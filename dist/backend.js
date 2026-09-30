@@ -1311,6 +1311,21 @@ class Ctx3 {
     }
   }
 }
+function normGate(r, where, c) {
+  const g = {};
+  if (r.narrator_when !== undefined) {
+    const x = c.expr(r.narrator_when, `${where} › narrator_when`);
+    if (x !== undefined)
+      g.when = String(x);
+  }
+  const words = list(r.narrator_words ?? r.narrator_keywords).map((w) => w.toLowerCase()).filter(Boolean);
+  if (words.length)
+    g.words = words;
+  const actions = list(r.narrator_actions).map((a) => a.toLowerCase()).filter(Boolean);
+  if (actions.length)
+    g.actions = actions;
+  return g.when || g.words || g.actions ? g : undefined;
+}
 function toneFor(index, count, good) {
   if (good === "none" || count <= 1)
     return "neutral";
@@ -1391,6 +1406,7 @@ function normStat(id, raw, where, c, forRel = false) {
   else if (r.narrator !== undefined && r.narrator !== false)
     narrator = Math.abs(c.num(r.narrator, `${where} › narrator`, 0));
   const start = c.num(r.start ?? r.value, `${where} › start`, good === "low" ? min : k === "meter" ? max : min);
+  const gate = narrator > 0 ? normGate(r, where, c) : undefined;
   const def = {
     id,
     label: typeof r.label === "string" ? r.label : titleCase(id),
@@ -1403,6 +1419,7 @@ function normStat(id, raw, where, c, forRel = false) {
     perHour: c.num(r.per_hour ?? r.perHour, `${where} › per_hour`, 0),
     show: k === "hidden" ? "hidden" : show,
     narrator,
+    ...gate ? { gate } : {},
     bands: normBands(r.bands, good, `${where} › bands`, c),
     color: typeof r.color === "string" ? r.color : undefined,
     desc: typeof r.desc === "string" ? r.desc : typeof r.description === "string" ? r.description : undefined
@@ -2065,6 +2082,111 @@ function normLiveChoices(raw, c, known) {
     c.warn("Live choices", "has no tags — add some under `tags:`");
   return def;
 }
+function normMind(raw, c) {
+  const def = { overrides: [], perception: [] };
+  if (raw === undefined)
+    return def;
+  if (!isObj(raw)) {
+    c.warn("Mind", "should be a map with `overrides:` and/or `perception:`");
+    return def;
+  }
+  for (const [id, o] of Object.entries(isObj(raw.overrides) ? raw.overrides : {})) {
+    const w = `Mind › overrides › ${id}`;
+    if (!isObj(o)) {
+      c.warn(w, "expected `when:`, `chance:` and `do:`");
+      continue;
+    }
+    const when = c.expr(o.when ?? true, `${w} › when`);
+    const chance = c.expr(o.chance ?? 100, `${w} › chance`);
+    if (when === undefined || chance === undefined)
+      continue;
+    const act = typeof o.do === "string" ? o.do : "fail";
+    def.overrides.push({
+      id,
+      when: String(when),
+      chance,
+      on: list(o.on).map((x) => x.toLowerCase()),
+      do: act,
+      cause: typeof o.cause === "string" ? o.cause : titleCase(id),
+      ...typeof o.text === "string" ? { text: o.text } : {}
+    });
+  }
+  const per = Array.isArray(raw.perception) ? raw.perception : [];
+  per.forEach((p, i) => {
+    const w = `Mind › perception #${i + 1}`;
+    if (!isObj(p) || typeof p.text !== "string") {
+      c.warn(w, "expected `{ when: ..., text: ... }`");
+      return;
+    }
+    const when = c.expr(p.when ?? true, `${w} › when`);
+    if (when !== undefined)
+      def.perception.push({ when: String(when), text: p.text });
+  });
+  return def;
+}
+function normKeep(raw, where, c, dflt = {}) {
+  const k = { codex: false, feats: false, perks: false, secrets: false, people: false, dating: false, deepest: false, stats: [], flags: [], items: [], rel: [], ...dflt };
+  if (raw === undefined)
+    return k;
+  const entries = Array.isArray(raw) ? raw.flatMap((x) => isObj(x) ? Object.entries(x) : [[String(x), true]]) : isObj(raw) ? Object.entries(raw) : typeof raw === "string" ? [[raw, true]] : [];
+  for (const [key, v] of entries) {
+    if (KEEP_FLAGS.includes(key))
+      k[key] = v !== false;
+    else if (KEEP_LISTS.includes(key))
+      k[key] = list(v);
+    else
+      c.warn(`${where} › ${key}`, `can keep ${[...KEEP_FLAGS, ...KEEP_LISTS].join(", ")}`);
+  }
+  return k;
+}
+function normCheckpoints(raw, endings, c, known) {
+  const def = { enabled: endings, slots: 3, keep: normKeep(undefined, "", c), auto: false, loop: null, hard: false };
+  if (raw === undefined || raw === false)
+    return def;
+  def.enabled = true;
+  if (!isObj(raw))
+    return def;
+  def.slots = Math.max(0, Math.min(9, Math.round(c.num(raw.slots, "Checkpoints › slots", 3))));
+  def.keep = normKeep(raw.keep, "Checkpoints › keep", c);
+  def.auto = raw.auto === true || raw.auto === "day";
+  def.hard = raw.hard === true;
+  if (isObj(raw.loop)) {
+    const when = c.expr(raw.loop.when, "Checkpoints › loop › when");
+    if (when === undefined)
+      c.warn("Checkpoints › loop", "needs `when:` — the moment the day rewinds");
+    else
+      def.loop = {
+        when: String(when),
+        to: raw.loop.to !== undefined ? String(raw.loop.to) : def.auto ? "auto" : "start",
+        text: typeof raw.loop.text === "string" ? raw.loop.text : "Time rewinds. Only {{user}} remembers what happened.",
+        effects: normEffect(raw.loop.do ?? raw.loop.effects, "Checkpoints › loop › do", c, known)
+      };
+  }
+  return def;
+}
+function normEndings(raw, c) {
+  const out = {};
+  for (const [id, e] of Object.entries(isObj(raw) ? raw : {})) {
+    const w = `Endings › ${id}`;
+    if (!isObj(e)) {
+      c.warn(w, "needs `when:` and `text:`");
+      continue;
+    }
+    const when = c.expr(e.when, `${w} › when`);
+    if (when === undefined) {
+      c.warn(w, "needs `when:` — the formula that ends the story");
+      continue;
+    }
+    out[id] = {
+      id,
+      when: String(when),
+      title: typeof e.title === "string" ? e.title : titleCase(id),
+      kind: e.kind === "good" || e.kind === "bad" ? e.kind : "neutral",
+      text: typeof e.text === "string" ? e.text : ""
+    };
+  }
+  return out;
+}
 function normalizeRuleset(raw) {
   const c = new Ctx3;
   if (!isObj(raw)) {
@@ -2163,18 +2285,21 @@ function normalizeRuleset(raw) {
   const conditions = {};
   for (const [id, d] of Object.entries(isObj(raw.conditions) ? raw.conditions : {})) {
     const r = isObj(d) ? d : typeof d === "string" ? { label: d } : {};
+    const gate = normGate(r, `Conditions › ${id}`, c);
     conditions[id] = {
       id,
       label: typeof r.label === "string" ? r.label : titleCase(id),
       tone: ["good", "warn", "bad", "neutral"].includes(r.tone) ? r.tone : "warn",
       desc: typeof r.desc === "string" ? r.desc : undefined,
-      narrator: r.narrator === true
+      narrator: r.narrator === true,
+      ...gate ? { gate } : {}
     };
   }
   const flags = {};
   for (const [id, d] of Object.entries(isObj(raw.flags) ? raw.flags : {})) {
     const r = isObj(d) ? d : { start: d };
-    flags[id] = { id, label: r.label, narrator: r.narrator === true, start: r.start ?? false };
+    const gate = normGate(r, `Flags › ${id}`, c);
+    flags[id] = { id, label: r.label, narrator: r.narrator === true, start: r.start ?? false, ...gate ? { gate } : {} };
   }
   const startRaw = isObj(raw.start) ? raw.start : {};
   const startItems = {};
@@ -2326,6 +2451,11 @@ function normalizeRuleset(raw) {
   const liveChoices = normLiveChoices(raw.live_choices, c, known);
   const dungeons = normDungeons(raw.dungeons, c, known);
   const dating = normDating(raw.dating, c, { stats: relStats, order: relStatOrder }, new Set(Object.keys(people)));
+  const mind = normMind(raw.mind, c);
+  const endingsRaw = isObj(raw.endings) ? raw.endings : {};
+  const endings = normEndings(Object.fromEntries(Object.entries(endingsRaw).filter(([k]) => k !== "legacy")), c);
+  const legacy = normKeep(endingsRaw.legacy, "Endings › legacy", c, { codex: true, feats: true, perks: true });
+  const checkpoints = normCheckpoints(raw.checkpoints, Object.keys(endings).length > 0, c, known);
   const ruleset = {
     name: typeof raw.name === "string" ? raw.name : "Untitled ruleset",
     description: typeof raw.description === "string" ? raw.description : undefined,
@@ -2372,7 +2502,11 @@ function normalizeRuleset(raw) {
     randomEvents,
     liveChoices,
     dungeons,
-    dating
+    dating,
+    mind,
+    checkpoints,
+    endings,
+    legacy
   };
   for (const p of Object.values(people))
     for (const e of p.schedule) {
@@ -2400,7 +2534,7 @@ function normalizeRuleset(raw) {
   }
   return { ruleset, issues: c.issues };
 }
-var isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v), DEFAULT_WEEKDAYS, KIND_ALIASES, list = (v) => Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : [], TIER_KEYS, MONTHS, DEFAULT_WEATHER, DEFAULT_SLOTS, SEXUAL_TAGS;
+var isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v), DEFAULT_WEEKDAYS, KIND_ALIASES, list = (v) => Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : [], TIER_KEYS, MONTHS, DEFAULT_WEATHER, DEFAULT_SLOTS, KEEP_FLAGS, KEEP_LISTS, SEXUAL_TAGS;
 var init_ruleset = __esm(() => {
   init_expr();
   init_dice();
@@ -2444,6 +2578,8 @@ var init_ruleset = __esm(() => {
     { id: "snow", label: "Snow", icon: "❄️", weight: 2, temp: -6, seasons: ["winter"], tags: ["wet", "cold"] }
   ];
   DEFAULT_SLOTS = ["head", "outer", "top", "bottom", "under_top", "under_bottom", "legs", "feet"];
+  KEEP_FLAGS = ["codex", "feats", "perks", "secrets", "people", "dating", "deepest"];
+  KEEP_LISTS = ["stats", "flags", "items", "rel"];
   SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
 });
 
@@ -2625,7 +2761,11 @@ function initialState(r) {
     dungeon: null,
     deepest: {},
     date: null,
-    dating: { prefs: {}, known: {}, partners: {}, dates: {} }
+    dating: { prefs: {}, known: {}, partners: {}, dates: {} },
+    saves: {},
+    runs: 1,
+    loops: 0,
+    ended: null
   };
   for (const id of r.statOrder)
     s.stats[id] = r.stats[id].start;
@@ -2876,6 +3016,35 @@ function applyEvent(s, e, r) {
       s.dating.partners = partners;
       break;
     }
+    case "save":
+      s.saves = { ...s.saves, [e.slot]: { at: s.minutes, turn: s.turn, label: e.label, snap: snapshotOf(s) } };
+      break;
+    case "load": {
+      const base = e.slot === "start" ? initialState(r) : s.saves[e.slot] ? structuredClone(s.saves[e.slot].snap) : null;
+      if (!base)
+        break;
+      rewind(r, s, base, r.checkpoints.keep);
+      s.loops += 1;
+      break;
+    }
+    case "restart": {
+      rewind(r, s, initialState(r), r.legacy);
+      s.saves = {};
+      s.runs += 1;
+      s.loops = 0;
+      break;
+    }
+    case "end":
+      if (!s.ended)
+        s.ended = { id: e.id, at: s.minutes, told: e.told };
+      break;
+    case "end_told":
+      if (s.ended)
+        s.ended = { ...s.ended, told: true };
+      break;
+    case "unend":
+      s.ended = null;
+      break;
     case "dt_dated": {
       const prev = s.dating.dates[e.who] ?? { count: 0, best: 0 };
       s.dating.dates = { ...s.dating.dates, [e.who]: { count: prev.count + 1, best: Math.max(prev.best, e.enjoy) } };
@@ -2885,6 +3054,56 @@ function applyEvent(s, e, r) {
       if (s.dungeon)
         applyDungeon(s, s.dungeon, e);
   }
+}
+function snapshotOf(s) {
+  const snap = structuredClone({ ...s, saves: {} });
+  return snap;
+}
+function rewind(r, s, base, keep) {
+  const from = structuredClone(s);
+  const next = structuredClone(base);
+  if (keep.codex)
+    next.codex = { ...next.codex, ...from.codex };
+  if (keep.feats)
+    next.feats = { ...next.feats, ...from.feats };
+  if (keep.perks)
+    next.perks = { ...next.perks, ...from.perks };
+  if (keep.secrets)
+    for (const [id, st] of Object.entries(from.secrets))
+      next.secrets[id] = Math.max(next.secrets[id] ?? -1, st);
+  if (keep.deepest)
+    for (const [id, d] of Object.entries(from.deepest))
+      next.deepest[id] = Math.max(next.deepest[id] ?? 0, d);
+  if (keep.dating)
+    next.dating = from.dating;
+  if (keep.people) {
+    next.people = { ...next.people, ...from.people };
+    for (const id of Object.keys(from.people))
+      next.rel[id] ??= from.rel[id];
+  }
+  for (const id of keep.stats)
+    if (id in from.stats)
+      next.stats[id] = from.stats[id];
+  for (const id of keep.flags)
+    if (id in from.flags)
+      next.flags[id] = from.flags[id];
+  for (const id of keep.items) {
+    if (from.items[id] > 0)
+      next.items[id] = from.items[id];
+    else
+      delete next.items[id];
+  }
+  for (const stat of keep.rel)
+    for (const [who, m] of Object.entries(from.rel))
+      if (stat in m)
+        (next.rel[who] ??= {})[stat] = m[stat];
+  next.seed = from.seed;
+  next.saves = from.saves;
+  next.runs = from.runs;
+  next.loops = from.loops;
+  next.ended = null;
+  next.turn = from.turn;
+  Object.assign(s, next);
 }
 function applyDungeon(s, d, e) {
   switch (e.t) {
@@ -2981,6 +3200,8 @@ function makeEnv(r, s, extra = {}) {
       in_dungeon: !!s.dungeon,
       dungeon_depth: s.dungeon?.depth ?? 0,
       in_date: !!s.date,
+      loops: s.loops,
+      runs: s.runs,
       on_outing: s.date?.kind === "outing",
       round: s.encounter?.round ?? 0,
       target: ""
@@ -3092,6 +3313,8 @@ function makeEnv(r, s, extra = {}) {
           return a0 in s.dating.partners;
         case "stage":
           return stageIndex(r, s, a0);
+        case "saved":
+          return a0 in s.saves;
         case "dates":
           return s.dating.dates[a0]?.count ?? 0;
       }
@@ -3169,8 +3392,56 @@ var init_state = __esm(() => {
     "in_dungeon",
     "dungeon_depth",
     "in_date",
-    "on_outing"
+    "on_outing",
+    "loops",
+    "runs"
   ];
+});
+
+// src/engine/chronicle.ts
+function runSummary(r, s) {
+  const lines = [];
+  if (r.clock.enabled)
+    lines.push(`It lasted until ${formatClock(r, s.minutes).label}.`);
+  if (s.runs > 1)
+    lines.push(`This was playthrough ${s.runs}.`);
+  if (s.loops > 0)
+    lines.push(`Time rewound ${s.loops} time${s.loops === 1 ? "" : "s"}.`);
+  const people = Object.keys(s.people).map((id) => {
+    const name = personName(r, s, id);
+    if (s.dating.partners[id])
+      return `${name} (together)`;
+    if (r.dating.enabled)
+      return `${name} (${stageLabel(r, s, id).toLowerCase()})`;
+    const first = r.relStatOrder[0];
+    const def = first ? r.relStats[first] : undefined;
+    const band = def ? bandFor(def, s.rel[id]?.[first] ?? def.start) : null;
+    return band ? `${name} (${def.label.toLowerCase()}: ${band.text.toLowerCase()})` : name;
+  });
+  if (people.length)
+    lines.push(`People: ${people.join(", ")}.`);
+  const dates = Object.entries(s.dating.dates).map(([id, d]) => `${d.count} with ${personName(r, s, id)}`);
+  if (dates.length)
+    lines.push(`Dates: ${dates.join(", ")}.`);
+  const feats = Object.keys(s.feats).map((id) => r.feats[id]?.name ?? id);
+  if (feats.length)
+    lines.push(`Feats: ${feats.join(", ")}.`);
+  const codex = Object.keys(s.codex).length;
+  if (codex)
+    lines.push(`Discovered ${codex} codex entr${codex === 1 ? "y" : "ies"}.`);
+  const deep = Object.entries(s.deepest).map(([id, d]) => `floor ${d} of ${r.dungeons[id]?.name ?? id}`);
+  if (deep.length)
+    lines.push(`Deepest dive: ${deep.join(", ")}.`);
+  const news = s.news.slice(-5).map((n) => n.text);
+  if (news.length)
+    lines.push(`What happened in the world: ${news.join(" ")}`);
+  return lines.join(" ");
+}
+function endingDirection(r, s, e) {
+  return `THE STORY REACHES AN ENDING — "${e.title}" (${e.kind}). ${e.text} Write this reply as the ending: close the story with an epilogue that draws on what actually happened. ${runSummary(r, s)} Don't carry the story on past it.`;
+}
+var init_chronicle = __esm(() => {
+  init_state();
 });
 
 // src/engine/date/talk.ts
@@ -4314,6 +4585,73 @@ function tickWorld(w, days, turns) {
   openFrontStages(w);
   tickGauge(w, days, turns);
 }
+function checkRun(w, before) {
+  const r = w.r;
+  if (!r.checkpoints.enabled)
+    return;
+  if (!w.s.ended)
+    for (const e of Object.values(r.endings)) {
+      if (!evalBool(e.when, w.env(), false))
+        continue;
+      w.push({ t: "end", id: e.id, told: !w.defer, src: "trigger" });
+      announce(w, endingDirection(r, w.s, e));
+      return;
+    }
+  if (w.s.ended)
+    return;
+  const loop = r.checkpoints.loop;
+  if (loop && evalBool(loop.when, w.env(), false)) {
+    const to = loop.to !== "start" && w.s.saves[loop.to] ? loop.to : "start";
+    const label = to === "start" ? "the very beginning" : w.s.saves[to].label;
+    w.push({ t: "load", slot: to, src: "world" });
+    effectToEvents(w, loop.effects, "world", {});
+    announce(w, `${loop.text} The story rewinds to ${label}: treat everything after it as undone, except what {{user}} remembers.`);
+    return;
+  }
+  if (r.checkpoints.auto && r.clock.enabled && Math.floor(w.s.minutes / 1440) > Math.floor(before.minutes / 1440)) {
+    w.push({ t: "save", slot: "auto", label: `Autosave · ${formatClock(r, w.s.minutes).label}`, src: "world" });
+  }
+}
+function runOp(r, before, op) {
+  const c = r.checkpoints;
+  if (!c.enabled)
+    return "This ruleset has no checkpoints.";
+  const w = new Working(r, cloneState(before));
+  switch (op.op) {
+    case "save": {
+      const n = Number(op.slot);
+      if (!Number.isInteger(n) || n < 1 || n > c.slots)
+        return "No such save slot.";
+      if (before.ended)
+        return "The story has ended — load a save or start over.";
+      const where = before.locationName ? ` · ${before.locationName}` : "";
+      w.push({ t: "save", slot: op.slot, label: `${r.clock.enabled ? formatClock(r, before.minutes).label : `Turn ${before.turn}`}${where}`, src: "manual" });
+      break;
+    }
+    case "load": {
+      if (op.slot !== "start" && !before.saves[op.slot])
+        return "That slot is empty.";
+      const label = op.slot === "start" ? "the very beginning" : before.saves[op.slot].label;
+      w.push({ t: "load", slot: op.slot, src: "manual" });
+      w.push({ t: "notice", text: `Time rewinds to ${label}. Treat everything after that point as undone — except what {{user}} remembers.`, src: "world" });
+      break;
+    }
+    case "restart":
+      w.push({ t: "restart", src: "manual" });
+      w.push({ t: "notice", text: "The story starts over from the very beginning: a new playthrough. Earlier events never happened, though some of what was learned carries over.", src: "world" });
+      break;
+    case "continue":
+      if (!before.ended)
+        return "The story hasn't ended.";
+      if (c.hard)
+        return "Hard mode: an ending is final.";
+      w.push({ t: "unend", src: "manual" });
+      w.push({ t: "notice", text: "The story goes on past its ending.", src: "world" });
+      break;
+  }
+  runTriggers(w, false);
+  return w.events;
+}
 function startEncounter(w, id, src) {
   const enc = w.r.encounters[id];
   if (!enc)
@@ -4437,7 +4775,25 @@ function resolveTurnFull(r, before, intent, opts) {
   const record = resolveInner(r, before, intent, opts, needs);
   return { record, needs };
 }
+function mindOverride(r, s, a, target, seed) {
+  for (const o of r.mind.overrides) {
+    const applies = o.on.length ? o.on.some((x) => x === a.id || a.tags.includes(x)) : !!a.check;
+    if (!applies || o.do === a.id)
+      continue;
+    const env = makeEnv(r, s, target ? { target } : {});
+    if (!evalBool(o.when, env, false))
+      continue;
+    const chance = Math.max(0, Math.min(100, evalNumber(o.chance, env, 0)));
+    if (seededRng(`${seed}:mind:${o.id}`)() * 100 >= chance)
+      continue;
+    const kind = o.do === "fail" ? "fail" : o.do === "alter" ? "alter" : "redirect";
+    return { id: o.id, cause: o.cause, text: o.text ?? `${o.cause} takes over.`, kind, ...kind === "redirect" ? { to: o.do } : {}, chance };
+  }
+  return null;
+}
 function resolveInner(r, before, intent, opts, needs) {
+  if (before.ended?.told && intent?.actionId !== RUN_EPILOGUE)
+    intent = null;
   const w = new Working(r, cloneState(before), seededRng(`${opts.seed}:fx`), opts.seed, opts.odds ?? {}, opts.scene ?? {});
   w.defer = false;
   const rec = { v: 1, hints: [], events: [], at: Date.now() };
@@ -4447,7 +4803,23 @@ function resolveInner(r, before, intent, opts, needs) {
     w.hints.push(...before.notices);
     w.push({ t: "noticed", src: "world" });
   }
-  const found = intent && !intent.actionId.startsWith(TRAVEL_PREFIX) && !intent.actionId.startsWith(DATE_PREFIX) ? findAction(r, before, intent.actionId) : null;
+  if (before.ended && !before.ended.told) {
+    const e = r.endings[before.ended.id];
+    if (e && !before.notices.some((n) => n.startsWith("THE STORY REACHES AN ENDING")))
+      w.hints.push(endingDirection(r, before, e));
+    w.push({ t: "end_told", src: "world" });
+    rec.action = { id: RUN_EPILOGUE, label: `The end: ${e?.title ?? "the story ends"}`, via: intent?.via ?? "choice" };
+  }
+  let found = intent && !intent.actionId.startsWith(TRAVEL_PREFIX) && !intent.actionId.startsWith(DATE_PREFIX) ? findAction(r, before, intent.actionId) : null;
+  let mind = found ? mindOverride(r, before, found.a, found.target, opts.seed) : null;
+  const meant = found ? found.target ? `${found.a.label} (${personName(r, before, found.target)})` : intent.label ?? found.a.label : "";
+  if (found && mind?.kind === "redirect") {
+    const alt = findAction(r, before, mind.to);
+    if (alt)
+      found = { a: alt.a, ...found.target && alt.a.perPerson ? { target: found.target } : {} };
+    else
+      mind = null;
+  }
   const a = found?.a;
   const inEncounter = !!before.encounter;
   const dateIntent = intent?.actionId.startsWith(DATE_PREFIX) ? intent : activeSession(r, before) && !intent ? { actionId: `${DATE_PREFIX}say`, via: "adjudicator" } : null;
@@ -4475,10 +4847,20 @@ function resolveInner(r, before, intent, opts, needs) {
   } else if (a) {
     const who = found?.target;
     const extra = paramValues(a, intent.params, who);
-    const label = intent.label ?? (who ? `${a.label} (${personName(r, before, who)})` : a.label);
-    rec.action = { id: intent.actionId, label, via: intent.via, ...a.params.length ? { params: Object.fromEntries(a.params.map((p) => [p.id, intent.params?.[p.id] ?? p.default])) } : {} };
+    const own = mind?.kind === "redirect" ? who ? `${a.label} (${personName(r, before, who)})` : a.label : null;
+    const label = own ?? intent.label ?? (who ? `${a.label} (${personName(r, before, who)})` : a.label);
+    rec.action = { id: mind?.kind === "redirect" ? `${a.id}${who ? `${TARGET_SEP}${who}` : ""}` : intent.actionId, label, via: intent.via, ...a.params.length ? { params: Object.fromEntries(a.params.map((p) => [p.id, intent.params?.[p.id] ?? p.default])) } : {} };
+    if (mind) {
+      rec.mind = { id: mind.id, cause: mind.cause, kind: mind.kind, meant, chance: mind.chance };
+      const why = mind.text.replace(/\{target\}/g, who ? personName(r, before, who) : "them");
+      w.hints.push(mind.kind === "fail" ? `{{user}} tries to ${meant.toLowerCase()}, but can't: ${why} It fails — no roll.` : mind.kind === "redirect" ? `{{user}} meant to ${meant.toLowerCase()}, but ${why} What actually happens: ${label.toLowerCase()}.` : `{{user}} goes ahead, but ${mind.cause.toLowerCase()} colours it: ${why}`);
+    }
     effectToEvents(w, a.cost, "cost", extra);
-    if (a.check) {
+    if (mind?.kind === "fail") {
+      const fail = a.outcomes.fail ?? a.outcomes.crit_fail;
+      if (fail)
+        effectToEvents(w, fail, "check", extra);
+    } else if (a.check) {
       const rng = seededRng(opts.seed);
       const { add, target } = checkNumbers(r, w.s, a, intent.params, who);
       const roll = rollDice(a.check.dice, rng);
@@ -4519,6 +4901,7 @@ function resolveInner(r, before, intent, opts, needs) {
   tickWorld(w, days, 1);
   if (w.events.length > worldBefore)
     runTriggers(w, false);
+  checkRun(w, before);
   w.push({ t: "turn", src: "action" });
   rec.events = w.events;
   rec.hints = w.hints;
@@ -4530,6 +4913,32 @@ function resolveInner(r, before, intent, opts, needs) {
   }
   needs.push(...w.needs);
   return rec;
+}
+function actionTags(r, actionId) {
+  const base = actionId.split(TARGET_SEP)[0];
+  const enc = Object.values(r.encounters).find((e) => e.actions[base]);
+  const a = base.startsWith(LIVE_PREFIX) ? r.liveChoices.tags[base.slice(LIVE_PREFIX.length)] : r.actions[base] ?? enc?.actions[base];
+  return [...a?.tags ?? [], ...enc?.tags ?? []];
+}
+function gateOpen(g, w, ctx) {
+  if (!g)
+    return true;
+  if (g.when && !evalBool(g.when, w.env(), false))
+    return false;
+  if (g.words) {
+    const text = ctx?.text.toLowerCase() ?? "";
+    if (!g.words.some((x) => text.includes(x)))
+      return false;
+  }
+  if (g.actions) {
+    const a = ctx?.action;
+    if (!a)
+      return false;
+    const id = a.id.split(TARGET_SEP)[0].toLowerCase();
+    if (!g.actions.some((x) => x === id || a.tags.includes(x)))
+      return false;
+  }
+  return true;
 }
 function clampAbs(v, lim) {
   return Math.max(-lim, Math.min(lim, v));
@@ -4544,7 +4953,7 @@ function findPerson(r, s, key) {
       return p.id;
   return null;
 }
-function applyProposal(r, before, p) {
+function applyProposal(r, before, p, ctx) {
   const w = new Working(r, cloneState(before), seededRng(`narrator:${before.turn}`));
   const src = "narrator";
   for (const person of p.people ?? []) {
@@ -4570,6 +4979,8 @@ function applyProposal(r, before, p) {
     const def = r.stats[id];
     if (!def || def.narrator <= 0 || typeof d !== "number" || !Number.isFinite(d))
       continue;
+    if (!gateOpen(def.gate, w, ctx))
+      continue;
     const v = clampAbs(d, def.narrator);
     if (v !== 0)
       w.push({ t: "stat", id, d: v, src });
@@ -4585,6 +4996,8 @@ function applyProposal(r, before, p) {
     for (const [stat, d] of Object.entries(m ?? {})) {
       const def = r.relStats[stat];
       if (!def || def.narrator <= 0 || typeof d !== "number" || !Number.isFinite(d))
+        continue;
+      if (!gateOpen(def.gate, w, ctx))
         continue;
       const v = clampAbs(d, def.narrator);
       if (v !== 0)
@@ -4615,16 +5028,16 @@ function applyProposal(r, before, p) {
   }
   for (const id of p.conditions?.add ?? []) {
     const def = r.conditions[id];
-    if (def?.narrator && !w.s.conditions[id])
+    if (def?.narrator && !w.s.conditions[id] && gateOpen(def.gate, w, ctx))
       w.push({ t: "cond", id, on: true, until: null, src });
   }
   for (const id of p.conditions?.remove ?? []) {
     const def = r.conditions[id];
-    if (def?.narrator && w.s.conditions[id])
+    if (def?.narrator && w.s.conditions[id] && gateOpen(def.gate, w, ctx))
       w.push({ t: "cond", id, on: false, src });
   }
   for (const [key, v] of Object.entries(p.flags ?? {})) {
-    if (r.flags[key]?.narrator)
+    if (r.flags[key]?.narrator && gateOpen(r.flags[key].gate, w, ctx))
       w.push({ t: "flag", key, v, src });
   }
   if (r.wardrobe.enabled && r.wardrobe.narrator) {
@@ -4647,6 +5060,7 @@ function applyProposal(r, before, p) {
     if (w.events.length > n)
       runTriggers(w, false);
   }
+  checkRun(w, before);
   return w.events;
 }
 function builderOf(w) {
@@ -4688,6 +5102,7 @@ function buildTurn(r, before, seed, fn) {
     if (w.events.length > n)
       runTriggers(w, false);
   }
+  checkRun(w, before);
   return w.events;
 }
 function manualSet(r, before, stat, value) {
@@ -4778,12 +5193,13 @@ function forgetPerson(r, before, who) {
     return "Unknown person.";
   return [{ t: "forget", who, src: "manual" }];
 }
-var TRAVEL_PREFIX = "go:", TARGET_SEP = "@", LIVE_PREFIX = "live:", NEXT_EVENT = "world:next_event", TIER_FALLBACK, TIER_LABEL;
+var TRAVEL_PREFIX = "go:", TARGET_SEP = "@", LIVE_PREFIX = "live:", NEXT_EVENT = "world:next_event", RUN_EPILOGUE = "run:epilogue", TIER_FALLBACK, TIER_LABEL;
 var init_resolve = __esm(() => {
   init_expr();
   init_dice();
   init_ruleset();
   init_state();
+  init_chronicle();
   init_world();
   init_types2();
   init_talk();
@@ -5494,7 +5910,38 @@ conditions:
       },
       {
         label: "rules",
-        yaml: `# Meters that feed into each other.
+        yaml: `# At low control, {{user}}'s mind can overrule the player. Each override rolls its chance per action.
+mind:
+  overrides:
+    freeze:
+      when: "control < 25"
+      chance: "60 - control * 2"
+      on: [violence, crime]
+      cause: Panic
+      text: "their body locks up and won't obey."
+    flight:
+      when: "control < 15 and cond('scared')"
+      chance: 35
+      do: alter
+      cause: Fear
+      text: "every instinct is screaming at them to get out."
+  perception:
+    - { when: "trauma >= 60", text: "Reminders of what happened hit hard. Show intrusive thoughts and flinches; safe things can feel unsafe." }
+    - { when: "control < 25", text: "{{user}} is barely holding together: narrow focus, racing heart, sounds too loud." }
+
+# Save slots, a daily autosave, and a bad end. What you've learned survives a rewind.
+checkpoints:
+  slots: 3
+  auto: day
+  keep: [codex, feats, secrets]
+endings:
+  burned_out:
+    when: "trauma >= 100"
+    title: Burned out
+    kind: bad
+    text: "{{user}} can't carry it any more. They pack a bag and take the night bus out of town."
+
+# Meters that feed into each other.
 triggers:
   exhaustion:
     when: fatigue >= 85
@@ -9937,6 +10384,45 @@ function lintRuleset(r) {
   }
   for (const a of Object.values(r.liveChoices.tags))
     checkAction(a, `Live choices › tags › ${a.id}`);
+  if (r.checkpoints.loop) {
+    check(r.checkpoints.loop.when, "Checkpoints › loop › when");
+    checkEffect(r.checkpoints.loop.effects, "Checkpoints › loop › do");
+    const to = r.checkpoints.loop.to;
+    const n = Number(to);
+    if (to !== "start" && to !== "auto" && !(Number.isInteger(n) && n >= 1 && n <= r.checkpoints.slots))
+      issues.push({ level: "warning", where: "Checkpoints › loop › to", message: `"${to}" should be start, auto or a slot number (1–${r.checkpoints.slots})` });
+    if (to === "auto" && !r.checkpoints.auto)
+      issues.push({ level: "warning", where: "Checkpoints › loop › to", message: "rewinds to the autosave, but `auto: day` is off — it will rewind to the start" });
+  }
+  for (const k of [r.checkpoints.keep, r.legacy]) {
+    for (const id of k.stats)
+      if (!r.stats[id])
+        issues.push({ level: "warning", where: "Checkpoints › keep", message: `"${id}" isn't a stat${suggest(id, r.statOrder)}` });
+    for (const id of k.rel)
+      if (!r.relStats[id])
+        issues.push({ level: "warning", where: "Checkpoints › keep", message: `"${id}" isn't a relationship stat` });
+    for (const id of k.flags)
+      if (!r.flags[id])
+        issues.push({ level: "warning", where: "Checkpoints › keep", message: `"${id}" isn't a declared flag` });
+  }
+  for (const e of Object.values(r.endings))
+    check(e.when, `Endings › ${e.id} › when`);
+  for (const o of r.mind.overrides) {
+    const w = `Mind › overrides › ${o.id}`;
+    check(o.when, `${w} › when`, { target: "someone" });
+    check(o.chance, `${w} › chance`, { target: "someone" });
+    if (o.do !== "fail" && o.do !== "alter" && !r.actions[o.do])
+      issues.push({ level: "warning", where: `${w} › do`, message: `"${o.do}" isn't fail, alter or an action${suggest(o.do, Object.keys(r.actions))}` });
+  }
+  r.mind.perception.forEach((p, i) => check(p.when, `Mind › perception #${i + 1} › when`));
+  const gates = [
+    ...r.statOrder.map((id) => [`Stats › ${id} › narrator_when`, r.stats[id].gate]),
+    ...r.relStatOrder.map((id) => [`Relationships › stats › ${id} › narrator_when`, r.relStats[id].gate]),
+    ...Object.values(r.flags).map((f) => [`Flags › ${f.id} › narrator_when`, f.gate]),
+    ...Object.values(r.conditions).map((c) => [`Conditions › ${c.id} › narrator_when`, c.gate])
+  ];
+  for (const [where, g] of gates)
+    check(g?.when, where);
   if (r.dating.enabled) {
     const dx = { target: Object.keys(r.people)[0] ?? "someone" };
     check(r.dating.with, "Dating › with", dx);
@@ -9991,6 +10477,7 @@ var init_lint = __esm(() => {
     "partner",
     "dates",
     "stage",
+    "saved",
     "min",
     "max",
     "clamp",
@@ -11304,6 +11791,16 @@ function buildHud(r, s) {
     perks: Object.values(r.perks).map((p) => ({ id: p.id, name: p.name, desc: p.desc, cost: p.cost, owned: !!s.perks[p.id], blocker: s.perks[p.id] ? null : perkBlocker(r, s, p.id) })),
     perkPoints: r.perkPoints ? s.stats[r.perkPoints] ?? 0 : null,
     news: s.news.slice().reverse().slice(0, 12).map((n) => ({ text: n.text, when: r.clock.enabled ? formatClock(r, n.at).day : null })),
+    run: r.checkpoints.enabled ? {
+      slots: Array.from({ length: r.checkpoints.slots }, (_, i) => ({ id: String(i + 1), label: s.saves[String(i + 1)]?.label ?? null })),
+      auto: s.saves.auto?.label ?? null,
+      runs: s.runs,
+      loops: s.loops,
+      hard: r.checkpoints.hard,
+      ended: s.ended ? { title: r.endings[s.ended.id]?.title ?? s.ended.id, kind: r.endings[s.ended.id]?.kind ?? "neutral", text: r.endings[s.ended.id]?.text ?? "", told: s.ended.told } : null,
+      keeps: keepWords(r, r.checkpoints.keep),
+      legacy: keepWords(r, r.legacy)
+    } : null,
     turn: s.turn
   };
 }
@@ -11377,11 +11874,37 @@ function buildMap(r, s) {
     edges
   };
 }
+function keepWords(r, k) {
+  const parts = [
+    k.codex && "the codex",
+    k.feats && "feats",
+    k.perks && "perks",
+    k.secrets && "secrets learned",
+    k.people && "people met",
+    k.dating && "what you know of people's tastes",
+    k.deepest && "dungeon progress",
+    ...k.stats.map((id) => r.stats[id]?.label ?? id),
+    ...k.flags.map((id) => r.flags[id]?.label ?? id.replace(/_/g, " ")),
+    ...k.items.map((id) => itemName(r, initialState(r), id)),
+    ...k.rel.map((id) => r.relStats[id]?.label ?? id)
+  ].filter(Boolean);
+  return parts.length ? parts.join(", ") : "nothing";
+}
 function buildChoices(r, s, opts) {
   const veils = new Set(opts.veils.map((v) => v.toLowerCase()));
   const lines = new Set(opts.lines.map((v) => v.toLowerCase()));
   const live = [];
   const plain = (id, label, group, desc = null) => ({ id, label, group, desc, odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [] });
+  if (s.ended) {
+    const e = r.endings[s.ended.id];
+    const group = `The end · ${e?.title ?? ""}`.trim();
+    return [
+      ...!s.ended.told ? [plain(RUN_EPILOGUE, "See how it ends", group, "The narrator writes the ending")] : [],
+      plain("run:restart", "Start over", group, `A new playthrough from the beginning. Carries over: ${keepWords(r, r.legacy)}`),
+      ...Object.entries(s.saves).map(([slot, v]) => plain(`run:load:${slot}`, `Load ${slot === "auto" ? "autosave" : `slot ${slot}`}`, group, v.label)),
+      ...!r.checkpoints.hard ? [plain("run:continue", "Keep playing", group, "Carry on past the ending")] : []
+    ];
+  }
   if (s.dungeon) {
     const d = dungeonOf(r, s.dungeon);
     return [
@@ -11644,6 +12167,7 @@ function buildRecordView(r, messageId, swipe, rec, before, after) {
       };
     }),
     contradiction: rec.contradiction ?? null,
+    mind: rec.mind ? { cause: rec.mind.cause, kind: rec.mind.kind, meant: rec.mind.meant, chance: rec.mind.chance } : null,
     redoFrom: null
   };
 }
@@ -11810,6 +12334,12 @@ function sceneHints(r, s) {
     notes.push("Exploring a dungeon");
   return Object.keys(moods).length || notes.length ? { moods, notes } : null;
 }
+function perception(r, s) {
+  const env = makeEnv(r, s);
+  const lines = r.mind.perception.filter((p) => evalBool(p.when, env, false)).map((p) => p.text);
+  return lines.length ? lines.join(`
+`) : null;
+}
 function outcomePacket(r, rec, before, after, playerName) {
   const lines = [];
   if (rec.action)
@@ -11836,6 +12366,7 @@ var init_view = __esm(() => {
   init_run();
   init_talk();
   init_types2();
+  init_expr();
 });
 
 // src/engine/dungeon/view.ts
@@ -12218,7 +12749,7 @@ async function bookkeeping(opts) {
     const d = r.stats[id];
     if (d.narrator <= 0)
       continue;
-    q[`stat:${id}`] = { type: "choice", instructions: `During the reply, how did ${player}'s ${d.label}${d.desc ? ` (${d.desc})` : ""} change?`, criteria: stepCriteria(d.label) };
+    q[`stat:${id}`] = { type: "choice", instructions: `During the reply, how did ${player}'s ${d.label}${d.desc ? ` (${d.desc})` : ""} change, beyond anything listed in already_applied?`, criteria: stepCriteria(d.label) };
   }
   const lower = opts.reply.toLowerCase();
   const mentioned = Object.keys(s.people).filter((pid) => lower.includes(personName(r, s, pid).toLowerCase().split(" ")[0]));
@@ -12232,7 +12763,7 @@ async function bookkeeping(opts) {
         const levels = feelLevels(d);
         q[`feel:${pid}:${rs}`] = { type: "score", instructions: `Right now, how does ${name} feel toward ${player} — ${d.label}?`, criteria: levels.map((l) => l.text) };
       } else {
-        q[`rel:${pid}:${rs}`] = { type: "choice", instructions: `How did ${name}'s ${d.label} toward ${player} change during the reply?`, criteria: stepCriteria(`${name}'s ${d.label}`) };
+        q[`rel:${pid}:${rs}`] = { type: "choice", instructions: `How did ${name}'s ${d.label} toward ${player} change during the reply, beyond anything listed in already_applied?`, criteria: stepCriteria(`${name}'s ${d.label}`) };
       }
     }
   const locs = Object.values(r.locations);
@@ -12263,7 +12794,12 @@ async function bookkeeping(opts) {
     q["gate:items"] = { type: "noul", instructions: `${player} gains, loses or uses up an item during the reply` };
   if (r.locationsOpen)
     q["gate:move"] = { type: "noul", instructions: `${player} ends the reply somewhere different from ${s.locationName ?? "where they started"}` };
-  const state = { game_state: stateDigest(r, s), player_message: clip(opts.playerText, 1200), narrator_reply: clip(opts.reply, 6000) };
+  const state = {
+    game_state: stateDigest(r, s),
+    player_message: clip(opts.playerText, 1200),
+    narrator_reply: clip(opts.reply, 6000),
+    already_applied: opts.applied || "(nothing — the rules applied no changes this turn)"
+  };
   const ans = await safeAsk(opts.decider, state, q, 12000, "bookkeeping");
   const p = {};
   const t = ans.time;
@@ -12602,7 +13138,7 @@ async function ask(system, user, settings, userId, timeoutMs, opts = {}) {
 function clip2(s, n) {
   return s.length > n ? `…${s.slice(-n)}` : s;
 }
-async function extract(r, s, playerText, reply, settings, userId, only) {
+async function extract(r, s, playerText, reply, settings, userId, only, applied) {
   const stats = r.statOrder.map((id) => r.stats[id]).filter((d) => d.narrator > 0);
   const rels = r.relStatOrder.map((id) => r.relStats[id]).filter((d) => d.narrator > 0);
   const conds = Object.values(r.conditions).filter((c) => c.narrator);
@@ -12659,7 +13195,8 @@ async function extract(r, s, playerText, reply, settings, userId, only) {
     clip2(playerText, 1200) || "(none)",
     "",
     "Narrator's reply:",
-    clip2(reply, 4000)
+    clip2(reply, 4000),
+    ...applied ? ["", "Already applied by the rules this turn (don't report these again):", applied] : []
   ].join(`
 `);
   try {
@@ -12828,6 +13365,10 @@ ${stateDigest(r, after)}`);
   if (r.narration.notes)
     parts.push(`[Warp — narrator notes]
 ${r.narration.notes}`);
+  const felt = perception(r, after);
+  if (felt)
+    parts.push(`[Warp — how {{user}} experiences things right now. Filter the narration through this.]
+${felt}`);
   const known = narratorKnowledge(r, after);
   if (known)
     parts.push(`[Warp — background only you know. The player hasn't seen it. Play it as subtext: never explain it, and reveal no more than the scene earns.]
@@ -12968,13 +13509,14 @@ async function interceptor(messages, ctx) {
   }
 }
 async function proposeChanges(decider, r, p, reply, settings, userId) {
+  const applied = p.outcome ? fillNames(p.outcome, p.player) : null;
   if (decider.id === "llm")
-    return extract(r, p.after, p.playerText, reply, settings, userId);
+    return extract(r, p.after, p.playerText, reply, settings, userId, undefined, applied);
   if (decider.id === "rules")
     return null;
-  const { proposal, needsWriting } = await bookkeeping({ decider, r, s: p.after, playerText: p.playerText, reply, player: p.player });
+  const { proposal, needsWriting } = await bookkeeping({ decider, r, s: p.after, playerText: p.playerText, reply, player: p.player, applied });
   if (needsWriting.size) {
-    const named = await extract(r, p.after, p.playerText, reply, settings, userId, needsWriting);
+    const named = await extract(r, p.after, p.playerText, reply, settings, userId, needsWriting, applied);
     if (named?.people)
       proposal.people = named.people;
     if (named?.items)
@@ -13037,7 +13579,9 @@ async function onGenerationEnded(payload, userId) {
     ]);
     const rec = { ...p.rec };
     if (proposal) {
-      const events = applyProposal(r, p.after, proposal);
+      const action = p.rec.action ? { id: p.rec.action.id, tags: actionTags(r, p.rec.action.id) } : undefined;
+      const events = applyProposal(r, p.after, proposal, { text: `${p.playerText}
+${payload.content}`, action });
       if (events.length)
         rec.events = [...rec.events, ...events];
     }
@@ -13430,8 +13974,8 @@ var PART_CONTENTS = {
   world: "weather, locations, items (incl. clothing), wardrobe, conditions, flags, start.items",
   actions: "actions",
   encounters: "encounters, dungeons",
-  journal: "codex, feats, perks",
-  rules: "triggers",
+  journal: "codex, feats, perks, checkpoints, endings",
+  rules: "triggers, mind",
   story: "secrets, fronts, random_events, live_choices",
   dating: "dating (tastes, topics, venues), plus gift items and actions to get them"
 };
@@ -13450,9 +13994,9 @@ function partForIssue(where) {
     return "actions";
   if (head.startsWith("encounters") || head.startsWith("dungeons"))
     return "encounters";
-  if (["codex", "feats", "perks"].some((k) => head.startsWith(k)))
+  if (["codex", "feats", "perks", "checkpoints", "endings"].some((k) => head.startsWith(k)))
     return "journal";
-  if (head.startsWith("triggers") || head.startsWith("rules"))
+  if (head.startsWith("triggers") || head.startsWith("rules") || head.startsWith("mind"))
     return "rules";
   if (["secrets", "fronts", "random events", "live choices"].some((k) => head.startsWith(k)))
     return "story";
@@ -13467,6 +14011,8 @@ stats:            # kinds: meter (bar) | attribute | skill | money | hidden
   athletics: { kind: skill, max: 100, start: 10, grades: [F, D, C, B, A, S] }
   money: { kind: money, start: 50, narrator: 50 }
   # good: high|low|none (colours); per_hour: drift; narrator: max change the story may make per reply (0 = rules only); max may be a formula ("level * 5")
+  # limit what the story may change (stats, relationship stats, flags, conditions): narrator_when: "not in_encounter",
+  #   narrator_words: [panic, scared] (the exchange must mention one), narrator_actions: [fight, violence] (action ids or tags)
 
 relationships:
   open: true                       # track new people the story introduces
@@ -13559,10 +14105,28 @@ codex: { docks: { title: The Docks, category: Places, text: "...", unlock: "loca
 feats: { night_owl: { name: Night owl, desc: "...", unlock: "hour >= 2 and hour < 5", reward: { stress: -5 } } }
 perks: { points: perk_points, sharp: { name: Sharpshooter, desc: "+2 Aim", cost: 1, requires: "level >= 2", effects: { aim: +2 } } }
 
+checkpoints:      # save slots in the journal; loading rewinds the game (the chat keeps its messages)
+  slots: 3
+  auto: day                        # autosave at the start of each in-game day (slot "auto")
+  keep: [codex, feats, { stats: [insight] }, { flags: [knows_the_truth] }]   # what survives a rewind: codex, feats, perks, secrets, people, dating, deepest, stats/flags/items/rel lists
+  loop: { when: "hour >= 23", to: auto, text: "Midnight. The day folds back on itself; only {{user}} remembers.", do: { stress: +5 } }   # a time loop
+  hard: false                      # true = an ending is final (load or start over, never keep playing)
+endings:          # when one holds, the story ends: the narrator writes an epilogue from what happened; then start over, load, or keep playing
+  burned_out: { when: "trauma >= 100", title: Burned out, kind: bad, text: "{{user}} can't go on and leaves town on the night bus." }
+  legacy: [codex, feats]           # carried into a new playthrough (default codex, feats, perks)
+FUNCTIONS for runs: saved(slot); names: loops (rewinds so far), runs (playthrough number).
+
 triggers:
   exhausted: { when: "fatigue >= 85", do: { add_condition: [exhausted], hint: "..." } }         # fires once when it becomes true
   drain: { when: "fatigue >= 85", repeat: true, do: { stress: +2 } }                           # every turn while true
   danger: { when_scene: "{{user}} is in immediate danger", do: { stress: +5 } }                # judged in plain language
+
+mind:             # the character's mind can overrule the player (in the "rules" part)
+  overrides:      # first one that holds and rolls under its chance wins; a \uD83E\uDDE0 chip says why
+    freeze: { when: "control < 25", chance: "60 - control * 2", on: [violence], cause: Panic, text: "their body won't obey." }   # do: fail (default) = fails with no roll
+    urge: { when: "lust >= 70", chance: 30, on: [talk], do: flirt, cause: Desire }      # do: <action id> = that happens instead
+    nerves: { when: "control < 50", chance: 50, do: alter, cause: Nerves }               # do: alter = goes ahead, coloured by the cause; on: [] = any action with a check
+  perception: [ { when: "awareness < 20", text: "{{user}} is naive: describe only what they understand." } ]   # filters the narration while true
 
 STORY MACHINERY (the "story" part):
 secrets:          # only opened stages ever reach the narrator — what isn't in the prompt can't leak
@@ -14467,7 +15031,14 @@ spindle.onFrontendMessage(async (raw, userId) => {
         const { state } = foldPath(r, msgs);
         let say;
         let intent = { actionId: msg.actionId, params: msg.params, via: "choice" };
-        if (msg.actionId.startsWith(LIVE_PREFIX)) {
+        if (msg.actionId === RUN_EPILOGUE) {
+          if (!state.ended || state.ended.told) {
+            await pushState(msg.chatId, userId);
+            return;
+          }
+          say = "*The end.*";
+          intent = { actionId: RUN_EPILOGUE, via: "choice", label: "The ending" };
+        } else if (msg.actionId.startsWith(LIVE_PREFIX)) {
           const c = liveChoicesOf(msgs[msgs.length - 1])[Number(msg.actionId.slice(LIVE_PREFIX.length))];
           if (!c || !r.liveChoices.tags[c.tag]) {
             toast("warning", "That choice isn't available anymore.", userId);
@@ -14540,6 +15111,13 @@ spindle.onFrontendMessage(async (raw, userId) => {
       }
       case "dungeon": {
         await runDungeonOp(msg, userId);
+        break;
+      }
+      case "run": {
+        const op = msg.op === "save" || msg.op === "load" ? { op: msg.op, slot: msg.slot ?? "" } : { op: msg.op };
+        const ok = await applyManual(msg.chatId, userId, (r, state) => runOp(r, state, op));
+        if (ok)
+          toast("success", msg.op === "save" ? "Saved." : msg.op === "load" ? "Rewound. The next reply picks up from there." : msg.op === "restart" ? "A new playthrough begins." : "The story goes on.", userId);
         break;
       }
       case "buy_perk": {

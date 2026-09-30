@@ -75,6 +75,18 @@ export interface HudView {
   perkPoints: number | null;
   /** What has surfaced in the world (newest first). */
   news: { text: string; when: string | null }[];
+  /** Checkpoints and endings, when the ruleset has them. */
+  run: {
+    slots: { id: string; label: string | null }[];
+    auto: string | null;
+    runs: number;
+    loops: number;
+    hard: boolean;
+    ended: { title: string; kind: string; text: string; told: boolean } | null;
+    /** What survives loading a save / starting over, in words. */
+    keeps: string;
+    legacy: string;
+  } | null;
   turn: number;
 }
 
@@ -465,5 +477,6 @@ export type FrontendToBackend =
   | { type: "builder_back"; chatId: string }
   | { type: "builder_close"; chatId: string }
   | ({ type: "dungeon"; chatId: string } & DungeonOp)
+  | { type: "run"; chatId: string; op: "save" | "load" | "restart" | "continue"; slot?: string }
   | { type: "set_jev_key"; key: string }
   | { type: "test_decider" };

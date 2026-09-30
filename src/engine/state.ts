@@ -7,7 +7,7 @@
 
 import type { Value, ExprEnv } from "./expr.js";
 import { evalNumber } from "./expr.js";
-import type { Ruleset, StatDef, Band } from "./ruleset.js";
+import type { Ruleset, StatDef, Band, KeepSpec } from "./ruleset.js";
 import type { BattleState, DungeonRun, PartyMember, Pending } from "./dungeon/types.js";
 import type { DateSession, DatingMemory, Reaction } from "./date/types.js";
 import { stageIndex } from "./date/stage.js";
@@ -68,7 +68,17 @@ export interface GameState {
   date: DateSession | null;
   /** What dating has taught the game about each person. */
   dating: DatingMemory;
+  /** Save slots: a copy of the state at the moment of saving. */
+  saves: Record<string, SaveSlot>;
+  /** Which playthrough this is (starting over after an ending adds one). */
+  runs: number;
+  /** Times the story has been rewound to a save. */
+  loops: number;
+  /** The story reached an ending (told = the narrator has written it). */
+  ended: { id: string; at: number; told: boolean } | null;
 }
+
+export interface SaveSlot { at: number; turn: number; label: string; snap: GameState }
 
 export type EventSource = "cost" | "check" | "action" | "drift" | "trigger" | "narrator" | "manual" | "start" | "world";
 
@@ -124,6 +134,12 @@ export type WarpEvent = { src: EventSource; note?: string } & (
   | { t: "dt_seen"; who: string; topic: string; reaction: Reaction }
   | { t: "dt_partner"; who: string; on: boolean }
   | { t: "dt_dated"; who: string; enjoy: number }
+  | { t: "save"; slot: string; label: string }
+  | { t: "load"; slot: string }
+  | { t: "restart" }
+  | { t: "end"; id: string; told: boolean }
+  | { t: "end_told" }
+  | { t: "unend" }
 );
 
 const DG_LOG_KEPT = 12;
@@ -167,6 +183,10 @@ export function initialState(r: Ruleset): GameState {
     deepest: {},
     date: null,
     dating: { prefs: {}, known: {}, partners: {}, dates: {} },
+    saves: {},
+    runs: 1,
+    loops: 0,
+    ended: null,
   };
   for (const id of r.statOrder) s.stats[id] = r.stats[id].start;
   // Stages with no condition at the top of a secret's ladder are known from the start.
@@ -346,6 +366,26 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       s.dating.partners = partners;
       break;
     }
+    case "save":
+      s.saves = { ...s.saves, [e.slot]: { at: s.minutes, turn: s.turn, label: e.label, snap: snapshotOf(s) } };
+      break;
+    case "load": {
+      const base = e.slot === "start" ? initialState(r) : s.saves[e.slot] ? structuredClone(s.saves[e.slot].snap) : null;
+      if (!base) break;
+      rewind(r, s, base, r.checkpoints.keep);
+      s.loops += 1;
+      break;
+    }
+    case "restart": {
+      rewind(r, s, initialState(r), r.legacy);
+      s.saves = {};
+      s.runs += 1;
+      s.loops = 0;
+      break;
+    }
+    case "end": if (!s.ended) s.ended = { id: e.id, at: s.minutes, told: e.told }; break;
+    case "end_told": if (s.ended) s.ended = { ...s.ended, told: true }; break;
+    case "unend": s.ended = null; break;
     case "dt_dated": {
       const prev = s.dating.dates[e.who] ?? { count: 0, best: 0 };
       s.dating.dates = { ...s.dating.dates, [e.who]: { count: prev.count + 1, best: Math.max(prev.best, e.enjoy) } };
@@ -353,6 +393,44 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
     }
     default: if (s.dungeon) applyDungeon(s, s.dungeon, e);
   }
+}
+
+/** A save's copy of the state (without the other saves inside it). */
+function snapshotOf(s: GameState): GameState {
+  const snap = structuredClone({ ...s, saves: {} });
+  return snap;
+}
+
+/** Replace the state with `base`, carrying over what `keep` says survives. Save slots and run counters stay. */
+function rewind(r: Ruleset, s: GameState, base: GameState, keep: KeepSpec) {
+  const from = structuredClone(s);
+  const next = structuredClone(base);
+  if (keep.codex) next.codex = { ...next.codex, ...from.codex };
+  if (keep.feats) next.feats = { ...next.feats, ...from.feats };
+  if (keep.perks) next.perks = { ...next.perks, ...from.perks };
+  if (keep.secrets) for (const [id, st] of Object.entries(from.secrets)) next.secrets[id] = Math.max(next.secrets[id] ?? -1, st);
+  if (keep.deepest) for (const [id, d] of Object.entries(from.deepest)) next.deepest[id] = Math.max(next.deepest[id] ?? 0, d);
+  if (keep.dating) next.dating = from.dating;
+  if (keep.people) {
+    next.people = { ...next.people, ...from.people };
+    for (const id of Object.keys(from.people)) next.rel[id] ??= from.rel[id];
+  }
+  for (const id of keep.stats) if (id in from.stats) next.stats[id] = from.stats[id];
+  for (const id of keep.flags) if (id in from.flags) next.flags[id] = from.flags[id];
+  for (const id of keep.items) {
+    if (from.items[id] > 0) next.items[id] = from.items[id];
+    else delete next.items[id];
+  }
+  for (const stat of keep.rel) for (const [who, m] of Object.entries(from.rel)) if (stat in m) (next.rel[who] ??= {})[stat] = m[stat];
+  // Bookkeeping that belongs to the playthrough, not the moment.
+  next.seed = from.seed;
+  next.saves = from.saves;
+  next.runs = from.runs;
+  next.loops = from.loops;
+  next.ended = null;
+  next.turn = from.turn;
+  void r;
+  Object.assign(s, next);
 }
 
 function applyDungeon(s: GameState, d: DungeonRun, e: WarpEvent) {
@@ -415,7 +493,7 @@ export const BUILTIN_NAMES = [
   "month", "date", "season", "weather", "temperature", "indoors", "outside",
   "warmth", "warmth_min", "warmth_max", "too_cold", "too_hot", "reveal", "exposed", "naked",
   "in_encounter", "round", "target", "in_dungeon", "dungeon_depth",
-  "in_date", "on_outing",
+  "in_date", "on_outing", "loops", "runs",
 ];
 
 export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> = {}): ExprEnv {
@@ -450,6 +528,8 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
       in_dungeon: !!s.dungeon,
       dungeon_depth: s.dungeon?.depth ?? 0,
       in_date: !!s.date,
+      loops: s.loops,
+      runs: s.runs,
       on_outing: s.date?.kind === "outing",
       round: s.encounter?.round ?? 0,
       target: "",
@@ -531,6 +611,8 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
         case "partner": return a0 in s.dating.partners;
         // Relationship stage index (0 = the first rung), −1 when hostile.
         case "stage": return stageIndex(r, s, a0);
+        // Checkpoints: whether a slot holds a save.
+        case "saved": return a0 in s.saves;
         case "dates": return s.dating.dates[a0]?.count ?? 0;
       }
       return undefined;

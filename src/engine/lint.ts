@@ -9,7 +9,7 @@ import { SKILLS } from "./dungeon/content.js";
 export const FUNCTIONS = [
   "has", "count", "flag", "cond", "at", "rel", "met", "between", "roll",
   "wearing", "worn", "trait", "present", "where", "codex", "feat", "perk",
-  "secret", "front", "front_stage", "happened", "deepest", "partner", "dates", "stage",
+  "secret", "front", "front_stage", "happened", "deepest", "partner", "dates", "stage", "saved",
   "min", "max", "clamp", "floor", "ceil", "round", "abs",
 ];
 
@@ -192,6 +192,20 @@ export function lintRuleset(r: Ruleset): Issue[] {
     for (const m of Object.values(d.monsters)) for (const sk of m.skills) if (!SKILLS[sk]) issues.push({ level: "warning", where: `${w} › monsters › ${m.id}`, message: `"${sk}" isn't a skill` });
   }
   for (const a of Object.values(r.liveChoices.tags)) checkAction(a, `Live choices › tags › ${a.id}`);
+  if (r.checkpoints.loop) {
+    check(r.checkpoints.loop.when, "Checkpoints › loop › when");
+    checkEffect(r.checkpoints.loop.effects, "Checkpoints › loop › do");
+    const to = r.checkpoints.loop.to;
+    const n = Number(to);
+    if (to !== "start" && to !== "auto" && !(Number.isInteger(n) && n >= 1 && n <= r.checkpoints.slots)) issues.push({ level: "warning", where: "Checkpoints › loop › to", message: `"${to}" should be start, auto or a slot number (1–${r.checkpoints.slots})` });
+    if (to === "auto" && !r.checkpoints.auto) issues.push({ level: "warning", where: "Checkpoints › loop › to", message: "rewinds to the autosave, but `auto: day` is off — it will rewind to the start" });
+  }
+  for (const k of [r.checkpoints.keep, r.legacy]) {
+    for (const id of k.stats) if (!r.stats[id]) issues.push({ level: "warning", where: "Checkpoints › keep", message: `"${id}" isn't a stat${suggest(id, r.statOrder)}` });
+    for (const id of k.rel) if (!r.relStats[id]) issues.push({ level: "warning", where: "Checkpoints › keep", message: `"${id}" isn't a relationship stat` });
+    for (const id of k.flags) if (!r.flags[id]) issues.push({ level: "warning", where: "Checkpoints › keep", message: `"${id}" isn't a declared flag` });
+  }
+  for (const e of Object.values(r.endings)) check(e.when, `Endings › ${e.id} › when`);
   for (const o of r.mind.overrides) {
     const w = `Mind › overrides › ${o.id}`;
     check(o.when, `${w} › when`, { target: "someone" });

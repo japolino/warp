@@ -182,7 +182,32 @@ export function renderJournal(h: HudView | null, records: RecordView[]): string 
         <span class="warp-dim warp-timeline-changes">${esc(r.changes.slice(0, 4).map((c) => c.text).join(" · "))}</span>
       </button>`).join("") : `<p>Nothing has happened yet.</p>`}
   </div>`;
-  return news + codex + feats + timeline;
+  return checkpoints(h) + news + codex + feats + timeline;
+}
+
+function checkpoints(h: HudView): string {
+  const run = h.run;
+  if (!run) return "";
+  const ended = run.ended
+    ? `<div class="warp-run-end warp-tone-${run.ended.kind === "good" ? "good" : run.ended.kind === "bad" ? "bad" : "neutral"}"><b>The end: ${esc(run.ended.title)}</b>${run.ended.text ? `<div class="warp-dim">${esc(run.ended.text)}</div>` : ""}</div>`
+    : "";
+  const row = (id: string, name: string, label: string | null, canSave: boolean) => `<div class="warp-run-slot">
+      <span class="warp-run-slot-name">${esc(name)}</span>
+      <span class="warp-run-slot-label${label ? "" : " warp-dim"}">${esc(label ?? "Empty")}</span>
+      ${label ? `<button class="warp-btn warp-mini" data-run="run:load:${esc(id)}">Load</button>` : ""}
+      ${canSave ? `<button class="warp-btn warp-mini" data-run="run:save:${esc(id)}">${label ? "Overwrite" : "Save"}</button>` : ""}
+    </div>`;
+  return `<div class="warp-card"><h3>Checkpoints <span class="warp-dim">${run.runs > 1 ? `playthrough ${run.runs}` : ""}${run.loops ? ` · rewound ${run.loops}×` : ""}</span></h3>
+    ${ended}
+    ${run.slots.map((sl) => row(sl.id, `Slot ${sl.id}`, sl.label, !run.ended)).join("")}
+    ${run.auto ? row("auto", "Auto", run.auto, false) : ""}
+    <div class="warp-row">
+      <button class="warp-btn warp-mini" data-run="run:load:start">Rewind to the start</button>
+      <button class="warp-btn warp-mini" data-run="run:restart">Start a new playthrough</button>
+      ${run.ended && !run.hard ? `<button class="warp-btn warp-mini" data-run="run:continue">Keep playing</button>` : ""}
+    </div>
+    <p class="warp-dim">Loading keeps: ${esc(run.keeps)}. A new playthrough carries over: ${esc(run.legacy)}.</p>
+  </div>`;
 }
 
 function section(title: string, count: number, body: string, open: boolean): string {

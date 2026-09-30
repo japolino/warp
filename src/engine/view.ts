@@ -1,12 +1,12 @@
 // View models for the UI and the text the narrator sees.
 
-import type { Ruleset, StatDef } from "./ruleset.js";
+import type { KeepSpec, Ruleset, StatDef } from "./ruleset.js";
 import { TIERS } from "./ruleset.js";
 import {
-  bandFor, formatClock, formatNumber, gradeFor, itemName, makeEnv, personName, statMax,
+  bandFor, formatClock, formatNumber, gradeFor, initialState, itemName, makeEnv, personName, statMax,
   type GameState, type WarpEvent,
 } from "./state.js";
-import { availableChoices, LIVE_PREFIX, odds, perkBlocker, TIER_LABEL, TRAVEL_PREFIX, travelTargets, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
+import { availableChoices, LIVE_PREFIX, odds, perkBlocker, RUN_EPILOGUE, TIER_LABEL, TRAVEL_PREFIX, travelTargets, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
 import {
   dateAt, exposedSlots, isIndoors, ordinal, personLocation, presentPeople, seasonAt, temperatureAt, warmthNeeded, warmthOf, weatherAt,
 } from "./world.js";
@@ -170,6 +170,16 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
     perks: Object.values(r.perks).map((p) => ({ id: p.id, name: p.name, desc: p.desc, cost: p.cost, owned: !!s.perks[p.id], blocker: s.perks[p.id] ? null : perkBlocker(r, s, p.id) })),
     perkPoints: r.perkPoints ? s.stats[r.perkPoints] ?? 0 : null,
     news: s.news.slice().reverse().slice(0, 12).map((n) => ({ text: n.text, when: r.clock.enabled ? formatClock(r, n.at).day : null })),
+    run: r.checkpoints.enabled ? {
+      slots: Array.from({ length: r.checkpoints.slots }, (_, i) => ({ id: String(i + 1), label: s.saves[String(i + 1)]?.label ?? null })),
+      auto: s.saves.auto?.label ?? null,
+      runs: s.runs,
+      loops: s.loops,
+      hard: r.checkpoints.hard,
+      ended: s.ended ? { title: r.endings[s.ended.id]?.title ?? s.ended.id, kind: r.endings[s.ended.id]?.kind ?? "neutral", text: r.endings[s.ended.id]?.text ?? "", told: s.ended.told } : null,
+      keeps: keepWords(r, r.checkpoints.keep),
+      legacy: keepWords(r, r.legacy),
+    } : null,
     turn: s.turn,
   };
 }
@@ -238,6 +248,16 @@ export function buildMap(r: Ruleset, s: GameState): MapView | null {
   };
 }
 
+/** "codex, feats and trust" — what a rewind keeps, in words. */
+export function keepWords(r: Ruleset, k: KeepSpec): string {
+  const parts = [
+    k.codex && "the codex", k.feats && "feats", k.perks && "perks", k.secrets && "secrets learned", k.people && "people met", k.dating && "what you know of people's tastes", k.deepest && "dungeon progress",
+    ...k.stats.map((id) => r.stats[id]?.label ?? id), ...k.flags.map((id) => r.flags[id]?.label ?? id.replace(/_/g, " ")),
+    ...k.items.map((id) => itemName(r, initialState(r), id)), ...k.rel.map((id) => r.relStats[id]?.label ?? id),
+  ].filter(Boolean) as string[];
+  return parts.length ? parts.join(", ") : "nothing";
+}
+
 export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; veils: string[]; live?: LiveChoice[] }): ChoiceView[] {
   const veils = new Set(opts.veils.map((v) => v.toLowerCase()));
   const lines = new Set(opts.lines.map((v) => v.toLowerCase()));
@@ -245,6 +265,17 @@ export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; 
   const live: ChoiceView[] = [];
   const plain = (id: string, label: string, group: string, desc: string | null = null): ChoiceView =>
     ({ id, label, group, desc, odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [] });
+  // The story has ended: see it written, rewind, start over, or (unless hard mode) keep going.
+  if (s.ended) {
+    const e = r.endings[s.ended.id];
+    const group = `The end · ${e?.title ?? ""}`.trim();
+    return [
+      ...(!s.ended.told ? [plain(RUN_EPILOGUE, "See how it ends", group, "The narrator writes the ending")] : []),
+      plain("run:restart", "Start over", group, `A new playthrough from the beginning. Carries over: ${keepWords(r, r.legacy)}`),
+      ...Object.entries(s.saves).map(([slot, v]) => plain(`run:load:${slot}`, `Load ${slot === "auto" ? "autosave" : `slot ${slot}`}`, group, v.label)),
+      ...(!r.checkpoints.hard ? [plain("run:continue", "Keep playing", group, "Carry on past the ending")] : []),
+    ];
+  }
   // In a dungeon the map is where you act; the story only offers moments and the way out.
   if (s.dungeon) {
     const d = dungeonOf(r, s.dungeon);

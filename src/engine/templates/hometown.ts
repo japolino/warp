@@ -474,6 +474,18 @@ mind:
     - { when: "trauma >= 60", text: "Reminders of what happened hit hard. Show intrusive thoughts and flinches; safe things can feel unsafe." }
     - { when: "control < 25", text: "{{user}} is barely holding together: narrow focus, racing heart, sounds too loud." }
 
+# Save slots, a daily autosave, and a bad end. What you've learned survives a rewind.
+checkpoints:
+  slots: 3
+  auto: day
+  keep: [codex, feats, secrets]
+endings:
+  burned_out:
+    when: "trauma >= 100"
+    title: Burned out
+    kind: bad
+    text: "{{user}} can't carry it any more. They pack a bag and take the night bus out of town."
+
 # Meters that feed into each other.
 triggers:
   exhaustion:

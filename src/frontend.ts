@@ -537,6 +537,8 @@ export function setup(ctx: SpindleFrontendContext) {
     if (dateCatEl) { dateCat = dateCatEl.dataset.dateCat!; renderDrawer(); return; }
     const dateAct = t.closest<HTMLElement>("[data-date-act]");
     if (dateAct) { if (!(dateAct as HTMLButtonElement).disabled) act(dateAct.dataset.dateAct!); return; }
+    const runBtn = t.closest<HTMLElement>("[data-run]");
+    if (runBtn) { act(runBtn.dataset.run!); return; }
     const go = t.closest<HTMLElement>("[data-go]");
     if (go) { act(`go:${go.dataset.go}`); return; }
     const jump = t.closest<HTMLElement>("[data-jump]");
@@ -725,6 +727,8 @@ export function setup(ctx: SpindleFrontendContext) {
   function act(actionId: string) {
     // "More…" during a conversation opens every topic in the drawer.
     if (actionId === "date:open") { drawerView = "date"; tab.activate(); renderDrawer(); return; }
+    // Saving, loading and starting over change the game without a new reply.
+    if (actionId.startsWith("run:") && actionId !== "run:epilogue") { void confirmRun(actionId); return; }
     // Dungeon choices open the dungeon screen instead of sending a line.
     if (actionId.startsWith("dungeon:")) {
       if (actionId === "dungeon:leave") void confirmLeave();
@@ -746,6 +750,25 @@ export function setup(ctx: SpindleFrontendContext) {
       }
     }, 15000);
   }
+  async function confirmRun(actionId: string) {
+    const cid = chatId();
+    if (!cid) return;
+    const [, op, slot] = actionId.split(":") as [string, "save" | "load" | "restart" | "continue", string | undefined];
+    const run = state?.hud?.run;
+    if (op === "load" || op === "restart") {
+      const res = await ctx.ui.showConfirm({
+        title: op === "load" ? "Rewind to this save?" : "Start over?",
+        message: op === "load"
+          ? `The game rewinds to ${slot === "start" ? "the very beginning" : slot === "auto" ? "the autosave" : `slot ${slot}`}. The chat keeps its messages; the next reply picks up from the rewind. Kept: ${run?.keeps ?? "nothing"}.`
+          : `A new playthrough from the beginning. Carried over: ${run?.legacy ?? "nothing"}.`,
+        confirmLabel: op === "load" ? "Rewind" : "Start over",
+        variant: "warning",
+      });
+      if (!res.confirmed) return;
+    }
+    send({ type: "run", chatId: cid, op, ...(slot ? { slot } : {}) });
+  }
+
   async function confirmRedo(btn: HTMLElement) {
     const cid = chatId();
     const userMessageId = btn.dataset.redo;

@@ -1,5 +1,5 @@
 import type { SpindleAPI } from "lumiverse-spindle-types";
-import { availableChoices, buyPerk, changeClothes, forgetPerson, LIVE_PREFIX, manualSet, manualSetRel, TARGET_SEP, TRAVEL_PREFIX, travelTargets, type Intent, type TurnRecord } from "./engine/resolve.js";
+import { availableChoices, buyPerk, changeClothes, forgetPerson, LIVE_PREFIX, manualSet, manualSetRel, RUN_EPILOGUE, runOp, TARGET_SEP, TRAVEL_PREFIX, travelTargets, type Intent, type TurnRecord } from "./engine/resolve.js";
 import type { Ruleset } from "./engine/ruleset.js";
 import type { GameState, WarpEvent } from "./engine/state.js";
 import { TEMPLATES } from "./engine/templates/index.js";
@@ -179,7 +179,11 @@ spindle.onFrontendMessage(async (raw, userId) => {
         const { state } = foldPath(r, msgs);
         let say: string;
         let intent: Intent = { actionId: msg.actionId, params: msg.params, via: "choice" };
-        if (msg.actionId.startsWith(LIVE_PREFIX)) {
+        if (msg.actionId === RUN_EPILOGUE) {
+          if (!state.ended || state.ended.told) { await pushState(msg.chatId, userId); return; }
+          say = "*The end.*";
+          intent = { actionId: RUN_EPILOGUE, via: "choice", label: "The ending" };
+        } else if (msg.actionId.startsWith(LIVE_PREFIX)) {
           // Choices written for the latest reply: the tag decides what happens, the label is what the player saw.
           const c = liveChoicesOf(msgs[msgs.length - 1])[Number(msg.actionId.slice(LIVE_PREFIX.length))];
           if (!c || !r.liveChoices.tags[c.tag]) { toast("warning", "That choice isn't available anymore.", userId); await pushState(msg.chatId, userId); return; }
@@ -242,6 +246,13 @@ spindle.onFrontendMessage(async (raw, userId) => {
 
       case "dungeon": {
         await runDungeonOp(msg, userId);
+        break;
+      }
+
+      case "run": {
+        const op = msg.op === "save" || msg.op === "load" ? { op: msg.op, slot: msg.slot ?? "" } : { op: msg.op };
+        const ok = await applyManual(msg.chatId, userId, (r, state) => runOp(r, state, op));
+        if (ok) toast("success", msg.op === "save" ? "Saved." : msg.op === "load" ? "Rewound. The next reply picks up from there." : msg.op === "restart" ? "A new playthrough begins." : "The story goes on.", userId);
         break;
       }
 

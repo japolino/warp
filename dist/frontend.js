@@ -357,6 +357,12 @@ var STYLES = `
 .warp-dg-mates { display: flex; flex-direction: column; gap: 4px; }
 .warp-dg-mate { display: flex; align-items: center; gap: 6px; }
 
+/* ───────── checkpoints ───────── */
+.warp-run-slot { display: grid; grid-template-columns: 52px 1fr auto auto; gap: 6px; align-items: center; font-size: 12.5px; }
+.warp-run-slot-name { color: var(--warp-dim); }
+.warp-run-slot-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.warp-run-end { padding: 8px; border-radius: var(--warp-radius); border: 1px solid currentColor; }
+
 /* ───────── dating ───────── */
 .warp-date { display: flex; flex-direction: column; gap: 10px; }
 .warp-date-person, .warp-date-head { display: flex; gap: 10px; align-items: flex-start; padding: 8px; border-radius: var(--warp-radius); background: var(--warp-fill-subtle); border: 1px solid var(--warp-border); }
@@ -609,7 +615,30 @@ function renderJournal(h, records) {
         <span class="warp-dim warp-timeline-changes">${esc(r.changes.slice(0, 4).map((c) => c.text).join(" · "))}</span>
       </button>`).join("") : `<p>Nothing has happened yet.</p>`}
   </div>`;
-  return news + codex + feats + timeline;
+  return checkpoints(h) + news + codex + feats + timeline;
+}
+function checkpoints(h) {
+  const run = h.run;
+  if (!run)
+    return "";
+  const ended = run.ended ? `<div class="warp-run-end warp-tone-${run.ended.kind === "good" ? "good" : run.ended.kind === "bad" ? "bad" : "neutral"}"><b>The end: ${esc(run.ended.title)}</b>${run.ended.text ? `<div class="warp-dim">${esc(run.ended.text)}</div>` : ""}</div>` : "";
+  const row = (id, name, label, canSave) => `<div class="warp-run-slot">
+      <span class="warp-run-slot-name">${esc(name)}</span>
+      <span class="warp-run-slot-label${label ? "" : " warp-dim"}">${esc(label ?? "Empty")}</span>
+      ${label ? `<button class="warp-btn warp-mini" data-run="run:load:${esc(id)}">Load</button>` : ""}
+      ${canSave ? `<button class="warp-btn warp-mini" data-run="run:save:${esc(id)}">${label ? "Overwrite" : "Save"}</button>` : ""}
+    </div>`;
+  return `<div class="warp-card"><h3>Checkpoints <span class="warp-dim">${run.runs > 1 ? `playthrough ${run.runs}` : ""}${run.loops ? ` · rewound ${run.loops}×` : ""}</span></h3>
+    ${ended}
+    ${run.slots.map((sl) => row(sl.id, `Slot ${sl.id}`, sl.label, !run.ended)).join("")}
+    ${run.auto ? row("auto", "Auto", run.auto, false) : ""}
+    <div class="warp-row">
+      <button class="warp-btn warp-mini" data-run="run:load:start">Rewind to the start</button>
+      <button class="warp-btn warp-mini" data-run="run:restart">Start a new playthrough</button>
+      ${run.ended && !run.hard ? `<button class="warp-btn warp-mini" data-run="run:continue">Keep playing</button>` : ""}
+    </div>
+    <p class="warp-dim">Loading keeps: ${esc(run.keeps)}. A new playthrough carries over: ${esc(run.legacy)}.</p>
+  </div>`;
 }
 function section(title, count, body, open) {
   return `<details class="warp-section" data-section="${esc(title)}"${open ? " open" : ""}><summary><span>${esc(title)}${count ? ` · ${count}` : ""}</span></summary><div class="warp-section-body">${body}</div></details>`;
@@ -655,6 +684,12 @@ function renderChips(rec, opts) {
     out.push(`<span class="warp-chip warp-decision" title="${esc(`${d.ask}
 ${odds}
 ${d.source === "model" ? "Odds from the decision model; the engine rolled." : "Odds from the ruleset's weights; the engine rolled."}`)}">\uD83C\uDFAD ${esc(d.picked)} <span class="warp-dim">${Math.round(d.p * 100)}%</span></span>`);
+  }
+  if (rec.mind) {
+    const m = rec.mind;
+    const what = m.kind === "fail" ? "couldn't go through with it" : m.kind === "redirect" ? "did something else" : "it took over";
+    out.push(`<span class="warp-chip warp-tone-warn" title="${esc(`You chose: ${m.meant}
+${m.cause}: ${what} (${Math.round(m.chance)}% chance at the time)`)}">\uD83E\uDDE0 ${esc(m.cause)} — ${esc(what)}</span>`);
   }
   if ((rec.contradiction ?? 0) >= 0.6) {
     out.push(`<span class="warp-chip warp-tone-warn" title="The decision model thinks this reply may contradict the game state (${Math.round(rec.contradiction * 100)}%). Consider swiping.">⚠ may contradict the state</span>`);
@@ -2068,6 +2103,11 @@ function setup(ctx) {
         act(dateAct.dataset.dateAct);
       return;
     }
+    const runBtn = t.closest("[data-run]");
+    if (runBtn) {
+      act(runBtn.dataset.run);
+      return;
+    }
     const go = t.closest("[data-go]");
     if (go) {
       act(`go:${go.dataset.go}`);
@@ -2359,6 +2399,10 @@ function setup(ctx) {
       renderDrawer();
       return;
     }
+    if (actionId.startsWith("run:") && actionId !== "run:epilogue") {
+      confirmRun(actionId);
+      return;
+    }
     if (actionId.startsWith("dungeon:")) {
       if (actionId === "dungeon:leave")
         confirmLeave();
@@ -2380,6 +2424,24 @@ function setup(ctx) {
         syncCue();
       }
     }, 15000);
+  }
+  async function confirmRun(actionId) {
+    const cid = chatId();
+    if (!cid)
+      return;
+    const [, op, slot] = actionId.split(":");
+    const run = state?.hud?.run;
+    if (op === "load" || op === "restart") {
+      const res = await ctx.ui.showConfirm({
+        title: op === "load" ? "Rewind to this save?" : "Start over?",
+        message: op === "load" ? `The game rewinds to ${slot === "start" ? "the very beginning" : slot === "auto" ? "the autosave" : `slot ${slot}`}. The chat keeps its messages; the next reply picks up from the rewind. Kept: ${run?.keeps ?? "nothing"}.` : `A new playthrough from the beginning. Carried over: ${run?.legacy ?? "nothing"}.`,
+        confirmLabel: op === "load" ? "Rewind" : "Start over",
+        variant: "warning"
+      });
+      if (!res.confirmed)
+        return;
+    }
+    send({ type: "run", chatId: cid, op, ...slot ? { slot } : {} });
   }
   async function confirmRedo(btn) {
     const cid = chatId();

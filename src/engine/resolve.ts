@@ -6,7 +6,8 @@ import { rollDice, seededRng, type Rng } from "./dice.js";
 import type { ActionDef, CheckDef, DecideSpec, Effect, NarratorGate, RandomEventDef, Ruleset, Tier } from "./ruleset.js";
 import { normalize, sample } from "./decide.js";
 import { emptyEffect, slug } from "./ruleset.js";
-import { applyEvent, cloneState, makeEnv, personName, timeKey, type EventSource, type GameState, type WarpEvent } from "./state.js";
+import { applyEvent, cloneState, formatClock, makeEnv, personName, timeKey, type EventSource, type GameState, type WarpEvent } from "./state.js";
+import { endingDirection } from "./chronicle.js";
 import { presentPeople } from "./world.js";
 import { DATE_PREFIX } from "./date/types.js";
 import { activeSession, resolveDate } from "./date/talk.js";
@@ -458,6 +459,75 @@ function tickWorld(w: Working, days: number, turns: number) {
   tickGauge(w, days, turns);
 }
 
+// ───────────────────────── checkpoints, loops and endings ─────────────────────────
+
+/** Endings, the time loop and the daily autosave — checked after anything that changes the state. */
+function checkRun(w: Working, before: GameState) {
+  const r = w.r;
+  if (!r.checkpoints.enabled) return;
+  if (!w.s.ended) for (const e of Object.values(r.endings)) {
+    if (!evalBool(e.when, w.env(), false)) continue;
+    // Reached while resolving a turn, the reply about to be written tells it; otherwise the next one does.
+    w.push({ t: "end", id: e.id, told: !w.defer, src: "trigger" });
+    announce(w, endingDirection(r, w.s, e));
+    return;
+  }
+  if (w.s.ended) return;
+  const loop = r.checkpoints.loop;
+  if (loop && evalBool(loop.when, w.env(), false)) {
+    const to = loop.to !== "start" && w.s.saves[loop.to] ? loop.to : "start";
+    const label = to === "start" ? "the very beginning" : w.s.saves[to].label;
+    w.push({ t: "load", slot: to, src: "world" });
+    effectToEvents(w, loop.effects, "world", {});
+    announce(w, `${loop.text} The story rewinds to ${label}: treat everything after it as undone, except what {{user}} remembers.`);
+    return;
+  }
+  if (r.checkpoints.auto && r.clock.enabled && Math.floor(w.s.minutes / 1440) > Math.floor(before.minutes / 1440)) {
+    w.push({ t: "save", slot: "auto", label: `Autosave · ${formatClock(r, w.s.minutes).label}`, src: "world" });
+  }
+}
+
+/** The player asks to see the ending written (after one was reached between replies). */
+export const RUN_EPILOGUE = "run:epilogue";
+
+export type RunOp = { op: "save"; slot: string } | { op: "load"; slot: string } | { op: "restart" } | { op: "continue" };
+
+/** Save, load, start over or keep playing after an ending (from the journal or the ending's choices). */
+export function runOp(r: Ruleset, before: GameState, op: RunOp): WarpEvent[] | string {
+  const c = r.checkpoints;
+  if (!c.enabled) return "This ruleset has no checkpoints.";
+  const w = new Working(r, cloneState(before));
+  switch (op.op) {
+    case "save": {
+      const n = Number(op.slot);
+      if (!Number.isInteger(n) || n < 1 || n > c.slots) return "No such save slot.";
+      if (before.ended) return "The story has ended — load a save or start over.";
+      const where = before.locationName ? ` · ${before.locationName}` : "";
+      w.push({ t: "save", slot: op.slot, label: `${r.clock.enabled ? formatClock(r, before.minutes).label : `Turn ${before.turn}`}${where}`, src: "manual" });
+      break;
+    }
+    case "load": {
+      if (op.slot !== "start" && !before.saves[op.slot]) return "That slot is empty.";
+      const label = op.slot === "start" ? "the very beginning" : before.saves[op.slot].label;
+      w.push({ t: "load", slot: op.slot, src: "manual" });
+      w.push({ t: "notice", text: `Time rewinds to ${label}. Treat everything after that point as undone — except what {{user}} remembers.`, src: "world" });
+      break;
+    }
+    case "restart":
+      w.push({ t: "restart", src: "manual" });
+      w.push({ t: "notice", text: "The story starts over from the very beginning: a new playthrough. Earlier events never happened, though some of what was learned carries over.", src: "world" });
+      break;
+    case "continue":
+      if (!before.ended) return "The story hasn't ended.";
+      if (c.hard) return "Hard mode: an ending is final.";
+      w.push({ t: "unend", src: "manual" });
+      w.push({ t: "notice", text: "The story goes on past its ending.", src: "world" });
+      break;
+  }
+  runTriggers(w, false);
+  return w.events;
+}
+
 function startEncounter(w: Working, id: string, src: EventSource) {
   const enc = w.r.encounters[id];
   if (!enc) return;
@@ -623,6 +693,8 @@ function mindOverride(r: Ruleset, s: GameState, a: ActionDef, target: string | u
 }
 
 function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts: ResolveOptions, needs: DecideSpec[]): TurnRecord {
+  // After an ending has been written, nothing more resolves until the player loads, starts over or keeps playing.
+  if (before.ended?.told && intent?.actionId !== RUN_EPILOGUE) intent = null;
   const w = new Working(r, cloneState(before), seededRng(`${opts.seed}:fx`), opts.seed, opts.odds ?? {}, opts.scene ?? {});
   w.defer = false;
   const rec: TurnRecord = { v: 1, hints: [], events: [], at: Date.now() };
@@ -632,6 +704,13 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   if (before.notices.length) {
     w.hints.push(...before.notices);
     w.push({ t: "noticed", src: "world" });
+  }
+  // An ending reached after the last reply is written now.
+  if (before.ended && !before.ended.told) {
+    const e = r.endings[before.ended.id];
+    if (e && !before.notices.some((n) => n.startsWith("THE STORY REACHES AN ENDING"))) w.hints.push(endingDirection(r, before, e));
+    w.push({ t: "end_told", src: "world" });
+    rec.action = { id: RUN_EPILOGUE, label: `The end: ${e?.title ?? "the story ends"}`, via: intent?.via ?? "choice" };
   }
   let found = intent && !intent.actionId.startsWith(TRAVEL_PREFIX) && !intent.actionId.startsWith(DATE_PREFIX) ? findAction(r, before, intent.actionId) : null;
   // The character's mind may overrule the player: freeze, do something else, or colour the attempt.
@@ -728,6 +807,7 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   const worldBefore = w.events.length;
   tickWorld(w, days, 1);
   if (w.events.length > worldBefore) runTriggers(w, false);
+  checkRun(w, before);
   w.push({ t: "turn", src: "action" });
   rec.events = w.events;
   rec.hints = w.hints;
@@ -895,6 +975,7 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
     tickWorld(w, (w.s.minutes - before.minutes) / 1440, 0);
     if (w.events.length > n) runTriggers(w, false);
   }
+  checkRun(w, before);
   return w.events;
 }
 
@@ -951,6 +1032,7 @@ export function buildTurn(r: Ruleset, before: GameState, seed: string, fn: (t: T
     tickWorld(w, (w.s.minutes - before.minutes) / 1440, 0);
     if (w.events.length > n) runTriggers(w, false);
   }
+  checkRun(w, before);
   return w.events;
 }
 

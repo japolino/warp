@@ -12,7 +12,7 @@ export const PART_CONTENTS: Record<PartLabel, string> = {
   world: "weather, locations, items (incl. clothing), wardrobe, conditions, flags, start.items",
   actions: "actions",
   encounters: "encounters, dungeons",
-  journal: "codex, feats, perks",
+  journal: "codex, feats, perks, checkpoints, endings",
   rules: "triggers, mind",
   story: "secrets, fronts, random_events, live_choices",
   dating: "dating (tastes, topics, venues), plus gift items and actions to get them",
@@ -28,7 +28,7 @@ export function partForIssue(where: string): PartLabel {
   if (["locations", "items", "wardrobe", "weather", "conditions", "flags"].some((k) => head.startsWith(k))) return "world";
   if (head.startsWith("actions")) return "actions";
   if (head.startsWith("encounters") || head.startsWith("dungeons")) return "encounters";
-  if (["codex", "feats", "perks"].some((k) => head.startsWith(k))) return "journal";
+  if (["codex", "feats", "perks", "checkpoints", "endings"].some((k) => head.startsWith(k))) return "journal";
   if (head.startsWith("triggers") || head.startsWith("rules") || head.startsWith("mind")) return "rules";
   if (["secrets", "fronts", "random events", "live choices"].some((k) => head.startsWith(k))) return "story";
   if (head.startsWith("dating")) return "dating";
@@ -135,6 +135,17 @@ dungeons:         # roguelike diving: floors of face-down tiles, one way down, q
 codex: { docks: { title: The Docks, category: Places, text: "...", unlock: "location == 'docks'", lore: [Lorebook entry title] } }
 feats: { night_owl: { name: Night owl, desc: "...", unlock: "hour >= 2 and hour < 5", reward: { stress: -5 } } }
 perks: { points: perk_points, sharp: { name: Sharpshooter, desc: "+2 Aim", cost: 1, requires: "level >= 2", effects: { aim: +2 } } }
+
+checkpoints:      # save slots in the journal; loading rewinds the game (the chat keeps its messages)
+  slots: 3
+  auto: day                        # autosave at the start of each in-game day (slot "auto")
+  keep: [codex, feats, { stats: [insight] }, { flags: [knows_the_truth] }]   # what survives a rewind: codex, feats, perks, secrets, people, dating, deepest, stats/flags/items/rel lists
+  loop: { when: "hour >= 23", to: auto, text: "Midnight. The day folds back on itself; only {{user}} remembers.", do: { stress: +5 } }   # a time loop
+  hard: false                      # true = an ending is final (load or start over, never keep playing)
+endings:          # when one holds, the story ends: the narrator writes an epilogue from what happened; then start over, load, or keep playing
+  burned_out: { when: "trauma >= 100", title: Burned out, kind: bad, text: "{{user}} can't go on and leaves town on the night bus." }
+  legacy: [codex, feats]           # carried into a new playthrough (default codex, feats, perks)
+FUNCTIONS for runs: saved(slot); names: loops (rewinds so far), runs (playthrough number).
 
 triggers:
   exhausted: { when: "fatigue >= 85", do: { add_condition: [exhausted], hint: "..." } }         # fires once when it becomes true

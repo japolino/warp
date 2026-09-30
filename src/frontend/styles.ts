@@ -322,6 +322,12 @@ export const STYLES = `
 .warp-dg-mates { display: flex; flex-direction: column; gap: 4px; }
 .warp-dg-mate { display: flex; align-items: center; gap: 6px; }
 
+/* ───────── checkpoints ───────── */
+.warp-run-slot { display: grid; grid-template-columns: 52px 1fr auto auto; gap: 6px; align-items: center; font-size: 12.5px; }
+.warp-run-slot-name { color: var(--warp-dim); }
+.warp-run-slot-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.warp-run-end { padding: 8px; border-radius: var(--warp-radius); border: 1px solid currentColor; }
+
 /* ───────── dating ───────── */
 .warp-date { display: flex; flex-direction: column; gap: 10px; }
 .warp-date-person, .warp-date-head { display: flex; gap: 10px; align-items: flex-start; padding: 8px; border-radius: var(--warp-radius); background: var(--warp-fill-subtle); border: 1px solid var(--warp-border); }

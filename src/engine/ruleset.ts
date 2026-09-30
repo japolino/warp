@@ -325,6 +325,29 @@ export interface MindDef {
   perception: { when: string; text: string }[];
 }
 
+/** What survives rewinding to a save (or starting over after an ending). Everything else rewinds. */
+export interface KeepSpec {
+  codex: boolean; feats: boolean; perks: boolean; secrets: boolean; people: boolean; dating: boolean; deepest: boolean;
+  stats: string[]; flags: string[]; items: string[];
+  /** Relationship stats kept for everyone. */
+  rel: string[];
+}
+
+export interface CheckpointsDef {
+  enabled: boolean;
+  /** Manual save slots. */
+  slots: number;
+  keep: KeepSpec;
+  /** Save automatically at the start of each in-game day (slot "auto"). */
+  auto: boolean;
+  /** A time loop: when this holds, the story rewinds to a save by itself. */
+  loop: { when: string; to: string; text: string; effects: Effect } | null;
+  /** Hard mode: an ending is final — load or start over, never "keep playing". */
+  hard: boolean;
+}
+
+export interface EndingDef { id: string; title: string; kind: "good" | "bad" | "neutral"; when: string; text: string }
+
 export interface Ruleset {
   name: string;
   description?: string;
@@ -376,6 +399,10 @@ export interface Ruleset {
   dungeons: Record<string, DungeonDef>;
   dating: DatingDef;
   mind: MindDef;
+  checkpoints: CheckpointsDef;
+  endings: Record<string, EndingDef>;
+  /** What carries over to a new run after an ending. */
+  legacy: KeepSpec;
 }
 
 export interface Issue {
@@ -1038,6 +1065,63 @@ function normMind(raw: unknown, c: Ctx): MindDef {
   return def;
 }
 
+const KEEP_FLAGS = ["codex", "feats", "perks", "secrets", "people", "dating", "deepest"] as const;
+const KEEP_LISTS = ["stats", "flags", "items", "rel"] as const;
+
+/** `keep: [codex, feats, { stats: [insight] }]` or `keep: { codex: true, stats: [insight] }`. */
+export function normKeep(raw: unknown, where: string, c: Ctx, dflt: Partial<KeepSpec> = {}): KeepSpec {
+  const k: KeepSpec = { codex: false, feats: false, perks: false, secrets: false, people: false, dating: false, deepest: false, stats: [], flags: [], items: [], rel: [], ...dflt };
+  if (raw === undefined) return k;
+  const entries: [string, unknown][] = Array.isArray(raw)
+    ? raw.flatMap((x) => (isObj(x) ? Object.entries(x) : [[String(x), true] as [string, unknown]]))
+    : isObj(raw) ? Object.entries(raw) : typeof raw === "string" ? [[raw, true]] : [];
+  for (const [key, v] of entries) {
+    if ((KEEP_FLAGS as readonly string[]).includes(key)) (k as unknown as Record<string, boolean>)[key] = v !== false;
+    else if ((KEEP_LISTS as readonly string[]).includes(key)) (k as unknown as Record<string, string[]>)[key] = list(v);
+    else c.warn(`${where} › ${key}`, `can keep ${[...KEEP_FLAGS, ...KEEP_LISTS].join(", ")}`);
+  }
+  return k;
+}
+
+function normCheckpoints(raw: unknown, endings: boolean, c: Ctx, known: { stats: Set<string> }): CheckpointsDef {
+  const def: CheckpointsDef = { enabled: endings, slots: 3, keep: normKeep(undefined, "", c), auto: false, loop: null, hard: false };
+  if (raw === undefined || raw === false) return def;
+  def.enabled = true;
+  if (!isObj(raw)) return def;
+  def.slots = Math.max(0, Math.min(9, Math.round(c.num(raw.slots, "Checkpoints › slots", 3))));
+  def.keep = normKeep(raw.keep, "Checkpoints › keep", c);
+  def.auto = raw.auto === true || raw.auto === "day";
+  def.hard = raw.hard === true;
+  if (isObj(raw.loop)) {
+    const when = c.expr(raw.loop.when, "Checkpoints › loop › when");
+    if (when === undefined) c.warn("Checkpoints › loop", "needs `when:` — the moment the day rewinds");
+    else def.loop = {
+      when: String(when),
+      to: raw.loop.to !== undefined ? String(raw.loop.to) : def.auto ? "auto" : "start",
+      text: typeof raw.loop.text === "string" ? raw.loop.text : "Time rewinds. Only {{user}} remembers what happened.",
+      effects: normEffect(raw.loop.do ?? raw.loop.effects, "Checkpoints › loop › do", c, known),
+    };
+  }
+  return def;
+}
+
+function normEndings(raw: unknown, c: Ctx): Record<string, EndingDef> {
+  const out: Record<string, EndingDef> = {};
+  for (const [id, e] of Object.entries(isObj(raw) ? raw : {})) {
+    const w = `Endings › ${id}`;
+    if (!isObj(e)) { c.warn(w, "needs `when:` and `text:`"); continue; }
+    const when = c.expr(e.when, `${w} › when`);
+    if (when === undefined) { c.warn(w, "needs `when:` — the formula that ends the story"); continue; }
+    out[id] = {
+      id, when: String(when),
+      title: typeof e.title === "string" ? e.title : titleCase(id),
+      kind: e.kind === "good" || e.kind === "bad" ? e.kind : "neutral",
+      text: typeof e.text === "string" ? e.text : "",
+    };
+  }
+  return out;
+}
+
 const SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
 
 export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issues: Issue[] } {
@@ -1289,6 +1373,10 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   // Dating adds its love and fear relationship stats if the ruleset doesn't have them.
   const dating = normDating(raw.dating, c, { stats: relStats, order: relStatOrder }, new Set(Object.keys(people)));
   const mind = normMind(raw.mind, c);
+  const endingsRaw: Raw = isObj(raw.endings) ? raw.endings : {};
+  const endings = normEndings(Object.fromEntries(Object.entries(endingsRaw).filter(([k]) => k !== "legacy")), c);
+  const legacy = normKeep(endingsRaw.legacy, "Endings › legacy", c, { codex: true, feats: true, perks: true });
+  const checkpoints = normCheckpoints(raw.checkpoints, Object.keys(endings).length > 0, c, known);
 
   const ruleset: Ruleset = {
     name: typeof raw.name === "string" ? raw.name : "Untitled ruleset",
@@ -1318,7 +1406,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     narration: { notes: typeof narrRaw.notes === "string" ? narrRaw.notes : undefined, numbers: narrRaw.numbers === true },
     weather, wardrobe, encounters, codex, feats, perks,
     ...(perkPoints && stats[perkPoints] ? { perkPoints } : {}),
-    secrets, fronts, randomEvents, liveChoices, dungeons, dating, mind,
+    secrets, fronts, randomEvents, liveChoices, dungeons, dating, mind, checkpoints, endings, legacy,
   };
 
   // Cross-references that need everything loaded.
