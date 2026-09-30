@@ -87,6 +87,10 @@ export interface Effect {
   body: Record<string, Record<string, string | null>>;
   /** Advance transformations by this many stages: `transform: { fox_charm: 1 }`. */
   transform: Record<string, string | number>;
+  /** Move companions' arcs: `arc: { jo: +5 }`. */
+  arc: Record<string, string | number>;
+  /** Change how people feel about each other: `bond: { jo: { dex: +3 } }`. */
+  bond: Record<string, Record<string, string | number>>;
 }
 
 export interface DecideOption { id: string; desc: string; weight: number; effect: Effect }
@@ -381,6 +385,20 @@ export interface BodyDef {
   transforms: Record<string, TransformDef>;
 }
 
+/** A companion with a life of their own: a goal, an arc they push by their own choices, feelings toward others. */
+export interface CompanionDef {
+  id: string;
+  goal?: string;
+  /** Their arc: a hidden clock (same shape as a front), registered as fronts[`arc_<id>`]. */
+  arc: string | null;
+  /** A choice they make on their own each in-game day; the decision model weighs it. */
+  daily: DecideSpec | null;
+  /** People they're jealous of ("anyone" = everyone else). */
+  jealousOf: string[];
+  /** Secrets only they know. */
+  knows: string[];
+}
+
 export interface Ruleset {
   name: string;
   description?: string;
@@ -437,6 +455,9 @@ export interface Ruleset {
   /** What carries over to a new run after an ending. */
   legacy: KeepSpec;
   body: BodyDef;
+  companions: Record<string, CompanionDef>;
+  /** Starting feelings between people: a → b → −100…100. */
+  bonds: Record<string, Record<string, number>>;
 }
 
 export interface Issue {
@@ -604,7 +625,7 @@ function normStat(id: string, raw: unknown, where: string, c: Ctx, forRel = fals
 export function emptyEffect(): Effect {
   return {
     stats: {}, set: {}, flags: {}, items: {}, rel: {}, addConditions: {}, removeConditions: [], decide: [],
-    foe: {}, unlock: [], wear: [], undress: [], damage: {}, front: {}, reveal: [], body: {}, transform: {},
+    foe: {}, unlock: [], wear: [], undress: [], damage: {}, front: {}, reveal: [], body: {}, transform: {}, arc: {}, bond: {},
   };
 }
 
@@ -745,10 +766,21 @@ export function normEffect(raw: unknown, where: string, c: Ctx, known: { stats: 
         if (isObj(v)) for (const [id, n] of Object.entries(v)) { const x = c.expr(n, `${w} › ${id}`); if (x !== undefined) e.transform[id] = x; }
         else for (const id of list(v)) e.transform[id] = 1;
         break;
+      case "arc":
+        if (isObj(v)) for (const [id, n] of Object.entries(v)) { const x = c.expr(n, `${w} › ${id}`); if (x !== undefined) e.arc[id] = x; }
+        else c.warn(w, "expected arc changes by companion, like `jo: +5`");
+        break;
+      case "bond": case "bonds":
+        if (isObj(v)) for (const [a, m] of Object.entries(v)) {
+          if (!isObj(m)) { c.warn(`${w} › ${a}`, "expected feelings toward others, like `dex: +3`"); continue; }
+          e.bond[a] = {};
+          for (const [b, n] of Object.entries(m)) { const x = c.expr(n, `${w} › ${a} › ${b}`); if (x !== undefined) e.bond[a][b] = x; }
+        }
+        break;
       default:
         // Flat shorthand: a known stat name maps to a delta.
         if (known.stats.has(k)) { const x = c.expr(v, w); if (x !== undefined) e.stats[k] = x; }
-        else c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, unlock, wear, undress, damage, front, reveal, gauge, momentum, body, transform)`);
+        else c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, unlock, wear, undress, damage, front, reveal, gauge, momentum, body, transform, arc, bond)`);
     }
   }
   return e;
@@ -1008,12 +1040,12 @@ function normSecrets(raw: unknown, c: Ctx): Record<string, SecretDef> {
   return out;
 }
 
-function normFronts(raw: unknown, c: Ctx, known: { stats: Set<string> }): Record<string, FrontDef> {
+function normFronts(raw: unknown, c: Ctx, known: { stats: Set<string> }, where: (id: string) => string = (id) => `Fronts › ${id}`): Record<string, FrontDef> {
   const out: Record<string, FrontDef> = {};
   if (raw === undefined) return out;
   if (!isObj(raw)) { c.warn("Fronts", "should be a map of front names to definitions"); return out; }
   for (const [id, fRaw] of Object.entries(raw)) {
-    const w = `Fronts › ${id}`;
+    const w = where(id);
     if (!isObj(fRaw)) { c.warn(w, "expected a front definition with `per_day:` and `stages:`"); continue; }
     const max = Math.max(1, c.num(fRaw.max, `${w} › max`, 100));
     const start = Math.max(0, Math.min(max, c.num(fRaw.start, `${w} › start`, 0)));
@@ -1218,6 +1250,49 @@ function normBody(raw: unknown, c: Ctx): BodyDef {
     def.transforms[id] = { id, label: typeof t.label === "string" ? t.label : titleCase(id), chance, stages };
   }
   return def;
+}
+
+function normCompanions(raw: unknown, c: Ctx, known: { stats: Set<string> }, fronts: Record<string, FrontDef>, bonds: Record<string, Record<string, number>>): Record<string, CompanionDef> {
+  const out: Record<string, CompanionDef> = {};
+  for (const [id, cr] of Object.entries(isObj(raw) ? raw : {})) {
+    const w = `Companions › ${id}`;
+    if (!isObj(cr)) { c.warn(w, "expected `goal:`, `arc:`, `daily:`…"); continue; }
+    let arc: string | null = null;
+    if (isObj(cr.arc)) {
+      const f = normFronts({ [`arc_${id}`]: { label: `${titleCase(id)}'s arc`, ...cr.arc } }, c, known, () => `${w} › arc`);
+      const def = f[`arc_${id}`];
+      if (def) {
+        // An arc only runs once the player has met them.
+        def.when = def.when ? `met('${id}') and (${def.when})` : `met('${id}')`;
+        fronts[`arc_${id}`] = def;
+        arc = `arc_${id}`;
+      }
+    }
+    let daily: DecideSpec | null = null;
+    if (isObj(cr.daily)) {
+      // Inside a companion's own choice, `arc: +5` and `bond: { dex: +3 }` mean this companion.
+      const d: Raw = { ...cr.daily, options: Object.fromEntries(Object.entries(isObj(cr.daily.options) ? cr.daily.options : {}).map(([oid, o]) => {
+        if (!isObj(o)) return [oid, o];
+        const x: Raw = { ...o };
+        if (x.arc !== undefined && !isObj(x.arc)) x.arc = { [id]: x.arc };
+        if (isObj(x.bond) && !Object.values(x.bond).some(isObj)) x.bond = { [id]: x.bond };
+        return [oid, x];
+      })) };
+      daily = normDecide(d, `${w} › daily`, c, known)[0] ?? null;
+      if (daily) daily = { ...daily, id: `companion_${id}_daily` };
+    }
+    if (isObj(cr.bonds)) {
+      bonds[id] = {};
+      for (const [b, n] of Object.entries(cr.bonds)) bonds[id][b] = Math.max(-100, Math.min(100, c.num(n, `${w} › bonds › ${b}`, 0)));
+    }
+    out[id] = {
+      id, arc, daily,
+      ...(typeof cr.goal === "string" ? { goal: cr.goal } : {}),
+      jealousOf: list(cr.jealous_of ?? cr.jealous),
+      knows: list(cr.knows),
+    };
+  }
+  return out;
 }
 
 const SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
@@ -1476,6 +1551,8 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const legacy = normKeep(endingsRaw.legacy, "Endings › legacy", c, { codex: true, feats: true, perks: true });
   const checkpoints = normCheckpoints(raw.checkpoints, Object.keys(endings).length > 0, c, known);
   const body = normBody(raw.body, c);
+  const bonds: Record<string, Record<string, number>> = {};
+  const companions = normCompanions(raw.companions, c, known, fronts, bonds);
 
   const ruleset: Ruleset = {
     name: typeof raw.name === "string" ? raw.name : "Untitled ruleset",
@@ -1505,7 +1582,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     narration: { notes: typeof narrRaw.notes === "string" ? narrRaw.notes : undefined, numbers: narrRaw.numbers === true },
     weather, wardrobe, encounters, codex, feats, perks,
     ...(perkPoints && stats[perkPoints] ? { perkPoints } : {}),
-    secrets, fronts, randomEvents, liveChoices, dungeons, dating, mind, checkpoints, endings, legacy, body,
+    secrets, fronts, randomEvents, liveChoices, dungeons, dating, mind, checkpoints, endings, legacy, body, companions, bonds,
   };
 
   // Cross-references that need everything loaded.

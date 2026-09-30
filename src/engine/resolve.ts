@@ -355,6 +355,16 @@ function effectToEvents(w: Working, e: Effect, src: EventSource, extra: Record<s
       announce(w, t.stages[stage].text ?? `${t.label}: {{user}}'s body changes (stage ${stage + 1} of ${t.stages.length}).`);
     }
   }
+  for (const [id, d] of Object.entries(e.arc)) {
+    const front = r.companions[id]?.arc;
+    if (!front) continue;
+    const v = evalNumber(d, w.env(extra), 0);
+    if (v !== 0) w.push({ t: "clock", id: front, d: v, src });
+  }
+  for (const [a, m] of Object.entries(e.bond)) for (const [b, d] of Object.entries(m)) {
+    const v = evalNumber(d, w.env(extra), 0);
+    if (v !== 0 && a !== b) w.push({ t: "bond", a, b, d: v, src });
+  }
   if (e.momentum !== undefined && w.s.encounter?.momentum !== undefined) {
     const v = evalNumber(e.momentum, w.env(extra), 0);
     if (v !== 0) w.push({ t: "swing", d: v, src });
@@ -484,6 +494,58 @@ function tickWorld(w: Working, days: number, turns: number) {
   }
   openFrontStages(w);
   tickGauge(w, days, turns);
+}
+
+// ───────────────────────── companions ─────────────────────────
+
+/** The relationship stat that means "how much they like you" (for jealousy). */
+function loveStat(r: Ruleset): string | null {
+  if (r.dating.enabled) return r.dating.love;
+  return r.relStatOrder.find((id) => r.relStats[id].good === "high") ?? null;
+}
+
+/**
+ * Companions live between replies: each in-game day they make a choice of their own
+ * (the decision model weighs it), and they notice when the player grows close to a rival.
+ */
+function companionLife(w: Working, before: GameState) {
+  const r = w.r;
+  const comps = Object.values(r.companions);
+  if (!comps.length) return;
+  const d0 = Math.floor(before.minutes / 1440);
+  const d1 = r.clock.enabled ? Math.floor(w.s.minutes / 1440) : d0;
+  const n = w.events.length;
+  for (let day = d0 + 1; day <= Math.min(d1, d0 + 3); day++) {
+    for (const c of comps) {
+      if (!c.daily || !w.s.people[c.id]) continue;
+      const spec = c.daily;
+      const keys = spec.options.map((o) => o.id);
+      const model = w.odds[spec.id];
+      if (!model && !w.needs.some((n) => n.id === spec.id)) w.needs.push(spec);
+      const p = normalize(model ?? Object.fromEntries(spec.options.map((o) => [o.id, o.weight])), keys);
+      const picked = sample(p, seededRng(`${w.seed}:daily:${c.id}:${day}`));
+      const opt = spec.options.find((o) => o.id === picked)!;
+      effectToEvents(w, opt.effect, "world", {});
+      const line = `${personName(r, w.s, c.id)}: ${opt.desc.charAt(0).toLowerCase()}${opt.desc.slice(1)}`;
+      w.push({ t: "news", text: line, src: "world" });
+      announce(w, `Off-screen, ${line}. (Their own choice — it may come up later.)`);
+    }
+  }
+  // Their choices can carry an arc to its next stage.
+  if (w.events.length > n) runTriggers(w, false);
+  const love = loveStat(r);
+  if (!love) return;
+  for (const c of comps) {
+    if (!c.jealousOf.length || !w.s.people[c.id]) continue;
+    const rivals = c.jealousOf.includes("anyone") ? Object.keys(w.s.people).filter((id) => id !== c.id) : c.jealousOf.filter((id) => id !== c.id);
+    const gains = rivals.map((id) => [id, (w.s.rel[id]?.[love] ?? 0) - (before.rel[id]?.[love] ?? 0)] as const).filter(([, g]) => g >= 1);
+    if (!gains.length) continue;
+    const total = gains.reduce((a, [, g]) => a + g, 0);
+    const drop = Math.max(1, Math.round(total / 2));
+    w.push({ t: "rel", who: c.id, stat: love, d: -drop, src: "world" });
+    for (const [id, g] of gains) w.push({ t: "bond", a: c.id, b: id, d: -Math.max(1, Math.round(g / 2)), src: "world" });
+    announce(w, `${personName(r, w.s, c.id)} notices {{user}} getting closer to ${gains.map(([id]) => personName(r, w.s, id)).join(" and ")} — and it stings.`);
+  }
 }
 
 // ───────────────────────── checkpoints, loops and endings ─────────────────────────
@@ -877,6 +939,7 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   const worldBefore = w.events.length;
   tickWorld(w, days, 1);
   if (w.events.length > worldBefore) runTriggers(w, false);
+  companionLife(w, before);
   checkRun(w, before);
   w.push({ t: "turn", src: "action" });
   rec.events = w.events;
@@ -1064,6 +1127,7 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
     tickWorld(w, (w.s.minutes - before.minutes) / 1440, 0);
     if (w.events.length > n) runTriggers(w, false);
   }
+  companionLife(w, before);
   checkRun(w, before);
   return w.events;
 }
@@ -1121,6 +1185,7 @@ export function buildTurn(r: Ruleset, before: GameState, seed: string, fn: (t: T
     tickWorld(w, (w.s.minutes - before.minutes) / 1440, 0);
     if (w.events.length > n) runTriggers(w, false);
   }
+  companionLife(w, before);
   checkRun(w, before);
   return w.events;
 }

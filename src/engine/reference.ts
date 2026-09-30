@@ -8,7 +8,7 @@ export type PartLabel = (typeof PART_LABELS)[number];
 export const PART_CONTENTS: Record<PartLabel, string> = {
   core: "name, description, player, clock, start, hud, narration",
   stats: "stats",
-  people: "relationships (stats + people with schedules)",
+  people: "relationships (stats + people with schedules), companions",
   world: "weather, locations, items (incl. clothing), wardrobe, body, conditions, flags, start.items",
   actions: "actions",
   encounters: "encounters, dungeons",
@@ -24,7 +24,7 @@ export function partForIssue(where: string): PartLabel {
   const head = w.split(/[›,]/)[0].trim().toLowerCase();
   if ((PART_LABELS as readonly string[]).includes(head)) return head as PartLabel;
   if (head.startsWith("stats")) return "stats";
-  if (head.startsWith("relationships") || head.startsWith("people")) return "people";
+  if (head.startsWith("relationships") || head.startsWith("people") || head.startsWith("companions")) return "people";
   if (["locations", "items", "wardrobe", "weather", "conditions", "flags", "body"].some((k) => head.startsWith(k))) return "world";
   if (head.startsWith("actions")) return "actions";
   if (head.startsWith("encounters") || head.startsWith("dungeons")) return "encounters";
@@ -54,6 +54,18 @@ relationships:
       desc: Runs the café.
       schedule:                    # first matching entry wins; entry without when = default; no match = not around
         - { when: "between(hour, 7, 18) and weekday != 'Sun'", at: high_street }
+
+companions:       # people with lives of their own (ids from relationships.people)
+  jo:
+    goal: Buy the café outright              # shown on the sheet
+    arc: { per_day: 2, stages: [ { at: 40, hint: "Jo's doing sums at closing time.", surface: "Jo makes an offer on the café." } ], story: { "{{user}} helps Jo at the café": 10 } }   # a hidden clock, same shape as a front; runs once met
+    daily:                                   # a choice they make each in-game day; the decision model weighs it; arc/bond here mean Jo
+      ask: How does Jo spend her evening?
+      options: { shift: { desc: Works an extra shift, weight: 2, arc: +6 }, out: { desc: Goes drinking with Dex, weight: 1, bond: { dex: +5 } } }
+    jealous_of: [dex]                        # or [anyone]: cools toward {{user}} (and the rival) when {{user}} grows close to them
+    bonds: { dex: 30 }                       # how they feel about others, −100…100
+    knows: [ward_accident]                   # secrets only they know: the narrator plays them with it, nobody else can mention it
+EFFECTS for companions: arc: { jo: +5 }, bond: { jo: { dex: -10 } }. FUNCTIONS: arc(person), bond(a, b).
 
 clock: { start: "Mon 07:00", date: "Sep 4", minutes_per_action: 15, narrator_max: 240 }
 start: { location: home, items: { phone: 1 } }

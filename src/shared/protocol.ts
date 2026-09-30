@@ -38,6 +38,10 @@ export interface PersonView {
   present: boolean;
   /** Where their schedule puts them, when they have one. */
   whereabouts: string | null;
+  /** A companion's goal. */
+  goal: string | null;
+  /** How they feel about other people ("fond of Dex"). */
+  bonds: string[];
 }
 
 export interface ClothingView { id: string; name: string; slot: string; warmth: number; reveal: number; traits: string[]; integrity: number | null; worn: boolean }

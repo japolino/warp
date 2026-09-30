@@ -777,7 +777,34 @@ live_choices:
     },
     {
       label: "dating",
-      yaml: `# Date mode: talk topic by topic, learn what people like, ask them out.
+      yaml: `# Companions live between replies: goals, arcs they push by their own choices, feelings about each other.
+companions:
+  jo:
+    goal: Buy the café outright before the landlord sells it
+    arc:
+      per_day: 1
+      stages:
+        - { at: 30, hint: "Jo has been doing sums at closing time.", surface: "Jo tells people she's trying to buy the café." }
+        - { at: 70, hint: "Jo looks exhausted; she's taken on extra shifts.", surface: "Jo makes the landlord an offer on the café.", do: { flags: { jo_offer: true } } }
+      story: { "{{user}} helps Jo at the café": 8 }
+    daily:
+      ask: How does Jo spend her evening?
+      options:
+        extra_shift: { desc: Works a late extra shift, weight: 3, arc: +4 }
+        the_strip: { desc: Goes out on the Strip and runs into Dex, weight: 1, arc: -2, bond: { dex: +4 } }
+        night_in: { desc: Stays in and rests, weight: 2 }
+    jealous_of: [dex]
+    bonds: { dex: 10, professor_ward: 20 }
+  dex:
+    goal: Clear a debt to people you don't owe money to
+    daily:
+      ask: What does Dex get up to tonight?
+      options:
+        job: { desc: Takes a job for the wrong people, weight: 2 }
+        café: { desc: Hangs around Jo's café until closing, weight: 1, bond: { jo: +5 } }
+    bonds: { jo: 25, professor_ward: -30 }
+
+# Date mode: talk topic by topic, learn what people like, ask them out.
 # Love is the "love" relationship stat; "fear" is added automatically.
 dating:
   love: love

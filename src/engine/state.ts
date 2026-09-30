@@ -80,6 +80,8 @@ export interface GameState {
   body: Record<string, Record<string, string>>;
   /** Transformation → stages applied. */
   tf: Record<string, number>;
+  /** How people feel about each other: a → b → −100…100. */
+  bonds: Record<string, Record<string, number>>;
   /** The story reached an ending (told = the narrator has written it). */
   ended: { id: string; at: number; told: boolean } | null;
 }
@@ -143,6 +145,8 @@ export type WarpEvent = { src: EventSource; note?: string } & (
   | { t: "dt_dated"; who: string; enjoy: number }
   | { t: "body"; part: string; trait: string; v: string | null }
   | { t: "tf"; id: string; stage: number }
+  | { t: "bond"; a: string; b: string; d: number }
+  | { t: "news"; text: string }
   | { t: "save"; slot: string; label: string }
   | { t: "load"; slot: string }
   | { t: "restart" }
@@ -198,6 +202,7 @@ export function initialState(r: Ruleset): GameState {
     ended: null,
     body: structuredClone(r.body.parts),
     tf: {},
+    bonds: structuredClone(r.bonds),
   };
   for (const id of r.statOrder) s.stats[id] = r.stats[id].start;
   // Stages with no condition at the top of a secret's ladder are known from the start.
@@ -389,6 +394,8 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       break;
     }
     case "tf": s.tf = { ...s.tf, [e.id]: Math.max(s.tf[e.id] ?? 0, e.stage) }; break;
+    case "news": s.news = [...s.news, { text: e.text, at: s.minutes }].slice(-NEWS_KEPT); break;
+    case "bond": s.bonds = { ...s.bonds, [e.a]: { ...(s.bonds[e.a] ?? {}), [e.b]: clamp((s.bonds[e.a]?.[e.b] ?? 0) + e.d, -100, 100) } }; break;
     case "save":
       s.saves = { ...s.saves, [e.slot]: { at: s.minutes, turn: s.turn, label: e.label, snap: snapshotOf(s) } };
       break;
@@ -640,6 +647,9 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
         // Body: a trait's value ('' when absent), and how far a transformation has gone.
         case "body": return s.body[a0]?.[String(args[1] ?? "type")] ?? "";
         case "transformed": return s.tf[a0] ?? 0;
+        // How one person feels about another (−100…100), and how far a companion's arc has gone.
+        case "bond": return s.bonds[a0]?.[String(args[1] ?? "")] ?? 0;
+        case "arc": return s.fronts[`arc_${a0}`]?.v ?? 0;
         case "dates": return s.dating.dates[a0]?.count ?? 0;
       }
       return undefined;

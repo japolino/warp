@@ -16,7 +16,7 @@ A game engine under your roleplay. Warp owns stats, dice, time, inventory and re
 | Time & world | Clock and calendar, seasons, weather, temperature (indoors vs out), a map of places with travel |
 | Body | Parts with any traits (hair, eyes, ears, tails, marks…), what clothing covers, and transformations in stages that each roll a chance. The story can change the body after a reply (new parts allowed unless closed), and the narrator always sees it — including what others can't see right now |
 | Clothing | Slots, warmth vs the weather, damage, how revealing, traits like rainproof; change clothes from the sheet |
-| People | Relationship stats, schedules (who is where, when), per-person actions ("Talk to Jo") |
+| People | Relationship stats, schedules (who is where, when), per-person actions ("Talk to Jo"). Companions live between replies: a goal, a hidden arc they push through a choice of their own each in-game day (weighed by the decision model), feelings toward each other, jealousy when you grow close to a rival, and secrets only they know |
 | Encounters | Turn-based scenes: foe stats, your moves, the foe's moves (weighted or model-weighed), win/lose/escape outcomes. Optional momentum: every check and foe move swings a tug-of-war gauge and only a full swing ends the fight; each round reaches the narrator as ordered beats, and a long move you typed is kept as written while only how it lands is rolled |
 | Progress | Codex entries that unlock (and can switch lorebook entries on), feats, perks bought with points |
 | Rules | Triggers by formula or in plain language (`when_scene`), uncertain reactions (`decide`) rolled on model odds |

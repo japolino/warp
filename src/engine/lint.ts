@@ -9,7 +9,7 @@ import { SKILLS } from "./dungeon/content.js";
 export const FUNCTIONS = [
   "has", "count", "flag", "cond", "at", "rel", "met", "between", "roll",
   "wearing", "worn", "trait", "present", "where", "codex", "feat", "perk",
-  "secret", "front", "front_stage", "happened", "deepest", "partner", "dates", "stage", "saved", "body", "transformed",
+  "secret", "front", "front_stage", "happened", "deepest", "partner", "dates", "stage", "saved", "body", "transformed", "bond", "arc",
   "min", "max", "clamp", "floor", "ceil", "round", "abs",
 ];
 
@@ -93,6 +93,7 @@ export function lintRuleset(r: Ruleset): Issue[] {
     else if (!r.body.open) for (const part of Object.keys(e.body)) {
       if (!r.body.parts[part]) issues.push({ level: "warning", where, message: `"${part}" isn't a body part (body › parts) and the body is closed (open: false)` });
     }
+    for (const id of Object.keys(e.arc)) if (!r.companions[id]?.arc) issues.push({ level: "warning", where, message: `"${id}" isn't a companion with an arc` });
     if (e.startEncounter && !r.encounters[e.startEncounter]) {
       issues.push({ level: "warning", where, message: `starts encounter "${e.startEncounter}", which doesn't exist${suggest(e.startEncounter, Object.keys(r.encounters))}` });
     }
@@ -214,6 +215,17 @@ export function lintRuleset(r: Ruleset): Issue[] {
     for (const id of k.flags) if (!r.flags[id]) issues.push({ level: "warning", where: "Checkpoints › keep", message: `"${id}" isn't a declared flag` });
   }
   for (const e of Object.values(r.endings)) check(e.when, `Endings › ${e.id} › when`);
+  const people = Object.keys(r.people);
+  for (const c of Object.values(r.companions)) {
+    const w = `Companions › ${c.id}`;
+    if (!r.people[c.id]) issues.push({ level: "warning", where: w, message: `"${c.id}" isn't a person in relationships › people${suggest(c.id, people)}` });
+    for (const id of c.jealousOf) if (id !== "anyone" && !r.people[id]) issues.push({ level: "warning", where: `${w} › jealous_of`, message: `"${id}" isn't a person${suggest(id, people)}` });
+    for (const id of c.knows) if (!r.secrets[id]) issues.push({ level: "warning", where: `${w} › knows`, message: `"${id}" isn't a secret${suggest(id, Object.keys(r.secrets))}` });
+    if (c.daily) for (const o of c.daily.options) checkEffect(o.effect, `${w} › daily › ${o.id}`);
+  }
+  for (const [a, m] of Object.entries(r.bonds)) for (const b of Object.keys(m)) {
+    if (!r.people[b]) issues.push({ level: "warning", where: `Companions › ${a} › bonds`, message: `"${b}" isn't a person${suggest(b, people)}` });
+  }
   const slotIds = r.wardrobe.slots.map((s) => s.id);
   for (const [part, slots] of Object.entries(r.body.hiddenBy)) for (const slot of slots) {
     if (!slotIds.includes(slot)) issues.push({ level: "warning", where: `Body › hidden_by › ${part}`, message: `"${slot}" isn't a wardrobe slot${suggest(slot, slotIds)}` });

@@ -84,6 +84,8 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
       }),
       present: here.has(id),
       whereabouts: where ? r.locations[where]?.name ?? where : null,
+      goal: r.companions[id]?.goal ?? null,
+      bonds: Object.entries(s.bonds[id] ?? {}).filter(([b, v]) => s.people[b] && Math.abs(v) >= 25).map(([b, v]) => `${bondWord(v)} ${personName(r, s, b)}`),
     };
   }).sort((a, b) => Number(b.present) - Number(a.present));
 
@@ -271,6 +273,20 @@ export function bodyLine(r: Ruleset, s: GameState): string | null {
   if (!parts.length) return null;
   const covered = parts.filter(([p]) => bodyCovered(r, s, p)).map(([p]) => p.replace(/_/g, " "));
   return `Body: ${parts.map(([p, t]) => `${p.replace(/_/g, " ")} — ${t}`).join("; ")}${covered.length ? ` (covered, not visible to others: ${covered.join(", ")})` : ""}`;
+}
+
+export function bondWord(v: number): string {
+  return v >= 60 ? "devoted to" : v >= 25 ? "fond of" : v > -25 ? "neutral toward" : v > -60 ? "cool toward" : "hostile toward";
+}
+
+/** How the people the player knows feel about each other (only the notable ones). */
+function bondLines(r: Ruleset, s: GameState): string[] {
+  const out: string[] = [];
+  for (const [a, m] of Object.entries(s.bonds)) {
+    if (!s.people[a]) continue;
+    for (const [b, v] of Object.entries(m)) if (s.people[b] && Math.abs(v) >= 25) out.push(`${personName(r, s, a)} is ${bondWord(v)} ${personName(r, s, b)}`);
+  }
+  return out;
 }
 
 /** "codex, feats and trust" — what a rewind keeps, in words. */
@@ -645,6 +661,8 @@ export function stateDigest(r: Ruleset, s: GameState): string {
   const inv = Object.entries(s.items).filter(([id]) => !wornSet.has(id)).map(([id, n]) => `${itemName(r, s, id)}${n > 1 ? ` ×${n}` : ""}`);
   if (inv.length) lines.push(`Carrying: ${inv.join(", ")}`);
 
+  const between = bondLines(r, s);
+  if (between.length) lines.push(`Between people: ${between.join("; ")}`);
   const ppl = Object.entries(s.people).map(([id, p]) => {
     const parts = r.relStatOrder.map((rs) => {
       const def = r.relStats[rs];
@@ -667,6 +685,15 @@ export function stateDigest(r: Ruleset, s: GameState): string {
  */
 export function narratorKnowledge(r: Ruleset, s: GameState): string | null {
   const lines: string[] = [];
+  // What only one companion knows: the narrator plays them with it, and no one else can bring it up.
+  for (const c of Object.values(r.companions)) {
+    if (!s.people[c.id]) continue;
+    for (const id of c.knows) {
+      const sec = r.secrets[id];
+      if (!sec) continue;
+      lines.push(`Only ${personName(r, s, c.id)} knows this (no one else can mention it; ${personName(r, s, c.id)} reveals it only if the scene truly earns it): ${sec.about} — ${sec.stages.map((st) => st.text).join(" ")}`);
+    }
+  }
   for (const sec of Object.values(r.secrets)) {
     const open = s.secrets[sec.id] ?? -1;
     for (let i = 0; i <= open && i < sec.stages.length; i++) lines.push(`${sec.about}: ${sec.stages[i].text}`);
