@@ -33,8 +33,30 @@ interface Pending {
   player: string;
 }
 
+/** Keyed by generation id when the host gives us one, otherwise by chat id. */
 const pending = new Map<string, Pending>();
 const playerNames = new Map<string, string>();
+
+/**
+ * What GENERATION_STARTED told us, per chat. Lumiverse fires it before prompt
+ * assembly, and the interceptor context itself doesn't carry the generation id
+ * or target message — so this is how the interceptor knows which message is
+ * being written (the host pre-stages an empty reply / blank swipe for it).
+ */
+interface Started { generationId: string; targetMessageId?: string; generationType?: string; at: number }
+const started = new Map<string, Started>();
+
+/** The host's interceptor context differs from the typings in places; read it defensively. */
+function ctxInfo(ctx: InterceptorContextDTO) {
+  const raw = ctx as unknown as Record<string, unknown>;
+  const s = started.get(ctx.chatId);
+  const fresh = s && Date.now() - s.at < 5 * 60_000 ? s : undefined;
+  return {
+    isDryRun: raw.isDryRun === true || raw.dryRun === true,
+    generationId: (typeof raw.generationId === "string" && raw.generationId) || fresh?.generationId || null,
+    targetMessageId: (typeof raw.excludeMessageId === "string" && raw.excludeMessageId) || fresh?.targetMessageId || null,
+  };
+}
 
 function textOf(content: LlmMessageDTO["content"]): string {
   if (typeof content === "string") return content;
@@ -85,12 +107,22 @@ function injectInto(messages: LlmMessageDTO[], text: string): { messages: LlmMes
   return { messages: out, index: out.length - 1 };
 }
 
-/** Which existing message is being (re)generated, if any. */
-function targetOf(ctx: InterceptorContextDTO, msgs: Msg[]): Msg | null {
-  if (ctx.excludeMessageId) return msgs.find((m) => m.id === ctx.excludeMessageId) ?? null;
+/**
+ * Which message is being written. Lumiverse creates it before the interceptor runs
+ * (an empty staged reply for normal sends, a blank new swipe for swipes/regens), so
+ * the history for this turn is everything *before* it.
+ */
+function targetOf(ctx: InterceptorContextDTO, targetId: string | null, msgs: Msg[]): Msg | null {
+  if (targetId) {
+    const hit = msgs.find((m) => m.id === targetId);
+    if (hit) return hit;
+  }
   if (ctx.generationType === "swipe" || ctx.generationType === "regenerate" || ctx.generationType === "continue") {
     for (let i = msgs.length - 1; i >= 0; i--) if (!msgs[i].is_user) return msgs[i];
   }
+  // No id to go on (e.g. a dry run): a trailing empty assistant message is the staged reply.
+  const last = msgs[msgs.length - 1];
+  if (last && !last.is_user && !last.content.trim()) return last;
   return null;
 }
 
@@ -103,8 +135,9 @@ export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorCon
     const r = loaded?.ruleset;
     if (!r) return messages;
 
+    const info = ctxInfo(ctx);
     const msgs = await getMessages(ctx.chatId);
-    const target = targetOf(ctx, msgs);
+    const target = targetOf(ctx, info.targetMessageId, msgs);
     const history = target ? msgs.filter((m) => m.index_in_chat < target.index_in_chat) : msgs;
     const { state: before } = foldPath(r, history);
     const player = await playerName(ctx.chatId, ctx.userId);
@@ -127,8 +160,8 @@ export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorCon
       let scene: Record<string, boolean> = {};
       let confidence: number | undefined;
       const sceneText = [...history].reverse().find((m) => !m.is_user)?.content ?? "";
-      const budget = () => Math.min(20000, (ctx.interceptorDeadlineAt ?? Date.now() + 20000) - Date.now() - 2000);
-      const decider = ctx.isDryRun ? null : await getDecider(settings, ctx.userId);
+      const budget = () => Math.min(20000, (typeof ctx.interceptorDeadlineAt === "number" ? ctx.interceptorDeadlineAt : Date.now() + 20000) - Date.now() - 2000);
+      const decider = info.isDryRun ? null : await getDecider(settings, ctx.userId);
 
       if (decider) {
         // One parallel batch: what the typed message attempts (if not already known) + plain-language triggers.
@@ -153,8 +186,8 @@ export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorCon
       if (confidence !== undefined && rec.action) rec.confidence = confidence;
       after = cloneState(before);
       for (const e of rec.events) applyEvent(after, e, r);
-      if (!ctx.isDryRun) {
-        pending.set(ctx.generationId, {
+      if (!info.isDryRun) {
+        pending.set(info.generationId ?? ctx.chatId, {
           chatId: ctx.chatId, userId: ctx.userId, rec, after,
           playerText: lastUser?.content ?? "", ruleset: r, at: Date.now(), verdict,
           outcome: outcomePacket(r, rec, before, after, player), player,
@@ -190,15 +223,20 @@ async function proposeChanges(decider: Decider, r: Ruleset, p: Pending, reply: s
   return proposal;
 }
 
-export async function onGenerationStarted(chatId: string, userId?: string) {
+export async function onGenerationStarted(payload: { generationId: string; chatId: string; targetMessageId?: string; generationType?: string }, userId?: string) {
+  const { chatId } = payload;
+  started.set(chatId, { generationId: payload.generationId, targetMessageId: payload.targetMessageId, generationType: payload.generationType, at: Date.now() });
   busyChats.add(chatId);
   host().sendToFrontend({ type: "busy", chatId, busy: true }, userId);
 }
 
 export async function onGenerationEnded(payload: { generationId: string; chatId: string; messageId?: string; content?: string; error?: string; generationType?: string }, userId?: string) {
   busyChats.delete(payload.chatId);
-  const p = pending.get(payload.generationId);
-  pending.delete(payload.generationId);
+  if (started.get(payload.chatId)?.generationId === payload.generationId) started.delete(payload.chatId);
+  // Match by generation id; fall back to the chat when the host didn't give the interceptor an id.
+  const key = pending.has(payload.generationId) ? payload.generationId : payload.chatId;
+  const p = pending.get(key);
+  pending.delete(key);
   // Drop stale entries (generations that never reported back).
   for (const [id, x] of pending) if (Date.now() - x.at > 10 * 60_000) pending.delete(id);
 

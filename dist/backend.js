@@ -7236,6 +7236,17 @@ async function extract(r, s, playerText, reply, settings, userId, only) {
 // src/backend/turn.ts
 var pending = new Map;
 var playerNames = new Map;
+var started = new Map;
+function ctxInfo(ctx) {
+  const raw = ctx;
+  const s = started.get(ctx.chatId);
+  const fresh = s && Date.now() - s.at < 5 * 60000 ? s : undefined;
+  return {
+    isDryRun: raw.isDryRun === true || raw.dryRun === true,
+    generationId: typeof raw.generationId === "string" && raw.generationId || fresh?.generationId || null,
+    targetMessageId: typeof raw.excludeMessageId === "string" && raw.excludeMessageId || fresh?.targetMessageId || null
+  };
+}
 async function playerName(chatId, userId) {
   const hit = playerNames.get(chatId);
   if (hit)
@@ -7289,14 +7300,20 @@ ${text}
   out.push({ role: "user", content: block.trim() });
   return { messages: out, index: out.length - 1 };
 }
-function targetOf(ctx, msgs) {
-  if (ctx.excludeMessageId)
-    return msgs.find((m) => m.id === ctx.excludeMessageId) ?? null;
+function targetOf(ctx, targetId, msgs) {
+  if (targetId) {
+    const hit = msgs.find((m) => m.id === targetId);
+    if (hit)
+      return hit;
+  }
   if (ctx.generationType === "swipe" || ctx.generationType === "regenerate" || ctx.generationType === "continue") {
     for (let i = msgs.length - 1;i >= 0; i--)
       if (!msgs[i].is_user)
         return msgs[i];
   }
+  const last = msgs[msgs.length - 1];
+  if (last && !last.is_user && !last.content.trim())
+    return last;
   return null;
 }
 async function interceptor(messages, ctx) {
@@ -7310,8 +7327,9 @@ async function interceptor(messages, ctx) {
     const r = loaded?.ruleset;
     if (!r)
       return messages;
+    const info = ctxInfo(ctx);
     const msgs = await getMessages(ctx.chatId);
-    const target = targetOf(ctx, msgs);
+    const target = targetOf(ctx, info.targetMessageId, msgs);
     const history = target ? msgs.filter((m) => m.index_in_chat < target.index_in_chat) : msgs;
     const { state: before } = foldPath(r, history);
     const player = await playerName(ctx.chatId, ctx.userId);
@@ -7332,8 +7350,8 @@ async function interceptor(messages, ctx) {
       let scene = {};
       let confidence;
       const sceneText = [...history].reverse().find((m) => !m.is_user)?.content ?? "";
-      const budget = () => Math.min(20000, (ctx.interceptorDeadlineAt ?? Date.now() + 20000) - Date.now() - 2000);
-      const decider = ctx.isDryRun ? null : await getDecider(settings, ctx.userId);
+      const budget = () => Math.min(20000, (typeof ctx.interceptorDeadlineAt === "number" ? ctx.interceptorDeadlineAt : Date.now() + 20000) - Date.now() - 2000);
+      const decider = info.isDryRun ? null : await getDecider(settings, ctx.userId);
       if (decider) {
         const readText = !intent && !meta.judged && lastUser && settings.freeTextChecks ? lastUser.content : null;
         const reading = await readTurn({ decider, r, s: before, settings, playerText: readText, sceneText, player, timeoutMs: budget() });
@@ -7357,8 +7375,8 @@ async function interceptor(messages, ctx) {
       after = cloneState(before);
       for (const e of rec.events)
         applyEvent(after, e, r);
-      if (!ctx.isDryRun) {
-        pending.set(ctx.generationId, {
+      if (!info.isDryRun) {
+        pending.set(info.generationId ?? ctx.chatId, {
           chatId: ctx.chatId,
           userId: ctx.userId,
           rec,
@@ -7399,14 +7417,19 @@ async function proposeChanges(decider, r, p, reply, settings, userId) {
   }
   return proposal;
 }
-async function onGenerationStarted(chatId, userId) {
+async function onGenerationStarted(payload, userId) {
+  const { chatId } = payload;
+  started.set(chatId, { generationId: payload.generationId, targetMessageId: payload.targetMessageId, generationType: payload.generationType, at: Date.now() });
   busyChats.add(chatId);
   host().sendToFrontend({ type: "busy", chatId, busy: true }, userId);
 }
 async function onGenerationEnded(payload, userId) {
   busyChats.delete(payload.chatId);
-  const p = pending.get(payload.generationId);
-  pending.delete(payload.generationId);
+  if (started.get(payload.chatId)?.generationId === payload.generationId)
+    started.delete(payload.chatId);
+  const key = pending.has(payload.generationId) ? payload.generationId : payload.chatId;
+  const p = pending.get(key);
+  pending.delete(key);
   for (const [id, x] of pending)
     if (Date.now() - x.at > 10 * 60000)
       pending.delete(id);
@@ -7475,7 +7498,7 @@ spindle.on("CHAT_SWITCHED", (p, userId) => {
   pushState(chatId, userId);
 });
 spindle.on("GENERATION_STARTED", (p, userId) => {
-  onGenerationStarted(p.chatId, userId);
+  onGenerationStarted(p, userId);
 });
 spindle.on("GENERATION_ENDED", (p, userId) => {
   onGenerationEnded(p, userId);

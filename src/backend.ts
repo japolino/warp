@@ -35,7 +35,7 @@ spindle.on("CHAT_SWITCHED", (p, userId) => {
   setActiveChat(userId, chatId);
   void pushState(chatId, userId);
 });
-spindle.on("GENERATION_STARTED", (p, userId) => { void onGenerationStarted(p.chatId, userId); });
+spindle.on("GENERATION_STARTED", (p, userId) => { void onGenerationStarted(p, userId); });
 spindle.on("GENERATION_ENDED", (p, userId) => { void onGenerationEnded(p, userId); });
 spindle.on("GENERATION_STOPPED", (p, userId) => {
   const chatId = chatIdOf(p);

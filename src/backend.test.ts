@@ -220,3 +220,43 @@ test("full loop: install → choose → roll → narrate → bookkeeping → swi
   expect(quietReplies.length).toBe(before);
   expect(dry.messages[0].content).toContain("<warp>");
 });
+
+test("real host shape: no generationId in the interceptor context, reply pre-staged before assembly", async () => {
+  // Fresh chat state: greeting only, ruleset already installed on the character by the previous test.
+  messages.length = 0;
+  messages.push(mkMsg("g0", false, "You wake up in your cramped apartment."));
+  await frontendHandler({ type: "refresh", chatId: "c1" });
+  expect(lastState().hud.location.name).toBe("Your Apartment");
+
+  // Click "Go to High Street" → Lumiverse appends the user message, fires GENERATION_STARTED,
+  // stages an empty assistant reply, THEN runs interceptors with a context lacking generationId.
+  appended.length = 0;
+  await frontendHandler({ type: "act", chatId: "c1", actionId: "go:high_street" });
+  const staged = mkMsg("staged1", false, "");
+  messages.push(staged);
+  await emit("GENERATION_STARTED", { generationId: "real-1", chatId: "c1", targetMessageId: "staged1", generationType: "normal" });
+  const hostCtx = { chatId: "c1", generationType: "normal", dryRun: false, userId: undefined };
+  const out = await interceptor([{ role: "user", content: appended[0].msg.content }], hostCtx);
+  const injected = out.messages[out.breakdown[0].messageIndex].content as string;
+  expect(injected).toContain("chose: Go to High Street");
+  expect(injected).toContain("Location: High Street");
+
+  // The reply lands in the staged message.
+  staged.content = "You step out onto the High Street.";
+  staged.swipes = [staged.content];
+  quietReplies.push("{}");
+  await emit("GENERATION_ENDED", { generationId: "real-1", chatId: "c1", messageId: "staged1", content: staged.content, generationType: "normal" });
+  await settle();
+  expect((staged.extra.spindle_metadata as any).warp.swipes["0"].action.id).toBe("go:high_street");
+  const st = lastState();
+  expect(st.hud.location.name).toBe("High Street");
+  const ids = st.choices.map((c: any) => c.id);
+  expect(ids).toContain("cafe_shift");
+  expect(ids).not.toContain("sleep");
+
+  // A Prompt Breakdown preview (host flag `dryRun`) never asks the decision model.
+  const q = quietReplies.length;
+  messages.push(mkMsg("u9", true, "I try to pick a pocket."));
+  await interceptor([{ role: "user", content: "I try to pick a pocket." }], { chatId: "c1", generationType: "normal", dryRun: true });
+  expect(quietReplies.length).toBe(q);
+});
