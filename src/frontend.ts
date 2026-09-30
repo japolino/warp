@@ -4,6 +4,7 @@ import type {
 } from "./shared/protocol.js";
 import { DEFAULT_SETTINGS } from "./shared/protocol.js";
 import { STYLES } from "./frontend/styles.js";
+import { attachedBox, edgeForDrop, PAD, PANEL_W, PILL, type Box, type Edge, type Viewport } from "./frontend/overlay-layout.js";
 import { esc, renderChips, renderChoices, renderHud, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
 
 type StateMsg = Extract<BackendToFrontend, { type: "state" }>;
@@ -54,17 +55,21 @@ export function setup(ctx: SpindleFrontendContext) {
   tab.root.appendChild(drawerRoot);
   cleanups.push(tab.onActivate(() => renderDrawer()));
 
-  // Status overlay: a floating widget that sits over the chat instead of docking
-  // beside it, so opening it never pushes the conversation around. Collapsed it's
-  // a small pill; expanded it's the full HUD. Only the header drags.
-  const PILL = { w: 150, h: 38 };
-  const PANEL_W = 290;
+  // Status overlay: a floating widget over the chat (never pushes the conversation).
+  // Collapsed it's a pill; open it's the HUD. Drag it against an edge to attach it
+  // as a sidebar (left/right) or strip (top/bottom); drag it off to float again.
   const narrow = () => window.innerWidth < 760;
+  const viewport = (): Viewport => {
+    try { return ctx.ui.geometry?.layoutViewportSize() ?? { width: window.innerWidth, height: window.innerHeight }; }
+    catch { return { width: window.innerWidth, height: window.innerHeight }; }
+  };
   let overlayOpen = store("overlayOpen") !== null ? store("overlayOpen") === "1" : !narrow();
+  const savedEdge = store("overlayEdge");
+  let edge: Edge | null = savedEdge === "left" || savedEdge === "right" || savedEdge === "top" || savedEdge === "bottom" ? savedEdge : null;
   let overlay: SpindleFloatWidgetHandle | null = null;
   const overlayEl = document.createElement("div");
   overlayEl.className = "warp-overlay";
-  overlayEl.innerHTML = `<div class="warp-overlay-head" title="Drag to move"></div><div class="warp-overlay-body warp-root"></div>`;
+  overlayEl.innerHTML = `<div class="warp-overlay-head" title="Drag to move · drop on a screen edge to attach"></div><div class="warp-overlay-body warp-root"></div>`;
   const headEl = overlayEl.firstElementChild as HTMLElement;
   const dockRoot = overlayEl.lastElementChild as HTMLElement;
   // Presses inside the body scroll and click; they must not start a widget drag.
@@ -72,50 +77,109 @@ export function setup(ctx: SpindleFrontendContext) {
   dockRoot.addEventListener("pointerdown", (e) => {
     if (!(e.target as Element).closest?.("input, select, textarea")) e.preventDefault();
   });
-  const onResize = () => { if (overlay?.isVisible()) fitOverlay(); };
-  window.addEventListener("resize", onResize);
-  cleanups.push(() => window.removeEventListener("resize", onResize));
-  let curSize = { ...PILL };
+  let cur: Box = { x: 0, y: 72, w: PILL.w, h: PILL.h };
   try {
-    const startW = overlayOpen ? PANEL_W : PILL.w;
+    const vp = viewport();
+    const w = overlayOpen ? PANEL_W : PILL.w;
+    const h = overlayOpen ? 420 : PILL.h;
+    const start = edge ? attachedBox(edge, overlayOpen, vp) : { x: Math.max(PAD, vp.width - w - 20), y: 72, w, h };
     overlay = ctx.ui.createFloatWidget({
-      width: startW,
-      height: overlayOpen ? 420 : PILL.h,
-      initialPosition: { x: Math.max(12, window.innerWidth - startW - 20), y: 72 },
+      width: start.w,
+      height: start.h,
+      initialPosition: { x: start.x, y: start.y },
       snapToEdge: false,
       tooltip: "Warp",
       chromeless: true,
     });
     overlay.root.appendChild(overlayEl);
     overlay.setVisible(false);
-    curSize = { w: startW, h: overlayOpen ? 420 : PILL.h };
+    cur = start;
     cleanups.push(() => overlay?.destroy());
   } catch {
     overlay = null; // ui_panels not granted — the drawer tab still has everything
   }
 
-  /** Resize, keeping whichever edge is nearer the screen side fixed so it doesn't jump. */
-  function resizeOverlay(w: number, h: number) {
-    if (!overlay || (w === curSize.w && h === curSize.h)) return;
-    const pos = overlay.getPosition();
-    const rightAnchored = pos.x + curSize.w / 2 > window.innerWidth / 2;
-    overlay.setSize(w, h);
-    if (rightAnchored && w !== curSize.w) overlay.moveTo(Math.max(12, pos.x + curSize.w - w), pos.y);
-    curSize = { w, h };
+  function place(b: Box) {
+    if (!overlay) return;
+    if (b.w !== cur.w || b.h !== cur.h) overlay.setSize(b.w, b.h);
+    const p = overlay.getPosition();
+    if (p.x !== b.x || p.y !== b.y) overlay.moveTo(b.x, b.y);
+    cur = b;
+  }
+
+  /** Floating resize that keeps whichever side is nearer the screen edge fixed, so it doesn't jump. */
+  function resizeFloating(w: number, h: number) {
+    if (!overlay) return;
+    const p = overlay.getPosition();
+    const rightAnchored = p.x + cur.w / 2 > viewport().width / 2;
+    const x = rightAnchored ? Math.max(PAD, p.x + cur.w - w) : p.x;
+    place({ x, y: p.y, w, h });
   }
 
   function fitOverlay() {
     if (!overlay) return;
     overlayEl.classList.toggle("warp-overlay-collapsed", !overlayOpen);
-    if (!overlayOpen) { resizeOverlay(PILL.w, PILL.h); return; }
-    const maxH = Math.max(240, window.innerHeight - 140);
+    overlayEl.dataset.edge = edge ?? "";
+    const vp = viewport();
+    if (edge) {
+      const b = attachedBox(edge, overlayOpen, vp);
+      overlayEl.style.setProperty("--warp-overlay-max", `${b.h - PILL.h}px`);
+      place(b);
+      return;
+    }
+    if (!overlayOpen) { resizeFloating(PILL.w, PILL.h); return; }
+    const maxH = Math.max(240, vp.height - 140);
     overlayEl.style.setProperty("--warp-overlay-max", `${maxH - PILL.h}px`);
     // Measure the body's natural height so short HUDs don't leave empty space.
-    requestAnimationFrame(() => {
-      const natural = PILL.h + dockRoot.scrollHeight + 2;
-      resizeOverlay(PANEL_W, Math.min(maxH, natural));
-    });
+    requestAnimationFrame(() => resizeFloating(PANEL_W, Math.min(maxH, PILL.h + dockRoot.scrollHeight + 2)));
   }
+
+  // Dragging an attached overlay detaches it straight away (back to floating size),
+  // so it follows the pointer as a normal panel; the drop then decides where it lives.
+  let dragStart: { x: number; y: number } | null = null;
+  let pressAt: { x: number; y: number } | null = null;
+  headEl.addEventListener("pointerdown", (e) => {
+    if (!overlay || e.button !== 0) return;
+    pressAt = { x: e.clientX, y: e.clientY };
+    dragStart = overlay.getPosition();
+  });
+  const onPointerMove = (e: PointerEvent) => {
+    if (!pressAt || !overlay) return;
+    if (Math.hypot(e.clientX - pressAt.x, e.clientY - pressAt.y) < 4) return;
+    pressAt = null;
+    if (edge) {
+      edge = null;
+      store("overlayEdge", "");
+      overlayEl.dataset.edge = "";
+      const w = overlayOpen ? PANEL_W : PILL.w;
+      const h = overlayOpen ? Math.min(420, cur.h) : PILL.h;
+      overlay.setSize(w, h);
+      cur = { ...cur, w, h };
+    }
+  };
+  const onPointerUp = () => { pressAt = null; };
+  window.addEventListener("pointermove", onPointerMove);
+  window.addEventListener("pointerup", onPointerUp);
+  cleanups.push(() => {
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", onPointerUp);
+  });
+
+  if (overlay) {
+    cleanups.push(overlay.onDragEnd((pos) => {
+      const from = dragStart ?? pos;
+      dragStart = null;
+      cur = { ...cur, x: pos.x, y: pos.y };
+      edge = edgeForDrop(from, cur, viewport());
+      store("overlayEdge", edge ?? "");
+      renderHead();
+      fitOverlay();
+    }));
+  }
+
+  const onResize = () => { if (overlay?.isVisible()) fitOverlay(); };
+  window.addEventListener("resize", onResize);
+  cleanups.push(() => window.removeEventListener("resize", onResize));
 
   function syncDockVisibility() {
     if (!overlay) return;
@@ -129,10 +193,12 @@ export function setup(ctx: SpindleFrontendContext) {
     const clock = h?.clock ? `${h.clock.time}` : "";
     const worst = h?.bars.find((b) => b.tone === "bad") ?? h?.bars.find((b) => b.tone === "warn");
     const dot = `<span class="warp-dot warp-bg-${worst?.tone ?? "good"}" title="${esc(worst ? `${worst.label}: ${worst.text ?? worst.display}` : "All good")}"></span>`;
+    const where = overlayOpen && h?.location ? ` <span class="warp-dim">· ${esc(h.location.name)}</span>` : "";
     headEl.innerHTML = `
-      <span class="warp-overlay-title">🎲 ${clock ? `<b>${esc(clock)}</b>` : "Warp"}</span>
+      <span class="warp-overlay-title">🎲 ${clock ? `<b>${esc(clock)}</b>` : "Warp"}${where}</span>
       ${dot}
       <span class="warp-overlay-actions">
+        ${overlayOpen && edge ? `<button class="warp-btn warp-btn-ghost" data-detach title="Float" aria-label="Detach">⇱</button>` : ""}
         ${overlayOpen ? `<button class="warp-btn warp-btn-ghost" data-open-sheet title="Open full sheet" aria-label="Open full sheet">⤢</button>` : ""}
         <button class="warp-btn warp-btn-ghost" data-toggle-overlay title="${overlayOpen ? "Collapse" : "Expand"}" aria-label="${overlayOpen ? "Collapse" : "Expand"}">${overlayOpen ? "–" : "+"}</button>
       </span>`;
@@ -141,6 +207,15 @@ export function setup(ctx: SpindleFrontendContext) {
   headEl.addEventListener("click", (e) => {
     const t = e.target as Element;
     if (t.closest("[data-open-sheet]")) { drawerView = "sheet"; tab.activate(); return; }
+    if (t.closest("[data-detach]")) {
+      const vp = viewport();
+      edge = null;
+      store("overlayEdge", "");
+      place({ x: Math.max(PAD, vp.width - PANEL_W - 40), y: 72, w: PANEL_W, h: Math.min(420, cur.h) });
+      renderHead();
+      fitOverlay();
+      return;
+    }
     // The whole pill toggles when collapsed; when open, only the button does.
     if (t.closest("[data-toggle-overlay]") || !overlayOpen) {
       overlayOpen = !overlayOpen;

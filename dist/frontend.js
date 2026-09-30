@@ -178,7 +178,22 @@ var STYLES = `
 .warp-dot.warp-bg-bad { background: var(--warp-bad); }
 .warp-overlay-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; max-height: var(--warp-overlay-max, 70vh); padding-top: 4px; border-top: 1px solid var(--lumiverse-border, rgba(255,255,255,0.12)); }
 .warp-overlay-collapsed { border-radius: 999px; }
-.warp-overlay-collapsed .warp-overlay-head { cursor: pointer; }
+
+/* Attached to a screen edge: sidebar (left/right) or strip (top/bottom). */
+.warp-overlay[data-edge=left]:not(.warp-overlay-collapsed),
+.warp-overlay[data-edge=right]:not(.warp-overlay-collapsed) { border-radius: 12px; }
+.warp-overlay[data-edge=top]:not(.warp-overlay-collapsed),
+.warp-overlay[data-edge=bottom]:not(.warp-overlay-collapsed) { border-radius: 12px; }
+.warp-overlay[data-edge=top] .warp-overlay-body,
+.warp-overlay[data-edge=bottom] .warp-overlay-body {
+  display: grid; grid-template-columns: minmax(170px, 220px) 1fr; gap: 8px 18px; align-content: start;
+}
+.warp-overlay[data-edge=top] .warp-bars,
+.warp-overlay[data-edge=bottom] .warp-bars {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px 18px;
+}
+.warp-overlay[data-edge=top] .warp-section,
+.warp-overlay[data-edge=bottom] .warp-section { grid-column: 1 / -1; }.warp-overlay-collapsed .warp-overlay-head { cursor: pointer; }
 .warp-overlay-collapsed .warp-overlay-body { display: none; }
 
 /* ───────── modal ───────── */
@@ -186,6 +201,56 @@ var STYLES = `
 .warp-template { text-align: left; font: inherit; color: inherit; cursor: pointer; }
 .warp-template:hover { border-color: var(--warp-accent); }
 `;
+
+// src/frontend/overlay-layout.ts
+var PAD = 12;
+var SNAP = 28;
+var PILL = { w: 150, h: 38 };
+var PANEL_W = 290;
+var SIDE_W = 300;
+var STRIP_H = 190;
+function edgeForDrop(start, box, vp) {
+  const dx = box.x - start.x;
+  const dy = box.y - start.y;
+  const near = {
+    left: box.x - PAD <= SNAP && dx < -2,
+    right: vp.width - (box.x + box.w) - PAD <= SNAP && dx > 2,
+    top: box.y - PAD <= SNAP && dy < -2,
+    bottom: vp.height - (box.y + box.h) - PAD <= SNAP && dy > 2
+  };
+  const horizontal = near.left ? "left" : near.right ? "right" : null;
+  const vertical = near.top ? "top" : near.bottom ? "bottom" : null;
+  if (horizontal && vertical)
+    return Math.abs(dx) >= Math.abs(dy) ? horizontal : vertical;
+  return horizontal ?? vertical;
+}
+function attachedBox(edge, open, vp) {
+  if (!open) {
+    switch (edge) {
+      case "left":
+        return { x: PAD, y: PAD, ...wh(PILL) };
+      case "right":
+        return { x: vp.width - PILL.w - PAD, y: PAD, ...wh(PILL) };
+      case "top":
+        return { x: Math.round((vp.width - PILL.w) / 2), y: PAD, ...wh(PILL) };
+      case "bottom":
+        return { x: Math.round((vp.width - PILL.w) / 2), y: vp.height - PILL.h - PAD, ...wh(PILL) };
+    }
+  }
+  switch (edge) {
+    case "left":
+      return { x: PAD, y: PAD, w: SIDE_W, h: vp.height - PAD * 2 };
+    case "right":
+      return { x: vp.width - SIDE_W - PAD, y: PAD, w: SIDE_W, h: vp.height - PAD * 2 };
+    case "top":
+      return { x: PAD, y: PAD, w: vp.width - PAD * 2, h: STRIP_H };
+    case "bottom":
+      return { x: PAD, y: vp.height - STRIP_H - PAD, w: vp.width - PAD * 2, h: STRIP_H };
+  }
+}
+function wh(s) {
+  return { w: s.w, h: s.h };
+}
 
 // src/frontend/render.ts
 function esc(v) {
@@ -428,69 +493,136 @@ function setup(ctx) {
   drawerRoot.className = "warp-root";
   tab.root.appendChild(drawerRoot);
   cleanups.push(tab.onActivate(() => renderDrawer()));
-  const PILL = { w: 150, h: 38 };
-  const PANEL_W = 290;
   const narrow = () => window.innerWidth < 760;
+  const viewport = () => {
+    try {
+      return ctx.ui.geometry?.layoutViewportSize() ?? { width: window.innerWidth, height: window.innerHeight };
+    } catch {
+      return { width: window.innerWidth, height: window.innerHeight };
+    }
+  };
   let overlayOpen = store("overlayOpen") !== null ? store("overlayOpen") === "1" : !narrow();
+  const savedEdge = store("overlayEdge");
+  let edge = savedEdge === "left" || savedEdge === "right" || savedEdge === "top" || savedEdge === "bottom" ? savedEdge : null;
   let overlay = null;
   const overlayEl = document.createElement("div");
   overlayEl.className = "warp-overlay";
-  overlayEl.innerHTML = `<div class="warp-overlay-head" title="Drag to move"></div><div class="warp-overlay-body warp-root"></div>`;
+  overlayEl.innerHTML = `<div class="warp-overlay-head" title="Drag to move · drop on a screen edge to attach"></div><div class="warp-overlay-body warp-root"></div>`;
   const headEl = overlayEl.firstElementChild;
   const dockRoot = overlayEl.lastElementChild;
   dockRoot.addEventListener("pointerdown", (e) => {
     if (!e.target.closest?.("input, select, textarea"))
       e.preventDefault();
   });
-  const onResize = () => {
-    if (overlay?.isVisible())
-      fitOverlay();
-  };
-  window.addEventListener("resize", onResize);
-  cleanups.push(() => window.removeEventListener("resize", onResize));
-  let curSize = { ...PILL };
+  let cur = { x: 0, y: 72, w: PILL.w, h: PILL.h };
   try {
-    const startW = overlayOpen ? PANEL_W : PILL.w;
+    const vp = viewport();
+    const w = overlayOpen ? PANEL_W : PILL.w;
+    const h = overlayOpen ? 420 : PILL.h;
+    const start = edge ? attachedBox(edge, overlayOpen, vp) : { x: Math.max(PAD, vp.width - w - 20), y: 72, w, h };
     overlay = ctx.ui.createFloatWidget({
-      width: startW,
-      height: overlayOpen ? 420 : PILL.h,
-      initialPosition: { x: Math.max(12, window.innerWidth - startW - 20), y: 72 },
+      width: start.w,
+      height: start.h,
+      initialPosition: { x: start.x, y: start.y },
       snapToEdge: false,
       tooltip: "Warp",
       chromeless: true
     });
     overlay.root.appendChild(overlayEl);
     overlay.setVisible(false);
-    curSize = { w: startW, h: overlayOpen ? 420 : PILL.h };
+    cur = start;
     cleanups.push(() => overlay?.destroy());
   } catch {
     overlay = null;
   }
-  function resizeOverlay(w, h) {
-    if (!overlay || w === curSize.w && h === curSize.h)
+  function place(b) {
+    if (!overlay)
       return;
-    const pos = overlay.getPosition();
-    const rightAnchored = pos.x + curSize.w / 2 > window.innerWidth / 2;
-    overlay.setSize(w, h);
-    if (rightAnchored && w !== curSize.w)
-      overlay.moveTo(Math.max(12, pos.x + curSize.w - w), pos.y);
-    curSize = { w, h };
+    if (b.w !== cur.w || b.h !== cur.h)
+      overlay.setSize(b.w, b.h);
+    const p = overlay.getPosition();
+    if (p.x !== b.x || p.y !== b.y)
+      overlay.moveTo(b.x, b.y);
+    cur = b;
+  }
+  function resizeFloating(w, h) {
+    if (!overlay)
+      return;
+    const p = overlay.getPosition();
+    const rightAnchored = p.x + cur.w / 2 > viewport().width / 2;
+    const x = rightAnchored ? Math.max(PAD, p.x + cur.w - w) : p.x;
+    place({ x, y: p.y, w, h });
   }
   function fitOverlay() {
     if (!overlay)
       return;
     overlayEl.classList.toggle("warp-overlay-collapsed", !overlayOpen);
-    if (!overlayOpen) {
-      resizeOverlay(PILL.w, PILL.h);
+    overlayEl.dataset.edge = edge ?? "";
+    const vp = viewport();
+    if (edge) {
+      const b = attachedBox(edge, overlayOpen, vp);
+      overlayEl.style.setProperty("--warp-overlay-max", `${b.h - PILL.h}px`);
+      place(b);
       return;
     }
-    const maxH = Math.max(240, window.innerHeight - 140);
+    if (!overlayOpen) {
+      resizeFloating(PILL.w, PILL.h);
+      return;
+    }
+    const maxH = Math.max(240, vp.height - 140);
     overlayEl.style.setProperty("--warp-overlay-max", `${maxH - PILL.h}px`);
-    requestAnimationFrame(() => {
-      const natural = PILL.h + dockRoot.scrollHeight + 2;
-      resizeOverlay(PANEL_W, Math.min(maxH, natural));
-    });
+    requestAnimationFrame(() => resizeFloating(PANEL_W, Math.min(maxH, PILL.h + dockRoot.scrollHeight + 2)));
   }
+  let dragStart = null;
+  let pressAt = null;
+  headEl.addEventListener("pointerdown", (e) => {
+    if (!overlay || e.button !== 0)
+      return;
+    pressAt = { x: e.clientX, y: e.clientY };
+    dragStart = overlay.getPosition();
+  });
+  const onPointerMove = (e) => {
+    if (!pressAt || !overlay)
+      return;
+    if (Math.hypot(e.clientX - pressAt.x, e.clientY - pressAt.y) < 4)
+      return;
+    pressAt = null;
+    if (edge) {
+      edge = null;
+      store("overlayEdge", "");
+      overlayEl.dataset.edge = "";
+      const w = overlayOpen ? PANEL_W : PILL.w;
+      const h = overlayOpen ? Math.min(420, cur.h) : PILL.h;
+      overlay.setSize(w, h);
+      cur = { ...cur, w, h };
+    }
+  };
+  const onPointerUp = () => {
+    pressAt = null;
+  };
+  window.addEventListener("pointermove", onPointerMove);
+  window.addEventListener("pointerup", onPointerUp);
+  cleanups.push(() => {
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", onPointerUp);
+  });
+  if (overlay) {
+    cleanups.push(overlay.onDragEnd((pos) => {
+      const from = dragStart ?? pos;
+      dragStart = null;
+      cur = { ...cur, x: pos.x, y: pos.y };
+      edge = edgeForDrop(from, cur, viewport());
+      store("overlayEdge", edge ?? "");
+      renderHead();
+      fitOverlay();
+    }));
+  }
+  const onResize = () => {
+    if (overlay?.isVisible())
+      fitOverlay();
+  };
+  window.addEventListener("resize", onResize);
+  cleanups.push(() => window.removeEventListener("resize", onResize));
   function syncDockVisibility() {
     if (!overlay)
       return;
@@ -505,10 +637,12 @@ function setup(ctx) {
     const clock = h?.clock ? `${h.clock.time}` : "";
     const worst = h?.bars.find((b) => b.tone === "bad") ?? h?.bars.find((b) => b.tone === "warn");
     const dot = `<span class="warp-dot warp-bg-${worst?.tone ?? "good"}" title="${esc(worst ? `${worst.label}: ${worst.text ?? worst.display}` : "All good")}"></span>`;
+    const where = overlayOpen && h?.location ? ` <span class="warp-dim">· ${esc(h.location.name)}</span>` : "";
     headEl.innerHTML = `
-      <span class="warp-overlay-title">\uD83C\uDFB2 ${clock ? `<b>${esc(clock)}</b>` : "Warp"}</span>
+      <span class="warp-overlay-title">\uD83C\uDFB2 ${clock ? `<b>${esc(clock)}</b>` : "Warp"}${where}</span>
       ${dot}
       <span class="warp-overlay-actions">
+        ${overlayOpen && edge ? `<button class="warp-btn warp-btn-ghost" data-detach title="Float" aria-label="Detach">⇱</button>` : ""}
         ${overlayOpen ? `<button class="warp-btn warp-btn-ghost" data-open-sheet title="Open full sheet" aria-label="Open full sheet">⤢</button>` : ""}
         <button class="warp-btn warp-btn-ghost" data-toggle-overlay title="${overlayOpen ? "Collapse" : "Expand"}" aria-label="${overlayOpen ? "Collapse" : "Expand"}">${overlayOpen ? "–" : "+"}</button>
       </span>`;
@@ -518,6 +652,15 @@ function setup(ctx) {
     if (t.closest("[data-open-sheet]")) {
       drawerView = "sheet";
       tab.activate();
+      return;
+    }
+    if (t.closest("[data-detach]")) {
+      const vp = viewport();
+      edge = null;
+      store("overlayEdge", "");
+      place({ x: Math.max(PAD, vp.width - PANEL_W - 40), y: 72, w: PANEL_W, h: Math.min(420, cur.h) });
+      renderHead();
+      fitOverlay();
       return;
     }
     if (t.closest("[data-toggle-overlay]") || !overlayOpen) {

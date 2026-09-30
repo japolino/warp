@@ -161,7 +161,22 @@ export const STYLES = `
 .warp-dot.warp-bg-bad { background: var(--warp-bad); }
 .warp-overlay-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; max-height: var(--warp-overlay-max, 70vh); padding-top: 4px; border-top: 1px solid var(--lumiverse-border, rgba(255,255,255,0.12)); }
 .warp-overlay-collapsed { border-radius: 999px; }
-.warp-overlay-collapsed .warp-overlay-head { cursor: pointer; }
+
+/* Attached to a screen edge: sidebar (left/right) or strip (top/bottom). */
+.warp-overlay[data-edge=left]:not(.warp-overlay-collapsed),
+.warp-overlay[data-edge=right]:not(.warp-overlay-collapsed) { border-radius: 12px; }
+.warp-overlay[data-edge=top]:not(.warp-overlay-collapsed),
+.warp-overlay[data-edge=bottom]:not(.warp-overlay-collapsed) { border-radius: 12px; }
+.warp-overlay[data-edge=top] .warp-overlay-body,
+.warp-overlay[data-edge=bottom] .warp-overlay-body {
+  display: grid; grid-template-columns: minmax(170px, 220px) 1fr; gap: 8px 18px; align-content: start;
+}
+.warp-overlay[data-edge=top] .warp-bars,
+.warp-overlay[data-edge=bottom] .warp-bars {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px 18px;
+}
+.warp-overlay[data-edge=top] .warp-section,
+.warp-overlay[data-edge=bottom] .warp-section { grid-column: 1 / -1; }.warp-overlay-collapsed .warp-overlay-head { cursor: pointer; }
 .warp-overlay-collapsed .warp-overlay-body { display: none; }
 
 /* ───────── modal ───────── */
