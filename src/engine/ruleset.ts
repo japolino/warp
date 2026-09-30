@@ -8,6 +8,8 @@ import { compile, ExprError } from "./expr.js";
 import { parseDice, DiceError } from "./dice.js";
 import { normDungeons } from "./dungeon/defs.js";
 import type { DungeonDef } from "./dungeon/types.js";
+import { normDating } from "./date/defs.js";
+import type { DatingDef } from "./date/types.js";
 
 export type Tone = "good" | "warn" | "bad" | "neutral";
 export type StatKind = "meter" | "attribute" | "skill" | "money" | "hidden";
@@ -342,6 +344,7 @@ export interface Ruleset {
   randomEvents: RandomEventsDef;
   liveChoices: LiveChoicesDef;
   dungeons: Record<string, DungeonDef>;
+  dating: DatingDef;
 }
 
 export interface Issue {
@@ -1209,6 +1212,8 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const randomEvents = normRandomEvents(raw.random_events ?? raw.events, c, known);
   const liveChoices = normLiveChoices(raw.live_choices, c, known);
   const dungeons = normDungeons(raw.dungeons, c, known);
+  // Dating adds its love and fear relationship stats if the ruleset doesn't have them.
+  const dating = normDating(raw.dating, c, { stats: relStats, order: relStatOrder }, new Set(Object.keys(people)));
 
   const ruleset: Ruleset = {
     name: typeof raw.name === "string" ? raw.name : "Untitled ruleset",
@@ -1238,7 +1243,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     narration: { notes: typeof narrRaw.notes === "string" ? narrRaw.notes : undefined, numbers: narrRaw.numbers === true },
     weather, wardrobe, encounters, codex, feats, perks,
     ...(perkPoints && stats[perkPoints] ? { perkPoints } : {}),
-    secrets, fronts, randomEvents, liveChoices, dungeons,
+    secrets, fronts, randomEvents, liveChoices, dungeons, dating,
   };
 
   // Cross-references that need everything loaded.

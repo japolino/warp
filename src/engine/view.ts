@@ -12,6 +12,8 @@ import {
 } from "./world.js";
 import type { ChangeView, ChoiceView, ClothingView, HudView, MapView, RecordView, Tone } from "../shared/protocol.js";
 import { dungeonOf, dungeonsHere, levelOf, memberFighter } from "./dungeon/run.js";
+import { activeSession, dateDigest, dateMoves, moodOf, type DateMove } from "./date/talk.js";
+import { REACTION_LABEL } from "./date/types.js";
 
 function pct(v: number, min: number, max: number) {
   return max > min ? Math.max(0, Math.min(1, (v - min) / (max - min))) : 0;
@@ -250,6 +252,20 @@ export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; 
       plain("dungeon:leave", "Leave the dungeon", d?.name ?? "Dungeon", "Climb back out with what you've found"),
     ];
   }
+  // A conversation or date takes over the choices: featured topics and moves, plus the full list in the drawer.
+  const asChoice = (m: DateMove): ChoiceView => ({
+    id: m.id, label: m.label, group: m.group, desc: m.desc, odds: m.odds, partialOdds: null, checkLabel: null,
+    veiled: m.romantic && (veils.has("romance") || veils.has("romantic")), params: [],
+  });
+  const moves = s.encounter ? [] : dateMoves(r, s, opts.lines);
+  if (activeSession(r, s)) {
+    const featured = moves.filter((m) => m.featured).map(asChoice);
+    // "More…" sits last, with the moves, so hotkeys run in the order the buttons appear.
+    const lastGroup = featured[featured.length - 1]?.group ?? "Talk";
+    const more = moves.length > featured.length ? [plain("date:open", "More…", lastGroup, "Every topic, gift and move — and what you know about them")] : [];
+    return [...featured, ...more];
+  }
+  const talk = moves.filter((m) => m.featured).map(asChoice);
   const dungeons = dungeonsHere(r, s).map((d) => plain(`dungeon:enter:${d.id}`, `Enter ${d.name}`, "Dungeon", d.desc ?? null));
   if (!s.encounter) (opts.live ?? []).forEach((c, i) => {
     const a = r.liveChoices.tags[c.tag];
@@ -291,7 +307,7 @@ export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; 
         params: a.params.map((p) => ({ id: p.id, label: p.label, options: Object.keys(p.options), default: p.default })),
       };
     });
-  return [...live, ...actions, ...dungeons, ...travel];
+  return [...live, ...actions, ...talk, ...dungeons, ...travel];
 }
 
 // ───────────────────────── change summaries ─────────────────────────
@@ -474,7 +490,7 @@ export function buildRecordView(r: Ruleset, messageId: string, swipe: number, re
         picked: d.pickedDesc,
         p: d.p[d.picked] ?? 0,
         source: d.source,
-        odds: Object.entries(d.p).map(([k, p]) => ({ desc: spec?.options.find((o) => o.id === k)?.desc ?? k, p })).sort((a, b) => b.p - a.p),
+        odds: Object.entries(d.p).map(([k, p]) => ({ desc: d.descs?.[k] ?? spec?.options.find((o) => o.id === k)?.desc ?? k, p })).sort((a, b) => b.p - a.p),
       };
     }),
     contradiction: rec.contradiction ?? null,
@@ -552,6 +568,8 @@ export function stateDigest(r: Ruleset, s: GameState): string {
       if (run.battle) lines.push(`Fighting: ${run.battle.fighters.filter((f) => f.side === "foe" && f.hp > 0).map((f) => f.name).join(", ")}.`);
     }
   } else if (here.length) lines.push(`Present here: ${here.join(", ")}`);
+  const date = dateDigest(r, s);
+  if (date) lines.push(date);
 
   const meters = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "meter" || d.kind === "money");
   const other = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "attribute" || d.kind === "skill");
@@ -626,7 +644,14 @@ export function sceneHints(r: Ruleset, s: GameState): { moods: Record<string, st
     }).filter(Boolean);
     if (parts.length) moods[personName(r, s, id)] = parts.join("; ");
   }
+  const sess = activeSession(r, s);
+  if (sess && s.people[sess.who]) {
+    const name = personName(r, s, sess.who);
+    const last = sess.last ? `, just reacted: ${REACTION_LABEL[sess.last.reaction].toLowerCase()}` : "";
+    moods[name] = `${moodOf(sess.mood).label.toLowerCase()}${last}${moods[name] ? `; ${moods[name]}` : ""}`;
+  }
   const notes: string[] = [];
+  if (sess?.kind === "outing") notes.push(`On a date at ${r.dating.venues[sess.venue ?? ""]?.name ?? "somewhere"}`);
   if (s.encounter) notes.push(`In a fight or tense encounter: ${r.encounters[s.encounter.id]?.name ?? s.encounter.id}`);
   if (s.dungeon) notes.push("Exploring a dungeon");
   return Object.keys(moods).length || notes.length ? { moods, notes } : null;

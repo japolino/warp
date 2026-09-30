@@ -14,7 +14,7 @@ const s = initialState(r);
 const msg = (): StateMsg => ({
   type: "state", chatId: "c1", status: { state: "ok", name: r.name, source: null, issues: [], characterName: null, cardKind: "character", tags: [] },
   hud: buildHud(r, s), map: null, choices: buildChoices(r, s, { lines: [], veils: [] }), records: [], suggestions: [],
-  latestMessageId: "m2", choicesAnchor: "m2", busy: false, dungeon: null, dungeonEntries: [],
+  latestMessageId: "m2", choicesAnchor: "m2", busy: false, dungeon: null, dungeonEntries: [], date: null,
 });
 
 type Sent = { type: string; detail: any };

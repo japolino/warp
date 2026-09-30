@@ -8,6 +8,8 @@ import { normalize, sample } from "./decide.js";
 import { emptyEffect, slug } from "./ruleset.js";
 import { applyEvent, cloneState, makeEnv, personName, timeKey, type EventSource, type GameState, type WarpEvent } from "./state.js";
 import { presentPeople } from "./world.js";
+import { DATE_PREFIX } from "./date/types.js";
+import { activeSession, resolveDate } from "./date/talk.js";
 
 export interface CheckResult {
   label: string;
@@ -49,6 +51,8 @@ export interface DecisionResult {
   p: Record<string, number>;
   /** Where the odds came from. */
   source: "model" | "weights";
+  /** Option descriptions, for rolls that aren't `decide:` blocks in the ruleset. */
+  descs?: Record<string, string>;
 }
 
 export interface Intent {
@@ -610,11 +614,23 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
     w.hints.push(...before.notices);
     w.push({ t: "noticed", src: "world" });
   }
-  const found = intent && !intent.actionId.startsWith(TRAVEL_PREFIX) ? findAction(r, before, intent.actionId) : null;
+  const found = intent && !intent.actionId.startsWith(TRAVEL_PREFIX) && !intent.actionId.startsWith(DATE_PREFIX) ? findAction(r, before, intent.actionId) : null;
   const a = found?.a;
   const inEncounter = !!before.encounter;
+  // A conversation or outing takes every turn until it ends; a typed line is the player's words in it.
+  const dateIntent = intent?.actionId.startsWith(DATE_PREFIX) ? intent : activeSession(r, before) && !intent ? { actionId: `${DATE_PREFIX}say`, via: "adjudicator" as const } : null;
 
-  if (intent?.actionId.startsWith(TRAVEL_PREFIX)) {
+  // A conversation the player walked away from is over.
+  if (before.date && !activeSession(r, before)) w.push({ t: "dt_end", src: "action" });
+
+  if (dateIntent) {
+    const done = resolveDate(builderOf(w), dateIntent);
+    if (done) {
+      rec.action = { id: dateIntent.actionId, label: done.label, via: dateIntent.via };
+      const veils = new Set((opts.veils ?? []).map((v) => v.toLowerCase()));
+      if (done.tags.some((t) => veils.has(t))) rec.veiled = true;
+    }
+  } else if (intent?.actionId.startsWith(TRAVEL_PREFIX)) {
     const to = intent.actionId.slice(TRAVEL_PREFIX.length);
     const dest = r.locations[to];
     if (dest) {
@@ -677,7 +693,8 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   rec.hints = w.hints;
   if (w.decisions.length) {
     rec.decisions = w.decisions;
-    for (const d of w.decisions) rec.hints.push(`${d.ask} → ${d.pickedDesc}`);
+    // Date rolls speak through their own directions; decide blocks are summarised here.
+    for (const d of w.decisions) if (!d.descs) rec.hints.push(`${d.ask} → ${d.pickedDesc}`);
   }
   needs.push(...w.needs);
   return rec;
@@ -812,7 +829,7 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal): WarpE
   return w.events;
 }
 
-/** A handle for systems that make their own turns outside the action flow (the dungeon). */
+/** A handle for systems that make their own turns outside the action flow (the dungeon, dates). */
 export interface TurnBuilder {
   readonly r: Ruleset;
   /** The live working state: every pushed event is already applied. */
@@ -823,21 +840,42 @@ export interface TurnBuilder {
   /** Apply a ruleset effect (stats, relationships, items…). */
   apply(effect: Effect, src: EventSource, extra?: Record<string, Value>): void;
   time(minutes: number, src: EventSource): void;
-  /** Tell the narrator on the next reply. */
+  /** Tell the narrator: on this reply during turn resolution, otherwise on the next one. */
   announce(text: string): void;
+  /** The decision model's odds for a question; when missing it's listed for the backend to ask, and null comes back. */
+  modelOdds(spec: DecideSpec): Record<string, number> | null;
+  /** Roll on odds with this turn's seeded dice; shown as a 🎭 chip. */
+  roll(id: string, ask: string, p: Record<string, number>, descs: Record<string, string>, source: "model" | "weights"): string;
 }
 
-/** Build events against a working copy; rules, clocks and the world react as usual. */
-export function buildTurn(r: Ruleset, before: GameState, seed: string, fn: (t: TurnBuilder) => void): WarpEvent[] {
-  const w = new Working(r, cloneState(before), seededRng(`${seed}:fx`), seed);
-  fn({
-    r, get s() { return w.s; }, seed,
+function builderOf(w: Working): TurnBuilder {
+  return {
+    r: w.r, get s() { return w.s; }, seed: w.seed,
     push: (e) => w.push(e),
     env: (extra = {}) => w.env(extra),
     apply: (effect, src, extra = {}) => effectToEvents(w, effect, src, extra),
     time: (minutes, src) => advanceTime(w, minutes, src),
     announce: (text) => announce(w, text),
-  });
+    modelOdds: (spec) => {
+      const model = w.odds[spec.id];
+      if (model) return normalize(model, spec.options.map((o) => o.id));
+      if (!w.needs.some((n) => n.id === spec.id)) w.needs.push(spec);
+      return null;
+    },
+    roll: (id, ask, p, descs, source) => {
+      const keys = Object.keys(p);
+      const odds = normalize(p, keys);
+      const picked = sample(odds, seededRng(`${w.seed}:roll:${id}`));
+      w.decisions.push({ id, ask, picked, pickedDesc: descs[picked] ?? picked, p: odds, source, descs });
+      return picked;
+    },
+  };
+}
+
+/** Build events against a working copy; rules, clocks and the world react as usual. */
+export function buildTurn(r: Ruleset, before: GameState, seed: string, fn: (t: TurnBuilder) => void): WarpEvent[] {
+  const w = new Working(r, cloneState(before), seededRng(`${seed}:fx`), seed);
+  fn(builderOf(w));
   runTriggers(w, false);
   if (r.clock.enabled && w.s.minutes > before.minutes) {
     const n = w.events.length;

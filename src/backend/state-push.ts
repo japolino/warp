@@ -2,6 +2,7 @@
 
 import { buildChoices, buildHud, buildMap, buildRecordView } from "../engine/view.js";
 import { buildDungeonEntries, buildDungeonView } from "../engine/dungeon/view.js";
+import { buildDateView } from "../engine/date/view.js";
 import type { RecordView, SuggestionView } from "../shared/protocol.js";
 import { getMessages, foldPath, liveChoicesOf, warpMeta } from "./ledger.js";
 import { getSettings } from "./settings.js";
@@ -32,7 +33,7 @@ export async function pushState(chatId: string | null, userId?: string, force = 
     const loaded = await getRuleset(chatId, userId, force);
     const status = statusOf(loaded);
     if (!chatId || !loaded?.ruleset) {
-      send({ type: "state", chatId, status, hud: null, map: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false, dungeon: null, dungeonEntries: [] }, userId);
+      send({ type: "state", chatId, status, hud: null, map: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false, dungeon: null, dungeonEntries: [], date: null }, userId);
       return;
     }
     const r = loaded.ruleset;
@@ -80,6 +81,7 @@ export async function pushState(chatId: string | null, userId?: string, force = 
       busy: busyChats.has(chatId),
       dungeon: settings.enabled ? await withName(buildDungeonView(r, state), chatId, userId) : null,
       dungeonEntries: settings.enabled ? buildDungeonEntries(r, state) : [],
+      date: settings.enabled ? buildDateView(r, state, settings.lines) : null,
     }, userId);
   } catch (e) {
     logError("pushState", e);

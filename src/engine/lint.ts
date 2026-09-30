@@ -9,7 +9,7 @@ import { SKILLS } from "./dungeon/content.js";
 export const FUNCTIONS = [
   "has", "count", "flag", "cond", "at", "rel", "met", "between", "roll",
   "wearing", "worn", "trait", "present", "where", "codex", "feat", "perk",
-  "secret", "front", "front_stage", "happened", "deepest",
+  "secret", "front", "front_stage", "happened", "deepest", "partner", "dates", "stage",
   "min", "max", "clamp", "floor", "ceil", "round", "abs",
 ];
 
@@ -30,6 +30,10 @@ function suggest(name: string, pool: string[]): string {
     if (d < bestD) { bestD = d; best = p; }
   }
   return best && bestD <= Math.max(2, Math.floor(name.length / 3)) ? ` — did you mean "${best}"?` : "";
+}
+
+function venueCostsWithoutMoney(r: Ruleset): boolean {
+  return !r.hud.money && Object.values(r.dating.venues).some((v) => v.cost > 0);
 }
 
 export function lintRuleset(r: Ruleset): Issue[] {
@@ -188,5 +192,21 @@ export function lintRuleset(r: Ruleset): Issue[] {
     for (const m of Object.values(d.monsters)) for (const sk of m.skills) if (!SKILLS[sk]) issues.push({ level: "warning", where: `${w} › monsters › ${m.id}`, message: `"${sk}" isn't a skill` });
   }
   for (const a of Object.values(r.liveChoices.tags)) checkAction(a, `Live choices › tags › ${a.id}`);
+  if (r.dating.enabled) {
+    const dx = { target: Object.keys(r.people)[0] ?? "someone" };
+    check(r.dating.with, "Dating › with", dx);
+    for (const t of Object.values(r.dating.topics)) check(t.when, `Dating › topics › ${t.id} › when`, dx);
+    const tags = new Set(Object.values(r.dating.venues).flatMap((v) => v.activities.flatMap((a) => a.tags)));
+    for (const v of Object.values(r.dating.venues)) {
+      check(v.when, `Dating › venues › ${v.id} › when`, dx);
+      if (v.at && Object.keys(r.locations).length && !r.locations[v.at]) issues.push({ level: "warning", where: `Dating › venues › ${v.id} › at`, message: `"${v.at}" isn't a declared location${suggest(v.at, Object.keys(r.locations))}` });
+    }
+    if (venueCostsWithoutMoney(r)) issues.push({ level: "warning", where: "Dating › venues", message: "venues have a cost but the ruleset has no money stat — outings will be free" });
+    for (const [pid, tastes] of Object.entries(r.dating.people)) for (const key of Object.keys(tastes)) {
+      const bare = key.replace(/^(tag|item|act):/, "");
+      const known = r.dating.topics[key] || r.dating.categories.some((c) => c.id === key) || (key.startsWith("tag:") ? tags.has(bare) : key.startsWith("item:") ? !!r.items[bare] : tags.has(key) || Object.values(r.dating.venues).some((v) => v.activities.some((a) => a.id === bare)));
+      if (!known) issues.push({ level: "warning", where: `Dating › people › ${pid}`, message: `"${key}" isn't a topic, category, activity tag (tag:…) or item (item:…)${suggest(key, Object.keys(r.dating.topics))}` });
+    }
+  }
   return issues;
 }

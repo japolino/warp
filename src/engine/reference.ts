@@ -1,7 +1,7 @@
 // The ruleset format, condensed for a model to write against. Kept in code so
 // the AI builder and the engine can't drift apart.
 
-export const PART_LABELS = ["core", "stats", "people", "world", "actions", "encounters", "journal", "rules", "story"] as const;
+export const PART_LABELS = ["core", "stats", "people", "world", "actions", "encounters", "journal", "rules", "story", "dating"] as const;
 export type PartLabel = (typeof PART_LABELS)[number];
 
 /** What each lorebook entry ("part") holds. */
@@ -15,6 +15,7 @@ export const PART_CONTENTS: Record<PartLabel, string> = {
   journal: "codex, feats, perks",
   rules: "triggers",
   story: "secrets, fronts, random_events, live_choices",
+  dating: "dating (tastes, topics, venues), plus gift items and actions to get them",
 };
 
 /** Which part an issue's "where" belongs to. */
@@ -30,6 +31,7 @@ export function partForIssue(where: string): PartLabel {
   if (["codex", "feats", "perks"].some((k) => head.startsWith(k))) return "journal";
   if (head.startsWith("triggers") || head.startsWith("rules")) return "rules";
   if (["secrets", "fronts", "random events", "live choices"].some((k) => head.startsWith(k))) return "story";
+  if (head.startsWith("dating")) return "dating";
   return "core";
 }
 
@@ -169,12 +171,29 @@ live_choices:     # a writer phrases options for the moment; each must carry one
     careful: { desc: "The cautious, safe option" }
 STORY EFFECTS: front: { harbour_gangs: -20 }, reveal: [ward_accident] (opens its next stage), gauge: +30 (brings the next event closer).
 
+DATING (the "dating" part):
+dating:           # talk topic by topic (tastes stay hidden until learned), ask people out, go on outings. \`dating: true\` = all built-ins
+  love: love                       # relationship stat used as love (created if missing); fear: fear likewise
+  romance: true                    # false = friendship only. Romance is never offered with anyone under 18 or of unknown age
+  stages: { stranger: 0, acquaintance: 10, friend: 30, close: 55, partner: { at: 80, partner: true } }   # love (0–100 of its range) per rung; partner only through a returned confession
+  hostile: { at: 60, label: Hostile }        # fear (0–100) that turns someone hostile
+  people:                          # authored tastes; otherwise the decision model reads them from the card (or they're seeded)
+    jo: { loves: [food], likes: [music, tag:nature], dislikes: [gossip], hates: [tease] }   # topic ids, category ids, tag:<activity tag>, item:<item id>
+  topics:                          # merged over the built-ins; false removes one. Built-ins: weather, their_day, local_news, gossip, hobbies, music, books_films, games, sport, food, travel, nature, fashion, work, family, dreams, past, worries, secrets, compliment_looks, compliment_mind, joke, tease, flirt, ideal_partner, love_life, the_two_of_you
+    cooking: { label: Cooking, category: interests, stage: acquaintance, when: "at('kitchen')" }   # categories: small_talk, interests, personal, charm, romance
+  venues:                          # outings; built-ins: cafe, park, cinema, dinner, arcade, bar (builtin_venues: false drops them)
+    pier: { name: The pier, at: docks, cost: 10, activities: { fish: { label: Go fishing, tags: [nature, calm] }, sunset: { label: Watch the sunset together, tags: [romance], romantic: true } }, events: { gulls: { text: "Gulls steal the chips.", enjoy: -5 } } }
+  with: "not flag('grounded')"     # who can be talked to (target = the person)
+  pace: { minutes_per_topic: 5, fatigue_per_topic: 12, beats: 4, minutes_per_beat: 30 }
+items: { flowers: { name: Flowers, tags: [gift] } }   # items tagged gift can be given during a conversation
+
 FORMULA NAMES: stats, flags, hour, minute, day, weekday, month, date, season, weather, temperature, indoors, outside,
 warmth, warmth_min, warmth_max, too_cold, too_hot, reveal, exposed, naked, in_encounter, round, foe.<stat>, target.<relstat>, location.
 FUNCTIONS: has(item[, n]), count(item), flag(x), cond(x), at(loc), rel(person, stat), met(person), between(v, lo, hi), roll('2d6'),
 wearing(item), worn(slot), trait(t), present(person), where(person), codex(id), feat(id), perk(id),
 secret(id) (stages the narrator knows), front(id) (clock value), front_stage(id) (stages surfaced), happened(event),
 deepest(dungeon) (deepest floor reached), in_dungeon, dungeon_depth,
+stage(person) (relationship rung, −1 hostile), partner(person), dates(person), in_date, on_outing,
 min, max, clamp, floor, ceil, round, abs.
 Operators: + - * / % < <= > >= == != and or not, a ? b : c. Strings in single quotes.
 `;

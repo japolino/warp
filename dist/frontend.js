@@ -356,6 +356,53 @@ var STYLES = `
 .warp-dg-cmd { padding: 5px 10px; }
 .warp-dg-mates { display: flex; flex-direction: column; gap: 4px; }
 .warp-dg-mate { display: flex; align-items: center; gap: 6px; }
+
+/* ───────── dating ───────── */
+.warp-date { display: flex; flex-direction: column; gap: 10px; }
+.warp-date-person, .warp-date-head { display: flex; gap: 10px; align-items: flex-start; padding: 8px; border-radius: var(--warp-radius); background: var(--warp-fill-subtle); border: 1px solid var(--warp-border); }
+.warp-date-head { background: color-mix(in srgb, hsl(var(--warp-hue, 300) 60% 55%) 6%, var(--warp-fill-subtle)); }
+.warp-date-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.warp-date-avatar { flex: none; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; color: #fff; background: hsl(var(--warp-hue, 300) 45% 42%); box-shadow: inset 0 0 0 2px hsl(var(--warp-hue, 300) 55% 60% / .6); }
+.warp-date-avatar.big { width: 44px; height: 44px; font-size: 18px; }
+.warp-date-name { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.warp-date-stage { font-size: 11px; padding: 0 8px; border-radius: 999px; border: 1px solid var(--warp-border); color: var(--warp-muted); }
+.warp-date-stage.partner { color: #e07aa6; border-color: #e07aa6; }
+.warp-date-stage.hostile { color: var(--warp-bad); border-color: var(--warp-bad); }
+.warp-date-here { color: var(--warp-good); font-size: 10px; }
+.warp-date-meter { display: grid; grid-template-columns: 58px 1fr auto; align-items: center; gap: 6px; font-size: 11.5px; }
+.warp-date-meter-l { color: var(--warp-dim); }
+.warp-date-meter-t { color: var(--warp-muted); white-space: nowrap; }
+.warp-date-meter-track { height: 5px; border-radius: 4px; background: var(--warp-fill); overflow: hidden; }
+.warp-date-meter-track > div { height: 100%; border-radius: 4px; transition: width 400ms ease; background: var(--warp-info); }
+.warp-date-meter.love .warp-date-meter-track > div { background: #e07aa6; }
+.warp-date-meter.fear .warp-date-meter-track > div { background: var(--warp-bad); }
+.warp-date-meter.enjoy .warp-date-meter-track > div { background: var(--warp-warn); }
+.warp-date-meter.fatigue.good .warp-date-meter-track > div { background: var(--warp-good); }
+.warp-date-meter.fatigue.warn .warp-date-meter-track > div { background: var(--warp-warn); }
+.warp-date-meter.fatigue.bad .warp-date-meter-track > div { background: var(--warp-bad); }
+.warp-date-knows { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; }
+.warp-date-mood { display: flex; flex-direction: column; align-items: center; font-size: 11px; color: var(--warp-muted); min-width: 56px; }
+.warp-date-face { font-size: 26px; line-height: 1.1; }
+.warp-date-stats { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
+.warp-date-combo { font-size: 12px; font-weight: 600; color: var(--warp-muted); white-space: nowrap; }
+.warp-date-combo.hot { color: var(--warp-warn); }
+.warp-date-outing { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; padding: 6px 8px; border-radius: var(--warp-radius); border: 1px dashed var(--warp-border); }
+.warp-date-outing .warp-date-meter { flex-basis: 100%; }
+.warp-date-last { font-size: 12.5px; padding: 4px 8px; border-radius: var(--warp-radius); background: var(--warp-fill); }
+.warp-date-move.venue, .warp-date-move.activity { border-color: color-mix(in srgb, var(--warp-warn) 50%, var(--warp-border)); }
+.warp-date-topics { display: flex; flex-direction: column; gap: 6px; }
+.warp-date-cats { display: flex; flex-wrap: wrap; gap: 4px; }
+.warp-date-cat { font: inherit; font-size: 12px; background: transparent; color: var(--warp-muted); border: 1px solid var(--warp-border); border-radius: 999px; padding: 2px 10px; cursor: pointer; }
+.warp-date-cat[aria-selected=true] { color: var(--warp-text); border-color: var(--warp-accent); background: var(--warp-fill); }
+.warp-date-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; }
+.warp-date-topic { font: inherit; text-align: left; display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: var(--warp-radius); border: 1px solid var(--warp-border); background: var(--warp-fill-subtle); color: var(--warp-text); cursor: pointer; min-height: 32px; }
+.warp-date-topic:hover:not(:disabled) { border-color: var(--warp-accent); background: var(--warp-fill); }
+.warp-date-topic:disabled { cursor: not-allowed; }
+.warp-date-topic.locked { opacity: .5; }
+.warp-date-topic-l { flex: 1; min-width: 0; }
+.warp-date-react { font-size: 11px; font-weight: 700; min-width: 18px; }
+.warp-date-used { font-size: 10.5px; color: var(--warp-dim); }
+.warp-date-lock { font-size: 11px; }
 `;
 
 // src/frontend/overlay-layout.ts
@@ -1152,7 +1199,7 @@ function renderDungeon(v, entries, ui) {
 var PROVIDER = "warp";
 var MAX_CHOICES = 12;
 function cueChoices(choices, showOdds) {
-  return choices.filter((c) => !c.id.startsWith("dungeon:")).slice(0, MAX_CHOICES).map((c) => ({
+  return choices.filter((c) => !c.id.startsWith("dungeon:") && c.id !== "date:open").slice(0, MAX_CHOICES).map((c) => ({
     id: c.id,
     label: c.label,
     group: c.group,
@@ -1193,6 +1240,25 @@ function renderCueCard(h) {
   const enc = h.encounter ? `<div class="sec">⚔ ${esc(h.encounter.name)} · round ${h.encounter.round}</div><div class="bars">${h.encounter.stats.map((s) => `<div class="bar"><span class="l">${esc(h.encounter.foe)} ${esc(s.label)}</span><span class="v">${s.value}/${s.max}</span><div class="track"><div class="fill ${s.tone}" style="width:${Math.round(s.pct * 100)}%"></div></div></div>`).join("")}</div>` : "";
   return `<style>${CARD_CSS}</style><div class="w"><div class="top">${top}</div>${enc}${bars ? `<div class="bars">${bars}</div>` : ""}${conds ? `<div class="chips">${conds}</div>` : ""}${here ? `<div class="sec">Here</div><div class="ppl">${here}</div>` : ""}</div>`;
 }
+function renderCueDateCard(d) {
+  const s = d.session;
+  const p = d.person;
+  if (!s || !p)
+    return null;
+  const bar = (label, v, text, cls) => `<div class="bar"><span class="l">${esc(label)}</span><span class="v">${esc(text)}</span><div class="track"><div class="fill ${cls}" style="width:${Math.round(Math.max(0, Math.min(1, v)) * 100)}%"></div></div></div>`;
+  const where = s.kind === "outing" ? `\uD83D\uDCCD ${esc(s.venue ?? "Out")} · ${s.closing ? "winding down" : `moment ${Math.min(s.beat + 1, s.beats)}/${s.beats}`}` : s.kind === "plan" ? "Choosing where to go" : "Talking";
+  return `<style>${CARD_CSS}.face{font-size:28px;line-height:1}</style><div class="w">
+    <div class="top"><span class="face">${s.moodFace}</span><b>${esc(p.name)}</b><span class="dim">${esc(p.partner ? `♥ ${p.stage}` : p.stage)} · ${esc(s.moodLabel)}</span></div>
+    <div class="dim">${where}</div>
+    <div class="bars">
+      ${bar("Love", p.love, p.loveText ?? "", "bad")}
+      ${p.fear > 0.005 ? bar("Fear", p.fear, p.fearText ?? "", "warn") : ""}
+      ${s.kind === "outing" ? bar("Enjoyment", s.enjoy / 100, `${Math.round(s.enjoy)}%`, "good") : ""}
+      ${bar("Fatigue", s.fatigue / 100, s.fatigue >= 80 ? "tired of talking" : "", s.fatigue >= 80 ? "bad" : s.fatigue >= 60 ? "warn" : "good")}
+    </div>
+    <div class="chips">${s.combo ? `<span class="chip">${s.combo >= 3 ? "\uD83D\uDD25" : "✦"} streak ×${s.combo}</span>` : ""}${s.last ? `<span class="chip">${esc(s.last.label)}: ${esc(s.last.text.toLowerCase())}</span>` : ""}</div>
+  </div>`;
+}
 function connectCue(opts) {
   let view = { state: null, enabled: false, showOdds: true, busy: false, busyLabel: "" };
   let request = null;
@@ -1221,6 +1287,9 @@ function connectCue(opts) {
     if (!req || !s || s.chatId !== req.chatId)
       return;
     const cards = view.enabled && s.hud ? [{ cardId: "status", title: `Warp · ${s.hud.rulesetName}`, html: renderCueCard(s.hud) }] : [];
+    const date = view.enabled && s.date ? renderCueDateCard(s.date) : null;
+    if (date)
+      cards.push({ cardId: "date", title: `Warp · ${s.date.person.name}`, html: date });
     const next = new Set;
     for (const card of cards) {
       next.add(card.cardId);
@@ -1278,6 +1347,117 @@ function connectCue(opts) {
   };
 }
 
+// src/frontend/date-ui.ts
+var REACT_ICON = { love: "♥♥", like: "♥", neutral: "–", dislike: "✕", hate: "✕✕" };
+var REACT_TONE = { love: "good", like: "good", neutral: "neutral", dislike: "warn", hate: "bad" };
+function hue(name) {
+  let h = 0;
+  for (const c of name)
+    h = (h * 31 + c.charCodeAt(0)) % 360;
+  return h;
+}
+function avatar(name, big = false) {
+  return `<span class="warp-date-avatar${big ? " big" : ""}" style="--warp-hue:${hue(name)}" aria-hidden="true">${esc(name.trim().charAt(0).toUpperCase() || "?")}</span>`;
+}
+function meter(label, value, text, cls) {
+  const pct = Math.round(Math.max(0, Math.min(1, value)) * 100);
+  return `<div class="warp-date-meter ${cls}" title="${esc(`${label}: ${text ?? `${pct}%`}`)}"><span class="warp-date-meter-l">${esc(label)}</span><div class="warp-date-meter-track"><div style="width:${pct}%"></div></div><span class="warp-date-meter-t">${esc(text ?? `${pct}%`)}</span></div>`;
+}
+function stageBadge(p) {
+  return `<span class="warp-date-stage${p.hostile ? " hostile" : ""}${p.partner ? " partner" : ""}">${p.partner ? "♥ " : ""}${esc(p.stage)}</span>`;
+}
+function knows(p) {
+  const bits = [
+    p.loves.length ? `<span class="warp-tone-good">♥♥ ${esc(p.loves.join(", "))}</span>` : "",
+    p.likes.length ? `<span class="warp-tone-good">♥ ${esc(p.likes.join(", "))}</span>` : "",
+    p.dislikes.length ? `<span class="warp-tone-bad">✕ ${esc(p.dislikes.join(", "))}</span>` : ""
+  ].filter(Boolean);
+  return bits.length ? `<div class="warp-date-knows">${bits.join("")}</div>` : `<div class="warp-date-knows warp-dim">You haven't learned their tastes yet.</div>`;
+}
+function personRow(p, busy) {
+  return `<div class="warp-date-person">
+    ${avatar(p.name)}
+    <div class="warp-date-main">
+      <div class="warp-date-name"><b>${esc(p.name)}</b>${stageBadge(p)}${p.here ? `<span class="warp-date-here" title="Here now">●</span>` : ""}${p.dates ? `<span class="warp-dim">${p.dates} date${p.dates === 1 ? "" : "s"}</span>` : ""}</div>
+      ${meter("Love", p.love, p.loveText, "love")}
+      ${p.fear > 0.005 ? meter("Fear", p.fear, p.fearText, "fear") : ""}
+      ${knows(p)}
+    </div>
+    <button class="warp-btn warp-mini" data-date-act="date:talk@${esc(p.id)}"${busy ? " disabled" : ""}>Talk</button>
+  </div>`;
+}
+function odds(p) {
+  if (p === null)
+    return "";
+  const tone = p >= 0.67 ? "good" : p >= 0.34 ? "warn" : "bad";
+  return `<span class="warp-choice-odds warp-tone-${tone}">${Math.round(p * 100)}%</span>`;
+}
+function topicTile(t, busy) {
+  const react = t.known ? `<span class="warp-date-react warp-tone-${REACT_TONE[t.known]}" title="${esc(t.knownLabel ?? "")}">${REACT_ICON[t.known]}</span>` : `<span class="warp-date-react warp-dim" title="You don't know how they feel about this yet">?</span>`;
+  const title = [t.desc, t.lock, t.knownLabel ? `Last time: ${t.knownLabel.toLowerCase()}` : null, t.used ? `Raised ${t.used}× this time — it wears thin` : null].filter(Boolean).join(`
+`);
+  return `<button class="warp-date-topic${t.lock ? " locked" : ""}" ${t.lock || busy ? "disabled" : ""} data-date-act="date:topic:${esc(t.id)}" title="${esc(title)}">
+    ${react}<span class="warp-date-topic-l">${esc(t.label)}</span>${t.lock ? `<span class="warp-date-lock" aria-label="locked">\uD83D\uDD12</span>` : odds(t.odds)}${t.used ? `<span class="warp-date-used">×${t.used}</span>` : ""}
+  </button>`;
+}
+function renderDate(v, ui) {
+  if (!v)
+    return `<div class="warp-card"><h3>Dating is off</h3><p>Add <b>dating: true</b> to the ruleset to talk topic by topic and go on dates.</p></div>`;
+  const s = v.session;
+  if (!s || !v.person) {
+    if (!v.people.length)
+      return `<div class="warp-card"><h3>Nobody to talk to yet</h3><p>People appear here once the story introduces them.</p></div>`;
+    return `<div class="warp-date">
+      <div class="warp-eyebrow">People · pick someone to talk to</div>
+      ${v.people.map((p) => personRow(p, ui.busy)).join("")}
+    </div>`;
+  }
+  const p = v.person;
+  const fatigueTone = s.fatigue >= 80 ? "bad" : s.fatigue >= 60 ? "warn" : "good";
+  const outing = s.kind === "outing" ? `<div class="warp-date-outing">
+        <span>\uD83D\uDCCD <b>${esc(s.venue ?? "Out")}</b></span>
+        <span class="warp-dim">${s.closing ? "Winding down" : `Moment ${Math.min(s.beat + 1, s.beats)} of ${s.beats}`}</span>
+        ${meter("Enjoyment", s.enjoy / 100, `${Math.round(s.enjoy)}%`, "enjoy")}
+      </div>` : s.kind === "plan" ? `<div class="warp-date-outing"><span>\uD83D\uDDD3 They said yes — pick where to go.</span></div>` : "";
+  const last = s.last ? `<div class="warp-date-last warp-tone-${REACT_TONE[s.last.reaction]}">${REACT_ICON[s.last.reaction]} <b>${esc(s.last.label)}</b> — ${esc(s.last.text)}</div>` : "";
+  const groups = new Map;
+  for (const m of v.moves)
+    groups.set(m.group, [...groups.get(m.group) ?? [], m]);
+  const moves = [...groups].map(([g, list]) => `<div class="warp-choice-group">
+      <div class="warp-choice-group-label">${esc(g)}</div>
+      <div class="warp-choice-grid">${list.map((m) => `<button class="warp-choice warp-date-move ${esc(m.kind)}" data-date-act="${esc(m.id)}" title="${esc(m.desc ?? "")}"${ui.busy ? " disabled" : ""}><span class="warp-choice-label">${esc(m.label)}</span>${odds(m.odds)}</button>`).join("")}</div>
+    </div>`).join("");
+  const cats = v.categories;
+  const cat = cats.find((c) => c.id === ui.cat) ?? cats.find((c) => c.topics.some((t) => !t.lock)) ?? cats[0];
+  const topics = cats.length ? `<div class="warp-date-topics">
+      <div class="warp-date-cats" role="tablist">${cats.map((c) => {
+    const open = c.topics.filter((t) => !t.lock).length;
+    return `<button class="warp-date-cat" role="tab" aria-selected="${c.id === cat?.id}" data-date-cat="${esc(c.id)}" title="${esc(c.label)}">${c.icon} <span>${esc(c.label)}</span>${open ? "" : " \uD83D\uDD12"}</button>`;
+  }).join("")}</div>
+      <div class="warp-date-grid">${cat ? cat.topics.map((t) => topicTile(t, ui.busy)).join("") : ""}</div>
+    </div>` : "";
+  return `<div class="warp-date">
+    <div class="warp-date-head">
+      ${avatar(p.name, true)}
+      <div class="warp-date-main">
+        <div class="warp-date-name"><b>${esc(p.name)}</b>${stageBadge(p)}</div>
+        ${meter("Love", p.love, p.loveText, "love")}
+        ${meter("Fear", p.fear, p.fearText, "fear")}
+      </div>
+      <div class="warp-date-mood" title="Mood: ${esc(s.moodLabel)}"><span class="warp-date-face">${s.moodFace}</span><span>${esc(s.moodLabel)}</span></div>
+    </div>
+    <div class="warp-date-stats">
+      ${meter("Fatigue", s.fatigue / 100, s.fatigue >= 100 ? "Done talking" : s.fatigue >= 80 ? "Tired of talking" : s.fatigue >= 60 ? "Flagging" : "Fresh", `fatigue ${fatigueTone}`)}
+      <span class="warp-date-combo${s.combo >= 3 ? " hot" : ""}" title="Good reactions in a row boost love">${s.combo >= 3 ? "\uD83D\uDD25" : "✦"} Streak ×${s.combo}</span>
+    </div>
+    ${outing}
+    ${last}
+    ${moves}
+    ${topics}
+    ${knows(p)}
+  </div>`;
+}
+
 // src/frontend.ts
 var CLEANUP_KEY = "__warpCleanup";
 var ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><circle cx="8.5" cy="8.5" r="1.3" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/></svg>`;
@@ -1306,6 +1486,7 @@ function setup(ctx) {
   let busy = { chatId: "", on: false, label: "" };
   let editingBar = null;
   let drawerView = "sheet";
+  let dateCat = null;
   let dgPick = null;
   const dgMates = new Set;
   const openSections = new Map;
@@ -1551,6 +1732,7 @@ function setup(ctx) {
       ["sheet", "Sheet"],
       ...state?.map ? [["map", "Map"]] : [],
       ...state?.hud ? [["journal", "Journal"]] : [],
+      ...state?.date ? [["date", state.date.session ? "Dating \uD83D\uDCAC" : "Dating"]] : [],
       ...state?.dungeon || state?.dungeonEntries?.length ? [["dungeon", state?.dungeon ? "Dungeon ⚔" : "Dungeon"]] : [],
       ["rules", `Ruleset${status.issues.some((i) => i.level === "error") ? " ⚠" : ""}`],
       ["settings", "Settings"]
@@ -1565,6 +1747,8 @@ function setup(ctx) {
       body = state?.hud ? renderHud(state.hud, { editing: editingBar, compact: false }) : renderRulesetCard(status, hasChat);
     } else if (drawerView === "map") {
       body = renderMap(state?.map ?? null);
+    } else if (drawerView === "date") {
+      body = renderDate(state?.date ?? null, { cat: dateCat, busy: busy.on && busy.chatId === state?.chatId });
     } else if (drawerView === "dungeon") {
       const isBusy = busy.on && busy.chatId === state?.chatId;
       body = renderDungeon(state?.dungeon ?? null, state?.dungeonEntries ?? [], { pick: dgPick, mates: dgMates, busy: isBusy });
@@ -1872,6 +2056,18 @@ function setup(ctx) {
       return;
     if (onDungeonClick(t))
       return;
+    const dateCatEl = t.closest("[data-date-cat]");
+    if (dateCatEl) {
+      dateCat = dateCatEl.dataset.dateCat;
+      renderDrawer();
+      return;
+    }
+    const dateAct = t.closest("[data-date-act]");
+    if (dateAct) {
+      if (!dateAct.disabled)
+        act(dateAct.dataset.dateAct);
+      return;
+    }
     const go = t.closest("[data-go]");
     if (go) {
       act(`go:${go.dataset.go}`);
@@ -2157,6 +2353,12 @@ function setup(ctx) {
     root.addEventListener("toggle", () => rememberSections(root), true);
   }
   function act(actionId) {
+    if (actionId === "date:open") {
+      drawerView = "date";
+      tab.activate();
+      renderDrawer();
+      return;
+    }
     if (actionId.startsWith("dungeon:")) {
       if (actionId === "dungeon:leave")
         confirmLeave();

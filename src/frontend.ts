@@ -8,6 +8,7 @@ import { attachedBox, edgeForDrop, PAD, PANEL_W, PILL, type Box, type Edge, type
 import { emptyDraft, renderBuilder, renderBuilderCta, type BuilderDraft } from "./frontend/builder-ui.js";
 import { renderDungeon, type DungeonPick } from "./frontend/dungeon-ui.js";
 import { connectCue } from "./frontend/cue-bridge.js";
+import { renderDate } from "./frontend/date-ui.js";
 import { esc, renderChips, renderChoices, renderHud, renderJournal, renderMap, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
 
 type StateMsg = Extract<BackendToFrontend, { type: "state" }>;
@@ -38,7 +39,8 @@ export function setup(ctx: SpindleFrontendContext) {
   let bDraft: BuilderDraft = emptyDraft();
   let busy = { chatId: "", on: false, label: "" };
   let editingBar: string | null = null;
-  let drawerView: "sheet" | "map" | "journal" | "dungeon" | "rules" | "settings" = "sheet";
+  let drawerView: "sheet" | "map" | "journal" | "date" | "dungeon" | "rules" | "settings" = "sheet";
+  let dateCat: string | null = null;
   let dgPick: DungeonPick = null;
   const dgMates = new Set<string>();
   const openSections = new Map<string, boolean>();
@@ -275,6 +277,7 @@ export function setup(ctx: SpindleFrontendContext) {
       ["sheet", "Sheet"],
       ...(state?.map ? [["map", "Map"] as [typeof drawerView, string]] : []),
       ...(state?.hud ? [["journal", "Journal"] as [typeof drawerView, string]] : []),
+      ...(state?.date ? [["date", state.date.session ? "Dating 💬" : "Dating"] as [typeof drawerView, string]] : []),
       ...(state?.dungeon || state?.dungeonEntries?.length ? [["dungeon", state?.dungeon ? "Dungeon ⚔" : "Dungeon"] as [typeof drawerView, string]] : []),
       ["rules", `Ruleset${status.issues.some((i) => i.level === "error") ? " ⚠" : ""}`],
       ["settings", "Settings"],
@@ -288,6 +291,8 @@ export function setup(ctx: SpindleFrontendContext) {
       body = state?.hud ? renderHud(state.hud, { editing: editingBar, compact: false }) : renderRulesetCard(status, hasChat);
     } else if (drawerView === "map") {
       body = renderMap(state?.map ?? null);
+    } else if (drawerView === "date") {
+      body = renderDate(state?.date ?? null, { cat: dateCat, busy: busy.on && busy.chatId === state?.chatId });
     } else if (drawerView === "dungeon") {
       const isBusy = busy.on && busy.chatId === state?.chatId;
       body = renderDungeon(state?.dungeon ?? null, state?.dungeonEntries ?? [], { pick: dgPick, mates: dgMates, busy: isBusy });
@@ -528,6 +533,10 @@ export function setup(ctx: SpindleFrontendContext) {
     if (view) { drawerView = view.dataset.view as typeof drawerView; renderDrawer(); return; }
     if (onBuilderClick(t)) return;
     if (onDungeonClick(t)) return;
+    const dateCatEl = t.closest<HTMLElement>("[data-date-cat]");
+    if (dateCatEl) { dateCat = dateCatEl.dataset.dateCat!; renderDrawer(); return; }
+    const dateAct = t.closest<HTMLElement>("[data-date-act]");
+    if (dateAct) { if (!(dateAct as HTMLButtonElement).disabled) act(dateAct.dataset.dateAct!); return; }
     const go = t.closest<HTMLElement>("[data-go]");
     if (go) { act(`go:${go.dataset.go}`); return; }
     const jump = t.closest<HTMLElement>("[data-jump]");
@@ -714,6 +723,8 @@ export function setup(ctx: SpindleFrontendContext) {
 
   // ───────── events: in-chat clicks (delegated; injected nodes are sanitized) ─────────
   function act(actionId: string) {
+    // "More…" during a conversation opens every topic in the drawer.
+    if (actionId === "date:open") { drawerView = "date"; tab.activate(); renderDrawer(); return; }
     // Dungeon choices open the dungeon screen instead of sending a line.
     if (actionId.startsWith("dungeon:")) {
       if (actionId === "dungeon:leave") void confirmLeave();

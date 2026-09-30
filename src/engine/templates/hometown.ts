@@ -736,5 +736,42 @@ live_choices:
       effects: { stress: -1 }
 `,
     },
+    {
+      label: "dating",
+      yaml: `# Date mode: talk topic by topic, learn what people like, ask them out.
+# Love is the "love" relationship stat; "fear" is added automatically.
+dating:
+  love: love
+  people:
+    jo: { loves: [food, their_day], likes: [music, tag:food, tag:calm], dislikes: [gossip, tease], hates: [fashion] }
+    professor_ward: { loves: [books_films, dreams], likes: [compliment_mind, tag:conversation], dislikes: [joke, flirt], hates: [gossip] }
+    dex: { loves: [local_news, gossip], likes: [games, tag:drink, tag:thrill], dislikes: [work, family], hates: [compliment_looks] }
+  topics:
+    the_docks: { label: "What goes on at the docks", category: small_talk, when: "hour >= 18 or hour < 4" }
+  venues:
+    park: { name: The park, at: park }
+    bar: { name: The Strip, at: the_strip }
+
+items:
+  flowers: { name: A bunch of flowers, tags: [gift] }
+  chocolates: { name: Box of chocolates, tags: [gift] }
+
+actions:
+  buy_flowers:
+    label: Buy flowers (£12)
+    group: Shops
+    at: [high_street]
+    when: money >= 12
+    time: 5
+    effects: { money: -12, give: flowers }
+  buy_chocolates:
+    label: Buy chocolates (£8)
+    group: Shops
+    at: [high_street]
+    when: money >= 8
+    time: 5
+    effects: { money: -8, give: chocolates }
+`,
+    },
   ],
 };

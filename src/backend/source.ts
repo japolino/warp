@@ -104,9 +104,28 @@ export async function getRuleset(chatId: string | null, userId?: string, force =
   }
 }
 
+const briefs = new Map<string, { text: string; at: number }>();
+
+/** The card's description, personality and scenario, clipped — for questions about who people are. */
+export async function characterBrief(chatId: string, userId?: string): Promise<string> {
+  const id = await characterForChat(chatId, userId).catch(() => null);
+  if (!id) return "";
+  const hit = briefs.get(id);
+  if (hit && Date.now() - hit.at < 60_000) return hit.text;
+  const c = await host().characters.get(id, userId).catch(() => null);
+  const text = c ? [
+    `Name: ${c.name}`,
+    c.description && `Description: ${c.description}`,
+    c.personality && `Personality: ${c.personality}`,
+    c.scenario && `Scenario: ${c.scenario}`,
+  ].filter(Boolean).join("\n").slice(0, 4000) : "";
+  briefs.set(id, { text, at: Date.now() });
+  return text;
+}
+
 export function invalidateCharacter(characterId?: string | null) {
-  if (characterId) byCharacter.delete(characterId);
-  else byCharacter.clear();
+  if (characterId) { byCharacter.delete(characterId); briefs.delete(characterId); }
+  else { byCharacter.clear(); briefs.clear(); }
 }
 
 export function statusOf(l: Loaded | null): RulesetStatus {

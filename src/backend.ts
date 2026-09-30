@@ -3,6 +3,8 @@ import { availableChoices, buyPerk, changeClothes, forgetPerson, LIVE_PREFIX, ma
 import type { Ruleset } from "./engine/ruleset.js";
 import type { GameState, WarpEvent } from "./engine/state.js";
 import { TEMPLATES } from "./engine/templates/index.js";
+import { dateMoves } from "./engine/date/talk.js";
+import { DATE_PREFIX } from "./engine/date/types.js";
 import type { FrontendToBackend } from "./shared/protocol.js";
 import { logError, send, toast } from "./backend/host.js";
 import { foldPath, getMessages, liveChoicesOf, patchWarpMeta, shiftAfterSwipeDelete, warpMeta, writeRecord } from "./backend/ledger.js";
@@ -183,6 +185,11 @@ spindle.onFrontendMessage(async (raw, userId) => {
           if (!c || !r.liveChoices.tags[c.tag]) { toast("warning", "That choice isn't available anymore.", userId); await pushState(msg.chatId, userId); return; }
           say = `*${c.label}*`;
           intent = { actionId: `${LIVE_PREFIX}${c.tag}${c.target ? `${TARGET_SEP}${c.target}` : ""}`, via: "choice", label: c.label };
+        } else if (msg.actionId.startsWith(DATE_PREFIX)) {
+          const m = dateMoves(r, state, settings.lines).find((x) => x.id === msg.actionId);
+          if (!m) { toast("warning", "That isn't possible right now.", userId); await pushState(msg.chatId, userId); return; }
+          say = m.say;
+          intent = { actionId: m.id, via: "choice", label: m.label };
         } else if (msg.actionId.startsWith(TRAVEL_PREFIX)) {
           const to = msg.actionId.slice(TRAVEL_PREFIX.length);
           if (!travelTargets(r, state).includes(to)) { toast("warning", "You can't get there from here.", userId); await pushState(msg.chatId, userId); return; }

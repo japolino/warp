@@ -11,6 +11,7 @@ import { availableChoices, TRAVEL_PREFIX, travelTargets, type Intent, type Propo
 import type { DecideSpec, Ruleset, StatDef } from "../engine/ruleset.js";
 import { personName, type GameState } from "../engine/state.js";
 import { stateDigest } from "../engine/view.js";
+import { activeSession } from "../engine/date/talk.js";
 import type { Settings } from "../shared/protocol.js";
 import { logError } from "./host.js";
 
@@ -58,8 +59,10 @@ export async function readTurn(opts: {
 }): Promise<Reading> {
   const { decider, r, s, settings, playerText, player } = opts;
   const q: Questions = {};
-  const actions = playerText ? availableChoices(r, s, settings.lines) : [];
-  const travel = playerText ? travelTargets(r, s) : [];
+  // In a conversation or on a date, typed lines are the player's words in it (read when the turn resolves), not actions.
+  const talking = !!activeSession(r, s);
+  const actions = playerText && !talking ? availableChoices(r, s, settings.lines) : [];
+  const travel = playerText && !talking ? travelTargets(r, s) : [];
 
   if (playerText && (actions.length || travel.length)) {
     const criteria: Record<string, string> = {
@@ -136,6 +139,8 @@ export async function readTurn(opts: {
 export async function odds(opts: {
   decider: Decider; r: Ruleset; s: GameState; specs: DecideSpec[];
   playerText: string; sceneText: string; player: string; timeoutMs: number;
+  /** Who the people are (the card), for questions about tastes and ages. */
+  card?: string;
 }): Promise<Record<string, Record<string, number>>> {
   const q: Questions = {};
   for (const d of opts.specs) {
@@ -149,6 +154,7 @@ export async function odds(opts: {
     game_state: stateDigest(opts.r, opts.s),
     scene_so_far: clip(opts.sceneText, 2000),
     player_message: clip(opts.playerText, 1200),
+    ...(opts.card ? { character_card: opts.card } : {}),
   };
   const ans = await safeAsk(opts.decider, state, q, opts.timeoutMs, "decide odds");
   const out: Record<string, Record<string, number>> = {};

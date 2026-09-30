@@ -17,7 +17,7 @@ import { host, logError } from "./host.js";
 import { activeRecord, foldPath, getMessages, patchMeta, patchWarpMeta, warpMeta, writeRecord, type Msg, type Suggestion } from "./ledger.js";
 import { writeLiveChoices } from "./live.js";
 import { getSettings } from "./settings.js";
-import { getRuleset } from "./source.js";
+import { characterBrief, getRuleset } from "./source.js";
 import { busyChats, pushState, schedulePush } from "./state-push.js";
 
 interface Pending {
@@ -186,7 +186,9 @@ export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorCon
       let res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene });
       if (decider && res.needs.length) {
         // Uncertain reactions: the model supplies odds, the same seed re-rolls the same dice with them.
-        const o = await odds({ decider, r, s: before, specs: res.needs, playerText: lastUser?.content ?? "", sceneText, player, timeoutMs: budget() });
+        // Questions about who someone is (tastes, age) need the card, not just the scene.
+        const card = res.needs.some((n) => n.id.startsWith("date:pref:") || n.id.startsWith("date:adult:")) ? await characterBrief(ctx.chatId, ctx.userId) : undefined;
+        const o = await odds({ decider, r, s: before, specs: res.needs, playerText: lastUser?.content ?? "", sceneText, player, timeoutMs: budget(), card });
         if (Object.keys(o).length) res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene, odds: o });
       }
       rec = res.record;

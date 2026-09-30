@@ -22,7 +22,12 @@ A game engine under your roleplay. Warp owns stats, dice, time, inventory and re
 | Secrets | Ladders of stages that open by condition. Only opened stages ever reach the narrator's prompt, so they can't leak; a stage-0 cue lets it play someone hiding something without knowing what |
 | Living world | Hidden clocks (`fronts`) that fill with in-game time, show signs, and surface events; story beats judged by the decision model push them. Random events come from a hidden gauge per in-game day, with an omen before each |
 | Live choices | Choices written for the moment. The writer must tag each one from a fixed list, and the tag decides the check and effects; with Jev, the model weighs which kinds of move fit |
+| Dating | Talk topic by topic: each person has hidden tastes (authored, read from the card by the decision model, or seeded) that you discover as you go. Reactions move love and fear, which set the stage (stranger → acquaintance → friend → close → partner, or hostile) that unlocks more topics. Mood, conversation fatigue and a streak bonus shape every reaction, and a line you type is judged on its own words. Ask people out, pick a venue, and play the outing moment by moment for an enjoyment score; confess, kiss, give gifts. Romance is only ever offered between adults |
 | Dungeons | Roguelike diving: floors of face-down tiles (monsters, elites, guardians, treasure, traps, springs, merchants, events, surprises, romance moments) with one way down. Party battles with HP/MP/TP, skills, items, escape and auto-battle; quit any time and keep the loot, or get wiped out and lose it. Story moments are written up by the narrator. Built-in bestiary, events and art |
+
+## Visual novel mode
+
+With the Cue visual-novel extension open, Warp's choices appear on the stage as buttons with their odds, a live status card (and one for the conversation or date in progress) can be pinned from **Panels**, and the moods Warp's rules decide are passed to Cue so its portraits match.
 
 ## ✨ Build with AI
 

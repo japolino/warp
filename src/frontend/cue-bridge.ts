@@ -7,7 +7,7 @@
 //   vn-game-request-v1 Cue → Warp   send the state again
 //   vn-panel-request-v1 / vn-panel-export-v1   live status cards ("Keep it updated")
 
-import type { BackendToFrontend, ChoiceView, HudView } from "../shared/protocol.js";
+import type { BackendToFrontend, ChoiceView, DateView, HudView } from "../shared/protocol.js";
 import { esc } from "./render.js";
 
 type StateMsg = Extract<BackendToFrontend, { type: "state" }>;
@@ -25,9 +25,9 @@ export interface BridgeView {
 
 interface PanelRequest { version: 1; chatId: string; messageId: string; swipeId: number; sourceFingerprint: string }
 
-/** Choices Cue can act on. Dungeon moves open Warp's own screen, which Cue would cover. */
+/** Choices Cue can act on. Dungeon moves and "More…" open Warp's own screens, which Cue would cover. */
 export function cueChoices(choices: ChoiceView[], showOdds: boolean) {
-  return choices.filter((c) => !c.id.startsWith("dungeon:")).slice(0, MAX_CHOICES).map((c) => ({
+  return choices.filter((c) => !c.id.startsWith("dungeon:") && c.id !== "date:open").slice(0, MAX_CHOICES).map((c) => ({
     id: c.id,
     label: c.label,
     group: c.group,
@@ -73,6 +73,26 @@ export function renderCueCard(h: HudView): string {
   return `<style>${CARD_CSS}</style><div class="w"><div class="top">${top}</div>${enc}${bars ? `<div class="bars">${bars}</div>` : ""}${conds ? `<div class="chips">${conds}</div>` : ""}${here ? `<div class="sec">Here</div><div class="ppl">${here}</div>` : ""}</div>`;
 }
 
+/** The conversation or date in progress: mood, where things stand, fatigue and the streak. */
+export function renderCueDateCard(d: DateView): string | null {
+  const s = d.session;
+  const p = d.person;
+  if (!s || !p) return null;
+  const bar = (label: string, v: number, text: string, cls: string) => `<div class="bar"><span class="l">${esc(label)}</span><span class="v">${esc(text)}</span><div class="track"><div class="fill ${cls}" style="width:${Math.round(Math.max(0, Math.min(1, v)) * 100)}%"></div></div></div>`;
+  const where = s.kind === "outing" ? `📍 ${esc(s.venue ?? "Out")} · ${s.closing ? "winding down" : `moment ${Math.min(s.beat + 1, s.beats)}/${s.beats}`}` : s.kind === "plan" ? "Choosing where to go" : "Talking";
+  return `<style>${CARD_CSS}.face{font-size:28px;line-height:1}</style><div class="w">
+    <div class="top"><span class="face">${s.moodFace}</span><b>${esc(p.name)}</b><span class="dim">${esc(p.partner ? `♥ ${p.stage}` : p.stage)} · ${esc(s.moodLabel)}</span></div>
+    <div class="dim">${where}</div>
+    <div class="bars">
+      ${bar("Love", p.love, p.loveText ?? "", "bad")}
+      ${p.fear > 0.005 ? bar("Fear", p.fear, p.fearText ?? "", "warn") : ""}
+      ${s.kind === "outing" ? bar("Enjoyment", s.enjoy / 100, `${Math.round(s.enjoy)}%`, "good") : ""}
+      ${bar("Fatigue", s.fatigue / 100, s.fatigue >= 80 ? "tired of talking" : "", s.fatigue >= 80 ? "bad" : s.fatigue >= 60 ? "warn" : "good")}
+    </div>
+    <div class="chips">${s.combo ? `<span class="chip">${s.combo >= 3 ? "🔥" : "✦"} streak ×${s.combo}</span>` : ""}${s.last ? `<span class="chip">${esc(s.last.label)}: ${esc(s.last.text.toLowerCase())}</span>` : ""}</div>
+  </div>`;
+}
+
 export interface CueBridge {
   update(view: BridgeView): void;
   destroy(): void;
@@ -105,6 +125,8 @@ export function connectCue(opts: { act(id: string): void; chatId(): string | nul
     const s = view.state;
     if (!req || !s || s.chatId !== req.chatId) return;
     const cards = view.enabled && s.hud ? [{ cardId: "status", title: `Warp · ${s.hud.rulesetName}`, html: renderCueCard(s.hud) }] : [];
+    const date = view.enabled && s.date ? renderCueDateCard(s.date) : null;
+    if (date) cards.push({ cardId: "date", title: `Warp · ${s.date!.person!.name}`, html: date });
     const next = new Set<string>();
     for (const card of cards) {
       next.add(card.cardId);

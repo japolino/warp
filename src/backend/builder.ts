@@ -125,6 +125,7 @@ const SYSTEMS: { id: string; label: string }[] = [
   { id: "schedules", label: "NPC schedules & places" },
   { id: "encounters", label: "Encounters / combat" },
   { id: "dungeon", label: "Dungeon diving (roguelike floors, party battles)" },
+  { id: "dating", label: "Dating (topics, hidden tastes, outings)" },
   { id: "crime", label: "Crime & consequences" },
   { id: "journal", label: "Codex & feats" },
   { id: "perks", label: "Levels & perks" },
@@ -283,6 +284,7 @@ function buildPreview(s: BuilderSession) {
     feats: Object.keys(r.feats).length,
     perks: Object.keys(r.perks).length,
     secrets: Object.keys(r.secrets).length,
+    venues: r.dating.enabled ? Object.keys(r.dating.venues).length : 0,
     fronts: Object.keys(r.fronts).length,
     events: Object.keys(r.randomEvents.events).length,
   };
@@ -397,6 +399,7 @@ async function draftAll(s: BuilderSession, userId?: string) {
     if (label === "encounters") return systems.has("encounters") || systems.has("dungeon");
     if (label === "journal") return systems.has("journal") || systems.has("perks");
     if (label === "story") return systems.has("story");
+    if (label === "dating") return systems.has("dating");
     return true;
   };
   const baseOf = (label: string) => {

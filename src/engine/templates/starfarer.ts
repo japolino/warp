@@ -475,5 +475,72 @@ live_choices:
       effects: { energy: +5 }
 `,
     },
+    {
+      label: "dating",
+      yaml: `# Date mode: talk topic by topic, learn what people like, ask them out.
+# Affinity is love; a "fear" relationship stat is added automatically.
+dating:
+  love: affinity
+  stages: { stranger: 0, contact: 12, friend: 35, close: 65, partner: { at: 85, partner: true } }
+  people:
+    vex: { loves: [the_frontier, gossip], likes: [tag:drink, tag:music, joke], dislikes: [work], hates: [family] }
+    kade: { loves: [ships, work], likes: [tag:food, tag:competition], dislikes: [compliment_looks, weather], hates: [tease] }
+  topics:
+    ships: { label: "Ships and engines", category: interests }
+    the_frontier: { label: "Life on the frontier", category: small_talk }
+    old_wars: { label: "The old wars", category: personal, stage: close }
+    fashion: false
+    sport: false
+  builtin_venues: false
+  venues:
+    cantina:
+      name: The Dry Dock bar
+      at: bar
+      cost: 25
+      activities:
+        synth_shots: { label: "Do synth-shots", tags: [drink, thrill] }
+        holo_darts: { label: "Play holo-darts", tags: [games, competition] }
+        band: { label: "Dance to the house band", tags: [dance, music] }
+        booth: { label: "Share a back booth", tags: [conversation, romance], romantic: true }
+      events:
+        brawl: { text: "A brawl breaks out two tables over.", enjoy: -6 }
+        round: { text: "A stranger buys the table a round.", enjoy: 6 }
+    observation:
+      name: The observation deck
+      cost: 0
+      activities:
+        stars: { label: "Name the constellations", tags: [calm, observation] }
+        ships_pass: { label: "Watch the ships come in", tags: [observation, ships] }
+        close: { label: "Sit close in the starlight", tags: [romance, calm], romantic: true }
+        story: { label: "Trade stories", tags: [conversation, humor] }
+      events:
+        aurora: { text: "An ion storm lights up the dark outside.", enjoy: 10 }
+        patrol: { text: "Station security moves everyone along for a while.", enjoy: -5 }
+    market:
+      name: A stroll through the concourse market
+      at: concourse
+      cost: 10
+      activities:
+        street_food: { label: "Try alien street food", tags: [food, thrill] }
+        trinket: { label: "Buy them a trinket", tags: [gift, fun] }
+        haggle: { label: "Haggle together", tags: [competition, humor] }
+        fortune: { label: "Visit a fortune-reading drone", tags: [fun, observation] }
+      events:
+        pickpocket: { text: "Someone tries to lift a credit chip.", enjoy: -6 }
+        festival: { text: "A dockworkers' festival spills into the market.", enjoy: 8 }
+
+items:
+  star_lily: { name: A star lily, tags: [gift] }
+
+actions:
+  buy_star_lily:
+    label: Buy a star lily (30 cr)
+    group: Trade
+    at: [merchant]
+    when: credits >= 30
+    time: 5
+    effects: { credits: -30, give: star_lily }
+`,
+    },
   ],
 };

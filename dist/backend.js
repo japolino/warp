@@ -845,6 +845,405 @@ var init_defs = __esm(() => {
   STAT_KEYS = ["hp", "mp", "atk", "def", "mat", "mdf", "agi"];
 });
 
+// src/engine/date/content.ts
+function venueTags(v) {
+  return [...new Set(v.activities.flatMap((a) => a.tags))];
+}
+var DEFAULT_CATEGORIES, DEFAULT_STAGES, TOPICS, DEFAULT_TOPICS, act = (id, label, tags, romantic = false) => ({ id, label, tags, romantic }), ev2 = (id, text, enjoy, weight = 1) => ({ id, text, enjoy, weight }), DEFAULT_VENUES;
+var init_content2 = __esm(() => {
+  DEFAULT_CATEGORIES = [
+    { id: "small_talk", label: "Small talk", icon: "\uD83D\uDCAC" },
+    { id: "interests", label: "Interests", icon: "\uD83C\uDFA8" },
+    { id: "personal", label: "Personal", icon: "\uD83E\uDEC2" },
+    { id: "charm", label: "Charm", icon: "✨" },
+    { id: "romance", label: "Romance", icon: "\uD83D\uDC97" }
+  ];
+  DEFAULT_STAGES = [
+    { id: "stranger", label: "Stranger", at: 0, partner: false },
+    { id: "acquaintance", label: "Acquaintance", at: 10, partner: false },
+    { id: "friend", label: "Friend", at: 30, partner: false },
+    { id: "close", label: "Close", at: 55, partner: false },
+    { id: "partner", label: "Partner", at: 80, partner: true }
+  ];
+  TOPICS = {
+    weather: { label: "The weather", category: "small_talk", desc: "Safe, if a little dull" },
+    their_day: { label: "How their day went", category: "small_talk" },
+    local_news: { label: "What's going on around here", category: "small_talk" },
+    gossip: { label: "Gossip", category: "small_talk", desc: "Who's doing what with whom" },
+    hobbies: { label: "Hobbies", category: "interests" },
+    music: { label: "Music", category: "interests" },
+    books_films: { label: "Books and films", category: "interests" },
+    games: { label: "Games", category: "interests" },
+    sport: { label: "Sport", category: "interests" },
+    food: { label: "Food", category: "interests" },
+    travel: { label: "Travel", category: "interests" },
+    nature: { label: "The outdoors", category: "interests" },
+    fashion: { label: "Fashion", category: "interests" },
+    work: { label: "Work or studies", category: "personal", stage: 1 },
+    family: { label: "Family", category: "personal", stage: 1 },
+    dreams: { label: "Dreams and ambitions", category: "personal", stage: 1 },
+    past: { label: "Their past", category: "personal", stage: 2, weight: 1.3 },
+    worries: { label: "What's worrying them", category: "personal", stage: 2, weight: 1.3 },
+    secrets: { label: "Share a secret", category: "personal", stage: 3, weight: 1.5 },
+    compliment_looks: { label: "Compliment their looks", category: "charm", stage: 1 },
+    compliment_mind: { label: "Praise their mind", category: "charm" },
+    joke: { label: "Tell a joke", category: "charm" },
+    tease: { label: "Tease them", category: "charm", stage: 1 },
+    flirt: { label: "Flirt", category: "romance", stage: 1, romantic: true },
+    ideal_partner: { label: "Their ideal partner", category: "romance", stage: 2, romantic: true },
+    love_life: { label: "Their love life", category: "romance", stage: 2, romantic: true },
+    the_two_of_you: { label: "The two of you", category: "romance", stage: 3, romantic: true, weight: 1.5 }
+  };
+  DEFAULT_TOPICS = Object.fromEntries(Object.entries(TOPICS).map(([id, t]) => [id, {
+    id,
+    weight: 1,
+    romantic: false,
+    stage: 0,
+    ...t
+  }]));
+  DEFAULT_VENUES = {
+    cafe: {
+      id: "cafe",
+      name: "A café",
+      desc: "Coffee, cake and a corner table.",
+      cost: 10,
+      romantic: false,
+      activities: [
+        act("order_for_them", "Order for them", ["food"]),
+        act("share_dessert", "Share a dessert", ["food", "sweet"]),
+        act("people_watch", "People-watch and make up stories", ["observation", "humor"]),
+        act("talk_for_hours", "Lose track of time talking", ["conversation"])
+      ],
+      events: [
+        ev2("spill", "A clumsy moment: a drink goes over.", -6),
+        ev2("song", "The café plays a song that fits the moment perfectly.", 8),
+        ev2("friend", "Someone who knows {target} stops by the table.", 0)
+      ]
+    },
+    park: {
+      id: "park",
+      name: "A walk in the park",
+      desc: "Paths, trees, a pond.",
+      cost: 0,
+      romantic: false,
+      activities: [
+        act("feed_birds", "Feed the birds", ["nature", "animals"]),
+        act("picnic", "Have a picnic", ["food", "nature"]),
+        act("watch_sky", "Sit and watch the sky", ["calm", "nature"]),
+        act("hold_hands", "Walk hand in hand", ["romance"], true)
+      ],
+      events: [
+        ev2("rain", "It starts to rain.", -6),
+        ev2("dog", "A friendly dog bounds over to say hello.", 6),
+        ev2("sunset", "The light turns gold; it's genuinely beautiful.", 10)
+      ]
+    },
+    cinema: {
+      id: "cinema",
+      name: "The cinema",
+      desc: "Something on the big screen.",
+      cost: 15,
+      romantic: false,
+      activities: [
+        act("their_pick", "Let them pick the film", ["film"]),
+        act("horror", "Watch a horror film", ["film", "thrill"]),
+        act("popcorn", "Share popcorn", ["food"]),
+        act("dark_hands", "Hold hands in the dark", ["romance"], true)
+      ],
+      events: [
+        ev2("great_film", "The film turns out to be great.", 10),
+        ev2("loud_row", "Someone behind talks through the whole film.", -8)
+      ]
+    },
+    dinner: {
+      id: "dinner",
+      name: "Dinner out",
+      desc: "A proper restaurant.",
+      cost: 40,
+      romantic: false,
+      activities: [
+        act("fancy_order", "Order something fancy", ["food", "luxury"]),
+        act("wine", "Share a bottle of wine", ["drink", "luxury"]),
+        act("toast", "Make a toast to them", ["humor", "conversation"]),
+        act("candlelight", "Talk by candlelight", ["romance", "conversation"], true)
+      ],
+      events: [
+        ev2("wrong_order", "The kitchen gets the order wrong.", -5),
+        ev2("dessert_free", "The waiter brings a dessert on the house.", 7)
+      ]
+    },
+    arcade: {
+      id: "arcade",
+      name: "The arcade",
+      desc: "Lights, noise, tickets.",
+      cost: 10,
+      romantic: false,
+      activities: [
+        act("compete", "Compete at the machines", ["games", "competition"]),
+        act("claw", "Win them a prize", ["games", "gift"]),
+        act("dance_game", "Try the dance game", ["dance", "music"]),
+        act("photo_booth", "Squeeze into the photo booth", ["fun", "romance"])
+      ],
+      events: [
+        ev2("jackpot", "The machine pays out a jackpot of tickets.", 9),
+        ev2("broken", "A machine eats their coins.", -5)
+      ]
+    },
+    bar: {
+      id: "bar",
+      name: "A bar",
+      desc: "Low lights and a crowd.",
+      cost: 20,
+      romantic: false,
+      activities: [
+        act("drinks", "Get a round in", ["drink"]),
+        act("dance", "Dance", ["dance", "music"]),
+        act("karaoke", "Do karaoke", ["music", "performance"]),
+        act("quiet_corner", "Find a quiet corner", ["conversation", "romance"], true)
+      ],
+      events: [
+        ev2("band", "A band starts playing, and it's good.", 8),
+        ev2("creep", "A stranger won't leave {target} alone.", -8)
+      ]
+    }
+  };
+});
+
+// src/engine/date/types.ts
+var REACTIONS, REACTION_VALUE, REACTION_LABEL, DATE_PREFIX = "date:";
+var init_types2 = __esm(() => {
+  REACTIONS = ["love", "like", "neutral", "dislike", "hate"];
+  REACTION_VALUE = { love: 2, like: 1, neutral: 0, dislike: -1, hate: -2 };
+  REACTION_LABEL = { love: "Loved it", like: "Liked it", neutral: "Indifferent", dislike: "Didn't like it", hate: "Hated it" };
+});
+
+// src/engine/date/defs.ts
+function disabledDating() {
+  return {
+    enabled: false,
+    love: "love",
+    fear: "fear",
+    stages: DEFAULT_STAGES,
+    hostileAt: 60,
+    hostileLabel: "Hostile",
+    categories: DEFAULT_CATEGORIES,
+    topics: {},
+    topicOrder: [],
+    venues: {},
+    people: {},
+    minutesPerTopic: 5,
+    fatiguePerTopic: 12,
+    beats: 4,
+    minutesPerBeat: 30,
+    romance: true
+  };
+}
+function defaultRelStat(id, kind) {
+  const love = kind === "love";
+  return {
+    id,
+    label: titleCase(id),
+    kind: "meter",
+    min: 0,
+    max: 100,
+    start: 0,
+    good: love ? "high" : "low",
+    perHour: 0,
+    show: "text",
+    narrator: 5,
+    bands: love ? [{ at: 0, text: "Indifferent", tone: "neutral" }, { at: 20, text: "Fond", tone: "warn" }, { at: 50, text: "Smitten", tone: "good" }, { at: 80, text: "In love", tone: "good" }] : [{ at: 0, text: "At ease", tone: "good" }, { at: 30, text: "Wary", tone: "warn" }, { at: 60, text: "Afraid", tone: "bad" }]
+  };
+}
+function normTopic(id, raw, base, where, c, cats, stageIds) {
+  const r = isObj(raw) ? raw : typeof raw === "string" ? { label: raw } : raw === true ? {} : {};
+  if (!isObj(raw) && typeof raw !== "string" && raw !== true) {
+    c.warn(where, "expected a topic (`label:`, `category:`) or `false` to remove it");
+    return null;
+  }
+  const category = typeof r.category === "string" ? r.category : base?.category ?? "small_talk";
+  if (!cats.has(category))
+    c.warn(`${where} › category`, `"${category}" isn't a category (${[...cats].join(", ")})`);
+  let stage = base?.stage ?? 0;
+  if (r.stage !== undefined) {
+    const i = typeof r.stage === "number" ? r.stage : stageIds.indexOf(String(r.stage));
+    if (i < 0 || i >= stageIds.length)
+      c.warn(`${where} › stage`, `"${r.stage}" isn't a stage (${stageIds.join(", ")})`);
+    else
+      stage = i;
+  }
+  const when = r.when !== undefined ? c.expr(r.when, `${where} › when`) : undefined;
+  return {
+    id,
+    label: typeof r.label === "string" ? r.label : base?.label ?? titleCase(id),
+    category,
+    stage,
+    romantic: r.romantic !== undefined ? r.romantic === true : base?.romantic ?? category === "romance",
+    weight: Math.max(0, c.num(r.weight, `${where} › weight`, base?.weight ?? 1)),
+    ...typeof r.desc === "string" ? { desc: r.desc } : base?.desc ? { desc: base.desc } : {},
+    ...typeof r.say === "string" ? { say: r.say } : base?.say ? { say: base.say } : {},
+    ...when !== undefined ? { when: String(when) } : base?.when ? { when: base.when } : {}
+  };
+}
+function normVenue(id, raw, base, where, c) {
+  if (!isObj(raw) && raw !== true && typeof raw !== "string") {
+    c.warn(where, "expected a venue (`name:`, `activities:`) or `false` to remove it");
+    return null;
+  }
+  const r = isObj(raw) ? raw : typeof raw === "string" ? { name: raw } : {};
+  const activities = [];
+  for (const [aid, a] of Object.entries(isObj(r.activities) ? r.activities : {})) {
+    const ar = isObj(a) ? a : typeof a === "string" ? { label: a } : {};
+    activities.push({
+      id: aid,
+      label: typeof ar.label === "string" ? ar.label : titleCase(aid),
+      tags: list(ar.tags).map((t) => t.toLowerCase()),
+      romantic: ar.romantic === true,
+      ...typeof ar.say === "string" ? { say: ar.say } : {}
+    });
+  }
+  const events = [];
+  for (const [eid, e] of Object.entries(isObj(r.events) ? r.events : {})) {
+    const er = isObj(e) ? e : typeof e === "string" ? { text: e } : {};
+    if (typeof er.text !== "string") {
+      c.warn(`${where} › events › ${eid}`, "needs `text:`");
+      continue;
+    }
+    events.push({ id: eid, text: er.text, weight: Math.max(0, c.num(er.weight, `${where} › events › ${eid} › weight`, 1)), enjoy: c.num(er.enjoy, `${where} › events › ${eid} › enjoy`, 0) });
+  }
+  const when = r.when !== undefined ? c.expr(r.when, `${where} › when`) : undefined;
+  const v = {
+    id,
+    name: typeof r.name === "string" ? r.name : base?.name ?? titleCase(id),
+    cost: Math.max(0, c.num(r.cost, `${where} › cost`, base?.cost ?? 0)),
+    romantic: r.romantic !== undefined ? r.romantic === true : base?.romantic ?? false,
+    activities: activities.length ? activities : base?.activities ?? [],
+    events: events.length ? events : base?.events ?? [],
+    ...typeof r.desc === "string" ? { desc: r.desc } : base?.desc ? { desc: base.desc } : {},
+    ...typeof r.at === "string" ? { at: r.at } : base?.at ? { at: base.at } : {},
+    ...when !== undefined ? { when: String(when) } : base?.when ? { when: base.when } : {}
+  };
+  if (v.activities.length < 2)
+    c.warn(where, "needs at least two `activities:` to make an outing of it");
+  return v;
+}
+function normDating(raw, c, rel, people) {
+  const def = disabledDating();
+  if (raw === undefined || raw === false || raw === null)
+    return def;
+  if (raw !== true && !isObj(raw)) {
+    c.warn("Dating", "should be `true` or a map");
+    return def;
+  }
+  const r = isObj(raw) ? raw : {};
+  def.enabled = true;
+  def.romance = r.romance !== false;
+  for (const k of ["love", "fear"]) {
+    const id = typeof r[k] === "string" ? String(r[k]) : k;
+    def[k] = id;
+    if (!rel.stats[id]) {
+      rel.stats[id] = defaultRelStat(id, k);
+      rel.order.push(id);
+    }
+  }
+  if (isObj(r.categories)) {
+    const cats = [];
+    for (const [id, cr] of Object.entries(r.categories)) {
+      const x = isObj(cr) ? cr : typeof cr === "string" ? { label: cr } : {};
+      cats.push({ id, label: typeof x.label === "string" ? x.label : titleCase(id), icon: typeof x.icon === "string" ? x.icon : "\uD83D\uDCAC" });
+    }
+    if (cats.length)
+      def.categories = r.builtin_topics === false ? cats : [...DEFAULT_CATEGORIES.filter((d) => !cats.some((x) => x.id === d.id)), ...cats];
+  }
+  if (isObj(r.stages)) {
+    const stages = [];
+    for (const [id, sr] of Object.entries(r.stages)) {
+      const x = isObj(sr) ? sr : { at: sr };
+      stages.push({ id, label: typeof x.label === "string" ? x.label : titleCase(id), at: c.num(x.at, `Dating › stages › ${id}`, 0), partner: x.partner === true });
+    }
+    stages.sort((a, b) => a.at - b.at);
+    if (stages.length >= 2)
+      def.stages = stages;
+    else
+      c.warn("Dating › stages", "needs at least two stages — using the built-in ladder");
+  }
+  const hostile = isObj(r.hostile) ? r.hostile : r.hostile !== undefined ? { at: r.hostile } : {};
+  def.hostileAt = Math.max(1, Math.min(100, c.num(hostile.at, "Dating › hostile", def.hostileAt)));
+  if (typeof hostile.label === "string")
+    def.hostileLabel = hostile.label;
+  const cats = new Set(def.categories.map((x) => x.id));
+  const stageIds = def.stages.map((s) => s.id);
+  const topics = r.builtin_topics === false ? {} : { ...DEFAULT_TOPICS };
+  for (const [id, t] of Object.entries(isObj(r.topics) ? r.topics : {})) {
+    if (t === false) {
+      delete topics[id];
+      continue;
+    }
+    const n = normTopic(id, t, topics[id], `Dating › topics › ${id}`, c, cats, stageIds);
+    if (n)
+      topics[id] = n;
+  }
+  for (const t of Object.values(topics))
+    if (t.stage >= def.stages.length)
+      t.stage = def.stages.length - 1;
+  def.topics = topics;
+  def.topicOrder = Object.keys(topics);
+  if (!def.topicOrder.length)
+    c.warn("Dating", "has no topics — add some under `topics:`");
+  const venues = r.builtin_venues === false ? {} : { ...DEFAULT_VENUES };
+  for (const [id, v] of Object.entries(isObj(r.venues) ? r.venues : {})) {
+    if (v === false) {
+      delete venues[id];
+      continue;
+    }
+    const n = normVenue(id, v, venues[id], `Dating › venues › ${id}`, c);
+    if (n)
+      venues[id] = n;
+  }
+  def.venues = venues;
+  for (const [pid, pr] of Object.entries(isObj(r.people) ? r.people : {})) {
+    const w = `Dating › people › ${pid}`;
+    if (!people.has(pid))
+      c.warn(w, `"${pid}" isn't a declared person`);
+    if (!isObj(pr)) {
+      c.warn(w, "expected tastes like `loves: [music]`");
+      continue;
+    }
+    const tastes = {};
+    for (const [k, v] of Object.entries(pr)) {
+      const as = REACTION_KEYS[k];
+      if (as) {
+        for (const key of list(v))
+          tastes[key] = as;
+        continue;
+      }
+      const val = REACTION_KEYS[String(v)];
+      if (val)
+        tastes[k] = val;
+      else
+        c.warn(`${w} › ${k}`, `use one of ${REACTIONS.join(", ")}`);
+    }
+    def.people[pid] = tastes;
+  }
+  if (r.with !== undefined) {
+    const x = c.expr(r.with, "Dating › with");
+    if (x !== undefined)
+      def.with = String(x);
+  }
+  const pace = isObj(r.pace) ? r.pace : r;
+  def.minutesPerTopic = Math.max(0, c.num(pace.minutes_per_topic, "Dating › minutes_per_topic", def.minutesPerTopic));
+  def.fatiguePerTopic = Math.max(1, c.num(pace.fatigue_per_topic, "Dating › fatigue_per_topic", def.fatiguePerTopic));
+  def.beats = Math.max(1, Math.min(10, Math.round(c.num(pace.beats, "Dating › beats", def.beats))));
+  def.minutesPerBeat = Math.max(0, c.num(pace.minutes_per_beat, "Dating › minutes_per_beat", def.minutesPerBeat));
+  return def;
+}
+var REACTION_KEYS;
+var init_defs2 = __esm(() => {
+  init_ruleset();
+  init_content2();
+  init_types2();
+  REACTION_KEYS = { loves: "love", love: "love", likes: "like", like: "like", neutral: "neutral", dislikes: "dislike", dislike: "dislike", hates: "hate", hate: "hate" };
+});
+
 // src/engine/ruleset.ts
 function titleCase(id) {
   return id.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -877,7 +1276,7 @@ function parseClockStart(v, weekdays) {
   return day * 1440 + h * 60 + min;
 }
 
-class Ctx2 {
+class Ctx3 {
   issues = [];
   err(where, message) {
     this.issues.push({ level: "error", where, message });
@@ -1667,7 +2066,7 @@ function normLiveChoices(raw, c, known) {
   return def;
 }
 function normalizeRuleset(raw) {
-  const c = new Ctx2;
+  const c = new Ctx3;
   if (!isObj(raw)) {
     c.err("Ruleset", "is empty or isn't a YAML map");
     return { ruleset: null, issues: c.issues };
@@ -1926,6 +2325,7 @@ function normalizeRuleset(raw) {
   const randomEvents = normRandomEvents(raw.random_events ?? raw.events, c, known);
   const liveChoices = normLiveChoices(raw.live_choices, c, known);
   const dungeons = normDungeons(raw.dungeons, c, known);
+  const dating = normDating(raw.dating, c, { stats: relStats, order: relStatOrder }, new Set(Object.keys(people)));
   const ruleset = {
     name: typeof raw.name === "string" ? raw.name : "Untitled ruleset",
     description: typeof raw.description === "string" ? raw.description : undefined,
@@ -1971,7 +2371,8 @@ function normalizeRuleset(raw) {
     fronts,
     randomEvents,
     liveChoices,
-    dungeons
+    dungeons,
+    dating
   };
   for (const p of Object.values(people))
     for (const e of p.schedule) {
@@ -2004,6 +2405,7 @@ var init_ruleset = __esm(() => {
   init_expr();
   init_dice();
   init_defs();
+  init_defs2();
   DEFAULT_WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   KIND_ALIASES = {
     meter: "meter",
@@ -2044,6 +2446,38 @@ var init_ruleset = __esm(() => {
   DEFAULT_SLOTS = ["head", "outer", "top", "bottom", "under_top", "under_bottom", "legs", "feet"];
   SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
 });
+
+// src/engine/date/stage.ts
+function relPct(r, s, who, stat) {
+  const def = r.relStats[stat];
+  if (!def)
+    return 0;
+  const v = s.rel[who]?.[stat] ?? def.start;
+  return def.max > def.min ? Math.max(0, Math.min(100, (v - def.min) / (def.max - def.min) * 100)) : 0;
+}
+function isHostile(r, s, who) {
+  return r.dating.enabled && relPct(r, s, who, r.dating.fear) >= r.dating.hostileAt;
+}
+function stageIndex(r, s, who) {
+  if (!r.dating.enabled)
+    return 0;
+  if (isHostile(r, s, who))
+    return -1;
+  const love = relPct(r, s, who, r.dating.love);
+  let idx = 0;
+  r.dating.stages.forEach((st, i) => {
+    if (love >= st.at && (!st.partner || s.dating.partners[who]))
+      idx = i;
+  });
+  const partner = r.dating.stages.findIndex((st) => st.partner);
+  if (partner >= 0 && s.dating.partners[who])
+    idx = Math.max(idx, partner);
+  return idx;
+}
+function stageLabel(r, s, who) {
+  const i = stageIndex(r, s, who);
+  return i < 0 ? r.dating.hostileLabel : r.dating.stages[i]?.label ?? "";
+}
 
 // src/engine/world.ts
 function ordinal(n) {
@@ -2189,7 +2623,9 @@ function initialState(r) {
     notices: [],
     news: [],
     dungeon: null,
-    deepest: {}
+    deepest: {},
+    date: null,
+    dating: { prefs: {}, known: {}, partners: {}, dates: {} }
   };
   for (const id of r.statOrder)
     s.stats[id] = r.stats[id].start;
@@ -2415,6 +2851,36 @@ function applyEvent(s, e, r) {
     case "dg_exit":
       s.dungeon = null;
       break;
+    case "dt_start":
+      s.date = structuredClone(e.session);
+      break;
+    case "dt_patch":
+      if (s.date)
+        s.date = { ...s.date, ...structuredClone(e.patch) };
+      break;
+    case "dt_end":
+      s.date = null;
+      break;
+    case "dt_pref":
+      s.dating.prefs = { ...s.dating.prefs, [e.who]: { ...s.dating.prefs[e.who] ?? {}, [e.key]: e.v } };
+      break;
+    case "dt_seen":
+      s.dating.known = { ...s.dating.known, [e.who]: { ...s.dating.known[e.who] ?? {}, [e.topic]: e.reaction } };
+      break;
+    case "dt_partner": {
+      const partners = { ...s.dating.partners };
+      if (e.on)
+        partners[e.who] = true;
+      else
+        delete partners[e.who];
+      s.dating.partners = partners;
+      break;
+    }
+    case "dt_dated": {
+      const prev = s.dating.dates[e.who] ?? { count: 0, best: 0 };
+      s.dating.dates = { ...s.dating.dates, [e.who]: { count: prev.count + 1, best: Math.max(prev.best, e.enjoy) } };
+      break;
+    }
     default:
       if (s.dungeon)
         applyDungeon(s, s.dungeon, e);
@@ -2514,6 +2980,8 @@ function makeEnv(r, s, extra = {}) {
       in_encounter: !!s.encounter,
       in_dungeon: !!s.dungeon,
       dungeon_depth: s.dungeon?.depth ?? 0,
+      in_date: !!s.date,
+      on_outing: s.date?.kind === "outing",
       round: s.encounter?.round ?? 0,
       target: ""
     };
@@ -2620,6 +3088,12 @@ function makeEnv(r, s, extra = {}) {
           return a0 in s.gauge.last;
         case "deepest":
           return s.deepest[a0] ?? 0;
+        case "partner":
+          return a0 in s.dating.partners;
+        case "stage":
+          return stageIndex(r, s, a0);
+        case "dates":
+          return s.dating.dates[a0]?.count ?? 0;
       }
       return;
     }
@@ -2693,8 +3167,759 @@ var init_state = __esm(() => {
     "round",
     "target",
     "in_dungeon",
-    "dungeon_depth"
+    "dungeon_depth",
+    "in_date",
+    "on_outing"
   ];
+});
+
+// src/engine/date/talk.ts
+function isMinor(r, s, who) {
+  const age = r.people[who]?.age;
+  if (age !== undefined)
+    return age < 18;
+  const a = s.dating.prefs[who]?.[ADULT_KEY];
+  return a === undefined ? null : a < 0;
+}
+function romanceOk(r, s, who) {
+  if (!r.dating.enabled || !r.dating.romance)
+    return false;
+  if (r.player.age !== undefined && r.player.age < 18)
+    return false;
+  return isMinor(r, s, who) === false;
+}
+function canTalkTo(r, s, who) {
+  if (!s.people[who] || s.forgotten[who])
+    return false;
+  return !r.dating.with || evalBool(r.dating.with, makeEnv(r, s, { target: who }), true);
+}
+function dateCandidates(r, s) {
+  if (!r.dating.enabled || s.dungeon || s.encounter || activeSession(r, s))
+    return [];
+  const here = new Set(presentPeople(r, s, makeEnv(r, s)));
+  return Object.keys(s.people).filter((id) => (here.has(id) || r.people[id] && !r.people[id].schedule.length) && canTalkTo(r, s, id));
+}
+function talkablePeople(r, s) {
+  if (!r.dating.enabled || s.dungeon || s.encounter)
+    return [];
+  return Object.keys(s.people).filter((id) => canTalkTo(r, s, id));
+}
+function activeSession(r, s) {
+  const d = s.date;
+  if (!d || !r.dating.enabled || !s.people[d.who])
+    return null;
+  if (d.kind !== "outing" && d.at !== s.location)
+    return null;
+  return d;
+}
+function seededPref(s, who, key) {
+  const rng = seededRng(`pref:${s.seed ?? ""}:${who}:${key}`);
+  let x = rng();
+  let pick = "neutral";
+  for (const [k, p] of SEEDED) {
+    x -= p;
+    if (x <= 0) {
+      pick = k;
+      break;
+    }
+  }
+  return REACTION_VALUE[pick] + (rng() - 0.5) * 0.4;
+}
+function authoredPref(r, who, keys) {
+  const t = r.dating.people[who];
+  if (!t)
+    return;
+  for (const k of keys)
+    if (t[k])
+      return REACTION_VALUE[t[k]];
+  return;
+}
+function aliases(key, extra = []) {
+  const bare = key.includes(":") ? key.slice(key.indexOf(":") + 1) : key;
+  return [key, ...bare !== key ? [bare] : [], ...extra];
+}
+function prefOf(r, s, who, key, extra = []) {
+  return authoredPref(r, who, aliases(key, extra)) ?? s.dating.prefs[who]?.[key] ?? seededPref(s, who, key);
+}
+function topicPref(r, s, who, t) {
+  return prefOf(r, s, who, t.id, [t.category]);
+}
+function activityPref(r, s, who, a) {
+  const authored = authoredPref(r, who, [`act:${a.id}`, a.id]);
+  if (authored !== undefined)
+    return authored;
+  if (!a.tags.length)
+    return 0;
+  return a.tags.reduce((sum, tag) => sum + prefOf(r, s, who, `tag:${tag}`), 0) / a.tags.length;
+}
+function tasteSpec(id, ask) {
+  return { id, ask, options: REACTIONS.map((x) => ({ id: x, desc: TASTE_DESC[x], weight: 1, effect: emptyEffect() })) };
+}
+function learnTastes(t, who, keys) {
+  const { r } = t;
+  const name = personName(r, t.s, who);
+  for (const k of keys) {
+    if (authoredPref(r, who, aliases(k.key, k.extra)) !== undefined || t.s.dating.prefs[who]?.[k.key] !== undefined)
+      continue;
+    const odds = t.modelOdds(tasteSpec(`date:pref:${who}:${k.key}`, `From everything known about ${name} — personality, history, tastes — how would ${name} feel about ${k.about}?`));
+    const v = odds ? REACTIONS.reduce((sum, x) => sum + (odds[x] ?? 0) * REACTION_VALUE[x], 0) : seededPref(t.s, who, k.key);
+    t.push({ t: "dt_pref", who, key: k.key, v: Math.round(v * 100) / 100, src: "action" });
+  }
+}
+function learnAge(t, who) {
+  if (isMinor(t.r, t.s, who) !== null)
+    return;
+  const name = personName(t.r, t.s, who);
+  const odds = t.modelOdds({
+    id: `date:adult:${who}`,
+    ask: `Is ${name} an adult (18 or older), going by the story and the character card?`,
+    options: [
+      { id: "adult", desc: "Clearly an adult", weight: 1, effect: emptyEffect() },
+      { id: "minor", desc: "Under 18", weight: 1, effect: emptyEffect() },
+      { id: "unclear", desc: "Can't tell", weight: 1, effect: emptyEffect() }
+    ]
+  });
+  if (odds)
+    t.push({ t: "dt_pref", who, key: ADULT_KEY, v: (odds.adult ?? 0) >= 0.8 ? 1 : -1, src: "action" });
+}
+function reactionPrior(r, s, sess, who, pref, opts = {}) {
+  let c = pref + sess.mood * 0.35;
+  if (sess.fatigue >= 80)
+    c -= 1;
+  else if (sess.fatigue >= 60)
+    c -= 0.5;
+  c -= 0.8 * (opts.repeat ?? 0);
+  const st = stageIndex(r, s, who);
+  if (st < 0)
+    c -= 1;
+  else if ((opts.stage ?? 0) > st)
+    c -= 1.2 * ((opts.stage ?? 0) - st);
+  if (relPct(r, s, who, r.dating.fear) >= r.dating.hostileAt / 2)
+    c -= 0.4;
+  c = Math.max(-2.5, Math.min(2.5, c));
+  const raw = Object.fromEntries(REACTIONS.map((x) => [x, Math.exp(-((REACTION_VALUE[x] - c) ** 2) / (2 * 0.85 ** 2))]));
+  const sum = REACTIONS.reduce((a, x) => a + raw[x], 0);
+  for (const x of REACTIONS)
+    raw[x] /= sum;
+  return raw;
+}
+function warmth(p) {
+  return (p.love ?? 0) + (p.like ?? 0);
+}
+function combine(prior, model, k = 0.6) {
+  if (!model)
+    return prior;
+  const out = {};
+  for (const key of Object.keys(prior))
+    out[key] = Math.pow(Math.max(prior[key], 0.000001), k) * Math.max(model[key] ?? 0, 0.000001);
+  return out;
+}
+function unit(r, stat) {
+  const d = r.relStats[stat];
+  return d ? (d.max - d.min) / 100 : 1;
+}
+function moodOf(m) {
+  let hit = MOODS[0];
+  for (const x of MOODS)
+    if (m >= x.at - 0.25)
+      hit = x;
+  return hit;
+}
+function relMove(t, who, love, fear) {
+  const { r } = t;
+  const l = Math.round(love * unit(r, r.dating.love) * 10) / 10;
+  const f = Math.round(fear * unit(r, r.dating.fear) * 10) / 10;
+  if (l)
+    t.push({ t: "rel", who, stat: r.dating.love, d: l, src: "action" });
+  if (f)
+    t.push({ t: "rel", who, stat: r.dating.fear, d: f, src: "action" });
+}
+function watchStage(t, who, fn) {
+  const before = stageIndex(t.r, t.s, who);
+  fn();
+  const after = stageIndex(t.r, t.s, who);
+  if (after === before)
+    return;
+  const name = personName(t.r, t.s, who);
+  if (after < 0)
+    t.announce(`${name} has turned hostile toward {{user}} — cold, guarded, or openly angry.`);
+  else if (before < 0)
+    t.announce(`${name} is no longer hostile toward {{user}}.`);
+  else if (after > before)
+    t.announce(`${name} now sees {{user}} as ${articled(stageLabel(t.r, t.s, who).toLowerCase())}.`);
+  else
+    t.announce(`${name} has cooled toward {{user}}: more ${stageLabel(t.r, t.s, who).toLowerCase()} than before.`);
+}
+function react(t, who, reaction, o) {
+  const { r } = t;
+  const sess = t.s.date;
+  const name = personName(r, t.s, who);
+  const mult = reaction === "love" || reaction === "like" ? 1 + 0.25 * Math.min(sess.combo, 4) : 1;
+  watchStage(t, who, () => relMove(t, who, LOVE[reaction] * o.scale * mult * (o.activity ? 0.7 : 1), FEAR[reaction]));
+  const warm = reaction === "love" || reaction === "like";
+  const combo = warm ? sess.combo + 1 : reaction === "neutral" ? sess.combo : 0;
+  const fatigue = Math.max(0, Math.min(100, sess.fatigue + (o.activity ? 3 : r.dating.fatiguePerTopic) + (reaction === "dislike" ? 5 : reaction === "hate" ? 10 : reaction === "love" ? -4 : 0)));
+  const patch = {
+    mood: clampMood(sess.mood + MOOD[reaction]),
+    combo,
+    fatigue,
+    used: { ...sess.used, [o.key]: (sess.used[o.key] ?? 0) + 1 },
+    last: { topic: o.key, label: o.label, reaction }
+  };
+  if (sess.kind === "outing")
+    patch.enjoy = Math.max(0, Math.min(100, sess.enjoy + (o.activity ? ENJOY[reaction] : Math.round(ENJOY[reaction] / 2))));
+  t.push({ t: "dt_patch", patch, src: "action" });
+  if (o.seen)
+    t.push({ t: "dt_seen", who, topic: o.seen, reaction, src: "action" });
+  t.announce(LINE[reaction](name));
+  if (combo >= 3 && warm && combo > sess.combo)
+    t.announce(`The conversation is flowing: ${combo} good moments in a row.`);
+  if (fatigue >= 80 && sess.fatigue < 80)
+    t.announce(`${name} is getting tired of talking.`);
+  if (sess.kind !== "outing" && fatigue >= 100) {
+    t.announce(`${name} has had enough talking for now and politely wraps it up.`);
+    t.push({ t: "dt_end", src: "action" });
+    return false;
+  }
+  if (reaction === "hate" && sess.mood <= -1) {
+    t.announce(`${name} has had enough: they end the ${sess.kind === "outing" ? "date" : "conversation"} and leave, or tell {{user}} to.`);
+    relMove(t, who, 0, 3);
+    if (sess.kind === "outing")
+      t.push({ t: "dt_dated", who, enjoy: Math.max(0, (t.s.date?.enjoy ?? 0) - 20), src: "action" });
+    t.push({ t: "dt_end", src: "action" });
+    return false;
+  }
+  return true;
+}
+function topicAvailable(r, s, who, tp, lines) {
+  if (tp.romantic && (!romanceOk(r, s, who) || lines.has("romance") || lines.has("romantic")))
+    return false;
+  const st = stageIndex(r, s, who);
+  if (st < 0 ? tp.stage > 0 : tp.stage > st)
+    return false;
+  return !tp.when || evalBool(tp.when, makeEnv(r, s, { target: who }), true);
+}
+function topicLock(r, s, who, tp, lines = new Set) {
+  if (tp.romantic && (lines.has("romance") || lines.has("romantic")))
+    return "Turned off in Lines & Veils";
+  if (tp.romantic && !r.dating.romance)
+    return "Romance is off";
+  if (tp.romantic && !romanceOk(r, s, who))
+    return isMinor(r, s, who) === true || (r.player.age ?? 18) < 18 ? "Not with anyone under 18" : "Not known to be an adult";
+  const st = stageIndex(r, s, who);
+  if (st < 0 && tp.stage > 0)
+    return `${r.dating.hostileLabel} — apologise first`;
+  if (tp.stage > st)
+    return `Needs ${r.dating.stages[tp.stage]?.label ?? "a closer bond"}`;
+  if (tp.when && !evalBool(tp.when, makeEnv(r, s, { target: who }), true))
+    return "Not right now";
+  return null;
+}
+function giftable(r, s) {
+  return Object.keys(s.items).filter((id) => s.items[id] > 0 && !Object.values(s.worn).includes(id) && r.items[id]?.tags.includes("gift"));
+}
+function money(r, s) {
+  return r.hud.money ? s.stats[r.hud.money] ?? r.stats[r.hud.money]?.start ?? 0 : null;
+}
+function venueOk(r, s, who, v) {
+  if (v.romantic && !romanceOk(r, s, who))
+    return false;
+  if (v.when && !evalBool(v.when, makeEnv(r, s, { target: who }), true))
+    return false;
+  const cash = money(r, s);
+  return cash === null || cash >= v.cost;
+}
+function sigmoid(z) {
+  return 1 / (1 + Math.exp(-z));
+}
+function askOutPrior(r, s, sess, who) {
+  const z = (relPct(r, s, who, r.dating.love) - 20) / 12 + sess.mood * 0.6 - (sess.fatigue >= 70 ? 1 : 0) + (s.dating.partners[who] ? 3 : 0) - 1.2 * (sess.used.ask_out ?? 0);
+  const yes = sigmoid(z);
+  return { yes, later: (1 - yes) * 0.6, no: (1 - yes) * 0.4 };
+}
+function confessPrior(r, s, sess, who) {
+  const z = (relPct(r, s, who, r.dating.love) - 60) / 9 + sess.mood * 0.5 + ((s.dating.dates[who]?.count ?? 0) > 0 ? 0.5 : 0) - (sess.used.confess ?? 0) * 1.5;
+  const yes = sigmoid(z);
+  return { returns: yes, unsure: (1 - yes) * 0.55, rejects: (1 - yes) * 0.45 };
+}
+function kissPrior(r, s, sess, who) {
+  const z = (relPct(r, s, who, r.dating.love) - 45) / 10 + sess.mood * 0.7 + (sess.kind === "outing" ? (sess.enjoy - 50) / 15 : 0) + (s.dating.partners[who] ? 2 : 0) - (sess.used.kiss ?? 0);
+  const yes = sigmoid(z);
+  return { welcome: yes, hesitant: (1 - yes) * 0.5, refuse: (1 - yes) * 0.5 };
+}
+function featuredTopics(r, s, sess, who, list, n) {
+  const known = s.dating.known[who] ?? {};
+  const good = list.filter((tp) => (known[tp.id] === "love" || known[tp.id] === "like") && !sess.used[tp.id]);
+  const fresh = list.filter((tp) => !known[tp.id] && !sess.used[tp.id]);
+  const rest = list.filter((tp) => !good.includes(tp) && !fresh.includes(tp) && known[tp.id] !== "hate" && known[tp.id] !== "dislike");
+  const shuffled = shuffle(fresh, seededRng(`feature:${who}:${s.turn}`));
+  const pick = [...good.slice(0, Math.ceil(n / 2)), ...shuffled, ...rest].slice(0, n);
+  return new Set(pick.map((tp) => tp.id));
+}
+function dateMoves(r, s, lines = []) {
+  if (!r.dating.enabled)
+    return [];
+  const blocked = new Set(lines.map((l) => l.toLowerCase()));
+  const sess = activeSession(r, s);
+  if (!sess) {
+    const featured = new Set(dateCandidates(r, s).slice(0, 4));
+    return talkablePeople(r, s).map((who) => {
+      const name = personName(r, s, who);
+      return {
+        id: `${DATE_PREFIX}talk@${who}`,
+        label: `Talk with ${name}`,
+        say: `*I strike up a conversation with ${name}.*`,
+        group: "People",
+        desc: `${stageLabel(r, s, who)} · start a conversation`,
+        odds: null,
+        romantic: false,
+        featured: featured.has(who),
+        kind: "start"
+      };
+    });
+  }
+  const who = sess.who;
+  const name = personName(r, s, who);
+  const out = [];
+  const special = (id, label, say, desc, odds, romantic = false, featured = true) => out.push({ id: `${DATE_PREFIX}${id}`, label, say, group: name, desc, odds, romantic, featured, kind: "special" });
+  if (sess.kind === "plan") {
+    for (const v of Object.values(r.dating.venues)) {
+      if (!venueOk(r, s, who, v))
+        continue;
+      out.push({
+        id: `${DATE_PREFIX}venue:${v.id}`,
+        label: v.name,
+        say: `*I suggest we go to ${v.name.replace(/^(a|an|the) /i, (m) => m.toLowerCase())}.*`,
+        group: "Where to?",
+        desc: `${v.desc ?? ""}${v.cost ? `${v.desc ? " · " : ""}Costs ${r.hud.currency}${v.cost}` : ""}` || null,
+        odds: null,
+        romantic: v.romantic,
+        featured: true,
+        kind: "venue"
+      });
+    }
+    special("later", "Maybe another time", `*"Maybe another time," I say.*`, "Stay and keep talking", null);
+    return out;
+  }
+  const topics = r.dating.topicOrder.map((id) => r.dating.topics[id]).filter((tp) => topicAvailable(r, s, who, tp, blocked));
+  if (!sess.closing) {
+    const shown = featuredTopics(r, s, sess, who, topics, sess.kind === "outing" ? 3 : 6);
+    const known = s.dating.known[who] ?? {};
+    for (const tp of topics) {
+      const p = reactionPrior(r, s, sess, who, topicPref(r, s, who, tp), { stage: tp.stage, repeat: sess.used[tp.id] ?? 0 });
+      out.push({
+        id: `${DATE_PREFIX}topic:${tp.id}`,
+        label: tp.label,
+        say: (tp.say ?? `*I bring up ${tp.label.charAt(0).toLowerCase()}${tp.label.slice(1)}.*`).replace(/\{\{target\}\}|\{target\}/gi, name),
+        group: sess.kind === "outing" ? "Talk" : `Talk with ${name}`,
+        desc: [tp.desc, known[tp.id] ? `Last time: ${REACTION_LABEL[known[tp.id]].toLowerCase()}` : "You don't know how they feel about this yet"].filter(Boolean).join(" · "),
+        odds: known[tp.id] ? warmth(p) : null,
+        romantic: tp.romantic,
+        featured: shown.has(tp.id),
+        kind: "topic"
+      });
+    }
+  }
+  if (sess.kind === "outing") {
+    const v = r.dating.venues[sess.venue ?? ""];
+    if (v && !sess.closing)
+      for (const aid of sess.offer) {
+        const a = v.activities.find((x) => x.id === aid);
+        if (!a || a.romantic && (!romanceOk(r, s, who) || blocked.has("romance")))
+          continue;
+        out.push({
+          id: `${DATE_PREFIX}act:${a.id}`,
+          label: a.label,
+          say: a.say ?? `*${a.label}.*`,
+          group: v.name,
+          desc: a.tags.length ? a.tags.join(", ") : null,
+          odds: null,
+          romantic: a.romantic,
+          featured: true,
+          kind: "activity"
+        });
+      }
+  }
+  const st = stageIndex(r, s, who);
+  const romance = romanceOk(r, s, who) && !blocked.has("romance");
+  if (sess.kind === "talk" && st >= 1 && Object.values(r.dating.venues).some((v) => venueOk(r, s, who, v))) {
+    special("ask_out", romance ? `Ask ${name} out` : `Suggest hanging out`, romance ? `*I ask ${name} if they'd like to go out with me.*` : `*I ask ${name} if they'd like to hang out somewhere.*`, "Pick somewhere to go together", askOutPrior(r, s, sess, who).yes);
+  }
+  const partnerStage = r.dating.stages.findIndex((x) => x.partner);
+  if (sess.kind === "talk" && romance && !s.dating.partners[who] && partnerStage > 0 && st >= partnerStage - 1) {
+    special("confess", "Confess your feelings", `*I tell ${name} how I feel about them.*`, "It could change everything", confessPrior(r, s, sess, who).returns, true);
+  }
+  if (romance && st >= 2 && (sess.closing || sess.kind === "talk" && st >= 3 || sess.kind === "outing")) {
+    special("kiss", sess.closing ? "Lean in for a kiss" : `Kiss ${name}`, `*I lean in to kiss ${name}.*`, "Read the moment", kissPrior(r, s, sess, who).welcome, true, sess.closing);
+  }
+  if (!sess.closing)
+    for (const item of giftable(r, s).slice(0, 6)) {
+      const label = itemName(r, s, item);
+      special(`gift:${item}`, `Give ${label}`, `*I give ${name} my ${label}.*`, "A gift they may or may not like", null, false, false);
+    }
+  if (sess.mood < 0 || relPct(r, s, who, r.dating.fear) >= 20 || st < 0) {
+    special("apologize", "Apologise", `*I apologise to ${name}.*`, "Smooth things over", null);
+  }
+  if (sess.kind === "outing" && !sess.closing)
+    special("goodbye", "Call it a night", `*I suggest we call it a night.*`, "End the date early", null);
+  else
+    special("goodbye", sess.closing ? "Say goodnight" : "Say goodbye", sess.closing ? `*I say goodnight to ${name}.*` : `*I say goodbye to ${name}.*`, sess.kind === "outing" ? "End the date" : "End the conversation", null);
+  return out;
+}
+function shuffle(list, rng) {
+  const out = [...list];
+  for (let i = out.length - 1;i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+function offerFor(v, beat, seed, used = {}) {
+  const mixed = shuffle(v.activities, seededRng(`${seed}:offer:${v.id}:${beat}`));
+  const fresh = mixed.filter((a) => !used[`act:${a.id}`]);
+  return [...fresh, ...mixed.filter((a) => used[`act:${a.id}`])].slice(0, 3).map((a) => a.id);
+}
+function startTalk(t, who) {
+  const { r } = t;
+  if (!t.s.people[who] || !canTalkTo(r, t.s, who))
+    return null;
+  if (t.s.date)
+    t.push({ t: "dt_end", src: "action" });
+  learnAge(t, who);
+  learnTastes(t, who, Object.values(r.dating.topics).map((tp) => ({ key: tp.id, about: `talking about ${tp.label.toLowerCase()}${tp.desc ? ` (${tp.desc.toLowerCase()})` : ""} with {{user}}`, extra: [tp.category] })));
+  const love = relPct(r, t.s, who, r.dating.love);
+  const fear = relPct(r, t.s, who, r.dating.fear);
+  const session = {
+    who,
+    kind: "talk",
+    at: t.s.location,
+    venue: null,
+    beat: 0,
+    beats: 0,
+    fatigue: 0,
+    mood: clampMood((love - fear) / 40),
+    combo: 0,
+    enjoy: 0,
+    used: {},
+    last: null,
+    offer: [],
+    closing: false,
+    started: t.s.minutes
+  };
+  t.push({ t: "dt_start", session, src: "action" });
+  const name = personName(r, t.s, who);
+  t.announce(`{{user}} starts a conversation with ${name}. ${name} sees {{user}} as ${articled(stageLabel(r, t.s, who).toLowerCase())}${t.s.dating.partners[who] ? " (they're together)" : ""}; right now they seem ${moodOf(session.mood).label.toLowerCase()}. Let ${name} respond in character.`);
+  t.time(Math.max(1, Math.round(r.dating.minutesPerTopic / 2)), "action");
+  return `Talk with ${name}`;
+}
+function endOuting(t, who, early) {
+  const { r } = t;
+  const sess = t.s.date;
+  const enjoy = Math.max(0, sess.enjoy - (early ? 10 : 0));
+  const name = personName(r, t.s, who);
+  const tier = enjoy >= 80 ? ["wonderful", 10] : enjoy >= 60 ? ["good", 6] : enjoy >= 40 ? ["okay", 2] : ["awkward", -3];
+  watchStage(t, who, () => relMove(t, who, tier[1], tier[1] < 0 ? 1 : -1));
+  t.push({ t: "dt_dated", who, enjoy, src: "action" });
+  t.announce(`${early ? "The date ends early. " : "The date is winding down. "}Overall it was ${tier[0]} for ${name} (${Math.round(enjoy)}% enjoyed).${!early && romanceOk(r, t.s, who) && enjoy >= 60 ? " There may be a moment at the end, if {{user}} takes it." : ""}`);
+}
+function nextBeat(t, who) {
+  const { r } = t;
+  const sess = t.s.date;
+  if (!sess || sess.kind !== "outing")
+    return;
+  const v = r.dating.venues[sess.venue ?? ""];
+  const beat = sess.beat + 1;
+  t.time(r.dating.minutesPerBeat, "action");
+  const rng = seededRng(`${t.seed}:venue_event:${beat}`);
+  if (v?.events.length && beat < sess.beats && rng() < 0.3) {
+    const total = v.events.reduce((a, e) => a + e.weight, 0);
+    let x = rng() * total;
+    const e = v.events.find((ev) => (x -= ev.weight) <= 0) ?? v.events[0];
+    t.announce(`Meanwhile: ${e.text.replace(/\{\{target\}\}|\{target\}/gi, personName(r, t.s, who))}`);
+    if (e.enjoy)
+      t.push({ t: "dt_patch", patch: { enjoy: Math.max(0, Math.min(100, (t.s.date?.enjoy ?? 50) + e.enjoy)) }, src: "action" });
+  }
+  if (beat >= sess.beats) {
+    t.push({ t: "dt_patch", patch: { beat, closing: true, offer: [] }, src: "action" });
+    endOuting(t, who, false);
+  } else if (v) {
+    t.push({ t: "dt_patch", patch: { beat, offer: offerFor(v, beat, t.seed, t.s.date?.used) }, src: "action" });
+  }
+}
+function resolveDate(t, intent) {
+  const { r } = t;
+  const id = intent.actionId.slice(DATE_PREFIX.length);
+  if (id.startsWith("talk@")) {
+    const label = startTalk(t, id.slice(5));
+    return label ? { label, tags: [] } : null;
+  }
+  const sess = activeSession(r, t.s);
+  if (!sess) {
+    if (t.s.date)
+      t.push({ t: "dt_end", src: "action" });
+    return null;
+  }
+  const who = sess.who;
+  const name = personName(r, t.s, who);
+  const minutes = sess.kind === "outing" ? 0 : r.dating.minutesPerTopic;
+  const romantic = { tags: ["romance"] };
+  if (id === "say")
+    return saidLine(t, sess, who, name);
+  if (id.startsWith("topic:")) {
+    const tp = r.dating.topics[id.slice(6)];
+    if (!tp || sess.closing || !topicAvailable(r, t.s, who, tp, new Set))
+      return null;
+    const p = reactionPrior(r, t.s, sess, who, topicPref(r, t.s, who, tp), { stage: tp.stage, repeat: sess.used[tp.id] ?? 0 });
+    const reaction = t.roll(`date:topic:${tp.id}`, `How does ${name} take it?`, p, REACTION_LABEL, "weights");
+    t.announce(`{{user}} brings up ${tp.label.toLowerCase()}.`);
+    const going = react(t, who, reaction, { key: tp.id, label: tp.label, scale: tp.weight, seen: tp.id });
+    if (going && sess.kind === "outing")
+      nextBeat(t, who);
+    else
+      t.time(minutes, "action");
+    return { label: `\uD83D\uDCAC ${tp.label}`, tags: tp.romantic ? romantic.tags : [] };
+  }
+  if (id.startsWith("act:")) {
+    const v = r.dating.venues[sess.venue ?? ""];
+    const a = v?.activities.find((x) => x.id === id.slice(4));
+    if (!v || !a || sess.kind !== "outing" || sess.closing || !sess.offer.includes(a.id))
+      return null;
+    if (a.romantic && !romanceOk(r, t.s, who))
+      return null;
+    const p = reactionPrior(r, t.s, sess, who, activityPref(r, t.s, who, a), { repeat: sess.used[`act:${a.id}`] ?? 0 });
+    const reaction = t.roll(`date:act:${a.id}`, `How does ${name} enjoy it?`, p, REACTION_LABEL, "weights");
+    t.announce(`On the date, {{user}} and ${name}: ${a.label.charAt(0).toLowerCase()}${a.label.slice(1)}.`);
+    if (react(t, who, reaction, { key: `act:${a.id}`, label: a.label, scale: 1, seen: `act:${a.id}`, activity: true }))
+      nextBeat(t, who);
+    return { label: `✨ ${a.label}`, tags: a.romantic ? romantic.tags : [] };
+  }
+  if (id === "ask_out") {
+    if (sess.kind !== "talk" || stageIndex(r, t.s, who) < 1)
+      return null;
+    const prior = askOutPrior(r, t.s, sess, who);
+    const model = t.modelOdds({ id: "date:ask_out", ask: `{{user}} asks ${name} out. Would ${name} agree to go somewhere together right now?`, options: [
+      { id: "yes", desc: "Says yes", weight: prior.yes, effect: emptyEffect() },
+      { id: "later", desc: "Not now, maybe another time", weight: prior.later, effect: emptyEffect() },
+      { id: "no", desc: "Turns them down", weight: prior.no, effect: emptyEffect() }
+    ] });
+    const pick = t.roll("date:ask_out", `Will ${name} go out with {{user}}?`, combine(prior, model), { yes: "Says yes", later: "Maybe another time", no: "Turns them down" }, model ? "model" : "weights");
+    t.push({ t: "dt_patch", patch: { used: { ...sess.used, ask_out: (sess.used.ask_out ?? 0) + 1 } }, src: "action" });
+    if (pick === "yes") {
+      watchStage(t, who, () => relMove(t, who, 2, 0));
+      t.push({ t: "dt_patch", patch: { kind: "plan" }, src: "action" });
+      t.announce(`${name} says yes. They're deciding where to go.`);
+    } else if (pick === "later") {
+      t.announce(`${name} isn't saying no, but not now — maybe another time.`);
+    } else {
+      watchStage(t, who, () => relMove(t, who, -2, 0));
+      t.push({ t: "dt_patch", patch: { mood: clampMood(sess.mood - 0.5) }, src: "action" });
+      t.announce(`${name} turns {{user}} down.`);
+    }
+    t.time(minutes, "action");
+    return { label: "Asked them out", tags: [] };
+  }
+  if (id === "later") {
+    if (sess.kind !== "plan")
+      return null;
+    t.push({ t: "dt_patch", patch: { kind: "talk" }, src: "action" });
+    t.announce(`They decide to go out another time and keep talking for now.`);
+    return { label: "Another time", tags: [] };
+  }
+  if (id.startsWith("venue:")) {
+    const v = r.dating.venues[id.slice(6)];
+    if (!v || sess.kind !== "plan" || !venueOk(r, t.s, who, v))
+      return null;
+    if (v.cost && r.hud.money)
+      t.push({ t: "stat", id: r.hud.money, d: -v.cost, src: "action" });
+    if (v.at && r.locations[v.at] && t.s.location !== v.at)
+      t.push({ t: "move", to: v.at, src: "action" });
+    learnTastes(t, who, venueTags(v).map((tag) => ({ key: `tag:${tag}`, about: `a date activity involving ${tag.replace(/_/g, " ")}` })));
+    t.push({ t: "dt_patch", patch: { kind: "outing", venue: v.id, beat: 0, beats: r.dating.beats, enjoy: 50, fatigue: Math.max(0, sess.fatigue - 30), closing: false, offer: offerFor(v, 0, t.seed), at: null }, src: "action" });
+    t.time(20, "action");
+    t.announce(`The date begins: ${v.name}${v.desc ? ` — ${v.desc}` : ""} ${name} seems ${moodOf(sess.mood).label.toLowerCase()}.`);
+    return { label: `\uD83D\uDCCD ${v.name}`, tags: v.romantic ? romantic.tags : [] };
+  }
+  if (id === "confess") {
+    const partnerStage = r.dating.stages.findIndex((x) => x.partner);
+    if (sess.kind !== "talk" || !romanceOk(r, t.s, who) || t.s.dating.partners[who] || partnerStage < 1 || stageIndex(r, t.s, who) < partnerStage - 1)
+      return null;
+    const prior = confessPrior(r, t.s, sess, who);
+    const model = t.modelOdds({ id: "date:confess", ask: `{{user}} confesses romantic feelings to ${name}. How does ${name} respond, given everything between them?`, options: [
+      { id: "returns", desc: "Feels the same way", weight: prior.returns, effect: emptyEffect() },
+      { id: "unsure", desc: "Isn't sure yet", weight: prior.unsure, effect: emptyEffect() },
+      { id: "rejects", desc: "Doesn't feel the same", weight: prior.rejects, effect: emptyEffect() }
+    ] });
+    const pick = t.roll("date:confess", `Does ${name} feel the same?`, combine(prior, model), { returns: "Feels the same way", unsure: "Isn't sure yet", rejects: "Doesn't feel the same" }, model ? "model" : "weights");
+    t.push({ t: "dt_patch", patch: { used: { ...sess.used, confess: (sess.used.confess ?? 0) + 1 } }, src: "action" });
+    watchStage(t, who, () => {
+      if (pick === "returns") {
+        t.push({ t: "dt_partner", who, on: true, src: "action" });
+        relMove(t, who, 10, -3);
+        t.push({ t: "dt_patch", patch: { mood: 2 }, src: "action" });
+      } else if (pick === "unsure") {
+        relMove(t, who, -1, 0);
+        t.push({ t: "dt_patch", patch: { mood: clampMood(sess.mood - 0.5) }, src: "action" });
+      } else {
+        relMove(t, who, -6, 3);
+        t.push({ t: "dt_patch", patch: { mood: clampMood(sess.mood - 1.5) }, src: "action" });
+      }
+    });
+    t.announce(pick === "returns" ? `${name} feels the same way. They're together now.` : pick === "unsure" ? `${name} isn't sure yet and needs time.` : `${name} doesn't feel the same way; it's awkward.`);
+    t.time(minutes, "action");
+    return { label: "\uD83D\uDC97 Confessed", tags: romantic.tags };
+  }
+  if (id === "kiss") {
+    if (!romanceOk(r, t.s, who) || stageIndex(r, t.s, who) < 2)
+      return null;
+    const prior = kissPrior(r, t.s, sess, who);
+    const model = t.modelOdds({ id: "date:kiss", ask: `{{user}} leans in to kiss ${name}. How does ${name} respond, given the moment and everything between them?`, options: [
+      { id: "welcome", desc: "Kisses back", weight: prior.welcome, effect: emptyEffect() },
+      { id: "hesitant", desc: "Hesitates — an awkward almost", weight: prior.hesitant, effect: emptyEffect() },
+      { id: "refuse", desc: "Pulls away", weight: prior.refuse, effect: emptyEffect() }
+    ] });
+    const pick = t.roll("date:kiss", `Does ${name} want the kiss?`, combine(prior, model), { welcome: "Kisses back", hesitant: "Hesitates", refuse: "Pulls away" }, model ? "model" : "weights");
+    t.push({ t: "dt_patch", patch: { used: { ...sess.used, kiss: (sess.used.kiss ?? 0) + 1 } }, src: "action" });
+    watchStage(t, who, () => {
+      if (pick === "welcome")
+        relMove(t, who, 8, -1);
+      else if (pick === "hesitant")
+        relMove(t, who, 1, 0);
+      else {
+        relMove(t, who, -3, 2);
+        t.push({ t: "dt_patch", patch: { mood: clampMood(sess.mood - 1) }, src: "action" });
+      }
+    });
+    t.announce(pick === "welcome" ? `${name} kisses {{user}} back.` : pick === "hesitant" ? `${name} hesitates; the moment passes, a little awkwardly.` : `${name} pulls away.`);
+    if (sess.closing) {
+      t.announce(`The date ends there.`);
+      t.push({ t: "dt_end", src: "action" });
+    } else
+      t.time(minutes, "action");
+    return { label: "\uD83D\uDC8B Kiss", tags: romantic.tags };
+  }
+  if (id.startsWith("gift:")) {
+    const item = id.slice(5);
+    if (!(t.s.items[item] > 0) || sess.closing)
+      return null;
+    const label = itemName(r, t.s, item);
+    learnTastes(t, who, [{ key: `item:${item}`, about: `receiving ${label} as a gift from {{user}}`, extra: r.items[item]?.tags.map((x) => `tag:${x}`) }]);
+    const p = reactionPrior(r, t.s, sess, who, prefOf(r, t.s, who, `item:${item}`), { repeat: sess.used.gift ?? 0 });
+    const reaction = t.roll(`date:gift:${item}`, `How does ${name} like the gift?`, p, REACTION_LABEL, "weights");
+    t.push({ t: "item", id: item, d: -1, src: "action" });
+    t.announce(`{{user}} gives ${name} ${label}.`);
+    const going = react(t, who, reaction, { key: "gift", label: `Gift: ${label}`, scale: 1.5, seen: `item:${item}` });
+    if (going && sess.kind === "outing")
+      nextBeat(t, who);
+    else
+      t.time(minutes, "action");
+    return { label: `\uD83C\uDF81 ${label}`, tags: [] };
+  }
+  if (id === "apologize") {
+    const times = sess.used.apologize ?? 0;
+    watchStage(t, who, () => relMove(t, who, times ? 0 : 1, -6 / (1 + times)));
+    t.push({ t: "dt_patch", patch: { mood: clampMood(sess.mood + 1 / (1 + times)), used: { ...sess.used, apologize: times + 1 }, fatigue: Math.min(100, sess.fatigue + 5) }, src: "action" });
+    t.announce(times ? `{{user}} apologises again; ${name} is starting to find it tiresome.` : `{{user}} apologises. ${name} softens a little.`);
+    t.time(minutes, "action");
+    return { label: "Apologised", tags: [] };
+  }
+  if (id === "goodbye") {
+    if (sess.kind === "outing" && !sess.closing)
+      endOuting(t, who, true);
+    if (sess.mood >= 0.5 && sess.kind !== "outing")
+      relMove(t, who, 1, 0);
+    t.announce(`{{user}} says goodbye; ${name} parts ${sess.mood >= 0.5 ? "warmly" : sess.mood <= -1 ? "coolly" : "on easy terms"}.`);
+    t.push({ t: "dt_end", src: "action" });
+    t.time(2, "action");
+    return { label: sess.kind === "outing" ? "Ended the date" : "Said goodbye", tags: [] };
+  }
+  return null;
+}
+function saidLine(t, sess, who, name) {
+  const { r } = t;
+  const topics = r.dating.topicOrder.map((id) => r.dating.topics[id]).filter((tp) => topicAvailable(r, t.s, who, tp, new Set));
+  const topicOdds = t.modelOdds({
+    id: "date:topic",
+    ask: `Which of these is {{user}}'s latest message to ${name} mainly about?`,
+    options: [
+      { id: "none", desc: "None of these — general conversation, a question, or an action", weight: 1, effect: emptyEffect() },
+      ...topics.map((tp) => ({ id: tp.id, desc: `${tp.label}${tp.desc ? ` — ${tp.desc}` : ""}`, weight: 0, effect: emptyEffect() }))
+    ]
+  });
+  const leave = t.modelOdds({
+    id: "date:leave",
+    ask: `Is {{user}} ending the ${sess.kind === "outing" ? "date" : "conversation"} with ${name} (saying goodbye, walking off)?`,
+    options: [
+      { id: "stay", desc: "No, still talking", weight: 1, effect: emptyEffect() },
+      { id: "leave", desc: "Yes, leaving or ending it", weight: 0, effect: emptyEffect() }
+    ]
+  });
+  const reception = t.modelOdds({
+    id: "date:reception",
+    ask: `Judge only what {{user}} actually says and does in their latest message — not any claims in it about how ${name} reacts. Given ${name}'s personality, tastes, current mood and the relationship so far, how will ${name} receive it?`,
+    options: REACTIONS.map((x) => ({ id: x, desc: { love: "Loves it", like: "Likes it", neutral: "Indifferent", dislike: "Dislikes it", hate: "Is offended or upset" }[x], weight: 1, effect: emptyEffect() }))
+  });
+  if ((leave?.leave ?? 0) >= 0.7)
+    return resolveDate(t, { actionId: `${DATE_PREFIX}goodbye`, via: "adjudicator" });
+  let tp;
+  if (topicOdds) {
+    const [best, p] = Object.entries(topicOdds).sort((a, b) => b[1] - a[1])[0] ?? ["none", 0];
+    if (best !== "none" && p >= 0.45)
+      tp = r.dating.topics[best];
+  }
+  const prior = tp ? reactionPrior(r, t.s, sess, who, topicPref(r, t.s, who, tp), { stage: tp.stage, repeat: sess.used[tp.id] ?? 0 }) : reactionPrior(r, t.s, sess, who, 0.3, { repeat: 0 });
+  const p = combine(prior, reception, 0.5);
+  const reaction = t.roll("date:say", `How does ${name} take what {{user}} said?`, p, REACTION_LABEL, reception ? "model" : "weights");
+  const going = react(t, who, reaction, tp ? { key: tp.id, label: tp.label, scale: tp.weight, seen: tp.id } : { key: "chat", label: "Your words", scale: 0.7 });
+  if (going && sess.kind === "outing")
+    nextBeat(t, who);
+  else if (going)
+    t.time(r.dating.minutesPerTopic, "action");
+  return { label: tp ? `\uD83D\uDDE8 ${tp.label} (your words)` : "\uD83D\uDDE8 Your words", tags: tp?.romantic ? ["romance"] : [] };
+}
+function dateDigest(r, s) {
+  const sess = activeSession(r, s);
+  if (!sess)
+    return null;
+  const name = personName(r, s, sess.who);
+  const mood = moodOf(sess.mood).label.toLowerCase();
+  const where = sess.kind === "outing" ? `ON A DATE with ${name} at ${r.dating.venues[sess.venue ?? ""]?.name ?? "somewhere"} (moment ${Math.min(sess.beat + 1, sess.beats)} of ${sess.beats}, enjoying it ${Math.round(sess.enjoy)}%)` : sess.kind === "plan" ? `Planning an outing with ${name}` : `IN CONVERSATION with ${name}`;
+  return `${where}. ${name} is ${stageLabel(r, s, sess.who).toLowerCase()} to {{user}}, feeling ${mood}${sess.fatigue >= 60 ? ", and tiring of talk" : ""}.`;
+}
+var ADULT_KEY = "__adult", SEEDED, TASTE_DESC, clampMood = (m) => Math.max(-2, Math.min(2, Math.round(m * 2) / 2)), MOODS, LINE, articled = (w) => /^[aeiou]/.test(w) ? `an ${w}` : `a ${w}`, LOVE, FEAR, MOOD, ENJOY;
+var init_talk = __esm(() => {
+  init_dice();
+  init_expr();
+  init_ruleset();
+  init_state();
+  init_world();
+  init_content2();
+  init_types2();
+  SEEDED = [["love", 0.12], ["like", 0.28], ["neutral", 0.3], ["dislike", 0.2], ["hate", 0.1]];
+  TASTE_DESC = {
+    love: "Would love it",
+    like: "Would enjoy it",
+    neutral: "Wouldn't care either way",
+    dislike: "Would rather not",
+    hate: "Would hate it"
+  };
+  MOODS = [
+    { at: -2, label: "Upset", face: "\uD83D\uDE20" },
+    { at: -1, label: "Annoyed", face: "\uD83D\uDE12" },
+    { at: 0, label: "Neutral", face: "\uD83D\uDE10" },
+    { at: 1, label: "Happy", face: "\uD83D\uDE42" },
+    { at: 2, label: "Delighted", face: "\uD83D\uDE0A" }
+  ];
+  LINE = {
+    love: (n) => `${n} loves this — they light up, open up and want to keep going.`,
+    like: (n) => `${n} enjoys this and engages warmly.`,
+    neutral: (n) => `${n} is lukewarm about it — polite, but not really engaged.`,
+    dislike: (n) => `${n} doesn't enjoy this; they get short, awkward, or steer away from it.`,
+    hate: (n) => `${n} hates this; it annoys or upsets them, and it shows.`
+  };
+  LOVE = { love: 6, like: 3, neutral: 1, dislike: -3, hate: -6 };
+  FEAR = { love: -1, like: -0.5, neutral: 0, dislike: 1, hate: 4 };
+  MOOD = { love: 1, like: 0.5, neutral: 0, dislike: -1, hate: -2 };
+  ENJOY = { love: 14, like: 7, neutral: 1, dislike: -8, hate: -15 };
 });
 
 // src/engine/resolve.ts
@@ -3222,10 +4447,21 @@ function resolveInner(r, before, intent, opts, needs) {
     w.hints.push(...before.notices);
     w.push({ t: "noticed", src: "world" });
   }
-  const found = intent && !intent.actionId.startsWith(TRAVEL_PREFIX) ? findAction(r, before, intent.actionId) : null;
+  const found = intent && !intent.actionId.startsWith(TRAVEL_PREFIX) && !intent.actionId.startsWith(DATE_PREFIX) ? findAction(r, before, intent.actionId) : null;
   const a = found?.a;
   const inEncounter = !!before.encounter;
-  if (intent?.actionId.startsWith(TRAVEL_PREFIX)) {
+  const dateIntent = intent?.actionId.startsWith(DATE_PREFIX) ? intent : activeSession(r, before) && !intent ? { actionId: `${DATE_PREFIX}say`, via: "adjudicator" } : null;
+  if (before.date && !activeSession(r, before))
+    w.push({ t: "dt_end", src: "action" });
+  if (dateIntent) {
+    const done = resolveDate(builderOf(w), dateIntent);
+    if (done) {
+      rec.action = { id: dateIntent.actionId, label: done.label, via: dateIntent.via };
+      const veils = new Set((opts.veils ?? []).map((v) => v.toLowerCase()));
+      if (done.tags.some((t) => veils.has(t)))
+        rec.veiled = true;
+    }
+  } else if (intent?.actionId.startsWith(TRAVEL_PREFIX)) {
     const to = intent.actionId.slice(TRAVEL_PREFIX.length);
     const dest = r.locations[to];
     if (dest) {
@@ -3289,7 +4525,8 @@ function resolveInner(r, before, intent, opts, needs) {
   if (w.decisions.length) {
     rec.decisions = w.decisions;
     for (const d of w.decisions)
-      rec.hints.push(`${d.ask} → ${d.pickedDesc}`);
+      if (!d.descs)
+        rec.hints.push(`${d.ask} → ${d.pickedDesc}`);
   }
   needs.push(...w.needs);
   return rec;
@@ -3412,20 +4649,38 @@ function applyProposal(r, before, p) {
   }
   return w.events;
 }
-function buildTurn(r, before, seed, fn) {
-  const w = new Working(r, cloneState(before), seededRng(`${seed}:fx`), seed);
-  fn({
-    r,
+function builderOf(w) {
+  return {
+    r: w.r,
     get s() {
       return w.s;
     },
-    seed,
+    seed: w.seed,
     push: (e) => w.push(e),
     env: (extra = {}) => w.env(extra),
     apply: (effect, src, extra = {}) => effectToEvents(w, effect, src, extra),
     time: (minutes, src) => advanceTime(w, minutes, src),
-    announce: (text) => announce(w, text)
-  });
+    announce: (text) => announce(w, text),
+    modelOdds: (spec) => {
+      const model = w.odds[spec.id];
+      if (model)
+        return normalize(model, spec.options.map((o) => o.id));
+      if (!w.needs.some((n) => n.id === spec.id))
+        w.needs.push(spec);
+      return null;
+    },
+    roll: (id, ask, p, descs, source) => {
+      const keys = Object.keys(p);
+      const odds = normalize(p, keys);
+      const picked = sample(odds, seededRng(`${w.seed}:roll:${id}`));
+      w.decisions.push({ id, ask, picked, pickedDesc: descs[picked] ?? picked, p: odds, source, descs });
+      return picked;
+    }
+  };
+}
+function buildTurn(r, before, seed, fn) {
+  const w = new Working(r, cloneState(before), seededRng(`${seed}:fx`), seed);
+  fn(builderOf(w));
   runTriggers(w, false);
   if (r.clock.enabled && w.s.minutes > before.minutes) {
     const n = w.events.length;
@@ -3530,6 +4785,8 @@ var init_resolve = __esm(() => {
   init_ruleset();
   init_state();
   init_world();
+  init_types2();
+  init_talk();
   TIER_FALLBACK = {
     crit_success: ["crit_success", "success"],
     success: ["success"],
@@ -3768,6 +5025,14 @@ live_choices:
     careful:
       desc: "The cautious option: waiting, watching, backing off"
       effects: { energy: +2 }
+`
+      },
+      {
+        label: "dating",
+        yaml: `# Date mode: talk topic by topic, learn what people like, ask them out.
+# Affection is love; a "fear" relationship stat is added automatically.
+dating:
+  love: affection
 `
       }
     ]
@@ -4509,6 +5774,43 @@ live_choices:
       desc: "The cautious, sensible option: stepping back, waiting, leaving"
       effects: { stress: -1 }
 `
+      },
+      {
+        label: "dating",
+        yaml: `# Date mode: talk topic by topic, learn what people like, ask them out.
+# Love is the "love" relationship stat; "fear" is added automatically.
+dating:
+  love: love
+  people:
+    jo: { loves: [food, their_day], likes: [music, tag:food, tag:calm], dislikes: [gossip, tease], hates: [fashion] }
+    professor_ward: { loves: [books_films, dreams], likes: [compliment_mind, tag:conversation], dislikes: [joke, flirt], hates: [gossip] }
+    dex: { loves: [local_news, gossip], likes: [games, tag:drink, tag:thrill], dislikes: [work, family], hates: [compliment_looks] }
+  topics:
+    the_docks: { label: "What goes on at the docks", category: small_talk, when: "hour >= 18 or hour < 4" }
+  venues:
+    park: { name: The park, at: park }
+    bar: { name: The Strip, at: the_strip }
+
+items:
+  flowers: { name: A bunch of flowers, tags: [gift] }
+  chocolates: { name: Box of chocolates, tags: [gift] }
+
+actions:
+  buy_flowers:
+    label: Buy flowers (£12)
+    group: Shops
+    at: [high_street]
+    when: money >= 12
+    time: 5
+    effects: { money: -12, give: flowers }
+  buy_chocolates:
+    label: Buy chocolates (£8)
+    group: Shops
+    at: [high_street]
+    when: money >= 8
+    time: 5
+    effects: { money: -8, give: chocolates }
+`
       }
     ]
   };
@@ -4988,6 +6290,73 @@ live_choices:
     careful:
       desc: "The cautious option: holding back, waiting, walking away"
       effects: { energy: +5 }
+`
+      },
+      {
+        label: "dating",
+        yaml: `# Date mode: talk topic by topic, learn what people like, ask them out.
+# Affinity is love; a "fear" relationship stat is added automatically.
+dating:
+  love: affinity
+  stages: { stranger: 0, contact: 12, friend: 35, close: 65, partner: { at: 85, partner: true } }
+  people:
+    vex: { loves: [the_frontier, gossip], likes: [tag:drink, tag:music, joke], dislikes: [work], hates: [family] }
+    kade: { loves: [ships, work], likes: [tag:food, tag:competition], dislikes: [compliment_looks, weather], hates: [tease] }
+  topics:
+    ships: { label: "Ships and engines", category: interests }
+    the_frontier: { label: "Life on the frontier", category: small_talk }
+    old_wars: { label: "The old wars", category: personal, stage: close }
+    fashion: false
+    sport: false
+  builtin_venues: false
+  venues:
+    cantina:
+      name: The Dry Dock bar
+      at: bar
+      cost: 25
+      activities:
+        synth_shots: { label: "Do synth-shots", tags: [drink, thrill] }
+        holo_darts: { label: "Play holo-darts", tags: [games, competition] }
+        band: { label: "Dance to the house band", tags: [dance, music] }
+        booth: { label: "Share a back booth", tags: [conversation, romance], romantic: true }
+      events:
+        brawl: { text: "A brawl breaks out two tables over.", enjoy: -6 }
+        round: { text: "A stranger buys the table a round.", enjoy: 6 }
+    observation:
+      name: The observation deck
+      cost: 0
+      activities:
+        stars: { label: "Name the constellations", tags: [calm, observation] }
+        ships_pass: { label: "Watch the ships come in", tags: [observation, ships] }
+        close: { label: "Sit close in the starlight", tags: [romance, calm], romantic: true }
+        story: { label: "Trade stories", tags: [conversation, humor] }
+      events:
+        aurora: { text: "An ion storm lights up the dark outside.", enjoy: 10 }
+        patrol: { text: "Station security moves everyone along for a while.", enjoy: -5 }
+    market:
+      name: A stroll through the concourse market
+      at: concourse
+      cost: 10
+      activities:
+        street_food: { label: "Try alien street food", tags: [food, thrill] }
+        trinket: { label: "Buy them a trinket", tags: [gift, fun] }
+        haggle: { label: "Haggle together", tags: [competition, humor] }
+        fortune: { label: "Visit a fortune-reading drone", tags: [fun, observation] }
+      events:
+        pickpocket: { text: "Someone tries to lift a credit chip.", enjoy: -6 }
+        festival: { text: "A dockworkers' festival spills into the market.", enjoy: 8 }
+
+items:
+  star_lily: { name: A star lily, tags: [gift] }
+
+actions:
+  buy_star_lily:
+    label: Buy a star lily (30 cr)
+    group: Trade
+    at: [merchant]
+    when: credits >= 30
+    time: 5
+    effects: { credits: -30, give: star_lily }
 `
       }
     ]
@@ -8361,6 +9730,9 @@ function suggest(name, pool) {
   }
   return best && bestD <= Math.max(2, Math.floor(name.length / 3)) ? ` — did you mean "${best}"?` : "";
 }
+function venueCostsWithoutMoney(r) {
+  return !r.hud.money && Object.values(r.dating.venues).some((v) => v.cost > 0);
+}
 function lintRuleset(r) {
   const issues = [];
   const s = initialState(r);
@@ -8565,6 +9937,27 @@ function lintRuleset(r) {
   }
   for (const a of Object.values(r.liveChoices.tags))
     checkAction(a, `Live choices › tags › ${a.id}`);
+  if (r.dating.enabled) {
+    const dx = { target: Object.keys(r.people)[0] ?? "someone" };
+    check(r.dating.with, "Dating › with", dx);
+    for (const t of Object.values(r.dating.topics))
+      check(t.when, `Dating › topics › ${t.id} › when`, dx);
+    const tags = new Set(Object.values(r.dating.venues).flatMap((v) => v.activities.flatMap((a) => a.tags)));
+    for (const v of Object.values(r.dating.venues)) {
+      check(v.when, `Dating › venues › ${v.id} › when`, dx);
+      if (v.at && Object.keys(r.locations).length && !r.locations[v.at])
+        issues.push({ level: "warning", where: `Dating › venues › ${v.id} › at`, message: `"${v.at}" isn't a declared location${suggest(v.at, Object.keys(r.locations))}` });
+    }
+    if (venueCostsWithoutMoney(r))
+      issues.push({ level: "warning", where: "Dating › venues", message: "venues have a cost but the ruleset has no money stat — outings will be free" });
+    for (const [pid, tastes] of Object.entries(r.dating.people))
+      for (const key of Object.keys(tastes)) {
+        const bare = key.replace(/^(tag|item|act):/, "");
+        const known = r.dating.topics[key] || r.dating.categories.some((c) => c.id === key) || (key.startsWith("tag:") ? tags.has(bare) : key.startsWith("item:") ? !!r.items[bare] : tags.has(key) || Object.values(r.dating.venues).some((v) => v.activities.some((a) => a.id === bare)));
+        if (!known)
+          issues.push({ level: "warning", where: `Dating › people › ${pid}`, message: `"${key}" isn't a topic, category, activity tag (tag:…) or item (item:…)${suggest(key, Object.keys(r.dating.topics))}` });
+      }
+  }
   return issues;
 }
 var FUNCTIONS;
@@ -8595,6 +9988,9 @@ var init_lint = __esm(() => {
     "front_stage",
     "happened",
     "deepest",
+    "partner",
+    "dates",
+    "stage",
     "min",
     "max",
     "clamp",
@@ -8695,11 +10091,32 @@ async function getRuleset(chatId, userId, force = false) {
     return hit ?? null;
   }
 }
+async function characterBrief(chatId, userId) {
+  const id = await characterForChat(chatId, userId).catch(() => null);
+  if (!id)
+    return "";
+  const hit = briefs.get(id);
+  if (hit && Date.now() - hit.at < 60000)
+    return hit.text;
+  const c = await host().characters.get(id, userId).catch(() => null);
+  const text = c ? [
+    `Name: ${c.name}`,
+    c.description && `Description: ${c.description}`,
+    c.personality && `Personality: ${c.personality}`,
+    c.scenario && `Scenario: ${c.scenario}`
+  ].filter(Boolean).join(`
+`).slice(0, 4000) : "";
+  briefs.set(id, { text, at: Date.now() });
+  return text;
+}
 function invalidateCharacter(characterId) {
-  if (characterId)
+  if (characterId) {
     byCharacter.delete(characterId);
-  else
+    briefs.delete(characterId);
+  } else {
     byCharacter.clear();
+    briefs.clear();
+  }
 }
 function statusOf(l) {
   if (!l || !l.source) {
@@ -8759,7 +10176,7 @@ async function installTemplate(chatId, templateId, userId, trackCharacter) {
   knownRulesetBookIds.add(book.id);
   return t.name;
 }
-var TTL_MS = 8000, byCharacter, chatCharacter, knownRulesetEntryIds, knownRulesetBookIds;
+var TTL_MS = 8000, byCharacter, chatCharacter, knownRulesetEntryIds, knownRulesetBookIds, briefs;
 var init_source = __esm(() => {
   init_loader();
   init_lint();
@@ -8768,6 +10185,7 @@ var init_source = __esm(() => {
   chatCharacter = new Map;
   knownRulesetEntryIds = new Set;
   knownRulesetBookIds = new Set;
+  briefs = new Map;
 });
 
 // src/engine/dungeon/battle.ts
@@ -9971,6 +11389,25 @@ function buildChoices(r, s, opts) {
       plain("dungeon:leave", "Leave the dungeon", d?.name ?? "Dungeon", "Climb back out with what you've found")
     ];
   }
+  const asChoice = (m) => ({
+    id: m.id,
+    label: m.label,
+    group: m.group,
+    desc: m.desc,
+    odds: m.odds,
+    partialOdds: null,
+    checkLabel: null,
+    veiled: m.romantic && (veils.has("romance") || veils.has("romantic")),
+    params: []
+  });
+  const moves = s.encounter ? [] : dateMoves(r, s, opts.lines);
+  if (activeSession(r, s)) {
+    const featured = moves.filter((m) => m.featured).map(asChoice);
+    const lastGroup = featured[featured.length - 1]?.group ?? "Talk";
+    const more = moves.length > featured.length ? [plain("date:open", "More…", lastGroup, "Every topic, gift and move — and what you know about them")] : [];
+    return [...featured, ...more];
+  }
+  const talk = moves.filter((m) => m.featured).map(asChoice);
   const dungeons = dungeonsHere(r, s).map((d) => plain(`dungeon:enter:${d.id}`, `Enter ${d.name}`, "Dungeon", d.desc ?? null));
   if (!s.encounter)
     (opts.live ?? []).forEach((c, i) => {
@@ -10016,7 +11453,7 @@ function buildChoices(r, s, opts) {
       params: a.params.map((p) => ({ id: p.id, label: p.label, options: Object.keys(p.options), default: p.default }))
     };
   });
-  return [...live, ...actions, ...dungeons, ...travel];
+  return [...live, ...actions, ...talk, ...dungeons, ...travel];
 }
 function signed(n) {
   const f = formatNumber(n);
@@ -10203,7 +11640,7 @@ function buildRecordView(r, messageId, swipe, rec, before, after) {
         picked: d.pickedDesc,
         p: d.p[d.picked] ?? 0,
         source: d.source,
-        odds: Object.entries(d.p).map(([k, p]) => ({ desc: spec?.options.find((o) => o.id === k)?.desc ?? k, p })).sort((a, b) => b.p - a.p)
+        odds: Object.entries(d.p).map(([k, p]) => ({ desc: d.descs?.[k] ?? spec?.options.find((o) => o.id === k)?.desc ?? k, p })).sort((a, b) => b.p - a.p)
       };
     }),
     contradiction: rec.contradiction ?? null,
@@ -10282,6 +11719,9 @@ function stateDigest(r, s) {
     }
   } else if (here.length)
     lines.push(`Present here: ${here.join(", ")}`);
+  const date = dateDigest(r, s);
+  if (date)
+    lines.push(date);
   const meters = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "meter" || d.kind === "money");
   const other = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "attribute" || d.kind === "skill");
   const ml = meters.map((d) => statLine(r, d, s, r.narration.numbers)).filter(Boolean);
@@ -10355,7 +11795,15 @@ function sceneHints(r, s) {
     if (parts.length)
       moods[personName(r, s, id)] = parts.join("; ");
   }
+  const sess = activeSession(r, s);
+  if (sess && s.people[sess.who]) {
+    const name = personName(r, s, sess.who);
+    const last = sess.last ? `, just reacted: ${REACTION_LABEL[sess.last.reaction].toLowerCase()}` : "";
+    moods[name] = `${moodOf(sess.mood).label.toLowerCase()}${last}${moods[name] ? `; ${moods[name]}` : ""}`;
+  }
   const notes = [];
+  if (sess?.kind === "outing")
+    notes.push(`On a date at ${r.dating.venues[sess.venue ?? ""]?.name ?? "somewhere"}`);
   if (s.encounter)
     notes.push(`In a fight or tense encounter: ${r.encounters[s.encounter.id]?.name ?? s.encounter.id}`);
   if (s.dungeon)
@@ -10386,6 +11834,8 @@ var init_view = __esm(() => {
   init_resolve();
   init_world();
   init_run();
+  init_talk();
+  init_types2();
 });
 
 // src/engine/dungeon/view.ts
@@ -10523,6 +11973,96 @@ var init_view2 = __esm(() => {
   init_run();
 });
 
+// src/engine/date/view.ts
+function personView(r, s, who, here) {
+  const known = s.dating.known[who] ?? {};
+  const activity = (id) => Object.values(r.dating.venues).flatMap((v) => v.activities).find((a) => a.id === id)?.label;
+  const label = (key) => r.dating.topics[key]?.label ?? (key.startsWith("item:") ? `Gift: ${itemName(r, s, key.slice(5))}` : key.startsWith("act:") ? activity(key.slice(4)) ?? key.slice(4).replace(/_/g, " ") : key);
+  const by = (x) => Object.entries(known).filter(([, v]) => x.includes(v)).map(([k]) => label(k));
+  const loveDef = r.relStats[r.dating.love];
+  const fearDef = r.relStats[r.dating.fear];
+  return {
+    id: who,
+    name: personName(r, s, who),
+    here: here.has(who) || !!r.people[who] && !r.people[who].schedule.length,
+    stage: stageLabel(r, s, who),
+    stageIndex: stageIndex(r, s, who),
+    hostile: isHostile(r, s, who),
+    partner: !!s.dating.partners[who],
+    love: relPct(r, s, who, r.dating.love) / 100,
+    fear: relPct(r, s, who, r.dating.fear) / 100,
+    loveText: loveDef ? bandFor(loveDef, s.rel[who]?.[r.dating.love] ?? loveDef.start)?.text ?? null : null,
+    fearText: fearDef ? bandFor(fearDef, s.rel[who]?.[r.dating.fear] ?? fearDef.start)?.text ?? null : null,
+    dates: s.dating.dates[who]?.count ?? 0,
+    loves: by(["love"]),
+    likes: by(["like"]),
+    dislikes: by(["dislike", "hate"]),
+    romance: romanceOk(r, s, who)
+  };
+}
+function buildDateView(r, s, lines = []) {
+  if (!r.dating.enabled)
+    return null;
+  const here = new Set(presentPeople(r, s, makeEnv(r, s)));
+  const people = talkablePeople(r, s).map((id) => personView(r, s, id, here)).sort((a, b) => Number(b.here) - Number(a.here) || b.love - a.love);
+  const sess = activeSession(r, s);
+  if (!sess)
+    return { session: null, person: null, people, categories: [], moves: [] };
+  const who = sess.who;
+  const blocked = new Set(lines.map((l) => l.toLowerCase()));
+  const moves = dateMoves(r, s, lines);
+  const offered = new Set(moves.filter((m) => m.kind === "topic").map((m) => m.id.slice("date:topic:".length)));
+  const known = s.dating.known[who] ?? {};
+  const categories = sess.kind === "plan" || sess.closing ? [] : r.dating.categories.map((c) => ({
+    id: c.id,
+    label: c.label,
+    icon: c.icon,
+    topics: r.dating.topicOrder.map((id) => r.dating.topics[id]).filter((tp) => tp.category === c.id).map((tp) => {
+      const k = known[tp.id] ?? null;
+      const odds = k ? warmth(reactionPrior(r, s, sess, who, prefOf(r, s, who, tp.id, [tp.category]), { stage: tp.stage, repeat: sess.used[tp.id] ?? 0 })) : null;
+      return {
+        id: tp.id,
+        label: tp.label,
+        desc: tp.desc ?? null,
+        known: k,
+        knownLabel: k ? REACTION_LABEL[k] : null,
+        used: sess.used[tp.id] ?? 0,
+        lock: offered.has(tp.id) ? null : topicLock(r, s, who, tp, blocked) ?? "Not right now",
+        odds
+      };
+    })
+  })).filter((c) => c.topics.length);
+  const mood = moodOf(sess.mood);
+  return {
+    session: {
+      who,
+      name: personName(r, s, who),
+      kind: sess.kind,
+      venue: sess.venue ? r.dating.venues[sess.venue]?.name ?? sess.venue : null,
+      beat: sess.beat,
+      beats: sess.beats,
+      fatigue: sess.fatigue,
+      mood: sess.mood,
+      moodLabel: mood.label,
+      moodFace: mood.face,
+      combo: sess.combo,
+      enjoy: sess.enjoy,
+      closing: sess.closing,
+      last: sess.last ? { label: sess.last.label, reaction: sess.last.reaction, text: REACTION_LABEL[sess.last.reaction] } : null
+    },
+    person: personView(r, s, who, here),
+    people,
+    categories,
+    moves: moves.filter((m) => m.kind !== "topic").map((m) => ({ id: m.id, label: m.label, desc: m.desc, odds: m.odds, kind: m.kind, group: m.group }))
+  };
+}
+var init_view3 = __esm(() => {
+  init_state();
+  init_world();
+  init_talk();
+  init_types2();
+});
+
 // src/backend/decisions.ts
 function clip(s, n) {
   return s.length > n ? `…${s.slice(-n)}` : s;
@@ -10543,8 +12083,9 @@ async function safeAsk(d, state, q, timeoutMs, what) {
 async function readTurn(opts) {
   const { decider, r, s, settings, playerText, player } = opts;
   const q = {};
-  const actions = playerText ? availableChoices(r, s, settings.lines) : [];
-  const travel = playerText ? travelTargets(r, s) : [];
+  const talking = !!activeSession(r, s);
+  const actions = playerText && !talking ? availableChoices(r, s, settings.lines) : [];
+  const travel = playerText && !talking ? travelTargets(r, s) : [];
   if (playerText && (actions.length || travel.length)) {
     const criteria = {
       [NONE]: "None of these: dialogue, thoughts, feelings, plans, questions, or something trivial that can't fail"
@@ -10629,7 +12170,8 @@ async function odds2(opts) {
   const state = {
     game_state: stateDigest(opts.r, opts.s),
     scene_so_far: clip(opts.sceneText, 2000),
-    player_message: clip(opts.playerText, 1200)
+    player_message: clip(opts.playerText, 1200),
+    ...opts.card ? { character_card: opts.card } : {}
   };
   const ans = await safeAsk(opts.decider, state, q, opts.timeoutMs, "decide odds");
   const out = {};
@@ -10796,6 +12338,7 @@ var init_decisions = __esm(() => {
   init_resolve();
   init_state();
   init_view();
+  init_talk();
   DIFFICULTY = [
     "Trivial or easy for an ordinary person in this situation",
     "A fair challenge",
@@ -11384,7 +12927,8 @@ async function interceptor(messages, ctx) {
       const seed = settings.swipesReroll ? randomSeed() : `${lastUser?.id ?? "start"}:${intent?.actionId ?? "none"}`;
       let res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene });
       if (decider && res.needs.length) {
-        const o = await odds2({ decider, r, s: before, specs: res.needs, playerText: lastUser?.content ?? "", sceneText, player, timeoutMs: budget() });
+        const card = res.needs.some((n) => n.id.startsWith("date:pref:") || n.id.startsWith("date:adult:")) ? await characterBrief(ctx.chatId, ctx.userId) : undefined;
+        const o = await odds2({ decider, r, s: before, specs: res.needs, playerText: lastUser?.content ?? "", sceneText, player, timeoutMs: budget(), card });
         if (Object.keys(o).length)
           res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene, odds: o });
       }
@@ -11542,7 +13086,7 @@ async function pushState(chatId, userId, force = false) {
     const loaded = await getRuleset(chatId, userId, force);
     const status = statusOf(loaded);
     if (!chatId || !loaded?.ruleset) {
-      send({ type: "state", chatId, status, hud: null, map: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false, dungeon: null, dungeonEntries: [] }, userId);
+      send({ type: "state", chatId, status, hud: null, map: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false, dungeon: null, dungeonEntries: [], date: null }, userId);
       return;
     }
     const r = loaded.ruleset;
@@ -11584,7 +13128,8 @@ async function pushState(chatId, userId, force = false) {
       choicesAnchor: anchor,
       busy: busyChats.has(chatId),
       dungeon: settings.enabled ? await withName(buildDungeonView(r, state), chatId, userId) : null,
-      dungeonEntries: settings.enabled ? buildDungeonEntries(r, state) : []
+      dungeonEntries: settings.enabled ? buildDungeonEntries(r, state) : [],
+      date: settings.enabled ? buildDateView(r, state, settings.lines) : null
     }, userId);
   } catch (e) {
     logError("pushState", e);
@@ -11625,6 +13170,7 @@ var lastStates, busyChats, activeChat, timers, key3 = (userId) => userId ?? "_",
 var init_state_push = __esm(() => {
   init_view();
   init_view2();
+  init_view3();
   init_ledger();
   init_settings();
   init_source();
@@ -11637,6 +13183,8 @@ var init_state_push = __esm(() => {
 // src/backend.ts
 init_resolve();
 init_templates();
+init_talk();
+init_types2();
 init_ledger();
 init_settings();
 init_source();
@@ -11874,7 +13422,7 @@ init_loader();
 init_lint();
 
 // src/engine/reference.ts
-var PART_LABELS = ["core", "stats", "people", "world", "actions", "encounters", "journal", "rules", "story"];
+var PART_LABELS = ["core", "stats", "people", "world", "actions", "encounters", "journal", "rules", "story", "dating"];
 var PART_CONTENTS = {
   core: "name, description, player, clock, start, hud, narration",
   stats: "stats",
@@ -11884,7 +13432,8 @@ var PART_CONTENTS = {
   encounters: "encounters, dungeons",
   journal: "codex, feats, perks",
   rules: "triggers",
-  story: "secrets, fronts, random_events, live_choices"
+  story: "secrets, fronts, random_events, live_choices",
+  dating: "dating (tastes, topics, venues), plus gift items and actions to get them"
 };
 function partForIssue(where) {
   const w = where.replace(/^warp-ruleset\s*·\s*/i, "");
@@ -11907,6 +13456,8 @@ function partForIssue(where) {
     return "rules";
   if (["secrets", "fronts", "random events", "live choices"].some((k) => head.startsWith(k)))
     return "story";
+  if (head.startsWith("dating"))
+    return "dating";
   return "core";
 }
 var REFERENCE = `WARP RULESET FORMAT (YAML). Numbers may be formulas in quotes. Meters are 0–100 unless there's a reason.
@@ -12045,12 +13596,29 @@ live_choices:     # a writer phrases options for the moment; each must carry one
     careful: { desc: "The cautious, safe option" }
 STORY EFFECTS: front: { harbour_gangs: -20 }, reveal: [ward_accident] (opens its next stage), gauge: +30 (brings the next event closer).
 
+DATING (the "dating" part):
+dating:           # talk topic by topic (tastes stay hidden until learned), ask people out, go on outings. \`dating: true\` = all built-ins
+  love: love                       # relationship stat used as love (created if missing); fear: fear likewise
+  romance: true                    # false = friendship only. Romance is never offered with anyone under 18 or of unknown age
+  stages: { stranger: 0, acquaintance: 10, friend: 30, close: 55, partner: { at: 80, partner: true } }   # love (0–100 of its range) per rung; partner only through a returned confession
+  hostile: { at: 60, label: Hostile }        # fear (0–100) that turns someone hostile
+  people:                          # authored tastes; otherwise the decision model reads them from the card (or they're seeded)
+    jo: { loves: [food], likes: [music, tag:nature], dislikes: [gossip], hates: [tease] }   # topic ids, category ids, tag:<activity tag>, item:<item id>
+  topics:                          # merged over the built-ins; false removes one. Built-ins: weather, their_day, local_news, gossip, hobbies, music, books_films, games, sport, food, travel, nature, fashion, work, family, dreams, past, worries, secrets, compliment_looks, compliment_mind, joke, tease, flirt, ideal_partner, love_life, the_two_of_you
+    cooking: { label: Cooking, category: interests, stage: acquaintance, when: "at('kitchen')" }   # categories: small_talk, interests, personal, charm, romance
+  venues:                          # outings; built-ins: cafe, park, cinema, dinner, arcade, bar (builtin_venues: false drops them)
+    pier: { name: The pier, at: docks, cost: 10, activities: { fish: { label: Go fishing, tags: [nature, calm] }, sunset: { label: Watch the sunset together, tags: [romance], romantic: true } }, events: { gulls: { text: "Gulls steal the chips.", enjoy: -5 } } }
+  with: "not flag('grounded')"     # who can be talked to (target = the person)
+  pace: { minutes_per_topic: 5, fatigue_per_topic: 12, beats: 4, minutes_per_beat: 30 }
+items: { flowers: { name: Flowers, tags: [gift] } }   # items tagged gift can be given during a conversation
+
 FORMULA NAMES: stats, flags, hour, minute, day, weekday, month, date, season, weather, temperature, indoors, outside,
 warmth, warmth_min, warmth_max, too_cold, too_hot, reveal, exposed, naked, in_encounter, round, foe.<stat>, target.<relstat>, location.
 FUNCTIONS: has(item[, n]), count(item), flag(x), cond(x), at(loc), rel(person, stat), met(person), between(v, lo, hi), roll('2d6'),
 wearing(item), worn(slot), trait(t), present(person), where(person), codex(id), feat(id), perk(id),
 secret(id) (stages the narrator knows), front(id) (clock value), front_stage(id) (stages surfaced), happened(event),
 deepest(dungeon) (deepest floor reached), in_dungeon, dungeon_depth,
+stage(person) (relationship rung, −1 hostile), partner(person), dates(person), in_date, on_outing,
 min, max, clamp, floor, ceil, round, abs.
 Operators: + - * / % < <= > >= == != and or not, a ? b : c. Strings in single quotes.
 `;
@@ -12189,6 +13757,7 @@ var SYSTEMS = [
   { id: "schedules", label: "NPC schedules & places" },
   { id: "encounters", label: "Encounters / combat" },
   { id: "dungeon", label: "Dungeon diving (roguelike floors, party battles)" },
+  { id: "dating", label: "Dating (topics, hidden tastes, outings)" },
   { id: "crime", label: "Crime & consequences" },
   { id: "journal", label: "Codex & feats" },
   { id: "perks", label: "Levels & perks" },
@@ -12385,6 +13954,7 @@ function buildPreview(s) {
     feats: Object.keys(r.feats).length,
     perks: Object.keys(r.perks).length,
     secrets: Object.keys(r.secrets).length,
+    venues: r.dating.enabled ? Object.keys(r.dating.venues).length : 0,
     fronts: Object.keys(r.fronts).length,
     events: Object.keys(r.randomEvents.events).length
   };
@@ -12533,6 +14103,8 @@ async function draftAll(s, userId) {
       return systems.has("journal") || systems.has("perks");
     if (label === "story")
       return systems.has("story");
+    if (label === "dating")
+      return systems.has("dating");
     return true;
   };
   const baseOf = (label) => {
@@ -12904,6 +14476,15 @@ spindle.onFrontendMessage(async (raw, userId) => {
           }
           say = `*${c.label}*`;
           intent = { actionId: `${LIVE_PREFIX}${c.tag}${c.target ? `${TARGET_SEP}${c.target}` : ""}`, via: "choice", label: c.label };
+        } else if (msg.actionId.startsWith(DATE_PREFIX)) {
+          const m = dateMoves(r, state, settings.lines).find((x) => x.id === msg.actionId);
+          if (!m) {
+            toast("warning", "That isn't possible right now.", userId);
+            await pushState(msg.chatId, userId);
+            return;
+          }
+          say = m.say;
+          intent = { actionId: m.id, via: "choice", label: m.label };
         } else if (msg.actionId.startsWith(TRAVEL_PREFIX)) {
           const to = msg.actionId.slice(TRAVEL_PREFIX.length);
           if (!travelTargets(r, state).includes(to)) {

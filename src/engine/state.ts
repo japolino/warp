@@ -9,6 +9,8 @@ import type { Value, ExprEnv } from "./expr.js";
 import { evalNumber } from "./expr.js";
 import type { Ruleset, StatDef, Band } from "./ruleset.js";
 import type { BattleState, DungeonRun, PartyMember, Pending } from "./dungeon/types.js";
+import type { DateSession, DatingMemory, Reaction } from "./date/types.js";
+import { stageIndex } from "./date/stage.js";
 import {
   dateAt, exposedSlots, hasTrait, isIndoors, personLocation, revealOf, seasonAt, temperatureAt,
   warmthNeeded, warmthOf, weatherAt,
@@ -62,6 +64,10 @@ export interface GameState {
   dungeon: DungeonRun | null;
   /** Deepest floor reached per dungeon. */
   deepest: Record<string, number>;
+  /** The conversation or outing in progress, if any. */
+  date: DateSession | null;
+  /** What dating has taught the game about each person. */
+  dating: DatingMemory;
 }
 
 export type EventSource = "cost" | "check" | "action" | "drift" | "trigger" | "narrator" | "manual" | "start" | "world";
@@ -111,6 +117,13 @@ export type WarpEvent = { src: EventSource; note?: string } & (
   | { t: "dg_log"; text: string }
   | { t: "dg_told" }
   | { t: "dg_exit" }
+  | { t: "dt_start"; session: DateSession }
+  | { t: "dt_patch"; patch: Partial<DateSession> }
+  | { t: "dt_end" }
+  | { t: "dt_pref"; who: string; key: string; v: number }
+  | { t: "dt_seen"; who: string; topic: string; reaction: Reaction }
+  | { t: "dt_partner"; who: string; on: boolean }
+  | { t: "dt_dated"; who: string; enjoy: number }
 );
 
 const DG_LOG_KEPT = 12;
@@ -152,6 +165,8 @@ export function initialState(r: Ruleset): GameState {
     news: [],
     dungeon: null,
     deepest: {},
+    date: null,
+    dating: { prefs: {}, known: {}, partners: {}, dates: {} },
   };
   for (const id of r.statOrder) s.stats[id] = r.stats[id].start;
   // Stages with no condition at the top of a secret's ladder are known from the start.
@@ -320,6 +335,22 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       s.deepest[e.run.id] = Math.max(s.deepest[e.run.id] ?? 0, e.run.depth);
       break;
     case "dg_exit": s.dungeon = null; break;
+    case "dt_start": s.date = structuredClone(e.session); break;
+    case "dt_patch": if (s.date) s.date = { ...s.date, ...structuredClone(e.patch) }; break;
+    case "dt_end": s.date = null; break;
+    case "dt_pref": s.dating.prefs = { ...s.dating.prefs, [e.who]: { ...(s.dating.prefs[e.who] ?? {}), [e.key]: e.v } }; break;
+    case "dt_seen": s.dating.known = { ...s.dating.known, [e.who]: { ...(s.dating.known[e.who] ?? {}), [e.topic]: e.reaction } }; break;
+    case "dt_partner": {
+      const partners = { ...s.dating.partners };
+      if (e.on) partners[e.who] = true; else delete partners[e.who];
+      s.dating.partners = partners;
+      break;
+    }
+    case "dt_dated": {
+      const prev = s.dating.dates[e.who] ?? { count: 0, best: 0 };
+      s.dating.dates = { ...s.dating.dates, [e.who]: { count: prev.count + 1, best: Math.max(prev.best, e.enjoy) } };
+      break;
+    }
     default: if (s.dungeon) applyDungeon(s, s.dungeon, e);
   }
 }
@@ -384,6 +415,7 @@ export const BUILTIN_NAMES = [
   "month", "date", "season", "weather", "temperature", "indoors", "outside",
   "warmth", "warmth_min", "warmth_max", "too_cold", "too_hot", "reveal", "exposed", "naked",
   "in_encounter", "round", "target", "in_dungeon", "dungeon_depth",
+  "in_date", "on_outing",
 ];
 
 export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> = {}): ExprEnv {
@@ -417,6 +449,8 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
       in_encounter: !!s.encounter,
       in_dungeon: !!s.dungeon,
       dungeon_depth: s.dungeon?.depth ?? 0,
+      in_date: !!s.date,
+      on_outing: s.date?.kind === "outing",
       round: s.encounter?.round ?? 0,
       target: "",
     };
@@ -493,6 +527,11 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
         case "happened": return a0 in s.gauge.last;
         // Deepest floor reached in a dungeon (0 = never entered).
         case "deepest": return s.deepest[a0] ?? 0;
+        // Dating: together with someone, and how many outings you've had.
+        case "partner": return a0 in s.dating.partners;
+        // Relationship stage index (0 = the first rung), −1 when hostile.
+        case "stage": return stageIndex(r, s, a0);
+        case "dates": return s.dating.dates[a0]?.count ?? 0;
       }
       return undefined;
     },

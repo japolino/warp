@@ -160,6 +160,66 @@ export interface DungeonEntryView {
   companions: { id: string; name: string; present: boolean; cls: string }[];
 }
 
+export interface DatePersonView {
+  id: string;
+  name: string;
+  /** Here now (or always around). */
+  here: boolean;
+  stage: string;
+  stageIndex: number;
+  hostile: boolean;
+  partner: boolean;
+  /** 0–1 of each stat's range. */
+  love: number;
+  fear: number;
+  loveText: string | null;
+  fearText: string | null;
+  dates: number;
+  /** Topic labels by how they reacted, as far as the player has seen. */
+  loves: string[];
+  likes: string[];
+  dislikes: string[];
+  romance: boolean;
+}
+
+export interface DateTopicView {
+  id: string;
+  label: string;
+  desc: string | null;
+  /** How they reacted last time (a reaction id), if the player has seen it. */
+  known: string | null;
+  knownLabel: string | null;
+  used: number;
+  /** Why it can't be raised now. */
+  lock: string | null;
+  odds: number | null;
+}
+
+export interface DateView {
+  session: {
+    who: string;
+    name: string;
+    kind: "talk" | "plan" | "outing";
+    venue: string | null;
+    beat: number;
+    beats: number;
+    fatigue: number;
+    mood: number;
+    moodLabel: string;
+    moodFace: string;
+    combo: number;
+    enjoy: number;
+    closing: boolean;
+    last: { label: string; reaction: string; text: string } | null;
+  } | null;
+  /** The person in the session. */
+  person: DatePersonView | null;
+  people: DatePersonView[];
+  categories: { id: string; label: string; icon: string; topics: DateTopicView[] }[];
+  /** Non-topic moves (asking out, venues, activities, gifts, goodbye). */
+  moves: { id: string; label: string; desc: string | null; odds: number | null; kind: string; group: string }[];
+}
+
 export type DungeonOp =
   | { op: "enter"; id: string; companions: string[] }
   | { op: "move"; x: number; y: number }
@@ -367,6 +427,8 @@ export type BackendToFrontend =
       busy: boolean;
       dungeon: DungeonView | null;
       dungeonEntries: DungeonEntryView[];
+      /** Dating: people, and the conversation or date in progress (null when the ruleset has no dating). */
+      date: DateView | null;
     }
   | { type: "busy"; chatId: string; busy: boolean; label?: string }
   | { type: "settings"; settings: Settings; templates: TemplateInfo[]; connections: { id: string; name: string }[]; jevKeySet: boolean }
