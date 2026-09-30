@@ -777,7 +777,43 @@ live_choices:
     },
     {
       label: "dating",
-      yaml: `# Companions live between replies: goals, arcs they push by their own choices, feelings about each other.
+      yaml: `# Rent is due every Monday. Miss it and the landlord decides what that costs.
+obligations:
+  rent:
+    label: Rent
+    amount: 120
+    every: 7
+    first: 7
+    grace: 1
+    late:
+      ask: "{{user}}'s rent is late. What does the landlord do?"
+      options:
+        warning: { desc: "Slips a stern note under the door", weight: 3, stress: +8 }
+        late_fee: { desc: "Adds a £25 late fee", weight: 2, stress: +10, money: "-min(money, 25)" }
+        lockout: { desc: "Changes the lock until it's paid", weight: 1, stress: +25, flags: { locked_out: true } }
+
+# A busy shift at Jo's café: every customer wants something different.
+jobs:
+  rush_hour:
+    label: Cover the lunch rush at the café
+    at: [high_street]
+    when: "between(hour, 11, 14) and weekday != 'Sun'"
+    customers: 3
+    pay: 25
+    tip: 4
+    skill: tending
+    minutes: 30
+    gain: { tending: +1, fatigue: +15 }
+    styles: { quick: "Get their order out fast", friendly: "Be warm and chatty", careful: "Get every detail exactly right" }
+    patrons:
+      - { who: "A nurse coming off a night shift, swaying on her feet", want: quick }
+      - { who: "A student with a laptop and nowhere to be", want: friendly }
+      - { who: "A regular who orders the same thing, very precisely, every day", want: careful }
+      - { who: "Two builders on a twenty-minute break", want: quick }
+      - { who: "An elderly man who's lonely and wants someone to talk to", want: friendly }
+      - { who: "A woman with a long list of allergies", want: careful }
+
+# Companions live between replies: goals, arcs they push by their own choices, feelings about each other.
 companions:
   jo:
     goal: Buy the café outright before the landlord sells it

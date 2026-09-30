@@ -85,6 +85,8 @@ export interface HudView {
   body: { part: string; label: string; text: string; covered: boolean }[] | null;
   /** Transformations under way. */
   transforms: { label: string; stage: number; of: number }[];
+  /** Bills and debts. */
+  dues: { label: string; owed: number; text: string; tone: Tone }[];
   /** A pregnancy (once it's known) and children. */
   family: { name: string; text: string }[];
   /** Checkpoints and endings, when the ruleset has them. */

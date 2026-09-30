@@ -9,7 +9,7 @@ import { SKILLS } from "./dungeon/content.js";
 export const FUNCTIONS = [
   "has", "count", "flag", "cond", "at", "rel", "met", "between", "roll",
   "wearing", "worn", "trait", "present", "where", "codex", "feat", "perk",
-  "secret", "front", "front_stage", "happened", "deepest", "partner", "dates", "stage", "saved", "body", "transformed", "bond", "arc", "age", "children",
+  "secret", "front", "front_stage", "happened", "deepest", "partner", "dates", "stage", "saved", "body", "transformed", "bond", "arc", "age", "children", "owed", "missed", "days_until",
   "min", "max", "clamp", "floor", "ceil", "round", "abs",
 ];
 
@@ -217,6 +217,23 @@ export function lintRuleset(r: Ruleset): Issue[] {
   }
   for (const e of Object.values(r.endings)) check(e.when, `Endings › ${e.id} › when`);
   const people = Object.keys(r.people);
+  for (const o of Object.values(r.obligations)) {
+    const w = `Obligations › ${o.id}`;
+    check(o.amount, `${w} › amount`);
+    if (!r.stats[o.payWith]) issues.push({ level: "warning", where: `${w} › pay_with`, message: `"${o.payWith}" isn't a stat` });
+    if (o.creditor && !r.people[o.creditor]) issues.push({ level: "warning", where: `${w} › creditor`, message: `"${o.creditor}" isn't a person${suggest(o.creditor, people)}` });
+    for (const loc of o.at) if (!r.locations[loc]) issues.push({ level: "warning", where: `${w} › at`, message: `"${loc}" isn't a location` });
+    if (o.late) for (const opt of o.late.options) checkEffect(opt.effect, `${w} › late › ${opt.id}`);
+  }
+  for (const j of Object.values(r.jobs)) {
+    const w = `Jobs › ${j.id}`;
+    check(j.when, `${w} › when`);
+    check(j.pay, `${w} › pay`);
+    check(j.tip, `${w} › tip`);
+    if (j.skill && !r.stats[j.skill]) issues.push({ level: "warning", where: `${w} › skill`, message: `"${j.skill}" isn't a stat` });
+    for (const loc of j.at) if (!r.locations[loc]) issues.push({ level: "warning", where: `${w} › at`, message: `"${loc}" isn't a location` });
+    checkEffect(j.gain, `${w} › gain`);
+  }
   r.lineage.stages.forEach((st, i) => checkEffect(st.effects, `Lineage › stage ${i + 1}`));
   for (const part of r.lineage.inherit) if (r.body.enabled && !r.body.parts[part]) issues.push({ level: "warning", where: "Lineage › children › inherit", message: `"${part}" isn't a body part${suggest(part, Object.keys(r.body.parts))}` });
   for (const c of Object.values(r.companions)) {

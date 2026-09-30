@@ -4,6 +4,7 @@ import type { Ruleset } from "./engine/ruleset.js";
 import type { GameState, WarpEvent } from "./engine/state.js";
 import { TEMPLATES } from "./engine/templates/index.js";
 import { dateMoves } from "./engine/date/talk.js";
+import { JOB_PREFIX, PAY_PREFIX, workMoves } from "./engine/work.js";
 import { DATE_PREFIX } from "./engine/date/types.js";
 import type { FrontendToBackend } from "./shared/protocol.js";
 import { logError, send, toast } from "./backend/host.js";
@@ -189,6 +190,11 @@ spindle.onFrontendMessage(async (raw, userId) => {
           if (!c || !r.liveChoices.tags[c.tag]) { toast("warning", "That choice isn't available anymore.", userId); await pushState(msg.chatId, userId); return; }
           say = `*${c.label}*`;
           intent = { actionId: `${LIVE_PREFIX}${c.tag}${c.target ? `${TARGET_SEP}${c.target}` : ""}`, via: "choice", label: c.label };
+        } else if (msg.actionId.startsWith(PAY_PREFIX) || msg.actionId.startsWith(JOB_PREFIX)) {
+          const m = workMoves(r, state).find((x) => x.id === msg.actionId);
+          if (!m) { toast("warning", "That isn't possible right now.", userId); await pushState(msg.chatId, userId); return; }
+          say = m.say;
+          intent = { actionId: m.id, via: "choice", label: m.label };
         } else if (msg.actionId.startsWith(DATE_PREFIX)) {
           const m = dateMoves(r, state, settings.lines).find((x) => x.id === msg.actionId);
           if (!m) { toast("warning", "That isn't possible right now.", userId); await pushState(msg.chatId, userId); return; }

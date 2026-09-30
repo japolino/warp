@@ -60,7 +60,7 @@ export async function readTurn(opts: {
   const { decider, r, s, settings, playerText, player } = opts;
   const q: Questions = {};
   // In a conversation or on a date, typed lines are the player's words in it (read when the turn resolves), not actions.
-  const talking = !!activeSession(r, s);
+  const talking = !!activeSession(r, s) || !!s.job;
   const actions = playerText && !talking ? availableChoices(r, s, settings.lines) : [];
   const travel = playerText && !talking ? travelTargets(r, s) : [];
 

@@ -14,6 +14,7 @@ import type { ChangeView, ChoiceView, ClothingView, HudView, MapView, RecordView
 import { dungeonOf, dungeonsHere, levelOf, memberFighter } from "./dungeon/run.js";
 import { activeSession, dateDigest, dateMoves, moodOf, type DateMove } from "./date/talk.js";
 import { REACTION_LABEL } from "./date/types.js";
+import { workDigest, workMoves } from "./work.js";
 import { evalBool } from "./expr.js";
 
 function pct(v: number, min: number, max: number) {
@@ -176,6 +177,16 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
     body: r.body.enabled ? Object.entries(s.body).map(([part, traits]) => ({
       part, label: part.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()), text: traitText(traits) || "—", covered: bodyCovered(r, s, part),
     })) : null,
+    dues: Object.values(r.obligations).map((o) => {
+      const d = s.dues[o.id];
+      const days = d ? Math.floor((d.due - s.minutes) / 1440) : 0;
+      return {
+        label: o.label,
+        owed: d?.owed ?? 0,
+        text: !d || d.owed <= 0 ? `Paid · next ${r.clock.enabled && d ? formatClock(r, d.due).day : "later"}` : d.missed || days < 0 ? `Overdue · ${d.missed} missed` : days <= 0 ? "Due today" : `Due in ${days} day${days === 1 ? "" : "s"}`,
+        tone: (!d || d.owed <= 0 ? "good" : d.missed || days < 0 ? "bad" : days <= 1 ? "warn" : "neutral") as Tone,
+      };
+    }),
     family: [
       ...(s.pregnancy && s.pregnancy.told > 0 ? [{ name: s.pregnancy.carrier === "player" ? "Expecting" : `${personName(r, s, s.pregnancy.carrier)} is expecting`, text: `${Math.floor((s.minutes - s.pregnancy.since) / 1440 / 7)} of ${r.lineage.weeks} weeks` }] : []),
       ...Object.entries(s.kin).map(([id, k]) => ({ name: k.name, text: `${k.sex === "girl" ? "Daughter" : "Son"}, ${kinAge(r, s, id)}${k.joined ? " · grown up" : ""}` })),
@@ -329,6 +340,9 @@ export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; 
       plain("dungeon:leave", "Leave the dungeon", d?.name ?? "Dungeon", "Climb back out with what you've found"),
     ];
   }
+  // A work shift takes over the choices until it ends.
+  const work = s.encounter ? [] : workMoves(r, s).map((m) => plain(m.id, m.label, m.group, m.desc));
+  if (s.job) return work;
   // A conversation or date takes over the choices: featured topics and moves, plus the full list in the drawer.
   const asChoice = (m: DateMove): ChoiceView => ({
     id: m.id, label: m.label, group: m.group, desc: m.desc, odds: m.odds, partialOdds: null, checkLabel: null,
@@ -384,7 +398,7 @@ export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; 
         params: a.params.map((p) => ({ id: p.id, label: p.label, options: Object.keys(p.options), default: p.default })),
       };
     });
-  return [...live, ...actions, ...talk, ...dungeons, ...travel];
+  return [...live, ...actions, ...talk, ...work, ...dungeons, ...travel];
 }
 
 // ───────────────────────── change summaries ─────────────────────────
@@ -656,6 +670,7 @@ export function stateDigest(r: Ruleset, s: GameState): string {
   if (date) lines.push(date);
   const body = bodyLine(r, s);
   if (body) lines.push(body);
+  lines.push(...workDigest(r, s));
 
   const meters = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "meter" || d.kind === "money");
   const other = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "attribute" || d.kind === "skill");

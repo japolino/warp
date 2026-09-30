@@ -10,7 +10,7 @@ export const PART_CONTENTS: Record<PartLabel, string> = {
   stats: "stats",
   people: "relationships (stats + people with schedules), companions, lineage",
   world: "weather, locations, items (incl. clothing), wardrobe, body, conditions, flags, start.items",
-  actions: "actions",
+  actions: "actions, obligations, jobs",
   encounters: "encounters, dungeons",
   journal: "codex, feats, perks, checkpoints, endings",
   rules: "triggers, mind",
@@ -26,7 +26,7 @@ export function partForIssue(where: string): PartLabel {
   if (head.startsWith("stats")) return "stats";
   if (["relationships", "people", "companions", "lineage"].some((k) => head.startsWith(k))) return "people";
   if (["locations", "items", "wardrobe", "weather", "conditions", "flags", "body"].some((k) => head.startsWith(k))) return "world";
-  if (head.startsWith("actions")) return "actions";
+  if (["actions", "obligations", "jobs"].some((k) => head.startsWith(k))) return "actions";
   if (head.startsWith("encounters") || head.startsWith("dungeons")) return "encounters";
   if (["codex", "feats", "perks", "checkpoints", "endings"].some((k) => head.startsWith(k))) return "journal";
   if (head.startsWith("triggers") || head.startsWith("rules") || head.startsWith("mind")) return "rules";
@@ -159,6 +159,21 @@ body:             # the player character's body; the story may change it after a
     feline_splice: { label: Feline splice, chance: 70, stages: [ { set: { ears: { type: cat } }, text: "Soft cat ears push up through {{user}}'s hair." }, { set: { tail: { type: cat } } } ] }
 EFFECTS for the body: body: { hair: { color: red } } (null removes a trait), transform: { feline_splice: 1 } (advance stages; each rolls its chance).
 FUNCTIONS: body('hair', 'color') ('' when absent), transformed('feline_splice') (stages so far).
+
+obligations:      # bills on the calendar: "Pay…" choices appear while something is owed; a missed one lets the creditor decide
+  rent: { amount: 120, every: 7, first: 7, grace: 1, creditor: landlord, at: [apartment], late: { ask: "The rent is late. What does {creditor} do?", options: { warn: { desc: A warning, weight: 3 }, fee: { desc: A late fee, weight: 1, money: -25 } } } }
+  # arrears pile up; FUNCTIONS owed(id), missed(id), days_until(id)
+jobs:             # a shift of customers, each wanting a style; your pick (or your typed words, judged by the model) sets their mood and tip
+  lunch_rush:
+    label: Cover the lunch rush
+    at: [high_street]
+    customers: 3
+    pay: 25                        # for the shift (formula); tip: per customer, scaled by how happy they are
+    tip: 4
+    skill: tending                 # helps every customer's mood
+    gain: { tending: +1 }
+    styles: { quick: Get their order out fast, friendly: Be warm and chatty }
+    patrons: [ { who: "A nurse off a night shift", want: quick }, { who: "A lonely old man", want: friendly } ]
 
 codex: { docks: { title: The Docks, category: Places, text: "...", unlock: "location == 'docks'", lore: [Lorebook entry title] } }
 feats: { night_owl: { name: Night owl, desc: "...", unlock: "hour >= 2 and hour < 5", reward: { stress: -5 } } }

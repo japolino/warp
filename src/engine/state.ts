@@ -86,6 +86,10 @@ export interface GameState {
   pregnancy: { carrier: string; with: string; since: number; told: number } | null;
   /** Children. They stay out of the cast (and out of reach of every action) until they come of age. */
   kin: Record<string, Kin>;
+  /** Obligations: when the next payment is due, what's owed now, how many were missed. */
+  dues: Record<string, { due: number; owed: number; missed: number }>;
+  /** A work shift in progress. */
+  job: { id: string; n: number; patron: number; earned: number; tips: number; log: { who: string; result: string }[] } | null;
   /** The story reached an ending (told = the narrator has written it). */
   ended: { id: string; at: number; told: boolean } | null;
 }
@@ -164,6 +168,8 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "preg_stage"; n: number }
   | { t: "birth"; id: string; kin: Kin }
   | { t: "kin_join"; id: string }
+  | { t: "due"; id: string; due?: number; owed?: number; missed?: number }
+  | { t: "job"; job: GameState["job"] }
   | { t: "save"; slot: string; label: string }
   | { t: "load"; slot: string }
   | { t: "restart" }
@@ -222,7 +228,14 @@ export function initialState(r: Ruleset): GameState {
     bonds: structuredClone(r.bonds),
     pregnancy: null,
     kin: {},
+    dues: {},
+    job: null,
   };
+  // Obligations: the first payment is due `first` days in; its amount is read now.
+  for (const o of Object.values(r.obligations)) {
+    const owed = typeof o.amount === "number" ? o.amount : evalNumber(o.amount, makeEnv(r, s), 0);
+    s.dues[o.id] = { due: r.clock.start + o.first * 1440, owed: Math.max(0, owed), missed: 0 };
+  }
   for (const id of r.statOrder) s.stats[id] = r.stats[id].start;
   // Stages with no condition at the top of a secret's ladder are known from the start.
   for (const sec of Object.values(r.secrets)) {
@@ -424,6 +437,12 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       if (!s.rel[e.id]) { s.rel[e.id] = {}; for (const rs of r.relStatOrder) s.rel[e.id][rs] = r.relStats[rs].start; }
       break;
     }
+    case "due": {
+      const cur = s.dues[e.id] ?? { due: 0, owed: 0, missed: 0 };
+      s.dues = { ...s.dues, [e.id]: { due: e.due ?? cur.due, owed: Math.max(0, e.owed ?? cur.owed), missed: e.missed ?? cur.missed } };
+      break;
+    }
+    case "job": s.job = e.job ? structuredClone(e.job) : null; break;
     case "news": s.news = [...s.news, { text: e.text, at: s.minutes }].slice(-NEWS_KEPT); break;
     case "bond": s.bonds = { ...s.bonds, [e.a]: { ...(s.bonds[e.a] ?? {}), [e.b]: clamp((s.bonds[e.a]?.[e.b] ?? 0) + e.d, -100, 100) } }; break;
     case "save":
@@ -553,7 +572,7 @@ export const BUILTIN_NAMES = [
   "month", "date", "season", "weather", "temperature", "indoors", "outside",
   "warmth", "warmth_min", "warmth_max", "too_cold", "too_hot", "reveal", "exposed", "naked",
   "in_encounter", "round", "momentum", "target", "in_dungeon", "dungeon_depth",
-  "in_date", "on_outing", "loops", "runs", "pregnant", "pregnancy_weeks",
+  "in_date", "on_outing", "loops", "runs", "pregnant", "pregnancy_weeks", "at_work",
 ];
 
 export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> = {}): ExprEnv {
@@ -591,6 +610,7 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
       in_date: !!s.date,
       loops: s.loops,
       runs: s.runs,
+      at_work: !!s.job,
       pregnant: !!s.pregnancy && s.pregnancy.carrier === "player",
       pregnancy_weeks: s.pregnancy ? Math.floor((s.minutes - s.pregnancy.since) / 1440 / 7) : 0,
       on_outing: s.date?.kind === "outing",
@@ -685,6 +705,10 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
         // Family: a child's age in years, and how many children there are.
         case "age": return s.kin[a0] ? kinAge(r, s, a0) : r.people[a0]?.age ?? 0;
         case "children": return Object.keys(s.kin).length;
+        // Obligations: what's owed, payments missed, whole days until the next is due (negative = overdue).
+        case "owed": return s.dues[a0]?.owed ?? 0;
+        case "missed": return s.dues[a0]?.missed ?? 0;
+        case "days_until": return s.dues[a0] ? Math.floor((s.dues[a0].due - s.minutes) / 1440) : 0;
         case "dates": return s.dating.dates[a0]?.count ?? 0;
       }
       return undefined;

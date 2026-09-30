@@ -11,6 +11,7 @@ import { endingDirection } from "./chronicle.js";
 import { presentPeople } from "./world.js";
 import { DATE_PREFIX } from "./date/types.js";
 import { activeSession, ADULT_KEY, resolveDate } from "./date/talk.js";
+import { JOB_PREFIX, obligationLife, PAY_PREFIX, resolveWork } from "./work.js";
 
 export interface CheckResult {
   label: string;
@@ -929,7 +930,7 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
     w.push({ t: "end_told", src: "world" });
     rec.action = { id: RUN_EPILOGUE, label: `The end: ${e?.title ?? "the story ends"}`, via: intent?.via ?? "choice" };
   }
-  let found = intent && !intent.actionId.startsWith(TRAVEL_PREFIX) && !intent.actionId.startsWith(DATE_PREFIX) ? findAction(r, before, intent.actionId) : null;
+  let found = intent && !intent.actionId.startsWith(TRAVEL_PREFIX) && !intent.actionId.startsWith(DATE_PREFIX) && !intent.actionId.startsWith(PAY_PREFIX) && !intent.actionId.startsWith(JOB_PREFIX) ? findAction(r, before, intent.actionId) : null;
   // The character's mind may overrule the player: freeze, do something else, or colour the attempt.
   let mind = found ? mindOverride(r, before, found.a, found.target, opts.seed) : null;
   const meant = found ? (found.target ? `${found.a.label} (${personName(r, before, found.target)})` : intent!.label ?? found.a.label) : "";
@@ -941,12 +942,17 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   const a = found?.a;
   const inEncounter = !!before.encounter;
   // A conversation or outing takes every turn until it ends; a typed line is the player's words in it.
-  const dateIntent = intent?.actionId.startsWith(DATE_PREFIX) ? intent : activeSession(r, before) && !intent ? { actionId: `${DATE_PREFIX}say`, via: "adjudicator" as const } : null;
+  const dateIntent = intent?.actionId.startsWith(DATE_PREFIX) ? intent : activeSession(r, before) && !intent && !before.job ? { actionId: `${DATE_PREFIX}say`, via: "adjudicator" as const } : null;
+  // Bills and work shifts; during a shift, a typed line is how {{user}} serves the customer.
+  const workIntent = intent && (intent.actionId.startsWith(PAY_PREFIX) || intent.actionId.startsWith(JOB_PREFIX)) ? intent : before.job && !intent ? { actionId: `${JOB_PREFIX}say`, via: "adjudicator" as const } : null;
 
   // A conversation the player walked away from is over.
   if (before.date && !activeSession(r, before)) w.push({ t: "dt_end", src: "action" });
 
-  if (dateIntent) {
+  if (workIntent) {
+    const label = because(w, "Work and bills", () => resolveWork(builderOf(w), workIntent));
+    if (label) rec.action = { id: workIntent.actionId, label, via: workIntent.via };
+  } else if (dateIntent) {
     const done = because(w, "Conversation", () => resolveDate(builderOf(w), dateIntent));
     if (done) {
       rec.action = { id: dateIntent.actionId, label: done.label, via: dateIntent.via };
@@ -1036,6 +1042,7 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   if (w.events.length > worldBefore) runTriggers(w, false);
   companionLife(w, before);
   lineageLife(w);
+  obligationLife(builderOf(w));
   checkRun(w, before);
   w.push({ t: "turn", src: "action" });
   rec.events = w.events;
@@ -1227,6 +1234,7 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
   }
   companionLife(w, before);
   lineageLife(w);
+  obligationLife(builderOf(w));
   checkRun(w, before);
   return w.events;
 }
@@ -1286,6 +1294,7 @@ export function buildTurn(r: Ruleset, before: GameState, seed: string, fn: (t: T
   }
   companionLife(w, before);
   lineageLife(w);
+  obligationLife(builderOf(w));
   checkRun(w, before);
   return w.events;
 }
