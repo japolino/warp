@@ -9,7 +9,7 @@ import { emptyDraft, renderBuilder, renderBuilderCta, type BuilderDraft } from "
 import { renderDungeon, type DungeonPick } from "./frontend/dungeon-ui.js";
 import { connectCue } from "./frontend/cue-bridge.js";
 import { renderDate } from "./frontend/date-ui.js";
-import { formatStory, renderStage, stageModeOf, storySpeaker, type StageMode } from "./frontend/stage.js";
+import { formatStory, renderStage, stageModeOf, type StageMode } from "./frontend/stage.js";
 import { STAGE_STYLES } from "./frontend/stage-styles.js";
 import { esc, renderChips, renderChoices, renderHud, renderJournal, renderMap, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
 
@@ -37,6 +37,7 @@ export function setup(ctx: SpindleFrontendContext) {
   let settings: Settings = { ...DEFAULT_SETTINGS };
   let templates: TemplateInfo[] = [];
   let connections: { id: string; name: string }[] = [];
+  let imageConnections: { id: string; name: string }[] = [];
   let jevKeySet = false;
   let builder: BuilderSession | null = null;
   let bDraft: BuilderDraft = emptyDraft();
@@ -153,9 +154,10 @@ export function setup(ctx: SpindleFrontendContext) {
   let reactionKey: string | null = null;
   let storyFolded = store("storyFolded") === "1";
   storyEl.classList.toggle("folded", storyFolded);
-  let storyShown = "";
-  /** The reply being written right now, token by token. */
-  let stream = { gen: "", text: "" };
+  /** The snippet on screen, which of its lines is showing, and a copy kept while a finished scene lingers. */
+  let shownScene: StateMsg["scene"] = null;
+  let sceneKey = "";
+  let lineAt = 0;
   const stageVisible = () => !!stage?.isVisible();
 
   function place(b: Box) {
@@ -355,7 +357,7 @@ export function setup(ctx: SpindleFrontendContext) {
     } else if (drawerView === "rules") {
       body = renderBuilderCta(status.state !== "none", hasChat) + renderRulesetCard(status, hasChat) + `<div class="warp-card"><h3>Writing rules</h3><p>Rules live in entries titled <b>warp-ruleset · …</b> (or any lorebook named <b>warp-ruleset</b>). Each entry is YAML; entries merge together. Warp keeps them out of the prompt automatically.</p></div>`;
     } else {
-      body = renderSettings(settings, state?.status ?? null, connections, jevKeySet);
+      body = renderSettings(settings, state?.status ?? null, connections, jevKeySet, imageConnections);
     }
     drawerRoot.innerHTML = tabs + body;
     restoreSections(drawerRoot);
@@ -520,33 +522,43 @@ export function setup(ctx: SpindleFrontendContext) {
     renderStory();
   }
 
-  let storyFrame = 0;
+  /** The dialogue box: one line of the snippet at a time, click (or Space / Enter) for the next. */
   function renderStory() {
     if (!stageVisible()) return;
-    const isBusy = busy.on && busy.chatId === state?.chatId;
-    speakerEl.textContent = storySpeaker(state, stageMode);
-    const said = state?.story?.said?.trim();
-    saidEl.innerHTML = said ? `<span>You</span>${esc(said.length > 280 ? `${said.slice(0, 280)}…` : said)}` : "";
-    const live = !!stream.gen;
-    const text = live || stream.text ? stream.text : state?.story?.text ?? "";
-    const html = formatStory(text);
-    if (html !== storyShown) {
-      const newReply = !live && !stream.text && state?.story?.messageId !== textEl.dataset.id;
-      textEl.innerHTML = html;
-      storyShown = html;
-      textEl.dataset.id = state?.story?.messageId ?? "";
-      // Follow a reply as it's written; start a finished one from the top.
-      if (live) storyBody.scrollTop = storyBody.scrollHeight;
-      else if (newReply) storyBody.scrollTop = 0;
-    }
-    textEl.classList.toggle("streaming", live);
-    statusEl.innerHTML = isBusy && !live ? `<span class="warp-stage-dots" aria-hidden="true"><i></i><i></i><i></i></span>${esc(busy.label && busy.label !== "Rolling…" ? busy.label : "The story continues…")}` : "";
-    sayButton.disabled = isBusy;
+    if (state?.scene) shownScene = state.scene;
+    else if (!lingering) shownScene = null;
+    const sc = shownScene;
+    const key = sc ? `${sc.kind}:${sc.seq}` : "";
+    if (key !== sceneKey) { sceneKey = key; lineAt = 0; }
+    const lines = sc?.lines ?? [];
+    const line = lines[Math.min(lineAt, Math.max(0, lines.length - 1))];
+    const writing = !!sc?.writing || (busy.on && busy.chatId === state?.chatId);
+    speakerEl.textContent = line?.speaker ?? "";
+    storyEl.classList.toggle("narration", !!line && !line.speaker);
+    const said = sc?.said?.replace(/\*/g, "").trim();
+    saidEl.innerHTML = said && lineAt === 0 ? `<span>You</span>${esc(said.length > 280 ? `${said.slice(0, 280)}…` : said)}` : "";
+    textEl.innerHTML = line ? formatStory(line.text) : "";
+    const more = lineAt < lines.length - 1;
+    storyEl.classList.toggle("more", more && !writing);
+    statusEl.innerHTML = writing
+      ? `<span class="warp-stage-dots" aria-hidden="true"><i></i><i></i><i></i></span>`
+      : more ? `<span class="warp-stage-next">${lineAt + 1} / ${lines.length} · click to continue ▸</span>` : "";
+    sayButton.disabled = writing;
   }
-  function scheduleStory() {
-    if (storyFrame) return;
-    storyFrame = requestAnimationFrame(() => { storyFrame = 0; renderStory(); });
+  function nextLine(): boolean {
+    const n = shownScene?.lines.length ?? 0;
+    if (lineAt >= n - 1) return false;
+    lineAt += 1;
+    renderStory();
+    return true;
   }
+  storyBody.addEventListener("click", () => { nextLine(); });
+  // The scene runs behind the dialogue box; keep its content clear of it.
+  try {
+    const ro = new ResizeObserver(() => stageEl.style.setProperty("--warp-story-h", `${storyEl.offsetHeight}px`));
+    ro.observe(storyEl);
+    cleanups.push(() => ro.disconnect());
+  } catch { /* no observer: the padding stays at its default */ }
 
   function growSay() {
     sayInput.style.height = "auto";
@@ -586,40 +598,21 @@ export function setup(ctx: SpindleFrontendContext) {
     else if (e.key === "Escape") { e.preventDefault(); closeStage(); }
   });
   const onStageKey = (e: KeyboardEvent) => {
-    if (e.key !== "Escape" || !stageVisible()) return;
-    // Not while a host dialog has focus: Escape belongs to it.
+    if (!stageVisible() || e.ctrlKey || e.metaKey || e.altKey) return;
+    // Not while a host dialog has focus: its keys belong to it.
     const a = document.activeElement;
     if (a && a !== document.body && !stageEl.contains(a)) return;
-    e.preventDefault();
-    closeStage();
+    if (a instanceof HTMLTextAreaElement || a instanceof HTMLInputElement) return;
+    if (e.key === "Escape") { e.preventDefault(); closeStage(); return; }
+    if ((e.key === " " || e.key === "Enter") && nextLine()) { e.preventDefault(); return; }
+    // Number keys pick from the open menu (categories, or a category's topics).
+    if (/^[1-9]$/.test(e.key)) {
+      const btn = sceneEl.querySelector<HTMLButtonElement>(`.warp-stage-menu-col [data-key="${e.key}"]`);
+      if (btn && !btn.disabled) { e.preventDefault(); btn.click(); }
+    }
   };
   document.addEventListener("keydown", onStageKey);
   cleanups.push(() => document.removeEventListener("keydown", onStageKey));
-
-  // Replies stream onto the stage as they're written.
-  const onHost = (ev: string, fn: (p: Record<string, unknown> | null) => void) => {
-    try { cleanups.push(ctx.events.on(ev, (p) => fn(p && typeof p === "object" ? p as Record<string, unknown> : null))); }
-    catch { /* no host events: each reply shows once it's written */ }
-  };
-  onHost("GENERATION_STARTED", (p) => {
-    if (!p || p.chatId !== state?.chatId || /quiet|impersonate/i.test(String(p.generationType ?? ""))) return;
-    stream = { gen: String(p.generationId ?? "live"), text: "" };
-    scheduleStory();
-  });
-  onHost("STREAM_TOKEN_RECEIVED", (p) => {
-    if (!stream.gen || !p || typeof p.token !== "string" || p.type === "reasoning") return;
-    if (p.generationId && stream.gen !== "live" && p.generationId !== stream.gen) return;
-    const at = typeof p.offset === "number" && p.offset <= stream.text.length ? p.offset : stream.text.length;
-    stream.text = stream.text.slice(0, at) + p.token;
-    scheduleStory();
-  });
-  const endStream = (p: Record<string, unknown> | null) => {
-    if (!stream.gen || (p?.generationId && stream.gen !== "live" && p.generationId !== stream.gen)) return;
-    stream.gen = "";
-    scheduleStory();
-  };
-  onHost("GENERATION_ENDED", endStream);
-  onHost("GENERATION_STOPPED", endStream);
 
   function renderPick() {
     renderDrawer();
@@ -1106,8 +1099,6 @@ export function setup(ctx: SpindleFrontendContext) {
         if (entered) drawerView = "dungeon";
         if (m.chatId === busy.chatId && !m.busy && busy.label === "Rolling…") busy = { chatId: "", on: false, label: "" };
         if (m.busy && m.chatId) busy = { chatId: m.chatId, on: true, label: busy.label };
-        // A finished reply is in the state now; the streamed copy has done its job.
-        if (!stream.gen) stream.text = "";
         renderAll();
         break;
       }
@@ -1133,6 +1124,7 @@ export function setup(ctx: SpindleFrontendContext) {
         settings = m.settings;
         templates = m.templates;
         connections = m.connections;
+        imageConnections = m.imageConnections ?? [];
         jevKeySet = m.jevKeySet;
         renderAll();
         break;

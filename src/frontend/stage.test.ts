@@ -8,7 +8,7 @@ import { buildDungeonEntries, buildDungeonView } from "../engine/dungeon/view.js
 import { buildDateView } from "../engine/date/view.js";
 import { dateMoves } from "../engine/date/talk.js";
 import type { BackendToFrontend } from "../shared/protocol.js";
-import { formatStory, renderStage, stageModeOf, storySpeaker } from "./stage.js";
+import { formatStory, renderStage, stageModeOf } from "./stage.js";
 
 type StateMsg = Extract<BackendToFrontend, { type: "state" }>;
 const t = TEMPLATES.find((x) => x.id === "hometown")!;
@@ -16,7 +16,7 @@ const r = loadRuleset(t.parts.map((p, i) => ({ label: p.label, content: p.yaml, 
 const msg = (s: GameState): StateMsg => ({
   type: "state", chatId: "c", status: { state: "ok", name: r.name, source: null, issues: [], characterName: null, cardKind: "character", tags: [] },
   hud: null, map: null, choices: [], records: [], suggestions: [], latestMessageId: "m", choicesAnchor: "m", busy: false,
-  dungeon: buildDungeonView(r, s), dungeonEntries: buildDungeonEntries(r, s), date: buildDateView(r, s, []), story: null,
+  dungeon: buildDungeonView(r, s), dungeonEntries: buildDungeonEntries(r, s), date: buildDateView(r, s, []), scene: null,
 });
 const ui = { pick: null, mates: new Set<string>(), busy: false, cat: null, freshReaction: false };
 const atDocks = () => { const s = initialState(r); s.location = "docks"; s.locationName = "The Docks"; return s; };
@@ -28,7 +28,6 @@ describe("the stage", () => {
     expect(stageModeOf(msg(s), true)).toBe("gate");
     const run = foldEvents(r, [enterDungeon(r, s, "old_mines", [], "seed").events], s);
     expect(stageModeOf(msg(run), false)).toBe("dungeon");
-    expect(storySpeaker(msg(run), "dungeon")).toBe("The Old Mines");
   });
 
   test("the entrance picks companions and enters", () => {
@@ -68,10 +67,18 @@ describe("the stage", () => {
     const html = renderStage(m, "date", { ...ui, freshReaction: true });
     expect(html).toContain("warp-stage-ladder");
     expect(html).toContain('class="now"');
-    expect(html).toContain("data-date-act=\"date:topic:");
+    expect(html).toContain("data-date-cat=");
     expect(html).toContain("warp-stage-reaction");
     expect(html).toContain(" fresh");
-    expect(storySpeaker(m, "date")).toBe("Jo");
+    // Without a picture yet, their portrait stands in; opening a category lists its topics, numbered.
+    expect(html).toContain("warp-stage-portrait");
+    const cat = m.date!.categories[0].id;
+    const topics = renderStage(m, "date", { ...ui, cat });
+    expect(topics).toContain('data-date-act="date:topic:');
+    expect(topics).toContain('data-key="1"');
+    const pictured = renderStage({ ...m, scene: { kind: "date", seq: 1, lines: [], said: null, image: "/img.png", imageBusy: false, writing: false } }, "date", ui);
+    expect(pictured).toContain("warp-stage-photo");
+    expect(pictured).not.toContain("warp-stage-portrait");
   });
 
   test("narration keeps its shape: paragraphs, emphasis, dialogue — and nothing unescaped", () => {

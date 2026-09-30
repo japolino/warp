@@ -11,6 +11,9 @@ import { getRuleset, installTemplate, invalidateCharacter, knownRulesetBookIds, 
 import { busyChats, connectionsFor, getActiveChat, lastStates, pushState, schedulePush, setActiveChat } from "./backend/state-push.js";
 import { afterReply, interceptor, onGenerationEnded, onGenerationStarted, playerName } from "./backend/turn.js";
 import { intentFor } from "./backend/intents.js";
+import { playScene } from "./backend/scene.js";
+import { activeSession } from "./engine/date/talk.js";
+import { DATE_PREFIX } from "./engine/date/types.js";
 import { momentKey, takePrewritten } from "./backend/drafts.js";
 import { isRulesetEntryTitle } from "./engine/loader.js";
 import { getDecider, JEV_KEY } from "./backend/deciders.js";
@@ -147,7 +150,17 @@ async function sendSettings(userId?: string) {
     type: "settings", settings, jevKeySet,
     templates: TEMPLATES.map(({ id, name, blurb }) => ({ id, name, blurb })),
     connections: await connectionsFor(userId),
+    imageConnections: await imageConnectionsFor(userId),
   }, userId);
+}
+
+async function imageConnectionsFor(userId?: string): Promise<{ id: string; name: string }[]> {
+  try {
+    const list = await spindle.imageGen.listConnections(userId);
+    return list.map((c) => ({ id: c.id, name: `${c.name}${(c as { model?: string }).model ? ` — ${(c as { model?: string }).model}` : ""}` }));
+  } catch {
+    return []; // image permission not granted yet
+  }
 }
 
 spindle.onFrontendMessage(async (raw, userId) => {
@@ -174,6 +187,14 @@ spindle.onFrontendMessage(async (raw, userId) => {
         const text = String(msg.text ?? "").trim().slice(0, 4000);
         if (!text) return;
         if (busyChats.has(msg.chatId)) { toast("info", "Wait for the story to catch up first.", userId); return; }
+        // On a date or in the dungeon, a typed line plays on the stage; otherwise it's a chat message.
+        const loaded = await getRuleset(msg.chatId, userId);
+        const r = loaded?.ruleset;
+        if (r) {
+          const { state } = foldPath(r, await getMessages(msg.chatId));
+          if (activeSession(r, state)) { await playScene({ chatId: msg.chatId, userId, kind: "date", intent: { actionId: `${DATE_PREFIX}say`, via: "adjudicator" }, said: text, typed: text }); break; }
+          if (state.dungeon) { await playScene({ chatId: msg.chatId, userId, kind: "dungeon", intent: null, said: text, typed: text }); break; }
+        }
         await spindle.chat.appendMessage(msg.chatId, { role: "user", content: text }, { triggerGeneration: true });
         break;
       }
@@ -192,6 +213,12 @@ spindle.onFrontendMessage(async (raw, userId) => {
           return;
         }
         const { say, intent } = ci;
+        // Dates play on the stage, off the chat.
+        if (msg.actionId.startsWith(DATE_PREFIX)) {
+          if (busyChats.has(msg.chatId)) { toast("info", "Wait a moment — they're still answering.", userId); await pushState(msg.chatId, userId); return; }
+          await playScene({ chatId: msg.chatId, userId, kind: "date", intent, said: say });
+          break;
+        }
         // Already written while the player read: post it at once, then catch up on the bookkeeping.
         const ready = takePrewritten(msg.chatId, momentKey(msgs, state), msg.actionId);
         if (ready) {

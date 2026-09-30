@@ -23,6 +23,9 @@ export interface StageUi {
   freshReaction: boolean;
 }
 
+/** The HUD bits a date shows in its corner. */
+type Hud = StateMsg["hud"];
+
 /** What the stage should show for this state (the entrance only when asked for). */
 export function stageModeOf(s: StateMsg | null, wantGate: boolean): StageMode | null {
   if (s?.dungeon) return "dungeon";
@@ -181,58 +184,54 @@ function ladder(v: DateView): string {
   return `<ol class="warp-stage-ladder" aria-label="Where you stand">${v.stages.map((st, i) => `<li class="${i < p.stageIndex ? "past" : i === p.stageIndex ? "now" : ""}">${esc(st)}</li>`).join("")}</ol>`;
 }
 
-function dateScene(v: DateView, ui: StageUi): string {
+/** A URL made safe inside CSS url("…"). */
+const cssUrl = (u: string) => u.replace(/["\\\r\n]/g, (c) => encodeURIComponent(c));
+
+function dateScene(v: DateView, hud: Hud, scene: StateMsg["scene"], ui: StageUi): string {
   const s = v.session!;
   const p = v.person!;
   const kicker = s.kind === "outing" ? `On a date${s.venue ? ` · ${esc(s.venue)}` : ""}` : s.kind === "plan" ? "Making plans" : "Talking with";
-  const fatigueTone = s.fatigue >= 80 ? "bad" : s.fatigue >= 60 ? "warn" : "good";
+  const image = scene?.image ?? null;
+  const fatigue = s.fatigue >= 100 ? "Done talking" : s.fatigue >= 80 ? "Tired of talking" : s.fatigue >= 60 ? "Flagging" : "Fresh";
   const last = s.last
     ? `<div class="warp-stage-reaction warp-tone-${REACT_TONE[s.last.reaction]}${ui.freshReaction ? " fresh" : ""}"><span class="warp-stage-reaction-icon">${REACT_ICON[s.last.reaction]}</span><div><b>${esc(s.last.text)}</b><span>${esc(s.last.label)}</span></div></div>`
-    : `<div class="warp-stage-reaction quiet"><span class="warp-stage-reaction-icon">✦</span><div><b>Say something</b><span>Pick a topic, or write your own line below.</span></div></div>`;
-  const outing = s.kind === "outing"
-    ? `<div class="warp-stage-outing">
-        <div class="warp-stage-beats" title="${s.closing ? "Winding down" : `Moment ${Math.min(s.beat + 1, s.beats)} of ${s.beats}`}">${Array.from({ length: s.beats }, (_, i) => `<i class="${i < s.beat ? "past" : i === s.beat && !s.closing ? "now" : ""}"></i>`).join("")}</div>
-        ${meter("Enjoyment", s.enjoy / 100, `${Math.round(s.enjoy)}%`, "enjoy")}
-      </div>`
-    : s.kind === "plan" ? `<div class="warp-stage-outing plan">🗓 They said yes — pick where to go.</div>` : "";
+    : "";
+  const corner = `<div class="warp-stage-corner">
+      ${hud?.clock ? `<div class="warp-stage-clock">${esc(hud.date ?? hud.clock.day)} · <b>${esc(hud.clock.time)}</b></div>` : ""}
+      <div class="warp-stage-where">${esc(s.venue ?? hud?.location?.name ?? "")}</div>
+      ${hud?.money ? `<div class="warp-stage-cash">${esc(hud.money)}</div>` : ""}
+    </div>`;
+  const stats = `<dl class="warp-stage-stats">
+      <dt>Love</dt><dd><span class="warp-stage-mini love"><i style="width:${Math.round(p.love * 100)}%"></i></span>${esc(p.loveText ?? `${Math.round(p.love * 100)}%`)}</dd>
+      ${p.fear > 0.005 ? `<dt>Fear</dt><dd><span class="warp-stage-mini fear"><i style="width:${Math.round(p.fear * 100)}%"></i></span>${esc(p.fearText ?? `${Math.round(p.fear * 100)}%`)}</dd>` : ""}
+      <dt>Stage</dt><dd class="${p.hostile ? "warp-tone-bad" : p.partner ? "love" : ""}">${esc(p.stage)}</dd>
+      <dt>Mood</dt><dd>${s.moodFace} ${esc(s.moodLabel)}</dd>
+      <dt>Fatigue</dt><dd class="${s.fatigue >= 80 ? "warp-tone-bad" : s.fatigue >= 60 ? "warp-tone-warn" : ""}">${Math.round(s.fatigue)}% · ${fatigue}</dd>
+      <dt>Streak</dt><dd class="${s.combo >= 3 ? "hot" : ""}">${s.combo >= 3 ? "🔥 " : ""}×${s.combo}</dd>
+      ${s.kind === "outing" ? `<dt>Date</dt><dd>${s.closing ? "Winding down" : `Moment ${Math.min(s.beat + 1, s.beats)} / ${s.beats}`} · ${Math.round(s.enjoy)}% fun</dd>` : ""}
+    </dl>`;
 
-  const groups = new Map<string, DateView["moves"]>();
-  for (const m of v.moves) groups.set(m.group, [...(groups.get(m.group) ?? []), m]);
-  const moves = [...groups].map(([g, list]) => `<div class="warp-stage-group">
-      <div class="warp-stage-kicker">${esc(g)}</div>
-      <div class="warp-stage-moves">${list.map((m) => `<button class="warp-stage-move ${esc(m.kind)}" data-date-act="${esc(m.id)}" title="${esc(m.desc ?? "")}"${ui.busy ? " disabled" : ""}><span>${esc(m.label)}</span>${odds(m.odds)}</button>`).join("")}</div>
-    </div>`).join("");
-
+  // The menu: moves first (ask out, gifts, goodbye), then topics by category — number keys pick in the open list.
+  const moves = v.moves.map((m) => `<button class="warp-stage-bar move ${esc(m.kind)}" data-date-act="${esc(m.id)}" title="${esc(m.desc ?? "")}"${ui.busy ? " disabled" : ""}><span>${esc(m.label)}</span>${odds(m.odds)}</button>`).join("");
   const cats = v.categories;
-  const cat = cats.find((c) => c.id === ui.cat) ?? cats.find((c) => c.topics.some((t) => !t.lock)) ?? cats[0];
-  const topics = cats.length ? `<div class="warp-stage-topics">
-      <div class="warp-stage-cats" role="tablist">${cats.map((c) => {
+  const cat = cats.find((c) => c.id === ui.cat) ?? null;
+  const list = cat
+    ? `<button class="warp-stage-bar back" data-date-cat="">‹ ${esc(cat.icon)} ${esc(cat.label)}</button>
+       ${cat.topics.map((t, i) => {
+         const react = t.known ? `<span class="warp-stage-bar-react warp-tone-${REACT_TONE[t.known]}" title="${esc(t.knownLabel ?? "")}">${REACT_ICON[t.known]}</span>` : `<span class="warp-stage-bar-react dim">?</span>`;
+         return `<button class="warp-stage-bar topic${t.lock ? " locked" : ""}" data-date-act="date:topic:${esc(t.id)}" data-key="${i + 1}" ${t.lock || ui.busy ? "disabled" : ""} title="${esc([t.desc, t.lock, t.used ? `Raised ${t.used}× already — it wears thin` : null].filter(Boolean).join("\n"))}"><span class="warp-stage-bar-n">${i + 1}.</span><span>${esc(t.label)}</span>${t.lock ? "🔒" : react}${odds(t.odds)}</button>`;
+       }).join("")}`
+    : cats.map((c, i) => {
         const open = c.topics.filter((t) => !t.lock).length;
-        return `<button class="warp-stage-cat" role="tab" aria-selected="${c.id === cat?.id}" data-date-cat="${esc(c.id)}">${c.icon} <span>${esc(c.label)}</span>${open ? `<small>${open}</small>` : " 🔒"}</button>`;
-      }).join("")}</div>
-      <div class="warp-stage-topic-grid">${cat ? cat.topics.map((t) => topicTile(t, ui.busy)).join("") : ""}</div>
-    </div>` : "";
+        return `<button class="warp-stage-bar cat" data-date-cat="${esc(c.id)}" data-key="${i + 1}"${open ? "" : " disabled"}><span class="warp-stage-bar-n">${i + 1}.</span><span>${esc(c.icon)} ${esc(c.label)}</span>${open ? `<small>${open}</small>` : "🔒"}</button>`;
+      }).join("");
 
-  return `<div class="warp-stage-bg" style="--warp-hue:${hue(p.name)}"></div>`
-    + top(kicker, p.name, ladder(v), "")
+  return `<div class="warp-stage-bg${image ? " has-photo" : ""}" style="--warp-hue:${hue(p.name)}">${image ? `<div class="warp-stage-photo" style="background-image:url(&quot;${esc(cssUrl(image))}&quot;)"></div>` : ""}</div>`
+    + top(kicker, p.name, ladder(v), scene?.imageBusy ? `<span class="warp-stage-painting">Painting the scene…</span>` : "")
     + `<main class="warp-stage-main warp-stage-date ${esc(s.kind)}">
-      <section class="warp-stage-heart">
-        ${ring(p.love, p.fear, p.name, s.moodFace)}
-        <div class="warp-stage-mood">${esc(s.moodLabel)}</div>
-        ${last}
-        <div class="warp-stage-gauges">
-          ${meter("Love", p.love, p.loveText, "love")}
-          ${p.fear > 0.005 ? meter("Fear", p.fear, p.fearText, "fear") : ""}
-          ${meter("Fatigue", s.fatigue / 100, s.fatigue >= 100 ? "Done talking" : s.fatigue >= 80 ? "Tired of talking" : s.fatigue >= 60 ? "Flagging" : "Fresh", `fatigue ${fatigueTone}`)}
-        </div>
-        <div class="warp-stage-streak${s.combo >= 3 ? " hot" : ""}" title="Good reactions in a row boost love">${s.combo >= 3 ? "🔥" : "✦"} Streak ×${s.combo}</div>
-        ${outing}
-      </section>
-      <section class="warp-stage-deck">
-        ${moves}
-        ${topics}
-        <div class="warp-stage-knows"><div class="warp-stage-kicker">What you know about ${esc(p.name)}</div>${knows(p)}</div>
-      </section>
+      <section class="warp-stage-left">${corner}${stats}${last}</section>
+      <section class="warp-stage-center">${image ? "" : ring(p.love, p.fear, p.name, s.moodFace)}</section>
+      <section class="warp-stage-menu-col"><div class="warp-stage-kicker">${cat ? "Topics" : "Talk"}</div>${cat ? "" : moves}${list}</section>
     </main>`;
 }
 
@@ -240,14 +239,7 @@ function dateScene(v: DateView, ui: StageUi): string {
 
 export function renderStage(s: StateMsg, mode: StageMode, ui: StageUi): string {
   if (mode === "dungeon" && s.dungeon) return dungeonScene(s.dungeon, ui);
-  if (mode === "date" && s.date?.session && s.date.person) return dateScene(s.date, ui);
+  if (mode === "date" && s.date?.session && s.date.person) return dateScene(s.date, s.hud, s.scene, ui);
   if (mode === "gate") return gateScene(s.dungeonEntries, ui);
   return "";
-}
-
-/** The story box's speaker label: who the scene is with. */
-export function storySpeaker(s: StateMsg | null, mode: StageMode | null): string {
-  if (mode === "date" && s?.date?.session) return s.date.session.name;
-  if (mode === "dungeon" && s?.dungeon) return s.dungeon.name;
-  return "The story";
 }

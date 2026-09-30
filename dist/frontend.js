@@ -30,7 +30,10 @@ var init_protocol = __esm(() => {
     askConfidence: 0.4,
     consistencyCheck: false,
     drafts: 1,
-    prewrite: 0
+    prewrite: 0,
+    sceneLines: "model",
+    dateImages: true,
+    imageConnectionId: ""
   };
 });
 
@@ -812,7 +815,7 @@ function renderDecider(s, jevKeySet) {
     <div class="warp-row"><button class="warp-btn" data-test-decider>Test</button></div>
   </div>`;
 }
-function renderSettings(s, status, connections, jevKeySet = false) {
+function renderSettings(s, status, connections, jevKeySet = false, imageConnections = []) {
   const tags = new Set([...status?.tags ?? [], ...s.lines, ...s.veils]);
   const tagChips = [...tags].sort().map((t) => {
     const mode = s.lines.includes(t) ? "line" : s.veils.includes(t) ? "veil" : "on";
@@ -839,6 +842,24 @@ function renderSettings(s, status, connections, jevKeySet = false) {
       <option value="">Same as the chat</option>
       ${connections.map((c) => `<option value="${esc(c.id)}"${c.id === s.helperConnectionId ? " selected" : ""}>${esc(c.name)}</option>`).join("")}
     </select>
+  </div>
+  <div class="warp-card">
+    <h3>Dates & dungeons</h3>
+    <p>They play full screen as short snippets, off the chat; one line goes into the chat when they end.</p>
+    <label class="warp-slider">Lines written by
+      <select class="warp-select" data-setting="sceneLines">
+        <option value="model"${s.sceneLines === "model" ? " selected" : ""}>The helper model (scripted if it's slow)</option>
+        <option value="scripted"${s.sceneLines === "scripted" ? " selected" : ""}>Scripted lines only — instant, free</option>
+      </select>
+    </label>
+    ${toggle("dateImages", "A picture for each date", "The place, with them in the middle — made once per person and place, then reused.", s.dateImages)}
+    <label class="warp-slider">Image connection
+      <select class="warp-select" data-setting="imageConnectionId">
+        <option value="">Your default image connection</option>
+        ${imageConnections.map((c) => `<option value="${esc(c.id)}"${c.id === s.imageConnectionId ? " selected" : ""}>${esc(c.name)}</option>`).join("")}
+      </select>
+      ${imageConnections.length ? "" : `<small class="warp-dim">No image connections found — add one in Lumiverse, or allow Warp's image permission.</small>`}
+    </label>
   </div>
   <div class="warp-card">
     <h3>Content: lines & veils</h3>
@@ -1681,67 +1702,54 @@ function ladder(v) {
     return `<ol class="warp-stage-ladder"><li class="hostile now">${esc(p.stage)}</li></ol>`;
   return `<ol class="warp-stage-ladder" aria-label="Where you stand">${v.stages.map((st, i) => `<li class="${i < p.stageIndex ? "past" : i === p.stageIndex ? "now" : ""}">${esc(st)}</li>`).join("")}</ol>`;
 }
-function dateScene(v, ui) {
+var cssUrl = (u) => u.replace(/["\\\r\n]/g, (c) => encodeURIComponent(c));
+function dateScene(v, hud, scene, ui) {
   const s = v.session;
   const p = v.person;
   const kicker = s.kind === "outing" ? `On a date${s.venue ? ` · ${esc(s.venue)}` : ""}` : s.kind === "plan" ? "Making plans" : "Talking with";
-  const fatigueTone = s.fatigue >= 80 ? "bad" : s.fatigue >= 60 ? "warn" : "good";
-  const last = s.last ? `<div class="warp-stage-reaction warp-tone-${REACT_TONE[s.last.reaction]}${ui.freshReaction ? " fresh" : ""}"><span class="warp-stage-reaction-icon">${REACT_ICON[s.last.reaction]}</span><div><b>${esc(s.last.text)}</b><span>${esc(s.last.label)}</span></div></div>` : `<div class="warp-stage-reaction quiet"><span class="warp-stage-reaction-icon">✦</span><div><b>Say something</b><span>Pick a topic, or write your own line below.</span></div></div>`;
-  const outing = s.kind === "outing" ? `<div class="warp-stage-outing">
-        <div class="warp-stage-beats" title="${s.closing ? "Winding down" : `Moment ${Math.min(s.beat + 1, s.beats)} of ${s.beats}`}">${Array.from({ length: s.beats }, (_, i) => `<i class="${i < s.beat ? "past" : i === s.beat && !s.closing ? "now" : ""}"></i>`).join("")}</div>
-        ${meter("Enjoyment", s.enjoy / 100, `${Math.round(s.enjoy)}%`, "enjoy")}
-      </div>` : s.kind === "plan" ? `<div class="warp-stage-outing plan">\uD83D\uDDD3 They said yes — pick where to go.</div>` : "";
-  const groups = new Map;
-  for (const m of v.moves)
-    groups.set(m.group, [...groups.get(m.group) ?? [], m]);
-  const moves = [...groups].map(([g, list]) => `<div class="warp-stage-group">
-      <div class="warp-stage-kicker">${esc(g)}</div>
-      <div class="warp-stage-moves">${list.map((m) => `<button class="warp-stage-move ${esc(m.kind)}" data-date-act="${esc(m.id)}" title="${esc(m.desc ?? "")}"${ui.busy ? " disabled" : ""}><span>${esc(m.label)}</span>${odds(m.odds)}</button>`).join("")}</div>
-    </div>`).join("");
+  const image = scene?.image ?? null;
+  const fatigue = s.fatigue >= 100 ? "Done talking" : s.fatigue >= 80 ? "Tired of talking" : s.fatigue >= 60 ? "Flagging" : "Fresh";
+  const last = s.last ? `<div class="warp-stage-reaction warp-tone-${REACT_TONE[s.last.reaction]}${ui.freshReaction ? " fresh" : ""}"><span class="warp-stage-reaction-icon">${REACT_ICON[s.last.reaction]}</span><div><b>${esc(s.last.text)}</b><span>${esc(s.last.label)}</span></div></div>` : "";
+  const corner = `<div class="warp-stage-corner">
+      ${hud?.clock ? `<div class="warp-stage-clock">${esc(hud.date ?? hud.clock.day)} · <b>${esc(hud.clock.time)}</b></div>` : ""}
+      <div class="warp-stage-where">${esc(s.venue ?? hud?.location?.name ?? "")}</div>
+      ${hud?.money ? `<div class="warp-stage-cash">${esc(hud.money)}</div>` : ""}
+    </div>`;
+  const stats = `<dl class="warp-stage-stats">
+      <dt>Love</dt><dd><span class="warp-stage-mini love"><i style="width:${Math.round(p.love * 100)}%"></i></span>${esc(p.loveText ?? `${Math.round(p.love * 100)}%`)}</dd>
+      ${p.fear > 0.005 ? `<dt>Fear</dt><dd><span class="warp-stage-mini fear"><i style="width:${Math.round(p.fear * 100)}%"></i></span>${esc(p.fearText ?? `${Math.round(p.fear * 100)}%`)}</dd>` : ""}
+      <dt>Stage</dt><dd class="${p.hostile ? "warp-tone-bad" : p.partner ? "love" : ""}">${esc(p.stage)}</dd>
+      <dt>Mood</dt><dd>${s.moodFace} ${esc(s.moodLabel)}</dd>
+      <dt>Fatigue</dt><dd class="${s.fatigue >= 80 ? "warp-tone-bad" : s.fatigue >= 60 ? "warp-tone-warn" : ""}">${Math.round(s.fatigue)}% · ${fatigue}</dd>
+      <dt>Streak</dt><dd class="${s.combo >= 3 ? "hot" : ""}">${s.combo >= 3 ? "\uD83D\uDD25 " : ""}×${s.combo}</dd>
+      ${s.kind === "outing" ? `<dt>Date</dt><dd>${s.closing ? "Winding down" : `Moment ${Math.min(s.beat + 1, s.beats)} / ${s.beats}`} · ${Math.round(s.enjoy)}% fun</dd>` : ""}
+    </dl>`;
+  const moves = v.moves.map((m) => `<button class="warp-stage-bar move ${esc(m.kind)}" data-date-act="${esc(m.id)}" title="${esc(m.desc ?? "")}"${ui.busy ? " disabled" : ""}><span>${esc(m.label)}</span>${odds(m.odds)}</button>`).join("");
   const cats = v.categories;
-  const cat = cats.find((c) => c.id === ui.cat) ?? cats.find((c) => c.topics.some((t) => !t.lock)) ?? cats[0];
-  const topics = cats.length ? `<div class="warp-stage-topics">
-      <div class="warp-stage-cats" role="tablist">${cats.map((c) => {
+  const cat = cats.find((c) => c.id === ui.cat) ?? null;
+  const list = cat ? `<button class="warp-stage-bar back" data-date-cat="">‹ ${esc(cat.icon)} ${esc(cat.label)}</button>
+       ${cat.topics.map((t, i) => {
+    const react = t.known ? `<span class="warp-stage-bar-react warp-tone-${REACT_TONE[t.known]}" title="${esc(t.knownLabel ?? "")}">${REACT_ICON[t.known]}</span>` : `<span class="warp-stage-bar-react dim">?</span>`;
+    return `<button class="warp-stage-bar topic${t.lock ? " locked" : ""}" data-date-act="date:topic:${esc(t.id)}" data-key="${i + 1}" ${t.lock || ui.busy ? "disabled" : ""} title="${esc([t.desc, t.lock, t.used ? `Raised ${t.used}× already — it wears thin` : null].filter(Boolean).join(`
+`))}"><span class="warp-stage-bar-n">${i + 1}.</span><span>${esc(t.label)}</span>${t.lock ? "\uD83D\uDD12" : react}${odds(t.odds)}</button>`;
+  }).join("")}` : cats.map((c, i) => {
     const open = c.topics.filter((t) => !t.lock).length;
-    return `<button class="warp-stage-cat" role="tab" aria-selected="${c.id === cat?.id}" data-date-cat="${esc(c.id)}">${c.icon} <span>${esc(c.label)}</span>${open ? `<small>${open}</small>` : " \uD83D\uDD12"}</button>`;
-  }).join("")}</div>
-      <div class="warp-stage-topic-grid">${cat ? cat.topics.map((t) => topicTile(t, ui.busy)).join("") : ""}</div>
-    </div>` : "";
-  return `<div class="warp-stage-bg" style="--warp-hue:${hue(p.name)}"></div>` + top(kicker, p.name, ladder(v), "") + `<main class="warp-stage-main warp-stage-date ${esc(s.kind)}">
-      <section class="warp-stage-heart">
-        ${ring(p.love, p.fear, p.name, s.moodFace)}
-        <div class="warp-stage-mood">${esc(s.moodLabel)}</div>
-        ${last}
-        <div class="warp-stage-gauges">
-          ${meter("Love", p.love, p.loveText, "love")}
-          ${p.fear > 0.005 ? meter("Fear", p.fear, p.fearText, "fear") : ""}
-          ${meter("Fatigue", s.fatigue / 100, s.fatigue >= 100 ? "Done talking" : s.fatigue >= 80 ? "Tired of talking" : s.fatigue >= 60 ? "Flagging" : "Fresh", `fatigue ${fatigueTone}`)}
-        </div>
-        <div class="warp-stage-streak${s.combo >= 3 ? " hot" : ""}" title="Good reactions in a row boost love">${s.combo >= 3 ? "\uD83D\uDD25" : "✦"} Streak ×${s.combo}</div>
-        ${outing}
-      </section>
-      <section class="warp-stage-deck">
-        ${moves}
-        ${topics}
-        <div class="warp-stage-knows"><div class="warp-stage-kicker">What you know about ${esc(p.name)}</div>${knows(p)}</div>
-      </section>
+    return `<button class="warp-stage-bar cat" data-date-cat="${esc(c.id)}" data-key="${i + 1}"${open ? "" : " disabled"}><span class="warp-stage-bar-n">${i + 1}.</span><span>${esc(c.icon)} ${esc(c.label)}</span>${open ? `<small>${open}</small>` : "\uD83D\uDD12"}</button>`;
+  }).join("");
+  return `<div class="warp-stage-bg${image ? " has-photo" : ""}" style="--warp-hue:${hue(p.name)}">${image ? `<div class="warp-stage-photo" style="background-image:url(&quot;${esc(cssUrl(image))}&quot;)"></div>` : ""}</div>` + top(kicker, p.name, ladder(v), scene?.imageBusy ? `<span class="warp-stage-painting">Painting the scene…</span>` : "") + `<main class="warp-stage-main warp-stage-date ${esc(s.kind)}">
+      <section class="warp-stage-left">${corner}${stats}${last}</section>
+      <section class="warp-stage-center">${image ? "" : ring(p.love, p.fear, p.name, s.moodFace)}</section>
+      <section class="warp-stage-menu-col"><div class="warp-stage-kicker">${cat ? "Topics" : "Talk"}</div>${cat ? "" : moves}${list}</section>
     </main>`;
 }
 function renderStage(s, mode, ui) {
   if (mode === "dungeon" && s.dungeon)
     return dungeonScene(s.dungeon, ui);
   if (mode === "date" && s.date?.session && s.date.person)
-    return dateScene(s.date, ui);
+    return dateScene(s.date, s.hud, s.scene, ui);
   if (mode === "gate")
     return gateScene(s.dungeonEntries, ui);
   return "";
-}
-function storySpeaker(s, mode) {
-  if (mode === "date" && s?.date?.session)
-    return s.date.session.name;
-  if (mode === "dungeon" && s?.dungeon)
-    return s.dungeon.name;
-  return "The story";
 }
 
 // src/frontend/stage-styles.ts
@@ -1793,7 +1801,10 @@ var STAGE_STYLES = `
 @keyframes warp-stage-in { from { opacity: 0; transform: scale(1.01); } to { opacity: 1; transform: none; } }
 .warp-stage *, .warp-stage *::before, .warp-stage *::after { box-sizing: border-box; }
 .warp-stage button { font: inherit; color: inherit; }
-.warp-stage-scene { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; }
+.warp-stage-scene { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; grid-row: 1 / -1; grid-column: 1; }
+/* the scene runs behind the dialogue box; its content stops above it */
+.warp-stage-story { grid-row: 2; grid-column: 1; align-self: end; }
+.warp-stage-main { padding-bottom: calc(var(--warp-story-h, 0px) + 18px) !important; }
 .warp-stage-dim { color: var(--st-dim); font-size: 12.5px; }
 .warp-stage-kicker { font-size: 10.5px; font-weight: 600; letter-spacing: .16em; text-transform: uppercase; color: var(--st-muted); display: inline-flex; align-items: center; gap: 6px; }
 .warp-stage-kicker-icon { width: 16px; height: 16px; }
@@ -1961,7 +1972,45 @@ var STAGE_STYLES = `
 .warp-stage-ladder li.past { color: var(--st-muted); }
 .warp-stage-ladder li.now { color: var(--st-accent-ink); background: var(--st-accent); font-weight: 700; box-shadow: 0 0 16px var(--st-glow); }
 .warp-stage-ladder li.hostile { background: #ef6a7a; color: #2a0710; }
-.warp-stage-date { display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); gap: 26px; }
+.warp-stage-date { display: grid; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr) minmax(260px, 360px); grid-template-rows: minmax(0, 1fr); gap: 20px; align-items: stretch; }
+/* the date's picture: the place, with them in the middle */
+.warp-stage-photo { position: absolute; inset: 0; background-size: cover; background-position: center 30%; animation: warp-stage-in 600ms ease both; }
+.warp-stage-bg.has-photo::before { display: none; }
+.warp-stage[data-mode=date] .warp-stage-bg.has-photo::after { background: linear-gradient(90deg, rgba(8, 4, 10, .55), transparent 28%, transparent 68%, rgba(8, 4, 10, .6)), linear-gradient(0deg, rgba(8, 4, 10, .7), transparent 38%); }
+.warp-stage-painting { font-size: 12px; color: var(--st-muted); padding: 4px 10px; border-radius: 999px; border: 1px dashed var(--st-line); animation: warp-stage-dot 1.6s ease-in-out infinite; }
+.warp-stage-left { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+.warp-stage-center { display: grid; place-items: center; min-height: 0; }
+.warp-stage-corner { display: flex; flex-direction: column; gap: 3px; padding: 10px 14px; border-radius: 12px; background: var(--st-panel); border: 1px solid var(--st-line); }
+.warp-stage-clock { font-size: 13px; color: var(--st-muted); }
+.warp-stage-clock b { color: var(--st-ink); font-size: 16px; font-variant-numeric: tabular-nums; }
+.warp-stage-where { font-family: var(--st-display); font-size: 15px; }
+.warp-stage-where:empty { display: none; }
+.warp-stage-cash { font-weight: 700; color: #f2c45a; font-variant-numeric: tabular-nums; }
+.warp-stage-stats { display: grid; grid-template-columns: auto 1fr; gap: 5px 12px; margin: 0; padding: 12px 14px; border-radius: 12px; background: var(--st-panel); border: 1px solid var(--st-line); font-size: 12.5px; }
+.warp-stage-stats dt { color: var(--st-dim); }
+.warp-stage-stats dd { margin: 0; display: flex; align-items: center; gap: 8px; justify-content: flex-end; text-align: right; }
+.warp-stage-stats dd.love { color: #ff9ab8; }
+.warp-stage-stats dd.hot { color: #ffb45c; font-weight: 700; }
+.warp-stage-mini { width: 60px; height: 5px; border-radius: 3px; background: rgba(255, 255, 255, .1); overflow: hidden; flex: none; }
+.warp-stage-mini i { display: block; height: 100%; background: linear-gradient(90deg, #ff5f8f, #ffb0c8); }
+.warp-stage-mini.fear i { background: linear-gradient(90deg, #7a5cff, #b9a6ff); }
+.warp-stage-menu-col { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; min-height: 0; max-height: 100%; overflow-y: auto; padding: 2px 2px 8px 12px; scrollbar-width: thin; }
+.warp-stage-menu-col > .warp-stage-kicker { align-self: flex-end; margin-bottom: 2px; }
+.warp-stage-bar { cursor: pointer; display: flex; align-items: center; gap: 8px; width: 100%; min-height: 36px; padding: 7px 16px 7px 22px; border: none; color: var(--st-ink); font-size: 14px; font-weight: 600; text-align: left;
+  background: linear-gradient(90deg, rgba(40, 18, 44, .72), rgba(22, 10, 26, .9)); clip-path: polygon(12px 0, 100% 0, 100% 100%, 0 100%);
+  box-shadow: inset -3px 0 0 var(--st-accent); transition: transform 120ms, background 120ms, filter 120ms; }
+.warp-stage-bar > span:not(.warp-stage-bar-n):not(.warp-stage-bar-react) { flex: 1; min-width: 0; }
+.warp-stage-bar:hover:not(:disabled) { transform: translateX(-6px); background: linear-gradient(90deg, rgba(90, 30, 70, .85), rgba(40, 14, 40, .95)); }
+.warp-stage-bar:disabled { opacity: .45; cursor: not-allowed; }
+.warp-stage-bar-n { color: var(--st-accent); font-variant-numeric: tabular-nums; min-width: 18px; }
+.warp-stage-bar small { font-size: 11px; padding: 0 7px; border-radius: 999px; background: rgba(255, 255, 255, .12); }
+.warp-stage-bar-react { font-size: 12px; font-weight: 800; }
+.warp-stage-bar-react.dim { color: var(--st-dim); }
+.warp-stage-bar.move { box-shadow: inset -3px 0 0 #f2c45a; }
+.warp-stage-bar.move.special { box-shadow: inset -3px 0 0 #ff7ea6; }
+.warp-stage-bar.back { min-height: 30px; font-size: 12.5px; color: var(--st-muted); box-shadow: none; background: rgba(0, 0, 0, .45); }
+.warp-stage-bar.locked { opacity: .5; }
+.warp-stage[data-mode=date] .warp-stage-story { width: min(900px, calc(100% - 48px)); justify-self: center; margin-left: auto; margin-right: auto; }
 .warp-stage-heart { display: flex; flex-direction: column; align-items: center; gap: 12px; min-height: 0; overflow-y: auto; padding: 4px 4px 8px; scrollbar-width: thin; }
 .warp-stage-portrait { position: relative; width: min(220px, 60vw); aspect-ratio: 1; flex: none; display: grid; place-items: center; }
 .warp-stage-portrait svg { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
@@ -2024,7 +2073,7 @@ var STAGE_STYLES = `
 /* ── the story box ── */
 .warp-stage-story { position: relative; z-index: 2; margin: 0 24px calc(16px + env(safe-area-inset-bottom, 0px)); display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
   max-height: 36dvh; border-radius: 16px; background: rgba(9, 9, 12, .9); border: 1px solid var(--st-line); box-shadow: 0 -10px 40px rgba(0, 0, 0, .45); backdrop-filter: blur(10px); user-select: text; -webkit-user-select: text; }
-.warp-stage[data-mode=date] .warp-stage-story { background: rgba(18, 9, 16, .9); }
+.warp-stage[data-mode=date] .warp-stage-story { background: rgba(18, 9, 16, .8); }
 .warp-stage-story-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 16px 0; }
 .warp-stage-speaker { font-family: var(--st-display); font-weight: 600; font-size: 15px; color: var(--st-accent); letter-spacing: .02em; }
 .warp-stage-fold { cursor: pointer; border: none; background: transparent; color: var(--st-muted); font-size: 16px; padding: 2px 6px; border-radius: 6px; transition: transform 160ms; }
@@ -2055,6 +2104,11 @@ var STAGE_STYLES = `
 .warp-stage-say textarea::placeholder { color: var(--st-dim); }
 .warp-stage-say .warp-stage-btn { height: 40px; }
 .warp-stage[data-view=gate] .warp-stage-story { display: none; }
+.warp-stage-story.narration .warp-stage-text { font-style: italic; color: var(--st-muted); }
+.warp-stage-story.more .warp-stage-story-body { cursor: pointer; }
+.warp-stage-story-head .warp-stage-speaker:empty::before { content: "9"; }
+.warp-stage-next { font-size: 12px; color: var(--st-accent); animation: warp-stage-caret 1.4s ease-in-out infinite; }
+.warp-stage-text { font-size: 18px; }
 .warp-stage-story.folded { grid-template-rows: auto 0 auto; }
 .warp-stage-story.folded .warp-stage-story-body { display: none; }
 .warp-stage-story.folded .warp-stage-fold { transform: rotate(180deg); }
@@ -2066,6 +2120,10 @@ var STAGE_STYLES = `
   .warp-stage-title h1 { font-size: 21px; }
   .warp-stage-main { padding: 12px 14px; overflow-y: auto; }
   .warp-stage-run, .warp-stage-date, .warp-stage-battle { display: flex; flex-direction: column; gap: 16px; }
+  .warp-stage-date .warp-stage-center { display: none; }
+  .warp-stage-left { overflow: visible; }
+  .warp-stage-menu-col { max-height: none; overflow: visible; padding-left: 0; }
+  .warp-stage[data-mode=date] .warp-stage-story { width: auto; }
   .warp-stage-run > *, .warp-stage-date > *, .warp-stage-battle > *, .warp-stage-map > * { flex: none; min-height: auto; }
   .warp-stage-board { container-type: inline-size; flex: none; }
   .warp-stage-board .warp-dg-board { width: min(100cqw, 64dvh); height: auto; aspect-ratio: 1; }
@@ -2111,6 +2169,7 @@ function setup(ctx) {
   let settings = { ...DEFAULT_SETTINGS };
   let templates = [];
   let connections = [];
+  let imageConnections = [];
   let jevKeySet = false;
   let builder = null;
   let bDraft = emptyDraft();
@@ -2222,8 +2281,9 @@ function setup(ctx) {
   let reactionKey = null;
   let storyFolded = store("storyFolded") === "1";
   storyEl.classList.toggle("folded", storyFolded);
-  let storyShown = "";
-  let stream = { gen: "", text: "" };
+  let shownScene = null;
+  let sceneKey = "";
+  let lineAt = 0;
   const stageVisible = () => !!stage?.isVisible();
   function place(b) {
     if (!overlay)
@@ -2435,7 +2495,7 @@ function setup(ctx) {
     } else if (drawerView === "rules") {
       body = renderBuilderCta(status.state !== "none", hasChat) + renderRulesetCard(status, hasChat) + `<div class="warp-card"><h3>Writing rules</h3><p>Rules live in entries titled <b>warp-ruleset · …</b> (or any lorebook named <b>warp-ruleset</b>). Each entry is YAML; entries merge together. Warp keeps them out of the prompt automatically.</p></div>`;
     } else {
-      body = renderSettings(settings, state?.status ?? null, connections, jevKeySet);
+      body = renderSettings(settings, state?.status ?? null, connections, jevKeySet, imageConnections);
     }
     drawerRoot.innerHTML = tabs + body;
     restoreSections(drawerRoot);
@@ -2624,39 +2684,48 @@ function setup(ctx) {
     });
     renderStory();
   }
-  let storyFrame = 0;
   function renderStory() {
     if (!stageVisible())
       return;
-    const isBusy = busy.on && busy.chatId === state?.chatId;
-    speakerEl.textContent = storySpeaker(state, stageMode);
-    const said = state?.story?.said?.trim();
-    saidEl.innerHTML = said ? `<span>You</span>${esc(said.length > 280 ? `${said.slice(0, 280)}…` : said)}` : "";
-    const live = !!stream.gen;
-    const text = live || stream.text ? stream.text : state?.story?.text ?? "";
-    const html = formatStory(text);
-    if (html !== storyShown) {
-      const newReply = !live && !stream.text && state?.story?.messageId !== textEl.dataset.id;
-      textEl.innerHTML = html;
-      storyShown = html;
-      textEl.dataset.id = state?.story?.messageId ?? "";
-      if (live)
-        storyBody.scrollTop = storyBody.scrollHeight;
-      else if (newReply)
-        storyBody.scrollTop = 0;
+    if (state?.scene)
+      shownScene = state.scene;
+    else if (!lingering)
+      shownScene = null;
+    const sc = shownScene;
+    const key = sc ? `${sc.kind}:${sc.seq}` : "";
+    if (key !== sceneKey) {
+      sceneKey = key;
+      lineAt = 0;
     }
-    textEl.classList.toggle("streaming", live);
-    statusEl.innerHTML = isBusy && !live ? `<span class="warp-stage-dots" aria-hidden="true"><i></i><i></i><i></i></span>${esc(busy.label && busy.label !== "Rolling…" ? busy.label : "The story continues…")}` : "";
-    sayButton.disabled = isBusy;
+    const lines = sc?.lines ?? [];
+    const line = lines[Math.min(lineAt, Math.max(0, lines.length - 1))];
+    const writing = !!sc?.writing || busy.on && busy.chatId === state?.chatId;
+    speakerEl.textContent = line?.speaker ?? "";
+    storyEl.classList.toggle("narration", !!line && !line.speaker);
+    const said = sc?.said?.replace(/\*/g, "").trim();
+    saidEl.innerHTML = said && lineAt === 0 ? `<span>You</span>${esc(said.length > 280 ? `${said.slice(0, 280)}…` : said)}` : "";
+    textEl.innerHTML = line ? formatStory(line.text) : "";
+    const more = lineAt < lines.length - 1;
+    storyEl.classList.toggle("more", more && !writing);
+    statusEl.innerHTML = writing ? `<span class="warp-stage-dots" aria-hidden="true"><i></i><i></i><i></i></span>` : more ? `<span class="warp-stage-next">${lineAt + 1} / ${lines.length} · click to continue ▸</span>` : "";
+    sayButton.disabled = writing;
   }
-  function scheduleStory() {
-    if (storyFrame)
-      return;
-    storyFrame = requestAnimationFrame(() => {
-      storyFrame = 0;
-      renderStory();
-    });
+  function nextLine() {
+    const n = shownScene?.lines.length ?? 0;
+    if (lineAt >= n - 1)
+      return false;
+    lineAt += 1;
+    renderStory();
+    return true;
   }
+  storyBody.addEventListener("click", () => {
+    nextLine();
+  });
+  try {
+    const ro = new ResizeObserver(() => stageEl.style.setProperty("--warp-story-h", `${storyEl.offsetHeight}px`));
+    ro.observe(storyEl);
+    cleanups.push(() => ro.disconnect());
+  } catch {}
   function growSay() {
     sayInput.style.height = "auto";
     sayInput.style.height = `${Math.min(120, sayInput.scrollHeight)}px`;
@@ -2712,44 +2781,32 @@ function setup(ctx) {
     }
   });
   const onStageKey = (e) => {
-    if (e.key !== "Escape" || !stageVisible())
+    if (!stageVisible() || e.ctrlKey || e.metaKey || e.altKey)
       return;
     const a = document.activeElement;
     if (a && a !== document.body && !stageEl.contains(a))
       return;
-    e.preventDefault();
-    closeStage();
+    if (a instanceof HTMLTextAreaElement || a instanceof HTMLInputElement)
+      return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeStage();
+      return;
+    }
+    if ((e.key === " " || e.key === "Enter") && nextLine()) {
+      e.preventDefault();
+      return;
+    }
+    if (/^[1-9]$/.test(e.key)) {
+      const btn = sceneEl.querySelector(`.warp-stage-menu-col [data-key="${e.key}"]`);
+      if (btn && !btn.disabled) {
+        e.preventDefault();
+        btn.click();
+      }
+    }
   };
   document.addEventListener("keydown", onStageKey);
   cleanups.push(() => document.removeEventListener("keydown", onStageKey));
-  const onHost = (ev, fn) => {
-    try {
-      cleanups.push(ctx.events.on(ev, (p) => fn(p && typeof p === "object" ? p : null)));
-    } catch {}
-  };
-  onHost("GENERATION_STARTED", (p) => {
-    if (!p || p.chatId !== state?.chatId || /quiet|impersonate/i.test(String(p.generationType ?? "")))
-      return;
-    stream = { gen: String(p.generationId ?? "live"), text: "" };
-    scheduleStory();
-  });
-  onHost("STREAM_TOKEN_RECEIVED", (p) => {
-    if (!stream.gen || !p || typeof p.token !== "string" || p.type === "reasoning")
-      return;
-    if (p.generationId && stream.gen !== "live" && p.generationId !== stream.gen)
-      return;
-    const at = typeof p.offset === "number" && p.offset <= stream.text.length ? p.offset : stream.text.length;
-    stream.text = stream.text.slice(0, at) + p.token;
-    scheduleStory();
-  });
-  const endStream = (p) => {
-    if (!stream.gen || p?.generationId && stream.gen !== "live" && p.generationId !== stream.gen)
-      return;
-    stream.gen = "";
-    scheduleStory();
-  };
-  onHost("GENERATION_ENDED", endStream);
-  onHost("GENERATION_STOPPED", endStream);
   function renderPick() {
     renderDrawer();
     renderStageScene();
@@ -3441,8 +3498,6 @@ function setup(ctx) {
           busy = { chatId: "", on: false, label: "" };
         if (m.busy && m.chatId)
           busy = { chatId: m.chatId, on: true, label: busy.label };
-        if (!stream.gen)
-          stream.text = "";
         renderAll();
         break;
       }
@@ -3468,6 +3523,7 @@ function setup(ctx) {
         settings = m.settings;
         templates = m.templates;
         connections = m.connections;
+        imageConnections = m.imageConnections ?? [];
         jevKeySet = m.jevKeySet;
         renderAll();
         break;

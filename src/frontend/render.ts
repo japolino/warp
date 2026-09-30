@@ -392,7 +392,7 @@ function renderDecider(s: Settings, jevKeySet: boolean): string {
   </div>`;
 }
 
-export function renderSettings(s: Settings, status: RulesetStatus | null, connections: { id: string; name: string }[], jevKeySet = false): string {
+export function renderSettings(s: Settings, status: RulesetStatus | null, connections: { id: string; name: string }[], jevKeySet = false, imageConnections: { id: string; name: string }[] = []): string {
   const tags = new Set([...(status?.tags ?? []), ...s.lines, ...s.veils]);
   const tagChips = [...tags].sort().map((t) => {
     const mode = s.lines.includes(t) ? "line" : s.veils.includes(t) ? "veil" : "on";
@@ -419,6 +419,24 @@ export function renderSettings(s: Settings, status: RulesetStatus | null, connec
       <option value="">Same as the chat</option>
       ${connections.map((c) => `<option value="${esc(c.id)}"${c.id === s.helperConnectionId ? " selected" : ""}>${esc(c.name)}</option>`).join("")}
     </select>
+  </div>
+  <div class="warp-card">
+    <h3>Dates & dungeons</h3>
+    <p>They play full screen as short snippets, off the chat; one line goes into the chat when they end.</p>
+    <label class="warp-slider">Lines written by
+      <select class="warp-select" data-setting="sceneLines">
+        <option value="model"${s.sceneLines === "model" ? " selected" : ""}>The helper model (scripted if it's slow)</option>
+        <option value="scripted"${s.sceneLines === "scripted" ? " selected" : ""}>Scripted lines only — instant, free</option>
+      </select>
+    </label>
+    ${toggle("dateImages", "A picture for each date", "The place, with them in the middle — made once per person and place, then reused.", s.dateImages)}
+    <label class="warp-slider">Image connection
+      <select class="warp-select" data-setting="imageConnectionId">
+        <option value="">Your default image connection</option>
+        ${imageConnections.map((c) => `<option value="${esc(c.id)}"${c.id === s.imageConnectionId ? " selected" : ""}>${esc(c.name)}</option>`).join("")}
+      </select>
+      ${imageConnections.length ? "" : `<small class="warp-dim">No image connections found — add one in Lumiverse, or allow Warp's image permission.</small>`}
+    </label>
   </div>
   <div class="warp-card">
     <h3>Content: lines & veils</h3>

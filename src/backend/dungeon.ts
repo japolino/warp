@@ -1,20 +1,20 @@
-// Dungeon actions from the drawer. Quiet steps are recorded on the latest message
-// (like any sheet edit); story moments append a player line so the narrator
-// writes them up, with what happened queued as its directions.
+// Dungeon actions from the stage. Every step is recorded on the latest message
+// (like any sheet edit); story moments play as short snippets on the stage.
 
 import type { SpindleAPI } from "lumiverse-spindle-types";
 import { randomSeed } from "../engine/dice.js";
 import type { TurnRecord } from "../engine/resolve.js";
-import type { GameState } from "../engine/state.js";
+import type { GameState, WarpEvent } from "../engine/state.js";
 import type { Ruleset } from "../engine/ruleset.js";
 import {
-  battleCommand, chooseEvent, descend, DUNGEON_ACTION, enterDungeon, leaveDungeon, moveTo, shopBuy, useItem, type DungeonResult,
+  battleCommand, chooseEvent, descend, enterDungeon, leaveDungeon, moveTo, shopBuy, useItem, type DungeonResult,
 } from "../engine/dungeon/run.js";
 import type { DungeonOp } from "../shared/protocol.js";
 import { toast } from "./host.js";
 import { foldPath, getMessages, warpMeta, writeRecord } from "./ledger.js";
 import { getRuleset } from "./source.js";
 import { busyChats, pushState } from "./state-push.js";
+import { playScene } from "./scene.js";
 
 declare const spindle: SpindleAPI;
 
@@ -53,11 +53,10 @@ export async function runDungeonOp(msg: { chatId: string } & DungeonOp, userId?:
     await writeRecord(msg.chatId, last.id, swipe, rec);
   }
   await pushState(msg.chatId, userId);
-  if (res.narrate) {
-    await spindle.chat.appendMessage(msg.chatId, {
-      role: "user",
-      content: res.narrate.say,
-      metadata: { warp: { intent: { actionId: DUNGEON_ACTION, via: "choice", label: res.narrate.say } } },
-    }, { triggerGeneration: true });
-  }
+  // Story moments play on the stage as a short snippet, off the chat.
+  const was = state.dungeon;
+  const endedRun = was && !res.events.some((e: WarpEvent) => e.t === "dg_enter") && res.events.some((e: WarpEvent) => e.t === "dg_exit")
+    ? { name: r.dungeons[was.id]?.name ?? "the dungeon", depth: was.depth, gold: was.gold }
+    : undefined;
+  if (res.narrate) await playScene({ chatId: msg.chatId, userId, kind: "dungeon", intent: null, said: res.narrate.say, ...(endedRun ? { runEnded: endedRun } : {}) });
 }

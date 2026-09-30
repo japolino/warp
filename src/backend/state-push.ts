@@ -3,7 +3,7 @@
 import { buildChoices, buildHud, buildMap, buildRecordView } from "../engine/view.js";
 import { buildDungeonEntries, buildDungeonView } from "../engine/dungeon/view.js";
 import { buildDateView } from "../engine/date/view.js";
-import { activeSession } from "../engine/date/talk.js";
+import { sceneViewFor } from "./scene.js";
 import type { ChoiceView, RecordView, SuggestionView } from "../shared/protocol.js";
 import { momentKey, readyChoices } from "./drafts.js";
 import { getMessages, foldPath, liveChoicesOf, warpMeta } from "./ledger.js";
@@ -35,7 +35,7 @@ export async function pushState(chatId: string | null, userId?: string, force = 
     const loaded = await getRuleset(chatId, userId, force);
     const status = statusOf(loaded);
     if (!chatId || !loaded?.ruleset) {
-      send({ type: "state", chatId, status, hud: null, map: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false, dungeon: null, dungeonEntries: [], date: null, story: null }, userId);
+      send({ type: "state", chatId, status, hud: null, map: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false, dungeon: null, dungeonEntries: [], date: null, scene: null }, userId);
       return;
     }
     const r = loaded.ruleset;
@@ -69,16 +69,6 @@ export async function pushState(chatId: string | null, userId?: string, force = 
     }
     const latest = msgs[msgs.length - 1] ?? null;
     const anchor = latest && !latest.is_user ? latest.id : null;
-    // The stage (dungeon runs, dates) shows the story itself, so it needs the latest reply.
-    let story: { messageId: string; text: string; said: string | null } | null = null;
-    if (settings.enabled && (state.dungeon || (state.date && activeSession(r, state)))) {
-      const reply = [...msgs].reverse().find((m) => !m.is_user && m.content.trim());
-      if (reply) {
-        const prev = msgs[(indexOf.get(reply.id) ?? 0) - 1];
-        const clipped = reply.content.length > 8000 ? `…${reply.content.slice(-8000)}` : reply.content;
-        story = { messageId: reply.id, text: clipped, said: prev?.is_user ? prev.content.slice(0, 600) : null };
-      }
-    }
     send({
       type: "state",
       chatId,
@@ -94,7 +84,7 @@ export async function pushState(chatId: string | null, userId?: string, force = 
       dungeon: settings.enabled ? await withName(buildDungeonView(r, state), chatId, userId) : null,
       dungeonEntries: settings.enabled ? buildDungeonEntries(r, state) : [],
       date: settings.enabled ? buildDateView(r, state, settings.lines) : null,
-      story: story ? await withName(story, chatId, userId) : null,
+      scene: settings.enabled ? sceneViewFor(chatId, r, state) : null,
     }, userId);
   } catch (e) {
     logError("pushState", e);

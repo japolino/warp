@@ -363,6 +363,12 @@ export interface Settings {
   drafts: number;
   /** Pre-write replies for this many of the first choices, so clicking them is instant (0 = off). */
   prewrite: number;
+  /** Who writes the stage's snippets (dates, dungeon moments): the helper model, or scripted lines. */
+  sceneLines: "model" | "scripted";
+  /** Generate a picture for each date (the place, with them in the middle). */
+  dateImages: boolean;
+  /** Image connection for date pictures; empty = the user's default. */
+  imageConnectionId: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -383,6 +389,9 @@ export const DEFAULT_SETTINGS: Settings = {
   consistencyCheck: false,
   drafts: 1,
   prewrite: 0,
+  sceneLines: "model",
+  dateImages: true,
+  imageConnectionId: "",
 };
 
 export interface TemplateInfo { id: string; name: string; blurb: string }
@@ -453,6 +462,23 @@ export interface BuilderSession {
   updatedAt: number;
 }
 
+/** One line of a stage snippet: someone speaking, or narration (speaker null). */
+export interface SceneLine { speaker: string | null; text: string }
+
+export interface SceneView {
+  kind: "date" | "dungeon";
+  /** Bumps with every new snippet, so the stage starts it from its first line. */
+  seq: number;
+  lines: SceneLine[];
+  /** What the player just did or said, shown above the snippet. */
+  said: string | null;
+  /** The date's picture (the place, with them in the middle), once it's ready. */
+  image: string | null;
+  imageBusy: boolean;
+  /** A snippet is being written. */
+  writing: boolean;
+}
+
 export type BackendToFrontend =
   | {
       type: "state";
@@ -471,11 +497,11 @@ export type BackendToFrontend =
       dungeonEntries: DungeonEntryView[];
       /** Dating: people, and the conversation or date in progress (null when the ruleset has no dating). */
       date: DateView | null;
-      /** During a dungeon run or a date: the narrator's latest reply (and the line it answers), for the stage. */
-      story: { messageId: string; text: string; said: string | null } | null;
+      /** A date or dungeon run on the stage: its latest snippet of lines, and the date's picture. */
+      scene: SceneView | null;
     }
   | { type: "busy"; chatId: string; busy: boolean; label?: string }
-  | { type: "settings"; settings: Settings; templates: TemplateInfo[]; connections: { id: string; name: string }[]; jevKeySet: boolean }
+  | { type: "settings"; settings: Settings; templates: TemplateInfo[]; connections: { id: string; name: string }[]; imageConnections: { id: string; name: string }[]; jevKeySet: boolean }
   | { type: "toast"; level: "info" | "success" | "warning" | "error"; message: string }
   | { type: "command"; command: "open" | "install" | "dungeon" }
   | { type: "builder"; session: BuilderSession | null };
@@ -484,7 +510,7 @@ export type FrontendToBackend =
   | { type: "hello"; chatId: string | null }
   | { type: "refresh"; chatId: string | null }
   | { type: "act"; chatId: string; actionId: string; params?: Record<string, string> }
-  /** A line typed on the stage: posted as the player's message, and the story goes on. */
+  /** A line typed on the stage: said on the date or in the dungeon (off the chat), or posted to the chat otherwise. */
   | { type: "say"; chatId: string; text: string }
   | { type: "undo"; chatId: string; messageId: string; swipe: number; events: number[] }
   | { type: "adjust"; chatId: string; stat: string; value: number }

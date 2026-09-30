@@ -23,6 +23,8 @@ export async function patchSettings(patch: Partial<Settings>, userId?: string): 
   next.veils = (next.veils ?? []).map((t) => t.trim().toLowerCase()).filter(Boolean);
   next.drafts = Math.max(1, Math.min(4, Math.round(Number(next.drafts) || 1)));
   next.prewrite = Math.max(0, Math.min(4, Math.round(Number(next.prewrite) || 0)));
+  next.sceneLines = next.sceneLines === "scripted" ? "scripted" : "model";
+  next.dateImages = next.dateImages !== false && (next.dateImages as unknown) !== "false";
   cache.set(key(userId), next);
   await host().userStorage.setJson("settings.json", next, { indent: 2, userId });
   return next;

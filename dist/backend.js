@@ -8556,7 +8556,10 @@ var init_protocol = __esm(() => {
     askConfidence: 0.4,
     consistencyCheck: false,
     drafts: 1,
-    prewrite: 0
+    prewrite: 0,
+    sceneLines: "model",
+    dateImages: true,
+    imageConnectionId: ""
   };
 });
 
@@ -8580,6 +8583,8 @@ async function patchSettings(patch, userId) {
   next.veils = (next.veils ?? []).map((t) => t.trim().toLowerCase()).filter(Boolean);
   next.drafts = Math.max(1, Math.min(4, Math.round(Number(next.drafts) || 1)));
   next.prewrite = Math.max(0, Math.min(4, Math.round(Number(next.prewrite) || 0)));
+  next.sceneLines = next.sceneLines === "scripted" ? "scripted" : "model";
+  next.dateImages = next.dateImages !== false && next.dateImages !== "false";
   cache2.set(key(userId), next);
   await host().userStorage.setJson("settings.json", next, { indent: 2, userId });
   return next;
@@ -13304,7 +13309,7 @@ function shopBuy(r, s, item) {
   });
   return { events };
 }
-var PLAYER = "you", DUNGEON_ACTION = "dungeon", fail = (error) => ({ events: [], error }), levelOf = (xp) => 1 + Math.floor(Math.sqrt(Math.max(0, xp) / 12)), levelScale = (level) => 1 + 0.12 * (level - 1), depthScale = (depth, from) => 1 + 0.12 * Math.max(0, depth - from), tierFor2 = (depth) => Math.min(4, 1 + Math.floor((depth - 1) / 3)), isAdult = (r, id) => (r.people[id]?.age ?? 18) >= 18;
+var PLAYER = "you", fail = (error) => ({ events: [], error }), levelOf = (xp) => 1 + Math.floor(Math.sqrt(Math.max(0, xp) / 12)), levelScale = (level) => 1 + 0.12 * (level - 1), depthScale = (depth, from) => 1 + 0.12 * Math.max(0, depth - from), tierFor2 = (depth) => Math.min(4, 1 + Math.floor((depth - 1) / 3)), isAdult = (r, id) => (r.people[id]?.age ?? 18) >= 18;
 var init_run = __esm(() => {
   init_dice();
   init_expr();
@@ -14959,232 +14964,6 @@ var init_decisions = __esm(() => {
   TIME_MINUTES = [0, 5, 30, 60, 180, 480];
 });
 
-// src/backend/inject.ts
-function fillNames(text, player) {
-  return text.replace(/\{\{user\}\}/gi, player);
-}
-function buildInjection(r, rec, before, after, player) {
-  const parts = [];
-  parts.push(`[Warp — current game state. The rules engine owns these facts; keep narration consistent with them.]
-${stateDigest(r, after)}`);
-  if (r.narration.notes)
-    parts.push(`[Warp — narrator notes]
-${r.narration.notes}`);
-  const felt = perception(r, after);
-  if (felt)
-    parts.push(`[Warp — how {{user}} experiences things right now. Filter the narration through this.]
-${felt}`);
-  const known = narratorKnowledge(r, after);
-  if (known)
-    parts.push(`[Warp — background only you know. The player hasn't seen it. Play it as subtext: never explain it, and reveal no more than the scene earns.]
-${known}`);
-  const packet = rec ? outcomePacket(r, rec, before, after, player) : null;
-  if (packet && (rec?.action || rec?.hints.length)) {
-    parts.push(`[Warp — this turn's outcome, already decided by the dice. Narrate it faithfully and do not change the result.]
-${packet}`);
-  }
-  return fillNames(parts.join(`
-
-`), player);
-}
-function injectInto(messages, text) {
-  const out = [...messages];
-  let idx = -1;
-  for (let i = out.length - 1;i >= 0; i--)
-    if (out[i].role === "user") {
-      idx = i;
-      break;
-    }
-  const block = `
-
-<warp>
-${text}
-</warp>`;
-  if (idx >= 0) {
-    const m = out[idx];
-    out[idx] = typeof m.content === "string" ? { ...m, content: m.content + block } : { ...m, content: [...m.content, { type: "text", text: block }] };
-    return { messages: out, index: idx };
-  }
-  out.push({ role: "user", content: block.trim() });
-  return { messages: out, index: out.length - 1 };
-}
-function nextPrompt(prompt, reply, say, injection) {
-  const clean = prompt.map((m) => typeof m.content === "string" && m.role === "user" ? { ...m, content: m.content.replace(WARP_BLOCK, "") } : m);
-  let idx = -1;
-  for (let i = clean.length - 1;i >= 0; i--)
-    if (clean[i].role === "user") {
-      idx = i;
-      break;
-    }
-  const turn = [
-    { role: "assistant", content: reply },
-    { role: "user", content: `${say}
-
-<warp>
-${injection}
-</warp>` }
-  ];
-  return idx >= 0 ? [...clean.slice(0, idx + 1), ...turn, ...clean.slice(idx + 1)] : [...clean, ...turn];
-}
-var WARP_BLOCK;
-var init_inject = __esm(() => {
-  init_view();
-  WARP_BLOCK = /\n*<warp>[\s\S]*?<\/warp>/g;
-});
-
-// src/backend/intents.ts
-function intentFor(r, state, settings, msgs, actionId, params) {
-  if (actionId === EXPLORE) {
-    if (!canExplore(r, state))
-      return { error: "There's nowhere new to find here." };
-    return { say: "*I explore around, looking for somewhere I haven't been.*", intent: { actionId: EXPLORE, via: "choice", label: "Explore" } };
-  }
-  if (actionId === RUN_EPILOGUE) {
-    if (!state.ended || state.ended.told)
-      return { error: "" };
-    return { say: "*The end.*", intent: { actionId: RUN_EPILOGUE, via: "choice", label: "The ending" } };
-  }
-  if (actionId.startsWith(LIVE_PREFIX)) {
-    const c = liveChoicesOf(msgs[msgs.length - 1])[Number(actionId.slice(LIVE_PREFIX.length))];
-    if (!c || !r.liveChoices.tags[c.tag])
-      return { error: "That choice isn't available anymore." };
-    return { say: `*${c.label}*`, intent: { actionId: `${LIVE_PREFIX}${c.tag}${c.target ? `${TARGET_SEP}${c.target}` : ""}`, via: "choice", label: c.label } };
-  }
-  if (actionId.startsWith(PAY_PREFIX) || actionId.startsWith(JOB_PREFIX)) {
-    const m = workMoves(r, state).find((x) => x.id === actionId);
-    if (!m)
-      return { error: "That isn't possible right now." };
-    return { say: m.say, intent: { actionId: m.id, via: "choice", label: m.label } };
-  }
-  if (actionId.startsWith(DATE_PREFIX)) {
-    const m = dateMoves(r, state, settings.lines).find((x) => x.id === actionId);
-    if (!m)
-      return { error: "That isn't possible right now." };
-    return { say: m.say, intent: { actionId: m.id, via: "choice", label: m.label } };
-  }
-  if (actionId.startsWith(TRAVEL_PREFIX)) {
-    const to = actionId.slice(TRAVEL_PREFIX.length);
-    if (!travelTargets(r, state).includes(to))
-      return { error: "You can't get there from here." };
-    return { say: `*I head to ${r.locations[to].name}.*`, intent: { actionId, params, via: "choice" } };
-  }
-  const c = availableChoices(r, state, settings.lines).find((x) => x.id === actionId);
-  if (!c)
-    return { error: "That choice isn't available anymore." };
-  const who = c.target ? state.people[c.target]?.name ?? c.target : "";
-  return { say: c.a.say ? c.a.say.replace(/\{\{target\}\}|\{target\}/gi, who) : `*${c.label}*`, intent: { actionId, params, via: "choice" } };
-}
-var init_intents = __esm(() => {
-  init_resolve();
-  init_talk();
-  init_types2();
-  init_work();
-  init_ledger();
-});
-
-// src/backend/drafts.ts
-function textOf(res) {
-  return typeof res === "string" ? res : res?.content ?? "";
-}
-async function writeReply(messages, userId, timeoutMs = 120000) {
-  const res = await host().generate.quiet({ type: "quiet", messages, userId, signal: AbortSignal.timeout(timeoutMs) });
-  return textOf(res).trim();
-}
-async function writeDrafts(prompt, n, userId) {
-  const out = await Promise.allSettled(Array.from({ length: n }, () => writeReply(prompt, userId)));
-  return out.flatMap((x) => x.status === "fulfilled" && x.value ? [x.value] : []);
-}
-async function judgeDrafts(decider, drafts, outcome, state) {
-  if (drafts.length < 2)
-    return 0;
-  try {
-    const ans = await decider.ask({ game_state: state, decided_outcome: outcome ?? "(nothing decided this turn — free roleplay)" }, { best: {
-      type: "choice",
-      instructions: "Which draft narrates the decided outcome most faithfully (every decided result, nothing that contradicts the game state), keeps characters in voice, and reads best?",
-      criteria: Object.fromEntries(drafts.map((d, i) => [`d${i}`, clip2(d, 2500)]))
-    } });
-    const a = ans.best;
-    if (a?.type !== "choice")
-      return 0;
-    const i = Number(a.choice.slice(1));
-    return Number.isInteger(i) && i > 0 && (a.probabilities[a.choice] ?? 0) >= (a.probabilities.d0 ?? 0) + 0.15 ? i : 0;
-  } catch (e) {
-    logError("judge drafts", e);
-    return 0;
-  }
-}
-function momentKey(msgs, state) {
-  const last = msgs[msgs.length - 1];
-  const s = JSON.stringify(state);
-  let h = 2166136261;
-  for (let i = 0;i < s.length; i++)
-    h = Math.imul(h ^ s.charCodeAt(i), 16777619);
-  return `${last?.id ?? ""}:${last?.swipe_id ?? 0}:${(h >>> 0).toString(36)}`;
-}
-function readyChoices(chatId, key) {
-  const c = cache3.get(chatId);
-  return c?.key === key ? new Set(c.replies.keys()) : new Set;
-}
-function takePrewritten(chatId, key, actionId) {
-  const c = cache3.get(chatId);
-  if (!c || c.key !== key)
-    return null;
-  const hit = c.replies.get(actionId) ?? null;
-  if (hit)
-    cache3.delete(chatId);
-  return hit;
-}
-function dropPrewritten(chatId) {
-  cache3.delete(chatId);
-}
-async function prewrite(opts) {
-  const { chatId, userId, r, settings, decider } = opts;
-  if (settings.prewrite <= 0)
-    return;
-  const msgs = await getMessages(chatId);
-  const { state } = foldPath(r, msgs);
-  const key = momentKey(msgs, state);
-  const choices = buildChoices(r, state, { ...settings, live: liveChoicesOf(msgs[msgs.length - 1]) }).filter((c) => writable(c.id) && !c.params.length).slice(0, settings.prewrite);
-  const replies = new Map;
-  cache3.set(chatId, { key, replies });
-  await Promise.allSettled(choices.map(async (c) => {
-    const ci = intentFor(r, state, settings, msgs, c.id);
-    if ("error" in ci)
-      return;
-    const seed = randomSeed();
-    let res = resolveTurnFull(r, state, ci.intent, { seed, veils: settings.veils, playerText: ci.say });
-    if (res.needs.length && decider.id !== "rules") {
-      const o = await odds2({ decider, r, s: state, specs: res.needs, playerText: ci.say, sceneText: opts.reply, player: opts.player, timeoutMs: 20000 });
-      if (Object.keys(o).length)
-        res = resolveTurnFull(r, state, ci.intent, { seed, veils: settings.veils, odds: o, playerText: ci.say });
-    }
-    const rec = res.record;
-    if (rec.discover)
-      return;
-    const after = cloneState(state);
-    for (const e of rec.events)
-      applyEvent(after, e, r);
-    const prompt = nextPrompt(opts.prompt, opts.reply, ci.say, buildInjection(r, rec, state, after, opts.player));
-    const text = await writeReply(prompt, userId);
-    if (!text || cache3.get(chatId)?.replies !== replies)
-      return;
-    replies.set(c.id, { say: ci.say, intent: ci.intent, rec, text, prompt, outcome: outcomePacket(r, rec, state, after, opts.player), after });
-    opts.onReady();
-  }));
-}
-var clip2 = (s, n) => s.length > n ? `${s.slice(0, n)}…` : s, cache3, writable = (id) => !id.startsWith("dungeon:") && id !== "date:open" && !(id.startsWith("run:") && id !== "run:epilogue");
-var init_drafts = __esm(() => {
-  init_dice();
-  init_resolve();
-  init_state();
-  init_view();
-  init_decisions();
-  init_inject();
-  init_intents();
-  init_ledger();
-  cache3 = new Map;
-});
-
 // src/backend/deciders.ts
 async function post(url, headers, body, timeoutMs) {
   const timeout = new Promise((_, rej) => setTimeout(() => rej(new DeciderError("Decision model timed out")), timeoutMs));
@@ -15427,7 +15206,7 @@ async function ask(system, user, settings, userId, timeoutMs, opts = {}) {
   });
   return typeof res === "string" ? res : res?.content ?? "";
 }
-function clip3(s, n) {
+function clip2(s, n) {
   return s.length > n ? `…${s.slice(-n)}` : s;
 }
 async function extract(r, s, playerText, reply, settings, userId, only, applied) {
@@ -15508,10 +15287,10 @@ async function extract(r, s, playerText, reply, settings, userId, only, applied)
     stateDigest(r, s),
     "",
     "Player's message:",
-    clip3(playerText, 1200) || "(none)",
+    clip2(playerText, 1200) || "(none)",
     "",
     "Narrator's reply:",
-    clip3(reply, 4000),
+    clip2(reply, 4000),
     ...applied ? ["", "Already applied by the rules this turn (don't report these again):", applied] : []
   ].join(`
 `);
@@ -15551,6 +15330,391 @@ var init_helpers = __esm(() => {
   init_state();
   init_world();
   init_view();
+});
+
+// src/backend/inject.ts
+function fillNames(text, player) {
+  return text.replace(/\{\{user\}\}/gi, player);
+}
+function buildInjection(r, rec, before, after, player) {
+  const parts = [];
+  parts.push(`[Warp — current game state. The rules engine owns these facts; keep narration consistent with them.]
+${stateDigest(r, after)}`);
+  if (r.narration.notes)
+    parts.push(`[Warp — narrator notes]
+${r.narration.notes}`);
+  const felt = perception(r, after);
+  if (felt)
+    parts.push(`[Warp — how {{user}} experiences things right now. Filter the narration through this.]
+${felt}`);
+  const known = narratorKnowledge(r, after);
+  if (known)
+    parts.push(`[Warp — background only you know. The player hasn't seen it. Play it as subtext: never explain it, and reveal no more than the scene earns.]
+${known}`);
+  const packet = rec ? outcomePacket(r, rec, before, after, player) : null;
+  if (packet && (rec?.action || rec?.hints.length)) {
+    parts.push(`[Warp — this turn's outcome, already decided by the dice. Narrate it faithfully and do not change the result.]
+${packet}`);
+  }
+  return fillNames(parts.join(`
+
+`), player);
+}
+function injectInto(messages, text) {
+  const out = [...messages];
+  let idx = -1;
+  for (let i = out.length - 1;i >= 0; i--)
+    if (out[i].role === "user") {
+      idx = i;
+      break;
+    }
+  const block = `
+
+<warp>
+${text}
+</warp>`;
+  if (idx >= 0) {
+    const m = out[idx];
+    out[idx] = typeof m.content === "string" ? { ...m, content: m.content + block } : { ...m, content: [...m.content, { type: "text", text: block }] };
+    return { messages: out, index: idx };
+  }
+  out.push({ role: "user", content: block.trim() });
+  return { messages: out, index: out.length - 1 };
+}
+function nextPrompt(prompt, reply, say, injection) {
+  const clean = prompt.map((m) => typeof m.content === "string" && m.role === "user" ? { ...m, content: m.content.replace(WARP_BLOCK, "") } : m);
+  let idx = -1;
+  for (let i = clean.length - 1;i >= 0; i--)
+    if (clean[i].role === "user") {
+      idx = i;
+      break;
+    }
+  const turn = [
+    { role: "assistant", content: reply },
+    { role: "user", content: `${say}
+
+<warp>
+${injection}
+</warp>` }
+  ];
+  return idx >= 0 ? [...clean.slice(0, idx + 1), ...turn, ...clean.slice(idx + 1)] : [...clean, ...turn];
+}
+var WARP_BLOCK;
+var init_inject = __esm(() => {
+  init_view();
+  WARP_BLOCK = /\n*<warp>[\s\S]*?<\/warp>/g;
+});
+
+// src/backend/snippets.ts
+function plain(text, player) {
+  return fillNames(text, player).replace(/^Dungeon \([^)]*\)\s*(—\s*since last time:\s*)?/, "").replace(/\s*Now:\s*/, " ").replace(/\*/g, "").replace(/\s+/g, " ").trim();
+}
+function reactionOf(rec) {
+  const d = rec.decisions?.find((x) => x.id.startsWith("date:topic:") || x.id === "date:say");
+  return d?.picked ?? null;
+}
+function scriptedLines(o) {
+  const rng = seededRng(`${o.seed}:lines`);
+  const out = [];
+  if (o.kind === "date") {
+    const sess = activeSession(o.r, o.after) ?? activeSession(o.r, o.before);
+    const name = sess ? personName(o.r, o.after, sess.who) : "They";
+    const reaction = reactionOf(o.rec);
+    if (reaction) {
+      out.push({ speaker: null, text: pick2(REACTION_BEAT[reaction], rng).replace(/\{name\}/g, name) });
+      out.push({ speaker: name, text: pick2(REACTION_LINES[reaction], rng) });
+      return out;
+    }
+  }
+  for (const h of o.rec.hints) {
+    const t = plain(h, o.player);
+    if (t && !/^(?:This round's beats|Handle this beat)/.test(t))
+      out.push({ speaker: null, text: t.length > MAX_CHARS ? `${t.slice(0, MAX_CHARS - 1)}…` : t });
+    if (out.length >= MAX_LINES)
+      break;
+  }
+  return out.length ? out : [{ speaker: null, text: o.kind === "date" ? "A quiet moment passes between you." : "The dungeon is quiet for a moment." }];
+}
+function sceneFacts(o) {
+  const { r, after } = o;
+  const facts = [];
+  if (r.clock.enabled) {
+    const c = formatClock(r, after.minutes);
+    facts.push(`Time: ${c.day}, ${c.time} (${c.phase})`);
+  }
+  if (o.kind === "date") {
+    const sess = activeSession(r, after) ?? activeSession(r, o.before);
+    if (sess) {
+      const name = personName(r, after, sess.who);
+      const desc = r.people[sess.who]?.desc;
+      facts.push(`With: ${name}${desc ? ` — ${desc}` : ""}`);
+      facts.push(`Where things stand: ${stageLabel(r, after, sess.who)}; ${name}'s mood right now: ${moodOf((activeSession(r, after) ?? sess).mood).label.toLowerCase()}`);
+      const venue = sess.venue ? r.dating.venues[sess.venue]?.name : null;
+      facts.push(`Place: ${venue ?? after.locationName ?? "somewhere"}${sess.kind === "outing" ? " (on a date)" : ""}`);
+    }
+  } else if (after.dungeon || o.before.dungeon) {
+    const run = after.dungeon ?? o.before.dungeon;
+    facts.push(`Place: ${r.dungeons[run.id]?.name ?? "a dungeon"}, floor ${run.depth}`);
+    const party = run.party.map((m) => m.id).filter((id) => o.after.people[id] || o.before.people[id]).map((id) => personName(o.r, o.after, id));
+    if (party.length)
+      facts.push(`With ${o.player}: ${party.join(", ")}`);
+  } else if (after.locationName)
+    facts.push(`Place: ${after.locationName}`);
+  return facts;
+}
+async function modelLines(o, settings, userId) {
+  const outcome = outcomePacket(o.r, o.rec, o.before, o.after, o.player);
+  const user = [
+    o.card ? `The character card (for voice and appearance):
+${o.card.slice(0, 1500)}` : "",
+    `The player character: ${o.player}`,
+    sceneFacts(o).join(`
+`),
+    o.recent.length ? `Just before:
+${o.recent.slice(-4).map((l) => `${l.speaker ?? "(narration)"}: ${l.text}`).join(`
+`)}` : "",
+    o.said ? `${o.player} now: ${o.said}` : "",
+    outcome ? `Decided by the rules (voice this):
+${fillNames(outcome, o.player)}` : ""
+  ].filter(Boolean).join(`
+
+`);
+  try {
+    const raw = firstJson2(await ask(SYSTEM, user, settings, userId, 15000, { temperature: 0.85, maxTokens: 350 }));
+    const lines = Array.isArray(raw?.lines) ? raw.lines : [];
+    const out = [];
+    for (const l of lines.slice(0, MAX_LINES)) {
+      const text = typeof l?.text === "string" ? l.text.trim().replace(/\s+/g, " ") : "";
+      if (!text)
+        continue;
+      const sp = typeof l.speaker === "string" ? l.speaker.trim() : "";
+      out.push({ speaker: sp && sp.toLowerCase() !== "narration" && sp.toLowerCase() !== "narrator" ? sp.slice(0, 40) : null, text: text.slice(0, MAX_CHARS) });
+    }
+    return out.length ? out : null;
+  } catch (e) {
+    logError("scene lines", e);
+    return null;
+  }
+}
+async function writeLines(o, settings, userId) {
+  if (settings.sceneLines === "model") {
+    const lines = await modelLines(o, settings, userId);
+    if (lines)
+      return lines;
+  }
+  return scriptedLines(o);
+}
+async function summaryLine(o) {
+  const { r } = o;
+  let fallback;
+  if (o.kind === "date" && o.who) {
+    const name = personName(r, o.end, o.who);
+    const from = stageLabel(r, o.start, o.who), to = stageLabel(r, o.end, o.who);
+    const where = o.venue ? ` at ${o.venue}` : o.end.locationName ? ` at ${o.end.locationName}` : "";
+    fallback = `*${o.player} spent some time with ${name}${where}.${from !== to ? ` Things between them moved from ${from.toLowerCase()} to ${to.toLowerCase()}.` : ""}*`;
+  } else if (o.dungeon) {
+    fallback = `*${o.player} climbed back out of ${o.dungeon.name}, having reached floor ${o.dungeon.depth}${o.dungeon.gold ? `, carrying ${o.dungeon.gold} gold` : ""}.*`;
+  } else
+    fallback = `*Some time passes.*`;
+  if (o.settings.sceneLines !== "model")
+    return fallback;
+  try {
+    const text = await ask("Summarise a finished mini-game scene as ONE short narration sentence (under 35 words) for a roleplay's history, in italics with *asterisks*. Past tense, third person, no dialogue.", [`Facts: ${fallback.replace(/\*/g, "")}`, `How it went:
+${o.lines.slice(-10).map((l) => `${l.speaker ?? "(narration)"}: ${l.text}`).join(`
+`)}`].join(`
+
+`), o.settings, o.userId, 12000, { temperature: 0.6, maxTokens: 120 });
+    const line = text.trim().split(`
+`).find((x) => x.trim())?.trim() ?? "";
+    return line.length > 10 && line.length < 400 ? line.startsWith("*") ? line : `*${line.replace(/^\*|\*$/g, "")}*` : fallback;
+  } catch {
+    return fallback;
+  }
+}
+var MAX_LINES = 3, MAX_CHARS = 220, REACTION_LINES, REACTION_BEAT, pick2 = (xs, rng) => xs[Math.floor(rng() * xs.length) % xs.length], SYSTEM;
+var init_snippets = __esm(() => {
+  init_dice();
+  init_state();
+  init_talk();
+  init_view();
+  init_helpers();
+  init_inject();
+  REACTION_LINES = {
+    love: ["Oh — I love that. Really.", "You too? Okay, now I have to hear everything.", "That's my favourite thing to talk about."],
+    like: ["That's nice. Tell me more.", "Mm, I like that.", "Huh — yeah, that's good."],
+    neutral: ["Huh. I guess.", "Sure, I suppose.", "Mm-hm."],
+    dislike: ["Can we talk about something else?", "That's… not really my thing.", "Let's not."],
+    hate: ["Seriously? Drop it.", "I'd rather not talk about that. At all.", "Wow. Okay."]
+  };
+  REACTION_BEAT = {
+    love: ["{name} lights up.", "{name} leans in, grinning.", "{name}'s eyes go bright."],
+    like: ["{name} smiles.", "{name} nods along.", "{name} relaxes a little."],
+    neutral: ["{name} shrugs.", "{name} glances away for a moment.", "{name} offers a polite half-smile."],
+    dislike: ["{name}'s smile thins.", "{name} shifts, uncomfortable.", "{name} looks elsewhere."],
+    hate: ["{name}'s face goes cold.", "{name} folds their arms.", "{name} stiffens."]
+  };
+  SYSTEM = [
+    "You write short snippets for a visual-novel mini-game played alongside a roleplay.",
+    "What happened is already decided by the game's rules — voice it faithfully; never change or add outcomes.",
+    `Write at most ${MAX_LINES} short lines, each under 25 words: a character's spoken line, or a brief narration beat. Snappy, in character, present tense.`,
+    "Never speak or act for the player character beyond what they did.",
+    "Romance and anything sexual only ever involve adults.",
+    'Reply with JSON only: {"lines": [{"speaker": "Name" or "", "text": "..."}]} — speaker "" is narration.'
+  ].join(`
+`);
+});
+
+// src/backend/intents.ts
+function intentFor(r, state, settings, msgs, actionId, params) {
+  if (actionId === EXPLORE) {
+    if (!canExplore(r, state))
+      return { error: "There's nowhere new to find here." };
+    return { say: "*I explore around, looking for somewhere I haven't been.*", intent: { actionId: EXPLORE, via: "choice", label: "Explore" } };
+  }
+  if (actionId === RUN_EPILOGUE) {
+    if (!state.ended || state.ended.told)
+      return { error: "" };
+    return { say: "*The end.*", intent: { actionId: RUN_EPILOGUE, via: "choice", label: "The ending" } };
+  }
+  if (actionId.startsWith(LIVE_PREFIX)) {
+    const c = liveChoicesOf(msgs[msgs.length - 1])[Number(actionId.slice(LIVE_PREFIX.length))];
+    if (!c || !r.liveChoices.tags[c.tag])
+      return { error: "That choice isn't available anymore." };
+    return { say: `*${c.label}*`, intent: { actionId: `${LIVE_PREFIX}${c.tag}${c.target ? `${TARGET_SEP}${c.target}` : ""}`, via: "choice", label: c.label } };
+  }
+  if (actionId.startsWith(PAY_PREFIX) || actionId.startsWith(JOB_PREFIX)) {
+    const m = workMoves(r, state).find((x) => x.id === actionId);
+    if (!m)
+      return { error: "That isn't possible right now." };
+    return { say: m.say, intent: { actionId: m.id, via: "choice", label: m.label } };
+  }
+  if (actionId.startsWith(DATE_PREFIX)) {
+    const m = dateMoves(r, state, settings.lines).find((x) => x.id === actionId);
+    if (!m)
+      return { error: "That isn't possible right now." };
+    return { say: m.say, intent: { actionId: m.id, via: "choice", label: m.label } };
+  }
+  if (actionId.startsWith(TRAVEL_PREFIX)) {
+    const to = actionId.slice(TRAVEL_PREFIX.length);
+    if (!travelTargets(r, state).includes(to))
+      return { error: "You can't get there from here." };
+    return { say: `*I head to ${r.locations[to].name}.*`, intent: { actionId, params, via: "choice" } };
+  }
+  const c = availableChoices(r, state, settings.lines).find((x) => x.id === actionId);
+  if (!c)
+    return { error: "That choice isn't available anymore." };
+  const who = c.target ? state.people[c.target]?.name ?? c.target : "";
+  return { say: c.a.say ? c.a.say.replace(/\{\{target\}\}|\{target\}/gi, who) : `*${c.label}*`, intent: { actionId, params, via: "choice" } };
+}
+var init_intents = __esm(() => {
+  init_resolve();
+  init_talk();
+  init_types2();
+  init_work();
+  init_ledger();
+});
+
+// src/backend/drafts.ts
+function textOf(res) {
+  return typeof res === "string" ? res : res?.content ?? "";
+}
+async function writeReply(messages, userId, timeoutMs = 120000) {
+  const res = await host().generate.quiet({ type: "quiet", messages, userId, signal: AbortSignal.timeout(timeoutMs) });
+  return textOf(res).trim();
+}
+async function writeDrafts(prompt, n, userId) {
+  const out = await Promise.allSettled(Array.from({ length: n }, () => writeReply(prompt, userId)));
+  return out.flatMap((x) => x.status === "fulfilled" && x.value ? [x.value] : []);
+}
+async function judgeDrafts(decider, drafts, outcome, state) {
+  if (drafts.length < 2)
+    return 0;
+  try {
+    const ans = await decider.ask({ game_state: state, decided_outcome: outcome ?? "(nothing decided this turn — free roleplay)" }, { best: {
+      type: "choice",
+      instructions: "Which draft narrates the decided outcome most faithfully (every decided result, nothing that contradicts the game state), keeps characters in voice, and reads best?",
+      criteria: Object.fromEntries(drafts.map((d, i) => [`d${i}`, clip3(d, 2500)]))
+    } });
+    const a = ans.best;
+    if (a?.type !== "choice")
+      return 0;
+    const i = Number(a.choice.slice(1));
+    return Number.isInteger(i) && i > 0 && (a.probabilities[a.choice] ?? 0) >= (a.probabilities.d0 ?? 0) + 0.15 ? i : 0;
+  } catch (e) {
+    logError("judge drafts", e);
+    return 0;
+  }
+}
+function momentKey(msgs, state) {
+  const last = msgs[msgs.length - 1];
+  const s = JSON.stringify(state);
+  let h = 2166136261;
+  for (let i = 0;i < s.length; i++)
+    h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+  return `${last?.id ?? ""}:${last?.swipe_id ?? 0}:${(h >>> 0).toString(36)}`;
+}
+function readyChoices(chatId, key) {
+  const c = cache3.get(chatId);
+  return c?.key === key ? new Set(c.replies.keys()) : new Set;
+}
+function takePrewritten(chatId, key, actionId) {
+  const c = cache3.get(chatId);
+  if (!c || c.key !== key)
+    return null;
+  const hit = c.replies.get(actionId) ?? null;
+  if (hit)
+    cache3.delete(chatId);
+  return hit;
+}
+function dropPrewritten(chatId) {
+  cache3.delete(chatId);
+}
+async function prewrite(opts) {
+  const { chatId, userId, r, settings, decider } = opts;
+  if (settings.prewrite <= 0)
+    return;
+  const msgs = await getMessages(chatId);
+  const { state } = foldPath(r, msgs);
+  const key = momentKey(msgs, state);
+  const choices = buildChoices(r, state, { ...settings, live: liveChoicesOf(msgs[msgs.length - 1]) }).filter((c) => writable(c.id) && !c.params.length).slice(0, settings.prewrite);
+  const replies = new Map;
+  cache3.set(chatId, { key, replies });
+  await Promise.allSettled(choices.map(async (c) => {
+    const ci = intentFor(r, state, settings, msgs, c.id);
+    if ("error" in ci)
+      return;
+    const seed = randomSeed();
+    let res = resolveTurnFull(r, state, ci.intent, { seed, veils: settings.veils, playerText: ci.say });
+    if (res.needs.length && decider.id !== "rules") {
+      const o = await odds2({ decider, r, s: state, specs: res.needs, playerText: ci.say, sceneText: opts.reply, player: opts.player, timeoutMs: 20000 });
+      if (Object.keys(o).length)
+        res = resolveTurnFull(r, state, ci.intent, { seed, veils: settings.veils, odds: o, playerText: ci.say });
+    }
+    const rec = res.record;
+    if (rec.discover)
+      return;
+    const after = cloneState(state);
+    for (const e of rec.events)
+      applyEvent(after, e, r);
+    const prompt = nextPrompt(opts.prompt, opts.reply, ci.say, buildInjection(r, rec, state, after, opts.player));
+    const text = await writeReply(prompt, userId);
+    if (!text || cache3.get(chatId)?.replies !== replies)
+      return;
+    replies.set(c.id, { say: ci.say, intent: ci.intent, rec, text, prompt, outcome: outcomePacket(r, rec, state, after, opts.player), after });
+    opts.onReady();
+  }));
+}
+var clip3 = (s, n) => s.length > n ? `${s.slice(0, n)}…` : s, cache3, writable = (id) => !id.startsWith("dungeon:") && id !== "date:open" && !(id.startsWith("run:") && id !== "run:epilogue");
+var init_drafts = __esm(() => {
+  init_dice();
+  init_resolve();
+  init_state();
+  init_view();
+  init_decisions();
+  init_inject();
+  init_intents();
+  init_ledger();
+  cache3 = new Map;
 });
 
 // src/backend/live.ts
@@ -16027,6 +16191,183 @@ var init_turn = __esm(() => {
   started = new Map;
 });
 
+// src/backend/scene.ts
+function logFor(chatId, kind) {
+  let l = logs.get(chatId);
+  if (!l || l.kind !== kind) {
+    l = { kind, seq: 0, lines: [], said: null, history: [], writing: false, image: null, imageBusy: false, start: null };
+    logs.set(chatId, l);
+  }
+  return l;
+}
+function sceneViewFor(chatId, r, s) {
+  const kind = s.dungeon ? "dungeon" : activeSession(r, s) ? "date" : null;
+  const l = logs.get(chatId);
+  if (!kind)
+    return null;
+  if (!l || l.kind !== kind)
+    return { kind, seq: 0, lines: [], said: null, image: null, imageBusy: false, writing: false };
+  return { kind, seq: l.seq, lines: l.lines, said: l.said, image: l.image, imageBusy: l.imageBusy, writing: l.writing };
+}
+async function playerNameOf(chatId, userId) {
+  await Promise.resolve().then(() => init_turn());
+  return playerName(chatId, userId).catch(() => "You");
+}
+async function playScene(opts) {
+  const { chatId, userId, kind } = opts;
+  const loaded = await getRuleset(chatId, userId);
+  const r = loaded?.ruleset;
+  if (!r)
+    return;
+  const settings = await getSettings(userId);
+  const msgs = await getMessages(chatId);
+  const last = msgs[msgs.length - 1];
+  if (!last) {
+    toast("warning", "Send a message first — the game attaches to the latest message.", userId);
+    return;
+  }
+  const log = logFor(chatId, kind);
+  busyChats.add(chatId);
+  log.writing = true;
+  log.said = opts.said;
+  send({ type: "busy", chatId, busy: true, label: kind === "date" ? "…" : "The dungeon stirs…" }, userId);
+  try {
+    const { state: before } = foldPath(r, msgs);
+    if (!log.start)
+      log.start = cloneState(before);
+    const player = await playerNameOf(chatId, userId);
+    const seed = randomSeed();
+    const playerText = opts.typed ?? opts.said ?? "";
+    let res = resolveTurnFull(r, before, opts.intent, { seed, veils: settings.veils, playerText });
+    const decider = await getDecider(settings, userId);
+    const card = await characterBrief(chatId, userId).catch(() => "");
+    if (res.needs.length && decider.id !== "rules") {
+      const recent = log.history.slice(-4).map((l) => `${l.speaker ?? ""}${l.speaker ? ": " : ""}${l.text}`).join(`
+`);
+      const o = await odds2({ decider, r, s: before, specs: res.needs, playerText, sceneText: recent, player, timeoutMs: 15000, card });
+      if (Object.keys(o).length)
+        res = resolveTurnFull(r, before, opts.intent, { seed, veils: settings.veils, odds: o, playerText });
+    }
+    const rec = res.record;
+    const after = cloneState(before);
+    for (const e of rec.events)
+      applyEvent(after, e, r);
+    const swipe = last.swipe_id ?? 0;
+    const existing = warpMeta(last).swipes?.[String(swipe)];
+    const merged = existing ? { ...existing, events: [...existing.events, ...rec.events] } : { v: 1, hints: [], events: rec.events, at: Date.now() };
+    await writeRecord(chatId, last.id, swipe, merged);
+    await pushState(chatId, userId);
+    const sess = activeSession(r, after);
+    if (kind === "date" && sess && settings.dateImages && !log.image && !log.imageBusy)
+      dateImage(chatId, userId, r, after, sess.who, sess.venue ?? null, card, log);
+    const lines = await writeLines({ kind, r, before, after, rec, player, said: opts.said, recent: log.history, card, seed }, settings, userId);
+    log.lines = lines;
+    log.history = [...log.history, ...opts.said ? [{ speaker: player, text: opts.said.replace(/\*/g, "") }] : [], ...lines].slice(-40);
+    log.seq += 1;
+    log.writing = false;
+    const ended = kind === "date" ? !!activeSession(r, before) && !sess : !!before.dungeon && !after.dungeon || !!opts.runEnded;
+    if (ended) {
+      const start = log.start ?? before;
+      const who = kind === "date" ? activeSession(r, before)?.who ?? null : null;
+      const bsess = activeSession(r, before);
+      const venue = bsess?.venue ? r.dating.venues[bsess.venue]?.name ?? null : null;
+      const run = before.dungeon;
+      const dungeon = opts.runEnded ?? (run ? { name: r.dungeons[run.id]?.name ?? "the dungeon", depth: run.depth, gold: run.gold } : null);
+      const line = await summaryLine({ kind, r, start, end: after, lines: log.history, player, settings, userId, who, venue, dungeon });
+      await host().chat.appendMessage(chatId, { role: "assistant", content: line });
+      logs.delete(chatId);
+    }
+  } catch (e) {
+    logError("scene", e);
+    log.writing = false;
+    toast("warning", "That didn't go through — try again.", userId);
+  } finally {
+    busyChats.delete(chatId);
+    send({ type: "busy", chatId, busy: false }, userId);
+    await pushState(chatId, userId);
+  }
+}
+async function dateImage(chatId, userId, r, s, who, venueId, card, log) {
+  const settings = await getSettings(userId);
+  const characterId = await characterForChat(chatId, userId).catch(() => null);
+  const place = venueId ?? s.location ?? "somewhere";
+  const key = `${characterId ?? "chat"}:${who}:${place}`;
+  let cache = {};
+  try {
+    cache = await host().userStorage.getJson(IMAGE_STORE, { fallback: {}, userId });
+  } catch {}
+  if (cache[key]) {
+    log.image = cache[key];
+    await pushState(chatId, userId);
+    return;
+  }
+  if (inflight.has(key))
+    return;
+  inflight.add(key);
+  log.imageBusy = true;
+  await pushState(chatId, userId);
+  try {
+    const prompt = await imagePrompt(r, s, who, venueId, card, settings, userId);
+    const res = await host().imageGen.generate({
+      ...settings.imageConnectionId ? { connection_id: settings.imageConnectionId } : {},
+      prompt,
+      negativePrompt: "multiple people, crowd, text, watermark, signature, lowres, blurry, deformed, extra limbs, nsfw, nude",
+      owner_chat_id: chatId,
+      includeDataUrl: false,
+      ...userId ? { userId } : {}
+    });
+    const url = res.imageUrl ?? (res.imageId ? `/api/v1/images/${res.imageId}` : null);
+    if (url) {
+      cache = { ...cache, [key]: url };
+      await host().userStorage.setJson(IMAGE_STORE, cache, { userId });
+      log.image = url;
+    }
+  } catch (e) {
+    logError("date picture", e);
+  } finally {
+    inflight.delete(key);
+    log.imageBusy = false;
+    await pushState(chatId, userId);
+  }
+}
+async function imagePrompt(r, s, who, venueId, card, settings, userId) {
+  const name = personName(r, s, who);
+  const venue = venueId ? r.dating.venues[venueId] : null;
+  const loc = s.location ? r.locations[s.location] : undefined;
+  const placeName = venue?.name ?? s.locationName ?? "a quiet place";
+  const placeDesc = loc?.desc ?? "";
+  const phase = r.clock.enabled ? formatClock(r, s.minutes).phase : "day";
+  const fallback = `${name}, one person, centered, upper body, facing the viewer, gentle smile, fully clothed, ${placeName}, ${phase}, detailed background, visual novel style, soft lighting`;
+  try {
+    const text = await ask("Write ONE image-generation prompt as comma-separated tags for a visual-novel scene: exactly one adult character, centered in the frame, upper body, facing the viewer, fully clothed, with the place behind them as a detailed background. Take their appearance (hair, eyes, build, clothes) from what you're given. Tags only, no sentences, under 70 words.", [`Character: ${name}${r.people[who]?.desc ? ` — ${r.people[who].desc}` : ""}`, card ? `Card (may describe them):
+${card.slice(0, 1800)}` : "", `Place: ${placeName}${placeDesc ? ` — ${placeDesc}` : ""}`, `Time of day: ${phase}`].filter(Boolean).join(`
+
+`), settings, userId, 20000, { temperature: 0.4, maxTokens: 160 });
+    const tags = text.replace(/```[a-z]*|```/g, "").split(`
+`).map((x) => x.trim()).find((x) => x.includes(",")) ?? "";
+    return tags.length > 20 ? `${tags}, centered composition, visual novel style` : fallback;
+  } catch {
+    return fallback;
+  }
+}
+var logs, IMAGE_STORE = "scene-images.json", inflight;
+var init_scene = __esm(() => {
+  init_dice();
+  init_resolve();
+  init_state();
+  init_talk();
+  init_decisions();
+  init_deciders();
+  init_helpers();
+  init_ledger();
+  init_settings();
+  init_source();
+  init_state_push();
+  init_snippets();
+  logs = new Map;
+  inflight = new Set;
+});
+
 // src/backend/state-push.ts
 function setActiveChat(userId, chatId) {
   activeChat.set(key3(userId), chatId);
@@ -16039,7 +16380,7 @@ async function pushState(chatId, userId, force = false) {
     const loaded = await getRuleset(chatId, userId, force);
     const status = statusOf(loaded);
     if (!chatId || !loaded?.ruleset) {
-      send({ type: "state", chatId, status, hud: null, map: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false, dungeon: null, dungeonEntries: [], date: null, story: null }, userId);
+      send({ type: "state", chatId, status, hud: null, map: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false, dungeon: null, dungeonEntries: [], date: null, scene: null }, userId);
       return;
     }
     const r = loaded.ruleset;
@@ -16068,15 +16409,6 @@ async function pushState(chatId, userId, force = false) {
     }
     const latest = msgs[msgs.length - 1] ?? null;
     const anchor = latest && !latest.is_user ? latest.id : null;
-    let story = null;
-    if (settings.enabled && (state.dungeon || state.date && activeSession(r, state))) {
-      const reply = [...msgs].reverse().find((m) => !m.is_user && m.content.trim());
-      if (reply) {
-        const prev = msgs[(indexOf.get(reply.id) ?? 0) - 1];
-        const clipped = reply.content.length > 8000 ? `…${reply.content.slice(-8000)}` : reply.content;
-        story = { messageId: reply.id, text: clipped, said: prev?.is_user ? prev.content.slice(0, 600) : null };
-      }
-    }
     send({
       type: "state",
       chatId,
@@ -16092,7 +16424,7 @@ async function pushState(chatId, userId, force = false) {
       dungeon: settings.enabled ? await withName(buildDungeonView(r, state), chatId, userId) : null,
       dungeonEntries: settings.enabled ? buildDungeonEntries(r, state) : [],
       date: settings.enabled ? buildDateView(r, state, settings.lines) : null,
-      story: story ? await withName(story, chatId, userId) : null
+      scene: settings.enabled ? sceneViewFor(chatId, r, state) : null
     }, userId);
   } catch (e) {
     logError("pushState", e);
@@ -16137,7 +16469,7 @@ var init_state_push = __esm(() => {
   init_view();
   init_view2();
   init_view3();
-  init_talk();
+  init_scene();
   init_drafts();
   init_ledger();
   init_settings();
@@ -16157,6 +16489,9 @@ init_source();
 init_state_push();
 init_turn();
 init_intents();
+init_scene();
+init_talk();
+init_types2();
 init_drafts();
 init_loader();
 init_deciders();
@@ -16167,6 +16502,7 @@ init_run();
 init_ledger();
 init_source();
 init_state_push();
+init_scene();
 function run2(r, s, op) {
   switch (op.op) {
     case "enter":
@@ -16222,13 +16558,10 @@ async function runDungeonOp(msg, userId) {
     await writeRecord(msg.chatId, last.id, swipe, rec);
   }
   await pushState(msg.chatId, userId);
-  if (res.narrate) {
-    await spindle.chat.appendMessage(msg.chatId, {
-      role: "user",
-      content: res.narrate.say,
-      metadata: { warp: { intent: { actionId: DUNGEON_ACTION, via: "choice", label: res.narrate.say } } }
-    }, { triggerGeneration: true });
-  }
+  const was = state.dungeon;
+  const endedRun = was && !res.events.some((e) => e.t === "dg_enter") && res.events.some((e) => e.t === "dg_exit") ? { name: r.dungeons[was.id]?.name ?? "the dungeon", depth: was.depth, gold: was.gold } : undefined;
+  if (res.narrate)
+    await playScene({ chatId: msg.chatId, userId, kind: "dungeon", intent: null, said: res.narrate.say, ...endedRun ? { runEnded: endedRun } : {} });
 }
 
 // src/engine/balance.ts
@@ -17488,8 +17821,17 @@ async function sendSettings(userId) {
     settings,
     jevKeySet,
     templates: TEMPLATES.map(({ id, name, blurb }) => ({ id, name, blurb })),
-    connections: await connectionsFor(userId)
+    connections: await connectionsFor(userId),
+    imageConnections: await imageConnectionsFor(userId)
   }, userId);
+}
+async function imageConnectionsFor(userId) {
+  try {
+    const list = await spindle.imageGen.listConnections(userId);
+    return list.map((c) => ({ id: c.id, name: `${c.name}${c.model ? ` — ${c.model}` : ""}` }));
+  } catch {
+    return [];
+  }
 }
 spindle.onFrontendMessage(async (raw, userId) => {
   const msg = raw;
@@ -17518,6 +17860,19 @@ spindle.onFrontendMessage(async (raw, userId) => {
           toast("info", "Wait for the story to catch up first.", userId);
           return;
         }
+        const loaded = await getRuleset(msg.chatId, userId);
+        const r = loaded?.ruleset;
+        if (r) {
+          const { state } = foldPath(r, await getMessages(msg.chatId));
+          if (activeSession(r, state)) {
+            await playScene({ chatId: msg.chatId, userId, kind: "date", intent: { actionId: `${DATE_PREFIX}say`, via: "adjudicator" }, said: text, typed: text });
+            break;
+          }
+          if (state.dungeon) {
+            await playScene({ chatId: msg.chatId, userId, kind: "dungeon", intent: null, said: text, typed: text });
+            break;
+          }
+        }
         await spindle.chat.appendMessage(msg.chatId, { role: "user", content: text }, { triggerGeneration: true });
         break;
       }
@@ -17537,6 +17892,15 @@ spindle.onFrontendMessage(async (raw, userId) => {
           return;
         }
         const { say, intent } = ci;
+        if (msg.actionId.startsWith(DATE_PREFIX)) {
+          if (busyChats.has(msg.chatId)) {
+            toast("info", "Wait a moment — they're still answering.", userId);
+            await pushState(msg.chatId, userId);
+            return;
+          }
+          await playScene({ chatId: msg.chatId, userId, kind: "date", intent, said: say });
+          break;
+        }
         const ready = takePrewritten(msg.chatId, momentKey(msgs, state), msg.actionId);
         if (ready) {
           await spindle.chat.appendMessage(msg.chatId, { role: "user", content: say, metadata: { warp: { intent, judged: true } } });
