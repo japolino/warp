@@ -1,0 +1,464 @@
+import type { SpindleDockPanelHandle, SpindleFrontendContext } from "lumiverse-spindle-types";
+import type {
+  BackendToFrontend, FrontendToBackend, RecordView, RulesetStatus, Settings, TemplateInfo,
+} from "./shared/protocol.js";
+import { DEFAULT_SETTINGS } from "./shared/protocol.js";
+import { STYLES } from "./frontend/styles.js";
+import { renderChips, renderChoices, renderHud, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
+
+type StateMsg = Extract<BackendToFrontend, { type: "state" }>;
+
+const CLEANUP_KEY = "__warpCleanup";
+const ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><circle cx="8.5" cy="8.5" r="1.3" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/></svg>`;
+
+function store(key: string, value?: string): string | null {
+  try {
+    if (value !== undefined) localStorage.setItem(`warp:${key}`, value);
+    return localStorage.getItem(`warp:${key}`);
+  } catch { return null; }
+}
+
+export function setup(ctx: SpindleFrontendContext) {
+  const prev = (globalThis as Record<string, unknown>)[CLEANUP_KEY];
+  if (typeof prev === "function") prev();
+
+  const cleanups: (() => void)[] = [];
+  cleanups.push(ctx.dom.addStyle(STYLES));
+
+  let state: StateMsg | null = null;
+  let settings: Settings = { ...DEFAULT_SETTINGS };
+  let templates: TemplateInfo[] = [];
+  let connections: { id: string; name: string }[] = [];
+  let jevKeySet = false;
+  let busy = { chatId: "", on: false, label: "" };
+  let editingBar: string | null = null;
+  let drawerView: "sheet" | "rules" | "settings" = "sheet";
+  const openSections = new Map<string, boolean>();
+
+  const send = (m: FrontendToBackend) => ctx.sendToBackend(m);
+  const chatId = () => { try { return ctx.getActiveChat().chatId ?? null; } catch { return null; } };
+
+  // ───────── surfaces: drawer tab (always) + left dock panel (when allowed) ─────────
+  const tab = ctx.ui.registerDrawerTab({
+    id: "warp",
+    title: "Warp — game state",
+    shortName: "Warp",
+    headerTitle: "Warp",
+    description: "Stats, dice, inventory, people and game settings",
+    keywords: ["stats", "dice", "game", "ruleset", "rpg", "tracker"],
+    iconSvg: ICON,
+  });
+  cleanups.push(() => tab.destroy());
+  const drawerRoot = document.createElement("div");
+  drawerRoot.className = "warp-root";
+  tab.root.appendChild(drawerRoot);
+  cleanups.push(tab.onActivate(() => renderDrawer()));
+
+  let dock: SpindleDockPanelHandle | null = null;
+  const dockRoot = document.createElement("div");
+  dockRoot.className = "warp-root";
+  const narrow = () => window.innerWidth < 760;
+  try {
+    dock = ctx.ui.requestDockPanel({
+      edge: "left",
+      title: "Warp",
+      size: Number(store("dockSize")) || 270,
+      minSize: 220,
+      maxSize: 420,
+      resizable: true,
+      startCollapsed: true,
+    });
+    dock.root.appendChild(dockRoot);
+    cleanups.push(dock.onVisibilityChange((visible) => {
+      // Remember an explicit collapse so we don't keep popping it open.
+      if (!autoToggling) store("dockHidden", visible ? "0" : "1");
+    }));
+    cleanups.push(() => dock?.destroy());
+  } catch {
+    dock = null; // ui_panels not granted — the drawer tab still has everything
+  }
+  let autoToggling = false;
+  function syncDockVisibility() {
+    if (!dock) return;
+    const want = !!state?.hud && store("dockHidden") !== "1" && !narrow();
+    if (want === !dock.isCollapsed()) return;
+    autoToggling = true;
+    try { if (want) dock.expand(); else dock.collapse(); } finally { autoToggling = false; }
+  }
+
+  // ───────── rendering ─────────
+  function rememberSections(root: HTMLElement) {
+    root.querySelectorAll<HTMLDetailsElement>("details[data-section]").forEach((d) => openSections.set(d.dataset.section!, d.open));
+  }
+  function restoreSections(root: HTMLElement) {
+    root.querySelectorAll<HTMLDetailsElement>("details[data-section]").forEach((d) => {
+      const v = openSections.get(d.dataset.section!);
+      if (v !== undefined) d.open = v;
+    });
+  }
+
+  let lastBars = new Map<string, number>();
+  function flashChangedBars(root: HTMLElement) {
+    if (!state?.hud) return;
+    for (const b of state.hud.bars) {
+      const prevV = lastBars.get(b.id);
+      if (prevV !== undefined && Math.abs(prevV - b.value) > 0.5) root.querySelector(`[data-bar="${CSS.escape(b.id)}"]`)?.classList.add("warp-changed");
+    }
+  }
+
+  function renderDock() {
+    if (!dock) return;
+    rememberSections(dockRoot);
+    if (state?.hud) {
+      dockRoot.innerHTML = renderHud(state.hud, { editing: editingBar, compact: true });
+    } else if (state?.status.state === "broken") {
+      dockRoot.innerHTML = renderRulesetCard(state.status, true);
+    } else {
+      dockRoot.innerHTML = "";
+    }
+    restoreSections(dockRoot);
+    flashChangedBars(dockRoot);
+  }
+
+  function renderDrawer() {
+    rememberSections(drawerRoot);
+    const hasChat = !!state?.chatId;
+    const status: RulesetStatus = state?.status ?? { state: "none", name: null, source: null, issues: [], characterName: null, tags: [] };
+    const tabs = `<div class="warp-tabs" role="tablist">
+      ${(["sheet", "rules", "settings"] as const).map((v) => `<button class="warp-tab" role="tab" data-view="${v}" aria-selected="${drawerView === v}">${v === "sheet" ? "Sheet" : v === "rules" ? `Ruleset${status.issues.some((i) => i.level === "error") ? " ⚠" : ""}` : "Settings"}</button>`).join("")}
+    </div>`;
+    let body = "";
+    if (drawerView === "sheet") {
+      body = state?.hud ? renderHud(state.hud, { editing: editingBar, compact: false }) : renderRulesetCard(status, hasChat);
+    } else if (drawerView === "rules") {
+      body = renderRulesetCard(status, hasChat) + `<div class="warp-card"><h3>Writing rules</h3><p>Rules live in entries titled <b>warp-ruleset · …</b> (or any lorebook named <b>warp-ruleset</b>). Each entry is YAML; entries merge together. Warp keeps them out of the prompt automatically.</p></div>`;
+    } else {
+      body = renderSettings(settings, state?.status ?? null, connections, jevKeySet);
+    }
+    drawerRoot.innerHTML = tabs + body;
+    restoreSections(drawerRoot);
+    flashChangedBars(drawerRoot);
+    tab.setBadge(status.issues.some((i) => i.level === "error") ? "!" : null);
+  }
+
+  // ───────── in-chat: choices under the latest reply, chips on each message ─────────
+  let choicesEl: Element | null = null;
+  let choicesFor: string | null = null;
+  let choicesHtml = "";
+  const chipEls = new Map<string, { el: Element; html: string }>();
+  const wantChips = new Map<string, string>();
+
+  function injectChips(messageId: string, html: string): boolean {
+    const bubble = ctx.dom.findMessageElement(messageId);
+    if (!bubble) return false;
+    const el = ctx.dom.inject(bubble, `<div class="warp-chips" data-warp-chips="${messageId}">${html}</div>`, "beforeend");
+    chipEls.set(messageId, { el, html });
+    return true;
+  }
+
+  function placeChoices(force = false) {
+    const anchor = state?.choicesAnchor ?? null;
+    const isBusy = busy.on && busy.chatId === state?.chatId;
+    const html = settings.enabled && state?.hud && anchor
+      ? renderChoices(state.choices, { showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined })
+      : "";
+    if (!force && anchor === choicesFor && html === choicesHtml && choicesEl?.isConnected) return;
+    if (choicesEl) { ctx.dom.uninject(choicesEl); choicesEl = null; }
+    choicesFor = anchor;
+    choicesHtml = html;
+    if (!anchor || !html) return;
+    const bubble = ctx.dom.findMessageElement(anchor);
+    if (!bubble) return;
+    choicesEl = ctx.dom.inject(bubble, `<div class="warp-choices${isBusy ? " warp-busy" : ""}">${html}</div>`, "beforeend");
+  }
+
+  function reconcileMessages() {
+    const records: RecordView[] = state?.records ?? [];
+    wantChips.clear();
+    if (settings.enabled) {
+      for (const r of records) {
+        const html = renderChips(r, { showDice: settings.showDiceChips });
+        if (html) wantChips.set(r.messageId, html);
+      }
+      // Suggestions sit on the player's own message.
+      for (const s of state?.suggestions ?? []) wantChips.set(s.messageId, (wantChips.get(s.messageId) ?? "") + renderSuggestion(s));
+    }
+    let anchorTouched = false;
+    for (const [id, cur] of chipEls) {
+      if (wantChips.get(id) !== cur.html) {
+        ctx.dom.uninject(cur.el);
+        chipEls.delete(id);
+        if (id === choicesFor) anchorTouched = true;
+      }
+    }
+    for (const [id, html] of wantChips) {
+      if (chipEls.has(id)) continue;
+      if (injectChips(id, html) && id === state?.choicesAnchor) anchorTouched = true;
+    }
+    // Keep choices below the chips on the anchor message.
+    placeChoices(anchorTouched);
+  }
+
+  // Bubbles mount lazily as you scroll; inject anything still pending once they appear.
+  let mo: MutationObserver | null = null;
+  let moTimer: ReturnType<typeof setTimeout> | null = null;
+  const pendingCheck = () => {
+    moTimer = null;
+    let touched = false;
+    for (const [id, html] of wantChips) if (!chipEls.has(id) && injectChips(id, html)) touched = touched || id === state?.choicesAnchor;
+    if (touched || (choicesFor && choicesHtml && !choicesEl?.isConnected)) placeChoices(true);
+  };
+  try {
+    mo = new MutationObserver(() => { if (!moTimer) moTimer = setTimeout(pendingCheck, 200); });
+    mo.observe(document.body, { childList: true, subtree: true });
+    cleanups.push(() => { mo?.disconnect(); if (moTimer) clearTimeout(moTimer); });
+  } catch { /* no observer: chips appear on the next state push */ }
+
+  function renderAll() {
+    renderDock();
+    renderDrawer();
+    reconcileMessages();
+    syncDockVisibility();
+    if (state?.hud) lastBars = new Map(state.hud.bars.map((b) => [b.id, b.value]));
+  }
+
+  // ───────── template picker ─────────
+  function openPicker() {
+    const id = chatId();
+    if (!id) return;
+    const modal = ctx.ui.showModal({ title: "Add a Warp ruleset", width: 520, maxHeight: 640 });
+    modal.root.innerHTML = renderTemplatePicker(templates);
+    modal.root.addEventListener("click", (e) => {
+      const btn = (e.target as Element).closest<HTMLElement>("[data-template]");
+      if (!btn) return;
+      send({ type: "install_template", chatId: id, templateId: btn.dataset.template! });
+      modal.dismiss();
+    });
+  }
+
+  async function confirmReplace() {
+    if (state?.status.state === "none") return openPicker();
+    const res = await ctx.ui.showConfirm({
+      title: "Add another ruleset?",
+      message: "This character already has warp-ruleset entries. A new template is added as another lorebook and merged with the existing rules — remove the old lorebook if you want a clean start.",
+      confirmLabel: "Choose a template",
+      variant: "warning",
+    });
+    if (res.confirmed) openPicker();
+  }
+
+  // ───────── events: HUD & drawer ─────────
+  function onPanelClick(e: Event) {
+    const t = e.target as Element;
+    const view = t.closest<HTMLElement>("[data-view]");
+    if (view) { drawerView = view.dataset.view as typeof drawerView; renderDrawer(); return; }
+    if (t.closest("[data-install]")) { void confirmReplace(); return; }
+    if (t.closest("[data-reload]")) { send({ type: "reload", chatId: chatId() }); return; }
+    const save = t.closest<HTMLElement>("[data-save]");
+    if (save) {
+      const id = save.dataset.save!;
+      const input = save.parentElement?.querySelector<HTMLInputElement>(`[data-num]`);
+      const v = Number(input?.value);
+      const cid = chatId();
+      if (cid && Number.isFinite(v)) send({ type: "adjust", chatId: cid, stat: id, value: v });
+      editingBar = null;
+      return;
+    }
+    if (t.closest(".warp-bar-edit")) return;
+    const bar = t.closest<HTMLElement>("[data-bar]");
+    if (bar) { editingBar = editingBar === bar.dataset.bar ? null : bar.dataset.bar!; renderDock(); renderDrawer(); return; }
+    if (t.closest("[data-save-jev]")) {
+      const input = drawerRoot.querySelector<HTMLInputElement>("[data-jevkey]");
+      if (input?.value.trim()) { send({ type: "set_jev_key", key: input.value.trim() }); input.value = ""; }
+      return;
+    }
+    if (t.closest("[data-clear-jev]")) { send({ type: "set_jev_key", key: "" }); return; }
+    if (t.closest("[data-test-decider]")) { send({ type: "test_decider" }); return; }
+    const tag = t.closest<HTMLElement>("[data-tag]");
+    if (tag) {
+      const name = tag.dataset.tag!;
+      const mode = tag.dataset.mode;
+      const lines = settings.lines.filter((x) => x !== name);
+      const veils = settings.veils.filter((x) => x !== name);
+      if (mode === "on") veils.push(name);
+      else if (mode === "veil") lines.push(name);
+      send({ type: "settings", patch: { lines, veils } });
+    }
+  }
+  function onPanelInput(e: Event) {
+    const t = e.target as HTMLInputElement;
+    if (t.dataset.range && state?.hud) {
+      const b = state.hud.bars.find((x) => x.id === t.dataset.range);
+      const num = t.parentElement?.querySelector<HTMLInputElement>("[data-num]");
+      if (b && num) {
+        // The slider works on a 0–1000 scale of the bar; convert back using current value/pct.
+        const span = b.pct > 0 ? b.value / b.pct : 0;
+        num.value = String(Math.round((Number(t.value) / 1000) * (span || 100)));
+      }
+    }
+  }
+  function onPanelChange(e: Event) {
+    const t = e.target as HTMLInputElement | HTMLSelectElement;
+    const pctKey = t.dataset.settingPct as "autoConfidence" | "askConfidence" | undefined;
+    if (pctKey) {
+      let v = Number(t.value) / 100;
+      // Keep "ask" below "auto" so the three bands stay ordered.
+      if (pctKey === "askConfidence") v = Math.min(v, settings.autoConfidence - 0.01);
+      else v = Math.max(v, settings.askConfidence + 0.01);
+      send({ type: "settings", patch: { [pctKey]: v } });
+      return;
+    }
+    const key = t.dataset.setting as keyof Settings | undefined;
+    if (!key) return;
+    const value = t instanceof HTMLInputElement && t.type === "checkbox" ? t.checked : t.value;
+    send({ type: "settings", patch: { [key]: value } as Partial<Settings> });
+  }
+  function onPanelKey(e: KeyboardEvent) {
+    const t = e.target as HTMLInputElement;
+    if (e.key === "Enter" && t.dataset.newtag !== undefined && t.value.trim()) {
+      send({ type: "settings", patch: { veils: [...settings.veils, t.value.trim().toLowerCase()] } });
+      t.value = "";
+    }
+  }
+  for (const root of [drawerRoot, dockRoot]) {
+    root.addEventListener("click", onPanelClick);
+    root.addEventListener("input", onPanelInput);
+    root.addEventListener("change", onPanelChange);
+    root.addEventListener("keydown", onPanelKey as EventListener);
+    root.addEventListener("toggle", () => rememberSections(root), true);
+  }
+
+  // ───────── events: in-chat clicks (delegated; injected nodes are sanitized) ─────────
+  function act(actionId: string) {
+    const cid = chatId();
+    if (!cid || (busy.on && busy.chatId === cid)) return;
+    busy = { chatId: cid, on: true, label: "Rolling…" };
+    placeChoices(true);
+    send({ type: "act", chatId: cid, actionId });
+    // If nothing starts (rejected choice, network hiccup), don't leave the grid locked.
+    setTimeout(() => {
+      if (busy.on && busy.label === "Rolling…" && busy.chatId === cid) {
+        busy = { chatId: "", on: false, label: "" };
+        placeChoices(true);
+      }
+    }, 15000);
+  }
+  async function confirmRedo(btn: HTMLElement) {
+    const cid = chatId();
+    const userMessageId = btn.dataset.redo;
+    if (!cid || !userMessageId) return;
+    const actionId = btn.dataset.redoAction || null;
+    let params: Record<string, string> | undefined;
+    try { params = btn.dataset.redoParams ? JSON.parse(btn.dataset.redoParams) : undefined; } catch { params = undefined; }
+    const res = await ctx.ui.showConfirm({
+      title: actionId ? "Roll for it?" : "Redo without a roll?",
+      message: actionId
+        ? "The reply to your message is replaced with a new one where the dice decide."
+        : "The reply to your message is replaced with a new one, treating your message as plain roleplay (no check).",
+      confirmLabel: actionId ? "Roll it" : "Redo turn",
+      variant: "info",
+    });
+    if (!res.confirmed) return;
+    busy = { chatId: cid, on: true, label: "Rolling…" };
+    placeChoices(true);
+    send({ type: "redo", chatId: cid, userMessageId, actionId, params });
+  }
+
+  const onDocClick = (e: MouseEvent) => {
+    const t = e.target as Element | null;
+    if (!t?.closest) return;
+    const choice = t.closest<HTMLElement>(".warp-choices [data-act]");
+    if (choice) { e.preventDefault(); act(choice.dataset.act!); return; }
+    const dice = t.closest<HTMLElement>(".warp-chips [data-dice]");
+    if (dice) {
+      const row = dice.closest<HTMLElement>(".warp-chips")!;
+      if (row.hasAttribute("data-open")) row.removeAttribute("data-open"); else row.setAttribute("data-open", "");
+      return;
+    }
+    const redo = t.closest<HTMLElement>(".warp-chips [data-redo]");
+    if (redo) { e.preventDefault(); void confirmRedo(redo); return; }
+    const dismiss = t.closest<HTMLElement>(".warp-chips [data-dismiss-suggest]");
+    if (dismiss) {
+      const cid = chatId();
+      if (cid) send({ type: "dismiss_suggestion", chatId: cid, messageId: dismiss.dataset.dismissSuggest! });
+      return;
+    }
+    const undo = t.closest<HTMLElement>(".warp-chips [data-undo]");
+    if (undo) {
+      const row = undo.closest<HTMLElement>("[data-warp-chips]");
+      const messageId = row?.dataset.warpChips;
+      const rec = state?.records.find((r) => r.messageId === messageId);
+      const cid = chatId();
+      if (rec && cid) send({ type: "undo", chatId: cid, messageId: rec.messageId, swipe: rec.swipe, events: undo.dataset.undo!.split(",").map(Number) });
+    }
+  };
+  document.addEventListener("click", onDocClick, true);
+  cleanups.push(() => document.removeEventListener("click", onDocClick, true));
+
+  const onKey = (e: KeyboardEvent) => {
+    if (!settings.hotkeys || e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = e.target as HTMLElement | null;
+    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    if (!/^[0-9]$/.test(e.key) || !state?.choices.length || !choicesEl?.isConnected) return;
+    const n = e.key === "0" ? 10 : Number(e.key);
+    const c = state.choices[n - 1];
+    if (!c) return;
+    e.preventDefault();
+    act(c.id);
+  };
+  document.addEventListener("keydown", onKey);
+  cleanups.push(() => document.removeEventListener("keydown", onKey));
+
+  // ───────── backend messages ─────────
+  cleanups.push(ctx.onBackendMessage((raw) => {
+    const m = raw as BackendToFrontend;
+    switch (m.type) {
+      case "state": {
+        const active = chatId();
+        if (m.chatId && active && m.chatId !== active) return;
+        if (state?.chatId !== m.chatId) { editingBar = null; lastBars = new Map(); }
+        state = m;
+        if (m.chatId === busy.chatId && !m.busy && busy.label === "Rolling…") busy = { chatId: "", on: false, label: "" };
+        if (m.busy && m.chatId) busy = { chatId: m.chatId, on: true, label: busy.label };
+        renderAll();
+        break;
+      }
+      case "busy":
+        busy = { chatId: m.chatId, on: m.busy, label: m.busy ? m.label ?? busy.label ?? "" : "" };
+        placeChoices(true);
+        break;
+      case "settings":
+        settings = m.settings;
+        templates = m.templates;
+        connections = m.connections;
+        jevKeySet = m.jevKeySet;
+        renderAll();
+        break;
+      case "command":
+        if (m.command === "install") void confirmReplace();
+        else { drawerView = "sheet"; tab.activate(); }
+        break;
+      case "toast":
+        // Backend normally uses native toasts; this is a fallback.
+        console.info(`[warp] ${m.message}`);
+        break;
+    }
+  }));
+
+  // Chat switches arrive as backend pushes; this covers first load and reloads.
+  send({ type: "hello", chatId: chatId() });
+  let lastChat = chatId();
+  const poll = setInterval(() => {
+    const now = chatId();
+    if (now !== lastChat) { lastChat = now; send({ type: "refresh", chatId: now }); }
+  }, 1000);
+  cleanups.push(() => clearInterval(poll));
+
+  const cleanup = () => {
+    for (const { el } of chipEls.values()) ctx.dom.uninject(el);
+    if (choicesEl) ctx.dom.uninject(choicesEl);
+    for (const c of cleanups.reverse()) { try { c(); } catch { /* keep going */ } }
+  };
+  (globalThis as Record<string, unknown>)[CLEANUP_KEY] = cleanup;
+  return cleanup;
+}

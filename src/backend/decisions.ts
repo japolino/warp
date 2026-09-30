@@ -1,0 +1,289 @@
+// Everything Warp asks a decision model, phrased as typed questions.
+//
+//   readTurn     — which action (if any) the player's text attempts, how hard, and scene triggers
+//   odds         — probabilities for `decide:` blocks (the engine rolls on them)
+//   bookkeeping  — atomic "what changed?" questions after a reply (System-1 path)
+//   consistency  — does the reply contradict the game state?
+
+import type { Answer, Answers, Decider, Questions } from "../engine/decide.js";
+import { normalize, noulConfidence } from "../engine/decide.js";
+import { availableActions, TRAVEL_PREFIX, travelTargets, type Intent, type Proposal } from "../engine/resolve.js";
+import type { DecideSpec, Ruleset } from "../engine/ruleset.js";
+import { personName, type GameState } from "../engine/state.js";
+import { stateDigest } from "../engine/view.js";
+import type { Settings } from "../shared/protocol.js";
+import { logError } from "./host.js";
+
+const NONE = "none";
+
+function clip(s: string, n: number) {
+  return s.length > n ? `…${s.slice(-n)}` : s;
+}
+
+function fill(text: string, player: string) {
+  return text.replace(/\{\{user\}\}/gi, player);
+}
+
+async function safeAsk(d: Decider, state: unknown, q: Questions, timeoutMs: number, what: string): Promise<Answers> {
+  if (!Object.keys(q).length) return {};
+  try {
+    return await (d.ask as (s: unknown, q: Questions, o: { timeoutMs: number }) => Promise<Answers>)(state, q, { timeoutMs });
+  } catch (e) {
+    logError(`${what} (${d.id})`, e);
+    return {};
+  }
+}
+
+// ───────────────────────── reading the turn ─────────────────────────
+
+export interface Reading {
+  /** Act on this (confidence ≥ auto threshold). */
+  intent: Intent | null;
+  /** Offer this as a one-tap suggestion (between the thresholds). */
+  suggestion: (Intent & { label: string; confidence: number }) | null;
+  confidence: number;
+  scene: Record<string, boolean>;
+}
+
+const DIFFICULTY = [
+  "Trivial or easy for an ordinary person in this situation",
+  "A fair challenge",
+  "Hard — most people would struggle",
+  "Extreme — only the exceptional could pull it off",
+];
+
+export async function readTurn(opts: {
+  decider: Decider; r: Ruleset; s: GameState; settings: Settings;
+  playerText: string | null; sceneText: string; player: string; timeoutMs: number;
+}): Promise<Reading> {
+  const { decider, r, s, settings, playerText, player } = opts;
+  const q: Questions = {};
+  const actions = playerText ? availableActions(r, s, settings.lines) : [];
+  const travel = playerText ? travelTargets(r, s) : [];
+
+  if (playerText && (actions.length || travel.length)) {
+    const criteria: Record<string, string> = {
+      [NONE]: "None of these: dialogue, thoughts, feelings, plans, questions, or something trivial that can't fail",
+    };
+    for (const a of actions) criteria[a.id] = `${a.label}${a.desc ? ` — ${a.desc}` : ""}`;
+    for (const t of travel) criteria[`${TRAVEL_PREFIX}${t}`] = `Go to ${r.locations[t].name}`;
+    q.action = { type: "choice", instructions: `Which of these does ${player}'s latest message actually attempt right now?`, criteria };
+    if (actions.some((a) => a.params.length)) {
+      q.difficulty = { type: "score", instructions: `How hard is what ${player} is attempting, given the scene?`, criteria: DIFFICULTY };
+    }
+  }
+  for (const t of r.triggers) {
+    if (t.whenScene) q[`scene:${t.id}`] = { type: "noul", instructions: fill(t.whenScene, player) };
+  }
+
+  const state = {
+    game_state: stateDigest(r, s),
+    scene_so_far: clip(opts.sceneText, 2000) || "(start of story)",
+    ...(playerText ? { player_message: clip(playerText, 1500) } : {}),
+  };
+  const ans = await safeAsk(decider, state, q, opts.timeoutMs, "read turn");
+
+  const scene: Record<string, boolean> = {};
+  for (const t of r.triggers) {
+    const a = ans[`scene:${t.id}`];
+    // Only commit a scene judgement when the model is reasonably sure either way.
+    if (t.whenScene && a?.type === "noul" && noulConfidence(a.noul) >= 0.3) scene[t.id] = a.noul >= 0.5;
+  }
+
+  const out: Reading = { intent: null, suggestion: null, confidence: 0, scene };
+  const act = ans.action;
+  if (act?.type !== "choice" || act.choice === NONE) return out;
+  const id = act.choice;
+  const conf = act.probabilities[id] ?? act.confidence;
+  out.confidence = conf;
+
+  let intent: Intent | null = null;
+  let label = id;
+  if (id.startsWith(TRAVEL_PREFIX)) {
+    const to = id.slice(TRAVEL_PREFIX.length);
+    if (!travel.includes(to)) return out;
+    intent = { actionId: id, via: "adjudicator" };
+    label = `Go to ${r.locations[to].name}`;
+  } else {
+    const a = actions.find((x) => x.id === id);
+    if (!a) return out;
+    label = a.label;
+    const params: Record<string, string> = {};
+    const level = ans.difficulty?.type === "score" ? ans.difficulty.score / (DIFFICULTY.length - 1) : null;
+    for (const p of a.params) {
+      // Map the 0..1 difficulty onto this param's options, which are listed easiest → hardest.
+      const keys = Object.keys(p.options);
+      params[p.id] = level === null ? p.default : keys[Math.round(level * (keys.length - 1))];
+    }
+    intent = { actionId: a.id, via: "adjudicator", ...(a.params.length ? { params } : {}) };
+  }
+  if (conf >= settings.autoConfidence) out.intent = intent;
+  else if (conf >= settings.askConfidence) out.suggestion = { ...intent, label, confidence: conf };
+  return out;
+}
+
+// ───────────────────────── odds for decide blocks ─────────────────────────
+
+export async function odds(opts: {
+  decider: Decider; r: Ruleset; s: GameState; specs: DecideSpec[];
+  playerText: string; sceneText: string; player: string; timeoutMs: number;
+}): Promise<Record<string, Record<string, number>>> {
+  const q: Questions = {};
+  for (const d of opts.specs) {
+    q[`decide:${d.id}`] = {
+      type: "choice",
+      instructions: fill(d.ask, opts.player),
+      criteria: Object.fromEntries(d.options.map((o) => [o.id, fill(o.desc, opts.player)])),
+    };
+  }
+  const state = {
+    game_state: stateDigest(opts.r, opts.s),
+    scene_so_far: clip(opts.sceneText, 2000),
+    player_message: clip(opts.playerText, 1200),
+  };
+  const ans = await safeAsk(opts.decider, state, q, opts.timeoutMs, "decide odds");
+  const out: Record<string, Record<string, number>> = {};
+  for (const d of opts.specs) {
+    const a = ans[`decide:${d.id}`];
+    if (a?.type === "choice") out[d.id] = normalize(a.probabilities, d.options.map((o) => o.id));
+  }
+  return out;
+}
+
+// ───────────────────────── System-1 bookkeeping ─────────────────────────
+
+const STEPS = ["down_lot", "down", "same", "up", "up_lot"] as const;
+const STEP_FACTOR: Record<string, number> = { down_lot: -1, down: -1 / 3, same: 0, up: 1 / 3, up_lot: 1 };
+const TIME_LEVELS = [
+  "No meaningful time — a few seconds or a single exchange",
+  "A few minutes",
+  "Around half an hour",
+  "About an hour",
+  "A few hours",
+  "Most of a day or night",
+];
+const TIME_MINUTES = [0, 5, 30, 60, 180, 480];
+
+/** A step's delta, rounded so chips read "+2", not "+1.667". Never rounds a real change to zero. */
+function stepDelta(step: string, limit: number): number {
+  const raw = STEP_FACTOR[step] * limit;
+  const rounded = Math.round(raw);
+  return rounded === 0 && raw !== 0 ? Math.sign(raw) * Math.min(1, Math.abs(limit)) : rounded;
+}
+
+function stepCriteria(what: string): Record<string, string> {
+  return {
+    down_lot: `${what} dropped sharply`,
+    down: `${what} went down a little`,
+    same: `${what} didn't change, or the reply doesn't say`,
+    up: `${what} went up a little`,
+    up_lot: `${what} rose sharply`,
+  };
+}
+
+function confident(a: Answer | undefined): a is Extract<Answer, { type: "choice" }> {
+  return a?.type === "choice" && a.confidence >= 0.5;
+}
+
+export interface Bookkeeping {
+  proposal: Proposal;
+  /** Open-ended things a writing model should fill in (names). */
+  needsWriting: Set<"people" | "items" | "move">;
+}
+
+export async function bookkeeping(opts: {
+  decider: Decider; r: Ruleset; s: GameState; playerText: string; reply: string; player: string;
+}): Promise<Bookkeeping> {
+  const { r, s, player } = opts;
+  const q: Questions = {};
+  if (r.clock.enabled) q.time = { type: "score", instructions: "How much in-story time passes during the narrator's reply?", criteria: TIME_LEVELS };
+
+  for (const id of r.statOrder) {
+    const d = r.stats[id];
+    if (d.narrator <= 0) continue;
+    q[`stat:${id}`] = { type: "choice", instructions: `During the reply, how did ${player}'s ${d.label}${d.desc ? ` (${d.desc})` : ""} change?`, criteria: stepCriteria(d.label) };
+  }
+  // Only ask about people the reply actually mentions — keeps the question count bounded.
+  const lower = opts.reply.toLowerCase();
+  const mentioned = Object.keys(s.people).filter((pid) => lower.includes(personName(r, s, pid).toLowerCase().split(" ")[0]));
+  for (const pid of mentioned) for (const rs of r.relStatOrder) {
+    const d = r.relStats[rs];
+    if (d.narrator <= 0) continue;
+    const name = personName(r, s, pid);
+    q[`rel:${pid}:${rs}`] = { type: "choice", instructions: `How did ${name}'s ${d.label} toward ${player} change during the reply?`, criteria: stepCriteria(`${name}'s ${d.label}`) };
+  }
+  const locs = Object.values(r.locations);
+  if (locs.length && !r.locationsOpen) {
+    q.move = {
+      type: "choice",
+      instructions: `Where is ${player} at the end of the reply?`,
+      criteria: { stay: `Still at ${s.locationName ?? "the same place"}`, ...Object.fromEntries(locs.filter((l) => l.id !== s.location).map((l) => [l.id, l.name])) },
+    };
+  }
+  for (const c of Object.values(r.conditions)) {
+    if (!c.narrator) continue;
+    q[`cond:${c.id}`] = { type: "noul", instructions: `At the end of the reply, ${player} is ${c.label.toLowerCase()}${c.desc ? ` (${c.desc})` : ""}` };
+  }
+  for (const f of Object.values(r.flags)) {
+    if (f.narrator && typeof f.start === "boolean") q[`flag:${f.id}`] = { type: "noul", instructions: `At the end of the reply, this is true: ${f.label ?? f.id.replace(/_/g, " ")}` };
+  }
+  if (r.peopleOpen) q["gate:people"] = { type: "noul", instructions: "The reply introduces a named character who wasn't in the game state before" };
+  if (r.itemsOpen) q["gate:items"] = { type: "noul", instructions: `${player} gains, loses or uses up an item during the reply` };
+  if (r.locationsOpen) q["gate:move"] = { type: "noul", instructions: `${player} ends the reply somewhere different from ${s.locationName ?? "where they started"}` };
+
+  const state = { game_state: stateDigest(r, s), player_message: clip(opts.playerText, 1200), narrator_reply: clip(opts.reply, 6000) };
+  const ans = await safeAsk(opts.decider, state, q, 12000, "bookkeeping");
+
+  const p: Proposal = {};
+  const t = ans.time;
+  if (t?.type === "score" && t.confidence >= 0.4) {
+    // Interpolate between levels using the fractional score.
+    const lo = Math.floor(t.score), hi = Math.min(TIME_MINUTES.length - 1, lo + 1), f = t.score - lo;
+    p.minutes = Math.round(TIME_MINUTES[lo] + (TIME_MINUTES[hi] - TIME_MINUTES[lo]) * f);
+  }
+  for (const id of r.statOrder) {
+    const a = ans[`stat:${id}`];
+    if (!confident(a) || a.choice === "same") continue;
+    (p.stats ??= {})[id] = stepDelta(a.choice, r.stats[id].narrator);
+  }
+  for (const [key, a] of Object.entries(ans)) {
+    if (!key.startsWith("rel:") || !confident(a) || a.choice === "same") continue;
+    const [, pid, rs] = key.split(":");
+    ((p.rel ??= {})[personName(r, s, pid)] ??= {})[rs] = stepDelta(a.choice, r.relStats[rs].narrator);
+  }
+  if (confident(ans.move) && ans.move.choice !== "stay") p.move = ans.move.choice;
+  for (const c of Object.values(r.conditions)) {
+    const a = ans[`cond:${c.id}`];
+    if (a?.type !== "noul" || noulConfidence(a.noul) < 0.4) continue;
+    const on = a.noul >= 0.5;
+    if (on && !s.conditions[c.id]) ((p.conditions ??= {}).add ??= []).push(c.id);
+    if (!on && s.conditions[c.id]) ((p.conditions ??= {}).remove ??= []).push(c.id);
+  }
+  for (const f of Object.values(r.flags)) {
+    const a = ans[`flag:${f.id}`];
+    if (a?.type === "noul" && noulConfidence(a.noul) >= 0.4) (p.flags ??= {})[f.id] = a.noul >= 0.5;
+  }
+  const needsWriting = new Set<"people" | "items" | "move">();
+  for (const g of ["people", "items", "move"] as const) {
+    const a = ans[`gate:${g}`];
+    if (a?.type === "noul" && a.noul >= 0.6) needsWriting.add(g);
+  }
+  return { proposal: p, needsWriting };
+}
+
+// ───────────────────────── consistency ─────────────────────────
+
+export async function contradiction(opts: {
+  decider: Decider; r: Ruleset; s: GameState; reply: string; outcome: string | null;
+}): Promise<number | null> {
+  const q: Questions = {
+    contradicts: {
+      type: "noul",
+      instructions: "The narrator's reply contradicts the game state or the decided outcome (wrong location, items, injuries, relationships, time of day, or a different result than the dice gave)",
+    },
+  };
+  const state = { game_state: stateDigest(opts.r, opts.s), decided_outcome: opts.outcome ?? "(none)", narrator_reply: clip(opts.reply, 6000) };
+  const ans = await safeAsk(opts.decider, state, q, 8000, "consistency");
+  const a = ans.contradicts;
+  return a?.type === "noul" ? a.noul : null;
+}

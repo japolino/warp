@@ -1,0 +1,248 @@
+// The turn pipeline:
+//   interceptor  → read intent + scene triggers (decider) → roll → odds for decide blocks → inject
+//   generation end → attach the record to the new swipe → bookkeeping + consistency → push UI
+
+import type { InterceptorContextDTO, InterceptorResultDTO, LlmMessageDTO } from "lumiverse-spindle-types";
+import type { Decider } from "../engine/decide.js";
+import { randomSeed } from "../engine/dice.js";
+import { applyProposal, resolveTurnFull, type Intent, type Proposal, type TurnRecord } from "../engine/resolve.js";
+import type { Ruleset } from "../engine/ruleset.js";
+import { applyEvent, cloneState, type GameState } from "../engine/state.js";
+import { outcomePacket, stateDigest } from "../engine/view.js";
+import type { Settings } from "../shared/protocol.js";
+import { bookkeeping, contradiction, odds, readTurn } from "./decisions.js";
+import { getDecider } from "./deciders.js";
+import { extract, type ExtractPart } from "./helpers.js";
+import { host, logError } from "./host.js";
+import { activeRecord, foldPath, getMessages, patchWarpMeta, warpMeta, writeRecord, type Msg, type Suggestion } from "./ledger.js";
+import { getSettings } from "./settings.js";
+import { getRuleset } from "./source.js";
+import { busyChats, pushState, schedulePush } from "./state-push.js";
+
+interface Pending {
+  chatId: string;
+  userId?: string;
+  rec: TurnRecord;
+  after: GameState;
+  playerText: string;
+  ruleset: Ruleset;
+  at: number;
+  /** A fresh adjudicator verdict to save on the player's message once the reply lands. */
+  verdict?: { messageId: string; intent: Intent | null; suggestion: Suggestion | null };
+  outcome: string | null;
+  player: string;
+}
+
+const pending = new Map<string, Pending>();
+const playerNames = new Map<string, string>();
+
+function textOf(content: LlmMessageDTO["content"]): string {
+  if (typeof content === "string") return content;
+  return content.map((p) => ("text" in p && typeof p.text === "string" ? p.text : "")).join("");
+}
+
+async function playerName(chatId: string, userId?: string): Promise<string> {
+  const hit = playerNames.get(chatId);
+  if (hit) return hit;
+  try {
+    const { text } = await host().macros.resolve("{{user}}", { chatId, commit: false } as never);
+    const name = text && text !== "{{user}}" ? text : "The player";
+    playerNames.set(chatId, name);
+    return name;
+  } catch {
+    return "The player";
+  }
+}
+
+function fillNames(text: string, player: string) {
+  return text.replace(/\{\{user\}\}/gi, player);
+}
+
+function buildInjection(r: Ruleset, rec: TurnRecord | null, before: GameState, after: GameState, player: string): string {
+  const parts: string[] = [];
+  parts.push(`[Warp — current game state. The rules engine owns these facts; keep narration consistent with them.]\n${stateDigest(r, after)}`);
+  if (r.narration.notes) parts.push(`[Warp — narrator notes]\n${r.narration.notes}`);
+  const packet = rec ? outcomePacket(r, rec, before, after, player) : null;
+  if (packet && (rec?.action || rec?.hints.length)) {
+    parts.push(`[Warp — this turn's outcome, already decided by the dice. Narrate it faithfully and do not change the result.]\n${packet}`);
+  }
+  return fillNames(parts.join("\n\n"), player);
+}
+
+function injectInto(messages: LlmMessageDTO[], text: string): { messages: LlmMessageDTO[]; index: number } {
+  const out = [...messages];
+  let idx = -1;
+  for (let i = out.length - 1; i >= 0; i--) if (out[i].role === "user") { idx = i; break; }
+  const block = `\n\n<warp>\n${text}\n</warp>`;
+  if (idx >= 0) {
+    const m = out[idx];
+    out[idx] = typeof m.content === "string"
+      ? { ...m, content: m.content + block }
+      : { ...m, content: [...m.content, { type: "text", text: block } as never] };
+    return { messages: out, index: idx };
+  }
+  out.push({ role: "user", content: block.trim() });
+  return { messages: out, index: out.length - 1 };
+}
+
+/** Which existing message is being (re)generated, if any. */
+function targetOf(ctx: InterceptorContextDTO, msgs: Msg[]): Msg | null {
+  if (ctx.excludeMessageId) return msgs.find((m) => m.id === ctx.excludeMessageId) ?? null;
+  if (ctx.generationType === "swipe" || ctx.generationType === "regenerate" || ctx.generationType === "continue") {
+    for (let i = msgs.length - 1; i >= 0; i--) if (!msgs[i].is_user) return msgs[i];
+  }
+  return null;
+}
+
+export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorContextDTO): Promise<LlmMessageDTO[] | InterceptorResultDTO> {
+  if (ctx.generationType === "impersonate" || ctx.generationType === "quiet") return messages;
+  try {
+    const settings = await getSettings(ctx.userId);
+    if (!settings.enabled) return messages;
+    const loaded = await getRuleset(ctx.chatId, ctx.userId);
+    const r = loaded?.ruleset;
+    if (!r) return messages;
+
+    const msgs = await getMessages(ctx.chatId);
+    const target = targetOf(ctx, msgs);
+    const history = target ? msgs.filter((m) => m.index_in_chat < target.index_in_chat) : msgs;
+    const { state: before } = foldPath(r, history);
+    const player = await playerName(ctx.chatId, ctx.userId);
+
+    let rec: TurnRecord | null = null;
+    let after = before;
+
+    if (ctx.generationType === "continue" && target) {
+      // Continuing keeps the existing outcome; just remind the narrator of it.
+      rec = activeRecord(target);
+      if (rec) {
+        after = cloneState(before);
+        for (const e of rec.events) applyEvent(after, e, r);
+      }
+    } else {
+      const lastUser = history[history.length - 1]?.is_user ? history[history.length - 1] : null;
+      const meta = lastUser ? warpMeta(lastUser) : {};
+      let intent: Intent | null = meta.intent ?? null;
+      let verdict: Pending["verdict"];
+      let scene: Record<string, boolean> = {};
+      let confidence: number | undefined;
+      const sceneText = [...history].reverse().find((m) => !m.is_user)?.content ?? "";
+      const budget = () => Math.min(20000, (ctx.interceptorDeadlineAt ?? Date.now() + 20000) - Date.now() - 2000);
+      const decider = ctx.isDryRun ? null : await getDecider(settings, ctx.userId);
+
+      if (decider) {
+        // One parallel batch: what the typed message attempts (if not already known) + plain-language triggers.
+        const readText = !intent && !meta.judged && lastUser && settings.freeTextChecks ? lastUser.content : null;
+        const reading = await readTurn({ decider, r, s: before, settings, playerText: readText, sceneText, player, timeoutMs: budget() });
+        scene = reading.scene;
+        if (readText !== null && lastUser) {
+          intent = reading.intent;
+          confidence = reading.confidence;
+          verdict = { messageId: lastUser.id, intent, suggestion: reading.suggestion };
+        }
+      }
+
+      const seed = settings.swipesReroll ? randomSeed() : `${lastUser?.id ?? "start"}:${intent?.actionId ?? "none"}`;
+      let res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene });
+      if (decider && res.needs.length) {
+        // Uncertain reactions: the model supplies odds, the same seed re-rolls the same dice with them.
+        const o = await odds({ decider, r, s: before, specs: res.needs, playerText: lastUser?.content ?? "", sceneText, player, timeoutMs: budget() });
+        if (Object.keys(o).length) res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene, odds: o });
+      }
+      rec = res.record;
+      if (confidence !== undefined && rec.action) rec.confidence = confidence;
+      after = cloneState(before);
+      for (const e of rec.events) applyEvent(after, e, r);
+      if (!ctx.isDryRun) {
+        pending.set(ctx.generationId, {
+          chatId: ctx.chatId, userId: ctx.userId, rec, after,
+          playerText: lastUser?.content ?? "", ruleset: r, at: Date.now(), verdict,
+          outcome: outcomePacket(r, rec, before, after, player), player,
+        });
+        // Let the HUD show the roll immediately, before the prose arrives.
+        if (rec.check) host().sendToFrontend({ type: "busy", chatId: ctx.chatId, busy: true, label: `${rec.check.label}: ${rec.check.tier.replace("_", " ")}` }, ctx.userId);
+      }
+    }
+
+    const text = buildInjection(r, rec, before, after, player);
+    const { messages: out, index } = injectInto(messages, text);
+    return { messages: out, breakdown: [{ messageIndex: index, name: "Warp game state" }] };
+  } catch (e) {
+    logError("interceptor", e);
+    return messages;
+  }
+}
+
+/**
+ * After-reply bookkeeping. A System-1 decider answers bounded "what changed?" questions;
+ * names it can't produce (new people, items, free-form places) go to the LLM only when a gate fires.
+ */
+async function proposeChanges(decider: Decider, r: Ruleset, p: Pending, reply: string, settings: Settings, userId?: string): Promise<Proposal | null> {
+  if (decider.id === "llm") return extract(r, p.after, p.playerText, reply, settings, userId);
+  if (decider.id === "rules") return null;
+  const { proposal, needsWriting } = await bookkeeping({ decider, r, s: p.after, playerText: p.playerText, reply, player: p.player });
+  if (needsWriting.size) {
+    const named = await extract(r, p.after, p.playerText, reply, settings, userId, needsWriting as Set<ExtractPart>);
+    if (named?.people) proposal.people = named.people;
+    if (named?.items) proposal.items = { ...(proposal.items ?? {}), ...named.items };
+    if (named?.move && !proposal.move) proposal.move = named.move;
+  }
+  return proposal;
+}
+
+export async function onGenerationStarted(chatId: string, userId?: string) {
+  busyChats.add(chatId);
+  host().sendToFrontend({ type: "busy", chatId, busy: true }, userId);
+}
+
+export async function onGenerationEnded(payload: { generationId: string; chatId: string; messageId?: string; content?: string; error?: string; generationType?: string }, userId?: string) {
+  busyChats.delete(payload.chatId);
+  const p = pending.get(payload.generationId);
+  pending.delete(payload.generationId);
+  // Drop stale entries (generations that never reported back).
+  for (const [id, x] of pending) if (Date.now() - x.at > 10 * 60_000) pending.delete(id);
+
+  if (!p || payload.error || !payload.messageId) {
+    await pushState(payload.chatId, userId);
+    return;
+  }
+  try {
+    const msgs = await getMessages(payload.chatId);
+    const msg = msgs.find((m) => m.id === payload.messageId);
+    if (!msg) return;
+    const swipe = msg.swipe_id ?? 0;
+    await writeRecord(payload.chatId, msg.id, swipe, p.rec);
+    if (p.verdict) {
+      const { messageId, intent, suggestion } = p.verdict;
+      await patchWarpMeta(payload.chatId, messageId, (w) => ({
+        ...w, judged: true, ...(intent ? { intent } : {}), ...(suggestion ? { suggest: suggestion } : {}),
+      })).catch((e) => logError("save verdict", e));
+    }
+    await pushState(payload.chatId, userId);
+
+    const settings = await getSettings(userId);
+    if (!payload.content || (!settings.narratorUpdates && !settings.consistencyCheck)) return;
+    host().sendToFrontend({ type: "busy", chatId: payload.chatId, busy: true, label: "Updating state…" }, userId);
+    const decider = await getDecider(settings, userId);
+    const r = p.ruleset;
+
+    const [proposal, contra] = await Promise.all([
+      settings.narratorUpdates ? proposeChanges(decider, r, p, payload.content, settings, userId) : Promise.resolve(null),
+      settings.consistencyCheck && decider.id !== "rules"
+        ? contradiction({ decider, r, s: p.after, reply: payload.content, outcome: p.outcome })
+        : Promise.resolve(null),
+    ]);
+    const rec: TurnRecord = { ...p.rec };
+    if (proposal) {
+      const events = applyProposal(r, p.after, proposal);
+      if (events.length) rec.events = [...rec.events, ...events];
+    }
+    if (contra !== null) rec.contradiction = contra;
+    if (rec.events !== p.rec.events || contra !== null) await writeRecord(payload.chatId, msg.id, swipe, rec);
+  } catch (e) {
+    logError("generation ended", e);
+  } finally {
+    host().sendToFrontend({ type: "busy", chatId: payload.chatId, busy: false }, userId);
+    schedulePush(payload.chatId, userId, 0);
+  }
+}
