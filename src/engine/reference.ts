@@ -42,6 +42,8 @@ stats:            # kinds: meter (bar) | attribute | skill | money | hidden
   athletics: { kind: skill, max: 100, start: 10, grades: [F, D, C, B, A, S] }
   money: { kind: money, start: 50, narrator: 50 }
   # good: high|low|none (colours); per_hour: drift; narrator: max change the story may make per reply (0 = rules only); max may be a formula ("level * 5")
+  # limit what the story may change (stats, relationship stats, flags, conditions): narrator_when: "not in_encounter",
+  #   narrator_words: [panic, scared] (the exchange must mention one), narrator_actions: [fight, violence] (action ids or tags)
 
 relationships:
   open: true                       # track new people the story introduces

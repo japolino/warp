@@ -3,7 +3,7 @@
 import type { ExprEnv, Value } from "./expr.js";
 import { evalBool, evalNumber, evaluate } from "./expr.js";
 import { rollDice, seededRng, type Rng } from "./dice.js";
-import type { ActionDef, CheckDef, DecideSpec, Effect, RandomEventDef, Ruleset, Tier } from "./ruleset.js";
+import type { ActionDef, CheckDef, DecideSpec, Effect, NarratorGate, RandomEventDef, Ruleset, Tier } from "./ruleset.js";
 import { normalize, sample } from "./decide.js";
 import { emptyEffect, slug } from "./ruleset.js";
 import { applyEvent, cloneState, makeEnv, personName, timeKey, type EventSource, type GameState, type WarpEvent } from "./state.js";
@@ -720,6 +720,33 @@ export interface Proposal {
   wear?: string[];
 }
 
+/** What the story's changes are checked against: the exchange's text and the action that was taken. */
+export interface GateContext { text: string; action?: { id: string; tags: string[] } }
+
+/** Tags of an action by id, wherever it's declared (ruleset, live-choice tags, encounters). */
+export function actionTags(r: Ruleset, actionId: string): string[] {
+  const base = actionId.split(TARGET_SEP)[0];
+  const enc = Object.values(r.encounters).find((e) => e.actions[base]);
+  const a = base.startsWith(LIVE_PREFIX) ? r.liveChoices.tags[base.slice(LIVE_PREFIX.length)] : r.actions[base] ?? enc?.actions[base];
+  return [...(a?.tags ?? []), ...(enc?.tags ?? [])];
+}
+
+function gateOpen(g: NarratorGate | undefined, w: Working, ctx: GateContext | undefined): boolean {
+  if (!g) return true;
+  if (g.when && !evalBool(g.when, w.env(), false)) return false;
+  if (g.words) {
+    const text = ctx?.text.toLowerCase() ?? "";
+    if (!g.words.some((x) => text.includes(x))) return false;
+  }
+  if (g.actions) {
+    const a = ctx?.action;
+    if (!a) return false;
+    const id = a.id.split(TARGET_SEP)[0].toLowerCase();
+    if (!g.actions.some((x) => x === id || a.tags.includes(x))) return false;
+  }
+  return true;
+}
+
 function clampAbs(v: number, lim: number) {
   return Math.max(-lim, Math.min(lim, v));
 }
@@ -732,7 +759,7 @@ function findPerson(r: Ruleset, s: GameState, key: string): string | null {
 }
 
 /** Turn a model's suggested changes into events, enforcing every limit the ruleset sets. */
-export function applyProposal(r: Ruleset, before: GameState, p: Proposal): WarpEvent[] {
+export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: GateContext): WarpEvent[] {
   const w = new Working(r, cloneState(before), seededRng(`narrator:${before.turn}`));
   const src: EventSource = "narrator";
 
@@ -756,6 +783,7 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal): WarpE
   for (const [id, d] of Object.entries(p.stats ?? {})) {
     const def = r.stats[id];
     if (!def || def.narrator <= 0 || typeof d !== "number" || !Number.isFinite(d)) continue;
+    if (!gateOpen(def.gate, w, ctx)) continue;
     const v = clampAbs(d, def.narrator);
     if (v !== 0) w.push({ t: "stat", id, d: v, src });
   }
@@ -770,6 +798,7 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal): WarpE
     for (const [stat, d] of Object.entries(m ?? {})) {
       const def = r.relStats[stat];
       if (!def || def.narrator <= 0 || typeof d !== "number" || !Number.isFinite(d)) continue;
+      if (!gateOpen(def.gate, w, ctx)) continue;
       const v = clampAbs(d, def.narrator);
       if (v !== 0) w.push({ t: "rel", who: id, stat, d: v, src });
     }
@@ -796,15 +825,15 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal): WarpE
 
   for (const id of p.conditions?.add ?? []) {
     const def = r.conditions[id];
-    if (def?.narrator && !w.s.conditions[id]) w.push({ t: "cond", id, on: true, until: null, src });
+    if (def?.narrator && !w.s.conditions[id] && gateOpen(def.gate, w, ctx)) w.push({ t: "cond", id, on: true, until: null, src });
   }
   for (const id of p.conditions?.remove ?? []) {
     const def = r.conditions[id];
-    if (def?.narrator && w.s.conditions[id]) w.push({ t: "cond", id, on: false, src });
+    if (def?.narrator && w.s.conditions[id] && gateOpen(def.gate, w, ctx)) w.push({ t: "cond", id, on: false, src });
   }
 
   for (const [key, v] of Object.entries(p.flags ?? {})) {
-    if (r.flags[key]?.narrator) w.push({ t: "flag", key, v, src });
+    if (r.flags[key]?.narrator && gateOpen(r.flags[key].gate, w, ctx)) w.push({ t: "flag", key, v, src });
   }
 
   if (r.wardrobe.enabled && r.wardrobe.narrator) {

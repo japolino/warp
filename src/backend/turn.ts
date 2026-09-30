@@ -5,7 +5,7 @@
 import type { InterceptorContextDTO, InterceptorResultDTO, LlmMessageDTO } from "lumiverse-spindle-types";
 import type { Decider } from "../engine/decide.js";
 import { randomSeed } from "../engine/dice.js";
-import { applyProposal, resolveTurnFull, type Intent, type Proposal, type TurnRecord } from "../engine/resolve.js";
+import { actionTags, applyProposal, resolveTurnFull, type Intent, type Proposal, type TurnRecord } from "../engine/resolve.js";
 import type { Ruleset } from "../engine/ruleset.js";
 import { applyEvent, cloneState, type GameState } from "../engine/state.js";
 import { narratorKnowledge, outcomePacket, sceneHints, stateDigest } from "../engine/view.js";
@@ -225,11 +225,13 @@ export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorCon
  * names it can't produce (new people, items, free-form places) go to the LLM only when a gate fires.
  */
 async function proposeChanges(decider: Decider, r: Ruleset, p: Pending, reply: string, settings: Settings, userId?: string): Promise<Proposal | null> {
-  if (decider.id === "llm") return extract(r, p.after, p.playerText, reply, settings, userId);
+  // What the dice already applied, so the story's reading doesn't count it twice.
+  const applied = p.outcome ? fillNames(p.outcome, p.player) : null;
+  if (decider.id === "llm") return extract(r, p.after, p.playerText, reply, settings, userId, undefined, applied);
   if (decider.id === "rules") return null;
-  const { proposal, needsWriting } = await bookkeeping({ decider, r, s: p.after, playerText: p.playerText, reply, player: p.player });
+  const { proposal, needsWriting } = await bookkeeping({ decider, r, s: p.after, playerText: p.playerText, reply, player: p.player, applied });
   if (needsWriting.size) {
-    const named = await extract(r, p.after, p.playerText, reply, settings, userId, needsWriting as Set<ExtractPart>);
+    const named = await extract(r, p.after, p.playerText, reply, settings, userId, needsWriting as Set<ExtractPart>, applied);
     if (named?.people) proposal.people = named.people;
     if (named?.items) proposal.items = { ...(proposal.items ?? {}), ...named.items };
     if (named?.move && !proposal.move) proposal.move = named.move;
@@ -291,7 +293,8 @@ export async function onGenerationEnded(payload: { generationId: string; chatId:
     ]);
     const rec: TurnRecord = { ...p.rec };
     if (proposal) {
-      const events = applyProposal(r, p.after, proposal);
+      const action = p.rec.action ? { id: p.rec.action.id, tags: actionTags(r, p.rec.action.id) } : undefined;
+      const events = applyProposal(r, p.after, proposal, { text: `${p.playerText}\n${payload.content}`, action });
       if (events.length) rec.events = [...rec.events, ...events];
     }
     if (contra !== null) rec.contradiction = contra;

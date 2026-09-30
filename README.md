@@ -11,7 +11,7 @@ A game engine under your roleplay. Warp owns stats, dice, time, inventory and re
 
 | System | |
 |---|---|
-| Stats | Meters described in words (bands), graded skills, attributes, money, hidden stats, drift over time, caps by formula |
+| Stats | Meters described in words (bands), graded skills, attributes, money, hidden stats, drift over time, caps by formula. Limit what the story may change after a reply: a cap per reply, and optionally only while a formula holds (`narrator_when`), only when the exchange mentions certain words (`narrator_words`), or only after certain actions (`narrator_actions`). The bookkeeper is told what the dice already applied, so nothing counts twice |
 | Checks | d100 chance, d20 vs difficulty, 2d6 PbtA; crits and partial successes; odds shown on buttons |
 | Time & world | Clock and calendar, seasons, weather, temperature (indoors vs out), a map of places with travel |
 | Clothing | Slots, warmth vs the weather, damage, how revealing, traits like rainproof; change clothes from the sheet |

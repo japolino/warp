@@ -192,6 +192,13 @@ export function lintRuleset(r: Ruleset): Issue[] {
     for (const m of Object.values(d.monsters)) for (const sk of m.skills) if (!SKILLS[sk]) issues.push({ level: "warning", where: `${w} › monsters › ${m.id}`, message: `"${sk}" isn't a skill` });
   }
   for (const a of Object.values(r.liveChoices.tags)) checkAction(a, `Live choices › tags › ${a.id}`);
+  const gates: [string, { when?: string } | undefined][] = [
+    ...r.statOrder.map((id) => [`Stats › ${id} › narrator_when`, r.stats[id].gate] as [string, { when?: string } | undefined]),
+    ...r.relStatOrder.map((id) => [`Relationships › stats › ${id} › narrator_when`, r.relStats[id].gate] as [string, { when?: string } | undefined]),
+    ...Object.values(r.flags).map((f) => [`Flags › ${f.id} › narrator_when`, f.gate] as [string, { when?: string } | undefined]),
+    ...Object.values(r.conditions).map((c) => [`Conditions › ${c.id} › narrator_when`, c.gate] as [string, { when?: string } | undefined]),
+  ];
+  for (const [where, g] of gates) check(g?.when, where);
   if (r.dating.enabled) {
     const dx = { target: Object.keys(r.people)[0] ?? "someone" };
     check(r.dating.with, "Dating › with", dx);

@@ -19,6 +19,13 @@ export const TIERS: Tier[] = ["crit_success", "success", "partial", "fail", "cri
 
 export interface Band { at: number; text: string; tone: Tone }
 
+/**
+ * Limits on what the story may change after a reply, on top of the per-reply cap:
+ * only while a formula holds, only when the exchange mentions certain words, or
+ * only after certain actions (ids or tags).
+ */
+export interface NarratorGate { when?: string; words?: string[]; actions?: string[] }
+
 export interface StatDef {
   id: string;
   label: string;
@@ -34,6 +41,7 @@ export interface StatDef {
   show: ShowMode;
   /** Max absolute change the narrator may make per turn. 0 = engine only. */
   narrator: number;
+  gate?: NarratorGate;
   bands: Band[];
   grades?: string[];
   color?: string;
@@ -150,7 +158,7 @@ export interface ItemDef {
   /** Clothing traits, e.g. rainproof, swimwear. */
   traits: string[];
 }
-export interface ConditionDef { id: string; label: string; tone: Tone; desc?: string; narrator: boolean }
+export interface ConditionDef { id: string; label: string; tone: Tone; desc?: string; narrator: boolean; gate?: NarratorGate }
 export interface ScheduleEntry { when?: string; at: string }
 export interface PersonDef {
   id: string; name: string; age?: number; start: Record<string, number>; desc?: string;
@@ -158,7 +166,7 @@ export interface PersonDef {
   schedule: ScheduleEntry[];
   traits: string[];
 }
-export interface FlagDef { id: string; label?: string; narrator: boolean; start: string | number | boolean | null }
+export interface FlagDef { id: string; label?: string; narrator: boolean; start: string | number | boolean | null; gate?: NarratorGate }
 
 export interface WeatherKind { id: string; label: string; icon: string; weight: number; temp: number; seasons: string[] | null; tags: string[] }
 export interface WeatherDef {
@@ -414,6 +422,17 @@ export class Ctx {
   }
 }
 
+/** `narrator_when:`, `narrator_words:` and `narrator_actions:` on anything the story may change. */
+export function normGate(r: Raw, where: string, c: Ctx): NarratorGate | undefined {
+  const g: NarratorGate = {};
+  if (r.narrator_when !== undefined) { const x = c.expr(r.narrator_when, `${where} › narrator_when`); if (x !== undefined) g.when = String(x); }
+  const words = list(r.narrator_words ?? r.narrator_keywords).map((w) => w.toLowerCase()).filter(Boolean);
+  if (words.length) g.words = words;
+  const actions = list(r.narrator_actions).map((a) => a.toLowerCase()).filter(Boolean);
+  if (actions.length) g.actions = actions;
+  return g.when || g.words || g.actions ? g : undefined;
+}
+
 function toneFor(index: number, count: number, good: StatDef["good"]): Tone {
   if (good === "none" || count <= 1) return "neutral";
   const pos = index / (count - 1); // 0 = lowest band
@@ -478,6 +497,7 @@ function normStat(id: string, raw: unknown, where: string, c: Ctx, forRel = fals
   if (r.narrator === true) narrator = Math.max(1, Math.round((max - min) / 10));
   else if (r.narrator !== undefined && r.narrator !== false) narrator = Math.abs(c.num(r.narrator, `${where} › narrator`, 0));
   const start = c.num(r.start ?? r.value, `${where} › start`, good === "low" ? min : k === "meter" ? max : min);
+  const gate = narrator > 0 ? normGate(r, where, c) : undefined;
   const def: StatDef = {
     id,
     label: typeof r.label === "string" ? r.label : titleCase(id),
@@ -488,6 +508,7 @@ function normStat(id: string, raw: unknown, where: string, c: Ctx, forRel = fals
     perHour: c.num(r.per_hour ?? r.perHour, `${where} › per_hour`, 0),
     show: k === "hidden" ? "hidden" : show,
     narrator,
+    ...(gate ? { gate } : {}),
     bands: normBands(r.bands, good, `${where} › bands`, c),
     color: typeof r.color === "string" ? r.color : undefined,
     desc: typeof r.desc === "string" ? r.desc : typeof r.description === "string" ? r.description : undefined,
@@ -1065,12 +1086,14 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const conditions: Record<string, ConditionDef> = {};
   for (const [id, d] of Object.entries(isObj(raw.conditions) ? raw.conditions : {})) {
     const r: Raw = isObj(d) ? d : typeof d === "string" ? { label: d } : {};
+    const gate = normGate(r, `Conditions › ${id}`, c);
     conditions[id] = {
       id,
       label: typeof r.label === "string" ? r.label : titleCase(id),
       tone: ["good", "warn", "bad", "neutral"].includes(r.tone) ? r.tone : "warn",
       desc: typeof r.desc === "string" ? r.desc : undefined,
       narrator: r.narrator === true,
+      ...(gate ? { gate } : {}),
     };
   }
 
@@ -1078,7 +1101,8 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const flags: Record<string, FlagDef> = {};
   for (const [id, d] of Object.entries(isObj(raw.flags) ? raw.flags : {})) {
     const r: Raw = isObj(d) ? d : { start: d };
-    flags[id] = { id, label: r.label, narrator: r.narrator === true, start: r.start ?? false };
+    const gate = normGate(r, `Flags › ${id}`, c);
+    flags[id] = { id, label: r.label, narrator: r.narrator === true, start: r.start ?? false, ...(gate ? { gate } : {}) };
   }
 
   // Start

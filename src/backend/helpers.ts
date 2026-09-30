@@ -63,7 +63,7 @@ export type ExtractPart = "minutes" | "stats" | "rel" | "people" | "items" | "mo
 
 export async function extract(
   r: Ruleset, s: GameState, playerText: string, reply: string,
-  settings: Settings, userId: string | undefined, only?: Set<ExtractPart>,
+  settings: Settings, userId: string | undefined, only?: Set<ExtractPart>, applied?: string | null,
 ): Promise<Proposal | null> {
   const stats = r.statOrder.map((id) => r.stats[id]).filter((d) => d.narrator > 0);
   const rels = r.relStatOrder.map((id) => r.relStats[id]).filter((d) => d.narrator > 0);
@@ -115,6 +115,7 @@ export async function extract(
     "",
     "Narrator's reply:",
     clip(reply, 4000),
+    ...(applied ? ["", "Already applied by the rules this turn (don't report these again):", applied] : []),
   ].join("\n");
 
   try {

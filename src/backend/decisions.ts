@@ -220,6 +220,8 @@ export interface Bookkeeping {
 
 export async function bookkeeping(opts: {
   decider: Decider; r: Ruleset; s: GameState; playerText: string; reply: string; player: string;
+  /** The turn's outcome the rules already applied (not to be counted again). */
+  applied?: string | null;
 }): Promise<Bookkeeping> {
   const { r, s, player } = opts;
   const q: Questions = {};
@@ -228,7 +230,7 @@ export async function bookkeeping(opts: {
   for (const id of r.statOrder) {
     const d = r.stats[id];
     if (d.narrator <= 0) continue;
-    q[`stat:${id}`] = { type: "choice", instructions: `During the reply, how did ${player}'s ${d.label}${d.desc ? ` (${d.desc})` : ""} change?`, criteria: stepCriteria(d.label) };
+    q[`stat:${id}`] = { type: "choice", instructions: `During the reply, how did ${player}'s ${d.label}${d.desc ? ` (${d.desc})` : ""} change, beyond anything listed in already_applied?`, criteria: stepCriteria(d.label) };
   }
   // Only ask about people the reply actually mentions — keeps the question count bounded.
   const lower = opts.reply.toLowerCase();
@@ -242,7 +244,7 @@ export async function bookkeeping(opts: {
       const levels = feelLevels(d);
       q[`feel:${pid}:${rs}`] = { type: "score", instructions: `Right now, how does ${name} feel toward ${player} — ${d.label}?`, criteria: levels.map((l) => l.text) };
     } else {
-      q[`rel:${pid}:${rs}`] = { type: "choice", instructions: `How did ${name}'s ${d.label} toward ${player} change during the reply?`, criteria: stepCriteria(`${name}'s ${d.label}`) };
+      q[`rel:${pid}:${rs}`] = { type: "choice", instructions: `How did ${name}'s ${d.label} toward ${player} change during the reply, beyond anything listed in already_applied?`, criteria: stepCriteria(`${name}'s ${d.label}`) };
     }
   }
   const locs = Object.values(r.locations);
@@ -269,7 +271,10 @@ export async function bookkeeping(opts: {
   if (r.itemsOpen) q["gate:items"] = { type: "noul", instructions: `${player} gains, loses or uses up an item during the reply` };
   if (r.locationsOpen) q["gate:move"] = { type: "noul", instructions: `${player} ends the reply somewhere different from ${s.locationName ?? "where they started"}` };
 
-  const state = { game_state: stateDigest(r, s), player_message: clip(opts.playerText, 1200), narrator_reply: clip(opts.reply, 6000) };
+  const state = {
+    game_state: stateDigest(r, s), player_message: clip(opts.playerText, 1200), narrator_reply: clip(opts.reply, 6000),
+    already_applied: opts.applied || "(nothing — the rules applied no changes this turn)",
+  };
   const ans = await safeAsk(opts.decider, state, q, 12000, "bookkeeping");
 
   const p: Proposal = {};
