@@ -71,6 +71,12 @@ export const STYLES = `
 .warp-grade { font-weight: 700; min-width: 22px; text-align: center; }
 .warp-mini-track { height: 3px; background: var(--warp-fill); border-radius: 3px; overflow: hidden; }
 .warp-mini-fill { height: 100%; background: var(--warp-accent); }
+.warp-skill-tracks { display: flex; flex-direction: column; gap: 2px; }
+.warp-practice-track { height: 2px; background: var(--warp-fill); border-radius: 2px; overflow: hidden; }
+.warp-practice-fill { height: 100%; background: var(--warp-good); opacity: .8; transition: width .4s ease; }
+.warp-away { margin-top: 6px; }
+.warp-away > summary { cursor: pointer; font-size: 12px; color: var(--warp-muted); padding: 2px 0; }
+.warp-away > .warp-section-body { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; opacity: .85; }
 .warp-person { padding: 6px 8px; border-radius: var(--warp-radius); background: var(--warp-fill-subtle); }
 .warp-person-name { font-weight: 600; margin-bottom: 2px; }
 .warp-person-stats { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 12px; color: var(--warp-muted); }

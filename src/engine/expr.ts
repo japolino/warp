@@ -280,3 +280,20 @@ export function evalBool(src: string | number | boolean | undefined, env: ExprEn
   if (src === undefined) return fallback;
   return truthy(evaluate(src, env, opts));
 }
+
+/** Every name a formula reads (each path segment), e.g. "athletics / 10 + stats.body" → athletics, stats, body. */
+export function identifiers(src: string | number | boolean | undefined): string[] {
+  if (typeof src !== "string") return [];
+  const out = new Set<string>();
+  const walk = (n: Node) => {
+    switch (n.k) {
+      case "id": n.path.forEach((p) => out.add(p)); break;
+      case "call": n.args.forEach(walk); break;
+      case "un": walk(n.a); break;
+      case "bin": walk(n.a); walk(n.b); break;
+      case "tern": walk(n.c); walk(n.a); walk(n.b); break;
+    }
+  };
+  try { walk(compile(src)); } catch { /* unreadable formulas name nothing */ }
+  return [...out];
+}

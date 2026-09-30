@@ -28,6 +28,8 @@ export interface SkillView {
   kind: "attribute" | "skill";
   text: string | null;
   tone: Tone;
+  /** Progress toward the next point from use and practice, 0–1 (null = doesn't grow, or maxed). */
+  practice: number | null;
 }
 
 export interface PersonView {
@@ -57,7 +59,7 @@ export interface HudView {
   bars: BarView[];
   skills: SkillView[];
   people: PersonView[];
-  items: { id: string; name: string; count: number; worn: boolean }[];
+  items: { id: string; name: string; count: number; worn: boolean; /** "3/5" uses left in the one in hand. */ uses: string | null }[];
   conditions: { id: string; label: string; tone: Tone; desc?: string; remaining?: string }[];
   /** Clothing warmth vs what the weather calls for. */
   warmth: { value: number; min: number; max: number; tone: Tone; text: string } | null;

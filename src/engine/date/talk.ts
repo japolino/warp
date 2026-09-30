@@ -7,7 +7,7 @@ import { evalBool } from "../expr.js";
 import type { Intent, TurnBuilder } from "../resolve.js";
 import { emptyEffect, type DecideSpec, type Ruleset } from "../ruleset.js";
 import { itemName, makeEnv, personName, type GameState } from "../state.js";
-import { presentPeople } from "../world.js";
+import { presentPeople, sceneWord } from "../world.js";
 import { venueTags } from "./content.js";
 import { isHostile, relPct, stageIndex, stageLabel } from "./stage.js";
 import {
@@ -49,7 +49,7 @@ function canTalkTo(r: Ruleset, s: GameState, who: string): boolean {
 export function dateCandidates(r: Ruleset, s: GameState): string[] {
   if (!r.dating.enabled || s.dungeon || s.encounter || activeSession(r, s)) return [];
   const here = new Set(presentPeople(r, s, makeEnv(r, s)));
-  return Object.keys(s.people).filter((id) => (here.has(id) || (r.people[id] && !r.people[id].schedule.length)) && canTalkTo(r, s, id));
+  return Object.keys(s.people).filter((id) => (here.has(id) || (r.people[id] && !r.people[id].schedule.length && sceneWord(s, id) === null)) && canTalkTo(r, s, id));
 }
 
 /** Everyone the player could strike up a conversation with (the drawer lists all known people). */

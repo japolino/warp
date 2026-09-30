@@ -3,9 +3,10 @@
 import type { KeepSpec, Ruleset, StatDef } from "./ruleset.js";
 import { TIERS } from "./ruleset.js";
 import {
-  bandFor, formatClock, formatNumber, gradeFor, initialState, itemName, kinAge, makeEnv, personName, statMax,
+  bandFor, foeName, formatClock, formatNumber, gradeFor, initialState, itemName, kinAge, makeEnv, personName, statMax,
   type GameState, type WarpEvent,
 } from "./state.js";
+import { practiceProgress } from "./freeform.js";
 import { availableChoices, canExplore, EXPLORE, LIVE_PREFIX, odds, perkBlocker, RUN_EPILOGUE, TIER_LABEL, TRAVEL_PREFIX, travelTargets, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
 import {
   dateAt, exposedSlots, isIndoors, ordinal, personLocation, presentPeople, seasonAt, temperatureAt, warmthNeeded, warmthOf, weatherAt,
@@ -67,6 +68,7 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
         kind: def.kind as "attribute" | "skill",
         text: band?.text ?? null,
         tone: band?.tone ?? "neutral" as Tone,
+        practice: practiceProgress(r, s, id),
       };
     });
 
@@ -99,7 +101,10 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
       worn: wornIds.has(id),
     };
   };
-  const items = Object.entries(s.items).map(([id, count]) => ({ id, name: itemName(r, s, id), count, worn: wornIds.has(id) }));
+  const items = Object.entries(s.items).map(([id, count]) => {
+    const per = r.items[id]?.uses ?? 0;
+    return { id, name: itemName(r, s, id), count, worn: wornIds.has(id), uses: per > 1 ? `${s.uses[id] ?? per}/${per}` : null };
+  });
   const clothing = Object.keys(s.items).filter((id) => r.items[id]?.slot).map(clothingView);
   const outfit = r.wardrobe.enabled
     ? r.wardrobe.slots.map((sl) => ({ slot: sl.id, label: sl.label, item: s.worn[sl.id] ? clothingView(s.worn[sl.id]) : null }))
@@ -125,7 +130,7 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
     const enc = r.encounters[s.encounter.id];
     encounter = {
       name: enc?.name ?? s.encounter.id,
-      foe: enc?.foe.name ?? "Opponent",
+      foe: foeName(r, s),
       round: s.encounter.round,
       momentum: s.encounter.momentum ?? null,
       stats: (enc?.foe.stats ?? []).map((fs) => {
@@ -466,6 +471,24 @@ export function summarizeEvents(r: Ruleset, before: GameState, after: GameState,
       case "person":
         out.push({ text: `Met ${e.name}`, tone: "neutral", src: e.src, undo: [i] });
         break;
+      case "scene":
+        if (e.note === "renew" || events.some((x, j) => j < i && x.t === "person" && x.id === e.who)) break;
+        out.push({ text: e.here ? `👋 ${personName(r, after, e.who)} is here` : `${personName(r, after, e.who)} left`, tone: "neutral", src: e.src, undo: [i] });
+        break;
+      case "use": {
+        const per = r.items[e.id]?.uses ?? 0;
+        const left = after.items[e.id] > 0 ? after.uses[e.id] ?? per : 0;
+        out.push({ text: `Used ${itemName(r, before, e.id)}${e.n > 1 ? ` ×${e.n}` : ""}${per > 1 && left ? ` · ${left}/${per} left` : ""}`, tone: "neutral", src: e.src, undo: [i] });
+        break;
+      }
+      case "practice": {
+        // Progress toward a point; the point itself shows as the stat's own chip.
+        const rose = events.some((x) => x.t === "stat" && x.id === e.id && (x.d ?? 0) > 0 && x.src === "check");
+        const def = r.stats[e.id];
+        if (rose || !def || e.d <= 0) break;
+        out.push({ text: `📈 ${def.label} ${Math.round((after.practice[e.id] ?? 0) * 100)}%`, tone: "good", src: e.src });
+        break;
+      }
       case "wear": {
         const prev = before.worn[e.slot];
         if (e.item) out.push({ text: `👕 Put on ${itemName(r, after, e.item)}`, tone: "neutral", src: e.src, undo: [i] });
@@ -478,14 +501,14 @@ export function summarizeEvents(r: Ruleset, before: GameState, after: GameState,
         break;
       }
       case "enc":
-        if (e.id) out.push({ text: `⚔ ${r.encounters[e.id]?.name ?? "Encounter"}`, tone: "warn", src: e.src });
+        if (e.id) out.push({ text: `⚔ ${r.encounters[e.id]?.name ?? "Encounter"}${e.foeName ? ` vs ${e.foeName}` : ""}`, tone: "warn", src: e.src });
         else out.push({ text: `⚔ Over: ${(e.outcome ?? "ended").replace(/_/g, " ")}`, tone: "neutral", src: e.src });
         break;
       case "foe": {
         const enc = before.encounter ?? after.encounter;
         const def = enc ? r.encounters[enc.id] : undefined;
         const fs = def?.foe.stats.find((x) => x.id === e.stat);
-        if (e.d) out.push({ text: `${def?.foe.name ?? "Foe"} ${fs?.label ?? e.stat} ${signed(e.d)}`, tone: (e.d < 0) === (fs?.good !== "high") ? "good" : "bad", src: e.src });
+        if (e.d) out.push({ text: `${(after.encounter ?? before.encounter)?.foeName ?? def?.foe.name ?? "Foe"} ${fs?.label ?? e.stat} ${signed(e.d)}`, tone: (e.d < 0) === (fs?.good !== "high") ? "good" : "bad", src: e.src });
         break;
       }
       case "codex":
@@ -666,7 +689,12 @@ export function stateDigest(r: Ruleset, s: GameState): string {
       lines.push(`IN A DUNGEON: ${d.name}, floor ${run.depth} (party level ${levelOf(run.xp)}). Party: ${party.join(", ")}. Carrying ${run.gold} gold from this run.`);
       if (run.battle) lines.push(`Fighting: ${run.battle.fighters.filter((f) => f.side === "foe" && f.hp > 0).map((f) => f.name).join(", ")}.`);
     }
-  } else if (here.length) lines.push(`Present here: ${here.join(", ")}`);
+  } else {
+    if (here.length || Object.keys(s.people).length) lines.push(`Present here: ${here.length ? here.join(", ") : "none of the people {{user}} knows"}`);
+    // People who were with {{user}} before the last move: the story says whether they came along.
+    const was = Object.entries(s.scene).filter(([id, v]) => v.here && s.people[id] && v.loc !== s.location && v.loc === s.lastLocation && !here.includes(s.people[id].name)).map(([id]) => personName(r, s, id));
+    if (was.length) lines.push(`Were with {{user}} before arriving here (include them only if they came along): ${was.join(", ")}`);
+  }
   const date = dateDigest(r, s);
   if (date) lines.push(date);
   const body = bodyLine(r, s);
@@ -690,8 +718,16 @@ export function stateDigest(r: Ruleset, s: GameState): string {
   if (conds.length) lines.push(`Conditions: ${conds.join(", ")}`);
 
   const wornSet = new Set(Object.values(s.worn));
-  const inv = Object.entries(s.items).filter(([id]) => !wornSet.has(id)).map(([id, n]) => `${itemName(r, s, id)}${n > 1 ? ` ×${n}` : ""}`);
+  const loose = Object.entries(s.items).filter(([id]) => !wornSet.has(id));
+  const uses = (id: string) => {
+    const per = r.items[id]?.uses ?? 0;
+    return per > 1 ? `, ${s.uses[id] ?? per} of ${per} uses left` : "";
+  };
+  const inv = loose.filter(([id]) => !r.items[id]?.slot).map(([id, n]) => `${itemName(r, s, id)}${n > 1 ? ` ×${n}` : ""}${uses(id) ? ` (${uses(id).slice(2)})` : ""}`);
   if (inv.length) lines.push(`Carrying: ${inv.join(", ")}`);
+  // Clothes in the bag aren't on: say so, or the narrator dresses {{user}} in them.
+  const spare = loose.filter(([id]) => r.items[id]?.slot).map(([id]) => itemName(r, s, id));
+  if (spare.length) lines.push(`Carried but NOT being worn (packed away — {{user}} isn't wearing these): ${spare.join(", ")}`);
 
   if (s.pregnancy && s.pregnancy.told > 0) {
     const weeks = Math.floor((s.minutes - s.pregnancy.since) / 1440 / 7);
@@ -703,7 +739,7 @@ export function stateDigest(r: Ruleset, s: GameState): string {
   if (kids.length) lines.push(`Family — {{user}}'s children: ${kids.join(", ")}. They are minors: never part of anything romantic or sexual, and kept out of any sexual scene.`);
   const between = bondLines(r, s);
   if (between.length) lines.push(`Between people: ${between.join("; ")}`);
-  const ppl = Object.entries(s.people).map(([id, p]) => {
+  const feel = (id: string, name: string) => {
     const parts = r.relStatOrder.map((rs) => {
       const def = r.relStats[rs];
       if (def.show === "hidden") return null;
@@ -711,9 +747,15 @@ export function stateDigest(r: Ruleset, s: GameState): string {
       const band = bandFor(def, v);
       return band && def.show !== "number" ? `${def.label} ${band.text}` : `${def.label} ${formatNumber(v)}`;
     }).filter(Boolean);
-    return parts.length ? `${p.name} (${parts.join(", ")})` : p.name;
-  });
-  if (ppl.length) lines.push(`Relationships: ${ppl.join("; ")}`);
+    return parts.length ? `${name} (${parts.join(", ")})` : name;
+  };
+  // Only the people in the scene are "in play"; the rest are named apart so the narrator doesn't write them back in.
+  const inScene = hud.people.filter((p) => p.present);
+  if (inScene.length) lines.push(`Relationships (here): ${inScene.map((p) => feel(p.id, p.name)).join("; ")}`);
+  const away = hud.people.filter((p) => !p.present)
+    .sort((a, b) => (s.scene[b.id]?.at ?? -1) - (s.scene[a.id]?.at ?? -1))
+    .slice(0, 8);
+  if (away.length) lines.push(`Not in this scene (bring them in only if the story calls for it): ${away.map((p) => feel(p.id, p.name)).join("; ")}`);
 
   return lines.join("\n");
 }

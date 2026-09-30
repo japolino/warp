@@ -6,7 +6,8 @@
 import type { GenerationResponseDTO } from "lumiverse-spindle-types";
 import type { Proposal } from "../engine/resolve.js";
 import type { Ruleset } from "../engine/ruleset.js";
-import { formatNumber, itemName, type GameState } from "../engine/state.js";
+import { formatNumber, itemName, makeEnv, type GameState } from "../engine/state.js";
+import { presentPeople } from "../engine/world.js";
 import { stateDigest } from "../engine/view.js";
 import type { Settings } from "../shared/protocol.js";
 import { host, logError } from "./host.js";
@@ -59,7 +60,12 @@ function clip(s: string, n: number) {
 
 // ───────────────────────── extractor ─────────────────────────
 
-export type ExtractPart = "minutes" | "stats" | "rel" | "people" | "items" | "move" | "conditions" | "flags" | "wardrobe" | "body";
+export type ExtractPart = "minutes" | "stats" | "rel" | "people" | "items" | "move" | "conditions" | "flags" | "wardrobe" | "body" | "scene" | "used" | "train" | "encounter";
+
+const sameName = (a: string, b: string) => {
+  const x = a.trim().toLowerCase(), y = b.trim().toLowerCase();
+  return x === y || x.split(/\s+/)[0] === y.split(/\s+/)[0];
+};
 
 export async function extract(
   r: Ruleset, s: GameState, playerText: string, reply: string,
@@ -78,14 +84,31 @@ export async function extract(
   if (want("rel") && rels.length) allowed.push(`- "rel": per person name, deltas to: ${rels.map((d) => `${d.id} (±${formatNumber(d.narrator)})`).join(", ")}`);
   // Starting feelings are absolute values on each stat's scale, read once when someone first appears.
   const feelScale = rels.map((d) => `${d.id} ${d.min}–${d.max}${d.bands.length ? ` (${d.bands.map((b) => `${b.at}=${b.text}`).join(", ")})` : ""}`).join("; ");
+  const tracked = Object.values(s.people).map((p) => p.name);
   if (want("people") && r.peopleOpen) {
-    allowed.push(`- "people": characters who appear for the first time, as [{"name": "...", "feelings": {<how they feel toward the player RIGHT NOW, absolute values>}}]${rels.length ? ` — scales: ${feelScale}` : ""}`);
+    allowed.push(`- "people": named characters who appear in the reply (speak, act, or are spoken to) and aren't tracked yet${tracked.length ? ` (already tracked: ${tracked.join(", ")})` : ""}, as [{"name": "...", "feelings": {<how they feel toward the player RIGHT NOW, absolute values>}}]${rels.length ? ` — scales: ${feelScale}` : ""}`);
+  }
+  if (want("scene") && (tracked.length || r.peopleOpen)) {
+    allowed.push(`- "present": names of everyone (tracked or new) physically in the scene with the player at the end of the reply — not people only mentioned, remembered, on the phone, or left behind. Always include it, even as [].`);
   }
   const uncalibrated = Object.keys(s.people).filter((id) => !s.calibrated[id]).map((id) => s.people[id].name);
   if (want("people") && rels.length && uncalibrated.length) {
     allowed.push(`- "feelings": for these tracked people who appear in the reply, where they stand toward the player right now (absolute values, same scales): ${uncalibrated.join(", ")} — as {"Name": {"stat": value}}`);
   }
-  if (want("items") && (r.itemsOpen || Object.keys(r.items).length)) allowed.push(`- "items": item name → count gained (+) or lost (−). Held: ${Object.keys(s.items).map((id) => itemName(r, s, id)).join(", ") || "nothing"}`);
+  if (want("items") && (r.itemsOpen || Object.keys(r.items).length)) allowed.push(`- "items": item name → count gained (+) or lost (−); lost includes used up, eaten, drunk, emptied, broken, given away or taken. Held: ${Object.entries(s.items).map(([id, n]) => `${itemName(r, s, id)}${n > 1 ? ` ×${n}` : ""}`).join(", ") || "nothing"}`);
+  const withUses = Object.keys(s.items).filter((id) => (r.items[id]?.uses ?? 0) > 0);
+  if (want("used") && withUses.length) allowed.push(`- "used": item name → times used, for items that have uses: ${withUses.map((id) => `${itemName(r, s, id)} (${s.uses[id] ?? r.items[id].uses}/${r.items[id].uses} uses left)`).join(", ")}`);
+  const growable = r.growth.enabled && r.growth.train ? r.statOrder.filter((id) => (r.stats[id].kind === "skill" || r.stats[id].kind === "attribute") && r.stats[id].growth > 0) : [];
+  if (want("train") && growable.length) allowed.push(`- "trained": ids of abilities the player spent real effort practising, training, studying or rehearsing during the reply: ${growable.join(", ")}`);
+  if (want("encounter")) {
+    const storyEnc = !s.encounter && !s.dungeon && !s.job ? Object.values(r.encounters).filter((x) => x.fromStory) : [];
+    if (storyEnc.length) allowed.push(`- "encounter": the id of one of these if it actually broke out in the reply (not just threatened): ${storyEnc.map((x) => `${x.id} (${x.name})`).join(", ")}; with "foe": the opponent's name when it's a specific person`);
+    else if (s.encounter) {
+      const def = r.encounters[s.encounter.id];
+      const outcomes = [...new Set([...Object.keys(def?.outcomes ?? {}), ...(def?.momentum ? [def.momentum.win, def.momentum.lose] : [])]), "broke_off"];
+      allowed.push(`- "encounter_end": only if ${def?.name ?? "the encounter"} is clearly over by the end of the reply, how it ended: ${outcomes.join(", ")}`);
+    }
+  }
   if (want("move") && (locs.length || r.locationsOpen)) allowed.push(`- "move": where the player character ends up, if they moved${locs.length && !r.locationsOpen ? ` (one of: ${locs.map((l) => l.name).join(", ")})` : ""}`);
   if (want("conditions") && conds.length) allowed.push(`- "conditions": {"add": [...], "remove": [...]} from: ${conds.map((c) => c.id).join(", ")}`);
   if (want("flags") && flags.length) allowed.push(`- "flags": set any of: ${flags.map((f) => f.id).join(", ")}`);
@@ -93,7 +116,7 @@ export async function extract(
     const worn = Object.entries(s.worn).map(([slot, id]) => `${slot}: ${itemName(r, s, id)}`).join(", ") || "nothing";
     const owned = Object.keys(s.items).filter((id) => r.items[id]?.slot && !Object.values(s.worn).includes(id));
     allowed.push(`- "undress": slots whose clothing came off (currently worn — ${worn})`);
-    if (owned.length) allowed.push(`- "wear": ids of owned clothing put on (${owned.join(", ")})`);
+    if (owned.length) allowed.push(`- "wear": ids of carried clothing put on, or that the reply shows the player wearing (${owned.join(", ")})`);
   }
   if (want("body") && r.body.enabled && r.body.narrator) {
     const now = Object.entries(s.body).map(([p, t]) => `${p}: ${Object.entries(t).map(([k, v]) => `${k} ${v}`).join(", ")}`).join("; ") || "nothing recorded";
@@ -124,7 +147,24 @@ export async function extract(
 
   try {
     const out = firstJson(await ask(system, user, settings, userId, 30000));
-    return (out ?? null) as Proposal | null;
+    if (!out) return null;
+    const p = out as Proposal & { present?: unknown; trained?: unknown; encounter_end?: unknown };
+    if (Array.isArray(p.present)) {
+      // The full list of who's there: whoever was here and isn't on it has left.
+      const listed = p.present.map(String).filter(Boolean);
+      const scene: Record<string, boolean> = Object.fromEntries(listed.map((n) => [n, true]));
+      for (const id of presentPeople(r, s, makeEnv(r, s))) {
+        const name = s.people[id]?.name;
+        if (name && !listed.some((l) => sameName(l, name))) scene[id] = false;
+      }
+      p.scene = scene;
+    }
+    delete p.present;
+    if (Array.isArray(p.trained)) p.train = p.trained.map(String);
+    delete p.trained;
+    if (typeof p.encounter_end === "string" && p.encounter_end) p.encounterEnd = p.encounter_end;
+    delete p.encounter_end;
+    return p;
   } catch (e) {
     logError("extractor", e);
     return null;

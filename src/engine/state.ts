@@ -22,6 +22,8 @@ export interface EncounterState {
   foe: Record<string, number>;
   /** −100 (the foe wins) … +100 (the player wins), for encounters that swing. */
   momentum?: number;
+  /** Who the opponent is this time (someone from the story), when not the encounter's own foe. */
+  foeName?: string;
 }
 
 export interface GameState {
@@ -97,6 +99,14 @@ export interface GameState {
   job: { id: string; n: number; patron: number; earned: number; tips: number; log: { who: string; result: string }[] } | null;
   /** The story reached an ending (told = the narrator has written it). */
   ended: { id: string; at: number; told: boolean } | null;
+  /** Progress toward the next point, per stat (in the stat's own units; a point is gained at 1). */
+  practice: Record<string, number>;
+  /** Who the story has in the scene: judged here or gone, at the place and time it was judged. */
+  scene: Record<string, { here: boolean; loc: string | null; at: number }>;
+  /** Where {{user}} was before the last move (people there may or may not have come along). */
+  lastLocation: string | null;
+  /** Uses left in the item in hand, for items with uses (absent = a fresh one). */
+  uses: Record<string, number>;
 }
 
 export interface Kin { name: string; sex: "girl" | "boy"; born: number; parents: string[]; body: Record<string, Record<string, string>>; joined: boolean }
@@ -126,7 +136,7 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "seed"; v: string }
   | { t: "wear"; slot: string; item: string | null }
   | { t: "dmg"; item: string; d: number }
-  | { t: "enc"; id: string | null; foe?: Record<string, number>; outcome?: string; momentum?: number }
+  | { t: "enc"; id: string | null; foe?: Record<string, number>; outcome?: string; momentum?: number; foeName?: string }
   | { t: "swing"; d: number }
   | { t: "foe"; stat: string; d?: number; set?: number }
   | { t: "round" }
@@ -178,6 +188,9 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "seen"; who: string; what: string; where: string; heard?: boolean }
   | { t: "explored"; loc: string; found: boolean }
   | { t: "discovered"; id: string }
+  | { t: "practice"; id: string; d: number }
+  | { t: "scene"; who: string; here: boolean }
+  | { t: "use"; id: string; n: number }
   | { t: "save"; slot: string; label: string }
   | { t: "load"; slot: string }
   | { t: "restart" }
@@ -241,6 +254,10 @@ export function initialState(r: Ruleset): GameState {
     seen: {},
     explored: {},
     discovered: [],
+    practice: {},
+    scene: {},
+    lastLocation: null,
+    uses: {},
   };
   // Obligations: the first payment is due `first` days in; its amount is read now.
   for (const o of Object.values(r.obligations)) {
@@ -270,6 +287,12 @@ export function initialState(r: Ruleset): GameState {
   return s;
 }
 
+/** Who the current encounter's opponent is. */
+export function foeName(r: Ruleset, s: GameState): string {
+  if (!s.encounter) return "Opponent";
+  return s.encounter.foeName ?? r.encounters[s.encounter.id]?.foe.name ?? "Opponent";
+}
+
 export function statMax(r: Ruleset, def: StatDef, s: GameState): number {
   if (!def.maxExpr) return def.max;
   const m = evalNumber(def.maxExpr, makeEnv(r, s), def.max);
@@ -297,6 +320,7 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
         // Can't keep wearing something you no longer have.
         for (const [slot, id] of Object.entries(s.worn)) if (id === e.id) delete s.worn[slot];
         delete s.integrity[e.id];
+        if (s.uses[e.id] !== undefined) { const u = { ...s.uses }; delete u[e.id]; s.uses = u; }
       } else s.items[e.id] = n;
       if (e.name && !r.items[e.id]) s.itemNames[e.id] = e.name;
       break;
@@ -326,7 +350,7 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       break;
     }
     case "enc":
-      s.encounter = e.id ? { id: e.id, round: 0, foe: { ...(e.foe ?? {}) }, ...(e.momentum !== undefined ? { momentum: e.momentum } : {}) } : null;
+      s.encounter = e.id ? { id: e.id, round: 0, foe: { ...(e.foe ?? {}) }, ...(e.momentum !== undefined ? { momentum: e.momentum } : {}), ...(e.foeName ? { foeName: e.foeName } : {}) } : null;
       break;
     case "swing":
       if (s.encounter && s.encounter.momentum !== undefined) s.encounter.momentum = clamp(s.encounter.momentum + e.d, -100, 100);
@@ -345,6 +369,7 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
     case "perk": s.perks[e.id] = true; break;
     case "calib": s.calibrated[e.who] = true; break;
     case "forget":
+      if (s.scene[e.who]) { const sc = { ...s.scene }; delete sc[e.who]; s.scene = sc; }
       delete s.people[e.who];
       delete s.rel[e.who];
       delete s.calibrated[e.who];
@@ -370,9 +395,30 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       break;
     }
     case "move":
+      if (e.to !== s.location) s.lastLocation = s.location;
       s.location = e.to;
       s.locationName = r.locations[e.to]?.name ?? e.name ?? e.to;
       break;
+    case "practice": s.practice = { ...s.practice, [e.id]: Math.max(0, (s.practice[e.id] ?? 0) + e.d) }; break;
+    case "scene": s.scene = { ...s.scene, [e.who]: { here: e.here, loc: s.location, at: s.minutes } }; break;
+    case "use": {
+      const per = r.items[e.id]?.uses ?? 0;
+      let have = s.items[e.id] ?? 0;
+      if (per <= 0 || have <= 0 || e.n <= 0) break;
+      let left = (s.uses[e.id] ?? per) - e.n;
+      while (left <= 0 && have > 0) { have -= 1; left += per; }
+      const uses = { ...s.uses };
+      if (have <= 0) {
+        delete s.items[e.id];
+        for (const [slot, id] of Object.entries(s.worn)) if (id === e.id) delete s.worn[slot];
+        delete uses[e.id];
+      } else {
+        s.items[e.id] = have;
+        if (left >= per) delete uses[e.id]; else uses[e.id] = left;
+      }
+      s.uses = uses;
+      break;
+    }
     case "time": s.minutes += Math.max(0, e.min); break;
     case "cond":
       if (e.on) s.conditions[e.id] = { until: e.until ?? null };
@@ -500,6 +546,9 @@ function snapshotOf(s: GameState): GameState {
 function rewind(r: Ruleset, s: GameState, base: GameState, keep: KeepSpec) {
   const from = structuredClone(s);
   const next = structuredClone(base);
+  // Saves made before a newer part of the state existed: fill it in fresh.
+  const fresh = initialState(r) as unknown as Record<string, unknown>;
+  for (const [k, v] of Object.entries(fresh)) if ((next as unknown as Record<string, unknown>)[k] === undefined) (next as unknown as Record<string, unknown>)[k] = v;
   if (keep.codex) next.codex = { ...next.codex, ...from.codex };
   if (keep.feats) next.feats = { ...next.feats, ...from.feats };
   if (keep.perks) next.perks = { ...next.perks, ...from.perks };

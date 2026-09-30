@@ -113,8 +113,26 @@ export function personLocation(r: Ruleset, s: GameState, id: string, env: ExprEn
   return null;
 }
 
-/** People here now: scheduled people whose schedule puts them at the player's location. */
+/** How long the story's word on who's in the scene holds without being read again (minutes). */
+export const SCENE_HOLDS = 6 * 60;
+
+/** What the story last said about someone being in the scene, if it still holds here and now. */
+export function sceneWord(s: GameState, id: string): boolean | null {
+  const w = s.scene?.[id];
+  return w && w.loc === s.location && s.minutes - w.at <= SCENE_HOLDS ? w.here : null;
+}
+
+/**
+ * People here now. What the story last said wins (someone judged here, or gone, at this
+ * place); otherwise a scheduled person is here when their schedule puts them here.
+ */
 export function presentPeople(r: Ruleset, s: GameState, env: ExprEnv): string[] {
-  if (!s.location) return [];
-  return Object.keys(r.people).filter((id) => !s.forgotten[id] && personLocation(r, s, id, env) === s.location);
+  const out: string[] = [];
+  for (const id of Object.keys(s.people)) {
+    if (s.forgotten[id]) continue;
+    const word = sceneWord(s, id);
+    if (word !== null) { if (word) out.push(id); continue; }
+    if (s.location && personLocation(r, s, id, env) === s.location) out.push(id);
+  }
+  return out;
 }

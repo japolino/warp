@@ -2,7 +2,7 @@
 
 A game engine under your roleplay. Warp owns stats, dice, time, inventory and relationships; the model only narrates outcomes the engine has already decided.
 
-- **Choices** appear under the latest reply (hotkeys 1–9, odds on each button). You can also just type — a quick referee call maps risky attempts to an action, and the dice decide.
+- **Choices** appear under the latest reply (hotkeys 1–9, odds on each button). You can also just type — a quick referee call maps risky attempts to an action (or, when nothing listed fits, rolls it on your closest ability), and the dice decide.
 - **Status panel** floats over the chat (drag it to any screen edge to attach it as a sidebar or strip), plus a **Warp** drawer tab: Sheet · Map · Journal · Ruleset · Settings.
 - **Dice & change chips** on every reply. Changes read from the story are dashed and can be undone with ×.
 - **Swipes reroll** (Casual) by default; turn off for Ironman. State always follows the active swipe.
@@ -30,6 +30,16 @@ A game engine under your roleplay. Warp owns stats, dice, time, inventory and re
 | Checkpoints & endings | Save slots and a daily autosave; loading rewinds the game while the chat keeps its messages, and the ruleset decides what survives (the codex, secrets, chosen stats…). Time loops rewind by themselves when a condition holds. Endings fire by formula: the narrator writes an epilogue from what actually happened, then you start a new playthrough (carrying unlocks forward), load a save, or keep playing (unless hard mode) |
 | Dating | Talk topic by topic: each person has hidden tastes (authored, read from the card by the decision model, or seeded) that you discover as you go. Reactions move love and fear, which set the stage (stranger → acquaintance → friend → close → partner, or hostile) that unlocks more topics. Mood, conversation fatigue and a streak bonus shape every reaction, and a line you type is judged on its own words. Ask people out, pick a venue, and play the outing moment by moment for an enjoyment score; confess, kiss, give gifts. Romance is only ever offered between adults |
 | Dungeons | Roguelike diving: floors of face-down tiles (monsters, elites, guardians, treasure, traps, springs, merchants, events, surprises, romance moments) with one way down. Party battles with HP/MP/TP, skills, items, escape and auto-battle; quit any time and keep the loot, or get wiped out and lose it. Story moments are written up by the narrator. Built-in bestiary, events and art |
+
+## Typing freely
+
+Most roleplay is typed, so the core systems follow the story rather than waiting for a button:
+
+- **Improvised attempts.** A risky thing you type that no action covers (talking your way past a bouncer, vaulting a bar, shoving someone) still rolls: d20 plus your closest skill or attribute's share of a bonus, against a difficulty the decision model reads from the scene. The narrator keeps what you wrote you do; the dice decide only how it turns out. In a fight it's a move like any other. Tune or turn off with `improvise:`.
+- **Skills grow with use.** Every check practises the skills and attributes it reads — harder checks teach more, failures teach a little less, and progress slows near the top. Training the story describes (an hour at the gym, a night of study) counts too. A thin green line under each skill shows progress to the next point. Tune with `growth:` or `growth: 0` on a stat.
+- **Who's in the scene.** After each reply the story is read for who is actually there — people it introduces, people who leave, who came along after a move. The sheet shows the people here and folds the rest under **Elsewhere**; the narrator only gets relationship details for the people here, so absent characters don't drift back in. Schedules still place people where the story hasn't said otherwise.
+- **Fights from the story.** When a fight (or any encounter) breaks out in the prose or in what you type, it starts — against whoever it's with — and it ends when the story ends it. `from_story: false` keeps an encounter to the rules.
+- **Things you use.** Items can have uses (`uses: 5`): each use the story shows spends one, and the last spends the item. For anything the reply mentions, the bookkeeper asks what happened to it — used, used up, given away, or put on — and clothes in your bag are named to the narrator as *not worn*.
 
 ## Visual novel mode
 

@@ -18,7 +18,7 @@ function defaultRelStat(id: string, kind: "love" | "fear"): StatDef {
   const love = kind === "love";
   return {
     id, label: titleCase(id), kind: "meter", min: 0, max: 100, start: 0,
-    good: love ? "high" : "low", perHour: 0, show: "text", narrator: 5,
+    good: love ? "high" : "low", perHour: 0, show: "text", narrator: 5, growth: 0,
     bands: love
       ? [{ at: 0, text: "Indifferent", tone: "neutral" }, { at: 20, text: "Fond", tone: "warn" }, { at: 50, text: "Smitten", tone: "good" }, { at: 80, text: "In love", tone: "good" }]
       : [{ at: 0, text: "At ease", tone: "good" }, { at: 30, text: "Wary", tone: "warn" }, { at: 60, text: "Afraid", tone: "bad" }],

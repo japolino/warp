@@ -7,9 +7,10 @@ import type { ActionDef, CheckDef, DecideSpec, Effect, NarratorGate, RandomEvent
 import { SEEN_REACTIONS } from "./ruleset.js";
 import { normalize, sample } from "./decide.js";
 import { emptyEffect, slug } from "./ruleset.js";
-import { applyEvent, cloneState, formatClock, kinAge, makeEnv, personName, timeKey, type EventSource, type GameState, type WarpEvent } from "./state.js";
+import { applyEvent, cloneState, foeName, formatClock, itemName, kinAge, makeEnv, personName, timeKey, type EventSource, type GameState, type WarpEvent } from "./state.js";
+import { checkGains, checkStats, DIFFICULTY_WORD, hardnessFrom, IMPROV, IMPROV_DIRECTION, improvAction, isDifficulty, practise, trainingGain } from "./freeform.js";
 import { endingDirection } from "./chronicle.js";
-import { exposedSlots, isIndoors, presentPeople, revealOf } from "./world.js";
+import { exposedSlots, isIndoors, presentPeople, revealOf, SCENE_HOLDS, sceneWord } from "./world.js";
 import { DATE_PREFIX } from "./date/types.js";
 import { activeSession, ADULT_KEY, resolveDate } from "./date/talk.js";
 import { JOB_PREFIX, obligationLife, PAY_PREFIX, resolveWork } from "./work.js";
@@ -206,6 +207,10 @@ export const LIVE_PREFIX = "live:";
 /** Look up an intent's action (and target) in whatever pool is live. */
 export function findAction(r: Ruleset, s: GameState, actionId: string): { a: ActionDef; target?: string } | null {
   const [base, target] = actionId.split(TARGET_SEP);
+  if (base.startsWith(IMPROV)) {
+    const a = improvAction(r, s, base);
+    return a ? { a } : null;
+  }
   const a = base.startsWith(LIVE_PREFIX) ? r.liveChoices.tags[base.slice(LIVE_PREFIX.length)] : actionPool(r, s).defs[base];
   return a ? { a, ...(target ? { target } : {}) } : null;
 }
@@ -805,12 +810,12 @@ export function runOp(r: Ruleset, before: GameState, op: RunOp): WarpEvent[] | s
   return w.events;
 }
 
-function startEncounter(w: Working, id: string, src: EventSource) {
+function startEncounter(w: Working, id: string, src: EventSource, opponent?: string) {
   const enc = w.r.encounters[id];
   if (!enc) return;
   const foe = Object.fromEntries(enc.foe.stats.map((s) => [s.id, s.start]));
-  w.push({ t: "enc", id, foe, ...(enc.momentum ? { momentum: enc.momentum.start } : {}), src });
-  announce(w, `An encounter begins: ${enc.name}${enc.desc ? ` — ${enc.desc}` : ""}. Opponent: ${enc.foe.name}.`);
+  w.push({ t: "enc", id, foe, ...(enc.momentum ? { momentum: enc.momentum.start } : {}), ...(opponent ? { foeName: opponent } : {}), src });
+  announce(w, `An encounter begins: ${enc.name}${enc.desc ? ` — ${enc.desc}` : ""}. Opponent: ${opponent ?? enc.foe.name}.`);
   because(w, `${enc.name} begins`, () => effectToEvents(w, enc.start, src, {}));
 }
 
@@ -865,7 +870,7 @@ function momentumWords(m: number, foe: string): string {
 function beatSheet(w: Working, before: GameState, rec: TurnRecord, playerText?: string) {
   const enc = before.encounter ? w.r.encounters[before.encounter.id] : undefined;
   if (!enc?.momentum || before.encounter?.momentum === undefined) return;
-  const foe = enc.foe.name;
+  const foe = foeName(w.r, before);
   const beats: string[] = [];
   const typed = (playerText ?? "").trim();
   const mine = rec.action ? `${rec.action.label}${rec.check ? ` — ${TIER_LABEL[rec.check.tier].toLowerCase()}` : ""}` : "no clear move";
@@ -972,6 +977,8 @@ export interface ResolveOptions {
   odds?: Record<string, Record<string, number>>;
   /** Judged plain-language trigger conditions, by trigger id. */
   scene?: Record<string, boolean>;
+  /** The scene says an encounter is breaking out (and who the opponent is, when it's someone from the story). */
+  encounter?: { id: string; foe?: string };
 }
 
 export interface Resolution { record: TurnRecord; needs: DecideSpec[] }
@@ -1025,6 +1032,15 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
     w.push({ t: "end_told", src: "world" });
     rec.action = { id: RUN_EPILOGUE, label: `The end: ${e?.title ?? "the story ends"}`, via: intent?.via ?? "choice" };
   }
+  // A fight (or any encounter) the scene says is breaking out starts before the player's move lands.
+  let encBase = before;
+  if (opts.encounter && !before.encounter && !before.dungeon && !before.job && !before.ended) {
+    const enc = r.encounters[opts.encounter.id];
+    if (enc?.fromStory) {
+      because(w, `The scene: ${enc.name} breaks out`, () => startEncounter(w, enc.id, "trigger", opts.encounter!.foe));
+      encBase = cloneState(w.s);
+    }
+  }
   let found = intent && !intent.actionId.startsWith(TRAVEL_PREFIX) && !intent.actionId.startsWith(DATE_PREFIX) && !intent.actionId.startsWith(PAY_PREFIX) && !intent.actionId.startsWith(JOB_PREFIX) ? findAction(r, before, intent.actionId) : null;
   // The character's mind may overrule the player: freeze, do something else, or colour the attempt.
   let mind = found ? mindOverride(r, before, found.a, found.target, opts.seed) : null;
@@ -1035,7 +1051,8 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
     else mind = null;
   }
   const a = found?.a;
-  const inEncounter = !!before.encounter;
+  const inEncounter = !!encBase.encounter;
+  const improvised = !!a && a.id.startsWith(IMPROV);
   // A conversation or outing takes every turn until it ends; a typed line is the player's words in it.
   const dateIntent = intent?.actionId.startsWith(DATE_PREFIX) ? intent : activeSession(r, before) && !intent && !before.job ? { actionId: `${DATE_PREFIX}say`, via: "adjudicator" as const } : null;
   // Bills and work shifts; during a shift, a typed line is how {{user}} serves the customer.
@@ -1082,7 +1099,10 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
     const who = found?.target;
     const extra = paramValues(a, intent!.params, who);
     const own = mind?.kind === "redirect" ? (who ? `${a.label} (${personName(r, before, who)})` : a.label) : null;
-    const label = own ?? intent!.label ?? (who ? `${a.label} (${personName(r, before, who)})` : a.label);
+    const difficulty = improvised && isDifficulty(intent!.params?.difficulty) ? intent!.params!.difficulty : "fair";
+    const label = improvised
+      ? `Attempt: ${a.check?.label ?? "luck"}, ${difficulty}`
+      : own ?? intent!.label ?? (who ? `${a.label} (${personName(r, before, who)})` : a.label);
     rec.action = { id: mind?.kind === "redirect" ? `${a.id}${who ? `${TARGET_SEP}${who}` : ""}` : intent!.actionId, label, via: intent!.via, ...(a.params.length ? { params: Object.fromEntries(a.params.map((p) => [p.id, intent!.params?.[p.id] ?? p.default])) } : {}) };
     if (mind) {
       rec.mind = { id: mind.id, cause: mind.cause, kind: mind.kind, meant, chance: mind.chance };
@@ -1117,7 +1137,17 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
       };
       const key = TIER_FALLBACK[tier].find((t) => a.outcomes[t]);
       if (key) because(w, `"${label}": ${rec.check.label} rolled ${rec.check.total}${target !== null ? ` vs ${target}` : ""} → ${TIER_LABEL[tier]}`, () => effectToEvents(w, a.outcomes[key]!, "check", extra));
-      if (tier === "partial" && key === "success") w.hints.push("It works, but not cleanly — introduce a cost or complication.");
+      if (improvised) {
+        // Typed freely: keep what the player wrote they do; the dice only decide how it turns out.
+        w.hints.push(`{{user}} attempts what they wrote (${a.check.label}, ${DIFFICULTY_WORD[difficulty as keyof typeof DIFFICULTY_WORD]}). ${IMPROV_DIRECTION[tier]} Keep {{user}}'s own words and choices; the dice decide only how it turns out.`);
+      } else if (tier === "partial" && key === "success") w.hints.push("It works, but not cleanly — introduce a cost or complication.");
+      // Using a skill or attribute in a check is how it grows.
+      const used = checkStats(r, a);
+      if (used.length) {
+        const hard = hardnessFrom(improvised ? null : odds(r, before, a, intent!.params, who)?.success ?? null, improvised ? difficulty : undefined);
+        const gains = checkGains(r, w.s, used, hard, tier);
+        if (Object.keys(gains).length) practise(builderOf(w), gains, `Used in "${label}" (${TIER_LABEL[tier].toLowerCase()})`);
+      }
     } else {
       because(w, `"${label}"`, () => effectToEvents(w, a.effects, "action", extra));
     }
@@ -1125,20 +1155,20 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
     // Encounter rounds are quick; ordinary actions take the ruleset's default.
     advanceTime(w, a.time ?? (inEncounter ? 1 : r.clock.minutesPerAction), "action");
     const veils = new Set((opts.veils ?? []).map((v) => v.toLowerCase()));
-    const encTags = inEncounter ? r.encounters[before.encounter!.id]?.tags ?? [] : [];
+    const encTags = inEncounter ? r.encounters[encBase.encounter!.id]?.tags ?? [] : [];
     if ([...a.tags, ...encTags].some((t) => veils.has(t))) rec.veiled = true;
     if (inEncounter) {
       // The move's result swings the fight (freezing up counts as a miss).
       const tier: Tier | null = rec.check?.tier ?? (rec.mind?.kind === "fail" ? "fail" : null);
-      const m = r.encounters[before.encounter!.id]?.momentum;
+      const m = r.encounters[encBase.encounter!.id]?.momentum;
       if (m && tier && w.s.encounter?.momentum !== undefined) w.push({ t: "swing", d: m.swing[tier], src: "check" });
       encounterRound(w, "action");
-      beatSheet(w, before, rec, opts.playerText);
+      beatSheet(w, encBase, rec, opts.playerText);
     }
   } else if (inEncounter && w.s.encounter) {
     // Typed a non-move during an encounter: the opponent still gets their turn.
     encounterRound(w, "action");
-    beatSheet(w, before, rec, opts.playerText);
+    beatSheet(w, encBase, rec, opts.playerText);
   }
 
   runTriggers(w, true);
@@ -1185,6 +1215,17 @@ export interface Proposal {
   wear?: string[];
   /** Body changes: part → trait → value (null removes). */
   body?: Record<string, Record<string, string | null>>;
+  /** Who is (true) or isn't (false) in the scene at the end of the reply, by name. */
+  scene?: Record<string, boolean>;
+  /** Items with uses that were used, by name → times. */
+  used?: Record<string, number>;
+  /** Skills or attributes {{user}} practised, trained or studied during the reply. */
+  train?: string[];
+  /** An encounter that broke out in the reply (id or name), and who the opponent is. */
+  encounter?: string;
+  foe?: string;
+  /** The encounter in progress ended in the reply, with this outcome. */
+  encounterEnd?: string;
 }
 
 /** What the story's changes are checked against: the exchange's text and the action that was taken. */
@@ -1219,10 +1260,15 @@ function clampAbs(v: number, lim: number) {
 }
 
 function findPerson(r: Ruleset, s: GameState, key: string): string | null {
-  const k = key.toLowerCase();
-  for (const [id, p] of Object.entries(s.people)) if (id === k || p.name.toLowerCase() === k) return id;
-  for (const p of Object.values(r.people)) if (p.id === k || p.name.toLowerCase() === k) return p.id;
-  return null;
+  const k = String(key).trim().toLowerCase();
+  if (!k) return null;
+  const sl = slug(k);
+  for (const [id, p] of Object.entries(s.people)) if (id === k || id === sl || p.name.toLowerCase() === k) return id;
+  for (const p of Object.values(r.people)) if (p.id === k || p.id === sl || p.name.toLowerCase() === k) return p.id;
+  // "Miu" for "Miu Tanaka" (or the other way round) — only when just one tracked person fits.
+  const first = (n: string) => n.toLowerCase().split(/\s+/)[0];
+  const hits = Object.entries(s.people).filter(([, p]) => first(p.name) === first(k));
+  return hits.length === 1 ? hits[0][0] : null;
 }
 
 /** Turn a model's suggested changes into events, enforcing every limit the ruleset sets. */
@@ -1230,18 +1276,23 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
   const w = new Working(r, cloneState(before), seededRng(`narrator:${before.turn}`));
   w.cause = "Read from the story";
   const src: EventSource = "narrator";
+  // Who the story has in the scene; people who appear count as here.
+  const scene: Record<string, boolean> = {};
 
   for (const person of p.people ?? []) {
-    if (!person?.name || !r.peopleOpen) continue;
+    if (!person?.name) continue;
     const known = findPerson(r, w.s, person.name);
     if (known) {
       // Already tracked: treat any feelings as a starting read if they've never been calibrated.
       if (person.feelings) calibrate(w, known, person.feelings, src);
+      scene[known] = true;
       continue;
     }
+    if (!r.peopleOpen) continue;
     const id = slug(person.id || person.name);
     if (!w.s.people[id]) w.push({ t: "person", id, name: person.name, src });
     calibrate(w, id, person.feelings ?? {}, src);
+    scene[id] = true;
   }
   for (const [who, feelings] of Object.entries(p.feelings ?? {})) {
     const id = findPerson(r, w.s, who);
@@ -1282,6 +1333,13 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
     const n = Math.round(clampAbs(d, 10));
     if (n < 0 && !(w.s.items[id] > 0)) continue;
     w.push({ t: "item", id, d: n, ...(declared ? {} : { name: key }), src });
+  }
+  // Items with uses (a spray, a first-aid kit): each use spends one, and the last one spends the item.
+  for (const [key, n] of Object.entries(p.used ?? {})) {
+    if (typeof n !== "number" || !Number.isFinite(n) || n <= 0) continue;
+    const k = key.toLowerCase();
+    const id = Object.keys(w.s.items).find((i) => i === k || itemName(r, w.s, i).toLowerCase() === k);
+    if (id && (r.items[id]?.uses ?? 0) > 0) w.push({ t: "use", id, n: Math.min(10, Math.round(n)), src });
   }
 
   if (p.move) {
@@ -1331,6 +1389,41 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
 
   if (typeof p.minutes === "number" && Number.isFinite(p.minutes) && p.minutes > 0) {
     advanceTime(w, Math.round(Math.min(p.minutes, r.clock.narratorMax)), src);
+  }
+
+  // Who's in the scene at the end of the reply — after any move and the time it took, so it's judged here and now.
+  for (const [who, here] of Object.entries(p.scene ?? {})) {
+    const id = findPerson(r, w.s, who);
+    if (id && typeof here === "boolean") scene[id] = here;
+  }
+  const hereNow = new Set(presentPeople(r, w.s, w.env()));
+  for (const [id, here] of Object.entries(scene)) {
+    if (!w.s.people[id]) continue;
+    const word = w.s.scene[id];
+    if (hereNow.has(id) !== here) w.push({ t: "scene", who: id, here, src });
+    // Still here: renew the story's word now and then so it keeps holding.
+    else if (here && word && sceneWord(w.s, id) !== null && w.s.minutes - word.at > SCENE_HOLDS / 3) w.push({ t: "scene", who: id, here, src, note: "renew" });
+  }
+
+  // Fights (and other encounters) the prose started or finished.
+  if (p.encounter && !w.s.encounter && !w.s.dungeon && !w.s.job) {
+    const k = String(p.encounter).toLowerCase();
+    const enc = r.encounters[k] ?? Object.values(r.encounters).find((x) => x.name.toLowerCase() === k);
+    if (enc?.fromStory) because(w, `${enc.name} broke out`, () => startEncounter(w, enc.id, src, typeof p.foe === "string" && p.foe.trim() ? p.foe.trim().slice(0, 60) : undefined));
+  } else if (p.encounterEnd && w.s.encounter) {
+    const name = r.encounters[w.s.encounter.id]?.name ?? "The encounter";
+    because(w, `${name} ended`, () => endEncounter(w, slug(String(p.encounterEnd)), src));
+  }
+
+  // Practice the story described: training, studying, rehearsing.
+  if (r.growth.enabled && r.growth.train) {
+    const gains: Record<string, number> = {};
+    for (const key of (Array.isArray(p.train) ? p.train : []).slice(0, 2)) {
+      const k = String(key).toLowerCase();
+      const id = r.statOrder.find((s) => s === k || r.stats[s].label.toLowerCase() === k);
+      if (id && (r.stats[id].kind === "skill" || r.stats[id].kind === "attribute")) gains[id] = (gains[id] ?? 0) + trainingGain(r, w.s, id, p.minutes);
+    }
+    if (Object.keys(gains).length) practise(builderOf(w), gains, "Practice the story described");
   }
 
   w.cause = null;

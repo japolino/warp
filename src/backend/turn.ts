@@ -137,6 +137,7 @@ export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorCon
       let intent: Intent | null = meta.intent ?? null;
       let verdict: Pending["verdict"];
       let scene: Record<string, boolean> = {};
+      let encounter: { id: string; foe?: string } | undefined;
       let confidence: number | undefined;
       const sceneText = [...history].reverse().find((m) => !m.is_user)?.content ?? "";
       const budget = () => Math.min(20000, (typeof ctx.interceptorDeadlineAt === "number" ? ctx.interceptorDeadlineAt : Date.now() + 20000) - Date.now() - 2000);
@@ -147,6 +148,7 @@ export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorCon
         const readText = !intent && !meta.judged && lastUser && settings.freeTextChecks ? lastUser.content : null;
         const reading = await readTurn({ decider, r, s: before, settings, playerText: readText, sceneText, player, timeoutMs: budget() });
         scene = reading.scene;
+        encounter = reading.encounter;
         if (readText !== null && lastUser) {
           intent = reading.intent;
           confidence = reading.confidence;
@@ -156,13 +158,13 @@ export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorCon
 
       const seed = settings.swipesReroll ? randomSeed() : `${lastUser?.id ?? "start"}:${intent?.actionId ?? "none"}`;
       const playerText = lastUser?.content ?? "";
-      let res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene, playerText });
+      let res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene, playerText, encounter });
       if (decider && res.needs.length) {
         // Uncertain reactions: the model supplies odds, the same seed re-rolls the same dice with them.
         // Questions about who someone is (tastes, age) need the card, not just the scene.
         const card = res.needs.some((n) => n.id.startsWith("date:pref:") || n.id.startsWith("date:adult:")) ? await characterBrief(ctx.chatId, ctx.userId) : undefined;
         const o = await odds({ decider, r, s: before, specs: res.needs, playerText: lastUser?.content ?? "", sceneText, player, timeoutMs: budget(), card });
-        if (Object.keys(o).length) res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene, odds: o, playerText });
+        if (Object.keys(o).length) res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene, odds: o, playerText, encounter });
       }
       rec = res.record;
       if (confidence !== undefined && rec.action) rec.confidence = confidence;
@@ -214,6 +216,7 @@ async function proposeChanges(decider: Decider, r: Ruleset, p: Pending, reply: s
     if (named?.move && !proposal.move) proposal.move = named.move;
     if (named?.body) proposal.body = named.body;
     if (named?.feelings) proposal.feelings = { ...(proposal.feelings ?? {}), ...named.feelings };
+    if (named?.used) proposal.used = { ...(proposal.used ?? {}), ...named.used };
   }
   return proposal;
 }

@@ -8,14 +8,61 @@
 import type { Answer, Answers, Decider, Questions } from "../engine/decide.js";
 import { normalize, noulConfidence } from "../engine/decide.js";
 import { availableChoices, TRAVEL_PREFIX, travelTargets, type Intent, type Proposal } from "../engine/resolve.js";
-import type { DecideSpec, Ruleset, StatDef } from "../engine/ruleset.js";
-import { personName, type GameState } from "../engine/state.js";
+import { DIFFICULTIES, type DecideSpec, type Ruleset, type StatDef } from "../engine/ruleset.js";
+import { itemName, makeEnv, personName, type GameState } from "../engine/state.js";
+import { IMPROV, improvStats } from "../engine/freeform.js";
+import { presentPeople } from "../engine/world.js";
 import { stateDigest } from "../engine/view.js";
 import { activeSession } from "../engine/date/talk.js";
 import type { Settings } from "../shared/protocol.js";
 import { logError } from "./host.js";
 
 const NONE = "none";
+const ATTEMPT = "attempt";
+/** How sure the model must be that a fight (or other encounter) is actually breaking out. */
+const ENCOUNTER_SURE = 0.6;
+/** …and that one in progress is over. */
+const ENCOUNTER_OVER = 0.7;
+
+const COMMON_CAPS = new Set([
+  "the", "a", "an", "he", "she", "they", "it", "his", "her", "their", "i", "you", "we", "but", "and", "or", "so", "then",
+  "when", "as", "if", "in", "on", "at", "with", "for", "from", "to", "of", "by", "that", "this", "there", "here", "what",
+  "who", "why", "how", "yes", "no", "not", "oh", "ah", "maybe", "still", "just", "even", "now", "after", "before", "once",
+  "every", "each", "some", "all", "something", "someone", "nothing", "god", "mr", "mrs", "ms", "miss", "sir", "lady", "lord",
+]);
+
+/**
+ * Capitalised words in the middle of sentences that aren't anyone or anything the game
+ * knows — likely a new name. Only a hint: it makes the "someone new?" question more sensitive.
+ */
+export function newNames(text: string, known: string[]): string[] {
+  const knownWords = new Set(known.flatMap((n) => n.toLowerCase().split(/[^\p{L}\p{N}']+/u)).filter(Boolean));
+  const out = new Set<string>();
+  const re = /\p{Lu}\p{Ll}{2,}/gu;
+  for (const m of text.matchAll(re)) {
+    const before = text.slice(0, m.index).trimEnd();
+    const prev = before.slice(-1);
+    // Sentence starts are ambiguous ("Later, …"); only mid-sentence capitals count.
+    if (!before || /[.!?"“”*…(\-—:\n]/.test(prev)) continue;
+    const w = m[0].toLowerCase();
+    if (COMMON_CAPS.has(w) || knownWords.has(w)) continue;
+    out.add(m[0]);
+  }
+  return [...out];
+}
+
+/** Does the text mention this item? Its full name, its head noun ("hoodie"), or most of its words. */
+export function mentions(text: string, name: string): boolean {
+  const t = text.toLowerCase();
+  const n = name.toLowerCase().trim();
+  if (!n) return false;
+  if (t.includes(n)) return true;
+  const words = n.split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 3 && !["the", "and", "with", "for", "of"].includes(w));
+  if (!words.length) return false;
+  const has = (w: string) => new RegExp(`(^|[^\\p{L}])${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(s|es)?([^\\p{L}]|$)`, "u").test(t);
+  if (has(words[words.length - 1])) return true;
+  return words.filter(has).length * 2 >= words.length && words.length > 1;
+}
 
 function clip(s: string, n: number) {
   return s.length > n ? `…${s.slice(-n)}` : s;
@@ -44,6 +91,8 @@ export interface Reading {
   suggestion: (Intent & { label: string; confidence: number }) | null;
   confidence: number;
   scene: Record<string, boolean>;
+  /** An encounter the latest exchange is breaking into (and who the opponent is, when it's someone present). */
+  encounter?: { id: string; foe?: string };
 }
 
 const DIFFICULTY = [
@@ -63,16 +112,44 @@ export async function readTurn(opts: {
   const talking = !!activeSession(r, s) || !!s.job;
   const actions = playerText && !talking ? availableChoices(r, s, settings.lines) : [];
   const travel = playerText && !talking ? travelTargets(r, s) : [];
+  // Anything risky the list doesn't cover is still an attempt: it rolls on the closest ability.
+  const improv = !!playerText && !talking && r.improvise.enabled && !s.dungeon;
+  const approach = improv ? improvStats(r) : [];
 
-  if (playerText && (actions.length || travel.length)) {
+  if (playerText && (actions.length || travel.length || improv)) {
     const criteria: Record<string, string> = {
       [NONE]: "None of these: dialogue, thoughts, feelings, plans, questions, or something trivial that can't fail",
     };
     for (const c of actions) criteria[c.id] = `${c.label}${c.a.desc ? ` — ${c.a.desc}` : ""}`;
     for (const t of travel) criteria[`${TRAVEL_PREFIX}${t}`] = `Go to ${r.locations[t].name}`;
+    if (improv) criteria[ATTEMPT] = "Something else with a real chance of failing that matters to the story, not listed above (sneaking, persuading, lying, fighting, climbing, stealing, resisting, performing…)";
     q.action = { type: "choice", instructions: `Which of these does ${player}'s latest message actually attempt right now?`, criteria };
-    if (actions.some((c) => c.a.params.length)) {
+    if (improv || actions.some((c) => c.a.params.length)) {
       q.difficulty = { type: "score", instructions: `How hard is what ${player} is attempting, given the scene?`, criteria: DIFFICULTY };
+    }
+    if (approach.length > 1) {
+      q.approach = {
+        type: "choice",
+        instructions: `If ${player} is attempting something that could fail, which of ${player}'s abilities matters most for it?`,
+        criteria: Object.fromEntries(approach.map((id) => [id, `${r.stats[id].label}${r.stats[id].desc ? ` — ${r.stats[id].desc}` : ""}`])),
+      };
+    }
+  }
+  // Fights (and other encounters) can break out of the story itself.
+  const storyEnc = !s.encounter && !s.dungeon && !s.job && !s.ended ? Object.values(r.encounters).filter((x) => x.fromStory) : [];
+  const here = storyEnc.length ? presentPeople(r, s, makeEnv(r, s)) : [];
+  if (storyEnc.length) {
+    q.encounter = {
+      type: "choice",
+      instructions: `Is one of these actually breaking out right now, in the latest exchange (not just threatened, feared or talked about)?`,
+      criteria: { [NONE]: "No — nothing like this is starting right now", ...Object.fromEntries(storyEnc.map((x) => [`enc:${x.id}`, `${x.name}${x.desc ? ` — ${x.desc}` : ""}`])) },
+    };
+    if (here.length) {
+      q.opponent = {
+        type: "choice",
+        instructions: `If a confrontation is starting, who is ${player} up against?`,
+        criteria: { other: "Someone else, or no one in particular", ...Object.fromEntries(here.map((id) => [`p:${id}`, personName(r, s, id)])) },
+      };
     }
   }
   for (const t of r.triggers) {
@@ -102,6 +179,15 @@ export async function readTurn(opts: {
   }
 
   const out: Reading = { intent: null, suggestion: null, confidence: 0, scene };
+  const enc = ans.encounter;
+  if (enc?.type === "choice" && enc.choice.startsWith("enc:") && (enc.probabilities[enc.choice] ?? enc.confidence) >= ENCOUNTER_SURE) {
+    const id = enc.choice.slice(4);
+    if (storyEnc.some((x) => x.id === id)) {
+      const opp = ans.opponent;
+      const who = opp?.type === "choice" && opp.choice.startsWith("p:") && opp.confidence >= 0.5 ? opp.choice.slice(2) : null;
+      out.encounter = { id, ...(who && here.includes(who) ? { foe: personName(r, s, who) } : {}) };
+    }
+  }
   const act = ans.action;
   if (act?.type !== "choice" || act.choice === NONE) return out;
   const id = act.choice;
@@ -110,7 +196,15 @@ export async function readTurn(opts: {
 
   let intent: Intent | null = null;
   let label = id;
-  if (id.startsWith(TRAVEL_PREFIX)) {
+  if (id === ATTEMPT) {
+    if (!improv) return out;
+    const ap = ans.approach;
+    const stat = approach.length === 1 ? approach[0] : ap?.type === "choice" && approach.includes(ap.choice) ? ap.choice : approach[0] ?? "";
+    const level = ans.difficulty?.type === "score" ? ans.difficulty.score : 1;
+    const difficulty = DIFFICULTIES[Math.max(0, Math.min(DIFFICULTIES.length - 1, Math.round(level)))];
+    intent = { actionId: `${IMPROV}${stat}`, via: "adjudicator", params: { difficulty } };
+    label = `${stat ? r.stats[stat].label : "Luck"} check (${difficulty})`;
+  } else if (id.startsWith(TRAVEL_PREFIX)) {
     const to = id.slice(TRAVEL_PREFIX.length);
     if (!travel.includes(to)) return out;
     intent = { actionId: id, via: "adjudicator" };
@@ -267,6 +361,63 @@ export async function bookkeeping(opts: {
       q[`cloth:${slot}`] = { type: "noul", instructions: `By the end of the reply, ${player} no longer has their ${r.items[id]?.name ?? id} on (taken off, removed or lost)` };
     }
   }
+  // Who's in the scene: everyone here, anyone the reply mentions, and whoever was with {{user}} before a move.
+  const hereBefore = presentPeople(r, s, makeEnv(r, s));
+  const leftBehind = Object.entries(s.scene).filter(([id, v]) => v.here && s.people[id] && v.loc !== s.location && v.loc === s.lastLocation).map(([id]) => id);
+  const cast = [...new Set([...hereBefore, ...mentioned, ...leftBehind])].slice(0, 12);
+  for (const pid of cast) {
+    q[`here:${pid}`] = { type: "noul", instructions: `At the end of the reply, ${personName(r, s, pid)} is physically in the scene with ${player} (in the same place — not just mentioned, remembered, on the phone, or left behind)` };
+  }
+  // What happened to the things {{user}} has that the reply mentions.
+  const wornIds = new Set(Object.values(s.worn));
+  let itemQs = 0;
+  for (const [id, n] of Object.entries(s.items)) {
+    if (itemQs >= 8) break;
+    const name = itemName(r, s, id);
+    if (!mentions(opts.reply, name)) continue;
+    const def = r.items[id];
+    const per = def?.uses ?? 0;
+    const criteria: Record<string, string> = {
+      same: "Nothing happened to it — only mentioned, carried, held, or worn as before",
+      used: per > 0 ? `Used once (it has ${s.uses[id] ?? per} of ${per} uses left)` : "Used, but not used up — it's still there afterwards",
+      gone: `Used up, eaten, drunk, emptied, broken, given away, dropped, lost or taken — ${player} has one fewer${n > 1 ? ` (has ${n} now)` : ""}`,
+    };
+    if (def?.slot && !wornIds.has(id)) criteria.worn = `Put on — ${player} is wearing it by the end of the reply`;
+    q[`item:${id}`] = { type: "choice", instructions: `What happened to ${player}'s ${name} during the reply?`, criteria };
+    itemQs++;
+  }
+  // Practice the story describes makes skills grow too.
+  const growable = r.growth.enabled && r.growth.train ? r.statOrder.filter((id) => (r.stats[id].kind === "skill" || r.stats[id].kind === "attribute") && r.stats[id].growth > 0) : [];
+  if (growable.length) {
+    q.train = {
+      type: "choice",
+      instructions: `During the reply, did ${player} spend real effort practising, training, studying or rehearsing one of these?`,
+      criteria: { [NONE]: "No", ...Object.fromEntries(growable.map((id) => [id, `${r.stats[id].label}${r.stats[id].desc ? ` — ${r.stats[id].desc}` : ""}`])) },
+    };
+  }
+  // Fights the prose starts, or finishes.
+  const storyEnc = !s.encounter && !s.dungeon && !s.job ? Object.values(r.encounters).filter((x) => x.fromStory) : [];
+  if (storyEnc.length) {
+    q.encounter = {
+      type: "choice",
+      instructions: `At the end of the reply, has one of these actually broken out (not just threatened)?`,
+      criteria: { [NONE]: "No", ...Object.fromEntries(storyEnc.map((x) => [`enc:${x.id}`, `${x.name}${x.desc ? ` — ${x.desc}` : ""}`])) },
+    };
+    const people = [...new Set([...hereBefore, ...mentioned])];
+    if (people.length) q.opponent = { type: "choice", instructions: `If a confrontation broke out, who is ${player} up against?`, criteria: { other: "Someone else, or no one in particular", ...Object.fromEntries(people.map((id) => [`p:${id}`, personName(r, s, id)])) } };
+  } else if (s.encounter) {
+    const def = r.encounters[s.encounter.id];
+    const outcomes = [...new Set([...Object.keys(def?.outcomes ?? {}), ...(def?.momentum ? [def.momentum.win, def.momentum.lose] : [])])];
+    q.encounter_end = {
+      type: "choice",
+      instructions: `Is ${def?.name ?? "the encounter"} over by the end of the reply?`,
+      criteria: {
+        ongoing: "No — it's still going",
+        ...Object.fromEntries(outcomes.map((o) => [`end:${o}`, `Yes — it ended: ${o.replace(/_/g, " ")}`])),
+        "end:broke_off": "Yes — it stopped some other way (broken off, interrupted, talked down, escaped)",
+      },
+    };
+  }
   if (r.body.enabled && r.body.narrator) q["gate:body"] = { type: "noul", instructions: `${player}'s body changes during the reply (a transformation, new mark or tattoo, haircut or dye, a lasting injury…)` };
   if (r.peopleOpen) q["gate:people"] = { type: "noul", instructions: "The reply introduces a named character who wasn't in the game state before" };
   if (r.itemsOpen) q["gate:items"] = { type: "noul", instructions: `${player} gains, loses or uses up an item during the reply` };
@@ -303,6 +454,28 @@ export async function bookkeeping(opts: {
     ((p.rel ??= {})[personName(r, s, pid)] ??= {})[rs] = stepDelta(a.choice, r.relStats[rs].narrator);
   }
   if (confident(ans.move) && ans.move.choice !== "stay") p.move = ans.move.choice;
+  for (const pid of cast) {
+    const a = ans[`here:${pid}`];
+    if (a?.type !== "noul") continue;
+    if (a.noul >= 0.6) (p.scene ??= {})[pid] = true;
+    else if (a.noul <= 0.3) (p.scene ??= {})[pid] = false;
+  }
+  for (const [key, a] of Object.entries(ans)) {
+    if (!key.startsWith("item:") || !confident(a) || a.choice === "same") continue;
+    const id = key.slice(5);
+    if (a.choice === "used" && (r.items[id]?.uses ?? 0) > 0) (p.used ??= {})[id] = 1;
+    else if (a.choice === "gone") (p.items ??= {})[id] = -1;
+    else if (a.choice === "worn") (p.wear ??= []).push(id);
+  }
+  if (confident(ans.train) && ans.train.choice !== NONE && growable.includes(ans.train.choice)) p.train = [ans.train.choice];
+  const enc = ans.encounter;
+  if (enc?.type === "choice" && enc.choice.startsWith("enc:") && (enc.probabilities[enc.choice] ?? enc.confidence) >= ENCOUNTER_SURE) {
+    p.encounter = enc.choice.slice(4);
+    const opp = ans.opponent;
+    if (opp?.type === "choice" && opp.choice.startsWith("p:") && opp.confidence >= 0.5) p.foe = personName(r, s, opp.choice.slice(2));
+  }
+  const over = ans.encounter_end;
+  if (over?.type === "choice" && over.choice.startsWith("end:") && (over.probabilities[over.choice] ?? over.confidence) >= ENCOUNTER_OVER) p.encounterEnd = over.choice.slice(4);
   for (const c of Object.values(r.conditions)) {
     const a = ans[`cond:${c.id}`];
     if (a?.type !== "noul" || noulConfidence(a.noul) < 0.4) continue;
@@ -319,9 +492,12 @@ export async function bookkeeping(opts: {
     if (a?.type === "noul" && a.noul >= 0.7) (p.undress ??= []).push(slot);
   }
   const needsWriting = new Set<"people" | "items" | "move" | "body">();
+  // A name nobody knows in the middle of a sentence makes "someone new?" easier to say yes to.
+  const known = [player, ...Object.values(s.people).map((x) => x.name), ...Object.values(r.locations).map((l) => l.name), s.locationName ?? "", ...Object.keys(s.items).map((id) => itemName(r, s, id))];
+  const peopleBar = newNames(opts.reply, known).length ? 0.35 : 0.6;
   for (const g of ["people", "items", "move", "body"] as const) {
     const a = ans[`gate:${g}`];
-    if (a?.type === "noul" && a.noul >= 0.6) needsWriting.add(g);
+    if (a?.type === "noul" && a.noul >= (g === "people" ? peopleBar : 0.6)) needsWriting.add(g);
   }
   return { proposal: p, needsWriting };
 }

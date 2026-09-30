@@ -295,6 +295,37 @@ function evalBool(src, env, fallback = true, opts = {}) {
     return fallback;
   return truthy(evaluate(src, env, opts));
 }
+function identifiers(src) {
+  if (typeof src !== "string")
+    return [];
+  const out = new Set;
+  const walk = (n) => {
+    switch (n.k) {
+      case "id":
+        n.path.forEach((p) => out.add(p));
+        break;
+      case "call":
+        n.args.forEach(walk);
+        break;
+      case "un":
+        walk(n.a);
+        break;
+      case "bin":
+        walk(n.a);
+        walk(n.b);
+        break;
+      case "tern":
+        walk(n.c);
+        walk(n.a);
+        walk(n.b);
+        break;
+    }
+  };
+  try {
+    walk(compile(src));
+  } catch {}
+  return [...out];
+}
 var ExprError, OPS, BP, cache, MATH;
 var init_expr = __esm(() => {
   ExprError = class ExprError extends Error {
@@ -1020,6 +1051,7 @@ function defaultRelStat(id, kind) {
     perHour: 0,
     show: "text",
     narrator: 5,
+    growth: 0,
     bands: love ? [{ at: 0, text: "Indifferent", tone: "neutral" }, { at: 20, text: "Fond", tone: "warn" }, { at: 50, text: "Smitten", tone: "good" }, { at: 80, text: "In love", tone: "good" }] : [{ at: 0, text: "At ease", tone: "good" }, { at: 30, text: "Wary", tone: "warn" }, { at: 60, text: "Afraid", tone: "bad" }]
   };
 }
@@ -1389,12 +1421,15 @@ function normStat(id, raw, where, c, forRel = false) {
     show: k === "hidden" ? "hidden" : show,
     narrator,
     ...gate ? { gate } : {},
+    growth: 0,
     bands: normBands(r.bands, good, `${where} › bands`, c),
     color: typeof r.color === "string" ? r.color : undefined,
     desc: typeof r.desc === "string" ? r.desc : typeof r.description === "string" ? r.description : undefined
   };
   if (Array.isArray(r.grades) && r.grades.length)
     def.grades = r.grades.map(String);
+  const grows = k === "skill" || k === "attribute";
+  def.growth = r.growth === false ? 0 : r.growth === true ? 1 : r.growth !== undefined ? Math.max(0, c.num(r.growth, `${where} › growth`, grows ? 1 : 0)) : grows ? 1 : 0;
   return def;
 }
 function emptyEffect() {
@@ -1963,7 +1998,8 @@ function normEncounter(id, raw, c, known) {
     endWhen,
     outcomes,
     start: normEffect(startRaw, `${w} › start`, c, known),
-    momentum
+    momentum,
+    fromStory: raw.from_story !== false
   };
 }
 function normSecrets(raw, c) {
@@ -2463,6 +2499,64 @@ function normObservers(raw, c, known) {
   }
   return def;
 }
+function normImprovise(raw, c, known, stats, order) {
+  const usable = order.filter((id) => stats[id].kind === "skill" || stats[id].kind === "attribute");
+  const def = { enabled: true, dc: { easy: 8, fair: 12, hard: 16, extreme: 20 }, bonus: 10, partial: 3, stats: usable, outcomes: {} };
+  if (raw === undefined || raw === true)
+    return def;
+  if (raw === false)
+    return { ...def, enabled: false };
+  if (!isObj(raw)) {
+    c.warn("Improvise", "expected `improvise: false` or a map of settings");
+    return def;
+  }
+  if (raw.enabled === false)
+    def.enabled = false;
+  if (isObj(raw.dc)) {
+    for (const d of DIFFICULTIES)
+      if (raw.dc[d] !== undefined)
+        def.dc[d] = c.num(raw.dc[d], `Improvise › dc › ${d}`, def.dc[d]);
+  }
+  def.bonus = c.num(raw.bonus, "Improvise › bonus", 10);
+  def.partial = Math.max(0, c.num(raw.partial, "Improvise › partial", 3));
+  if (raw.stats !== undefined) {
+    const want = list(raw.stats);
+    for (const id of want)
+      if (!stats[id])
+        c.warn("Improvise › stats", `"${id}" isn't a stat`);
+    def.stats = want.filter((id) => stats[id]);
+  }
+  if (raw.time !== undefined)
+    def.time = Math.max(0, c.num(raw.time, "Improvise › time", 10));
+  if (isObj(raw.outcomes))
+    for (const [k, v] of Object.entries(raw.outcomes)) {
+      const tier = TIER_KEYS[k];
+      if (tier)
+        def.outcomes[tier] = normEffect(v, `Improvise › outcomes › ${k}`, c, known);
+      else
+        c.warn(`Improvise › outcomes › ${k}`, "tiers are crit_success, success, partial, fail, crit_fail");
+    }
+  return def;
+}
+function normGrowth(raw, c) {
+  const def = { enabled: true, rate: 1, attributes: 0.5, train: true };
+  if (raw === undefined || raw === true)
+    return def;
+  if (raw === false)
+    return { ...def, enabled: false };
+  if (typeof raw === "number")
+    return { ...def, rate: Math.max(0, raw), enabled: raw > 0 };
+  if (!isObj(raw)) {
+    c.warn("Growth", "expected `growth: false`, a speed, or a map of settings");
+    return def;
+  }
+  if (raw.enabled === false)
+    def.enabled = false;
+  def.rate = Math.max(0, c.num(raw.rate, "Growth › rate", 1));
+  def.attributes = Math.max(0, c.num(raw.attributes, "Growth › attributes", 0.5));
+  def.train = raw.train !== false;
+  return def;
+}
 function normDiscovery(raw, c) {
   const def = { enabled: false, at: [], chance: 25, max: 12, time: 60, label: "Explore around here" };
   if (raw === undefined || raw === false)
@@ -2553,7 +2647,8 @@ function normalizeRuleset(raw) {
       warmth: c.num(r.warmth, `${w} › warmth`, 0),
       integrity: Math.max(1, c.num(r.integrity, `${w} › integrity`, 100)),
       reveal: c.num(r.reveal, `${w} › reveal`, 0),
-      traits: list(r.traits).map((t) => t.toLowerCase())
+      traits: list(r.traits).map((t) => t.toLowerCase()),
+      uses: Math.max(0, Math.round(c.num(r.uses ?? r.charges, `${w} › uses`, list(r.tags).map((t) => t.toLowerCase()).includes("consumable") ? 1 : 0)))
     };
   }
   const locations = {};
@@ -2757,6 +2852,8 @@ function normalizeRuleset(raw) {
   const jobs = normJobs(raw.jobs, c, known);
   const observers = normObservers(raw.observers ?? raw.being_seen, c, known);
   const discovery = normDiscovery(raw.discovery, c);
+  const improvise = normImprovise(raw.improvise ?? raw.improvised, c, known, stats, statOrder);
+  const growth = normGrowth(raw.growth ?? raw.practice, c);
   const ruleset = {
     name: typeof raw.name === "string" ? raw.name : "Untitled ruleset",
     description: typeof raw.description === "string" ? raw.description : undefined,
@@ -2815,7 +2912,9 @@ function normalizeRuleset(raw) {
     obligations,
     jobs,
     observers,
-    discovery
+    discovery,
+    improvise,
+    growth
   };
   for (const p of Object.values(people))
     for (const e of p.schedule) {
@@ -2843,13 +2942,14 @@ function normalizeRuleset(raw) {
   }
   return { ruleset, issues: c.issues };
 }
-var SEEN_REACTIONS, isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v), DEFAULT_WEEKDAYS, KIND_ALIASES, list = (v) => Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : [], TIER_KEYS, MONTHS, DEFAULT_WEATHER, DEFAULT_SLOTS, KEEP_FLAGS, KEEP_LISTS, CHILD_NAMES, SEXUAL_TAGS;
+var SEEN_REACTIONS, DIFFICULTIES, isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v), DEFAULT_WEEKDAYS, KIND_ALIASES, list = (v) => Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : [], TIER_KEYS, MONTHS, DEFAULT_WEATHER, DEFAULT_SLOTS, KEEP_FLAGS, KEEP_LISTS, CHILD_NAMES, SEXUAL_TAGS;
 var init_ruleset = __esm(() => {
   init_expr();
   init_dice();
   init_defs();
   init_defs2();
   SEEN_REACTIONS = ["unnoticed", "glance", "interested", "disapproving", "predatory"];
+  DIFFICULTIES = ["easy", "fair", "hard", "extreme"];
   DEFAULT_WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   KIND_ALIASES = {
     meter: "meter",
@@ -3055,17 +3155,33 @@ function personLocation(r, s, id, env) {
       return e.at;
   return null;
 }
-function presentPeople(r, s, env) {
-  if (!s.location)
-    return [];
-  return Object.keys(r.people).filter((id) => !s.forgotten[id] && personLocation(r, s, id, env) === s.location);
+function sceneWord(s, id) {
+  const w = s.scene?.[id];
+  return w && w.loc === s.location && s.minutes - w.at <= SCENE_HOLDS ? w.here : null;
 }
-var MONTH_NAMES, MONTH_DAYS;
+function presentPeople(r, s, env) {
+  const out = [];
+  for (const id of Object.keys(s.people)) {
+    if (s.forgotten[id])
+      continue;
+    const word = sceneWord(s, id);
+    if (word !== null) {
+      if (word)
+        out.push(id);
+      continue;
+    }
+    if (s.location && personLocation(r, s, id, env) === s.location)
+      out.push(id);
+  }
+  return out;
+}
+var MONTH_NAMES, MONTH_DAYS, SCENE_HOLDS;
 var init_world = __esm(() => {
   init_dice();
   init_expr();
   MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   MONTH_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  SCENE_HOLDS = 6 * 60;
 });
 
 // src/engine/state.ts
@@ -3121,7 +3237,11 @@ function initialState(r) {
     job: null,
     seen: {},
     explored: {},
-    discovered: []
+    discovered: [],
+    practice: {},
+    scene: {},
+    lastLocation: null,
+    uses: {}
   };
   for (const o of Object.values(r.obligations)) {
     const owed = typeof o.amount === "number" ? o.amount : evalNumber(o.amount, makeEnv(r, s), 0);
@@ -3154,6 +3274,11 @@ function initialState(r) {
   }
   return s;
 }
+function foeName(r, s) {
+  if (!s.encounter)
+    return "Opponent";
+  return s.encounter.foeName ?? r.encounters[s.encounter.id]?.foe.name ?? "Opponent";
+}
 function statMax(r, def, s) {
   if (!def.maxExpr)
     return def.max;
@@ -3183,6 +3308,11 @@ function applyEvent(s, e, r) {
           if (id === e.id)
             delete s.worn[slot];
         delete s.integrity[e.id];
+        if (s.uses[e.id] !== undefined) {
+          const u = { ...s.uses };
+          delete u[e.id];
+          s.uses = u;
+        }
       } else
         s.items[e.id] = n;
       if (e.name && !r.items[e.id])
@@ -3225,7 +3355,7 @@ function applyEvent(s, e, r) {
       break;
     }
     case "enc":
-      s.encounter = e.id ? { id: e.id, round: 0, foe: { ...e.foe ?? {} }, ...e.momentum !== undefined ? { momentum: e.momentum } : {} } : null;
+      s.encounter = e.id ? { id: e.id, round: 0, foe: { ...e.foe ?? {} }, ...e.momentum !== undefined ? { momentum: e.momentum } : {}, ...e.foeName ? { foeName: e.foeName } : {} } : null;
       break;
     case "swing":
       if (s.encounter && s.encounter.momentum !== undefined)
@@ -3257,6 +3387,11 @@ function applyEvent(s, e, r) {
       s.calibrated[e.who] = true;
       break;
     case "forget":
+      if (s.scene[e.who]) {
+        const sc = { ...s.scene };
+        delete sc[e.who];
+        s.scene = sc;
+      }
       delete s.people[e.who];
       delete s.rel[e.who];
       delete s.calibrated[e.who];
@@ -3284,9 +3419,44 @@ function applyEvent(s, e, r) {
       break;
     }
     case "move":
+      if (e.to !== s.location)
+        s.lastLocation = s.location;
       s.location = e.to;
       s.locationName = r.locations[e.to]?.name ?? e.name ?? e.to;
       break;
+    case "practice":
+      s.practice = { ...s.practice, [e.id]: Math.max(0, (s.practice[e.id] ?? 0) + e.d) };
+      break;
+    case "scene":
+      s.scene = { ...s.scene, [e.who]: { here: e.here, loc: s.location, at: s.minutes } };
+      break;
+    case "use": {
+      const per = r.items[e.id]?.uses ?? 0;
+      let have = s.items[e.id] ?? 0;
+      if (per <= 0 || have <= 0 || e.n <= 0)
+        break;
+      let left = (s.uses[e.id] ?? per) - e.n;
+      while (left <= 0 && have > 0) {
+        have -= 1;
+        left += per;
+      }
+      const uses = { ...s.uses };
+      if (have <= 0) {
+        delete s.items[e.id];
+        for (const [slot, id] of Object.entries(s.worn))
+          if (id === e.id)
+            delete s.worn[slot];
+        delete uses[e.id];
+      } else {
+        s.items[e.id] = have;
+        if (left >= per)
+          delete uses[e.id];
+        else
+          uses[e.id] = left;
+      }
+      s.uses = uses;
+      break;
+    }
     case "time":
       s.minutes += Math.max(0, e.min);
       break;
@@ -3493,6 +3663,10 @@ function snapshotOf(s) {
 function rewind(r, s, base, keep) {
   const from = structuredClone(s);
   const next = structuredClone(base);
+  const fresh = initialState(r);
+  for (const [k, v] of Object.entries(fresh))
+    if (next[k] === undefined)
+      next[k] = v;
   if (keep.codex)
     next.codex = { ...next.codex, ...from.codex };
   if (keep.feats)
@@ -3859,6 +4033,126 @@ var init_state = __esm(() => {
   ];
 });
 
+// src/engine/freeform.ts
+function improvStats(r) {
+  return r.improvise.stats.filter((id) => r.stats[id]);
+}
+function isDifficulty(v) {
+  return typeof v === "string" && DIFFICULTIES.includes(v);
+}
+function position(r, s, stat) {
+  const def = r.stats[stat];
+  const max = statMax(r, def, s);
+  const v = s.stats[stat] ?? def.start;
+  return max > def.min ? Math.max(0, Math.min(1, (v - def.min) / (max - def.min))) : 0;
+}
+function improvBonus(r, s, stat) {
+  return r.stats[stat] ? Math.round(position(r, s, stat) * r.improvise.bonus) : 0;
+}
+function improvAction(r, s, actionId) {
+  if (!r.improvise.enabled || !actionId.startsWith(IMPROV))
+    return null;
+  const stat = actionId.slice(IMPROV.length);
+  if (stat && !r.stats[stat])
+    return null;
+  const label = stat ? r.stats[stat].label : "Luck";
+  return {
+    id: actionId,
+    label: `Attempt (${label})`,
+    at: [],
+    hidden: true,
+    ...r.improvise.time !== undefined ? { time: r.improvise.time } : {},
+    cost: emptyEffect(),
+    check: { style: "vs", dice: "d20", target: "difficulty", add: stat ? improvBonus(r, s, stat) : 0, partialMargin: r.improvise.partial, label, crits: true },
+    outcomes: r.improvise.outcomes,
+    effects: emptyEffect(),
+    params: [{ id: "difficulty", label: "Difficulty", options: Object.fromEntries(DIFFICULTIES.map((d) => [d, r.improvise.dc[d]])), default: "fair" }],
+    tags: ["improvised"],
+    order: 0,
+    perPerson: false
+  };
+}
+function checkStats(r, a) {
+  if (a.id.startsWith(IMPROV)) {
+    const st = a.id.slice(IMPROV.length);
+    return st && r.stats[st] ? [st] : [];
+  }
+  if (!a.check)
+    return [];
+  const names = new Set([...identifiers(a.check.add), ...identifiers(a.check.target)]);
+  return r.statOrder.filter((id) => names.has(id) && (r.stats[id].kind === "skill" || r.stats[id].kind === "attribute"));
+}
+function practiceGain(r, s, stat, hardness, learn) {
+  const def = r.stats[stat];
+  if (!def || !r.growth.enabled || def.growth <= 0)
+    return 0;
+  const max = statMax(r, def, s);
+  if ((s.stats[stat] ?? def.start) >= max)
+    return 0;
+  const kind = def.kind === "attribute" ? r.growth.attributes : 1;
+  return (max - def.min) * 0.02 * r.growth.rate * def.growth * kind * hardness * learn * (1 - 0.6 * position(r, s, stat));
+}
+function hardnessFrom(success, difficulty) {
+  if (isDifficulty(difficulty))
+    return HARDNESS[difficulty];
+  return success === null ? 1 : 0.5 + 1.5 * (1 - Math.max(0, Math.min(1, success)));
+}
+function checkGains(r, s, stats, hardness, tier) {
+  const out = {};
+  for (const id of stats) {
+    const g = practiceGain(r, s, id, hardness, LEARN[tier]);
+    if (g > 0)
+      out[id] = g;
+  }
+  return out;
+}
+function trainingGain(r, s, stat, minutes) {
+  if (!r.growth.train)
+    return 0;
+  const hours = Math.max(0.5, Math.min(4, (minutes ?? 60) / 60));
+  return practiceGain(r, s, stat, 1, 1.5 * hours);
+}
+function practise(t, gains, why) {
+  for (const [id, g] of Object.entries(gains)) {
+    const def = t.r.stats[id];
+    if (!def || !(g > 0))
+      continue;
+    const pool = (t.s.practice[id] ?? 0) + g;
+    const room = Math.max(0, statMax(t.r, def, t.s) - (t.s.stats[id] ?? def.start));
+    const up = Math.min(Math.floor(pool), Math.floor(room));
+    const left = room - up < 1 ? 0 : pool - up;
+    const d = left - (t.s.practice[id] ?? 0);
+    if (Math.abs(d) > 0.000000001)
+      t.push({ t: "practice", id, d, src: "check", why });
+    if (up > 0)
+      t.push({ t: "stat", id, d: up, src: "check", why: `${why} — ${def.label} improved with practice` });
+  }
+}
+function practiceProgress(r, s, stat) {
+  const def = r.stats[stat];
+  if (!def || !r.growth.enabled || def.growth <= 0)
+    return null;
+  if ((s.stats[stat] ?? def.start) >= statMax(r, def, s))
+    return null;
+  return Math.max(0, Math.min(0.999, s.practice[stat] ?? 0));
+}
+var IMPROV = "try:", DIFFICULTY_WORD, HARDNESS, LEARN, IMPROV_DIRECTION;
+var init_freeform = __esm(() => {
+  init_expr();
+  init_ruleset();
+  init_state();
+  DIFFICULTY_WORD = { easy: "easy", fair: "a fair challenge", hard: "hard", extreme: "extreme" };
+  HARDNESS = { easy: 0.5, fair: 1, hard: 1.5, extreme: 2 };
+  LEARN = { crit_success: 1.2, success: 1, partial: 1, fail: 0.7, crit_fail: 0.5 };
+  IMPROV_DIRECTION = {
+    crit_success: "It goes better than {{user}} could have hoped — a clean success with something extra.",
+    success: "It works.",
+    partial: "It works, but not cleanly — add a cost, a complication or a price.",
+    fail: "It doesn't work. Show the failure and a consequence that makes things harder.",
+    crit_fail: "It goes badly wrong — a failure that costs {{user}} something real."
+  };
+});
+
 // src/engine/chronicle.ts
 function runSummary(r, s) {
   const lines = [];
@@ -3931,7 +4225,7 @@ function dateCandidates(r, s) {
   if (!r.dating.enabled || s.dungeon || s.encounter || activeSession(r, s))
     return [];
   const here = new Set(presentPeople(r, s, makeEnv(r, s)));
-  return Object.keys(s.people).filter((id) => (here.has(id) || r.people[id] && !r.people[id].schedule.length) && canTalkTo(r, s, id));
+  return Object.keys(s.people).filter((id) => (here.has(id) || r.people[id] && !r.people[id].schedule.length && sceneWord(s, id) === null) && canTalkTo(r, s, id));
 }
 function talkablePeople(r, s) {
   if (!r.dating.enabled || s.dungeon || s.encounter)
@@ -5003,6 +5297,10 @@ function availableChoices(r, s, lines = []) {
 }
 function findAction(r, s, actionId) {
   const [base, target] = actionId.split(TARGET_SEP);
+  if (base.startsWith(IMPROV)) {
+    const a = improvAction(r, s, base);
+    return a ? { a } : null;
+  }
   const a = base.startsWith(LIVE_PREFIX) ? r.liveChoices.tags[base.slice(LIVE_PREFIX.length)] : actionPool(r, s).defs[base];
   return a ? { a, ...target ? { target } : {} } : null;
 }
@@ -5627,13 +5925,13 @@ function runOp(r, before, op) {
   runTriggers(w, false);
   return w.events;
 }
-function startEncounter(w, id, src) {
+function startEncounter(w, id, src, opponent) {
   const enc = w.r.encounters[id];
   if (!enc)
     return;
   const foe = Object.fromEntries(enc.foe.stats.map((s) => [s.id, s.start]));
-  w.push({ t: "enc", id, foe, ...enc.momentum ? { momentum: enc.momentum.start } : {}, src });
-  announce(w, `An encounter begins: ${enc.name}${enc.desc ? ` — ${enc.desc}` : ""}. Opponent: ${enc.foe.name}.`);
+  w.push({ t: "enc", id, foe, ...enc.momentum ? { momentum: enc.momentum.start } : {}, ...opponent ? { foeName: opponent } : {}, src });
+  announce(w, `An encounter begins: ${enc.name}${enc.desc ? ` — ${enc.desc}` : ""}. Opponent: ${opponent ?? enc.foe.name}.`);
   because(w, `${enc.name} begins`, () => effectToEvents(w, enc.start, src, {}));
 }
 function encounterOutcome(w) {
@@ -5701,7 +5999,7 @@ function beatSheet(w, before, rec, playerText) {
   const enc = before.encounter ? w.r.encounters[before.encounter.id] : undefined;
   if (!enc?.momentum || before.encounter?.momentum === undefined)
     return;
-  const foe = enc.foe.name;
+  const foe = foeName(w.r, before);
   const beats = [];
   const typed = (playerText ?? "").trim();
   const mine = rec.action ? `${rec.action.label}${rec.check ? ` — ${TIER_LABEL[rec.check.tier].toLowerCase()}` : ""}` : "no clear move";
@@ -5830,6 +6128,14 @@ function resolveInner(r, before, intent, opts, needs) {
     w.push({ t: "end_told", src: "world" });
     rec.action = { id: RUN_EPILOGUE, label: `The end: ${e?.title ?? "the story ends"}`, via: intent?.via ?? "choice" };
   }
+  let encBase = before;
+  if (opts.encounter && !before.encounter && !before.dungeon && !before.job && !before.ended) {
+    const enc = r.encounters[opts.encounter.id];
+    if (enc?.fromStory) {
+      because(w, `The scene: ${enc.name} breaks out`, () => startEncounter(w, enc.id, "trigger", opts.encounter.foe));
+      encBase = cloneState(w.s);
+    }
+  }
   let found = intent && !intent.actionId.startsWith(TRAVEL_PREFIX) && !intent.actionId.startsWith(DATE_PREFIX) && !intent.actionId.startsWith(PAY_PREFIX) && !intent.actionId.startsWith(JOB_PREFIX) ? findAction(r, before, intent.actionId) : null;
   let mind = found ? mindOverride(r, before, found.a, found.target, opts.seed) : null;
   const meant = found ? found.target ? `${found.a.label} (${personName(r, before, found.target)})` : intent.label ?? found.a.label : "";
@@ -5841,7 +6147,8 @@ function resolveInner(r, before, intent, opts, needs) {
       mind = null;
   }
   const a = found?.a;
-  const inEncounter = !!before.encounter;
+  const inEncounter = !!encBase.encounter;
+  const improvised = !!a && a.id.startsWith(IMPROV);
   const dateIntent = intent?.actionId.startsWith(DATE_PREFIX) ? intent : activeSession(r, before) && !intent && !before.job ? { actionId: `${DATE_PREFIX}say`, via: "adjudicator" } : null;
   const workIntent = intent && (intent.actionId.startsWith(PAY_PREFIX) || intent.actionId.startsWith(JOB_PREFIX)) ? intent : before.job && !intent ? { actionId: `${JOB_PREFIX}say`, via: "adjudicator" } : null;
   if (before.date && !activeSession(r, before))
@@ -5889,7 +6196,8 @@ function resolveInner(r, before, intent, opts, needs) {
     const who = found?.target;
     const extra = paramValues(a, intent.params, who);
     const own = mind?.kind === "redirect" ? who ? `${a.label} (${personName(r, before, who)})` : a.label : null;
-    const label = own ?? intent.label ?? (who ? `${a.label} (${personName(r, before, who)})` : a.label);
+    const difficulty = improvised && isDifficulty(intent.params?.difficulty) ? intent.params.difficulty : "fair";
+    const label = improvised ? `Attempt: ${a.check?.label ?? "luck"}, ${difficulty}` : own ?? intent.label ?? (who ? `${a.label} (${personName(r, before, who)})` : a.label);
     rec.action = { id: mind?.kind === "redirect" ? `${a.id}${who ? `${TARGET_SEP}${who}` : ""}` : intent.actionId, label, via: intent.via, ...a.params.length ? { params: Object.fromEntries(a.params.map((p) => [p.id, intent.params?.[p.id] ?? p.default])) } : {} };
     if (mind) {
       rec.mind = { id: mind.id, cause: mind.cause, kind: mind.kind, meant, chance: mind.chance };
@@ -5921,27 +6229,36 @@ function resolveInner(r, before, intent, opts, needs) {
       const key = TIER_FALLBACK[tier].find((t) => a.outcomes[t]);
       if (key)
         because(w, `"${label}": ${rec.check.label} rolled ${rec.check.total}${target !== null ? ` vs ${target}` : ""} → ${TIER_LABEL[tier]}`, () => effectToEvents(w, a.outcomes[key], "check", extra));
-      if (tier === "partial" && key === "success")
+      if (improvised) {
+        w.hints.push(`{{user}} attempts what they wrote (${a.check.label}, ${DIFFICULTY_WORD[difficulty]}). ${IMPROV_DIRECTION[tier]} Keep {{user}}'s own words and choices; the dice decide only how it turns out.`);
+      } else if (tier === "partial" && key === "success")
         w.hints.push("It works, but not cleanly — introduce a cost or complication.");
+      const used = checkStats(r, a);
+      if (used.length) {
+        const hard = hardnessFrom(improvised ? null : odds(r, before, a, intent.params, who)?.success ?? null, improvised ? difficulty : undefined);
+        const gains = checkGains(r, w.s, used, hard, tier);
+        if (Object.keys(gains).length)
+          practise(builderOf(w), gains, `Used in "${label}" (${TIER_LABEL[tier].toLowerCase()})`);
+      }
     } else {
       because(w, `"${label}"`, () => effectToEvents(w, a.effects, "action", extra));
     }
     advanceTime(w, a.time ?? (inEncounter ? 1 : r.clock.minutesPerAction), "action");
     const veils = new Set((opts.veils ?? []).map((v) => v.toLowerCase()));
-    const encTags = inEncounter ? r.encounters[before.encounter.id]?.tags ?? [] : [];
+    const encTags = inEncounter ? r.encounters[encBase.encounter.id]?.tags ?? [] : [];
     if ([...a.tags, ...encTags].some((t) => veils.has(t)))
       rec.veiled = true;
     if (inEncounter) {
       const tier = rec.check?.tier ?? (rec.mind?.kind === "fail" ? "fail" : null);
-      const m = r.encounters[before.encounter.id]?.momentum;
+      const m = r.encounters[encBase.encounter.id]?.momentum;
       if (m && tier && w.s.encounter?.momentum !== undefined)
         w.push({ t: "swing", d: m.swing[tier], src: "check" });
       encounterRound(w, "action");
-      beatSheet(w, before, rec, opts.playerText);
+      beatSheet(w, encBase, rec, opts.playerText);
     }
   } else if (inEncounter && w.s.encounter) {
     encounterRound(w, "action");
-    beatSheet(w, before, rec, opts.playerText);
+    beatSheet(w, encBase, rec, opts.playerText);
   }
   runTriggers(w, true);
   const days = r.clock.enabled ? (w.s.minutes - before.minutes) / 1440 : 1;
@@ -5997,32 +6314,42 @@ function clampAbs(v, lim) {
   return Math.max(-lim, Math.min(lim, v));
 }
 function findPerson(r, s, key) {
-  const k = key.toLowerCase();
+  const k = String(key).trim().toLowerCase();
+  if (!k)
+    return null;
+  const sl = slug(k);
   for (const [id, p] of Object.entries(s.people))
-    if (id === k || p.name.toLowerCase() === k)
+    if (id === k || id === sl || p.name.toLowerCase() === k)
       return id;
   for (const p of Object.values(r.people))
-    if (p.id === k || p.name.toLowerCase() === k)
+    if (p.id === k || p.id === sl || p.name.toLowerCase() === k)
       return p.id;
-  return null;
+  const first = (n) => n.toLowerCase().split(/\s+/)[0];
+  const hits = Object.entries(s.people).filter(([, p]) => first(p.name) === first(k));
+  return hits.length === 1 ? hits[0][0] : null;
 }
 function applyProposal(r, before, p, ctx) {
   const w = new Working(r, cloneState(before), seededRng(`narrator:${before.turn}`));
   w.cause = "Read from the story";
   const src = "narrator";
+  const scene = {};
   for (const person of p.people ?? []) {
-    if (!person?.name || !r.peopleOpen)
+    if (!person?.name)
       continue;
     const known = findPerson(r, w.s, person.name);
     if (known) {
       if (person.feelings)
         calibrate(w, known, person.feelings, src);
+      scene[known] = true;
       continue;
     }
+    if (!r.peopleOpen)
+      continue;
     const id = slug(person.id || person.name);
     if (!w.s.people[id])
       w.push({ t: "person", id, name: person.name, src });
     calibrate(w, id, person.feelings ?? {}, src);
+    scene[id] = true;
   }
   for (const [who, feelings] of Object.entries(p.feelings ?? {})) {
     const id = findPerson(r, w.s, who);
@@ -6071,6 +6398,14 @@ function applyProposal(r, before, p, ctx) {
     if (n < 0 && !(w.s.items[id] > 0))
       continue;
     w.push({ t: "item", id, d: n, ...declared ? {} : { name: key }, src });
+  }
+  for (const [key, n] of Object.entries(p.used ?? {})) {
+    if (typeof n !== "number" || !Number.isFinite(n) || n <= 0)
+      continue;
+    const k = key.toLowerCase();
+    const id = Object.keys(w.s.items).find((i) => i === k || itemName(r, w.s, i).toLowerCase() === k);
+    if (id && (r.items[id]?.uses ?? 0) > 0)
+      w.push({ t: "use", id, n: Math.min(10, Math.round(n)), src });
   }
   if (p.move) {
     const k = p.move.toLowerCase();
@@ -6126,6 +6461,41 @@ function applyProposal(r, before, p, ctx) {
   }
   if (typeof p.minutes === "number" && Number.isFinite(p.minutes) && p.minutes > 0) {
     advanceTime(w, Math.round(Math.min(p.minutes, r.clock.narratorMax)), src);
+  }
+  for (const [who, here] of Object.entries(p.scene ?? {})) {
+    const id = findPerson(r, w.s, who);
+    if (id && typeof here === "boolean")
+      scene[id] = here;
+  }
+  const hereNow = new Set(presentPeople(r, w.s, w.env()));
+  for (const [id, here] of Object.entries(scene)) {
+    if (!w.s.people[id])
+      continue;
+    const word = w.s.scene[id];
+    if (hereNow.has(id) !== here)
+      w.push({ t: "scene", who: id, here, src });
+    else if (here && word && sceneWord(w.s, id) !== null && w.s.minutes - word.at > SCENE_HOLDS / 3)
+      w.push({ t: "scene", who: id, here, src, note: "renew" });
+  }
+  if (p.encounter && !w.s.encounter && !w.s.dungeon && !w.s.job) {
+    const k = String(p.encounter).toLowerCase();
+    const enc = r.encounters[k] ?? Object.values(r.encounters).find((x) => x.name.toLowerCase() === k);
+    if (enc?.fromStory)
+      because(w, `${enc.name} broke out`, () => startEncounter(w, enc.id, src, typeof p.foe === "string" && p.foe.trim() ? p.foe.trim().slice(0, 60) : undefined));
+  } else if (p.encounterEnd && w.s.encounter) {
+    const name = r.encounters[w.s.encounter.id]?.name ?? "The encounter";
+    because(w, `${name} ended`, () => endEncounter(w, slug(String(p.encounterEnd)), src));
+  }
+  if (r.growth.enabled && r.growth.train) {
+    const gains = {};
+    for (const key of (Array.isArray(p.train) ? p.train : []).slice(0, 2)) {
+      const k = String(key).toLowerCase();
+      const id = r.statOrder.find((s) => s === k || r.stats[s].label.toLowerCase() === k);
+      if (id && (r.stats[id].kind === "skill" || r.stats[id].kind === "attribute"))
+        gains[id] = (gains[id] ?? 0) + trainingGain(r, w.s, id, p.minutes);
+    }
+    if (Object.keys(gains).length)
+      practise(builderOf(w), gains, "Practice the story described");
   }
   w.cause = null;
   runTriggers(w, false);
@@ -6282,6 +6652,7 @@ var init_resolve = __esm(() => {
   init_ruleset();
   init_ruleset();
   init_state();
+  init_freeform();
   init_chronicle();
   init_world();
   init_types2();
@@ -12997,7 +13368,8 @@ function buildHud(r, s) {
       pct: pct(v, def.min, max),
       kind: def.kind,
       text: band?.text ?? null,
-      tone: band?.tone ?? "neutral"
+      tone: band?.tone ?? "neutral",
+      practice: practiceProgress(r, s, id)
     };
   });
   const env = makeEnv(r, s);
@@ -13034,7 +13406,10 @@ function buildHud(r, s) {
       worn: wornIds.has(id)
     };
   };
-  const items = Object.entries(s.items).map(([id, count]) => ({ id, name: itemName(r, s, id), count, worn: wornIds.has(id) }));
+  const items = Object.entries(s.items).map(([id, count]) => {
+    const per = r.items[id]?.uses ?? 0;
+    return { id, name: itemName(r, s, id), count, worn: wornIds.has(id), uses: per > 1 ? `${s.uses[id] ?? per}/${per}` : null };
+  });
   const clothing = Object.keys(s.items).filter((id) => r.items[id]?.slot).map(clothingView);
   const outfit = r.wardrobe.enabled ? r.wardrobe.slots.map((sl) => ({ slot: sl.id, label: sl.label, item: s.worn[sl.id] ? clothingView(s.worn[sl.id]) : null })) : null;
   const temp = temperatureAt(r, s);
@@ -13058,7 +13433,7 @@ function buildHud(r, s) {
     const enc = r.encounters[s.encounter.id];
     encounter = {
       name: enc?.name ?? s.encounter.id,
-      foe: enc?.foe.name ?? "Opponent",
+      foe: foeName(r, s),
       round: s.encounter.round,
       momentum: s.encounter.momentum ?? null,
       stats: (enc?.foe.stats ?? []).map((fs) => {
@@ -13408,6 +13783,25 @@ function summarizeEvents(r, before, after, events) {
       case "person":
         out.push({ text: `Met ${e.name}`, tone: "neutral", src: e.src, undo: [i] });
         break;
+      case "scene":
+        if (e.note === "renew" || events.some((x, j) => j < i && x.t === "person" && x.id === e.who))
+          break;
+        out.push({ text: e.here ? `\uD83D\uDC4B ${personName(r, after, e.who)} is here` : `${personName(r, after, e.who)} left`, tone: "neutral", src: e.src, undo: [i] });
+        break;
+      case "use": {
+        const per = r.items[e.id]?.uses ?? 0;
+        const left = after.items[e.id] > 0 ? after.uses[e.id] ?? per : 0;
+        out.push({ text: `Used ${itemName(r, before, e.id)}${e.n > 1 ? ` ×${e.n}` : ""}${per > 1 && left ? ` · ${left}/${per} left` : ""}`, tone: "neutral", src: e.src, undo: [i] });
+        break;
+      }
+      case "practice": {
+        const rose = events.some((x) => x.t === "stat" && x.id === e.id && (x.d ?? 0) > 0 && x.src === "check");
+        const def = r.stats[e.id];
+        if (rose || !def || e.d <= 0)
+          break;
+        out.push({ text: `\uD83D\uDCC8 ${def.label} ${Math.round((after.practice[e.id] ?? 0) * 100)}%`, tone: "good", src: e.src });
+        break;
+      }
       case "wear": {
         const prev = before.worn[e.slot];
         if (e.item)
@@ -13423,7 +13817,7 @@ function summarizeEvents(r, before, after, events) {
       }
       case "enc":
         if (e.id)
-          out.push({ text: `⚔ ${r.encounters[e.id]?.name ?? "Encounter"}`, tone: "warn", src: e.src });
+          out.push({ text: `⚔ ${r.encounters[e.id]?.name ?? "Encounter"}${e.foeName ? ` vs ${e.foeName}` : ""}`, tone: "warn", src: e.src });
         else
           out.push({ text: `⚔ Over: ${(e.outcome ?? "ended").replace(/_/g, " ")}`, tone: "neutral", src: e.src });
         break;
@@ -13432,7 +13826,7 @@ function summarizeEvents(r, before, after, events) {
         const def = enc ? r.encounters[enc.id] : undefined;
         const fs = def?.foe.stats.find((x) => x.id === e.stat);
         if (e.d)
-          out.push({ text: `${def?.foe.name ?? "Foe"} ${fs?.label ?? e.stat} ${signed(e.d)}`, tone: e.d < 0 === (fs?.good !== "high") ? "good" : "bad", src: e.src });
+          out.push({ text: `${(after.encounter ?? before.encounter)?.foeName ?? def?.foe.name ?? "Foe"} ${fs?.label ?? e.stat} ${signed(e.d)}`, tone: e.d < 0 === (fs?.good !== "high") ? "good" : "bad", src: e.src });
         break;
       }
       case "codex":
@@ -13616,8 +14010,13 @@ function stateDigest(r, s) {
       if (run.battle)
         lines.push(`Fighting: ${run.battle.fighters.filter((f) => f.side === "foe" && f.hp > 0).map((f) => f.name).join(", ")}.`);
     }
-  } else if (here.length)
-    lines.push(`Present here: ${here.join(", ")}`);
+  } else {
+    if (here.length || Object.keys(s.people).length)
+      lines.push(`Present here: ${here.length ? here.join(", ") : "none of the people {{user}} knows"}`);
+    const was = Object.entries(s.scene).filter(([id, v]) => v.here && s.people[id] && v.loc !== s.location && v.loc === s.lastLocation && !here.includes(s.people[id].name)).map(([id]) => personName(r, s, id));
+    if (was.length)
+      lines.push(`Were with {{user}} before arriving here (include them only if they came along): ${was.join(", ")}`);
+  }
   const date = dateDigest(r, s);
   if (date)
     lines.push(date);
@@ -13643,9 +14042,17 @@ function stateDigest(r, s) {
   if (conds.length)
     lines.push(`Conditions: ${conds.join(", ")}`);
   const wornSet = new Set(Object.values(s.worn));
-  const inv = Object.entries(s.items).filter(([id]) => !wornSet.has(id)).map(([id, n]) => `${itemName(r, s, id)}${n > 1 ? ` ×${n}` : ""}`);
+  const loose = Object.entries(s.items).filter(([id]) => !wornSet.has(id));
+  const uses = (id) => {
+    const per = r.items[id]?.uses ?? 0;
+    return per > 1 ? `, ${s.uses[id] ?? per} of ${per} uses left` : "";
+  };
+  const inv = loose.filter(([id]) => !r.items[id]?.slot).map(([id, n]) => `${itemName(r, s, id)}${n > 1 ? ` ×${n}` : ""}${uses(id) ? ` (${uses(id).slice(2)})` : ""}`);
   if (inv.length)
     lines.push(`Carrying: ${inv.join(", ")}`);
+  const spare = loose.filter(([id]) => r.items[id]?.slot).map(([id]) => itemName(r, s, id));
+  if (spare.length)
+    lines.push(`Carried but NOT being worn (packed away — {{user}} isn't wearing these): ${spare.join(", ")}`);
   if (s.pregnancy && s.pregnancy.told > 0) {
     const weeks = Math.floor((s.minutes - s.pregnancy.since) / 1440 / 7);
     const carrier = s.pregnancy.carrier === "player" ? "{{user}}" : personName(r, s, s.pregnancy.carrier);
@@ -13658,7 +14065,7 @@ function stateDigest(r, s) {
   const between = bondLines(r, s);
   if (between.length)
     lines.push(`Between people: ${between.join("; ")}`);
-  const ppl = Object.entries(s.people).map(([id, p]) => {
+  const feel = (id, name) => {
     const parts = r.relStatOrder.map((rs) => {
       const def = r.relStats[rs];
       if (def.show === "hidden")
@@ -13667,10 +14074,14 @@ function stateDigest(r, s) {
       const band = bandFor(def, v);
       return band && def.show !== "number" ? `${def.label} ${band.text}` : `${def.label} ${formatNumber(v)}`;
     }).filter(Boolean);
-    return parts.length ? `${p.name} (${parts.join(", ")})` : p.name;
-  });
-  if (ppl.length)
-    lines.push(`Relationships: ${ppl.join("; ")}`);
+    return parts.length ? `${name} (${parts.join(", ")})` : name;
+  };
+  const inScene = hud.people.filter((p) => p.present);
+  if (inScene.length)
+    lines.push(`Relationships (here): ${inScene.map((p) => feel(p.id, p.name)).join("; ")}`);
+  const away = hud.people.filter((p) => !p.present).sort((a, b) => (s.scene[b.id]?.at ?? -1) - (s.scene[a.id]?.at ?? -1)).slice(0, 8);
+  if (away.length)
+    lines.push(`Not in this scene (bring them in only if the story calls for it): ${away.map((p) => feel(p.id, p.name)).join("; ")}`);
   return lines.join(`
 `);
 }
@@ -13772,6 +14183,7 @@ function outcomePacket(r, rec, before, after, playerName) {
 var init_view = __esm(() => {
   init_ruleset();
   init_state();
+  init_freeform();
   init_resolve();
   init_world();
   init_run();
@@ -14007,6 +14419,37 @@ var init_view3 = __esm(() => {
 });
 
 // src/backend/decisions.ts
+function newNames(text, known) {
+  const knownWords = new Set(known.flatMap((n) => n.toLowerCase().split(/[^\p{L}\p{N}']+/u)).filter(Boolean));
+  const out = new Set;
+  const re = /\p{Lu}\p{Ll}{2,}/gu;
+  for (const m of text.matchAll(re)) {
+    const before = text.slice(0, m.index).trimEnd();
+    const prev = before.slice(-1);
+    if (!before || /[.!?"“”*…(\-—:\n]/.test(prev))
+      continue;
+    const w = m[0].toLowerCase();
+    if (COMMON_CAPS.has(w) || knownWords.has(w))
+      continue;
+    out.add(m[0]);
+  }
+  return [...out];
+}
+function mentions(text, name) {
+  const t = text.toLowerCase();
+  const n = name.toLowerCase().trim();
+  if (!n)
+    return false;
+  if (t.includes(n))
+    return true;
+  const words = n.split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 3 && !["the", "and", "with", "for", "of"].includes(w));
+  if (!words.length)
+    return false;
+  const has = (w) => new RegExp(`(^|[^\\p{L}])${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(s|es)?([^\\p{L}]|$)`, "u").test(t);
+  if (has(words[words.length - 1]))
+    return true;
+  return words.filter(has).length * 2 >= words.length && words.length > 1;
+}
 function clip(s, n) {
   return s.length > n ? `…${s.slice(-n)}` : s;
 }
@@ -14029,7 +14472,9 @@ async function readTurn(opts) {
   const talking = !!activeSession(r, s) || !!s.job;
   const actions = playerText && !talking ? availableChoices(r, s, settings.lines) : [];
   const travel = playerText && !talking ? travelTargets(r, s) : [];
-  if (playerText && (actions.length || travel.length)) {
+  const improv = !!playerText && !talking && r.improvise.enabled && !s.dungeon;
+  const approach = improv ? improvStats(r) : [];
+  if (playerText && (actions.length || travel.length || improv)) {
     const criteria = {
       [NONE]: "None of these: dialogue, thoughts, feelings, plans, questions, or something trivial that can't fail"
     };
@@ -14037,9 +14482,34 @@ async function readTurn(opts) {
       criteria[c.id] = `${c.label}${c.a.desc ? ` — ${c.a.desc}` : ""}`;
     for (const t of travel)
       criteria[`${TRAVEL_PREFIX}${t}`] = `Go to ${r.locations[t].name}`;
+    if (improv)
+      criteria[ATTEMPT] = "Something else with a real chance of failing that matters to the story, not listed above (sneaking, persuading, lying, fighting, climbing, stealing, resisting, performing…)";
     q.action = { type: "choice", instructions: `Which of these does ${player}'s latest message actually attempt right now?`, criteria };
-    if (actions.some((c) => c.a.params.length)) {
+    if (improv || actions.some((c) => c.a.params.length)) {
       q.difficulty = { type: "score", instructions: `How hard is what ${player} is attempting, given the scene?`, criteria: DIFFICULTY };
+    }
+    if (approach.length > 1) {
+      q.approach = {
+        type: "choice",
+        instructions: `If ${player} is attempting something that could fail, which of ${player}'s abilities matters most for it?`,
+        criteria: Object.fromEntries(approach.map((id) => [id, `${r.stats[id].label}${r.stats[id].desc ? ` — ${r.stats[id].desc}` : ""}`]))
+      };
+    }
+  }
+  const storyEnc = !s.encounter && !s.dungeon && !s.job && !s.ended ? Object.values(r.encounters).filter((x) => x.fromStory) : [];
+  const here = storyEnc.length ? presentPeople(r, s, makeEnv(r, s)) : [];
+  if (storyEnc.length) {
+    q.encounter = {
+      type: "choice",
+      instructions: `Is one of these actually breaking out right now, in the latest exchange (not just threatened, feared or talked about)?`,
+      criteria: { [NONE]: "No — nothing like this is starting right now", ...Object.fromEntries(storyEnc.map((x) => [`enc:${x.id}`, `${x.name}${x.desc ? ` — ${x.desc}` : ""}`])) }
+    };
+    if (here.length) {
+      q.opponent = {
+        type: "choice",
+        instructions: `If a confrontation is starting, who is ${player} up against?`,
+        criteria: { other: "Someone else, or no one in particular", ...Object.fromEntries(here.map((id) => [`p:${id}`, personName(r, s, id)])) }
+      };
     }
   }
   for (const t of r.triggers) {
@@ -14067,6 +14537,15 @@ async function readTurn(opts) {
       scene[key] = true;
   }
   const out = { intent: null, suggestion: null, confidence: 0, scene };
+  const enc = ans.encounter;
+  if (enc?.type === "choice" && enc.choice.startsWith("enc:") && (enc.probabilities[enc.choice] ?? enc.confidence) >= ENCOUNTER_SURE) {
+    const id = enc.choice.slice(4);
+    if (storyEnc.some((x) => x.id === id)) {
+      const opp = ans.opponent;
+      const who = opp?.type === "choice" && opp.choice.startsWith("p:") && opp.confidence >= 0.5 ? opp.choice.slice(2) : null;
+      out.encounter = { id, ...who && here.includes(who) ? { foe: personName(r, s, who) } : {} };
+    }
+  }
   const act = ans.action;
   if (act?.type !== "choice" || act.choice === NONE)
     return out;
@@ -14075,7 +14554,16 @@ async function readTurn(opts) {
   out.confidence = conf;
   let intent = null;
   let label = id;
-  if (id.startsWith(TRAVEL_PREFIX)) {
+  if (id === ATTEMPT) {
+    if (!improv)
+      return out;
+    const ap = ans.approach;
+    const stat = approach.length === 1 ? approach[0] : ap?.type === "choice" && approach.includes(ap.choice) ? ap.choice : approach[0] ?? "";
+    const level = ans.difficulty?.type === "score" ? ans.difficulty.score : 1;
+    const difficulty = DIFFICULTIES[Math.max(0, Math.min(DIFFICULTIES.length - 1, Math.round(level)))];
+    intent = { actionId: `${IMPROV}${stat}`, via: "adjudicator", params: { difficulty } };
+    label = `${stat ? r.stats[stat].label : "Luck"} check (${difficulty})`;
+  } else if (id.startsWith(TRAVEL_PREFIX)) {
     const to = id.slice(TRAVEL_PREFIX.length);
     if (!travel.includes(to))
       return out;
@@ -14200,6 +14688,63 @@ async function bookkeeping(opts) {
       q[`cloth:${slot}`] = { type: "noul", instructions: `By the end of the reply, ${player} no longer has their ${r.items[id]?.name ?? id} on (taken off, removed or lost)` };
     }
   }
+  const hereBefore = presentPeople(r, s, makeEnv(r, s));
+  const leftBehind = Object.entries(s.scene).filter(([id, v]) => v.here && s.people[id] && v.loc !== s.location && v.loc === s.lastLocation).map(([id]) => id);
+  const cast = [...new Set([...hereBefore, ...mentioned, ...leftBehind])].slice(0, 12);
+  for (const pid of cast) {
+    q[`here:${pid}`] = { type: "noul", instructions: `At the end of the reply, ${personName(r, s, pid)} is physically in the scene with ${player} (in the same place — not just mentioned, remembered, on the phone, or left behind)` };
+  }
+  const wornIds = new Set(Object.values(s.worn));
+  let itemQs = 0;
+  for (const [id, n] of Object.entries(s.items)) {
+    if (itemQs >= 8)
+      break;
+    const name = itemName(r, s, id);
+    if (!mentions(opts.reply, name))
+      continue;
+    const def = r.items[id];
+    const per = def?.uses ?? 0;
+    const criteria = {
+      same: "Nothing happened to it — only mentioned, carried, held, or worn as before",
+      used: per > 0 ? `Used once (it has ${s.uses[id] ?? per} of ${per} uses left)` : "Used, but not used up — it's still there afterwards",
+      gone: `Used up, eaten, drunk, emptied, broken, given away, dropped, lost or taken — ${player} has one fewer${n > 1 ? ` (has ${n} now)` : ""}`
+    };
+    if (def?.slot && !wornIds.has(id))
+      criteria.worn = `Put on — ${player} is wearing it by the end of the reply`;
+    q[`item:${id}`] = { type: "choice", instructions: `What happened to ${player}'s ${name} during the reply?`, criteria };
+    itemQs++;
+  }
+  const growable = r.growth.enabled && r.growth.train ? r.statOrder.filter((id) => (r.stats[id].kind === "skill" || r.stats[id].kind === "attribute") && r.stats[id].growth > 0) : [];
+  if (growable.length) {
+    q.train = {
+      type: "choice",
+      instructions: `During the reply, did ${player} spend real effort practising, training, studying or rehearsing one of these?`,
+      criteria: { [NONE]: "No", ...Object.fromEntries(growable.map((id) => [id, `${r.stats[id].label}${r.stats[id].desc ? ` — ${r.stats[id].desc}` : ""}`])) }
+    };
+  }
+  const storyEnc = !s.encounter && !s.dungeon && !s.job ? Object.values(r.encounters).filter((x) => x.fromStory) : [];
+  if (storyEnc.length) {
+    q.encounter = {
+      type: "choice",
+      instructions: `At the end of the reply, has one of these actually broken out (not just threatened)?`,
+      criteria: { [NONE]: "No", ...Object.fromEntries(storyEnc.map((x) => [`enc:${x.id}`, `${x.name}${x.desc ? ` — ${x.desc}` : ""}`])) }
+    };
+    const people = [...new Set([...hereBefore, ...mentioned])];
+    if (people.length)
+      q.opponent = { type: "choice", instructions: `If a confrontation broke out, who is ${player} up against?`, criteria: { other: "Someone else, or no one in particular", ...Object.fromEntries(people.map((id) => [`p:${id}`, personName(r, s, id)])) } };
+  } else if (s.encounter) {
+    const def = r.encounters[s.encounter.id];
+    const outcomes = [...new Set([...Object.keys(def?.outcomes ?? {}), ...def?.momentum ? [def.momentum.win, def.momentum.lose] : []])];
+    q.encounter_end = {
+      type: "choice",
+      instructions: `Is ${def?.name ?? "the encounter"} over by the end of the reply?`,
+      criteria: {
+        ongoing: "No — it's still going",
+        ...Object.fromEntries(outcomes.map((o) => [`end:${o}`, `Yes — it ended: ${o.replace(/_/g, " ")}`])),
+        "end:broke_off": "Yes — it stopped some other way (broken off, interrupted, talked down, escaped)"
+      }
+    };
+  }
   if (r.body.enabled && r.body.narrator)
     q["gate:body"] = { type: "noul", instructions: `${player}'s body changes during the reply (a transformation, new mark or tattoo, haircut or dye, a lasting injury…)` };
   if (r.peopleOpen)
@@ -14243,6 +14788,38 @@ async function bookkeeping(opts) {
   }
   if (confident(ans.move) && ans.move.choice !== "stay")
     p.move = ans.move.choice;
+  for (const pid of cast) {
+    const a = ans[`here:${pid}`];
+    if (a?.type !== "noul")
+      continue;
+    if (a.noul >= 0.6)
+      (p.scene ??= {})[pid] = true;
+    else if (a.noul <= 0.3)
+      (p.scene ??= {})[pid] = false;
+  }
+  for (const [key, a] of Object.entries(ans)) {
+    if (!key.startsWith("item:") || !confident(a) || a.choice === "same")
+      continue;
+    const id = key.slice(5);
+    if (a.choice === "used" && (r.items[id]?.uses ?? 0) > 0)
+      (p.used ??= {})[id] = 1;
+    else if (a.choice === "gone")
+      (p.items ??= {})[id] = -1;
+    else if (a.choice === "worn")
+      (p.wear ??= []).push(id);
+  }
+  if (confident(ans.train) && ans.train.choice !== NONE && growable.includes(ans.train.choice))
+    p.train = [ans.train.choice];
+  const enc = ans.encounter;
+  if (enc?.type === "choice" && enc.choice.startsWith("enc:") && (enc.probabilities[enc.choice] ?? enc.confidence) >= ENCOUNTER_SURE) {
+    p.encounter = enc.choice.slice(4);
+    const opp = ans.opponent;
+    if (opp?.type === "choice" && opp.choice.startsWith("p:") && opp.confidence >= 0.5)
+      p.foe = personName(r, s, opp.choice.slice(2));
+  }
+  const over = ans.encounter_end;
+  if (over?.type === "choice" && over.choice.startsWith("end:") && (over.probabilities[over.choice] ?? over.confidence) >= ENCOUNTER_OVER)
+    p.encounterEnd = over.choice.slice(4);
   for (const c of Object.values(r.conditions)) {
     const a = ans[`cond:${c.id}`];
     if (a?.type !== "noul" || noulConfidence(a.noul) < 0.4)
@@ -14264,9 +14841,11 @@ async function bookkeeping(opts) {
       (p.undress ??= []).push(slot);
   }
   const needsWriting = new Set;
+  const known = [player, ...Object.values(s.people).map((x) => x.name), ...Object.values(r.locations).map((l) => l.name), s.locationName ?? "", ...Object.keys(s.items).map((id) => itemName(r, s, id))];
+  const peopleBar = newNames(opts.reply, known).length ? 0.35 : 0.6;
   for (const g of ["people", "items", "move", "body"]) {
     const a = ans[`gate:${g}`];
-    if (a?.type === "noul" && a.noul >= 0.6)
+    if (a?.type === "noul" && a.noul >= (g === "people" ? peopleBar : 0.6))
       needsWriting.add(g);
   }
   return { proposal: p, needsWriting };
@@ -14283,12 +14862,83 @@ async function contradiction(opts) {
   const a = ans.contradicts;
   return a?.type === "noul" ? a.noul : null;
 }
-var NONE = "none", DIFFICULTY, STEP_FACTOR, TIME_LEVELS, TIME_MINUTES;
+var NONE = "none", ATTEMPT = "attempt", ENCOUNTER_SURE = 0.6, ENCOUNTER_OVER = 0.7, COMMON_CAPS, DIFFICULTY, STEP_FACTOR, TIME_LEVELS, TIME_MINUTES;
 var init_decisions = __esm(() => {
   init_resolve();
+  init_ruleset();
   init_state();
+  init_freeform();
+  init_world();
   init_view();
   init_talk();
+  COMMON_CAPS = new Set([
+    "the",
+    "a",
+    "an",
+    "he",
+    "she",
+    "they",
+    "it",
+    "his",
+    "her",
+    "their",
+    "i",
+    "you",
+    "we",
+    "but",
+    "and",
+    "or",
+    "so",
+    "then",
+    "when",
+    "as",
+    "if",
+    "in",
+    "on",
+    "at",
+    "with",
+    "for",
+    "from",
+    "to",
+    "of",
+    "by",
+    "that",
+    "this",
+    "there",
+    "here",
+    "what",
+    "who",
+    "why",
+    "how",
+    "yes",
+    "no",
+    "not",
+    "oh",
+    "ah",
+    "maybe",
+    "still",
+    "just",
+    "even",
+    "now",
+    "after",
+    "before",
+    "once",
+    "every",
+    "each",
+    "some",
+    "all",
+    "something",
+    "someone",
+    "nothing",
+    "god",
+    "mr",
+    "mrs",
+    "ms",
+    "miss",
+    "sir",
+    "lady",
+    "lord"
+  ]);
   DIFFICULTY = [
     "Trivial or easy for an ordinary person in this situation",
     "A fair challenge",
@@ -14793,15 +15443,35 @@ async function extract(r, s, playerText, reply, settings, userId, only, applied)
   if (want("rel") && rels.length)
     allowed.push(`- "rel": per person name, deltas to: ${rels.map((d) => `${d.id} (±${formatNumber(d.narrator)})`).join(", ")}`);
   const feelScale = rels.map((d) => `${d.id} ${d.min}–${d.max}${d.bands.length ? ` (${d.bands.map((b) => `${b.at}=${b.text}`).join(", ")})` : ""}`).join("; ");
+  const tracked = Object.values(s.people).map((p) => p.name);
   if (want("people") && r.peopleOpen) {
-    allowed.push(`- "people": characters who appear for the first time, as [{"name": "...", "feelings": {<how they feel toward the player RIGHT NOW, absolute values>}}]${rels.length ? ` — scales: ${feelScale}` : ""}`);
+    allowed.push(`- "people": named characters who appear in the reply (speak, act, or are spoken to) and aren't tracked yet${tracked.length ? ` (already tracked: ${tracked.join(", ")})` : ""}, as [{"name": "...", "feelings": {<how they feel toward the player RIGHT NOW, absolute values>}}]${rels.length ? ` — scales: ${feelScale}` : ""}`);
+  }
+  if (want("scene") && (tracked.length || r.peopleOpen)) {
+    allowed.push(`- "present": names of everyone (tracked or new) physically in the scene with the player at the end of the reply — not people only mentioned, remembered, on the phone, or left behind. Always include it, even as [].`);
   }
   const uncalibrated = Object.keys(s.people).filter((id) => !s.calibrated[id]).map((id) => s.people[id].name);
   if (want("people") && rels.length && uncalibrated.length) {
     allowed.push(`- "feelings": for these tracked people who appear in the reply, where they stand toward the player right now (absolute values, same scales): ${uncalibrated.join(", ")} — as {"Name": {"stat": value}}`);
   }
   if (want("items") && (r.itemsOpen || Object.keys(r.items).length))
-    allowed.push(`- "items": item name → count gained (+) or lost (−). Held: ${Object.keys(s.items).map((id) => itemName(r, s, id)).join(", ") || "nothing"}`);
+    allowed.push(`- "items": item name → count gained (+) or lost (−); lost includes used up, eaten, drunk, emptied, broken, given away or taken. Held: ${Object.entries(s.items).map(([id, n]) => `${itemName(r, s, id)}${n > 1 ? ` ×${n}` : ""}`).join(", ") || "nothing"}`);
+  const withUses = Object.keys(s.items).filter((id) => (r.items[id]?.uses ?? 0) > 0);
+  if (want("used") && withUses.length)
+    allowed.push(`- "used": item name → times used, for items that have uses: ${withUses.map((id) => `${itemName(r, s, id)} (${s.uses[id] ?? r.items[id].uses}/${r.items[id].uses} uses left)`).join(", ")}`);
+  const growable = r.growth.enabled && r.growth.train ? r.statOrder.filter((id) => (r.stats[id].kind === "skill" || r.stats[id].kind === "attribute") && r.stats[id].growth > 0) : [];
+  if (want("train") && growable.length)
+    allowed.push(`- "trained": ids of abilities the player spent real effort practising, training, studying or rehearsing during the reply: ${growable.join(", ")}`);
+  if (want("encounter")) {
+    const storyEnc = !s.encounter && !s.dungeon && !s.job ? Object.values(r.encounters).filter((x) => x.fromStory) : [];
+    if (storyEnc.length)
+      allowed.push(`- "encounter": the id of one of these if it actually broke out in the reply (not just threatened): ${storyEnc.map((x) => `${x.id} (${x.name})`).join(", ")}; with "foe": the opponent's name when it's a specific person`);
+    else if (s.encounter) {
+      const def = r.encounters[s.encounter.id];
+      const outcomes = [...new Set([...Object.keys(def?.outcomes ?? {}), ...def?.momentum ? [def.momentum.win, def.momentum.lose] : []]), "broke_off"];
+      allowed.push(`- "encounter_end": only if ${def?.name ?? "the encounter"} is clearly over by the end of the reply, how it ended: ${outcomes.join(", ")}`);
+    }
+  }
   if (want("move") && (locs.length || r.locationsOpen))
     allowed.push(`- "move": where the player character ends up, if they moved${locs.length && !r.locationsOpen ? ` (one of: ${locs.map((l) => l.name).join(", ")})` : ""}`);
   if (want("conditions") && conds.length)
@@ -14813,7 +15483,7 @@ async function extract(r, s, playerText, reply, settings, userId, only, applied)
     const owned = Object.keys(s.items).filter((id) => r.items[id]?.slot && !Object.values(s.worn).includes(id));
     allowed.push(`- "undress": slots whose clothing came off (currently worn — ${worn})`);
     if (owned.length)
-      allowed.push(`- "wear": ids of owned clothing put on (${owned.join(", ")})`);
+      allowed.push(`- "wear": ids of carried clothing put on, or that the reply shows the player wearing (${owned.join(", ")})`);
   }
   if (want("body") && r.body.enabled && r.body.narrator) {
     const now = Object.entries(s.body).map(([p, t]) => `${p}: ${Object.entries(t).map(([k, v]) => `${k} ${v}`).join(", ")}`).join("; ") || "nothing recorded";
@@ -14845,14 +15515,39 @@ async function extract(r, s, playerText, reply, settings, userId, only, applied)
 `);
   try {
     const out = firstJson2(await ask(system, user, settings, userId, 30000));
-    return out ?? null;
+    if (!out)
+      return null;
+    const p = out;
+    if (Array.isArray(p.present)) {
+      const listed = p.present.map(String).filter(Boolean);
+      const scene = Object.fromEntries(listed.map((n) => [n, true]));
+      for (const id of presentPeople(r, s, makeEnv(r, s))) {
+        const name = s.people[id]?.name;
+        if (name && !listed.some((l) => sameName(l, name)))
+          scene[id] = false;
+      }
+      p.scene = scene;
+    }
+    delete p.present;
+    if (Array.isArray(p.trained))
+      p.train = p.trained.map(String);
+    delete p.trained;
+    if (typeof p.encounter_end === "string" && p.encounter_end)
+      p.encounterEnd = p.encounter_end;
+    delete p.encounter_end;
+    return p;
   } catch (e) {
     logError("extractor", e);
     return null;
   }
 }
+var sameName = (a, b) => {
+  const x = a.trim().toLowerCase(), y = b.trim().toLowerCase();
+  return x === y || x.split(/\s+/)[0] === y.split(/\s+/)[0];
+};
 var init_helpers = __esm(() => {
   init_state();
+  init_world();
   init_view();
 });
 
@@ -15118,6 +15813,7 @@ async function interceptor(messages, ctx) {
       let intent = meta.intent ?? null;
       let verdict;
       let scene = {};
+      let encounter;
       let confidence;
       const sceneText = [...history].reverse().find((m) => !m.is_user)?.content ?? "";
       const budget = () => Math.min(20000, (typeof ctx.interceptorDeadlineAt === "number" ? ctx.interceptorDeadlineAt : Date.now() + 20000) - Date.now() - 2000);
@@ -15126,6 +15822,7 @@ async function interceptor(messages, ctx) {
         const readText = !intent && !meta.judged && lastUser && settings.freeTextChecks ? lastUser.content : null;
         const reading = await readTurn({ decider, r, s: before, settings, playerText: readText, sceneText, player, timeoutMs: budget() });
         scene = reading.scene;
+        encounter = reading.encounter;
         if (readText !== null && lastUser) {
           intent = reading.intent;
           confidence = reading.confidence;
@@ -15134,12 +15831,12 @@ async function interceptor(messages, ctx) {
       }
       const seed = settings.swipesReroll ? randomSeed() : `${lastUser?.id ?? "start"}:${intent?.actionId ?? "none"}`;
       const playerText = lastUser?.content ?? "";
-      let res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene, playerText });
+      let res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene, playerText, encounter });
       if (decider && res.needs.length) {
         const card = res.needs.some((n) => n.id.startsWith("date:pref:") || n.id.startsWith("date:adult:")) ? await characterBrief(ctx.chatId, ctx.userId) : undefined;
         const o = await odds2({ decider, r, s: before, specs: res.needs, playerText: lastUser?.content ?? "", sceneText, player, timeoutMs: budget(), card });
         if (Object.keys(o).length)
-          res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene, odds: o, playerText });
+          res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene, odds: o, playerText, encounter });
       }
       rec = res.record;
       if (confidence !== undefined && rec.action)
@@ -15200,6 +15897,8 @@ async function proposeChanges(decider, r, p, reply, settings, userId) {
       proposal.body = named.body;
     if (named?.feelings)
       proposal.feelings = { ...proposal.feelings ?? {}, ...named.feelings };
+    if (named?.used)
+      proposal.used = { ...proposal.used ?? {}, ...named.used };
   }
   return proposal;
 }
@@ -15681,10 +16380,10 @@ init_lint();
 var PART_LABELS = ["core", "stats", "people", "world", "actions", "encounters", "journal", "rules", "story", "dating"];
 var PART_CONTENTS = {
   core: "name, description, player, clock, start, hud, narration",
-  stats: "stats",
+  stats: "stats, growth",
   people: "relationships (stats + people with schedules), companions, lineage",
   world: "weather, locations, items (incl. clothing), wardrobe, body, conditions, flags, start.items",
-  actions: "actions, obligations, jobs",
+  actions: "actions, improvise, obligations, jobs",
   encounters: "encounters, dungeons",
   journal: "codex, feats, perks, checkpoints, endings",
   rules: "triggers, mind",
@@ -15696,13 +16395,13 @@ function partForIssue(where) {
   const head = w.split(/[›,]/)[0].trim().toLowerCase();
   if (PART_LABELS.includes(head))
     return head;
-  if (head.startsWith("stats"))
+  if (head.startsWith("stats") || head.startsWith("growth"))
     return "stats";
   if (["relationships", "people", "companions", "lineage"].some((k) => head.startsWith(k)))
     return "people";
   if (["locations", "items", "wardrobe", "weather", "conditions", "flags", "body"].some((k) => head.startsWith(k)))
     return "world";
-  if (["actions", "obligations", "jobs"].some((k) => head.startsWith(k)))
+  if (["actions", "improvise", "obligations", "jobs"].some((k) => head.startsWith(k)))
     return "actions";
   if (head.startsWith("encounters") || head.startsWith("dungeons"))
     return "encounters";
@@ -15725,6 +16424,8 @@ stats:            # kinds: meter (bar) | attribute | skill | money | hidden
   # good: high|low|none (colours); per_hour: drift; narrator: max change the story may make per reply (0 = rules only); max may be a formula ("level * 5")
   # limit what the story may change (stats, relationship stats, flags, conditions): narrator_when: "not in_encounter",
   #   narrator_words: [panic, scared] (the exchange must mention one), narrator_actions: [fight, violence] (action ids or tags)
+  # skills and attributes improve with use: every check that reads them (and practice the story describes) adds progress; growth: 0 on a stat stops it, growth: 2 doubles it
+growth: { rate: 1, attributes: 0.5, train: true }   # optional; growth: false turns it off. Attributes move at half the skill rate by default
 
 relationships:
   open: true                       # track new people the story introduces
@@ -15765,6 +16466,7 @@ locations:
 items:
   phone: Phone
   raincoat: { name: Raincoat, slot: outer, warmth: 5, reveal: 0, traits: [rainproof] }   # clothing = item with a slot
+  pepper_spray: { name: Pepper Spray, uses: 5 }   # uses: each use the story shows spends one; the last spends the item (tags: [consumable] = 1 use)
 wardrobe: { slots: [outer, top, bottom, under_top, under_bottom, feet], cover: [top, bottom], start: [t_shirt, jeans] }
 conditions: { cold: { label: Cold, tone: bad } }
 flags: { met_boss: { start: false, narrator: true } }
@@ -15795,6 +16497,14 @@ actions:
     params: { difficulty: { easy: 70, normal: 45, hard: 25, extreme: 10 } }   # easiest → hardest
     check: { chance: "difficulty + skulduggery / 2" }
 
+improvise:        # optional (on by default): typed attempts no action covers still roll — d20 + the closest ability's share of bonus vs a DC by difficulty
+  dc: { easy: 8, fair: 12, hard: 16, extreme: 20 }
+  bonus: 10                        # what a maxed-out ability adds
+  partial: 3                       # missing by this much is a partial success
+  stats: [athletics, charm]        # abilities an attempt may lean on (default: every skill and attribute)
+  outcomes: { crit_fail: { stress: +5 } }   # optional effects by result; the story's own reading records the rest
+  # improvise: false turns it off (then only listed actions roll)
+
 EFFECTS (any success/fail/effects/cost/do block):
   stat shorthand (fatigue: +5, may be a quoted formula), set: { stress: 50 }, flags: { x: true }, give: item / take: item,
   rel: { jo: { trust: +3 } }, move: location, time: 30, add_condition: [cold] or { cold: 120 }, remove_condition: [cold],
@@ -15812,6 +16522,7 @@ encounters:
     foe_moves: { grab: { desc: "Grabs you", weight: 2, pain: +8 }, threaten: { desc: "Threatens", weight: 1, stress: +6 } }
     end_when: { won: "foe.nerve <= 0", beaten: "pain >= 80" }
     outcomes: { won: { hint: "They flee." }, escaped: { stress: +3 }, beaten: { money: "-min(money, 30)" } }
+    # from_story: false = only actions/effects start it (by default the story can: a fight breaking out in the prose starts it, against whoever it's with)
     # momentum: { win: won, lose: beaten, swing: { crit_success: 40, success: 25, partial: 10, fail: -20, crit_fail: -35 } }
     #   a fight that swings (−100…+100): each check moves it, foe moves can too (effect momentum: -15), and only a full swing ends it;
     #   each round reaches the narrator as ordered beats (a long typed move is kept as written). Formula name: momentum.

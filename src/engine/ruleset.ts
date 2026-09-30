@@ -42,6 +42,8 @@ export interface StatDef {
   /** Max absolute change the narrator may make per turn. 0 = engine only. */
   narrator: number;
   gate?: NarratorGate;
+  /** How fast it improves with use (skills and attributes; 0 = never). */
+  growth: number;
   bands: Band[];
   grades?: string[];
   color?: string;
@@ -169,6 +171,8 @@ export interface ItemDef {
   reveal: number;
   /** Clothing traits, e.g. rainproof, swimwear. */
   traits: string[];
+  /** Uses per item (a spray with 5 sprays); each use spends one, and at 0 the item is gone. 0 = not used up by use. */
+  uses: number;
 }
 export interface ConditionDef { id: string; label: string; tone: Tone; desc?: string; narrator: boolean; gate?: NarratorGate }
 export interface ScheduleEntry { when?: string; at: string }
@@ -227,6 +231,8 @@ export interface EncounterDef {
    * narrator as ordered beats.
    */
   momentum: { win: string; lose: string; start: number; swing: Record<Tier, number> } | null;
+  /** The story can start it (a fight breaks out in the prose). */
+  fromStory: boolean;
 }
 
 export interface CodexEntry { id: string; title: string; text: string; category?: string; unlock?: string; lore: string[] }
@@ -483,6 +489,38 @@ export interface DiscoveryDef {
   guide?: string;
 }
 
+export type Difficulty = "easy" | "fair" | "hard" | "extreme";
+export const DIFFICULTIES: Difficulty[] = ["easy", "fair", "hard", "extreme"];
+
+/**
+ * Typed attempts that match no listed action still roll: d20 plus the stat's
+ * share of `bonus`, against a difficulty class the decision model picks.
+ */
+export interface ImproviseDef {
+  enabled: boolean;
+  dc: Record<Difficulty, number>;
+  /** What a maxed-out stat adds to the d20. */
+  bonus: number;
+  /** Missing by this much or less is a partial success. */
+  partial: number;
+  /** Stats an attempt can lean on (default: every skill and attribute). */
+  stats: string[];
+  /** Minutes an attempt takes (default: the clock's minutes_per_action). */
+  time?: number;
+  outcomes: Partial<Record<Tier, Effect>>;
+}
+
+/** Skills and attributes improve with use: every check, and practice the story describes, adds progress. */
+export interface GrowthDef {
+  enabled: boolean;
+  /** Overall speed (2 = twice as fast). */
+  rate: number;
+  /** Attributes improve at this fraction of the skill rate. */
+  attributes: number;
+  /** Training, studying and practising the story describes counts too. */
+  train: boolean;
+}
+
 export interface Ruleset {
   name: string;
   description?: string;
@@ -547,6 +585,8 @@ export interface Ruleset {
   jobs: Record<string, JobDef>;
   observers: ObserversDef;
   discovery: DiscoveryDef;
+  improvise: ImproviseDef;
+  growth: GrowthDef;
 }
 
 export interface Issue {
@@ -703,11 +743,15 @@ function normStat(id: string, raw: unknown, where: string, c: Ctx, forRel = fals
     show: k === "hidden" ? "hidden" : show,
     narrator,
     ...(gate ? { gate } : {}),
+    growth: 0,
     bands: normBands(r.bands, good, `${where} › bands`, c),
     color: typeof r.color === "string" ? r.color : undefined,
     desc: typeof r.desc === "string" ? r.desc : typeof r.description === "string" ? r.description : undefined,
   };
   if (Array.isArray(r.grades) && r.grades.length) def.grades = r.grades.map(String);
+  // Skills and attributes improve with use unless told otherwise (`growth: 0` or a speed multiplier).
+  const grows = k === "skill" || k === "attribute";
+  def.growth = r.growth === false ? 0 : r.growth === true ? 1 : r.growth !== undefined ? Math.max(0, c.num(r.growth, `${where} › growth`, grows ? 1 : 0)) : grows ? 1 : 0;
   return def;
 }
 
@@ -1107,6 +1151,7 @@ function normEncounter(id: string, raw: unknown, c: Ctx, known: { stats: Set<str
     actions, actionOrder, foeMoves, endWhen, outcomes,
     start: normEffect(startRaw, `${w} › start`, c, known),
     momentum,
+    fromStory: raw.from_story !== false,
   };
 }
 
@@ -1481,6 +1526,43 @@ function normObservers(raw: unknown, c: Ctx, known: { stats: Set<string> }): Obs
   return def;
 }
 
+function normImprovise(raw: unknown, c: Ctx, known: { stats: Set<string> }, stats: Record<string, StatDef>, order: string[]): ImproviseDef {
+  const usable = order.filter((id) => stats[id].kind === "skill" || stats[id].kind === "attribute");
+  const def: ImproviseDef = { enabled: true, dc: { easy: 8, fair: 12, hard: 16, extreme: 20 }, bonus: 10, partial: 3, stats: usable, outcomes: {} };
+  if (raw === undefined || raw === true) return def;
+  if (raw === false) return { ...def, enabled: false };
+  if (!isObj(raw)) { c.warn("Improvise", "expected `improvise: false` or a map of settings"); return def; }
+  if (raw.enabled === false) def.enabled = false;
+  if (isObj(raw.dc)) for (const d of DIFFICULTIES) if (raw.dc[d] !== undefined) def.dc[d] = c.num(raw.dc[d], `Improvise › dc › ${d}`, def.dc[d]);
+  def.bonus = c.num(raw.bonus, "Improvise › bonus", 10);
+  def.partial = Math.max(0, c.num(raw.partial, "Improvise › partial", 3));
+  if (raw.stats !== undefined) {
+    const want = list(raw.stats);
+    for (const id of want) if (!stats[id]) c.warn("Improvise › stats", `"${id}" isn't a stat`);
+    def.stats = want.filter((id) => stats[id]);
+  }
+  if (raw.time !== undefined) def.time = Math.max(0, c.num(raw.time, "Improvise › time", 10));
+  if (isObj(raw.outcomes)) for (const [k, v] of Object.entries(raw.outcomes)) {
+    const tier = TIER_KEYS[k];
+    if (tier) def.outcomes[tier] = normEffect(v, `Improvise › outcomes › ${k}`, c, known);
+    else c.warn(`Improvise › outcomes › ${k}`, "tiers are crit_success, success, partial, fail, crit_fail");
+  }
+  return def;
+}
+
+function normGrowth(raw: unknown, c: Ctx): GrowthDef {
+  const def: GrowthDef = { enabled: true, rate: 1, attributes: 0.5, train: true };
+  if (raw === undefined || raw === true) return def;
+  if (raw === false) return { ...def, enabled: false };
+  if (typeof raw === "number") return { ...def, rate: Math.max(0, raw), enabled: raw > 0 };
+  if (!isObj(raw)) { c.warn("Growth", "expected `growth: false`, a speed, or a map of settings"); return def; }
+  if (raw.enabled === false) def.enabled = false;
+  def.rate = Math.max(0, c.num(raw.rate, "Growth › rate", 1));
+  def.attributes = Math.max(0, c.num(raw.attributes, "Growth › attributes", 0.5));
+  def.train = raw.train !== false;
+  return def;
+}
+
 function normDiscovery(raw: unknown, c: Ctx): DiscoveryDef {
   const def: DiscoveryDef = { enabled: false, at: [], chance: 25, max: 12, time: 60, label: "Explore around here" };
   if (raw === undefined || raw === false) return def;
@@ -1568,6 +1650,8 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
       integrity: Math.max(1, c.num(r.integrity, `${w} › integrity`, 100)),
       reveal: c.num(r.reveal, `${w} › reveal`, 0),
       traits: list(r.traits).map((t) => t.toLowerCase()),
+      // `uses: 5` — five uses per item; a `consumable` tag means one.
+      uses: Math.max(0, Math.round(c.num(r.uses ?? r.charges, `${w} › uses`, list(r.tags).map((t) => t.toLowerCase()).includes("consumable") ? 1 : 0))),
     };
   }
 
@@ -1759,6 +1843,8 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const jobs = normJobs(raw.jobs, c, known);
   const observers = normObservers(raw.observers ?? raw.being_seen, c, known);
   const discovery = normDiscovery(raw.discovery, c);
+  const improvise = normImprovise(raw.improvise ?? raw.improvised, c, known, stats, statOrder);
+  const growth = normGrowth(raw.growth ?? raw.practice, c);
 
   const ruleset: Ruleset = {
     name: typeof raw.name === "string" ? raw.name : "Untitled ruleset",
@@ -1788,7 +1874,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     narration: { notes: typeof narrRaw.notes === "string" ? narrRaw.notes : undefined, numbers: narrRaw.numbers === true },
     weather, wardrobe, encounters, codex, feats, perks,
     ...(perkPoints && stats[perkPoints] ? { perkPoints } : {}),
-    secrets, fronts, randomEvents, liveChoices, dungeons, dating, mind, checkpoints, endings, legacy, body, companions, bonds, lineage, obligations, jobs, observers, discovery,
+    secrets, fronts, randomEvents, liveChoices, dungeons, dating, mind, checkpoints, endings, legacy, body, companions, bonds, lineage, obligations, jobs, observers, discovery, improvise, growth,
   };
 
   // Cross-references that need everything loaded.

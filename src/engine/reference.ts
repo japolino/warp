@@ -7,10 +7,10 @@ export type PartLabel = (typeof PART_LABELS)[number];
 /** What each lorebook entry ("part") holds. */
 export const PART_CONTENTS: Record<PartLabel, string> = {
   core: "name, description, player, clock, start, hud, narration",
-  stats: "stats",
+  stats: "stats, growth",
   people: "relationships (stats + people with schedules), companions, lineage",
   world: "weather, locations, items (incl. clothing), wardrobe, body, conditions, flags, start.items",
-  actions: "actions, obligations, jobs",
+  actions: "actions, improvise, obligations, jobs",
   encounters: "encounters, dungeons",
   journal: "codex, feats, perks, checkpoints, endings",
   rules: "triggers, mind",
@@ -23,10 +23,10 @@ export function partForIssue(where: string): PartLabel {
   const w = where.replace(/^warp-ruleset\s*·\s*/i, "");
   const head = w.split(/[›,]/)[0].trim().toLowerCase();
   if ((PART_LABELS as readonly string[]).includes(head)) return head as PartLabel;
-  if (head.startsWith("stats")) return "stats";
+  if (head.startsWith("stats") || head.startsWith("growth")) return "stats";
   if (["relationships", "people", "companions", "lineage"].some((k) => head.startsWith(k))) return "people";
   if (["locations", "items", "wardrobe", "weather", "conditions", "flags", "body"].some((k) => head.startsWith(k))) return "world";
-  if (["actions", "obligations", "jobs"].some((k) => head.startsWith(k))) return "actions";
+  if (["actions", "improvise", "obligations", "jobs"].some((k) => head.startsWith(k))) return "actions";
   if (head.startsWith("encounters") || head.startsWith("dungeons")) return "encounters";
   if (["codex", "feats", "perks", "checkpoints", "endings"].some((k) => head.startsWith(k))) return "journal";
   if (head.startsWith("triggers") || head.startsWith("rules") || head.startsWith("mind")) return "rules";
@@ -44,6 +44,8 @@ stats:            # kinds: meter (bar) | attribute | skill | money | hidden
   # good: high|low|none (colours); per_hour: drift; narrator: max change the story may make per reply (0 = rules only); max may be a formula ("level * 5")
   # limit what the story may change (stats, relationship stats, flags, conditions): narrator_when: "not in_encounter",
   #   narrator_words: [panic, scared] (the exchange must mention one), narrator_actions: [fight, violence] (action ids or tags)
+  # skills and attributes improve with use: every check that reads them (and practice the story describes) adds progress; growth: 0 on a stat stops it, growth: 2 doubles it
+growth: { rate: 1, attributes: 0.5, train: true }   # optional; growth: false turns it off. Attributes move at half the skill rate by default
 
 relationships:
   open: true                       # track new people the story introduces
@@ -84,6 +86,7 @@ locations:
 items:
   phone: Phone
   raincoat: { name: Raincoat, slot: outer, warmth: 5, reveal: 0, traits: [rainproof] }   # clothing = item with a slot
+  pepper_spray: { name: Pepper Spray, uses: 5 }   # uses: each use the story shows spends one; the last spends the item (tags: [consumable] = 1 use)
 wardrobe: { slots: [outer, top, bottom, under_top, under_bottom, feet], cover: [top, bottom], start: [t_shirt, jeans] }
 conditions: { cold: { label: Cold, tone: bad } }
 flags: { met_boss: { start: false, narrator: true } }
@@ -114,6 +117,14 @@ actions:
     params: { difficulty: { easy: 70, normal: 45, hard: 25, extreme: 10 } }   # easiest → hardest
     check: { chance: "difficulty + skulduggery / 2" }
 
+improvise:        # optional (on by default): typed attempts no action covers still roll — d20 + the closest ability's share of bonus vs a DC by difficulty
+  dc: { easy: 8, fair: 12, hard: 16, extreme: 20 }
+  bonus: 10                        # what a maxed-out ability adds
+  partial: 3                       # missing by this much is a partial success
+  stats: [athletics, charm]        # abilities an attempt may lean on (default: every skill and attribute)
+  outcomes: { crit_fail: { stress: +5 } }   # optional effects by result; the story's own reading records the rest
+  # improvise: false turns it off (then only listed actions roll)
+
 EFFECTS (any success/fail/effects/cost/do block):
   stat shorthand (fatigue: +5, may be a quoted formula), set: { stress: 50 }, flags: { x: true }, give: item / take: item,
   rel: { jo: { trust: +3 } }, move: location, time: 30, add_condition: [cold] or { cold: 120 }, remove_condition: [cold],
@@ -131,6 +142,7 @@ encounters:
     foe_moves: { grab: { desc: "Grabs you", weight: 2, pain: +8 }, threaten: { desc: "Threatens", weight: 1, stress: +6 } }
     end_when: { won: "foe.nerve <= 0", beaten: "pain >= 80" }
     outcomes: { won: { hint: "They flee." }, escaped: { stress: +3 }, beaten: { money: "-min(money, 30)" } }
+    # from_story: false = only actions/effects start it (by default the story can: a fight breaking out in the prose starts it, against whoever it's with)
     # momentum: { win: won, lose: beaten, swing: { crit_success: 40, success: 25, partial: 10, fail: -20, crit_fail: -35 } }
     #   a fight that swings (−100…+100): each check moves it, foe moves can too (effect momentum: -15), and only a full swing ends it;
     #   each round reaches the narrator as ordered beats (a long typed move is kept as written). Formula name: momentum.
