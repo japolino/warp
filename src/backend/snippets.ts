@@ -129,7 +129,7 @@ const SYSTEM = [
 export async function modelLines(o: SnippetInput, settings: Settings, userId?: string): Promise<SceneLine[] | null> {
   const outcome = outcomePacket(o.r, o.rec, o.before, o.after, o.player);
   const user = [
-    o.card ? `The character card (for voice and appearance):\n${o.card.slice(0, 1500)}` : "",
+    o.card ? `Who's who (for voice and appearance):\n${o.card.slice(0, 3000)}` : "",
     `The player character: ${o.player}`,
     sceneFacts(o).join("\n"),
     o.recent.length ? `Just before:\n${o.recent.slice(-4).map((l) => `${l.speaker ?? "(narration)"}: ${l.text}`).join("\n")}` : "",

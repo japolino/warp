@@ -12349,7 +12349,103 @@ async function installTemplate(chatId, templateId, userId, trackCharacter) {
   knownRulesetBookIds.add(book.id);
   return t.name;
 }
-var TTL_MS = 8000, byCharacter, chatCharacter, knownRulesetEntryIds, knownRulesetBookIds, briefs;
+function aboutThem(text, re, budget) {
+  if (!text)
+    return "";
+  const out = [];
+  let n = 0;
+  for (const para of text.split(/\n\s*\n|\n(?=[-*•]|\w+:)/)) {
+    const p = para.trim();
+    if (!p || !re.test(p))
+      continue;
+    const piece = p.length > 700 ? `${p.slice(0, 700)}…` : p;
+    if (n + piece.length > budget)
+      break;
+    out.push(piece);
+    n += piece.length;
+  }
+  return out.join(`
+`);
+}
+async function personProfile(chatId, name, userId, note) {
+  const key = `${chatId}:${name.toLowerCase()}`;
+  const hit = profiles.get(key);
+  if (hit && Date.now() - hit.at < PROFILE_TTL)
+    return hit.p;
+  const re = nameRe(name);
+  const id = await characterForChat(chatId, userId).catch(() => null);
+  const c = id ? await host().characters.get(id, userId).catch(() => null) : null;
+  const scenario = !!c && looksLikeScenario(c);
+  const parts = [];
+  if (note)
+    parts.push(note);
+  let setting = "";
+  if (c && !scenario && re.test(c.name)) {
+    parts.push(await characterBrief(chatId, userId));
+  } else if (c) {
+    const fromCard = [c.description, c.personality, c.scenario].map((t) => aboutThem(t, re, 1200)).filter(Boolean).join(`
+`);
+    if (fromCard)
+      parts.push(`From the card:
+${fromCard}`);
+    setting = [c.scenario, c.description].filter(Boolean).join(`
+`).slice(0, 600);
+    const lore = [];
+    for (const bookId of c.world_book_ids ?? []) {
+      if (lore.length >= 3)
+        break;
+      const book = await host().world_books.get(bookId, userId).catch(() => null);
+      if (!book || isRulesetBookName(book.name))
+        continue;
+      const entries = await listAllEntries(bookId, userId).catch(() => []);
+      for (const e of entries) {
+        if (lore.length >= 3)
+          break;
+        if (isRulesetEntryTitle(e.comment))
+          continue;
+        const keys = [...e.key ?? [], e.comment ?? ""].join(" ");
+        if (re.test(keys))
+          lore.push(e.content.length > 900 ? `${e.content.slice(0, 900)}…` : e.content);
+      }
+    }
+    if (lore.length)
+      parts.push(`From the lorebook:
+${lore.join(`
+---
+`)}`);
+  }
+  try {
+    await Promise.resolve().then(() => init_ledger());
+    const msgs = await getMessages(chatId);
+    const seen = [];
+    let n = 0;
+    for (const m of [...msgs].reverse().slice(0, 40)) {
+      if (m.is_user || !re.test(m.content))
+        continue;
+      const bit = aboutThem(m.content, re, 500);
+      if (!bit || n + bit.length > 1400)
+        continue;
+      seen.unshift(bit);
+      n += bit.length;
+      if (seen.length >= 4)
+        break;
+    }
+    if (seen.length)
+      parts.push(`How the story has shown them:
+${seen.join(`
+`)}`);
+  } catch {}
+  const p = { text: parts.filter(Boolean).join(`
+
+`).slice(0, 4500), scenario, setting };
+  profiles.set(key, { at: Date.now(), p });
+  return p;
+}
+var TTL_MS = 8000, byCharacter, chatCharacter, knownRulesetEntryIds, knownRulesetBookIds, briefs, profiles, PROFILE_TTL, nameRe = (name) => {
+  const first = name.trim().split(/\s+/)[0] ?? name;
+  const safe = first.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^\\p{L}])${safe}(?=[^\\p{L}]|$)`, "iu");
+};
 var init_source = __esm(() => {
   init_loader();
   init_lint();
@@ -12359,6 +12455,8 @@ var init_source = __esm(() => {
   knownRulesetEntryIds = new Set;
   knownRulesetBookIds = new Set;
   briefs = new Map;
+  profiles = new Map;
+  PROFILE_TTL = 10 * 60000;
 });
 
 // src/engine/dungeon/battle.ts
@@ -15465,8 +15563,8 @@ function sceneFacts(o) {
 async function modelLines(o, settings, userId) {
   const outcome = outcomePacket(o.r, o.rec, o.before, o.after, o.player);
   const user = [
-    o.card ? `The character card (for voice and appearance):
-${o.card.slice(0, 1500)}` : "",
+    o.card ? `Who's who (for voice and appearance):
+${o.card.slice(0, 3000)}` : "",
     `The player character: ${o.player}`,
     sceneFacts(o).join(`
 `),
@@ -16240,7 +16338,23 @@ async function playScene(opts) {
     const playerText = opts.typed ?? opts.said ?? "";
     let res = resolveTurnFull(r, before, opts.intent, { seed, veils: settings.veils, playerText });
     const decider = await getDecider(settings, userId);
-    const card = await characterBrief(chatId, userId).catch(() => "");
+    const partner = activeSession(r, before) ?? null;
+    let card = "";
+    if (kind === "date" || opts.intent?.actionId.startsWith("date:talk@")) {
+      const who = partner?.who ?? opts.intent?.actionId.split("@")[1] ?? null;
+      if (who) {
+        const name = personName(r, before, who);
+        const prof = await personProfile(chatId, name, userId, r.people[who]?.desc ? `${name}: ${r.people[who].desc}` : undefined).catch(() => null);
+        if (prof)
+          card = [prof.text ? `About ${name}:
+${prof.text}` : "", prof.scenario && prof.setting ? `The setting (the card is a scenario, not ${name}):
+${prof.setting}` : ""].filter(Boolean).join(`
+
+`);
+      }
+    }
+    if (!card)
+      card = await characterBrief(chatId, userId).catch(() => "");
     if (res.needs.length && decider.id !== "rules") {
       const recent = log.history.slice(-4).map((l) => `${l.speaker ?? ""}${l.speaker ? ": " : ""}${l.text}`).join(`
 `);
@@ -16339,8 +16453,8 @@ async function imagePrompt(r, s, who, venueId, card, settings, userId) {
   const phase = r.clock.enabled ? formatClock(r, s.minutes).phase : "day";
   const fallback = `${name}, one person, centered, upper body, facing the viewer, gentle smile, fully clothed, ${placeName}, ${phase}, detailed background, visual novel style, soft lighting`;
   try {
-    const text = await ask("Write ONE image-generation prompt as comma-separated tags for a visual-novel scene: exactly one adult character, centered in the frame, upper body, facing the viewer, fully clothed, with the place behind them as a detailed background. Take their appearance (hair, eyes, build, clothes) from what you're given. Tags only, no sentences, under 70 words.", [`Character: ${name}${r.people[who]?.desc ? ` — ${r.people[who].desc}` : ""}`, card ? `Card (may describe them):
-${card.slice(0, 1800)}` : "", `Place: ${placeName}${placeDesc ? ` — ${placeDesc}` : ""}`, `Time of day: ${phase}`].filter(Boolean).join(`
+    const text = await ask("Write ONE image-generation prompt as comma-separated tags for a visual-novel scene: exactly one adult character, centered in the frame, upper body, facing the viewer, fully clothed, with the place behind them as a detailed background. Take their appearance (hair, eyes, build, clothes) from what you're given. Tags only, no sentences, under 70 words.", [`Character: ${name}${r.people[who]?.desc ? ` — ${r.people[who].desc}` : ""}`, card ? `What's known about them (use only what describes ${name}):
+${card.slice(0, 3000)}` : "", `Place: ${placeName}${placeDesc ? ` — ${placeDesc}` : ""}`, `Time of day: ${phase}`].filter(Boolean).join(`
 
 `), settings, userId, 20000, { temperature: 0.4, maxTokens: 160 });
     const tags = text.replace(/```[a-z]*|```/g, "").split(`

@@ -16,7 +16,7 @@ import { ask } from "./helpers.js";
 import { host, logError, send, toast } from "./host.js";
 import { foldPath, getMessages, warpMeta, writeRecord } from "./ledger.js";
 import { getSettings } from "./settings.js";
-import { characterBrief, characterForChat, getRuleset } from "./source.js";
+import { characterBrief, characterForChat, getRuleset, personProfile } from "./source.js";
 import { busyChats, pushState } from "./state-push.js";
 import { summaryLine, writeLines } from "./snippets.js";
 
@@ -93,7 +93,18 @@ export async function playScene(opts: {
     const playerText = opts.typed ?? opts.said ?? "";
     let res = resolveTurnFull(r, before, opts.intent, { seed, veils: settings.veils, playerText });
     const decider = await getDecider(settings, userId);
-    const card = await characterBrief(chatId, userId).catch(() => "");
+    // Who they are: on a date, a profile of that person (card, lorebook, the story so far) — scenario cards included.
+    const partner = activeSession(r, before) ?? null;
+    let card = "";
+    if (kind === "date" || opts.intent?.actionId.startsWith("date:talk@")) {
+      const who = partner?.who ?? opts.intent?.actionId.split("@")[1] ?? null;
+      if (who) {
+        const name = personName(r, before, who);
+        const prof = await personProfile(chatId, name, userId, r.people[who]?.desc ? `${name}: ${r.people[who].desc}` : undefined).catch(() => null);
+        if (prof) card = [prof.text ? `About ${name}:\n${prof.text}` : "", prof.scenario && prof.setting ? `The setting (the card is a scenario, not ${name}):\n${prof.setting}` : ""].filter(Boolean).join("\n\n");
+      }
+    }
+    if (!card) card = await characterBrief(chatId, userId).catch(() => "");
     if (res.needs.length && decider.id !== "rules") {
       const recent = log.history.slice(-4).map((l) => `${l.speaker ?? ""}${l.speaker ? ": " : ""}${l.text}`).join("\n");
       const o = await odds({ decider, r, s: before, specs: res.needs, playerText, sceneText: recent, player, timeoutMs: 15000, card });
@@ -198,7 +209,7 @@ async function imagePrompt(r: Ruleset, s: GameState, who: string, venueId: strin
   try {
     const text = await ask(
       "Write ONE image-generation prompt as comma-separated tags for a visual-novel scene: exactly one adult character, centered in the frame, upper body, facing the viewer, fully clothed, with the place behind them as a detailed background. Take their appearance (hair, eyes, build, clothes) from what you're given. Tags only, no sentences, under 70 words.",
-      [`Character: ${name}${r.people[who]?.desc ? ` — ${r.people[who].desc}` : ""}`, card ? `Card (may describe them):\n${card.slice(0, 1800)}` : "", `Place: ${placeName}${placeDesc ? ` — ${placeDesc}` : ""}`, `Time of day: ${phase}`].filter(Boolean).join("\n\n"),
+      [`Character: ${name}${r.people[who]?.desc ? ` — ${r.people[who].desc}` : ""}`, card ? `What's known about them (use only what describes ${name}):\n${card.slice(0, 3000)}` : "", `Place: ${placeName}${placeDesc ? ` — ${placeDesc}` : ""}`, `Time of day: ${phase}`].filter(Boolean).join("\n\n"),
       settings, userId, 20000, { temperature: 0.4, maxTokens: 160 },
     );
     const tags = text.replace(/```[a-z]*|```/g, "").split("\n").map((x) => x.trim()).find((x) => x.includes(",")) ?? "";

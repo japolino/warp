@@ -184,3 +184,99 @@ export async function installTemplate(chatId: string, templateId: string, userId
   knownRulesetBookIds.add(book.id);
   return t.name;
 }
+
+// ───────────────────────── who someone is ─────────────────────────
+
+export interface PersonProfile {
+  /** What's known about them: the card, lorebook entries about them, how the story has shown them. */
+  text: string;
+  /** The card is a setting (scenario / narrator card), not this person. */
+  scenario: boolean;
+  /** A short piece of the setting, for scenario cards. */
+  setting: string;
+}
+
+const profiles = new Map<string, { at: number; p: PersonProfile }>();
+const PROFILE_TTL = 10 * 60_000;
+
+export const nameRe = (name: string) => {
+  const first = name.trim().split(/\s+/)[0] ?? name;
+  const safe = first.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^\\p{L}])${safe}(?=[^\\p{L}]|$)`, "iu");
+};
+
+/** Paragraphs of a text that mention them, up to a budget. */
+export function aboutThem(text: string | undefined | null, re: RegExp, budget: number): string {
+  if (!text) return "";
+  const out: string[] = [];
+  let n = 0;
+  for (const para of text.split(/\n\s*\n|\n(?=[-*•]|\w+:)/)) {
+    const p = para.trim();
+    if (!p || !re.test(p)) continue;
+    const piece = p.length > 700 ? `${p.slice(0, 700)}…` : p;
+    if (n + piece.length > budget) break;
+    out.push(piece);
+    n += piece.length;
+  }
+  return out.join("\n");
+}
+
+/**
+ * Who a person is, gathered for the stage's lines and pictures: the whole card when
+ * they are the card's character; otherwise what the card says about them, lorebook
+ * entries keyed to their name, and how the recent story has shown them.
+ */
+export async function personProfile(chatId: string, name: string, userId?: string, note?: string): Promise<PersonProfile> {
+  const key = `${chatId}:${name.toLowerCase()}`;
+  const hit = profiles.get(key);
+  if (hit && Date.now() - hit.at < PROFILE_TTL) return hit.p;
+  const re = nameRe(name);
+  const id = await characterForChat(chatId, userId).catch(() => null);
+  const c = id ? await host().characters.get(id, userId).catch(() => null) : null;
+  const scenario = !!c && looksLikeScenario(c);
+  const parts: string[] = [];
+  if (note) parts.push(note);
+  let setting = "";
+  if (c && !scenario && re.test(c.name)) {
+    // They are the card.
+    parts.push(await characterBrief(chatId, userId));
+  } else if (c) {
+    const fromCard = [c.description, c.personality, c.scenario].map((t) => aboutThem(t, re, 1200)).filter(Boolean).join("\n");
+    if (fromCard) parts.push(`From the card:\n${fromCard}`);
+    setting = [c.scenario, c.description].filter(Boolean).join("\n").slice(0, 600);
+    // Lorebook entries about them (keyed to their name, or titled after them).
+    const lore: string[] = [];
+    for (const bookId of c.world_book_ids ?? []) {
+      if (lore.length >= 3) break;
+      const book = await host().world_books.get(bookId, userId).catch(() => null);
+      if (!book || isRulesetBookName(book.name)) continue;
+      const entries = await listAllEntries(bookId, userId).catch(() => [] as WorldBookEntryDTO[]);
+      for (const e of entries) {
+        if (lore.length >= 3) break;
+        if (isRulesetEntryTitle(e.comment)) continue;
+        const keys = [...(e.key ?? []), e.comment ?? ""].join(" ");
+        if (re.test(keys)) lore.push(e.content.length > 900 ? `${e.content.slice(0, 900)}…` : e.content);
+      }
+    }
+    if (lore.length) parts.push(`From the lorebook:\n${lore.join("\n---\n")}`);
+  }
+  // How the story has shown them lately.
+  try {
+    const { getMessages } = await import("./ledger.js");
+    const msgs = await getMessages(chatId);
+    const seen: string[] = [];
+    let n = 0;
+    for (const m of [...msgs].reverse().slice(0, 40)) {
+      if (m.is_user || !re.test(m.content)) continue;
+      const bit = aboutThem(m.content, re, 500);
+      if (!bit || n + bit.length > 1400) continue;
+      seen.unshift(bit);
+      n += bit.length;
+      if (seen.length >= 4) break;
+    }
+    if (seen.length) parts.push(`How the story has shown them:\n${seen.join("\n")}`);
+  } catch { /* no history */ }
+  const p: PersonProfile = { text: parts.filter(Boolean).join("\n\n").slice(0, 4500), scenario, setting };
+  profiles.set(key, { at: Date.now(), p });
+  return p;
+}
