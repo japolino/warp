@@ -33,7 +33,7 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
     const band = bandFor(def, v);
     const p = pct(v, def.min, max);
     return {
-      id, label: def.label, value: v,
+      id, label: def.label, value: v, min: def.min, max,
       display: statDisplay(def, v, max, r.hud.currency),
       pct: p,
       text: band?.text ?? null,

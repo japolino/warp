@@ -427,14 +427,13 @@ export function setup(ctx: SpindleFrontendContext) {
   }
   function onPanelInput(e: Event) {
     const t = e.target as HTMLInputElement;
-    if (t.dataset.range && state?.hud) {
-      const b = state.hud.bars.find((x) => x.id === t.dataset.range);
+    // Slider and number box share the stat's real range; keep them in step both ways.
+    if (t.dataset.range) {
       const num = t.parentElement?.querySelector<HTMLInputElement>("[data-num]");
-      if (b && num) {
-        // The slider works on a 0–1000 scale of the bar; convert back using current value/pct.
-        const span = b.pct > 0 ? b.value / b.pct : 0;
-        num.value = String(Math.round((Number(t.value) / 1000) * (span || 100)));
-      }
+      if (num) num.value = t.value;
+    } else if (t.dataset.num) {
+      const range = t.parentElement?.querySelector<HTMLInputElement>("[data-range]");
+      if (range) range.value = t.value;
     }
   }
   function onPanelChange(e: Event) {

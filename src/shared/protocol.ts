@@ -8,6 +8,8 @@ export interface BarView {
   id: string;
   label: string;
   value: number;
+  min: number;
+  max: number;
   display: string;
   pct: number;
   text: string | null;

@@ -135,7 +135,7 @@ test("full loop: install → choose → roll → narrate → bookkeeping → swi
   const rec = (messages[2].extra.spindle_metadata as any).warp.swipes["0"];
   expect(rec.action.id).toBe("go:high_street");
   const narr = rec.events.filter((e: any) => e.src === "narrator");
-  expect(narr.find((e: any) => e.t === "stat" && e.id === "stress").d).toBe(1500);
+  expect(narr.find((e: any) => e.t === "stat" && e.id === "stress").d).toBe(15);
   expect(narr.some((e: any) => e.id === "skulduggery")).toBe(false);
   st = lastState();
   expect(st.hud.location.name).toBe("High Street");

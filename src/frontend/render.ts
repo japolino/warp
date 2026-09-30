@@ -29,7 +29,16 @@ export function renderHud(h: HudView, opts: { editing: string | null; compact: b
     return `<div class="warp-bar" data-bar="${esc(b.id)}" title="${esc(`${b.label}: ${b.display}${b.desc ? ` — ${b.desc}` : ""}\nClick to adjust`)}">
       <div class="warp-bar-head"><span class="warp-bar-label">${esc(b.label)}</span><span class="warp-bar-text warp-tone-${b.tone}">${esc(b.text ?? b.display)}</span></div>
       <div class="warp-bar-track"><div class="warp-bar-fill warp-bg-${b.tone}" style="width:${(b.pct * 100).toFixed(1)}%${b.color ? `;background:${esc(b.color)}` : ""}"></div></div>
-      ${editing ? `<div class="warp-bar-edit"><input type="range" min="0" max="1000" value="${Math.round(b.pct * 1000)}" data-range="${esc(b.id)}" aria-label="${esc(b.label)}"><input class="warp-input" type="number" value="${esc(Math.round(b.value))}" data-num="${esc(b.id)}" aria-label="${esc(b.label)} value"><button class="warp-btn warp-btn-primary" data-save="${esc(b.id)}">Set</button></div>` : ""}
+      ${editing ? (() => {
+        const step = b.max - b.min > 200 ? 1 : b.max - b.min > 20 ? 0.5 : 0.1;
+        const v = Math.round(b.value * 10) / 10;
+        return `<div class="warp-bar-edit">
+          <input type="range" min="${b.min}" max="${b.max}" step="${step}" value="${v}" data-range="${esc(b.id)}" aria-label="${esc(b.label)}">
+          <input class="warp-input" type="number" min="${b.min}" max="${b.max}" step="${step}" value="${v}" data-num="${esc(b.id)}" aria-label="${esc(b.label)} value">
+          <span class="warp-dim warp-of">/ ${esc(b.max)}</span>
+          <button class="warp-btn warp-btn-primary" data-save="${esc(b.id)}">Set</button>
+        </div>`;
+      })() : ""}
     </div>`;
   }).join("");
 

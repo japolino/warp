@@ -98,22 +98,22 @@ describe("turn resolution", () => {
     const s = initialState(r);
     s.location = "high_street";
     const o = odds(r, s, r.actions.cafe_shift)!;
-    expect(o.success).toBeCloseTo((55 + 50 / 15 | 0) / 100, 1);
+    expect(o.success).toBeCloseTo(Math.round(55 + 5 / 1.5) / 100, 2);
   });
 
   test("triggers fire on the rising edge only", () => {
     const r = hometown();
     const s = initialState(r);
-    s.stats.stress = 9900;
+    s.stats.stress = 99;
     s.location = "apartment";
     const rec = resolveTurn(r, s, { actionId: "shower", via: "choice" }, { seed: "x" });
     // shower lowers stress, so no breakdown
     expect(rec.events.some((e) => e.t === "trig" && e.id === "breakdown")).toBe(false);
-    s.stats.stress = 10000;
+    s.stats.stress = 100;
     const rec2 = resolveTurn(r, s, null, { seed: "y" });
     expect(rec2.events.some((e) => e.t === "trig" && e.id === "breakdown" && e.v)).toBe(true);
     const after = foldEvents(r, [rec2.events], s);
-    expect(after.stats.stress).toBe(6000);
+    expect(after.stats.stress).toBe(60);
     expect(after.conditions.shaken).toBeDefined();
     const rec3 = resolveTurn(r, after, null, { seed: "z" });
     expect(rec3.events.some((e) => e.t === "trig" && e.id === "breakdown" && e.v)).toBe(false);
@@ -141,7 +141,7 @@ describe("narrator proposals are bounded", () => {
       minutes: 99999,
     });
     const after = foldEvents(r, [ev], s);
-    expect(after.stats.stress).toBeLessThanOrEqual(s.stats.stress + 1500 + 1);
+    expect(after.stats.stress).toBeLessThanOrEqual(s.stats.stress + 15 + 1);
     expect(after.stats.skulduggery).toBe(s.stats.skulduggery);
     expect(after.people.robin.name).toBe("Robin");
     expect(after.rel.robin.trust).toBe(10 + 5);

@@ -38,101 +38,96 @@ narration:
     {
       label: "stats",
       yaml: `stats:
+  # Every meter runs 0–100, so hand edits and author formulas stay readable.
   pain:
     kind: meter
-    max: 200
     good: low
-    per_hour: -12
-    narrator: 40
+    per_hour: -6
+    narrator: 20
     bands:
       0: You feel okay.
-      30: You're a little sore.
-      80: You're in pain.
-      130: You're in agony!
+      15: You're a little sore.
+      40: You're in pain.
+      65: You're in agony!
   arousal:
     kind: meter
-    max: 10000
     good: none
     start: 0
-    per_hour: -300
-    narrator: 2500
+    per_hour: -3
+    narrator: 25
     color: "#e0569b"
     bands:
       0: You feel cold.
-      2000: You feel warm.
-      5000: You feel aroused.
-      8000: You're shaking with arousal.
+      20: You feel warm.
+      50: You feel aroused.
+      80: You're shaking with arousal.
   fatigue:
     kind: meter
-    max: 2000
     good: low
-    start: 150
-    per_hour: 60            # a point a minute while awake
-    narrator: 300
+    start: 8
+    per_hour: 3             # about a point every 20 minutes awake
+    narrator: 15
     bands:
       0: You are wide awake.
-      600: You are alert.
-      1200: You are tired.
-      1700: You are exhausted.
+      30: You are alert.
+      60: You are tired.
+      85: You are exhausted.
   stress:
     kind: meter
-    max: 10000
     good: low
-    per_hour: -40
-    narrator: 1500
+    start: 0
+    per_hour: -0.4
+    narrator: 15
     bands:
       0: You are calm.
-      3000: You are stressed.
-      6000: You are strained.
-      8000: You are distressed.
+      30: You are stressed.
+      60: You are strained.
+      80: You are distressed.
   trauma:
     kind: meter
-    max: 5000
     good: low
-    narrator: 400
+    start: 0
+    narrator: 8
     bands:
       0: You feel fine.
-      1000: You are uneasy.
-      2500: You are nervous.
-      4000: You feel numb.
+      20: You are uneasy.
+      50: You are nervous.
+      80: You feel numb.
   control:
     kind: meter
-    max: 1000
     good: high
-    start: 1000
-    narrator: 250
+    start: 100
+    narrator: 25
     bands:
       0: You are terrified.
-      200: You are scared.
-      400: You are insecure.
-      700: You are confident.
+      20: You are scared.
+      40: You are insecure.
+      70: You are confident.
   allure:
     kind: meter
-    max: 10000
     good: none
-    start: 800
-    narrator: 1500
+    start: 8
+    narrator: 15
     bands:
       0: You don't stand out.
-      1000: You attract glances.
-      3000: You stand out.
-      6000: You look like you want trouble.
+      10: You attract glances.
+      30: You stand out.
+      60: You look like you want trouble.
   money:
     kind: money
     start: 60
     narrator: 200
 
-  athletics:   { kind: skill, max: 1000, start: 100, grades: [F, F+, D, D+, C, C+, B, B+, A, A+, S] }
-  swimming:    { kind: skill, max: 1000, start: 50,  grades: [F, F+, D, D+, C, C+, B, B+, A, A+, S] }
-  dancing:     { kind: skill, max: 1000, start: 0,   grades: [F, F+, D, D+, C, C+, B, B+, A, A+, S] }
-  skulduggery: { kind: skill, max: 1000, start: 0,   grades: [F, F+, D, D+, C, C+, B, B+, A, A+, S] }
-  tending:     { kind: skill, max: 1000, start: 50,  grades: [F, F+, D, D+, C, C+, B, B+, A, A+, S] }
-  studies:     { kind: skill, max: 1000, start: 200, grades: [F, E, D, C, B, A, "A*"] }
+  athletics:   { kind: skill, max: 100, start: 10, grades: [F, F+, D, D+, C, C+, B, B+, A, A+, S] }
+  swimming:    { kind: skill, max: 100, start: 5,   grades: [F, F+, D, D+, C, C+, B, B+, A, A+, S] }
+  dancing:     { kind: skill, max: 100, start: 0,   grades: [F, F+, D, D+, C, C+, B, B+, A, A+, S] }
+  skulduggery: { kind: skill, max: 100, start: 0,   grades: [F, F+, D, D+, C, C+, B, B+, A, A+, S] }
+  tending:     { kind: skill, max: 100, start: 5,   grades: [F, F+, D, D+, C, C+, B, B+, A, A+, S] }
+  studies:     { kind: skill, max: 100, start: 20,  grades: [F, E, D, C, B, A, "A*"] }
   crime:
     kind: hidden
-    max: 5000
     good: low
-    per_hour: -2
+    per_hour: -0.04
 `,
     },
     {
@@ -213,14 +208,14 @@ conditions:
     at: apartment
     say: "*I get into bed and sleep.*"
     time: 480
-    effects: { fatigue: -2000, stress: -1500, pain: -60, control: +100 }
+    effects: { fatigue: -100, stress: -15, pain: -30, control: +10 }
   shower:
     label: Shower
     group: Home
     at: apartment
     say: "*I take a long shower.*"
     time: 20
-    effects: { stress: -300, arousal: -500 }
+    effects: { stress: -3, arousal: -5 }
 
   attend_lecture:
     label: Attend lecture
@@ -229,23 +224,23 @@ conditions:
     when: between(hour, 9, 16) and weekday != 'Sat' and weekday != 'Sun'
     say: "*I head into a lecture and try to focus.*"
     time: 90
-    effects: { studies: +15, fatigue: +100 }
+    effects: { studies: +1.5, fatigue: +5 }
   study:
     label: Study in the library
     group: Campus
     at: campus
     say: "*I find a quiet corner in the library and study.*"
     time: 60
-    check: { chance: 50 + studies / 20 - fatigue / 40, label: Studies }
-    success: { studies: +12, hint: "The material clicks." }
-    fail: { studies: +3, stress: +200, hint: "The words swim; very little sticks." }
+    check: { chance: 50 + studies / 2 - fatigue / 2, label: Studies }
+    success: { studies: +1.2, hint: "The material clicks." }
+    fail: { studies: +0.3, stress: +2, hint: "The words swim; very little sticks." }
   swim:
     label: Swim laps
     group: Campus
     at: campus
     say: "*I swim laps in the university pool.*"
     time: 45
-    effects: { swimming: +10, athletics: +4, fatigue: +250, stress: -300 }
+    effects: { swimming: +1, athletics: +0.4, fatigue: +12, stress: -3 }
 
   jog:
     label: Go for a jog
@@ -253,9 +248,9 @@ conditions:
     at: park
     say: "*I go for a jog around the park.*"
     time: 40
-    check: { chance: 60 + athletics / 20 - fatigue / 30, label: Athletics }
-    success: { athletics: +10, fatigue: +200, stress: -400 }
-    fail: { athletics: +4, fatigue: +350, pain: +20, hint: "{{user}} pushes too hard and ends up aching and winded." }
+    check: { chance: 60 + athletics / 2 - fatigue * 2 / 3, label: Athletics }
+    success: { athletics: +1, fatigue: +10, stress: -4 }
+    fail: { athletics: +0.4, fatigue: +17, pain: +10, hint: "{{user}} pushes too hard and ends up aching and winded." }
 
   cafe_shift:
     label: Work a café shift
@@ -264,9 +259,9 @@ conditions:
     when: between(hour, 7, 18)
     say: "*I put on an apron and work a shift at the café.*"
     time: 240
-    check: { chance: 55 + tending / 15, label: Tending }
-    success: { money: 45 + tending / 20, tending: +12, fatigue: +400, hint: "A smooth shift — good tips." }
-    fail: { money: 30, tending: +6, fatigue: +450, stress: +600, hint: "A rough shift: rude customers and a smashed tray." }
+    check: { chance: 55 + tending / 1.5, label: Tending }
+    success: { money: 45 + tending / 2, tending: +1.2, fatigue: +20, hint: "A smooth shift — good tips." }
+    fail: { money: 30, tending: +0.6, fatigue: +22, stress: +6, hint: "A rough shift: rude customers and a smashed tray." }
   buy_coffee:
     label: Buy a coffee (£3)
     group: Shops
@@ -274,7 +269,7 @@ conditions:
     when: money >= 3
     say: "*I grab a coffee.*"
     time: 10
-    effects: { money: -3, fatigue: -80 }
+    effects: { money: -3, fatigue: -4 }
 
   pickpocket:
     label: Pick a pocket
@@ -283,11 +278,11 @@ conditions:
     say: "*I pick out a distracted mark and go for their wallet.*"
     tags: [crime]
     time: 10
-    check: { chance: 15 + skulduggery / 12 - allure / 800, label: Skulduggery }
-    crit_success: { money: roll('4d10') + 20, skulduggery: +15, hint: "A fat wallet, and nobody noticed a thing." }
-    success: { money: roll('2d10') + 5, skulduggery: +10, hint: "Clean lift. Nobody noticed." }
-    fail: { crime: +300, stress: +800, skulduggery: +3, hint: "The mark catches {{user}}'s wrist and starts shouting." }
-    crit_fail: { crime: +800, stress: +1500, pain: +40, hint: "Caught red-handed by someone who doesn't wait for the police." }
+    check: { chance: 15 + skulduggery / 1.2 - allure / 8, label: Skulduggery }
+    crit_success: { money: roll('4d10') + 20, skulduggery: +1.5, hint: "A fat wallet, and nobody noticed a thing." }
+    success: { money: roll('2d10') + 5, skulduggery: +1, hint: "Clean lift. Nobody noticed." }
+    fail: { crime: +6, stress: +8, skulduggery: +0.3, hint: "The mark catches {{user}}'s wrist and starts shouting." }
+    crit_fail: { crime: +16, stress: +15, pain: +20, hint: "Caught red-handed by someone who doesn't wait for the police." }
 
   dance:
     label: Dance at a club
@@ -296,9 +291,9 @@ conditions:
     when: hour >= 20 or hour < 4
     say: "*I hit the dance floor.*"
     time: 60
-    check: { chance: 40 + dancing / 12, label: Dancing }
-    success: { dancing: +12, stress: -600, allure: +300, fatigue: +200, hint: "{{user}} moves well and draws eyes." }
-    fail: { dancing: +5, stress: +200, fatigue: +200, hint: "Awkward, off the beat, and a little embarrassing." }
+    check: { chance: 40 + dancing / 1.2, label: Dancing }
+    success: { dancing: +1.2, stress: -6, allure: +3, fatigue: +10, hint: "{{user}} moves well and draws eyes." }
+    fail: { dancing: +0.5, stress: +2, fatigue: +10, hint: "Awkward, off the beat, and a little embarrassing." }
   drink:
     label: Have a drink (£6)
     group: Nightlife
@@ -306,7 +301,7 @@ conditions:
     when: money >= 6
     say: "*I order a drink.*"
     time: 30
-    effects: { money: -6, stress: -500, control: -20 }
+    effects: { money: -6, stress: -5, control: -2 }
 
   wander:
     label: Wander around
@@ -319,9 +314,9 @@ conditions:
         ask: What does the town throw at {{user}} while they wander?
         options:
           windfall: { desc: "A small windfall", weight: 2, money: roll('2d6'), hint: "{{user}} stumbles on a little luck — some dropped cash." }
-          friendly: { desc: "A friendly face", weight: 3, stress: -300, hint: "Someone friendly strikes up a conversation." }
-          quiet: { desc: "Nothing much happens", weight: 3, stress: -100, hint: "A quiet, uneventful walk." }
-          trouble: { desc: "Someone unpleasant takes an interest", weight: 2, stress: +400, hint: "Trouble finds {{user}}: someone unpleasant takes an interest." }
+          friendly: { desc: "A friendly face", weight: 3, stress: -3, hint: "Someone friendly strikes up a conversation." }
+          quiet: { desc: "Nothing much happens", weight: 3, stress: -1, hint: "A quiet, uneventful walk." }
+          trouble: { desc: "Someone unpleasant takes an interest", weight: 2, stress: +4, hint: "Trouble finds {{user}}: someone unpleasant takes an interest." }
 
   endure:
     label: Endure
@@ -329,18 +324,18 @@ conditions:
     desc: Resisting pain, fear, temptation or pressure; keeping composure.
     params:
       difficulty: { easy: 75, normal: 50, hard: 30, extreme: 15 }
-    check: { chance: difficulty + control / 40 - stress / 400, label: Control }
+    check: { chance: difficulty + control / 4 - stress / 4, label: Control }
     success: { hint: "{{user}} holds it together." }
-    fail: { stress: +500, control: -40, hint: "{{user}} cracks under it." }
+    fail: { stress: +5, control: -4, hint: "{{user}} cracks under it." }
   escape:
     label: Escape
     hidden: true
     desc: Running away, struggling free, slipping out of a bad situation.
     params:
       difficulty: { easy: 75, normal: 50, hard: 30, extreme: 15 }
-    check: { chance: difficulty + athletics / 25 - fatigue / 60 - pain / 5, label: Athletics }
-    success: { fatigue: +150, hint: "{{user}} gets away." }
-    fail: { fatigue: +200, pain: +20, hint: "{{user}} doesn't get away." }
+    check: { chance: difficulty + athletics / 2.5 - fatigue / 3 - pain * 0.8, label: Athletics }
+    success: { fatigue: +7, hint: "{{user}} gets away." }
+    fail: { fatigue: +10, pain: +10, hint: "{{user}} doesn't get away." }
   sneak:
     label: Sneak
     hidden: true
@@ -348,9 +343,9 @@ conditions:
     tags: [crime]
     params:
       difficulty: { easy: 70, normal: 45, hard: 25, extreme: 10 }
-    check: { chance: difficulty + skulduggery / 15, label: Skulduggery }
-    success: { skulduggery: +8 }
-    fail: { crime: +150, stress: +300, skulduggery: +2, hint: "{{user}} is noticed." }
+    check: { chance: difficulty + skulduggery / 1.5, label: Skulduggery }
+    success: { skulduggery: +0.8 }
+    fail: { crime: +3, stress: +3, skulduggery: +0.2, hint: "{{user}} is noticed." }
 `,
     },
     {
@@ -358,53 +353,53 @@ conditions:
       yaml: `# Meters that feed into each other.
 triggers:
   exhaustion:
-    when: fatigue >= 1700
+    when: fatigue >= 85
     do:
       add_condition: [exhausted]
       hint: "{{user}} is swaying on their feet from exhaustion."
   exhaustion_stress:
-    when: fatigue >= 1700
+    when: fatigue >= 85
     repeat: true
-    do: { stress: +250 }
+    do: { stress: +2.5 }
   rested:
-    when: fatigue < 1200
+    when: fatigue < 60
     do: { remove_condition: [exhausted] }
 
   breakdown:
-    when: stress >= 10000
+    when: stress >= 100
     do:
-      set: { stress: 6000 }
-      trauma: +600
-      control: -200
+      set: { stress: 60 }
+      trauma: +12
+      control: -20
       add_condition: { shaken: 240 }
       hint: "The pressure finally overwhelms {{user}} — they break down."
 
   scared:
-    when: control < 400
+    when: control < 40
     do:
       add_condition: [scared]
       hint: "{{user}}'s nerve is gone; old fears are surfacing."
   steady:
-    when: control >= 400
+    when: control >= 40
     do: { remove_condition: [scared] }
   trauma_eats_control:
-    when: trauma >= 2500
+    when: trauma >= 50
     repeat: true
-    do: { control: -10 }
+    do: { control: -1 }
 
   # Judged by the decision model each turn, in plain language.
   threatened:
     when_scene: "{{user}} is being threatened, cornered or attacked"
     do:
-      stress: +400
-      control: -30
+      stress: +4
+      control: -3
   wanted:
-    when: crime >= 1500
+    when: crime >= 30
     do:
       add_condition: [wanted]
       hint: "Word is out: the police are asking about {{user}}."
   cleared:
-    when: crime < 800
+    when: crime < 16
     do: { remove_condition: [wanted] }
 `,
     },

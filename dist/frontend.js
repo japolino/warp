@@ -72,7 +72,8 @@ var STYLES = `
 .warp-bar-fill.warp-bg-neutral { background: var(--warp-info); }
 .warp-bar-edit { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
 .warp-bar-edit input[type=range] { flex: 1; accent-color: var(--warp-accent); }
-.warp-bar-edit input[type=number] { width: 72px; }
+.warp-bar-edit input[type=number] { width: 64px; }
+.warp-of { font-size: 12px; white-space: nowrap; }
 .warp-changed { animation: warp-flash 1.2s ease; }
 @keyframes warp-flash { 0% { background: color-mix(in srgb, var(--warp-accent) 30%, transparent); } 100% { background: transparent; } }
 
@@ -273,7 +274,16 @@ function renderHud(h, opts) {
 Click to adjust`)}">
       <div class="warp-bar-head"><span class="warp-bar-label">${esc(b.label)}</span><span class="warp-bar-text warp-tone-${b.tone}">${esc(b.text ?? b.display)}</span></div>
       <div class="warp-bar-track"><div class="warp-bar-fill warp-bg-${b.tone}" style="width:${(b.pct * 100).toFixed(1)}%${b.color ? `;background:${esc(b.color)}` : ""}"></div></div>
-      ${editing ? `<div class="warp-bar-edit"><input type="range" min="0" max="1000" value="${Math.round(b.pct * 1000)}" data-range="${esc(b.id)}" aria-label="${esc(b.label)}"><input class="warp-input" type="number" value="${esc(Math.round(b.value))}" data-num="${esc(b.id)}" aria-label="${esc(b.label)} value"><button class="warp-btn warp-btn-primary" data-save="${esc(b.id)}">Set</button></div>` : ""}
+      ${editing ? (() => {
+      const step = b.max - b.min > 200 ? 1 : b.max - b.min > 20 ? 0.5 : 0.1;
+      const v = Math.round(b.value * 10) / 10;
+      return `<div class="warp-bar-edit">
+          <input type="range" min="${b.min}" max="${b.max}" step="${step}" value="${v}" data-range="${esc(b.id)}" aria-label="${esc(b.label)}">
+          <input class="warp-input" type="number" min="${b.min}" max="${b.max}" step="${step}" value="${v}" data-num="${esc(b.id)}" aria-label="${esc(b.label)} value">
+          <span class="warp-dim warp-of">/ ${esc(b.max)}</span>
+          <button class="warp-btn warp-btn-primary" data-save="${esc(b.id)}">Set</button>
+        </div>`;
+    })() : ""}
     </div>`;
   }).join("");
   const skills = h.skills.length ? section("Skills & attributes", h.skills.length, h.skills.map((s) => `
@@ -910,13 +920,14 @@ function setup(ctx) {
   }
   function onPanelInput(e) {
     const t = e.target;
-    if (t.dataset.range && state?.hud) {
-      const b = state.hud.bars.find((x) => x.id === t.dataset.range);
+    if (t.dataset.range) {
       const num = t.parentElement?.querySelector("[data-num]");
-      if (b && num) {
-        const span = b.pct > 0 ? b.value / b.pct : 0;
-        num.value = String(Math.round(Number(t.value) / 1000 * (span || 100)));
-      }
+      if (num)
+        num.value = t.value;
+    } else if (t.dataset.num) {
+      const range = t.parentElement?.querySelector("[data-range]");
+      if (range)
+        range.value = t.value;
     }
   }
   function onPanelChange(e) {

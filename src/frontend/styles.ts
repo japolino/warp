@@ -55,7 +55,8 @@ export const STYLES = `
 .warp-bar-fill.warp-bg-neutral { background: var(--warp-info); }
 .warp-bar-edit { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
 .warp-bar-edit input[type=range] { flex: 1; accent-color: var(--warp-accent); }
-.warp-bar-edit input[type=number] { width: 72px; }
+.warp-bar-edit input[type=number] { width: 64px; }
+.warp-of { font-size: 12px; white-space: nowrap; }
 .warp-changed { animation: warp-flash 1.2s ease; }
 @keyframes warp-flash { 0% { background: color-mix(in srgb, var(--warp-accent) 30%, transparent); } 100% { background: transparent; } }
 
