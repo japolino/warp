@@ -3,10 +3,10 @@
 import type { ExprEnv, Value } from "./expr.js";
 import { evalBool, evalNumber, evaluate } from "./expr.js";
 import { rollDice, seededRng, type Rng } from "./dice.js";
-import type { ActionDef, CheckDef, DecideSpec, Effect, Ruleset, Tier } from "./ruleset.js";
+import type { ActionDef, CheckDef, DecideSpec, Effect, RandomEventDef, Ruleset, Tier } from "./ruleset.js";
 import { normalize, sample } from "./decide.js";
-import { slug } from "./ruleset.js";
-import { applyEvent, cloneState, makeEnv, personName, type EventSource, type GameState, type WarpEvent } from "./state.js";
+import { emptyEffect, slug } from "./ruleset.js";
+import { applyEvent, cloneState, makeEnv, personName, timeKey, type EventSource, type GameState, type WarpEvent } from "./state.js";
 import { presentPeople } from "./world.js";
 
 export interface CheckResult {
@@ -56,7 +56,12 @@ export interface Intent {
   params?: Record<string, string>;
   /** choice = clicked; adjudicator = read from typed text; confirmed = player accepted a suggestion. */
   via: "choice" | "adjudicator" | "command" | "confirmed";
+  /** The label the player saw, for choices written on the spot (live choices). */
+  label?: string;
 }
+
+/** A choice written for the moment: the label is the writer's, the tag decides what happens. */
+export interface LiveChoice { label: string; tag: string; target?: string }
 
 /** Mutable working copy: every pushed event is applied immediately so later formulas see it. */
 class Working {
@@ -67,6 +72,11 @@ class Working {
   pendingEnd: string | null = null;
   /** Decide specs reached without model odds — the backend asks and re-resolves. */
   needs: DecideSpec[] = [];
+  /**
+   * World happenings wait for the next turn instead of joining this one's directions.
+   * Only turn resolution (before the reply is written) narrates them right away.
+   */
+  defer = true;
   constructor(
     public r: Ruleset,
     public s: GameState,
@@ -158,10 +168,13 @@ export function availableChoices(r: Ruleset, s: GameState, lines: string[] = [])
   return out;
 }
 
+/** Live choices resolve through their tag: `live:<tag>` (or `live:<tag>@<person>`). */
+export const LIVE_PREFIX = "live:";
+
 /** Look up an intent's action (and target) in whatever pool is live. */
 export function findAction(r: Ruleset, s: GameState, actionId: string): { a: ActionDef; target?: string } | null {
   const [base, target] = actionId.split(TARGET_SEP);
-  const a = actionPool(r, s).defs[base];
+  const a = base.startsWith(LIVE_PREFIX) ? r.liveChoices.tags[base.slice(LIVE_PREFIX.length)] : actionPool(r, s).defs[base];
   return a ? { a, ...(target ? { target } : {}) } : null;
 }
 
@@ -296,9 +309,147 @@ function effectToEvents(w: Working, e: Effect, src: EventSource, extra: Record<s
   if (e.startEncounter && !w.s.encounter) startEncounter(w, e.startEncounter, src);
 
   for (const id of e.unlock) if (w.r.codex[id] && !w.s.codex[id]) w.push({ t: "codex", id, src });
+
+  // World clocks, secrets and the event gauge.
+  for (const [id, d] of Object.entries(e.front)) {
+    if (!r.fronts[id]) continue;
+    const v = evalNumber(d, w.env(extra), 0);
+    if (v !== 0) w.push({ t: "clock", id, d: v, src });
+  }
+  for (const id of e.reveal) {
+    const sec = r.secrets[id];
+    const cur = w.s.secrets[id] ?? -1;
+    if (sec && cur + 1 < sec.stages.length) w.push({ t: "secret", id, stage: cur + 1, src });
+  }
+  if (e.gauge !== undefined && r.randomEvents.enabled) {
+    const v = evalNumber(e.gauge, w.env(extra), 0);
+    if (v !== 0) w.push({ t: "gauge", d: v, src });
+  }
+
   if (e.time) advanceTime(w, e.time, src);
-  if (e.hint) w.hints.push(fillTarget(w, e.hint, extra));
+  if (e.hint) announce(w, fillTarget(w, e.hint, extra));
   for (const d of e.decide) decide(w, d, src, extra);
+}
+
+// ───────────────────────── the living world ─────────────────────────
+
+/** Something happened in the world: tell the narrator now, or on the next turn if the reply is already written. */
+function announce(w: Working, text: string) {
+  if (w.defer) w.push({ t: "notice", text, src: "world" });
+  else w.hints.push(text);
+}
+
+/** Open every secret stage whose condition now holds — in order; a ladder never skips a rung. */
+function openSecrets(w: Working) {
+  for (const sec of Object.values(w.r.secrets)) {
+    let cur = w.s.secrets[sec.id] ?? -1;
+    while (cur + 1 < sec.stages.length) {
+      const st = sec.stages[cur + 1];
+      if (st.when && !evalBool(st.when, w.env(), false)) break;
+      cur++;
+      w.push({ t: "secret", id: sec.id, stage: cur, src: "trigger" });
+    }
+  }
+}
+
+/** Surface every front stage the clock has reached. */
+function openFrontStages(w: Working) {
+  for (const f of Object.values(w.r.fronts)) {
+    for (let n = (w.s.fronts[f.id]?.stage ?? -1) + 1; n < f.stages.length; n++) {
+      const st = f.stages[n];
+      if ((w.s.fronts[f.id]?.v ?? f.start) < st.at) break;
+      w.push({ t: "stage", id: f.id, n, src: "world" });
+      effectToEvents(w, st.effects, "world", {});
+      if (st.surface) announce(w, `In the wider world: ${st.surface}`);
+    }
+  }
+}
+
+function eligibleEvents(w: Working): RandomEventDef[] {
+  const now = timeKey(w.r, w.s);
+  const unit = w.r.clock.enabled ? 1440 : 1;
+  return Object.values(w.r.randomEvents.events).filter((e) => {
+    if (e.weight <= 0) return false;
+    const last = w.s.gauge.last[e.id];
+    if (last !== undefined && (now - last) / unit < e.cooldownDays) return false;
+    return !e.when || evalBool(e.when, w.env(), false);
+  });
+}
+
+export const NEXT_EVENT = "world:next_event";
+
+/** Which event comes next: the author's weights, sharpened by the decision model's sense of the story when it has one. */
+function pickEvent(w: Working, candidates: RandomEventDef[]): string {
+  const keys = candidates.map((e) => e.id);
+  const model = w.odds[NEXT_EVENT];
+  if (!model && !w.needs.some((n) => n.id === NEXT_EVENT)) {
+    w.needs.push({
+      id: NEXT_EVENT,
+      ask: "Which of these would the story most plausibly bring next, given everything so far?",
+      options: candidates.map((e) => ({ id: e.id, desc: e.text, weight: e.weight, effect: emptyEffect() })),
+    });
+  }
+  const p = model
+    ? normalize(Object.fromEntries(candidates.map((e) => [e.id, (model[e.id] ?? 0) * e.weight])), keys)
+    : normalize(Object.fromEntries(candidates.map((e) => [e.id, e.weight])), keys);
+  return sample(p, seededRng(`${w.seed}:event:${w.s.turn}:${Math.floor(w.s.minutes)}`));
+}
+
+/** The event gauge: fills with in-game time, shows an omen near the top, and fires at 100. */
+function tickGauge(w: Working, days: number, turns: number) {
+  const ev = w.r.randomEvents;
+  if (!ev.enabled) return;
+  let fillDays = days;
+  if (w.s.gauge.rest > 0 && days > 0) {
+    const used = Math.min(w.s.gauge.rest, days);
+    w.push({ t: "rest", days: w.s.gauge.rest - used, src: "world" });
+    fillDays -= used;
+  }
+  const candidates = eligibleEvents(w);
+  // Nothing can happen right now: don't bank a full gauge to fire the moment something can.
+  if (!candidates.length) {
+    if (w.s.gauge.next) w.push({ t: "omen", id: null, src: "world" });
+    return;
+  }
+  if (w.s.gauge.rest <= 0) {
+    const env = w.env();
+    const base = evalNumber(ev.perDay, env, 0) * Math.max(0, fillDays) + evalNumber(ev.perTurn, env, 0) * turns;
+    if (base > 0) {
+      const rng = seededRng(`${w.seed}:gauge:${w.s.turn}:${Math.floor(w.s.minutes)}`);
+      const fill = base * (1 + ev.jitter * (rng() * 2 - 1));
+      if (fill > 0) w.push({ t: "gauge", d: fill, src: "world" });
+    }
+  }
+  const g = w.s.gauge;
+  if (g.v >= 100) {
+    const id = g.next && candidates.some((c) => c.id === g.next) ? g.next : pickEvent(w, candidates);
+    const e = ev.events[id];
+    w.push({ t: "happen", id, src: "world" });
+    w.push({ t: "gauge", set: 0, src: "world" });
+    if (w.s.gauge.next) w.push({ t: "omen", id: null, src: "world" });
+    if (ev.restDays > 0) w.push({ t: "rest", days: ev.restDays, src: "world" });
+    effectToEvents(w, e.effects, "world", {});
+    announce(w, e.text);
+  } else if (ev.omenAt > 0 && g.v >= ev.omenAt && !g.next) {
+    w.push({ t: "omen", id: pickEvent(w, candidates), src: "world" });
+  } else if (g.next && (ev.omenAt <= 0 || g.v < ev.omenAt)) {
+    // Pushed back below the line by the story: the sign fades.
+    w.push({ t: "omen", id: null, src: "world" });
+  }
+}
+
+/** Time passed: world clocks run, stages surface, the event gauge fills. */
+function tickWorld(w: Working, days: number, turns: number) {
+  for (const f of Object.values(w.r.fronts)) {
+    if (f.when && !evalBool(f.when, w.env(), false)) continue;
+    let add = 0;
+    if (days > 0) add += evalNumber(f.rate, w.env(), 0) * days;
+    if (turns > 0) add += evalNumber(f.perTurn, w.env(), 0) * turns;
+    f.pushes.forEach((p, i) => { if (w.scene[`front:${f.id}:${i}`] === true) add += p.add; });
+    if (Math.abs(add) > 1e-9) w.push({ t: "clock", id: f.id, d: add, src: "world" });
+  }
+  openFrontStages(w);
+  tickGauge(w, days, turns);
 }
 
 function startEncounter(w: Working, id: string, src: EventSource) {
@@ -306,7 +457,7 @@ function startEncounter(w: Working, id: string, src: EventSource) {
   if (!enc) return;
   const foe = Object.fromEntries(enc.foe.stats.map((s) => [s.id, s.start]));
   w.push({ t: "enc", id, foe, src });
-  w.hints.push(`An encounter begins: ${enc.name}${enc.desc ? ` — ${enc.desc}` : ""}. Opponent: ${enc.foe.name}.`);
+  announce(w, `An encounter begins: ${enc.name}${enc.desc ? ` — ${enc.desc}` : ""}. Opponent: ${enc.foe.name}.`);
   effectToEvents(w, enc.start, src, {});
 }
 
@@ -325,7 +476,7 @@ function endEncounter(w: Working, outcome: string, src: EventSource) {
   const enc = w.r.encounters[s.id];
   w.pendingEnd = null;
   w.push({ t: "enc", id: null, outcome, src });
-  w.hints.push(`The encounter ends: ${outcome.replace(/_/g, " ")}.`);
+  announce(w, `The encounter ends: ${outcome.replace(/_/g, " ")}.`);
   const eff = enc?.outcomes[outcome];
   if (eff) effectToEvents(w, eff, src, {});
 }
@@ -403,6 +554,8 @@ function runTriggers(w: Working, includeRepeat: boolean) {
       effectToEvents(w, f.reward, "trigger", {});
     }
   }
+  openSecrets(w);
+  openFrontStages(w);
 }
 
 // ───────────────────────── the turn ─────────────────────────
@@ -448,9 +601,15 @@ export function resolveTurn(r: Ruleset, before: GameState, intent: Intent | null
 
 function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts: ResolveOptions, needs: DecideSpec[]): TurnRecord {
   const w = new Working(r, cloneState(before), seededRng(`${opts.seed}:fx`), opts.seed, opts.odds ?? {}, opts.scene ?? {});
+  w.defer = false;
   const rec: TurnRecord = { v: 1, hints: [], events: [], at: Date.now() };
   // First turn of a chat fixes its world seed (weather etc.).
   if (!w.s.seed) w.push({ t: "seed", v: opts.seed, src: "start" });
+  // World happenings that surfaced after the last reply are this turn's news.
+  if (before.notices.length) {
+    w.hints.push(...before.notices);
+    w.push({ t: "noticed", src: "world" });
+  }
   const found = intent && !intent.actionId.startsWith(TRAVEL_PREFIX) ? findAction(r, before, intent.actionId) : null;
   const a = found?.a;
   const inEncounter = !!before.encounter;
@@ -468,7 +627,7 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   } else if (a) {
     const who = found?.target;
     const extra = paramValues(a, intent!.params, who);
-    const label = who ? `${a.label} (${personName(r, before, who)})` : a.label;
+    const label = intent!.label ?? (who ? `${a.label} (${personName(r, before, who)})` : a.label);
     rec.action = { id: intent!.actionId, label, via: intent!.via, ...(a.params.length ? { params: Object.fromEntries(a.params.map((p) => [p.id, intent!.params?.[p.id] ?? p.default])) } : {}) };
     effectToEvents(w, a.cost, "cost", extra);
 
@@ -508,6 +667,11 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   }
 
   runTriggers(w, true);
+  // The world moves with in-game time (without a clock, each turn counts as a day).
+  const days = r.clock.enabled ? (w.s.minutes - before.minutes) / 1440 : 1;
+  const worldBefore = w.events.length;
+  tickWorld(w, days, 1);
+  if (w.events.length > worldBefore) runTriggers(w, false);
   w.push({ t: "turn", src: "action" });
   rec.events = w.events;
   rec.hints = w.hints;
@@ -639,6 +803,12 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal): WarpE
   }
 
   runTriggers(w, false);
+  // Time the story itself covered moves the world too; whatever surfaces is told next turn.
+  if (r.clock.enabled && w.s.minutes > before.minutes) {
+    const n = w.events.length;
+    tickWorld(w, (w.s.minutes - before.minutes) / 1440, 0);
+    if (w.events.length > n) runTriggers(w, false);
+  }
   return w.events;
 }
 

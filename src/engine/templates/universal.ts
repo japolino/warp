@@ -186,5 +186,40 @@ conditions:
     desc: Running on empty.
 `,
     },
+    {
+      label: "story",
+      yaml: `# Choices written for each moment. A writer phrases them from the story; each must
+# carry one of these tags, and the tag decides the roll — the writer can't.
+# Add secrets:, fronts: and random_events: here for a card-specific living world.
+live_choices:
+  label: Right now
+  count: 3
+  when: not in_encounter
+  tags:
+    bold:
+      desc: "A daring, physical or risky move"
+      check: { vs: 12, add: body, label: Body, partial: 3 }
+      success: { mood: +3 }
+      fail: { health: -5, mood: -3 }
+    clever:
+      desc: "Noticing, working something out, or a clever trick"
+      check: { vs: 12, add: mind, label: Mind, partial: 3 }
+      success: { mood: +2 }
+      fail: { mood: -2 }
+    charm:
+      desc: "Persuading, charming or flirting with someone here"
+      per_person: true
+      check: { vs: 12, add: charm, label: Charm, partial: 3 }
+      success: { rel: { target: { affection: +3, trust: +2 } } }
+      fail: { mood: -3, rel: { target: { trust: -2 } } }
+    kind:
+      desc: "Something kind or supportive toward someone here"
+      per_person: true
+      effects: { mood: +2, rel: { target: { trust: +3 } } }
+    careful:
+      desc: "The cautious option: waiting, watching, backing off"
+      effects: { energy: +2 }
+`,
+    },
   ],
 };

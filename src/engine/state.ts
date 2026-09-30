@@ -47,9 +47,19 @@ export interface GameState {
   conditions: Record<string, { until: number | null }>;
   triggers: Record<string, boolean>;
   turn: number;
+  /** Secret id → index of the highest stage the narrator has been told (−1 = none). */
+  secrets: Record<string, number>;
+  /** Hidden world clocks: value, and the highest stage that has surfaced (−1 = none). */
+  fronts: Record<string, { v: number; stage: number }>;
+  /** The random-event gauge (0–100), quiet days left, the event already picked (omen showing), and when each last happened. */
+  gauge: { v: number; rest: number; next: string | null; last: Record<string, number> };
+  /** World happenings that surfaced after a reply — told to the narrator on the next turn. */
+  notices: string[];
+  /** What has surfaced in the world, for the journal. */
+  news: { text: string; at: number }[];
 }
 
-export type EventSource = "cost" | "check" | "action" | "drift" | "trigger" | "narrator" | "manual" | "start";
+export type EventSource = "cost" | "check" | "action" | "drift" | "trigger" | "narrator" | "manual" | "start" | "world";
 
 export type WarpEvent = { src: EventSource; note?: string } & (
   | { t: "stat"; id: string; d?: number; set?: number }
@@ -73,7 +83,23 @@ export type WarpEvent = { src: EventSource; note?: string } & (
   | { t: "perk"; id: string }
   | { t: "calib"; who: string }
   | { t: "forget"; who: string }
+  | { t: "secret"; id: string; stage: number }
+  | { t: "clock"; id: string; d: number }
+  | { t: "stage"; id: string; n: number }
+  | { t: "gauge"; d?: number; set?: number }
+  | { t: "rest"; days: number }
+  | { t: "omen"; id: string | null }
+  | { t: "happen"; id: string }
+  | { t: "notice"; text: string }
+  | { t: "noticed" }
 );
+
+const NEWS_KEPT = 30;
+
+/** The unit random-event cooldowns are measured in: minutes with a clock, turns without. */
+export function timeKey(r: Ruleset, s: GameState): number {
+  return r.clock.enabled ? s.minutes : s.turn;
+}
 
 export function initialState(r: Ruleset): GameState {
   const s: GameState = {
@@ -98,8 +124,20 @@ export function initialState(r: Ruleset): GameState {
     conditions: {},
     triggers: {},
     turn: 0,
+    secrets: {},
+    fronts: {},
+    gauge: { v: 0, rest: 0, next: null, last: {} },
+    notices: [],
+    news: [],
   };
   for (const id of r.statOrder) s.stats[id] = r.stats[id].start;
+  // Stages with no condition at the top of a secret's ladder are known from the start.
+  for (const sec of Object.values(r.secrets)) {
+    let open = -1;
+    while (open + 1 < sec.stages.length && !sec.stages[open + 1].when) open++;
+    s.secrets[sec.id] = open;
+  }
+  for (const f of Object.values(r.fronts)) s.fronts[f.id] = { v: f.start, stage: -1 };
   for (const f of Object.values(r.flags)) s.flags[f.id] = f.start;
   for (const p of Object.values(r.people)) {
     s.people[p.id] = { name: p.name };
@@ -222,6 +260,38 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       break;
     case "trig": s.triggers[e.id] = e.v; break;
     case "turn": s.turn += 1; break;
+    case "secret": s.secrets[e.id] = Math.max(s.secrets[e.id] ?? -1, e.stage); break;
+    case "clock": {
+      const def = r.fronts[e.id];
+      const f = s.fronts[e.id] ?? { v: def?.start ?? 0, stage: -1 };
+      f.v = clamp(f.v + e.d, 0, def?.max ?? 100);
+      s.fronts[e.id] = f;
+      break;
+    }
+    case "stage": {
+      const def = r.fronts[e.id];
+      const f = s.fronts[e.id] ?? { v: def?.start ?? 0, stage: -1 };
+      if (e.n > f.stage) {
+        f.stage = e.n;
+        const st = def?.stages[e.n];
+        const line = st?.news ?? st?.surface;
+        if (line) s.news = [...s.news, { text: line, at: s.minutes }].slice(-NEWS_KEPT);
+      }
+      s.fronts[e.id] = f;
+      break;
+    }
+    case "gauge": s.gauge.v = clamp(e.set !== undefined ? e.set : s.gauge.v + (e.d ?? 0), 0, 100); break;
+    case "rest": s.gauge.rest = Math.max(0, e.days); break;
+    case "omen": s.gauge.next = e.id; break;
+    case "happen": {
+      s.gauge.last[e.id] = timeKey(r, s);
+      const def = r.randomEvents.events[e.id];
+      const line = def?.news ?? def?.text;
+      if (line) s.news = [...s.news, { text: line, at: s.minutes }].slice(-NEWS_KEPT);
+      break;
+    }
+    case "notice": s.notices = [...s.notices, e.text]; break;
+    case "noticed": s.notices = []; break;
   }
 }
 
@@ -342,6 +412,12 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
         case "codex": return a0 in s.codex;
         case "feat": return a0 in s.feats;
         case "perk": return a0 in s.perks;
+        // How many stages of a secret the narrator knows (0 = none).
+        case "secret": return (s.secrets[a0] ?? -1) + 1;
+        // A world clock's value, and how many of its stages have surfaced.
+        case "front": return s.fronts[a0]?.v ?? r.fronts[a0]?.start ?? 0;
+        case "front_stage": return (s.fronts[a0]?.stage ?? -1) + 1;
+        case "happened": return a0 in s.gauge.last;
       }
       return undefined;
     },

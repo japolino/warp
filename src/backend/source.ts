@@ -115,6 +115,7 @@ export function statusOf(l: Loaded | null): RulesetStatus {
   }
   const tags = new Set<string>();
   for (const a of Object.values(l.ruleset?.actions ?? {})) for (const t of a.tags) tags.add(t);
+  for (const a of Object.values(l.ruleset?.liveChoices.tags ?? {})) for (const t of a.tags) tags.add(t);
   return {
     state: l.ruleset ? "ok" : "broken",
     name: l.ruleset?.name ?? null,

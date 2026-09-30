@@ -649,7 +649,9 @@ function emptyEffect() {
     unlock: [],
     wear: [],
     undress: [],
-    damage: {}
+    damage: {},
+    front: {},
+    reveal: []
   };
 }
 var list = (v) => Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : [];
@@ -828,13 +830,34 @@ function normEffect(raw, where, c, known) {
         else
           c.warn(w, "expected clothing damage by slot, like `top: 30`");
         break;
+      case "front":
+      case "fronts":
+        if (isObj(v))
+          for (const [id, d] of Object.entries(v)) {
+            const x = c.expr(d, `${w} › ${id}`);
+            if (x !== undefined)
+              e.front[id] = x;
+          }
+        else
+          c.warn(w, "expected clock changes like `gangs: -20`");
+        break;
+      case "reveal":
+        e.reveal.push(...list(v));
+        break;
+      case "gauge":
+      case "events_gauge": {
+        const x = c.expr(v, w);
+        if (x !== undefined)
+          e.gauge = x;
+        break;
+      }
       default:
         if (known.stats.has(k)) {
           const x = c.expr(v, w);
           if (x !== undefined)
             e.stats[k] = x;
         } else
-          c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, unlock, wear, undress, damage)`);
+          c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, unlock, wear, undress, damage, front, reveal, gauge)`);
     }
   }
   return e;
@@ -1107,6 +1130,190 @@ function normEncounter(id, raw, c, known) {
     start: normEffect(startRaw, `${w} › start`, c, known)
   };
 }
+function normSecrets(raw, c) {
+  const out = {};
+  if (raw === undefined)
+    return out;
+  if (!isObj(raw)) {
+    c.warn("Secrets", "should be a map of secret names to definitions");
+    return out;
+  }
+  for (const [id, sRaw] of Object.entries(raw)) {
+    const w = `Secrets › ${id}`;
+    const r = isObj(sRaw) ? sRaw : typeof sRaw === "string" ? { stages: [sRaw] } : {};
+    const stages = [];
+    if (typeof r.cue === "string")
+      stages.push({ text: r.cue, lore: [] });
+    const stageList = Array.isArray(r.stages) ? r.stages : typeof r.text === "string" ? [{ text: r.text, when: r.when, lore: r.lore }] : [];
+    stageList.forEach((st, i) => {
+      const sw = `${w} › stage ${i + 1}`;
+      const sr = isObj(st) ? st : typeof st === "string" ? { text: st } : {};
+      if (typeof sr.text !== "string" || !sr.text.trim()) {
+        c.warn(sw, "each stage needs `text:`");
+        return;
+      }
+      const when = sr.when !== undefined ? c.expr(sr.when, `${sw} › when`) : undefined;
+      stages.push({ text: sr.text, lore: list(sr.lore), ...when !== undefined ? { when: String(when) } : {} });
+    });
+    if (!stages.length) {
+      c.warn(w, "has no stages — add `cue:` and/or `stages:`");
+      continue;
+    }
+    const tell = r.tell === true || r.tell === "exists" ? "exists" : "none";
+    out[id] = { id, about: typeof r.about === "string" ? r.about : titleCase(id), tell, stages };
+  }
+  return out;
+}
+function normFronts(raw, c, known) {
+  const out = {};
+  if (raw === undefined)
+    return out;
+  if (!isObj(raw)) {
+    c.warn("Fronts", "should be a map of front names to definitions");
+    return out;
+  }
+  for (const [id, fRaw] of Object.entries(raw)) {
+    const w = `Fronts › ${id}`;
+    if (!isObj(fRaw)) {
+      c.warn(w, "expected a front definition with `per_day:` and `stages:`");
+      continue;
+    }
+    const max = Math.max(1, c.num(fRaw.max, `${w} › max`, 100));
+    const start = Math.max(0, Math.min(max, c.num(fRaw.start, `${w} › start`, 0)));
+    const rate = c.expr(fRaw.per_day ?? fRaw.rate ?? 0, `${w} › per_day`) ?? 0;
+    const perTurn = c.expr(fRaw.per_turn ?? 0, `${w} › per_turn`) ?? 0;
+    const when = fRaw.when !== undefined ? c.expr(fRaw.when, `${w} › when`) : undefined;
+    const raws = [];
+    (Array.isArray(fRaw.stages) ? fRaw.stages : []).forEach((st, i) => {
+      if (!isObj(st)) {
+        c.warn(`${w} › stage ${i + 1}`, "each stage needs `at:` and a `surface:`");
+        return;
+      }
+      raws.push(st);
+    });
+    raws.sort((a, b) => Number(a.at) - Number(b.at));
+    const stages = [];
+    let prev = start;
+    raws.forEach((st, i) => {
+      const sw = `${w} › stage ${i + 1}`;
+      const at = c.num(st.at, `${sw} › at`, NaN);
+      if (!Number.isFinite(at)) {
+        c.warn(sw, "needs a numeric `at:` (the clock value where it surfaces)");
+        return;
+      }
+      if (at > max)
+        c.warn(sw, `at ${at} is above the clock's max (${max}) — it can never surface`);
+      const str = (k) => typeof st[k] === "string" && st[k].trim() ? st[k] : undefined;
+      stages.push({
+        at,
+        hintAt: st.hint_at !== undefined ? c.num(st.hint_at, `${sw} › hint_at`, at) : prev + (at - prev) / 2,
+        hint: str("hint"),
+        backstage: str("backstage"),
+        surface: str("surface"),
+        news: str("news"),
+        effects: normEffect(st.do ?? st.effects, `${sw} › do`, c, known)
+      });
+      prev = at;
+    });
+    if (!stages.length)
+      c.warn(w, "has no stages — nothing will ever surface");
+    const pushes = [];
+    const story = fRaw.story ?? fRaw.pushed_by;
+    if (isObj(story))
+      for (const [scene, n] of Object.entries(story))
+        pushes.push({ scene, add: c.num(n, `${w} › story › ${scene}`, 0) });
+    else if (Array.isArray(story))
+      story.forEach((p, i) => {
+        if (isObj(p) && typeof (p.if ?? p.when_scene) === "string")
+          pushes.push({ scene: String(p.if ?? p.when_scene), add: c.num(p.add, `${w} › story #${i + 1}`, 0) });
+        else
+          c.warn(`${w} › story #${i + 1}`, 'expected `{ if: "plain-language event", add: 10 }`');
+      });
+    out[id] = {
+      id,
+      label: typeof fRaw.label === "string" ? fRaw.label : titleCase(id),
+      rate,
+      perTurn,
+      max,
+      start,
+      stages,
+      pushes,
+      ...when !== undefined ? { when: String(when) } : {}
+    };
+  }
+  return out;
+}
+function normRandomEvents(raw, c, known) {
+  const def = { enabled: false, perDay: 25, perTurn: 0, jitter: 0.3, restDays: 1, omenAt: 80, events: {} };
+  if (raw === undefined || raw === false)
+    return def;
+  if (!isObj(raw)) {
+    c.warn("Random events", "should be a map with `events:`");
+    return def;
+  }
+  const pace = isObj(raw.pace) ? raw.pace : raw;
+  def.perDay = c.expr(pace.per_day ?? def.perDay, "Random events › per_day") ?? def.perDay;
+  def.perTurn = c.expr(pace.per_turn ?? 0, "Random events › per_turn") ?? 0;
+  def.jitter = Math.max(0, Math.min(0.9, c.num(pace.jitter, "Random events › jitter", def.jitter)));
+  def.restDays = Math.max(0, c.num(pace.rest_days ?? pace.cooldown, "Random events › rest_days", def.restDays));
+  def.omenAt = Math.max(0, Math.min(99, c.num(pace.omen_at, "Random events › omen_at", def.omenAt)));
+  const evRaw = isObj(raw.events) ? raw.events : isObj(raw.list) ? raw.list : {};
+  for (const [id, e] of Object.entries(evRaw)) {
+    const w = `Random events › ${id}`;
+    const r = isObj(e) ? e : typeof e === "string" ? { text: e } : {};
+    if (typeof r.text !== "string" || !r.text.trim()) {
+      c.warn(w, "needs `text:` — what happens, for the narrator");
+      continue;
+    }
+    const when = r.when !== undefined ? c.expr(r.when, `${w} › when`) : undefined;
+    def.events[id] = {
+      id,
+      label: typeof r.label === "string" ? r.label : titleCase(id),
+      weight: Math.max(0, c.num(r.weight, `${w} › weight`, 1)),
+      cooldownDays: Math.max(0, c.num(r.cooldown, `${w} › cooldown`, 3)),
+      text: r.text,
+      ...typeof r.omen === "string" && r.omen.trim() ? { omen: r.omen } : {},
+      ...typeof r.news === "string" ? { news: r.news } : {},
+      ...when !== undefined ? { when: String(when) } : {},
+      effects: normEffect(r.do ?? r.effects, `${w} › do`, c, known)
+    };
+  }
+  def.enabled = Object.keys(def.events).length > 0;
+  if (!def.enabled)
+    c.warn("Random events", "has no events — add some under `events:`");
+  return def;
+}
+function normLiveChoices(raw, c, known) {
+  const def = { enabled: false, label: "Right now", count: 3, tags: {} };
+  if (raw === undefined || raw === false)
+    return def;
+  if (!isObj(raw)) {
+    c.warn("Live choices", "should be a map with `tags:`");
+    return def;
+  }
+  def.label = typeof raw.label === "string" ? raw.label : def.label;
+  def.count = Math.max(1, Math.min(6, Math.round(c.num(raw.count, "Live choices › count", def.count))));
+  if (raw.when !== undefined) {
+    const x = c.expr(raw.when, "Live choices › when");
+    if (x !== undefined)
+      def.when = String(x);
+  }
+  if (typeof raw.guide === "string")
+    def.guide = raw.guide;
+  let i = 0;
+  for (const [id, t] of Object.entries(isObj(raw.tags) ? raw.tags : {})) {
+    const a = normAction(id, typeof t === "string" ? { desc: t } : t, `Live choices › tags › ${id}`, c, known, i++);
+    if (!a)
+      continue;
+    if (!a.desc)
+      c.warn(`Live choices › tags › ${id}`, "add `desc:` — it tells the writer when to use this tag");
+    def.tags[id] = a;
+  }
+  def.enabled = Object.keys(def.tags).length > 0;
+  if (!def.enabled)
+    c.warn("Live choices", "has no tags — add some under `tags:`");
+  return def;
+}
 var SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
 function normalizeRuleset(raw) {
   const c = new Ctx;
@@ -1363,6 +1570,10 @@ function normalizeRuleset(raw) {
   const perkPoints = typeof perksRaw.points === "string" ? perksRaw.points : undefined;
   if (perkPoints && !stats[perkPoints])
     c.warn("Perks › points", `"${perkPoints}" isn't a declared stat`);
+  const secrets = normSecrets(raw.secrets, c);
+  const fronts = normFronts(raw.fronts, c, known);
+  const randomEvents = normRandomEvents(raw.random_events ?? raw.events, c, known);
+  const liveChoices = normLiveChoices(raw.live_choices, c, known);
   const ruleset = {
     name: typeof raw.name === "string" ? raw.name : "Untitled ruleset",
     description: typeof raw.description === "string" ? raw.description : undefined,
@@ -1403,7 +1614,11 @@ function normalizeRuleset(raw) {
     codex,
     feats,
     perks,
-    ...perkPoints && stats[perkPoints] ? { perkPoints } : {}
+    ...perkPoints && stats[perkPoints] ? { perkPoints } : {},
+    secrets,
+    fronts,
+    randomEvents,
+    liveChoices
   };
   for (const p of Object.values(people))
     for (const e of p.schedule) {
@@ -1422,7 +1637,8 @@ function normalizeRuleset(raw) {
   ];
   const sexualActions = [
     ...Object.values(actions),
-    ...Object.values(encounters).flatMap((e) => Object.values(e.actions).map((a) => ({ ...a, tags: [...a.tags, ...e.tags] })))
+    ...Object.values(encounters).flatMap((e) => Object.values(e.actions).map((a) => ({ ...a, tags: [...a.tags, ...e.tags] }))),
+    ...Object.values(liveChoices.tags)
   ].filter((a) => a.tags.some((t) => SEXUAL_TAGS.has(t)));
   if (minors.length && sexualActions.length) {
     c.err("Ruleset", `declares characters under 18 (${minors.join(", ")}) alongside sexual actions — Warp won't run this ruleset`);
@@ -1538,6 +1754,10 @@ function presentPeople(r, s, env) {
 }
 
 // src/engine/state.ts
+var NEWS_KEPT = 30;
+function timeKey(r, s) {
+  return r.clock.enabled ? s.minutes : s.turn;
+}
 function initialState(r) {
   const s = {
     seed: null,
@@ -1560,10 +1780,23 @@ function initialState(r) {
     minutes: r.clock.start,
     conditions: {},
     triggers: {},
-    turn: 0
+    turn: 0,
+    secrets: {},
+    fronts: {},
+    gauge: { v: 0, rest: 0, next: null, last: {} },
+    notices: [],
+    news: []
   };
   for (const id of r.statOrder)
     s.stats[id] = r.stats[id].start;
+  for (const sec of Object.values(r.secrets)) {
+    let open = -1;
+    while (open + 1 < sec.stages.length && !sec.stages[open + 1].when)
+      open++;
+    s.secrets[sec.id] = open;
+  }
+  for (const f of Object.values(r.fronts))
+    s.fronts[f.id] = { v: f.start, stage: -1 };
   for (const f of Object.values(r.flags))
     s.flags[f.id] = f.start;
   for (const p of Object.values(r.people)) {
@@ -1725,6 +1958,52 @@ function applyEvent(s, e, r) {
     case "turn":
       s.turn += 1;
       break;
+    case "secret":
+      s.secrets[e.id] = Math.max(s.secrets[e.id] ?? -1, e.stage);
+      break;
+    case "clock": {
+      const def = r.fronts[e.id];
+      const f = s.fronts[e.id] ?? { v: def?.start ?? 0, stage: -1 };
+      f.v = clamp(f.v + e.d, 0, def?.max ?? 100);
+      s.fronts[e.id] = f;
+      break;
+    }
+    case "stage": {
+      const def = r.fronts[e.id];
+      const f = s.fronts[e.id] ?? { v: def?.start ?? 0, stage: -1 };
+      if (e.n > f.stage) {
+        f.stage = e.n;
+        const st = def?.stages[e.n];
+        const line = st?.news ?? st?.surface;
+        if (line)
+          s.news = [...s.news, { text: line, at: s.minutes }].slice(-NEWS_KEPT);
+      }
+      s.fronts[e.id] = f;
+      break;
+    }
+    case "gauge":
+      s.gauge.v = clamp(e.set !== undefined ? e.set : s.gauge.v + (e.d ?? 0), 0, 100);
+      break;
+    case "rest":
+      s.gauge.rest = Math.max(0, e.days);
+      break;
+    case "omen":
+      s.gauge.next = e.id;
+      break;
+    case "happen": {
+      s.gauge.last[e.id] = timeKey(r, s);
+      const def = r.randomEvents.events[e.id];
+      const line = def?.news ?? def?.text;
+      if (line)
+        s.news = [...s.news, { text: line, at: s.minutes }].slice(-NEWS_KEPT);
+      break;
+    }
+    case "notice":
+      s.notices = [...s.notices, e.text];
+      break;
+    case "noticed":
+      s.notices = [];
+      break;
   }
 }
 function cloneState(s) {
@@ -1882,6 +2161,14 @@ function makeEnv(r, s, extra = {}) {
           return a0 in s.feats;
         case "perk":
           return a0 in s.perks;
+        case "secret":
+          return (s.secrets[a0] ?? -1) + 1;
+        case "front":
+          return s.fronts[a0]?.v ?? r.fronts[a0]?.start ?? 0;
+        case "front_stage":
+          return (s.fronts[a0]?.stage ?? -1) + 1;
+        case "happened":
+          return a0 in s.gauge.last;
       }
       return;
     }
@@ -1938,6 +2225,7 @@ class Working {
   decisions = [];
   pendingEnd = null;
   needs = [];
+  defer = true;
   constructor(r, s, rng = seededRng("effects"), seed = "effects", odds = {}, scene = {}) {
     this.r = r;
     this.s = s;
@@ -2023,9 +2311,10 @@ function availableChoices(r, s, lines = []) {
   }
   return out;
 }
+var LIVE_PREFIX = "live:";
 function findAction(r, s, actionId) {
   const [base, target] = actionId.split(TARGET_SEP);
-  const a = actionPool(r, s).defs[base];
+  const a = base.startsWith(LIVE_PREFIX) ? r.liveChoices.tags[base.slice(LIVE_PREFIX.length)] : actionPool(r, s).defs[base];
   return a ? { a, ...target ? { target } : {} } : null;
 }
 function tierFor(check, roll, add, target) {
@@ -2174,12 +2463,150 @@ function effectToEvents(w, e, src, extra) {
   for (const id of e.unlock)
     if (w.r.codex[id] && !w.s.codex[id])
       w.push({ t: "codex", id, src });
+  for (const [id, d] of Object.entries(e.front)) {
+    if (!r.fronts[id])
+      continue;
+    const v = evalNumber(d, w.env(extra), 0);
+    if (v !== 0)
+      w.push({ t: "clock", id, d: v, src });
+  }
+  for (const id of e.reveal) {
+    const sec = r.secrets[id];
+    const cur = w.s.secrets[id] ?? -1;
+    if (sec && cur + 1 < sec.stages.length)
+      w.push({ t: "secret", id, stage: cur + 1, src });
+  }
+  if (e.gauge !== undefined && r.randomEvents.enabled) {
+    const v = evalNumber(e.gauge, w.env(extra), 0);
+    if (v !== 0)
+      w.push({ t: "gauge", d: v, src });
+  }
   if (e.time)
     advanceTime(w, e.time, src);
   if (e.hint)
-    w.hints.push(fillTarget(w, e.hint, extra));
+    announce(w, fillTarget(w, e.hint, extra));
   for (const d of e.decide)
     decide(w, d, src, extra);
+}
+function announce(w, text) {
+  if (w.defer)
+    w.push({ t: "notice", text, src: "world" });
+  else
+    w.hints.push(text);
+}
+function openSecrets(w) {
+  for (const sec of Object.values(w.r.secrets)) {
+    let cur = w.s.secrets[sec.id] ?? -1;
+    while (cur + 1 < sec.stages.length) {
+      const st = sec.stages[cur + 1];
+      if (st.when && !evalBool(st.when, w.env(), false))
+        break;
+      cur++;
+      w.push({ t: "secret", id: sec.id, stage: cur, src: "trigger" });
+    }
+  }
+}
+function openFrontStages(w) {
+  for (const f of Object.values(w.r.fronts)) {
+    for (let n = (w.s.fronts[f.id]?.stage ?? -1) + 1;n < f.stages.length; n++) {
+      const st = f.stages[n];
+      if ((w.s.fronts[f.id]?.v ?? f.start) < st.at)
+        break;
+      w.push({ t: "stage", id: f.id, n, src: "world" });
+      effectToEvents(w, st.effects, "world", {});
+      if (st.surface)
+        announce(w, `In the wider world: ${st.surface}`);
+    }
+  }
+}
+function eligibleEvents(w) {
+  const now = timeKey(w.r, w.s);
+  const unit = w.r.clock.enabled ? 1440 : 1;
+  return Object.values(w.r.randomEvents.events).filter((e) => {
+    if (e.weight <= 0)
+      return false;
+    const last = w.s.gauge.last[e.id];
+    if (last !== undefined && (now - last) / unit < e.cooldownDays)
+      return false;
+    return !e.when || evalBool(e.when, w.env(), false);
+  });
+}
+var NEXT_EVENT = "world:next_event";
+function pickEvent(w, candidates) {
+  const keys = candidates.map((e) => e.id);
+  const model = w.odds[NEXT_EVENT];
+  if (!model && !w.needs.some((n) => n.id === NEXT_EVENT)) {
+    w.needs.push({
+      id: NEXT_EVENT,
+      ask: "Which of these would the story most plausibly bring next, given everything so far?",
+      options: candidates.map((e) => ({ id: e.id, desc: e.text, weight: e.weight, effect: emptyEffect() }))
+    });
+  }
+  const p = model ? normalize(Object.fromEntries(candidates.map((e) => [e.id, (model[e.id] ?? 0) * e.weight])), keys) : normalize(Object.fromEntries(candidates.map((e) => [e.id, e.weight])), keys);
+  return sample(p, seededRng(`${w.seed}:event:${w.s.turn}:${Math.floor(w.s.minutes)}`));
+}
+function tickGauge(w, days, turns) {
+  const ev = w.r.randomEvents;
+  if (!ev.enabled)
+    return;
+  let fillDays = days;
+  if (w.s.gauge.rest > 0 && days > 0) {
+    const used = Math.min(w.s.gauge.rest, days);
+    w.push({ t: "rest", days: w.s.gauge.rest - used, src: "world" });
+    fillDays -= used;
+  }
+  const candidates = eligibleEvents(w);
+  if (!candidates.length) {
+    if (w.s.gauge.next)
+      w.push({ t: "omen", id: null, src: "world" });
+    return;
+  }
+  if (w.s.gauge.rest <= 0) {
+    const env = w.env();
+    const base = evalNumber(ev.perDay, env, 0) * Math.max(0, fillDays) + evalNumber(ev.perTurn, env, 0) * turns;
+    if (base > 0) {
+      const rng = seededRng(`${w.seed}:gauge:${w.s.turn}:${Math.floor(w.s.minutes)}`);
+      const fill = base * (1 + ev.jitter * (rng() * 2 - 1));
+      if (fill > 0)
+        w.push({ t: "gauge", d: fill, src: "world" });
+    }
+  }
+  const g = w.s.gauge;
+  if (g.v >= 100) {
+    const id = g.next && candidates.some((c) => c.id === g.next) ? g.next : pickEvent(w, candidates);
+    const e = ev.events[id];
+    w.push({ t: "happen", id, src: "world" });
+    w.push({ t: "gauge", set: 0, src: "world" });
+    if (w.s.gauge.next)
+      w.push({ t: "omen", id: null, src: "world" });
+    if (ev.restDays > 0)
+      w.push({ t: "rest", days: ev.restDays, src: "world" });
+    effectToEvents(w, e.effects, "world", {});
+    announce(w, e.text);
+  } else if (ev.omenAt > 0 && g.v >= ev.omenAt && !g.next) {
+    w.push({ t: "omen", id: pickEvent(w, candidates), src: "world" });
+  } else if (g.next && (ev.omenAt <= 0 || g.v < ev.omenAt)) {
+    w.push({ t: "omen", id: null, src: "world" });
+  }
+}
+function tickWorld(w, days, turns) {
+  for (const f of Object.values(w.r.fronts)) {
+    if (f.when && !evalBool(f.when, w.env(), false))
+      continue;
+    let add = 0;
+    if (days > 0)
+      add += evalNumber(f.rate, w.env(), 0) * days;
+    if (turns > 0)
+      add += evalNumber(f.perTurn, w.env(), 0) * turns;
+    f.pushes.forEach((p, i) => {
+      if (w.scene[`front:${f.id}:${i}`] === true)
+        add += p.add;
+    });
+    if (Math.abs(add) > 0.000000001)
+      w.push({ t: "clock", id: f.id, d: add, src: "world" });
+  }
+  openFrontStages(w);
+  tickGauge(w, days, turns);
 }
 function startEncounter(w, id, src) {
   const enc = w.r.encounters[id];
@@ -2187,7 +2614,7 @@ function startEncounter(w, id, src) {
     return;
   const foe = Object.fromEntries(enc.foe.stats.map((s) => [s.id, s.start]));
   w.push({ t: "enc", id, foe, src });
-  w.hints.push(`An encounter begins: ${enc.name}${enc.desc ? ` — ${enc.desc}` : ""}. Opponent: ${enc.foe.name}.`);
+  announce(w, `An encounter begins: ${enc.name}${enc.desc ? ` — ${enc.desc}` : ""}. Opponent: ${enc.foe.name}.`);
   effectToEvents(w, enc.start, src, {});
 }
 function encounterOutcome(w) {
@@ -2209,7 +2636,7 @@ function endEncounter(w, outcome, src) {
   const enc = w.r.encounters[s.id];
   w.pendingEnd = null;
   w.push({ t: "enc", id: null, outcome, src });
-  w.hints.push(`The encounter ends: ${outcome.replace(/_/g, " ")}.`);
+  announce(w, `The encounter ends: ${outcome.replace(/_/g, " ")}.`);
   const eff = enc?.outcomes[outcome];
   if (eff)
     effectToEvents(w, eff, src, {});
@@ -2296,6 +2723,8 @@ function runTriggers(w, includeRepeat) {
       effectToEvents(w, f.reward, "trigger", {});
     }
   }
+  openSecrets(w);
+  openFrontStages(w);
 }
 var TIER_FALLBACK = {
   crit_success: ["crit_success", "success"],
@@ -2318,9 +2747,14 @@ function resolveTurnFull(r, before, intent, opts) {
 }
 function resolveInner(r, before, intent, opts, needs) {
   const w = new Working(r, cloneState(before), seededRng(`${opts.seed}:fx`), opts.seed, opts.odds ?? {}, opts.scene ?? {});
+  w.defer = false;
   const rec = { v: 1, hints: [], events: [], at: Date.now() };
   if (!w.s.seed)
     w.push({ t: "seed", v: opts.seed, src: "start" });
+  if (before.notices.length) {
+    w.hints.push(...before.notices);
+    w.push({ t: "noticed", src: "world" });
+  }
   const found = intent && !intent.actionId.startsWith(TRAVEL_PREFIX) ? findAction(r, before, intent.actionId) : null;
   const a = found?.a;
   const inEncounter = !!before.encounter;
@@ -2338,7 +2772,7 @@ function resolveInner(r, before, intent, opts, needs) {
   } else if (a) {
     const who = found?.target;
     const extra = paramValues(a, intent.params, who);
-    const label = who ? `${a.label} (${personName(r, before, who)})` : a.label;
+    const label = intent.label ?? (who ? `${a.label} (${personName(r, before, who)})` : a.label);
     rec.action = { id: intent.actionId, label, via: intent.via, ...a.params.length ? { params: Object.fromEntries(a.params.map((p) => [p.id, intent.params?.[p.id] ?? p.default])) } : {} };
     effectToEvents(w, a.cost, "cost", extra);
     if (a.check) {
@@ -2377,6 +2811,11 @@ function resolveInner(r, before, intent, opts, needs) {
     encounterRound(w, "action");
   }
   runTriggers(w, true);
+  const days = r.clock.enabled ? (w.s.minutes - before.minutes) / 1440 : 1;
+  const worldBefore = w.events.length;
+  tickWorld(w, days, 1);
+  if (w.events.length > worldBefore)
+    runTriggers(w, false);
   w.push({ t: "turn", src: "action" });
   rec.events = w.events;
   rec.hints = w.hints;
@@ -2498,6 +2937,12 @@ function applyProposal(r, before, p) {
     advanceTime(w, Math.round(Math.min(p.minutes, r.clock.narratorMax)), src);
   }
   runTriggers(w, false);
+  if (r.clock.enabled && w.s.minutes > before.minutes) {
+    const n = w.events.length;
+    tickWorld(w, (w.s.minutes - before.minutes) / 1440, 0);
+    if (w.events.length > n)
+      runTriggers(w, false);
+  }
   return w.events;
 }
 function manualSet(r, before, stat, value) {
@@ -2774,6 +3219,41 @@ conditions:
     label: Exhausted
     tone: bad
     desc: Running on empty.
+`
+    },
+    {
+      label: "story",
+      yaml: `# Choices written for each moment. A writer phrases them from the story; each must
+# carry one of these tags, and the tag decides the roll — the writer can't.
+# Add secrets:, fronts: and random_events: here for a card-specific living world.
+live_choices:
+  label: Right now
+  count: 3
+  when: not in_encounter
+  tags:
+    bold:
+      desc: "A daring, physical or risky move"
+      check: { vs: 12, add: body, label: Body, partial: 3 }
+      success: { mood: +3 }
+      fail: { health: -5, mood: -3 }
+    clever:
+      desc: "Noticing, working something out, or a clever trick"
+      check: { vs: 12, add: mind, label: Mind, partial: 3 }
+      success: { mood: +2 }
+      fail: { mood: -2 }
+    charm:
+      desc: "Persuading, charming or flirting with someone here"
+      per_person: true
+      check: { vs: 12, add: charm, label: Charm, partial: 3 }
+      success: { rel: { target: { affection: +3, trust: +2 } } }
+      fail: { mood: -3, rel: { target: { trust: -2 } } }
+    kind:
+      desc: "Something kind or supportive toward someone here"
+      per_person: true
+      effects: { mood: +2, rel: { target: { trust: +3 } } }
+    careful:
+      desc: "The cautious option: waiting, watching, backing off"
+      effects: { energy: +2 }
 `
     }
   ]
@@ -3385,6 +3865,119 @@ feats:
   stood_ground: { name: Stood your ground, desc: "Fight off a mugger.", unlock: "flag('fought_off_mugger')", reward: { control: +10 } }
   well_dressed: { name: Dressed for it, desc: "Own a raincoat and a winter coat.", unlock: "has('raincoat') and has('winter_coat')" }
 `
+    },
+    {
+      label: "story",
+      yaml: `# Secrets reach the narrator one stage at a time — a stage that isn't open is never
+# in its prompt, so it can't leak. Fronts are hidden clocks that fill with game time
+# and surface in the story. Random events come from a hidden gauge, with an omen first.
+# Live choices are written for each moment; their tag, not the writer, decides the roll.
+secrets:
+  ward_observatory:
+    about: Professor Ward
+    cue: "Ward goes very still whenever the old observatory on campus comes up, and changes the subject."
+    tell: exists
+    stages:
+      - when: "rel('professor_ward', 'trust') >= 45"
+        text: "Years ago a student fell from the observatory roof during a night session Ward supervised. Ward has never forgiven themself."
+      - when: "rel('professor_ward', 'trust') >= 70"
+        text: "Ward signed the safety report saying the roof hatch was locked. It wasn't, and nobody else knows."
+  dex_debt:
+    about: Dex
+    cue: "Dex checks the street whenever a black car passes, and never stays in one spot for long."
+    tell: exists
+    stages:
+      - when: "rel('dex', 'trust') >= 40"
+        text: "Dex owes a lot of money to the people who run the docks, and is running out of time to pay."
+
+fronts:
+  dock_crew:
+    label: The dock crew
+    per_day: 5
+    story:
+      "{{user}} draws the attention of the people who run the docks": 12
+      "{{user}} helps Dex stay out of trouble": -8
+    stages:
+      - at: 30
+        hint: "More people than usual loiter by the docks after dark, watching who comes and goes."
+        backstage: "The dock crew has started collecting protection money from the High Street shops."
+        surface: "Jo's café window is smashed overnight. Jo is sweeping up glass and won't say who did it."
+        news: "Jo's café window was smashed overnight."
+        do: { flags: { cafe_hit: true } }
+      - at: 65
+        hint: "Dex hasn't been seen at the docks for a couple of nights."
+        backstage: "The crew gave Dex one week to pay what they owe."
+        surface: "Word on the street: the dock crew is looking for Dex, and for anyone who knows where Dex is."
+        news: "The dock crew is looking for Dex."
+        do: { flags: { dex_hunted: true } }
+      - at: 100
+        backstage: "The crew caught up with Dex."
+        surface: "Dex turns up badly beaten. The docks go quiet and nobody is talking."
+        news: "Dex was found badly beaten."
+        do: { flags: { dex_beaten: true } }
+
+random_events:
+  pace: { per_day: 30, jitter: 0.35, rest_days: 1, omen_at: 80 }
+  events:
+    landlord:
+      label: The landlord
+      omen: "An unopened letter from the landlord is waiting by the door."
+      text: "The landlord turns up unannounced, wants to inspect the flat, and hints that the rent is going up."
+      cooldown: 14
+      do: { stress: +6 }
+    power_cut:
+      label: Power cut
+      omen: "The lights in the building keep flickering."
+      text: "The power cuts out across the whole block."
+      cooldown: 10
+    found_wallet:
+      label: A dropped wallet
+      when: outside
+      text: "{{user}} spots a wallet lying on the pavement, stuffed with cash."
+      cooldown: 20
+    party:
+      label: A party invite
+      when: "weekday == 'Fri' or weekday == 'Sat'"
+      omen: "People on campus keep talking about a party this weekend."
+      text: "Someone from {{user}}'s course invites them to a house party tonight."
+      weight: 2
+      cooldown: 6
+    old_friend:
+      label: An old friend
+      text: "An old school friend of {{user}}'s calls out to them from across the street, delighted."
+      cooldown: 21
+
+live_choices:
+  label: Right now
+  count: 3
+  when: not in_encounter
+  guide: "Grounded, everyday options. Include one that's a little risky."
+  tags:
+    bold:
+      desc: "A daring, risky or impulsive move"
+      check: { chance: 45 + control / 4 - stress / 5, label: Nerve }
+      success: { control: +3, stress: -2 }
+      fail: { stress: +6, control: -2 }
+    charm:
+      desc: "Charming, flirting with or winning over someone here"
+      per_person: true
+      check: { chance: 35 + allure / 2 + target.trust / 4, label: Allure }
+      success: { rel: { target: { love: +3, trust: +2 } } }
+      fail: { stress: +3, rel: { target: { trust: -1 } } }
+    kind:
+      desc: "Something kind, generous or supportive toward someone here"
+      per_person: true
+      effects: { stress: -2, rel: { target: { trust: +3 } } }
+    sly:
+      desc: "Something sneaky, dishonest or against the rules"
+      tags: [crime]
+      check: { chance: 30 + skulduggery / 1.5, label: Skulduggery }
+      success: { skulduggery: +0.5 }
+      fail: { crime: +4, stress: +4 }
+    careful:
+      desc: "The cautious, sensible option: stepping back, waiting, leaving"
+      effects: { stress: -1 }
+`
     }
   ]
 };
@@ -3761,6 +4354,91 @@ feats:
     do:
       hint: "{{user}}'s shields are down — hits now land on flesh."
 `
+    },
+    {
+      label: "story",
+      yaml: `# Secrets reach the narrator one stage at a time; fronts are hidden clocks that fill
+# with game time; random events come from a hidden gauge with an omen first; live
+# choices are written for each moment, and their tag decides the roll.
+secrets:
+  vex_informant:
+    about: Vex
+    cue: "Vex always seems to know which ships are carrying what, and goes quiet when anyone mentions the Red Veil."
+    tell: exists
+    stages:
+      - when: "rel('vex', 'affinity') >= 50"
+        text: "Vex sells shipping manifests to the Red Veil syndicate. It's how Vex pays off an old debt to them."
+      - when: "rel('vex', 'affinity') >= 80"
+        text: "Vex passed the Red Veil {{user}}'s ship registry weeks ago, before they ever became friends."
+
+fronts:
+  red_veil:
+    label: The Red Veil syndicate
+    per_day: 8
+    story:
+      "{{user}} makes enemies of pirates or the Red Veil": 15
+      "{{user}} lies low or covers their tracks": -10
+    stages:
+      - at: 35
+        hint: "The same unmarked shuttle has docked near {{user}}'s ship two days running."
+        backstage: "The Red Veil has marked {{user}}'s ship as a target worth taking."
+        surface: "Someone has been aboard {{user}}'s ship: the cargo bay lock is scorched and a crate is missing."
+        news: "Someone broke into the cargo bay."
+        do: { credits: -150 }
+      - at: 70
+        hint: "Station security keeps finding reasons to walk past {{user}}'s berth."
+        backstage: "The Red Veil paid a station security officer to look the other way."
+        surface: "A Red Veil scavenger crew makes its move against {{user}}."
+        news: "The Red Veil made its move."
+        do: { start_encounter: ambush }
+
+random_events:
+  pace: { per_day: 20, jitter: 0.3, rest_days: 2, omen_at: 80 }
+  events:
+    distress_call:
+      label: Distress call
+      omen: "The comm panel keeps catching fragments of a looping signal."
+      text: "A distress beacon pings {{user}}'s comm — a small ship in trouble on the jungle edge."
+      cooldown: 10
+    customs:
+      label: Customs inspection
+      when: "location == 'concourse' or location == 'bar' or location == 'merchant'"
+      omen: "Customs officers are working their way along the docking ring."
+      text: "Station customs flag {{user}} for a random inspection."
+      cooldown: 8
+      do: { energy: -10 }
+    ion_storm:
+      label: Ion storm
+      omen: "Static crawls across every screen on the station."
+      text: "An ion storm rolls over the station; shields and comms flicker."
+      cooldown: 12
+      do: { shields: -10 }
+
+live_choices:
+  label: Right now
+  count: 3
+  when: not in_encounter
+  tags:
+    daring:
+      desc: "A fast, daring or reckless move"
+      check: { vs: 12, add: floor(reflexes / 2), label: Reflexes }
+      success: { xp: +10 }
+      fail: { hp: -6 }
+    charm:
+      desc: "Charming, flirting with or winning over someone here"
+      per_person: true
+      check: { vs: 11, add: floor(libido / 10), label: Libido }
+      success: { rel: { target: { affinity: +4, attraction: +3 } } }
+      fail: { lust: +5 }
+    tech:
+      desc: "Hacking, scanning or working a piece of tech"
+      check: { vs: 12, add: floor(intelligence / 2), label: Intelligence }
+      success: { xp: +10 }
+      fail: { energy: -8 }
+    careful:
+      desc: "The cautious option: holding back, waiting, walking away"
+      effects: { energy: +5 }
+`
     }
   ]
 };
@@ -3832,6 +4510,11 @@ function logError(where, err) {
 }
 
 // src/backend/ledger.ts
+function liveChoicesOf(m) {
+  if (!m || m.is_user)
+    return [];
+  return warpMeta(m).live?.[String(m.swipe_id ?? 0)] ?? [];
+}
 function warpMeta(m) {
   const w = m.metadata?.warp;
   return w && typeof w === "object" ? w : {};
@@ -7134,6 +7817,10 @@ var FUNCTIONS = [
   "codex",
   "feat",
   "perk",
+  "secret",
+  "front",
+  "front_stage",
+  "happened",
   "min",
   "max",
   "clamp",
@@ -7235,6 +7922,20 @@ function lintRuleset(r) {
         issues.push({ level: "warning", where, message: `changes foe stat "${stat}", which no encounter declares` });
       check(v, `${where} › foe › ${stat}`, extra);
     }
+    for (const [id, v] of Object.entries(e.front)) {
+      if (!r.fronts[id])
+        issues.push({ level: "warning", where, message: `moves front "${id}", which doesn't exist${suggest(id, Object.keys(r.fronts))}` });
+      check(v, `${where} › front › ${id}`, extra);
+    }
+    for (const id of e.reveal) {
+      if (!r.secrets[id])
+        issues.push({ level: "warning", where, message: `reveals secret "${id}", which doesn't exist${suggest(id, Object.keys(r.secrets))}` });
+    }
+    if (e.gauge !== undefined) {
+      if (!r.randomEvents.enabled)
+        issues.push({ level: "warning", where, message: "moves the event gauge, but there are no random events" });
+      check(e.gauge, `${where} › gauge`, extra);
+    }
   };
   for (const id of r.statOrder)
     check(r.stats[id].maxExpr, `Stats › ${id} › max`);
@@ -7290,6 +7991,29 @@ function lintRuleset(r) {
   for (const id of r.hud.bars)
     if (!r.stats[id])
       issues.push({ level: "warning", where: "HUD › bars", message: `"${id}" isn't a stat` });
+  for (const sec of Object.values(r.secrets))
+    sec.stages.forEach((st, i) => check(st.when, `Secrets › ${sec.id} › stage ${i + 1} › when`));
+  for (const f of Object.values(r.fronts)) {
+    const w = `Fronts › ${f.id}`;
+    check(f.rate, `${w} › per_day`);
+    check(f.perTurn, `${w} › per_turn`);
+    check(f.when, `${w} › when`);
+    f.stages.forEach((st, i) => checkEffect(st.effects, `${w} › stage ${i + 1}`));
+    const moved = f.pushes.length > 0 || f.rate !== 0 || f.perTurn !== 0;
+    if (!moved)
+      issues.push({ level: "warning", where: w, message: "never moves on its own — give it `per_day:`, `per_turn:` or `story:` pushes (or move it with `front:` effects)" });
+  }
+  if (r.randomEvents.enabled) {
+    check(r.randomEvents.perDay, "Random events › per_day");
+    check(r.randomEvents.perTurn, "Random events › per_turn");
+    for (const e of Object.values(r.randomEvents.events)) {
+      check(e.when, `Random events › ${e.id} › when`);
+      checkEffect(e.effects, `Random events › ${e.id}`);
+    }
+  }
+  check(r.liveChoices.when, "Live choices › when");
+  for (const a of Object.values(r.liveChoices.tags))
+    checkAction(a, `Live choices › tags › ${a.id}`);
   return issues;
 }
 
@@ -7400,6 +8124,9 @@ function statusOf(l) {
   }
   const tags = new Set;
   for (const a of Object.values(l.ruleset?.actions ?? {}))
+    for (const t of a.tags)
+      tags.add(t);
+  for (const a of Object.values(l.ruleset?.liveChoices.tags ?? {}))
     for (const t of a.tags)
       tags.add(t);
   return {
@@ -7605,6 +8332,7 @@ function buildHud(r, s) {
     feats: Object.values(r.feats).filter((f) => !f.hidden || s.feats[f.id]).map((f) => ({ id: f.id, name: f.name, desc: f.desc, unlocked: !!s.feats[f.id] })),
     perks: Object.values(r.perks).map((p) => ({ id: p.id, name: p.name, desc: p.desc, cost: p.cost, owned: !!s.perks[p.id], blocker: s.perks[p.id] ? null : perkBlocker(r, s, p.id) })),
     perkPoints: r.perkPoints ? s.stats[r.perkPoints] ?? 0 : null,
+    news: s.news.slice().reverse().slice(0, 12).map((n) => ({ text: n.text, when: r.clock.enabled ? formatClock(r, n.at).day : null })),
     turn: s.turn
   };
 }
@@ -7680,6 +8408,26 @@ function buildMap(r, s) {
 }
 function buildChoices(r, s, opts) {
   const veils = new Set(opts.veils.map((v) => v.toLowerCase()));
+  const lines = new Set(opts.lines.map((v) => v.toLowerCase()));
+  const live = [];
+  if (!s.encounter)
+    (opts.live ?? []).forEach((c, i) => {
+      const a = r.liveChoices.tags[c.tag];
+      if (!a || a.tags.some((t) => lines.has(t)))
+        return;
+      const o = odds(r, s, a, undefined, c.target);
+      live.push({
+        id: `${LIVE_PREFIX}${i}`,
+        label: c.label,
+        group: r.liveChoices.label,
+        desc: a.desc ?? null,
+        odds: o ? o.success : null,
+        partialOdds: o && o.partial > 0 ? o.partial : null,
+        checkLabel: a.check?.label ?? null,
+        veiled: a.tags.some((t) => veils.has(t)),
+        params: []
+      });
+    });
   const travel = travelTargets(r, s).map((id) => ({
     id: `${TRAVEL_PREFIX}${id}`,
     label: `Go to ${r.locations[id].name}`,
@@ -7706,7 +8454,7 @@ function buildChoices(r, s, opts) {
       params: a.params.map((p) => ({ id: p.id, label: p.label, options: Object.keys(p.options), default: p.default }))
     };
   });
-  return [...actions, ...travel];
+  return [...live, ...actions, ...travel];
 }
 function signed(n) {
   const f = formatNumber(n);
@@ -7991,6 +8739,32 @@ function stateDigest(r, s) {
   return lines.join(`
 `);
 }
+function narratorKnowledge(r, s) {
+  const lines = [];
+  for (const sec of Object.values(r.secrets)) {
+    const open = s.secrets[sec.id] ?? -1;
+    for (let i = 0;i <= open && i < sec.stages.length; i++)
+      lines.push(`${sec.about}: ${sec.stages[i].text}`);
+    if (sec.tell === "exists" && open < sec.stages.length - 1) {
+      lines.push(`${sec.about} is keeping something you don't know. If pressed, they deflect or change the subject — don't invent what it is.`);
+    }
+  }
+  for (const f of Object.values(r.fronts)) {
+    const st = s.fronts[f.id] ?? { v: f.start, stage: -1 };
+    for (let i = 0;i <= st.stage && i < f.stages.length; i++) {
+      if (f.stages[i].backstage)
+        lines.push(`Behind the scenes (${f.label}): ${f.stages[i].backstage}`);
+    }
+    const next = f.stages[st.stage + 1];
+    if (next?.hint && st.v >= next.hintAt)
+      lines.push(`In the background: ${next.hint} (a sign only — don't explain it or make anything happen)`);
+  }
+  const omen = s.gauge.next ? r.randomEvents.events[s.gauge.next]?.omen : undefined;
+  if (omen)
+    lines.push(`In the background: ${omen} (you don't know what it means — don't explain it or make anything happen)`);
+  return lines.length ? lines.join(`
+`) : null;
+}
 function outcomePacket(r, rec, before, after, playerName) {
   const lines = [];
   if (rec.action)
@@ -8063,7 +8837,7 @@ async function pushState(chatId, userId, force = false) {
       status,
       hud: settings.enabled ? buildHud(r, state) : null,
       map: settings.enabled ? buildMap(r, state) : null,
-      choices: settings.enabled ? buildChoices(r, state, settings) : [],
+      choices: settings.enabled ? buildChoices(r, state, { ...settings, live: liveChoicesOf(latest) }) : [],
       records: settings.enabled ? records : [],
       suggestions: settings.enabled ? suggestions.filter((s) => s.canRedo) : [],
       latestMessageId: latest?.id ?? null,
@@ -8144,6 +8918,10 @@ async function readTurn(opts) {
     if (t.whenScene)
       q[`scene:${t.id}`] = { type: "noul", instructions: fill(t.whenScene, player) };
   }
+  for (const f of Object.values(r.fronts))
+    f.pushes.forEach((p, i) => {
+      q[`front:${f.id}:${i}`] = { type: "noul", instructions: `In the latest exchange: ${fill(p.scene, player)}` };
+    });
   const state = {
     game_state: stateDigest(r, s),
     scene_so_far: clip(opts.sceneText, 2000) || "(start of story)",
@@ -8155,6 +8933,10 @@ async function readTurn(opts) {
     const a = ans[`scene:${t.id}`];
     if (t.whenScene && a?.type === "noul" && noulConfidence(a.noul) >= 0.3)
       scene[t.id] = a.noul >= 0.5;
+  }
+  for (const [key, a] of Object.entries(ans)) {
+    if (key.startsWith("front:") && a.type === "noul" && a.noul >= 0.65)
+      scene[key] = true;
   }
   const out = { intent: null, suggestion: null, confidence: 0, scene };
   const act = ans.action;
@@ -8604,7 +9386,7 @@ function firstJson2(text) {
   }
   return null;
 }
-async function ask(system, user, settings, userId, timeoutMs) {
+async function ask(system, user, settings, userId, timeoutMs, opts = {}) {
   const res = await host().generate.quiet({
     type: "quiet",
     messages: [
@@ -8613,7 +9395,7 @@ async function ask(system, user, settings, userId, timeoutMs) {
     ],
     connection_id: settings.helperConnectionId || undefined,
     reasoning: { source: "off" },
-    parameters: { temperature: 0.1, max_tokens: 500 },
+    parameters: { temperature: opts.temperature ?? 0.1, max_tokens: opts.maxTokens ?? 500 },
     userId,
     signal: AbortSignal.timeout(Math.max(3000, timeoutMs))
   });
@@ -8691,6 +9473,116 @@ async function extract(r, s, playerText, reply, settings, userId, only) {
   }
 }
 
+// src/backend/live.ts
+function clip3(s, n) {
+  return s.length > n ? `…${s.slice(-n)}` : s;
+}
+function usableTags(r, settings) {
+  const blocked = new Set(settings.lines.map((l) => l.toLowerCase()));
+  return Object.values(r.liveChoices.tags).filter((a) => !a.tags.some((t) => blocked.has(t)));
+}
+function repairTag(tags, raw) {
+  if (typeof raw !== "string" || !raw.trim())
+    return null;
+  const k = raw.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const exact = tags.find((a) => a.id.toLowerCase() === k || a.label.toLowerCase() === raw.trim().toLowerCase());
+  if (exact)
+    return exact.id;
+  const loose = tags.find((a) => k.startsWith(a.id.toLowerCase()) || a.id.toLowerCase().startsWith(k));
+  return loose?.id ?? null;
+}
+function personId(s, name) {
+  if (typeof name !== "string" || !name.trim())
+    return null;
+  const n = name.trim().toLowerCase();
+  for (const [id, p] of Object.entries(s.people)) {
+    const full = p.name.toLowerCase();
+    if (full === n || id === n || full.split(" ")[0] === n.split(" ")[0])
+      return id;
+  }
+  return null;
+}
+function cleanChoices(r, s, tags, raw, count) {
+  const list = Array.isArray(raw) ? raw : [];
+  const out = [];
+  const seen = new Set;
+  for (const item of list) {
+    if (!item || typeof item !== "object")
+      continue;
+    const o = item;
+    const label = typeof o.label === "string" ? o.label.trim().replace(/^[*"']+|[*"']+$/g, "").slice(0, 90) : "";
+    const tag = repairTag(tags, o.tag);
+    if (!label || !tag || seen.has(label.toLowerCase()))
+      continue;
+    const a = r.liveChoices.tags[tag];
+    const target = personId(s, o.target);
+    if (a.perPerson && !target)
+      continue;
+    seen.add(label.toLowerCase());
+    out.push({ label, tag, ...a.perPerson && target ? { target } : {} });
+    if (out.length >= count)
+      break;
+  }
+  return out;
+}
+async function pickTags(decider, r, s, tags, reply, player) {
+  if (decider.id !== "jev" || tags.length <= 1)
+    return null;
+  const ans = await decider.ask({ game_state: stateDigest(r, s), narrator_reply: clip3(reply, 4000) }, {
+    kinds: {
+      type: "choice",
+      instructions: `Right after this reply, which kind of move would be most natural and interesting for ${player} to make next?`,
+      criteria: Object.fromEntries(tags.map((a) => [a.id, a.desc ?? a.label]))
+    }
+  });
+  const a = ans.kinds;
+  if (a?.type !== "choice")
+    return null;
+  const ranked = Object.entries(a.probabilities).filter(([id]) => r.liveChoices.tags[id]).sort((x, y) => y[1] - x[1]);
+  const picked = ranked.filter(([, p]) => p >= 0.04).slice(0, r.liveChoices.count).map(([id]) => id);
+  return picked.length ? picked : ranked.slice(0, 1).map(([id]) => id);
+}
+async function writeLiveChoices(opts) {
+  const { r, s, settings } = opts;
+  const lc = r.liveChoices;
+  if (!lc.enabled || s.encounter)
+    return [];
+  if (lc.when && !evalBool(lc.when, makeEnv(r, s), true))
+    return [];
+  const tags = usableTags(r, settings);
+  if (!tags.length)
+    return [];
+  let wanted = null;
+  try {
+    wanted = await pickTags(opts.decider, r, s, tags, opts.reply, opts.player);
+  } catch (e) {
+    logError("live choice kinds", e);
+  }
+  const count = wanted?.length ?? lc.count;
+  const people = Object.values(s.people).map((p) => p.name);
+  const tagLines = tags.map((a) => `- ${a.id}: ${a.desc ?? a.label}${a.perPerson ? ` (also give "target": the name of the person it's aimed at${people.length ? ` — one of ${people.join(", ")}` : ""})` : ""}`);
+  const system = [
+    "You write the clickable choices for a text roleplay game. You never write story.",
+    `Write ${count} short options for what ${opts.player} could do right now, given the narrator's latest reply.`,
+    `Each is 3–10 words, phrased as an action ${opts.player} takes (e.g. "Ask Jo about the letter", "Slip out the back door").`,
+    "Make them specific to this moment and different from each other. Never decide how they turn out.",
+    wanted ? `Write exactly one option for each of these tags, in this order: ${wanted.join(", ")}. The tags:` : "Tag each option with the kind of move it is, from this list only:",
+    ...tagLines,
+    ...lc.guide ? [`Author's note: ${lc.guide}`] : [],
+    'Reply with JSON only: {"choices": [{"label": "...", "tag": "...", "target": "..."}]}'
+  ].join(`
+`);
+  const user = ["Current state:", stateDigest(r, s), "", "Narrator's latest reply:", clip3(opts.reply, 4000)].join(`
+`);
+  try {
+    const out = firstJson2(await ask(system, user, settings, opts.userId, 25000, { temperature: 0.8, maxTokens: 450 }));
+    return cleanChoices(r, s, tags, out?.choices, count);
+  } catch (e) {
+    logError("live choices", e);
+    return [];
+  }
+}
+
 // src/backend/turn.ts
 var pending = new Map;
 var playerNames = new Map;
@@ -8728,6 +9620,10 @@ ${stateDigest(r, after)}`);
   if (r.narration.notes)
     parts.push(`[Warp — narrator notes]
 ${r.narration.notes}`);
+  const known = narratorKnowledge(r, after);
+  if (known)
+    parts.push(`[Warp — background only you know. The player hasn't seen it. Play it as subtext: never explain it, and reveal no more than the scene earns.]
+${known}`);
   const packet = rec ? outcomePacket(r, rec, before, after, player) : null;
   if (packet && (rec?.action || rec?.hints.length)) {
     parts.push(`[Warp — this turn's outcome, already decided by the dice. Narrate it faithfully and do not change the result.]
@@ -8915,14 +9811,16 @@ async function onGenerationEnded(payload, userId) {
     }
     await pushState(payload.chatId, userId);
     const settings = await getSettings(userId);
-    if (!payload.content || !settings.narratorUpdates && !settings.consistencyCheck)
+    const r = p.ruleset;
+    const wantLive = r.liveChoices.enabled;
+    if (!payload.content || !settings.narratorUpdates && !settings.consistencyCheck && !wantLive)
       return;
     host().sendToFrontend({ type: "busy", chatId: payload.chatId, busy: true, label: "Updating state…" }, userId);
     const decider = await getDecider(settings, userId);
-    const r = p.ruleset;
-    const [proposal, contra] = await Promise.all([
+    const [proposal, contra, live] = await Promise.all([
       settings.narratorUpdates ? proposeChanges(decider, r, p, payload.content, settings, userId) : Promise.resolve(null),
-      settings.consistencyCheck && decider.id !== "rules" ? contradiction({ decider, r, s: p.after, reply: payload.content, outcome: p.outcome }) : Promise.resolve(null)
+      settings.consistencyCheck && decider.id !== "rules" ? contradiction({ decider, r, s: p.after, reply: payload.content, outcome: p.outcome }) : Promise.resolve(null),
+      wantLive ? writeLiveChoices({ r, s: p.after, reply: payload.content, player: p.player, settings, userId, decider }) : Promise.resolve([])
     ]);
     const rec = { ...p.rec };
     if (proposal) {
@@ -8934,6 +9832,9 @@ async function onGenerationEnded(payload, userId) {
       rec.contradiction = contra;
     if (rec.events !== p.rec.events || contra !== null)
       await writeRecord(payload.chatId, msg.id, swipe, rec);
+    if (live.length) {
+      await patchWarpMeta(payload.chatId, msg.id, (w) => ({ ...w, live: { ...w.live ?? {}, [String(swipe)]: live } }));
+    }
   } catch (e) {
     logError("generation ended", e);
   } finally {
@@ -8973,6 +9874,12 @@ function effectsOf(r) {
     add(f.reward);
   for (const p of Object.values(r.perks))
     add(p.effects);
+  for (const f of Object.values(r.fronts))
+    for (const st of f.stages)
+      add(st.effects);
+  for (const e of Object.values(r.randomEvents.events))
+    add(e.effects);
+  Object.values(r.liveChoices.tags).forEach(addAction);
   return out;
 }
 function reviewBalance(r) {
@@ -9009,6 +9916,22 @@ function reviewBalance(r) {
   for (const t of r.triggers) {
     if (t.when && !t.whenScene && meaningful(t.effects) && evalBool(t.when, env, false) && !t.repeat) {
       out.push({ id: `trig:${t.id}`, part: "rules", text: `Rule “${t.id}” fires immediately on turn one.`, fix: `Adjust the "${t.id}" trigger (or the starting values it checks) so it doesn't fire at the very start.` });
+    }
+  }
+  for (const f of Object.values(r.fronts)) {
+    const last = f.stages[f.stages.length - 1];
+    const rate = evalNumber(f.rate, env, 0);
+    if (!last || rate <= 0)
+      continue;
+    const days = (last.at - f.start) / rate;
+    if (days < 2) {
+      out.push({ id: `front:${f.id}`, part: "story", text: `“${f.label}” runs through all its stages in about ${Math.max(1, Math.round(days * 24))}h of game time.`, fix: `Slow the "${f.id}" front down (lower per_day or space its stages out) so it takes at least a week or two of game time to play out.` });
+    }
+  }
+  if (r.randomEvents.enabled) {
+    const perDay = evalNumber(r.randomEvents.perDay, env, 0);
+    if (perDay > 0 && 100 / perDay < 0.75) {
+      out.push({ id: "events:pace", part: "story", text: `A random event roughly every ${Math.max(1, Math.round(100 / perDay * 24))}h of game time — that's a lot.`, fix: "Lower random_events per_day so events come every few days of game time rather than several times a day." });
     }
   }
   const touched = new Set;
@@ -9071,7 +9994,7 @@ function simulateEncounter(r, from, id, runs) {
 }
 
 // src/engine/reference.ts
-var PART_LABELS = ["core", "stats", "people", "world", "actions", "encounters", "journal", "rules"];
+var PART_LABELS = ["core", "stats", "people", "world", "actions", "encounters", "journal", "rules", "story"];
 var PART_CONTENTS = {
   core: "name, description, player, clock, start, hud, narration",
   stats: "stats",
@@ -9080,7 +10003,8 @@ var PART_CONTENTS = {
   actions: "actions",
   encounters: "encounters",
   journal: "codex, feats, perks",
-  rules: "triggers"
+  rules: "triggers",
+  story: "secrets, fronts, random_events, live_choices"
 };
 function partForIssue(where) {
   const w = where.replace(/^warp-ruleset\s*·\s*/i, "");
@@ -9101,6 +10025,8 @@ function partForIssue(where) {
     return "journal";
   if (head.startsWith("triggers") || head.startsWith("rules"))
     return "rules";
+  if (["secrets", "fronts", "random events", "live choices"].some((k) => head.startsWith(k)))
+    return "story";
   return "core";
 }
 var REFERENCE = `WARP RULESET FORMAT (YAML). Numbers may be formulas in quotes. Meters are 0–100 unless there's a reason.
@@ -9190,10 +10116,44 @@ triggers:
   drain: { when: "fatigue >= 85", repeat: true, do: { stress: +2 } }                           # every turn while true
   danger: { when_scene: "{{user}} is in immediate danger", do: { stress: +5 } }                # judged in plain language
 
+STORY MACHINERY (the "story" part):
+secrets:          # only opened stages ever reach the narrator — what isn't in the prompt can't leak
+  ward_accident:
+    about: Professor Ward
+    cue: "Ward goes quiet whenever the old observatory comes up."    # known from the start: behaviour, never the reason
+    tell: exists                   # narrator is told there's more it doesn't know, so it deflects instead of inventing
+    stages:                        # a ladder: each opens when its when holds, in order, and never closes
+      - { when: "rel('ward', 'trust') >= 60", text: "A student died in an observatory accident on Ward's watch.", lore: [Lorebook entry title] }
+      - { when: "flag('found_logbook')", text: "Ward falsified the safety log to protect the department." }
+fronts:           # hidden world clocks that fill with in-game time; each stage surfaces once in the story
+  harbour_gangs:
+    label: The harbour gangs
+    per_day: 6                     # clock points per in-game day (formula); per_turn also allowed; max defaults to 100
+    when: "not flag('gangs_broken')"
+    story: { "{{user}} stirs up trouble with the gangs": 10, "{{user}} helps the police against the gangs": -10 }   # judged each turn
+    stages:
+      - { at: 30, hint: "More broken windows along the harbour road.", backstage: "The Kestrels took over the fish market.", surface: "A harbour shop is torched overnight.", do: { flags: { harbour_unrest: true } } }
+      # hint = a sign with no reason, shown from halfway to this stage; backstage stays hidden until the stage surfaces
+random_events:    # a hidden gauge fills with in-game time, not per reply; near the top it picks the next event and shows its omen
+  pace: { per_day: 25, jitter: 0.3, rest_days: 1, omen_at: 80 }     # per_day 25 ≈ one event every 4 days
+  events:
+    storm: { when: "season == 'autumn'", weight: 2, cooldown: 7, omen: "Gulls are flying inland.", text: "A storm rolls in off the sea.", do: { add_condition: [soaked] } }
+live_choices:     # a writer phrases options for the moment; each must carry one of these tags, and the TAG decides what happens
+  label: Right now
+  count: 3
+  when: "not in_encounter"
+  tags:
+    bold: { desc: "A daring or risky move", check: { vs: 12, add: "floor(nerve / 10)" }, success: { nerve: +1 }, fail: { stress: +5 } }
+    kind: { desc: "Something kind toward someone here", per_person: true, effects: { rel: { target: { trust: +3 } } } }
+    careful: { desc: "The cautious, safe option" }
+STORY EFFECTS: front: { harbour_gangs: -20 }, reveal: [ward_accident] (opens its next stage), gauge: +30 (brings the next event closer).
+
 FORMULA NAMES: stats, flags, hour, minute, day, weekday, month, date, season, weather, temperature, indoors, outside,
 warmth, warmth_min, warmth_max, too_cold, too_hot, reveal, exposed, naked, in_encounter, round, foe.<stat>, target.<relstat>, location.
 FUNCTIONS: has(item[, n]), count(item), flag(x), cond(x), at(loc), rel(person, stat), met(person), between(v, lo, hi), roll('2d6'),
-wearing(item), worn(slot), trait(t), present(person), where(person), codex(id), feat(id), perk(id), min, max, clamp, floor, ceil, round, abs.
+wearing(item), worn(slot), trait(t), present(person), where(person), codex(id), feat(id), perk(id),
+secret(id) (stages the narrator knows), front(id) (clock value), front_stage(id) (stages surfaced), happened(event),
+min, max, clamp, floor, ceil, round, abs.
 Operators: + - * / % < <= > >= == != and or not, a ? b : c. Strings in single quotes.
 `;
 
@@ -9328,7 +10288,8 @@ var SYSTEMS = [
   { id: "encounters", label: "Encounters / combat" },
   { id: "crime", label: "Crime & consequences" },
   { id: "journal", label: "Codex & feats" },
-  { id: "perks", label: "Levels & perks" }
+  { id: "perks", label: "Levels & perks" },
+  { id: "story", label: "Secrets, a living world & choices for the moment" }
 ];
 function coreQuestions(defaultSystems) {
   return [
@@ -9518,13 +10479,17 @@ function buildPreview(s) {
     rules: r.triggers.length,
     codex: Object.keys(r.codex).length,
     feats: Object.keys(r.feats).length,
-    perks: Object.keys(r.perks).length
+    perks: Object.keys(r.perks).length,
+    secrets: Object.keys(r.secrets).length,
+    fronts: Object.keys(r.fronts).length,
+    events: Object.keys(r.randomEvents.events).length
   };
   const phrase = Object.entries(counts).filter(([, n]) => n).map(([k, n]) => `${n} ${n === 1 ? k.replace(/s$/, "").replace(/^people$/, "person").replace(/^codex$/, "codex entry") : k}`).join(", ");
   const extras = [
     r.weather.enabled ? "weather & temperature" : "",
     r.wardrobe.enabled ? "a wardrobe" : "",
-    r.clock.startDate ? "a calendar" : ""
+    r.clock.startDate ? "a calendar" : "",
+    r.liveChoices.enabled ? "choices written for the moment" : ""
   ].filter(Boolean);
   s.preview = {
     summary: `${r.name}: ${phrase}${extras.length ? `, plus ${extras.join(", ")}` : ""}.`,
@@ -9614,7 +10579,7 @@ Reply with JSON:
       cast: Array.isArray(out.cast) ? out.cast.slice(0, 12).map((c) => ({ name: String(c?.name ?? ""), relation: String(c?.relation ?? "") })).filter((c) => c.name) : []
     };
     s.base = opts.base || suggested;
-    const defaults = Array.isArray(out.systems) ? out.systems.map(String).filter((x) => SYSTEMS.some((y) => y.id === x)) : ["needs", "relationships", "money", "skills"];
+    const defaults = Array.isArray(out.systems) ? out.systems.map(String).filter((x) => SYSTEMS.some((y) => y.id === x)) : ["needs", "relationships", "money", "skills", "story"];
     s.rounds = [{ questions: [...coreQuestions(defaults), ...normQuestions(out.followUps, "f1_")], answers: {} }];
     s.step = "questions";
   } catch (e) {
@@ -9662,6 +10627,8 @@ async function draftAll(s, userId) {
       return systems.has("encounters");
     if (label === "journal")
       return systems.has("journal") || systems.has("perks");
+    if (label === "story")
+      return systems.has("story");
     return true;
   };
   const baseOf = (label) => {
@@ -9875,18 +10842,29 @@ spindle.registerWorldInfoInterceptor(async (ctx) => {
   try {
     const loaded = await getRuleset(ctx.chatId, ctx.userId);
     const r = loaded?.ruleset;
-    const gated = r ? Object.values(r.codex).filter((c) => c.lore.length) : [];
-    if (r && gated.length) {
+    const gates = [];
+    if (r) {
+      for (const c of Object.values(r.codex))
+        if (c.lore.length)
+          gates.push({ lore: c.lore, open: (s) => !!s.codex[c.id] });
+      for (const sec of Object.values(r.secrets))
+        sec.stages.forEach((st, i) => {
+          if (st.lore.length)
+            gates.push({ lore: st.lore, open: (s) => (s.secrets[sec.id] ?? -1) >= i });
+        });
+    }
+    if (r && gates.length) {
       let state = lastStates.get(ctx.chatId);
       if (!state)
         state = foldPath(r, await getMessages(ctx.chatId)).state;
       const title = (s) => s.replace(/^\s*\[[^\]]*\]\s*/, "").trim().toLowerCase();
-      for (const c of gated) {
-        const names = new Set(c.lore.map(title));
+      for (const g of gates) {
+        const names = new Set(g.lore.map(title));
+        const open = g.open(state);
         for (const e of ctx.entries) {
           if (!names.has(title(e.comment ?? "")))
             continue;
-          if (state.codex[c.id])
+          if (open)
             forced.push(e.id);
           else
             disabled.push(e.id);
@@ -10008,9 +10986,20 @@ spindle.onFrontendMessage(async (raw, userId) => {
         if (!r)
           return;
         const settings = await getSettings(userId);
-        const { state } = foldPath(r, await getMessages(msg.chatId));
+        const msgs = await getMessages(msg.chatId);
+        const { state } = foldPath(r, msgs);
         let say;
-        if (msg.actionId.startsWith(TRAVEL_PREFIX)) {
+        let intent = { actionId: msg.actionId, params: msg.params, via: "choice" };
+        if (msg.actionId.startsWith(LIVE_PREFIX)) {
+          const c = liveChoicesOf(msgs[msgs.length - 1])[Number(msg.actionId.slice(LIVE_PREFIX.length))];
+          if (!c || !r.liveChoices.tags[c.tag]) {
+            toast("warning", "That choice isn't available anymore.", userId);
+            await pushState(msg.chatId, userId);
+            return;
+          }
+          say = `*${c.label}*`;
+          intent = { actionId: `${LIVE_PREFIX}${c.tag}${c.target ? `${TARGET_SEP}${c.target}` : ""}`, via: "choice", label: c.label };
+        } else if (msg.actionId.startsWith(TRAVEL_PREFIX)) {
           const to = msg.actionId.slice(TRAVEL_PREFIX.length);
           if (!travelTargets(r, state).includes(to)) {
             toast("warning", "You can't get there from here.", userId);
@@ -10031,7 +11020,7 @@ spindle.onFrontendMessage(async (raw, userId) => {
         await spindle.chat.appendMessage(msg.chatId, {
           role: "user",
           content: say,
-          metadata: { warp: { intent: { actionId: msg.actionId, params: msg.params, via: "choice" } } }
+          metadata: { warp: { intent } }
         }, { triggerGeneration: true });
         break;
       }

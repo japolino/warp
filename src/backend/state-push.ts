@@ -2,7 +2,7 @@
 
 import { buildChoices, buildHud, buildMap, buildRecordView } from "../engine/view.js";
 import type { RecordView, SuggestionView } from "../shared/protocol.js";
-import { getMessages, foldPath, warpMeta } from "./ledger.js";
+import { getMessages, foldPath, liveChoicesOf, warpMeta } from "./ledger.js";
 import { getSettings } from "./settings.js";
 import { getRuleset, statusOf } from "./source.js";
 import { host, logError, send } from "./host.js";
@@ -71,7 +71,7 @@ export async function pushState(chatId: string | null, userId?: string, force = 
       status,
       hud: settings.enabled ? buildHud(r, state) : null,
       map: settings.enabled ? buildMap(r, state) : null,
-      choices: settings.enabled ? buildChoices(r, state, settings) : [],
+      choices: settings.enabled ? buildChoices(r, state, { ...settings, live: liveChoicesOf(latest) }) : [],
       records: settings.enabled ? records : [],
       suggestions: settings.enabled ? suggestions.filter((s) => s.canRedo) : [],
       latestMessageId: latest?.id ?? null,

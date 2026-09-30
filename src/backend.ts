@@ -1,11 +1,11 @@
 import type { SpindleAPI } from "lumiverse-spindle-types";
-import { availableChoices, buyPerk, changeClothes, forgetPerson, manualSet, manualSetRel, TRAVEL_PREFIX, travelTargets, type TurnRecord } from "./engine/resolve.js";
+import { availableChoices, buyPerk, changeClothes, forgetPerson, LIVE_PREFIX, manualSet, manualSetRel, TARGET_SEP, TRAVEL_PREFIX, travelTargets, type Intent, type TurnRecord } from "./engine/resolve.js";
 import type { Ruleset } from "./engine/ruleset.js";
 import type { GameState, WarpEvent } from "./engine/state.js";
 import { TEMPLATES } from "./engine/templates/index.js";
 import type { FrontendToBackend } from "./shared/protocol.js";
 import { logError, send, toast } from "./backend/host.js";
-import { foldPath, getMessages, patchWarpMeta, shiftAfterSwipeDelete, warpMeta, writeRecord } from "./backend/ledger.js";
+import { foldPath, getMessages, liveChoicesOf, patchWarpMeta, shiftAfterSwipeDelete, warpMeta, writeRecord } from "./backend/ledger.js";
 import { getSettings, patchSettings } from "./backend/settings.js";
 import { getRuleset, installTemplate, invalidateCharacter, knownRulesetBookIds, knownRulesetEntryIds } from "./backend/source.js";
 import { connectionsFor, getActiveChat, lastStates, pushState, schedulePush, setActiveChat } from "./backend/state-push.js";
@@ -25,21 +25,29 @@ spindle.registerWorldInfoInterceptor(async (ctx) => {
     .filter((e) => knownRulesetEntryIds.has(e.id) || knownRulesetBookIds.has(e.world_book_id) || isRulesetEntryTitle(e.comment))
     .map((e) => e.id);
 
-  // Codex-gated lore: entries named in a codex entry's `lore:` stay off until it's unlocked, then they're forced on.
+  // Gated lore: entries named in a codex entry's `lore:` (or a secret stage's) stay off until it's
+  // unlocked, then they're forced on — so a secret's long text can live in the lorebook and still never leak early.
   const forced: string[] = [];
   try {
     const loaded = await getRuleset(ctx.chatId, ctx.userId);
     const r = loaded?.ruleset;
-    const gated = r ? Object.values(r.codex).filter((c) => c.lore.length) : [];
-    if (r && gated.length) {
+    const gates: { lore: string[]; open: (s: GameState) => boolean }[] = [];
+    if (r) {
+      for (const c of Object.values(r.codex)) if (c.lore.length) gates.push({ lore: c.lore, open: (s) => !!s.codex[c.id] });
+      for (const sec of Object.values(r.secrets)) sec.stages.forEach((st, i) => {
+        if (st.lore.length) gates.push({ lore: st.lore, open: (s) => (s.secrets[sec.id] ?? -1) >= i });
+      });
+    }
+    if (r && gates.length) {
       let state = lastStates.get(ctx.chatId);
       if (!state) state = foldPath(r, await getMessages(ctx.chatId)).state;
       const title = (s: string) => s.replace(/^\s*\[[^\]]*\]\s*/, "").trim().toLowerCase();
-      for (const c of gated) {
-        const names = new Set(c.lore.map(title));
+      for (const g of gates) {
+        const names = new Set(g.lore.map(title));
+        const open = g.open(state);
         for (const e of ctx.entries) {
           if (!names.has(title(e.comment ?? ""))) continue;
-          if (state.codex[c.id]) forced.push(e.id);
+          if (open) forced.push(e.id);
           else disabled.push(e.id);
         }
       }
@@ -163,9 +171,17 @@ spindle.onFrontendMessage(async (raw, userId) => {
         const r = loaded?.ruleset;
         if (!r) return;
         const settings = await getSettings(userId);
-        const { state } = foldPath(r, await getMessages(msg.chatId));
+        const msgs = await getMessages(msg.chatId);
+        const { state } = foldPath(r, msgs);
         let say: string;
-        if (msg.actionId.startsWith(TRAVEL_PREFIX)) {
+        let intent: Intent = { actionId: msg.actionId, params: msg.params, via: "choice" };
+        if (msg.actionId.startsWith(LIVE_PREFIX)) {
+          // Choices written for the latest reply: the tag decides what happens, the label is what the player saw.
+          const c = liveChoicesOf(msgs[msgs.length - 1])[Number(msg.actionId.slice(LIVE_PREFIX.length))];
+          if (!c || !r.liveChoices.tags[c.tag]) { toast("warning", "That choice isn't available anymore.", userId); await pushState(msg.chatId, userId); return; }
+          say = `*${c.label}*`;
+          intent = { actionId: `${LIVE_PREFIX}${c.tag}${c.target ? `${TARGET_SEP}${c.target}` : ""}`, via: "choice", label: c.label };
+        } else if (msg.actionId.startsWith(TRAVEL_PREFIX)) {
           const to = msg.actionId.slice(TRAVEL_PREFIX.length);
           if (!travelTargets(r, state).includes(to)) { toast("warning", "You can't get there from here.", userId); await pushState(msg.chatId, userId); return; }
           say = `*I head to ${r.locations[to].name}.*`;
@@ -178,7 +194,7 @@ spindle.onFrontendMessage(async (raw, userId) => {
         await spindle.chat.appendMessage(msg.chatId, {
           role: "user",
           content: say,
-          metadata: { warp: { intent: { actionId: msg.actionId, params: msg.params, via: "choice" } } },
+          metadata: { warp: { intent } },
         }, { triggerGeneration: true });
         break;
       }

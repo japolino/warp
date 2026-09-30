@@ -1,7 +1,7 @@
 // The ruleset format, condensed for a model to write against. Kept in code so
 // the AI builder and the engine can't drift apart.
 
-export const PART_LABELS = ["core", "stats", "people", "world", "actions", "encounters", "journal", "rules"] as const;
+export const PART_LABELS = ["core", "stats", "people", "world", "actions", "encounters", "journal", "rules", "story"] as const;
 export type PartLabel = (typeof PART_LABELS)[number];
 
 /** What each lorebook entry ("part") holds. */
@@ -14,6 +14,7 @@ export const PART_CONTENTS: Record<PartLabel, string> = {
   encounters: "encounters",
   journal: "codex, feats, perks",
   rules: "triggers",
+  story: "secrets, fronts, random_events, live_choices",
 };
 
 /** Which part an issue's "where" belongs to. */
@@ -28,6 +29,7 @@ export function partForIssue(where: string): PartLabel {
   if (head.startsWith("encounters")) return "encounters";
   if (["codex", "feats", "perks"].some((k) => head.startsWith(k))) return "journal";
   if (head.startsWith("triggers") || head.startsWith("rules")) return "rules";
+  if (["secrets", "fronts", "random events", "live choices"].some((k) => head.startsWith(k))) return "story";
   return "core";
 }
 
@@ -118,9 +120,43 @@ triggers:
   drain: { when: "fatigue >= 85", repeat: true, do: { stress: +2 } }                           # every turn while true
   danger: { when_scene: "{{user}} is in immediate danger", do: { stress: +5 } }                # judged in plain language
 
+STORY MACHINERY (the "story" part):
+secrets:          # only opened stages ever reach the narrator — what isn't in the prompt can't leak
+  ward_accident:
+    about: Professor Ward
+    cue: "Ward goes quiet whenever the old observatory comes up."    # known from the start: behaviour, never the reason
+    tell: exists                   # narrator is told there's more it doesn't know, so it deflects instead of inventing
+    stages:                        # a ladder: each opens when its when holds, in order, and never closes
+      - { when: "rel('ward', 'trust') >= 60", text: "A student died in an observatory accident on Ward's watch.", lore: [Lorebook entry title] }
+      - { when: "flag('found_logbook')", text: "Ward falsified the safety log to protect the department." }
+fronts:           # hidden world clocks that fill with in-game time; each stage surfaces once in the story
+  harbour_gangs:
+    label: The harbour gangs
+    per_day: 6                     # clock points per in-game day (formula); per_turn also allowed; max defaults to 100
+    when: "not flag('gangs_broken')"
+    story: { "{{user}} stirs up trouble with the gangs": 10, "{{user}} helps the police against the gangs": -10 }   # judged each turn
+    stages:
+      - { at: 30, hint: "More broken windows along the harbour road.", backstage: "The Kestrels took over the fish market.", surface: "A harbour shop is torched overnight.", do: { flags: { harbour_unrest: true } } }
+      # hint = a sign with no reason, shown from halfway to this stage; backstage stays hidden until the stage surfaces
+random_events:    # a hidden gauge fills with in-game time, not per reply; near the top it picks the next event and shows its omen
+  pace: { per_day: 25, jitter: 0.3, rest_days: 1, omen_at: 80 }     # per_day 25 ≈ one event every 4 days
+  events:
+    storm: { when: "season == 'autumn'", weight: 2, cooldown: 7, omen: "Gulls are flying inland.", text: "A storm rolls in off the sea.", do: { add_condition: [soaked] } }
+live_choices:     # a writer phrases options for the moment; each must carry one of these tags, and the TAG decides what happens
+  label: Right now
+  count: 3
+  when: "not in_encounter"
+  tags:
+    bold: { desc: "A daring or risky move", check: { vs: 12, add: "floor(nerve / 10)" }, success: { nerve: +1 }, fail: { stress: +5 } }
+    kind: { desc: "Something kind toward someone here", per_person: true, effects: { rel: { target: { trust: +3 } } } }
+    careful: { desc: "The cautious, safe option" }
+STORY EFFECTS: front: { harbour_gangs: -20 }, reveal: [ward_accident] (opens its next stage), gauge: +30 (brings the next event closer).
+
 FORMULA NAMES: stats, flags, hour, minute, day, weekday, month, date, season, weather, temperature, indoors, outside,
 warmth, warmth_min, warmth_max, too_cold, too_hot, reveal, exposed, naked, in_encounter, round, foe.<stat>, target.<relstat>, location.
 FUNCTIONS: has(item[, n]), count(item), flag(x), cond(x), at(loc), rel(person, stat), met(person), between(v, lo, hi), roll('2d6'),
-wearing(item), worn(slot), trait(t), present(person), where(person), codex(id), feat(id), perk(id), min, max, clamp, floor, ceil, round, abs.
+wearing(item), worn(slot), trait(t), present(person), where(person), codex(id), feat(id), perk(id),
+secret(id) (stages the narrator knows), front(id) (clock value), front_stage(id) (stages surfaced), happened(event),
+min, max, clamp, floor, ceil, round, abs.
 Operators: + - * / % < <= > >= == != and or not, a ? b : c. Strings in single quotes.
 `;

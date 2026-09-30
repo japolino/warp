@@ -8,13 +8,14 @@ import { randomSeed } from "../engine/dice.js";
 import { applyProposal, resolveTurnFull, type Intent, type Proposal, type TurnRecord } from "../engine/resolve.js";
 import type { Ruleset } from "../engine/ruleset.js";
 import { applyEvent, cloneState, type GameState } from "../engine/state.js";
-import { outcomePacket, stateDigest } from "../engine/view.js";
+import { narratorKnowledge, outcomePacket, stateDigest } from "../engine/view.js";
 import type { Settings } from "../shared/protocol.js";
 import { bookkeeping, contradiction, odds, readTurn } from "./decisions.js";
 import { getDecider } from "./deciders.js";
 import { extract, type ExtractPart } from "./helpers.js";
 import { host, logError } from "./host.js";
 import { activeRecord, foldPath, getMessages, patchWarpMeta, warpMeta, writeRecord, type Msg, type Suggestion } from "./ledger.js";
+import { writeLiveChoices } from "./live.js";
 import { getSettings } from "./settings.js";
 import { getRuleset } from "./source.js";
 import { busyChats, pushState, schedulePush } from "./state-push.js";
@@ -84,6 +85,8 @@ function buildInjection(r: Ruleset, rec: TurnRecord | null, before: GameState, a
   const parts: string[] = [];
   parts.push(`[Warp — current game state. The rules engine owns these facts; keep narration consistent with them.]\n${stateDigest(r, after)}`);
   if (r.narration.notes) parts.push(`[Warp — narrator notes]\n${r.narration.notes}`);
+  const known = narratorKnowledge(r, after);
+  if (known) parts.push(`[Warp — background only you know. The player hasn't seen it. Play it as subtext: never explain it, and reveal no more than the scene earns.]\n${known}`);
   const packet = rec ? outcomePacket(r, rec, before, after, player) : null;
   if (packet && (rec?.action || rec?.hints.length)) {
     parts.push(`[Warp — this turn's outcome, already decided by the dice. Narrate it faithfully and do not change the result.]\n${packet}`);
@@ -260,16 +263,20 @@ export async function onGenerationEnded(payload: { generationId: string; chatId:
     await pushState(payload.chatId, userId);
 
     const settings = await getSettings(userId);
-    if (!payload.content || (!settings.narratorUpdates && !settings.consistencyCheck)) return;
+    const r = p.ruleset;
+    const wantLive = r.liveChoices.enabled;
+    if (!payload.content || (!settings.narratorUpdates && !settings.consistencyCheck && !wantLive)) return;
     host().sendToFrontend({ type: "busy", chatId: payload.chatId, busy: true, label: "Updating state…" }, userId);
     const decider = await getDecider(settings, userId);
-    const r = p.ruleset;
 
-    const [proposal, contra] = await Promise.all([
+    const [proposal, contra, live] = await Promise.all([
       settings.narratorUpdates ? proposeChanges(decider, r, p, payload.content, settings, userId) : Promise.resolve(null),
       settings.consistencyCheck && decider.id !== "rules"
         ? contradiction({ decider, r, s: p.after, reply: payload.content, outcome: p.outcome })
         : Promise.resolve(null),
+      wantLive
+        ? writeLiveChoices({ r, s: p.after, reply: payload.content, player: p.player, settings, userId, decider })
+        : Promise.resolve([]),
     ]);
     const rec: TurnRecord = { ...p.rec };
     if (proposal) {
@@ -278,6 +285,9 @@ export async function onGenerationEnded(payload: { generationId: string; chatId:
     }
     if (contra !== null) rec.contradiction = contra;
     if (rec.events !== p.rec.events || contra !== null) await writeRecord(payload.chatId, msg.id, swipe, rec);
+    if (live.length) {
+      await patchWarpMeta(payload.chatId, msg.id, (w) => ({ ...w, live: { ...(w.live ?? {}), [String(swipe)]: live } }));
+    }
   } catch (e) {
     logError("generation ended", e);
   } finally {

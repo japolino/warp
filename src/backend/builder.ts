@@ -127,6 +127,7 @@ const SYSTEMS: { id: string; label: string }[] = [
   { id: "crime", label: "Crime & consequences" },
   { id: "journal", label: "Codex & feats" },
   { id: "perks", label: "Levels & perks" },
+  { id: "story", label: "Secrets, a living world & choices for the moment" },
 ];
 
 function coreQuestions(defaultSystems: string[]): BuilderQuestion[] {
@@ -279,12 +280,16 @@ function buildPreview(s: BuilderSession) {
     codex: Object.keys(r.codex).length,
     feats: Object.keys(r.feats).length,
     perks: Object.keys(r.perks).length,
+    secrets: Object.keys(r.secrets).length,
+    fronts: Object.keys(r.fronts).length,
+    events: Object.keys(r.randomEvents.events).length,
   };
   const phrase = Object.entries(counts).filter(([, n]) => n).map(([k, n]) => `${n} ${n === 1 ? k.replace(/s$/, "").replace(/^people$/, "person").replace(/^codex$/, "codex entry") : k}`).join(", ");
   const extras = [
     r.weather.enabled ? "weather & temperature" : "",
     r.wardrobe.enabled ? "a wardrobe" : "",
     r.clock.startDate ? "a calendar" : "",
+    r.liveChoices.enabled ? "choices written for the moment" : "",
   ].filter(Boolean);
   s.preview = {
     summary: `${r.name}: ${phrase}${extras.length ? `, plus ${extras.join(", ")}` : ""}.`,
@@ -350,7 +355,7 @@ export async function builderStart(chatId: string, opts: { connectionId: string;
       cast: Array.isArray(out.cast) ? out.cast.slice(0, 12).map((c) => ({ name: String((c as Record<string, unknown>)?.name ?? ""), relation: String((c as Record<string, unknown>)?.relation ?? "") })).filter((c) => c.name) : [],
     };
     s.base = opts.base || suggested;
-    const defaults = Array.isArray(out.systems) ? out.systems.map(String).filter((x) => SYSTEMS.some((y) => y.id === x)) : ["needs", "relationships", "money", "skills"];
+    const defaults = Array.isArray(out.systems) ? out.systems.map(String).filter((x) => SYSTEMS.some((y) => y.id === x)) : ["needs", "relationships", "money", "skills", "story"];
     s.rounds = [{ questions: [...coreQuestions(defaults), ...normQuestions(out.followUps, "f1_")], answers: {} }];
     s.step = "questions";
   } catch (e) {
@@ -389,6 +394,7 @@ async function draftAll(s: BuilderSession, userId?: string) {
   const want = (label: PartLabel) => {
     if (label === "encounters") return systems.has("encounters");
     if (label === "journal") return systems.has("journal") || systems.has("perks");
+    if (label === "story") return systems.has("story");
     return true;
   };
   const baseOf = (label: string) => {

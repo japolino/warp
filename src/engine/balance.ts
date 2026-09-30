@@ -3,7 +3,7 @@
 // immediately, stats nothing touches, and simulated encounters.
 
 import { seededRng } from "./dice.js";
-import { evalBool } from "./expr.js";
+import { evalBool, evalNumber } from "./expr.js";
 import type { ActionDef, Effect, Ruleset } from "./ruleset.js";
 import { applyEvent, cloneState, initialState, makeEnv, type GameState } from "./state.js";
 import { availableChoices, odds, resolveTurnFull } from "./resolve.js";
@@ -35,6 +35,9 @@ function effectsOf(r: Ruleset): Effect[] {
   }
   for (const f of Object.values(r.feats)) add(f.reward);
   for (const p of Object.values(r.perks)) add(p.effects);
+  for (const f of Object.values(r.fronts)) for (const st of f.stages) add(st.effects);
+  for (const e of Object.values(r.randomEvents.events)) add(e.effects);
+  Object.values(r.liveChoices.tags).forEach(addAction);
   return out;
 }
 
@@ -75,6 +78,23 @@ export function reviewBalance(r: Ruleset): BalanceWarning[] {
   for (const t of r.triggers) {
     if (t.when && !t.whenScene && meaningful(t.effects) && evalBool(t.when, env, false) && !t.repeat) {
       out.push({ id: `trig:${t.id}`, part: "rules", text: `Rule “${t.id}” fires immediately on turn one.`, fix: `Adjust the "${t.id}" trigger (or the starting values it checks) so it doesn't fire at the very start.` });
+    }
+  }
+
+  // World pacing: clocks that run out almost at once, and events that come too thick.
+  for (const f of Object.values(r.fronts)) {
+    const last = f.stages[f.stages.length - 1];
+    const rate = evalNumber(f.rate, env, 0);
+    if (!last || rate <= 0) continue;
+    const days = (last.at - f.start) / rate;
+    if (days < 2) {
+      out.push({ id: `front:${f.id}`, part: "story", text: `“${f.label}” runs through all its stages in about ${Math.max(1, Math.round(days * 24))}h of game time.`, fix: `Slow the "${f.id}" front down (lower per_day or space its stages out) so it takes at least a week or two of game time to play out.` });
+    }
+  }
+  if (r.randomEvents.enabled) {
+    const perDay = evalNumber(r.randomEvents.perDay, env, 0);
+    if (perDay > 0 && 100 / perDay < 0.75) {
+      out.push({ id: "events:pace", part: "story", text: `A random event roughly every ${Math.max(1, Math.round((100 / perDay) * 24))}h of game time — that's a lot.`, fix: "Lower random_events per_day so events come every few days of game time rather than several times a day." });
     }
   }
 

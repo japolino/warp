@@ -8,6 +8,7 @@ import { BUILTIN_NAMES, initialState, makeEnv } from "./state.js";
 export const FUNCTIONS = [
   "has", "count", "flag", "cond", "at", "rel", "met", "between", "roll",
   "wearing", "worn", "trait", "present", "where", "codex", "feat", "perk",
+  "secret", "front", "front_stage", "happened",
   "min", "max", "clamp", "floor", "ceil", "round", "abs",
 ];
 
@@ -89,6 +90,17 @@ export function lintRuleset(r: Ruleset): Issue[] {
       if (!known) issues.push({ level: "warning", where, message: `changes foe stat "${stat}", which no encounter declares` });
       check(v, `${where} › foe › ${stat}`, extra);
     }
+    for (const [id, v] of Object.entries(e.front)) {
+      if (!r.fronts[id]) issues.push({ level: "warning", where, message: `moves front "${id}", which doesn't exist${suggest(id, Object.keys(r.fronts))}` });
+      check(v, `${where} › front › ${id}`, extra);
+    }
+    for (const id of e.reveal) {
+      if (!r.secrets[id]) issues.push({ level: "warning", where, message: `reveals secret "${id}", which doesn't exist${suggest(id, Object.keys(r.secrets))}` });
+    }
+    if (e.gauge !== undefined) {
+      if (!r.randomEvents.enabled) issues.push({ level: "warning", where, message: "moves the event gauge, but there are no random events" });
+      check(e.gauge, `${where} › gauge`, extra);
+    }
   };
 
   for (const id of r.statOrder) check(r.stats[id].maxExpr, `Stats › ${id} › max`);
@@ -126,5 +138,26 @@ export function lintRuleset(r: Ruleset): Issue[] {
     }
   }
   for (const id of r.hud.bars) if (!r.stats[id]) issues.push({ level: "warning", where: "HUD › bars", message: `"${id}" isn't a stat` });
+
+  for (const sec of Object.values(r.secrets)) sec.stages.forEach((st, i) => check(st.when, `Secrets › ${sec.id} › stage ${i + 1} › when`));
+  for (const f of Object.values(r.fronts)) {
+    const w = `Fronts › ${f.id}`;
+    check(f.rate, `${w} › per_day`);
+    check(f.perTurn, `${w} › per_turn`);
+    check(f.when, `${w} › when`);
+    f.stages.forEach((st, i) => checkEffect(st.effects, `${w} › stage ${i + 1}`));
+    const moved = f.pushes.length > 0 || f.rate !== 0 || f.perTurn !== 0;
+    if (!moved) issues.push({ level: "warning", where: w, message: "never moves on its own — give it `per_day:`, `per_turn:` or `story:` pushes (or move it with `front:` effects)" });
+  }
+  if (r.randomEvents.enabled) {
+    check(r.randomEvents.perDay, "Random events › per_day");
+    check(r.randomEvents.perTurn, "Random events › per_turn");
+    for (const e of Object.values(r.randomEvents.events)) {
+      check(e.when, `Random events › ${e.id} › when`);
+      checkEffect(e.effects, `Random events › ${e.id}`);
+    }
+  }
+  check(r.liveChoices.when, "Live choices › when");
+  for (const a of Object.values(r.liveChoices.tags)) checkAction(a, `Live choices › tags › ${a.id}`);
   return issues;
 }

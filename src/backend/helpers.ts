@@ -11,7 +11,7 @@ import { stateDigest } from "../engine/view.js";
 import type { Settings } from "../shared/protocol.js";
 import { host, logError } from "./host.js";
 
-function firstJson(text: string): Record<string, unknown> | null {
+export function firstJson(text: string): Record<string, unknown> | null {
   const cleaned = text.replace(/```(?:json)?/gi, "");
   const start = cleaned.indexOf("{");
   if (start < 0) return null;
@@ -33,7 +33,11 @@ function firstJson(text: string): Record<string, unknown> | null {
   return null;
 }
 
-async function ask(system: string, user: string, settings: Settings, userId: string | undefined, timeoutMs: number): Promise<string> {
+/** One quiet call on the helper connection (or the chat's own). */
+export async function ask(
+  system: string, user: string, settings: Settings, userId: string | undefined, timeoutMs: number,
+  opts: { temperature?: number; maxTokens?: number } = {},
+): Promise<string> {
   const res = (await host().generate.quiet({
     type: "quiet",
     messages: [
@@ -42,7 +46,7 @@ async function ask(system: string, user: string, settings: Settings, userId: str
     ],
     connection_id: settings.helperConnectionId || undefined,
     reasoning: { source: "off" },
-    parameters: { temperature: 0.1, max_tokens: 500 },
+    parameters: { temperature: opts.temperature ?? 0.1, max_tokens: opts.maxTokens ?? 500 },
     userId,
     signal: AbortSignal.timeout(Math.max(3000, timeoutMs)),
   })) as GenerationResponseDTO | string;

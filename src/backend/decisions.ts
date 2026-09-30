@@ -75,6 +75,10 @@ export async function readTurn(opts: {
   for (const t of r.triggers) {
     if (t.whenScene) q[`scene:${t.id}`] = { type: "noul", instructions: fill(t.whenScene, player) };
   }
+  // Story beats that move hidden world clocks ("{{user}} stirred up the dock gangs").
+  for (const f of Object.values(r.fronts)) f.pushes.forEach((p, i) => {
+    q[`front:${f.id}:${i}`] = { type: "noul", instructions: `In the latest exchange: ${fill(p.scene, player)}` };
+  });
 
   const state = {
     game_state: stateDigest(r, s),
@@ -88,6 +92,10 @@ export async function readTurn(opts: {
     const a = ans[`scene:${t.id}`];
     // Only commit a scene judgement when the model is reasonably sure either way.
     if (t.whenScene && a?.type === "noul" && noulConfidence(a.noul) >= 0.3) scene[t.id] = a.noul >= 0.5;
+  }
+  for (const [key, a] of Object.entries(ans)) {
+    // Clock pushes only count when the model is fairly sure it happened.
+    if (key.startsWith("front:") && a.type === "noul" && a.noul >= 0.65) scene[key] = true;
   }
 
   const out: Reading = { intent: null, suggestion: null, confidence: 0, scene };

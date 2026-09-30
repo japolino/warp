@@ -374,5 +374,90 @@ feats:
       hint: "{{user}}'s shields are down — hits now land on flesh."
 `,
     },
+    {
+      label: "story",
+      yaml: `# Secrets reach the narrator one stage at a time; fronts are hidden clocks that fill
+# with game time; random events come from a hidden gauge with an omen first; live
+# choices are written for each moment, and their tag decides the roll.
+secrets:
+  vex_informant:
+    about: Vex
+    cue: "Vex always seems to know which ships are carrying what, and goes quiet when anyone mentions the Red Veil."
+    tell: exists
+    stages:
+      - when: "rel('vex', 'affinity') >= 50"
+        text: "Vex sells shipping manifests to the Red Veil syndicate. It's how Vex pays off an old debt to them."
+      - when: "rel('vex', 'affinity') >= 80"
+        text: "Vex passed the Red Veil {{user}}'s ship registry weeks ago, before they ever became friends."
+
+fronts:
+  red_veil:
+    label: The Red Veil syndicate
+    per_day: 8
+    story:
+      "{{user}} makes enemies of pirates or the Red Veil": 15
+      "{{user}} lies low or covers their tracks": -10
+    stages:
+      - at: 35
+        hint: "The same unmarked shuttle has docked near {{user}}'s ship two days running."
+        backstage: "The Red Veil has marked {{user}}'s ship as a target worth taking."
+        surface: "Someone has been aboard {{user}}'s ship: the cargo bay lock is scorched and a crate is missing."
+        news: "Someone broke into the cargo bay."
+        do: { credits: -150 }
+      - at: 70
+        hint: "Station security keeps finding reasons to walk past {{user}}'s berth."
+        backstage: "The Red Veil paid a station security officer to look the other way."
+        surface: "A Red Veil scavenger crew makes its move against {{user}}."
+        news: "The Red Veil made its move."
+        do: { start_encounter: ambush }
+
+random_events:
+  pace: { per_day: 20, jitter: 0.3, rest_days: 2, omen_at: 80 }
+  events:
+    distress_call:
+      label: Distress call
+      omen: "The comm panel keeps catching fragments of a looping signal."
+      text: "A distress beacon pings {{user}}'s comm — a small ship in trouble on the jungle edge."
+      cooldown: 10
+    customs:
+      label: Customs inspection
+      when: "location == 'concourse' or location == 'bar' or location == 'merchant'"
+      omen: "Customs officers are working their way along the docking ring."
+      text: "Station customs flag {{user}} for a random inspection."
+      cooldown: 8
+      do: { energy: -10 }
+    ion_storm:
+      label: Ion storm
+      omen: "Static crawls across every screen on the station."
+      text: "An ion storm rolls over the station; shields and comms flicker."
+      cooldown: 12
+      do: { shields: -10 }
+
+live_choices:
+  label: Right now
+  count: 3
+  when: not in_encounter
+  tags:
+    daring:
+      desc: "A fast, daring or reckless move"
+      check: { vs: 12, add: floor(reflexes / 2), label: Reflexes }
+      success: { xp: +10 }
+      fail: { hp: -6 }
+    charm:
+      desc: "Charming, flirting with or winning over someone here"
+      per_person: true
+      check: { vs: 11, add: floor(libido / 10), label: Libido }
+      success: { rel: { target: { affinity: +4, attraction: +3 } } }
+      fail: { lust: +5 }
+    tech:
+      desc: "Hacking, scanning or working a piece of tech"
+      check: { vs: 12, add: floor(intelligence / 2), label: Intelligence }
+      success: { xp: +10 }
+      fail: { energy: -8 }
+    careful:
+      desc: "The cautious option: holding back, waiting, walking away"
+      effects: { energy: +5 }
+`,
+    },
   ],
 };

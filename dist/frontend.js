@@ -199,6 +199,8 @@ var STYLES = `
 .warp-feat.unlocked { opacity: 1; }
 .warp-timeline-row { font: inherit; color: inherit; text-align: left; background: none; border: none; border-top: 1px solid var(--warp-border); padding: 6px 2px; display: grid; grid-template-columns: 1fr; gap: 1px; cursor: pointer; }
 .warp-timeline-row:hover { background: var(--warp-fill-subtle); }
+.warp-news-row { border-top: 1px solid var(--warp-border); padding: 6px 2px; display: grid; gap: 1px; font-size: 12.5px; }
+.warp-news-row:first-of-type { border-top: none; }
 .warp-timeline-changes { font-size: 11.5px; }
 
 /* ───────── AI builder ───────── */
@@ -473,6 +475,9 @@ function renderJournal(h, records) {
   const feats = h.feats.length ? `<div class="warp-card"><h3>Feats <span class="warp-dim">${h.feats.filter((f) => f.unlocked).length} / ${h.feats.length}</span></h3>
         ${h.feats.map((f) => `<div class="warp-feat${f.unlocked ? " unlocked" : ""}"><span>${f.unlocked ? "\uD83C\uDFC6" : "\uD83D\uDD12"}</span><div><b>${esc(f.name)}</b><div class="warp-dim">${esc(f.desc)}</div></div></div>`).join("")}
       </div>` : "";
+  const news = h.news.length ? `<div class="warp-card"><h3>News</h3>
+        ${h.news.map((n) => `<div class="warp-news-row">${n.when ? `<span class="warp-dim">${esc(n.when)}</span>` : ""}<span>${esc(n.text)}</span></div>`).join("")}
+      </div>` : "";
   const turns = records.filter((r) => r.action || r.check || r.changes.length).slice().reverse().slice(0, 40);
   const timeline = `<div class="warp-card"><h3>Timeline</h3>
     ${turns.length ? turns.map((r) => `<button class="warp-timeline-row" data-jump="${esc(r.messageId)}" title="Jump to this message">
@@ -481,7 +486,7 @@ function renderJournal(h, records) {
         <span class="warp-dim warp-timeline-changes">${esc(r.changes.slice(0, 4).map((c) => c.text).join(" · "))}</span>
       </button>`).join("") : `<p>Nothing has happened yet.</p>`}
   </div>`;
-  return codex + feats + timeline;
+  return news + codex + feats + timeline;
 }
 function section(title, count, body, open) {
   return `<details class="warp-section" data-section="${esc(title)}"${open ? " open" : ""}><summary><span>${esc(title)}${count ? ` · ${count}` : ""}</span></summary><div class="warp-section-body">${body}</div></details>`;

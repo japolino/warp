@@ -609,5 +609,118 @@ feats:
   well_dressed: { name: Dressed for it, desc: "Own a raincoat and a winter coat.", unlock: "has('raincoat') and has('winter_coat')" }
 `,
     },
+    {
+      label: "story",
+      yaml: `# Secrets reach the narrator one stage at a time — a stage that isn't open is never
+# in its prompt, so it can't leak. Fronts are hidden clocks that fill with game time
+# and surface in the story. Random events come from a hidden gauge, with an omen first.
+# Live choices are written for each moment; their tag, not the writer, decides the roll.
+secrets:
+  ward_observatory:
+    about: Professor Ward
+    cue: "Ward goes very still whenever the old observatory on campus comes up, and changes the subject."
+    tell: exists
+    stages:
+      - when: "rel('professor_ward', 'trust') >= 45"
+        text: "Years ago a student fell from the observatory roof during a night session Ward supervised. Ward has never forgiven themself."
+      - when: "rel('professor_ward', 'trust') >= 70"
+        text: "Ward signed the safety report saying the roof hatch was locked. It wasn't, and nobody else knows."
+  dex_debt:
+    about: Dex
+    cue: "Dex checks the street whenever a black car passes, and never stays in one spot for long."
+    tell: exists
+    stages:
+      - when: "rel('dex', 'trust') >= 40"
+        text: "Dex owes a lot of money to the people who run the docks, and is running out of time to pay."
+
+fronts:
+  dock_crew:
+    label: The dock crew
+    per_day: 5
+    story:
+      "{{user}} draws the attention of the people who run the docks": 12
+      "{{user}} helps Dex stay out of trouble": -8
+    stages:
+      - at: 30
+        hint: "More people than usual loiter by the docks after dark, watching who comes and goes."
+        backstage: "The dock crew has started collecting protection money from the High Street shops."
+        surface: "Jo's café window is smashed overnight. Jo is sweeping up glass and won't say who did it."
+        news: "Jo's café window was smashed overnight."
+        do: { flags: { cafe_hit: true } }
+      - at: 65
+        hint: "Dex hasn't been seen at the docks for a couple of nights."
+        backstage: "The crew gave Dex one week to pay what they owe."
+        surface: "Word on the street: the dock crew is looking for Dex, and for anyone who knows where Dex is."
+        news: "The dock crew is looking for Dex."
+        do: { flags: { dex_hunted: true } }
+      - at: 100
+        backstage: "The crew caught up with Dex."
+        surface: "Dex turns up badly beaten. The docks go quiet and nobody is talking."
+        news: "Dex was found badly beaten."
+        do: { flags: { dex_beaten: true } }
+
+random_events:
+  pace: { per_day: 30, jitter: 0.35, rest_days: 1, omen_at: 80 }
+  events:
+    landlord:
+      label: The landlord
+      omen: "An unopened letter from the landlord is waiting by the door."
+      text: "The landlord turns up unannounced, wants to inspect the flat, and hints that the rent is going up."
+      cooldown: 14
+      do: { stress: +6 }
+    power_cut:
+      label: Power cut
+      omen: "The lights in the building keep flickering."
+      text: "The power cuts out across the whole block."
+      cooldown: 10
+    found_wallet:
+      label: A dropped wallet
+      when: outside
+      text: "{{user}} spots a wallet lying on the pavement, stuffed with cash."
+      cooldown: 20
+    party:
+      label: A party invite
+      when: "weekday == 'Fri' or weekday == 'Sat'"
+      omen: "People on campus keep talking about a party this weekend."
+      text: "Someone from {{user}}'s course invites them to a house party tonight."
+      weight: 2
+      cooldown: 6
+    old_friend:
+      label: An old friend
+      text: "An old school friend of {{user}}'s calls out to them from across the street, delighted."
+      cooldown: 21
+
+live_choices:
+  label: Right now
+  count: 3
+  when: not in_encounter
+  guide: "Grounded, everyday options. Include one that's a little risky."
+  tags:
+    bold:
+      desc: "A daring, risky or impulsive move"
+      check: { chance: 45 + control / 4 - stress / 5, label: Nerve }
+      success: { control: +3, stress: -2 }
+      fail: { stress: +6, control: -2 }
+    charm:
+      desc: "Charming, flirting with or winning over someone here"
+      per_person: true
+      check: { chance: 35 + allure / 2 + target.trust / 4, label: Allure }
+      success: { rel: { target: { love: +3, trust: +2 } } }
+      fail: { stress: +3, rel: { target: { trust: -1 } } }
+    kind:
+      desc: "Something kind, generous or supportive toward someone here"
+      per_person: true
+      effects: { stress: -2, rel: { target: { trust: +3 } } }
+    sly:
+      desc: "Something sneaky, dishonest or against the rules"
+      tags: [crime]
+      check: { chance: 30 + skulduggery / 1.5, label: Skulduggery }
+      success: { skulduggery: +0.5 }
+      fail: { crime: +4, stress: +4 }
+    careful:
+      desc: "The cautious, sensible option: stepping back, waiting, leaving"
+      effects: { stress: -1 }
+`,
+    },
   ],
 };

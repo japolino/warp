@@ -73,6 +73,8 @@ export interface HudView {
   feats: { id: string; name: string; desc: string; unlocked: boolean }[];
   perks: { id: string; name: string; desc: string; cost: number; owned: boolean; blocker: string | null }[];
   perkPoints: number | null;
+  /** What has surfaced in the world (newest first). */
+  news: { text: string; when: string | null }[];
   turn: number;
 }
 

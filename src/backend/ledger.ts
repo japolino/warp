@@ -5,7 +5,7 @@
 // every message before it — so swipes, edits and deletions stay correct for free.
 
 import type { ChatMessageDTO } from "lumiverse-spindle-types";
-import type { Intent, TurnRecord } from "../engine/resolve.js";
+import type { Intent, LiveChoice, TurnRecord } from "../engine/resolve.js";
 import type { Ruleset } from "../engine/ruleset.js";
 import { applyEvent, cloneState, initialState, type GameState } from "../engine/state.js";
 import { host } from "./host.js";
@@ -21,6 +21,14 @@ export interface WarpMeta {
   /** The adjudicator already read this message (intent may be absent = "not an action"). Swipes reuse the verdict. */
   judged?: boolean;
   swipes?: Record<string, TurnRecord>;
+  /** Choices written for the moment after this reply, per swipe. */
+  live?: Record<string, LiveChoice[]>;
+}
+
+/** The live choices offered under a reply (its active swipe). */
+export function liveChoicesOf(m: Msg | null | undefined): LiveChoice[] {
+  if (!m || m.is_user) return [];
+  return warpMeta(m).live?.[String(m.swipe_id ?? 0)] ?? [];
 }
 
 export function warpMeta(m: Msg): WarpMeta {

@@ -6,7 +6,7 @@ import {
   bandFor, formatClock, formatNumber, gradeFor, itemName, makeEnv, personName, statMax,
   type GameState, type WarpEvent,
 } from "./state.js";
-import { availableChoices, odds, perkBlocker, TIER_LABEL, TRAVEL_PREFIX, travelTargets, type CheckResult, type TurnRecord } from "./resolve.js";
+import { availableChoices, LIVE_PREFIX, odds, perkBlocker, TIER_LABEL, TRAVEL_PREFIX, travelTargets, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
 import {
   dateAt, exposedSlots, isIndoors, ordinal, personLocation, presentPeople, seasonAt, temperatureAt, warmthNeeded, warmthOf, weatherAt,
 } from "./world.js";
@@ -165,6 +165,7 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
     feats: Object.values(r.feats).filter((f) => !f.hidden || s.feats[f.id]).map((f) => ({ id: f.id, name: f.name, desc: f.desc, unlocked: !!s.feats[f.id] })),
     perks: Object.values(r.perks).map((p) => ({ id: p.id, name: p.name, desc: p.desc, cost: p.cost, owned: !!s.perks[p.id], blocker: s.perks[p.id] ? null : perkBlocker(r, s, p.id) })),
     perkPoints: r.perkPoints ? s.stats[r.perkPoints] ?? 0 : null,
+    news: s.news.slice().reverse().slice(0, 12).map((n) => ({ text: n.text, when: r.clock.enabled ? formatClock(r, n.at).day : null })),
     turn: s.turn,
   };
 }
@@ -233,8 +234,27 @@ export function buildMap(r: Ruleset, s: GameState): MapView | null {
   };
 }
 
-export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; veils: string[] }): ChoiceView[] {
+export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; veils: string[]; live?: LiveChoice[] }): ChoiceView[] {
   const veils = new Set(opts.veils.map((v) => v.toLowerCase()));
+  const lines = new Set(opts.lines.map((v) => v.toLowerCase()));
+  // Choices written for this moment come first; their tag decides the check and the odds.
+  const live: ChoiceView[] = [];
+  if (!s.encounter) (opts.live ?? []).forEach((c, i) => {
+    const a = r.liveChoices.tags[c.tag];
+    if (!a || a.tags.some((t) => lines.has(t))) return;
+    const o = odds(r, s, a, undefined, c.target);
+    live.push({
+      id: `${LIVE_PREFIX}${i}`,
+      label: c.label,
+      group: r.liveChoices.label,
+      desc: a.desc ?? null,
+      odds: o ? o.success : null,
+      partialOdds: o && o.partial > 0 ? o.partial : null,
+      checkLabel: a.check?.label ?? null,
+      veiled: a.tags.some((t) => veils.has(t)),
+      params: [],
+    });
+  });
   const travel: ChoiceView[] = travelTargets(r, s).map((id) => ({
     id: `${TRAVEL_PREFIX}${id}`,
     label: `Go to ${r.locations[id].name}`,
@@ -259,7 +279,7 @@ export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; 
         params: a.params.map((p) => ({ id: p.id, label: p.label, options: Object.keys(p.options), default: p.default })),
       };
     });
-  return [...actions, ...travel];
+  return [...live, ...actions, ...travel];
 }
 
 // ───────────────────────── change summaries ─────────────────────────
@@ -537,6 +557,33 @@ export function stateDigest(r: Ruleset, s: GameState): string {
   if (ppl.length) lines.push(`Relationships: ${ppl.join("; ")}`);
 
   return lines.join("\n");
+}
+
+/**
+ * What only the narrator knows: opened secret stages, what's happened behind the
+ * scenes, and signs of what's coming. Everything not yet opened stays out of the
+ * prompt entirely — that's the guarantee, not an instruction to keep quiet.
+ */
+export function narratorKnowledge(r: Ruleset, s: GameState): string | null {
+  const lines: string[] = [];
+  for (const sec of Object.values(r.secrets)) {
+    const open = s.secrets[sec.id] ?? -1;
+    for (let i = 0; i <= open && i < sec.stages.length; i++) lines.push(`${sec.about}: ${sec.stages[i].text}`);
+    if (sec.tell === "exists" && open < sec.stages.length - 1) {
+      lines.push(`${sec.about} is keeping something you don't know. If pressed, they deflect or change the subject — don't invent what it is.`);
+    }
+  }
+  for (const f of Object.values(r.fronts)) {
+    const st = s.fronts[f.id] ?? { v: f.start, stage: -1 };
+    for (let i = 0; i <= st.stage && i < f.stages.length; i++) {
+      if (f.stages[i].backstage) lines.push(`Behind the scenes (${f.label}): ${f.stages[i].backstage}`);
+    }
+    const next = f.stages[st.stage + 1];
+    if (next?.hint && st.v >= next.hintAt) lines.push(`In the background: ${next.hint} (a sign only — don't explain it or make anything happen)`);
+  }
+  const omen = s.gauge.next ? r.randomEvents.events[s.gauge.next]?.omen : undefined;
+  if (omen) lines.push(`In the background: ${omen} (you don't know what it means — don't explain it or make anything happen)`);
+  return lines.length ? lines.join("\n") : null;
 }
 
 /** The outcome block for a turn with an action. */
