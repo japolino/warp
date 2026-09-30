@@ -1,6 +1,7 @@
 // Computing the full UI state for a chat and pushing it to the frontend.
 
 import { buildChoices, buildHud, buildMap, buildRecordView } from "../engine/view.js";
+import { buildDungeonEntries, buildDungeonView } from "../engine/dungeon/view.js";
 import type { RecordView, SuggestionView } from "../shared/protocol.js";
 import { getMessages, foldPath, liveChoicesOf, warpMeta } from "./ledger.js";
 import { getSettings } from "./settings.js";
@@ -31,7 +32,7 @@ export async function pushState(chatId: string | null, userId?: string, force = 
     const loaded = await getRuleset(chatId, userId, force);
     const status = statusOf(loaded);
     if (!chatId || !loaded?.ruleset) {
-      send({ type: "state", chatId, status, hud: null, map: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false }, userId);
+      send({ type: "state", chatId, status, hud: null, map: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false, dungeon: null, dungeonEntries: [] }, userId);
       return;
     }
     const r = loaded.ruleset;
@@ -77,10 +78,21 @@ export async function pushState(chatId: string | null, userId?: string, force = 
       latestMessageId: latest?.id ?? null,
       choicesAnchor: anchor,
       busy: busyChats.has(chatId),
+      dungeon: settings.enabled ? await withName(buildDungeonView(r, state), chatId, userId) : null,
+      dungeonEntries: settings.enabled ? buildDungeonEntries(r, state) : [],
     }, userId);
   } catch (e) {
     logError("pushState", e);
   }
+}
+
+/** Dungeon lines name the player "{{user}}"; show their persona's name. */
+async function withName<T>(v: T, chatId: string, userId?: string): Promise<T> {
+  if (!v) return v;
+  const { playerName } = await import("./turn.js");
+  const name = await playerName(chatId, userId).catch(() => "You");
+  const safe = JSON.stringify(name).slice(1, -1);
+  return JSON.parse(JSON.stringify(v).replace(/\{\{user\}\}/g, () => safe)) as T;
 }
 
 /** Coalesce bursts of events (swipe → edit → render) into one push. */

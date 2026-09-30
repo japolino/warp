@@ -325,6 +325,22 @@ encounters:
       fled: { hint: "{{user}} gets away." }
       downed: { set: { hp: 1 }, credits: -100, hint: "{{user}} is knocked out and wakes later, robbed." }
       overwhelmed: { set: { lust: 40 }, hint: "{{user}} is overwhelmed by lust and can't keep fighting — the scavenger has their way." }
+
+# Roguelike diving in the pre-colonial ruins. Leave whenever you like and keep the
+# salvage; get wiped out and you lose it.
+dungeons:
+  ruins:
+    name: The Deep Ruins
+    desc: Pre-colonial vaults under the jungle, still humming with power and full of things that don't like visitors.
+    at: [jungle_deep]
+    theme: ruins
+    floors: 20
+    party: { max: 3 }
+    player: { class: fighter, hp: "40 + physique * 6 + level * 8", atk: "6 + aim * 1.5", def: "6 + physique", mat: "6 + intelligence * 1.5", agi: "6 + reflexes * 1.2" }
+    currency: credits
+    loot: { shield_booster: 3, medkit: 2 }
+    on_leave: { energy: -20 }
+    on_defeat: { hp: -20, credits: "-min(credits, 150)" }
 `,
     },
     {

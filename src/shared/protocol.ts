@@ -96,6 +96,80 @@ export interface ChoiceView {
   params: { id: string; label: string; options: string[]; default: string }[];
 }
 
+export interface FighterView {
+  id: string;
+  name: string;
+  side: "party" | "foe";
+  sprite: string;
+  hp: number; mhp: number; mp: number; mmp: number; tp: number;
+  alive: boolean;
+  /** Waiting for a command. */
+  active: boolean;
+  guard: boolean;
+  elite?: boolean;
+  boss?: boolean;
+}
+
+export interface DungeonView {
+  id: string;
+  name: string;
+  theme: string;
+  depth: number;
+  /** Deepest floor (0 = endless). */
+  floors: number;
+  size: number;
+  /** This floor has a guardian on the way down. */
+  boss: boolean;
+  tiles: { x: number; y: number; kind: string | null; state: "hidden" | "seen" | "here"; cleared: boolean; reachable: boolean }[];
+  here: {
+    kind: string;
+    canDescend: boolean;
+    bottom: boolean;
+    shop: { id: string; name: string; price: number; sprite: string; desc: string; affordable: boolean }[] | null;
+  };
+  event: { text: string; romance: boolean; choices: { id: string; label: string; ok: boolean; chance: number | null; cost: number | null }[] } | null;
+  battle: {
+    kind: string;
+    round: number;
+    active: string | null;
+    fighters: FighterView[];
+    skills: { id: string; name: string; cost: string; target: string; usable: boolean }[];
+    log: string[];
+    canEscape: boolean;
+    over: string | null;
+  } | null;
+  party: FighterView[];
+  level: number;
+  xp: number;
+  xpNext: number;
+  gold: number;
+  bag: { id: string; name: string; count: number; sprite: string }[];
+  loot: { name: string; count: number }[];
+  /** Newest first. */
+  log: string[];
+}
+
+export interface DungeonEntryView {
+  id: string;
+  name: string;
+  desc: string | null;
+  theme: string;
+  deepest: number;
+  floors: number;
+  max: number;
+  companions: { id: string; name: string; present: boolean; cls: string }[];
+}
+
+export type DungeonOp =
+  | { op: "enter"; id: string; companions: string[] }
+  | { op: "move"; x: number; y: number }
+  | { op: "choose"; choice: string }
+  | { op: "battle"; skill?: string; item?: "potion" | "ether" | "bomb"; target?: string; escape?: boolean; auto?: "turn" | "round" | "battle" }
+  | { op: "descend" }
+  | { op: "leave" }
+  | { op: "use"; item: string; target: string }
+  | { op: "buy"; item: string };
+
 export interface ChangeView {
   text: string;
   tone: Tone;
@@ -291,11 +365,13 @@ export type BackendToFrontend =
       /** Latest message is from the assistant (choices are shown under it). */
       choicesAnchor: string | null;
       busy: boolean;
+      dungeon: DungeonView | null;
+      dungeonEntries: DungeonEntryView[];
     }
   | { type: "busy"; chatId: string; busy: boolean; label?: string }
   | { type: "settings"; settings: Settings; templates: TemplateInfo[]; connections: { id: string; name: string }[]; jevKeySet: boolean }
   | { type: "toast"; level: "info" | "success" | "warning" | "error"; message: string }
-  | { type: "command"; command: "open" | "install" }
+  | { type: "command"; command: "open" | "install" | "dungeon" }
   | { type: "builder"; session: BuilderSession | null };
 
 export type FrontendToBackend =
@@ -324,5 +400,6 @@ export type FrontendToBackend =
   | { type: "builder_install"; chatId: string }
   | { type: "builder_back"; chatId: string }
   | { type: "builder_close"; chatId: string }
+  | ({ type: "dungeon"; chatId: string } & DungeonOp)
   | { type: "set_jev_key"; key: string }
   | { type: "test_decider" };

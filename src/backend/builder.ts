@@ -124,6 +124,7 @@ const SYSTEMS: { id: string; label: string }[] = [
   { id: "clothing", label: "Clothing, weather & temperature" },
   { id: "schedules", label: "NPC schedules & places" },
   { id: "encounters", label: "Encounters / combat" },
+  { id: "dungeon", label: "Dungeon diving (roguelike floors, party battles)" },
   { id: "crime", label: "Crime & consequences" },
   { id: "journal", label: "Codex & feats" },
   { id: "perks", label: "Levels & perks" },
@@ -276,6 +277,7 @@ function buildPreview(s: BuilderSession) {
     items: Object.keys(r.items).length,
     actions: Object.keys(r.actions).length,
     encounters: Object.keys(r.encounters).length,
+    dungeons: Object.keys(r.dungeons).length,
     rules: r.triggers.length,
     codex: Object.keys(r.codex).length,
     feats: Object.keys(r.feats).length,
@@ -392,7 +394,7 @@ async function draftAll(s: BuilderSession, userId?: string) {
   const t = getTemplate(s.base);
   const systems = chosenSystems(s);
   const want = (label: PartLabel) => {
-    if (label === "encounters") return systems.has("encounters");
+    if (label === "encounters") return systems.has("encounters") || systems.has("dungeon");
     if (label === "journal") return systems.has("journal") || systems.has("perks");
     if (label === "story") return systems.has("story");
     return true;

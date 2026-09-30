@@ -11,6 +11,7 @@ import {
   dateAt, exposedSlots, isIndoors, ordinal, personLocation, presentPeople, seasonAt, temperatureAt, warmthNeeded, warmthOf, weatherAt,
 } from "./world.js";
 import type { ChangeView, ChoiceView, ClothingView, HudView, MapView, RecordView, Tone } from "../shared/protocol.js";
+import { dungeonOf, dungeonsHere, levelOf, memberFighter } from "./dungeon/run.js";
 
 function pct(v: number, min: number, max: number) {
   return max > min ? Math.max(0, Math.min(1, (v - min) / (max - min))) : 0;
@@ -239,6 +240,17 @@ export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; 
   const lines = new Set(opts.lines.map((v) => v.toLowerCase()));
   // Choices written for this moment come first; their tag decides the check and the odds.
   const live: ChoiceView[] = [];
+  const plain = (id: string, label: string, group: string, desc: string | null = null): ChoiceView =>
+    ({ id, label, group, desc, odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [] });
+  // In a dungeon the map is where you act; the story only offers moments and the way out.
+  if (s.dungeon) {
+    const d = dungeonOf(r, s.dungeon);
+    return [
+      plain("dungeon:open", s.dungeon.battle ? "Back to the fight" : s.dungeon.pending ? "Decide what to do" : "Keep exploring", d?.name ?? "Dungeon", "Open the dungeon map"),
+      plain("dungeon:leave", "Leave the dungeon", d?.name ?? "Dungeon", "Climb back out with what you've found"),
+    ];
+  }
+  const dungeons = dungeonsHere(r, s).map((d) => plain(`dungeon:enter:${d.id}`, `Enter ${d.name}`, "Dungeon", d.desc ?? null));
   if (!s.encounter) (opts.live ?? []).forEach((c, i) => {
     const a = r.liveChoices.tags[c.tag];
     if (!a || a.tags.some((t) => lines.has(t))) return;
@@ -279,7 +291,7 @@ export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; 
         params: a.params.map((p) => ({ id: p.id, label: p.label, options: Object.keys(p.options), default: p.default })),
       };
     });
-  return [...live, ...actions, ...travel];
+  return [...live, ...actions, ...dungeons, ...travel];
 }
 
 // ───────────────────────── change summaries ─────────────────────────
@@ -528,7 +540,18 @@ export function stateDigest(r: Ruleset, s: GameState): string {
   }
 
   const here = hud.people.filter((p) => p.present).map((p) => p.name);
-  if (here.length) lines.push(`Present here: ${here.join(", ")}`);
+  if (s.dungeon) {
+    const run = s.dungeon;
+    const d = dungeonOf(r, run);
+    if (d) {
+      const party = run.party.map((m) => {
+        const f = memberFighter(r, s, d, run, m);
+        return `${f.name} ${f.hp <= 0 ? "down" : `HP ${f.hp}/${f.mhp}`}`;
+      });
+      lines.push(`IN A DUNGEON: ${d.name}, floor ${run.depth} (party level ${levelOf(run.xp)}). Party: ${party.join(", ")}. Carrying ${run.gold} gold from this run.`);
+      if (run.battle) lines.push(`Fighting: ${run.battle.fighters.filter((f) => f.side === "foe" && f.hp > 0).map((f) => f.name).join(", ")}.`);
+    }
+  } else if (here.length) lines.push(`Present here: ${here.join(", ")}`);
 
   const meters = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "meter" || d.kind === "money");
   const other = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "attribute" || d.kind === "skill");

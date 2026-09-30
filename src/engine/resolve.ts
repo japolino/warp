@@ -812,6 +812,41 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal): WarpE
   return w.events;
 }
 
+/** A handle for systems that make their own turns outside the action flow (the dungeon). */
+export interface TurnBuilder {
+  readonly r: Ruleset;
+  /** The live working state: every pushed event is already applied. */
+  readonly s: GameState;
+  readonly seed: string;
+  push(e: WarpEvent): void;
+  env(extra?: Record<string, Value>): ExprEnv;
+  /** Apply a ruleset effect (stats, relationships, items…). */
+  apply(effect: Effect, src: EventSource, extra?: Record<string, Value>): void;
+  time(minutes: number, src: EventSource): void;
+  /** Tell the narrator on the next reply. */
+  announce(text: string): void;
+}
+
+/** Build events against a working copy; rules, clocks and the world react as usual. */
+export function buildTurn(r: Ruleset, before: GameState, seed: string, fn: (t: TurnBuilder) => void): WarpEvent[] {
+  const w = new Working(r, cloneState(before), seededRng(`${seed}:fx`), seed);
+  fn({
+    r, get s() { return w.s; }, seed,
+    push: (e) => w.push(e),
+    env: (extra = {}) => w.env(extra),
+    apply: (effect, src, extra = {}) => effectToEvents(w, effect, src, extra),
+    time: (minutes, src) => advanceTime(w, minutes, src),
+    announce: (text) => announce(w, text),
+  });
+  runTriggers(w, false);
+  if (r.clock.enabled && w.s.minutes > before.minutes) {
+    const n = w.events.length;
+    tickWorld(w, (w.s.minutes - before.minutes) / 1440, 0);
+    if (w.events.length > n) runTriggers(w, false);
+  }
+  return w.events;
+}
+
 /** Apply a manual HUD edit (player adjusting a number by hand). */
 export function manualSet(r: Ruleset, before: GameState, stat: string, value: number): WarpEvent[] {
   const w = new Working(r, cloneState(before));

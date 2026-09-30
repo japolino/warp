@@ -8,6 +8,7 @@
 import type { Value, ExprEnv } from "./expr.js";
 import { evalNumber } from "./expr.js";
 import type { Ruleset, StatDef, Band } from "./ruleset.js";
+import type { BattleState, DungeonRun, PartyMember, Pending } from "./dungeon/types.js";
 import {
   dateAt, exposedSlots, hasTrait, isIndoors, personLocation, revealOf, seasonAt, temperatureAt,
   warmthNeeded, warmthOf, weatherAt,
@@ -57,6 +58,10 @@ export interface GameState {
   notices: string[];
   /** What has surfaced in the world, for the journal. */
   news: { text: string; at: number }[];
+  /** The dungeon run in progress, if any. */
+  dungeon: DungeonRun | null;
+  /** Deepest floor reached per dungeon. */
+  deepest: Record<string, number>;
 }
 
 export type EventSource = "cost" | "check" | "action" | "drift" | "trigger" | "narrator" | "manual" | "start" | "world";
@@ -92,7 +97,23 @@ export type WarpEvent = { src: EventSource; note?: string } & (
   | { t: "happen"; id: string }
   | { t: "notice"; text: string }
   | { t: "noticed" }
+  | { t: "dg_enter"; run: DungeonRun }
+  | { t: "dg_step"; x: number; y: number }
+  | { t: "dg_clear"; key: string }
+  | { t: "dg_down"; pos: [number, number] }
+  | { t: "dg_party"; party: PartyMember[] }
+  | { t: "dg_xp"; d: number }
+  | { t: "dg_gold"; d: number }
+  | { t: "dg_bag"; item: string; d: number }
+  | { t: "dg_loot"; item: string; d: number }
+  | { t: "dg_battle"; battle: BattleState | null }
+  | { t: "dg_pending"; pending: Pending | null }
+  | { t: "dg_log"; text: string }
+  | { t: "dg_told" }
+  | { t: "dg_exit" }
 );
+
+const DG_LOG_KEPT = 12;
 
 const NEWS_KEPT = 30;
 
@@ -129,6 +150,8 @@ export function initialState(r: Ruleset): GameState {
     gauge: { v: 0, rest: 0, next: null, last: {} },
     notices: [],
     news: [],
+    dungeon: null,
+    deepest: {},
   };
   for (const id of r.statOrder) s.stats[id] = r.stats[id].start;
   // Stages with no condition at the top of a secret's ladder are known from the start.
@@ -292,6 +315,54 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
     }
     case "notice": s.notices = [...s.notices, e.text]; break;
     case "noticed": s.notices = []; break;
+    case "dg_enter":
+      s.dungeon = structuredClone(e.run);
+      s.deepest[e.run.id] = Math.max(s.deepest[e.run.id] ?? 0, e.run.depth);
+      break;
+    case "dg_exit": s.dungeon = null; break;
+    default: if (s.dungeon) applyDungeon(s, s.dungeon, e);
+  }
+}
+
+function applyDungeon(s: GameState, d: DungeonRun, e: WarpEvent) {
+  switch (e.t) {
+    case "dg_step": {
+      d.pos = [e.x, e.y];
+      const k = `${e.x},${e.y}`;
+      if (!d.seen.includes(k)) d.seen = [...d.seen, k];
+      break;
+    }
+    case "dg_clear": if (!d.cleared.includes(e.key)) d.cleared = [...d.cleared, e.key]; break;
+    case "dg_down":
+      d.depth += 1;
+      d.pos = e.pos;
+      d.seen = [`${e.pos[0]},${e.pos[1]}`];
+      d.cleared = [];
+      d.pending = null;
+      s.deepest[d.id] = Math.max(s.deepest[d.id] ?? 0, d.depth);
+      break;
+    case "dg_party": d.party = e.party.map((p) => ({ ...p })); break;
+    case "dg_xp": d.xp = Math.max(0, d.xp + e.d); break;
+    case "dg_gold": d.gold = Math.max(0, d.gold + e.d); break;
+    case "dg_bag": {
+      const n = (d.bag[e.item] ?? 0) + e.d;
+      d.bag = { ...d.bag, [e.item]: Math.max(0, n) };
+      break;
+    }
+    case "dg_loot": {
+      const n = (d.loot[e.item] ?? 0) + e.d;
+      const loot = { ...d.loot };
+      if (n > 0) loot[e.item] = n; else delete loot[e.item];
+      d.loot = loot;
+      break;
+    }
+    case "dg_battle": d.battle = e.battle ? structuredClone(e.battle) : null; break;
+    case "dg_pending": d.pending = e.pending ? { ...e.pending } : null; break;
+    case "dg_log":
+      d.log = [...d.log, e.text].slice(-DG_LOG_KEPT);
+      d.untold = [...(d.untold ?? []), e.text].slice(-DG_LOG_KEPT);
+      break;
+    case "dg_told": d.untold = []; break;
   }
 }
 
@@ -312,7 +383,7 @@ export const BUILTIN_NAMES = [
   "minutes", "hour", "minute", "day", "weekday", "turn", "location",
   "month", "date", "season", "weather", "temperature", "indoors", "outside",
   "warmth", "warmth_min", "warmth_max", "too_cold", "too_hot", "reveal", "exposed", "naked",
-  "in_encounter", "round", "target",
+  "in_encounter", "round", "target", "in_dungeon", "dungeon_depth",
 ];
 
 export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> = {}): ExprEnv {
@@ -344,6 +415,8 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
       exposed,
       naked: r.wardrobe.enabled && exposed === r.wardrobe.cover.length && r.wardrobe.cover.length > 0,
       in_encounter: !!s.encounter,
+      in_dungeon: !!s.dungeon,
+      dungeon_depth: s.dungeon?.depth ?? 0,
       round: s.encounter?.round ?? 0,
       target: "",
     };
@@ -418,6 +491,8 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
         case "front": return s.fronts[a0]?.v ?? r.fronts[a0]?.start ?? 0;
         case "front_stage": return (s.fronts[a0]?.stage ?? -1) + 1;
         case "happened": return a0 in s.gauge.last;
+        // Deepest floor reached in a dungeon (0 = never entered).
+        case "deepest": return s.deepest[a0] ?? 0;
       }
       return undefined;
     },

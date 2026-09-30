@@ -589,6 +589,20 @@ encounters:
       robbed: { stress: +8, control: -8, hint: "They take the money and vanish." }
       escaped: { stress: +3, hint: "{{user}} gets clear." }
       beaten: { trauma: +5, money: "-min(money, 30)", hint: "{{user}} is left hurt on the pavement, pockets emptied." }
+
+# Roguelike diving: floors of face-down tiles with one way down. Leave whenever you
+# like and keep what you found; get wiped out and you lose it.
+dungeons:
+  old_mines:
+    name: The Old Mines
+    desc: Flooded tunnels under the docks, abandoned when the seam ran dry. People say things live down there now.
+    at: [docks]
+    theme: cave
+    floors: 15
+    party: { max: 3 }
+    player: { atk: "12 + athletics / 10", agi: "10 + athletics / 12" }
+    on_leave: { fatigue: +15 }
+    on_defeat: { pain: +40, trauma: +8, control: -10 }
 `,
     },
     {

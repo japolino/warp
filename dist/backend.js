@@ -1,7 +1,16 @@
+var __esm = (fn, res, err) => () => {
+  if (fn)
+    try {
+      res = fn(fn = 0);
+    } catch (e) {
+      err = [e];
+    }
+  if (err)
+    throw err[0];
+  return res;
+};
+
 // src/engine/expr.ts
-class ExprError extends Error {
-}
-var OPS = ["<=", ">=", "==", "!=", "&&", "||", "+", "-", "*", "/", "%", "<", ">", "!", "(", ")", ",", ".", "?", ":"];
 function tokenize(src) {
   const out = [];
   let i = 0;
@@ -48,23 +57,6 @@ function tokenize(src) {
   }
   return out;
 }
-var BP = {
-  or: 1,
-  "||": 1,
-  and: 2,
-  "&&": 2,
-  "==": 3,
-  "!=": 3,
-  "<": 4,
-  "<=": 4,
-  ">": 4,
-  ">=": 4,
-  "+": 5,
-  "-": 5,
-  "*": 6,
-  "/": 6,
-  "%": 6
-};
 
 class Parser {
   toks;
@@ -193,7 +185,6 @@ class Parser {
     this.fail(`Unexpected "${t.v}"`);
   }
 }
-var cache = new Map;
 function compile(src) {
   const key = src.trim();
   let n = cache.get(key);
@@ -205,15 +196,6 @@ function compile(src) {
   }
   return n;
 }
-var MATH = {
-  min: (a) => Math.min(...a),
-  max: (a) => Math.max(...a),
-  clamp: ([v, lo, hi]) => Math.min(hi, Math.max(lo, v)),
-  floor: ([v]) => Math.floor(v),
-  ceil: ([v]) => Math.ceil(v),
-  round: ([v]) => Math.round(v),
-  abs: ([v]) => Math.abs(v)
-};
 function num(v) {
   if (typeof v === "number")
     return v;
@@ -313,6 +295,39 @@ function evalBool(src, env, fallback = true, opts = {}) {
     return fallback;
   return truthy(evaluate(src, env, opts));
 }
+var ExprError, OPS, BP, cache, MATH;
+var init_expr = __esm(() => {
+  ExprError = class ExprError extends Error {
+  };
+  OPS = ["<=", ">=", "==", "!=", "&&", "||", "+", "-", "*", "/", "%", "<", ">", "!", "(", ")", ",", ".", "?", ":"];
+  BP = {
+    or: 1,
+    "||": 1,
+    and: 2,
+    "&&": 2,
+    "==": 3,
+    "!=": 3,
+    "<": 4,
+    "<=": 4,
+    ">": 4,
+    ">=": 4,
+    "+": 5,
+    "-": 5,
+    "*": 6,
+    "/": 6,
+    "%": 6
+  };
+  cache = new Map;
+  MATH = {
+    min: (a) => Math.min(...a),
+    max: (a) => Math.max(...a),
+    clamp: ([v, lo, hi]) => Math.min(hi, Math.max(lo, v)),
+    floor: ([v]) => Math.floor(v),
+    ceil: ([v]) => Math.ceil(v),
+    round: ([v]) => Math.round(v),
+    abs: ([v]) => Math.abs(v)
+  };
+});
 
 // src/engine/dice.ts
 function hashSeed(str) {
@@ -340,10 +355,6 @@ function randomSeed() {
   crypto.getRandomValues(bytes);
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
-
-class DiceError extends Error {
-}
-var TERM = /([+-]?)\s*(?:(\d*)d(\d+|%)(?:(kh|kl)(\d+))?(!)?|(\d+))/gy;
 function parseDice(src) {
   const s = src.replace(/\s+/g, "").toLowerCase();
   if (!s)
@@ -421,6 +432,12 @@ function rollDice(notation, rng) {
   });
   return { notation, dice, total, natural, primarySides: parsed.primarySides };
 }
+var DiceError, TERM;
+var init_dice = __esm(() => {
+  DiceError = class DiceError extends Error {
+  };
+  TERM = /([+-]?)\s*(?:(\d*)d(\d+|%)(?:(kh|kl)(\d+))?(!)?|(\d+))/gy;
+});
 
 // src/engine/decide.ts
 function normalize(p, keys) {
@@ -453,15 +470,388 @@ function noulConfidence(p) {
   return Math.abs(2 * p - 1);
 }
 
+// src/engine/dungeon/content.ts
+var m = (id, name, tier, s, skills, xp, gold, sprite = id) => ({ id, name, sprite, tier, ...s, skills, xp, gold }), BESTIARY, DEFAULT_BOSSES, sk = (id, name, target, kind, power, mp = 0, tp = 0, extra = {}) => ({ id, name, target, kind, power, mp, tp, ...extra }), SKILLS, CLASSES, CLASS_IDS, PARTY_SPRITES, out = (o = {}) => ({ ...o, effect: emptyEffect() }), ch = (id, label, success, extra = {}) => ({ id, label, success, ...extra }), ev = (id, text, choices, minDepth = 1, weight = 1) => ({ id, text, choices, minDepth, weight }), BUILTIN_EVENTS, BUILTIN_ROMANCE, SHOP;
+var init_content = __esm(() => {
+  init_ruleset();
+  BESTIARY = Object.fromEntries([
+    m("rat", "Giant Rat", 1, { hp: 26, mp: 0, atk: 8, def: 3, mat: 2, mdf: 2, agi: 12 }, ["bite"], 6, 3),
+    m("bat", "Cave Bat", 1, { hp: 22, mp: 0, atk: 7, def: 2, mat: 2, mdf: 3, agi: 16 }, ["bite"], 6, 2),
+    m("jackal", "Jackal", 1, { hp: 28, mp: 0, atk: 9, def: 3, mat: 2, mdf: 2, agi: 13 }, ["bite"], 7, 3),
+    m("kobold", "Kobold", 1, { hp: 32, mp: 0, atk: 9, def: 5, mat: 3, mdf: 3, agi: 10 }, ["attack", "smash"], 8, 6),
+    m("goblin", "Goblin", 1, { hp: 34, mp: 0, atk: 10, def: 5, mat: 4, mdf: 4, agi: 11 }, ["attack", "smash"], 9, 8),
+    m("ooze", "Ooze", 1, { hp: 44, mp: 0, atk: 8, def: 7, mat: 6, mdf: 8, agi: 5 }, ["attack", "acid"], 9, 4),
+    m("spider", "Cave Spider", 1, { hp: 28, mp: 0, atk: 10, def: 4, mat: 4, mdf: 3, agi: 14 }, ["bite", "venom"], 8, 3),
+    m("frog", "Giant Frog", 1, { hp: 36, mp: 0, atk: 9, def: 4, mat: 2, mdf: 3, agi: 12 }, ["bite"], 7, 3),
+    m("hobgoblin", "Hobgoblin", 2, { hp: 55, mp: 0, atk: 13, def: 9, mat: 5, mdf: 6, agi: 10 }, ["attack", "smash"], 18, 14),
+    m("gnoll", "Gnoll", 2, { hp: 51, mp: 0, atk: 14, def: 8, mat: 5, mdf: 6, agi: 12 }, ["attack", "smash"], 18, 12),
+    m("orc", "Orc", 2, { hp: 58, mp: 0, atk: 13, def: 10, mat: 5, mdf: 6, agi: 9 }, ["attack", "smash"], 19, 14),
+    m("orc_warrior", "Orc Warrior", 2, { hp: 65, mp: 0, atk: 15, def: 11, mat: 5, mdf: 6, agi: 9 }, ["attack", "smash"], 22, 16),
+    m("orc_priest", "Orc Priest", 2, { hp: 48, mp: 0, atk: 9, def: 8, mat: 14, mdf: 11, agi: 10 }, ["attack", "curse", "mend"], 21, 16),
+    m("wolf", "Wolf", 2, { hp: 49, mp: 0, atk: 14, def: 7, mat: 4, mdf: 5, agi: 16 }, ["bite"], 17, 6),
+    m("ghoul", "Ghoul", 2, { hp: 62, mp: 0, atk: 13, def: 9, mat: 8, mdf: 10, agi: 8 }, ["bite", "drain"], 21, 10),
+    m("scorpion", "Giant Scorpion", 2, { hp: 56, mp: 0, atk: 15, def: 12, mat: 4, mdf: 6, agi: 11 }, ["attack", "venom"], 20, 8),
+    m("wolf_spider", "Wolf Spider", 2, { hp: 46, mp: 0, atk: 14, def: 8, mat: 6, mdf: 6, agi: 15 }, ["bite", "venom"], 18, 6),
+    m("big_kobold", "Big Kobold", 2, { hp: 60, mp: 0, atk: 13, def: 10, mat: 4, mdf: 5, agi: 10 }, ["attack", "smash"], 18, 14),
+    m("ogre", "Ogre", 3, { hp: 121, mp: 0, atk: 23, def: 14, mat: 6, mdf: 8, agi: 8 }, ["attack", "smash"], 38, 26),
+    m("orc_knight", "Orc Knight", 3, { hp: 104, mp: 0, atk: 21, def: 17, mat: 8, mdf: 10, agi: 10 }, ["attack", "smash"], 36, 28),
+    m("orc_wizard", "Orc Wizard", 3, { hp: 77, mp: 0, atk: 12, def: 11, mat: 22, mdf: 16, agi: 11 }, ["attack", "firebolt", "curse"], 36, 30),
+    m("mummy", "Mummy", 3, { hp: 109, mp: 0, atk: 19, def: 15, mat: 14, mdf: 14, agi: 7 }, ["attack", "curse"], 35, 24),
+    m("wraith", "Wraith", 3, { hp: 84, mp: 0, atk: 18, def: 12, mat: 20, mdf: 18, agi: 14 }, ["attack", "drain"], 37, 22),
+    m("troll", "Deep Troll", 3, { hp: 132, mp: 0, atk: 24, def: 13, mat: 6, mdf: 8, agi: 9 }, ["attack", "smash"], 40, 24),
+    m("harpy", "Harpy", 3, { hp: 79, mp: 0, atk: 19, def: 11, mat: 10, mdf: 11, agi: 18 }, ["attack", "rend"], 34, 20),
+    m("naga", "Naga", 3, { hp: 99, mp: 0, atk: 18, def: 13, mat: 18, mdf: 16, agi: 11 }, ["attack", "venom", "firebolt"], 37, 28),
+    m("basilisk", "Basilisk", 3, { hp: 106, mp: 0, atk: 20, def: 16, mat: 16, mdf: 14, agi: 10 }, ["bite", "gaze"], 38, 22),
+    m("bear", "Cave Bear", 3, { hp: 125, mp: 0, atk: 23, def: 13, mat: 4, mdf: 8, agi: 11 }, ["attack", "rend"], 36, 10),
+    m("clay_golem", "Clay Golem", 3, { hp: 150, mp: 0, atk: 20, def: 20, mat: 4, mdf: 14, agi: 5 }, ["attack", "smash"], 40, 20),
+    m("minotaur", "Minotaur", 4, { hp: 202, mp: 0, atk: 32, def: 19, mat: 8, mdf: 12, agi: 12 }, ["attack", "smash", "rend"], 66, 44),
+    m("cyclops", "Cyclops", 4, { hp: 229, mp: 0, atk: 33, def: 20, mat: 8, mdf: 12, agi: 8 }, ["attack", "smash"], 68, 46),
+    m("hill_giant", "Hill Giant", 4, { hp: 246, mp: 0, atk: 31, def: 18, mat: 6, mdf: 10, agi: 7 }, ["attack", "smash"], 66, 50),
+    m("death_knight", "Death Knight", 4, { hp: 194, mp: 0, atk: 30, def: 24, mat: 22, mdf: 20, agi: 11 }, ["attack", "smash", "drain"], 72, 56),
+    m("lich", "Lich", 4, { hp: 158, mp: 0, atk: 16, def: 16, mat: 34, mdf: 28, agi: 12 }, ["curse", "firebolt", "frost"], 74, 60),
+    m("iron_golem", "Iron Golem", 4, { hp: 264, mp: 0, atk: 30, def: 30, mat: 6, mdf: 18, agi: 6 }, ["attack", "smash"], 70, 40),
+    m("greater_naga", "Greater Naga", 4, { hp: 185, mp: 0, atk: 26, def: 20, mat: 28, mdf: 22, agi: 12 }, ["attack", "venom", "frost"], 70, 54),
+    m("executioner", "Executioner", 4, { hp: 211, mp: 0, atk: 36, def: 18, mat: 14, mdf: 16, agi: 13 }, ["attack", "rend"], 72, 50),
+    m("fire_giant", "Fire Giant", 4, { hp: 255, mp: 0, atk: 32, def: 21, mat: 26, mdf: 18, agi: 8 }, ["attack", "firebolt", "breath"], 76, 58),
+    m("elf_knight", "Deep Elf Knight", 4, { hp: 176, mp: 0, atk: 29, def: 22, mat: 24, mdf: 22, agi: 15 }, ["attack", "rend", "frost"], 70, 60),
+    m("orc_warlord", "Orc Warlord", 5, { hp: 340, mp: 0, atk: 19, def: 12, mat: 10, mdf: 10, agi: 11 }, ["attack", "smash", "rally"], 150, 120),
+    m("hydra", "Five-Headed Hydra", 5, { hp: 900, mp: 0, atk: 30, def: 18, mat: 22, mdf: 16, agi: 10 }, ["bite", "rend", "breath"], 320, 240),
+    m("bone_dragon", "Bone Dragon", 5, { hp: 1400, mp: 0, atk: 38, def: 24, mat: 32, mdf: 24, agi: 11 }, ["rend", "breath", "curse"], 520, 380),
+    m("golden_dragon", "Golden Dragon", 5, { hp: 2100, mp: 0, atk: 46, def: 30, mat: 42, mdf: 32, agi: 13 }, ["rend", "breath", "smash"], 800, 600),
+    m("ancient_lich", "Ancient Lich", 5, { hp: 2400, mp: 0, atk: 30, def: 28, mat: 56, mdf: 44, agi: 14 }, ["curse", "frost", "breath", "drain"], 1000, 800),
+    m("mimic", "Mimic", 1, { hp: 40, mp: 0, atk: 11, def: 8, mat: 4, mdf: 6, agi: 9 }, ["bite", "smash"], 16, 30)
+  ].map((x) => [x.id, x]));
+  DEFAULT_BOSSES = ["orc_warlord", "hydra", "bone_dragon", "golden_dragon", "ancient_lich"];
+  SKILLS = Object.fromEntries([
+    sk("attack", "Attack", "foe", "phys", 1),
+    sk("guard", "Guard", "self", "guard", 0),
+    sk("strike", "Power Strike", "foe", "phys", 1.9, 0, 35),
+    sk("cleave", "Cleave", "foes", "phys", 1.1, 0, 60),
+    sk("stab", "Backstab", "foe", "phys", 1.4, 4, 0, { crit: 0.3 }),
+    sk("fire", "Fire", "foe", "magic", 1.8, 5),
+    sk("blizzard", "Blizzard", "foes", "magic", 1.2, 12),
+    sk("smite", "Smite", "foe", "magic", 1.3, 4),
+    sk("heal", "Heal", "ally", "heal", 1, 6),
+    sk("holy", "Holy Light", "allies", "heal", 0.6, 12),
+    sk("bite", "Bite", "foe", "phys", 1.1),
+    sk("smash", "Smash", "foe", "phys", 1.6),
+    sk("rend", "Rend", "foe", "phys", 1.35, 0, 0, { crit: 0.15 }),
+    sk("acid", "Acid Splash", "foe", "magic", 1.2),
+    sk("venom", "Venom", "foe", "magic", 1.3),
+    sk("curse", "Curse", "foe", "magic", 1.4),
+    sk("firebolt", "Firebolt", "foe", "magic", 1.6),
+    sk("frost", "Frost Wave", "foes", "magic", 1),
+    sk("breath", "Breath", "foes", "magic", 1.2),
+    sk("gaze", "Petrifying Gaze", "foe", "magic", 1.5),
+    sk("drain", "Drain", "foe", "magic", 1.1, 0, 0, { drain: 0.5 }),
+    sk("mend", "Mend", "ally", "heal", 0.8),
+    sk("rally", "War Cry", "allies", "heal", 0.35)
+  ].map((x) => [x.id, x]));
+  CLASSES = {
+    adventurer: { hp: 72, mp: 22, atk: 13, def: 9, mat: 11, mdf: 9, agi: 11, skills: ["strike", "fire", "heal"] },
+    fighter: { hp: 84, mp: 10, atk: 14, def: 11, mat: 5, mdf: 7, agi: 9, skills: ["strike", "cleave"] },
+    mage: { hp: 52, mp: 42, atk: 7, def: 6, mat: 16, mdf: 12, agi: 10, skills: ["fire", "blizzard"] },
+    healer: { hp: 60, mp: 38, atk: 8, def: 8, mat: 13, mdf: 13, agi: 9, skills: ["heal", "holy", "smite"] },
+    rogue: { hp: 60, mp: 18, atk: 13, def: 8, mat: 8, mdf: 8, agi: 15, skills: ["stab", "strike"] }
+  };
+  CLASS_IDS = Object.keys(CLASSES);
+  PARTY_SPRITES = {
+    adventurer: ["pc_adventurer_1", "pc_adventurer_2", "pc_adventurer_3", "pc_adventurer_4"],
+    fighter: ["pc_fighter_1", "pc_fighter_2", "pc_fighter_3", "pc_fighter_4"],
+    mage: ["pc_mage_1", "pc_mage_2", "pc_mage_3", "pc_mage_4"],
+    healer: ["pc_healer_1", "pc_healer_2", "pc_healer_3"],
+    rogue: ["pc_rogue_1", "pc_rogue_2", "pc_rogue_3"]
+  };
+  BUILTIN_EVENTS = Object.fromEntries([
+    ev("shrine", "A crumbling shrine glows faintly in an alcove.", [
+      ch("pray", "Pray at the shrine", out({ heal: 40, mana: 30, text: "A gentle warmth washes over the party; wounds close." }), { chance: 65, fail: out({ hurt: 10, text: "The glow turns cold and bites at them." }) }),
+      ch("leave", "Leave it be", out({ text: "The party leaves the shrine undisturbed." }))
+    ]),
+    ev("wounded_stranger", "A wounded adventurer sits slumped against the wall, clutching their side.", [
+      ch("help", "Give them a potion", out({ bag: { potion: -1 }, gold: "15 + depth * 6", xp: 12, text: "The stranger thanks them and presses a pouch of coins into their hand." }), { when: "bag('potion') >= 1" }),
+      ch("ask", "Ask what happened", out({ xp: 6, text: "The stranger warns them about what waits deeper down before limping away." })),
+      ch("leave", "Walk past", out({ text: "They leave the stranger to fend for themselves." }))
+    ]),
+    ev("pool", "A still, dark pool shimmers with a faint blue light.", [
+      ch("drink", "Drink from it", out({ mana: 100, heal: 15, text: "The water is cold and sweet; strength and focus return." }), { chance: 55, fail: out({ hurt: 14, text: "The water burns going down." }) }),
+      ch("leave", "Don't risk it", out({ text: "They leave the pool alone." }))
+    ]),
+    ev("locked_chest", "An iron-bound chest sits in the middle of the room, its lock rusted shut.", [
+      ch("force", "Force it open", out({ gold: "25 + depth * 12", bag: { potion: 1 }, text: "The lock gives; the chest is full of coin." }), { chance: 60, fail: out({ hurt: 12, text: "A hidden needle snaps out of the lock." }) }),
+      ch("leave", "Leave it", out({ text: "They decide the chest isn't worth it." }))
+    ]),
+    ev("statue", "A statue of a forgotten hero stands here. Something seems to whisper from it.", [
+      ch("listen", "Listen closely", out({ xp: "10 + depth * 4", text: "The whispers tell of old battles; the party learns from them." })),
+      ch("leave", "Move on", out({ text: "They move on, unsettled." }))
+    ]),
+    ev("collapsed", "The tunnel ahead has partly collapsed; something glints under the rubble.", [
+      ch("dig", "Dig through", out({ gold: "20 + depth * 10", text: "Under the rubble: a dead explorer's purse." }), { chance: 70, fail: out({ hurt: 10, text: "Loose rock tumbles down on them." }) }),
+      ch("around", "Find a way around", out({ text: "They find another way through." }))
+    ]),
+    ev("ghost_merchant", "A translucent merchant beckons from behind a floating counter.", [
+      ch("trade", "Buy two potions (30 gold)", out({ gold: -30, bag: { potion: 2 }, text: "The ghost hands over two potions with a hollow laugh." }), { cost: 30 }),
+      ch("leave", "Decline", out({ text: "The merchant fades away." }))
+    ], 2),
+    ev("gambler", "A goblin with a crooked grin shakes a cup of dice. 'Twenty gold says you lose.'", [
+      ch("bet", "Bet 20 gold", out({ gold: 40, text: "The dice fall their way; the goblin pays up, grumbling." }), { chance: 45, cost: 20, fail: out({ gold: -20, text: "The goblin cackles and pockets their coins." }) }),
+      ch("leave", "Refuse", out({ text: "They ignore the goblin's jeers." }))
+    ]),
+    ev("ambush", "Voices ahead — a band of monsters is resting around the next corner.", [
+      ch("sneak", "Sneak past", out({ xp: "8 + depth * 3", text: "They slip past unseen." }), { chance: 60, fail: out({ fight: "enemy", text: "A twig snaps. The monsters leap to their feet." }) }),
+      ch("charge", "Charge them", out({ fight: "enemy", text: "They charge before the monsters can react." }))
+    ]),
+    ev("blood_altar", "A stone altar is stained dark. An inscription promises knowledge for blood.", [
+      ch("offer", "Offer blood", out({ hurt: 15, xp: "20 + depth * 6", text: "Pain, then sudden clarity." })),
+      ch("leave", "Step away", out({ text: "They back away from the altar." }))
+    ], 3)
+  ].map((x) => [x.id, x]));
+  BUILTIN_ROMANCE = Object.fromEntries([
+    ev("campfire", "The party makes a small fire in a quiet side chamber. {target} sits down close beside {{user}}.", [
+      ch("talk", "Talk with {target}", out({ bond: 3, heal: 10, text: "They talk quietly by the fire; {target} opens up a little." })),
+      ch("close", "Pull {target} closer", out({ bond: 2, desire: 4, text: "{target} doesn't pull away." }), { chance: "40 + rel_bond(target) / 2", fail: out({ bond: -1, text: "{target} stiffens and shifts away, awkward." }) }),
+      ch("watch", "Keep watch so {target} can rest", out({ bond: 2, text: "{target} sleeps a while, trusting {{user}} to keep watch." }))
+    ]),
+    ev("close_call", "A ledge crumbles under {{user}}'s feet — {target} grabs their hand and hauls them back.", [
+      ch("thank", "Thank {target}", out({ bond: 3, text: "{target} brushes it off, but holds on a moment longer than needed." })),
+      ch("tease", "Tease {target} about it", out({ bond: 1, desire: 3, text: "{target} laughs, flustered." }), { chance: "50 + rel_bond(target) / 3", fail: out({ bond: -1, text: "{target} isn't in the mood for jokes." }) })
+    ]),
+    ev("wounds", "{target} is quietly nursing a cut from the last fight.", [
+      ch("tend", "Tend {target}'s wound", out({ bond: 3, heal: 20, text: "{{user}} cleans and binds the cut; {target} watches them the whole time." })),
+      ch("potion", "Give {target} a potion", out({ bond: 2, heal: 50, bag: { potion: -1 }, text: "{target} is touched by the gesture." }), { when: "bag('potion') >= 1" })
+    ]),
+    ev("confession", "In the dark between torches, {target} stops and says there's something they want to tell {{user}}.", [
+      ch("listen", "Listen", out({ bond: 4, text: "{target} shares something they've never told anyone." })),
+      ch("kiss", "Kiss {target}", out({ bond: 3, desire: 5, text: "{target} kisses back." }), { chance: "20 + rel_bond(target) * 0.8", fail: out({ bond: -2, text: "{target} turns away — it wasn't that." }) })
+    ], 3)
+  ].map((x) => [x.id, x]));
+  SHOP = {
+    potion: { name: "Potion", price: (d) => 12 + d * 3, sprite: "potion", desc: "Restores half of one ally's HP." },
+    ether: { name: "Ether", price: (d) => 16 + d * 3, sprite: "ether", desc: "Restores half of one ally's MP." },
+    bomb: { name: "Bomb", price: (d) => 20 + d * 4, sprite: "bomb", desc: "Hits every enemy." }
+  };
+});
+
+// src/engine/dungeon/types.ts
+var DEALT_KINDS, THEMES;
+var init_types = __esm(() => {
+  DEALT_KINDS = ["empty", "enemy", "elite", "treasure", "trap", "rest", "shop", "event", "surprise", "romance"];
+  THEMES = ["cave", "crypt", "ruins", "hell", "lair"];
+});
+
+// src/engine/dungeon/defs.ts
+function normOutcome(raw, where, c, known) {
+  const r = isObj(raw) ? raw : typeof raw === "string" ? { text: raw } : {};
+  const o = { effect: normEffect(Object.fromEntries(Object.entries(r).filter(([k]) => !OUTCOME_KEYS.has(k))), where, c, known) };
+  if (typeof r.text === "string")
+    o.text = r.text;
+  for (const k of ["heal", "hurt", "mana", "bond", "desire", "xp"]) {
+    if (r[k] !== undefined) {
+      const x = k === "xp" ? c.expr(r[k], `${where} › ${k}`) : c.num(r[k], `${where} › ${k}`, 0);
+      if (x !== undefined)
+        o[k] = x;
+    }
+  }
+  if (r.gold !== undefined) {
+    const x = c.expr(r.gold, `${where} › gold`);
+    if (x !== undefined)
+      o.gold = x;
+  }
+  if (isObj(r.bag))
+    o.bag = Object.fromEntries(Object.entries(r.bag).map(([k, v]) => [k, c.num(v, `${where} › bag › ${k}`, 1)]));
+  if (typeof r.fight === "string")
+    o.fight = r.fight;
+  return o;
+}
+function normEvents(raw, where, c, known) {
+  const out = {};
+  for (const [id, e] of Object.entries(isObj(raw) ? raw : {})) {
+    const w = `${where} › ${id}`;
+    if (!isObj(e) || typeof e.text !== "string") {
+      c.warn(w, "needs `text:` and `choices:`");
+      continue;
+    }
+    const choices = [];
+    for (const [cid, chRaw] of Object.entries(isObj(e.choices) ? e.choices : {})) {
+      const cw = `${w} › ${cid}`;
+      const r = isObj(chRaw) ? chRaw : typeof chRaw === "string" ? { label: chRaw } : {};
+      const successRaw = r.success ?? Object.fromEntries(Object.entries(r).filter(([k]) => !CHOICE_KEYS.has(k)));
+      const chance = r.chance !== undefined ? c.expr(r.chance, `${cw} › chance`) : undefined;
+      const when = r.when !== undefined ? c.expr(r.when, `${cw} › when`) : undefined;
+      choices.push({
+        id: cid,
+        label: typeof r.label === "string" ? r.label : titleCase(cid),
+        success: normOutcome(successRaw, `${cw} › success`, c, known),
+        ...r.fail !== undefined ? { fail: normOutcome(r.fail, `${cw} › fail`, c, known) } : {},
+        ...chance !== undefined ? { chance } : {},
+        ...when !== undefined ? { when: String(when) } : {},
+        ...r.cost !== undefined ? { cost: c.num(r.cost, `${cw} › cost`, 0) } : {}
+      });
+    }
+    if (!choices.length) {
+      c.warn(w, "needs at least one choice");
+      continue;
+    }
+    out[id] = { id, text: e.text, choices, minDepth: c.num(e.min_depth, `${w} › min_depth`, 1), weight: Math.max(0, c.num(e.weight, `${w} › weight`, 1)) };
+  }
+  return out;
+}
+function normMonsters(raw, where, c) {
+  const out = {};
+  for (const [id, mRaw] of Object.entries(isObj(raw) ? raw : {})) {
+    const w = `${where} › ${id}`;
+    if (!isObj(mRaw)) {
+      c.warn(w, "expected a monster definition");
+      continue;
+    }
+    const base = BESTIARY[typeof mRaw.like === "string" ? mRaw.like : id];
+    const tier = Math.max(1, Math.min(5, Math.round(c.num(mRaw.tier, `${w} › tier`, base?.tier ?? 1))));
+    const stat = (k, d) => Math.max(k === "hp" ? 1 : 0, c.num(mRaw[k], `${w} › ${k}`, base?.[k] ?? d));
+    const skills = list(mRaw.skills).filter((s) => {
+      if (SKILLS[s])
+        return true;
+      c.warn(`${w} › skills`, `"${s}" isn't a skill (${Object.keys(SKILLS).join(", ")})`);
+      return false;
+    });
+    out[id] = {
+      id,
+      name: typeof mRaw.name === "string" ? mRaw.name : base?.name ?? titleCase(id),
+      sprite: typeof mRaw.sprite === "string" ? mRaw.sprite : base?.sprite ?? "skull",
+      tier,
+      hp: stat("hp", 30 * tier),
+      mp: 0,
+      atk: stat("atk", 8 * tier),
+      def: stat("def", 4 * tier),
+      mat: stat("mat", 4 * tier),
+      mdf: stat("mdf", 4 * tier),
+      agi: stat("agi", 10),
+      skills: skills.length ? skills : base?.skills ?? ["attack"],
+      xp: c.num(mRaw.xp, `${w} › xp`, base?.xp ?? 8 * tier),
+      gold: c.num(mRaw.gold, `${w} › gold`, base?.gold ?? 5 * tier)
+    };
+  }
+  return out;
+}
+function normDungeons(raw, c, known) {
+  const out = {};
+  if (raw === undefined)
+    return out;
+  if (!isObj(raw)) {
+    c.warn("Dungeons", "should be a map of dungeon names to definitions");
+    return out;
+  }
+  for (const [id, dRaw] of Object.entries(raw)) {
+    const w = `Dungeons › ${id}`;
+    const r = isObj(dRaw) ? dRaw : typeof dRaw === "string" ? { name: dRaw } : {};
+    const theme = THEMES.includes(r.theme) ? r.theme : "cave";
+    if (r.theme !== undefined && !THEMES.includes(r.theme))
+      c.warn(`${w} › theme`, `use one of ${THEMES.join(", ")}`);
+    const tiles = { ...DEFAULT_TILES };
+    if (isObj(r.tiles))
+      for (const [k, v] of Object.entries(r.tiles)) {
+        if (DEALT_KINDS.includes(k))
+          tiles[k] = Math.max(0, c.num(v, `${w} › tiles › ${k}`, tiles[k]));
+        else
+          c.warn(`${w} › tiles › ${k}`, `tile kinds are ${DEALT_KINDS.join(", ")} (start, stairs and boss are placed for you)`);
+      }
+    const custom = normMonsters(r.monsters, `${w} › monsters`, c);
+    const allowed = Array.isArray(r.bestiary) ? list(r.bestiary) : null;
+    for (const b of allowed ?? [])
+      if (!BESTIARY[b])
+        c.warn(`${w} › bestiary`, `"${b}" isn't a built-in monster`);
+    const monsters = {};
+    for (const mon of Object.values(BESTIARY))
+      if (!allowed || allowed.includes(mon.id) || mon.tier === 5 || mon.id === "mimic")
+        monsters[mon.id] = mon;
+    Object.assign(monsters, custom);
+    const bosses = Array.isArray(r.bosses) ? list(r.bosses).filter((b) => {
+      if (monsters[b])
+        return true;
+      c.warn(`${w} › bosses`, `"${b}" isn't a monster here`);
+      return false;
+    }) : DEFAULT_BOSSES;
+    const events = { ...r.builtin_events === false ? {} : BUILTIN_EVENTS, ...normEvents(r.events, `${w} › events`, c, known) };
+    const romance = { ...r.builtin_romance === false ? {} : BUILTIN_ROMANCE, ...normEvents(r.romance, `${w} › romance`, c, known) };
+    const loot = [];
+    if (isObj(r.loot))
+      for (const [item, v] of Object.entries(r.loot)) {
+        const lr = isObj(v) ? v : { weight: v };
+        loot.push({ item, weight: Math.max(0, c.num(lr.weight, `${w} › loot › ${item}`, 1)), minDepth: c.num(lr.min_depth, `${w} › loot › ${item} › min_depth`, 1) });
+      }
+    const partyRaw = isObj(r.party) ? r.party : {};
+    const classes = {};
+    for (const [who, cls] of Object.entries(isObj(partyRaw.classes) ? partyRaw.classes : {})) {
+      if (CLASS_IDS.includes(cls))
+        classes[who] = cls;
+      else
+        c.warn(`${w} › party › classes › ${who}`, `classes are ${CLASS_IDS.join(", ")}`);
+    }
+    const partyWhen = partyRaw.when !== undefined ? c.expr(partyRaw.when, `${w} › party › when`) : undefined;
+    const playerRaw = isObj(r.player) ? r.player : {};
+    const player = { class: CLASS_IDS.includes(playerRaw.class) ? playerRaw.class : "adventurer" };
+    for (const k of STAT_KEYS)
+      if (playerRaw[k] !== undefined) {
+        const x = c.expr(playerRaw[k], `${w} › player › ${k}`);
+        if (x !== undefined)
+          player[k] = x;
+      }
+    if (typeof playerRaw.sprite === "string")
+      player.sprite = playerRaw.sprite;
+    const when = r.when !== undefined ? c.expr(r.when, `${w} › when`) : undefined;
+    out[id] = {
+      id,
+      name: typeof r.name === "string" ? r.name : titleCase(id),
+      ...typeof r.desc === "string" ? { desc: r.desc } : {},
+      at: list(r.at ?? r.entrance),
+      ...when !== undefined ? { when: String(when) } : {},
+      theme,
+      size: Math.max(3, Math.min(9, Math.round(c.num(r.size, `${w} › size`, 5)))),
+      floors: Math.max(0, Math.round(c.num(r.floors ?? r.depth, `${w} › floors`, 0))),
+      bossEvery: Math.max(0, Math.round(c.num(r.boss_every, `${w} › boss_every`, 5))),
+      tiles,
+      monsters,
+      bosses: bosses.length ? bosses : DEFAULT_BOSSES,
+      events,
+      romance,
+      loot,
+      party: { max: Math.max(0, Math.min(3, Math.round(c.num(partyRaw.max, `${w} › party › max`, 3)))), ...partyWhen !== undefined ? { when: String(partyWhen) } : {}, classes },
+      player,
+      ...typeof r.currency === "string" ? { currency: r.currency } : {},
+      onLeave: normEffect(r.on_leave, `${w} › on_leave`, c, known),
+      onDefeat: normEffect(r.on_defeat, `${w} › on_defeat`, c, known),
+      narrate: r.narrate === "all" ? "all" : "highlights"
+    };
+  }
+  return out;
+}
+var DEFAULT_TILES, OUTCOME_KEYS, CHOICE_KEYS, STAT_KEYS;
+var init_defs = __esm(() => {
+  init_ruleset();
+  init_content();
+  init_types();
+  DEFAULT_TILES = {
+    empty: 7,
+    enemy: 6,
+    elite: 1,
+    treasure: 2.5,
+    trap: 1.5,
+    rest: 1,
+    shop: 0.6,
+    event: 2,
+    surprise: 1.5,
+    romance: 1.2
+  };
+  OUTCOME_KEYS = new Set(["text", "heal", "hurt", "mana", "gold", "xp", "bag", "fight", "bond", "desire"]);
+  CHOICE_KEYS = new Set(["label", "chance", "when", "cost", "fail", "success"]);
+  STAT_KEYS = ["hp", "mp", "atk", "def", "mat", "mdf", "agi"];
+});
+
 // src/engine/ruleset.ts
-var isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 function titleCase(id) {
   return id.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 function slug(s) {
   return String(s).trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "x";
 }
-var DEFAULT_WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 function parseClockStart(v, weekdays) {
   if (typeof v === "number" && Number.isFinite(v))
     return Math.max(0, Math.floor(v));
@@ -487,7 +877,7 @@ function parseClockStart(v, weekdays) {
   return day * 1440 + h * 60 + min;
 }
 
-class Ctx {
+class Ctx2 {
   issues = [];
   err(where, message) {
     this.issues.push({ level: "error", where, message });
@@ -567,19 +957,6 @@ function normBands(raw, good, where, c) {
   list.sort((a, b) => a.at - b.at);
   return list.map((b, i) => ({ at: b.at, text: b.text, tone: b.tone ?? toneFor(i, list.length, good) }));
 }
-var KIND_ALIASES = {
-  meter: "meter",
-  bar: "meter",
-  pool: "meter",
-  resource: "meter",
-  attribute: "attribute",
-  attr: "attribute",
-  stat: "attribute",
-  skill: "skill",
-  money: "money",
-  currency: "money",
-  hidden: "hidden"
-};
 function normStat(id, raw, where, c, forRel = false) {
   const r = isObj(raw) ? raw : typeof raw === "number" ? { start: raw } : {};
   if (!isObj(raw) && typeof raw !== "number" && raw !== null && raw !== undefined) {
@@ -654,7 +1031,6 @@ function emptyEffect() {
     reveal: []
   };
 }
-var list = (v) => Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : [];
 function normDecide(raw, where, c, known, minOptions = 2) {
   if (!isObj(raw)) {
     c.warn(where, "decide needs `ask:` and `options:`");
@@ -897,21 +1273,6 @@ function normCheck(raw, where, c) {
     crits: raw.crits !== false
   };
 }
-var TIER_KEYS = {
-  crit_success: "crit_success",
-  critical_success: "crit_success",
-  crit: "crit_success",
-  success: "success",
-  pass: "success",
-  partial: "partial",
-  mixed: "partial",
-  fail: "fail",
-  failure: "fail",
-  miss: "fail",
-  crit_fail: "crit_fail",
-  critical_fail: "crit_fail",
-  fumble: "crit_fail"
-};
 function normAction(id, raw, where, c, known, order) {
   if (typeof raw === "string")
     raw = { label: raw };
@@ -978,7 +1339,6 @@ function normAction(id, raw, where, c, known, order) {
     perPerson: raw.per_person === true || raw.with === "person" || raw.with === "people"
   };
 }
-var MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 function parseDate(v) {
   if (isObj(v)) {
     const m = Number(v.month), d = Number(v.day);
@@ -994,13 +1354,6 @@ function parseDate(v) {
   const month = name ? MONTHS.indexOf(name.slice(0, 3)) + 1 : 0;
   return month >= 1 && day >= 1 && day <= 31 ? { month, day } : null;
 }
-var DEFAULT_WEATHER = [
-  { id: "clear", label: "Clear", icon: "☀️", weight: 4, temp: 1, seasons: null, tags: [] },
-  { id: "cloudy", label: "Overcast", icon: "☁️", weight: 3, temp: -1, seasons: null, tags: [] },
-  { id: "rain", label: "Rain", icon: "\uD83C\uDF27️", weight: 2, temp: -3, seasons: null, tags: ["wet"] },
-  { id: "storm", label: "Storm", icon: "⛈️", weight: 1, temp: -4, seasons: ["summer", "autumn"], tags: ["wet", "windy"] },
-  { id: "snow", label: "Snow", icon: "❄️", weight: 2, temp: -6, seasons: ["winter"], tags: ["wet", "cold"] }
-];
 function normWeather(raw, c) {
   const def = {
     enabled: false,
@@ -1047,7 +1400,6 @@ function normWeather(raw, c) {
   def.indoorTemp = c.num(raw.indoors ?? raw.indoor_temp, "Weather › indoors", def.indoorTemp);
   return def;
 }
-var DEFAULT_SLOTS = ["head", "outer", "top", "bottom", "under_top", "under_bottom", "legs", "feet"];
 function normWardrobe(raw, items, c) {
   const clothing = Object.values(items).some((i) => i.slot);
   const def = { enabled: clothing, slots: [], cover: ["top", "bottom"], startWorn: [], narrator: true };
@@ -1314,9 +1666,8 @@ function normLiveChoices(raw, c, known) {
     c.warn("Live choices", "has no tags — add some under `tags:`");
   return def;
 }
-var SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
 function normalizeRuleset(raw) {
-  const c = new Ctx;
+  const c = new Ctx2;
   if (!isObj(raw)) {
     c.err("Ruleset", "is empty or isn't a YAML map");
     return { ruleset: null, issues: c.issues };
@@ -1574,6 +1925,7 @@ function normalizeRuleset(raw) {
   const fronts = normFronts(raw.fronts, c, known);
   const randomEvents = normRandomEvents(raw.random_events ?? raw.events, c, known);
   const liveChoices = normLiveChoices(raw.live_choices, c, known);
+  const dungeons = normDungeons(raw.dungeons, c, known);
   const ruleset = {
     name: typeof raw.name === "string" ? raw.name : "Untitled ruleset",
     description: typeof raw.description === "string" ? raw.description : undefined,
@@ -1618,7 +1970,8 @@ function normalizeRuleset(raw) {
     secrets,
     fronts,
     randomEvents,
-    liveChoices
+    liveChoices,
+    dungeons
   };
   for (const p of Object.values(people))
     for (const e of p.schedule) {
@@ -1646,10 +1999,53 @@ function normalizeRuleset(raw) {
   }
   return { ruleset, issues: c.issues };
 }
+var isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v), DEFAULT_WEEKDAYS, KIND_ALIASES, list = (v) => Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : [], TIER_KEYS, MONTHS, DEFAULT_WEATHER, DEFAULT_SLOTS, SEXUAL_TAGS;
+var init_ruleset = __esm(() => {
+  init_expr();
+  init_dice();
+  init_defs();
+  DEFAULT_WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  KIND_ALIASES = {
+    meter: "meter",
+    bar: "meter",
+    pool: "meter",
+    resource: "meter",
+    attribute: "attribute",
+    attr: "attribute",
+    stat: "attribute",
+    skill: "skill",
+    money: "money",
+    currency: "money",
+    hidden: "hidden"
+  };
+  TIER_KEYS = {
+    crit_success: "crit_success",
+    critical_success: "crit_success",
+    crit: "crit_success",
+    success: "success",
+    pass: "success",
+    partial: "partial",
+    mixed: "partial",
+    fail: "fail",
+    failure: "fail",
+    miss: "fail",
+    crit_fail: "crit_fail",
+    critical_fail: "crit_fail",
+    fumble: "crit_fail"
+  };
+  MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+  DEFAULT_WEATHER = [
+    { id: "clear", label: "Clear", icon: "☀️", weight: 4, temp: 1, seasons: null, tags: [] },
+    { id: "cloudy", label: "Overcast", icon: "☁️", weight: 3, temp: -1, seasons: null, tags: [] },
+    { id: "rain", label: "Rain", icon: "\uD83C\uDF27️", weight: 2, temp: -3, seasons: null, tags: ["wet"] },
+    { id: "storm", label: "Storm", icon: "⛈️", weight: 1, temp: -4, seasons: ["summer", "autumn"], tags: ["wet", "windy"] },
+    { id: "snow", label: "Snow", icon: "❄️", weight: 2, temp: -6, seasons: ["winter"], tags: ["wet", "cold"] }
+  ];
+  DEFAULT_SLOTS = ["head", "outer", "top", "bottom", "under_top", "under_bottom", "legs", "feet"];
+  SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
+});
 
 // src/engine/world.ts
-var MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-var MONTH_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 function ordinal(n) {
   const s = n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] ?? "th";
   return `${n}${s}`;
@@ -1752,9 +2148,15 @@ function presentPeople(r, s, env) {
     return [];
   return Object.keys(r.people).filter((id) => !s.forgotten[id] && personLocation(r, s, id, env) === s.location);
 }
+var MONTH_NAMES, MONTH_DAYS;
+var init_world = __esm(() => {
+  init_dice();
+  init_expr();
+  MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  MONTH_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+});
 
 // src/engine/state.ts
-var NEWS_KEPT = 30;
 function timeKey(r, s) {
   return r.clock.enabled ? s.minutes : s.turn;
 }
@@ -1785,7 +2187,9 @@ function initialState(r) {
     fronts: {},
     gauge: { v: 0, rest: 0, next: null, last: {} },
     notices: [],
-    news: []
+    news: [],
+    dungeon: null,
+    deepest: {}
   };
   for (const id of r.statOrder)
     s.stats[id] = r.stats[id].start;
@@ -2004,38 +2408,81 @@ function applyEvent(s, e, r) {
     case "noticed":
       s.notices = [];
       break;
+    case "dg_enter":
+      s.dungeon = structuredClone(e.run);
+      s.deepest[e.run.id] = Math.max(s.deepest[e.run.id] ?? 0, e.run.depth);
+      break;
+    case "dg_exit":
+      s.dungeon = null;
+      break;
+    default:
+      if (s.dungeon)
+        applyDungeon(s, s.dungeon, e);
+  }
+}
+function applyDungeon(s, d, e) {
+  switch (e.t) {
+    case "dg_step": {
+      d.pos = [e.x, e.y];
+      const k = `${e.x},${e.y}`;
+      if (!d.seen.includes(k))
+        d.seen = [...d.seen, k];
+      break;
+    }
+    case "dg_clear":
+      if (!d.cleared.includes(e.key))
+        d.cleared = [...d.cleared, e.key];
+      break;
+    case "dg_down":
+      d.depth += 1;
+      d.pos = e.pos;
+      d.seen = [`${e.pos[0]},${e.pos[1]}`];
+      d.cleared = [];
+      d.pending = null;
+      s.deepest[d.id] = Math.max(s.deepest[d.id] ?? 0, d.depth);
+      break;
+    case "dg_party":
+      d.party = e.party.map((p) => ({ ...p }));
+      break;
+    case "dg_xp":
+      d.xp = Math.max(0, d.xp + e.d);
+      break;
+    case "dg_gold":
+      d.gold = Math.max(0, d.gold + e.d);
+      break;
+    case "dg_bag": {
+      const n = (d.bag[e.item] ?? 0) + e.d;
+      d.bag = { ...d.bag, [e.item]: Math.max(0, n) };
+      break;
+    }
+    case "dg_loot": {
+      const n = (d.loot[e.item] ?? 0) + e.d;
+      const loot = { ...d.loot };
+      if (n > 0)
+        loot[e.item] = n;
+      else
+        delete loot[e.item];
+      d.loot = loot;
+      break;
+    }
+    case "dg_battle":
+      d.battle = e.battle ? structuredClone(e.battle) : null;
+      break;
+    case "dg_pending":
+      d.pending = e.pending ? { ...e.pending } : null;
+      break;
+    case "dg_log":
+      d.log = [...d.log, e.text].slice(-DG_LOG_KEPT);
+      d.untold = [...d.untold ?? [], e.text].slice(-DG_LOG_KEPT);
+      break;
+    case "dg_told":
+      d.untold = [];
+      break;
   }
 }
 function cloneState(s) {
   return structuredClone(s);
 }
-var BUILTIN_NAMES = [
-  "minutes",
-  "hour",
-  "minute",
-  "day",
-  "weekday",
-  "turn",
-  "location",
-  "month",
-  "date",
-  "season",
-  "weather",
-  "temperature",
-  "indoors",
-  "outside",
-  "warmth",
-  "warmth_min",
-  "warmth_max",
-  "too_cold",
-  "too_hot",
-  "reveal",
-  "exposed",
-  "naked",
-  "in_encounter",
-  "round",
-  "target"
-];
 function makeEnv(r, s, extra = {}) {
   const day = Math.floor(s.minutes / 1440);
   const date = dateAt(r, s.minutes);
@@ -2065,6 +2512,8 @@ function makeEnv(r, s, extra = {}) {
       exposed,
       naked: r.wardrobe.enabled && exposed === r.wardrobe.cover.length && r.wardrobe.cover.length > 0,
       in_encounter: !!s.encounter,
+      in_dungeon: !!s.dungeon,
+      dungeon_depth: s.dungeon?.depth ?? 0,
       round: s.encounter?.round ?? 0,
       target: ""
     };
@@ -2169,6 +2618,8 @@ function makeEnv(r, s, extra = {}) {
           return (s.fronts[a0]?.stage ?? -1) + 1;
         case "happened":
           return a0 in s.gauge.last;
+        case "deepest":
+          return s.deepest[a0] ?? 0;
       }
       return;
     }
@@ -2211,6 +2662,40 @@ function itemName(r, s, id) {
 function personName(r, s, id) {
   return s.people[id]?.name ?? r.people[id]?.name ?? id;
 }
+var DG_LOG_KEPT = 12, NEWS_KEPT = 30, BUILTIN_NAMES;
+var init_state = __esm(() => {
+  init_expr();
+  init_world();
+  BUILTIN_NAMES = [
+    "minutes",
+    "hour",
+    "minute",
+    "day",
+    "weekday",
+    "turn",
+    "location",
+    "month",
+    "date",
+    "season",
+    "weather",
+    "temperature",
+    "indoors",
+    "outside",
+    "warmth",
+    "warmth_min",
+    "warmth_max",
+    "too_cold",
+    "too_hot",
+    "reveal",
+    "exposed",
+    "naked",
+    "in_encounter",
+    "round",
+    "target",
+    "in_dungeon",
+    "dungeon_depth"
+  ];
+});
 
 // src/engine/resolve.ts
 class Working {
@@ -2255,14 +2740,12 @@ class Working {
     };
   }
 }
-var TRAVEL_PREFIX = "go:";
 function travelTargets(r, s) {
   if (s.encounter)
     return [];
   const here = s.location ? r.locations[s.location] : undefined;
   return here ? here.exits.filter((x) => r.locations[x]) : [];
 }
-var TARGET_SEP = "@";
 function paramValues(a, chosen, target) {
   const out = {};
   for (const p of a.params) {
@@ -2311,7 +2794,6 @@ function availableChoices(r, s, lines = []) {
   }
   return out;
 }
-var LIVE_PREFIX = "live:";
 function findAction(r, s, actionId) {
   const [base, target] = actionId.split(TARGET_SEP);
   const a = base.startsWith(LIVE_PREFIX) ? r.liveChoices.tags[base.slice(LIVE_PREFIX.length)] : actionPool(r, s).defs[base];
@@ -2531,7 +3013,6 @@ function eligibleEvents(w) {
     return !e.when || evalBool(e.when, w.env(), false);
   });
 }
-var NEXT_EVENT = "world:next_event";
 function pickEvent(w, candidates) {
   const keys = candidates.map((e) => e.id);
   const model = w.odds[NEXT_EVENT];
@@ -2726,20 +3207,6 @@ function runTriggers(w, includeRepeat) {
   openSecrets(w);
   openFrontStages(w);
 }
-var TIER_FALLBACK = {
-  crit_success: ["crit_success", "success"],
-  success: ["success"],
-  partial: ["partial", "success"],
-  fail: ["fail"],
-  crit_fail: ["crit_fail", "fail"]
-};
-var TIER_LABEL = {
-  crit_success: "Critical success",
-  success: "Success",
-  partial: "Partial success",
-  fail: "Failure",
-  crit_fail: "Critical failure"
-};
 function resolveTurnFull(r, before, intent, opts) {
   const needs = [];
   const record = resolveInner(r, before, intent, opts, needs);
@@ -2945,6 +3412,29 @@ function applyProposal(r, before, p) {
   }
   return w.events;
 }
+function buildTurn(r, before, seed, fn) {
+  const w = new Working(r, cloneState(before), seededRng(`${seed}:fx`), seed);
+  fn({
+    r,
+    get s() {
+      return w.s;
+    },
+    seed,
+    push: (e) => w.push(e),
+    env: (extra = {}) => w.env(extra),
+    apply: (effect, src, extra = {}) => effectToEvents(w, effect, src, extra),
+    time: (minutes, src) => advanceTime(w, minutes, src),
+    announce: (text) => announce(w, text)
+  });
+  runTriggers(w, false);
+  if (r.clock.enabled && w.s.minutes > before.minutes) {
+    const n = w.events.length;
+    tickWorld(w, (w.s.minutes - before.minutes) / 1440, 0);
+    if (w.events.length > n)
+      runTriggers(w, false);
+  }
+  return w.events;
+}
 function manualSet(r, before, stat, value) {
   const w = new Working(r, cloneState(before));
   if (r.stats[stat])
@@ -3033,16 +3523,40 @@ function forgetPerson(r, before, who) {
     return "Unknown person.";
   return [{ t: "forget", who, src: "manual" }];
 }
+var TRAVEL_PREFIX = "go:", TARGET_SEP = "@", LIVE_PREFIX = "live:", NEXT_EVENT = "world:next_event", TIER_FALLBACK, TIER_LABEL;
+var init_resolve = __esm(() => {
+  init_expr();
+  init_dice();
+  init_ruleset();
+  init_state();
+  init_world();
+  TIER_FALLBACK = {
+    crit_success: ["crit_success", "success"],
+    success: ["success"],
+    partial: ["partial", "success"],
+    fail: ["fail"],
+    crit_fail: ["crit_fail", "fail"]
+  };
+  TIER_LABEL = {
+    crit_success: "Critical success",
+    success: "Success",
+    partial: "Partial success",
+    fail: "Failure",
+    crit_fail: "Critical failure"
+  };
+});
 
 // src/engine/templates/universal.ts
-var universal = {
-  id: "universal",
-  name: "Universal",
-  blurb: "Light mechanics for any card: time, place, health, energy, mood, money, relationships, and d20 checks the narrator can't fudge.",
-  parts: [
-    {
-      label: "core",
-      yaml: `# Warp ruleset — core settings.
+var universal;
+var init_universal = __esm(() => {
+  universal = {
+    id: "universal",
+    name: "Universal",
+    blurb: "Light mechanics for any card: time, place, health, energy, mood, money, relationships, and d20 checks the narrator can't fudge.",
+    parts: [
+      {
+        label: "core",
+        yaml: `# Warp ruleset — core settings.
 # This lorebook is never sent to the model; Warp reads it directly.
 name: Universal
 description: Light mechanics that fit any card.
@@ -3058,10 +3572,10 @@ hud:
 narration:
   notes: Keep narration consistent with the state block. Never invent dice results.
 `
-    },
-    {
-      label: "stats",
-      yaml: `stats:
+      },
+      {
+        label: "stats",
+        yaml: `stats:
   health:
     kind: meter
     narrator: 20          # the narrator may move this by at most 20 per reply
@@ -3108,10 +3622,10 @@ narration:
     start: 3
     desc: Persuasion, presence, deceit.
 `
-    },
-    {
-      label: "people",
-      yaml: `relationships:
+      },
+      {
+        label: "people",
+        yaml: `relationships:
   open: true              # new people the story introduces are tracked automatically
   stats:
     affection:
@@ -3132,10 +3646,10 @@ narration:
         50: Trusting
         80: Unshakeable
 `
-    },
-    {
-      label: "actions",
-      yaml: `actions:
+      },
+      {
+        label: "actions",
+        yaml: `actions:
   look_around:
     label: Look around
     group: Explore
@@ -3200,10 +3714,10 @@ narration:
     fail: { mood: -5, hint: "It doesn't land. They're unconvinced, or put off." }
     crit_fail: { mood: -10, hint: "It backfires embarrassingly and they react badly." }
 `
-    },
-    {
-      label: "rules",
-      yaml: `triggers:
+      },
+      {
+        label: "rules",
+        yaml: `triggers:
   exhausted:
     when: energy <= 0
     do:
@@ -3220,10 +3734,10 @@ conditions:
     tone: bad
     desc: Running on empty.
 `
-    },
-    {
-      label: "story",
-      yaml: `# Choices written for each moment. A writer phrases them from the story; each must
+      },
+      {
+        label: "story",
+        yaml: `# Choices written for each moment. A writer phrases them from the story; each must
 # carry one of these tags, and the tag decides the roll — the writer can't.
 # Add secrets:, fronts: and random_events: here for a card-specific living world.
 live_choices:
@@ -3255,19 +3769,22 @@ live_choices:
       desc: "The cautious option: waiting, watching, backing off"
       effects: { energy: +2 }
 `
-    }
-  ]
-};
+      }
+    ]
+  };
+});
 
 // src/engine/templates/hometown.ts
-var hometown = {
-  id: "hometown",
-  name: "Hometown (life-sim)",
-  blurb: "Survival life-sim: Pain, Arousal, Fatigue, Stress, Trauma, Control and Allure described in words, graded skills, a calendar with weather and temperature, clothing that matters, townsfolk on schedules, a mugging encounter, and meters that feed into each other.",
-  parts: [
-    {
-      label: "core",
-      yaml: `name: Hometown
+var hometown;
+var init_hometown = __esm(() => {
+  hometown = {
+    id: "hometown",
+    name: "Hometown (life-sim)",
+    blurb: "Survival life-sim: Pain, Arousal, Fatigue, Stress, Trauma, Control and Allure described in words, graded skills, a calendar with weather and temperature, clothing that matters, townsfolk on schedules, a mugging encounter, and meters that feed into each other.",
+    parts: [
+      {
+        label: "core",
+        yaml: `name: Hometown
 description: A survival life-sim in a small coastal university town.
 
 player:
@@ -3292,10 +3809,10 @@ narration:
     Describe {{user}}'s condition through the state lines, not numbers.
     High fatigue, stress or trauma should visibly colour their behaviour.
 `
-    },
-    {
-      label: "stats",
-      yaml: `stats:
+      },
+      {
+        label: "stats",
+        yaml: `stats:
   # Every meter runs 0–100, so hand edits and author formulas stay readable.
   pain:
     kind: meter
@@ -3387,10 +3904,10 @@ narration:
     good: low
     per_hour: -0.04
 `
-    },
-    {
-      label: "people",
-      yaml: `relationships:
+      },
+      {
+        label: "people",
+        yaml: `relationships:
   open: true
   stats:
     love:
@@ -3432,10 +3949,10 @@ narration:
       schedule:
         - { when: "hour >= 19 or hour < 4", at: docks }
 `
-    },
-    {
-      label: "world",
-      yaml: `weather:
+      },
+      {
+        label: "world",
+        yaml: `weather:
   temps: { spring: 12, summer: 21, autumn: 11, winter: 3 }
 
 locations:
@@ -3502,10 +4019,10 @@ conditions:
   soaked: { label: Soaked, tone: warn, desc: Caught in the rain without a coat. }
   exposed: { label: Exposed, tone: bad, desc: Not decently covered in public. }
 `
-    },
-    {
-      label: "actions",
-      yaml: `actions:
+      },
+      {
+        label: "actions",
+        yaml: `actions:
   sleep:
     label: Sleep
     group: Home
@@ -3709,10 +4226,10 @@ conditions:
     success: { skulduggery: +0.8 }
     fail: { crime: +3, stress: +3, skulduggery: +0.2, hint: "{{user}} is noticed." }
 `
-    },
-    {
-      label: "rules",
-      yaml: `# Meters that feed into each other.
+      },
+      {
+        label: "rules",
+        yaml: `# Meters that feed into each other.
 triggers:
   exhaustion:
     when: fatigue >= 85
@@ -3801,10 +4318,10 @@ triggers:
     when: exposed == 0 or indoors
     do: { remove_condition: [exposed] }
 `
-    },
-    {
-      label: "encounters",
-      yaml: `# Turn-based encounters. Your moves replace the normal choices until it ends;
+      },
+      {
+        label: "encounters",
+        yaml: `# Turn-based encounters. Your moves replace the normal choices until it ends;
 # the mugger's move each round is rolled (odds weighed by the decision model if you use one).
 encounters:
   mugging:
@@ -3846,11 +4363,25 @@ encounters:
       robbed: { stress: +8, control: -8, hint: "They take the money and vanish." }
       escaped: { stress: +3, hint: "{{user}} gets clear." }
       beaten: { trauma: +5, money: "-min(money, 30)", hint: "{{user}} is left hurt on the pavement, pockets emptied." }
+
+# Roguelike diving: floors of face-down tiles with one way down. Leave whenever you
+# like and keep what you found; get wiped out and you lose it.
+dungeons:
+  old_mines:
+    name: The Old Mines
+    desc: Flooded tunnels under the docks, abandoned when the seam ran dry. People say things live down there now.
+    at: [docks]
+    theme: cave
+    floors: 15
+    party: { max: 3 }
+    player: { atk: "12 + athletics / 10", agi: "10 + athletics / 12" }
+    on_leave: { fatigue: +15 }
+    on_defeat: { pain: +40, trauma: +8, control: -10 }
 `
-    },
-    {
-      label: "journal",
-      yaml: `# Codex entries unlock as you play. Add "lore: [Lorebook entry title]" to one and that
+      },
+      {
+        label: "journal",
+        yaml: `# Codex entries unlock as you play. Add "lore: [Lorebook entry title]" to one and that
 # lorebook entry stays off until the codex entry unlocks.
 codex:
   apartment: { title: Your Apartment, category: Places, text: "Above the chip shop. The landlord never fixes anything.", unlock: "turn >= 1" }
@@ -3865,10 +4396,10 @@ feats:
   stood_ground: { name: Stood your ground, desc: "Fight off a mugger.", unlock: "flag('fought_off_mugger')", reward: { control: +10 } }
   well_dressed: { name: Dressed for it, desc: "Own a raincoat and a winter coat.", unlock: "has('raincoat') and has('winter_coat')" }
 `
-    },
-    {
-      label: "story",
-      yaml: `# Secrets reach the narrator one stage at a time — a stage that isn't open is never
+      },
+      {
+        label: "story",
+        yaml: `# Secrets reach the narrator one stage at a time — a stage that isn't open is never
 # in its prompt, so it can't leak. Fronts are hidden clocks that fill with game time
 # and surface in the story. Random events come from a hidden gauge, with an omen first.
 # Live choices are written for each moment; their tag, not the writer, decides the roll.
@@ -3978,19 +4509,22 @@ live_choices:
       desc: "The cautious, sensible option: stepping back, waiting, leaving"
       effects: { stress: -1 }
 `
-    }
-  ]
-};
+      }
+    ]
+  };
+});
 
 // src/engine/templates/starfarer.ts
-var starfarer = {
-  id: "starfarer",
-  name: "Starfarer (sci-fi RPG)",
-  blurb: "Sci-fi RPG: Physique, Reflexes, Aim, Intelligence, Willpower and Libido capped at 5× level; Shields/HP/Lust/Energy pools; credits; XP, levels and perks; a ship and a frontier world; turn-based combat you can win by force or by seduction; a codex that fills in as you explore.",
-  parts: [
-    {
-      label: "core",
-      yaml: `name: Starfarer
+var starfarer;
+var init_starfarer = __esm(() => {
+  starfarer = {
+    id: "starfarer",
+    name: "Starfarer (sci-fi RPG)",
+    blurb: "Sci-fi RPG: Physique, Reflexes, Aim, Intelligence, Willpower and Libido capped at 5× level; Shields/HP/Lust/Energy pools; credits; XP, levels and perks; a ship and a frontier world; turn-based combat you can win by force or by seduction; a codex that fills in as you explore.",
+    parts: [
+      {
+        label: "core",
+        yaml: `name: Starfarer
 description: A frontier sci-fi RPG aboard your own ship.
 
 clock:
@@ -4006,10 +4540,10 @@ hud:
   currency: "₡"
   bars: [shields, hp, lust, energy, xp]
 `
-    },
-    {
-      label: "stats",
-      yaml: `stats:
+      },
+      {
+        label: "stats",
+        yaml: `stats:
   level:
     kind: attribute
     start: 1
@@ -4072,10 +4606,10 @@ hud:
   willpower:    { kind: attribute, start: 3, max: level * 5, desc: Resisting physical, mental and sexual pressure. }
   libido:       { kind: attribute, start: 15, max: 100, good: none, desc: Tease power and how quickly lust rises. }
 `
-    },
-    {
-      label: "people",
-      yaml: `relationships:
+      },
+      {
+        label: "people",
+        yaml: `relationships:
   open: true
   stats:
     affinity:
@@ -4099,10 +4633,10 @@ hud:
       schedule:
         - { when: "between(hour, 8, 20)", at: merchant }
 `
-    },
-    {
-      label: "world",
-      yaml: `locations:
+      },
+      {
+        label: "world",
+        yaml: `locations:
   bridge:
     name: Ship — Bridge
     desc: Your ship's cramped cockpit and nav console.
@@ -4159,10 +4693,10 @@ conditions:
   grappled: { label: Grappled, tone: bad, narrator: true }
   burning: { label: Burning, tone: bad, narrator: true }
 `
-    },
-    {
-      label: "actions",
-      yaml: `actions:
+      },
+      {
+        label: "actions",
+        yaml: `actions:
   rest_quarters:
     label: Rest in your bunk
     group: Ship
@@ -4248,10 +4782,10 @@ conditions:
     success: { xp: +5, hint: "It works." }
     fail: { hint: "It doesn't work." }
 `
-    },
-    {
-      label: "encounters",
-      yaml: `# Turn-based combat. Shields soak damage first; win by knocking the foe out
+      },
+      {
+        label: "encounters",
+        yaml: `# Turn-based combat. Shields soak damage first; win by knocking the foe out
 # or by driving their lust to the limit — and lose the same two ways.
 encounters:
   ambush:
@@ -4306,11 +4840,27 @@ encounters:
       fled: { hint: "{{user}} gets away." }
       downed: { set: { hp: 1 }, credits: -100, hint: "{{user}} is knocked out and wakes later, robbed." }
       overwhelmed: { set: { lust: 40 }, hint: "{{user}} is overwhelmed by lust and can't keep fighting — the scavenger has their way." }
+
+# Roguelike diving in the pre-colonial ruins. Leave whenever you like and keep the
+# salvage; get wiped out and you lose it.
+dungeons:
+  ruins:
+    name: The Deep Ruins
+    desc: Pre-colonial vaults under the jungle, still humming with power and full of things that don't like visitors.
+    at: [jungle_deep]
+    theme: ruins
+    floors: 20
+    party: { max: 3 }
+    player: { class: fighter, hp: "40 + physique * 6 + level * 8", atk: "6 + aim * 1.5", def: "6 + physique", mat: "6 + intelligence * 1.5", agi: "6 + reflexes * 1.2" }
+    currency: credits
+    loot: { shield_booster: 3, medkit: 2 }
+    on_leave: { energy: -20 }
+    on_defeat: { hp: -20, credits: "-min(credits, 150)" }
 `
-    },
-    {
-      label: "journal",
-      yaml: `# Perks cost points (one per level). Codex entries unlock as you explore.
+      },
+      {
+        label: "journal",
+        yaml: `# Perks cost points (one per level). Codex entries unlock as you explore.
 perks:
   points: perk_points
   sharpshooter: { name: Sharpshooter, desc: "+2 Aim.", cost: 1, effects: { aim: +2 } }
@@ -4329,10 +4879,10 @@ feats:
   first_blood: { name: First blood, desc: "Win a fight.", unlock: "xp >= 40 or level >= 2" }
   explorer: { name: Explorer, desc: "Reach the deep jungle.", unlock: "location == 'jungle_deep'", reward: { xp: +20 } }
 `
-    },
-    {
-      label: "rules",
-      yaml: `triggers:
+      },
+      {
+        label: "rules",
+        yaml: `triggers:
   # Fights can also start from the story itself, judged each turn by the decision model.
   fight_starts:
     when_scene: "A fight has broken out and {{user}} is in it"
@@ -4354,10 +4904,10 @@ feats:
     do:
       hint: "{{user}}'s shields are down — hits now land on flesh."
 `
-    },
-    {
-      label: "story",
-      yaml: `# Secrets reach the narrator one stage at a time; fronts are hidden clocks that fill
+      },
+      {
+        label: "story",
+        yaml: `# Secrets reach the narrator one stage at a time; fronts are hidden clocks that fill
 # with game time; random events come from a hidden gauge with an omen first; live
 # choices are written for each moment, and their tag decides the roll.
 secrets:
@@ -4439,12 +4989,12 @@ live_choices:
       desc: "The cautious option: holding back, waiting, walking away"
       effects: { energy: +5 }
 `
-    }
-  ]
-};
+      }
+    ]
+  };
+});
 
 // src/engine/templates/index.ts
-var TEMPLATES = [universal, hometown, starfarer];
 function getTemplate(id) {
   return TEMPLATES.find((t) => t.id === id);
 }
@@ -4487,6 +5037,13 @@ function withCharacter(yaml, name) {
 `)}  people:
 ${entry}`;
 }
+var TEMPLATES;
+var init_templates = __esm(() => {
+  init_universal();
+  init_hometown();
+  init_starfarer();
+  TEMPLATES = [universal, hometown, starfarer];
+});
 
 // src/backend/host.ts
 function host() {
@@ -4566,29 +5123,33 @@ async function shiftAfterSwipeDelete(chatId, messageId, deleted) {
     return { ...w, swipes: next };
   });
 }
+var init_ledger = __esm(() => {
+  init_state();
+});
 
 // src/shared/protocol.ts
-var DEFAULT_SETTINGS = {
-  enabled: true,
-  freeTextChecks: true,
-  narratorUpdates: true,
-  swipesReroll: true,
-  helperConnectionId: "",
-  showOdds: true,
-  showDiceChips: true,
-  hotkeys: true,
-  lines: [],
-  veils: [],
-  decider: "llm",
-  jevModel: "jev-latest",
-  autoConfidence: 0.75,
-  askConfidence: 0.4,
-  consistencyCheck: false
-};
+var DEFAULT_SETTINGS;
+var init_protocol = __esm(() => {
+  DEFAULT_SETTINGS = {
+    enabled: true,
+    freeTextChecks: true,
+    narratorUpdates: true,
+    swipesReroll: true,
+    helperConnectionId: "",
+    showOdds: true,
+    showDiceChips: true,
+    hotkeys: true,
+    lines: [],
+    veils: [],
+    decider: "llm",
+    jevModel: "jev-latest",
+    autoConfidence: 0.75,
+    askConfidence: 0.4,
+    consistencyCheck: false
+  };
+});
 
 // src/backend/settings.ts
-var cache2 = new Map;
-var key = (userId) => userId ?? "_";
 async function getSettings(userId) {
   const hit = cache2.get(key(userId));
   if (hit)
@@ -4610,15 +5171,16 @@ async function patchSettings(patch, userId) {
   await host().userStorage.setJson("settings.json", next, { indent: 2, userId });
   return next;
 }
+var cache2, key = (userId) => userId ?? "_";
+var init_settings = __esm(() => {
+  init_protocol();
+  cache2 = new Map;
+});
 
 // node_modules/js-yaml/dist/js-yaml.mjs
 function getDefaultExportFromCjs(x) {
   return x && x.__esModule && Object.prototype.hasOwnProperty.call(x, "default") ? x["default"] : x;
 }
-var jsYaml = {};
-var loader = {};
-var common = {};
-var hasRequiredCommon;
 function requireCommon() {
   if (hasRequiredCommon)
     return common;
@@ -4664,8 +5226,6 @@ function requireCommon() {
   common.extend = extend;
   return common;
 }
-var exception;
-var hasRequiredException;
 function requireException() {
   if (hasRequiredException)
     return exception;
@@ -4706,8 +5266,6 @@ function requireException() {
   exception = YAMLException2;
   return exception;
 }
-var snippet;
-var hasRequiredSnippet;
 function requireSnippet() {
   if (hasRequiredSnippet)
     return snippet;
@@ -4786,8 +5344,6 @@ function requireSnippet() {
   snippet = makeSnippet;
   return snippet;
 }
-var type;
-var hasRequiredType;
 function requireType() {
   if (hasRequiredType)
     return type;
@@ -4851,8 +5407,6 @@ function requireType() {
   type = Type2;
   return type;
 }
-var schema;
-var hasRequiredSchema;
 function requireSchema() {
   if (hasRequiredSchema)
     return schema;
@@ -4943,8 +5497,6 @@ function requireSchema() {
   schema = Schema2;
   return schema;
 }
-var str;
-var hasRequiredStr;
 function requireStr() {
   if (hasRequiredStr)
     return str;
@@ -4958,8 +5510,6 @@ function requireStr() {
   });
   return str;
 }
-var seq;
-var hasRequiredSeq;
 function requireSeq() {
   if (hasRequiredSeq)
     return seq;
@@ -4973,8 +5523,6 @@ function requireSeq() {
   });
   return seq;
 }
-var map;
-var hasRequiredMap;
 function requireMap() {
   if (hasRequiredMap)
     return map;
@@ -4988,8 +5536,6 @@ function requireMap() {
   });
   return map;
 }
-var failsafe;
-var hasRequiredFailsafe;
 function requireFailsafe() {
   if (hasRequiredFailsafe)
     return failsafe;
@@ -5004,8 +5550,6 @@ function requireFailsafe() {
   });
   return failsafe;
 }
-var _null;
-var hasRequired_null;
 function require_null() {
   if (hasRequired_null)
     return _null;
@@ -5049,8 +5593,6 @@ function require_null() {
   });
   return _null;
 }
-var bool;
-var hasRequiredBool;
 function requireBool() {
   if (hasRequiredBool)
     return bool;
@@ -5088,8 +5630,6 @@ function requireBool() {
   });
   return bool;
 }
-var int;
-var hasRequiredInt;
 function requireInt() {
   if (hasRequiredInt)
     return int;
@@ -5217,8 +5757,6 @@ function requireInt() {
   });
   return int;
 }
-var float;
-var hasRequiredFloat;
 function requireFloat() {
   if (hasRequiredFloat)
     return float;
@@ -5299,8 +5837,6 @@ function requireFloat() {
   });
   return float;
 }
-var json;
-var hasRequiredJson;
 function requireJson() {
   if (hasRequiredJson)
     return json;
@@ -5315,8 +5851,6 @@ function requireJson() {
   });
   return json;
 }
-var core;
-var hasRequiredCore;
 function requireCore() {
   if (hasRequiredCore)
     return core;
@@ -5324,8 +5858,6 @@ function requireCore() {
   core = requireJson();
   return core;
 }
-var timestamp;
-var hasRequiredTimestamp;
 function requireTimestamp() {
   if (hasRequiredTimestamp)
     return timestamp;
@@ -5390,8 +5922,6 @@ function requireTimestamp() {
   });
   return timestamp;
 }
-var merge;
-var hasRequiredMerge;
 function requireMerge() {
   if (hasRequiredMerge)
     return merge;
@@ -5406,8 +5936,6 @@ function requireMerge() {
   });
   return merge;
 }
-var binary;
-var hasRequiredBinary;
 function requireBinary() {
   if (hasRequiredBinary)
     return binary;
@@ -5503,8 +6031,6 @@ function requireBinary() {
   });
   return binary;
 }
-var omap;
-var hasRequiredOmap;
 function requireOmap() {
   if (hasRequiredOmap)
     return omap;
@@ -5549,8 +6075,6 @@ function requireOmap() {
   });
   return omap;
 }
-var pairs;
-var hasRequiredPairs;
 function requirePairs() {
   if (hasRequiredPairs)
     return pairs;
@@ -5592,8 +6116,6 @@ function requirePairs() {
   });
   return pairs;
 }
-var set;
-var hasRequiredSet;
 function requireSet() {
   if (hasRequiredSet)
     return set;
@@ -5622,8 +6144,6 @@ function requireSet() {
   });
   return set;
 }
-var _default;
-var hasRequired_default;
 function require_default() {
   if (hasRequired_default)
     return _default;
@@ -5642,7 +6162,6 @@ function require_default() {
   });
   return _default;
 }
-var hasRequiredLoader;
 function requireLoader() {
   if (hasRequiredLoader)
     return loader;
@@ -7030,8 +7549,6 @@ function requireLoader() {
   loader.load = load2;
   return loader;
 }
-var dumper = {};
-var hasRequiredDumper;
 function requireDumper() {
   if (hasRequiredDumper)
     return dumper;
@@ -7683,7 +8200,6 @@ function requireDumper() {
   dumper.dump = dump2;
   return dumper;
 }
-var hasRequiredJsYaml;
 function requireJsYaml() {
   if (hasRequiredJsYaml)
     return jsYaml;
@@ -7725,28 +8241,33 @@ function requireJsYaml() {
   jsYaml.safeDump = renamed("safeDump", "dump");
   return jsYaml;
 }
-var jsYamlExports = requireJsYaml();
-var yaml = /* @__PURE__ */ getDefaultExportFromCjs(jsYamlExports);
-var {
-  Type,
-  Schema,
-  FAILSAFE_SCHEMA,
-  JSON_SCHEMA,
-  CORE_SCHEMA,
-  DEFAULT_SCHEMA,
-  load,
-  loadAll,
-  dump,
-  YAMLException,
-  types,
-  safeLoad,
-  safeLoadAll,
-  safeDump
-} = yaml;
+var jsYaml, loader, common, hasRequiredCommon, exception, hasRequiredException, snippet, hasRequiredSnippet, type, hasRequiredType, schema, hasRequiredSchema, str, hasRequiredStr, seq, hasRequiredSeq, map, hasRequiredMap, failsafe, hasRequiredFailsafe, _null, hasRequired_null, bool, hasRequiredBool, int, hasRequiredInt, float, hasRequiredFloat, json, hasRequiredJson, core, hasRequiredCore, timestamp, hasRequiredTimestamp, merge, hasRequiredMerge, binary, hasRequiredBinary, omap, hasRequiredOmap, pairs, hasRequiredPairs, set, hasRequiredSet, _default, hasRequired_default, hasRequiredLoader, dumper, hasRequiredDumper, hasRequiredJsYaml, jsYamlExports, yaml, Type, Schema, FAILSAFE_SCHEMA, JSON_SCHEMA, CORE_SCHEMA, DEFAULT_SCHEMA, load, loadAll, dump, YAMLException, types, safeLoad, safeLoadAll, safeDump;
+var init_js_yaml = __esm(() => {
+  jsYaml = {};
+  loader = {};
+  common = {};
+  dumper = {};
+  jsYamlExports = requireJsYaml();
+  yaml = /* @__PURE__ */ getDefaultExportFromCjs(jsYamlExports);
+  ({
+    Type,
+    Schema,
+    FAILSAFE_SCHEMA,
+    JSON_SCHEMA,
+    CORE_SCHEMA,
+    DEFAULT_SCHEMA,
+    load,
+    loadAll,
+    dump,
+    YAMLException,
+    types,
+    safeLoad,
+    safeLoadAll,
+    safeDump
+  } = yaml);
+});
 
 // src/engine/loader.ts
-var ENTRY_RE = /^\s*(?:\[[^\]]*\]\s*)?warp[-_ ]?ruleset\b/i;
-var BOOK_RE = /^\s*warp[-_ ]?ruleset\b/i;
 function isRulesetEntryTitle(comment) {
   return !!comment && ENTRY_RE.test(comment);
 }
@@ -7757,7 +8278,6 @@ function stripFences(s) {
   const m = /^\s*```[a-z]*\s*\n([\s\S]*?)\n?```\s*$/i.exec(s);
   return m ? m[1] : s;
 }
-var isObj2 = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 function deepMerge(a, b) {
   if (Array.isArray(a) && Array.isArray(b))
     return [...a, ...b];
@@ -7797,38 +8317,15 @@ function loadRuleset(parts) {
   const { ruleset, issues: more } = normalizeRuleset(merged);
   return { ruleset, issues: [...issues, ...more] };
 }
+var ENTRY_RE, BOOK_RE, isObj2 = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+var init_loader = __esm(() => {
+  init_js_yaml();
+  init_ruleset();
+  ENTRY_RE = /^\s*(?:\[[^\]]*\]\s*)?warp[-_ ]?ruleset\b/i;
+  BOOK_RE = /^\s*warp[-_ ]?ruleset\b/i;
+});
 
 // src/engine/lint.ts
-var FUNCTIONS = [
-  "has",
-  "count",
-  "flag",
-  "cond",
-  "at",
-  "rel",
-  "met",
-  "between",
-  "roll",
-  "wearing",
-  "worn",
-  "trait",
-  "present",
-  "where",
-  "codex",
-  "feat",
-  "perk",
-  "secret",
-  "front",
-  "front_stage",
-  "happened",
-  "min",
-  "max",
-  "clamp",
-  "floor",
-  "ceil",
-  "round",
-  "abs"
-];
 function distance(a, b) {
   const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
   for (let j = 1;j <= b.length; j++)
@@ -7854,11 +8351,11 @@ function lintRuleset(r) {
   const issues = [];
   const s = initialState(r);
   const names = [...r.statOrder, ...Object.keys(r.flags), ...BUILTIN_NAMES];
-  const check = (src, where, extra = {}) => {
+  const check = (src, where, extra = {}, dungeon = false) => {
     if (src === undefined || typeof src === "number")
       return;
     const base = makeEnv(r, s, extra);
-    const env = { lookup: base.lookup, call: (n, a) => n === "roll" ? 1 : base.call?.(n, a) };
+    const env = { lookup: base.lookup, call: (n, a) => n === "roll" ? 1 : dungeon && (n === "bag" || n === "rel_bond") ? 0 : base.call?.(n, a) };
     const unknown = new Set;
     try {
       evaluate(src, env, { unknown });
@@ -8012,17 +8509,89 @@ function lintRuleset(r) {
     }
   }
   check(r.liveChoices.when, "Live choices › when");
+  for (const d of Object.values(r.dungeons)) {
+    const w = `Dungeons › ${d.id}`;
+    const dx = { depth: 1, target: Object.keys(r.people)[0] ?? "someone" };
+    check(d.when, `${w} › when`);
+    check(d.party.when, `${w} › party › when`, dx);
+    for (const [k, v] of Object.entries(d.player))
+      if (k !== "class" && k !== "sprite")
+        check(v, `${w} › player › ${k}`);
+    for (const loc of d.at)
+      if (Object.keys(r.locations).length && !r.locations[loc])
+        issues.push({ level: "warning", where: `${w} › at`, message: `"${loc}" isn't a declared location${suggest(loc, Object.keys(r.locations))}` });
+    for (const l of d.loot)
+      if (!r.items[l.item] && !r.itemsOpen)
+        issues.push({ level: "warning", where: `${w} › loot`, message: `"${l.item}" isn't a declared item` });
+    if (d.currency && !r.stats[d.currency])
+      issues.push({ level: "warning", where: `${w} › currency`, message: `"${d.currency}" isn't a stat` });
+    checkEffect(d.onLeave, `${w} › on_leave`);
+    checkEffect(d.onDefeat, `${w} › on_defeat`);
+    for (const [kind, list] of [["events", d.events], ["romance", d.romance]]) {
+      for (const ev of Object.values(list))
+        for (const c of ev.choices) {
+          const cw = `${w} › ${kind} › ${ev.id} › ${c.id}`;
+          check(c.chance, `${cw} › chance`, dx, true);
+          check(c.when, `${cw} › when`, dx, true);
+          for (const o of [c.success, c.fail]) {
+            if (!o)
+              continue;
+            check(o.gold, `${cw} › gold`, dx, true);
+            check(o.xp, `${cw} › xp`, dx, true);
+            checkEffect(o.effect, cw, dx);
+            if (o.fight && o.fight !== "enemy" && o.fight !== "elite" && !d.monsters[o.fight])
+              issues.push({ level: "warning", where: cw, message: `fights "${o.fight}", which isn't a monster here` });
+          }
+        }
+    }
+    for (const m of Object.values(d.monsters))
+      for (const sk of m.skills)
+        if (!SKILLS[sk])
+          issues.push({ level: "warning", where: `${w} › monsters › ${m.id}`, message: `"${sk}" isn't a skill` });
+  }
   for (const a of Object.values(r.liveChoices.tags))
     checkAction(a, `Live choices › tags › ${a.id}`);
   return issues;
 }
+var FUNCTIONS;
+var init_lint = __esm(() => {
+  init_expr();
+  init_state();
+  init_content();
+  FUNCTIONS = [
+    "has",
+    "count",
+    "flag",
+    "cond",
+    "at",
+    "rel",
+    "met",
+    "between",
+    "roll",
+    "wearing",
+    "worn",
+    "trait",
+    "present",
+    "where",
+    "codex",
+    "feat",
+    "perk",
+    "secret",
+    "front",
+    "front_stage",
+    "happened",
+    "deepest",
+    "min",
+    "max",
+    "clamp",
+    "floor",
+    "ceil",
+    "round",
+    "abs"
+  ];
+});
 
 // src/backend/source.ts
-var TTL_MS = 8000;
-var byCharacter = new Map;
-var chatCharacter = new Map;
-var knownRulesetEntryIds = new Set;
-var knownRulesetBookIds = new Set;
 async function listAllEntries(bookId, userId) {
   const out = [];
   for (let offset = 0;offset < 5000; offset += 200) {
@@ -8176,6 +8745,976 @@ async function installTemplate(chatId, templateId, userId, trackCharacter) {
   knownRulesetBookIds.add(book.id);
   return t.name;
 }
+var TTL_MS = 8000, byCharacter, chatCharacter, knownRulesetEntryIds, knownRulesetBookIds;
+var init_source = __esm(() => {
+  init_loader();
+  init_lint();
+  init_templates();
+  byCharacter = new Map;
+  chatCharacter = new Map;
+  knownRulesetEntryIds = new Set;
+  knownRulesetBookIds = new Set;
+});
+
+// src/engine/dungeon/battle.ts
+function say(b, line) {
+  b.log = [...b.log, line].slice(-LOG_KEPT);
+}
+function rngFor(b, seed, who) {
+  return seededRng(`${seed}:${b.at}:${b.round}:${b.queue.length}:${who}:${b.log.length}`);
+}
+function variance(rng) {
+  return 0.85 + rng() * 0.3;
+}
+function skillCost(s) {
+  return s.mp ? `${s.mp} MP` : s.tp ? `${s.tp} TP` : "";
+}
+function canUse(f, s) {
+  if (f.side === "foe")
+    return true;
+  return f.mp >= s.mp && f.tp >= s.tp;
+}
+function hit(b, a, t, s, rng, ignoreGuard = false) {
+  let dmg;
+  if (s.kind === "phys")
+    dmg = Math.max(1, a.atk * 3 - t.def * 1.5) * s.power;
+  else
+    dmg = Math.max(1, 15 + a.mat * 2.5 - t.mdf) * s.power;
+  dmg *= variance(rng);
+  const crit = s.kind === "phys" && rng() < 0.05 + (s.crit ?? 0);
+  if (crit)
+    dmg *= 1.8;
+  if (t.guard && !ignoreGuard)
+    dmg *= 0.5;
+  const n = Math.max(1, Math.round(dmg));
+  t.hp = Math.max(0, t.hp - n);
+  t.tp = Math.min(100, t.tp + Math.round(n / Math.max(1, t.mhp) * 40));
+  say(b, `${a.name} ${s.id === "attack" ? "hits" : `uses ${s.name} on`} ${t.name} for ${n}${crit ? " (critical!)" : ""}.${t.hp <= 0 ? ` ${t.name} ${t.side === "foe" ? "is defeated" : "goes down"}!` : ""}`);
+  if (s.drain && n > 0)
+    a.hp = Math.min(a.mhp, a.hp + Math.round(n * s.drain));
+  return n;
+}
+function heal(b, a, t, s, rng) {
+  const n = Math.round((20 + a.mat * 2.5) * s.power * variance(rng));
+  const before = t.hp;
+  t.hp = Math.min(t.mhp, t.hp + n);
+  say(b, `${a.name} uses ${s.name}${t.id === a.id ? "" : ` on ${t.name}`} (+${t.hp - before} HP).`);
+}
+function targetsFor(b, a, s, chosen, rng) {
+  const mine = b.fighters.filter((f) => f.side === a.side && alive(f));
+  const theirs = b.fighters.filter((f) => f.side !== a.side && alive(f));
+  const byId = (list) => list.find((f) => f.id === chosen);
+  switch (s.target) {
+    case "self":
+      return [a];
+    case "foes":
+      return theirs;
+    case "allies":
+      return mine;
+    case "ally": {
+      const t = byId(mine);
+      if (t)
+        return [t];
+      return mine.length ? [mine.reduce((x, y) => y.hp / y.mhp < x.hp / x.mhp ? y : x)] : [];
+    }
+    case "foe": {
+      const t = byId(theirs);
+      if (t)
+        return [t];
+      return theirs.length ? [theirs[Math.floor(rng() * theirs.length)]] : [];
+    }
+  }
+}
+function useSkill(b, a, s, target, rng) {
+  if (a.side === "party") {
+    a.mp -= s.mp;
+    a.tp -= s.tp;
+  }
+  if (s.kind === "guard") {
+    a.guard = true;
+    a.tp = Math.min(100, a.tp + 10);
+    say(b, `${a.name} guards.`);
+    return;
+  }
+  const ts = targetsFor(b, a, s, target, rng);
+  for (const t of ts) {
+    if (s.kind === "heal")
+      heal(b, a, t, s, rng);
+    else
+      hit(b, a, t, s, rng);
+  }
+  if (a.side === "party" && s.tp === 0)
+    a.tp = Math.min(100, a.tp + 6);
+}
+function outcome(b) {
+  if (!foesOf(b).some(alive))
+    return "won";
+  if (!partyOf(b).some(alive))
+    return "lost";
+  return null;
+}
+function newRound(b, seed) {
+  b.round += 1;
+  const rng = seededRng(`${seed}:${b.at}:order:${b.round}`);
+  b.queue = b.fighters.filter(alive).map((f) => ({ id: f.id, v: f.agi * (0.8 + rng() * 0.4) })).sort((x, y) => y.v - x.v).map((x) => x.id);
+}
+function foeTurn(b, f, seed) {
+  const rng = rngFor(b, seed, f.id);
+  const allies = foesOf(b).filter(alive);
+  const hurtAlly = allies.some((x) => x.hp < x.mhp * 0.5);
+  const options = f.skills.map((id) => SKILLS[id]).filter((s) => !!s && (s.kind !== "heal" || hurtAlly));
+  if (!options.length)
+    options.push(SKILLS.attack);
+  const weights = options.map((_, i) => i === 0 ? 3 : 1);
+  let x = rng() * weights.reduce((n, w) => n + w, 0);
+  let pick = options[0];
+  for (let i = 0;i < options.length; i++) {
+    x -= weights[i];
+    if (x <= 0) {
+      pick = options[i];
+      break;
+    }
+  }
+  useSkill(b, f, pick, undefined, rng);
+}
+function advance(b, seed) {
+  for (let guard = 0;guard < 200 && !b.over; guard++) {
+    if (!b.queue.length)
+      newRound(b, seed);
+    const id = b.queue[0];
+    const f = b.fighters.find((x) => x.id === id);
+    if (!f || !alive(f)) {
+      b.queue.shift();
+      continue;
+    }
+    f.guard = false;
+    if (f.side === "party") {
+      b.active = f.id;
+      return b;
+    }
+    b.queue.shift();
+    foeTurn(b, f, seed);
+    b.over = outcome(b);
+  }
+  b.active = null;
+  return b;
+}
+function startBattle(kind, at, party, foes, seed) {
+  const b = { kind, at, round: 0, fighters: [...party, ...foes].map((f) => ({ ...f, guard: false })), queue: [], active: null, log: [], over: null };
+  say(b, foes.length === 1 ? `${foes[0].name} attacks!` : `${foes.length} enemies attack!`);
+  return advance(b, seed);
+}
+function command(prev, cmd, seed, opts) {
+  const b = structuredClone(prev);
+  const a = b.fighters.find((f) => f.id === b.active);
+  if (!a || b.over)
+    return { b: prev, used: null, error: "Nobody is waiting to act." };
+  const rng = rngFor(b, seed, a.id);
+  let used = null;
+  if ("escape" in cmd) {
+    if (b.kind === "boss")
+      return { b: prev, used: null, error: "There's no escaping this fight." };
+    const avg = (xs) => xs.reduce((n, f) => n + f.agi, 0) / Math.max(1, xs.length);
+    const chance = Math.min(0.9, Math.max(0.15, 0.5 + (avg(partyOf(b).filter(alive)) - avg(foesOf(b).filter(alive))) * 0.03));
+    if (rng() < chance) {
+      say(b, "The party escapes!");
+      b.over = "fled";
+      b.active = null;
+      return { b, used };
+    }
+    say(b, "The party tries to flee, but can't get away!");
+  } else if ("item" in cmd) {
+    used = cmd.item;
+    if (cmd.item === "bomb") {
+      for (const t of foesOf(b).filter(alive)) {
+        const n = Math.round((25 + opts.depth * 8) * variance(rng));
+        t.hp = Math.max(0, t.hp - n);
+        say(b, `The bomb blasts ${t.name} for ${n}.${t.hp <= 0 ? ` ${t.name} is defeated!` : ""}`);
+      }
+    } else {
+      const mine = partyOf(b).filter(alive);
+      const t = mine.find((f) => f.id === cmd.target) ?? a;
+      if (cmd.item === "potion") {
+        const before = t.hp;
+        t.hp = Math.min(t.mhp, t.hp + Math.ceil(t.mhp / 2));
+        say(b, `${a.name} uses a potion${t.id === a.id ? "" : ` on ${t.name}`} (+${t.hp - before} HP).`);
+      } else {
+        const before = t.mp;
+        t.mp = Math.min(t.mmp, t.mp + Math.ceil(t.mmp / 2));
+        say(b, `${a.name} uses an ether${t.id === a.id ? "" : ` on ${t.name}`} (+${t.mp - before} MP).`);
+      }
+    }
+  } else {
+    const s = SKILLS[cmd.skill];
+    if (!s || s.id !== "attack" && s.id !== "guard" && !a.skills.includes(s.id))
+      return { b: prev, used: null, error: "Unknown skill." };
+    if (!canUse(a, s))
+      return { b: prev, used: null, error: `Not enough ${s.mp ? "MP" : "TP"}.` };
+    useSkill(b, a, s, cmd.target, rng);
+  }
+  b.queue.shift();
+  b.active = null;
+  b.over = outcome(b);
+  return { b: advance(b, seed), used };
+}
+function autoCommand(b, bag) {
+  const a = b.fighters.find((f) => f.id === b.active);
+  const mine = partyOf(b).filter(alive);
+  const theirs = foesOf(b).filter(alive);
+  const low = mine.filter((f) => f.hp < f.mhp * 0.35).sort((x, y) => x.hp / x.mhp - y.hp / y.mhp)[0];
+  const usable = a.skills.map((id) => SKILLS[id]).filter((s) => !!s && canUse(a, s));
+  if (low) {
+    const h = usable.find((s) => s.kind === "heal");
+    if (h)
+      return { skill: h.id, target: low.id };
+    if ((bag.potion ?? 0) > 0 && low.hp < low.mhp * 0.25)
+      return { item: "potion", target: low.id };
+  }
+  const weakest = theirs.sort((x, y) => x.hp - y.hp)[0];
+  const aoe = usable.find((s) => s.target === "foes" && s.kind !== "heal");
+  if (aoe && theirs.length >= 2)
+    return { skill: aoe.id };
+  const strong = usable.filter((s) => s.target === "foe" && s.kind !== "heal").sort((x, y) => y.power - x.power)[0];
+  if (strong && (strong.tp > 0 || strong.mp <= a.mp - 4 || a.mmp === 0))
+    return { skill: strong.id, target: weakest?.id };
+  return { skill: "attack", target: weakest?.id };
+}
+var LOG_KEPT = 14, alive = (f) => f.hp > 0, partyOf = (b) => b.fighters.filter((f) => f.side === "party"), foesOf = (b) => b.fighters.filter((f) => f.side === "foe");
+var init_battle = __esm(() => {
+  init_dice();
+  init_content();
+});
+
+// src/engine/dungeon/floor.ts
+function floorSize(d, depth) {
+  return Math.min(9, Math.max(3, d.size + Math.floor((depth - 1) / 3)));
+}
+function isBossFloor(d, depth) {
+  return d.bossEvery > 0 && depth % d.bossEvery === 0;
+}
+function pick(weights, rng) {
+  const total = weights.reduce((n, [, w]) => n + Math.max(0, w), 0);
+  let x = rng() * total;
+  for (const [k, w] of weights) {
+    x -= Math.max(0, w);
+    if (x <= 0)
+      return k;
+  }
+  return weights[weights.length - 1][0];
+}
+function generateFloor(d, seed, depth) {
+  const rng = seededRng(`${seed}:floor:${depth}`);
+  const n = floorSize(d, depth);
+  const start = [Math.floor(rng() * n), n - 1];
+  const far = [];
+  let best = [0, 0];
+  let bestD = -1;
+  for (let y = 0;y < n; y++)
+    for (let x = 0;x < n; x++) {
+      const dist = Math.abs(x - start[0]) + Math.abs(y - start[1]);
+      if (dist >= Math.ceil(n * 0.8))
+        far.push([x, y]);
+      if (dist > bestD) {
+        bestD = dist;
+        best = [x, y];
+      }
+    }
+  const stairs = far.length ? far[Math.floor(rng() * far.length)] : best;
+  const boss = isBossFloor(d, depth);
+  const tiles = Array.from({ length: n }, () => Array(n).fill("empty"));
+  const counts = {};
+  const weights = Object.entries(d.tiles);
+  for (let y = 0;y < n; y++)
+    for (let x = 0;x < n; x++) {
+      if (x === start[0] && y === start[1]) {
+        tiles[y][x] = "start";
+        continue;
+      }
+      if (x === stairs[0] && y === stairs[1]) {
+        tiles[y][x] = boss ? "boss" : "stairs";
+        continue;
+      }
+      const nearStart = Math.abs(x - start[0]) + Math.abs(y - start[1]) <= 1;
+      const allowed = weights.filter(([k]) => (CAPS[k] === undefined || (counts[k] ?? 0) < CAPS[k]) && !(nearStart && k === "elite"));
+      const kind = pick(allowed, rng);
+      counts[kind] = (counts[kind] ?? 0) + 1;
+      tiles[y][x] = kind;
+    }
+  return { size: n, depth, start, stairs, boss, tiles };
+}
+function tileAt(f, x, y) {
+  return x >= 0 && y >= 0 && x < f.size && y < f.size ? f.tiles[y][x] : null;
+}
+function adjacent(a, b) {
+  return Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) === 1;
+}
+var key2 = (x, y) => `${x},${y}`, CAPS;
+var init_floor = __esm(() => {
+  init_dice();
+  CAPS = { elite: 2, shop: 1, rest: 1, romance: 2 };
+});
+
+// src/engine/dungeon/run.ts
+function hash(s) {
+  let h = 2166136261;
+  for (let i = 0;i < s.length; i++)
+    h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+  return h >>> 0;
+}
+function dungeonOf(r, run) {
+  return r.dungeons[run.id] ?? null;
+}
+function dgEnv(t, run, extra = {}) {
+  const base = makeEnv(t.r, t.s, { depth: run?.depth ?? 1, ...extra });
+  return {
+    lookup: base.lookup,
+    call(name, args) {
+      if (name === "bag")
+        return run?.bag[String(args[0])] ?? 0;
+      if (name === "rel_bond")
+        return bondOf(t.r, t.s, String(args[0] ?? ""));
+      return base.call?.(name, args);
+    }
+  };
+}
+function bondOf(r, s, who) {
+  const stats = r.relStatOrder.map((id) => r.relStats[id]).filter((d) => d.good === "high");
+  if (!stats.length)
+    return 0;
+  return stats.reduce((n, d) => n + (s.rel[who]?.[d.id] ?? d.start), 0) / stats.length;
+}
+function classFor(d, who) {
+  if (who === PLAYER)
+    return d.player.class;
+  return d.party.classes[who] ?? CLASS_IDS.filter((c) => c !== "adventurer")[hash(who) % 4];
+}
+function memberFighter(r, s, d, run, m) {
+  const cls = classFor(d, m.id);
+  const base = CLASSES[cls];
+  const env = makeEnv(r, s);
+  const scale = levelScale(levelOf(run.xp));
+  const stat = (k) => {
+    const f = m.id === PLAYER ? d.player[k] : undefined;
+    const v = f !== undefined ? evalNumber(f, env, base[k]) : base[k];
+    return Math.max(k === "hp" ? 1 : 0, Math.round(v * scale));
+  };
+  const mhp = stat("hp"), mmp = stat("mp");
+  const name = m.id === PLAYER ? "{{user}}" : personName(r, s, m.id);
+  return {
+    id: m.id,
+    side: "party",
+    name,
+    sprite: m.id === PLAYER && d.player.sprite ? d.player.sprite : PARTY_SPRITES[cls][hash(m.id === PLAYER ? "player" : name) % PARTY_SPRITES[cls].length],
+    hp: Math.min(m.hp, mhp),
+    mhp,
+    mp: Math.min(m.mp, mmp),
+    mmp,
+    tp: m.tp,
+    atk: stat("atk"),
+    def: stat("def"),
+    mat: stat("mat"),
+    mdf: stat("mdf"),
+    agi: stat("agi"),
+    skills: base.skills,
+    guard: false
+  };
+}
+function fullVitals(r, s, d, run, id) {
+  const f = memberFighter(r, s, d, run, { id, hp: 1e9, mp: 1e9, tp: 0 });
+  return { id, hp: f.mhp, mp: f.mmp, tp: 0 };
+}
+function dungeonsHere(r, s) {
+  if (s.dungeon || s.encounter)
+    return [];
+  const env = makeEnv(r, s);
+  return Object.values(r.dungeons).filter((d) => (!d.at.length || d.at.includes(s.location ?? "")) && (!d.when || evalBool(d.when, env, true)));
+}
+function eligibleCompanions(r, s, d) {
+  const here = new Set(presentPeople(r, s, makeEnv(r, s)));
+  return Object.keys(s.people).filter((id) => !s.forgotten[id]).filter((id) => !d.party.when || evalBool(d.party.when, makeEnv(r, s, { target: id }), true)).map((id) => ({ id, name: personName(r, s, id), present: here.has(id), cls: classFor(d, id) }));
+}
+function log(t, text) {
+  t.push({ t: "dg_log", text, src: "action" });
+}
+function party(t, members) {
+  t.push({ t: "dg_party", party: members, src: "action" });
+}
+function changeVitals(t, d, run, opts) {
+  const next = run.party.map((m) => {
+    if (opts.only && !opts.only.includes(m.id))
+      return m;
+    const f = memberFighter(t.r, t.s, d, run, m);
+    let hp = m.hp;
+    if (opts.heal)
+      hp = Math.min(f.mhp, hp + Math.ceil(f.mhp * opts.heal / 100));
+    if (opts.hurt)
+      hp = Math.max(m.id === PLAYER ? 1 : 0, hp - Math.ceil(f.mhp * opts.hurt / 100));
+    const mp = opts.mana ? Math.min(f.mmp, m.mp + Math.ceil(f.mmp * opts.mana / 100)) : m.mp;
+    return { ...m, hp, mp };
+  });
+  party(t, next);
+}
+function tell(t, d, run, moment) {
+  const recent = (t.s.dungeon?.untold ?? []).slice(-6);
+  const where = `${d.name}, floor ${run.depth}`;
+  t.announce(`Dungeon (${where})${recent.length ? ` — since last time: ${recent.join(" ")}` : ""} Now: ${moment}`);
+  t.push({ t: "dg_told", src: "action" });
+}
+function weighted(items, weight, rng) {
+  const total = items.reduce((n, x) => n + Math.max(0, weight(x)), 0);
+  if (total <= 0)
+    return null;
+  let x = rng() * total;
+  for (const it of items) {
+    x -= Math.max(0, weight(it));
+    if (x <= 0)
+      return it;
+  }
+  return items[items.length - 1] ?? null;
+}
+function foeFrom(mon, id, depth, from, extra = {}) {
+  const k = depthScale(depth, from) * (extra.scale ?? 1);
+  const hpk = extra.elite ? 1.8 : 1;
+  const hp = Math.round(mon.hp * k * hpk);
+  return {
+    id,
+    side: "foe",
+    name: extra.elite ? `Elite ${mon.name}` : mon.name,
+    sprite: mon.sprite,
+    hp,
+    mhp: hp,
+    mp: 0,
+    mmp: 0,
+    tp: 0,
+    atk: Math.round(mon.atk * k * (extra.elite ? 1.15 : 1)),
+    def: Math.round(mon.def * k),
+    mat: Math.round(mon.mat * k),
+    mdf: Math.round(mon.mdf * k),
+    agi: Math.round(mon.agi * (1 + 0.03 * Math.max(0, depth - from))),
+    skills: mon.skills,
+    guard: false,
+    xp: Math.round(mon.xp * k * (extra.elite ? 2.2 : extra.boss ? 1 : 1)),
+    gold: Math.round(mon.gold * k * (extra.elite ? 2 : 1)),
+    ...extra.elite ? { elite: true } : {},
+    ...extra.boss ? { boss: true } : {}
+  };
+}
+function nameDupes(foes) {
+  const counts = new Map;
+  for (const f of foes)
+    counts.set(f.name, (counts.get(f.name) ?? 0) + 1);
+  const seen = new Map;
+  return foes.map((f) => {
+    if ((counts.get(f.name) ?? 0) < 2)
+      return f;
+    const n = (seen.get(f.name) ?? 0) + 1;
+    seen.set(f.name, n);
+    return { ...f, name: `${f.name} ${String.fromCharCode(64 + n)}` };
+  });
+}
+function rollFoes(d, run, at, kind, pick) {
+  const rng = seededRng(`${run.seed}:foes:${run.depth}:${at}:${kind}`);
+  const depth = run.depth;
+  const monsters = Object.values(d.monsters).filter((m) => m.tier <= 4 && m.id !== "mimic");
+  const inTier = (tier) => {
+    for (let t = tier;t >= 1; t--) {
+      const list = monsters.filter((m) => m.tier === t);
+      if (list.length)
+        return list;
+    }
+    return monsters.length ? monsters : [];
+  };
+  const bandStart = (tier) => 1 + (tier - 1) * 3;
+  const one = (tier) => {
+    const list = inTier(tier);
+    return list[Math.floor(rng() * list.length)];
+  };
+  if (pick && d.monsters[pick])
+    return [foeFrom(d.monsters[pick], `${pick}#1`, depth, bandStart(d.monsters[pick].tier))];
+  if (kind === "mimic")
+    return [foeFrom(d.monsters.mimic ?? monsters[0], "mimic#1", depth, 1)];
+  if (kind === "boss") {
+    const n = Math.max(1, Math.floor(depth / Math.max(1, d.bossEvery)));
+    const id = d.bosses[Math.min(n, d.bosses.length) - 1];
+    const extra = n > d.bosses.length ? 1 + 0.35 * (n - d.bosses.length) : 1;
+    const boss = foeFrom(d.monsters[id], `${id}#1`, depth, depth, { boss: true, scale: extra });
+    return [boss];
+  }
+  const tier = tierFor2(depth);
+  if (kind === "elite") {
+    const t = Math.min(4, tier + 1);
+    const mon = one(t);
+    const out = [foeFrom(mon, `${mon.id}#e`, depth, bandStart(t) + 1, { elite: true })];
+    if (rng() < 0.5) {
+      const m2 = one(tier);
+      out.push(foeFrom(m2, `${m2.id}#1`, depth, bandStart(tier)));
+    }
+    return nameDupes(out);
+  }
+  const count = 1 + (rng() < 0.55 ? 1 : 0) + (depth >= 3 && rng() < 0.35 ? 1 : 0);
+  const out = [];
+  for (let i = 0;i < count; i++) {
+    const mon = rng() < 0.2 && tier > 1 ? one(tier - 1) : one(tier);
+    if (mon)
+      out.push(foeFrom(mon, `${mon.id}#${i + 1}`, depth, bandStart(mon.tier)));
+  }
+  return nameDupes(out);
+}
+function beginBattle(t, d, run, at, kind, pick) {
+  const foes = rollFoes(d, run, at, kind, pick);
+  const members = run.party.map((m) => memberFighter(t.r, t.s, d, run, m));
+  const b = startBattle(kind, at, members, foes, `${run.seed}:${run.depth}:${at}`);
+  t.push({ t: "dg_battle", battle: b, src: "action" });
+  log(t, kind === "boss" ? `${foes[0].name} blocks the way down!` : `Ambushed by ${foes.map((f) => f.name).join(", ")}.`);
+}
+function enterDungeon(r, s, id, companions, seed) {
+  const d = r.dungeons[id];
+  if (!d)
+    return fail("There's no such dungeon.");
+  if (s.dungeon)
+    return fail("You're already in a dungeon.");
+  if (!dungeonsHere(r, s).some((x) => x.id === id))
+    return fail(`${d.name} can't be entered from here.`);
+  const allowed = new Set(eligibleCompanions(r, s, d).map((c) => c.id));
+  const chosen = [...new Set(companions)].filter((c) => allowed.has(c)).slice(0, d.party.max);
+  const events = buildTurn(r, s, seed, (t) => {
+    const floor = generateFloor(d, seed, 1);
+    const run = {
+      id,
+      seed,
+      depth: 1,
+      pos: floor.start,
+      seen: [key2(...floor.start)],
+      cleared: [key2(...floor.start)],
+      party: [],
+      xp: 0,
+      gold: 0,
+      bag: { potion: 2, ether: 0, bomb: 0 },
+      loot: {},
+      battle: null,
+      pending: null,
+      log: [],
+      untold: []
+    };
+    run.party = [PLAYER, ...chosen].map((m) => fullVitals(t.r, t.s, d, run, m));
+    t.push({ t: "dg_enter", run, src: "action" });
+    t.time(10, "action");
+    const withWho = chosen.length ? ` with ${chosen.map((c) => personName(r, s, c)).join(" and ")}` : " alone";
+    tell(t, d, run, `{{user}} goes down into ${d.name}${withWho}.${d.desc ? ` ${d.desc}` : ""}`);
+  });
+  return { events, narrate: { say: `*I head down into ${d.name}.*` } };
+}
+function moveTo(r, s, x, y) {
+  const run = s.dungeon;
+  const d = run && dungeonOf(r, run);
+  if (!run || !d)
+    return fail("You're not in a dungeon.");
+  if (run.battle)
+    return fail("Finish the fight first.");
+  if (run.pending)
+    return fail("Decide what to do here first.");
+  const floor = generateFloor(d, run.seed, run.depth);
+  const kind = tileAt(floor, x, y);
+  if (!kind)
+    return fail("That's outside the floor.");
+  if (!adjacent(run.pos, [x, y]))
+    return fail("You can only move to a neighbouring tile.");
+  const k = key2(x, y);
+  let narrate;
+  const events = buildTurn(r, s, `${run.seed}:${run.depth}:${k}`, (t) => {
+    t.push({ t: "dg_step", x, y, src: "action" });
+    t.time(5, "action");
+    if (run.cleared.includes(k) || kind === "stairs" || kind === "shop" && run.seen.includes(k))
+      return;
+    narrate = resolveTile(t, d, t.s.dungeon, floor, k, kind);
+  });
+  return { events, ...narrate ? { narrate } : {} };
+}
+function resolveTile(t, d, run, floor, k, kind) {
+  const rng = seededRng(`${run.seed}:tile:${run.depth}:${k}`);
+  const clear = () => t.push({ t: "dg_clear", key: k, src: "action" });
+  switch (kind) {
+    case "start":
+    case "empty":
+      clear();
+      return;
+    case "enemy":
+    case "elite":
+    case "boss":
+      beginBattle(t, d, run, k, kind);
+      return;
+    case "treasure":
+      treasure(t, d, run, rng, 1);
+      clear();
+      return;
+    case "trap": {
+      const agi = Math.max(...run.party.filter((m) => m.hp > 0).map((m) => memberFighter(t.r, t.s, d, run, m).agi));
+      const chance = Math.min(0.9, Math.max(0.1, 0.35 + agi * 0.02));
+      if (rng() < chance)
+        log(t, "A trap clicks underfoot — the party spots it in time.");
+      else {
+        const pct = 8 + Math.floor(rng() * 8);
+        changeVitals(t, d, run, { hurt: pct });
+        log(t, `A trap springs! Darts pepper the party (−${pct}% HP).`);
+      }
+      clear();
+      return;
+    }
+    case "rest":
+      changeVitals(t, d, run, { heal: 35, mana: 35 });
+      t.time(30, "action");
+      log(t, "A quiet spring. The party rests and recovers.");
+      clear();
+      return;
+    case "shop":
+      log(t, "A travelling merchant has set up shop here.");
+      return;
+    case "event": {
+      const ev = pickEvent2(t, d, run, Object.values(d.events), rng);
+      clear();
+      if (!ev)
+        return;
+      t.push({ t: "dg_pending", pending: { kind: "event", id: ev.id, at: k }, src: "action" });
+      log(t, fillText(ev.text, t, null));
+      return;
+    }
+    case "romance": {
+      const mates = run.party.filter((m) => m.id !== PLAYER && m.hp > 0 && isAdult(t.r, m.id));
+      clear();
+      if (!mates.length) {
+        changeVitals(t, d, run, { heal: 10 });
+        log(t, "A peaceful grotto. {{user}} takes a moment to breathe.");
+        return;
+      }
+      const who = mates[Math.floor(rng() * mates.length)].id;
+      const ev = pickEvent2(t, d, run, Object.values(d.romance), rng);
+      if (!ev)
+        return;
+      t.push({ t: "dg_pending", pending: { kind: "romance", id: ev.id, at: k, target: who }, src: "action" });
+      log(t, fillText(ev.text, t, who));
+      return;
+    }
+    case "surprise": {
+      const roll = weighted(["treasure", "mimic", "event", "trap", "rest"], (x) => ({ treasure: 30, mimic: 20, event: 25, trap: 10, rest: 15 })[x], rng);
+      log(t, "Something unexpected…");
+      if (roll === "treasure") {
+        treasure(t, d, run, rng, 2);
+        clear();
+        return;
+      }
+      if (roll === "mimic") {
+        log(t, "The chest has teeth! A mimic!");
+        beginBattle(t, d, run, k, "mimic");
+        return;
+      }
+      return resolveTile(t, d, run, floor, k, roll);
+    }
+  }
+  return;
+}
+function pickEvent2(t, d, run, list, rng) {
+  return weighted(list.filter((e) => e.minDepth <= run.depth), (e) => e.weight, rng);
+}
+function treasure(t, d, run, rng, mult) {
+  const gold = Math.round((8 + rng() * 10) * (1 + 0.3 * (run.depth - 1)) * mult);
+  const found = [`${gold} gold`];
+  t.push({ t: "dg_gold", d: gold, src: "action" });
+  const roll = rng();
+  if (roll < 0.3) {
+    t.push({ t: "dg_bag", item: "potion", d: 1, src: "action" });
+    found.push("a potion");
+  } else if (roll < 0.45) {
+    t.push({ t: "dg_bag", item: "ether", d: 1, src: "action" });
+    found.push("an ether");
+  } else if (roll < 0.55) {
+    t.push({ t: "dg_bag", item: "bomb", d: 1, src: "action" });
+    found.push("a bomb");
+  }
+  const loot = d.loot.filter((l) => l.minDepth <= run.depth);
+  if (loot.length && rng() < 0.2 * mult) {
+    const l = weighted(loot, (x) => x.weight, rng);
+    if (l) {
+      t.push({ t: "dg_loot", item: l.item, d: 1, src: "action" });
+      found.push(itemName(t.r, t.s, l.item));
+    }
+  }
+  log(t, `A chest! Inside: ${found.join(", ")}.`);
+}
+function fillText(text, t, who) {
+  return who ? text.replace(/\{target\}/g, personName(t.r, t.s, who)) : text;
+}
+function choicesFor(r, s) {
+  const run = s.dungeon;
+  const d = run && dungeonOf(r, run);
+  if (!run?.pending || !d)
+    return null;
+  const ev = (run.pending.kind === "romance" ? d.romance : d.events)[run.pending.id];
+  if (!ev)
+    return null;
+  const env = dgEnv({ r, s }, run, { target: run.pending.target ?? "" });
+  const choices = ev.choices.filter((c) => !c.when || evalBool(c.when, env, true)).map((c) => ({ ...c, ok: !c.cost || run.gold >= c.cost }));
+  return { ev, choices, ...run.pending.target ? { target: run.pending.target } : {} };
+}
+function chooseEvent(r, s, choiceId) {
+  const run = s.dungeon;
+  const d = run && dungeonOf(r, run);
+  const open = choicesFor(r, s);
+  if (!run || !d || !open)
+    return fail("There's nothing to decide here.");
+  const c = open.choices.find((x) => x.id === choiceId);
+  if (!c)
+    return fail("That option isn't available.");
+  if (!c.ok)
+    return fail(`You need ${c.cost} gold for that.`);
+  const who = open.target ?? null;
+  let label = fillText(c.label, { r, s }, who);
+  const events = buildTurn(r, s, `${run.seed}:${run.depth}:choice:${run.pending.at}`, (t) => {
+    const rng = seededRng(`${run.seed}:choice:${run.depth}:${run.pending.at}:${c.id}`);
+    const env = dgEnv(t, run, { target: who ?? "" });
+    const chance = c.chance === undefined ? 100 : evalNumber(c.chance, env, 50);
+    const ok = rng() * 100 < chance;
+    const o = ok || !c.fail ? c.success : c.fail;
+    t.push({ t: "dg_pending", pending: null, src: "action" });
+    applyOutcome(t, d, run, o, who, run.pending.at);
+    const text = fillText(`${fillText(open.ev.text, t, who)} {{user}} chose: ${label}.${o.text ? ` ${o.text}` : ""}`, t, who);
+    log(t, fillText(`${label}${c.chance !== undefined ? ok ? " — it works." : " — it goes wrong." : "."}${o.text ? ` ${o.text}` : ""}`, t, who));
+    tell(t, d, t.s.dungeon ?? run, text);
+  });
+  label = label.replace(/\{\{user\}\}/g, "I");
+  return { events, narrate: { say: `*${label}*` } };
+}
+function applyOutcome(t, d, run, o, who, at) {
+  const live = () => t.s.dungeon ?? run;
+  if (o.heal || o.hurt || o.mana)
+    changeVitals(t, d, live(), { heal: o.heal, hurt: o.hurt, mana: o.mana });
+  const env = dgEnv(t, live(), { target: who ?? "" });
+  if (o.gold !== undefined) {
+    const g = Math.round(evalNumber(o.gold, env, 0));
+    if (g)
+      t.push({ t: "dg_gold", d: g, src: "action" });
+  }
+  if (o.xp !== undefined) {
+    const x = Math.round(evalNumber(o.xp, env, 0));
+    if (x)
+      t.push({ t: "dg_xp", d: x, src: "action" });
+  }
+  for (const [item, n] of Object.entries(o.bag ?? {}))
+    if (n)
+      t.push({ t: "dg_bag", item, d: n, src: "action" });
+  if (who && (o.bond || o.desire)) {
+    for (const rs of t.r.relStatOrder) {
+      const def = t.r.relStats[rs];
+      const span = (def.max - def.min) / 100;
+      if (o.bond && def.good === "high")
+        t.push({ t: "rel", who, stat: rs, d: Math.round(o.bond * span * 10) / 10, src: "action" });
+      if (o.desire && /lust|attract|desire|arous|passion/i.test(`${rs} ${def.label}`))
+        t.push({ t: "rel", who, stat: rs, d: Math.round(o.desire * span * 10) / 10, src: "action" });
+    }
+  }
+  t.apply(o.effect, "action", who ? { target: who } : {});
+  if (o.fight) {
+    const kind = o.fight === "elite" ? "elite" : "event";
+    beginBattle(t, d, live(), `${at}:fight`, kind, o.fight !== "enemy" && o.fight !== "elite" ? o.fight : undefined);
+  }
+}
+function battleCommand(r, s, cmd) {
+  const run = s.dungeon;
+  const d = run && dungeonOf(r, run);
+  if (!run || !d || !run.battle)
+    return fail("There's no fight going on.");
+  let b = run.battle;
+  const bag = { ...run.bag };
+  const seed = `${run.seed}:${run.depth}:${b.at}`;
+  const startRound = b.round;
+  const used = [];
+  for (let n = 0;n < 60 && !b.over && b.active; n++) {
+    const c = "auto" in cmd ? autoCommand(b, bag) : cmd;
+    if ("item" in c) {
+      if ((bag[c.item] ?? 0) < 1)
+        return fail(`You have no ${SHOP[c.item]?.name.toLowerCase() ?? c.item}s left.`);
+    }
+    const res = command(b, c, seed, { depth: run.depth });
+    if (res.error)
+      return fail(res.error);
+    b = res.b;
+    if (res.used) {
+      bag[res.used] = (bag[res.used] ?? 0) - 1;
+      used.push(res.used);
+    }
+    if (!("auto" in cmd) || cmd.auto === "turn")
+      break;
+    if (cmd.auto === "round" && b.round > startRound)
+      break;
+  }
+  let narrate;
+  const events = buildTurn(r, s, `${seed}:cmd:${b.round}:${b.log.length}`, (t) => {
+    for (const item of used)
+      t.push({ t: "dg_bag", item, d: -1, src: "action" });
+    t.push({ t: "dg_battle", battle: b, src: "action" });
+    if (b.over)
+      narrate = finishBattle(t, d, t.s.dungeon, b);
+  });
+  return { events, ...narrate ? { narrate } : {} };
+}
+function finishBattle(t, d, run, b) {
+  const foes = b.fighters.filter((f) => f.side === "foe");
+  const names = foes.map((f) => f.name).join(", ");
+  const partyAfter = run.party.map((m) => {
+    const f = b.fighters.find((x) => x.id === m.id);
+    return f ? { id: m.id, hp: f.hp, mp: f.mp, tp: f.tp } : m;
+  });
+  t.push({ t: "dg_battle", battle: null, src: "action" });
+  t.time(5, "action");
+  const highlight = d.narrate === "all" || b.kind === "elite" || b.kind === "boss" || b.kind === "mimic";
+  const beats = b.log.slice(-6).join(" ");
+  if (b.over === "lost")
+    return defeat(t, d, run, names);
+  if (b.over === "fled") {
+    party(t, partyAfter);
+    log(t, `The party fled from ${names}.`);
+    if (highlight) {
+      tell(t, d, t.s.dungeon, `The party fled from ${names}. ${beats}`);
+      return { say: "*We run for it!*" };
+    }
+    return;
+  }
+  party(t, partyAfter.map((m) => m.hp <= 0 ? { ...m, hp: 1 } : m));
+  const xp = foes.reduce((n, f) => n + (f.xp ?? 0), 0);
+  const gold = foes.reduce((n, f) => n + (f.gold ?? 0), 0);
+  const before = levelOf(run.xp);
+  if (xp)
+    t.push({ t: "dg_xp", d: xp, src: "action" });
+  if (gold)
+    t.push({ t: "dg_gold", d: gold, src: "action" });
+  if (!b.at.endsWith(":fight"))
+    t.push({ t: "dg_clear", key: b.at, src: "action" });
+  const after = levelOf(run.xp + xp);
+  log(t, `Defeated ${names}. +${xp} XP, +${gold} gold.${after > before ? ` The party reaches level ${after}!` : ""}`);
+  if (b.kind === "boss")
+    log(t, "The way down is open.");
+  if (highlight) {
+    tell(t, d, t.s.dungeon, `The party defeated ${names}${b.kind === "boss" ? " — the guardian of this floor" : ""}. How it went: ${beats}`);
+    return { say: b.kind === "boss" ? "*It's over. The way down is clear.*" : "*We catch our breath after the fight.*" };
+  }
+  return;
+}
+function defeat(t, d, run, by) {
+  const lostGold = run.gold;
+  const lostLoot = Object.keys(run.loot).length;
+  tell(t, d, run, `The party is overwhelmed by ${by} on floor ${run.depth}. Everything found on this run is lost${lostGold ? ` (${lostGold} gold${lostLoot ? " and the treasures" : ""})` : ""}. {{user}} comes to later, back outside the dungeon, battered.`);
+  t.push({ t: "dg_exit", src: "action" });
+  t.apply(d.onDefeat, "action");
+  t.time(120, "action");
+  return { say: "*Everything goes dark…*" };
+}
+function descend(r, s) {
+  const run = s.dungeon;
+  const d = run && dungeonOf(r, run);
+  if (!run || !d)
+    return fail("You're not in a dungeon.");
+  if (run.battle || run.pending)
+    return fail("Deal with what's here first.");
+  const floor = generateFloor(d, run.seed, run.depth);
+  const here = key2(...run.pos);
+  if (here !== key2(...floor.stairs))
+    return fail("The way down isn't here.");
+  if (floor.boss && !run.cleared.includes(here))
+    return fail("The guardian still blocks the way.");
+  if (d.floors && run.depth >= d.floors)
+    return fail("This is as deep as it goes.");
+  const next = generateFloor(d, run.seed, run.depth + 1);
+  let narrate;
+  const events = buildTurn(r, s, `${run.seed}:down:${run.depth}`, (t) => {
+    t.push({ t: "dg_down", pos: next.start, src: "action" });
+    t.push({ t: "dg_clear", key: key2(...next.start), src: "action" });
+    changeVitals(t, d, t.s.dungeon, { heal: 20, mana: 20 });
+    t.time(10, "action");
+    log(t, `The party descends to floor ${run.depth + 1}.${next.boss ? " Something powerful waits on this floor." : ""}`);
+    if (d.narrate === "all" || next.boss) {
+      tell(t, d, t.s.dungeon, `The party descends to floor ${run.depth + 1}.${next.boss ? " A powerful presence waits somewhere on this floor." : ""}`);
+      narrate = { say: "*We head down the stairs.*" };
+    }
+  });
+  return { events, ...narrate ? { narrate } : {} };
+}
+function leaveDungeon(r, s) {
+  const run = s.dungeon;
+  const d = run && dungeonOf(r, run);
+  if (!run || !d)
+    return fail("You're not in a dungeon.");
+  const events = buildTurn(r, s, `${run.seed}:leave:${run.depth}`, (t) => {
+    const money = d.currency ?? r.hud.money;
+    const found = [];
+    if (run.gold && money && r.stats[money]) {
+      t.push({ t: "stat", id: money, d: run.gold, src: "action" });
+      found.push(`${formatNumber(run.gold)} gold`);
+    }
+    for (const [item, n] of Object.entries(run.loot)) {
+      t.push({ t: "item", id: item, d: n, src: "action" });
+      found.push(itemName(r, s, item));
+    }
+    tell(t, d, run, `{{user}}'s party climbs back out of ${d.name} from floor ${run.depth}${found.length ? `, carrying ${found.join(", ")}` : ", empty-handed"}.`);
+    t.push({ t: "dg_exit", src: "action" });
+    t.apply(d.onLeave, "action");
+    t.time(Math.min(120, 10 * run.depth), "action");
+  });
+  return { events, narrate: { say: "*We make our way back out of the dungeon.*" } };
+}
+function useItem(r, s, item, target) {
+  const run = s.dungeon;
+  const d = run && dungeonOf(r, run);
+  if (!run || !d)
+    return fail("You're not in a dungeon.");
+  if (run.battle)
+    return battleCommand(r, s, { item, target });
+  if (item !== "potion" && item !== "ether")
+    return fail("That can only be used in a fight.");
+  if ((run.bag[item] ?? 0) < 1)
+    return fail(`You have no ${item}s left.`);
+  const m = run.party.find((p) => p.id === target);
+  if (!m)
+    return fail("They're not in the party.");
+  const events = buildTurn(r, s, `${run.seed}:use:${run.depth}:${run.log.length}`, (t) => {
+    t.push({ t: "dg_bag", item, d: -1, src: "action" });
+    const f = memberFighter(r, s, d, run, m);
+    const next = run.party.map((p) => p.id !== target ? p : item === "potion" ? { ...p, hp: Math.min(f.mhp, Math.max(p.hp, 0) + Math.ceil(f.mhp / 2)) } : { ...p, mp: Math.min(f.mmp, p.mp + Math.ceil(f.mmp / 2)) });
+    party(t, next);
+    log(t, `${f.name} drinks ${item === "potion" ? "a potion" : "an ether"}.`);
+  });
+  return { events };
+}
+function shopBuy(r, s, item) {
+  const run = s.dungeon;
+  const d = run && dungeonOf(r, run);
+  if (!run || !d)
+    return fail("You're not in a dungeon.");
+  const floor = generateFloor(d, run.seed, run.depth);
+  if (tileAt(floor, ...run.pos) !== "shop")
+    return fail("There's no merchant here.");
+  const ware = SHOP[item];
+  if (!ware)
+    return fail("The merchant doesn't sell that.");
+  const price = ware.price(run.depth);
+  if (run.gold < price)
+    return fail(`That costs ${price} gold.`);
+  const events = buildTurn(r, s, `${run.seed}:buy:${run.depth}:${run.log.length}`, (t) => {
+    t.push({ t: "dg_gold", d: -price, src: "action" });
+    t.push({ t: "dg_bag", item, d: 1, src: "action" });
+    log(t, `Bought a ${ware.name.toLowerCase()} for ${price} gold.`);
+  });
+  return { events };
+}
+var PLAYER = "you", DUNGEON_ACTION = "dungeon", fail = (error) => ({ events: [], error }), levelOf = (xp) => 1 + Math.floor(Math.sqrt(Math.max(0, xp) / 12)), levelScale = (level) => 1 + 0.12 * (level - 1), depthScale = (depth, from) => 1 + 0.12 * Math.max(0, depth - from), tierFor2 = (depth) => Math.min(4, 1 + Math.floor((depth - 1) / 3)), isAdult = (r, id) => (r.people[id]?.age ?? 18) >= 18;
+var init_run = __esm(() => {
+  init_dice();
+  init_expr();
+  init_resolve();
+  init_state();
+  init_world();
+  init_battle();
+  init_content();
+  init_floor();
+});
 
 // src/engine/view.ts
 function pct(v, min, max) {
@@ -8410,6 +9949,15 @@ function buildChoices(r, s, opts) {
   const veils = new Set(opts.veils.map((v) => v.toLowerCase()));
   const lines = new Set(opts.lines.map((v) => v.toLowerCase()));
   const live = [];
+  const plain = (id, label, group, desc = null) => ({ id, label, group, desc, odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [] });
+  if (s.dungeon) {
+    const d = dungeonOf(r, s.dungeon);
+    return [
+      plain("dungeon:open", s.dungeon.battle ? "Back to the fight" : s.dungeon.pending ? "Decide what to do" : "Keep exploring", d?.name ?? "Dungeon", "Open the dungeon map"),
+      plain("dungeon:leave", "Leave the dungeon", d?.name ?? "Dungeon", "Climb back out with what you've found")
+    ];
+  }
+  const dungeons = dungeonsHere(r, s).map((d) => plain(`dungeon:enter:${d.id}`, `Enter ${d.name}`, "Dungeon", d.desc ?? null));
   if (!s.encounter)
     (opts.live ?? []).forEach((c, i) => {
       const a = r.liveChoices.tags[c.tag];
@@ -8454,7 +10002,7 @@ function buildChoices(r, s, opts) {
       params: a.params.map((p) => ({ id: p.id, label: p.label, options: Object.keys(p.options), default: p.default }))
     };
   });
-  return [...live, ...actions, ...travel];
+  return [...live, ...actions, ...dungeons, ...travel];
 }
 function signed(n) {
   const f = formatNumber(n);
@@ -8706,7 +10254,19 @@ function stateDigest(r, s) {
     lines.push(`Wearing: ${worn.length ? worn.join(", ") : "nothing"}${exposure}${hud.warmth && hud.warmth.tone !== "good" ? ` · ${hud.warmth.text}` : ""}`);
   }
   const here = hud.people.filter((p) => p.present).map((p) => p.name);
-  if (here.length)
+  if (s.dungeon) {
+    const run = s.dungeon;
+    const d = dungeonOf(r, run);
+    if (d) {
+      const party = run.party.map((m) => {
+        const f = memberFighter(r, s, d, run, m);
+        return `${f.name} ${f.hp <= 0 ? "down" : `HP ${f.hp}/${f.mhp}`}`;
+      });
+      lines.push(`IN A DUNGEON: ${d.name}, floor ${run.depth} (party level ${levelOf(run.xp)}). Party: ${party.join(", ")}. Carrying ${run.gold} gold from this run.`);
+      if (run.battle)
+        lines.push(`Fighting: ${run.battle.fighters.filter((f) => f.side === "foe" && f.hp > 0).map((f) => f.name).join(", ")}.`);
+    }
+  } else if (here.length)
     lines.push(`Present here: ${here.join(", ")}`);
   const meters = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "meter" || d.kind === "money");
   const other = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "attribute" || d.kind === "skill");
@@ -8783,97 +10343,150 @@ function outcomePacket(r, rec, before, after, playerName) {
   return lines.join(`
 `);
 }
+var init_view = __esm(() => {
+  init_ruleset();
+  init_state();
+  init_resolve();
+  init_world();
+  init_run();
+});
 
-// src/backend/state-push.ts
-var lastStates = new Map;
-var busyChats = new Set;
-var activeChat = new Map;
-var timers = new Map;
-var key2 = (userId) => userId ?? "_";
-function setActiveChat(userId, chatId) {
-  activeChat.set(key2(userId), chatId);
+// src/engine/dungeon/view.ts
+function fighterView(f, active) {
+  return {
+    id: f.id,
+    name: f.name,
+    side: f.side,
+    sprite: f.sprite,
+    hp: f.hp,
+    mhp: f.mhp,
+    mp: f.mp,
+    mmp: f.mmp,
+    tp: f.tp,
+    alive: f.hp > 0,
+    active: f.id === active,
+    guard: f.guard,
+    ...f.elite ? { elite: true } : {},
+    ...f.boss ? { boss: true } : {}
+  };
 }
-function getActiveChat(userId) {
-  return activeChat.get(key2(userId)) ?? null;
+function buildDungeonEntries(r, s) {
+  return dungeonsHere(r, s).map((d) => ({
+    id: d.id,
+    name: d.name,
+    desc: d.desc ?? null,
+    theme: d.theme,
+    deepest: s.deepest[d.id] ?? 0,
+    floors: d.floors,
+    max: d.party.max,
+    companions: eligibleCompanions(r, s, d)
+  }));
 }
-var MAX_RECORDS = 60;
-async function pushState(chatId, userId, force = false) {
-  try {
-    const loaded = await getRuleset(chatId, userId, force);
-    const status = statusOf(loaded);
-    if (!chatId || !loaded?.ruleset) {
-      send({ type: "state", chatId, status, hud: null, map: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false }, userId);
-      return;
+function buildDungeonView(r, s) {
+  const run = s.dungeon;
+  const d = run && dungeonOf(r, run);
+  if (!run || !d)
+    return null;
+  const floor = generateFloor(d, run.seed, run.depth);
+  const seen = new Set(run.seen);
+  const cleared = new Set(run.cleared);
+  const busy = !!run.battle || !!run.pending;
+  const tiles = [];
+  for (let y = 0;y < floor.size; y++)
+    for (let x = 0;x < floor.size; x++) {
+      const k = key2(x, y);
+      const kind = floor.tiles[y][x];
+      const here = run.pos[0] === x && run.pos[1] === y;
+      const known = seen.has(k);
+      const shown = known ? kind === "boss" && cleared.has(k) ? "stairs" : kind : null;
+      tiles.push({
+        x,
+        y,
+        kind: shown,
+        state: here ? "here" : known ? "seen" : "hidden",
+        cleared: cleared.has(k),
+        reachable: !busy && adjacent(run.pos, [x, y])
+      });
     }
-    const r = loaded.ruleset;
-    const settings = await getSettings(userId);
-    const msgs = await getMessages(chatId);
-    const { state, steps } = foldPath(r, msgs);
-    lastStates.set(chatId, state);
-    const redoable = (userMsgId) => {
-      const i = msgs.findIndex((m) => m.id === userMsgId);
-      return i >= 0 && msgs[i].is_user && msgs.length - 1 - i <= 1;
+  const hereKind = floor.tiles[run.pos[1]][run.pos[0]];
+  const hereKey = key2(...run.pos);
+  const onStairs = hereKey === key2(...floor.stairs) && (!floor.boss || cleared.has(hereKey));
+  const level = levelOf(run.xp);
+  const open = choicesFor(r, s);
+  const event = open ? {
+    text: open.ev.text.replace(/\{target\}/g, open.target ? s.people[open.target]?.name ?? open.target : ""),
+    romance: run.pending?.kind === "romance",
+    choices: open.choices.map((c) => {
+      let chance = null;
+      if (c.chance !== undefined) {
+        const e = makeEnv(r, s, { depth: run.depth, target: open.target ?? "" });
+        try {
+          chance = Math.max(0, Math.min(100, Math.round(evalNumber(c.chance, { lookup: e.lookup, call: (n, a) => n === "rel_bond" ? bondOf(r, s, String(a[0] ?? "")) : n === "bag" ? run.bag[String(a[0])] ?? 0 : e.call?.(n, a) }, 50))));
+        } catch {
+          chance = null;
+        }
+      }
+      return { id: c.id, label: c.label.replace(/\{target\}/g, open.target ? s.people[open.target]?.name ?? open.target : ""), ok: c.ok, chance, cost: c.cost ?? null };
+    })
+  } : null;
+  const b = run.battle;
+  let battle = null;
+  if (b) {
+    const active = b.fighters.find((f) => f.id === b.active) ?? null;
+    battle = {
+      kind: b.kind,
+      round: b.round,
+      active: b.active,
+      fighters: b.fighters.map((f) => fighterView(f, b.active)),
+      skills: active ? ["attack", ...active.skills, "guard"].map((id) => SKILLS[id]).filter(Boolean).map((sk) => ({
+        id: sk.id,
+        name: sk.name,
+        cost: skillCost(sk),
+        target: sk.target,
+        usable: canUse(active, sk)
+      })) : [],
+      log: b.log,
+      canEscape: b.kind !== "boss",
+      over: b.over
     };
-    const indexOf = new Map(msgs.map((m, i) => [m.id, i]));
-    const records = steps.slice(-MAX_RECORDS).map((st) => {
-      const v = buildRecordView(r, st.message.id, st.message.swipe_id ?? 0, st.record, st.before, st.after);
-      const prev = msgs[(indexOf.get(st.message.id) ?? 0) - 1];
-      if (st.record.action?.via === "adjudicator" && prev?.is_user && redoable(prev.id))
-        v.redoFrom = prev.id;
-      return v;
-    }).filter((v) => v.check || v.changes.length || v.action || v.decisions.length || (v.contradiction ?? 0) >= 0.6);
-    const suggestions = [];
-    for (const m of msgs.slice(-6)) {
-      const w = warpMeta(m);
-      if (!m.is_user || !w.suggest || w.intent)
-        continue;
-      suggestions.push({ messageId: m.id, actionId: w.suggest.actionId, params: w.suggest.params, label: w.suggest.label, confidence: w.suggest.confidence, canRedo: redoable(m.id) });
-    }
-    const latest = msgs[msgs.length - 1] ?? null;
-    const anchor = latest && !latest.is_user ? latest.id : null;
-    send({
-      type: "state",
-      chatId,
-      status,
-      hud: settings.enabled ? buildHud(r, state) : null,
-      map: settings.enabled ? buildMap(r, state) : null,
-      choices: settings.enabled ? buildChoices(r, state, { ...settings, live: liveChoicesOf(latest) }) : [],
-      records: settings.enabled ? records : [],
-      suggestions: settings.enabled ? suggestions.filter((s) => s.canRedo) : [],
-      latestMessageId: latest?.id ?? null,
-      choicesAnchor: anchor,
-      busy: busyChats.has(chatId)
-    }, userId);
-  } catch (e) {
-    logError("pushState", e);
   }
+  return {
+    id: d.id,
+    name: d.name,
+    theme: d.theme,
+    depth: run.depth,
+    floors: d.floors,
+    size: floor.size,
+    boss: floor.boss,
+    tiles,
+    here: {
+      kind: hereKind === "boss" && cleared.has(hereKey) ? "stairs" : hereKind,
+      canDescend: onStairs && !busy && (!d.floors || run.depth < d.floors),
+      bottom: !!d.floors && run.depth >= d.floors && onStairs,
+      shop: hereKind === "shop" && !busy ? Object.entries(SHOP).map(([id, w]) => ({ id, name: w.name, price: w.price(run.depth), sprite: w.sprite, desc: w.desc, affordable: run.gold >= w.price(run.depth) })) : null
+    },
+    event,
+    battle,
+    party: run.party.map((m) => fighterView(memberFighter(r, s, d, run, m), null)),
+    level,
+    xp: run.xp,
+    xpNext: 12 * level * level,
+    gold: run.gold,
+    bag: Object.entries(run.bag).filter(([, n]) => n > 0).map(([id, count]) => ({ id, name: SHOP[id]?.name ?? id, count, sprite: SHOP[id]?.sprite ?? "potion" })),
+    loot: Object.entries(run.loot).map(([id, count]) => ({ name: itemName(r, s, id), count })),
+    log: run.log.slice().reverse()
+  };
 }
-function schedulePush(chatId, userId, delay = 150) {
-  if (!chatId)
-    return;
-  const active = getActiveChat(userId);
-  if (active && active !== chatId)
-    return;
-  const k = `${key2(userId)}:${chatId}`;
-  const t = timers.get(k);
-  if (t)
-    clearTimeout(t);
-  timers.set(k, setTimeout(() => {
-    timers.delete(k);
-    pushState(chatId, userId);
-  }, delay));
-}
-async function connectionsFor(userId) {
-  try {
-    const list = await host().connections.list(userId);
-    return list.map((c) => ({ id: c.id, name: `${c.name} — ${c.model}` }));
-  } catch {
-    return [];
-  }
-}
+var init_view2 = __esm(() => {
+  init_expr();
+  init_state();
+  init_battle();
+  init_content();
+  init_floor();
+  init_run();
+});
 
 // src/backend/decisions.ts
-var NONE = "none";
 function clip(s, n) {
   return s.length > n ? `…${s.slice(-n)}` : s;
 }
@@ -8890,12 +10503,6 @@ async function safeAsk(d, state, q, timeoutMs, what) {
     return {};
   }
 }
-var DIFFICULTY = [
-  "Trivial or easy for an ordinary person in this situation",
-  "A fair challenge",
-  "Hard — most people would struggle",
-  "Extreme — only the exceptional could pull it off"
-];
 async function readTurn(opts) {
   const { decider, r, s, settings, playerText, player } = opts;
   const q = {};
@@ -8996,16 +10603,6 @@ async function odds2(opts) {
   }
   return out;
 }
-var STEP_FACTOR = { down_lot: -1, down: -1 / 3, same: 0, up: 1 / 3, up_lot: 1 };
-var TIME_LEVELS = [
-  "No meaningful time — a few seconds or a single exchange",
-  "A few minutes",
-  "Around half an hour",
-  "About an hour",
-  "A few hours",
-  "Most of a day or night"
-];
-var TIME_MINUTES = [0, 5, 30, 60, 180, 480];
 function feelLevels(d) {
   if (d.bands.length >= 2) {
     return d.bands.map((b, i) => {
@@ -9157,13 +10754,30 @@ async function contradiction(opts) {
   const a = ans.contradicts;
   return a?.type === "noul" ? a.noul : null;
 }
+var NONE = "none", DIFFICULTY, STEP_FACTOR, TIME_LEVELS, TIME_MINUTES;
+var init_decisions = __esm(() => {
+  init_resolve();
+  init_state();
+  init_view();
+  DIFFICULTY = [
+    "Trivial or easy for an ordinary person in this situation",
+    "A fair challenge",
+    "Hard — most people would struggle",
+    "Extreme — only the exceptional could pull it off"
+  ];
+  STEP_FACTOR = { down_lot: -1, down: -1 / 3, same: 0, up: 1 / 3, up_lot: 1 };
+  TIME_LEVELS = [
+    "No meaningful time — a few seconds or a single exchange",
+    "A few minutes",
+    "Around half an hour",
+    "About an hour",
+    "A few hours",
+    "Most of a day or night"
+  ];
+  TIME_MINUTES = [0, 5, 30, 60, 180, 480];
+});
 
 // src/backend/deciders.ts
-var JEV_KEY = "jev_api_key";
-var JEV_URL = "https://api.typesafe.ai/v1/systemone";
-
-class DeciderError extends Error {
-}
 async function post(url, headers, body, timeoutMs) {
   const timeout = new Promise((_, rej) => setTimeout(() => rej(new DeciderError("Decision model timed out")), timeoutMs));
   const call = (async () => {
@@ -9303,8 +10917,6 @@ ${lines.join(`
     return out;
   }
 }
-var STOP = new Set("a an the to of and or in on at for with my i me you your it is be do try tries trying".split(" "));
-var words = (s) => new Set(s.toLowerCase().split(/[^a-z0-9']+/).filter((w) => w.length > 2 && !STOP.has(w)));
 
 class RulesDecider {
   id = "rules";
@@ -9354,6 +10966,12 @@ async function getDecider(settings, userId) {
   }
   return new LlmDecider(settings, userId);
 }
+var JEV_KEY = "jev_api_key", JEV_URL = "https://api.typesafe.ai/v1/systemone", DeciderError, STOP, words = (s) => new Set(s.toLowerCase().split(/[^a-z0-9']+/).filter((w) => w.length > 2 && !STOP.has(w)));
+var init_deciders = __esm(() => {
+  DeciderError = class DeciderError extends Error {
+  };
+  STOP = new Set("a an the to of and or in on at for with my i me you your it is be do try tries trying".split(" "));
+});
 
 // src/backend/helpers.ts
 function firstJson2(text) {
@@ -9472,6 +11090,10 @@ async function extract(r, s, playerText, reply, settings, userId, only) {
     return null;
   }
 }
+var init_helpers = __esm(() => {
+  init_state();
+  init_view();
+});
 
 // src/backend/live.ts
 function clip3(s, n) {
@@ -9545,7 +11167,7 @@ async function pickTags(decider, r, s, tags, reply, player) {
 async function writeLiveChoices(opts) {
   const { r, s, settings } = opts;
   const lc = r.liveChoices;
-  if (!lc.enabled || s.encounter)
+  if (!lc.enabled || s.encounter || s.dungeon)
     return [];
   if (lc.when && !evalBool(lc.when, makeEnv(r, s), true))
     return [];
@@ -9582,11 +11204,14 @@ async function writeLiveChoices(opts) {
     return [];
   }
 }
+var init_live = __esm(() => {
+  init_expr();
+  init_state();
+  init_view();
+  init_helpers();
+});
 
 // src/backend/turn.ts
-var pending = new Map;
-var playerNames = new Map;
-var started = new Map;
 function ctxInfo(ctx) {
   const raw = ctx;
   const s = started.get(ctx.chatId);
@@ -9842,8 +11467,215 @@ async function onGenerationEnded(payload, userId) {
     schedulePush(payload.chatId, userId, 0);
   }
 }
+var pending, playerNames, started;
+var init_turn = __esm(() => {
+  init_dice();
+  init_resolve();
+  init_state();
+  init_view();
+  init_decisions();
+  init_deciders();
+  init_helpers();
+  init_ledger();
+  init_live();
+  init_settings();
+  init_source();
+  init_state_push();
+  pending = new Map;
+  playerNames = new Map;
+  started = new Map;
+});
+
+// src/backend/state-push.ts
+function setActiveChat(userId, chatId) {
+  activeChat.set(key3(userId), chatId);
+}
+function getActiveChat(userId) {
+  return activeChat.get(key3(userId)) ?? null;
+}
+async function pushState(chatId, userId, force = false) {
+  try {
+    const loaded = await getRuleset(chatId, userId, force);
+    const status = statusOf(loaded);
+    if (!chatId || !loaded?.ruleset) {
+      send({ type: "state", chatId, status, hud: null, map: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false, dungeon: null, dungeonEntries: [] }, userId);
+      return;
+    }
+    const r = loaded.ruleset;
+    const settings = await getSettings(userId);
+    const msgs = await getMessages(chatId);
+    const { state, steps } = foldPath(r, msgs);
+    lastStates.set(chatId, state);
+    const redoable = (userMsgId) => {
+      const i = msgs.findIndex((m) => m.id === userMsgId);
+      return i >= 0 && msgs[i].is_user && msgs.length - 1 - i <= 1;
+    };
+    const indexOf = new Map(msgs.map((m, i) => [m.id, i]));
+    const records = steps.slice(-MAX_RECORDS).map((st) => {
+      const v = buildRecordView(r, st.message.id, st.message.swipe_id ?? 0, st.record, st.before, st.after);
+      const prev = msgs[(indexOf.get(st.message.id) ?? 0) - 1];
+      if (st.record.action?.via === "adjudicator" && prev?.is_user && redoable(prev.id))
+        v.redoFrom = prev.id;
+      return v;
+    }).filter((v) => v.check || v.changes.length || v.action || v.decisions.length || (v.contradiction ?? 0) >= 0.6);
+    const suggestions = [];
+    for (const m of msgs.slice(-6)) {
+      const w = warpMeta(m);
+      if (!m.is_user || !w.suggest || w.intent)
+        continue;
+      suggestions.push({ messageId: m.id, actionId: w.suggest.actionId, params: w.suggest.params, label: w.suggest.label, confidence: w.suggest.confidence, canRedo: redoable(m.id) });
+    }
+    const latest = msgs[msgs.length - 1] ?? null;
+    const anchor = latest && !latest.is_user ? latest.id : null;
+    send({
+      type: "state",
+      chatId,
+      status,
+      hud: settings.enabled ? buildHud(r, state) : null,
+      map: settings.enabled ? buildMap(r, state) : null,
+      choices: settings.enabled ? buildChoices(r, state, { ...settings, live: liveChoicesOf(latest) }) : [],
+      records: settings.enabled ? records : [],
+      suggestions: settings.enabled ? suggestions.filter((s) => s.canRedo) : [],
+      latestMessageId: latest?.id ?? null,
+      choicesAnchor: anchor,
+      busy: busyChats.has(chatId),
+      dungeon: settings.enabled ? await withName(buildDungeonView(r, state), chatId, userId) : null,
+      dungeonEntries: settings.enabled ? buildDungeonEntries(r, state) : []
+    }, userId);
+  } catch (e) {
+    logError("pushState", e);
+  }
+}
+async function withName(v, chatId, userId) {
+  if (!v)
+    return v;
+  await Promise.resolve().then(() => init_turn());
+  const name = await playerName(chatId, userId).catch(() => "You");
+  const safe = JSON.stringify(name).slice(1, -1);
+  return JSON.parse(JSON.stringify(v).replace(/\{\{user\}\}/g, () => safe));
+}
+function schedulePush(chatId, userId, delay = 150) {
+  if (!chatId)
+    return;
+  const active = getActiveChat(userId);
+  if (active && active !== chatId)
+    return;
+  const k = `${key3(userId)}:${chatId}`;
+  const t = timers.get(k);
+  if (t)
+    clearTimeout(t);
+  timers.set(k, setTimeout(() => {
+    timers.delete(k);
+    pushState(chatId, userId);
+  }, delay));
+}
+async function connectionsFor(userId) {
+  try {
+    const list = await host().connections.list(userId);
+    return list.map((c) => ({ id: c.id, name: `${c.name} — ${c.model}` }));
+  } catch {
+    return [];
+  }
+}
+var lastStates, busyChats, activeChat, timers, key3 = (userId) => userId ?? "_", MAX_RECORDS = 60;
+var init_state_push = __esm(() => {
+  init_view();
+  init_view2();
+  init_ledger();
+  init_settings();
+  init_source();
+  lastStates = new Map;
+  busyChats = new Set;
+  activeChat = new Map;
+  timers = new Map;
+});
+
+// src/backend.ts
+init_resolve();
+init_templates();
+init_ledger();
+init_settings();
+init_source();
+init_state_push();
+init_turn();
+init_loader();
+init_deciders();
+
+// src/backend/dungeon.ts
+init_dice();
+init_run();
+init_ledger();
+init_source();
+init_state_push();
+function run2(r, s, op) {
+  switch (op.op) {
+    case "enter":
+      return enterDungeon(r, s, op.id, op.companions, randomSeed());
+    case "move":
+      return moveTo(r, s, op.x, op.y);
+    case "choose":
+      return chooseEvent(r, s, op.choice);
+    case "battle":
+      if (op.auto)
+        return battleCommand(r, s, { auto: op.auto });
+      if (op.escape)
+        return battleCommand(r, s, { escape: true });
+      if (op.item)
+        return battleCommand(r, s, { item: op.item, target: op.target });
+      return battleCommand(r, s, { skill: op.skill ?? "attack", target: op.target });
+    case "descend":
+      return descend(r, s);
+    case "leave":
+      return leaveDungeon(r, s);
+    case "use":
+      return useItem(r, s, op.item, op.target);
+    case "buy":
+      return shopBuy(r, s, op.item);
+  }
+}
+async function runDungeonOp(msg, userId) {
+  const loaded = await getRuleset(msg.chatId, userId);
+  const r = loaded?.ruleset;
+  if (!r)
+    return;
+  if (busyChats.has(msg.chatId)) {
+    toast("info", "Wait for the story to catch up first.", userId);
+    return;
+  }
+  const msgs = await getMessages(msg.chatId);
+  const last = msgs[msgs.length - 1];
+  if (!last) {
+    toast("warning", "Send a message first — the dungeon attaches to the latest message.", userId);
+    return;
+  }
+  const { state } = foldPath(r, msgs);
+  const res = run2(r, state, msg);
+  if (res.error) {
+    toast("warning", res.error, userId);
+    await pushState(msg.chatId, userId);
+    return;
+  }
+  if (res.events.length) {
+    const swipe = last.swipe_id ?? 0;
+    const existing = warpMeta(last).swipes?.[String(swipe)];
+    const rec = existing ? { ...existing, events: [...existing.events, ...res.events] } : { v: 1, hints: [], events: res.events, at: Date.now() };
+    await writeRecord(msg.chatId, last.id, swipe, rec);
+  }
+  await pushState(msg.chatId, userId);
+  if (res.narrate) {
+    await spindle.chat.appendMessage(msg.chatId, {
+      role: "user",
+      content: res.narrate.say,
+      metadata: { warp: { intent: { actionId: DUNGEON_ACTION, via: "choice", label: res.narrate.say } } }
+    }, { triggerGeneration: true });
+  }
+}
 
 // src/engine/balance.ts
+init_dice();
+init_expr();
+init_state();
+init_resolve();
 function effectsOf(r) {
   const out = [];
   const add = (e) => {
@@ -9993,6 +11825,10 @@ function simulateEncounter(r, from, id, runs) {
   return { runs, outcomes, stuck, rounds: rounds / runs };
 }
 
+// src/backend/builder.ts
+init_loader();
+init_lint();
+
 // src/engine/reference.ts
 var PART_LABELS = ["core", "stats", "people", "world", "actions", "encounters", "journal", "rules", "story"];
 var PART_CONTENTS = {
@@ -10001,7 +11837,7 @@ var PART_CONTENTS = {
   people: "relationships (stats + people with schedules)",
   world: "weather, locations, items (incl. clothing), wardrobe, conditions, flags, start.items",
   actions: "actions",
-  encounters: "encounters",
+  encounters: "encounters, dungeons",
   journal: "codex, feats, perks",
   rules: "triggers",
   story: "secrets, fronts, random_events, live_choices"
@@ -10019,7 +11855,7 @@ function partForIssue(where) {
     return "world";
   if (head.startsWith("actions"))
     return "actions";
-  if (head.startsWith("encounters"))
+  if (head.startsWith("encounters") || head.startsWith("dungeons"))
     return "encounters";
   if (["codex", "feats", "perks"].some((k) => head.startsWith(k)))
     return "journal";
@@ -10107,6 +11943,23 @@ encounters:
     end_when: { won: "foe.nerve <= 0", beaten: "pain >= 80" }
     outcomes: { won: { hint: "They flee." }, escaped: { stress: +3 }, beaten: { money: "-min(money, 30)" } }
 
+dungeons:         # roguelike diving: floors of face-down tiles, one way down, quit any time (keep the loot; get wiped out and lose it)
+  old_mines:
+    name: The Old Mines
+    at: [docks]                    # entrance locations (empty = anywhere)
+    theme: cave                    # cave | crypt | ruins | hell | lair
+    floors: 10                     # 0 = endless; a guardian every boss_every floors (default 5)
+    tiles: { enemy: 6, elite: 1, treasure: 2.5, trap: 1.5, rest: 1, shop: 0.6, event: 2, surprise: 1.5, romance: 1.2, empty: 7 }
+    loot: { lockpick: 2 }          # ruleset items that can turn up in chests
+    party: { max: 3, when: "rel(target, 'trust') >= 30", classes: { jo: healer } }   # fighter | mage | healer | rogue | adventurer
+    player: { class: adventurer, atk: "10 + athletics / 10" }                       # battle stats from ruleset stats (optional)
+    on_leave: { fatigue: +15 }
+    on_defeat: { pain: +40, stress: +20 }
+    events:                        # added to the built-ins (builtin_events: false to drop them); romance: works the same with {target}
+      smugglers_cache: { text: "A smugglers' cache behind a loose stone.", choices: { take: { label: Take it, gold: "30 + depth * 10", crime: +5 }, leave: { label: Leave it } } }
+    # choice outcome keys: text, heal, hurt, mana (percent), gold, xp, bag { potion: 1 }, fight (enemy|elite|monster id), bond, desire, plus any effect; chance: "60" rolls d100
+    # monsters: { id: { name, like: goblin, tier: 1-4, hp, atk, def, mat, mdf, agi, skills: [attack, smash], xp, gold } }; bosses: [orc_warlord, hydra]
+
 codex: { docks: { title: The Docks, category: Places, text: "...", unlock: "location == 'docks'", lore: [Lorebook entry title] } }
 feats: { night_owl: { name: Night owl, desc: "...", unlock: "hour >= 2 and hour < 5", reward: { stress: -5 } } }
 perks: { points: perk_points, sharp: { name: Sharpshooter, desc: "+2 Aim", cost: 1, requires: "level >= 2", effects: { aim: +2 } } }
@@ -10153,17 +12006,22 @@ warmth, warmth_min, warmth_max, too_cold, too_hot, reveal, exposed, naked, in_en
 FUNCTIONS: has(item[, n]), count(item), flag(x), cond(x), at(loc), rel(person, stat), met(person), between(v, lo, hi), roll('2d6'),
 wearing(item), worn(slot), trait(t), present(person), where(person), codex(id), feat(id), perk(id),
 secret(id) (stages the narrator knows), front(id) (clock value), front_stage(id) (stages surfaced), happened(event),
+deepest(dungeon) (deepest floor reached), in_dungeon, dungeon_depth,
 min, max, clamp, floor, ceil, round, abs.
 Operators: + - * / % < <= > >= == != and or not, a ? b : c. Strings in single quotes.
 `;
 
 // src/backend/builder.ts
+init_state();
+init_templates();
+init_view();
+init_source();
 var sessions = new Map;
-var key3 = (userId, characterId) => `${userId ?? "_"}:${characterId}`;
+var key4 = (userId, characterId) => `${userId ?? "_"}:${characterId}`;
 var path = (characterId) => `builder/${characterId}.json`;
 async function save(s, userId) {
   s.updatedAt = Date.now();
-  sessions.set(key3(userId, s.characterId), s);
+  sessions.set(key4(userId, s.characterId), s);
   try {
     await host().userStorage.setJson(path(s.characterId), s, { userId });
   } catch (e) {
@@ -10185,14 +12043,14 @@ async function sessionFor(chatId, userId) {
   const characterId = await characterForChat(chatId, userId);
   if (!characterId)
     return null;
-  const hit = sessions.get(key3(userId, characterId));
+  const hit = sessions.get(key4(userId, characterId));
   if (hit)
     return hit;
   try {
     const stored = await host().userStorage.getJson(path(characterId), { fallback: null, userId });
     if (stored) {
       stored.busy = null;
-      sessions.set(key3(userId, characterId), stored);
+      sessions.set(key4(userId, characterId), stored);
       return stored;
     }
   } catch {}
@@ -10286,6 +12144,7 @@ var SYSTEMS = [
   { id: "clothing", label: "Clothing, weather & temperature" },
   { id: "schedules", label: "NPC schedules & places" },
   { id: "encounters", label: "Encounters / combat" },
+  { id: "dungeon", label: "Dungeon diving (roguelike floors, party battles)" },
   { id: "crime", label: "Crime & consequences" },
   { id: "journal", label: "Codex & feats" },
   { id: "perks", label: "Levels & perks" },
@@ -10476,6 +12335,7 @@ function buildPreview(s) {
     items: Object.keys(r.items).length,
     actions: Object.keys(r.actions).length,
     encounters: Object.keys(r.encounters).length,
+    dungeons: Object.keys(r.dungeons).length,
     rules: r.triggers.length,
     codex: Object.keys(r.codex).length,
     feats: Object.keys(r.feats).length,
@@ -10624,7 +12484,7 @@ async function draftAll(s, userId) {
   const systems = chosenSystems(s);
   const want = (label) => {
     if (label === "encounters")
-      return systems.has("encounters");
+      return systems.has("encounters") || systems.has("dungeon");
     if (label === "journal")
       return systems.has("journal") || systems.has("perks");
     if (label === "story")
@@ -10751,7 +12611,7 @@ async function builderClose(chatId, userId) {
   const characterId = await characterForChat(chatId, userId);
   if (!characterId)
     return;
-  sessions.delete(key3(userId, characterId));
+  sessions.delete(key4(userId, characterId));
   try {
     await host().userStorage.delete(path(characterId), userId);
   } catch {}
@@ -10914,6 +12774,7 @@ spindle.on("CHARACTER_EDITED", (p, userId) => {
 spindle.commands.register([
   { id: "open", label: "Warp: Open character sheet", description: "Stats, skills, people, inventory and settings", keywords: ["stats", "sheet", "hud", "game"], scope: "chat" },
   { id: "install", label: "Warp: Add a ruleset to this character", description: "Pick a starter game (Universal, life-sim, sci-fi RPG)", keywords: ["ruleset", "template", "game", "setup"], scope: "chat" },
+  { id: "dungeon", label: "Warp: Open the dungeon", description: "Explore, fight and loot — or pick a dungeon to enter", keywords: ["dungeon", "explore", "battle", "roguelike"], scope: "chat" },
   { id: "reload", label: "Warp: Reload ruleset", description: "Re-read the character's warp-ruleset lorebook", keywords: ["refresh", "ruleset"], scope: "chat" }
 ]);
 spindle.commands.onInvoked((id, context) => {
@@ -11050,6 +12911,10 @@ spindle.onFrontendMessage(async (raw, userId) => {
       }
       case "forget": {
         await applyManual(msg.chatId, userId, (r, state) => forgetPerson(r, state, msg.who));
+        break;
+      }
+      case "dungeon": {
+        await runDungeonOp(msg, userId);
         break;
       }
       case "buy_perk": {

@@ -11,7 +11,7 @@ export const PART_CONTENTS: Record<PartLabel, string> = {
   people: "relationships (stats + people with schedules)",
   world: "weather, locations, items (incl. clothing), wardrobe, conditions, flags, start.items",
   actions: "actions",
-  encounters: "encounters",
+  encounters: "encounters, dungeons",
   journal: "codex, feats, perks",
   rules: "triggers",
   story: "secrets, fronts, random_events, live_choices",
@@ -26,7 +26,7 @@ export function partForIssue(where: string): PartLabel {
   if (head.startsWith("relationships") || head.startsWith("people")) return "people";
   if (["locations", "items", "wardrobe", "weather", "conditions", "flags"].some((k) => head.startsWith(k))) return "world";
   if (head.startsWith("actions")) return "actions";
-  if (head.startsWith("encounters")) return "encounters";
+  if (head.startsWith("encounters") || head.startsWith("dungeons")) return "encounters";
   if (["codex", "feats", "perks"].some((k) => head.startsWith(k))) return "journal";
   if (head.startsWith("triggers") || head.startsWith("rules")) return "rules";
   if (["secrets", "fronts", "random events", "live choices"].some((k) => head.startsWith(k))) return "story";
@@ -111,6 +111,23 @@ encounters:
     end_when: { won: "foe.nerve <= 0", beaten: "pain >= 80" }
     outcomes: { won: { hint: "They flee." }, escaped: { stress: +3 }, beaten: { money: "-min(money, 30)" } }
 
+dungeons:         # roguelike diving: floors of face-down tiles, one way down, quit any time (keep the loot; get wiped out and lose it)
+  old_mines:
+    name: The Old Mines
+    at: [docks]                    # entrance locations (empty = anywhere)
+    theme: cave                    # cave | crypt | ruins | hell | lair
+    floors: 10                     # 0 = endless; a guardian every boss_every floors (default 5)
+    tiles: { enemy: 6, elite: 1, treasure: 2.5, trap: 1.5, rest: 1, shop: 0.6, event: 2, surprise: 1.5, romance: 1.2, empty: 7 }
+    loot: { lockpick: 2 }          # ruleset items that can turn up in chests
+    party: { max: 3, when: "rel(target, 'trust') >= 30", classes: { jo: healer } }   # fighter | mage | healer | rogue | adventurer
+    player: { class: adventurer, atk: "10 + athletics / 10" }                       # battle stats from ruleset stats (optional)
+    on_leave: { fatigue: +15 }
+    on_defeat: { pain: +40, stress: +20 }
+    events:                        # added to the built-ins (builtin_events: false to drop them); romance: works the same with {target}
+      smugglers_cache: { text: "A smugglers' cache behind a loose stone.", choices: { take: { label: Take it, gold: "30 + depth * 10", crime: +5 }, leave: { label: Leave it } } }
+    # choice outcome keys: text, heal, hurt, mana (percent), gold, xp, bag { potion: 1 }, fight (enemy|elite|monster id), bond, desire, plus any effect; chance: "60" rolls d100
+    # monsters: { id: { name, like: goblin, tier: 1-4, hp, atk, def, mat, mdf, agi, skills: [attack, smash], xp, gold } }; bosses: [orc_warlord, hydra]
+
 codex: { docks: { title: The Docks, category: Places, text: "...", unlock: "location == 'docks'", lore: [Lorebook entry title] } }
 feats: { night_owl: { name: Night owl, desc: "...", unlock: "hour >= 2 and hour < 5", reward: { stress: -5 } } }
 perks: { points: perk_points, sharp: { name: Sharpshooter, desc: "+2 Aim", cost: 1, requires: "level >= 2", effects: { aim: +2 } } }
@@ -157,6 +174,7 @@ warmth, warmth_min, warmth_max, too_cold, too_hot, reveal, exposed, naked, in_en
 FUNCTIONS: has(item[, n]), count(item), flag(x), cond(x), at(loc), rel(person, stat), met(person), between(v, lo, hi), roll('2d6'),
 wearing(item), worn(slot), trait(t), present(person), where(person), codex(id), feat(id), perk(id),
 secret(id) (stages the narrator knows), front(id) (clock value), front_stage(id) (stages surfaced), happened(event),
+deepest(dungeon) (deepest floor reached), in_dungeon, dungeon_depth,
 min, max, clamp, floor, ceil, round, abs.
 Operators: + - * / % < <= > >= == != and or not, a ? b : c. Strings in single quotes.
 `;

@@ -93,7 +93,7 @@ export async function writeLiveChoices(opts: {
 }): Promise<LiveChoice[]> {
   const { r, s, settings } = opts;
   const lc = r.liveChoices;
-  if (!lc.enabled || s.encounter) return [];
+  if (!lc.enabled || s.encounter || s.dungeon) return [];
   if (lc.when && !evalBool(lc.when, makeEnv(r, s), true)) return [];
   const tags = usableTags(r, settings);
   if (!tags.length) return [];

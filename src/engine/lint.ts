@@ -4,11 +4,12 @@
 import { evaluate, type ExprEnv, type Value } from "./expr.js";
 import type { ActionDef, Effect, Issue, Ruleset } from "./ruleset.js";
 import { BUILTIN_NAMES, initialState, makeEnv } from "./state.js";
+import { SKILLS } from "./dungeon/content.js";
 
 export const FUNCTIONS = [
   "has", "count", "flag", "cond", "at", "rel", "met", "between", "roll",
   "wearing", "worn", "trait", "present", "where", "codex", "feat", "perk",
-  "secret", "front", "front_stage", "happened",
+  "secret", "front", "front_stage", "happened", "deepest",
   "min", "max", "clamp", "floor", "ceil", "round", "abs",
 ];
 
@@ -36,10 +37,11 @@ export function lintRuleset(r: Ruleset): Issue[] {
   const s = initialState(r);
   const names = [...r.statOrder, ...Object.keys(r.flags), ...BUILTIN_NAMES];
 
-  const check = (src: string | number | undefined, where: string, extra: Record<string, Value> = {}) => {
+  const check = (src: string | number | undefined, where: string, extra: Record<string, Value> = {}, dungeon = false) => {
     if (src === undefined || typeof src === "number") return;
     const base = makeEnv(r, s, extra);
-    const env: ExprEnv = { lookup: base.lookup, call: (n, a) => (n === "roll" ? 1 : base.call?.(n, a)) };
+    // Dungeon formulas also know depth, bag('potion') and rel_bond(person).
+    const env: ExprEnv = { lookup: base.lookup, call: (n, a) => (n === "roll" ? 1 : dungeon && (n === "bag" || n === "rel_bond") ? 0 : base.call?.(n, a)) };
     const unknown = new Set<string>();
     try { evaluate(src, env, { unknown }); } catch { return; }
     for (const u of unknown) {
@@ -158,6 +160,33 @@ export function lintRuleset(r: Ruleset): Issue[] {
     }
   }
   check(r.liveChoices.when, "Live choices › when");
+  for (const d of Object.values(r.dungeons)) {
+    const w = `Dungeons › ${d.id}`;
+    const dx = { depth: 1, target: Object.keys(r.people)[0] ?? "someone" };
+    check(d.when, `${w} › when`);
+    check(d.party.when, `${w} › party › when`, dx);
+    for (const [k, v] of Object.entries(d.player)) if (k !== "class" && k !== "sprite") check(v as string | number, `${w} › player › ${k}`);
+    for (const loc of d.at) if (Object.keys(r.locations).length && !r.locations[loc]) issues.push({ level: "warning", where: `${w} › at`, message: `"${loc}" isn't a declared location${suggest(loc, Object.keys(r.locations))}` });
+    for (const l of d.loot) if (!r.items[l.item] && !r.itemsOpen) issues.push({ level: "warning", where: `${w} › loot`, message: `"${l.item}" isn't a declared item` });
+    if (d.currency && !r.stats[d.currency]) issues.push({ level: "warning", where: `${w} › currency`, message: `"${d.currency}" isn't a stat` });
+    checkEffect(d.onLeave, `${w} › on_leave`);
+    checkEffect(d.onDefeat, `${w} › on_defeat`);
+    for (const [kind, list] of [["events", d.events], ["romance", d.romance]] as const) {
+      for (const ev of Object.values(list)) for (const c of ev.choices) {
+        const cw = `${w} › ${kind} › ${ev.id} › ${c.id}`;
+        check(c.chance, `${cw} › chance`, dx, true);
+        check(c.when, `${cw} › when`, dx, true);
+        for (const o of [c.success, c.fail]) {
+          if (!o) continue;
+          check(o.gold, `${cw} › gold`, dx, true);
+          check(o.xp, `${cw} › xp`, dx, true);
+          checkEffect(o.effect, cw, dx);
+          if (o.fight && o.fight !== "enemy" && o.fight !== "elite" && !d.monsters[o.fight]) issues.push({ level: "warning", where: cw, message: `fights "${o.fight}", which isn't a monster here` });
+        }
+      }
+    }
+    for (const m of Object.values(d.monsters)) for (const sk of m.skills) if (!SKILLS[sk]) issues.push({ level: "warning", where: `${w} › monsters › ${m.id}`, message: `"${sk}" isn't a skill` });
+  }
   for (const a of Object.values(r.liveChoices.tags)) checkAction(a, `Live choices › tags › ${a.id}`);
   return issues;
 }

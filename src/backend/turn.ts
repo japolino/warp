@@ -64,7 +64,7 @@ function textOf(content: LlmMessageDTO["content"]): string {
   return content.map((p) => ("text" in p && typeof p.text === "string" ? p.text : "")).join("");
 }
 
-async function playerName(chatId: string, userId?: string): Promise<string> {
+export async function playerName(chatId: string, userId?: string): Promise<string> {
   const hit = playerNames.get(chatId);
   if (hit) return hit;
   try {

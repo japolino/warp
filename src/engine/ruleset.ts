@@ -6,6 +6,8 @@
 
 import { compile, ExprError } from "./expr.js";
 import { parseDice, DiceError } from "./dice.js";
+import { normDungeons } from "./dungeon/defs.js";
+import type { DungeonDef } from "./dungeon/types.js";
 
 export type Tone = "good" | "warn" | "bad" | "neutral";
 export type StatKind = "meter" | "attribute" | "skill" | "money" | "hidden";
@@ -339,6 +341,7 @@ export interface Ruleset {
   fronts: Record<string, FrontDef>;
   randomEvents: RandomEventsDef;
   liveChoices: LiveChoicesDef;
+  dungeons: Record<string, DungeonDef>;
 }
 
 export interface Issue {
@@ -349,10 +352,10 @@ export interface Issue {
 
 // ───────────────────────── helpers ─────────────────────────
 
-type Raw = Record<string, any>;
-const isObj = (v: unknown): v is Raw => !!v && typeof v === "object" && !Array.isArray(v);
+export type Raw = Record<string, any>;
+export const isObj = (v: unknown): v is Raw => !!v && typeof v === "object" && !Array.isArray(v);
 
-function titleCase(id: string): string {
+export function titleCase(id: string): string {
   return id.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
@@ -384,7 +387,7 @@ export function parseClockStart(v: unknown, weekdays: string[]): number | null {
 
 // ───────────────────────── normalizer ─────────────────────────
 
-class Ctx {
+export class Ctx {
   issues: Issue[] = [];
   err(where: string, message: string) { this.issues.push({ level: "error", where, message }); }
   warn(where: string, message: string) { this.issues.push({ level: "warning", where, message }); }
@@ -497,7 +500,7 @@ export function emptyEffect(): Effect {
   };
 }
 
-const list = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : []);
+export const list = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : []);
 
 function normDecide(raw: unknown, where: string, c: Ctx, known: { stats: Set<string> }, minOptions = 2): DecideSpec[] {
   if (!isObj(raw)) { c.warn(where, "decide needs `ask:` and `options:`"); return []; }
@@ -522,7 +525,7 @@ function normDecide(raw: unknown, where: string, c: Ctx, known: { stats: Set<str
 }
 
 /** Effects accept both a structured form and a flat shorthand: `{ fatigue: +20, hint: "..." }`. */
-function normEffect(raw: unknown, where: string, c: Ctx, known: { stats: Set<string> }): Effect {
+export function normEffect(raw: unknown, where: string, c: Ctx, known: { stats: Set<string> }): Effect {
   const e = emptyEffect();
   if (raw === undefined || raw === null) return e;
   if (typeof raw === "string") { e.hint = raw; return e; }
@@ -1205,6 +1208,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const fronts = normFronts(raw.fronts, c, known);
   const randomEvents = normRandomEvents(raw.random_events ?? raw.events, c, known);
   const liveChoices = normLiveChoices(raw.live_choices, c, known);
+  const dungeons = normDungeons(raw.dungeons, c, known);
 
   const ruleset: Ruleset = {
     name: typeof raw.name === "string" ? raw.name : "Untitled ruleset",
@@ -1234,7 +1238,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     narration: { notes: typeof narrRaw.notes === "string" ? narrRaw.notes : undefined, numbers: narrRaw.numbers === true },
     weather, wardrobe, encounters, codex, feats, perks,
     ...(perkPoints && stats[perkPoints] ? { perkPoints } : {}),
-    secrets, fronts, randomEvents, liveChoices,
+    secrets, fronts, randomEvents, liveChoices, dungeons,
   };
 
   // Cross-references that need everything loaded.

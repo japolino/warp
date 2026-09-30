@@ -22,6 +22,7 @@ A game engine under your roleplay. Warp owns stats, dice, time, inventory and re
 | Secrets | Ladders of stages that open by condition. Only opened stages ever reach the narrator's prompt, so they can't leak; a stage-0 cue lets it play someone hiding something without knowing what |
 | Living world | Hidden clocks (`fronts`) that fill with in-game time, show signs, and surface events; story beats judged by the decision model push them. Random events come from a hidden gauge per in-game day, with an omen before each |
 | Live choices | Choices written for the moment. The writer must tag each one from a fixed list, and the tag decides the check and effects; with Jev, the model weighs which kinds of move fit |
+| Dungeons | Roguelike diving: floors of face-down tiles (monsters, elites, guardians, treasure, traps, springs, merchants, events, surprises, romance moments) with one way down. Party battles with HP/MP/TP, skills, items, escape and auto-battle; quit any time and keep the loot, or get wiped out and lose it. Story moments are written up by the narrator. Built-in bestiary, events and art |
 
 ## ✨ Build with AI
 
@@ -152,3 +153,7 @@ bun install
 bun run verify   # tests + typecheck
 bun run build    # dist/backend.js, dist/frontend.js
 ```
+
+## Credits
+
+Dungeon art: *Dungeon Crawl 32x32 tiles*, CC0 (public domain). See [CREDITS.md](CREDITS.md).

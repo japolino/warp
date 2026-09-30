@@ -12,6 +12,7 @@ import { connectionsFor, getActiveChat, lastStates, pushState, schedulePush, set
 import { interceptor, onGenerationEnded, onGenerationStarted } from "./backend/turn.js";
 import { isRulesetEntryTitle } from "./engine/loader.js";
 import { getDecider, JEV_KEY } from "./backend/deciders.js";
+import { runDungeonOp } from "./backend/dungeon.js";
 import { builderAnswer, builderBack, builderClose, builderCurrent, builderFix, builderInstall, builderOpen, builderRedo, builderRefine, builderStart } from "./backend/builder.js";
 
 declare const spindle: SpindleAPI;
@@ -96,6 +97,7 @@ spindle.on("CHARACTER_EDITED", (p, userId) => {
 spindle.commands.register([
   { id: "open", label: "Warp: Open character sheet", description: "Stats, skills, people, inventory and settings", keywords: ["stats", "sheet", "hud", "game"], scope: "chat" },
   { id: "install", label: "Warp: Add a ruleset to this character", description: "Pick a starter game (Universal, life-sim, sci-fi RPG)", keywords: ["ruleset", "template", "game", "setup"], scope: "chat" },
+  { id: "dungeon", label: "Warp: Open the dungeon", description: "Explore, fight and loot — or pick a dungeon to enter", keywords: ["dungeon", "explore", "battle", "roguelike"], scope: "chat" },
   { id: "reload", label: "Warp: Reload ruleset", description: "Re-read the character's warp-ruleset lorebook", keywords: ["refresh", "ruleset"], scope: "chat" },
 ]);
 spindle.commands.onInvoked((id, context) => {
@@ -103,7 +105,7 @@ spindle.commands.onInvoked((id, context) => {
     void pushState(context.chatId ?? null, undefined, true).then(() => toast("info", "Ruleset reloaded"));
     return;
   }
-  send({ type: "command", command: id as "open" | "install" });
+  send({ type: "command", command: id as "open" | "install" | "dungeon" });
 });
 
 // ── Frontend messages ────────────────────────────────────────────
@@ -228,6 +230,11 @@ spindle.onFrontendMessage(async (raw, userId) => {
 
       case "forget": {
         await applyManual(msg.chatId, userId, (r, state) => forgetPerson(r, state, msg.who));
+        break;
+      }
+
+      case "dungeon": {
+        await runDungeonOp(msg, userId);
         break;
       }
 

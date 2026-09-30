@@ -6,6 +6,7 @@ import { DEFAULT_SETTINGS } from "./shared/protocol.js";
 import { STYLES } from "./frontend/styles.js";
 import { attachedBox, edgeForDrop, PAD, PANEL_W, PILL, type Box, type Edge, type Viewport } from "./frontend/overlay-layout.js";
 import { emptyDraft, renderBuilder, renderBuilderCta, type BuilderDraft } from "./frontend/builder-ui.js";
+import { renderDungeon, type DungeonPick } from "./frontend/dungeon-ui.js";
 import { esc, renderChips, renderChoices, renderHud, renderJournal, renderMap, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
 
 type StateMsg = Extract<BackendToFrontend, { type: "state" }>;
@@ -36,7 +37,9 @@ export function setup(ctx: SpindleFrontendContext) {
   let bDraft: BuilderDraft = emptyDraft();
   let busy = { chatId: "", on: false, label: "" };
   let editingBar: string | null = null;
-  let drawerView: "sheet" | "map" | "journal" | "rules" | "settings" = "sheet";
+  let drawerView: "sheet" | "map" | "journal" | "dungeon" | "rules" | "settings" = "sheet";
+  let dgPick: DungeonPick = null;
+  const dgMates = new Set<string>();
   const openSections = new Map<string, boolean>();
 
   const send = (m: FrontendToBackend) => ctx.sendToBackend(m);
@@ -271,6 +274,7 @@ export function setup(ctx: SpindleFrontendContext) {
       ["sheet", "Sheet"],
       ...(state?.map ? [["map", "Map"] as [typeof drawerView, string]] : []),
       ...(state?.hud ? [["journal", "Journal"] as [typeof drawerView, string]] : []),
+      ...(state?.dungeon || state?.dungeonEntries?.length ? [["dungeon", state?.dungeon ? "Dungeon ⚔" : "Dungeon"] as [typeof drawerView, string]] : []),
       ["rules", `Ruleset${status.issues.some((i) => i.level === "error") ? " ⚠" : ""}`],
       ["settings", "Settings"],
     ];
@@ -283,6 +287,9 @@ export function setup(ctx: SpindleFrontendContext) {
       body = state?.hud ? renderHud(state.hud, { editing: editingBar, compact: false }) : renderRulesetCard(status, hasChat);
     } else if (drawerView === "map") {
       body = renderMap(state?.map ?? null);
+    } else if (drawerView === "dungeon") {
+      const isBusy = busy.on && busy.chatId === state?.chatId;
+      body = renderDungeon(state?.dungeon ?? null, state?.dungeonEntries ?? [], { pick: dgPick, mates: dgMates, busy: isBusy });
     } else if (drawerView === "journal") {
       body = renderJournal(state?.hud ?? null, state?.records ?? []);
     } else if (drawerView === "rules" && builder) {
@@ -511,6 +518,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const view = t.closest<HTMLElement>("[data-view]");
     if (view) { drawerView = view.dataset.view as typeof drawerView; renderDrawer(); return; }
     if (onBuilderClick(t)) return;
+    if (onDungeonClick(t)) return;
     const go = t.closest<HTMLElement>("[data-go]");
     if (go) { act(`go:${go.dataset.go}`); return; }
     const jump = t.closest<HTMLElement>("[data-jump]");
@@ -578,6 +586,69 @@ export function setup(ctx: SpindleFrontendContext) {
       send({ type: "settings", patch: { lines, veils } });
     }
   }
+  function dg(op: import("./shared/protocol.js").DungeonOp) {
+    const cid = chatId();
+    if (!cid) return;
+    dgPick = null;
+    send({ type: "dungeon", chatId: cid, ...op } as FrontendToBackend);
+  }
+  function openDungeon() {
+    drawerView = "dungeon";
+    tab.activate();
+    renderDrawer();
+  }
+  async function confirmLeave() {
+    const res = await ctx.ui.showConfirm({
+      title: "Leave the dungeon?",
+      message: "The party climbs back out and keeps everything found so far.",
+      confirmLabel: "Leave",
+      variant: "info",
+    });
+    if (res.confirmed) dg({ op: "leave" });
+  }
+  function onDungeonClick(t: Element): boolean {
+    const el = t.closest<HTMLElement>("[data-dg-move],[data-dg-choose],[data-dg-skill],[data-dg-item],[data-dg-target],[data-dg-escape],[data-dg-auto],[data-dg-descend],[data-dg-leave],[data-dg-buy],[data-dg-use],[data-dg-enter],[data-dg-cancel]");
+    if (!el || (el as HTMLButtonElement).disabled) return !!el;
+    const d = el.dataset;
+    const v = state?.dungeon;
+    if (d.dgMove) { const [x, y] = d.dgMove.split(",").map(Number); dg({ op: "move", x, y }); return true; }
+    if (d.dgChoose) { dg({ op: "choose", choice: d.dgChoose }); return true; }
+    if (d.dgCancel !== undefined) { dgPick = null; renderDrawer(); return true; }
+    if (d.dgSkill) {
+      const target = d.dgSkillTarget;
+      const foes = v?.battle?.fighters.filter((f) => f.side === "foe" && f.alive) ?? [];
+      if (target === "foe" && foes.length > 1) { dgPick = { kind: "skill", id: d.dgSkill, target: "foe" }; renderDrawer(); return true; }
+      if (target === "ally") { dgPick = { kind: "skill", id: d.dgSkill, target: "ally" }; renderDrawer(); return true; }
+      dg({ op: "battle", skill: d.dgSkill, target: foes[0]?.id });
+      return true;
+    }
+    if (d.dgItem) {
+      if (d.dgItem === "bomb") { dg({ op: "battle", item: "bomb" }); return true; }
+      dgPick = { kind: "item", id: d.dgItem, target: "ally" }; renderDrawer(); return true;
+    }
+    if (d.dgUse) { dgPick = { kind: "use", id: d.dgUse, target: "ally" }; renderDrawer(); return true; }
+    if (d.dgTarget && dgPick) {
+      const p = dgPick;
+      if (p.kind === "skill") dg({ op: "battle", skill: p.id, target: d.dgTarget });
+      else if (p.kind === "item") dg({ op: "battle", item: p.id as "potion" | "ether", target: d.dgTarget });
+      else dg({ op: "use", item: p.id, target: d.dgTarget });
+      return true;
+    }
+    if (d.dgEscape !== undefined) { dg({ op: "battle", escape: true }); return true; }
+    if (d.dgAuto) { dg({ op: "battle", auto: d.dgAuto as "round" | "battle" }); return true; }
+    if (d.dgDescend !== undefined) { dg({ op: "descend" }); return true; }
+    if (d.dgLeave !== undefined) { void confirmLeave(); return true; }
+    if (d.dgBuy) { dg({ op: "buy", item: d.dgBuy }); return true; }
+    if (d.dgEnter) {
+      const entry = state?.dungeonEntries.find((e) => e.id === d.dgEnter);
+      const mates = [...dgMates].filter((m) => entry?.companions.some((c) => c.id === m));
+      dg({ op: "enter", id: d.dgEnter, companions: mates });
+      dgMates.clear();
+      return true;
+    }
+    return true;
+  }
+
   function onPanelInput(e: Event) {
     const t = e.target as HTMLInputElement;
     if (onBuilderInput(t)) return;
@@ -593,6 +664,11 @@ export function setup(ctx: SpindleFrontendContext) {
   function onPanelChange(e: Event) {
     const t = e.target as HTMLInputElement | HTMLSelectElement;
     if (onBuilderInput(t as HTMLInputElement)) return;
+    if (t.dataset.dgMate) {
+      if ((t as HTMLInputElement).checked) dgMates.add(t.dataset.dgMate); else dgMates.delete(t.dataset.dgMate);
+      renderDrawer();
+      return;
+    }
     if (t.dataset.wearSlot) {
       const cid = chatId();
       if (cid && t.value) send({ type: "wear", chatId: cid, slot: t.dataset.wearSlot, item: t.value === "__off" ? null : t.value });
@@ -629,6 +705,12 @@ export function setup(ctx: SpindleFrontendContext) {
 
   // ───────── events: in-chat clicks (delegated; injected nodes are sanitized) ─────────
   function act(actionId: string) {
+    // Dungeon choices open the dungeon screen instead of sending a line.
+    if (actionId.startsWith("dungeon:")) {
+      if (actionId === "dungeon:leave") void confirmLeave();
+      else openDungeon();
+      return;
+    }
     const cid = chatId();
     if (!cid || (busy.on && busy.chatId === cid)) return;
     busy = { chatId: cid, on: true, label: "Rolling…" };
@@ -716,7 +798,10 @@ export function setup(ctx: SpindleFrontendContext) {
         const active = chatId();
         if (m.chatId && active && m.chatId !== active) return;
         if (state?.chatId !== m.chatId) { editingBar = null; lastBars = new Map(); }
+        const entered = !state?.dungeon && !!m.dungeon && state?.chatId === m.chatId;
+        if (!m.dungeon?.battle) dgPick = dgPick?.kind === "use" ? dgPick : null;
         state = m;
+        if (entered) drawerView = "dungeon";
         if (m.chatId === busy.chatId && !m.busy && busy.label === "Rolling…") busy = { chatId: "", on: false, label: "" };
         if (m.busy && m.chatId) busy = { chatId: m.chatId, on: true, label: busy.label };
         renderAll();
@@ -747,6 +832,7 @@ export function setup(ctx: SpindleFrontendContext) {
         break;
       case "command":
         if (m.command === "install") void confirmReplace();
+        else if (m.command === "dungeon") openDungeon();
         else { drawerView = "sheet"; tab.activate(); }
         break;
       case "toast":
