@@ -139,6 +139,31 @@ export const STYLES = `
 .warp-slider { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--warp-muted); }
 .warp-slider input { accent-color: var(--warp-accent); }
 
+/* ───────── floating status overlay ───────── */
+.warp-overlay {
+  --warp-good: #34b89a; --warp-warn: #d9a441; --warp-bad: #e05a7e; --warp-info: #6f8cff;
+  display: flex; flex-direction: column; width: 100%; height: 100%; box-sizing: border-box; overflow: hidden;
+  color: var(--lumiverse-text, #e8e8ee); font-size: 13px;
+  background: color-mix(in srgb, var(--lumiverse-fill-strong, #16141d) 88%, transparent);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  border: 1px solid var(--lumiverse-border, rgba(255,255,255,0.12));
+  border-radius: 14px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.35);
+}
+.warp-overlay-head { display: flex; align-items: center; gap: 8px; height: 38px; flex: 0 0 38px; padding: 0 6px 0 12px; box-sizing: border-box; cursor: grab; user-select: none; }
+.warp-overlay-head:active { cursor: grabbing; }
+.warp-overlay-title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.warp-overlay-actions { display: flex; gap: 2px; }
+.warp-overlay-actions .warp-btn { font-size: 15px; line-height: 1; padding: 4px 8px; }
+.warp-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; }
+.warp-dot.warp-bg-good { background: var(--warp-good); }
+.warp-dot.warp-bg-warn { background: var(--warp-warn); }
+.warp-dot.warp-bg-bad { background: var(--warp-bad); }
+.warp-overlay-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; max-height: var(--warp-overlay-max, 70vh); padding-top: 4px; border-top: 1px solid var(--lumiverse-border, rgba(255,255,255,0.12)); }
+.warp-overlay-collapsed { border-radius: 999px; }
+.warp-overlay-collapsed .warp-overlay-head { cursor: pointer; }
+.warp-overlay-collapsed .warp-overlay-body { display: none; }
+
 /* ───────── modal ───────── */
 .warp-modal { display: flex; flex-direction: column; gap: 10px; padding: 4px 2px; }
 .warp-template { text-align: left; font: inherit; color: inherit; cursor: pointer; }

@@ -156,6 +156,31 @@ var STYLES = `
 .warp-slider { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--warp-muted); }
 .warp-slider input { accent-color: var(--warp-accent); }
 
+/* ───────── floating status overlay ───────── */
+.warp-overlay {
+  --warp-good: #34b89a; --warp-warn: #d9a441; --warp-bad: #e05a7e; --warp-info: #6f8cff;
+  display: flex; flex-direction: column; width: 100%; height: 100%; box-sizing: border-box; overflow: hidden;
+  color: var(--lumiverse-text, #e8e8ee); font-size: 13px;
+  background: color-mix(in srgb, var(--lumiverse-fill-strong, #16141d) 88%, transparent);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  border: 1px solid var(--lumiverse-border, rgba(255,255,255,0.12));
+  border-radius: 14px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.35);
+}
+.warp-overlay-head { display: flex; align-items: center; gap: 8px; height: 38px; flex: 0 0 38px; padding: 0 6px 0 12px; box-sizing: border-box; cursor: grab; user-select: none; }
+.warp-overlay-head:active { cursor: grabbing; }
+.warp-overlay-title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.warp-overlay-actions { display: flex; gap: 2px; }
+.warp-overlay-actions .warp-btn { font-size: 15px; line-height: 1; padding: 4px 8px; }
+.warp-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; }
+.warp-dot.warp-bg-good { background: var(--warp-good); }
+.warp-dot.warp-bg-warn { background: var(--warp-warn); }
+.warp-dot.warp-bg-bad { background: var(--warp-bad); }
+.warp-overlay-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; max-height: var(--warp-overlay-max, 70vh); padding-top: 4px; border-top: 1px solid var(--lumiverse-border, rgba(255,255,255,0.12)); }
+.warp-overlay-collapsed { border-radius: 999px; }
+.warp-overlay-collapsed .warp-overlay-head { cursor: pointer; }
+.warp-overlay-collapsed .warp-overlay-body { display: none; }
+
 /* ───────── modal ───────── */
 .warp-modal { display: flex; flex-direction: column; gap: 10px; padding: 4px 2px; }
 .warp-template { text-align: left; font: inherit; color: inherit; cursor: pointer; }
@@ -403,46 +428,105 @@ function setup(ctx) {
   drawerRoot.className = "warp-root";
   tab.root.appendChild(drawerRoot);
   cleanups.push(tab.onActivate(() => renderDrawer()));
-  let dock = null;
-  const dockRoot = document.createElement("div");
-  dockRoot.className = "warp-root";
+  const PILL = { w: 150, h: 38 };
+  const PANEL_W = 290;
   const narrow = () => window.innerWidth < 760;
+  let overlayOpen = store("overlayOpen") !== null ? store("overlayOpen") === "1" : !narrow();
+  let overlay = null;
+  const overlayEl = document.createElement("div");
+  overlayEl.className = "warp-overlay";
+  overlayEl.innerHTML = `<div class="warp-overlay-head" title="Drag to move"></div><div class="warp-overlay-body warp-root"></div>`;
+  const headEl = overlayEl.firstElementChild;
+  const dockRoot = overlayEl.lastElementChild;
+  dockRoot.addEventListener("pointerdown", (e) => {
+    if (!e.target.closest?.("input, select, textarea"))
+      e.preventDefault();
+  });
+  const onResize = () => {
+    if (overlay?.isVisible())
+      fitOverlay();
+  };
+  window.addEventListener("resize", onResize);
+  cleanups.push(() => window.removeEventListener("resize", onResize));
+  let curSize = { ...PILL };
   try {
-    dock = ctx.ui.requestDockPanel({
-      edge: "left",
-      title: "Warp",
-      size: Number(store("dockSize")) || 270,
-      minSize: 220,
-      maxSize: 420,
-      resizable: true,
-      startCollapsed: true
+    const startW = overlayOpen ? PANEL_W : PILL.w;
+    overlay = ctx.ui.createFloatWidget({
+      width: startW,
+      height: overlayOpen ? 420 : PILL.h,
+      initialPosition: { x: Math.max(12, window.innerWidth - startW - 20), y: 72 },
+      snapToEdge: false,
+      tooltip: "Warp",
+      chromeless: true
     });
-    dock.root.appendChild(dockRoot);
-    cleanups.push(dock.onVisibilityChange((visible) => {
-      if (!autoToggling)
-        store("dockHidden", visible ? "0" : "1");
-    }));
-    cleanups.push(() => dock?.destroy());
+    overlay.root.appendChild(overlayEl);
+    overlay.setVisible(false);
+    curSize = { w: startW, h: overlayOpen ? 420 : PILL.h };
+    cleanups.push(() => overlay?.destroy());
   } catch {
-    dock = null;
+    overlay = null;
   }
-  let autoToggling = false;
-  function syncDockVisibility() {
-    if (!dock)
+  function resizeOverlay(w, h) {
+    if (!overlay || w === curSize.w && h === curSize.h)
       return;
-    const want = !!state?.hud && store("dockHidden") !== "1" && !narrow();
-    if (want === !dock.isCollapsed())
+    const pos = overlay.getPosition();
+    const rightAnchored = pos.x + curSize.w / 2 > window.innerWidth / 2;
+    overlay.setSize(w, h);
+    if (rightAnchored && w !== curSize.w)
+      overlay.moveTo(Math.max(12, pos.x + curSize.w - w), pos.y);
+    curSize = { w, h };
+  }
+  function fitOverlay() {
+    if (!overlay)
       return;
-    autoToggling = true;
-    try {
-      if (want)
-        dock.expand();
-      else
-        dock.collapse();
-    } finally {
-      autoToggling = false;
+    overlayEl.classList.toggle("warp-overlay-collapsed", !overlayOpen);
+    if (!overlayOpen) {
+      resizeOverlay(PILL.w, PILL.h);
+      return;
     }
+    const maxH = Math.max(240, window.innerHeight - 140);
+    overlayEl.style.setProperty("--warp-overlay-max", `${maxH - PILL.h}px`);
+    requestAnimationFrame(() => {
+      const natural = PILL.h + dockRoot.scrollHeight + 2;
+      resizeOverlay(PANEL_W, Math.min(maxH, natural));
+    });
   }
+  function syncDockVisibility() {
+    if (!overlay)
+      return;
+    const show = !!state?.hud || state?.status.state === "broken";
+    if (show !== overlay.isVisible())
+      overlay.setVisible(show);
+    if (show)
+      fitOverlay();
+  }
+  function renderHead() {
+    const h = state?.hud;
+    const clock = h?.clock ? `${h.clock.time}` : "";
+    const worst = h?.bars.find((b) => b.tone === "bad") ?? h?.bars.find((b) => b.tone === "warn");
+    const dot = `<span class="warp-dot warp-bg-${worst?.tone ?? "good"}" title="${esc(worst ? `${worst.label}: ${worst.text ?? worst.display}` : "All good")}"></span>`;
+    headEl.innerHTML = `
+      <span class="warp-overlay-title">\uD83C\uDFB2 ${clock ? `<b>${esc(clock)}</b>` : "Warp"}</span>
+      ${dot}
+      <span class="warp-overlay-actions">
+        ${overlayOpen ? `<button class="warp-btn warp-btn-ghost" data-open-sheet title="Open full sheet" aria-label="Open full sheet">⤢</button>` : ""}
+        <button class="warp-btn warp-btn-ghost" data-toggle-overlay title="${overlayOpen ? "Collapse" : "Expand"}" aria-label="${overlayOpen ? "Collapse" : "Expand"}">${overlayOpen ? "–" : "+"}</button>
+      </span>`;
+  }
+  headEl.addEventListener("click", (e) => {
+    const t = e.target;
+    if (t.closest("[data-open-sheet]")) {
+      drawerView = "sheet";
+      tab.activate();
+      return;
+    }
+    if (t.closest("[data-toggle-overlay]") || !overlayOpen) {
+      overlayOpen = !overlayOpen;
+      store("overlayOpen", overlayOpen ? "1" : "0");
+      renderHead();
+      fitOverlay();
+    }
+  });
   function rememberSections(root) {
     root.querySelectorAll("details[data-section]").forEach((d) => openSections.set(d.dataset.section, d.open));
   }
@@ -464,8 +548,9 @@ function setup(ctx) {
     }
   }
   function renderDock() {
-    if (!dock)
+    if (!overlay)
       return;
+    renderHead();
     rememberSections(dockRoot);
     if (state?.hud) {
       dockRoot.innerHTML = renderHud(state.hud, { editing: editingBar, compact: true });

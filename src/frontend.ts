@@ -1,10 +1,10 @@
-import type { SpindleDockPanelHandle, SpindleFrontendContext } from "lumiverse-spindle-types";
+import type { SpindleFloatWidgetHandle, SpindleFrontendContext } from "lumiverse-spindle-types";
 import type {
   BackendToFrontend, FrontendToBackend, RecordView, RulesetStatus, Settings, TemplateInfo,
 } from "./shared/protocol.js";
 import { DEFAULT_SETTINGS } from "./shared/protocol.js";
 import { STYLES } from "./frontend/styles.js";
-import { renderChips, renderChoices, renderHud, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
+import { esc, renderChips, renderChoices, renderHud, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
 
 type StateMsg = Extract<BackendToFrontend, { type: "state" }>;
 
@@ -54,37 +54,101 @@ export function setup(ctx: SpindleFrontendContext) {
   tab.root.appendChild(drawerRoot);
   cleanups.push(tab.onActivate(() => renderDrawer()));
 
-  let dock: SpindleDockPanelHandle | null = null;
-  const dockRoot = document.createElement("div");
-  dockRoot.className = "warp-root";
+  // Status overlay: a floating widget that sits over the chat instead of docking
+  // beside it, so opening it never pushes the conversation around. Collapsed it's
+  // a small pill; expanded it's the full HUD. Only the header drags.
+  const PILL = { w: 150, h: 38 };
+  const PANEL_W = 290;
   const narrow = () => window.innerWidth < 760;
+  let overlayOpen = store("overlayOpen") !== null ? store("overlayOpen") === "1" : !narrow();
+  let overlay: SpindleFloatWidgetHandle | null = null;
+  const overlayEl = document.createElement("div");
+  overlayEl.className = "warp-overlay";
+  overlayEl.innerHTML = `<div class="warp-overlay-head" title="Drag to move"></div><div class="warp-overlay-body warp-root"></div>`;
+  const headEl = overlayEl.firstElementChild as HTMLElement;
+  const dockRoot = overlayEl.lastElementChild as HTMLElement;
+  // Presses inside the body scroll and click; they must not start a widget drag.
+  // (Form controls are already exempt from dragging, and need their default to take focus.)
+  dockRoot.addEventListener("pointerdown", (e) => {
+    if (!(e.target as Element).closest?.("input, select, textarea")) e.preventDefault();
+  });
+  const onResize = () => { if (overlay?.isVisible()) fitOverlay(); };
+  window.addEventListener("resize", onResize);
+  cleanups.push(() => window.removeEventListener("resize", onResize));
+  let curSize = { ...PILL };
   try {
-    dock = ctx.ui.requestDockPanel({
-      edge: "left",
-      title: "Warp",
-      size: Number(store("dockSize")) || 270,
-      minSize: 220,
-      maxSize: 420,
-      resizable: true,
-      startCollapsed: true,
+    const startW = overlayOpen ? PANEL_W : PILL.w;
+    overlay = ctx.ui.createFloatWidget({
+      width: startW,
+      height: overlayOpen ? 420 : PILL.h,
+      initialPosition: { x: Math.max(12, window.innerWidth - startW - 20), y: 72 },
+      snapToEdge: false,
+      tooltip: "Warp",
+      chromeless: true,
     });
-    dock.root.appendChild(dockRoot);
-    cleanups.push(dock.onVisibilityChange((visible) => {
-      // Remember an explicit collapse so we don't keep popping it open.
-      if (!autoToggling) store("dockHidden", visible ? "0" : "1");
-    }));
-    cleanups.push(() => dock?.destroy());
+    overlay.root.appendChild(overlayEl);
+    overlay.setVisible(false);
+    curSize = { w: startW, h: overlayOpen ? 420 : PILL.h };
+    cleanups.push(() => overlay?.destroy());
   } catch {
-    dock = null; // ui_panels not granted — the drawer tab still has everything
+    overlay = null; // ui_panels not granted — the drawer tab still has everything
   }
-  let autoToggling = false;
+
+  /** Resize, keeping whichever edge is nearer the screen side fixed so it doesn't jump. */
+  function resizeOverlay(w: number, h: number) {
+    if (!overlay || (w === curSize.w && h === curSize.h)) return;
+    const pos = overlay.getPosition();
+    const rightAnchored = pos.x + curSize.w / 2 > window.innerWidth / 2;
+    overlay.setSize(w, h);
+    if (rightAnchored && w !== curSize.w) overlay.moveTo(Math.max(12, pos.x + curSize.w - w), pos.y);
+    curSize = { w, h };
+  }
+
+  function fitOverlay() {
+    if (!overlay) return;
+    overlayEl.classList.toggle("warp-overlay-collapsed", !overlayOpen);
+    if (!overlayOpen) { resizeOverlay(PILL.w, PILL.h); return; }
+    const maxH = Math.max(240, window.innerHeight - 140);
+    overlayEl.style.setProperty("--warp-overlay-max", `${maxH - PILL.h}px`);
+    // Measure the body's natural height so short HUDs don't leave empty space.
+    requestAnimationFrame(() => {
+      const natural = PILL.h + dockRoot.scrollHeight + 2;
+      resizeOverlay(PANEL_W, Math.min(maxH, natural));
+    });
+  }
+
   function syncDockVisibility() {
-    if (!dock) return;
-    const want = !!state?.hud && store("dockHidden") !== "1" && !narrow();
-    if (want === !dock.isCollapsed()) return;
-    autoToggling = true;
-    try { if (want) dock.expand(); else dock.collapse(); } finally { autoToggling = false; }
+    if (!overlay) return;
+    const show = !!state?.hud || state?.status.state === "broken";
+    if (show !== overlay.isVisible()) overlay.setVisible(show);
+    if (show) fitOverlay();
   }
+
+  function renderHead() {
+    const h = state?.hud;
+    const clock = h?.clock ? `${h.clock.time}` : "";
+    const worst = h?.bars.find((b) => b.tone === "bad") ?? h?.bars.find((b) => b.tone === "warn");
+    const dot = `<span class="warp-dot warp-bg-${worst?.tone ?? "good"}" title="${esc(worst ? `${worst.label}: ${worst.text ?? worst.display}` : "All good")}"></span>`;
+    headEl.innerHTML = `
+      <span class="warp-overlay-title">🎲 ${clock ? `<b>${esc(clock)}</b>` : "Warp"}</span>
+      ${dot}
+      <span class="warp-overlay-actions">
+        ${overlayOpen ? `<button class="warp-btn warp-btn-ghost" data-open-sheet title="Open full sheet" aria-label="Open full sheet">⤢</button>` : ""}
+        <button class="warp-btn warp-btn-ghost" data-toggle-overlay title="${overlayOpen ? "Collapse" : "Expand"}" aria-label="${overlayOpen ? "Collapse" : "Expand"}">${overlayOpen ? "–" : "+"}</button>
+      </span>`;
+  }
+
+  headEl.addEventListener("click", (e) => {
+    const t = e.target as Element;
+    if (t.closest("[data-open-sheet]")) { drawerView = "sheet"; tab.activate(); return; }
+    // The whole pill toggles when collapsed; when open, only the button does.
+    if (t.closest("[data-toggle-overlay]") || !overlayOpen) {
+      overlayOpen = !overlayOpen;
+      store("overlayOpen", overlayOpen ? "1" : "0");
+      renderHead();
+      fitOverlay();
+    }
+  });
 
   // ───────── rendering ─────────
   function rememberSections(root: HTMLElement) {
@@ -107,7 +171,8 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   function renderDock() {
-    if (!dock) return;
+    if (!overlay) return;
+    renderHead();
     rememberSections(dockRoot);
     if (state?.hud) {
       dockRoot.innerHTML = renderHud(state.hud, { editing: editingBar, compact: true });
