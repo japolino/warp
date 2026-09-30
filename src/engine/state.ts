@@ -102,7 +102,8 @@ export interface SaveSlot { at: number; turn: number; label: string; snap: GameS
 
 export type EventSource = "cost" | "check" | "action" | "drift" | "trigger" | "narrator" | "manual" | "start" | "world";
 
-export type WarpEvent = { src: EventSource; note?: string } & (
+/** `why`: what caused this change, in words (for the "Why?" view). */
+export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "stat"; id: string; d?: number; set?: number }
   | { t: "flag"; key: string; v: Value }
   | { t: "item"; id: string; d: number; name?: string }

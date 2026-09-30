@@ -524,6 +524,12 @@ export function summarizeEvents(r: Ruleset, before: GameState, after: GameState,
     const name = itemName(r, after.items[id] ? after : before, id);
     out.push({ text: `${a.d > 0 ? "+" : "−"} ${name}${Math.abs(a.d) > 1 ? ` ×${Math.abs(a.d)}` : ""}`, tone: "neutral", src: a.src, undo: a.idx });
   }
+  // The "Why?" trace: every cause behind each chip.
+  const causeOf = (ev: WarpEvent) => ev.why ?? (ev.src === "narrator" ? "Read from the story" : ev.src === "manual" ? "You set this" : null);
+  for (const c of out) {
+    const why = [...new Set((c.undo ?? []).map((i) => events[i] && causeOf(events[i])).filter((x): x is string => !!x))];
+    if (why.length) c.why = why;
+  }
   return out;
 }
 

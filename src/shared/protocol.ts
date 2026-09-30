@@ -262,6 +262,8 @@ export interface ChangeView {
   band?: string;
   /** Index into the record's events of the first event this change summarises — used for undo. */
   undo?: number[];
+  /** What caused it ("Rule \"breakdown\" (stress >= 100)", "Read from the story"…). */
+  why?: string[];
 }
 
 export interface RecordView {

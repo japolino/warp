@@ -278,14 +278,20 @@ export function renderChips(rec: RecordView, opts: { showDice: boolean }): strin
   if ((rec.contradiction ?? 0) >= 0.6) {
     out.push(`<span class="warp-chip warp-tone-warn" title="The decision model thinks this reply may contradict the game state (${Math.round(rec.contradiction! * 100)}%). Consider swiping.">⚠ may contradict the state</span>`);
   }
+  const whys: string[] = [];
   for (const ch of rec.changes) {
     const narr = ch.src === "narrator" || ch.src === "manual";
+    if (ch.why?.length) whys.push(`<div><b>${esc(ch.text)}</b> <span class="warp-dim">←</span> ${ch.why.map(esc).join(" · ")}</div>`);
     const undo = narr && ch.undo?.length
       ? `<button class="warp-chip-undo" data-undo="${esc(ch.undo.join(","))}" title="Undo this change" aria-label="Undo">×</button>`
       : "";
     out.push(`<span class="warp-chip warp-tone-${ch.tone}${narr ? " warp-chip-narr" : ""}" title="${esc(narr ? (ch.src === "manual" ? "You set this" : "Read from the story — click × to undo") : "Applied by the rules")}">${esc(ch.text)}${ch.band ? ` <span class="warp-band">${esc(ch.band)}</span>` : ""}${undo}</span>`);
   }
   if (rec.veiled) out.push(`<span class="warp-chip warp-tone-warn" title="Narrated off-screen by your Veils setting">◐ veiled</span>`);
+  if (whys.length) {
+    out.push(`<button class="warp-chip warp-why-btn" data-why title="Show what caused each change">Why?</button>`);
+    out.push(`<div class="warp-why-detail">${whys.join("")}</div>`);
+  }
   return out.join("");
 }
 

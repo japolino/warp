@@ -133,6 +133,9 @@ export const STYLES = `
 .warp-die { display: inline-grid; place-items: center; min-width: 24px; height: 24px; padding: 0 4px; border-radius: 6px; border: 1px solid var(--warp-border); font-weight: 700; font-variant-numeric: tabular-nums; color: var(--warp-text); }
 .warp-die[data-dropped] { opacity: .35; text-decoration: line-through; }
 .warp-band { color: var(--warp-dim); font-style: italic; }
+.warp-why-btn { font: inherit; cursor: pointer; border: 1px dashed var(--warp-border); background: transparent; color: var(--warp-muted); }
+.warp-why-detail { flex-basis: 100%; display: none; flex-direction: column; gap: 3px; padding: 4px 2px 0; font-size: 12px; color: var(--warp-muted); white-space: normal; }
+.warp-chips[data-why-open] .warp-why-detail { display: flex; }
 
 .warp-decision { border: 1px solid var(--warp-info); color: var(--warp-text); }
 .warp-suggest { background: color-mix(in srgb, var(--warp-accent) 14%, transparent); border: 1px solid var(--warp-accent); gap: 8px; padding: 3px 4px 3px 10px; }

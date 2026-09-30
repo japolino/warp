@@ -70,6 +70,13 @@ export interface Intent {
 /** A choice written for the moment: the label is the writer's, the tag decides what happens. */
 export interface LiveChoice { label: string; tag: string; target?: string }
 
+/** Run `fn` with a cause stamped on every event it pushes (nested causes read "outer → inner"). */
+function because<T>(w: Working, cause: string, fn: () => T): T {
+  const prev = w.cause;
+  w.cause = prev ? `${prev} → ${cause}` : cause;
+  try { return fn(); } finally { w.cause = prev; }
+}
+
 /** Mutable working copy: every pushed event is applied immediately so later formulas see it. */
 class Working {
   events: WarpEvent[] = [];
@@ -92,7 +99,10 @@ class Working {
     public odds: Record<string, Record<string, number>> = {},
     public scene: Record<string, boolean> = {},
   ) {}
+  /** The cause stamped on events pushed right now (the "Why?" trace). */
+  cause: string | null = null;
   push(e: WarpEvent) {
+    if (this.cause && !e.why) e = { ...e, why: this.cause };
     applyEvent(this.s, e, this.r);
     this.events.push(e);
   }
@@ -403,8 +413,10 @@ function openFrontStages(w: Working) {
     for (let n = (w.s.fronts[f.id]?.stage ?? -1) + 1; n < f.stages.length; n++) {
       const st = f.stages[n];
       if ((w.s.fronts[f.id]?.v ?? f.start) < st.at) break;
-      w.push({ t: "stage", id: f.id, n, src: "world" });
-      effectToEvents(w, st.effects, "world", {});
+      because(w, `World: ${f.label} reached stage ${n + 1}`, () => {
+        w.push({ t: "stage", id: f.id, n, src: "world" });
+        effectToEvents(w, st.effects, "world", {});
+      });
       if (st.surface) announce(w, `In the wider world: ${st.surface}`);
     }
   }
@@ -473,7 +485,7 @@ function tickGauge(w: Working, days: number, turns: number) {
     w.push({ t: "gauge", set: 0, src: "world" });
     if (w.s.gauge.next) w.push({ t: "omen", id: null, src: "world" });
     if (ev.restDays > 0) w.push({ t: "rest", days: ev.restDays, src: "world" });
-    effectToEvents(w, e.effects, "world", {});
+    because(w, `Random event: ${e.label}`, () => effectToEvents(w, e.effects, "world", {}));
     announce(w, e.text);
   } else if (ev.omenAt > 0 && g.v >= ev.omenAt && !g.next) {
     w.push({ t: "omen", id: pickEvent(w, candidates), src: "world" });
@@ -546,7 +558,7 @@ function lineageLife(w: Working) {
     r.lineage.stages.forEach((st, i) => {
       if (i + 1 <= (w.s.pregnancy?.told ?? 0) || weeks < st.week) return;
       w.push({ t: "preg_stage", n: i + 1, src: "world" });
-      effectToEvents(w, st.effects, "world", {});
+      because(w, `Pregnancy, week ${st.week}`, () => effectToEvents(w, st.effects, "world", {}));
       announce(w, st.text.replace(/\{carrier\}/g, p.carrier === "player" ? "{{user}}" : personName(r, w.s, p.carrier)));
     });
     if (weeks >= r.lineage.weeks) {
@@ -600,7 +612,7 @@ function companionLife(w: Working, before: GameState) {
       const p = normalize(model ?? Object.fromEntries(spec.options.map((o) => [o.id, o.weight])), keys);
       const picked = sample(p, seededRng(`${w.seed}:daily:${c.id}:${day}`));
       const opt = spec.options.find((o) => o.id === picked)!;
-      effectToEvents(w, opt.effect, "world", {});
+      because(w, `${personName(r, w.s, c.id)}'s own choice: ${opt.desc}`, () => effectToEvents(w, opt.effect, "world", {}));
       const line = `${personName(r, w.s, c.id)}: ${opt.desc.charAt(0).toLowerCase()}${opt.desc.slice(1)}`;
       w.push({ t: "news", text: line, src: "world" });
       announce(w, `Off-screen, ${line}. (Their own choice — it may come up later.)`);
@@ -617,8 +629,11 @@ function companionLife(w: Working, before: GameState) {
     if (!gains.length) continue;
     const total = gains.reduce((a, [, g]) => a + g, 0);
     const drop = Math.max(1, Math.round(total / 2));
+    const jealous = `${personName(r, w.s, c.id)} is jealous of ${gains.map(([id]) => personName(r, w.s, id)).join(" and ")}`;
+    because(w, jealous, () => {
     w.push({ t: "rel", who: c.id, stat: love, d: -drop, src: "world" });
     for (const [id, g] of gains) w.push({ t: "bond", a: c.id, b: id, d: -Math.max(1, Math.round(g / 2)), src: "world" });
+    });
     announce(w, `${personName(r, w.s, c.id)} notices {{user}} getting closer to ${gains.map(([id]) => personName(r, w.s, id)).join(" and ")} — and it stings.`);
   }
 }
@@ -641,8 +656,10 @@ function checkRun(w: Working, before: GameState) {
   if (loop && evalBool(loop.when, w.env(), false)) {
     const to = loop.to !== "start" && w.s.saves[loop.to] ? loop.to : "start";
     const label = to === "start" ? "the very beginning" : w.s.saves[to].label;
-    w.push({ t: "load", slot: to, src: "world" });
-    effectToEvents(w, loop.effects, "world", {});
+    because(w, "Time loop", () => {
+      w.push({ t: "load", slot: to, src: "world" });
+      effectToEvents(w, loop.effects, "world", {});
+    });
     announce(w, `${loop.text} The story rewinds to ${label}: treat everything after it as undone, except what {{user}} remembers.`);
     return;
   }
@@ -698,7 +715,7 @@ function startEncounter(w: Working, id: string, src: EventSource) {
   const foe = Object.fromEntries(enc.foe.stats.map((s) => [s.id, s.start]));
   w.push({ t: "enc", id, foe, ...(enc.momentum ? { momentum: enc.momentum.start } : {}), src });
   announce(w, `An encounter begins: ${enc.name}${enc.desc ? ` — ${enc.desc}` : ""}. Opponent: ${enc.foe.name}.`);
-  effectToEvents(w, enc.start, src, {});
+  because(w, `${enc.name} begins`, () => effectToEvents(w, enc.start, src, {}));
 }
 
 function encounterOutcome(w: Working): string | null {
@@ -723,7 +740,7 @@ function endEncounter(w: Working, outcome: string, src: EventSource) {
   w.push({ t: "enc", id: null, outcome, src });
   announce(w, `The encounter ends: ${outcome.replace(/_/g, " ")}.`);
   const eff = enc?.outcomes[outcome];
-  if (eff) effectToEvents(w, eff, src, {});
+  if (eff) because(w, `${enc?.name ?? "Encounter"} ended: ${outcome.replace(/_/g, " ")}`, () => effectToEvents(w, eff, src, {}));
 }
 
 /** After the player's move: a round passes, the foe acts (odds from the decider or weights), then end checks. */
@@ -775,7 +792,7 @@ function decide(w: Working, d: DecideSpec, src: EventSource, extra: Record<strin
   const picked = sample(p, seededRng(`${w.seed}:decide:${d.id}`));
   const opt = d.options.find((o) => o.id === picked)!;
   w.decisions.push({ id: d.id, ask: fillTarget(w, d.ask, extra), picked, pickedDesc: fillTarget(w, opt.desc, extra), p, source: model ? "model" : "weights" });
-  effectToEvents(w, opt.effect, src, extra);
+  because(w, `${fillTarget(w, d.ask, extra)} → ${fillTarget(w, opt.desc, extra)} (${Math.round((p[picked] ?? 0) * 100)}% odds)`, () => effectToEvents(w, opt.effect, src, extra));
 }
 
 function advanceTime(w: Working, minutes: number, src: EventSource) {
@@ -785,7 +802,7 @@ function advanceTime(w: Working, minutes: number, src: EventSource) {
     const def = w.r.stats[id];
     if (!def.perHour) continue;
     const d = (def.perHour * minutes) / 60;
-    if (Math.abs(d) > 1e-9) w.push({ t: "stat", id, d, src: "drift" });
+    if (Math.abs(d) > 1e-9) w.push({ t: "stat", id, d, src: "drift", why: `${minutes >= 60 ? `${Math.round(minutes / 6) / 10}h` : `${minutes} min`} passed (${def.label} drifts ${def.perHour > 0 ? "+" : ""}${def.perHour}/h)` });
   }
   for (const [id, c] of Object.entries(w.s.conditions)) {
     if (c.until !== null && c.until <= w.s.minutes) w.push({ t: "cond", id, on: false, src: "drift", note: "expired" });
@@ -801,13 +818,14 @@ function runTriggers(w: Working, includeRepeat: boolean) {
       if (t.whenScene && !(t.id in w.scene)) continue;
       const now = (t.when === undefined || evalBool(t.when, w.env(), false)) && (!t.whenScene || w.scene[t.id] === true);
       const prev = w.s.triggers[t.id] ?? false;
+      const why = `Rule "${t.id.replace(/_/g, " ")}"${t.when ? ` (${t.when})` : ""}${t.whenScene ? ` — judged: ${t.whenScene}` : ""}`;
       if (now && !prev) {
         w.push({ t: "trig", id: t.id, v: true, src: "trigger" });
-        effectToEvents(w, t.effects, "trigger", {});
+        because(w, why, () => effectToEvents(w, t.effects, "trigger", {}));
         fired.add(t.id);
         changed = true;
       } else if (now && t.repeat && includeRepeat && !fired.has(t.id)) {
-        effectToEvents(w, t.effects, "trigger", {});
+        because(w, `${why}, every turn while true`, () => effectToEvents(w, t.effects, "trigger", {}));
         fired.add(t.id);
         changed = true;
       } else if (!now && prev) {
@@ -824,7 +842,7 @@ function runTriggers(w: Working, includeRepeat: boolean) {
   for (const f of Object.values(w.r.feats)) {
     if (!w.s.feats[f.id] && evalBool(f.unlock, w.env(), false)) {
       w.push({ t: "feat", id: f.id, src: "trigger" });
-      effectToEvents(w, f.reward, "trigger", {});
+      because(w, `Feat: ${f.name}`, () => effectToEvents(w, f.reward, "trigger", {}));
     }
   }
   openSecrets(w);
@@ -929,7 +947,7 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   if (before.date && !activeSession(r, before)) w.push({ t: "dt_end", src: "action" });
 
   if (dateIntent) {
-    const done = resolveDate(builderOf(w), dateIntent);
+    const done = because(w, "Conversation", () => resolveDate(builderOf(w), dateIntent));
     if (done) {
       rec.action = { id: dateIntent.actionId, label: done.label, via: dateIntent.via };
       const veils = new Set((opts.veils ?? []).map((v) => v.toLowerCase()));
@@ -941,8 +959,10 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
     if (dest) {
       const from = before.location ? r.locations[before.location] : undefined;
       rec.action = { id: intent.actionId, label: `Go to ${dest.name}`, via: intent.via };
-      w.push({ t: "move", to, src: "action" });
-      advanceTime(w, from?.travel ?? dest.travel, "action");
+      because(w, `Travel to ${dest.name}`, () => {
+        w.push({ t: "move", to, src: "action" });
+        advanceTime(w, from?.travel ?? dest.travel, "action");
+      });
       if (dest.desc) w.hints.push(`Arriving at ${dest.name}: ${dest.desc}`);
     }
   } else if (a) {
@@ -960,11 +980,11 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
           ? `{{user}} meant to ${meant.toLowerCase()}, but ${why} What actually happens: ${label.toLowerCase()}.`
           : `{{user}} goes ahead, but ${mind.cause.toLowerCase()} colours it: ${why}`);
     }
-    effectToEvents(w, a.cost, "cost", extra);
+    because(w, `Cost of "${label}"`, () => effectToEvents(w, a.cost, "cost", extra));
 
     if (mind?.kind === "fail") {
       const fail = a.outcomes.fail ?? a.outcomes.crit_fail;
-      if (fail) effectToEvents(w, fail, "check", extra);
+      if (fail) because(w, `"${meant}" — ${mind.cause} stopped it`, () => effectToEvents(w, fail, "check", extra));
     } else if (a.check) {
       const rng: Rng = seededRng(opts.seed);
       const { add, target } = checkNumbers(r, w.s, a, intent!.params, who);
@@ -983,10 +1003,10 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
         seed: opts.seed,
       };
       const key = TIER_FALLBACK[tier].find((t) => a.outcomes[t]);
-      if (key) effectToEvents(w, a.outcomes[key]!, "check", extra);
+      if (key) because(w, `"${label}": ${rec.check.label} rolled ${rec.check.total}${target !== null ? ` vs ${target}` : ""} → ${TIER_LABEL[tier]}`, () => effectToEvents(w, a.outcomes[key]!, "check", extra));
       if (tier === "partial" && key === "success") w.hints.push("It works, but not cleanly — introduce a cost or complication.");
     } else {
-      effectToEvents(w, a.effects, "action", extra);
+      because(w, `"${label}"`, () => effectToEvents(w, a.effects, "action", extra));
     }
 
     // Encounter rounds are quick; ordinary actions take the ruleset's default.
@@ -1092,6 +1112,7 @@ function findPerson(r: Ruleset, s: GameState, key: string): string | null {
 /** Turn a model's suggested changes into events, enforcing every limit the ruleset sets. */
 export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: GateContext): WarpEvent[] {
   const w = new Working(r, cloneState(before), seededRng(`narrator:${before.turn}`));
+  w.cause = "Read from the story";
   const src: EventSource = "narrator";
 
   for (const person of p.people ?? []) {
@@ -1196,6 +1217,7 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
     advanceTime(w, Math.round(Math.min(p.minutes, r.clock.narratorMax)), src);
   }
 
+  w.cause = null;
   runTriggers(w, false);
   // Time the story itself covered moves the world too; whatever surfaces is told next turn.
   if (r.clock.enabled && w.s.minutes > before.minutes) {

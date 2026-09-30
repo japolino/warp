@@ -801,6 +801,12 @@ export function setup(ctx: SpindleFrontendContext) {
       if (row.hasAttribute("data-open")) row.removeAttribute("data-open"); else row.setAttribute("data-open", "");
       return;
     }
+    const why = t.closest<HTMLElement>(".warp-chips [data-why]");
+    if (why) {
+      const row = why.closest<HTMLElement>(".warp-chips")!;
+      if (row.hasAttribute("data-why-open")) row.removeAttribute("data-why-open"); else row.setAttribute("data-why-open", "");
+      return;
+    }
     const redo = t.closest<HTMLElement>(".warp-chips [data-redo]");
     if (redo) { e.preventDefault(); void confirmRedo(redo); return; }
     const dismiss = t.closest<HTMLElement>(".warp-chips [data-dismiss-suggest]");
