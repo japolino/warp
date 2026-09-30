@@ -34,19 +34,51 @@ export interface PersonView {
   id: string;
   name: string;
   stats: { id: string; label: string; display: string; pct: number; text: string | null; tone: Tone }[];
+  /** Here with the player right now. */
+  present: boolean;
+  /** Where their schedule puts them, when they have one. */
+  whereabouts: string | null;
 }
+
+export interface ClothingView { id: string; name: string; slot: string; warmth: number; reveal: number; traits: string[]; integrity: number | null; worn: boolean }
 
 export interface HudView {
   rulesetName: string;
   clock: { label: string; time: string; day: string; phase: string } | null;
+  /** "Sun 4th Sep" when the ruleset has a calendar. */
+  date: string | null;
+  weather: { icon: string; label: string; temp: number; season: string | null; indoors: boolean } | null;
   location: { name: string; desc?: string } | null;
   money: string | null;
   bars: BarView[];
   skills: SkillView[];
   people: PersonView[];
-  items: { id: string; name: string; count: number }[];
+  items: { id: string; name: string; count: number; worn: boolean }[];
   conditions: { id: string; label: string; tone: Tone; desc?: string; remaining?: string }[];
+  /** Clothing warmth vs what the weather calls for. */
+  warmth: { value: number; min: number; max: number; tone: Tone; text: string } | null;
+  /** One row per wardrobe slot. */
+  outfit: { slot: string; label: string; item: ClothingView | null }[] | null;
+  /** Owned clothing (for the change-clothes panel). */
+  clothing: ClothingView[];
+  exposed: string[];
+  encounter: {
+    name: string;
+    foe: string;
+    round: number;
+    stats: { id: string; label: string; value: number; max: number; pct: number; tone: Tone }[];
+  } | null;
+  codex: { id: string; title: string; text: string; category: string | null }[];
+  codexTotal: number;
+  feats: { id: string; name: string; desc: string; unlocked: boolean }[];
+  perks: { id: string; name: string; desc: string; cost: number; owned: boolean; blocker: string | null }[];
+  perkPoints: number | null;
   turn: number;
+}
+
+export interface MapView {
+  nodes: { id: string; name: string; x: number; y: number; here: boolean; reachable: boolean; indoors: boolean; people: string[] }[];
+  edges: [string, string][];
 }
 
 export interface ChoiceView {
@@ -75,6 +107,8 @@ export interface ChangeView {
 export interface RecordView {
   messageId: string;
   swipe: number;
+  /** In-game clock at the end of this turn (timeline). */
+  clock: string | null;
   action: string | null;
   via: string | null;
   check: {
@@ -179,6 +213,7 @@ export type BackendToFrontend =
       chatId: string | null;
       status: RulesetStatus;
       hud: HudView | null;
+      map: MapView | null;
       choices: ChoiceView[];
       records: RecordView[];
       suggestions: SuggestionView[];
@@ -204,5 +239,8 @@ export type FrontendToBackend =
   /** Replace the reply to `userMessageId` and resend it with this intent (null = "not an action"). */
   | { type: "redo"; chatId: string; userMessageId: string; actionId: string | null; params?: Record<string, string> }
   | { type: "dismiss_suggestion"; chatId: string; messageId: string }
+  /** Wardrobe: put on an item, or take off a slot (item null). */
+  | { type: "wear"; chatId: string; slot: string; item: string | null }
+  | { type: "buy_perk"; chatId: string; perk: string }
   | { type: "set_jev_key"; key: string }
   | { type: "test_decider" };

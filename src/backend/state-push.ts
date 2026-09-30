@@ -1,6 +1,6 @@
 // Computing the full UI state for a chat and pushing it to the frontend.
 
-import { buildChoices, buildHud, buildRecordView } from "../engine/view.js";
+import { buildChoices, buildHud, buildMap, buildRecordView } from "../engine/view.js";
 import type { RecordView, SuggestionView } from "../shared/protocol.js";
 import { getMessages, foldPath, warpMeta } from "./ledger.js";
 import { getSettings } from "./settings.js";
@@ -28,7 +28,7 @@ export async function pushState(chatId: string | null, userId?: string, force = 
     const loaded = await getRuleset(chatId, userId, force);
     const status = statusOf(loaded);
     if (!chatId || !loaded?.ruleset) {
-      send({ type: "state", chatId, status, hud: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false }, userId);
+      send({ type: "state", chatId, status, hud: null, map: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false }, userId);
       return;
     }
     const r = loaded.ruleset;
@@ -66,6 +66,7 @@ export async function pushState(chatId: string | null, userId?: string, force = 
       chatId,
       status,
       hud: settings.enabled ? buildHud(r, state) : null,
+      map: settings.enabled ? buildMap(r, state) : null,
       choices: settings.enabled ? buildChoices(r, state, settings) : [],
       records: settings.enabled ? records : [],
       suggestions: settings.enabled ? suggestions.filter((s) => s.canRedo) : [],

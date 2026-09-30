@@ -49,6 +49,20 @@ export interface Effect {
   hint?: string;
   /** Uncertain reactions: a decision model supplies odds, the engine rolls. */
   decide: DecideSpec[];
+  /** Change the current encounter's foe stats. */
+  foe: Record<string, string | number>;
+  /** End the current encounter with this outcome id. */
+  end?: string;
+  /** Begin an encounter by id. */
+  startEncounter?: string;
+  /** Unlock codex entries. */
+  unlock: string[];
+  /** Put on items (slot is taken from the item) — `wear: [raincoat]`. */
+  wear: string[];
+  /** Take off whatever is worn in these slots. */
+  undress: string[];
+  /** Damage worn clothing by slot: `damage: { top: 30 }` (integrity points). */
+  damage: Record<string, string | number>;
 }
 
 export interface DecideOption { id: string; desc: string; weight: number; effect: Effect }
@@ -94,6 +108,8 @@ export interface ActionDef {
   params: ParamDef[];
   tags: string[];
   order: number;
+  /** One choice per person present ("Talk to X"); `target` is that person in formulas and `rel: { target: … }`. */
+  perPerson: boolean;
 }
 
 export interface TriggerDef {
@@ -105,11 +121,81 @@ export interface TriggerDef {
   effects: Effect;
 }
 
-export interface LocationDef { id: string; name: string; desc?: string; exits: string[]; travel: number }
-export interface ItemDef { id: string; name: string; desc?: string; tags: string[] }
+export interface LocationDef {
+  id: string; name: string; desc?: string; exits: string[]; travel: number;
+  /** Indoors: temperature is the indoor temperature and weather doesn't touch you. */
+  indoors: boolean;
+  /** Optional map position (any units; the map scales to fit). */
+  pos?: [number, number];
+}
+export interface ItemDef {
+  id: string; name: string; desc?: string; tags: string[];
+  /** Clothing: the slot it's worn in. */
+  slot?: string;
+  warmth: number;
+  /** Max integrity (clothing); it's destroyed at 0. */
+  integrity: number;
+  /** How revealing it is (adds to `reveal`). */
+  reveal: number;
+  /** Clothing traits, e.g. rainproof, swimwear. */
+  traits: string[];
+}
 export interface ConditionDef { id: string; label: string; tone: Tone; desc?: string; narrator: boolean }
-export interface PersonDef { id: string; name: string; age?: number; start: Record<string, number>; desc?: string }
+export interface ScheduleEntry { when?: string; at: string }
+export interface PersonDef {
+  id: string; name: string; age?: number; start: Record<string, number>; desc?: string;
+  /** First entry whose `when` holds decides where they are; an entry without `when` is the default. */
+  schedule: ScheduleEntry[];
+  traits: string[];
+}
 export interface FlagDef { id: string; label?: string; narrator: boolean; start: string | number | boolean | null }
+
+export interface WeatherKind { id: string; label: string; icon: string; weight: number; temp: number; seasons: string[] | null; tags: string[] }
+export interface WeatherDef {
+  enabled: boolean;
+  kinds: WeatherKind[];
+  /** Base outdoor °C per season. */
+  seasonTemps: Record<string, number>;
+  /** Month numbers (1–12) per season. */
+  seasons: Record<string, number[]>;
+  /** Daily swing: warmest mid-afternoon, coldest before dawn. */
+  swing: number;
+  /** Weather re-rolls every this many hours. */
+  changeHours: number;
+  indoorTemp: number;
+}
+
+export interface WardrobeDef {
+  enabled: boolean;
+  slots: { id: string; label: string }[];
+  /** Slots that count toward being exposed when empty. */
+  cover: string[];
+  startWorn: string[];
+  /** The narrator may undress/redress the player. */
+  narrator: boolean;
+}
+
+export interface FoeStatDef { id: string; label: string; start: number; max: number; good: "high" | "low" | "none" }
+export interface EncounterDef {
+  id: string;
+  name: string;
+  desc?: string;
+  tags: string[];
+  foe: { name: string; stats: FoeStatDef[] };
+  /** Player moves while the encounter is on (replace normal choices). */
+  actions: Record<string, ActionDef>;
+  actionOrder: string[];
+  /** The foe's turn: weighted (or model-weighed) choice among moves. */
+  foeMoves: DecideSpec | null;
+  /** outcome id → formula; first that holds ends the encounter. */
+  endWhen: { outcome: string; when: string }[];
+  outcomes: Record<string, Effect>;
+  start: Effect;
+}
+
+export interface CodexEntry { id: string; title: string; text: string; category?: string; unlock?: string; lore: string[] }
+export interface FeatDef { id: string; name: string; desc: string; unlock: string; reward: Effect; hidden: boolean }
+export interface PerkDef { id: string; name: string; desc: string; cost: number; requires?: string; effects: Effect }
 
 export interface Ruleset {
   name: string;
@@ -142,9 +228,19 @@ export interface Ruleset {
     /** Max minutes the narrator may advance in one turn. */
     narratorMax: number;
     weekdays: string[];
+    /** Calendar date of day 1 (month 1–12, day of month), when dates are shown. */
+    startDate: { month: number; day: number } | null;
   };
   hud: { bars: string[]; money?: string; currency: string };
   narration: { notes?: string; numbers: boolean };
+  weather: WeatherDef;
+  wardrobe: WardrobeDef;
+  encounters: Record<string, EncounterDef>;
+  codex: Record<string, CodexEntry>;
+  feats: Record<string, FeatDef>;
+  perks: Record<string, PerkDef>;
+  /** Stat holding perk points. */
+  perkPoints?: string;
 }
 
 export interface Issue {
@@ -297,10 +393,15 @@ function normStat(id: string, raw: unknown, where: string, c: Ctx, forRel = fals
 }
 
 function emptyEffect(): Effect {
-  return { stats: {}, set: {}, flags: {}, items: {}, rel: {}, addConditions: {}, removeConditions: [], decide: [] };
+  return {
+    stats: {}, set: {}, flags: {}, items: {}, rel: {}, addConditions: {}, removeConditions: [], decide: [],
+    foe: {}, unlock: [], wear: [], undress: [], damage: {},
+  };
 }
 
-function normDecide(raw: unknown, where: string, c: Ctx, known: { stats: Set<string> }): DecideSpec[] {
+const list = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : []);
+
+function normDecide(raw: unknown, where: string, c: Ctx, known: { stats: Set<string> }, minOptions = 2): DecideSpec[] {
   if (!isObj(raw)) { c.warn(where, "decide needs `ask:` and `options:`"); return []; }
   // Either one spec ({ ask, options }) or a map of named specs. Unnamed specs get a stable id from their location.
   const entries: [string, unknown][] = typeof raw.ask === "string" ? [[slug(where), raw]] : Object.entries(raw);
@@ -316,7 +417,7 @@ function normDecide(raw: unknown, where: string, c: Ctx, known: { stats: Set<str
       delete r.desc; delete r.label; delete r.weight;
       options.push({ id: oid, desc, weight: Math.max(0, weight), effect: normEffect(r, `${w} › ${oid}`, c, known) });
     }
-    if (options.length < 2) { c.warn(w, "decide needs at least two options"); continue; }
+    if (options.length < minOptions) { c.warn(w, minOptions > 1 ? "decide needs at least two options" : "needs at least one option"); continue; }
     out.push({ id: typeof spec.id === "string" ? spec.id : id, ask: spec.ask, options });
   }
   return out;
@@ -374,10 +475,33 @@ function normEffect(raw: unknown, where: string, c: Ctx, known: { stats: Set<str
       case "decide":
         e.decide.push(...normDecide(v, w, c, known));
         break;
+      case "foe":
+        if (isObj(v)) for (const [s, d] of Object.entries(v)) { const x = c.expr(d, `${w} › ${s}`); if (x !== undefined) e.foe[s] = x; }
+        else c.warn(w, "expected foe stat changes like `hp: -8`");
+        break;
+      case "end": case "end_encounter":
+        e.end = v === true ? "ended" : String(v);
+        break;
+      case "start_encounter": case "encounter":
+        e.startEncounter = String(v);
+        break;
+      case "unlock": case "codex":
+        e.unlock.push(...list(v));
+        break;
+      case "wear": case "put_on":
+        e.wear.push(...list(v));
+        break;
+      case "undress": case "take_off":
+        e.undress.push(...list(v));
+        break;
+      case "damage":
+        if (isObj(v)) for (const [slot, d] of Object.entries(v)) { const x = c.expr(d, `${w} › ${slot}`); if (x !== undefined) e.damage[slot] = x; }
+        else c.warn(w, "expected clothing damage by slot, like `top: 30`");
+        break;
       default:
         // Flat shorthand: a known stat name maps to a delta.
         if (known.stats.has(k)) { const x = c.expr(v, w); if (x !== undefined) e.stats[k] = x; }
-        else c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint)`);
+        else c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, unlock, wear, undress, damage)`);
     }
   }
   return e;
@@ -458,6 +582,143 @@ function normAction(id: string, raw: unknown, where: string, c: Ctx, known: { st
     params,
     tags: Array.isArray(raw.tags) ? raw.tags.map((t: unknown) => String(t).toLowerCase()) : [],
     order: typeof raw.order === "number" ? raw.order : order,
+    perPerson: raw.per_person === true || raw.with === "person" || raw.with === "people",
+  };
+}
+
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+
+/** "Sep 4", "4 Sep", "September 4th", or { month, day }. */
+export function parseDate(v: unknown): { month: number; day: number } | null {
+  if (isObj(v)) {
+    const m = Number(v.month), d = Number(v.day);
+    return m >= 1 && m <= 12 && d >= 1 && d <= 31 ? { month: m, day: d } : null;
+  }
+  if (typeof v !== "string") return null;
+  const s = v.trim().toLowerCase();
+  const a = /^([a-z]{3,})\.?\s+(\d{1,2})(?:st|nd|rd|th)?$/.exec(s);
+  const b = /^(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]{3,})\.?$/.exec(s);
+  const name = a?.[1] ?? b?.[2];
+  const day = Number(a?.[2] ?? b?.[1]);
+  const month = name ? MONTHS.indexOf(name.slice(0, 3)) + 1 : 0;
+  return month >= 1 && day >= 1 && day <= 31 ? { month, day } : null;
+}
+
+const DEFAULT_WEATHER: WeatherKind[] = [
+  { id: "clear", label: "Clear", icon: "☀️", weight: 4, temp: 1, seasons: null, tags: [] },
+  { id: "cloudy", label: "Overcast", icon: "☁️", weight: 3, temp: -1, seasons: null, tags: [] },
+  { id: "rain", label: "Rain", icon: "🌧️", weight: 2, temp: -3, seasons: null, tags: ["wet"] },
+  { id: "storm", label: "Storm", icon: "⛈️", weight: 1, temp: -4, seasons: ["summer", "autumn"], tags: ["wet", "windy"] },
+  { id: "snow", label: "Snow", icon: "❄️", weight: 2, temp: -6, seasons: ["winter"], tags: ["wet", "cold"] },
+];
+
+function normWeather(raw: unknown, c: Ctx): WeatherDef {
+  const def: WeatherDef = {
+    enabled: false,
+    kinds: DEFAULT_WEATHER,
+    seasonTemps: { spring: 12, summer: 22, autumn: 11, winter: 3 },
+    seasons: { spring: [3, 4, 5], summer: [6, 7, 8], autumn: [9, 10, 11], winter: [12, 1, 2] },
+    swing: 5,
+    changeHours: 6,
+    indoorTemp: 20,
+  };
+  if (raw === undefined || raw === false) return def;
+  def.enabled = true;
+  if (!isObj(raw)) return def;
+  if (isObj(raw.kinds)) {
+    const kinds: WeatherKind[] = [];
+    for (const [id, k] of Object.entries(raw.kinds)) {
+      const r: Raw = isObj(k) ? k : {};
+      const w = `Weather › kinds › ${id}`;
+      kinds.push({
+        id,
+        label: typeof r.label === "string" ? r.label : titleCase(id),
+        icon: typeof r.icon === "string" ? r.icon : "",
+        weight: Math.max(0, c.num(r.weight, `${w} › weight`, 1)),
+        temp: c.num(r.temp, `${w} › temp`, 0),
+        seasons: r.seasons === undefined ? null : list(r.seasons),
+        tags: list(r.tags),
+      });
+    }
+    if (kinds.length) def.kinds = kinds;
+  }
+  if (isObj(raw.temps)) for (const [s, t] of Object.entries(raw.temps)) def.seasonTemps[s] = c.num(t, `Weather › temps › ${s}`, 10);
+  if (isObj(raw.seasons)) {
+    def.seasons = {};
+    for (const [s, m] of Object.entries(raw.seasons)) def.seasons[s] = (Array.isArray(m) ? m : [m]).map(Number).filter((n) => n >= 1 && n <= 12);
+  }
+  def.swing = c.num(raw.swing, "Weather › swing", def.swing);
+  def.changeHours = Math.max(1, c.num(raw.change_hours ?? raw.changes_every, "Weather › change_hours", def.changeHours));
+  def.indoorTemp = c.num(raw.indoors ?? raw.indoor_temp, "Weather › indoors", def.indoorTemp);
+  return def;
+}
+
+const DEFAULT_SLOTS = ["head", "outer", "top", "bottom", "under_top", "under_bottom", "legs", "feet"];
+
+function normWardrobe(raw: unknown, items: Record<string, ItemDef>, c: Ctx): WardrobeDef {
+  const clothing = Object.values(items).some((i) => i.slot);
+  const def: WardrobeDef = { enabled: clothing, slots: [], cover: ["top", "bottom"], startWorn: [], narrator: true };
+  const r: Raw = isObj(raw) ? raw : {};
+  if (raw === false) def.enabled = false;
+  if (isObj(raw)) def.enabled = true;
+  const slotIds = Array.isArray(r.slots) ? r.slots.map(String) : DEFAULT_SLOTS;
+  def.slots = slotIds.map((id: string) => ({ id, label: titleCase(id) }));
+  if (Array.isArray(r.cover)) def.cover = r.cover.map(String);
+  def.startWorn = list(r.start ?? r.worn);
+  def.narrator = r.narrator !== false;
+  for (const it of Object.values(items)) {
+    if (it.slot && !slotIds.includes(it.slot)) c.warn(`Items › ${it.id} › slot`, `"${it.slot}" isn't a wardrobe slot (${slotIds.join(", ")})`);
+  }
+  return def;
+}
+
+function normEncounter(id: string, raw: unknown, c: Ctx, known: { stats: Set<string> }): EncounterDef | null {
+  const w = `Encounters › ${id}`;
+  if (!isObj(raw)) { c.warn(w, "expected an encounter definition"); return null; }
+  const foeRaw: Raw = isObj(raw.foe) ? raw.foe : {};
+  const stats: FoeStatDef[] = [];
+  for (const [sid, s] of Object.entries(isObj(foeRaw.stats) ? foeRaw.stats : {})) {
+    const r: Raw = isObj(s) ? s : { start: s };
+    const start = c.num(r.start, `${w} › foe › ${sid}`, 10);
+    const goodRaw = String(r.good ?? "low").toLowerCase();
+    stats.push({
+      id: sid,
+      label: typeof r.label === "string" ? r.label : titleCase(sid),
+      start,
+      max: c.num(r.max, `${w} › foe › ${sid} › max`, Math.max(start, 1)),
+      good: goodRaw === "high" ? "high" : goodRaw === "none" ? "none" : "low",
+    });
+  }
+  const actions: Record<string, ActionDef> = {};
+  const actionOrder: string[] = [];
+  let i = 0;
+  for (const [aid, a] of Object.entries(isObj(raw.actions) ? raw.actions : {})) {
+    const def = normAction(aid, a, `${w} › actions › ${aid}`, c, known, i++);
+    if (def) { actions[aid] = def; actionOrder.push(aid); }
+  }
+  if (!actionOrder.length) c.warn(w, "has no player `actions:` — the player can't do anything during it");
+  let foeMoves: DecideSpec | null = null;
+  const movesRaw = raw.foe_moves ?? raw.moves;
+  if (isObj(movesRaw)) {
+    const specs = normDecide({ ask: typeof raw.foe_ask === "string" ? raw.foe_ask : `What does ${typeof foeRaw.name === "string" ? foeRaw.name : "the opponent"} do next?`, options: movesRaw }, `${w} › foe_moves`, c, known, 1);
+    foeMoves = specs[0] ? { ...specs[0], id: `enc_${id}_foe` } : null;
+  }
+  const endWhen: { outcome: string; when: string }[] = [];
+  for (const [outcome, when] of Object.entries(isObj(raw.end_when) ? raw.end_when : {})) {
+    const x = c.expr(when, `${w} › end_when › ${outcome}`);
+    if (x !== undefined) endWhen.push({ outcome, when: String(x) });
+  }
+  const outcomes: Record<string, Effect> = {};
+  for (const [o, e] of Object.entries(isObj(raw.outcomes) ? raw.outcomes : {})) outcomes[o] = normEffect(e, `${w} › outcomes › ${o}`, c, known);
+  const startRaw = raw.start ?? (typeof raw.start_hint === "string" ? { hint: raw.start_hint } : undefined);
+  return {
+    id,
+    name: typeof raw.name === "string" ? raw.name : titleCase(id),
+    desc: typeof raw.desc === "string" ? raw.desc : undefined,
+    tags: list(raw.tags).map((t) => t.toLowerCase()),
+    foe: { name: typeof foeRaw.name === "string" ? foeRaw.name : "Opponent", stats },
+    actions, actionOrder, foeMoves, endWhen, outcomes,
+    start: normEffect(startRaw, `${w} › start`, c, known),
   };
 }
 
@@ -498,12 +759,23 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     const r: Raw = isObj(p) ? p : typeof p === "string" ? { name: p } : {};
     const start: Record<string, number> = {};
     if (isObj(r.start)) for (const [s, v] of Object.entries(r.start)) start[s] = c.num(v, `Relationships › people › ${id} › start › ${s}`, 0);
+    const schedule: ScheduleEntry[] = [];
+    const sched = r.schedule ?? r.routine;
+    const schedList: unknown[] = Array.isArray(sched) ? sched : typeof sched === "string" ? [{ at: sched }] : isObj(sched) ? Object.entries(sched).map(([at, when]) => ({ at, when })) : [];
+    schedList.forEach((e, n) => {
+      const sw = `Relationships › people › ${id} › schedule #${n + 1}`;
+      if (!isObj(e) || typeof e.at !== "string") { c.warn(sw, "each schedule entry needs `at:` (a location) and optionally `when:`"); return; }
+      const when = e.when === undefined || e.when === true ? undefined : c.expr(e.when, `${sw} › when`);
+      schedule.push({ at: e.at, ...(when !== undefined ? { when: String(when) } : {}) });
+    });
     people[id] = {
       id,
       name: typeof r.name === "string" ? r.name : titleCase(id),
       age: r.age !== undefined ? c.num(r.age, `Relationships › people › ${id} › age`, 0) : undefined,
       start,
       desc: typeof r.desc === "string" ? r.desc : undefined,
+      schedule,
+      traits: list(r.traits),
     };
   }
 
@@ -512,7 +784,18 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const items: Record<string, ItemDef> = {};
   for (const [id, it] of Object.entries(isObj(raw.items) ? raw.items : isObj(invRaw.items) ? invRaw.items : {})) {
     const r: Raw = isObj(it) ? it : typeof it === "string" ? { name: it } : {};
-    items[id] = { id, name: typeof r.name === "string" ? r.name : titleCase(id), desc: r.desc, tags: Array.isArray(r.tags) ? r.tags.map(String) : [] };
+    const w = `Items › ${id}`;
+    items[id] = {
+      id,
+      name: typeof r.name === "string" ? r.name : titleCase(id),
+      desc: r.desc,
+      tags: list(r.tags),
+      ...(typeof r.slot === "string" ? { slot: r.slot } : {}),
+      warmth: c.num(r.warmth, `${w} › warmth`, 0),
+      integrity: Math.max(1, c.num(r.integrity, `${w} › integrity`, 100)),
+      reveal: c.num(r.reveal, `${w} › reveal`, 0),
+      traits: list(r.traits).map((t) => t.toLowerCase()),
+    };
   }
 
   // Locations
@@ -525,6 +808,8 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
       desc: typeof r.desc === "string" ? r.desc : undefined,
       exits: Array.isArray(r.exits) ? r.exits.map(String) : [],
       travel: c.num(r.travel, `Locations › ${id} › travel`, 10),
+      indoors: r.indoors === true || r.inside === true,
+      ...(Array.isArray(r.pos) && r.pos.length === 2 && r.pos.every((n: unknown) => Number.isFinite(Number(n))) ? { pos: [Number(r.pos[0]), Number(r.pos[1])] as [number, number] } : {}),
     };
   }
   for (const l of Object.values(locations)) for (const x of l.exits) {
@@ -572,6 +857,13 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const clockStartRaw = startRaw.time ?? clockRaw.start ?? "Mon 08:00";
   const clockStart = parseClockStart(clockStartRaw, weekdays);
   if (clockStart === null) c.warn("Clock › start", `"${clockStartRaw}" should look like "Mon 07:30" or "Day 1 07:30"`);
+  const dateRaw = clockRaw.date ?? clockRaw.start_date ?? startRaw.date;
+  const startDate = dateRaw === undefined ? null : parseDate(dateRaw);
+  if (dateRaw !== undefined && !startDate) c.warn("Clock › date", `"${dateRaw}" should look like "Sep 4"`);
+
+  const worldRaw = { weather: raw.weather, wardrobe: raw.wardrobe };
+  const weather = normWeather(worldRaw.weather, c);
+  const wardrobe = normWardrobe(worldRaw.wardrobe, items, c);
 
   // Actions
   const actions: Record<string, ActionDef> = {};
@@ -615,6 +907,60 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const narrRaw: Raw = isObj(raw.narration) ? raw.narration : {};
   const playerRaw: Raw = isObj(raw.player) ? raw.player : {};
 
+  // Encounters, codex, feats, perks
+  const encounters: Record<string, EncounterDef> = {};
+  for (const [id, e] of Object.entries(isObj(raw.encounters) ? raw.encounters : {})) {
+    const def = normEncounter(id, e, c, known);
+    if (def) encounters[id] = def;
+  }
+  const codex: Record<string, CodexEntry> = {};
+  for (const [id, e] of Object.entries(isObj(raw.codex) ? raw.codex : {})) {
+    const w = `Codex › ${id}`;
+    const r: Raw = isObj(e) ? e : typeof e === "string" ? { text: e } : {};
+    const unlock = r.unlock !== undefined ? c.expr(r.unlock, `${w} › unlock`) : undefined;
+    codex[id] = {
+      id,
+      title: typeof r.title === "string" ? r.title : titleCase(id),
+      text: typeof r.text === "string" ? r.text : "",
+      ...(typeof r.category === "string" ? { category: r.category } : {}),
+      ...(unlock !== undefined ? { unlock: String(unlock) } : {}),
+      lore: list(r.lore),
+    };
+  }
+  const feats: Record<string, FeatDef> = {};
+  for (const [id, f] of Object.entries(isObj(raw.feats) ? raw.feats : {})) {
+    const w = `Feats › ${id}`;
+    if (!isObj(f)) { c.warn(w, "a feat needs `unlock:` (a formula)"); continue; }
+    const unlock = c.expr(f.unlock ?? f.when, `${w} › unlock`);
+    if (unlock === undefined) { c.warn(w, "a feat needs `unlock:` (a formula)"); continue; }
+    feats[id] = {
+      id,
+      name: typeof f.name === "string" ? f.name : titleCase(id),
+      desc: typeof f.desc === "string" ? f.desc : "",
+      unlock: String(unlock),
+      reward: normEffect(f.reward, `${w} › reward`, c, known),
+      hidden: f.hidden === true,
+    };
+  }
+  const perksRaw: Raw = isObj(raw.perks) ? raw.perks : {};
+  const perkList: Raw = isObj(perksRaw.list) ? perksRaw.list : Object.fromEntries(Object.entries(perksRaw).filter(([k]) => k !== "points"));
+  const perks: Record<string, PerkDef> = {};
+  for (const [id, p] of Object.entries(perkList)) {
+    const w = `Perks › ${id}`;
+    if (!isObj(p)) { c.warn(w, "expected a perk definition"); continue; }
+    const req = p.requires !== undefined ? c.expr(p.requires, `${w} › requires`) : undefined;
+    perks[id] = {
+      id,
+      name: typeof p.name === "string" ? p.name : titleCase(id),
+      desc: typeof p.desc === "string" ? p.desc : "",
+      cost: c.num(p.cost, `${w} › cost`, 1),
+      ...(req !== undefined ? { requires: String(req) } : {}),
+      effects: normEffect(p.effects, `${w} › effects`, c, known),
+    };
+  }
+  const perkPoints = typeof perksRaw.points === "string" ? perksRaw.points : undefined;
+  if (perkPoints && !stats[perkPoints]) c.warn("Perks › points", `"${perkPoints}" isn't a declared stat`);
+
   const ruleset: Ruleset = {
     name: typeof raw.name === "string" ? raw.name : "Untitled ruleset",
     description: typeof raw.description === "string" ? raw.description : undefined,
@@ -637,17 +983,32 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
       minutesPerAction: c.num(clockRaw.minutes_per_action, "Clock › minutes_per_action", 10),
       narratorMax: c.num(clockRaw.narrator_max ?? clockRaw.narrator, "Clock › narrator_max", 480),
       weekdays,
+      startDate,
     },
     hud: { bars, money: moneyStat && stats[moneyStat] ? moneyStat : undefined, currency: typeof hudRaw.currency === "string" ? hudRaw.currency : "$" },
     narration: { notes: typeof narrRaw.notes === "string" ? narrRaw.notes : undefined, numbers: narrRaw.numbers === true },
+    weather, wardrobe, encounters, codex, feats, perks,
+    ...(perkPoints && stats[perkPoints] ? { perkPoints } : {}),
   };
+
+  // Cross-references that need everything loaded.
+  for (const p of Object.values(people)) for (const e of p.schedule) {
+    if (Object.keys(locations).length && !locations[e.at]) c.warn(`Relationships › people › ${p.id} › schedule`, `"${e.at}" isn't a declared location`);
+  }
+  for (const id of wardrobe.startWorn) {
+    if (!items[id]?.slot) c.warn("Wardrobe › start", `"${id}" isn't a declared clothing item (items need a \`slot:\`)`);
+    else if (!(startItems[id] > 0)) startItems[id] = 1; // wearing it means owning it
+  }
 
   // Hard floor: sexual content and minors never mix, whatever the tags or settings.
   const minors = [
     ...(ruleset.player.age !== undefined && ruleset.player.age < 18 ? ["the player"] : []),
     ...Object.values(people).filter((p) => p.age !== undefined && p.age < 18).map((p) => p.name),
   ];
-  const sexualActions = Object.values(actions).filter((a) => a.tags.some((t) => SEXUAL_TAGS.has(t)));
+  const sexualActions = [
+    ...Object.values(actions),
+    ...Object.values(encounters).flatMap((e) => Object.values(e.actions).map((a) => ({ ...a, tags: [...a.tags, ...e.tags] }))),
+  ].filter((a) => a.tags.some((t) => SEXUAL_TAGS.has(t)));
   if (minors.length && sexualActions.length) {
     c.err("Ruleset", `declares characters under 18 (${minors.join(", ")}) alongside sexual actions — Warp won't run this ruleset`);
     return { ruleset: null, issues: c.issues };

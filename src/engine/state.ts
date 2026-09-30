@@ -8,8 +8,28 @@
 import type { Value, ExprEnv } from "./expr.js";
 import { evalNumber } from "./expr.js";
 import type { Ruleset, StatDef, Band } from "./ruleset.js";
+import {
+  dateAt, exposedSlots, hasTrait, isIndoors, personLocation, revealOf, seasonAt, temperatureAt,
+  warmthNeeded, warmthOf, weatherAt,
+} from "./world.js";
+
+export interface EncounterState {
+  id: string;
+  round: number;
+  foe: Record<string, number>;
+}
 
 export interface GameState {
+  /** Per-chat world seed (weather etc.), set on the first turn. */
+  seed: string | null;
+  /** slot → item id currently worn. */
+  worn: Record<string, string>;
+  /** item id → current integrity, when damaged. */
+  integrity: Record<string, number>;
+  encounter: EncounterState | null;
+  codex: Record<string, true>;
+  feats: Record<string, true>;
+  perks: Record<string, true>;
   stats: Record<string, number>;
   flags: Record<string, Value>;
   items: Record<string, number>;
@@ -38,10 +58,26 @@ export type WarpEvent = { src: EventSource; note?: string } & (
   | { t: "cond"; id: string; on: boolean; until?: number | null }
   | { t: "trig"; id: string; v: boolean }
   | { t: "turn" }
+  | { t: "seed"; v: string }
+  | { t: "wear"; slot: string; item: string | null }
+  | { t: "dmg"; item: string; d: number }
+  | { t: "enc"; id: string | null; foe?: Record<string, number>; outcome?: string }
+  | { t: "foe"; stat: string; d?: number; set?: number }
+  | { t: "round" }
+  | { t: "codex"; id: string }
+  | { t: "feat"; id: string }
+  | { t: "perk"; id: string }
 );
 
 export function initialState(r: Ruleset): GameState {
   const s: GameState = {
+    seed: null,
+    worn: {},
+    integrity: {},
+    encounter: null,
+    codex: {},
+    feats: {},
+    perks: {},
     stats: {},
     flags: {},
     items: { ...r.startItems },
@@ -61,6 +97,10 @@ export function initialState(r: Ruleset): GameState {
     s.people[p.id] = { name: p.name };
     s.rel[p.id] = {};
     for (const rs of r.relStatOrder) s.rel[p.id][rs] = p.start[rs] ?? r.relStats[rs].start;
+  }
+  for (const id of r.wardrobe.startWorn) {
+    const slot = r.items[id]?.slot;
+    if (slot) s.worn[slot] = id;
   }
   return s;
 }
@@ -87,11 +127,54 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
     case "flag": s.flags[e.key] = e.v; break;
     case "item": {
       const n = (s.items[e.id] ?? 0) + e.d;
-      if (n <= 0) delete s.items[e.id];
-      else s.items[e.id] = n;
+      if (n <= 0) {
+        delete s.items[e.id];
+        // Can't keep wearing something you no longer have.
+        for (const [slot, id] of Object.entries(s.worn)) if (id === e.id) delete s.worn[slot];
+        delete s.integrity[e.id];
+      } else s.items[e.id] = n;
       if (e.name && !r.items[e.id]) s.itemNames[e.id] = e.name;
       break;
     }
+    case "seed": if (!s.seed) s.seed = e.v; break;
+    case "wear":
+      if (e.item) {
+        // Wearing implies owning; an item occupies one slot at a time.
+        if (!(s.items[e.item] > 0)) s.items[e.item] = 1;
+        for (const [slot, id] of Object.entries(s.worn)) if (id === e.item) delete s.worn[slot];
+        s.worn[e.slot] = e.item;
+      } else delete s.worn[e.slot];
+      break;
+    case "dmg": {
+      const def = r.items[e.item];
+      const max = def?.integrity ?? 100;
+      const next = Math.min(max, (s.integrity[e.item] ?? max) + e.d);
+      if (next <= 0) {
+        // Destroyed.
+        delete s.integrity[e.item];
+        for (const [slot, id] of Object.entries(s.worn)) if (id === e.item) delete s.worn[slot];
+        const n = (s.items[e.item] ?? 1) - 1;
+        if (n <= 0) delete s.items[e.item];
+        else s.items[e.item] = n;
+      } else if (next >= max) delete s.integrity[e.item];
+      else s.integrity[e.item] = next;
+      break;
+    }
+    case "enc":
+      s.encounter = e.id ? { id: e.id, round: 0, foe: { ...(e.foe ?? {}) } } : null;
+      break;
+    case "foe": {
+      if (!s.encounter) break;
+      const def = r.encounters[s.encounter.id]?.foe.stats.find((x) => x.id === e.stat);
+      const cur = s.encounter.foe[e.stat] ?? def?.start ?? 0;
+      const next = e.set !== undefined ? e.set : cur + (e.d ?? 0);
+      s.encounter.foe[e.stat] = def ? clamp(next, 0, def.max) : next;
+      break;
+    }
+    case "round": if (s.encounter) s.encounter.round += 1; break;
+    case "codex": s.codex[e.id] = true; break;
+    case "feat": s.feats[e.id] = true; break;
+    case "perk": s.perks[e.id] = true; break;
     case "person":
       s.people[e.id] = { name: e.name };
       if (!s.rel[e.id]) {
@@ -136,8 +219,48 @@ export function foldEvents(r: Ruleset, batches: Iterable<WarpEvent[]>, from?: Ga
 
 // ───────────────────────── expression environment ─────────────────────────
 
+/** Every built-in name formulas can use (for the linter and the AI builder's reference). */
+export const BUILTIN_NAMES = [
+  "minutes", "hour", "minute", "day", "weekday", "turn", "location",
+  "month", "date", "season", "weather", "temperature", "indoors", "outside",
+  "warmth", "warmth_min", "warmth_max", "too_cold", "too_hot", "reveal", "exposed", "naked",
+  "in_encounter", "round", "target",
+];
+
 export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> = {}): ExprEnv {
   const day = Math.floor(s.minutes / 1440);
+  const date = dateAt(r, s.minutes);
+  // Lazily computed so formulas that don't use the world pay nothing for it.
+  let world: Record<string, Value> | null = null;
+  const worldVars = (): Record<string, Value> => {
+    if (world) return world;
+    const temp = temperatureAt(r, s);
+    const need = temp === null ? null : warmthNeeded(temp);
+    const warmth = warmthOf(r, s);
+    const exposed = exposedSlots(r, s).length;
+    const indoors = isIndoors(r, s);
+    world = {
+      month: date?.month ?? 0,
+      date: date?.day ?? 0,
+      season: seasonAt(r, s.minutes) ?? "",
+      weather: weatherAt(r, s)?.id ?? "",
+      temperature: temp ?? 20,
+      indoors,
+      outside: !indoors,
+      warmth,
+      warmth_min: need?.min ?? 0,
+      warmth_max: need?.max ?? 99,
+      too_cold: need ? warmth < need.min : false,
+      too_hot: need ? warmth > need.max : false,
+      reveal: revealOf(r, s),
+      exposed,
+      naked: r.wardrobe.enabled && exposed === r.wardrobe.cover.length && r.wardrobe.cover.length > 0,
+      in_encounter: !!s.encounter,
+      round: s.encounter?.round ?? 0,
+      target: "",
+    };
+    return world;
+  };
   const clockVars: Record<string, Value> = {
     minutes: s.minutes,
     hour: Math.floor((s.minutes % 1440) / 60),
@@ -147,7 +270,9 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
     turn: s.turn,
     location: s.location ?? "",
   };
-  return {
+  // Schedules are evaluated with an env that can't ask about presence (no recursion).
+  const scheduleEnv = (): ExprEnv => ({ lookup: base.lookup, call: (n, a) => (n === "present" || n === "where" ? undefined : base.call!(n, a)) });
+  const base: ExprEnv = {
     lookup(path) {
       const [head, ...rest] = path;
       if (rest.length === 0) {
@@ -157,7 +282,17 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
         if (head in clockVars) return clockVars[head];
         if (head in s.flags) return s.flags[head];
         if (r.flags[head]) return r.flags[head].start;
+        const w = worldVars();
+        if (head in w) return w[head];
         return undefined;
+      }
+      if (head === "foe") {
+        if (!s.encounter) return 0;
+        const def = r.encounters[s.encounter.id]?.foe.stats.find((x) => x.id === rest[0]);
+        return s.encounter.foe[rest[0]] ?? def?.start ?? 0;
+      }
+      if (head === "target" && typeof extra.target === "string" && rest.length === 1) {
+        return s.rel[extra.target]?.[rest[0]] ?? r.relStats[rest[0]]?.start ?? 0;
       }
       if (head === "flags") return s.flags[rest[0]] ?? (r.flags[rest[0]] ? r.flags[rest[0]].start : false);
       if (head === "items") return s.items[rest[0]] ?? 0;
@@ -181,10 +316,19 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
           const v = Number(args[0]); const lo = Number(args[1]); const hi = Number(args[2]);
           return lo <= hi ? v >= lo && v < hi : v >= lo || v < hi;
         }
+        case "wearing": return Object.values(s.worn).includes(a0);
+        case "worn": return s.worn[a0] ?? "";
+        case "trait": return hasTrait(r, s, a0);
+        case "present": return personLocation(r, s, a0, scheduleEnv()) === s.location && !!s.location;
+        case "where": return personLocation(r, s, a0, scheduleEnv()) ?? "";
+        case "codex": return a0 in s.codex;
+        case "feat": return a0 in s.feats;
+        case "perk": return a0 in s.perks;
       }
       return undefined;
     },
   };
+  return base;
 }
 
 // ───────────────────────── presentation helpers ─────────────────────────

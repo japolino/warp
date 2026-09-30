@@ -3,11 +3,14 @@
 import type { Ruleset, StatDef } from "./ruleset.js";
 import { TIERS } from "./ruleset.js";
 import {
-  bandFor, formatClock, formatNumber, gradeFor, itemName, personName, statMax,
+  bandFor, formatClock, formatNumber, gradeFor, itemName, makeEnv, personName, statMax,
   type GameState, type WarpEvent,
 } from "./state.js";
-import { availableActions, odds, TIER_LABEL, TRAVEL_PREFIX, travelTargets, type CheckResult, type TurnRecord } from "./resolve.js";
-import type { ChangeView, ChoiceView, HudView, RecordView, Tone } from "../shared/protocol.js";
+import { availableChoices, odds, perkBlocker, TIER_LABEL, TRAVEL_PREFIX, travelTargets, type CheckResult, type TurnRecord } from "./resolve.js";
+import {
+  dateAt, exposedSlots, isIndoors, ordinal, personLocation, presentPeople, seasonAt, temperatureAt, warmthNeeded, warmthOf, weatherAt,
+} from "./world.js";
+import type { ChangeView, ChoiceView, ClothingView, HudView, MapView, RecordView, Tone } from "../shared/protocol.js";
 
 function pct(v: number, min: number, max: number) {
   return max > min ? Math.max(0, Math.min(1, (v - min) / (max - min))) : 0;
@@ -62,18 +65,68 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
       };
     });
 
-  const people = Object.entries(s.people).map(([id, p]) => ({
-    id, name: p.name,
-    stats: r.relStatOrder.map((rs) => {
-      const def = r.relStats[rs];
-      const v = s.rel[id]?.[rs] ?? def.start;
-      const band = bandFor(def, v);
-      const pp = pct(v, def.min, def.max);
-      return { id: rs, label: def.label, display: formatNumber(v), pct: pp, text: band?.text ?? null, tone: band?.tone ?? toneFromPct(pp, def.good) };
-    }),
-  }));
+  const env = makeEnv(r, s);
+  const here = new Set(presentPeople(r, s, env));
+  const people = Object.entries(s.people).map(([id, p]) => {
+    const where = r.people[id]?.schedule.length ? personLocation(r, s, id, env) : null;
+    return {
+      id, name: p.name,
+      stats: r.relStatOrder.map((rs) => {
+        const def = r.relStats[rs];
+        const v = s.rel[id]?.[rs] ?? def.start;
+        const band = bandFor(def, v);
+        const pp = pct(v, def.min, def.max);
+        return { id: rs, label: def.label, display: formatNumber(v), pct: pp, text: band?.text ?? null, tone: band?.tone ?? toneFromPct(pp, def.good) };
+      }),
+      present: here.has(id),
+      whereabouts: where ? r.locations[where]?.name ?? where : null,
+    };
+  }).sort((a, b) => Number(b.present) - Number(a.present));
 
-  const items = Object.entries(s.items).map(([id, count]) => ({ id, name: itemName(r, s, id), count }));
+  const wornIds = new Set(Object.values(s.worn));
+  const clothingView = (id: string): ClothingView => {
+    const d = r.items[id];
+    return {
+      id, name: itemName(r, s, id), slot: d?.slot ?? "", warmth: d?.warmth ?? 0, reveal: d?.reveal ?? 0, traits: d?.traits ?? [],
+      integrity: d && s.integrity[id] !== undefined ? Math.round((s.integrity[id] / d.integrity) * 100) : null,
+      worn: wornIds.has(id),
+    };
+  };
+  const items = Object.entries(s.items).map(([id, count]) => ({ id, name: itemName(r, s, id), count, worn: wornIds.has(id) }));
+  const clothing = Object.keys(s.items).filter((id) => r.items[id]?.slot).map(clothingView);
+  const outfit = r.wardrobe.enabled
+    ? r.wardrobe.slots.map((sl) => ({ slot: sl.id, label: sl.label, item: s.worn[sl.id] ? clothingView(s.worn[sl.id]) : null }))
+    : null;
+
+  const temp = temperatureAt(r, s);
+  const wx = weatherAt(r, s);
+  const date = dateAt(r, s.minutes);
+  let warmth: HudView["warmth"] = null;
+  if (r.wardrobe.enabled && temp !== null) {
+    const need = warmthNeeded(temp);
+    const value = warmthOf(r, s);
+    const cold = value < need.min, hot = value > need.max;
+    warmth = {
+      value, min: need.min, max: need.max,
+      tone: cold || hot ? (Math.min(Math.abs(value - need.min), Math.abs(value - need.max)) > 6 ? "bad" : "warn") : "good",
+      text: cold ? "You're underdressed for this." : hot ? "You're overdressed and sweltering." : "Dressed right for the weather.",
+    };
+  }
+
+  let encounter: HudView["encounter"] = null;
+  if (s.encounter) {
+    const enc = r.encounters[s.encounter.id];
+    encounter = {
+      name: enc?.name ?? s.encounter.id,
+      foe: enc?.foe.name ?? "Opponent",
+      round: s.encounter.round,
+      stats: (enc?.foe.stats ?? []).map((fs) => {
+        const v = s.encounter!.foe[fs.id] ?? fs.start;
+        const p = pct(v, 0, fs.max);
+        return { id: fs.id, label: fs.label, value: v, max: fs.max, pct: p, tone: toneFromPct(p, fs.good === "none" ? "none" : fs.good === "high" ? "high" : "low") };
+      }),
+    };
+  }
 
   const conditions = Object.entries(s.conditions).map(([id, c]) => {
     const def = r.conditions[id];
@@ -93,6 +146,8 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
   return {
     rulesetName: r.name,
     clock: r.clock.enabled ? formatClock(r, s.minutes) : null,
+    date: date ? `${r.clock.weekdays[Math.floor(s.minutes / 1440) % r.clock.weekdays.length] ?? ""} ${ordinal(date.day)} ${date.monthName}`.trim() : null,
+    weather: temp !== null ? { icon: isIndoors(r, s) ? "🏠" : wx?.icon ?? "", label: isIndoors(r, s) ? "Indoors" : wx?.label ?? "", temp, season: seasonAt(r, s.minutes), indoors: isIndoors(r, s) } : null,
     location: s.locationName ? { name: s.locationName, desc: loc?.desc } : null,
     money,
     bars: bars.filter((b) => r.stats[b.id].kind !== "money"),
@@ -100,7 +155,79 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
     people,
     items,
     conditions,
+    warmth,
+    outfit,
+    clothing,
+    exposed: exposedSlots(r, s),
+    encounter,
+    codex: Object.values(r.codex).filter((c) => s.codex[c.id]).map((c) => ({ id: c.id, title: c.title, text: c.text, category: c.category ?? null })),
+    codexTotal: Object.keys(r.codex).length,
+    feats: Object.values(r.feats).filter((f) => !f.hidden || s.feats[f.id]).map((f) => ({ id: f.id, name: f.name, desc: f.desc, unlocked: !!s.feats[f.id] })),
+    perks: Object.values(r.perks).map((p) => ({ id: p.id, name: p.name, desc: p.desc, cost: p.cost, owned: !!s.perks[p.id], blocker: s.perks[p.id] ? null : perkBlocker(r, s, p.id) })),
+    perkPoints: r.perkPoints ? s.stats[r.perkPoints] ?? 0 : null,
     turn: s.turn,
+  };
+}
+
+/** A radial map: the start location in the middle, neighbours around it (authored `pos:` wins). */
+export function buildMap(r: Ruleset, s: GameState): MapView | null {
+  const ids = Object.keys(r.locations);
+  if (ids.length < 2) return null;
+  const pos = new Map<string, [number, number]>();
+  if (ids.every((id) => r.locations[id].pos)) {
+    for (const id of ids) pos.set(id, r.locations[id].pos!);
+  } else {
+    const root = r.startLocation && r.locations[r.startLocation] ? r.startLocation : ids[0];
+    // BFS tree, then give each subtree an angular slice proportional to its size.
+    const children = new Map<string, string[]>();
+    const depth = new Map<string, number>([[root, 0]]);
+    const queue = [root];
+    while (queue.length) {
+      const id = queue.shift()!;
+      for (const x of r.locations[id].exits) {
+        if (!r.locations[x] || depth.has(x)) continue;
+        depth.set(x, depth.get(id)! + 1);
+        children.set(id, [...(children.get(id) ?? []), x]);
+        queue.push(x);
+      }
+    }
+    // Unconnected places go on an outer ring.
+    for (const id of ids) if (!depth.has(id)) { depth.set(id, 3); children.set(root, [...(children.get(root) ?? []), id]); }
+    const size = (id: string): number => 1 + (children.get(id) ?? []).reduce((a, c) => a + size(c), 0);
+    const place = (id: string, a0: number, a1: number) => {
+      const d = depth.get(id)!;
+      const a = (a0 + a1) / 2;
+      pos.set(id, [Math.cos(a) * d * 110, Math.sin(a) * d * 110]);
+      const kids = children.get(id) ?? [];
+      const total = kids.reduce((n, c) => n + size(c), 0) || 1;
+      let start = a0;
+      for (const c of kids) {
+        const span = ((a1 - a0) * size(c)) / total;
+        place(c, start, start + span);
+        start += span;
+      }
+    };
+    place(root, -Math.PI / 2, (3 * Math.PI) / 2);
+  }
+  const env = makeEnv(r, s);
+  const peopleAt = new Map<string, string[]>();
+  for (const pid of Object.keys(r.people)) {
+    const at = personLocation(r, s, pid, env);
+    if (at) peopleAt.set(at, [...(peopleAt.get(at) ?? []), personName(r, s, pid)]);
+  }
+  const reach = new Set(travelTargets(r, s));
+  const edges: [string, string][] = [];
+  const seen = new Set<string>();
+  for (const id of ids) for (const x of r.locations[id].exits) {
+    const k = [id, x].sort().join("|");
+    if (r.locations[x] && !seen.has(k)) { seen.add(k); edges.push([id, x]); }
+  }
+  return {
+    nodes: ids.map((id) => {
+      const [x, y] = pos.get(id) ?? [0, 0];
+      return { id, name: r.locations[id].name, x, y, here: s.location === id, reachable: reach.has(id), indoors: r.locations[id].indoors, people: peopleAt.get(id) ?? [] };
+    }),
+    edges,
   };
 }
 
@@ -113,14 +240,15 @@ export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; 
     desc: r.locations[id].desc ?? null,
     odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [],
   }));
-  const actions = availableActions(r, s, opts.lines)
-    .filter((a) => !a.hidden)
-    .map((a) => {
-      const o = odds(r, s, a);
+  const encName = s.encounter ? r.encounters[s.encounter.id]?.name ?? "Encounter" : null;
+  const actions = availableChoices(r, s, opts.lines)
+    .filter(({ a }) => !a.hidden)
+    .map(({ id, a, target, label }) => {
+      const o = odds(r, s, a, undefined, target);
       return {
-        id: a.id,
-        label: a.label,
-        group: a.group ?? null,
+        id,
+        label,
+        group: encName ?? a.group ?? null,
         desc: a.desc ?? null,
         odds: o ? o.success : null,
         partialOdds: o && o.partial > 0 ? o.partial : null,
@@ -195,6 +323,37 @@ export function summarizeEvents(r: Ruleset, before: GameState, after: GameState,
       case "person":
         out.push({ text: `Met ${e.name}`, tone: "neutral", src: e.src, undo: [i] });
         break;
+      case "wear": {
+        const prev = before.worn[e.slot];
+        if (e.item) out.push({ text: `👕 Put on ${itemName(r, after, e.item)}`, tone: "neutral", src: e.src, undo: [i] });
+        else if (prev) out.push({ text: `👕 Took off ${itemName(r, before, prev)}`, tone: "neutral", src: e.src, undo: [i] });
+        break;
+      }
+      case "dmg": {
+        const gone = !(after.items[e.item] > 0);
+        out.push({ text: gone ? `💥 ${itemName(r, before, e.item)} destroyed` : `🧵 ${itemName(r, after, e.item)} damaged`, tone: "bad", src: e.src, undo: [i] });
+        break;
+      }
+      case "enc":
+        if (e.id) out.push({ text: `⚔ ${r.encounters[e.id]?.name ?? "Encounter"}`, tone: "warn", src: e.src });
+        else out.push({ text: `⚔ Over: ${(e.outcome ?? "ended").replace(/_/g, " ")}`, tone: "neutral", src: e.src });
+        break;
+      case "foe": {
+        const enc = before.encounter ?? after.encounter;
+        const def = enc ? r.encounters[enc.id] : undefined;
+        const fs = def?.foe.stats.find((x) => x.id === e.stat);
+        if (e.d) out.push({ text: `${def?.foe.name ?? "Foe"} ${fs?.label ?? e.stat} ${signed(e.d)}`, tone: (e.d < 0) === (fs?.good !== "high") ? "good" : "bad", src: e.src });
+        break;
+      }
+      case "codex":
+        out.push({ text: `📖 ${r.codex[e.id]?.title ?? e.id}`, tone: "good", src: e.src });
+        break;
+      case "feat":
+        out.push({ text: `🏆 ${r.feats[e.id]?.name ?? e.id}`, tone: "good", src: e.src });
+        break;
+      case "perk":
+        out.push({ text: `★ ${r.perks[e.id]?.name ?? e.id}`, tone: "good", src: e.src });
+        break;
     }
   });
 
@@ -249,6 +408,7 @@ export function buildRecordView(r: Ruleset, messageId: string, swipe: number, re
   return {
     messageId,
     swipe,
+    clock: r.clock.enabled ? formatClock(r, after.minutes).label : null,
     action: rec.action?.label ?? null,
     via: rec.action?.via ?? null,
     check: rec.check ? {
@@ -320,9 +480,28 @@ function statLine(r: Ruleset, def: StatDef, s: GameState, forceNumbers: boolean)
 export function stateDigest(r: Ruleset, s: GameState): string {
   const lines: string[] = [];
   const head: string[] = [];
-  if (r.clock.enabled) { const c = formatClock(r, s.minutes); head.push(`${c.day}, ${c.time} (${c.phase})`); }
-  if (s.locationName) head.push(`Location: ${s.locationName}`);
+  const hud = buildHud(r, s);
+  if (r.clock.enabled) {
+    const c = formatClock(r, s.minutes);
+    head.push(`${hud.date ?? c.day}, ${c.time} (${c.phase})`);
+  }
+  if (s.locationName) head.push(`Location: ${s.locationName}${hud.weather?.indoors ? " (indoors)" : ""}`);
+  if (hud.weather) head.push(hud.weather.indoors ? `${hud.weather.temp}°C inside` : `${hud.weather.label}, ${hud.weather.temp}°C${hud.weather.season ? ` (${hud.weather.season})` : ""}`);
   if (head.length) lines.push(head.join(" · "));
+
+  if (hud.encounter) {
+    const e = hud.encounter;
+    lines.push(`ENCOUNTER in progress: ${e.name} vs ${e.foe}, round ${e.round}${e.stats.length ? ` — ${e.stats.map((x) => `${x.label} ${formatNumber(x.value)}/${formatNumber(x.max)}`).join(", ")}` : ""}`);
+  }
+
+  if (hud.outfit) {
+    const worn = hud.outfit.filter((o) => o.item).map((o) => `${o.item!.name}${o.item!.integrity !== null && o.item!.integrity < 60 ? " (torn)" : ""}`);
+    const exposure = hud.exposed.length ? ` — exposed: ${hud.exposed.join(", ")}` : "";
+    lines.push(`Wearing: ${worn.length ? worn.join(", ") : "nothing"}${exposure}${hud.warmth && hud.warmth.tone !== "good" ? ` · ${hud.warmth.text}` : ""}`);
+  }
+
+  const here = hud.people.filter((p) => p.present).map((p) => p.name);
+  if (here.length) lines.push(`Present here: ${here.join(", ")}`);
 
   const meters = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "meter" || d.kind === "money");
   const other = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "attribute" || d.kind === "skill");
@@ -334,7 +513,8 @@ export function stateDigest(r: Ruleset, s: GameState): string {
   const conds = Object.keys(s.conditions).map((id) => r.conditions[id]?.label ?? id);
   if (conds.length) lines.push(`Conditions: ${conds.join(", ")}`);
 
-  const inv = Object.entries(s.items).map(([id, n]) => `${itemName(r, s, id)}${n > 1 ? ` ×${n}` : ""}`);
+  const wornSet = new Set(Object.values(s.worn));
+  const inv = Object.entries(s.items).filter(([id]) => !wornSet.has(id)).map(([id, n]) => `${itemName(r, s, id)}${n > 1 ? ` ×${n}` : ""}`);
   if (inv.length) lines.push(`Carrying: ${inv.join(", ")}`);
 
   const ppl = Object.entries(s.people).map(([id, p]) => {
