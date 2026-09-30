@@ -9,7 +9,7 @@ import { SKILLS } from "./dungeon/content.js";
 export const FUNCTIONS = [
   "has", "count", "flag", "cond", "at", "rel", "met", "between", "roll",
   "wearing", "worn", "trait", "present", "where", "codex", "feat", "perk",
-  "secret", "front", "front_stage", "happened", "deepest", "partner", "dates", "stage", "saved", "body", "transformed", "bond", "arc", "age", "children", "owed", "missed", "days_until",
+  "secret", "front", "front_stage", "happened", "deepest", "partner", "dates", "stage", "saved", "body", "transformed", "bond", "arc", "age", "children", "owed", "missed", "days_until", "seen_by", "fame",
   "min", "max", "clamp", "floor", "ceil", "round", "abs",
 ];
 
@@ -217,6 +217,10 @@ export function lintRuleset(r: Ruleset): Issue[] {
   }
   for (const e of Object.values(r.endings)) check(e.when, `Endings › ${e.id} › when`);
   const people = Object.keys(r.people);
+  if (r.observers.enabled) {
+    check(r.observers.when, "Observers › when");
+    for (const [k, eff] of Object.entries(r.observers.reactions)) if (eff) checkEffect(eff, `Observers › reactions › ${k}`, { target: "someone" });
+  }
   for (const o of Object.values(r.obligations)) {
     const w = `Obligations › ${o.id}`;
     check(o.amount, `${w} › amount`);

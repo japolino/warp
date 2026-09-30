@@ -454,6 +454,20 @@ export interface JobDef {
   styles: Record<string, string>;
 }
 
+/** Being seen: when this holds, everyone present reacts to how {{user}} looks, individually. */
+export interface ObserversDef {
+  enabled: boolean;
+  when: string;
+  /** Anonymous passers-by sampled when outdoors. */
+  crowd: number;
+  /** Effects per reaction, on the observer (`target`). */
+  reactions: Partial<Record<SeenReaction, Effect>>;
+  /** Witnesses tell the people they're close to, once a day. */
+  rumours: boolean;
+}
+export type SeenReaction = "unnoticed" | "glance" | "interested" | "disapproving" | "predatory";
+export const SEEN_REACTIONS: SeenReaction[] = ["unnoticed", "glance", "interested", "disapproving", "predatory"];
+
 export interface Ruleset {
   name: string;
   description?: string;
@@ -516,6 +530,7 @@ export interface Ruleset {
   lineage: LineageDef;
   obligations: Record<string, ObligationDef>;
   jobs: Record<string, JobDef>;
+  observers: ObserversDef;
 }
 
 export interface Issue {
@@ -1435,6 +1450,21 @@ function normJobs(raw: unknown, c: Ctx, known: { stats: Set<string> }): Record<s
   return out;
 }
 
+function normObservers(raw: unknown, c: Ctx, known: { stats: Set<string> }): ObserversDef {
+  const def: ObserversDef = { enabled: false, when: "exposed > 0", crowd: 2, reactions: {}, rumours: true };
+  if (raw === undefined || raw === false) return def;
+  const r: Raw = isObj(raw) ? raw : {};
+  def.enabled = true;
+  if (r.when !== undefined) { const x = c.expr(r.when, "Observers › when"); if (x !== undefined) def.when = String(x); }
+  def.crowd = Math.max(0, Math.min(6, Math.round(c.num(r.crowd, "Observers › crowd", 2))));
+  def.rumours = r.rumours !== false;
+  for (const [k, v] of Object.entries(isObj(r.reactions) ? r.reactions : {})) {
+    if (!(SEEN_REACTIONS as string[]).includes(k)) { c.warn(`Observers › reactions › ${k}`, `reactions are ${SEEN_REACTIONS.join(", ")}`); continue; }
+    def.reactions[k as SeenReaction] = normEffect(v, `Observers › reactions › ${k}`, c, known);
+  }
+  return def;
+}
+
 const SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
 
 export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issues: Issue[] } {
@@ -1697,6 +1727,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const moneyId = typeof hudRaw.money === "string" ? hudRaw.money : statOrder.find((s) => stats[s].kind === "money");
   const obligations = normObligations(raw.obligations ?? raw.debts, c, known, moneyId);
   const jobs = normJobs(raw.jobs, c, known);
+  const observers = normObservers(raw.observers ?? raw.being_seen, c, known);
 
   const ruleset: Ruleset = {
     name: typeof raw.name === "string" ? raw.name : "Untitled ruleset",
@@ -1726,7 +1757,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     narration: { notes: typeof narrRaw.notes === "string" ? narrRaw.notes : undefined, numbers: narrRaw.numbers === true },
     weather, wardrobe, encounters, codex, feats, perks,
     ...(perkPoints && stats[perkPoints] ? { perkPoints } : {}),
-    secrets, fronts, randomEvents, liveChoices, dungeons, dating, mind, checkpoints, endings, legacy, body, companions, bonds, lineage, obligations, jobs,
+    secrets, fronts, randomEvents, liveChoices, dungeons, dating, mind, checkpoints, endings, legacy, body, companions, bonds, lineage, obligations, jobs, observers,
   };
 
   // Cross-references that need everything loaded.

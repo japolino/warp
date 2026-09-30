@@ -671,6 +671,12 @@ export function stateDigest(r: Ruleset, s: GameState): string {
   const body = bodyLine(r, s);
   if (body) lines.push(body);
   lines.push(...workDigest(r, s));
+  const saw = Object.entries(s.seen).filter(([id]) => s.people[id]);
+  if (saw.length) {
+    const eyes = saw.filter(([, v]) => !v.heard).map(([id]) => personName(r, s, id));
+    const ears = saw.filter(([, v]) => v.heard).map(([id]) => personName(r, s, id));
+    lines.push(`Reputation: ${eyes.length ? `${eyes.join(", ")} ${eyes.length === 1 ? "has" : "have"} seen {{user}} exposed` : ""}${eyes.length && ears.length ? "; " : ""}${ears.length ? `${ears.join(", ")} heard about it` : ""}.`);
+  }
 
   const meters = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "meter" || d.kind === "money");
   const other = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "attribute" || d.kind === "skill");

@@ -88,6 +88,8 @@ export interface GameState {
   kin: Record<string, Kin>;
   /** Obligations: when the next payment is due, what's owed now, how many were missed. */
   dues: Record<string, { due: number; owed: number; missed: number }>;
+  /** Who has seen {{user}} exposed (and what), and who only heard about it. */
+  seen: Record<string, { what: string; at: number; where: string; heard?: boolean }>;
   /** A work shift in progress. */
   job: { id: string; n: number; patron: number; earned: number; tips: number; log: { who: string; result: string }[] } | null;
   /** The story reached an ending (told = the narrator has written it). */
@@ -170,6 +172,7 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "kin_join"; id: string }
   | { t: "due"; id: string; due?: number; owed?: number; missed?: number }
   | { t: "job"; job: GameState["job"] }
+  | { t: "seen"; who: string; what: string; where: string; heard?: boolean }
   | { t: "save"; slot: string; label: string }
   | { t: "load"; slot: string }
   | { t: "restart" }
@@ -230,6 +233,7 @@ export function initialState(r: Ruleset): GameState {
     kin: {},
     dues: {},
     job: null,
+    seen: {},
   };
   // Obligations: the first payment is due `first` days in; its amount is read now.
   for (const o of Object.values(r.obligations)) {
@@ -442,6 +446,9 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       s.dues = { ...s.dues, [e.id]: { due: e.due ?? cur.due, owed: Math.max(0, e.owed ?? cur.owed), missed: e.missed ?? cur.missed } };
       break;
     }
+    case "seen":
+      if (!e.heard || !s.seen[e.who]) s.seen = { ...s.seen, [e.who]: { what: e.what, at: s.minutes, where: e.where, ...(e.heard ? { heard: true } : {}) } };
+      break;
     case "job": s.job = e.job ? structuredClone(e.job) : null; break;
     case "news": s.news = [...s.news, { text: e.text, at: s.minutes }].slice(-NEWS_KEPT); break;
     case "bond": s.bonds = { ...s.bonds, [e.a]: { ...(s.bonds[e.a] ?? {}), [e.b]: clamp((s.bonds[e.a]?.[e.b] ?? 0) + e.d, -100, 100) } }; break;
@@ -707,6 +714,9 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
         case "children": return Object.keys(s.kin).length;
         // Obligations: what's owed, payments missed, whole days until the next is due (negative = overdue).
         case "owed": return s.dues[a0]?.owed ?? 0;
+        // Being seen: whether someone saw (or heard about) {{user}} exposed, and how many have.
+        case "seen_by": return !!s.seen[a0] && !s.seen[a0].heard;
+        case "fame": return Object.keys(s.seen).length;
         case "missed": return s.dues[a0]?.missed ?? 0;
         case "days_until": return s.dues[a0] ? Math.floor((s.dues[a0].due - s.minutes) / 1440) : 0;
         case "dates": return s.dating.dates[a0]?.count ?? 0;

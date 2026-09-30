@@ -777,7 +777,16 @@ live_choices:
     },
     {
       label: "dating",
-      yaml: `# Rent is due every Monday. Miss it and the landlord decides what that costs.
+      yaml: `# When {{user}} is exposed, everyone present reacts in their own way, and word gets around.
+observers:
+  when: "exposed > 0"
+  crowd: 2
+  reactions:
+    interested: { rel: { target: { lust: +4 } } }
+    disapproving: { rel: { target: { trust: -3 } }, stress: +3 }
+    predatory: { stress: +6, hint: "{target} starts paying the wrong kind of attention." }
+
+# Rent is due every Monday. Miss it and the landlord decides what that costs.
 obligations:
   rent:
     label: Rent
