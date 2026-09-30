@@ -13,7 +13,7 @@ export const PART_CONTENTS: Record<PartLabel, string> = {
   actions: "actions",
   encounters: "encounters, dungeons",
   journal: "codex, feats, perks",
-  rules: "triggers",
+  rules: "triggers, mind",
   story: "secrets, fronts, random_events, live_choices",
   dating: "dating (tastes, topics, venues), plus gift items and actions to get them",
 };
@@ -29,7 +29,7 @@ export function partForIssue(where: string): PartLabel {
   if (head.startsWith("actions")) return "actions";
   if (head.startsWith("encounters") || head.startsWith("dungeons")) return "encounters";
   if (["codex", "feats", "perks"].some((k) => head.startsWith(k))) return "journal";
-  if (head.startsWith("triggers") || head.startsWith("rules")) return "rules";
+  if (head.startsWith("triggers") || head.startsWith("rules") || head.startsWith("mind")) return "rules";
   if (["secrets", "fronts", "random events", "live choices"].some((k) => head.startsWith(k))) return "story";
   if (head.startsWith("dating")) return "dating";
   return "core";
@@ -140,6 +140,13 @@ triggers:
   exhausted: { when: "fatigue >= 85", do: { add_condition: [exhausted], hint: "..." } }         # fires once when it becomes true
   drain: { when: "fatigue >= 85", repeat: true, do: { stress: +2 } }                           # every turn while true
   danger: { when_scene: "{{user}} is in immediate danger", do: { stress: +5 } }                # judged in plain language
+
+mind:             # the character's mind can overrule the player (in the "rules" part)
+  overrides:      # first one that holds and rolls under its chance wins; a 🧠 chip says why
+    freeze: { when: "control < 25", chance: "60 - control * 2", on: [violence], cause: Panic, text: "their body won't obey." }   # do: fail (default) = fails with no roll
+    urge: { when: "lust >= 70", chance: 30, on: [talk], do: flirt, cause: Desire }      # do: <action id> = that happens instead
+    nerves: { when: "control < 50", chance: 50, do: alter, cause: Nerves }               # do: alter = goes ahead, coloured by the cause; on: [] = any action with a check
+  perception: [ { when: "awareness < 20", text: "{{user}} is naive: describe only what they understand." } ]   # filters the narration while true
 
 STORY MACHINERY (the "story" part):
 secrets:          # only opened stages ever reach the narrator — what isn't in the prompt can't leak

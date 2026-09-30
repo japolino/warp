@@ -14,6 +14,7 @@ import type { ChangeView, ChoiceView, ClothingView, HudView, MapView, RecordView
 import { dungeonOf, dungeonsHere, levelOf, memberFighter } from "./dungeon/run.js";
 import { activeSession, dateDigest, dateMoves, moodOf, type DateMove } from "./date/talk.js";
 import { REACTION_LABEL } from "./date/types.js";
+import { evalBool } from "./expr.js";
 
 function pct(v: number, min: number, max: number) {
   return max > min ? Math.max(0, Math.min(1, (v - min) / (max - min))) : 0;
@@ -494,6 +495,7 @@ export function buildRecordView(r: Ruleset, messageId: string, swipe: number, re
       };
     }),
     contradiction: rec.contradiction ?? null,
+    mind: rec.mind ? { cause: rec.mind.cause, kind: rec.mind.kind, meant: rec.mind.meant, chance: rec.mind.chance } : null,
     redoFrom: null,
   };
 }
@@ -655,6 +657,13 @@ export function sceneHints(r: Ruleset, s: GameState): { moods: Record<string, st
   if (s.encounter) notes.push(`In a fight or tense encounter: ${r.encounters[s.encounter.id]?.name ?? s.encounter.id}`);
   if (s.dungeon) notes.push("Exploring a dungeon");
   return Object.keys(moods).length || notes.length ? { moods, notes } : null;
+}
+
+/** How the player character experiences things right now (the mind's perception filters). */
+export function perception(r: Ruleset, s: GameState): string | null {
+  const env = makeEnv(r, s);
+  const lines = r.mind.perception.filter((p) => evalBool(p.when, env, false)).map((p) => p.text);
+  return lines.length ? lines.join("\n") : null;
 }
 
 /** The outcome block for a turn with an action. */

@@ -8,7 +8,7 @@ import { randomSeed } from "../engine/dice.js";
 import { actionTags, applyProposal, resolveTurnFull, type Intent, type Proposal, type TurnRecord } from "../engine/resolve.js";
 import type { Ruleset } from "../engine/ruleset.js";
 import { applyEvent, cloneState, type GameState } from "../engine/state.js";
-import { narratorKnowledge, outcomePacket, sceneHints, stateDigest } from "../engine/view.js";
+import { narratorKnowledge, outcomePacket, perception, sceneHints, stateDigest } from "../engine/view.js";
 import type { Settings } from "../shared/protocol.js";
 import { bookkeeping, contradiction, odds, readTurn } from "./decisions.js";
 import { getDecider } from "./deciders.js";
@@ -89,6 +89,8 @@ function buildInjection(r: Ruleset, rec: TurnRecord | null, before: GameState, a
   const parts: string[] = [];
   parts.push(`[Warp — current game state. The rules engine owns these facts; keep narration consistent with them.]\n${stateDigest(r, after)}`);
   if (r.narration.notes) parts.push(`[Warp — narrator notes]\n${r.narration.notes}`);
+  const felt = perception(r, after);
+  if (felt) parts.push(`[Warp — how {{user}} experiences things right now. Filter the narration through this.]\n${felt}`);
   const known = narratorKnowledge(r, after);
   if (known) parts.push(`[Warp — background only you know. The player hasn't seen it. Play it as subtext: never explain it, and reveal no more than the scene earns.]\n${known}`);
   const packet = rec ? outcomePacket(r, rec, before, after, player) : null;

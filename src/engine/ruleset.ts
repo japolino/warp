@@ -303,6 +303,28 @@ export interface LiveChoicesDef {
   tags: Record<string, ActionDef>;
 }
 
+/**
+ * The player character's mind can overrule the player: at low control a typed or
+ * clicked action may freeze, turn into something else, or be coloured by a cause.
+ */
+export interface MindOverride {
+  id: string;
+  when: string;
+  /** Percent chance per action it applies to (formula). */
+  chance: string | number;
+  /** Action ids or tags it applies to; empty = any action with a check. */
+  on: string[];
+  /** fail = it fails without a roll; alter = it goes ahead, coloured by the cause; or an action id done instead. */
+  do: string;
+  cause: string;
+  text?: string;
+}
+export interface MindDef {
+  overrides: MindOverride[];
+  /** How the narrator should describe things to the player character while a condition holds. */
+  perception: { when: string; text: string }[];
+}
+
 export interface Ruleset {
   name: string;
   description?: string;
@@ -353,6 +375,7 @@ export interface Ruleset {
   liveChoices: LiveChoicesDef;
   dungeons: Record<string, DungeonDef>;
   dating: DatingDef;
+  mind: MindDef;
 }
 
 export interface Issue {
@@ -988,6 +1011,33 @@ function normLiveChoices(raw: unknown, c: Ctx, known: { stats: Set<string> }): L
   return def;
 }
 
+function normMind(raw: unknown, c: Ctx): MindDef {
+  const def: MindDef = { overrides: [], perception: [] };
+  if (raw === undefined) return def;
+  if (!isObj(raw)) { c.warn("Mind", "should be a map with `overrides:` and/or `perception:`"); return def; }
+  for (const [id, o] of Object.entries(isObj(raw.overrides) ? raw.overrides : {})) {
+    const w = `Mind › overrides › ${id}`;
+    if (!isObj(o)) { c.warn(w, "expected `when:`, `chance:` and `do:`"); continue; }
+    const when = c.expr(o.when ?? true, `${w} › when`);
+    const chance = c.expr(o.chance ?? 100, `${w} › chance`);
+    if (when === undefined || chance === undefined) continue;
+    const act = typeof o.do === "string" ? o.do : "fail";
+    def.overrides.push({
+      id, when: String(when), chance, on: list(o.on).map((x) => x.toLowerCase()), do: act,
+      cause: typeof o.cause === "string" ? o.cause : titleCase(id),
+      ...(typeof o.text === "string" ? { text: o.text } : {}),
+    });
+  }
+  const per = Array.isArray(raw.perception) ? raw.perception : [];
+  per.forEach((p: unknown, i: number) => {
+    const w = `Mind › perception #${i + 1}`;
+    if (!isObj(p) || typeof p.text !== "string") { c.warn(w, "expected `{ when: ..., text: ... }`"); return; }
+    const when = c.expr(p.when ?? true, `${w} › when`);
+    if (when !== undefined) def.perception.push({ when: String(when), text: p.text });
+  });
+  return def;
+}
+
 const SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
 
 export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issues: Issue[] } {
@@ -1238,6 +1288,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const dungeons = normDungeons(raw.dungeons, c, known);
   // Dating adds its love and fear relationship stats if the ruleset doesn't have them.
   const dating = normDating(raw.dating, c, { stats: relStats, order: relStatOrder }, new Set(Object.keys(people)));
+  const mind = normMind(raw.mind, c);
 
   const ruleset: Ruleset = {
     name: typeof raw.name === "string" ? raw.name : "Untitled ruleset",
@@ -1267,7 +1318,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     narration: { notes: typeof narrRaw.notes === "string" ? narrRaw.notes : undefined, numbers: narrRaw.numbers === true },
     weather, wardrobe, encounters, codex, feats, perks,
     ...(perkPoints && stats[perkPoints] ? { perkPoints } : {}),
-    secrets, fronts, randomEvents, liveChoices, dungeons, dating,
+    secrets, fronts, randomEvents, liveChoices, dungeons, dating, mind,
   };
 
   // Cross-references that need everything loaded.

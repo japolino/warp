@@ -39,6 +39,8 @@ export interface TurnRecord {
   confidence?: number;
   /** Consistency check: probability the reply contradicts the state. */
   contradiction?: number;
+  /** The player character's mind overruled the player this turn. */
+  mind?: { id: string; cause: string; kind: "fail" | "alter" | "redirect"; meant: string; chance: number };
   at: number;
 }
 
@@ -603,6 +605,23 @@ export function resolveTurn(r: Ruleset, before: GameState, intent: Intent | null
   return resolveInner(r, before, intent, opts, []);
 }
 
+interface MindHit { id: string; cause: string; text: string; kind: "fail" | "alter" | "redirect"; to?: string; chance: number }
+
+/** Does the character's mind overrule this action? First matching override that rolls under its chance wins. */
+function mindOverride(r: Ruleset, s: GameState, a: ActionDef, target: string | undefined, seed: string): MindHit | null {
+  for (const o of r.mind.overrides) {
+    const applies = o.on.length ? o.on.some((x) => x === a.id || a.tags.includes(x)) : !!a.check;
+    if (!applies || o.do === a.id) continue;
+    const env = makeEnv(r, s, target ? { target } : {});
+    if (!evalBool(o.when, env, false)) continue;
+    const chance = Math.max(0, Math.min(100, evalNumber(o.chance, env, 0)));
+    if (seededRng(`${seed}:mind:${o.id}`)() * 100 >= chance) continue;
+    const kind = o.do === "fail" ? "fail" : o.do === "alter" ? "alter" : "redirect";
+    return { id: o.id, cause: o.cause, text: o.text ?? `${o.cause} takes over.`, kind, ...(kind === "redirect" ? { to: o.do } : {}), chance };
+  }
+  return null;
+}
+
 function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts: ResolveOptions, needs: DecideSpec[]): TurnRecord {
   const w = new Working(r, cloneState(before), seededRng(`${opts.seed}:fx`), opts.seed, opts.odds ?? {}, opts.scene ?? {});
   w.defer = false;
@@ -614,7 +633,15 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
     w.hints.push(...before.notices);
     w.push({ t: "noticed", src: "world" });
   }
-  const found = intent && !intent.actionId.startsWith(TRAVEL_PREFIX) && !intent.actionId.startsWith(DATE_PREFIX) ? findAction(r, before, intent.actionId) : null;
+  let found = intent && !intent.actionId.startsWith(TRAVEL_PREFIX) && !intent.actionId.startsWith(DATE_PREFIX) ? findAction(r, before, intent.actionId) : null;
+  // The character's mind may overrule the player: freeze, do something else, or colour the attempt.
+  let mind = found ? mindOverride(r, before, found.a, found.target, opts.seed) : null;
+  const meant = found ? (found.target ? `${found.a.label} (${personName(r, before, found.target)})` : intent!.label ?? found.a.label) : "";
+  if (found && mind?.kind === "redirect") {
+    const alt = findAction(r, before, mind.to!);
+    if (alt) found = { a: alt.a, ...(found.target && alt.a.perPerson ? { target: found.target } : {}) };
+    else mind = null;
+  }
   const a = found?.a;
   const inEncounter = !!before.encounter;
   // A conversation or outing takes every turn until it ends; a typed line is the player's words in it.
@@ -643,11 +670,24 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   } else if (a) {
     const who = found?.target;
     const extra = paramValues(a, intent!.params, who);
-    const label = intent!.label ?? (who ? `${a.label} (${personName(r, before, who)})` : a.label);
-    rec.action = { id: intent!.actionId, label, via: intent!.via, ...(a.params.length ? { params: Object.fromEntries(a.params.map((p) => [p.id, intent!.params?.[p.id] ?? p.default])) } : {}) };
+    const own = mind?.kind === "redirect" ? (who ? `${a.label} (${personName(r, before, who)})` : a.label) : null;
+    const label = own ?? intent!.label ?? (who ? `${a.label} (${personName(r, before, who)})` : a.label);
+    rec.action = { id: mind?.kind === "redirect" ? `${a.id}${who ? `${TARGET_SEP}${who}` : ""}` : intent!.actionId, label, via: intent!.via, ...(a.params.length ? { params: Object.fromEntries(a.params.map((p) => [p.id, intent!.params?.[p.id] ?? p.default])) } : {}) };
+    if (mind) {
+      rec.mind = { id: mind.id, cause: mind.cause, kind: mind.kind, meant, chance: mind.chance };
+      const why = mind.text.replace(/\{target\}/g, who ? personName(r, before, who) : "them");
+      w.hints.push(mind.kind === "fail"
+        ? `{{user}} tries to ${meant.toLowerCase()}, but can't: ${why} It fails — no roll.`
+        : mind.kind === "redirect"
+          ? `{{user}} meant to ${meant.toLowerCase()}, but ${why} What actually happens: ${label.toLowerCase()}.`
+          : `{{user}} goes ahead, but ${mind.cause.toLowerCase()} colours it: ${why}`);
+    }
     effectToEvents(w, a.cost, "cost", extra);
 
-    if (a.check) {
+    if (mind?.kind === "fail") {
+      const fail = a.outcomes.fail ?? a.outcomes.crit_fail;
+      if (fail) effectToEvents(w, fail, "check", extra);
+    } else if (a.check) {
       const rng: Rng = seededRng(opts.seed);
       const { add, target } = checkNumbers(r, w.s, a, intent!.params, who);
       const roll = rollDice(a.check.dice, rng);

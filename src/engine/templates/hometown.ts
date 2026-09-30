@@ -455,7 +455,26 @@ conditions:
     },
     {
       label: "rules",
-      yaml: `# Meters that feed into each other.
+      yaml: `# At low control, {{user}}'s mind can overrule the player. Each override rolls its chance per action.
+mind:
+  overrides:
+    freeze:
+      when: "control < 25"
+      chance: "60 - control * 2"
+      on: [violence, crime]
+      cause: Panic
+      text: "their body locks up and won't obey."
+    flight:
+      when: "control < 15 and cond('scared')"
+      chance: 35
+      do: alter
+      cause: Fear
+      text: "every instinct is screaming at them to get out."
+  perception:
+    - { when: "trauma >= 60", text: "Reminders of what happened hit hard. Show intrusive thoughts and flinches; safe things can feel unsafe." }
+    - { when: "control < 25", text: "{{user}} is barely holding together: narrow focus, racing heart, sounds too loud." }
+
+# Meters that feed into each other.
 triggers:
   exhaustion:
     when: fatigue >= 85

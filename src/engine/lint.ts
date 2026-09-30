@@ -192,6 +192,13 @@ export function lintRuleset(r: Ruleset): Issue[] {
     for (const m of Object.values(d.monsters)) for (const sk of m.skills) if (!SKILLS[sk]) issues.push({ level: "warning", where: `${w} › monsters › ${m.id}`, message: `"${sk}" isn't a skill` });
   }
   for (const a of Object.values(r.liveChoices.tags)) checkAction(a, `Live choices › tags › ${a.id}`);
+  for (const o of r.mind.overrides) {
+    const w = `Mind › overrides › ${o.id}`;
+    check(o.when, `${w} › when`, { target: "someone" });
+    check(o.chance, `${w} › chance`, { target: "someone" });
+    if (o.do !== "fail" && o.do !== "alter" && !r.actions[o.do]) issues.push({ level: "warning", where: `${w} › do`, message: `"${o.do}" isn't fail, alter or an action${suggest(o.do, Object.keys(r.actions))}` });
+  }
+  r.mind.perception.forEach((p, i) => check(p.when, `Mind › perception #${i + 1} › when`));
   const gates: [string, { when?: string } | undefined][] = [
     ...r.statOrder.map((id) => [`Stats › ${id} › narrator_when`, r.stats[id].gate] as [string, { when?: string } | undefined]),
     ...r.relStatOrder.map((id) => [`Relationships › stats › ${id} › narrator_when`, r.relStats[id].gate] as [string, { when?: string } | undefined]),

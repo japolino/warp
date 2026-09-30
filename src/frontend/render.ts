@@ -238,6 +238,11 @@ export function renderChips(rec: RecordView, opts: { showDice: boolean }): strin
     const odds = d.odds.map((o) => `${o.desc} ${Math.round(o.p * 100)}%`).join(" · ");
     out.push(`<span class="warp-chip warp-decision" title="${esc(`${d.ask}\n${odds}\n${d.source === "model" ? "Odds from the decision model; the engine rolled." : "Odds from the ruleset's weights; the engine rolled."}`)}">🎭 ${esc(d.picked)} <span class="warp-dim">${Math.round(d.p * 100)}%</span></span>`);
   }
+  if (rec.mind) {
+    const m = rec.mind;
+    const what = m.kind === "fail" ? "couldn't go through with it" : m.kind === "redirect" ? "did something else" : "it took over";
+    out.push(`<span class="warp-chip warp-tone-warn" title="${esc(`You chose: ${m.meant}\n${m.cause}: ${what} (${Math.round(m.chance)}% chance at the time)`)}">🧠 ${esc(m.cause)} — ${esc(what)}</span>`);
+  }
   if ((rec.contradiction ?? 0) >= 0.6) {
     out.push(`<span class="warp-chip warp-tone-warn" title="The decision model thinks this reply may contradict the game state (${Math.round(rec.contradiction! * 100)}%). Consider swiping.">⚠ may contradict the state</span>`);
   }
