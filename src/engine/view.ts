@@ -124,6 +124,7 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
       name: enc?.name ?? s.encounter.id,
       foe: enc?.foe.name ?? "Opponent",
       round: s.encounter.round,
+      momentum: s.encounter.momentum ?? null,
       stats: (enc?.foe.stats ?? []).map((fs) => {
         const v = s.encounter!.foe[fs.id] ?? fs.start;
         const p = pct(v, 0, fs.max);
@@ -579,7 +580,7 @@ export function stateDigest(r: Ruleset, s: GameState): string {
 
   if (hud.encounter) {
     const e = hud.encounter;
-    lines.push(`ENCOUNTER in progress: ${e.name} vs ${e.foe}, round ${e.round}${e.stats.length ? ` — ${e.stats.map((x) => `${x.label} ${formatNumber(x.value)}/${formatNumber(x.max)}`).join(", ")}` : ""}`);
+    lines.push(`ENCOUNTER in progress: ${e.name} vs ${e.foe}, round ${e.round}${e.stats.length ? ` — ${e.stats.map((x) => `${x.label} ${formatNumber(x.value)}/${formatNumber(x.max)}`).join(", ")}` : ""}${e.momentum !== null ? ` — momentum ${e.momentum > 0 ? "+" : ""}${Math.round(e.momentum)} (−100 = ${e.foe} wins, +100 = {{user}} wins)` : ""}`);
   }
 
   if (hud.outfit) {

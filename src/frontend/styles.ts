@@ -322,6 +322,11 @@ export const STYLES = `
 .warp-dg-mates { display: flex; flex-direction: column; gap: 4px; }
 .warp-dg-mate { display: flex; align-items: center; gap: 6px; }
 
+/* ───────── swinging fights ───────── */
+.warp-momentum { position: relative; height: 8px; border-radius: 4px; background: linear-gradient(90deg, var(--warp-good), var(--warp-fill) 45%, var(--warp-fill) 55%, var(--warp-bad)); }
+.warp-momentum-mid { position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--warp-border); }
+.warp-momentum-mark { position: absolute; top: -3px; width: 4px; height: 14px; margin-left: -2px; border-radius: 2px; background: var(--warp-text); transition: left 400ms ease; }
+
 /* ───────── checkpoints ───────── */
 .warp-run-slot { display: grid; grid-template-columns: 52px 1fr auto auto; gap: 6px; align-items: center; font-size: 12.5px; }
 .warp-run-slot-name { color: var(--warp-dim); }

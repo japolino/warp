@@ -81,6 +81,8 @@ export interface Effect {
   reveal: string[];
   /** Push the random-event gauge up (+) or back (−). */
   gauge?: string | number;
+  /** Swing the encounter's momentum toward the player (+) or the foe (−). */
+  momentum?: string | number;
 }
 
 export interface DecideOption { id: string; desc: string; weight: number; effect: Effect }
@@ -209,6 +211,12 @@ export interface EncounterDef {
   endWhen: { outcome: string; when: string }[];
   outcomes: Record<string, Effect>;
   start: Effect;
+  /**
+   * A fight that swings: each check moves a momentum gauge (−100 … +100), the
+   * foe's moves push back, and only a full swing ends it. Rounds reach the
+   * narrator as ordered beats.
+   */
+  momentum: { win: string; lose: string; start: number; swing: Record<Tier, number> } | null;
 }
 
 export interface CodexEntry { id: string; title: string; text: string; category?: string; unlock?: string; lore: string[] }
@@ -685,10 +693,15 @@ export function normEffect(raw: unknown, where: string, c: Ctx, known: { stats: 
         if (x !== undefined) e.gauge = x;
         break;
       }
+      case "momentum": case "swing": {
+        const x = c.expr(v, w);
+        if (x !== undefined) e.momentum = x;
+        break;
+      }
       default:
         // Flat shorthand: a known stat name maps to a delta.
         if (known.stats.has(k)) { const x = c.expr(v, w); if (x !== undefined) e.stats[k] = x; }
-        else c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, unlock, wear, undress, damage, front, reveal, gauge)`);
+        else c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, unlock, wear, undress, damage, front, reveal, gauge, momentum)`);
     }
   }
   return e;
@@ -898,6 +911,19 @@ function normEncounter(id: string, raw: unknown, c: Ctx, known: { stats: Set<str
   const outcomes: Record<string, Effect> = {};
   for (const [o, e] of Object.entries(isObj(raw.outcomes) ? raw.outcomes : {})) outcomes[o] = normEffect(e, `${w} › outcomes › ${o}`, c, known);
   const startRaw = raw.start ?? (typeof raw.start_hint === "string" ? { hint: raw.start_hint } : undefined);
+  let momentum: EncounterDef["momentum"] = null;
+  if (raw.momentum !== undefined && raw.momentum !== false) {
+    const m: Raw = isObj(raw.momentum) ? raw.momentum : {};
+    const swing: Record<Tier, number> = { crit_success: 40, success: 25, partial: 10, fail: -20, crit_fail: -35 };
+    if (isObj(m.swing)) for (const [k, v] of Object.entries(m.swing)) {
+      const tier = TIER_KEYS[k];
+      if (tier) swing[tier] = c.num(v, `${w} › momentum › swing › ${k}`, swing[tier]);
+      else c.warn(`${w} › momentum › swing › ${k}`, "tiers are crit_success, success, partial, fail, crit_fail");
+    }
+    const win = typeof m.win === "string" ? m.win : "won";
+    const lose = typeof m.lose === "string" ? m.lose : "lost";
+    momentum = { win, lose, start: Math.max(-99, Math.min(99, c.num(m.start, `${w} › momentum › start`, 0))), swing };
+  }
   return {
     id,
     name: typeof raw.name === "string" ? raw.name : titleCase(id),
@@ -906,6 +932,7 @@ function normEncounter(id: string, raw: unknown, c: Ctx, known: { stats: Set<str
     foe: { name: typeof foeRaw.name === "string" ? foeRaw.name : "Opponent", stats },
     actions, actionOrder, foeMoves, endWhen, outcomes,
     start: normEffect(startRaw, `${w} › start`, c, known),
+    momentum,
   };
 }
 

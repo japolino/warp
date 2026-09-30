@@ -332,6 +332,10 @@ function effectToEvents(w: Working, e: Effect, src: EventSource, extra: Record<s
     const v = evalNumber(e.gauge, w.env(extra), 0);
     if (v !== 0) w.push({ t: "gauge", d: v, src });
   }
+  if (e.momentum !== undefined && w.s.encounter?.momentum !== undefined) {
+    const v = evalNumber(e.momentum, w.env(extra), 0);
+    if (v !== 0) w.push({ t: "swing", d: v, src });
+  }
 
   if (e.time) advanceTime(w, e.time, src);
   if (e.hint) announce(w, fillTarget(w, e.hint, extra));
@@ -532,7 +536,7 @@ function startEncounter(w: Working, id: string, src: EventSource) {
   const enc = w.r.encounters[id];
   if (!enc) return;
   const foe = Object.fromEntries(enc.foe.stats.map((s) => [s.id, s.start]));
-  w.push({ t: "enc", id, foe, src });
+  w.push({ t: "enc", id, foe, ...(enc.momentum ? { momentum: enc.momentum.start } : {}), src });
   announce(w, `An encounter begins: ${enc.name}${enc.desc ? ` — ${enc.desc}` : ""}. Opponent: ${enc.foe.name}.`);
   effectToEvents(w, enc.start, src, {});
 }
@@ -542,6 +546,11 @@ function encounterOutcome(w: Working): string | null {
   if (!s) return null;
   if (w.pendingEnd) return w.pendingEnd;
   const enc = w.r.encounters[s.id];
+  // A fight that swings ends only when one side has it completely.
+  if (enc?.momentum && s.momentum !== undefined) {
+    if (s.momentum >= 100) return enc.momentum.win;
+    if (s.momentum <= -100) return enc.momentum.lose;
+  }
   for (const e of enc?.endWhen ?? []) if (evalBool(e.when, w.env(), false)) return e.outcome;
   return null;
 }
@@ -567,6 +576,34 @@ function encounterRound(w: Working, src: EventSource) {
   if (enc?.foeMoves) decide(w, enc.foeMoves, src, {});
   out = encounterOutcome(w);
   if (out) endEncounter(w, out, src);
+}
+
+function momentumWords(m: number, foe: string): string {
+  if (m >= 100) return "{{user}} has won the exchange";
+  if (m <= -100) return `${foe} has won the exchange`;
+  if (m >= 60) return "{{user}} is close to winning";
+  if (m >= 20) return "{{user}} has the upper hand";
+  if (m > -20) return "evenly matched";
+  if (m > -60) return `${foe} has the upper hand`;
+  return `${foe} is close to winning`;
+}
+
+/** A round of a swinging fight, as ordered beats for the narrator. */
+function beatSheet(w: Working, before: GameState, rec: TurnRecord, playerText?: string) {
+  const enc = before.encounter ? w.r.encounters[before.encounter.id] : undefined;
+  if (!enc?.momentum || before.encounter?.momentum === undefined) return;
+  const foe = enc.foe.name;
+  const beats: string[] = [];
+  const typed = (playerText ?? "").trim();
+  const mine = rec.action ? `${rec.action.label}${rec.check ? ` — ${TIER_LABEL[rec.check.tier].toLowerCase()}` : ""}` : "no clear move";
+  if (rec.action && typed.length >= 240) beats.push(`1. {{user}}: keep the move exactly as {{user}} wrote it; only how well it lands is decided (${rec.check ? TIER_LABEL[rec.check.tier].toLowerCase() : "it happens"}).`);
+  else beats.push(`1. {{user}}: ${mine}.${typed.length < 80 ? " Write the move itself in your own words as the opening beat." : ""}`);
+  const foeMove = enc.foeMoves ? w.decisions.find((d) => d.id === enc.foeMoves!.id) : undefined;
+  if (foeMove) beats.push(`2. ${foe}: ${foeMove.pickedDesc}.`);
+  const shift = w.events.reduce((sum, e) => sum + (e.t === "swing" ? e.d : 0), 0);
+  const now = Math.max(-100, Math.min(100, before.encounter.momentum + shift));
+  beats.push(`${beats.length + 1}. Where it stands: ${momentumWords(now, foe)}${shift ? ` (it swung ${shift > 0 ? "toward {{user}}" : `toward ${foe}`})` : ""}.`);
+  w.hints.push(`This round's beats, in order:\n${beats.join("\n")}\nNarrate them in order. ${w.s.encounter ? "The fight isn't over until the rules end it — don't finish it early." : ""}`.trim());
 }
 
 function decide(w: Working, d: DecideSpec, src: EventSource, extra: Record<string, Value>) {
@@ -654,6 +691,8 @@ export const TIER_LABEL: Record<Tier, string> = {
 
 export interface ResolveOptions {
   seed: string;
+  /** What the player wrote this turn (for keeping a long described move as written). */
+  playerText?: string;
   veils?: string[];
   /** Model odds for decide blocks, by decide id. Missing ones fall back to author weights and are listed in `needs`. */
   odds?: Record<string, Record<string, number>>;
@@ -795,10 +834,18 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
     const veils = new Set((opts.veils ?? []).map((v) => v.toLowerCase()));
     const encTags = inEncounter ? r.encounters[before.encounter!.id]?.tags ?? [] : [];
     if ([...a.tags, ...encTags].some((t) => veils.has(t))) rec.veiled = true;
-    if (inEncounter) encounterRound(w, "action");
+    if (inEncounter) {
+      // The move's result swings the fight (freezing up counts as a miss).
+      const tier: Tier | null = rec.check?.tier ?? (rec.mind?.kind === "fail" ? "fail" : null);
+      const m = r.encounters[before.encounter!.id]?.momentum;
+      if (m && tier && w.s.encounter?.momentum !== undefined) w.push({ t: "swing", d: m.swing[tier], src: "check" });
+      encounterRound(w, "action");
+      beatSheet(w, before, rec, opts.playerText);
+    }
   } else if (inEncounter && w.s.encounter) {
     // Typed a non-move during an encounter: the opponent still gets their turn.
     encounterRound(w, "action");
+    beatSheet(w, before, rec, opts.playerText);
   }
 
   runTriggers(w, true);

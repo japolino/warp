@@ -67,6 +67,8 @@ export interface HudView {
     foe: string;
     round: number;
     stats: { id: string; label: string; value: number; max: number; pct: number; tone: Tone }[];
+    /** −100 … +100 for fights that swing. */
+    momentum: number | null;
   } | null;
   codex: { id: string; title: string; text: string; category: string | null }[];
   codexTotal: number;

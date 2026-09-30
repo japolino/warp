@@ -20,6 +20,8 @@ export interface EncounterState {
   id: string;
   round: number;
   foe: Record<string, number>;
+  /** −100 (the foe wins) … +100 (the player wins), for encounters that swing. */
+  momentum?: number;
 }
 
 export interface GameState {
@@ -96,7 +98,8 @@ export type WarpEvent = { src: EventSource; note?: string } & (
   | { t: "seed"; v: string }
   | { t: "wear"; slot: string; item: string | null }
   | { t: "dmg"; item: string; d: number }
-  | { t: "enc"; id: string | null; foe?: Record<string, number>; outcome?: string }
+  | { t: "enc"; id: string | null; foe?: Record<string, number>; outcome?: string; momentum?: number }
+  | { t: "swing"; d: number }
   | { t: "foe"; stat: string; d?: number; set?: number }
   | { t: "round" }
   | { t: "codex"; id: string }
@@ -267,7 +270,10 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       break;
     }
     case "enc":
-      s.encounter = e.id ? { id: e.id, round: 0, foe: { ...(e.foe ?? {}) } } : null;
+      s.encounter = e.id ? { id: e.id, round: 0, foe: { ...(e.foe ?? {}) }, ...(e.momentum !== undefined ? { momentum: e.momentum } : {}) } : null;
+      break;
+    case "swing":
+      if (s.encounter && s.encounter.momentum !== undefined) s.encounter.momentum = clamp(s.encounter.momentum + e.d, -100, 100);
       break;
     case "foe": {
       if (!s.encounter) break;
@@ -492,7 +498,7 @@ export const BUILTIN_NAMES = [
   "minutes", "hour", "minute", "day", "weekday", "turn", "location",
   "month", "date", "season", "weather", "temperature", "indoors", "outside",
   "warmth", "warmth_min", "warmth_max", "too_cold", "too_hot", "reveal", "exposed", "naked",
-  "in_encounter", "round", "target", "in_dungeon", "dungeon_depth",
+  "in_encounter", "round", "momentum", "target", "in_dungeon", "dungeon_depth",
   "in_date", "on_outing", "loops", "runs",
 ];
 
@@ -525,6 +531,7 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
       exposed,
       naked: r.wardrobe.enabled && exposed === r.wardrobe.cover.length && r.wardrobe.cover.length > 0,
       in_encounter: !!s.encounter,
+      momentum: s.encounter?.momentum ?? 0,
       in_dungeon: !!s.dungeon,
       dungeon_depth: s.dungeon?.depth ?? 0,
       in_date: !!s.date,

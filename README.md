@@ -16,7 +16,7 @@ A game engine under your roleplay. Warp owns stats, dice, time, inventory and re
 | Time & world | Clock and calendar, seasons, weather, temperature (indoors vs out), a map of places with travel |
 | Clothing | Slots, warmth vs the weather, damage, how revealing, traits like rainproof; change clothes from the sheet |
 | People | Relationship stats, schedules (who is where, when), per-person actions ("Talk to Jo") |
-| Encounters | Turn-based scenes: foe stats, your moves, the foe's moves (weighted or model-weighed), win/lose/escape outcomes |
+| Encounters | Turn-based scenes: foe stats, your moves, the foe's moves (weighted or model-weighed), win/lose/escape outcomes. Optional momentum: every check and foe move swings a tug-of-war gauge and only a full swing ends the fight; each round reaches the narrator as ordered beats, and a long move you typed is kept as written while only how it lands is rolled |
 | Progress | Codex entries that unlock (and can switch lorebook entries on), feats, perks bought with points |
 | Rules | Triggers by formula or in plain language (`when_scene`), uncertain reactions (`decide`) rolled on model odds |
 | Mind | Your character's mind can overrule you: at low control an action may freeze (fails, no roll), turn into something else, or be coloured by a cause — each with a chance and a 🧠 chip saying why. Perception filters change how the narrator describes the world to your character while a condition holds |
