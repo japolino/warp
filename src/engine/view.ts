@@ -609,6 +609,29 @@ export function narratorKnowledge(r: Ruleset, s: GameState): string | null {
   return lines.length ? lines.join("\n") : null;
 }
 
+/**
+ * How the people in the scene feel, as the rules see it — for presentation
+ * extensions (the visual-novel extension reads it as `metadata.vn_hints` to pick expressions).
+ */
+export function sceneHints(r: Ruleset, s: GameState): { moods: Record<string, string>; notes: string[] } | null {
+  const moods: Record<string, string> = {};
+  const here = presentPeople(r, s, makeEnv(r, s));
+  for (const id of here) {
+    if (!s.people[id]) continue;
+    const parts = r.relStatOrder.map((rs) => {
+      const def = r.relStats[rs];
+      if (def.show === "hidden") return null;
+      const band = bandFor(def, s.rel[id]?.[rs] ?? def.start);
+      return band ? `${def.label.toLowerCase()}: ${band.text}` : null;
+    }).filter(Boolean);
+    if (parts.length) moods[personName(r, s, id)] = parts.join("; ");
+  }
+  const notes: string[] = [];
+  if (s.encounter) notes.push(`In a fight or tense encounter: ${r.encounters[s.encounter.id]?.name ?? s.encounter.id}`);
+  if (s.dungeon) notes.push("Exploring a dungeon");
+  return Object.keys(moods).length || notes.length ? { moods, notes } : null;
+}
+
 /** The outcome block for a turn with an action. */
 export function outcomePacket(r: Ruleset, rec: TurnRecord, before: GameState, after: GameState, playerName: string): string | null {
   const lines: string[] = [];

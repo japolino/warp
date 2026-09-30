@@ -73,6 +73,17 @@ export async function patchWarpMeta(chatId: string, messageId: string, fn: (w: W
   await host().chat.updateMessage(chatId, messageId, { metadata: meta, skipChunkRebuild: true });
 }
 
+/** Set one top-level metadata key (read-merge-write, like patchWarpMeta). */
+export async function patchMeta(chatId: string, messageId: string, key: string, value: unknown): Promise<void> {
+  const msgs = await getMessages(chatId);
+  const m = msgs.find((x) => x.id === messageId);
+  if (!m) return;
+  const meta = { ...((m.metadata as Record<string, unknown>) ?? {}) };
+  if (JSON.stringify(meta[key]) === JSON.stringify(value)) return;
+  if (value === undefined) delete meta[key]; else meta[key] = value;
+  await host().chat.updateMessage(chatId, messageId, { metadata: meta, skipChunkRebuild: true });
+}
+
 export async function writeRecord(chatId: string, messageId: string, swipe: number, rec: TurnRecord): Promise<void> {
   await patchWarpMeta(chatId, messageId, (w) => ({ ...w, swipes: { ...(w.swipes ?? {}), [String(swipe)]: rec } }));
 }

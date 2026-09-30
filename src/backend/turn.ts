@@ -8,13 +8,13 @@ import { randomSeed } from "../engine/dice.js";
 import { applyProposal, resolveTurnFull, type Intent, type Proposal, type TurnRecord } from "../engine/resolve.js";
 import type { Ruleset } from "../engine/ruleset.js";
 import { applyEvent, cloneState, type GameState } from "../engine/state.js";
-import { narratorKnowledge, outcomePacket, stateDigest } from "../engine/view.js";
+import { narratorKnowledge, outcomePacket, sceneHints, stateDigest } from "../engine/view.js";
 import type { Settings } from "../shared/protocol.js";
 import { bookkeeping, contradiction, odds, readTurn } from "./decisions.js";
 import { getDecider } from "./deciders.js";
 import { extract, type ExtractPart } from "./helpers.js";
 import { host, logError } from "./host.js";
-import { activeRecord, foldPath, getMessages, patchWarpMeta, warpMeta, writeRecord, type Msg, type Suggestion } from "./ledger.js";
+import { activeRecord, foldPath, getMessages, patchMeta, patchWarpMeta, warpMeta, writeRecord, type Msg, type Suggestion } from "./ledger.js";
 import { writeLiveChoices } from "./live.js";
 import { getSettings } from "./settings.js";
 import { getRuleset } from "./source.js";
@@ -79,6 +79,10 @@ export async function playerName(chatId: string, userId?: string): Promise<strin
 
 function fillNames(text: string, player: string) {
   return text.replace(/\{\{user\}\}/gi, player);
+}
+
+function fillHints(h: { moods: Record<string, string>; notes: string[] }, player: string) {
+  return { v: 1, source: "warp", moods: h.moods, notes: h.notes.map((n) => fillNames(n, player)) };
 }
 
 function buildInjection(r: Ruleset, rec: TurnRecord | null, before: GameState, after: GameState, player: string): string {
@@ -197,6 +201,11 @@ export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorCon
         });
         // Let the HUD show the roll immediately, before the prose arrives.
         if (rec.check) host().sendToFrontend({ type: "busy", chatId: ctx.chatId, busy: true, label: `${rec.check.label}: ${rec.check.tier.replace("_", " ")}` }, ctx.userId);
+        // Moods for the visual-novel extension, on the message this reply answers (there before the reply is planned).
+        if (lastUser) {
+          const hints = sceneHints(r, after);
+          void patchMeta(ctx.chatId, lastUser.id, "vn_hints", hints ? fillHints(hints, player) : undefined).catch((e) => logError("scene hints", e));
+        }
       }
     }
 

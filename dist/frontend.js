@@ -1148,6 +1148,136 @@ function renderDungeon(v, entries, ui) {
   return head + `<div class="warp-dg-party">${v.party.map((f) => memberCard(f, { targetable: pickAlly })).join("")}</div>` + (pickAlly ? `<div class="warp-dg-prompt">Who drinks it? <button class="warp-btn warp-mini" data-dg-cancel>Cancel</button></div>` : "") + board(v) + herePanel(v, ui) + `<div class="warp-dg-bag">${bag}${bombs ? `<span class="warp-dim">${sprite("bomb", "warp-dg-mini")}Bomb ×${bombs.count}</span>` : ""}${v.loot.length ? `<span class="warp-dim" title="Kept when you leave">Found: ${esc2(v.loot.map((l) => `${l.name}${l.count > 1 ? ` ×${l.count}` : ""}`).join(", "))}</span>` : ""}</div>` + `<div class="warp-dg-log">${v.log.slice(0, 6).map((l) => `<div>${esc2(you(l))}</div>`).join("")}</div>` + `<button class="warp-btn warp-dg-leave" data-dg-leave ${ui.busy ? "disabled" : ""}>Leave the dungeon</button>`;
 }
 
+// src/frontend/cue-bridge.ts
+var PROVIDER = "warp";
+var MAX_CHOICES = 12;
+function cueChoices(choices, showOdds) {
+  return choices.filter((c) => !c.id.startsWith("dungeon:")).slice(0, MAX_CHOICES).map((c) => ({
+    id: c.id,
+    label: c.label,
+    group: c.group,
+    detail: [c.desc, c.checkLabel ? `Check: ${c.checkLabel}` : null].filter(Boolean).join(`
+`) || null,
+    odds: showOdds ? c.odds : null
+  }));
+}
+var CARD_CSS = `
+.w{font:13px/1.45 system-ui,sans-serif;color:#ecebf2;display:grid;gap:8px}
+.top{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline}
+.top b{font-size:15px}.dim{color:#a9a6b8}
+.bars{display:grid;gap:6px}
+.bar{display:grid;grid-template-columns:auto 1fr;gap:2px 8px;align-items:center}
+.bar .l{font-weight:600}.bar .v{text-align:right;color:#a9a6b8;font-variant-numeric:tabular-nums}
+.track{grid-column:1/-1;height:6px;border-radius:99px;background:#2b2a36;overflow:hidden}
+.fill{height:100%;border-radius:99px}
+.good{background:#5fc58a}.warn{background:#e0b34f}.bad{background:#e06a6a}.neutral{background:#8b86a8}
+.t-good{color:#8fe0a8}.t-warn{color:#f0cf7a}.t-bad{color:#f19a9a}.t-neutral{color:#c9c6d8}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{padding:1px 8px;border-radius:99px;background:#2b2a36;font-size:12px}
+.sec{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#a9a6b8;margin-top:2px}
+.ppl{display:grid;gap:3px}
+`;
+function renderCueCard(h) {
+  const top = [
+    h.clock ? `<b>${esc(h.clock.time)}</b> <span class="dim">${esc(h.date ?? h.clock.day)}</span>` : `<b>${esc(h.rulesetName)}</b>`,
+    h.location ? `<span>\uD83D\uDCCD ${esc(h.location.name)}</span>` : "",
+    h.weather ? `<span class="dim">${esc(`${h.weather.icon} ${h.weather.label} ${h.weather.temp}°C`.trim())}</span>` : "",
+    h.money ? `<span>\uD83D\uDCB0 ${esc(h.money)}</span>` : ""
+  ].filter(Boolean).join("");
+  const bars = h.bars.map((b) => `<div class="bar"><span class="l">${esc(b.label)}</span><span class="v">${esc(b.text ?? b.display)}</span><div class="track"><div class="fill ${b.tone}" style="width:${Math.round(b.pct * 100)}%"></div></div></div>`).join("");
+  const conds = h.conditions.map((c) => `<span class="chip t-${c.tone}">${esc(c.label)}${c.remaining ? ` · ${esc(c.remaining)}` : ""}</span>`).join("");
+  const here = h.people.filter((p) => p.present).map((p) => {
+    const feel = p.stats.filter((s) => s.text).map((s) => `<span class="t-${s.tone}">${esc(s.text)}</span>`).join(" · ");
+    return `<div>${esc(p.name)}${feel ? ` <span class="dim">—</span> ${feel}` : ""}</div>`;
+  }).join("");
+  const enc = h.encounter ? `<div class="sec">⚔ ${esc(h.encounter.name)} · round ${h.encounter.round}</div><div class="bars">${h.encounter.stats.map((s) => `<div class="bar"><span class="l">${esc(h.encounter.foe)} ${esc(s.label)}</span><span class="v">${s.value}/${s.max}</span><div class="track"><div class="fill ${s.tone}" style="width:${Math.round(s.pct * 100)}%"></div></div></div>`).join("")}</div>` : "";
+  return `<style>${CARD_CSS}</style><div class="w"><div class="top">${top}</div>${enc}${bars ? `<div class="bars">${bars}</div>` : ""}${conds ? `<div class="chips">${conds}</div>` : ""}${here ? `<div class="sec">Here</div><div class="ppl">${here}</div>` : ""}</div>`;
+}
+function connectCue(opts) {
+  let view = { state: null, enabled: false, showOdds: true, busy: false, busyLabel: "" };
+  let request = null;
+  let revision = 0;
+  let published = new Set;
+  let dead = false;
+  const emit = (type, detail) => window.dispatchEvent(new CustomEvent(type, { detail }));
+  function sendChoices() {
+    const s = view.state;
+    const chatId = s?.chatId ?? opts.chatId();
+    if (!chatId)
+      return;
+    const live = view.enabled && !!s?.hud && !!s.choicesAnchor;
+    emit("vn-game-state-v1", {
+      version: 1,
+      provider: PROVIDER,
+      chatId,
+      choices: live ? cueChoices(s.choices, view.showOdds) : [],
+      busy: view.busy,
+      busyLabel: view.busy ? view.busyLabel || null : null
+    });
+  }
+  function sendCards() {
+    const req = request;
+    const s = view.state;
+    if (!req || !s || s.chatId !== req.chatId)
+      return;
+    const cards = view.enabled && s.hud ? [{ cardId: "status", title: `Warp · ${s.hud.rulesetName}`, html: renderCueCard(s.hud) }] : [];
+    const next = new Set;
+    for (const card of cards) {
+      next.add(card.cardId);
+      emit("vn-panel-export-v1", { ...req, provider: PROVIDER, ...card, revision: ++revision, status: "ready" });
+    }
+    for (const cardId of published)
+      if (!next.has(cardId))
+        emit("vn-panel-export-v1", { ...req, provider: PROVIDER, cardId, revision: ++revision, status: "removed" });
+    published = next;
+  }
+  const onPick = (e) => {
+    const d = e.detail;
+    if (dead || d?.version !== 1 || d.provider !== PROVIDER || typeof d.id !== "string")
+      return;
+    if (!d.chatId || d.chatId !== (view.state?.chatId ?? opts.chatId()))
+      return;
+    if (!view.state?.choices.some((c) => c.id === d.id)) {
+      sendChoices();
+      return;
+    }
+    opts.act(d.id);
+    sendChoices();
+  };
+  const onGameRequest = (e) => {
+    const d = e.detail;
+    if (!dead && d?.version === 1 && d.chatId && d.chatId === view.state?.chatId)
+      sendChoices();
+  };
+  const onPanelRequest = (e) => {
+    const d = e.detail;
+    if (dead || d?.version !== 1 || typeof d.chatId !== "string" || typeof d.messageId !== "string" || typeof d.sourceFingerprint !== "string" || !Number.isSafeInteger(d.swipeId))
+      return;
+    if (request?.messageId !== d.messageId || request?.sourceFingerprint !== d.sourceFingerprint)
+      published = new Set;
+    request = { version: 1, chatId: d.chatId, messageId: d.messageId, swipeId: d.swipeId, sourceFingerprint: d.sourceFingerprint };
+    sendCards();
+  };
+  window.addEventListener("vn-game-pick-v1", onPick);
+  window.addEventListener("vn-game-request-v1", onGameRequest);
+  window.addEventListener("vn-panel-request-v1", onPanelRequest);
+  return {
+    update(next) {
+      view = next;
+      if (dead)
+        return;
+      sendChoices();
+      sendCards();
+    },
+    destroy() {
+      dead = true;
+      window.removeEventListener("vn-game-pick-v1", onPick);
+      window.removeEventListener("vn-game-request-v1", onGameRequest);
+      window.removeEventListener("vn-panel-request-v1", onPanelRequest);
+    }
+  };
+}
+
 // src/frontend.ts
 var CLEANUP_KEY = "__warpCleanup";
 var ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><circle cx="8.5" cy="8.5" r="1.3" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/></svg>`;
@@ -1536,11 +1666,17 @@ function setup(ctx) {
         clearTimeout(moTimer);
     });
   } catch {}
+  const cue = connectCue({ act: (id) => act(id), chatId });
+  cleanups.push(() => cue.destroy());
+  function syncCue() {
+    cue.update({ state, enabled: settings.enabled, showOdds: settings.showOdds, busy: busy.on && busy.chatId === state?.chatId, busyLabel: busy.label });
+  }
   function renderAll() {
     renderDock();
     renderDrawer();
     reconcileMessages();
     syncDockVisibility();
+    syncCue();
     if (state?.hud)
       lastBars = new Map(state.hud.bars.map((b) => [b.id, b.value]));
   }
@@ -2033,11 +2169,13 @@ function setup(ctx) {
       return;
     busy = { chatId: cid, on: true, label: "Rolling…" };
     placeChoices(true);
+    syncCue();
     send({ type: "act", chatId: cid, actionId });
     setTimeout(() => {
       if (busy.on && busy.label === "Rolling…" && busy.chatId === cid) {
         busy = { chatId: "", on: false, label: "" };
         placeChoices(true);
+        syncCue();
       }
     }, 15000);
   }
@@ -2153,6 +2291,7 @@ function setup(ctx) {
       case "busy":
         busy = { chatId: m.chatId, on: m.busy, label: m.busy ? m.label ?? busy.label ?? "" : "" };
         placeChoices(true);
+        syncCue();
         break;
       case "builder": {
         const prev = builder;

@@ -5108,6 +5108,20 @@ async function patchWarpMeta(chatId, messageId, fn) {
   meta.warp = fn({ ...warpMeta(m) });
   await host().chat.updateMessage(chatId, messageId, { metadata: meta, skipChunkRebuild: true });
 }
+async function patchMeta(chatId, messageId, key, value) {
+  const msgs = await getMessages(chatId);
+  const m = msgs.find((x) => x.id === messageId);
+  if (!m)
+    return;
+  const meta = { ...m.metadata ?? {} };
+  if (JSON.stringify(meta[key]) === JSON.stringify(value))
+    return;
+  if (value === undefined)
+    delete meta[key];
+  else
+    meta[key] = value;
+  await host().chat.updateMessage(chatId, messageId, { metadata: meta, skipChunkRebuild: true });
+}
 async function writeRecord(chatId, messageId, swipe, rec) {
   await patchWarpMeta(chatId, messageId, (w) => ({ ...w, swipes: { ...w.swipes ?? {}, [String(swipe)]: rec } }));
 }
@@ -10325,6 +10339,29 @@ function narratorKnowledge(r, s) {
   return lines.length ? lines.join(`
 `) : null;
 }
+function sceneHints(r, s) {
+  const moods = {};
+  const here = presentPeople(r, s, makeEnv(r, s));
+  for (const id of here) {
+    if (!s.people[id])
+      continue;
+    const parts = r.relStatOrder.map((rs) => {
+      const def = r.relStats[rs];
+      if (def.show === "hidden")
+        return null;
+      const band = bandFor(def, s.rel[id]?.[rs] ?? def.start);
+      return band ? `${def.label.toLowerCase()}: ${band.text}` : null;
+    }).filter(Boolean);
+    if (parts.length)
+      moods[personName(r, s, id)] = parts.join("; ");
+  }
+  const notes = [];
+  if (s.encounter)
+    notes.push(`In a fight or tense encounter: ${r.encounters[s.encounter.id]?.name ?? s.encounter.id}`);
+  if (s.dungeon)
+    notes.push("Exploring a dungeon");
+  return Object.keys(moods).length || notes.length ? { moods, notes } : null;
+}
 function outcomePacket(r, rec, before, after, playerName) {
   const lines = [];
   if (rec.action)
@@ -11238,6 +11275,9 @@ async function playerName(chatId, userId) {
 function fillNames(text, player) {
   return text.replace(/\{\{user\}\}/gi, player);
 }
+function fillHints(h, player) {
+  return { v: 1, source: "warp", moods: h.moods, notes: h.notes.map((n) => fillNames(n, player)) };
+}
 function buildInjection(r, rec, before, after, player) {
   const parts = [];
   parts.push(`[Warp — current game state. The rules engine owns these facts; keep narration consistent with them.]
@@ -11369,6 +11409,10 @@ async function interceptor(messages, ctx) {
         });
         if (rec.check)
           host().sendToFrontend({ type: "busy", chatId: ctx.chatId, busy: true, label: `${rec.check.label}: ${rec.check.tier.replace("_", " ")}` }, ctx.userId);
+        if (lastUser) {
+          const hints = sceneHints(r, after);
+          patchMeta(ctx.chatId, lastUser.id, "vn_hints", hints ? fillHints(hints, player) : undefined).catch((e) => logError("scene hints", e));
+        }
       }
     }
     const text = buildInjection(r, rec, before, after, player);

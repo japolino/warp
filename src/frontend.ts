@@ -7,6 +7,7 @@ import { STYLES } from "./frontend/styles.js";
 import { attachedBox, edgeForDrop, PAD, PANEL_W, PILL, type Box, type Edge, type Viewport } from "./frontend/overlay-layout.js";
 import { emptyDraft, renderBuilder, renderBuilderCta, type BuilderDraft } from "./frontend/builder-ui.js";
 import { renderDungeon, type DungeonPick } from "./frontend/dungeon-ui.js";
+import { connectCue } from "./frontend/cue-bridge.js";
 import { esc, renderChips, renderChoices, renderHud, renderJournal, renderMap, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
 
 type StateMsg = Extract<BackendToFrontend, { type: "state" }>;
@@ -378,11 +379,19 @@ export function setup(ctx: SpindleFrontendContext) {
     cleanups.push(() => { mo?.disconnect(); if (moTimer) clearTimeout(moTimer); });
   } catch { /* no observer: chips appear on the next state push */ }
 
+  // The visual-novel extension (Cue) covers the chat; hand it our choices and status card.
+  const cue = connectCue({ act: (id) => act(id), chatId });
+  cleanups.push(() => cue.destroy());
+  function syncCue() {
+    cue.update({ state, enabled: settings.enabled, showOdds: settings.showOdds, busy: busy.on && busy.chatId === state?.chatId, busyLabel: busy.label });
+  }
+
   function renderAll() {
     renderDock();
     renderDrawer();
     reconcileMessages();
     syncDockVisibility();
+    syncCue();
     if (state?.hud) lastBars = new Map(state.hud.bars.map((b) => [b.id, b.value]));
   }
 
@@ -715,12 +724,14 @@ export function setup(ctx: SpindleFrontendContext) {
     if (!cid || (busy.on && busy.chatId === cid)) return;
     busy = { chatId: cid, on: true, label: "Rolling…" };
     placeChoices(true);
+    syncCue();
     send({ type: "act", chatId: cid, actionId });
     // If nothing starts (rejected choice, network hiccup), don't leave the grid locked.
     setTimeout(() => {
       if (busy.on && busy.label === "Rolling…" && busy.chatId === cid) {
         busy = { chatId: "", on: false, label: "" };
         placeChoices(true);
+        syncCue();
       }
     }, 15000);
   }
@@ -810,6 +821,7 @@ export function setup(ctx: SpindleFrontendContext) {
       case "busy":
         busy = { chatId: m.chatId, on: m.busy, label: m.busy ? m.label ?? busy.label ?? "" : "" };
         placeChoices(true);
+        syncCue();
         break;
       case "builder": {
         const prev = builder;
