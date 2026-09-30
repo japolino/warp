@@ -3,9 +3,26 @@
 A game engine under your roleplay. Warp owns stats, dice, time, inventory and relationships; the model only narrates outcomes the engine has already decided.
 
 - **Choices** appear under the latest reply (hotkeys 1–9, odds on each button). You can also just type — a quick referee call maps risky attempts to an action, and the dice decide.
-- **Status sidebar** (left dock) and a **Warp** drawer tab with the full sheet, ruleset health, and settings.
+- **Status panel** floats over the chat (drag it to any screen edge to attach it as a sidebar or strip), plus a **Warp** drawer tab: Sheet · Map · Journal · Ruleset · Settings.
 - **Dice & change chips** on every reply. Changes read from the story are dashed and can be undone with ×.
 - **Swipes reroll** (Casual) by default; turn off for Ironman. State always follows the active swipe.
+
+## What a ruleset can do
+
+| System | |
+|---|---|
+| Stats | Meters described in words (bands), graded skills, attributes, money, hidden stats, drift over time, caps by formula |
+| Checks | d100 chance, d20 vs difficulty, 2d6 PbtA; crits and partial successes; odds shown on buttons |
+| Time & world | Clock and calendar, seasons, weather, temperature (indoors vs out), a map of places with travel |
+| Clothing | Slots, warmth vs the weather, damage, how revealing, traits like rainproof; change clothes from the sheet |
+| People | Relationship stats, schedules (who is where, when), per-person actions ("Talk to Jo") |
+| Encounters | Turn-based scenes: foe stats, your moves, the foe's moves (weighted or model-weighed), win/lose/escape outcomes |
+| Progress | Codex entries that unlock (and can switch lorebook entries on), feats, perks bought with points |
+| Rules | Triggers by formula or in plain language (`when_scene`), uncertain reactions (`decide`) rolled on model odds |
+
+## ✨ Build with AI
+
+**Warp → Ruleset → Build with AI** reads the character card, asks a few questions (tone, which systems, difficulty, relationship depth, plus follow-ups about the card and anything you want to add in your own words), then drafts the ruleset section by section. Every section passes Warp's checker — problems are sent back to the model and fixed automatically — and you get a review before anything is saved: a live preview of the sidebar and choices, a summary, balance warnings with one-tap **Fix**, and **Redo** per section. **Refine with AI** changes an existing ruleset from an instruction ("make it harder", "add a cooking skill").
 
 ## Decision model (System 1)
 
@@ -37,6 +54,8 @@ In the character's lorebook, so they travel with the card:
 Each entry is YAML; entries merge. Warp keeps them out of the prompt automatically. Command palette → **Warp: Add a ruleset to this character** installs a starter (Universal, Hometown life-sim, Starfarer sci-fi RPG).
 
 ## Ruleset reference
+
+The complete format — including weather, wardrobe, schedules, encounters, codex, feats and perks — is in [`src/engine/reference.ts`](src/engine/reference.ts) (the same reference the AI builder writes against). The starter templates in [`src/engine/templates/`](src/engine/templates/) are full worked examples. The basics:
 
 ```yaml
 name: My Game
