@@ -132,6 +132,8 @@ class Parser {
     const t = this.peek();
     if (!t) this.fail("Expression ended too early");
     if (t.t === "op" && t.v === "-") { this.i++; return { k: "un", op: "-", a: this.unary() }; }
+    // Leading plus is just emphasis ("+(12 + x)" reads as "add this"), so it's a no-op.
+    if (t.t === "op" && t.v === "+") { this.i++; return this.unary(); }
     if ((t.t === "op" && t.v === "!") || (t.t === "id" && t.v === "not")) { this.i++; return { k: "un", op: "not", a: this.unary() }; }
     return this.primary();
   }

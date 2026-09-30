@@ -6,7 +6,7 @@ import type { Template } from "./index.js";
 export const hometown: Template = {
   id: "hometown",
   name: "Hometown (life-sim)",
-  blurb: "Survival life-sim: Pain, Arousal, Fatigue, Stress, Trauma, Control and Allure described in words, graded skills, a clock, a small town map, and meters that feed into each other.",
+  blurb: "Survival life-sim: Pain, Arousal, Fatigue, Stress, Trauma, Control and Allure described in words, graded skills, a calendar with weather and temperature, clothing that matters, townsfolk on schedules, a mugging encounter, and meters that feed into each other.",
   parts: [
     {
       label: "core",
@@ -18,6 +18,7 @@ player:
 
 clock:
   start: Mon 07:00
+  date: Sep 4
   minutes_per_action: 15
   narrator_max: 240
 
@@ -155,14 +156,36 @@ narration:
       good: none
       narrator: 5
       bands: { -100: Submissive, -30: Deferential, -10: Even, 10: Assertive, 40: Domineering }
+  # Townsfolk keep their own hours; they show up as "here" when you share a place.
+  people:
+    jo:
+      name: Jo
+      desc: Runs the café on the High Street. Brisk, fair, secretly kind.
+      schedule:
+        - { when: "between(hour, 7, 18) and weekday != 'Sun'", at: high_street }
+        - { when: "(weekday == 'Fri' or weekday == 'Sat') and (hour >= 21 or hour < 2)", at: the_strip }
+    professor_ward:
+      name: Professor Ward
+      desc: Your tutor. Exacting, dry, notices everything.
+      schedule:
+        - { when: "between(hour, 9, 17) and weekday != 'Sat' and weekday != 'Sun'", at: campus }
+    dex:
+      name: Dex
+      desc: Works the docks at night. Knows people who know people.
+      schedule:
+        - { when: "hour >= 19 or hour < 4", at: docks }
 `,
     },
     {
       label: "world",
-      yaml: `locations:
+      yaml: `weather:
+  temps: { spring: 12, summer: 21, autumn: 11, winter: 3 }
+
+locations:
   apartment:
     name: Your Apartment
     desc: A cramped one-bedroom above a chip shop. Thin walls, a lock that sticks.
+    indoors: true
     exits: [high_street]
   high_street:
     name: High Street
@@ -171,6 +194,7 @@ narration:
   campus:
     name: University Campus
     desc: Lecture halls, a library, a gym with a pool.
+    indoors: true
     exits: [high_street]
     travel: 15
   park:
@@ -191,12 +215,35 @@ items:
   phone: Phone
   keys: Apartment keys
   coffee: Coffee
+  # Clothing: slot, warmth, how revealing, traits.
+  t_shirt: { name: T-shirt, slot: top, warmth: 2 }
+  hoodie: { name: Hoodie, slot: top, warmth: 6 }
+  jeans: { name: Jeans, slot: bottom, warmth: 4 }
+  skirt: { name: Short skirt, slot: bottom, warmth: 1, reveal: 3 }
+  undershirt: { name: Undershirt, slot: under_top, warmth: 1 }
+  underwear: { name: Underwear, slot: under_bottom, warmth: 1 }
+  trainers: { name: Trainers, slot: feet, warmth: 1 }
+  raincoat: { name: Raincoat, slot: outer, warmth: 4, traits: [rainproof] }
+  winter_coat: { name: Winter coat, slot: outer, warmth: 12 }
+  swimsuit: { name: Swimsuit, slot: under_bottom, warmth: 0, reveal: 5, traits: [swimwear] }
+
+wardrobe:
+  slots: [outer, top, bottom, under_top, under_bottom, feet]
+  cover: [top, bottom]
+  start: [t_shirt, jeans, undershirt, underwear, trainers]
+
+start:
+  items: { hoodie: 1, skirt: 1 }
 
 conditions:
   exhausted: { label: Exhausted, tone: bad, desc: Stress builds fast while this tired. }
   scared: { label: Scared, tone: bad, desc: Low control — trauma comes to the surface. }
   shaken: { label: Shaken, tone: warn, desc: Recently overwhelmed. }
   wanted: { label: Wanted, tone: bad, desc: The police are looking for you. }
+  cold: { label: Cold, tone: bad, desc: Underdressed for the weather. }
+  overheating: { label: Overheating, tone: warn, desc: Overdressed for the weather. }
+  soaked: { label: Soaked, tone: warn, desc: Caught in the rain without a coat. }
+  exposed: { label: Exposed, tone: bad, desc: Not decently covered in public. }
 `,
     },
     {
@@ -260,8 +307,32 @@ conditions:
     say: "*I put on an apron and work a shift at the café.*"
     time: 240
     check: { chance: 55 + tending / 1.5, label: Tending }
-    success: { money: 45 + tending / 2, tending: +1.2, fatigue: +20, hint: "A smooth shift — good tips." }
-    fail: { money: 30, tending: +0.6, fatigue: +22, stress: +6, hint: "A rough shift: rude customers and a smashed tray." }
+    success: { money: 45 + tending / 2, tending: +1.2, fatigue: +20, flags: { worked: true }, hint: "A smooth shift — good tips." }
+    fail: { money: 30, tending: +0.6, fatigue: +22, stress: +6, flags: { worked: true }, hint: "A rough shift: rude customers and a smashed tray." }
+  buy_raincoat:
+    label: Buy a raincoat (£30)
+    group: Shops
+    at: high_street
+    when: money >= 30 and not has('raincoat')
+    say: "*I buy a raincoat.*"
+    time: 15
+    effects: { money: -30, give: raincoat }
+  buy_coat:
+    label: Buy a winter coat (£60)
+    group: Shops
+    at: high_street
+    when: money >= 60 and not has('winter_coat')
+    say: "*I buy a proper winter coat.*"
+    time: 15
+    effects: { money: -60, give: winter_coat }
+  buy_swimsuit:
+    label: Buy a swimsuit (£20)
+    group: Shops
+    at: high_street
+    when: money >= 20 and not has('swimsuit')
+    say: "*I pick up a swimsuit.*"
+    time: 15
+    effects: { money: -20, give: swimsuit }
   buy_coffee:
     label: Buy a coffee (£3)
     group: Shops
@@ -317,6 +388,40 @@ conditions:
           friendly: { desc: "A friendly face", weight: 3, stress: -3, hint: "Someone friendly strikes up a conversation." }
           quiet: { desc: "Nothing much happens", weight: 3, stress: -1, hint: "A quiet, uneventful walk." }
           trouble: { desc: "Someone unpleasant takes an interest", weight: 2, stress: +4, hint: "Trouble finds {{user}}: someone unpleasant takes an interest." }
+          mugged: { desc: "A mugger corners them", weight: 1, start_encounter: mugging }
+
+  # One button per person here. {target} is their name; rel: { target: … } changes how they feel.
+  chat:
+    label: Chat with {target}
+    group: People
+    per_person: true
+    say: "*I strike up a conversation with {target}.*"
+    time: 20
+    effects: { rel: { target: { trust: +2, love: +1 } }, stress: -2 }
+  flirt:
+    label: Flirt with {target}
+    group: People
+    per_person: true
+    say: "*I flirt with {target}.*"
+    time: 15
+    check: { chance: 30 + allure / 2 + target.love / 2 + target.trust / 4, label: Allure }
+    success: { rel: { target: { love: +3, lust: +4 } }, arousal: +3, hint: "{target} is charmed." }
+    fail: { rel: { target: { trust: -2 } }, stress: +3, hint: "It lands badly; {target} is put off." }
+    crit_fail: { rel: { target: { trust: -4, love: -2 } }, stress: +6, hint: "Mortifying. {target} makes it clear they're not interested." }
+  ask_favour:
+    label: Ask {target} for help
+    group: People
+    per_person: true
+    when: target.trust >= 30
+    say: "*I ask {target} for a favour.*"
+    time: 20
+    effects:
+      decide:
+        ask: Does {target} agree to help {{user}}?
+        options:
+          yes: { desc: "Helps gladly", weight: 3, stress: -5, rel: { target: { love: +1 } } }
+          grudging: { desc: "Helps, but grudgingly", weight: 2, rel: { target: { trust: -1 } } }
+          no: { desc: "Refuses", weight: 1, stress: +3 }
 
   endure:
     label: Endure
@@ -401,6 +506,107 @@ triggers:
   cleared:
     when: crime < 16
     do: { remove_condition: [wanted] }
+
+  # Weather and clothing.
+  cold:
+    when: too_cold and outside
+    do:
+      add_condition: [cold]
+      hint: "{{user}} is shivering — badly underdressed for the weather."
+  cold_bites:
+    when: too_cold and outside
+    repeat: true
+    do: { stress: +1, fatigue: +1 }
+  warmed_up:
+    when: not too_cold or indoors
+    do: { remove_condition: [cold] }
+  overheating:
+    when: too_hot
+    do: { add_condition: [overheating] }
+  cooled_down:
+    when: not too_hot
+    do: { remove_condition: [overheating] }
+  soaked:
+    when: (weather == 'rain' or weather == 'storm') and outside and not trait('rainproof')
+    do:
+      add_condition: { soaked: 120 }
+      hint: "The rain soaks {{user}} through."
+  exposed:
+    when: exposed > 0 and outside
+    do:
+      add_condition: [exposed]
+      hint: "{{user}} is out in public without being decently covered, and people notice."
+  exposed_stress:
+    when: exposed > 0 and outside
+    repeat: true
+    do: { stress: +3, allure: +2 }
+  covered:
+    when: exposed == 0 or indoors
+    do: { remove_condition: [exposed] }
+`,
+    },
+    {
+      label: "encounters",
+      yaml: `# Turn-based encounters. Your moves replace the normal choices until it ends;
+# the mugger's move each round is rolled (odds weighed by the decision model if you use one).
+encounters:
+  mugging:
+    name: Mugging
+    desc: Someone blocks {{user}}'s way and wants their money.
+    tags: [violence]
+    foe:
+      name: Mugger
+      stats:
+        nerve: { label: Nerve, start: 10, max: 10 }
+    actions:
+      fight_back:
+        label: Fight back
+        check: { chance: 30 + athletics / 2 - fatigue / 3 - pain / 3, label: Athletics }
+        success: { foe: { nerve: -6 }, hint: "{{user}} lands a solid hit." }
+        fail: { pain: +10, hint: "{{user}}'s swing misses and they take a blow." }
+      shout:
+        label: Shout for help
+        check: { chance: 35 + control / 4, label: Control }
+        success: { foe: { nerve: -4 }, hint: "Heads turn at the shouting." }
+        fail: { stress: +4, hint: "Nobody comes." }
+      hand_over:
+        label: Hand over your money
+        effects: { money: "-min(money, 20)", end: robbed }
+      run:
+        label: Run
+        check: { chance: 35 + athletics / 2 - fatigue / 3 - pain / 2, label: Athletics }
+        success: { fatigue: +5, end: escaped }
+        fail: { pain: +5, hint: "{{user}} is caught before getting far." }
+    foe_moves:
+      grab: { desc: "Grabs and shoves {{user}}", weight: 2, pain: +8, stress: +4, damage: { top: 20 } }
+      threaten: { desc: "Makes an ugly threat", weight: 2, stress: +6, control: -3 }
+      snatch: { desc: "Snatches at their pockets", weight: 1, money: "-min(money, 10)" }
+    end_when:
+      won: foe.nerve <= 0
+      beaten: pain >= 80
+    outcomes:
+      won: { stress: -5, control: +5, flags: { fought_off_mugger: true }, hint: "The mugger loses their nerve and bolts." }
+      robbed: { stress: +8, control: -8, hint: "They take the money and vanish." }
+      escaped: { stress: +3, hint: "{{user}} gets clear." }
+      beaten: { trauma: +5, money: "-min(money, 30)", hint: "{{user}} is left hurt on the pavement, pockets emptied." }
+`,
+    },
+    {
+      label: "journal",
+      yaml: `# Codex entries unlock as you play. Add "lore: [Lorebook entry title]" to one and that
+# lorebook entry stays off until the codex entry unlocks.
+codex:
+  apartment: { title: Your Apartment, category: Places, text: "Above the chip shop. The landlord never fixes anything.", unlock: "turn >= 1" }
+  campus: { title: University Campus, category: Places, text: "Sprawling and old; the pool is open late on weekdays.", unlock: "location == 'campus'" }
+  docks: { title: The Docks, category: Places, text: "Cargo, cranes and people who don't ask questions.", unlock: "location == 'docks'" }
+  the_strip: { title: The Strip, category: Places, text: "Where the town goes to forget itself.", unlock: "location == 'the_strip'" }
+  jo: { title: Jo, category: People, text: "Runs the café. Pays fairly, expects the same.", unlock: "met('jo') and rel('jo', 'trust') >= 15" }
+
+feats:
+  first_pay: { name: First paycheque, desc: "Finish a shift at the café.", unlock: "flag('worked')", reward: { stress: -5 } }
+  night_owl: { name: Night owl, desc: "Be out on the Strip after 2am.", unlock: "location == 'the_strip' and between(hour, 2, 5)" }
+  stood_ground: { name: Stood your ground, desc: "Fight off a mugger.", unlock: "flag('fought_off_mugger')", reward: { control: +10 } }
+  well_dressed: { name: Dressed for it, desc: "Own a raincoat and a winter coat.", unlock: "has('raincoat') and has('winter_coat')" }
 `,
     },
   ],

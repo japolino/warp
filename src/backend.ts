@@ -1,12 +1,14 @@
 import type { SpindleAPI } from "lumiverse-spindle-types";
-import { availableActions, manualSet, TRAVEL_PREFIX, travelTargets, type TurnRecord } from "./engine/resolve.js";
+import { availableChoices, buyPerk, changeClothes, manualSet, TRAVEL_PREFIX, travelTargets, type TurnRecord } from "./engine/resolve.js";
+import type { Ruleset } from "./engine/ruleset.js";
+import type { GameState, WarpEvent } from "./engine/state.js";
 import { TEMPLATES } from "./engine/templates/index.js";
 import type { FrontendToBackend } from "./shared/protocol.js";
 import { logError, send, toast } from "./backend/host.js";
 import { foldPath, getMessages, patchWarpMeta, shiftAfterSwipeDelete, warpMeta, writeRecord } from "./backend/ledger.js";
 import { getSettings, patchSettings } from "./backend/settings.js";
 import { getRuleset, installTemplate, invalidateCharacter, knownRulesetBookIds, knownRulesetEntryIds } from "./backend/source.js";
-import { connectionsFor, getActiveChat, pushState, schedulePush, setActiveChat } from "./backend/state-push.js";
+import { connectionsFor, getActiveChat, lastStates, pushState, schedulePush, setActiveChat } from "./backend/state-push.js";
 import { interceptor, onGenerationEnded, onGenerationStarted } from "./backend/turn.js";
 import { isRulesetEntryTitle } from "./engine/loader.js";
 import { getDecider, JEV_KEY } from "./backend/deciders.js";
@@ -21,7 +23,30 @@ spindle.registerWorldInfoInterceptor(async (ctx) => {
   const disabled = ctx.entries
     .filter((e) => knownRulesetEntryIds.has(e.id) || knownRulesetBookIds.has(e.world_book_id) || isRulesetEntryTitle(e.comment))
     .map((e) => e.id);
-  return disabled.length ? { disabled } : undefined;
+
+  // Codex-gated lore: entries named in a codex entry's `lore:` stay off until it's unlocked, then they're forced on.
+  const forced: string[] = [];
+  try {
+    const loaded = await getRuleset(ctx.chatId, ctx.userId);
+    const r = loaded?.ruleset;
+    const gated = r ? Object.values(r.codex).filter((c) => c.lore.length) : [];
+    if (r && gated.length) {
+      let state = lastStates.get(ctx.chatId);
+      if (!state) state = foldPath(r, await getMessages(ctx.chatId)).state;
+      const title = (s: string) => s.replace(/^\s*\[[^\]]*\]\s*/, "").trim().toLowerCase();
+      for (const c of gated) {
+        const names = new Set(c.lore.map(title));
+        for (const e of ctx.entries) {
+          if (!names.has(title(e.comment ?? ""))) continue;
+          if (state.codex[c.id]) forced.push(e.id);
+          else disabled.push(e.id);
+        }
+      }
+    }
+  } catch (e) {
+    logError("codex lore gate", e);
+  }
+  return disabled.length || forced.length ? { ...(disabled.length ? { disabled } : {}), ...(forced.length ? { forced } : {}) } : undefined;
 }, 10);
 
 // ── Lifecycle events ─────────────────────────────────────────────
@@ -73,6 +98,34 @@ spindle.commands.onInvoked((id, context) => {
 });
 
 // ── Frontend messages ────────────────────────────────────────────
+
+/**
+ * Player-made changes (HUD edits, clothes, perks) are recorded on the latest
+ * message's active swipe, so they fold, swipe and undo like everything else.
+ */
+async function applyManual(
+  chatId: string, userId: string | undefined,
+  make: (r: Ruleset, state: GameState) => WarpEvent[] | string,
+): Promise<boolean> {
+  const loaded = await getRuleset(chatId, userId);
+  const r = loaded?.ruleset;
+  if (!r) return false;
+  const msgs = await getMessages(chatId);
+  const last = msgs[msgs.length - 1];
+  if (!last) { toast("warning", "Send a message first — changes attach to the latest message.", userId); return false; }
+  const { state } = foldPath(r, msgs);
+  const events = make(r, state);
+  if (typeof events === "string") { toast("warning", events, userId); return false; }
+  const swipe = last.swipe_id ?? 0;
+  const existing = warpMeta(last).swipes?.[String(swipe)];
+  const rec: TurnRecord = existing
+    ? { ...existing, events: [...existing.events, ...events] }
+    : { v: 1, hints: [], events, at: Date.now() };
+  await writeRecord(chatId, last.id, swipe, rec);
+  await pushState(chatId, userId);
+  return true;
+}
+
 async function sendSettings(userId?: string) {
   const settings = await getSettings(userId);
   let jevKeySet = false;
@@ -114,9 +167,10 @@ spindle.onFrontendMessage(async (raw, userId) => {
           if (!travelTargets(r, state).includes(to)) { toast("warning", "You can't get there from here.", userId); await pushState(msg.chatId, userId); return; }
           say = `*I head to ${r.locations[to].name}.*`;
         } else {
-          const a = availableActions(r, state, settings.lines).find((x) => x.id === msg.actionId);
-          if (!a) { toast("warning", "That choice isn't available anymore.", userId); await pushState(msg.chatId, userId); return; }
-          say = a.say ?? `*${a.label}*`;
+          const c = availableChoices(r, state, settings.lines).find((x) => x.id === msg.actionId);
+          if (!c) { toast("warning", "That choice isn't available anymore.", userId); await pushState(msg.chatId, userId); return; }
+          const who = c.target ? state.people[c.target]?.name ?? c.target : "";
+          say = c.a.say ? c.a.say.replace(/\{\{target\}\}|\{target\}/gi, who) : `*${c.label}*`;
         }
         await spindle.chat.appendMessage(msg.chatId, {
           role: "user",
@@ -139,21 +193,18 @@ spindle.onFrontendMessage(async (raw, userId) => {
       }
 
       case "adjust": {
-        const loaded = await getRuleset(msg.chatId, userId);
-        const r = loaded?.ruleset;
-        if (!r || !r.stats[msg.stat]) return;
-        const msgs = await getMessages(msg.chatId);
-        const last = msgs[msgs.length - 1];
-        if (!last) { toast("warning", "Send a message first — edits attach to the latest message.", userId); return; }
-        const { state } = foldPath(r, msgs);
-        const events = manualSet(r, state, msg.stat, msg.value);
-        const swipe = last.swipe_id ?? 0;
-        const existing = warpMeta(last).swipes?.[String(swipe)];
-        const rec: TurnRecord = existing
-          ? { ...existing, events: [...existing.events, ...events] }
-          : { v: 1, hints: [], events, at: Date.now() };
-        await writeRecord(msg.chatId, last.id, swipe, rec);
-        await pushState(msg.chatId, userId);
+        await applyManual(msg.chatId, userId, (r, state) => (r.stats[msg.stat] ? manualSet(r, state, msg.stat, msg.value) : "Unknown stat."));
+        break;
+      }
+
+      case "wear": {
+        await applyManual(msg.chatId, userId, (r, state) => changeClothes(r, state, msg.slot, msg.item));
+        break;
+      }
+
+      case "buy_perk": {
+        const ok = await applyManual(msg.chatId, userId, (r, state) => buyPerk(r, state, msg.perk));
+        if (ok) toast("success", "Perk taken.", userId);
         break;
       }
 

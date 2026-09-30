@@ -131,6 +131,10 @@ class Parser {
       this.i++;
       return { k: "un", op: "-", a: this.unary() };
     }
+    if (t.t === "op" && t.v === "+") {
+      this.i++;
+      return this.unary();
+    }
     if (t.t === "op" && t.v === "!" || t.t === "id" && t.v === "not") {
       this.i++;
       return { k: "un", op: "not", a: this.unary() };
@@ -632,9 +636,24 @@ function normStat(id, raw, where, c, forRel = false) {
   return def;
 }
 function emptyEffect() {
-  return { stats: {}, set: {}, flags: {}, items: {}, rel: {}, addConditions: {}, removeConditions: [], decide: [] };
+  return {
+    stats: {},
+    set: {},
+    flags: {},
+    items: {},
+    rel: {},
+    addConditions: {},
+    removeConditions: [],
+    decide: [],
+    foe: {},
+    unlock: [],
+    wear: [],
+    undress: [],
+    damage: {}
+  };
 }
-function normDecide(raw, where, c, known) {
+var list = (v) => Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : [];
+function normDecide(raw, where, c, known, minOptions = 2) {
   if (!isObj(raw)) {
     c.warn(where, "decide needs `ask:` and `options:`");
     return [];
@@ -657,8 +676,8 @@ function normDecide(raw, where, c, known) {
       delete r.weight;
       options.push({ id: oid, desc, weight: Math.max(0, weight), effect: normEffect(r, `${w} › ${oid}`, c, known) });
     }
-    if (options.length < 2) {
-      c.warn(w, "decide needs at least two options");
+    if (options.length < minOptions) {
+      c.warn(w, minOptions > 1 ? "decide needs at least two options" : "needs at least one option");
       continue;
     }
     out.push({ id: typeof spec.id === "string" ? spec.id : id, ask: spec.ask, options });
@@ -769,13 +788,53 @@ function normEffect(raw, where, c, known) {
       case "decide":
         e.decide.push(...normDecide(v, w, c, known));
         break;
+      case "foe":
+        if (isObj(v))
+          for (const [s, d] of Object.entries(v)) {
+            const x = c.expr(d, `${w} › ${s}`);
+            if (x !== undefined)
+              e.foe[s] = x;
+          }
+        else
+          c.warn(w, "expected foe stat changes like `hp: -8`");
+        break;
+      case "end":
+      case "end_encounter":
+        e.end = v === true ? "ended" : String(v);
+        break;
+      case "start_encounter":
+      case "encounter":
+        e.startEncounter = String(v);
+        break;
+      case "unlock":
+      case "codex":
+        e.unlock.push(...list(v));
+        break;
+      case "wear":
+      case "put_on":
+        e.wear.push(...list(v));
+        break;
+      case "undress":
+      case "take_off":
+        e.undress.push(...list(v));
+        break;
+      case "damage":
+        if (isObj(v))
+          for (const [slot, d] of Object.entries(v)) {
+            const x = c.expr(d, `${w} › ${slot}`);
+            if (x !== undefined)
+              e.damage[slot] = x;
+          }
+        else
+          c.warn(w, "expected clothing damage by slot, like `top: 30`");
+        break;
       default:
         if (known.stats.has(k)) {
           const x = c.expr(v, w);
           if (x !== undefined)
             e.stats[k] = x;
         } else
-          c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint)`);
+          c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, unlock, wear, undress, damage)`);
     }
   }
   return e;
@@ -892,7 +951,160 @@ function normAction(id, raw, where, c, known, order) {
     effects: normEffect(raw.effects ?? raw.effect, `${where} › effects`, c, known),
     params,
     tags: Array.isArray(raw.tags) ? raw.tags.map((t) => String(t).toLowerCase()) : [],
-    order: typeof raw.order === "number" ? raw.order : order
+    order: typeof raw.order === "number" ? raw.order : order,
+    perPerson: raw.per_person === true || raw.with === "person" || raw.with === "people"
+  };
+}
+var MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+function parseDate(v) {
+  if (isObj(v)) {
+    const m = Number(v.month), d = Number(v.day);
+    return m >= 1 && m <= 12 && d >= 1 && d <= 31 ? { month: m, day: d } : null;
+  }
+  if (typeof v !== "string")
+    return null;
+  const s = v.trim().toLowerCase();
+  const a = /^([a-z]{3,})\.?\s+(\d{1,2})(?:st|nd|rd|th)?$/.exec(s);
+  const b = /^(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]{3,})\.?$/.exec(s);
+  const name = a?.[1] ?? b?.[2];
+  const day = Number(a?.[2] ?? b?.[1]);
+  const month = name ? MONTHS.indexOf(name.slice(0, 3)) + 1 : 0;
+  return month >= 1 && day >= 1 && day <= 31 ? { month, day } : null;
+}
+var DEFAULT_WEATHER = [
+  { id: "clear", label: "Clear", icon: "☀️", weight: 4, temp: 1, seasons: null, tags: [] },
+  { id: "cloudy", label: "Overcast", icon: "☁️", weight: 3, temp: -1, seasons: null, tags: [] },
+  { id: "rain", label: "Rain", icon: "\uD83C\uDF27️", weight: 2, temp: -3, seasons: null, tags: ["wet"] },
+  { id: "storm", label: "Storm", icon: "⛈️", weight: 1, temp: -4, seasons: ["summer", "autumn"], tags: ["wet", "windy"] },
+  { id: "snow", label: "Snow", icon: "❄️", weight: 2, temp: -6, seasons: ["winter"], tags: ["wet", "cold"] }
+];
+function normWeather(raw, c) {
+  const def = {
+    enabled: false,
+    kinds: DEFAULT_WEATHER,
+    seasonTemps: { spring: 12, summer: 22, autumn: 11, winter: 3 },
+    seasons: { spring: [3, 4, 5], summer: [6, 7, 8], autumn: [9, 10, 11], winter: [12, 1, 2] },
+    swing: 5,
+    changeHours: 6,
+    indoorTemp: 20
+  };
+  if (raw === undefined || raw === false)
+    return def;
+  def.enabled = true;
+  if (!isObj(raw))
+    return def;
+  if (isObj(raw.kinds)) {
+    const kinds = [];
+    for (const [id, k] of Object.entries(raw.kinds)) {
+      const r = isObj(k) ? k : {};
+      const w = `Weather › kinds › ${id}`;
+      kinds.push({
+        id,
+        label: typeof r.label === "string" ? r.label : titleCase(id),
+        icon: typeof r.icon === "string" ? r.icon : "",
+        weight: Math.max(0, c.num(r.weight, `${w} › weight`, 1)),
+        temp: c.num(r.temp, `${w} › temp`, 0),
+        seasons: r.seasons === undefined ? null : list(r.seasons),
+        tags: list(r.tags)
+      });
+    }
+    if (kinds.length)
+      def.kinds = kinds;
+  }
+  if (isObj(raw.temps))
+    for (const [s, t] of Object.entries(raw.temps))
+      def.seasonTemps[s] = c.num(t, `Weather › temps › ${s}`, 10);
+  if (isObj(raw.seasons)) {
+    def.seasons = {};
+    for (const [s, m] of Object.entries(raw.seasons))
+      def.seasons[s] = (Array.isArray(m) ? m : [m]).map(Number).filter((n) => n >= 1 && n <= 12);
+  }
+  def.swing = c.num(raw.swing, "Weather › swing", def.swing);
+  def.changeHours = Math.max(1, c.num(raw.change_hours ?? raw.changes_every, "Weather › change_hours", def.changeHours));
+  def.indoorTemp = c.num(raw.indoors ?? raw.indoor_temp, "Weather › indoors", def.indoorTemp);
+  return def;
+}
+var DEFAULT_SLOTS = ["head", "outer", "top", "bottom", "under_top", "under_bottom", "legs", "feet"];
+function normWardrobe(raw, items, c) {
+  const clothing = Object.values(items).some((i) => i.slot);
+  const def = { enabled: clothing, slots: [], cover: ["top", "bottom"], startWorn: [], narrator: true };
+  const r = isObj(raw) ? raw : {};
+  if (raw === false)
+    def.enabled = false;
+  if (isObj(raw))
+    def.enabled = true;
+  const slotIds = Array.isArray(r.slots) ? r.slots.map(String) : DEFAULT_SLOTS;
+  def.slots = slotIds.map((id) => ({ id, label: titleCase(id) }));
+  if (Array.isArray(r.cover))
+    def.cover = r.cover.map(String);
+  def.startWorn = list(r.start ?? r.worn);
+  def.narrator = r.narrator !== false;
+  for (const it of Object.values(items)) {
+    if (it.slot && !slotIds.includes(it.slot))
+      c.warn(`Items › ${it.id} › slot`, `"${it.slot}" isn't a wardrobe slot (${slotIds.join(", ")})`);
+  }
+  return def;
+}
+function normEncounter(id, raw, c, known) {
+  const w = `Encounters › ${id}`;
+  if (!isObj(raw)) {
+    c.warn(w, "expected an encounter definition");
+    return null;
+  }
+  const foeRaw = isObj(raw.foe) ? raw.foe : {};
+  const stats = [];
+  for (const [sid, s] of Object.entries(isObj(foeRaw.stats) ? foeRaw.stats : {})) {
+    const r = isObj(s) ? s : { start: s };
+    const start = c.num(r.start, `${w} › foe › ${sid}`, 10);
+    const goodRaw = String(r.good ?? "low").toLowerCase();
+    stats.push({
+      id: sid,
+      label: typeof r.label === "string" ? r.label : titleCase(sid),
+      start,
+      max: c.num(r.max, `${w} › foe › ${sid} › max`, Math.max(start, 1)),
+      good: goodRaw === "high" ? "high" : goodRaw === "none" ? "none" : "low"
+    });
+  }
+  const actions = {};
+  const actionOrder = [];
+  let i = 0;
+  for (const [aid, a] of Object.entries(isObj(raw.actions) ? raw.actions : {})) {
+    const def = normAction(aid, a, `${w} › actions › ${aid}`, c, known, i++);
+    if (def) {
+      actions[aid] = def;
+      actionOrder.push(aid);
+    }
+  }
+  if (!actionOrder.length)
+    c.warn(w, "has no player `actions:` — the player can't do anything during it");
+  let foeMoves = null;
+  const movesRaw = raw.foe_moves ?? raw.moves;
+  if (isObj(movesRaw)) {
+    const specs = normDecide({ ask: typeof raw.foe_ask === "string" ? raw.foe_ask : `What does ${typeof foeRaw.name === "string" ? foeRaw.name : "the opponent"} do next?`, options: movesRaw }, `${w} › foe_moves`, c, known, 1);
+    foeMoves = specs[0] ? { ...specs[0], id: `enc_${id}_foe` } : null;
+  }
+  const endWhen = [];
+  for (const [outcome, when] of Object.entries(isObj(raw.end_when) ? raw.end_when : {})) {
+    const x = c.expr(when, `${w} › end_when › ${outcome}`);
+    if (x !== undefined)
+      endWhen.push({ outcome, when: String(x) });
+  }
+  const outcomes = {};
+  for (const [o, e] of Object.entries(isObj(raw.outcomes) ? raw.outcomes : {}))
+    outcomes[o] = normEffect(e, `${w} › outcomes › ${o}`, c, known);
+  const startRaw = raw.start ?? (typeof raw.start_hint === "string" ? { hint: raw.start_hint } : undefined);
+  return {
+    id,
+    name: typeof raw.name === "string" ? raw.name : titleCase(id),
+    desc: typeof raw.desc === "string" ? raw.desc : undefined,
+    tags: list(raw.tags).map((t) => t.toLowerCase()),
+    foe: { name: typeof foeRaw.name === "string" ? foeRaw.name : "Opponent", stats },
+    actions,
+    actionOrder,
+    foeMoves,
+    endWhen,
+    outcomes,
+    start: normEffect(startRaw, `${w} › start`, c, known)
   };
 }
 var SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
@@ -934,19 +1146,44 @@ function normalizeRuleset(raw) {
     if (isObj(r.start))
       for (const [s, v] of Object.entries(r.start))
         start[s] = c.num(v, `Relationships › people › ${id} › start › ${s}`, 0);
+    const schedule = [];
+    const sched = r.schedule ?? r.routine;
+    const schedList = Array.isArray(sched) ? sched : typeof sched === "string" ? [{ at: sched }] : isObj(sched) ? Object.entries(sched).map(([at, when]) => ({ at, when })) : [];
+    schedList.forEach((e, n) => {
+      const sw = `Relationships › people › ${id} › schedule #${n + 1}`;
+      if (!isObj(e) || typeof e.at !== "string") {
+        c.warn(sw, "each schedule entry needs `at:` (a location) and optionally `when:`");
+        return;
+      }
+      const when = e.when === undefined || e.when === true ? undefined : c.expr(e.when, `${sw} › when`);
+      schedule.push({ at: e.at, ...when !== undefined ? { when: String(when) } : {} });
+    });
     people[id] = {
       id,
       name: typeof r.name === "string" ? r.name : titleCase(id),
       age: r.age !== undefined ? c.num(r.age, `Relationships › people › ${id} › age`, 0) : undefined,
       start,
-      desc: typeof r.desc === "string" ? r.desc : undefined
+      desc: typeof r.desc === "string" ? r.desc : undefined,
+      schedule,
+      traits: list(r.traits)
     };
   }
   const invRaw = isObj(raw.inventory) ? raw.inventory : {};
   const items = {};
   for (const [id, it] of Object.entries(isObj(raw.items) ? raw.items : isObj(invRaw.items) ? invRaw.items : {})) {
     const r = isObj(it) ? it : typeof it === "string" ? { name: it } : {};
-    items[id] = { id, name: typeof r.name === "string" ? r.name : titleCase(id), desc: r.desc, tags: Array.isArray(r.tags) ? r.tags.map(String) : [] };
+    const w = `Items › ${id}`;
+    items[id] = {
+      id,
+      name: typeof r.name === "string" ? r.name : titleCase(id),
+      desc: r.desc,
+      tags: list(r.tags),
+      ...typeof r.slot === "string" ? { slot: r.slot } : {},
+      warmth: c.num(r.warmth, `${w} › warmth`, 0),
+      integrity: Math.max(1, c.num(r.integrity, `${w} › integrity`, 100)),
+      reveal: c.num(r.reveal, `${w} › reveal`, 0),
+      traits: list(r.traits).map((t) => t.toLowerCase())
+    };
   }
   const locations = {};
   for (const [id, l] of Object.entries(isObj(raw.locations) ? raw.locations : {})) {
@@ -956,7 +1193,9 @@ function normalizeRuleset(raw) {
       name: typeof r.name === "string" ? r.name : titleCase(id),
       desc: typeof r.desc === "string" ? r.desc : undefined,
       exits: Array.isArray(r.exits) ? r.exits.map(String) : [],
-      travel: c.num(r.travel, `Locations › ${id} › travel`, 10)
+      travel: c.num(r.travel, `Locations › ${id} › travel`, 10),
+      indoors: r.indoors === true || r.inside === true,
+      ...Array.isArray(r.pos) && r.pos.length === 2 && r.pos.every((n) => Number.isFinite(Number(n))) ? { pos: [Number(r.pos[0]), Number(r.pos[1])] } : {}
     };
   }
   for (const l of Object.values(locations))
@@ -1007,6 +1246,13 @@ function normalizeRuleset(raw) {
   const clockStart = parseClockStart(clockStartRaw, weekdays);
   if (clockStart === null)
     c.warn("Clock › start", `"${clockStartRaw}" should look like "Mon 07:30" or "Day 1 07:30"`);
+  const dateRaw = clockRaw.date ?? clockRaw.start_date ?? startRaw.date;
+  const startDate = dateRaw === undefined ? null : parseDate(dateRaw);
+  if (dateRaw !== undefined && !startDate)
+    c.warn("Clock › date", `"${dateRaw}" should look like "Sep 4"`);
+  const worldRaw = { weather: raw.weather, wardrobe: raw.wardrobe };
+  const weather = normWeather(worldRaw.weather, c);
+  const wardrobe = normWardrobe(worldRaw.wardrobe, items, c);
   const actions = {};
   const actionOrder = [];
   let i = 0;
@@ -1054,6 +1300,69 @@ function normalizeRuleset(raw) {
   }) : statOrder.filter((s) => stats[s].kind === "meter");
   const narrRaw = isObj(raw.narration) ? raw.narration : {};
   const playerRaw = isObj(raw.player) ? raw.player : {};
+  const encounters = {};
+  for (const [id, e] of Object.entries(isObj(raw.encounters) ? raw.encounters : {})) {
+    const def = normEncounter(id, e, c, known);
+    if (def)
+      encounters[id] = def;
+  }
+  const codex = {};
+  for (const [id, e] of Object.entries(isObj(raw.codex) ? raw.codex : {})) {
+    const w = `Codex › ${id}`;
+    const r = isObj(e) ? e : typeof e === "string" ? { text: e } : {};
+    const unlock = r.unlock !== undefined ? c.expr(r.unlock, `${w} › unlock`) : undefined;
+    codex[id] = {
+      id,
+      title: typeof r.title === "string" ? r.title : titleCase(id),
+      text: typeof r.text === "string" ? r.text : "",
+      ...typeof r.category === "string" ? { category: r.category } : {},
+      ...unlock !== undefined ? { unlock: String(unlock) } : {},
+      lore: list(r.lore)
+    };
+  }
+  const feats = {};
+  for (const [id, f] of Object.entries(isObj(raw.feats) ? raw.feats : {})) {
+    const w = `Feats › ${id}`;
+    if (!isObj(f)) {
+      c.warn(w, "a feat needs `unlock:` (a formula)");
+      continue;
+    }
+    const unlock = c.expr(f.unlock ?? f.when, `${w} › unlock`);
+    if (unlock === undefined) {
+      c.warn(w, "a feat needs `unlock:` (a formula)");
+      continue;
+    }
+    feats[id] = {
+      id,
+      name: typeof f.name === "string" ? f.name : titleCase(id),
+      desc: typeof f.desc === "string" ? f.desc : "",
+      unlock: String(unlock),
+      reward: normEffect(f.reward, `${w} › reward`, c, known),
+      hidden: f.hidden === true
+    };
+  }
+  const perksRaw = isObj(raw.perks) ? raw.perks : {};
+  const perkList = isObj(perksRaw.list) ? perksRaw.list : Object.fromEntries(Object.entries(perksRaw).filter(([k]) => k !== "points"));
+  const perks = {};
+  for (const [id, p] of Object.entries(perkList)) {
+    const w = `Perks › ${id}`;
+    if (!isObj(p)) {
+      c.warn(w, "expected a perk definition");
+      continue;
+    }
+    const req = p.requires !== undefined ? c.expr(p.requires, `${w} › requires`) : undefined;
+    perks[id] = {
+      id,
+      name: typeof p.name === "string" ? p.name : titleCase(id),
+      desc: typeof p.desc === "string" ? p.desc : "",
+      cost: c.num(p.cost, `${w} › cost`, 1),
+      ...req !== undefined ? { requires: String(req) } : {},
+      effects: normEffect(p.effects, `${w} › effects`, c, known)
+    };
+  }
+  const perkPoints = typeof perksRaw.points === "string" ? perksRaw.points : undefined;
+  if (perkPoints && !stats[perkPoints])
+    c.warn("Perks › points", `"${perkPoints}" isn't a declared stat`);
   const ruleset = {
     name: typeof raw.name === "string" ? raw.name : "Untitled ruleset",
     description: typeof raw.description === "string" ? raw.description : undefined,
@@ -1083,16 +1392,38 @@ function normalizeRuleset(raw) {
       start: clockStart ?? 480,
       minutesPerAction: c.num(clockRaw.minutes_per_action, "Clock › minutes_per_action", 10),
       narratorMax: c.num(clockRaw.narrator_max ?? clockRaw.narrator, "Clock › narrator_max", 480),
-      weekdays
+      weekdays,
+      startDate
     },
     hud: { bars, money: moneyStat && stats[moneyStat] ? moneyStat : undefined, currency: typeof hudRaw.currency === "string" ? hudRaw.currency : "$" },
-    narration: { notes: typeof narrRaw.notes === "string" ? narrRaw.notes : undefined, numbers: narrRaw.numbers === true }
+    narration: { notes: typeof narrRaw.notes === "string" ? narrRaw.notes : undefined, numbers: narrRaw.numbers === true },
+    weather,
+    wardrobe,
+    encounters,
+    codex,
+    feats,
+    perks,
+    ...perkPoints && stats[perkPoints] ? { perkPoints } : {}
   };
+  for (const p of Object.values(people))
+    for (const e of p.schedule) {
+      if (Object.keys(locations).length && !locations[e.at])
+        c.warn(`Relationships › people › ${p.id} › schedule`, `"${e.at}" isn't a declared location`);
+    }
+  for (const id of wardrobe.startWorn) {
+    if (!items[id]?.slot)
+      c.warn("Wardrobe › start", `"${id}" isn't a declared clothing item (items need a \`slot:\`)`);
+    else if (!(startItems[id] > 0))
+      startItems[id] = 1;
+  }
   const minors = [
     ...ruleset.player.age !== undefined && ruleset.player.age < 18 ? ["the player"] : [],
     ...Object.values(people).filter((p) => p.age !== undefined && p.age < 18).map((p) => p.name)
   ];
-  const sexualActions = Object.values(actions).filter((a) => a.tags.some((t) => SEXUAL_TAGS.has(t)));
+  const sexualActions = [
+    ...Object.values(actions),
+    ...Object.values(encounters).flatMap((e) => Object.values(e.actions).map((a) => ({ ...a, tags: [...a.tags, ...e.tags] })))
+  ].filter((a) => a.tags.some((t) => SEXUAL_TAGS.has(t)));
   if (minors.length && sexualActions.length) {
     c.err("Ruleset", `declares characters under 18 (${minors.join(", ")}) alongside sexual actions — Warp won't run this ruleset`);
     return { ruleset: null, issues: c.issues };
@@ -1100,9 +1431,122 @@ function normalizeRuleset(raw) {
   return { ruleset, issues: c.issues };
 }
 
+// src/engine/world.ts
+var MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+var MONTH_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+function ordinal(n) {
+  const s = n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] ?? "th";
+  return `${n}${s}`;
+}
+function dateAt(r, minutes) {
+  const start = r.clock.startDate;
+  if (!start)
+    return null;
+  let month = start.month - 1;
+  const elapsed = Math.floor(minutes / 1440) - Math.floor(r.clock.start / 1440);
+  let day = start.day - 1 + Math.max(0, elapsed);
+  while (day >= MONTH_DAYS[month]) {
+    day -= MONTH_DAYS[month];
+    month = (month + 1) % 12;
+  }
+  return { month: month + 1, day: day + 1, monthName: MONTH_NAMES[month] };
+}
+function seasonAt(r, minutes) {
+  const d = dateAt(r, minutes);
+  if (!d)
+    return null;
+  for (const [season, months] of Object.entries(r.weather.seasons))
+    if (months.includes(d.month))
+      return season;
+  return null;
+}
+function weatherAt(r, s) {
+  if (!r.weather.enabled || !r.weather.kinds.length)
+    return null;
+  const season = seasonAt(r, s.minutes);
+  const pool = r.weather.kinds.filter((k) => !k.seasons || season !== null && k.seasons.includes(season));
+  const kinds = pool.length ? pool : r.weather.kinds;
+  const block = Math.floor(s.minutes / (r.weather.changeHours * 60));
+  const rng = seededRng(`${s.seed ?? "world"}:weather:${block}`);
+  const total = kinds.reduce((a, k) => a + k.weight, 0) || 1;
+  let x = rng() * total;
+  for (const k of kinds) {
+    x -= k.weight;
+    if (x <= 0)
+      return k;
+  }
+  return kinds[kinds.length - 1];
+}
+function isIndoors(r, s) {
+  return !!(s.location && r.locations[s.location]?.indoors);
+}
+function temperatureAt(r, s) {
+  if (!r.weather.enabled)
+    return null;
+  if (isIndoors(r, s))
+    return r.weather.indoorTemp;
+  const season = seasonAt(r, s.minutes);
+  const base = season !== null ? r.weather.seasonTemps[season] ?? 12 : 14;
+  const hour = s.minutes % 1440 / 60;
+  const swing = r.weather.swing * Math.cos((hour - 15) / 24 * 2 * Math.PI);
+  const w = weatherAt(r, s);
+  return Math.round((base + swing + (w?.temp ?? 0)) * 10) / 10;
+}
+function wornItems(r, s) {
+  return Object.values(s.worn).filter((id) => !!id);
+}
+function warmthOf(r, s) {
+  let total = 0;
+  for (const id of wornItems(r, s)) {
+    const def = r.items[id];
+    if (!def)
+      continue;
+    const health = (s.integrity[id] ?? def.integrity) / def.integrity;
+    total += def.warmth * Math.max(0, Math.min(1, health));
+  }
+  return Math.round(total * 10) / 10;
+}
+function warmthNeeded(temp) {
+  const ideal = Math.max(0, Math.round((20 - temp) * 0.9));
+  return { min: Math.max(0, ideal - 5), max: ideal + 8 };
+}
+function revealOf(r, s) {
+  return wornItems(r, s).reduce((a, id) => a + (r.items[id]?.reveal ?? 0), 0);
+}
+function exposedSlots(r, s) {
+  if (!r.wardrobe.enabled)
+    return [];
+  return r.wardrobe.cover.filter((slot) => !s.worn[slot]);
+}
+function hasTrait(r, s, trait) {
+  const t = trait.toLowerCase();
+  return wornItems(r, s).some((id) => r.items[id]?.traits.includes(t));
+}
+function personLocation(r, s, id, env) {
+  const p = r.people[id];
+  if (!p?.schedule.length)
+    return null;
+  for (const e of p.schedule)
+    if (e.when === undefined || evalBool(e.when, env, false))
+      return e.at;
+  return null;
+}
+function presentPeople(r, s, env) {
+  if (!s.location)
+    return [];
+  return Object.keys(r.people).filter((id) => personLocation(r, s, id, env) === s.location);
+}
+
 // src/engine/state.ts
 function initialState(r) {
   const s = {
+    seed: null,
+    worn: {},
+    integrity: {},
+    encounter: null,
+    codex: {},
+    feats: {},
+    perks: {},
     stats: {},
     flags: {},
     items: { ...r.startItems },
@@ -1125,6 +1569,11 @@ function initialState(r) {
     s.rel[p.id] = {};
     for (const rs of r.relStatOrder)
       s.rel[p.id][rs] = p.start[rs] ?? r.relStats[rs].start;
+  }
+  for (const id of r.wardrobe.startWorn) {
+    const slot = r.items[id]?.slot;
+    if (slot)
+      s.worn[slot] = id;
   }
   return s;
 }
@@ -1151,14 +1600,78 @@ function applyEvent(s, e, r) {
       break;
     case "item": {
       const n = (s.items[e.id] ?? 0) + e.d;
-      if (n <= 0)
+      if (n <= 0) {
         delete s.items[e.id];
-      else
+        for (const [slot, id] of Object.entries(s.worn))
+          if (id === e.id)
+            delete s.worn[slot];
+        delete s.integrity[e.id];
+      } else
         s.items[e.id] = n;
       if (e.name && !r.items[e.id])
         s.itemNames[e.id] = e.name;
       break;
     }
+    case "seed":
+      if (!s.seed)
+        s.seed = e.v;
+      break;
+    case "wear":
+      if (e.item) {
+        if (!(s.items[e.item] > 0))
+          s.items[e.item] = 1;
+        for (const [slot, id] of Object.entries(s.worn))
+          if (id === e.item)
+            delete s.worn[slot];
+        s.worn[e.slot] = e.item;
+      } else
+        delete s.worn[e.slot];
+      break;
+    case "dmg": {
+      const def = r.items[e.item];
+      const max = def?.integrity ?? 100;
+      const next = Math.min(max, (s.integrity[e.item] ?? max) + e.d);
+      if (next <= 0) {
+        delete s.integrity[e.item];
+        for (const [slot, id] of Object.entries(s.worn))
+          if (id === e.item)
+            delete s.worn[slot];
+        const n = (s.items[e.item] ?? 1) - 1;
+        if (n <= 0)
+          delete s.items[e.item];
+        else
+          s.items[e.item] = n;
+      } else if (next >= max)
+        delete s.integrity[e.item];
+      else
+        s.integrity[e.item] = next;
+      break;
+    }
+    case "enc":
+      s.encounter = e.id ? { id: e.id, round: 0, foe: { ...e.foe ?? {} } } : null;
+      break;
+    case "foe": {
+      if (!s.encounter)
+        break;
+      const def = r.encounters[s.encounter.id]?.foe.stats.find((x) => x.id === e.stat);
+      const cur = s.encounter.foe[e.stat] ?? def?.start ?? 0;
+      const next = e.set !== undefined ? e.set : cur + (e.d ?? 0);
+      s.encounter.foe[e.stat] = def ? clamp(next, 0, def.max) : next;
+      break;
+    }
+    case "round":
+      if (s.encounter)
+        s.encounter.round += 1;
+      break;
+    case "codex":
+      s.codex[e.id] = true;
+      break;
+    case "feat":
+      s.feats[e.id] = true;
+      break;
+    case "perk":
+      s.perks[e.id] = true;
+      break;
     case "person":
       s.people[e.id] = { name: e.name };
       if (!s.rel[e.id]) {
@@ -1203,8 +1716,67 @@ function applyEvent(s, e, r) {
 function cloneState(s) {
   return structuredClone(s);
 }
+var BUILTIN_NAMES = [
+  "minutes",
+  "hour",
+  "minute",
+  "day",
+  "weekday",
+  "turn",
+  "location",
+  "month",
+  "date",
+  "season",
+  "weather",
+  "temperature",
+  "indoors",
+  "outside",
+  "warmth",
+  "warmth_min",
+  "warmth_max",
+  "too_cold",
+  "too_hot",
+  "reveal",
+  "exposed",
+  "naked",
+  "in_encounter",
+  "round",
+  "target"
+];
 function makeEnv(r, s, extra = {}) {
   const day = Math.floor(s.minutes / 1440);
+  const date = dateAt(r, s.minutes);
+  let world = null;
+  const worldVars = () => {
+    if (world)
+      return world;
+    const temp = temperatureAt(r, s);
+    const need = temp === null ? null : warmthNeeded(temp);
+    const warmth = warmthOf(r, s);
+    const exposed = exposedSlots(r, s).length;
+    const indoors = isIndoors(r, s);
+    world = {
+      month: date?.month ?? 0,
+      date: date?.day ?? 0,
+      season: seasonAt(r, s.minutes) ?? "",
+      weather: weatherAt(r, s)?.id ?? "",
+      temperature: temp ?? 20,
+      indoors,
+      outside: !indoors,
+      warmth,
+      warmth_min: need?.min ?? 0,
+      warmth_max: need?.max ?? 99,
+      too_cold: need ? warmth < need.min : false,
+      too_hot: need ? warmth > need.max : false,
+      reveal: revealOf(r, s),
+      exposed,
+      naked: r.wardrobe.enabled && exposed === r.wardrobe.cover.length && r.wardrobe.cover.length > 0,
+      in_encounter: !!s.encounter,
+      round: s.encounter?.round ?? 0,
+      target: ""
+    };
+    return world;
+  };
   const clockVars = {
     minutes: s.minutes,
     hour: Math.floor(s.minutes % 1440 / 60),
@@ -1214,7 +1786,8 @@ function makeEnv(r, s, extra = {}) {
     turn: s.turn,
     location: s.location ?? ""
   };
-  return {
+  const scheduleEnv = () => ({ lookup: base.lookup, call: (n, a) => n === "present" || n === "where" ? undefined : base.call(n, a) });
+  const base = {
     lookup(path) {
       const [head, ...rest] = path;
       if (rest.length === 0) {
@@ -1230,7 +1803,19 @@ function makeEnv(r, s, extra = {}) {
           return s.flags[head];
         if (r.flags[head])
           return r.flags[head].start;
+        const w = worldVars();
+        if (head in w)
+          return w[head];
         return;
+      }
+      if (head === "foe") {
+        if (!s.encounter)
+          return 0;
+        const def = r.encounters[s.encounter.id]?.foe.stats.find((x) => x.id === rest[0]);
+        return s.encounter.foe[rest[0]] ?? def?.start ?? 0;
+      }
+      if (head === "target" && typeof extra.target === "string" && rest.length === 1) {
+        return s.rel[extra.target]?.[rest[0]] ?? r.relStats[rest[0]]?.start ?? 0;
       }
       if (head === "flags")
         return s.flags[rest[0]] ?? (r.flags[rest[0]] ? r.flags[rest[0]].start : false);
@@ -1267,10 +1852,27 @@ function makeEnv(r, s, extra = {}) {
           const hi = Number(args[2]);
           return lo <= hi ? v >= lo && v < hi : v >= lo || v < hi;
         }
+        case "wearing":
+          return Object.values(s.worn).includes(a0);
+        case "worn":
+          return s.worn[a0] ?? "";
+        case "trait":
+          return hasTrait(r, s, a0);
+        case "present":
+          return personLocation(r, s, a0, scheduleEnv()) === s.location && !!s.location;
+        case "where":
+          return personLocation(r, s, a0, scheduleEnv()) ?? "";
+        case "codex":
+          return a0 in s.codex;
+        case "feat":
+          return a0 in s.feats;
+        case "perk":
+          return a0 in s.perks;
       }
       return;
     }
   };
+  return base;
 }
 function bandFor(def, value) {
   let hit = null;
@@ -1320,6 +1922,7 @@ class Working {
   events = [];
   hints = [];
   decisions = [];
+  pendingEnd = null;
   needs = [];
   constructor(r, s, rng = seededRng("effects"), seed = "effects", odds = {}, scene = {}) {
     this.r = r;
@@ -1352,27 +1955,64 @@ class Working {
 }
 var TRAVEL_PREFIX = "go:";
 function travelTargets(r, s) {
+  if (s.encounter)
+    return [];
   const here = s.location ? r.locations[s.location] : undefined;
   return here ? here.exits.filter((x) => r.locations[x]) : [];
 }
-function paramValues(a, chosen) {
+var TARGET_SEP = "@";
+function paramValues(a, chosen, target) {
   const out = {};
   for (const p of a.params) {
     const key = chosen?.[p.id] && p.options[chosen[p.id]] !== undefined ? chosen[p.id] : p.default;
     out[p.id] = p.options[key];
   }
+  if (target)
+    out.target = target;
   return out;
 }
-function isAvailable(r, s, a) {
-  if (a.at.length && !a.at.includes(s.location ?? ""))
+function actionPool(r, s) {
+  const enc = s.encounter ? r.encounters[s.encounter.id] : undefined;
+  if (enc)
+    return { defs: enc.actions, order: enc.actionOrder, tags: enc.tags };
+  return { defs: r.actions, order: r.actionOrder, tags: [] };
+}
+function isAvailable(r, s, a, target) {
+  if (!s.encounter && a.at.length && !a.at.includes(s.location ?? ""))
     return false;
-  if (a.when && !evalBool(a.when, makeEnv(r, s, paramValues(a)), true))
+  if (a.when && !evalBool(a.when, makeEnv(r, s, paramValues(a, undefined, target)), true))
     return false;
   return true;
 }
 function availableActions(r, s, lines = []) {
   const blocked = new Set(lines.map((l) => l.toLowerCase()));
-  return r.actionOrder.map((id) => r.actions[id]).filter((a) => !a.tags.some((t) => blocked.has(t)) && isAvailable(r, s, a));
+  const pool = actionPool(r, s);
+  if (pool.tags.some((t) => blocked.has(t)))
+    return [];
+  return pool.order.map((id) => pool.defs[id]).filter((a) => !a.tags.some((t) => blocked.has(t)) && (a.perPerson || isAvailable(r, s, a)));
+}
+function availableChoices(r, s, lines = []) {
+  const out = [];
+  const here = presentPeople(r, s, makeEnv(r, s));
+  for (const a of availableActions(r, s, lines)) {
+    if (!a.perPerson) {
+      out.push({ id: a.id, a, label: a.label });
+      continue;
+    }
+    for (const pid of here) {
+      if (!isAvailable(r, s, a, pid))
+        continue;
+      const name = personName(r, s, pid);
+      const label = /\btarget\b|\{\{target\}\}|\{target\}/i.test(a.label) ? a.label.replace(/\{\{target\}\}|\{target\}/gi, name) : `${a.label} (${name})`;
+      out.push({ id: `${a.id}${TARGET_SEP}${pid}`, a, target: pid, label });
+    }
+  }
+  return out;
+}
+function findAction(r, s, actionId) {
+  const [base, target] = actionId.split(TARGET_SEP);
+  const a = actionPool(r, s).defs[base];
+  return a ? { a, ...target ? { target } : {} } : null;
 }
 function tierFor(check, roll, add, target) {
   const total = roll.total + add;
@@ -1411,9 +2051,9 @@ function tierFor(check, roll, add, target) {
       return "fail";
   }
 }
-function checkNumbers(r, s, a, params) {
+function checkNumbers(r, s, a, params, who) {
   const check = a.check;
-  const env = makeEnv(r, s, paramValues(a, params));
+  const env = makeEnv(r, s, paramValues(a, params, who));
   const add = check.add !== undefined ? Math.round(evalNumber(check.add, env, 0)) : 0;
   let target = null;
   if (check.target !== undefined) {
@@ -1423,11 +2063,11 @@ function checkNumbers(r, s, a, params) {
   }
   return { add, target };
 }
-function odds(r, s, a, params) {
+function odds(r, s, a, params, who) {
   const check = a.check;
   if (!check)
     return null;
-  const { add, target } = checkNumbers(r, s, a, params);
+  const { add, target } = checkNumbers(r, s, a, params, who);
   if (check.style === "chance" && check.dice === "d100" && target !== null) {
     return { success: target / 100, partial: 0 };
   }
@@ -1472,7 +2112,10 @@ function effectToEvents(w, e, src, extra) {
       continue;
     w.push({ t: "item", id, d: n, src });
   }
-  for (const [who, m] of Object.entries(e.rel)) {
+  for (const [key, m] of Object.entries(e.rel)) {
+    const who = key === "target" && typeof extra.target === "string" ? extra.target : key;
+    if (key === "target" && who === "target")
+      continue;
     if (!w.s.people[who])
       w.push({ t: "person", id: who, name: r.people[who]?.name ?? who, src });
     for (const [stat, d] of Object.entries(m)) {
@@ -1489,12 +2132,89 @@ function effectToEvents(w, e, src, extra) {
   for (const id of e.removeConditions)
     if (w.s.conditions[id])
       w.push({ t: "cond", id, on: false, src });
+  for (const id of e.wear) {
+    const slot = r.items[id]?.slot;
+    if (slot && w.s.worn[slot] !== id)
+      w.push({ t: "wear", slot, item: id, src });
+  }
+  for (const slot of e.undress)
+    if (w.s.worn[slot])
+      w.push({ t: "wear", slot, item: null, src });
+  for (const [slot, d] of Object.entries(e.damage)) {
+    const item = w.s.worn[slot];
+    const v = evalNumber(d, w.env(extra), 0);
+    if (item && v > 0)
+      w.push({ t: "dmg", item, d: -v, src });
+  }
+  if (w.s.encounter) {
+    for (const [stat, d] of Object.entries(e.foe)) {
+      const v = evalNumber(d, w.env(extra), 0);
+      if (v !== 0)
+        w.push({ t: "foe", stat, d: v, src });
+    }
+    if (e.end)
+      w.pendingEnd = e.end;
+  }
+  if (e.startEncounter && !w.s.encounter)
+    startEncounter(w, e.startEncounter, src);
+  for (const id of e.unlock)
+    if (w.r.codex[id] && !w.s.codex[id])
+      w.push({ t: "codex", id, src });
   if (e.time)
     advanceTime(w, e.time, src);
   if (e.hint)
-    w.hints.push(e.hint);
+    w.hints.push(fillTarget(w, e.hint, extra));
   for (const d of e.decide)
     decide(w, d, src, extra);
+}
+function startEncounter(w, id, src) {
+  const enc = w.r.encounters[id];
+  if (!enc)
+    return;
+  const foe = Object.fromEntries(enc.foe.stats.map((s) => [s.id, s.start]));
+  w.push({ t: "enc", id, foe, src });
+  w.hints.push(`An encounter begins: ${enc.name}${enc.desc ? ` — ${enc.desc}` : ""}. Opponent: ${enc.foe.name}.`);
+  effectToEvents(w, enc.start, src, {});
+}
+function encounterOutcome(w) {
+  const s = w.s.encounter;
+  if (!s)
+    return null;
+  if (w.pendingEnd)
+    return w.pendingEnd;
+  const enc = w.r.encounters[s.id];
+  for (const e of enc?.endWhen ?? [])
+    if (evalBool(e.when, w.env(), false))
+      return e.outcome;
+  return null;
+}
+function endEncounter(w, outcome, src) {
+  const s = w.s.encounter;
+  if (!s)
+    return;
+  const enc = w.r.encounters[s.id];
+  w.pendingEnd = null;
+  w.push({ t: "enc", id: null, outcome, src });
+  w.hints.push(`The encounter ends: ${outcome.replace(/_/g, " ")}.`);
+  const eff = enc?.outcomes[outcome];
+  if (eff)
+    effectToEvents(w, eff, src, {});
+}
+function encounterRound(w, src) {
+  if (!w.s.encounter)
+    return;
+  let out = encounterOutcome(w);
+  if (out) {
+    endEncounter(w, out, src);
+    return;
+  }
+  w.push({ t: "round", src });
+  const enc = w.r.encounters[w.s.encounter.id];
+  if (enc?.foeMoves)
+    decide(w, enc.foeMoves, src, {});
+  out = encounterOutcome(w);
+  if (out)
+    endEncounter(w, out, src);
 }
 function decide(w, d, src, extra) {
   if (w.decisions.some((x) => x.id === d.id))
@@ -1506,7 +2226,7 @@ function decide(w, d, src, extra) {
   const p = normalize(model ?? Object.fromEntries(d.options.map((o) => [o.id, o.weight])), keys);
   const picked = sample(p, seededRng(`${w.seed}:decide:${d.id}`));
   const opt = d.options.find((o) => o.id === picked);
-  w.decisions.push({ id: d.id, ask: d.ask, picked, pickedDesc: opt.desc, p, source: model ? "model" : "weights" });
+  w.decisions.push({ id: d.id, ask: fillTarget(w, d.ask, extra), picked, pickedDesc: fillTarget(w, opt.desc, extra), p, source: model ? "model" : "weights" });
   effectToEvents(w, opt.effect, src, extra);
 }
 function advanceTime(w, minutes, src) {
@@ -1552,6 +2272,16 @@ function runTriggers(w, includeRepeat) {
     if (!changed)
       break;
   }
+  for (const c of Object.values(w.r.codex)) {
+    if (c.unlock && !w.s.codex[c.id] && evalBool(c.unlock, w.env(), false))
+      w.push({ t: "codex", id: c.id, src: "trigger" });
+  }
+  for (const f of Object.values(w.r.feats)) {
+    if (!w.s.feats[f.id] && evalBool(f.unlock, w.env(), false)) {
+      w.push({ t: "feat", id: f.id, src: "trigger" });
+      effectToEvents(w, f.reward, "trigger", {});
+    }
+  }
 }
 var TIER_FALLBACK = {
   crit_success: ["crit_success", "success"],
@@ -1575,7 +2305,11 @@ function resolveTurnFull(r, before, intent, opts) {
 function resolveInner(r, before, intent, opts, needs) {
   const w = new Working(r, cloneState(before), seededRng(`${opts.seed}:fx`), opts.seed, opts.odds ?? {}, opts.scene ?? {});
   const rec = { v: 1, hints: [], events: [], at: Date.now() };
-  const a = intent ? r.actions[intent.actionId] : undefined;
+  if (!w.s.seed)
+    w.push({ t: "seed", v: opts.seed, src: "start" });
+  const found = intent && !intent.actionId.startsWith(TRAVEL_PREFIX) ? findAction(r, before, intent.actionId) : null;
+  const a = found?.a;
+  const inEncounter = !!before.encounter;
   if (intent?.actionId.startsWith(TRAVEL_PREFIX)) {
     const to = intent.actionId.slice(TRAVEL_PREFIX.length);
     const dest = r.locations[to];
@@ -1588,12 +2322,14 @@ function resolveInner(r, before, intent, opts, needs) {
         w.hints.push(`Arriving at ${dest.name}: ${dest.desc}`);
     }
   } else if (a) {
-    const extra = paramValues(a, intent.params);
-    rec.action = { id: a.id, label: a.label, via: intent.via, ...a.params.length ? { params: Object.fromEntries(a.params.map((p) => [p.id, intent.params?.[p.id] ?? p.default])) } : {} };
+    const who = found?.target;
+    const extra = paramValues(a, intent.params, who);
+    const label = who ? `${a.label} (${personName(r, before, who)})` : a.label;
+    rec.action = { id: intent.actionId, label, via: intent.via, ...a.params.length ? { params: Object.fromEntries(a.params.map((p) => [p.id, intent.params?.[p.id] ?? p.default])) } : {} };
     effectToEvents(w, a.cost, "cost", extra);
     if (a.check) {
       const rng = seededRng(opts.seed);
-      const { add, target } = checkNumbers(r, w.s, a, intent.params);
+      const { add, target } = checkNumbers(r, w.s, a, intent.params, who);
       const roll = rollDice(a.check.dice, rng);
       const tier = tierFor(a.check, roll, add, target);
       rec.check = {
@@ -1616,10 +2352,15 @@ function resolveInner(r, before, intent, opts, needs) {
     } else {
       effectToEvents(w, a.effects, "action", extra);
     }
-    advanceTime(w, a.time ?? r.clock.minutesPerAction, "action");
+    advanceTime(w, a.time ?? (inEncounter ? 1 : r.clock.minutesPerAction), "action");
     const veils = new Set((opts.veils ?? []).map((v) => v.toLowerCase()));
-    if (a.tags.some((t) => veils.has(t)))
+    const encTags = inEncounter ? r.encounters[before.encounter.id]?.tags ?? [] : [];
+    if ([...a.tags, ...encTags].some((t) => veils.has(t)))
       rec.veiled = true;
+    if (inEncounter)
+      encounterRound(w, "action");
+  } else if (inEncounter && w.s.encounter) {
+    encounterRound(w, "action");
   }
   runTriggers(w, true);
   w.push({ t: "turn", src: "action" });
@@ -1719,6 +2460,16 @@ function applyProposal(r, before, p) {
     if (r.flags[key]?.narrator)
       w.push({ t: "flag", key, v, src });
   }
+  if (r.wardrobe.enabled && r.wardrobe.narrator) {
+    for (const slot of p.undress ?? [])
+      if (w.s.worn[slot])
+        w.push({ t: "wear", slot, item: null, src });
+    for (const id of p.wear ?? []) {
+      const slot = r.items[id]?.slot;
+      if (slot && w.s.items[id] > 0 && w.s.worn[slot] !== id)
+        w.push({ t: "wear", slot, item: id, src });
+    }
+  }
   if (typeof p.minutes === "number" && Number.isFinite(p.minutes) && p.minutes > 0) {
     advanceTime(w, Math.round(Math.min(p.minutes, r.clock.narratorMax)), src);
   }
@@ -1731,6 +2482,54 @@ function manualSet(r, before, stat, value) {
     w.push({ t: "stat", id: stat, set: value, src: "manual" });
   runTriggers(w, false);
   return w.events;
+}
+function changeClothes(r, before, slot, item) {
+  if (!r.wardrobe.enabled)
+    return "This ruleset has no wardrobe.";
+  if (item) {
+    const def = r.items[item];
+    if (!def?.slot)
+      return "That isn't clothing.";
+    if (!(before.items[item] > 0))
+      return "You don't have that.";
+    slot = def.slot;
+  } else if (!before.worn[slot]) {
+    return "Nothing is worn there.";
+  }
+  const w = new Working(r, cloneState(before));
+  w.push({ t: "wear", slot, item, src: "manual" });
+  runTriggers(w, false);
+  return w.events;
+}
+function perkBlocker(r, s, id) {
+  const p = r.perks[id];
+  if (!p)
+    return "Unknown perk.";
+  if (s.perks[id])
+    return "Already taken.";
+  if (p.requires && !evalBool(p.requires, makeEnv(r, s), false))
+    return "Requirements not met.";
+  if (r.perkPoints && (s.stats[r.perkPoints] ?? 0) < p.cost)
+    return `Needs ${p.cost} point${p.cost === 1 ? "" : "s"}.`;
+  return null;
+}
+function buyPerk(r, before, id) {
+  const blocked = perkBlocker(r, before, id);
+  if (blocked)
+    return blocked;
+  const p = r.perks[id];
+  const w = new Working(r, cloneState(before));
+  w.push({ t: "perk", id, src: "manual" });
+  if (r.perkPoints && p.cost)
+    w.push({ t: "stat", id: r.perkPoints, d: -p.cost, src: "manual" });
+  effectToEvents(w, p.effects, "manual", {});
+  runTriggers(w, false);
+  return w.events;
+}
+function fillTarget(w, text, extra) {
+  if (typeof extra.target !== "string" || !extra.target || !text.includes("{target}"))
+    return text;
+  return text.replace(/\{target\}/g, personName(w.r, w.s, extra.target));
 }
 
 // src/engine/templates/universal.ts
@@ -1927,7 +2726,7 @@ conditions:
 var hometown = {
   id: "hometown",
   name: "Hometown (life-sim)",
-  blurb: "Survival life-sim: Pain, Arousal, Fatigue, Stress, Trauma, Control and Allure described in words, graded skills, a clock, a small town map, and meters that feed into each other.",
+  blurb: "Survival life-sim: Pain, Arousal, Fatigue, Stress, Trauma, Control and Allure described in words, graded skills, a calendar with weather and temperature, clothing that matters, townsfolk on schedules, a mugging encounter, and meters that feed into each other.",
   parts: [
     {
       label: "core",
@@ -1939,6 +2738,7 @@ player:
 
 clock:
   start: Mon 07:00
+  date: Sep 4
   minutes_per_action: 15
   narrator_max: 240
 
@@ -2076,14 +2876,36 @@ narration:
       good: none
       narrator: 5
       bands: { -100: Submissive, -30: Deferential, -10: Even, 10: Assertive, 40: Domineering }
+  # Townsfolk keep their own hours; they show up as "here" when you share a place.
+  people:
+    jo:
+      name: Jo
+      desc: Runs the café on the High Street. Brisk, fair, secretly kind.
+      schedule:
+        - { when: "between(hour, 7, 18) and weekday != 'Sun'", at: high_street }
+        - { when: "(weekday == 'Fri' or weekday == 'Sat') and (hour >= 21 or hour < 2)", at: the_strip }
+    professor_ward:
+      name: Professor Ward
+      desc: Your tutor. Exacting, dry, notices everything.
+      schedule:
+        - { when: "between(hour, 9, 17) and weekday != 'Sat' and weekday != 'Sun'", at: campus }
+    dex:
+      name: Dex
+      desc: Works the docks at night. Knows people who know people.
+      schedule:
+        - { when: "hour >= 19 or hour < 4", at: docks }
 `
     },
     {
       label: "world",
-      yaml: `locations:
+      yaml: `weather:
+  temps: { spring: 12, summer: 21, autumn: 11, winter: 3 }
+
+locations:
   apartment:
     name: Your Apartment
     desc: A cramped one-bedroom above a chip shop. Thin walls, a lock that sticks.
+    indoors: true
     exits: [high_street]
   high_street:
     name: High Street
@@ -2092,6 +2914,7 @@ narration:
   campus:
     name: University Campus
     desc: Lecture halls, a library, a gym with a pool.
+    indoors: true
     exits: [high_street]
     travel: 15
   park:
@@ -2112,12 +2935,35 @@ items:
   phone: Phone
   keys: Apartment keys
   coffee: Coffee
+  # Clothing: slot, warmth, how revealing, traits.
+  t_shirt: { name: T-shirt, slot: top, warmth: 2 }
+  hoodie: { name: Hoodie, slot: top, warmth: 6 }
+  jeans: { name: Jeans, slot: bottom, warmth: 4 }
+  skirt: { name: Short skirt, slot: bottom, warmth: 1, reveal: 3 }
+  undershirt: { name: Undershirt, slot: under_top, warmth: 1 }
+  underwear: { name: Underwear, slot: under_bottom, warmth: 1 }
+  trainers: { name: Trainers, slot: feet, warmth: 1 }
+  raincoat: { name: Raincoat, slot: outer, warmth: 4, traits: [rainproof] }
+  winter_coat: { name: Winter coat, slot: outer, warmth: 12 }
+  swimsuit: { name: Swimsuit, slot: under_bottom, warmth: 0, reveal: 5, traits: [swimwear] }
+
+wardrobe:
+  slots: [outer, top, bottom, under_top, under_bottom, feet]
+  cover: [top, bottom]
+  start: [t_shirt, jeans, undershirt, underwear, trainers]
+
+start:
+  items: { hoodie: 1, skirt: 1 }
 
 conditions:
   exhausted: { label: Exhausted, tone: bad, desc: Stress builds fast while this tired. }
   scared: { label: Scared, tone: bad, desc: Low control — trauma comes to the surface. }
   shaken: { label: Shaken, tone: warn, desc: Recently overwhelmed. }
   wanted: { label: Wanted, tone: bad, desc: The police are looking for you. }
+  cold: { label: Cold, tone: bad, desc: Underdressed for the weather. }
+  overheating: { label: Overheating, tone: warn, desc: Overdressed for the weather. }
+  soaked: { label: Soaked, tone: warn, desc: Caught in the rain without a coat. }
+  exposed: { label: Exposed, tone: bad, desc: Not decently covered in public. }
 `
     },
     {
@@ -2181,8 +3027,32 @@ conditions:
     say: "*I put on an apron and work a shift at the café.*"
     time: 240
     check: { chance: 55 + tending / 1.5, label: Tending }
-    success: { money: 45 + tending / 2, tending: +1.2, fatigue: +20, hint: "A smooth shift — good tips." }
-    fail: { money: 30, tending: +0.6, fatigue: +22, stress: +6, hint: "A rough shift: rude customers and a smashed tray." }
+    success: { money: 45 + tending / 2, tending: +1.2, fatigue: +20, flags: { worked: true }, hint: "A smooth shift — good tips." }
+    fail: { money: 30, tending: +0.6, fatigue: +22, stress: +6, flags: { worked: true }, hint: "A rough shift: rude customers and a smashed tray." }
+  buy_raincoat:
+    label: Buy a raincoat (£30)
+    group: Shops
+    at: high_street
+    when: money >= 30 and not has('raincoat')
+    say: "*I buy a raincoat.*"
+    time: 15
+    effects: { money: -30, give: raincoat }
+  buy_coat:
+    label: Buy a winter coat (£60)
+    group: Shops
+    at: high_street
+    when: money >= 60 and not has('winter_coat')
+    say: "*I buy a proper winter coat.*"
+    time: 15
+    effects: { money: -60, give: winter_coat }
+  buy_swimsuit:
+    label: Buy a swimsuit (£20)
+    group: Shops
+    at: high_street
+    when: money >= 20 and not has('swimsuit')
+    say: "*I pick up a swimsuit.*"
+    time: 15
+    effects: { money: -20, give: swimsuit }
   buy_coffee:
     label: Buy a coffee (£3)
     group: Shops
@@ -2238,6 +3108,40 @@ conditions:
           friendly: { desc: "A friendly face", weight: 3, stress: -3, hint: "Someone friendly strikes up a conversation." }
           quiet: { desc: "Nothing much happens", weight: 3, stress: -1, hint: "A quiet, uneventful walk." }
           trouble: { desc: "Someone unpleasant takes an interest", weight: 2, stress: +4, hint: "Trouble finds {{user}}: someone unpleasant takes an interest." }
+          mugged: { desc: "A mugger corners them", weight: 1, start_encounter: mugging }
+
+  # One button per person here. {target} is their name; rel: { target: … } changes how they feel.
+  chat:
+    label: Chat with {target}
+    group: People
+    per_person: true
+    say: "*I strike up a conversation with {target}.*"
+    time: 20
+    effects: { rel: { target: { trust: +2, love: +1 } }, stress: -2 }
+  flirt:
+    label: Flirt with {target}
+    group: People
+    per_person: true
+    say: "*I flirt with {target}.*"
+    time: 15
+    check: { chance: 30 + allure / 2 + target.love / 2 + target.trust / 4, label: Allure }
+    success: { rel: { target: { love: +3, lust: +4 } }, arousal: +3, hint: "{target} is charmed." }
+    fail: { rel: { target: { trust: -2 } }, stress: +3, hint: "It lands badly; {target} is put off." }
+    crit_fail: { rel: { target: { trust: -4, love: -2 } }, stress: +6, hint: "Mortifying. {target} makes it clear they're not interested." }
+  ask_favour:
+    label: Ask {target} for help
+    group: People
+    per_person: true
+    when: target.trust >= 30
+    say: "*I ask {target} for a favour.*"
+    time: 20
+    effects:
+      decide:
+        ask: Does {target} agree to help {{user}}?
+        options:
+          yes: { desc: "Helps gladly", weight: 3, stress: -5, rel: { target: { love: +1 } } }
+          grudging: { desc: "Helps, but grudgingly", weight: 2, rel: { target: { trust: -1 } } }
+          no: { desc: "Refuses", weight: 1, stress: +3 }
 
   endure:
     label: Endure
@@ -2322,6 +3226,107 @@ triggers:
   cleared:
     when: crime < 16
     do: { remove_condition: [wanted] }
+
+  # Weather and clothing.
+  cold:
+    when: too_cold and outside
+    do:
+      add_condition: [cold]
+      hint: "{{user}} is shivering — badly underdressed for the weather."
+  cold_bites:
+    when: too_cold and outside
+    repeat: true
+    do: { stress: +1, fatigue: +1 }
+  warmed_up:
+    when: not too_cold or indoors
+    do: { remove_condition: [cold] }
+  overheating:
+    when: too_hot
+    do: { add_condition: [overheating] }
+  cooled_down:
+    when: not too_hot
+    do: { remove_condition: [overheating] }
+  soaked:
+    when: (weather == 'rain' or weather == 'storm') and outside and not trait('rainproof')
+    do:
+      add_condition: { soaked: 120 }
+      hint: "The rain soaks {{user}} through."
+  exposed:
+    when: exposed > 0 and outside
+    do:
+      add_condition: [exposed]
+      hint: "{{user}} is out in public without being decently covered, and people notice."
+  exposed_stress:
+    when: exposed > 0 and outside
+    repeat: true
+    do: { stress: +3, allure: +2 }
+  covered:
+    when: exposed == 0 or indoors
+    do: { remove_condition: [exposed] }
+`
+    },
+    {
+      label: "encounters",
+      yaml: `# Turn-based encounters. Your moves replace the normal choices until it ends;
+# the mugger's move each round is rolled (odds weighed by the decision model if you use one).
+encounters:
+  mugging:
+    name: Mugging
+    desc: Someone blocks {{user}}'s way and wants their money.
+    tags: [violence]
+    foe:
+      name: Mugger
+      stats:
+        nerve: { label: Nerve, start: 10, max: 10 }
+    actions:
+      fight_back:
+        label: Fight back
+        check: { chance: 30 + athletics / 2 - fatigue / 3 - pain / 3, label: Athletics }
+        success: { foe: { nerve: -6 }, hint: "{{user}} lands a solid hit." }
+        fail: { pain: +10, hint: "{{user}}'s swing misses and they take a blow." }
+      shout:
+        label: Shout for help
+        check: { chance: 35 + control / 4, label: Control }
+        success: { foe: { nerve: -4 }, hint: "Heads turn at the shouting." }
+        fail: { stress: +4, hint: "Nobody comes." }
+      hand_over:
+        label: Hand over your money
+        effects: { money: "-min(money, 20)", end: robbed }
+      run:
+        label: Run
+        check: { chance: 35 + athletics / 2 - fatigue / 3 - pain / 2, label: Athletics }
+        success: { fatigue: +5, end: escaped }
+        fail: { pain: +5, hint: "{{user}} is caught before getting far." }
+    foe_moves:
+      grab: { desc: "Grabs and shoves {{user}}", weight: 2, pain: +8, stress: +4, damage: { top: 20 } }
+      threaten: { desc: "Makes an ugly threat", weight: 2, stress: +6, control: -3 }
+      snatch: { desc: "Snatches at their pockets", weight: 1, money: "-min(money, 10)" }
+    end_when:
+      won: foe.nerve <= 0
+      beaten: pain >= 80
+    outcomes:
+      won: { stress: -5, control: +5, flags: { fought_off_mugger: true }, hint: "The mugger loses their nerve and bolts." }
+      robbed: { stress: +8, control: -8, hint: "They take the money and vanish." }
+      escaped: { stress: +3, hint: "{{user}} gets clear." }
+      beaten: { trauma: +5, money: "-min(money, 30)", hint: "{{user}} is left hurt on the pavement, pockets emptied." }
+`
+    },
+    {
+      label: "journal",
+      yaml: `# Codex entries unlock as you play. Add "lore: [Lorebook entry title]" to one and that
+# lorebook entry stays off until the codex entry unlocks.
+codex:
+  apartment: { title: Your Apartment, category: Places, text: "Above the chip shop. The landlord never fixes anything.", unlock: "turn >= 1" }
+  campus: { title: University Campus, category: Places, text: "Sprawling and old; the pool is open late on weekdays.", unlock: "location == 'campus'" }
+  docks: { title: The Docks, category: Places, text: "Cargo, cranes and people who don't ask questions.", unlock: "location == 'docks'" }
+  the_strip: { title: The Strip, category: Places, text: "Where the town goes to forget itself.", unlock: "location == 'the_strip'" }
+  jo: { title: Jo, category: People, text: "Runs the café. Pays fairly, expects the same.", unlock: "met('jo') and rel('jo', 'trust') >= 15" }
+
+feats:
+  first_pay: { name: First paycheque, desc: "Finish a shift at the café.", unlock: "flag('worked')", reward: { stress: -5 } }
+  night_owl: { name: Night owl, desc: "Be out on the Strip after 2am.", unlock: "location == 'the_strip' and between(hour, 2, 5)" }
+  stood_ground: { name: Stood your ground, desc: "Fight off a mugger.", unlock: "flag('fought_off_mugger')", reward: { control: +10 } }
+  well_dressed: { name: Dressed for it, desc: "Own a raincoat and a winter coat.", unlock: "has('raincoat') and has('winter_coat')" }
 `
     }
   ]
@@ -2331,7 +3336,7 @@ triggers:
 var starfarer = {
   id: "starfarer",
   name: "Starfarer (sci-fi RPG)",
-  blurb: "Sci-fi RPG: Physique, Reflexes, Aim, Intelligence, Willpower and Libido capped at 5× level; Shields/HP/Lust/Energy pools; credits; XP and levels; a ship; combat moves that appear during fights.",
+  blurb: "Sci-fi RPG: Physique, Reflexes, Aim, Intelligence, Willpower and Libido capped at 5× level; Shields/HP/Lust/Energy pools; credits; XP, levels and perks; a ship and a frontier world; turn-based combat you can win by force or by seduction; a codex that fills in as you explore.",
   parts: [
     {
       label: "core",
@@ -2350,10 +3355,6 @@ start:
 hud:
   currency: "₡"
   bars: [shields, hp, lust, energy, xp]
-
-flags:
-  in_combat: { narrator: true }     # the narrator starts/ends fights
-  enemy_defense: { start: 12, narrator: true }
 `
     },
     {
@@ -2370,6 +3371,11 @@ flags:
     max: level * 100
     good: none
     narrator: 60
+  perk_points:
+    kind: attribute
+    label: Perk points
+    start: 1
+    max: 20
   shields:
     kind: meter
     max: 10 + level * 8
@@ -2431,6 +3437,17 @@ flags:
       narrator: 8
       good: none
       bands: { 0: None, 25: Curious, 55: Interested, 85: Infatuated }
+  people:
+    vex:
+      name: Vex
+      desc: Bartender at the Dry Dock. Sells rumours by the glass.
+      schedule:
+        - { when: "hour >= 16 or hour < 4", at: bar }
+    kade:
+      name: Kade
+      desc: Gear merchant. Haggles like it's a blood sport.
+      schedule:
+        - { when: "between(hour, 8, 20)", at: merchant }
 `
     },
     {
@@ -2439,36 +3456,47 @@ flags:
   bridge:
     name: Ship — Bridge
     desc: Your ship's cramped cockpit and nav console.
+    indoors: true
     exits: [quarters, cargo_bay]
     travel: 2
   quarters:
     name: Ship — Quarters
     desc: A bunk, a shower, a locker.
+    indoors: true
     exits: [bridge]
     travel: 2
   cargo_bay:
     name: Ship — Cargo Bay
     desc: The loading ramp opens onto whatever dock you're berthed at.
+    indoors: true
     exits: [bridge, concourse, jungle_edge]
     travel: 2
   concourse:
     name: Station Concourse
     desc: Merchants, a bar, and a notice board full of bounties.
+    indoors: true
     exits: [cargo_bay, bar, merchant]
     travel: 10
   bar:
     name: The Dry Dock (bar)
     desc: Spacers, mercs, and rumours.
+    indoors: true
     exits: [concourse]
   merchant:
     name: Gear Merchant
     desc: Guns, armour, gadgets — for a price.
+    indoors: true
     exits: [concourse]
   jungle_edge:
     name: Frontier Jungle
     desc: Hot, wet, and full of things that bite. Or worse.
-    exits: [cargo_bay]
+    exits: [cargo_bay, jungle_deep]
     travel: 30
+  jungle_deep:
+    name: Deep Jungle
+    desc: The canopy closes overhead. Old ruins, older predators.
+    exits: [jungle_edge]
+    travel: 45
 
 items:
   holdout_pistol: Holdout pistol
@@ -2485,78 +3513,16 @@ conditions:
     {
       label: "actions",
       yaml: `actions:
-  # ── Combat (only while in_combat is true) ──
-  shoot:
-    label: Shoot
-    group: Combat
-    when: in_combat
-    say: "*I draw and fire.*"
-    time: 1
-    cost: { energy: -5 }
-    check: { vs: enemy_defense, add: floor(aim / 2), label: Aim }
-    crit_success: { hint: "A perfect shot — devastating damage, the enemy reels." }
-    success: { hint: "The shot lands solidly." }
-    fail: { shields: -6, hint: "Missed — and the enemy answers with a hit of their own." }
-    crit_fail: { shields: -6, hp: -8, hint: "A bad miss that leaves {{user}} wide open to a painful counter." }
-  melee:
-    label: Melee
-    group: Combat
-    when: in_combat
-    say: "*I close in and strike.*"
-    time: 1
-    cost: { energy: -8 }
-    check: { vs: enemy_defense, add: floor(physique / 2), label: Physique }
-    success: { hint: "A heavy blow connects." }
-    fail: { shields: -8, hint: "Blocked, and the counterattack hurts." }
-    crit_fail: { hp: -10, hint: "Overextended — {{user}} takes a brutal hit." }
-  tease:
-    label: Tease
-    group: Combat
-    when: in_combat
-    say: "*I put on a show to throw them off.*"
-    time: 1
-    check: { vs: enemy_defense, add: floor(libido / 10), label: Libido }
-    success: { hint: "The enemy is visibly flustered and distracted." }
-    fail: { lust: +8, hint: "They don't bite — and the attempt leaves {{user}} a little hot and bothered." }
-  sense:
-    label: Sense
-    group: Combat
-    when: in_combat
-    say: "*I study my opponent for weaknesses.*"
-    time: 1
-    check: { vs: 12, add: floor(intelligence / 2), label: Intelligence }
-    success: { flags: { enemy_defense: enemy_defense - 3 }, hint: "Reveal the enemy's weak point and what they like and dislike." }
-    fail: { hint: "Nothing useful gleaned." }
-  flee:
-    label: Flee
-    group: Combat
-    when: in_combat
-    say: "*I try to break away and run.*"
-    time: 1
-    check: { vs: 13, add: floor(reflexes / 2), label: Reflexes }
-    success: { flags: { in_combat: false }, energy: -10, hint: "{{user}} escapes." }
-    fail: { shields: -6, hint: "Cut off — the fight goes on." }
-  use_medkit:
-    label: Use a medkit
-    group: Combat
-    when: has('medkit')
-    say: "*I slap a medkit on.*"
-    time: 2
-    effects: { take: medkit, hp: +25 }
-
-  # ── Out of combat ──
   rest_quarters:
     label: Rest in your bunk
     group: Ship
     at: quarters
-    when: not in_combat
     say: "*I crash in my bunk for a few hours.*"
     time: 240
     effects: { hp: +40, shields: +100, energy: +100, lust: -20 }
   scan:
     label: Scan the area
     group: Explore
-    when: not in_combat
     say: "*I sweep the area with my codex scanner.*"
     time: 5
     check: { vs: 12, add: floor(intelligence / 2), label: Intelligence }
@@ -2565,13 +3531,19 @@ conditions:
   explore:
     label: Explore
     group: Explore
-    at: jungle_edge
-    when: not in_combat
+    at: [jungle_edge, jungle_deep]
     say: "*I push deeper into the jungle.*"
     time: 45
     check: { vs: 11, add: floor(reflexes / 3), label: Reflexes }
     success: { xp: +15, credits: roll('3d20'), hint: "A discovery: salvage or something worth selling." }
-    fail: { flags: { in_combat: true }, hint: "Something hostile ambushes {{user}} — a fight begins." }
+    fail: { start_encounter: ambush }
+  use_booster:
+    label: Use a shield booster
+    group: Gear
+    when: has('shield_booster')
+    say: "*I pop a shield booster.*"
+    time: 1
+    effects: { take: shield_booster, shields: +30 }
   buy_booster:
     label: Buy shield booster (₡150)
     group: Trade
@@ -2589,8 +3561,24 @@ conditions:
     check: { vs: 10, add: floor(intelligence / 3), label: Intelligence }
     success: { credits: -20, lust: +5, hint: "A useful rumour: a job, a lead, or a warning." }
     fail: { credits: -20, lust: +5, hint: "Just noise tonight." }
+  talk:
+    label: Talk to {target}
+    group: Social
+    per_person: true
+    say: "*I strike up a conversation with {target}.*"
+    time: 15
+    effects: { rel: { target: { affinity: +2 } } }
+  flirt:
+    label: Flirt with {target}
+    group: Social
+    per_person: true
+    say: "*I flirt with {target}.*"
+    time: 15
+    check: { vs: 12, add: floor(libido / 10) + floor(target.affinity / 20), label: Libido }
+    success: { rel: { target: { attraction: +5 } }, lust: +5 }
+    fail: { rel: { target: { affinity: -2 } } }
 
-  # ── Free-text only ──
+  # Free-text only
   resist:
     label: Resist
     hidden: true
@@ -2612,24 +3600,99 @@ conditions:
 `
     },
     {
+      label: "encounters",
+      yaml: `# Turn-based combat. Shields soak damage first; win by knocking the foe out
+# or by driving their lust to the limit — and lose the same two ways.
+encounters:
+  ambush:
+    name: Ambush
+    desc: A hostile scavenger jumps {{user}}.
+    foe:
+      name: Scavenger
+      stats:
+        shields: { label: Shields, start: 12, max: 12 }
+        hp: { label: HP, start: 30, max: 30 }
+        lust: { label: Lust, start: 0, max: 100, good: low }
+    actions:
+      shoot:
+        label: Shoot
+        cost: { energy: -5 }
+        check: { vs: 12, add: floor(aim / 2), label: Aim }
+        crit_success: { foe: { shields: -14, hp: "foe.shields <= 0 ? -12 : 0" }, hint: "A perfect shot." }
+        success: { foe: { shields: -8, hp: "foe.shields <= 0 ? -7 : 0" }, hint: "The shot lands." }
+        fail: { hint: "Missed." }
+      melee:
+        label: Melee
+        cost: { energy: -8 }
+        check: { vs: 12, add: floor(physique / 2), label: Physique }
+        success: { foe: { hp: "-(6 + floor(physique / 2))" }, hint: "A heavy blow gets past their shields." }
+        fail: { hint: "Blocked." }
+      tease:
+        label: Tease
+        check: { vs: 11, add: floor(libido / 10), label: Libido }
+        success: { foe: { lust: "+(12 + floor(libido / 5))" }, hint: "They're visibly flustered." }
+        fail: { lust: +5, hint: "They don't bite — and it leaves {{user}} a little hot and bothered." }
+      medkit:
+        label: Use a medkit
+        when: has('medkit')
+        effects: { take: medkit, hp: +25 }
+      flee:
+        label: Flee
+        check: { vs: 13, add: floor(reflexes / 2), label: Reflexes }
+        success: { energy: -10, end: fled }
+        fail: { hint: "Cut off — the fight goes on." }
+    foe_moves:
+      blast: { desc: "Fires a blaster", weight: 3, shields: -8, hp: "shields <= 0 ? -6 : 0" }
+      grapple: { desc: "Tries to grapple", weight: 1, hp: -4, add_condition: { grappled: 2 } }
+      taunt: { desc: "Puts on a lewd display", weight: 1, lust: "+(8 + floor(libido / 10))" }
+    end_when:
+      won: foe.hp <= 0
+      seduced: foe.lust >= 100
+      downed: hp <= 0
+      overwhelmed: lust >= 100
+    outcomes:
+      won: { xp: +40, credits: roll('4d20'), hint: "The scavenger goes down." }
+      seduced: { xp: +40, lust: +10, hint: "The scavenger gives up the fight, overcome with desire." }
+      fled: { hint: "{{user}} gets away." }
+      downed: { set: { hp: 1 }, credits: -100, hint: "{{user}} is knocked out and wakes later, robbed." }
+      overwhelmed: { set: { lust: 40 }, hint: "{{user}} is overwhelmed by lust and can't keep fighting — the scavenger has their way." }
+`
+    },
+    {
+      label: "journal",
+      yaml: `# Perks cost points (one per level). Codex entries unlock as you explore.
+perks:
+  points: perk_points
+  sharpshooter: { name: Sharpshooter, desc: "+2 Aim.", cost: 1, effects: { aim: +2 } }
+  bruiser: { name: Bruiser, desc: "+2 Physique.", cost: 1, effects: { physique: +2 } }
+  iron_will: { name: Iron Will, desc: "+2 Willpower.", cost: 1, effects: { willpower: +2 } }
+  silver_tongue: { name: Silver Tongue, desc: "+10 Libido.", cost: 1, effects: { libido: +10 } }
+  tactician: { name: Tactician, desc: "+2 Intelligence and Reflexes.", cost: 2, requires: "level >= 3", effects: { intelligence: +2, reflexes: +2 } }
+
+codex:
+  station: { title: The Station, category: Places, text: "A trade hub bolted onto an asteroid. Everything's for sale.", unlock: "location == 'concourse'" }
+  jungle: { title: The Frontier Jungle, category: Places, text: "Humid, hostile, and dotted with pre-colonial ruins.", unlock: "location == 'jungle_edge'" }
+  ruins: { title: The Ruins, category: Places, text: "Whoever built them left in a hurry — and left things behind.", unlock: "location == 'jungle_deep'" }
+  scavengers: { title: Scavengers, category: Threats, text: "Desperate, armed, and occasionally persuadable.", unlock: "turn > 0 and in_encounter" }
+
+feats:
+  first_blood: { name: First blood, desc: "Win a fight.", unlock: "xp >= 40 or level >= 2" }
+  explorer: { name: Explorer, desc: "Reach the deep jungle.", unlock: "location == 'jungle_deep'", reward: { xp: +20 } }
+`
+    },
+    {
       label: "rules",
       yaml: `triggers:
-  # Fights start and end from the story itself, judged each turn by the decision model.
+  # Fights can also start from the story itself, judged each turn by the decision model.
   fight_starts:
     when_scene: "A fight has broken out and {{user}} is in it"
-    do:
-      flags: { in_combat: true }
-      hint: "Combat! {{user}} squares up."
-  fight_over:
-    when: in_combat
-    when_scene: "The fight is over — enemies fled, surrendered, or are down"
-    do:
-      flags: { in_combat: false }
+    do: { start_encounter: ambush }
   level_up:
     when: xp >= level * 100
     do:
       set: { xp: 0 }
       level: +1
+      perk_points: +1
       physique: +1
       reflexes: +1
       aim: +1
@@ -2637,22 +3700,9 @@ conditions:
       willpower: +1
       hint: "Level up! {{user}} feels stronger, faster, sharper."
   shields_down:
-    when: shields <= 0 and in_combat
+    when: shields <= 0 and in_encounter
     do:
       hint: "{{user}}'s shields are down — hits now land on flesh."
-  defeated_hp:
-    when: hp <= 0
-    do:
-      flags: { in_combat: false }
-      set: { hp: 1 }
-      credits: -100
-      hint: "{{user}} is knocked out. They wake later, robbed of some credits."
-  defeated_lust:
-    when: lust >= 100
-    do:
-      flags: { in_combat: false }
-      set: { lust: 40 }
-      hint: "{{user}} is overwhelmed by lust and can't keep fighting — the enemy has their way."
 `
     }
   ]
@@ -2662,6 +3712,22 @@ conditions:
 var TEMPLATES = [universal, hometown, starfarer];
 function getTemplate(id) {
   return TEMPLATES.find((t) => t.id === id);
+}
+function withCharacter(yaml, name) {
+  if (!/^relationships:/m.test(yaml))
+    return yaml;
+  const id = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "companion";
+  if (new RegExp(`^    ${id}:`, "m").test(yaml))
+    return yaml;
+  const entry = `    ${id}:
+      name: ${JSON.stringify(name)}
+`;
+  const m = /^  people:[^\n]*\n/m.exec(yaml);
+  if (m)
+    return yaml.slice(0, m.index + m[0].length) + entry + yaml.slice(m.index + m[0].length);
+  return `${yaml.replace(/\n*$/, `
+`)}  people:
+${entry}`;
 }
 
 // src/backend/host.ts
@@ -5970,6 +7036,32 @@ function loadRuleset(parts) {
 }
 
 // src/engine/lint.ts
+var FUNCTIONS = [
+  "has",
+  "count",
+  "flag",
+  "cond",
+  "at",
+  "rel",
+  "met",
+  "between",
+  "roll",
+  "wearing",
+  "worn",
+  "trait",
+  "present",
+  "where",
+  "codex",
+  "feat",
+  "perk",
+  "min",
+  "max",
+  "clamp",
+  "floor",
+  "ceil",
+  "round",
+  "abs"
+];
 function distance(a, b) {
   const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
   for (let j = 1;j <= b.length; j++)
@@ -5994,17 +7086,7 @@ function suggest(name, pool) {
 function lintRuleset(r) {
   const issues = [];
   const s = initialState(r);
-  const names = [
-    ...r.statOrder,
-    ...Object.keys(r.flags),
-    "minutes",
-    "hour",
-    "minute",
-    "day",
-    "weekday",
-    "turn",
-    "location"
-  ];
+  const names = [...r.statOrder, ...Object.keys(r.flags), ...BUILTIN_NAMES];
   const check = (src, where, extra = {}) => {
     if (src === undefined || typeof src === "number")
       return;
@@ -6018,7 +7100,7 @@ function lintRuleset(r) {
     }
     for (const u of unknown) {
       const isCall = u.endsWith("()");
-      const msg = isCall ? `"${u}" isn't a known function (has, count, flag, cond, at, rel, met, between, roll, min, max, clamp, floor, ceil, round, abs)` : `"${u}" isn't a stat, flag or clock value${suggest(u, [...names, ...Object.keys(extra)])}`;
+      const msg = isCall ? `"${u}" isn't a known function (${FUNCTIONS.join(", ")})` : `"${u}" isn't a stat, flag or clock value${suggest(u, [...names, ...Object.keys(extra)])}`;
       issues.push({ level: "warning", where, message: msg });
     }
   };
@@ -6049,12 +7131,37 @@ function lintRuleset(r) {
     if (e.move && Object.keys(r.locations).length && !r.locations[e.move]) {
       issues.push({ level: "warning", where, message: `moves to "${e.move}", which isn't a declared location${suggest(e.move, Object.keys(r.locations))}` });
     }
+    for (const id of e.wear) {
+      if (!r.items[id]?.slot)
+        issues.push({ level: "warning", where, message: `wears "${id}", which isn't clothing (an item with a slot)${suggest(id, Object.keys(r.items))}` });
+    }
+    const slots = r.wardrobe.slots.map((s) => s.id);
+    for (const slot of [...e.undress, ...Object.keys(e.damage)]) {
+      if (!slots.includes(slot))
+        issues.push({ level: "warning", where, message: `"${slot}" isn't a wardrobe slot${suggest(slot, slots)}` });
+    }
+    for (const [slot, v] of Object.entries(e.damage))
+      check(v, `${where} › damage › ${slot}`, extra);
+    if (e.startEncounter && !r.encounters[e.startEncounter]) {
+      issues.push({ level: "warning", where, message: `starts encounter "${e.startEncounter}", which doesn't exist${suggest(e.startEncounter, Object.keys(r.encounters))}` });
+    }
+    for (const id of e.unlock) {
+      if (!r.codex[id])
+        issues.push({ level: "warning", where, message: `unlocks codex "${id}", which doesn't exist${suggest(id, Object.keys(r.codex))}` });
+    }
+    for (const [stat, v] of Object.entries(e.foe)) {
+      const known = Object.values(r.encounters).some((enc) => enc.foe.stats.some((s) => s.id === stat));
+      if (!known)
+        issues.push({ level: "warning", where, message: `changes foe stat "${stat}", which no encounter declares` });
+      check(v, `${where} › foe › ${stat}`, extra);
+    }
   };
   for (const id of r.statOrder)
     check(r.stats[id].maxExpr, `Stats › ${id} › max`);
-  for (const a of Object.values(r.actions)) {
-    const w = `Actions › ${a.id}`;
+  const checkAction = (a, w) => {
     const extra = Object.fromEntries(a.params.map((p) => [p.id, p.options[p.default]]));
+    if (a.perPerson)
+      extra.target = Object.keys(r.people)[0] ?? "someone";
     check(a.when, `${w} › when`, extra);
     if (a.check) {
       check(a.check.target, `${w} › check`, extra);
@@ -6065,10 +7172,40 @@ function lintRuleset(r) {
     for (const [tier, e] of Object.entries(a.outcomes))
       if (e)
         checkEffect(e, `${w} › ${tier}`, extra);
-  }
+  };
+  for (const a of Object.values(r.actions))
+    checkAction(a, `Actions › ${a.id}`);
   for (const t of r.triggers) {
     check(t.when, `Triggers › ${t.id} › when`);
     checkEffect(t.effects, `Triggers › ${t.id}`);
+  }
+  for (const p of Object.values(r.people))
+    p.schedule.forEach((e, i) => check(e.when, `People › ${p.id} › schedule #${i + 1}`));
+  for (const c of Object.values(r.codex))
+    check(c.unlock, `Codex › ${c.id} › unlock`);
+  for (const f of Object.values(r.feats)) {
+    check(f.unlock, `Feats › ${f.id} › unlock`);
+    checkEffect(f.reward, `Feats › ${f.id} › reward`);
+  }
+  for (const p of Object.values(r.perks)) {
+    check(p.requires, `Perks › ${p.id} › requires`);
+    checkEffect(p.effects, `Perks › ${p.id}`);
+  }
+  for (const enc of Object.values(r.encounters)) {
+    const w = `Encounters › ${enc.id}`;
+    for (const a of Object.values(enc.actions))
+      checkAction(a, `${w} › actions › ${a.id}`);
+    if (enc.foeMoves)
+      for (const o of enc.foeMoves.options)
+        checkEffect(o.effect, `${w} › foe_moves › ${o.id}`);
+    for (const e of enc.endWhen)
+      check(e.when, `${w} › end_when › ${e.outcome}`);
+    for (const [o, e] of Object.entries(enc.outcomes))
+      checkEffect(e, `${w} › outcomes › ${o}`);
+    checkEffect(enc.start, `${w} › start`);
+    if (!enc.endWhen.length && !Object.values(enc.actions).some((a) => [a.effects, ...Object.values(a.outcomes)].some((e) => e?.end))) {
+      issues.push({ level: "warning", where: w, message: "has no way to end — add `end_when:` or an action with `end:`" });
+    }
   }
   for (const id of r.hud.bars)
     if (!r.stats[id])
@@ -6211,13 +7348,8 @@ async function installTemplate(chatId, templateId, userId) {
   let order = 10;
   for (const part of t.parts) {
     let content = part.yaml;
-    if (part.label === "people" && /relationships:/.test(content) && character.name) {
-      const id = character.name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "companion";
-      content += `  people:
-    ${id}:
-      name: ${JSON.stringify(character.name)}
-`;
-    }
+    if (part.label === "people" && character.name)
+      content = withCharacter(content, character.name);
     await host().world_books.entries.create(book.id, {
       comment: `warp-ruleset · ${part.label}`,
       content,
@@ -6290,18 +7422,71 @@ function buildHud(r, s) {
       tone: band?.tone ?? "neutral"
     };
   });
-  const people = Object.entries(s.people).map(([id, p]) => ({
-    id,
-    name: p.name,
-    stats: r.relStatOrder.map((rs) => {
-      const def = r.relStats[rs];
-      const v = s.rel[id]?.[rs] ?? def.start;
-      const band = bandFor(def, v);
-      const pp = pct(v, def.min, def.max);
-      return { id: rs, label: def.label, display: formatNumber(v), pct: pp, text: band?.text ?? null, tone: band?.tone ?? toneFromPct(pp, def.good) };
-    })
-  }));
-  const items = Object.entries(s.items).map(([id, count]) => ({ id, name: itemName(r, s, id), count }));
+  const env = makeEnv(r, s);
+  const here = new Set(presentPeople(r, s, env));
+  const people = Object.entries(s.people).map(([id, p]) => {
+    const where = r.people[id]?.schedule.length ? personLocation(r, s, id, env) : null;
+    return {
+      id,
+      name: p.name,
+      stats: r.relStatOrder.map((rs) => {
+        const def = r.relStats[rs];
+        const v = s.rel[id]?.[rs] ?? def.start;
+        const band = bandFor(def, v);
+        const pp = pct(v, def.min, def.max);
+        return { id: rs, label: def.label, display: formatNumber(v), pct: pp, text: band?.text ?? null, tone: band?.tone ?? toneFromPct(pp, def.good) };
+      }),
+      present: here.has(id),
+      whereabouts: where ? r.locations[where]?.name ?? where : null
+    };
+  }).sort((a, b) => Number(b.present) - Number(a.present));
+  const wornIds = new Set(Object.values(s.worn));
+  const clothingView = (id) => {
+    const d = r.items[id];
+    return {
+      id,
+      name: itemName(r, s, id),
+      slot: d?.slot ?? "",
+      warmth: d?.warmth ?? 0,
+      reveal: d?.reveal ?? 0,
+      traits: d?.traits ?? [],
+      integrity: d && s.integrity[id] !== undefined ? Math.round(s.integrity[id] / d.integrity * 100) : null,
+      worn: wornIds.has(id)
+    };
+  };
+  const items = Object.entries(s.items).map(([id, count]) => ({ id, name: itemName(r, s, id), count, worn: wornIds.has(id) }));
+  const clothing = Object.keys(s.items).filter((id) => r.items[id]?.slot).map(clothingView);
+  const outfit = r.wardrobe.enabled ? r.wardrobe.slots.map((sl) => ({ slot: sl.id, label: sl.label, item: s.worn[sl.id] ? clothingView(s.worn[sl.id]) : null })) : null;
+  const temp = temperatureAt(r, s);
+  const wx = weatherAt(r, s);
+  const date = dateAt(r, s.minutes);
+  let warmth = null;
+  if (r.wardrobe.enabled && temp !== null) {
+    const need = warmthNeeded(temp);
+    const value = warmthOf(r, s);
+    const cold = value < need.min, hot = value > need.max;
+    warmth = {
+      value,
+      min: need.min,
+      max: need.max,
+      tone: cold || hot ? Math.min(Math.abs(value - need.min), Math.abs(value - need.max)) > 6 ? "bad" : "warn" : "good",
+      text: cold ? "You're underdressed for this." : hot ? "You're overdressed and sweltering." : "Dressed right for the weather."
+    };
+  }
+  let encounter = null;
+  if (s.encounter) {
+    const enc = r.encounters[s.encounter.id];
+    encounter = {
+      name: enc?.name ?? s.encounter.id,
+      foe: enc?.foe.name ?? "Opponent",
+      round: s.encounter.round,
+      stats: (enc?.foe.stats ?? []).map((fs) => {
+        const v = s.encounter.foe[fs.id] ?? fs.start;
+        const p = pct(v, 0, fs.max);
+        return { id: fs.id, label: fs.label, value: v, max: fs.max, pct: p, tone: toneFromPct(p, fs.good === "none" ? "none" : fs.good === "high" ? "high" : "low") };
+      })
+    };
+  }
   const conditions = Object.entries(s.conditions).map(([id, c]) => {
     const def = r.conditions[id];
     const left = c.until !== null ? c.until - s.minutes : null;
@@ -6318,6 +7503,8 @@ function buildHud(r, s) {
   return {
     rulesetName: r.name,
     clock: r.clock.enabled ? formatClock(r, s.minutes) : null,
+    date: date ? `${r.clock.weekdays[Math.floor(s.minutes / 1440) % r.clock.weekdays.length] ?? ""} ${ordinal(date.day)} ${date.monthName}`.trim() : null,
+    weather: temp !== null ? { icon: isIndoors(r, s) ? "\uD83C\uDFE0" : wx?.icon ?? "", label: isIndoors(r, s) ? "Indoors" : wx?.label ?? "", temp, season: seasonAt(r, s.minutes), indoors: isIndoors(r, s) } : null,
     location: s.locationName ? { name: s.locationName, desc: loc?.desc } : null,
     money,
     bars: bars.filter((b) => r.stats[b.id].kind !== "money"),
@@ -6325,7 +7512,87 @@ function buildHud(r, s) {
     people,
     items,
     conditions,
+    warmth,
+    outfit,
+    clothing,
+    exposed: exposedSlots(r, s),
+    encounter,
+    codex: Object.values(r.codex).filter((c) => s.codex[c.id]).map((c) => ({ id: c.id, title: c.title, text: c.text, category: c.category ?? null })),
+    codexTotal: Object.keys(r.codex).length,
+    feats: Object.values(r.feats).filter((f) => !f.hidden || s.feats[f.id]).map((f) => ({ id: f.id, name: f.name, desc: f.desc, unlocked: !!s.feats[f.id] })),
+    perks: Object.values(r.perks).map((p) => ({ id: p.id, name: p.name, desc: p.desc, cost: p.cost, owned: !!s.perks[p.id], blocker: s.perks[p.id] ? null : perkBlocker(r, s, p.id) })),
+    perkPoints: r.perkPoints ? s.stats[r.perkPoints] ?? 0 : null,
     turn: s.turn
+  };
+}
+function buildMap(r, s) {
+  const ids = Object.keys(r.locations);
+  if (ids.length < 2)
+    return null;
+  const pos = new Map;
+  if (ids.every((id) => r.locations[id].pos)) {
+    for (const id of ids)
+      pos.set(id, r.locations[id].pos);
+  } else {
+    const root = r.startLocation && r.locations[r.startLocation] ? r.startLocation : ids[0];
+    const children = new Map;
+    const depth = new Map([[root, 0]]);
+    const queue = [root];
+    while (queue.length) {
+      const id = queue.shift();
+      for (const x of r.locations[id].exits) {
+        if (!r.locations[x] || depth.has(x))
+          continue;
+        depth.set(x, depth.get(id) + 1);
+        children.set(id, [...children.get(id) ?? [], x]);
+        queue.push(x);
+      }
+    }
+    for (const id of ids)
+      if (!depth.has(id)) {
+        depth.set(id, 3);
+        children.set(root, [...children.get(root) ?? [], id]);
+      }
+    const size = (id) => 1 + (children.get(id) ?? []).reduce((a, c) => a + size(c), 0);
+    const place = (id, a0, a1) => {
+      const d = depth.get(id);
+      const a = (a0 + a1) / 2;
+      pos.set(id, [Math.cos(a) * d * 110, Math.sin(a) * d * 110]);
+      const kids = children.get(id) ?? [];
+      const total = kids.reduce((n, c) => n + size(c), 0) || 1;
+      let start = a0;
+      for (const c of kids) {
+        const span = (a1 - a0) * size(c) / total;
+        place(c, start, start + span);
+        start += span;
+      }
+    };
+    place(root, -Math.PI / 2, 3 * Math.PI / 2);
+  }
+  const env = makeEnv(r, s);
+  const peopleAt = new Map;
+  for (const pid of Object.keys(r.people)) {
+    const at = personLocation(r, s, pid, env);
+    if (at)
+      peopleAt.set(at, [...peopleAt.get(at) ?? [], personName(r, s, pid)]);
+  }
+  const reach = new Set(travelTargets(r, s));
+  const edges = [];
+  const seen = new Set;
+  for (const id of ids)
+    for (const x of r.locations[id].exits) {
+      const k = [id, x].sort().join("|");
+      if (r.locations[x] && !seen.has(k)) {
+        seen.add(k);
+        edges.push([id, x]);
+      }
+    }
+  return {
+    nodes: ids.map((id) => {
+      const [x, y] = pos.get(id) ?? [0, 0];
+      return { id, name: r.locations[id].name, x, y, here: s.location === id, reachable: reach.has(id), indoors: r.locations[id].indoors, people: peopleAt.get(id) ?? [] };
+    }),
+    edges
   };
 }
 function buildChoices(r, s, opts) {
@@ -6341,12 +7608,13 @@ function buildChoices(r, s, opts) {
     veiled: false,
     params: []
   }));
-  const actions = availableActions(r, s, opts.lines).filter((a) => !a.hidden).map((a) => {
-    const o = odds(r, s, a);
+  const encName = s.encounter ? r.encounters[s.encounter.id]?.name ?? "Encounter" : null;
+  const actions = availableChoices(r, s, opts.lines).filter(({ a }) => !a.hidden).map(({ id, a, target, label }) => {
+    const o = odds(r, s, a, undefined, target);
     return {
-      id: a.id,
-      label: a.label,
-      group: a.group ?? null,
+      id,
+      label,
+      group: encName ?? a.group ?? null,
       desc: a.desc ?? null,
       odds: o ? o.success : null,
       partialOdds: o && o.partial > 0 ? o.partial : null,
@@ -6416,6 +7684,42 @@ function summarizeEvents(r, before, after, events) {
       case "person":
         out.push({ text: `Met ${e.name}`, tone: "neutral", src: e.src, undo: [i] });
         break;
+      case "wear": {
+        const prev = before.worn[e.slot];
+        if (e.item)
+          out.push({ text: `\uD83D\uDC55 Put on ${itemName(r, after, e.item)}`, tone: "neutral", src: e.src, undo: [i] });
+        else if (prev)
+          out.push({ text: `\uD83D\uDC55 Took off ${itemName(r, before, prev)}`, tone: "neutral", src: e.src, undo: [i] });
+        break;
+      }
+      case "dmg": {
+        const gone = !(after.items[e.item] > 0);
+        out.push({ text: gone ? `\uD83D\uDCA5 ${itemName(r, before, e.item)} destroyed` : `\uD83E\uDDF5 ${itemName(r, after, e.item)} damaged`, tone: "bad", src: e.src, undo: [i] });
+        break;
+      }
+      case "enc":
+        if (e.id)
+          out.push({ text: `⚔ ${r.encounters[e.id]?.name ?? "Encounter"}`, tone: "warn", src: e.src });
+        else
+          out.push({ text: `⚔ Over: ${(e.outcome ?? "ended").replace(/_/g, " ")}`, tone: "neutral", src: e.src });
+        break;
+      case "foe": {
+        const enc = before.encounter ?? after.encounter;
+        const def = enc ? r.encounters[enc.id] : undefined;
+        const fs = def?.foe.stats.find((x) => x.id === e.stat);
+        if (e.d)
+          out.push({ text: `${def?.foe.name ?? "Foe"} ${fs?.label ?? e.stat} ${signed(e.d)}`, tone: e.d < 0 === (fs?.good !== "high") ? "good" : "bad", src: e.src });
+        break;
+      }
+      case "codex":
+        out.push({ text: `\uD83D\uDCD6 ${r.codex[e.id]?.title ?? e.id}`, tone: "good", src: e.src });
+        break;
+      case "feat":
+        out.push({ text: `\uD83C\uDFC6 ${r.feats[e.id]?.name ?? e.id}`, tone: "good", src: e.src });
+        break;
+      case "perk":
+        out.push({ text: `★ ${r.perks[e.id]?.name ?? e.id}`, tone: "good", src: e.src });
+        break;
     }
   });
   if (timeAgg.min >= 1) {
@@ -6473,6 +7777,7 @@ function buildRecordView(r, messageId, swipe, rec, before, after) {
   return {
     messageId,
     swipe,
+    clock: r.clock.enabled ? formatClock(r, after.minutes).label : null,
     action: rec.action?.label ?? null,
     via: rec.action?.via ?? null,
     check: rec.check ? {
@@ -6543,14 +7848,29 @@ function statLine(r, def, s, forceNumbers) {
 function stateDigest(r, s) {
   const lines = [];
   const head = [];
+  const hud = buildHud(r, s);
   if (r.clock.enabled) {
     const c = formatClock(r, s.minutes);
-    head.push(`${c.day}, ${c.time} (${c.phase})`);
+    head.push(`${hud.date ?? c.day}, ${c.time} (${c.phase})`);
   }
   if (s.locationName)
-    head.push(`Location: ${s.locationName}`);
+    head.push(`Location: ${s.locationName}${hud.weather?.indoors ? " (indoors)" : ""}`);
+  if (hud.weather)
+    head.push(hud.weather.indoors ? `${hud.weather.temp}°C inside` : `${hud.weather.label}, ${hud.weather.temp}°C${hud.weather.season ? ` (${hud.weather.season})` : ""}`);
   if (head.length)
     lines.push(head.join(" · "));
+  if (hud.encounter) {
+    const e = hud.encounter;
+    lines.push(`ENCOUNTER in progress: ${e.name} vs ${e.foe}, round ${e.round}${e.stats.length ? ` — ${e.stats.map((x) => `${x.label} ${formatNumber(x.value)}/${formatNumber(x.max)}`).join(", ")}` : ""}`);
+  }
+  if (hud.outfit) {
+    const worn = hud.outfit.filter((o) => o.item).map((o) => `${o.item.name}${o.item.integrity !== null && o.item.integrity < 60 ? " (torn)" : ""}`);
+    const exposure = hud.exposed.length ? ` — exposed: ${hud.exposed.join(", ")}` : "";
+    lines.push(`Wearing: ${worn.length ? worn.join(", ") : "nothing"}${exposure}${hud.warmth && hud.warmth.tone !== "good" ? ` · ${hud.warmth.text}` : ""}`);
+  }
+  const here = hud.people.filter((p) => p.present).map((p) => p.name);
+  if (here.length)
+    lines.push(`Present here: ${here.join(", ")}`);
   const meters = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "meter" || d.kind === "money");
   const other = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "attribute" || d.kind === "skill");
   const ml = meters.map((d) => statLine(r, d, s, r.narration.numbers)).filter(Boolean);
@@ -6562,7 +7882,8 @@ function stateDigest(r, s) {
   const conds = Object.keys(s.conditions).map((id) => r.conditions[id]?.label ?? id);
   if (conds.length)
     lines.push(`Conditions: ${conds.join(", ")}`);
-  const inv = Object.entries(s.items).map(([id, n]) => `${itemName(r, s, id)}${n > 1 ? ` ×${n}` : ""}`);
+  const wornSet = new Set(Object.values(s.worn));
+  const inv = Object.entries(s.items).filter(([id]) => !wornSet.has(id)).map(([id, n]) => `${itemName(r, s, id)}${n > 1 ? ` ×${n}` : ""}`);
   if (inv.length)
     lines.push(`Carrying: ${inv.join(", ")}`);
   const ppl = Object.entries(s.people).map(([id, p]) => {
@@ -6601,6 +7922,7 @@ function outcomePacket(r, rec, before, after, playerName) {
 }
 
 // src/backend/state-push.ts
+var lastStates = new Map;
 var busyChats = new Set;
 var activeChat = new Map;
 var timers = new Map;
@@ -6617,13 +7939,14 @@ async function pushState(chatId, userId, force = false) {
     const loaded = await getRuleset(chatId, userId, force);
     const status = statusOf(loaded);
     if (!chatId || !loaded?.ruleset) {
-      send({ type: "state", chatId, status, hud: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false }, userId);
+      send({ type: "state", chatId, status, hud: null, map: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false }, userId);
       return;
     }
     const r = loaded.ruleset;
     const settings = await getSettings(userId);
     const msgs = await getMessages(chatId);
     const { state, steps } = foldPath(r, msgs);
+    lastStates.set(chatId, state);
     const redoable = (userMsgId) => {
       const i = msgs.findIndex((m) => m.id === userMsgId);
       return i >= 0 && msgs[i].is_user && msgs.length - 1 - i <= 1;
@@ -6650,6 +7973,7 @@ async function pushState(chatId, userId, force = false) {
       chatId,
       status,
       hud: settings.enabled ? buildHud(r, state) : null,
+      map: settings.enabled ? buildMap(r, state) : null,
       choices: settings.enabled ? buildChoices(r, state, settings) : [],
       records: settings.enabled ? records : [],
       suggestions: settings.enabled ? suggestions.filter((s) => s.canRedo) : [],
@@ -6712,18 +8036,18 @@ var DIFFICULTY = [
 async function readTurn(opts) {
   const { decider, r, s, settings, playerText, player } = opts;
   const q = {};
-  const actions = playerText ? availableActions(r, s, settings.lines) : [];
+  const actions = playerText ? availableChoices(r, s, settings.lines) : [];
   const travel = playerText ? travelTargets(r, s) : [];
   if (playerText && (actions.length || travel.length)) {
     const criteria = {
       [NONE]: "None of these: dialogue, thoughts, feelings, plans, questions, or something trivial that can't fail"
     };
-    for (const a of actions)
-      criteria[a.id] = `${a.label}${a.desc ? ` — ${a.desc}` : ""}`;
+    for (const c of actions)
+      criteria[c.id] = `${c.label}${c.a.desc ? ` — ${c.a.desc}` : ""}`;
     for (const t of travel)
       criteria[`${TRAVEL_PREFIX}${t}`] = `Go to ${r.locations[t].name}`;
     q.action = { type: "choice", instructions: `Which of these does ${player}'s latest message actually attempt right now?`, criteria };
-    if (actions.some((a) => a.params.length)) {
+    if (actions.some((c) => c.a.params.length)) {
       q.difficulty = { type: "score", instructions: `How hard is what ${player} is attempting, given the scene?`, criteria: DIFFICULTY };
     }
   }
@@ -6759,17 +8083,18 @@ async function readTurn(opts) {
     intent = { actionId: id, via: "adjudicator" };
     label = `Go to ${r.locations[to].name}`;
   } else {
-    const a = actions.find((x) => x.id === id);
+    const c = actions.find((x) => x.id === id);
+    const a = c?.a;
     if (!a)
       return out;
-    label = a.label;
+    label = c.label;
     const params = {};
     const level = ans.difficulty?.type === "score" ? ans.difficulty.score / (DIFFICULTY.length - 1) : null;
     for (const p of a.params) {
       const keys = Object.keys(p.options);
       params[p.id] = level === null ? p.default : keys[Math.round(level * (keys.length - 1))];
     }
-    intent = { actionId: a.id, via: "adjudicator", ...a.params.length ? { params } : {} };
+    intent = { actionId: c.id, via: "adjudicator", ...a.params.length ? { params } : {} };
   }
   if (conf >= settings.autoConfidence)
     out.intent = intent;
@@ -6865,6 +8190,11 @@ async function bookkeeping(opts) {
     if (f.narrator && typeof f.start === "boolean")
       q[`flag:${f.id}`] = { type: "noul", instructions: `At the end of the reply, this is true: ${f.label ?? f.id.replace(/_/g, " ")}` };
   }
+  if (r.wardrobe.enabled && r.wardrobe.narrator) {
+    for (const [slot, id] of Object.entries(s.worn)) {
+      q[`cloth:${slot}`] = { type: "noul", instructions: `By the end of the reply, ${player} no longer has their ${r.items[id]?.name ?? id} on (taken off, removed or lost)` };
+    }
+  }
   if (r.peopleOpen)
     q["gate:people"] = { type: "noul", instructions: "The reply introduces a named character who wasn't in the game state before" };
   if (r.itemsOpen)
@@ -6907,6 +8237,11 @@ async function bookkeeping(opts) {
     const a = ans[`flag:${f.id}`];
     if (a?.type === "noul" && noulConfidence(a.noul) >= 0.4)
       (p.flags ??= {})[f.id] = a.noul >= 0.5;
+  }
+  for (const slot of Object.keys(s.worn)) {
+    const a = ans[`cloth:${slot}`];
+    if (a?.type === "noul" && a.noul >= 0.7)
+      (p.undress ??= []).push(slot);
   }
   const needsWriting = new Set;
   for (const g of ["people", "items", "move"]) {
@@ -7199,6 +8534,13 @@ async function extract(r, s, playerText, reply, settings, userId, only) {
     allowed.push(`- "conditions": {"add": [...], "remove": [...]} from: ${conds.map((c) => c.id).join(", ")}`);
   if (want("flags") && flags.length)
     allowed.push(`- "flags": set any of: ${flags.map((f) => f.id).join(", ")}`);
+  if (want("wardrobe") && r.wardrobe.enabled && r.wardrobe.narrator) {
+    const worn = Object.entries(s.worn).map(([slot, id]) => `${slot}: ${itemName(r, s, id)}`).join(", ") || "nothing";
+    const owned = Object.keys(s.items).filter((id) => r.items[id]?.slot && !Object.values(s.worn).includes(id));
+    allowed.push(`- "undress": slots whose clothing came off (currently worn — ${worn})`);
+    if (owned.length)
+      allowed.push(`- "wear": ids of owned clothing put on (${owned.join(", ")})`);
+  }
   if (!allowed.length)
     return null;
   const system = [
@@ -7483,7 +8825,32 @@ async function onGenerationEnded(payload, userId) {
 spindle.registerInterceptor(interceptor, 60);
 spindle.registerWorldInfoInterceptor(async (ctx) => {
   const disabled = ctx.entries.filter((e) => knownRulesetEntryIds.has(e.id) || knownRulesetBookIds.has(e.world_book_id) || isRulesetEntryTitle(e.comment)).map((e) => e.id);
-  return disabled.length ? { disabled } : undefined;
+  const forced = [];
+  try {
+    const loaded = await getRuleset(ctx.chatId, ctx.userId);
+    const r = loaded?.ruleset;
+    const gated = r ? Object.values(r.codex).filter((c) => c.lore.length) : [];
+    if (r && gated.length) {
+      let state = lastStates.get(ctx.chatId);
+      if (!state)
+        state = foldPath(r, await getMessages(ctx.chatId)).state;
+      const title = (s) => s.replace(/^\s*\[[^\]]*\]\s*/, "").trim().toLowerCase();
+      for (const c of gated) {
+        const names = new Set(c.lore.map(title));
+        for (const e of ctx.entries) {
+          if (!names.has(title(e.comment ?? "")))
+            continue;
+          if (state.codex[c.id])
+            forced.push(e.id);
+          else
+            disabled.push(e.id);
+        }
+      }
+    }
+  } catch (e) {
+    logError("codex lore gate", e);
+  }
+  return disabled.length || forced.length ? { ...disabled.length ? { disabled } : {}, ...forced.length ? { forced } : {} } : undefined;
 }, 10);
 var chatIdOf = (p) => {
   const x = p;
@@ -7532,6 +8899,30 @@ spindle.commands.onInvoked((id, context) => {
   }
   send({ type: "command", command: id });
 });
+async function applyManual(chatId, userId, make) {
+  const loaded = await getRuleset(chatId, userId);
+  const r = loaded?.ruleset;
+  if (!r)
+    return false;
+  const msgs = await getMessages(chatId);
+  const last = msgs[msgs.length - 1];
+  if (!last) {
+    toast("warning", "Send a message first — changes attach to the latest message.", userId);
+    return false;
+  }
+  const { state } = foldPath(r, msgs);
+  const events = make(r, state);
+  if (typeof events === "string") {
+    toast("warning", events, userId);
+    return false;
+  }
+  const swipe = last.swipe_id ?? 0;
+  const existing = warpMeta(last).swipes?.[String(swipe)];
+  const rec = existing ? { ...existing, events: [...existing.events, ...events] } : { v: 1, hints: [], events, at: Date.now() };
+  await writeRecord(chatId, last.id, swipe, rec);
+  await pushState(chatId, userId);
+  return true;
+}
 async function sendSettings(userId) {
   const settings = await getSettings(userId);
   let jevKeySet = false;
@@ -7580,13 +8971,14 @@ spindle.onFrontendMessage(async (raw, userId) => {
           }
           say = `*I head to ${r.locations[to].name}.*`;
         } else {
-          const a = availableActions(r, state, settings.lines).find((x) => x.id === msg.actionId);
-          if (!a) {
+          const c = availableChoices(r, state, settings.lines).find((x) => x.id === msg.actionId);
+          if (!c) {
             toast("warning", "That choice isn't available anymore.", userId);
             await pushState(msg.chatId, userId);
             return;
           }
-          say = a.say ?? `*${a.label}*`;
+          const who = c.target ? state.people[c.target]?.name ?? c.target : "";
+          say = c.a.say ? c.a.say.replace(/\{\{target\}\}|\{target\}/gi, who) : `*${c.label}*`;
         }
         await spindle.chat.appendMessage(msg.chatId, {
           role: "user",
@@ -7608,23 +9000,17 @@ spindle.onFrontendMessage(async (raw, userId) => {
         break;
       }
       case "adjust": {
-        const loaded = await getRuleset(msg.chatId, userId);
-        const r = loaded?.ruleset;
-        if (!r || !r.stats[msg.stat])
-          return;
-        const msgs = await getMessages(msg.chatId);
-        const last = msgs[msgs.length - 1];
-        if (!last) {
-          toast("warning", "Send a message first — edits attach to the latest message.", userId);
-          return;
-        }
-        const { state } = foldPath(r, msgs);
-        const events = manualSet(r, state, msg.stat, msg.value);
-        const swipe = last.swipe_id ?? 0;
-        const existing = warpMeta(last).swipes?.[String(swipe)];
-        const rec = existing ? { ...existing, events: [...existing.events, ...events] } : { v: 1, hints: [], events, at: Date.now() };
-        await writeRecord(msg.chatId, last.id, swipe, rec);
-        await pushState(msg.chatId, userId);
+        await applyManual(msg.chatId, userId, (r, state) => r.stats[msg.stat] ? manualSet(r, state, msg.stat, msg.value) : "Unknown stat.");
+        break;
+      }
+      case "wear": {
+        await applyManual(msg.chatId, userId, (r, state) => changeClothes(r, state, msg.slot, msg.item));
+        break;
+      }
+      case "buy_perk": {
+        const ok = await applyManual(msg.chatId, userId, (r, state) => buyPerk(r, state, msg.perk));
+        if (ok)
+          toast("success", "Perk taken.", userId);
         break;
       }
       case "settings": {

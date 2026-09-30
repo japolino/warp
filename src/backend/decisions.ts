@@ -7,7 +7,7 @@
 
 import type { Answer, Answers, Decider, Questions } from "../engine/decide.js";
 import { normalize, noulConfidence } from "../engine/decide.js";
-import { availableActions, TRAVEL_PREFIX, travelTargets, type Intent, type Proposal } from "../engine/resolve.js";
+import { availableChoices, TRAVEL_PREFIX, travelTargets, type Intent, type Proposal } from "../engine/resolve.js";
 import type { DecideSpec, Ruleset } from "../engine/ruleset.js";
 import { personName, type GameState } from "../engine/state.js";
 import { stateDigest } from "../engine/view.js";
@@ -58,17 +58,17 @@ export async function readTurn(opts: {
 }): Promise<Reading> {
   const { decider, r, s, settings, playerText, player } = opts;
   const q: Questions = {};
-  const actions = playerText ? availableActions(r, s, settings.lines) : [];
+  const actions = playerText ? availableChoices(r, s, settings.lines) : [];
   const travel = playerText ? travelTargets(r, s) : [];
 
   if (playerText && (actions.length || travel.length)) {
     const criteria: Record<string, string> = {
       [NONE]: "None of these: dialogue, thoughts, feelings, plans, questions, or something trivial that can't fail",
     };
-    for (const a of actions) criteria[a.id] = `${a.label}${a.desc ? ` — ${a.desc}` : ""}`;
+    for (const c of actions) criteria[c.id] = `${c.label}${c.a.desc ? ` — ${c.a.desc}` : ""}`;
     for (const t of travel) criteria[`${TRAVEL_PREFIX}${t}`] = `Go to ${r.locations[t].name}`;
     q.action = { type: "choice", instructions: `Which of these does ${player}'s latest message actually attempt right now?`, criteria };
-    if (actions.some((a) => a.params.length)) {
+    if (actions.some((c) => c.a.params.length)) {
       q.difficulty = { type: "score", instructions: `How hard is what ${player} is attempting, given the scene?`, criteria: DIFFICULTY };
     }
   }
@@ -105,9 +105,10 @@ export async function readTurn(opts: {
     intent = { actionId: id, via: "adjudicator" };
     label = `Go to ${r.locations[to].name}`;
   } else {
-    const a = actions.find((x) => x.id === id);
+    const c = actions.find((x) => x.id === id);
+    const a = c?.a;
     if (!a) return out;
-    label = a.label;
+    label = c!.label;
     const params: Record<string, string> = {};
     const level = ans.difficulty?.type === "score" ? ans.difficulty.score / (DIFFICULTY.length - 1) : null;
     for (const p of a.params) {
@@ -115,7 +116,7 @@ export async function readTurn(opts: {
       const keys = Object.keys(p.options);
       params[p.id] = level === null ? p.default : keys[Math.round(level * (keys.length - 1))];
     }
-    intent = { actionId: a.id, via: "adjudicator", ...(a.params.length ? { params } : {}) };
+    intent = { actionId: c!.id, via: "adjudicator", ...(a.params.length ? { params } : {}) };
   }
   if (conf >= settings.autoConfidence) out.intent = intent;
   else if (conf >= settings.askConfidence) out.suggestion = { ...intent, label, confidence: conf };
@@ -227,6 +228,11 @@ export async function bookkeeping(opts: {
   for (const f of Object.values(r.flags)) {
     if (f.narrator && typeof f.start === "boolean") q[`flag:${f.id}`] = { type: "noul", instructions: `At the end of the reply, this is true: ${f.label ?? f.id.replace(/_/g, " ")}` };
   }
+  if (r.wardrobe.enabled && r.wardrobe.narrator) {
+    for (const [slot, id] of Object.entries(s.worn)) {
+      q[`cloth:${slot}`] = { type: "noul", instructions: `By the end of the reply, ${player} no longer has their ${r.items[id]?.name ?? id} on (taken off, removed or lost)` };
+    }
+  }
   if (r.peopleOpen) q["gate:people"] = { type: "noul", instructions: "The reply introduces a named character who wasn't in the game state before" };
   if (r.itemsOpen) q["gate:items"] = { type: "noul", instructions: `${player} gains, loses or uses up an item during the reply` };
   if (r.locationsOpen) q["gate:move"] = { type: "noul", instructions: `${player} ends the reply somewhere different from ${s.locationName ?? "where they started"}` };
@@ -262,6 +268,10 @@ export async function bookkeeping(opts: {
   for (const f of Object.values(r.flags)) {
     const a = ans[`flag:${f.id}`];
     if (a?.type === "noul" && noulConfidence(a.noul) >= 0.4) (p.flags ??= {})[f.id] = a.noul >= 0.5;
+  }
+  for (const slot of Object.keys(s.worn)) {
+    const a = ans[`cloth:${slot}`];
+    if (a?.type === "noul" && a.noul >= 0.7) (p.undress ??= []).push(slot);
   }
   const needsWriting = new Set<"people" | "items" | "move">();
   for (const g of ["people", "items", "move"] as const) {

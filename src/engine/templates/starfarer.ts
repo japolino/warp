@@ -1,12 +1,11 @@
 import type { Template } from "./index.js";
 
-// Sci-fi RPG: six core stats capped by
-// level, shield/HP/lust/energy pools, credits, a ship, and combat actions that
-// only appear while a fight is on.
+// Sci-fi RPG: six core stats capped by level, shield/HP/lust/energy pools,
+// credits, a ship, turn-based combat encounters, perks and a codex.
 export const starfarer: Template = {
   id: "starfarer",
   name: "Starfarer (sci-fi RPG)",
-  blurb: "Sci-fi RPG: Physique, Reflexes, Aim, Intelligence, Willpower and Libido capped at 5× level; Shields/HP/Lust/Energy pools; credits; XP and levels; a ship; combat moves that appear during fights.",
+  blurb: "Sci-fi RPG: Physique, Reflexes, Aim, Intelligence, Willpower and Libido capped at 5× level; Shields/HP/Lust/Energy pools; credits; XP, levels and perks; a ship and a frontier world; turn-based combat you can win by force or by seduction; a codex that fills in as you explore.",
   parts: [
     {
       label: "core",
@@ -25,10 +24,6 @@ start:
 hud:
   currency: "₡"
   bars: [shields, hp, lust, energy, xp]
-
-flags:
-  in_combat: { narrator: true }     # the narrator starts/ends fights
-  enemy_defense: { start: 12, narrator: true }
 `,
     },
     {
@@ -45,6 +40,11 @@ flags:
     max: level * 100
     good: none
     narrator: 60
+  perk_points:
+    kind: attribute
+    label: Perk points
+    start: 1
+    max: 20
   shields:
     kind: meter
     max: 10 + level * 8
@@ -106,6 +106,17 @@ flags:
       narrator: 8
       good: none
       bands: { 0: None, 25: Curious, 55: Interested, 85: Infatuated }
+  people:
+    vex:
+      name: Vex
+      desc: Bartender at the Dry Dock. Sells rumours by the glass.
+      schedule:
+        - { when: "hour >= 16 or hour < 4", at: bar }
+    kade:
+      name: Kade
+      desc: Gear merchant. Haggles like it's a blood sport.
+      schedule:
+        - { when: "between(hour, 8, 20)", at: merchant }
 `,
     },
     {
@@ -114,36 +125,47 @@ flags:
   bridge:
     name: Ship — Bridge
     desc: Your ship's cramped cockpit and nav console.
+    indoors: true
     exits: [quarters, cargo_bay]
     travel: 2
   quarters:
     name: Ship — Quarters
     desc: A bunk, a shower, a locker.
+    indoors: true
     exits: [bridge]
     travel: 2
   cargo_bay:
     name: Ship — Cargo Bay
     desc: The loading ramp opens onto whatever dock you're berthed at.
+    indoors: true
     exits: [bridge, concourse, jungle_edge]
     travel: 2
   concourse:
     name: Station Concourse
     desc: Merchants, a bar, and a notice board full of bounties.
+    indoors: true
     exits: [cargo_bay, bar, merchant]
     travel: 10
   bar:
     name: The Dry Dock (bar)
     desc: Spacers, mercs, and rumours.
+    indoors: true
     exits: [concourse]
   merchant:
     name: Gear Merchant
     desc: Guns, armour, gadgets — for a price.
+    indoors: true
     exits: [concourse]
   jungle_edge:
     name: Frontier Jungle
     desc: Hot, wet, and full of things that bite. Or worse.
-    exits: [cargo_bay]
+    exits: [cargo_bay, jungle_deep]
     travel: 30
+  jungle_deep:
+    name: Deep Jungle
+    desc: The canopy closes overhead. Old ruins, older predators.
+    exits: [jungle_edge]
+    travel: 45
 
 items:
   holdout_pistol: Holdout pistol
@@ -160,78 +182,16 @@ conditions:
     {
       label: "actions",
       yaml: `actions:
-  # ── Combat (only while in_combat is true) ──
-  shoot:
-    label: Shoot
-    group: Combat
-    when: in_combat
-    say: "*I draw and fire.*"
-    time: 1
-    cost: { energy: -5 }
-    check: { vs: enemy_defense, add: floor(aim / 2), label: Aim }
-    crit_success: { hint: "A perfect shot — devastating damage, the enemy reels." }
-    success: { hint: "The shot lands solidly." }
-    fail: { shields: -6, hint: "Missed — and the enemy answers with a hit of their own." }
-    crit_fail: { shields: -6, hp: -8, hint: "A bad miss that leaves {{user}} wide open to a painful counter." }
-  melee:
-    label: Melee
-    group: Combat
-    when: in_combat
-    say: "*I close in and strike.*"
-    time: 1
-    cost: { energy: -8 }
-    check: { vs: enemy_defense, add: floor(physique / 2), label: Physique }
-    success: { hint: "A heavy blow connects." }
-    fail: { shields: -8, hint: "Blocked, and the counterattack hurts." }
-    crit_fail: { hp: -10, hint: "Overextended — {{user}} takes a brutal hit." }
-  tease:
-    label: Tease
-    group: Combat
-    when: in_combat
-    say: "*I put on a show to throw them off.*"
-    time: 1
-    check: { vs: enemy_defense, add: floor(libido / 10), label: Libido }
-    success: { hint: "The enemy is visibly flustered and distracted." }
-    fail: { lust: +8, hint: "They don't bite — and the attempt leaves {{user}} a little hot and bothered." }
-  sense:
-    label: Sense
-    group: Combat
-    when: in_combat
-    say: "*I study my opponent for weaknesses.*"
-    time: 1
-    check: { vs: 12, add: floor(intelligence / 2), label: Intelligence }
-    success: { flags: { enemy_defense: enemy_defense - 3 }, hint: "Reveal the enemy's weak point and what they like and dislike." }
-    fail: { hint: "Nothing useful gleaned." }
-  flee:
-    label: Flee
-    group: Combat
-    when: in_combat
-    say: "*I try to break away and run.*"
-    time: 1
-    check: { vs: 13, add: floor(reflexes / 2), label: Reflexes }
-    success: { flags: { in_combat: false }, energy: -10, hint: "{{user}} escapes." }
-    fail: { shields: -6, hint: "Cut off — the fight goes on." }
-  use_medkit:
-    label: Use a medkit
-    group: Combat
-    when: has('medkit')
-    say: "*I slap a medkit on.*"
-    time: 2
-    effects: { take: medkit, hp: +25 }
-
-  # ── Out of combat ──
   rest_quarters:
     label: Rest in your bunk
     group: Ship
     at: quarters
-    when: not in_combat
     say: "*I crash in my bunk for a few hours.*"
     time: 240
     effects: { hp: +40, shields: +100, energy: +100, lust: -20 }
   scan:
     label: Scan the area
     group: Explore
-    when: not in_combat
     say: "*I sweep the area with my codex scanner.*"
     time: 5
     check: { vs: 12, add: floor(intelligence / 2), label: Intelligence }
@@ -240,13 +200,19 @@ conditions:
   explore:
     label: Explore
     group: Explore
-    at: jungle_edge
-    when: not in_combat
+    at: [jungle_edge, jungle_deep]
     say: "*I push deeper into the jungle.*"
     time: 45
     check: { vs: 11, add: floor(reflexes / 3), label: Reflexes }
     success: { xp: +15, credits: roll('3d20'), hint: "A discovery: salvage or something worth selling." }
-    fail: { flags: { in_combat: true }, hint: "Something hostile ambushes {{user}} — a fight begins." }
+    fail: { start_encounter: ambush }
+  use_booster:
+    label: Use a shield booster
+    group: Gear
+    when: has('shield_booster')
+    say: "*I pop a shield booster.*"
+    time: 1
+    effects: { take: shield_booster, shields: +30 }
   buy_booster:
     label: Buy shield booster (₡150)
     group: Trade
@@ -264,8 +230,24 @@ conditions:
     check: { vs: 10, add: floor(intelligence / 3), label: Intelligence }
     success: { credits: -20, lust: +5, hint: "A useful rumour: a job, a lead, or a warning." }
     fail: { credits: -20, lust: +5, hint: "Just noise tonight." }
+  talk:
+    label: Talk to {target}
+    group: Social
+    per_person: true
+    say: "*I strike up a conversation with {target}.*"
+    time: 15
+    effects: { rel: { target: { affinity: +2 } } }
+  flirt:
+    label: Flirt with {target}
+    group: Social
+    per_person: true
+    say: "*I flirt with {target}.*"
+    time: 15
+    check: { vs: 12, add: floor(libido / 10) + floor(target.affinity / 20), label: Libido }
+    success: { rel: { target: { attraction: +5 } }, lust: +5 }
+    fail: { rel: { target: { affinity: -2 } } }
 
-  # ── Free-text only ──
+  # Free-text only
   resist:
     label: Resist
     hidden: true
@@ -287,24 +269,99 @@ conditions:
 `,
     },
     {
+      label: "encounters",
+      yaml: `# Turn-based combat. Shields soak damage first; win by knocking the foe out
+# or by driving their lust to the limit — and lose the same two ways.
+encounters:
+  ambush:
+    name: Ambush
+    desc: A hostile scavenger jumps {{user}}.
+    foe:
+      name: Scavenger
+      stats:
+        shields: { label: Shields, start: 12, max: 12 }
+        hp: { label: HP, start: 30, max: 30 }
+        lust: { label: Lust, start: 0, max: 100, good: low }
+    actions:
+      shoot:
+        label: Shoot
+        cost: { energy: -5 }
+        check: { vs: 12, add: floor(aim / 2), label: Aim }
+        crit_success: { foe: { shields: -14, hp: "foe.shields <= 0 ? -12 : 0" }, hint: "A perfect shot." }
+        success: { foe: { shields: -8, hp: "foe.shields <= 0 ? -7 : 0" }, hint: "The shot lands." }
+        fail: { hint: "Missed." }
+      melee:
+        label: Melee
+        cost: { energy: -8 }
+        check: { vs: 12, add: floor(physique / 2), label: Physique }
+        success: { foe: { hp: "-(6 + floor(physique / 2))" }, hint: "A heavy blow gets past their shields." }
+        fail: { hint: "Blocked." }
+      tease:
+        label: Tease
+        check: { vs: 11, add: floor(libido / 10), label: Libido }
+        success: { foe: { lust: "+(12 + floor(libido / 5))" }, hint: "They're visibly flustered." }
+        fail: { lust: +5, hint: "They don't bite — and it leaves {{user}} a little hot and bothered." }
+      medkit:
+        label: Use a medkit
+        when: has('medkit')
+        effects: { take: medkit, hp: +25 }
+      flee:
+        label: Flee
+        check: { vs: 13, add: floor(reflexes / 2), label: Reflexes }
+        success: { energy: -10, end: fled }
+        fail: { hint: "Cut off — the fight goes on." }
+    foe_moves:
+      blast: { desc: "Fires a blaster", weight: 3, shields: -8, hp: "shields <= 0 ? -6 : 0" }
+      grapple: { desc: "Tries to grapple", weight: 1, hp: -4, add_condition: { grappled: 2 } }
+      taunt: { desc: "Puts on a lewd display", weight: 1, lust: "+(8 + floor(libido / 10))" }
+    end_when:
+      won: foe.hp <= 0
+      seduced: foe.lust >= 100
+      downed: hp <= 0
+      overwhelmed: lust >= 100
+    outcomes:
+      won: { xp: +40, credits: roll('4d20'), hint: "The scavenger goes down." }
+      seduced: { xp: +40, lust: +10, hint: "The scavenger gives up the fight, overcome with desire." }
+      fled: { hint: "{{user}} gets away." }
+      downed: { set: { hp: 1 }, credits: -100, hint: "{{user}} is knocked out and wakes later, robbed." }
+      overwhelmed: { set: { lust: 40 }, hint: "{{user}} is overwhelmed by lust and can't keep fighting — the scavenger has their way." }
+`,
+    },
+    {
+      label: "journal",
+      yaml: `# Perks cost points (one per level). Codex entries unlock as you explore.
+perks:
+  points: perk_points
+  sharpshooter: { name: Sharpshooter, desc: "+2 Aim.", cost: 1, effects: { aim: +2 } }
+  bruiser: { name: Bruiser, desc: "+2 Physique.", cost: 1, effects: { physique: +2 } }
+  iron_will: { name: Iron Will, desc: "+2 Willpower.", cost: 1, effects: { willpower: +2 } }
+  silver_tongue: { name: Silver Tongue, desc: "+10 Libido.", cost: 1, effects: { libido: +10 } }
+  tactician: { name: Tactician, desc: "+2 Intelligence and Reflexes.", cost: 2, requires: "level >= 3", effects: { intelligence: +2, reflexes: +2 } }
+
+codex:
+  station: { title: The Station, category: Places, text: "A trade hub bolted onto an asteroid. Everything's for sale.", unlock: "location == 'concourse'" }
+  jungle: { title: The Frontier Jungle, category: Places, text: "Humid, hostile, and dotted with pre-colonial ruins.", unlock: "location == 'jungle_edge'" }
+  ruins: { title: The Ruins, category: Places, text: "Whoever built them left in a hurry — and left things behind.", unlock: "location == 'jungle_deep'" }
+  scavengers: { title: Scavengers, category: Threats, text: "Desperate, armed, and occasionally persuadable.", unlock: "turn > 0 and in_encounter" }
+
+feats:
+  first_blood: { name: First blood, desc: "Win a fight.", unlock: "xp >= 40 or level >= 2" }
+  explorer: { name: Explorer, desc: "Reach the deep jungle.", unlock: "location == 'jungle_deep'", reward: { xp: +20 } }
+`,
+    },
+    {
       label: "rules",
       yaml: `triggers:
-  # Fights start and end from the story itself, judged each turn by the decision model.
+  # Fights can also start from the story itself, judged each turn by the decision model.
   fight_starts:
     when_scene: "A fight has broken out and {{user}} is in it"
-    do:
-      flags: { in_combat: true }
-      hint: "Combat! {{user}} squares up."
-  fight_over:
-    when: in_combat
-    when_scene: "The fight is over — enemies fled, surrendered, or are down"
-    do:
-      flags: { in_combat: false }
+    do: { start_encounter: ambush }
   level_up:
     when: xp >= level * 100
     do:
       set: { xp: 0 }
       level: +1
+      perk_points: +1
       physique: +1
       reflexes: +1
       aim: +1
@@ -312,22 +369,9 @@ conditions:
       willpower: +1
       hint: "Level up! {{user}} feels stronger, faster, sharper."
   shields_down:
-    when: shields <= 0 and in_combat
+    when: shields <= 0 and in_encounter
     do:
       hint: "{{user}}'s shields are down — hits now land on flesh."
-  defeated_hp:
-    when: hp <= 0
-    do:
-      flags: { in_combat: false }
-      set: { hp: 1 }
-      credits: -100
-      hint: "{{user}} is knocked out. They wake later, robbed of some credits."
-  defeated_lust:
-    when: lust >= 100
-    do:
-      flags: { in_combat: false }
-      set: { lust: 40 }
-      hint: "{{user}} is overwhelmed by lust and can't keep fighting — the enemy has their way."
 `,
     },
   ],

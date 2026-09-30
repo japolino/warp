@@ -55,7 +55,7 @@ function clip(s: string, n: number) {
 
 // ───────────────────────── extractor ─────────────────────────
 
-export type ExtractPart = "minutes" | "stats" | "rel" | "people" | "items" | "move" | "conditions" | "flags";
+export type ExtractPart = "minutes" | "stats" | "rel" | "people" | "items" | "move" | "conditions" | "flags" | "wardrobe";
 
 export async function extract(
   r: Ruleset, s: GameState, playerText: string, reply: string,
@@ -77,6 +77,12 @@ export async function extract(
   if (want("move") && (locs.length || r.locationsOpen)) allowed.push(`- "move": where the player character ends up, if they moved${locs.length && !r.locationsOpen ? ` (one of: ${locs.map((l) => l.name).join(", ")})` : ""}`);
   if (want("conditions") && conds.length) allowed.push(`- "conditions": {"add": [...], "remove": [...]} from: ${conds.map((c) => c.id).join(", ")}`);
   if (want("flags") && flags.length) allowed.push(`- "flags": set any of: ${flags.map((f) => f.id).join(", ")}`);
+  if (want("wardrobe") && r.wardrobe.enabled && r.wardrobe.narrator) {
+    const worn = Object.entries(s.worn).map(([slot, id]) => `${slot}: ${itemName(r, s, id)}`).join(", ") || "nothing";
+    const owned = Object.keys(s.items).filter((id) => r.items[id]?.slot && !Object.values(s.worn).includes(id));
+    allowed.push(`- "undress": slots whose clothing came off (currently worn — ${worn})`);
+    if (owned.length) allowed.push(`- "wear": ids of owned clothing put on (${owned.join(", ")})`);
+  }
   if (!allowed.length) return null;
 
   const system = [

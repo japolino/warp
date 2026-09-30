@@ -297,7 +297,7 @@ function effectToEvents(w: Working, e: Effect, src: EventSource, extra: Record<s
 
   for (const id of e.unlock) if (w.r.codex[id] && !w.s.codex[id]) w.push({ t: "codex", id, src });
   if (e.time) advanceTime(w, e.time, src);
-  if (e.hint) w.hints.push(e.hint);
+  if (e.hint) w.hints.push(fillTarget(w, e.hint, extra));
   for (const d of e.decide) decide(w, d, src, extra);
 }
 
@@ -350,7 +350,7 @@ function decide(w: Working, d: DecideSpec, src: EventSource, extra: Record<strin
   const p = normalize(model ?? Object.fromEntries(d.options.map((o) => [o.id, o.weight])), keys);
   const picked = sample(p, seededRng(`${w.seed}:decide:${d.id}`));
   const opt = d.options.find((o) => o.id === picked)!;
-  w.decisions.push({ id: d.id, ask: d.ask, picked, pickedDesc: opt.desc, p, source: model ? "model" : "weights" });
+  w.decisions.push({ id: d.id, ask: fillTarget(w, d.ask, extra), picked, pickedDesc: fillTarget(w, opt.desc, extra), p, source: model ? "model" : "weights" });
   effectToEvents(w, opt.effect, src, extra);
 }
 
@@ -674,4 +674,10 @@ export function buyPerk(r: Ruleset, before: GameState, id: string): WarpEvent[] 
   effectToEvents(w, p.effects, "manual", {});
   runTriggers(w, false);
   return w.events;
+}
+
+/** "{target}" in hints and questions becomes the name of the person a per-person action is aimed at. */
+function fillTarget(w: Working, text: string, extra: Record<string, Value>): string {
+  if (typeof extra.target !== "string" || !extra.target || !text.includes("{target}")) return text;
+  return text.replace(/\{target\}/g, personName(w.r, w.s, extra.target));
 }

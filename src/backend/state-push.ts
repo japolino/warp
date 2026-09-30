@@ -7,6 +7,9 @@ import { getSettings } from "./settings.js";
 import { getRuleset, statusOf } from "./source.js";
 import { host, logError, send } from "./host.js";
 
+/** Latest folded state per chat (used by the lorebook gate). */
+export const lastStates = new Map<string, import("../engine/state.js").GameState>();
+
 /** Chats with a generation in flight (per chat id). */
 export const busyChats = new Set<string>();
 const activeChat = new Map<string, string | null>();
@@ -35,6 +38,7 @@ export async function pushState(chatId: string | null, userId?: string, force = 
     const settings = await getSettings(userId);
     const msgs = await getMessages(chatId);
     const { state, steps } = foldPath(r, msgs);
+    lastStates.set(chatId, state);
 
     // A turn can be redone only while it's the latest exchange: the player's message and at most one reply after it.
     const redoable = (userMsgId: string) => {

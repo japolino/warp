@@ -5,7 +5,7 @@ import type { WorldBookEntryDTO } from "lumiverse-spindle-types";
 import { isRulesetBookName, isRulesetEntryTitle, loadRuleset, type RulesetPart } from "../engine/loader.js";
 import { lintRuleset } from "../engine/lint.js";
 import type { Issue, Ruleset } from "../engine/ruleset.js";
-import { getTemplate } from "../engine/templates/index.js";
+import { getTemplate, withCharacter } from "../engine/templates/index.js";
 import type { RulesetStatus } from "../shared/protocol.js";
 import { host, logError } from "./host.js";
 
@@ -142,10 +142,7 @@ export async function installTemplate(chatId: string, templateId: string, userId
   for (const part of t.parts) {
     let content = part.yaml;
     // Seed the card's own character as a tracked person so relationships work from turn one.
-    if (part.label === "people" && /relationships:/.test(content) && character.name) {
-      const id = character.name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "companion";
-      content += `  people:\n    ${id}:\n      name: ${JSON.stringify(character.name)}\n`;
-    }
+    if (part.label === "people" && character.name) content = withCharacter(content, character.name);
     await host().world_books.entries.create(book.id, {
       comment: `warp-ruleset · ${part.label}`,
       content,
