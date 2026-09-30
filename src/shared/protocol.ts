@@ -207,6 +207,68 @@ export const DEFAULT_SETTINGS: Settings = {
 
 export interface TemplateInfo { id: string; name: string; blurb: string }
 
+// ───────────────────────── AI ruleset builder ─────────────────────────
+
+export interface BuilderQuestion {
+  id: string;
+  text: string;
+  kind: "single" | "multi" | "scale" | "text";
+  options?: { id: string; label: string }[];
+  /** Why it's being asked (shown small under the question). */
+  why?: string;
+  /** Part of the fixed core set every card gets. */
+  core?: boolean;
+  /** Default answer. */
+  default?: string | string[] | number;
+}
+
+export type BuilderAnswer = string | string[] | number;
+
+export interface BuilderAddition { name: string; kind: "skill" | "meter" | "item" | "place" | "action" | "rule" | "person" | "other"; note: string }
+
+export interface BuilderPart {
+  label: string;
+  yaml: string;
+  /** ok = passes the checker; warn = only warnings; error = can't run. */
+  status: "ok" | "warn" | "error";
+  issues: IssueView[];
+  /** Changed by the latest refine. */
+  changed?: boolean;
+}
+
+export interface BuilderSession {
+  characterId: string;
+  characterName: string;
+  mode: "build" | "refine";
+  step: "start" | "questions" | "review" | "done";
+  connectionId: string;
+  creative: boolean;
+  base: string;
+  analysis: {
+    summary: string;
+    suggestedTemplate: string;
+    reason: string;
+    statusBlock: { found: boolean; fields: string[] } | null;
+  } | null;
+  rounds: { questions: BuilderQuestion[]; answers: Record<string, BuilderAnswer> }[];
+  additions: BuilderAddition[];
+  parts: BuilderPart[];
+  preview: {
+    summary: string;
+    counts: Record<string, number>;
+    hud: HudView | null;
+    choices: ChoiceView[];
+    warnings: { id: string; part: string; text: string }[];
+  } | null;
+  /** Refine: what was asked and what the model says it changed. */
+  request: string | null;
+  changeSummary: string | null;
+  /** Something is running (label shown with a spinner). */
+  busy: string | null;
+  error: string | null;
+  updatedAt: number;
+}
+
 export type BackendToFrontend =
   | {
       type: "state";
@@ -225,7 +287,8 @@ export type BackendToFrontend =
   | { type: "busy"; chatId: string; busy: boolean; label?: string }
   | { type: "settings"; settings: Settings; templates: TemplateInfo[]; connections: { id: string; name: string }[]; jevKeySet: boolean }
   | { type: "toast"; level: "info" | "success" | "warning" | "error"; message: string }
-  | { type: "command"; command: "open" | "install" };
+  | { type: "command"; command: "open" | "install" }
+  | { type: "builder"; session: BuilderSession | null };
 
 export type FrontendToBackend =
   | { type: "hello"; chatId: string | null }
@@ -242,5 +305,14 @@ export type FrontendToBackend =
   /** Wardrobe: put on an item, or take off a slot (item null). */
   | { type: "wear"; chatId: string; slot: string; item: string | null }
   | { type: "buy_perk"; chatId: string; perk: string }
+  | { type: "builder_open"; chatId: string; mode: "build" | "refine" }
+  | { type: "builder_start"; chatId: string; connectionId: string; creative: boolean; base?: string }
+  | { type: "builder_answer"; chatId: string; answers: Record<string, BuilderAnswer>; additions: BuilderAddition[]; more: boolean }
+  | { type: "builder_redo"; chatId: string; part: string; note?: string }
+  | { type: "builder_fix"; chatId: string; warning: string }
+  | { type: "builder_refine"; chatId: string; request: string }
+  | { type: "builder_install"; chatId: string }
+  | { type: "builder_back"; chatId: string }
+  | { type: "builder_close"; chatId: string }
   | { type: "set_jev_key"; key: string }
   | { type: "test_decider" };

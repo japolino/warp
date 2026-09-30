@@ -1508,7 +1508,7 @@ function warmthOf(r, s) {
 }
 function warmthNeeded(temp) {
   const ideal = Math.max(0, Math.round((20 - temp) * 0.9));
-  return { min: Math.max(0, ideal - 5), max: ideal + 8 };
+  return { min: Math.max(0, ideal - 6), max: ideal + 12 };
 }
 function revealOf(r, s) {
   return wornItems(r, s).reduce((a, id) => a + (r.items[id]?.reveal ?? 0), 0);
@@ -2673,7 +2673,7 @@ narration:
     params:
       difficulty: { easy: 8, normal: 12, hard: 16, extreme: 20 }
     check: { vs: difficulty, add: body, label: Body, partial: 3 }
-    success: { hint: "It works." }
+    success: { body: +0.2, hint: "It works." }
     fail: { energy: -10, hint: "It doesn't work, and it takes something out of {{user}}." }
     crit_fail: { health: -15, energy: -10, hint: "It goes badly wrong — a real setback or injury." }
 
@@ -2684,7 +2684,7 @@ narration:
     params:
       difficulty: { easy: 8, normal: 12, hard: 16, extreme: 20 }
     check: { vs: difficulty, add: mind, label: Mind, partial: 3 }
-    success: { hint: "The answer or insight comes clearly." }
+    success: { mind: +0.2, hint: "The answer or insight comes clearly." }
     fail: { hint: "It doesn't add up — nothing useful comes of it." }
 
   social_feat:
@@ -2694,7 +2694,7 @@ narration:
     params:
       difficulty: { easy: 8, normal: 12, hard: 16, extreme: 20 }
     check: { vs: difficulty, add: charm, label: Charm, partial: 3 }
-    success: { hint: "They're swayed." }
+    success: { charm: +0.2, hint: "They're swayed." }
     fail: { mood: -5, hint: "It doesn't land. They're unconvinced, or put off." }
     crit_fail: { mood: -10, hint: "It backfires embarrassingly and they react badly." }
 `
@@ -8821,6 +8821,923 @@ async function onGenerationEnded(payload, userId) {
   }
 }
 
+// src/engine/balance.ts
+function effectsOf(r) {
+  const out = [];
+  const add = (e) => {
+    if (!e)
+      return;
+    out.push(e);
+    for (const d of e.decide)
+      for (const o of d.options)
+        add(o.effect);
+  };
+  const addAction = (a) => {
+    add(a.cost);
+    add(a.effects);
+    for (const e of Object.values(a.outcomes))
+      add(e);
+  };
+  Object.values(r.actions).forEach(addAction);
+  for (const t of r.triggers)
+    add(t.effects);
+  for (const enc of Object.values(r.encounters)) {
+    Object.values(enc.actions).forEach(addAction);
+    for (const o of enc.foeMoves?.options ?? [])
+      add(o.effect);
+    Object.values(enc.outcomes).forEach(add);
+    add(enc.start);
+  }
+  for (const f of Object.values(r.feats))
+    add(f.reward);
+  for (const p of Object.values(r.perks))
+    add(p.effects);
+  return out;
+}
+function reviewBalance(r) {
+  const out = [];
+  const start = initialState(r);
+  for (const a of Object.values(r.actions)) {
+    if (!a.check || a.perPerson)
+      continue;
+    const s = cloneState(start);
+    if (a.at.length)
+      s.location = a.at[0];
+    const o = odds(r, s, a);
+    if (!o)
+      continue;
+    const p = o.success + o.partial / 2;
+    if (p < 0.12)
+      out.push({ id: `odds:${a.id}`, part: "actions", text: `“${a.label}” succeeds only ${Math.round(p * 100)}% of the time at the start.`, fix: `Make the "${a.id}" action's check noticeably easier at the start (aim for 30–50% success), keeping it harder than it will be later.` });
+    else if (p > 0.95)
+      out.push({ id: `odds:${a.id}`, part: "actions", text: `“${a.label}” succeeds ${Math.round(p * 100)}% of the time — the roll barely matters.`, fix: `Make the "${a.id}" action's check less of a sure thing (aim for 60–80% success at the start).` });
+  }
+  for (const id of r.statOrder) {
+    const d = r.stats[id];
+    if (!d.perHour)
+      continue;
+    const toEdge = d.perHour > 0 ? d.max - d.start : d.start - d.min;
+    const hours = toEdge / Math.abs(d.perHour);
+    const bad = d.perHour > 0 && d.good === "low" || d.perHour < 0 && d.good === "high";
+    if (bad && hours < 8) {
+      out.push({ id: `drift:${id}`, part: "stats", text: `${d.label} reaches its worst in about ${Math.max(1, Math.round(hours))}h of game time on its own.`, fix: `Slow down the per_hour drift of the "${id}" stat so it takes at least a day of game time to reach its worst.` });
+    }
+  }
+  const env = makeEnv(r, start);
+  const meaningful = (e) => Object.keys(e.stats).length + Object.keys(e.set).length + Object.keys(e.addConditions).length + Object.keys(e.items).length + Object.keys(e.rel).length + e.decide.length + e.wear.length + e.undress.length > 0 || !!e.move || !!e.startEncounter || !!e.hint;
+  for (const t of r.triggers) {
+    if (t.when && !t.whenScene && meaningful(t.effects) && evalBool(t.when, env, false) && !t.repeat) {
+      out.push({ id: `trig:${t.id}`, part: "rules", text: `Rule “${t.id}” fires immediately on turn one.`, fix: `Adjust the "${t.id}" trigger (or the starting values it checks) so it doesn't fire at the very start.` });
+    }
+  }
+  const touched = new Set;
+  for (const e of effectsOf(r)) {
+    Object.keys(e.stats).forEach((k) => touched.add(k));
+    Object.keys(e.set).forEach((k) => touched.add(k));
+  }
+  for (const id of r.statOrder) {
+    const d = r.stats[id];
+    if (d.kind === "money" && d.narrator > 0)
+      continue;
+    if (!touched.has(id) && !d.perHour && d.narrator <= 0) {
+      out.push({ id: `dead:${id}`, part: "stats", text: `${d.label} never changes — no action, rule or story update touches it.`, fix: `Give the "${id}" stat a way to change: at least one action or rule that raises or lowers it, or allow the narrator to adjust it.` });
+    }
+  }
+  for (const enc of Object.values(r.encounters)) {
+    const sim = simulateEncounter(r, start, enc.id, 120);
+    if (!sim)
+      continue;
+    const goodEnds = Object.keys(enc.outcomes).filter((o) => /won|win|victory|escaped|fled|seduced/i.test(o));
+    const wins = goodEnds.reduce((n, o) => n + (sim.outcomes[o] ?? 0), 0) / sim.runs;
+    if (sim.stuck / sim.runs > 0.2) {
+      out.push({ id: `enc-stuck:${enc.id}`, part: "encounters", text: `“${enc.name}” often doesn't end within 25 rounds.`, fix: `Make the "${enc.id}" encounter reliably end within about 4–10 rounds (stronger effects on foe stats or tighter end_when conditions).` });
+    } else if (goodEnds.length && wins < 0.2) {
+      out.push({ id: `enc-hard:${enc.id}`, part: "encounters", text: `“${enc.name}” is won or escaped only ${Math.round(wins * 100)}% of the time with random play.`, fix: `Make the "${enc.id}" encounter fairer for the player (aim for roughly half of random playthroughs ending well).` });
+    } else if (goodEnds.length && wins > 0.95) {
+      out.push({ id: `enc-easy:${enc.id}`, part: "encounters", text: `“${enc.name}” almost always goes the player's way — there's little risk.`, fix: `Make the "${enc.id}" encounter more dangerous (foe moves hit harder or the player's options are riskier).` });
+    }
+  }
+  return out;
+}
+function simulateEncounter(r, from, id, runs) {
+  const enc = r.encounters[id];
+  if (!enc)
+    return null;
+  const outcomes = {};
+  let stuck = 0, rounds = 0;
+  const rng = seededRng(`sim:${id}`);
+  for (let i = 0;i < runs; i++) {
+    const s = cloneState(from);
+    applyEvent(s, { t: "enc", id, foe: Object.fromEntries(enc.foe.stats.map((x) => [x.id, x.start])), src: "start" }, r);
+    let ended = null;
+    for (let n = 0;n < 25 && s.encounter; n++) {
+      const choices = availableChoices(r, s);
+      const pick = choices.length ? choices[Math.floor(rng() * choices.length)].id : null;
+      const { record } = resolveTurnFull(r, s, pick ? { actionId: pick, via: "choice" } : null, { seed: `sim:${id}:${i}:${n}` });
+      for (const e of record.events) {
+        applyEvent(s, e, r);
+        if (e.t === "enc" && !e.id)
+          ended = e.outcome ?? "ended";
+      }
+      rounds++;
+    }
+    if (ended)
+      outcomes[ended] = (outcomes[ended] ?? 0) + 1;
+    else
+      stuck++;
+  }
+  return { runs, outcomes, stuck, rounds: rounds / runs };
+}
+
+// src/engine/reference.ts
+var PART_LABELS = ["core", "stats", "people", "world", "actions", "encounters", "journal", "rules"];
+var PART_CONTENTS = {
+  core: "name, description, player, clock, start, hud, narration",
+  stats: "stats",
+  people: "relationships (stats + people with schedules)",
+  world: "weather, locations, items (incl. clothing), wardrobe, conditions, flags, start.items",
+  actions: "actions",
+  encounters: "encounters",
+  journal: "codex, feats, perks",
+  rules: "triggers"
+};
+function partForIssue(where) {
+  const w = where.replace(/^warp-ruleset\s*·\s*/i, "");
+  const head = w.split(/[›,]/)[0].trim().toLowerCase();
+  if (PART_LABELS.includes(head))
+    return head;
+  if (head.startsWith("stats"))
+    return "stats";
+  if (head.startsWith("relationships") || head.startsWith("people"))
+    return "people";
+  if (["locations", "items", "wardrobe", "weather", "conditions", "flags"].some((k) => head.startsWith(k)))
+    return "world";
+  if (head.startsWith("actions"))
+    return "actions";
+  if (head.startsWith("encounters"))
+    return "encounters";
+  if (["codex", "feats", "perks"].some((k) => head.startsWith(k)))
+    return "journal";
+  if (head.startsWith("triggers") || head.startsWith("rules"))
+    return "rules";
+  return "core";
+}
+var REFERENCE = `WARP RULESET FORMAT (YAML). Numbers may be formulas in quotes. Meters are 0–100 unless there's a reason.
+
+stats:            # kinds: meter (bar) | attribute | skill | money | hidden
+  stress: { kind: meter, good: low, start: 0, per_hour: -0.5, narrator: 10, bands: { 0: You are calm., 30: You are stressed., 70: You are distressed. } }
+  athletics: { kind: skill, max: 100, start: 10, grades: [F, D, C, B, A, S] }
+  money: { kind: money, start: 50, narrator: 50 }
+  # good: high|low|none (colours); per_hour: drift; narrator: max change the story may make per reply (0 = rules only); max may be a formula ("level * 5")
+
+relationships:
+  open: true                       # track new people the story introduces
+  stats: { trust: { start: 10, narrator: 5, bands: { 0: Wary, 40: Trusting } } }
+  people:
+    jo:
+      name: Jo
+      desc: Runs the café.
+      schedule:                    # first matching entry wins; entry without when = default; no match = not around
+        - { when: "between(hour, 7, 18) and weekday != 'Sun'", at: high_street }
+
+clock: { start: "Mon 07:00", date: "Sep 4", minutes_per_action: 15, narrator_max: 240 }
+start: { location: home, items: { phone: 1 } }
+hud: { currency: "$", bars: [health, stress] }
+narration: { notes: "Guidance for the narrator." }
+player: { age: 20 }
+
+weather: { temps: { spring: 12, summer: 22, autumn: 11, winter: 3 } }     # enables weather + temperature
+locations:
+  home: { name: Home, desc: "...", indoors: true, exits: [street], travel: 10 }   # exits become travel buttons
+items:
+  phone: Phone
+  raincoat: { name: Raincoat, slot: outer, warmth: 5, reveal: 0, traits: [rainproof] }   # clothing = item with a slot
+wardrobe: { slots: [outer, top, bottom, under_top, under_bottom, feet], cover: [top, bottom], start: [t_shirt, jeans] }
+conditions: { cold: { label: Cold, tone: bad } }
+flags: { met_boss: { start: false, narrator: true } }
+
+actions:
+  pick_lock:
+    label: Pick the lock
+    group: Explore
+    say: "*I kneel and work the lock.*"
+    at: [street]                   # optional location filter
+    when: "has('lockpick') and between(hour, 20, 6)"
+    time: 10                       # minutes
+    cost: { fatigue: +2 }
+    tags: [crime]
+    check: { chance: "20 + skulduggery / 2", label: Skulduggery }      # d100 roll-under percent
+    # or check: { vs: 12, add: "floor(dex / 2)", partial: 3 }          # d20 + add vs 12
+    # or check: { style: pbta, add: cool }                             # 2d6: 10+ hit, 7–9 mixed
+    success: { flags: { door_open: true }, skulduggery: +1 }
+    fail: { stress: +5, hint: "The pick snaps." }
+    # tiers: crit_success, success, partial, fail, crit_fail; without a check use effects:
+  chat:
+    label: Chat with {target}
+    per_person: true               # one button per person present; {target} = their name
+    effects: { rel: { target: { trust: +2 } } }
+  sneak:
+    hidden: true                   # free-text only: the referee maps typed attempts to it
+    desc: Staying unseen.
+    params: { difficulty: { easy: 70, normal: 45, hard: 25, extreme: 10 } }   # easiest → hardest
+    check: { chance: "difficulty + skulduggery / 2" }
+
+EFFECTS (any success/fail/effects/cost/do block):
+  stat shorthand (fatigue: +5, may be a quoted formula), set: { stress: 50 }, flags: { x: true }, give: item / take: item,
+  rel: { jo: { trust: +3 } }, move: location, time: 30, add_condition: [cold] or { cold: 120 }, remove_condition: [cold],
+  hint: "direction for the narrator", wear: [raincoat], undress: [top], damage: { top: 20 },
+  start_encounter: id, foe: { hp: -6 }, end: outcome_id, unlock: [codex_id],
+  decide: { ask: "How does Jo react?", options: { yes: { desc: "Agrees", weight: 2, rel: { jo: { trust: +2 } } }, no: { desc: "Refuses", weight: 1 } } }
+  Formulas with commas MUST be quoted: money: "-min(money, 20)".
+
+encounters:
+  mugging:
+    name: Mugging
+    tags: [violence]
+    foe: { name: Mugger, stats: { nerve: { start: 10, max: 10 } } }
+    actions: { fight: { label: Fight back, check: { chance: "30 + athletics / 2" }, success: { foe: { nerve: -6 } }, fail: { pain: +10 } }, run: { label: Run, effects: { end: escaped } } }
+    foe_moves: { grab: { desc: "Grabs you", weight: 2, pain: +8 }, threaten: { desc: "Threatens", weight: 1, stress: +6 } }
+    end_when: { won: "foe.nerve <= 0", beaten: "pain >= 80" }
+    outcomes: { won: { hint: "They flee." }, escaped: { stress: +3 }, beaten: { money: "-min(money, 30)" } }
+
+codex: { docks: { title: The Docks, category: Places, text: "...", unlock: "location == 'docks'", lore: [Lorebook entry title] } }
+feats: { night_owl: { name: Night owl, desc: "...", unlock: "hour >= 2 and hour < 5", reward: { stress: -5 } } }
+perks: { points: perk_points, sharp: { name: Sharpshooter, desc: "+2 Aim", cost: 1, requires: "level >= 2", effects: { aim: +2 } } }
+
+triggers:
+  exhausted: { when: "fatigue >= 85", do: { add_condition: [exhausted], hint: "..." } }         # fires once when it becomes true
+  drain: { when: "fatigue >= 85", repeat: true, do: { stress: +2 } }                           # every turn while true
+  danger: { when_scene: "{{user}} is in immediate danger", do: { stress: +5 } }                # judged in plain language
+
+FORMULA NAMES: stats, flags, hour, minute, day, weekday, month, date, season, weather, temperature, indoors, outside,
+warmth, warmth_min, warmth_max, too_cold, too_hot, reveal, exposed, naked, in_encounter, round, foe.<stat>, target.<relstat>, location.
+FUNCTIONS: has(item[, n]), count(item), flag(x), cond(x), at(loc), rel(person, stat), met(person), between(v, lo, hi), roll('2d6'),
+wearing(item), worn(slot), trait(t), present(person), where(person), codex(id), feat(id), perk(id), min, max, clamp, floor, ceil, round, abs.
+Operators: + - * / % < <= > >= == != and or not, a ? b : c. Strings in single quotes.
+`;
+
+// src/backend/builder.ts
+var sessions = new Map;
+var key3 = (userId, characterId) => `${userId ?? "_"}:${characterId}`;
+var path = (characterId) => `builder/${characterId}.json`;
+async function save(s, userId) {
+  s.updatedAt = Date.now();
+  sessions.set(key3(userId, s.characterId), s);
+  try {
+    await host().userStorage.setJson(path(s.characterId), s, { userId });
+  } catch (e) {
+    logError("builder save", e);
+  }
+}
+function emit(s, userId) {
+  send({ type: "builder", session: s }, userId);
+}
+async function progress(s, label, userId) {
+  s.busy = label;
+  if (label)
+    s.error = null;
+  emit(s, userId);
+  if (!label)
+    await save(s, userId);
+}
+async function sessionFor(chatId, userId) {
+  const characterId = await characterForChat(chatId, userId);
+  if (!characterId)
+    return null;
+  const hit = sessions.get(key3(userId, characterId));
+  if (hit)
+    return hit;
+  try {
+    const stored = await host().userStorage.getJson(path(characterId), { fallback: null, userId });
+    if (stored) {
+      stored.busy = null;
+      sessions.set(key3(userId, characterId), stored);
+      return stored;
+    }
+  } catch {}
+  return null;
+}
+async function llm(s, system, user, userId, maxTokens = 3000) {
+  const res = await host().generate.quiet({
+    type: "quiet",
+    messages: [{ role: "system", content: system }, { role: "user", content: user }],
+    connection_id: s.connectionId || undefined,
+    parameters: { temperature: s.creative ? 0.8 : 0.4, max_tokens: maxTokens },
+    userId,
+    signal: AbortSignal.timeout(180000)
+  });
+  return typeof res === "string" ? res : res?.content ?? "";
+}
+function parseJson(text) {
+  const t = text.replace(/```(?:json)?/gi, "");
+  const a = t.indexOf("{"), b = t.lastIndexOf("}");
+  if (a < 0 || b <= a)
+    return null;
+  try {
+    return JSON.parse(t.slice(a, b + 1));
+  } catch {
+    return null;
+  }
+}
+function extractYaml(text) {
+  const fenced = /```(?:ya?ml)?\s*\n([\s\S]*?)```/i.exec(text);
+  let y = fenced ? fenced[1] : text;
+  const lines = y.split(`
+`);
+  const first = lines.findIndex((l) => /^[A-Za-z_][\w-]*:/.test(l) || /^#/.test(l));
+  if (first > 0)
+    y = lines.slice(first).join(`
+`);
+  return y.trim() + `
+`;
+}
+async function cardText(characterId, userId) {
+  const c = await host().characters.get(characterId, userId);
+  if (!c)
+    throw new Error("Character not found");
+  const clip = (v, n) => v.length > n ? `${v.slice(0, n)}…` : v;
+  const parts = [
+    `Name: ${c.name}`,
+    c.description && `Description:
+${clip(c.description, 4000)}`,
+    c.personality && `Personality:
+${clip(c.personality, 1500)}`,
+    c.scenario && `Scenario:
+${clip(c.scenario, 1500)}`,
+    c.first_mes && `Greeting:
+${clip(c.first_mes, 2500)}`,
+    c.creator_notes && `Creator notes:
+${clip(c.creator_notes, 1000)}`
+  ].filter(Boolean);
+  let hasRuleset = false;
+  const lore = [];
+  for (const bookId of c.world_book_ids ?? []) {
+    const book = await host().world_books.get(bookId, userId);
+    if (!book)
+      continue;
+    if (isRulesetBookName(book.name)) {
+      hasRuleset = true;
+      continue;
+    }
+    const page = await host().world_books.entries.list(bookId, { limit: 60, userId });
+    for (const e of page.data) {
+      if (isRulesetEntryTitle(e.comment)) {
+        hasRuleset = true;
+        continue;
+      }
+      if (lore.length < 40)
+        lore.push(`- ${e.comment || e.key.join(", ") || "entry"}: ${clip(e.content.replace(/\s+/g, " "), 220)}`);
+    }
+  }
+  if (lore.length)
+    parts.push(`Lorebook (excerpts):
+${lore.join(`
+`)}`);
+  return { name: c.name, text: parts.join(`
+
+`), hasRuleset };
+}
+var SYSTEMS = [
+  { id: "needs", label: "Needs & condition (fatigue, stress…)" },
+  { id: "relationships", label: "Relationships" },
+  { id: "money", label: "Money & work" },
+  { id: "skills", label: "Skills that grow" },
+  { id: "clothing", label: "Clothing, weather & temperature" },
+  { id: "schedules", label: "NPC schedules & places" },
+  { id: "encounters", label: "Encounters / combat" },
+  { id: "crime", label: "Crime & consequences" },
+  { id: "journal", label: "Codex & feats" },
+  { id: "perks", label: "Levels & perks" }
+];
+function coreQuestions(defaultSystems) {
+  return [
+    {
+      id: "tone",
+      core: true,
+      kind: "single",
+      text: "What tone should the game have?",
+      default: "dramatic",
+      options: ["cozy", "dramatic", "dark", "chaotic", "romantic", "gritty"].map((t) => ({ id: t, label: t[0].toUpperCase() + t.slice(1) }))
+    },
+    { id: "systems", core: true, kind: "multi", text: "Which systems do you want?", default: defaultSystems, options: SYSTEMS },
+    {
+      id: "difficulty",
+      core: true,
+      kind: "scale",
+      text: "How hard should checks be?",
+      default: 3,
+      options: [{ id: "1", label: "Forgiving" }, { id: "3", label: "Fair" }, { id: "5", label: "Punishing" }]
+    },
+    {
+      id: "relationship_depth",
+      core: true,
+      kind: "single",
+      text: "How deep should relationship tracking go?",
+      default: "simple",
+      options: [
+        { id: "simple", label: "Simple — affection & trust" },
+        { id: "deep", label: "Deep — love, lust, trust, dominance" },
+        { id: "custom", label: "Custom — I'll describe it below" }
+      ]
+    }
+  ];
+}
+function normQuestions(raw, prefix) {
+  if (!Array.isArray(raw))
+    return [];
+  const out = [];
+  raw.slice(0, 5).forEach((q, i) => {
+    if (!q || typeof q !== "object")
+      return;
+    const r = q;
+    const text = typeof r.text === "string" ? r.text : typeof r.question === "string" ? r.question : "";
+    if (!text)
+      return;
+    const kind = ["single", "multi", "scale", "text"].find((k) => k === r.kind) ?? (Array.isArray(r.options) ? "single" : "text");
+    const options = Array.isArray(r.options) ? r.options.slice(0, 8).map((o, j) => typeof o === "string" ? { id: `o${j}`, label: o } : { id: String(o.id ?? `o${j}`), label: String(o.label ?? o.text ?? `Option ${j + 1}`) }) : undefined;
+    out.push({ id: `${prefix}${i}`, text, kind, ...options?.length ? { options } : {}, ...typeof r.why === "string" ? { why: r.why } : {} });
+  });
+  return out;
+}
+function answerText(q, a) {
+  if (a === undefined || a === "" || Array.isArray(a) && !a.length)
+    return "(no answer)";
+  const label = (id) => q.options?.find((o) => o.id === id)?.label ?? id;
+  if (Array.isArray(a))
+    return a.map(label).join(", ");
+  if (q.kind === "scale")
+    return `${a} of 5 (1 = forgiving, 5 = punishing)`;
+  return typeof a === "string" ? label(a) : String(a);
+}
+function brief(s) {
+  const qa = s.rounds.flatMap((r) => r.questions.map((q) => `- ${q.text} → ${answerText(q, r.answers[q.id] ?? q.default)}`));
+  const adds = s.additions.filter((a) => a.name.trim()).map((a) => `- ${a.kind}: ${a.name}${a.note ? ` — ${a.note}` : ""}`);
+  return [
+    `Character: ${s.characterName}`,
+    s.analysis ? `Card summary: ${s.analysis.summary}` : "",
+    s.analysis?.statusBlock?.found ? `The card currently makes the model print a status block with: ${s.analysis.statusBlock.fields.join(", ")}. Cover these as proper stats; the narrator should no longer print status blocks.` : "",
+    qa.length ? `The player's answers:
+${qa.join(`
+`)}` : "",
+    adds.length ? `The player's own additions (build each in — the stat/item/place/etc., what changes it, and which actions check it):
+${adds.join(`
+`)}` : "",
+    s.creative ? "Style: be inventive — add fitting systems, places and actions beyond the starting point where they serve the card." : "Style: stay close to the starting point — rename, retune, trim and extend it to fit the card, rather than inventing whole new systems."
+  ].filter(Boolean).join(`
+
+`);
+}
+function chosenSystems(s) {
+  const q = s.rounds[0]?.questions.find((x) => x.id === "systems");
+  const a = s.rounds[0]?.answers.systems ?? q?.default;
+  return new Set(Array.isArray(a) ? a : SYSTEMS.map((x) => x.id));
+}
+function merged(parts) {
+  return parts.map((p, i) => ({ label: `warp-ruleset · ${p.label}`, content: p.yaml, order: i }));
+}
+function check(parts) {
+  const { ruleset, issues } = loadRuleset(merged(parts));
+  const all = ruleset ? [...issues, ...lintRuleset(ruleset)] : issues;
+  for (const p of parts) {
+    p.issues = all.filter((i) => partForIssue(i.where) === p.label);
+    p.status = p.issues.some((i) => i.level === "error") ? "error" : p.issues.length ? "warn" : "ok";
+  }
+  return { ruleset, issues: all };
+}
+function contextOf(parts) {
+  const { ruleset: r } = loadRuleset(merged(parts.filter((p) => p.yaml.trim())));
+  if (!r)
+    return "";
+  const list = (label, ids) => ids.length ? `${label}: ${ids.join(", ")}` : "";
+  return [
+    list("Stats", r.statOrder.map((id) => `${id} (${r.stats[id].kind}${r.stats[id].kind === "meter" ? ` ${r.stats[id].min}–${r.stats[id].max}` : ""})`)),
+    list("Relationship stats", r.relStatOrder),
+    list("People", Object.keys(r.people)),
+    list("Locations", Object.keys(r.locations)),
+    list("Items", Object.keys(r.items).map((id) => r.items[id].slot ? `${id} [${r.items[id].slot}]` : id)),
+    list("Wardrobe slots", r.wardrobe.enabled ? r.wardrobe.slots.map((x) => x.id) : []),
+    list("Conditions", Object.keys(r.conditions)),
+    list("Flags", Object.keys(r.flags)),
+    list("Encounters", Object.keys(r.encounters)),
+    list("Codex", Object.keys(r.codex))
+  ].filter(Boolean).join(`
+`);
+}
+var SYSTEM_PROMPT = `You write sections of a Warp ruleset: YAML that a game engine runs underneath a roleplay chat.
+Output ONLY the YAML for the requested section — no prose, no explanations. Use only the formats below.
+Use snake_case ids. Keep numbers readable (meters 0–100). Quote any formula that contains a comma.
+Write in-world text (bands, hints, descriptions) in a voice that suits the card. Refer to the player as {{user}}.
+
+${REFERENCE}`;
+async function draftPart(s, label, base, context, userId, note, current) {
+  const user = [
+    brief(s),
+    `Write the "${label}" section. It may contain only: ${PART_CONTENTS[label]}.`,
+    base ? `Starting point for this section (adapt it):
+${base}` : "There's no starting point for this section — write it from scratch.",
+    current ? `The current version of this section:
+${current}` : "",
+    context ? `Ids defined in the other sections (reuse them exactly; don't redefine them here):
+${context}` : "",
+    note ? `The player asked for this change: ${note}` : ""
+  ].filter(Boolean).join(`
+
+`);
+  return extractYaml(await llm(s, SYSTEM_PROMPT, user, userId, 3500));
+}
+async function repair(s, parts, userId, includeWarnings = true) {
+  for (let round = 0;round < 2; round++) {
+    check(parts);
+    const broken = parts.filter((p) => p.status === "error" || includeWarnings && round === 0 && p.status === "warn");
+    if (!broken.length)
+      return;
+    await progress(s, `Fixing ${broken.map((p) => p.label).join(", ")}…`, userId);
+    const context = contextOf(parts);
+    await Promise.all(broken.map(async (p) => {
+      const msgs = p.issues.map((i) => `- ${i.where}: ${i.message}`).join(`
+`);
+      const user = `This "${p.label}" section has problems reported by the checker. Return the corrected YAML for the whole section.
+
+Problems:
+${msgs}
+
+Section:
+${p.yaml}
+
+Ids in the other sections:
+${context}`;
+      try {
+        p.yaml = extractYaml(await llm(s, SYSTEM_PROMPT, user, userId, 3500));
+      } catch (e) {
+        logError("builder repair", e);
+      }
+    }));
+  }
+  check(parts);
+}
+function buildPreview(s) {
+  const { ruleset: r } = check(s.parts);
+  if (!r) {
+    s.preview = null;
+    return;
+  }
+  const st = initialState(r);
+  const counts = {
+    meters: r.statOrder.filter((id) => r.stats[id].kind === "meter").length,
+    skills: r.statOrder.filter((id) => ["skill", "attribute"].includes(r.stats[id].kind)).length,
+    people: Object.keys(r.people).length,
+    places: Object.keys(r.locations).length,
+    items: Object.keys(r.items).length,
+    actions: Object.keys(r.actions).length,
+    encounters: Object.keys(r.encounters).length,
+    rules: r.triggers.length,
+    codex: Object.keys(r.codex).length,
+    feats: Object.keys(r.feats).length,
+    perks: Object.keys(r.perks).length
+  };
+  const phrase = Object.entries(counts).filter(([, n]) => n).map(([k, n]) => `${n} ${n === 1 ? k.replace(/s$/, "").replace(/^people$/, "person").replace(/^codex$/, "codex entry") : k}`).join(", ");
+  const extras = [
+    r.weather.enabled ? "weather & temperature" : "",
+    r.wardrobe.enabled ? "a wardrobe" : "",
+    r.clock.startDate ? "a calendar" : ""
+  ].filter(Boolean);
+  s.preview = {
+    summary: `${r.name}: ${phrase}${extras.length ? `, plus ${extras.join(", ")}` : ""}.`,
+    counts,
+    hud: buildHud(r, st),
+    choices: buildChoices(r, st, { lines: [], veils: [] }),
+    warnings: reviewBalance(r).map((w) => ({ id: w.id, part: w.part, text: w.text }))
+  };
+}
+async function builderOpen(chatId, mode, userId) {
+  const characterId = await characterForChat(chatId, userId);
+  if (!characterId)
+    throw new Error("Open a chat with a character first.");
+  const existing = await sessionFor(chatId, userId);
+  if (existing && existing.mode === mode && existing.step !== "done") {
+    emit(existing, userId);
+    return;
+  }
+  const card = await cardText(characterId, userId);
+  const s = {
+    characterId,
+    characterName: card.name,
+    mode,
+    step: "start",
+    connectionId: existing?.connectionId ?? "",
+    creative: existing?.creative ?? false,
+    base: "",
+    analysis: null,
+    rounds: [],
+    additions: [],
+    parts: [],
+    preview: null,
+    request: null,
+    changeSummary: null,
+    busy: null,
+    error: null,
+    updatedAt: Date.now()
+  };
+  if (mode === "refine") {
+    s.parts = await currentParts(characterId, userId);
+    if (!s.parts.length)
+      throw new Error("This character has no ruleset to refine yet.");
+    s.step = "review";
+    buildPreview(s);
+  }
+  await save(s, userId);
+  emit(s, userId);
+}
+async function builderStart(chatId, opts, userId) {
+  const s = await sessionFor(chatId, userId);
+  if (!s)
+    throw new Error("No builder open.");
+  s.connectionId = opts.connectionId;
+  s.creative = opts.creative;
+  await progress(s, "Reading the card…", userId);
+  try {
+    const card = await cardText(s.characterId, userId);
+    const templates = TEMPLATES.map((t) => `- ${t.id}: ${t.blurb}`).join(`
+`);
+    const system = `You help set up a game ruleset for a roleplay character card. Reply with JSON only.`;
+    const user = `${card.text}
+
+Available starting templates:
+${templates}
+- blank: nothing, build from scratch
+
+Systems the player can pick from: ${SYSTEMS.map((x) => x.id).join(", ")}.
+
+Reply with JSON:
+{"summary": "2–3 sentences: who this is, the setting, the likely kind of story",
+ "suggestedTemplate": "<template id>",
+ "reason": "one sentence: why that template fits",
+ "systems": ["<system ids that fit this card>"],
+ "statusBlock": {"found": <does the card tell the model to print a status/stat block?>, "fields": ["<fields it tracks>"]},
+ "followUps": [ up to 5 questions specific to THIS card, e.g. {"text": "Aina gets jealous easily. Track jealousy as its own meter?", "kind": "single", "options": ["Yes", "No"], "why": "The description mentions jealousy"} — kinds: single, multi, text ]}`;
+    const out = parseJson(await llm(s, system, user, userId, 1500)) ?? {};
+    const suggested = typeof out.suggestedTemplate === "string" && (getTemplate(out.suggestedTemplate) || out.suggestedTemplate === "blank") ? out.suggestedTemplate : "universal";
+    const sb = out.statusBlock;
+    s.analysis = {
+      summary: typeof out.summary === "string" ? out.summary : `${card.name}.`,
+      suggestedTemplate: suggested,
+      reason: typeof out.reason === "string" ? out.reason : "",
+      statusBlock: sb && sb.found === true ? { found: true, fields: Array.isArray(sb.fields) ? sb.fields.map(String).slice(0, 12) : [] } : null
+    };
+    s.base = opts.base || suggested;
+    const defaults = Array.isArray(out.systems) ? out.systems.map(String).filter((x) => SYSTEMS.some((y) => y.id === x)) : ["needs", "relationships", "money", "skills"];
+    s.rounds = [{ questions: [...coreQuestions(defaults), ...normQuestions(out.followUps, "f1_")], answers: {} }];
+    s.step = "questions";
+  } catch (e) {
+    s.error = `Couldn't read the card: ${e instanceof Error ? e.message : String(e)}`;
+  }
+  await progress(s, null, userId);
+}
+async function builderAnswer(chatId, answers, additions, more, userId) {
+  const s = await sessionFor(chatId, userId);
+  if (!s || !s.rounds.length)
+    throw new Error("No questions to answer.");
+  for (const r of s.rounds)
+    for (const q of r.questions)
+      if (q.id in answers)
+        r.answers[q.id] = answers[q.id];
+  s.additions = additions.filter((a) => a.name.trim());
+  if (more && s.rounds.length < 3) {
+    await progress(s, "Thinking of more questions…", userId);
+    try {
+      const card = await cardText(s.characterId, userId);
+      const user = `${card.text}
+
+${brief(s)}
+
+Ask up to 4 more short questions that would change how the game ruleset is built — things still unclear or worth customising for this card. Don't repeat earlier questions. Reply with JSON: {"followUps": [{"text": "...", "kind": "single|multi|text", "options": ["..."], "why": "..."}]}`;
+      const out = parseJson(await llm(s, "You help set up a game ruleset for a roleplay character card. Reply with JSON only.", user, userId, 1000)) ?? {};
+      const qs = normQuestions(out.followUps, `f${s.rounds.length + 1}_`).slice(0, 4);
+      if (qs.length)
+        s.rounds.push({ questions: qs, answers: {} });
+      else
+        s.error = "No more questions — you can build it now.";
+    } catch (e) {
+      s.error = `Couldn't get more questions: ${e instanceof Error ? e.message : String(e)}`;
+    }
+    await progress(s, null, userId);
+    return;
+  }
+  await draftAll(s, userId);
+}
+async function draftAll(s, userId) {
+  const t = getTemplate(s.base);
+  const systems = chosenSystems(s);
+  const want = (label) => {
+    if (label === "encounters")
+      return systems.has("encounters");
+    if (label === "journal")
+      return systems.has("journal") || systems.has("perks");
+    return true;
+  };
+  const baseOf = (label) => {
+    const y = t?.parts.find((p) => p.label === label)?.yaml ?? null;
+    return y && label === "people" ? withCharacter(y, s.characterName) : y;
+  };
+  const labels = PART_LABELS.filter(want);
+  s.parts = labels.map((label) => ({ label, yaml: "", status: "ok", issues: [] }));
+  const byLabel = (l) => s.parts.find((p) => p.label === l);
+  try {
+    const phaseA = ["core", "stats", "world"];
+    await progress(s, "Drafting the foundations: core, stats, world…", userId);
+    await Promise.all(phaseA.map(async (l) => {
+      byLabel(l).yaml = await draftPart(s, l, baseOf(l), "", userId);
+    }));
+    const phaseB = labels.filter((l) => !phaseA.includes(l));
+    await progress(s, `Drafting ${phaseB.join(", ")}…`, userId);
+    const ctx = contextOf(s.parts);
+    await Promise.all(phaseB.map(async (l) => {
+      byLabel(l).yaml = await draftPart(s, l, baseOf(l), ctx, userId);
+    }));
+    await repair(s, s.parts, userId);
+    buildPreview(s);
+    s.step = "review";
+  } catch (e) {
+    s.error = `Drafting failed: ${e instanceof Error ? e.message : String(e)}`;
+  }
+  await progress(s, null, userId);
+}
+async function builderRedo(chatId, label, note, userId) {
+  const s = await sessionFor(chatId, userId);
+  const part = s?.parts.find((p) => p.label === label);
+  if (!s || !part)
+    throw new Error("Nothing to redo.");
+  await progress(s, `Rewriting ${label}…`, userId);
+  try {
+    const ctx = contextOf(s.parts.filter((p) => p !== part));
+    const t = getTemplate(s.base);
+    part.yaml = await draftPart(s, label, t?.parts.find((p) => p.label === label)?.yaml ?? null, ctx, userId, note || "Write a fresh, better version.", part.yaml);
+    part.changed = true;
+    await repair(s, s.parts, userId);
+    buildPreview(s);
+  } catch (e) {
+    s.error = `Couldn't rewrite ${label}: ${e instanceof Error ? e.message : String(e)}`;
+  }
+  await progress(s, null, userId);
+}
+async function builderFix(chatId, warningId, userId) {
+  const s = await sessionFor(chatId, userId);
+  if (!s)
+    throw new Error("No builder open.");
+  const { ruleset } = check(s.parts);
+  const w = ruleset ? reviewBalance(ruleset).find((x) => x.id === warningId) : undefined;
+  if (!w) {
+    buildPreview(s);
+    emit(s, userId);
+    return;
+  }
+  await builderRedo(chatId, w.part, w.fix, userId);
+}
+async function builderRefine(chatId, request, userId) {
+  const s = await sessionFor(chatId, userId);
+  if (!s || !s.parts.length)
+    throw new Error("Nothing to refine.");
+  s.request = request;
+  await progress(s, "Working out what to change…", userId);
+  try {
+    const all = s.parts.map((p) => `### ${p.label}
+${p.yaml}`).join(`
+
+`);
+    const user = `${brief(s)}
+
+The current ruleset, section by section:
+
+${all}
+
+The player wants: ${request}
+
+Change only what's needed. Reply with JSON: {"summary": "one or two sentences on what you changed", "parts": {"<section label>": "<the whole new YAML for that section>"}} — include only sections you changed. Section labels: ${s.parts.map((p) => p.label).join(", ")}${s.parts.length < PART_LABELS.length ? ` (you may also add: ${PART_LABELS.filter((l) => !s.parts.some((p) => p.label === l)).join(", ")})` : ""}.`;
+    const out = parseJson(await llm(s, SYSTEM_PROMPT, user, userId, 6000)) ?? {};
+    const changed = out.parts && typeof out.parts === "object" ? out.parts : {};
+    for (const p of s.parts)
+      p.changed = false;
+    for (const [label, yaml] of Object.entries(changed)) {
+      if (typeof yaml !== "string" || !PART_LABELS.includes(label))
+        continue;
+      const existing = s.parts.find((p) => p.label === label);
+      if (existing) {
+        existing.yaml = extractYaml(yaml);
+        existing.changed = true;
+      } else
+        s.parts.push({ label, yaml: extractYaml(yaml), status: "ok", issues: [], changed: true });
+    }
+    s.changeSummary = typeof out.summary === "string" ? out.summary : Object.keys(changed).length ? `Changed: ${Object.keys(changed).join(", ")}.` : "The model didn't change anything — try rephrasing.";
+    await repair(s, s.parts, userId);
+    buildPreview(s);
+  } catch (e) {
+    s.error = `Couldn't refine: ${e instanceof Error ? e.message : String(e)}`;
+  }
+  await progress(s, null, userId);
+}
+async function builderBack(chatId, userId) {
+  const s = await sessionFor(chatId, userId);
+  if (!s)
+    return;
+  if (s.step === "review" && s.mode === "build")
+    s.step = "questions";
+  else if (s.step === "questions") {
+    if (s.rounds.length > 1)
+      s.rounds.pop();
+    else
+      s.step = "start";
+  }
+  s.error = null;
+  await save(s, userId);
+  emit(s, userId);
+}
+async function builderClose(chatId, userId) {
+  const characterId = await characterForChat(chatId, userId);
+  if (!characterId)
+    return;
+  sessions.delete(key3(userId, characterId));
+  try {
+    await host().userStorage.delete(path(characterId), userId);
+  } catch {}
+  emit(null, userId);
+}
+async function builderCurrent(chatId, userId) {
+  emit(chatId ? await sessionFor(chatId, userId) : null, userId);
+}
+function labelOf(comment) {
+  return comment.replace(/^\s*(?:\[[^\]]*\]\s*)?warp[-_ ]?ruleset\s*[·:\-–—|]?\s*/i, "").trim().toLowerCase() || "core";
+}
+async function rulesetEntries(characterId, userId) {
+  const c = await host().characters.get(characterId, userId);
+  const entries = [];
+  let rulesetBook = null;
+  for (const bookId of c?.world_book_ids ?? []) {
+    const book = await host().world_books.get(bookId, userId);
+    if (!book)
+      continue;
+    const whole = isRulesetBookName(book.name);
+    if (whole && !rulesetBook)
+      rulesetBook = bookId;
+    for (let offset = 0;offset < 2000; offset += 200) {
+      const page = await host().world_books.entries.list(bookId, { limit: 200, offset, userId });
+      for (const e of page.data)
+        if (whole || isRulesetEntryTitle(e.comment))
+          entries.push({ id: e.id, bookId, label: labelOf(e.comment ?? ""), content: e.content });
+      if (page.data.length < 200)
+        break;
+    }
+  }
+  return { entries, rulesetBook, bookIds: c?.world_book_ids ?? [] };
+}
+async function currentParts(characterId, userId) {
+  const { entries } = await rulesetEntries(characterId, userId);
+  const parts = entries.map((e) => ({ label: e.label, yaml: e.content, status: "ok", issues: [] }));
+  check(parts);
+  return parts;
+}
+async function builderInstall(chatId, userId) {
+  const s = await sessionFor(chatId, userId);
+  if (!s || !s.parts.length)
+    throw new Error("Nothing to install.");
+  const { ruleset } = check(s.parts);
+  if (!ruleset)
+    throw new Error("The ruleset still has errors — fix or redo the sections marked in red first.");
+  await progress(s, "Saving to the lorebook…", userId);
+  try {
+    const { entries, rulesetBook, bookIds } = await rulesetEntries(s.characterId, userId);
+    let bookId = rulesetBook;
+    if (!bookId) {
+      const book = await host().world_books.create({ name: "warp-ruleset", description: `Warp game rules for ${s.characterName}. Warp reads these entries directly; they are never sent to the model.` }, userId);
+      bookId = book.id;
+      await host().characters.update(s.characterId, { world_book_ids: [...bookIds, book.id] }, userId);
+      knownRulesetBookIds.add(book.id);
+    }
+    const used = new Set;
+    let order = 10;
+    for (const p of s.parts) {
+      const hit = entries.find((e) => e.label === p.label && !used.has(e.id));
+      if (hit) {
+        used.add(hit.id);
+        await host().world_books.entries.update(hit.id, { content: p.yaml, disabled: true, order_value: order }, userId);
+      } else {
+        await host().world_books.entries.create(bookId, { comment: `warp-ruleset · ${p.label}`, content: p.yaml, key: [], disabled: true, constant: false, order_value: order }, userId);
+      }
+      order += 10;
+    }
+    for (const e of entries) {
+      if (used.has(e.id))
+        continue;
+      await host().world_books.entries.update(e.id, { content: `# Replaced by the Warp builder on ${new Date().toISOString().slice(0, 10)}.
+`, disabled: true }, userId);
+    }
+    invalidateCharacter(s.characterId);
+    s.step = "done";
+  } catch (e) {
+    s.error = `Couldn't save: ${e instanceof Error ? e.message : String(e)}`;
+  }
+  await progress(s, null, userId);
+}
+
 // src/backend.ts
 spindle.registerInterceptor(interceptor, 60);
 spindle.registerWorldInfoInterceptor(async (ctx) => {
@@ -8945,11 +9862,13 @@ spindle.onFrontendMessage(async (raw, userId) => {
         setActiveChat(userId, msg.chatId);
         await sendSettings(userId);
         await pushState(msg.chatId, userId);
+        await builderCurrent(msg.chatId, userId);
         break;
       }
       case "refresh":
         setActiveChat(userId, msg.chatId);
         await pushState(msg.chatId, userId);
+        await builderCurrent(msg.chatId, userId);
         break;
       case "reload":
         await pushState(msg.chatId, userId, true);
@@ -9040,6 +9959,36 @@ spindle.onFrontendMessage(async (raw, userId) => {
           toast("success", `${decider.id.toUpperCase()} answered "${a.choice}" at ${Math.round(a.confidence * 100)}% confidence in ${ms} ms.`, userId);
         else
           toast("warning", `${decider.id.toUpperCase()} replied in ${ms} ms but gave no usable answer.`, userId);
+        break;
+      }
+      case "builder_open":
+        await builderOpen(msg.chatId, msg.mode, userId);
+        break;
+      case "builder_start":
+        await builderStart(msg.chatId, { connectionId: msg.connectionId, creative: msg.creative, base: msg.base }, userId);
+        break;
+      case "builder_answer":
+        await builderAnswer(msg.chatId, msg.answers, msg.additions, msg.more, userId);
+        break;
+      case "builder_redo":
+        await builderRedo(msg.chatId, msg.part, msg.note, userId);
+        break;
+      case "builder_fix":
+        await builderFix(msg.chatId, msg.warning, userId);
+        break;
+      case "builder_refine":
+        await builderRefine(msg.chatId, msg.request, userId);
+        break;
+      case "builder_back":
+        await builderBack(msg.chatId, userId);
+        break;
+      case "builder_close":
+        await builderClose(msg.chatId, userId);
+        break;
+      case "builder_install": {
+        await builderInstall(msg.chatId, userId);
+        await pushState(msg.chatId, userId, true);
+        toast("success", "Ruleset saved to the character's warp-ruleset lorebook.", userId);
         break;
       }
       case "dismiss_suggestion": {

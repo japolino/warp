@@ -86,8 +86,9 @@ export function warmthOf(r: Ruleset, s: GameState): number {
 
 /** Comfortable warmth range for a temperature. */
 export function warmthNeeded(temp: number): { min: number; max: number } {
+  // Wide enough that ordinary clothes are fine at room temperature.
   const ideal = Math.max(0, Math.round((20 - temp) * 0.9));
-  return { min: Math.max(0, ideal - 5), max: ideal + 8 };
+  return { min: Math.max(0, ideal - 6), max: ideal + 12 };
 }
 
 export function revealOf(r: Ruleset, s: GameState): number {

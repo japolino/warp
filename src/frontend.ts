@@ -1,10 +1,11 @@
 import type { SpindleFloatWidgetHandle, SpindleFrontendContext } from "lumiverse-spindle-types";
 import type {
-  BackendToFrontend, FrontendToBackend, RecordView, RulesetStatus, Settings, TemplateInfo,
+  BackendToFrontend, BuilderAnswer, BuilderSession, FrontendToBackend, RecordView, RulesetStatus, Settings, TemplateInfo,
 } from "./shared/protocol.js";
 import { DEFAULT_SETTINGS } from "./shared/protocol.js";
 import { STYLES } from "./frontend/styles.js";
 import { attachedBox, edgeForDrop, PAD, PANEL_W, PILL, type Box, type Edge, type Viewport } from "./frontend/overlay-layout.js";
+import { emptyDraft, renderBuilder, renderBuilderCta, type BuilderDraft } from "./frontend/builder-ui.js";
 import { esc, renderChips, renderChoices, renderHud, renderJournal, renderMap, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
 
 type StateMsg = Extract<BackendToFrontend, { type: "state" }>;
@@ -31,6 +32,8 @@ export function setup(ctx: SpindleFrontendContext) {
   let templates: TemplateInfo[] = [];
   let connections: { id: string; name: string }[] = [];
   let jevKeySet = false;
+  let builder: BuilderSession | null = null;
+  let bDraft: BuilderDraft = emptyDraft();
   let busy = { chatId: "", on: false, label: "" };
   let editingBar: string | null = null;
   let drawerView: "sheet" | "map" | "journal" | "rules" | "settings" = "sheet";
@@ -282,8 +285,10 @@ export function setup(ctx: SpindleFrontendContext) {
       body = renderMap(state?.map ?? null);
     } else if (drawerView === "journal") {
       body = renderJournal(state?.hud ?? null, state?.records ?? []);
+    } else if (drawerView === "rules" && builder) {
+      body = renderBuilder(builder, bDraft, templates, connections, status.state !== "none");
     } else if (drawerView === "rules") {
-      body = renderRulesetCard(status, hasChat) + `<div class="warp-card"><h3>Writing rules</h3><p>Rules live in entries titled <b>warp-ruleset · …</b> (or any lorebook named <b>warp-ruleset</b>). Each entry is YAML; entries merge together. Warp keeps them out of the prompt automatically.</p></div>`;
+      body = renderBuilderCta(status.state !== "none", hasChat) + renderRulesetCard(status, hasChat) + `<div class="warp-card"><h3>Writing rules</h3><p>Rules live in entries titled <b>warp-ruleset · …</b> (or any lorebook named <b>warp-ruleset</b>). Each entry is YAML; entries merge together. Warp keeps them out of the prompt automatically.</p></div>`;
     } else {
       body = renderSettings(settings, state?.status ?? null, connections, jevKeySet);
     }
@@ -383,7 +388,8 @@ export function setup(ctx: SpindleFrontendContext) {
     modal.root.addEventListener("click", (e) => {
       const btn = (e.target as Element).closest<HTMLElement>("[data-template]");
       if (!btn) return;
-      send({ type: "install_template", chatId: id, templateId: btn.dataset.template! });
+      if (btn.dataset.template === "__ai") { drawerView = "rules"; tab.activate(); send({ type: "builder_open", chatId: id, mode: "build" }); }
+      else send({ type: "install_template", chatId: id, templateId: btn.dataset.template! });
       modal.dismiss();
     });
   }
@@ -400,10 +406,108 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   // ───────── events: HUD & drawer ─────────
+  // ───────── AI builder ─────────
+  function builderAnswers(): Record<string, BuilderAnswer> {
+    const out: Record<string, BuilderAnswer> = {};
+    for (const r of builder?.rounds ?? []) for (const q of r.questions) {
+      const v = bDraft.answers[q.id] ?? r.answers[q.id] ?? q.default;
+      if (v !== undefined) out[q.id] = v;
+    }
+    return out;
+  }
+
+  function currentAnswer(id: string): BuilderAnswer | undefined {
+    for (const r of builder?.rounds ?? []) for (const q of r.questions) if (q.id === id) return bDraft.answers[id] ?? r.answers[id] ?? q.default;
+    return undefined;
+  }
+
+  function onBuilderClick(t: Element): boolean {
+    const opt = t.closest<HTMLElement>("[data-bq-opt]");
+    if (opt) {
+      const id = opt.dataset.bq!, v = opt.dataset.bqOpt!;
+      if (opt.dataset.bqKind === "multi") {
+        const cur = currentAnswer(id);
+        const set = new Set(Array.isArray(cur) ? cur : []);
+        if (set.has(v)) set.delete(v); else set.add(v);
+        bDraft.answers[id] = [...set];
+      } else bDraft.answers[id] = v;
+      renderDrawer();
+      return true;
+    }
+    const seg = t.closest<HTMLElement>('[data-bset="creative"]');
+    if (seg) { bDraft.creative = seg.dataset.v === "1"; renderDrawer(); return true; }
+    const b = t.closest<HTMLElement>("[data-b]");
+    if (!b) return false;
+    const cid = chatId();
+    if (!cid) return true;
+    switch (b.dataset.b) {
+      case "open-build": drawerView = "rules"; send({ type: "builder_open", chatId: cid, mode: "build" }); break;
+      case "open-refine": drawerView = "rules"; send({ type: "builder_open", chatId: cid, mode: "refine" }); break;
+      case "start": send({ type: "builder_start", chatId: cid, connectionId: bDraft.connectionId, creative: bDraft.creative, base: bDraft.base || undefined }); break;
+      case "more": case "build":
+        send({ type: "builder_answer", chatId: cid, answers: builderAnswers(), additions: bDraft.additions, more: b.dataset.b === "more" });
+        break;
+      case "back": send({ type: "builder_back", chatId: cid }); break;
+      case "close":
+        void (async () => {
+          if (builder && builder.step !== "done" && builder.step !== "start") {
+            const res = await ctx.ui.showConfirm({ title: "Close the builder?", message: "The draft is discarded. Your current ruleset isn't touched.", confirmLabel: "Discard draft", variant: "warning" });
+            if (!res.confirmed) return;
+          }
+          send({ type: "builder_close", chatId: cid });
+        })();
+        break;
+      case "install":
+        void (async () => {
+          if (b.dataset.replacing === "1" && builder?.mode === "build") {
+            const res = await ctx.ui.showConfirm({ title: "Replace the current ruleset?", message: "The character's existing warp-ruleset sections are overwritten with this draft. Game state already recorded in chats is kept.", confirmLabel: "Replace", variant: "warning" });
+            if (!res.confirmed) return;
+          }
+          send({ type: "builder_install", chatId: cid });
+        })();
+        break;
+      case "refine":
+        if (bDraft.refine.trim()) { send({ type: "builder_refine", chatId: cid, request: bDraft.refine.trim() }); bDraft.refine = ""; }
+        break;
+      case "chip": bDraft.refine = b.dataset.text ?? ""; renderDrawer(); break;
+      case "fix": send({ type: "builder_fix", chatId: cid, warning: b.dataset.w! }); break;
+      case "redo": {
+        const part = b.dataset.part!;
+        send({ type: "builder_redo", chatId: cid, part, note: bDraft.notes[part] || undefined });
+        delete bDraft.notes[part];
+        break;
+      }
+      case "add-row": bDraft.additions.push({ name: "", kind: "skill", note: "" }); renderDrawer(); break;
+      case "add-remove": bDraft.additions.splice(Number(b.dataset.i), 1); renderDrawer(); break;
+      default: return false;
+    }
+    return true;
+  }
+
+  /** Typing into builder fields updates drafts without re-rendering (keeps focus). */
+  function onBuilderInput(t: HTMLInputElement): boolean {
+    if (t.dataset.bq && (t.dataset.bqKind === "text" || t.dataset.bqKind === "scale")) {
+      bDraft.answers[t.dataset.bq] = t.dataset.bqKind === "scale" ? Number(t.value) : t.value;
+      return true;
+    }
+    if (t.dataset.badd !== undefined) {
+      const row = bDraft.additions[Number(t.dataset.badd)];
+      const field = t.dataset.baddField as "name" | "kind" | "note";
+      if (row) (row as unknown as Record<string, string>)[field] = t.value;
+      return true;
+    }
+    if (t.dataset.bnote) { bDraft.notes[t.dataset.bnote] = t.value; return true; }
+    if (t.dataset.brefine !== undefined) { bDraft.refine = t.value; return true; }
+    if (t.dataset.bset === "base") { bDraft.base = t.value; return true; }
+    if (t.dataset.bset === "connectionId") { bDraft.connectionId = t.value; return true; }
+    return false;
+  }
+
   function onPanelClick(e: Event) {
     const t = e.target as Element;
     const view = t.closest<HTMLElement>("[data-view]");
     if (view) { drawerView = view.dataset.view as typeof drawerView; renderDrawer(); return; }
+    if (onBuilderClick(t)) return;
     const go = t.closest<HTMLElement>("[data-go]");
     if (go) { act(`go:${go.dataset.go}`); return; }
     const jump = t.closest<HTMLElement>("[data-jump]");
@@ -450,6 +554,7 @@ export function setup(ctx: SpindleFrontendContext) {
   }
   function onPanelInput(e: Event) {
     const t = e.target as HTMLInputElement;
+    if (onBuilderInput(t)) return;
     // Slider and number box share the stat's real range; keep them in step both ways.
     if (t.dataset.range) {
       const num = t.parentElement?.querySelector<HTMLInputElement>("[data-num]");
@@ -461,6 +566,7 @@ export function setup(ctx: SpindleFrontendContext) {
   }
   function onPanelChange(e: Event) {
     const t = e.target as HTMLInputElement | HTMLSelectElement;
+    if (onBuilderInput(t as HTMLInputElement)) return;
     if (t.dataset.wearSlot) {
       const cid = chatId();
       if (cid && t.value) send({ type: "wear", chatId: cid, slot: t.dataset.wearSlot, item: t.value === "__off" ? null : t.value });
@@ -594,6 +700,18 @@ export function setup(ctx: SpindleFrontendContext) {
         busy = { chatId: m.chatId, on: m.busy, label: m.busy ? m.label ?? busy.label ?? "" : "" };
         placeChoices(true);
         break;
+      case "builder": {
+        const prev = builder;
+        builder = m.session;
+        // A different session (or none): start the drafts fresh.
+        if (!builder || !prev || prev.characterId !== builder.characterId || prev.mode !== builder.mode || (prev.step !== builder.step && builder.step === "start")) {
+          const keep = { creative: bDraft.creative, connectionId: bDraft.connectionId };
+          bDraft = { ...emptyDraft(), ...keep, ...(builder ? { additions: builder.additions.map((a) => ({ ...a })) } : {}) };
+        }
+        if (builder && prev?.step !== builder.step) bDraft.notes = {};
+        renderDrawer();
+        break;
+      }
       case "settings":
         settings = m.settings;
         templates = m.templates;

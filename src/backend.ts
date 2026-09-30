@@ -12,6 +12,7 @@ import { connectionsFor, getActiveChat, lastStates, pushState, schedulePush, set
 import { interceptor, onGenerationEnded, onGenerationStarted } from "./backend/turn.js";
 import { isRulesetEntryTitle } from "./engine/loader.js";
 import { getDecider, JEV_KEY } from "./backend/deciders.js";
+import { builderAnswer, builderBack, builderClose, builderCurrent, builderFix, builderInstall, builderOpen, builderRedo, builderRefine, builderStart } from "./backend/builder.js";
 
 declare const spindle: SpindleAPI;
 
@@ -145,11 +146,13 @@ spindle.onFrontendMessage(async (raw, userId) => {
         setActiveChat(userId, msg.chatId);
         await sendSettings(userId);
         await pushState(msg.chatId, userId);
+        await builderCurrent(msg.chatId, userId);
         break;
       }
       case "refresh":
         setActiveChat(userId, msg.chatId);
         await pushState(msg.chatId, userId);
+        await builderCurrent(msg.chatId, userId);
         break;
       case "reload":
         await pushState(msg.chatId, userId, true);
@@ -236,6 +239,21 @@ spindle.onFrontendMessage(async (raw, userId) => {
         const ms = Date.now() - t0;
         if (a?.type === "choice") toast("success", `${decider.id.toUpperCase()} answered "${a.choice}" at ${Math.round(a.confidence * 100)}% confidence in ${ms} ms.`, userId);
         else toast("warning", `${decider.id.toUpperCase()} replied in ${ms} ms but gave no usable answer.`, userId);
+        break;
+      }
+
+      case "builder_open": await builderOpen(msg.chatId, msg.mode, userId); break;
+      case "builder_start": await builderStart(msg.chatId, { connectionId: msg.connectionId, creative: msg.creative, base: msg.base }, userId); break;
+      case "builder_answer": await builderAnswer(msg.chatId, msg.answers, msg.additions, msg.more, userId); break;
+      case "builder_redo": await builderRedo(msg.chatId, msg.part, msg.note, userId); break;
+      case "builder_fix": await builderFix(msg.chatId, msg.warning, userId); break;
+      case "builder_refine": await builderRefine(msg.chatId, msg.request, userId); break;
+      case "builder_back": await builderBack(msg.chatId, userId); break;
+      case "builder_close": await builderClose(msg.chatId, userId); break;
+      case "builder_install": {
+        await builderInstall(msg.chatId, userId);
+        await pushState(msg.chatId, userId, true);
+        toast("success", "Ruleset saved to the character's warp-ruleset lorebook.", userId);
         break;
       }
 

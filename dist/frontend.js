@@ -198,6 +198,39 @@ var STYLES = `
 .warp-timeline-row:hover { background: var(--warp-fill-subtle); }
 .warp-timeline-changes { font-size: 11.5px; }
 
+/* ───────── AI builder ───────── */
+.warp-builder { display: flex; flex-direction: column; gap: 10px; }
+.warp-builder-head { display: flex; justify-content: space-between; align-items: flex-start; }
+.warp-steps { display: flex; gap: 4px; list-style: none; margin: 0; padding: 0; counter-reset: s; }
+.warp-steps li { flex: 1; font-size: 11px; text-align: center; padding: 4px 2px; border-bottom: 3px solid var(--warp-border); color: var(--warp-dim); counter-increment: s; }
+.warp-steps li::before { content: counter(s) ". "; }
+.warp-steps li.done { border-color: color-mix(in srgb, var(--warp-accent) 55%, transparent); color: var(--warp-muted); }
+.warp-steps li.now { border-color: var(--warp-accent); color: var(--warp-text); font-weight: 600; }
+.warp-q { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; border-top: 1px solid var(--warp-border); }
+.warp-q:first-of-type { border-top: none; }
+.warp-q-text { font-weight: 600; }
+.warp-q-why { font-size: 12px; margin-top: -4px; }
+.warp-opt[aria-pressed=true] { background: var(--warp-accent); color: var(--warp-accent-fg); border-color: transparent; }
+.warp-scale { width: 100%; accent-color: var(--warp-accent); }
+.warp-scale-labels { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--warp-dim); }
+.warp-add-row { display: grid; grid-template-columns: 1fr 86px 1.4fr auto; gap: 4px; align-items: center; }
+.warp-field { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--warp-muted); }
+.warp-seg { display: flex; border: 1px solid var(--warp-border); border-radius: var(--warp-radius); overflow: hidden; }
+.warp-seg-btn { flex: 1; font: inherit; font-size: 12.5px; padding: 7px 8px; background: transparent; border: none; color: var(--warp-muted); cursor: pointer; }
+.warp-seg-btn[aria-pressed=true] { background: var(--warp-accent); color: var(--warp-accent-fg); }
+.warp-warning-row { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; font-size: 12.5px; }
+.warp-preview-grid { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.warp-preview-hud { border: 1px solid var(--warp-border); border-radius: var(--warp-radius); max-height: 320px; overflow: auto; }
+.warp-preview .warp-choices { margin-top: 0; border-top: none; padding-top: 0; }
+.warp-part { border-top: 1px solid var(--warp-border); padding: 6px 0; }
+.warp-part > summary { cursor: pointer; }
+.warp-yaml { max-height: 240px; overflow: auto; font-size: 11.5px; background: var(--warp-fill-subtle); border-radius: 6px; padding: 8px; white-space: pre; }
+.warp-busy-card { border-color: var(--warp-accent); }
+.warp-error-card { border-color: var(--warp-bad); }
+.warp-builder-foot { justify-content: space-between; }
+.warp-builder-cta { border-color: color-mix(in srgb, var(--warp-accent) 50%, transparent); }
+.warp-btn[disabled] { opacity: .5; cursor: not-allowed; }
+
 /* ───────── floating status overlay ───────── */
 .warp-overlay {
   --warp-good: #34b89a; --warp-warn: #d9a441; --warp-bad: #e05a7e; --warp-info: #6f8cff;
@@ -526,6 +559,7 @@ function renderRulesetCard(s, hasChat) {
 function renderTemplatePicker(templates) {
   return `<div class="warp-modal">
     <p style="margin:0;color:var(--warp-muted)">Pick a starting point. Warp creates a <b>warp-ruleset</b> lorebook on this character, split into readable entries (stats, people, world, actions, rules) that you can edit like any lorebook. It's never sent to the model.</p>
+    <button class="warp-card warp-template warp-builder-cta" data-template="__ai"><h3>✨ Build with AI</h3><p>Reads this character's card, asks you a few questions, and drafts a ruleset made for it — previewed and balance-checked before anything is saved.</p></button>
     ${templates.map((t) => `<button class="warp-card warp-template" data-template="${esc(t.id)}"><h3>${esc(t.name)}</h3><p>${esc(t.blurb)}</p></button>`).join("")}
   </div>`;
 }
@@ -595,6 +629,167 @@ function renderSettings(s, status, connections, jevKeySet = false) {
   </div>`;
 }
 
+// src/frontend/builder-ui.ts
+function emptyDraft() {
+  return { answers: {}, additions: [], notes: {}, refine: "", base: "", creative: false, connectionId: "" };
+}
+var KINDS = ["skill", "meter", "item", "place", "person", "action", "rule", "other"];
+var REFINE_CHIPS = [
+  "Make it harder",
+  "Make it more forgiving",
+  "Add more places to go",
+  "Add an encounter that fits the card",
+  "Give the main character a daily schedule",
+  "Add a skill for something the card mentions"
+];
+function renderBuilderCta(hasRuleset, hasChat) {
+  if (!hasChat)
+    return "";
+  return `<div class="warp-card warp-builder-cta">
+    <h3>✨ Build with AI</h3>
+    <p>Warp reads the card, asks you a few questions, and drafts a ruleset that fits — checked, balance-reviewed and previewed before anything is saved.</p>
+    <div class="warp-row">
+      <button class="warp-btn warp-btn-primary" data-b="open-build">${hasRuleset ? "Rebuild with AI" : "Build with AI"}</button>
+      ${hasRuleset ? `<button class="warp-btn" data-b="open-refine">Refine with AI</button>` : ""}
+    </div>
+  </div>`;
+}
+function steps(s) {
+  const list = s.mode === "refine" ? ["Describe", "Review", "Install"] : ["Read", "Ask", "Review", "Install"];
+  const at = s.mode === "refine" ? s.step === "done" ? 2 : 1 : s.step === "start" ? 0 : s.step === "questions" ? 1 : s.step === "review" ? 2 : 3;
+  return `<ol class="warp-steps">${list.map((l, i) => `<li class="${i < at ? "done" : i === at ? "now" : ""}">${esc(l)}</li>`).join("")}</ol>`;
+}
+function question(q, a) {
+  const val = a ?? q.default;
+  const why = q.why ? `<div class="warp-dim warp-q-why">${esc(q.why)}</div>` : "";
+  let body = "";
+  if (q.kind === "single" || q.kind === "multi") {
+    const chosen = new Set(Array.isArray(val) ? val : val !== undefined ? [String(val)] : []);
+    body = `<div class="warp-tags">${(q.options ?? []).map((o) => `<button class="warp-tag warp-opt" data-bq="${esc(q.id)}" data-bq-kind="${q.kind}" data-bq-opt="${esc(o.id)}" aria-pressed="${chosen.has(o.id)}">${esc(o.label)}</button>`).join("")}</div>`;
+  } else if (q.kind === "scale") {
+    const v = typeof val === "number" ? val : Number(val ?? 3);
+    const labels = q.options ?? [];
+    body = `<input type="range" min="1" max="5" step="1" value="${v}" data-bq="${esc(q.id)}" data-bq-kind="scale" class="warp-scale" aria-label="${esc(q.text)}">
+      <div class="warp-scale-labels">${labels.map((o) => `<span>${esc(o.label)}</span>`).join("")}</div>`;
+  } else {
+    body = `<textarea class="warp-input" rows="2" data-bq="${esc(q.id)}" data-bq-kind="text" placeholder="Your answer…">${esc(typeof val === "string" ? val : "")}</textarea>`;
+  }
+  return `<div class="warp-q${q.core ? " core" : ""}"><div class="warp-q-text">${esc(q.text)}</div>${why}${body}</div>`;
+}
+function additions(d) {
+  const rows = d.additions.map((a, i) => `<div class="warp-add-row">
+      <input class="warp-input" value="${esc(a.name)}" placeholder="Name (e.g. Cooking)" data-badd="${i}" data-badd-field="name">
+      <select class="warp-select" data-badd="${i}" data-badd-field="kind">${KINDS.map((k) => `<option value="${k}"${a.kind === k ? " selected" : ""}>${k}</option>`).join("")}</select>
+      <input class="warp-input" value="${esc(a.note)}" placeholder="How it should work (optional)" data-badd="${i}" data-badd-field="note">
+      <button class="warp-btn warp-btn-ghost" data-b="add-remove" data-i="${i}" aria-label="Remove">×</button>
+    </div>`).join("");
+  return `<div class="warp-card">
+    <h3>Add your own</h3>
+    <p>Skills, meters, items, places, people, actions or rules you want in — in your own words. They'll be built in properly.</p>
+    ${rows}
+    <div class="warp-row"><button class="warp-btn" data-b="add-row">+ Add something</button></div>
+  </div>`;
+}
+function renderBuilder(s, d, templates, connections, hasRuleset) {
+  const busy = !!s.busy;
+  const dis = busy ? " disabled" : "";
+  const head = `<div class="warp-builder-head">
+      <div><div class="warp-eyebrow"><span>✨ ${s.mode === "refine" ? "Refine" : "Build"} with AI</span></div><b>${esc(s.characterName)}</b></div>
+      <button class="warp-btn warp-btn-ghost" data-b="close" title="Close the builder (discards the draft)" aria-label="Close">×</button>
+    </div>${steps(s)}`;
+  const status = busy ? `<div class="warp-card warp-busy-card"><div class="warp-status-line"><span class="warp-spinner"></span>${esc(s.busy)}</div><p>This can take a minute — you can keep chatting; the drawer will update when it's done.</p></div>` : s.error ? `<div class="warp-card warp-error-card"><p class="warp-tone-bad">${esc(s.error)}</p></div>` : "";
+  let body = "";
+  if (s.step === "start") {
+    body = `<div class="warp-card">
+      <h3>How should it build?</h3>
+      <label class="warp-field"><span>Starting point</span>
+        <select class="warp-select" data-bset="base">
+          <option value=""${!d.base ? " selected" : ""}>Let the AI pick after reading the card</option>
+          ${templates.map((t) => `<option value="${esc(t.id)}"${d.base === t.id ? " selected" : ""}>${esc(t.name)}</option>`).join("")}
+          <option value="blank"${d.base === "blank" ? " selected" : ""}>Blank — from scratch</option>
+        </select></label>
+      <div class="warp-seg" role="radiogroup" aria-label="Style">
+        <button class="warp-seg-btn" data-bset="creative" data-v="0" aria-pressed="${!d.creative}">Stay close to the template</button>
+        <button class="warp-seg-btn" data-bset="creative" data-v="1" aria-pressed="${d.creative}">Get creative</button>
+      </div>
+      <label class="warp-field"><span>Model</span>
+        <select class="warp-select" data-bset="connectionId">
+          <option value="">Same as the chat</option>
+          ${connections.map((c) => `<option value="${esc(c.id)}"${d.connectionId === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("")}
+        </select></label>
+      <p>A strong model gives better rulesets. Nothing is saved until you install it at the end.</p>
+      <div class="warp-row"><button class="warp-btn warp-btn-primary" data-b="start"${dis}>Read the card →</button></div>
+    </div>`;
+  } else if (s.step === "questions") {
+    const a = s.analysis;
+    const analysis = a ? `<div class="warp-card">
+        <h3>What I read</h3>
+        <p>${esc(a.summary)}</p>
+        <p><b>Starting from:</b> ${esc(templates.find((t) => t.id === s.base)?.name ?? (s.base === "blank" ? "Blank" : s.base))}${s.base === a.suggestedTemplate && a.reason ? ` — ${esc(a.reason)}` : ""}</p>
+        ${a.statusBlock?.found ? `<p class="warp-tone-warn">This card prints its own status block (${esc(a.statusBlock.fields.join(", ") || "stats")}). Warp will track those properly and tell the narrator to stop printing it.</p>` : ""}
+      </div>` : "";
+    const rounds = s.rounds.map((r, i) => `<div class="warp-card">
+        <h3>${i === 0 ? "A few questions" : "A few more"}</h3>
+        ${r.questions.map((q) => question(q, d.answers[q.id] ?? r.answers[q.id])).join("")}
+      </div>`).join("");
+    body = `${analysis}${rounds}${additions(d)}
+      <div class="warp-row warp-builder-foot">
+        <button class="warp-btn warp-btn-ghost" data-b="back"${dis}>← Back</button>
+        ${s.rounds.length < 3 ? `<button class="warp-btn" data-b="more"${dis}>Ask me more</button>` : ""}
+        <button class="warp-btn warp-btn-primary" data-b="build"${dis}>Build it →</button>
+      </div>`;
+  } else if (s.step === "review") {
+    const p = s.preview;
+    const errors = s.parts.filter((x) => x.status === "error").length;
+    const summary = `<div class="warp-card">
+        <h3>${s.mode === "refine" && s.changeSummary ? "What changed" : "The draft"}</h3>
+        ${s.changeSummary ? `<p>${esc(s.changeSummary)}</p>` : ""}
+        <p>${esc(p?.summary ?? "The draft doesn't run yet — see the sections marked in red.")}</p>
+        ${p?.warnings.length ? `<div class="warp-issues">${p.warnings.map((w) => `<div class="warp-warning-row"><span class="warp-tone-warn">!</span><span>${esc(w.text)}</span><button class="warp-btn warp-mini" data-b="fix" data-w="${esc(w.id)}"${dis}>Fix</button></div>`).join("")}</div>` : p ? `<p class="warp-tone-good">No balance problems found.</p>` : ""}
+      </div>`;
+    const preview = p?.hud ? `<details class="warp-card warp-preview" open><summary><b>Preview</b> <span class="warp-dim">— the sidebar and choices at the start</span></summary>
+        <div class="warp-preview-grid"><div class="warp-preview-hud">${renderHud(p.hud, { editing: null, compact: true })}</div>
+        <div class="warp-choices">${renderChoices(p.choices, { showOdds: true, hotkeys: false, busy: false })}</div></div>
+      </details>` : "";
+    const parts = `<div class="warp-card"><h3>Sections</h3>
+      ${s.parts.map((x) => {
+      const badge = x.status === "ok" ? `<span class="warp-tone-good">✓</span>` : x.status === "warn" ? `<span class="warp-tone-warn">! ${x.issues.length}</span>` : `<span class="warp-tone-bad">✕ ${x.issues.filter((i) => i.level === "error").length}</span>`;
+      return `<details class="warp-part"><summary>${badge} <b>${esc(x.label)}</b>${x.changed ? ` <span class="warp-here">changed</span>` : ""} <span class="warp-dim">${esc(countLine(x.yaml))}</span></summary>
+          ${x.issues.length ? `<div class="warp-issues">${x.issues.slice(0, 8).map((i) => `<div class="warp-issue"><span class="warp-tone-${i.level === "error" ? "bad" : "warn"}">${i.level === "error" ? "✕" : "!"}</span><span>${esc(i.message)}</span><span class="warp-issue-where">${esc(i.where)}</span></div>`).join("")}</div>` : ""}
+          <pre class="warp-yaml">${esc(x.yaml)}</pre>
+          <div class="warp-row">
+            <input class="warp-input" style="flex:1" placeholder="What should change in ${esc(x.label)}? (optional)" data-bnote="${esc(x.label)}" value="${esc(d.notes[x.label] ?? "")}">
+            <button class="warp-btn" data-b="redo" data-part="${esc(x.label)}"${dis}>Redo</button>
+          </div>
+        </details>`;
+    }).join("")}
+    </div>`;
+    const refine = `<div class="warp-card">
+        <h3>Change something</h3>
+        <div class="warp-tags">${REFINE_CHIPS.map((c) => `<button class="warp-tag" data-b="chip" data-text="${esc(c)}">${esc(c)}</button>`).join("")}</div>
+        <textarea class="warp-input" rows="2" data-brefine placeholder="e.g. Add a cooking skill Aina is bad at, and a kitchen at home">${esc(d.refine)}</textarea>
+        <div class="warp-row"><button class="warp-btn" data-b="refine"${dis}>Apply change</button></div>
+      </div>`;
+    body = `${summary}${preview}${parts}${refine}
+      <div class="warp-row warp-builder-foot">
+        ${s.mode === "build" ? `<button class="warp-btn warp-btn-ghost" data-b="back"${dis}>← Back to questions</button>` : ""}
+        <button class="warp-btn warp-btn-primary" data-b="install" data-replacing="${hasRuleset ? 1 : 0}"${errors || busy ? " disabled" : ""} title="${errors ? "Fix or redo the sections marked in red first" : ""}">${s.mode === "refine" ? "Save changes" : "Install to lorebook"}</button>
+      </div>`;
+  } else {
+    body = `<div class="warp-card">
+      <h3 class="warp-tone-good">✓ Saved</h3>
+      <p>The ruleset is in ${esc(s.characterName)}'s <b>warp-ruleset</b> lorebook and running in this chat. You can refine it any time.</p>
+      <div class="warp-row"><button class="warp-btn warp-btn-primary" data-b="close">Done</button><button class="warp-btn" data-b="open-refine">Refine it</button></div>
+    </div>`;
+  }
+  return `<div class="warp-builder">${head}${status}${body}</div>`;
+}
+function countLine(yaml) {
+  const lines = yaml.split(`
+`).filter((l) => l.trim() && !l.trim().startsWith("#")).length;
+  return `${lines} lines`;
+}
+
 // src/frontend.ts
 var CLEANUP_KEY = "__warpCleanup";
 var ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><circle cx="8.5" cy="8.5" r="1.3" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/></svg>`;
@@ -618,6 +813,8 @@ function setup(ctx) {
   let templates = [];
   let connections = [];
   let jevKeySet = false;
+  let builder = null;
+  let bDraft = emptyDraft();
   let busy = { chatId: "", on: false, label: "" };
   let editingBar = null;
   let drawerView = "sheet";
@@ -879,8 +1076,10 @@ function setup(ctx) {
       body = renderMap(state?.map ?? null);
     } else if (drawerView === "journal") {
       body = renderJournal(state?.hud ?? null, state?.records ?? []);
+    } else if (drawerView === "rules" && builder) {
+      body = renderBuilder(builder, bDraft, templates, connections, status.state !== "none");
     } else if (drawerView === "rules") {
-      body = renderRulesetCard(status, hasChat) + `<div class="warp-card"><h3>Writing rules</h3><p>Rules live in entries titled <b>warp-ruleset · …</b> (or any lorebook named <b>warp-ruleset</b>). Each entry is YAML; entries merge together. Warp keeps them out of the prompt automatically.</p></div>`;
+      body = renderBuilderCta(status.state !== "none", hasChat) + renderRulesetCard(status, hasChat) + `<div class="warp-card"><h3>Writing rules</h3><p>Rules live in entries titled <b>warp-ruleset · …</b> (or any lorebook named <b>warp-ruleset</b>). Each entry is YAML; entries merge together. Warp keeps them out of the prompt automatically.</p></div>`;
     } else {
       body = renderSettings(settings, state?.status ?? null, connections, jevKeySet);
     }
@@ -991,7 +1190,12 @@ function setup(ctx) {
       const btn = e.target.closest("[data-template]");
       if (!btn)
         return;
-      send({ type: "install_template", chatId: id, templateId: btn.dataset.template });
+      if (btn.dataset.template === "__ai") {
+        drawerView = "rules";
+        tab.activate();
+        send({ type: "builder_open", chatId: id, mode: "build" });
+      } else
+        send({ type: "install_template", chatId: id, templateId: btn.dataset.template });
       modal.dismiss();
     });
   }
@@ -1007,6 +1211,153 @@ function setup(ctx) {
     if (res.confirmed)
       openPicker();
   }
+  function builderAnswers() {
+    const out = {};
+    for (const r of builder?.rounds ?? [])
+      for (const q of r.questions) {
+        const v = bDraft.answers[q.id] ?? r.answers[q.id] ?? q.default;
+        if (v !== undefined)
+          out[q.id] = v;
+      }
+    return out;
+  }
+  function currentAnswer(id) {
+    for (const r of builder?.rounds ?? [])
+      for (const q of r.questions)
+        if (q.id === id)
+          return bDraft.answers[id] ?? r.answers[id] ?? q.default;
+    return;
+  }
+  function onBuilderClick(t) {
+    const opt = t.closest("[data-bq-opt]");
+    if (opt) {
+      const id = opt.dataset.bq, v = opt.dataset.bqOpt;
+      if (opt.dataset.bqKind === "multi") {
+        const cur = currentAnswer(id);
+        const set = new Set(Array.isArray(cur) ? cur : []);
+        if (set.has(v))
+          set.delete(v);
+        else
+          set.add(v);
+        bDraft.answers[id] = [...set];
+      } else
+        bDraft.answers[id] = v;
+      renderDrawer();
+      return true;
+    }
+    const seg = t.closest('[data-bset="creative"]');
+    if (seg) {
+      bDraft.creative = seg.dataset.v === "1";
+      renderDrawer();
+      return true;
+    }
+    const b = t.closest("[data-b]");
+    if (!b)
+      return false;
+    const cid = chatId();
+    if (!cid)
+      return true;
+    switch (b.dataset.b) {
+      case "open-build":
+        drawerView = "rules";
+        send({ type: "builder_open", chatId: cid, mode: "build" });
+        break;
+      case "open-refine":
+        drawerView = "rules";
+        send({ type: "builder_open", chatId: cid, mode: "refine" });
+        break;
+      case "start":
+        send({ type: "builder_start", chatId: cid, connectionId: bDraft.connectionId, creative: bDraft.creative, base: bDraft.base || undefined });
+        break;
+      case "more":
+      case "build":
+        send({ type: "builder_answer", chatId: cid, answers: builderAnswers(), additions: bDraft.additions, more: b.dataset.b === "more" });
+        break;
+      case "back":
+        send({ type: "builder_back", chatId: cid });
+        break;
+      case "close":
+        (async () => {
+          if (builder && builder.step !== "done" && builder.step !== "start") {
+            const res = await ctx.ui.showConfirm({ title: "Close the builder?", message: "The draft is discarded. Your current ruleset isn't touched.", confirmLabel: "Discard draft", variant: "warning" });
+            if (!res.confirmed)
+              return;
+          }
+          send({ type: "builder_close", chatId: cid });
+        })();
+        break;
+      case "install":
+        (async () => {
+          if (b.dataset.replacing === "1" && builder?.mode === "build") {
+            const res = await ctx.ui.showConfirm({ title: "Replace the current ruleset?", message: "The character's existing warp-ruleset sections are overwritten with this draft. Game state already recorded in chats is kept.", confirmLabel: "Replace", variant: "warning" });
+            if (!res.confirmed)
+              return;
+          }
+          send({ type: "builder_install", chatId: cid });
+        })();
+        break;
+      case "refine":
+        if (bDraft.refine.trim()) {
+          send({ type: "builder_refine", chatId: cid, request: bDraft.refine.trim() });
+          bDraft.refine = "";
+        }
+        break;
+      case "chip":
+        bDraft.refine = b.dataset.text ?? "";
+        renderDrawer();
+        break;
+      case "fix":
+        send({ type: "builder_fix", chatId: cid, warning: b.dataset.w });
+        break;
+      case "redo": {
+        const part = b.dataset.part;
+        send({ type: "builder_redo", chatId: cid, part, note: bDraft.notes[part] || undefined });
+        delete bDraft.notes[part];
+        break;
+      }
+      case "add-row":
+        bDraft.additions.push({ name: "", kind: "skill", note: "" });
+        renderDrawer();
+        break;
+      case "add-remove":
+        bDraft.additions.splice(Number(b.dataset.i), 1);
+        renderDrawer();
+        break;
+      default:
+        return false;
+    }
+    return true;
+  }
+  function onBuilderInput(t) {
+    if (t.dataset.bq && (t.dataset.bqKind === "text" || t.dataset.bqKind === "scale")) {
+      bDraft.answers[t.dataset.bq] = t.dataset.bqKind === "scale" ? Number(t.value) : t.value;
+      return true;
+    }
+    if (t.dataset.badd !== undefined) {
+      const row = bDraft.additions[Number(t.dataset.badd)];
+      const field = t.dataset.baddField;
+      if (row)
+        row[field] = t.value;
+      return true;
+    }
+    if (t.dataset.bnote) {
+      bDraft.notes[t.dataset.bnote] = t.value;
+      return true;
+    }
+    if (t.dataset.brefine !== undefined) {
+      bDraft.refine = t.value;
+      return true;
+    }
+    if (t.dataset.bset === "base") {
+      bDraft.base = t.value;
+      return true;
+    }
+    if (t.dataset.bset === "connectionId") {
+      bDraft.connectionId = t.value;
+      return true;
+    }
+    return false;
+  }
   function onPanelClick(e) {
     const t = e.target;
     const view = t.closest("[data-view]");
@@ -1015,6 +1366,8 @@ function setup(ctx) {
       renderDrawer();
       return;
     }
+    if (onBuilderClick(t))
+      return;
     const go = t.closest("[data-go]");
     if (go) {
       act(`go:${go.dataset.go}`);
@@ -1095,6 +1448,8 @@ function setup(ctx) {
   }
   function onPanelInput(e) {
     const t = e.target;
+    if (onBuilderInput(t))
+      return;
     if (t.dataset.range) {
       const num = t.parentElement?.querySelector("[data-num]");
       if (num)
@@ -1107,6 +1462,8 @@ function setup(ctx) {
   }
   function onPanelChange(e) {
     const t = e.target;
+    if (onBuilderInput(t))
+      return;
     if (t.dataset.wearSlot) {
       const cid = chatId();
       if (cid && t.value)
@@ -1265,6 +1622,18 @@ function setup(ctx) {
         busy = { chatId: m.chatId, on: m.busy, label: m.busy ? m.label ?? busy.label ?? "" : "" };
         placeChoices(true);
         break;
+      case "builder": {
+        const prev = builder;
+        builder = m.session;
+        if (!builder || !prev || prev.characterId !== builder.characterId || prev.mode !== builder.mode || prev.step !== builder.step && builder.step === "start") {
+          const keep = { creative: bDraft.creative, connectionId: bDraft.connectionId };
+          bDraft = { ...emptyDraft(), ...keep, ...builder ? { additions: builder.additions.map((a) => ({ ...a })) } : {} };
+        }
+        if (builder && prev?.step !== builder.step)
+          bDraft.notes = {};
+        renderDrawer();
+        break;
+      }
       case "settings":
         settings = m.settings;
         templates = m.templates;

@@ -140,7 +140,7 @@ narration:
     params:
       difficulty: { easy: 8, normal: 12, hard: 16, extreme: 20 }
     check: { vs: difficulty, add: body, label: Body, partial: 3 }
-    success: { hint: "It works." }
+    success: { body: +0.2, hint: "It works." }
     fail: { energy: -10, hint: "It doesn't work, and it takes something out of {{user}}." }
     crit_fail: { health: -15, energy: -10, hint: "It goes badly wrong — a real setback or injury." }
 
@@ -151,7 +151,7 @@ narration:
     params:
       difficulty: { easy: 8, normal: 12, hard: 16, extreme: 20 }
     check: { vs: difficulty, add: mind, label: Mind, partial: 3 }
-    success: { hint: "The answer or insight comes clearly." }
+    success: { mind: +0.2, hint: "The answer or insight comes clearly." }
     fail: { hint: "It doesn't add up — nothing useful comes of it." }
 
   social_feat:
@@ -161,7 +161,7 @@ narration:
     params:
       difficulty: { easy: 8, normal: 12, hard: 16, extreme: 20 }
     check: { vs: difficulty, add: charm, label: Charm, partial: 3 }
-    success: { hint: "They're swayed." }
+    success: { charm: +0.2, hint: "They're swayed." }
     fail: { mood: -5, hint: "It doesn't land. They're unconvinced, or put off." }
     crit_fail: { mood: -10, hint: "It backfires embarrassingly and they react badly." }
 `,
