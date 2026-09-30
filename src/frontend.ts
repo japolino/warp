@@ -9,6 +9,8 @@ import { emptyDraft, renderBuilder, renderBuilderCta, type BuilderDraft } from "
 import { renderDungeon, type DungeonPick } from "./frontend/dungeon-ui.js";
 import { connectCue } from "./frontend/cue-bridge.js";
 import { renderDate } from "./frontend/date-ui.js";
+import { formatStory, renderStage, stageModeOf, storySpeaker, type StageMode } from "./frontend/stage.js";
+import { STAGE_STYLES } from "./frontend/stage-styles.js";
 import { esc, renderChips, renderChoices, renderHud, renderJournal, renderMap, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
 
 type StateMsg = Extract<BackendToFrontend, { type: "state" }>;
@@ -29,6 +31,7 @@ export function setup(ctx: SpindleFrontendContext) {
 
   const cleanups: (() => void)[] = [];
   cleanups.push(ctx.dom.addStyle(STYLES));
+  cleanups.push(ctx.dom.addStyle(STAGE_STYLES));
 
   let state: StateMsg | null = null;
   let settings: Settings = { ...DEFAULT_SETTINGS };
@@ -107,6 +110,53 @@ export function setup(ctx: SpindleFrontendContext) {
   } catch {
     overlay = null; // ui_panels not granted — the drawer tab still has everything
   }
+
+  // The stage: a dungeon run or a date takes the whole screen, apart from the chat.
+  // The scene re-renders with the state; the story box and the line being typed persist.
+  const stageEl = document.createElement("div");
+  stageEl.className = "warp-stage";
+  stageEl.innerHTML = `<div class="warp-stage-scene"></div>
+    <section class="warp-stage-story" aria-label="The story">
+      <div class="warp-stage-story-head"><span class="warp-stage-speaker"></span><button class="warp-stage-fold" type="button" data-stage-fold title="Fold the story" aria-label="Fold the story">▾</button></div>
+      <div class="warp-stage-story-body"><div class="warp-stage-said"></div><div class="warp-stage-text" aria-live="polite"></div><div class="warp-stage-status"></div></div>
+      <form class="warp-stage-say"><textarea rows="1" placeholder="Say or do something…" aria-label="Your line" enterkeyhint="send"></textarea><button type="submit" class="warp-stage-btn primary">Send</button></form>
+    </section>`;
+  const sceneEl = stageEl.querySelector<HTMLElement>(".warp-stage-scene")!;
+  const storyEl = stageEl.querySelector<HTMLElement>(".warp-stage-story")!;
+  const storyBody = stageEl.querySelector<HTMLElement>(".warp-stage-story-body")!;
+  const speakerEl = stageEl.querySelector<HTMLElement>(".warp-stage-speaker")!;
+  const saidEl = stageEl.querySelector<HTMLElement>(".warp-stage-said")!;
+  const textEl = stageEl.querySelector<HTMLElement>(".warp-stage-text")!;
+  const statusEl = stageEl.querySelector<HTMLElement>(".warp-stage-status")!;
+  const sayForm = stageEl.querySelector<HTMLFormElement>(".warp-stage-say")!;
+  const sayInput = sayForm.querySelector<HTMLTextAreaElement>("textarea")!;
+  const sayButton = sayForm.querySelector<HTMLButtonElement>("button")!;
+  let stage: SpindleFloatWidgetHandle | null = null;
+  try {
+    stage = ctx.ui.createFloatWidget({ fullscreen: true, chromeless: true, snapToEdge: false });
+    stage.root.appendChild(stageEl);
+    stage.setVisible(false);
+    cleanups.push(() => stage?.destroy());
+  } catch {
+    stage = null; // no floating surfaces: the drawer's Dungeon and Dating tabs still work
+  }
+  // The host's widget menu ("hide widget") has no place on the stage.
+  stageEl.addEventListener("contextmenu", (e) => e.stopPropagation());
+  let stageOpen = false;
+  let stageWantGate = false;
+  let stageMode: StageMode | null = null;
+  let stageKey = "";
+  /** The run or date ended while the stage was up: it stays until the player heads back. */
+  let lingering = false;
+  /** Stages the player sent back to the chat (per chat and mode) don't reopen by themselves. */
+  const stageDismissed = new Set<string>();
+  let reactionKey: string | null = null;
+  let storyFolded = store("storyFolded") === "1";
+  storyEl.classList.toggle("folded", storyFolded);
+  let storyShown = "";
+  /** The reply being written right now, token by token. */
+  let stream = { gen: "", text: "" };
+  const stageVisible = () => !!stage?.isVisible();
 
   function place(b: Box) {
     if (!overlay) return;
@@ -192,7 +242,7 @@ export function setup(ctx: SpindleFrontendContext) {
 
   function syncDockVisibility() {
     if (!overlay) return;
-    const show = !!state?.hud || state?.status.state === "broken";
+    const show = (!!state?.hud || state?.status.state === "broken") && !stageVisible();
     if (show !== overlay.isVisible()) overlay.setVisible(show);
     if (show) fitOverlay();
   }
@@ -207,6 +257,7 @@ export function setup(ctx: SpindleFrontendContext) {
       <span class="warp-overlay-title">🎲 ${clock ? `<b>${esc(clock)}</b>` : "Warp"}${where}</span>
       ${dot}
       <span class="warp-overlay-actions">
+        ${stageMode && !stageVisible() ? `<button class="warp-btn warp-btn-ghost" data-open-stage title="Back to the ${stageMode === "date" ? "date" : "dungeon"}" aria-label="Back to the ${stageMode === "date" ? "date" : "dungeon"}">${stageMode === "date" ? "💬" : "⚔"}</button>` : ""}
         ${overlayOpen && edge ? `<button class="warp-btn warp-btn-ghost" data-detach title="Float" aria-label="Detach">⇱</button>` : ""}
         ${overlayOpen ? `<button class="warp-btn warp-btn-ghost" data-open-sheet title="Open full sheet" aria-label="Open full sheet">⤢</button>` : ""}
         <button class="warp-btn warp-btn-ghost" data-toggle-overlay title="${overlayOpen ? "Collapse" : "Expand"}" aria-label="${overlayOpen ? "Collapse" : "Expand"}">${overlayOpen ? "–" : "+"}</button>
@@ -216,6 +267,7 @@ export function setup(ctx: SpindleFrontendContext) {
   headEl.addEventListener("click", (e) => {
     const t = e.target as Element;
     if (t.closest("[data-open-sheet]")) { drawerView = "sheet"; tab.activate(); return; }
+    if (t.closest("[data-open-stage]")) { openStage(); return; }
     if (t.closest("[data-detach]")) {
       const vp = viewport();
       edge = null;
@@ -391,10 +443,194 @@ export function setup(ctx: SpindleFrontendContext) {
     cue.update({ state, enabled: settings.enabled, showOdds: settings.showOdds, busy: busy.on && busy.chatId === state?.chatId, busyLabel: busy.label });
   }
 
+  // ───────── the stage ─────────
+  function raiseStage() {
+    // Above other full-screen layers (the visual-novel view), still below the host's dialogs.
+    const host = stage?.root.parentElement?.parentElement;
+    if (host instanceof HTMLElement) host.style.zIndex = "9992";
+  }
+
+  function syncStage() {
+    const mode = settings.enabled ? stageModeOf(state, stageWantGate) : null;
+    const key = mode ? `${state?.chatId}:${mode}` : "";
+    if (key !== stageKey) {
+      const sameChat = !!stageKey && stageKey.startsWith(`${state?.chatId}:`);
+      // A run or date that ended forgets being sent back to the chat, so the next one opens by itself.
+      if (stageKey) stageDismissed.delete(stageKey);
+      stageKey = key;
+      reactionKey = null;
+      if (mode) {
+        lingering = false;
+        stageMode = mode;
+        // A run or a date just began (or this chat is in the middle of one): take the screen, unless sent back to the chat.
+        if (!stageDismissed.has(key)) stageOpen = true;
+      } else if (sameChat && stageVisible() && stageMode && stageMode !== "gate") {
+        // It's over: keep the last scene up while the closing lines are written, until the player heads back.
+        lingering = true;
+        sceneEl.insertAdjacentHTML("beforeend", `<div class="warp-stage-ended"><div><div class="warp-stage-kicker">${stageMode === "date" ? "The date is over" : "Out of the dungeon"}</div><button class="warp-stage-btn primary" data-stage-close>Back to the chat</button></div></div>`);
+      } else {
+        stageOpen = false;
+        stageMode = null;
+        stageWantGate = false;
+        lingering = false;
+      }
+      stageEl.dataset.mode = stageMode === "date" ? "date" : stageMode ? "dungeon" : "";
+      stageEl.dataset.view = stageMode ?? "";
+    }
+    const show = !!stage && stageOpen && (!!mode || lingering);
+    if (show !== stageVisible()) {
+      stage?.setVisible(show);
+      // The host mounts the widget on the next frames; raise it once it's there.
+      if (show) { raiseStage(); requestAnimationFrame(() => requestAnimationFrame(raiseStage)); }
+    }
+    if (show) renderStageScene();
+  }
+
+  function openStage() {
+    if (!stage) { openDungeonDrawer(); return; }
+    if (stageKey) stageDismissed.delete(stageKey);
+    stageOpen = true;
+    syncStage();
+    syncDockVisibility();
+    renderHead();
+  }
+
+  function closeStage() {
+    if (stageKey) stageDismissed.add(stageKey);
+    stageOpen = false;
+    if (lingering) { lingering = false; stageMode = null; stageWantGate = false; stageKey = ""; }
+    if (stageMode === "gate") { stageWantGate = false; stageMode = null; stageKey = ""; }
+    stage?.setVisible(false);
+    syncDockVisibility();
+    renderHead();
+  }
+
+  const SCROLLERS = [".warp-stage-side", ".warp-stage-deck", ".warp-stage-heart", ".warp-stage-main"];
+  function renderStageScene() {
+    if (!state || !stageMode || lingering || !stageVisible()) { renderStory(); return; }
+    const isBusy = busy.on && busy.chatId === state.chatId;
+    const sess = state.date?.session;
+    const rk = sess?.last ? `${sess.who}|${sess.last.label}|${sess.last.reaction}|${sess.fatigue}` : "";
+    const fresh = reactionKey !== null && rk !== "" && rk !== reactionKey;
+    reactionKey = rk;
+    // Keep each pane where the player had scrolled it.
+    const kept = SCROLLERS.map((sel) => sceneEl.querySelector<HTMLElement>(sel)?.scrollTop ?? 0);
+    sceneEl.innerHTML = renderStage(state, stageMode, { pick: dgPick, mates: dgMates, busy: isBusy, cat: dateCat, freshReaction: fresh });
+    SCROLLERS.forEach((sel, i) => { const el = sceneEl.querySelector<HTMLElement>(sel); if (el && kept[i]) el.scrollTop = kept[i]; });
+    renderStory();
+  }
+
+  let storyFrame = 0;
+  function renderStory() {
+    if (!stageVisible()) return;
+    const isBusy = busy.on && busy.chatId === state?.chatId;
+    speakerEl.textContent = storySpeaker(state, stageMode);
+    const said = state?.story?.said?.trim();
+    saidEl.innerHTML = said ? `<span>You</span>${esc(said.length > 280 ? `${said.slice(0, 280)}…` : said)}` : "";
+    const live = !!stream.gen;
+    const text = live || stream.text ? stream.text : state?.story?.text ?? "";
+    const html = formatStory(text);
+    if (html !== storyShown) {
+      const newReply = !live && !stream.text && state?.story?.messageId !== textEl.dataset.id;
+      textEl.innerHTML = html;
+      storyShown = html;
+      textEl.dataset.id = state?.story?.messageId ?? "";
+      // Follow a reply as it's written; start a finished one from the top.
+      if (live) storyBody.scrollTop = storyBody.scrollHeight;
+      else if (newReply) storyBody.scrollTop = 0;
+    }
+    textEl.classList.toggle("streaming", live);
+    statusEl.innerHTML = isBusy && !live ? `<span class="warp-stage-dots" aria-hidden="true"><i></i><i></i><i></i></span>${esc(busy.label && busy.label !== "Rolling…" ? busy.label : "The story continues…")}` : "";
+    sayButton.disabled = isBusy;
+  }
+  function scheduleStory() {
+    if (storyFrame) return;
+    storyFrame = requestAnimationFrame(() => { storyFrame = 0; renderStory(); });
+  }
+
+  function growSay() {
+    sayInput.style.height = "auto";
+    sayInput.style.height = `${Math.min(120, sayInput.scrollHeight)}px`;
+  }
+  function sendLine() {
+    const text = sayInput.value.trim();
+    const cid = chatId();
+    if (!text || !cid || (busy.on && busy.chatId === cid)) return;
+    send({ type: "say", chatId: cid, text });
+    sayInput.value = "";
+    growSay();
+    lockUntilReply(cid);
+  }
+  stageEl.addEventListener("click", (e) => {
+    const t = e.target as Element;
+    if (t.closest("[data-stage-close]")) { closeStage(); return; }
+    if (t.closest("[data-stage-fold]")) {
+      storyFolded = !storyFolded;
+      store("storyFolded", storyFolded ? "1" : "0");
+      storyEl.classList.toggle("folded", storyFolded);
+      return;
+    }
+    if (onDungeonClick(t)) return;
+    const dateCatEl = t.closest<HTMLElement>("[data-date-cat]");
+    if (dateCatEl) { dateCat = dateCatEl.dataset.dateCat!; renderPick(); return; }
+    const dateAct = t.closest<HTMLElement>("[data-date-act]");
+    if (dateAct && !(dateAct as HTMLButtonElement).disabled) act(dateAct.dataset.dateAct!);
+  });
+  stageEl.addEventListener("change", (e) => onPanelChange(e));
+  sayForm.addEventListener("submit", (e) => { e.preventDefault(); sendLine(); });
+  sayInput.addEventListener("input", growSay);
+  sayInput.addEventListener("keydown", (e) => {
+    // Typing here is ours: the host's typing shortcuts stay out of it.
+    e.stopPropagation();
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendLine(); }
+    else if (e.key === "Escape") { e.preventDefault(); closeStage(); }
+  });
+  const onStageKey = (e: KeyboardEvent) => {
+    if (e.key !== "Escape" || !stageVisible()) return;
+    // Not while a host dialog has focus: Escape belongs to it.
+    const a = document.activeElement;
+    if (a && a !== document.body && !stageEl.contains(a)) return;
+    e.preventDefault();
+    closeStage();
+  };
+  document.addEventListener("keydown", onStageKey);
+  cleanups.push(() => document.removeEventListener("keydown", onStageKey));
+
+  // Replies stream onto the stage as they're written.
+  const onHost = (ev: string, fn: (p: Record<string, unknown> | null) => void) => {
+    try { cleanups.push(ctx.events.on(ev, (p) => fn(p && typeof p === "object" ? p as Record<string, unknown> : null))); }
+    catch { /* no host events: each reply shows once it's written */ }
+  };
+  onHost("GENERATION_STARTED", (p) => {
+    if (!p || p.chatId !== state?.chatId || /quiet|impersonate/i.test(String(p.generationType ?? ""))) return;
+    stream = { gen: String(p.generationId ?? "live"), text: "" };
+    scheduleStory();
+  });
+  onHost("STREAM_TOKEN_RECEIVED", (p) => {
+    if (!stream.gen || !p || typeof p.token !== "string" || p.type === "reasoning") return;
+    if (p.generationId && stream.gen !== "live" && p.generationId !== stream.gen) return;
+    const at = typeof p.offset === "number" && p.offset <= stream.text.length ? p.offset : stream.text.length;
+    stream.text = stream.text.slice(0, at) + p.token;
+    scheduleStory();
+  });
+  const endStream = (p: Record<string, unknown> | null) => {
+    if (!stream.gen || (p?.generationId && stream.gen !== "live" && p.generationId !== stream.gen)) return;
+    stream.gen = "";
+    scheduleStory();
+  };
+  onHost("GENERATION_ENDED", endStream);
+  onHost("GENERATION_STOPPED", endStream);
+
+  function renderPick() {
+    renderDrawer();
+    renderStageScene();
+  }
+
   function renderAll() {
     renderDock();
     renderDrawer();
     reconcileMessages();
+    syncStage();
     syncDockVisibility();
     syncCue();
     if (state?.hud) lastBars = new Map(state.hud.bars.map((b) => [b.id, b.value]));
@@ -612,10 +848,16 @@ export function setup(ctx: SpindleFrontendContext) {
     dgPick = null;
     send({ type: "dungeon", chatId: cid, ...op } as FrontendToBackend);
   }
-  function openDungeon() {
-    drawerView = "dungeon";
+  function openDungeonDrawer() {
+    drawerView = state?.date?.session && !state.dungeon ? "date" : "dungeon";
     tab.activate();
     renderDrawer();
+  }
+  /** The dungeon on the stage (the entrance when no run is on), or in the drawer without a stage. */
+  function openDungeon() {
+    if (!stage) { openDungeonDrawer(); return; }
+    if (!state?.dungeon) stageWantGate = true;
+    openStage();
   }
   async function confirmLeave() {
     const res = await ctx.ui.showConfirm({
@@ -633,20 +875,20 @@ export function setup(ctx: SpindleFrontendContext) {
     const v = state?.dungeon;
     if (d.dgMove) { const [x, y] = d.dgMove.split(",").map(Number); dg({ op: "move", x, y }); return true; }
     if (d.dgChoose) { dg({ op: "choose", choice: d.dgChoose }); return true; }
-    if (d.dgCancel !== undefined) { dgPick = null; renderDrawer(); return true; }
+    if (d.dgCancel !== undefined) { dgPick = null; renderPick(); return true; }
     if (d.dgSkill) {
       const target = d.dgSkillTarget;
       const foes = v?.battle?.fighters.filter((f) => f.side === "foe" && f.alive) ?? [];
-      if (target === "foe" && foes.length > 1) { dgPick = { kind: "skill", id: d.dgSkill, target: "foe" }; renderDrawer(); return true; }
-      if (target === "ally") { dgPick = { kind: "skill", id: d.dgSkill, target: "ally" }; renderDrawer(); return true; }
+      if (target === "foe" && foes.length > 1) { dgPick = { kind: "skill", id: d.dgSkill, target: "foe" }; renderPick(); return true; }
+      if (target === "ally") { dgPick = { kind: "skill", id: d.dgSkill, target: "ally" }; renderPick(); return true; }
       dg({ op: "battle", skill: d.dgSkill, target: foes[0]?.id });
       return true;
     }
     if (d.dgItem) {
       if (d.dgItem === "bomb") { dg({ op: "battle", item: "bomb" }); return true; }
-      dgPick = { kind: "item", id: d.dgItem, target: "ally" }; renderDrawer(); return true;
+      dgPick = { kind: "item", id: d.dgItem, target: "ally" }; renderPick(); return true;
     }
-    if (d.dgUse) { dgPick = { kind: "use", id: d.dgUse, target: "ally" }; renderDrawer(); return true; }
+    if (d.dgUse) { dgPick = { kind: "use", id: d.dgUse, target: "ally" }; renderPick(); return true; }
     if (d.dgTarget && dgPick) {
       const p = dgPick;
       if (p.kind === "skill") dg({ op: "battle", skill: p.id, target: d.dgTarget });
@@ -686,7 +928,7 @@ export function setup(ctx: SpindleFrontendContext) {
     if (onBuilderInput(t as HTMLInputElement)) return;
     if (t.dataset.dgMate) {
       if ((t as HTMLInputElement).checked) dgMates.add(t.dataset.dgMate); else dgMates.delete(t.dataset.dgMate);
-      renderDrawer();
+      renderPick();
       return;
     }
     if (t.dataset.wearSlot) {
@@ -725,8 +967,12 @@ export function setup(ctx: SpindleFrontendContext) {
 
   // ───────── events: in-chat clicks (delegated; injected nodes are sanitized) ─────────
   function act(actionId: string) {
-    // "More…" during a conversation opens every topic in the drawer.
-    if (actionId === "date:open") { drawerView = "date"; tab.activate(); renderDrawer(); return; }
+    // "More…" during a conversation opens the date on the stage (every topic is there).
+    if (actionId === "date:open") {
+      if (stage && state?.date?.session) openStage();
+      else { drawerView = "date"; tab.activate(); renderDrawer(); }
+      return;
+    }
     // Saving, loading and starting over change the game without a new reply.
     if (actionId.startsWith("run:") && actionId !== "run:epilogue") { void confirmRun(actionId); return; }
     // Dungeon choices open the dungeon screen instead of sending a line.
@@ -737,16 +983,21 @@ export function setup(ctx: SpindleFrontendContext) {
     }
     const cid = chatId();
     if (!cid || (busy.on && busy.chatId === cid)) return;
+    send({ type: "act", chatId: cid, actionId });
+    lockUntilReply(cid);
+  }
+  /** Lock the choices while a turn starts; if nothing starts (rejected, network hiccup), unlock again. */
+  function lockUntilReply(cid: string) {
     busy = { chatId: cid, on: true, label: "Rolling…" };
     placeChoices(true);
     syncCue();
-    send({ type: "act", chatId: cid, actionId });
-    // If nothing starts (rejected choice, network hiccup), don't leave the grid locked.
+    renderStageScene();
     setTimeout(() => {
       if (busy.on && busy.label === "Rolling…" && busy.chatId === cid) {
         busy = { chatId: "", on: false, label: "" };
         placeChoices(true);
         syncCue();
+        renderStageScene();
       }
     }, 15000);
   }
@@ -828,7 +1079,7 @@ export function setup(ctx: SpindleFrontendContext) {
   cleanups.push(() => document.removeEventListener("click", onDocClick, true));
 
   const onKey = (e: KeyboardEvent) => {
-    if (!settings.hotkeys || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!settings.hotkeys || e.ctrlKey || e.metaKey || e.altKey || stageVisible()) return;
     const t = e.target as HTMLElement | null;
     if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
     if (!/^[0-9]$/.test(e.key) || !state?.choices.length || !choicesEl?.isConnected) return;
@@ -855,6 +1106,8 @@ export function setup(ctx: SpindleFrontendContext) {
         if (entered) drawerView = "dungeon";
         if (m.chatId === busy.chatId && !m.busy && busy.label === "Rolling…") busy = { chatId: "", on: false, label: "" };
         if (m.busy && m.chatId) busy = { chatId: m.chatId, on: true, label: busy.label };
+        // A finished reply is in the state now; the streamed copy has done its job.
+        if (!stream.gen) stream.text = "";
         renderAll();
         break;
       }
@@ -862,6 +1115,7 @@ export function setup(ctx: SpindleFrontendContext) {
         busy = { chatId: m.chatId, on: m.busy, label: m.busy ? m.label ?? busy.label ?? "" : "" };
         placeChoices(true);
         syncCue();
+        renderStageScene();
         break;
       case "builder": {
         const prev = builder;

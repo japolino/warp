@@ -43,7 +43,8 @@ export function buildDateView(r: Ruleset, s: GameState, lines: string[] = []): D
   const people = talkablePeople(r, s).map((id) => personView(r, s, id, here))
     .sort((a, b) => Number(b.here) - Number(a.here) || b.love - a.love);
   const sess = activeSession(r, s);
-  if (!sess) return { session: null, person: null, people, categories: [], moves: [] };
+  const stages = r.dating.stages.map((st) => st.label);
+  if (!sess) return { session: null, person: null, people, categories: [], moves: [], stages };
 
   const who = sess.who;
   const blocked = new Set(lines.map((l) => l.toLowerCase()));
@@ -78,5 +79,6 @@ export function buildDateView(r: Ruleset, s: GameState, lines: string[] = []): D
     people,
     categories,
     moves: moves.filter((m) => m.kind !== "topic").map((m) => ({ id: m.id, label: m.label, desc: m.desc, odds: m.odds, kind: m.kind, group: m.group })),
+    stages,
   };
 }

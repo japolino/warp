@@ -1538,6 +1538,556 @@ function renderDate(v, ui) {
   </div>`;
 }
 
+// src/frontend/stage.ts
+function stageModeOf(s, wantGate) {
+  if (s?.dungeon)
+    return "dungeon";
+  if (s?.date?.session)
+    return "date";
+  if (wantGate && s?.dungeonEntries.length)
+    return "gate";
+  return null;
+}
+function formatStory(text) {
+  const safe = esc(text.trim());
+  if (!safe)
+    return "";
+  return safe.split(/\n{2,}/).map((p) => `<p>${p.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>").replace(/\*([^*\n]+)\*/g, "<em>$1</em>").replace(/(&quot;|“)([^\n]*?)(&quot;|”)/g, `<span class="warp-stage-q">$1$2$3</span>`).replace(/\n/g, "<br>")}</p>`).join("");
+}
+function top(kicker, title, middle, actions) {
+  return `<header class="warp-stage-top">
+    <div class="warp-stage-title"><span class="warp-stage-kicker">${kicker}</span><h1>${esc(title)}</h1></div>
+    <div class="warp-stage-mid">${middle}</div>
+    <div class="warp-stage-actions">${actions}<button class="warp-stage-btn ghost" data-stage-close title="Back to the chat (Esc)">Chat <span aria-hidden="true">⤓</span></button></div>
+  </header>`;
+}
+function depthTrack(v) {
+  if (!v.floors)
+    return `<div class="warp-stage-depth" title="Endless — floor ${v.depth}"><span class="warp-stage-depth-n">Floor ${v.depth}</span><span class="warp-stage-endless">∞</span></div>`;
+  const pips = Array.from({ length: v.floors }, (_, i) => `<i class="${i + 1 < v.depth ? "past" : i + 1 === v.depth ? "now" : ""}${i + 1 === v.floors ? " last" : ""}"></i>`).join("");
+  return `<div class="warp-stage-depth" title="Floor ${v.depth} of ${v.floors}"><span class="warp-stage-depth-n">Floor ${v.depth}<span class="warp-stage-of"> / ${v.floors}</span></span><span class="warp-stage-pips">${pips}</span>${v.boss ? `<span class="warp-stage-boss" title="A guardian blocks the way down">☠</span>` : ""}</div>`;
+}
+function purse(v) {
+  const pct = v.xpNext > 0 ? Math.min(100, v.xp / v.xpNext * 100) : 100;
+  return `<div class="warp-stage-purse">
+    <span class="warp-stage-lv" title="Party level">Lv ${v.level}</span>
+    <span class="warp-stage-xp" title="${v.xp} / ${v.xpNext} XP"><span style="width:${pct.toFixed(1)}%"></span></span>
+    <span class="warp-stage-gold" title="Gold carried — kept if you leave, lost if you're wiped out">${sprite("gold", "warp-stage-coin")}${v.gold}</span>
+  </div>`;
+}
+function foeCard(f, targetable) {
+  const cls = ["warp-stage-foe", f.alive ? "" : "down", f.boss ? "boss" : f.elite ? "elite" : "", targetable && f.alive ? "targetable" : ""].filter(Boolean).join(" ");
+  const tag = targetable && f.alive ? "button" : "div";
+  return `<${tag} class="${cls}" ${targetable && f.alive ? `data-dg-target="${esc(f.id)}" title="Target ${esc(f.name)}"` : ""}>
+    <div class="warp-stage-foe-glow"></div>
+    ${sprite(f.sprite, "warp-stage-foe-img")}
+    <div class="warp-stage-foe-name">${esc(f.name)}</div>
+    ${bar(f.hp, f.mhp, "hp", "HP")}
+  </${tag}>`;
+}
+function battle(v, ui) {
+  const b = v.battle;
+  const foes = b.fighters.filter((f) => f.side === "foe");
+  const party = b.fighters.filter((f) => f.side === "party");
+  const active = party.find((f) => f.id === b.active);
+  const pickFoe = ui.pick?.target === "foe";
+  const pickAlly = ui.pick?.target === "ally";
+  let menu = "";
+  if (b.over)
+    menu = `<div class="warp-stage-menu-note">The fight is over.</div>`;
+  else if (ui.pick)
+    menu = `<div class="warp-stage-menu-note warn">Choose ${ui.pick.target === "foe" ? "an enemy" : "an ally"} <button class="warp-stage-btn small" data-dg-cancel>Cancel</button></div>`;
+  else if (active) {
+    const skills = b.skills.map((s) => `<button class="warp-stage-cmd" data-dg-skill="${esc(s.id)}" data-dg-skill-target="${esc(s.target)}" ${s.usable && !ui.busy ? "" : "disabled"} title="${esc(s.cost || "Free")}"><span>${esc(s.name)}</span>${s.cost ? `<small>${esc(s.cost)}</small>` : ""}</button>`).join("");
+    const items = v.bag.map((i) => `<button class="warp-stage-cmd item" data-dg-item="${esc(i.id)}" ${ui.busy ? "disabled" : ""}>${sprite(i.sprite, "warp-dg-mini")}<span>${esc(i.name)}</span><small>×${i.count}</small></button>`).join("");
+    const who = you(active.name);
+    menu = `<div class="warp-stage-turn">${sprite(active.sprite, "warp-stage-turn-face")}${who === "You" ? "<b>Your</b> turn" : `<b>${esc(who)}</b>'s turn`}</div>
+      <div class="warp-stage-cmds">${skills}</div>
+      ${items ? `<div class="warp-stage-cmds">${items}</div>` : ""}
+      <div class="warp-stage-cmds tail">
+        ${b.canEscape ? `<button class="warp-stage-cmd flee" data-dg-escape ${ui.busy ? "disabled" : ""}>Escape</button>` : ""}
+        <button class="warp-stage-cmd" data-dg-auto="round" ${ui.busy ? "disabled" : ""} title="Everyone picks a sensible move for this round">Auto round</button>
+        <button class="warp-stage-cmd" data-dg-auto="battle" ${ui.busy ? "disabled" : ""} title="Fight it out automatically">Auto battle</button>
+      </div>`;
+  }
+  const kind = b.kind === "boss" ? "Floor guardian" : b.kind === "elite" ? "Elite battle" : "Battle";
+  return `<main class="warp-stage-main warp-stage-battle">
+    <section class="warp-stage-arena ${esc(b.kind)}">
+      <div class="warp-stage-arena-head"><span class="warp-stage-kicker">${kind}</span><span class="warp-stage-round">Round ${b.round}</span></div>
+      <div class="warp-stage-foes">${foes.map((f) => foeCard(f, pickFoe)).join("")}</div>
+      <div class="warp-stage-ticker" aria-live="polite">${b.log.slice(-4).map((l, i, a) => `<div class="${i === a.length - 1 ? "new" : ""}">${esc(you(l))}</div>`).join("")}</div>
+    </section>
+    <section class="warp-stage-command">
+      <div class="warp-stage-party">${party.map((f) => memberCard(f, { targetable: pickAlly })).join("")}</div>
+      <div class="warp-stage-menu">${menu}</div>
+    </section>
+  </main>`;
+}
+function dungeonScene(v, ui) {
+  const floor = SPRITES[`floor_${v.theme}`] ?? SPRITES.floor_cave;
+  const head = top(`${sprite("stairs", "warp-stage-kicker-icon")} Dungeon`, v.name, `${depthTrack(v)}${purse(v)}`, v.battle ? "" : `<button class="warp-stage-btn" data-dg-leave ${ui.busy ? "disabled" : ""} title="Climb out and keep what you've found">Leave</button>`);
+  const bg = `<div class="warp-stage-bg" style="--warp-stage-tex:url(${floor})"></div>`;
+  if (v.battle)
+    return bg + head + battle(v, ui);
+  const pickAlly = ui.pick?.kind === "use";
+  const bag = v.bag.filter((i) => i.id !== "bomb").map((i) => `<button class="warp-stage-chip" data-dg-use="${esc(i.id)}" ${ui.busy ? "disabled" : ""} title="Use ${esc(i.name)}">${sprite(i.sprite, "warp-dg-mini")}${esc(i.name)} <b>×${i.count}</b></button>`).join("");
+  const bombs = v.bag.find((i) => i.id === "bomb");
+  const here = herePanel(v, { pick: ui.pick, mates: ui.mates, busy: ui.busy });
+  return bg + head + `<main class="warp-stage-main warp-stage-run">
+    <section class="warp-stage-map">
+      <div class="warp-stage-board">${board(v)}</div>
+      <div class="warp-stage-bag">${bag}${bombs ? `<span class="warp-stage-chip muted">${sprite("bomb", "warp-dg-mini")}Bomb <b>×${bombs.count}</b></span>` : ""}${v.loot.length ? `<span class="warp-stage-loot" title="Kept when you leave">Found: ${esc(v.loot.map((l) => `${l.name}${l.count > 1 ? ` ×${l.count}` : ""}`).join(", "))}</span>` : ""}</div>
+    </section>
+    <aside class="warp-stage-side">
+      <div class="warp-stage-party">${v.party.map((f) => memberCard(f, { targetable: pickAlly })).join("")}</div>
+      ${pickAlly ? `<div class="warp-stage-menu-note warn">Who drinks it? <button class="warp-stage-btn small" data-dg-cancel>Cancel</button></div>` : ""}
+      ${here ? `<div class="warp-stage-here">${here}</div>` : ""}
+      <div class="warp-stage-log">${v.log.slice(0, 7).map((l) => `<div>${esc(you(l))}</div>`).join("")}</div>
+    </aside>
+  </main>`;
+}
+function gateScene(entries, ui) {
+  const first = entries[0];
+  const floor = SPRITES[`floor_${first?.theme ?? "cave"}`] ?? SPRITES.floor_cave;
+  const cards = entries.map((e) => `<article class="warp-stage-gate">
+    <div class="warp-stage-gate-head">${sprite("stairs", "warp-stage-gate-icon")}<div><h2>${esc(e.name)}</h2>
+      <div class="warp-stage-dim">${e.deepest ? `Deepest so far: floor ${e.deepest}` : "Unexplored"}${e.floors ? ` · ${e.floors} floors` : " · endless"}</div></div></div>
+    ${e.desc ? `<p>${esc(e.desc)}</p>` : ""}
+    ${e.max && e.companions.length ? `<div class="warp-stage-kicker">Bring along — up to ${e.max}</div>
+      <div class="warp-stage-mates">${e.companions.map((c) => `<label class="warp-stage-mate${ui.mates.has(c.id) ? " on" : ""}"><input type="checkbox" data-dg-mate="${esc(c.id)}" ${ui.mates.has(c.id) ? "checked" : ""} ${!ui.mates.has(c.id) && ui.mates.size >= e.max ? "disabled" : ""}><span class="warp-stage-mate-name">${esc(c.name)}</span><span class="warp-stage-dim">${esc(c.cls)}${c.present ? " · here" : ""}</span></label>`).join("")}</div>` : ""}
+    <p class="warp-stage-dim">Tiles are face down until you step on them; one of them leads down. Leave whenever you like and keep what you found — get wiped out and you lose it.</p>
+    <button class="warp-stage-btn primary" data-dg-enter="${esc(e.id)}" ${ui.busy ? "disabled" : ""}>Enter ${esc(e.name)}</button>
+  </article>`).join("");
+  return `<div class="warp-stage-bg" style="--warp-stage-tex:url(${floor})"></div>` + top(`${sprite("stairs", "warp-stage-kicker-icon")} Dungeon`, entries.length === 1 ? first.name : "Dungeons", "", "") + `<main class="warp-stage-main warp-stage-gates">${cards}</main>`;
+}
+function ring(love, fear, name, face) {
+  const C = 2 * Math.PI * 46, c2 = 2 * Math.PI * 38;
+  const l = Math.max(0, Math.min(1, love)), f = Math.max(0, Math.min(1, fear));
+  return `<div class="warp-stage-portrait" style="--warp-hue:${hue(name)}">
+    <svg viewBox="0 0 100 100" aria-hidden="true">
+      <circle cx="50" cy="50" r="46" class="track"/>
+      ${l > 0.005 ? `<circle cx="50" cy="50" r="46" class="love" stroke-dasharray="${(C * l).toFixed(1)} ${C.toFixed(1)}"/>` : ""}
+      ${f > 0.005 ? `<circle cx="50" cy="50" r="38" class="track thin"/><circle cx="50" cy="50" r="38" class="fear" stroke-dasharray="${(c2 * f).toFixed(1)} ${c2.toFixed(1)}"/>` : ""}
+    </svg>
+    <span class="warp-stage-initial">${esc(name.trim().charAt(0).toUpperCase() || "?")}</span>
+    <span class="warp-stage-face" aria-hidden="true">${face}</span>
+  </div>`;
+}
+function ladder(v) {
+  const p = v.person;
+  if (!v.stages.length)
+    return "";
+  if (p.hostile)
+    return `<ol class="warp-stage-ladder"><li class="hostile now">${esc(p.stage)}</li></ol>`;
+  return `<ol class="warp-stage-ladder" aria-label="Where you stand">${v.stages.map((st, i) => `<li class="${i < p.stageIndex ? "past" : i === p.stageIndex ? "now" : ""}">${esc(st)}</li>`).join("")}</ol>`;
+}
+function dateScene(v, ui) {
+  const s = v.session;
+  const p = v.person;
+  const kicker = s.kind === "outing" ? `On a date${s.venue ? ` · ${esc(s.venue)}` : ""}` : s.kind === "plan" ? "Making plans" : "Talking with";
+  const fatigueTone = s.fatigue >= 80 ? "bad" : s.fatigue >= 60 ? "warn" : "good";
+  const last = s.last ? `<div class="warp-stage-reaction warp-tone-${REACT_TONE[s.last.reaction]}${ui.freshReaction ? " fresh" : ""}"><span class="warp-stage-reaction-icon">${REACT_ICON[s.last.reaction]}</span><div><b>${esc(s.last.text)}</b><span>${esc(s.last.label)}</span></div></div>` : `<div class="warp-stage-reaction quiet"><span class="warp-stage-reaction-icon">✦</span><div><b>Say something</b><span>Pick a topic, or write your own line below.</span></div></div>`;
+  const outing = s.kind === "outing" ? `<div class="warp-stage-outing">
+        <div class="warp-stage-beats" title="${s.closing ? "Winding down" : `Moment ${Math.min(s.beat + 1, s.beats)} of ${s.beats}`}">${Array.from({ length: s.beats }, (_, i) => `<i class="${i < s.beat ? "past" : i === s.beat && !s.closing ? "now" : ""}"></i>`).join("")}</div>
+        ${meter("Enjoyment", s.enjoy / 100, `${Math.round(s.enjoy)}%`, "enjoy")}
+      </div>` : s.kind === "plan" ? `<div class="warp-stage-outing plan">\uD83D\uDDD3 They said yes — pick where to go.</div>` : "";
+  const groups = new Map;
+  for (const m of v.moves)
+    groups.set(m.group, [...groups.get(m.group) ?? [], m]);
+  const moves = [...groups].map(([g, list]) => `<div class="warp-stage-group">
+      <div class="warp-stage-kicker">${esc(g)}</div>
+      <div class="warp-stage-moves">${list.map((m) => `<button class="warp-stage-move ${esc(m.kind)}" data-date-act="${esc(m.id)}" title="${esc(m.desc ?? "")}"${ui.busy ? " disabled" : ""}><span>${esc(m.label)}</span>${odds(m.odds)}</button>`).join("")}</div>
+    </div>`).join("");
+  const cats = v.categories;
+  const cat = cats.find((c) => c.id === ui.cat) ?? cats.find((c) => c.topics.some((t) => !t.lock)) ?? cats[0];
+  const topics = cats.length ? `<div class="warp-stage-topics">
+      <div class="warp-stage-cats" role="tablist">${cats.map((c) => {
+    const open = c.topics.filter((t) => !t.lock).length;
+    return `<button class="warp-stage-cat" role="tab" aria-selected="${c.id === cat?.id}" data-date-cat="${esc(c.id)}">${c.icon} <span>${esc(c.label)}</span>${open ? `<small>${open}</small>` : " \uD83D\uDD12"}</button>`;
+  }).join("")}</div>
+      <div class="warp-stage-topic-grid">${cat ? cat.topics.map((t) => topicTile(t, ui.busy)).join("") : ""}</div>
+    </div>` : "";
+  return `<div class="warp-stage-bg" style="--warp-hue:${hue(p.name)}"></div>` + top(kicker, p.name, ladder(v), "") + `<main class="warp-stage-main warp-stage-date ${esc(s.kind)}">
+      <section class="warp-stage-heart">
+        ${ring(p.love, p.fear, p.name, s.moodFace)}
+        <div class="warp-stage-mood">${esc(s.moodLabel)}</div>
+        ${last}
+        <div class="warp-stage-gauges">
+          ${meter("Love", p.love, p.loveText, "love")}
+          ${p.fear > 0.005 ? meter("Fear", p.fear, p.fearText, "fear") : ""}
+          ${meter("Fatigue", s.fatigue / 100, s.fatigue >= 100 ? "Done talking" : s.fatigue >= 80 ? "Tired of talking" : s.fatigue >= 60 ? "Flagging" : "Fresh", `fatigue ${fatigueTone}`)}
+        </div>
+        <div class="warp-stage-streak${s.combo >= 3 ? " hot" : ""}" title="Good reactions in a row boost love">${s.combo >= 3 ? "\uD83D\uDD25" : "✦"} Streak ×${s.combo}</div>
+        ${outing}
+      </section>
+      <section class="warp-stage-deck">
+        ${moves}
+        ${topics}
+        <div class="warp-stage-knows"><div class="warp-stage-kicker">What you know about ${esc(p.name)}</div>${knows(p)}</div>
+      </section>
+    </main>`;
+}
+function renderStage(s, mode, ui) {
+  if (mode === "dungeon" && s.dungeon)
+    return dungeonScene(s.dungeon, ui);
+  if (mode === "date" && s.date?.session && s.date.person)
+    return dateScene(s.date, ui);
+  if (mode === "gate")
+    return gateScene(s.dungeonEntries, ui);
+  return "";
+}
+function storySpeaker(s, mode) {
+  if (mode === "date" && s?.date?.session)
+    return s.date.session.name;
+  if (mode === "dungeon" && s?.dungeon)
+    return s.dungeon.name;
+  return "The story";
+}
+
+// src/frontend/stage-styles.ts
+var STAGE_STYLES = `
+.warp-stage {
+  --st-bg: #0b0c10;
+  --st-ink: #ede7da;
+  --st-muted: #b1a996;
+  --st-dim: #7c7567;
+  --st-line: rgba(237, 231, 218, .12);
+  --st-panel: rgba(12, 12, 16, .78);
+  --st-panel-hi: rgba(255, 255, 255, .06);
+  --st-accent: #e9a94f;
+  --st-accent-ink: #1b1206;
+  --st-glow: rgba(233, 169, 79, .35);
+  --st-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  --st-ui: var(--lumiverse-font, system-ui, -apple-system, "Segoe UI", sans-serif);
+  --warp-text: var(--st-ink);
+  --warp-muted: var(--st-muted);
+  --warp-dim: var(--st-dim);
+  --warp-fill: rgba(255, 255, 255, .07);
+  --warp-fill-subtle: rgba(255, 255, 255, .035);
+  --warp-border: var(--st-line);
+  --warp-accent: var(--st-accent);
+  --warp-accent-fg: var(--st-accent-ink);
+  --warp-good: #5cc9a7;
+  --warp-warn: #e9b44f;
+  --warp-bad: #ef6a7a;
+  --warp-info: #7d9bff;
+  --warp-radius: 10px;
+  position: absolute; inset: 0;
+  display: grid; grid-template-rows: minmax(0, 1fr) auto;
+  background: var(--st-bg); color: var(--st-ink);
+  font-family: var(--st-ui); font-size: 14px; line-height: 1.45;
+  overflow: hidden; user-select: none; -webkit-user-select: none;
+  animation: warp-stage-in 380ms ease both;
+}
+.warp-stage[data-mode=date] {
+  --st-bg: #120b14;
+  --st-ink: #f5e9ee;
+  --st-muted: #c7abb8;
+  --st-dim: #8d7280;
+  --st-line: rgba(245, 233, 238, .12);
+  --st-panel: rgba(22, 12, 22, .74);
+  --st-accent: #ff7ea6;
+  --st-accent-ink: #2a0714;
+  --st-glow: rgba(255, 126, 166, .35);
+}
+@keyframes warp-stage-in { from { opacity: 0; transform: scale(1.01); } to { opacity: 1; transform: none; } }
+.warp-stage *, .warp-stage *::before, .warp-stage *::after { box-sizing: border-box; }
+.warp-stage button { font: inherit; color: inherit; }
+.warp-stage-scene { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; }
+.warp-stage-dim { color: var(--st-dim); font-size: 12.5px; }
+.warp-stage-kicker { font-size: 10.5px; font-weight: 600; letter-spacing: .16em; text-transform: uppercase; color: var(--st-muted); display: inline-flex; align-items: center; gap: 6px; }
+.warp-stage-kicker-icon { width: 16px; height: 16px; }
+
+/* ── backdrop ── */
+.warp-stage-bg { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+.warp-stage-bg::before { content: ""; position: absolute; inset: -2px; background: var(--warp-stage-tex, none) 0 0 / 72px 72px; image-rendering: pixelated; filter: brightness(.28) saturate(.65) contrast(1.05); }
+.warp-stage-bg::after { content: ""; position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse 60% 45% at 50% 38%, rgba(233, 169, 79, .16), transparent 70%),
+    radial-gradient(ellipse at center, transparent 35%, rgba(0, 0, 0, .88) 100%); }
+.warp-stage[data-mode=date] .warp-stage-bg::before {
+  background:
+    radial-gradient(circle at 18% 28%, hsl(var(--warp-hue, 330) 80% 65% / .20), transparent 32%),
+    radial-gradient(circle at 82% 22%, hsl(calc(var(--warp-hue, 330) + 50) 75% 62% / .14), transparent 30%),
+    radial-gradient(circle at 70% 78%, hsl(calc(var(--warp-hue, 330) - 30) 70% 60% / .16), transparent 34%),
+    linear-gradient(165deg, #22122a 0%, #150b18 55%, #0c070e 100%);
+  filter: none; }
+.warp-stage[data-mode=date] .warp-stage-bg::after {
+  background:
+    radial-gradient(circle at 12% 70%, rgba(255, 255, 255, .06) 0 6px, transparent 7px),
+    radial-gradient(circle at 34% 18%, rgba(255, 255, 255, .05) 0 10px, transparent 11px),
+    radial-gradient(circle at 64% 60%, rgba(255, 255, 255, .04) 0 14px, transparent 15px),
+    radial-gradient(circle at 88% 40%, rgba(255, 255, 255, .05) 0 8px, transparent 9px),
+    radial-gradient(ellipse at center, transparent 45%, rgba(0, 0, 0, .7) 100%); }
+
+/* ── top bar ── */
+.warp-stage-top { position: relative; z-index: 1; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 18px;
+  padding: calc(14px + env(safe-area-inset-top, 0px)) 24px 14px; border-bottom: 1px solid var(--st-line);
+  background: linear-gradient(180deg, rgba(0, 0, 0, .6), rgba(0, 0, 0, .15)); }
+.warp-stage-title { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.warp-stage-title h1 { margin: 0; font-family: var(--st-display); font-weight: 600; font-size: 26px; line-height: 1.1; letter-spacing: .01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-wrap: balance; }
+.warp-stage-mid { display: flex; align-items: center; gap: 18px; }
+.warp-stage-actions { display: flex; align-items: center; gap: 8px; }
+.warp-stage-btn { cursor: pointer; border-radius: 999px; padding: 7px 14px; border: 1px solid var(--st-line); background: var(--st-panel-hi); font-weight: 600; font-size: 13px; transition: background 120ms, border-color 120ms, transform 120ms; white-space: nowrap; }
+.warp-stage-btn:hover:not(:disabled) { border-color: var(--st-accent); background: rgba(255, 255, 255, .1); }
+.warp-stage-btn:active:not(:disabled) { transform: translateY(1px); }
+.warp-stage-btn:disabled { opacity: .45; cursor: not-allowed; }
+.warp-stage-btn.ghost { background: transparent; }
+.warp-stage-btn.primary { background: var(--st-accent); color: var(--st-accent-ink); border-color: transparent; box-shadow: 0 6px 20px var(--st-glow); }
+.warp-stage-btn.primary:hover:not(:disabled) { background: var(--st-accent); filter: brightness(1.08); }
+.warp-stage-btn.small { padding: 3px 10px; font-size: 12px; }
+.warp-stage-btn:focus-visible, .warp-stage-cmd:focus-visible, .warp-stage-move:focus-visible, .warp-stage .warp-dg-tile:focus-visible { outline: 2px solid var(--st-accent); outline-offset: 2px; }
+
+/* dungeon: depth, level, gold */
+.warp-stage-depth { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+.warp-stage-depth-n { font-family: var(--st-display); font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.warp-stage-of { color: var(--st-dim); font-size: 14px; }
+.warp-stage-pips { display: flex; gap: 4px; }
+.warp-stage-pips i { width: 8px; height: 8px; transform: rotate(45deg); border: 1px solid rgba(233, 169, 79, .45); background: transparent; }
+.warp-stage-pips i.past { background: rgba(233, 169, 79, .55); border-color: transparent; }
+.warp-stage-pips i.now { background: var(--st-accent); border-color: transparent; box-shadow: 0 0 8px var(--st-accent); }
+.warp-stage-pips i.last { border-color: #ef6a7a; }
+.warp-stage-endless { font-size: 16px; color: var(--st-muted); }
+.warp-stage-boss { color: #ef6a7a; font-size: 14px; filter: drop-shadow(0 0 4px #ef6a7a); }
+.warp-stage-purse { display: flex; align-items: center; gap: 10px; font-variant-numeric: tabular-nums; }
+.warp-stage-lv { font-weight: 700; font-size: 13px; letter-spacing: .04em; }
+.warp-stage-xp { width: 90px; height: 5px; border-radius: 3px; background: rgba(255, 255, 255, .1); overflow: hidden; }
+.warp-stage-xp > span { display: block; height: 100%; background: linear-gradient(90deg, #7d9bff, #b9a6ff); transition: width 400ms ease; }
+.warp-stage-gold { display: inline-flex; align-items: center; gap: 4px; font-weight: 700; color: #f2c45a; }
+.warp-stage-coin { width: 20px; height: 20px; }
+
+/* ── main ── */
+.warp-stage-main { position: relative; z-index: 1; min-height: 0; padding: 18px 24px; }
+.warp-stage-run { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); gap: 22px; }
+.warp-stage-map { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.warp-stage-board { flex: 1; min-height: 0; width: 100%; container-type: size; display: grid; place-items: center; }
+.warp-stage-board .warp-dg-board { width: min(100cqw, 100cqh); height: min(100cqw, 100cqh); grid-auto-rows: 1fr; gap: 4px; padding: 6px; border-radius: 12px;
+  background: rgba(0, 0, 0, .55); box-shadow: 0 0 0 1px rgba(233, 169, 79, .18), 0 24px 60px rgba(0, 0, 0, .6); }
+.warp-stage .warp-dg-tile { aspect-ratio: auto; border-radius: 5px; border: 1px solid rgba(0, 0, 0, .55); transition: filter 160ms, transform 160ms; }
+.warp-stage .warp-dg-tile.hidden { filter: brightness(.32) saturate(.5); }
+.warp-stage .warp-dg-tile.reachable { outline: 2px solid rgba(233, 169, 79, .8); outline-offset: -2px; filter: brightness(.75); animation: warp-stage-beckon 2.4s ease-in-out infinite; }
+.warp-stage .warp-dg-tile.reachable:hover { filter: brightness(1.15); transform: translateY(-2px); animation: none; }
+.warp-stage .warp-dg-tile.here { outline: 2px solid #fff3d6; box-shadow: 0 0 18px rgba(255, 220, 150, .55); z-index: 1; }
+.warp-stage .warp-dg-tile.here .warp-dg-icon { animation: warp-stage-bob 1.8s ease-in-out infinite; }
+@keyframes warp-stage-beckon { 50% { outline-color: rgba(233, 169, 79, .35); } }
+@keyframes warp-stage-bob { 50% { transform: translateY(-4%); } }
+.warp-stage-bag { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: center; }
+.warp-stage-chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--st-line); background: var(--st-panel); cursor: pointer; font-size: 12.5px; }
+.warp-stage-chip:hover:not(:disabled) { border-color: var(--st-accent); }
+.warp-stage-chip.muted { cursor: default; color: var(--st-muted); }
+.warp-stage-loot { font-size: 12px; color: var(--st-muted); }
+.warp-stage-side { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto; padding-right: 4px; scrollbar-width: thin; }
+.warp-stage-party { display: flex; flex-direction: column; gap: 8px; }
+.warp-stage-party.row { flex-direction: row; flex-wrap: wrap; }
+.warp-stage-party.row > * { flex: 1 1 150px; }
+.warp-stage .warp-dg-member { background: var(--st-panel); border: 1px solid var(--st-line); border-radius: 12px; padding: 8px 10px; gap: 4px; }
+.warp-stage .warp-dg-member.active { border-color: var(--st-accent); box-shadow: 0 0 0 1px var(--st-accent) inset, 0 0 22px var(--st-glow); }
+.warp-stage .warp-dg-member.targetable { border-color: var(--warp-good); cursor: pointer; animation: warp-stage-pulse 1.4s ease-in-out infinite; }
+.warp-stage .warp-dg-face { width: 36px; height: 36px; }
+.warp-stage .warp-dg-bar { font-size: 11px; grid-template-columns: 22px 1fr 34px; }
+.warp-stage .warp-dg-bar-track { height: 6px; background: rgba(0, 0, 0, .5); }
+.warp-stage-here .warp-card, .warp-stage-here > div { background: var(--st-panel); border: 1px solid var(--st-line); border-radius: 12px; padding: 12px; }
+.warp-stage-here .warp-dg-event { border-color: rgba(233, 169, 79, .45); box-shadow: 0 0 30px rgba(233, 169, 79, .12); }
+.warp-stage-here .warp-dg-event p { font-family: var(--st-display); font-size: 15.5px; line-height: 1.55; margin: 0 0 10px; }
+.warp-stage-here .warp-dg-event.romance { border-color: #ff7ea6; box-shadow: 0 0 30px rgba(255, 126, 166, .15); }
+.warp-stage-here .warp-btn { border-radius: 999px; padding: 6px 12px; }
+.warp-stage-here h3 { margin: 0 0 8px; font-family: var(--st-display); font-size: 16px; }
+.warp-stage-log { font-size: 12.5px; color: var(--st-muted); display: flex; flex-direction: column; gap: 3px; border-top: 1px solid var(--st-line); padding-top: 10px; }
+.warp-stage-log > div:first-child { color: var(--st-ink); }
+.warp-stage-menu-note { display: flex; align-items: center; gap: 10px; color: var(--st-muted); }
+.warp-stage-menu-note.warn { color: var(--warp-warn); }
+
+/* battle */
+.warp-stage-battle { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); gap: 18px; }
+.warp-stage:has(.warp-stage-battle) .warp-stage-story { max-height: 24dvh; }
+.warp-stage-arena { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 8px; min-height: 0; border-radius: 16px; padding: 14px 18px;
+  background: radial-gradient(ellipse 70% 60% at 50% 70%, rgba(255, 190, 120, .10), transparent 70%), rgba(0, 0, 0, .35);
+  box-shadow: inset 0 0 0 1px rgba(233, 169, 79, .16), inset 0 -60px 80px rgba(0, 0, 0, .45); }
+.warp-stage-arena.boss { box-shadow: inset 0 0 0 1px rgba(239, 106, 122, .35), inset 0 -60px 80px rgba(0, 0, 0, .45), 0 0 40px rgba(239, 106, 122, .12); }
+.warp-stage-arena-head { display: flex; justify-content: space-between; align-items: baseline; }
+.warp-stage-round { font-family: var(--st-display); font-size: 16px; color: var(--st-muted); }
+.warp-stage-foes { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; align-content: center; gap: 22px; min-height: 0; }
+.warp-stage-foe { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; width: 150px; padding: 8px; border-radius: 14px; border: 1px solid transparent; background: transparent; }
+.warp-stage-foe-glow { position: absolute; left: 15%; right: 15%; bottom: 44px; height: 14px; border-radius: 50%; background: rgba(0, 0, 0, .55); filter: blur(4px); }
+.warp-stage-foe-img { position: relative; width: clamp(72px, 15vh, 132px); height: clamp(72px, 15vh, 132px); filter: drop-shadow(0 6px 4px rgba(0, 0, 0, .6)); animation: warp-stage-idle 3.2s ease-in-out infinite; }
+.warp-stage-foe:nth-child(2n) .warp-stage-foe-img { animation-delay: -1.1s; }
+.warp-stage-foe.elite .warp-stage-foe-img { width: clamp(84px, 18vh, 156px); height: clamp(84px, 18vh, 156px); filter: drop-shadow(0 0 10px rgba(233, 180, 79, .8)); }
+.warp-stage-foe.boss { width: 230px; }
+.warp-stage-foe.boss .warp-stage-foe-img { width: clamp(110px, 26vh, 220px); height: clamp(110px, 26vh, 220px); filter: drop-shadow(0 0 14px rgba(239, 106, 122, .85)); }
+.warp-stage-foe.down { opacity: .22; filter: grayscale(1); }
+.warp-stage-foe.down .warp-stage-foe-img { animation: none; transform: rotate(-8deg) translateY(8px); }
+.warp-stage-foe.targetable { cursor: pointer; border-color: rgba(239, 106, 122, .7); background: rgba(239, 106, 122, .08); animation: warp-stage-pulse 1.4s ease-in-out infinite; }
+.warp-stage-foe-name { font-weight: 600; font-size: 13px; text-shadow: 0 1px 3px #000; text-align: center; }
+.warp-stage-foe .warp-dg-bar { width: 100%; }
+@keyframes warp-stage-idle { 50% { transform: translateY(-5px); } }
+@keyframes warp-stage-pulse { 50% { box-shadow: 0 0 0 4px rgba(233, 169, 79, .15); } }
+.warp-stage-ticker { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 13px; color: var(--st-muted); text-align: center; }
+.warp-stage-ticker .new { color: var(--st-ink); font-weight: 600; animation: warp-stage-rise 360ms ease both; }
+@keyframes warp-stage-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.warp-stage-command { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+.warp-stage-menu { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 14px;
+  background: linear-gradient(180deg, rgba(24, 20, 16, .95), rgba(10, 9, 8, .95)); border: 1px solid rgba(233, 169, 79, .35);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .7), 0 14px 40px rgba(0, 0, 0, .55); }
+.warp-stage-turn { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--st-muted); }
+.warp-stage-turn b { color: var(--st-ink); }
+.warp-stage-turn-face { width: 28px; height: 28px; }
+.warp-stage-cmds { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 6px; }
+.warp-stage-cmds.tail { border-top: 1px solid rgba(233, 169, 79, .18); padding-top: 8px; }
+.warp-stage-cmd { cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 7px 10px; border-radius: 8px; border: 1px solid rgba(233, 169, 79, .22); background: rgba(255, 255, 255, .04); text-align: left; font-size: 13px; font-weight: 600; transition: background 120ms, border-color 120ms, transform 120ms; }
+.warp-stage-cmd small { font-weight: 500; color: var(--st-dim); font-size: 11px; }
+.warp-stage-cmd:hover:not(:disabled) { background: rgba(233, 169, 79, .16); border-color: var(--st-accent); transform: translateX(2px); }
+.warp-stage-cmd:disabled { opacity: .4; cursor: not-allowed; }
+.warp-stage-cmd.item span { flex: 1; }
+.warp-stage-cmd.flee { border-color: rgba(125, 155, 255, .35); }
+
+/* gate */
+.warp-stage-gates { display: flex; flex-wrap: wrap; justify-content: center; align-content: center; gap: 20px; overflow-y: auto; }
+.warp-stage-gate { width: min(460px, 100%); display: flex; flex-direction: column; gap: 12px; padding: 22px; border-radius: 18px; background: var(--st-panel); border: 1px solid rgba(233, 169, 79, .28); box-shadow: 0 24px 60px rgba(0, 0, 0, .55); }
+.warp-stage-gate-head { display: flex; align-items: center; gap: 14px; }
+.warp-stage-gate-icon { width: 56px; height: 56px; filter: drop-shadow(0 0 10px rgba(233, 169, 79, .5)); }
+.warp-stage-gate h2 { margin: 0; font-family: var(--st-display); font-size: 24px; font-weight: 600; }
+.warp-stage-gate p { margin: 0; }
+.warp-stage-mates { display: flex; flex-direction: column; gap: 6px; }
+.warp-stage-mate { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--st-line); cursor: pointer; }
+.warp-stage-mate.on { border-color: var(--st-accent); background: rgba(233, 169, 79, .08); }
+.warp-stage-mate input { accent-color: var(--st-accent); }
+.warp-stage-mate-name { font-weight: 600; flex: 1; }
+.warp-stage-gate .warp-stage-btn.primary { align-self: flex-start; padding: 10px 18px; font-size: 14px; }
+
+/* ── date ── */
+.warp-stage-ladder { list-style: none; margin: 0; padding: 0; display: flex; align-items: center; gap: 0; }
+.warp-stage-ladder li { position: relative; font-size: 11.5px; letter-spacing: .04em; color: var(--st-dim); padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
+.warp-stage-ladder li + li::before { content: ""; position: absolute; left: -6px; top: 50%; width: 12px; height: 1px; background: var(--st-line); }
+.warp-stage-ladder li.past { color: var(--st-muted); }
+.warp-stage-ladder li.now { color: var(--st-accent-ink); background: var(--st-accent); font-weight: 700; box-shadow: 0 0 16px var(--st-glow); }
+.warp-stage-ladder li.hostile { background: #ef6a7a; color: #2a0710; }
+.warp-stage-date { display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); gap: 26px; }
+.warp-stage-heart { display: flex; flex-direction: column; align-items: center; gap: 12px; min-height: 0; overflow-y: auto; padding: 4px 4px 8px; scrollbar-width: thin; }
+.warp-stage-portrait { position: relative; width: min(220px, 60vw); aspect-ratio: 1; flex: none; display: grid; place-items: center; }
+.warp-stage-portrait svg { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
+.warp-stage-portrait circle { fill: none; stroke-width: 4; stroke-linecap: round; transition: stroke-dasharray 700ms ease; }
+.warp-stage-portrait circle.track { stroke: rgba(255, 255, 255, .08); }
+.warp-stage-portrait circle.track.thin { stroke-width: 2.5; }
+.warp-stage-portrait circle.love { stroke: #ff7ea6; filter: drop-shadow(0 0 3px rgba(255, 126, 166, .7)); }
+.warp-stage-portrait circle.fear { stroke: #9b7bff; stroke-width: 2.5; }
+.warp-stage-initial { width: 72%; aspect-ratio: 1; border-radius: 50%; display: grid; place-items: center; font-family: var(--st-display); font-size: clamp(48px, 7vw, 76px); font-weight: 600; color: #fff;
+  background: radial-gradient(circle at 35% 30%, hsl(var(--warp-hue, 330) 60% 62%), hsl(var(--warp-hue, 330) 50% 30%) 70%);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .15), 0 20px 50px rgba(0, 0, 0, .5); text-shadow: 0 2px 10px rgba(0, 0, 0, .35); }
+.warp-stage-face { position: absolute; right: 6%; bottom: 8%; font-size: clamp(30px, 4vw, 40px); line-height: 1; filter: drop-shadow(0 4px 8px rgba(0, 0, 0, .5)); animation: warp-stage-idle 3.6s ease-in-out infinite; }
+.warp-stage-mood { font-family: var(--st-display); font-size: 18px; font-style: italic; color: var(--st-muted); margin-top: -4px; }
+.warp-stage-reaction { width: 100%; display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 14px; background: var(--st-panel); border: 1px solid var(--st-line); }
+.warp-stage-reaction div { display: flex; flex-direction: column; min-width: 0; }
+.warp-stage-reaction b { font-size: 14px; }
+.warp-stage-reaction span:not(.warp-stage-reaction-icon) { font-size: 12.5px; color: var(--st-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.warp-stage-reaction-icon { font-size: 20px; font-weight: 800; min-width: 34px; text-align: center; }
+.warp-stage-reaction.quiet .warp-stage-reaction-icon { color: var(--st-dim); }
+.warp-stage-reaction.fresh { animation: warp-stage-pop 620ms cubic-bezier(.2, 1.4, .4, 1) both; }
+.warp-stage-reaction.fresh.warp-tone-good { box-shadow: 0 0 34px rgba(92, 201, 167, .25); border-color: rgba(92, 201, 167, .5); }
+.warp-stage-reaction.fresh.warp-tone-bad, .warp-stage-reaction.fresh.warp-tone-warn { box-shadow: 0 0 34px rgba(239, 106, 122, .22); border-color: rgba(239, 106, 122, .45); }
+@keyframes warp-stage-pop { from { opacity: 0; transform: scale(.86) translateY(8px); } to { opacity: 1; transform: none; } }
+.warp-stage-gauges { width: 100%; display: flex; flex-direction: column; gap: 7px; padding: 12px 14px; border-radius: 14px; background: var(--st-panel); border: 1px solid var(--st-line); }
+.warp-stage .warp-date-meter { grid-template-columns: 64px 1fr auto; font-size: 12px; }
+.warp-stage .warp-date-meter-track { height: 6px; background: rgba(255, 255, 255, .08); }
+.warp-stage .warp-date-meter.love .warp-date-meter-track > div { background: linear-gradient(90deg, #ff5f8f, #ffb0c8); }
+.warp-stage .warp-date-meter.fear .warp-date-meter-track > div { background: linear-gradient(90deg, #7a5cff, #b9a6ff); }
+.warp-stage-streak { font-weight: 700; font-size: 13px; color: var(--st-muted); }
+.warp-stage-streak.hot { color: #ffb45c; text-shadow: 0 0 12px rgba(255, 150, 60, .6); }
+.warp-stage-outing { width: 100%; display: flex; flex-direction: column; gap: 8px; padding: 10px 14px; border-radius: 14px; border: 1px dashed var(--st-line); }
+.warp-stage-outing.plan { color: var(--st-muted); }
+.warp-stage-beats { display: flex; gap: 6px; justify-content: center; }
+.warp-stage-beats i { width: 26px; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, .1); }
+.warp-stage-beats i.past { background: rgba(255, 126, 166, .55); }
+.warp-stage-beats i.now { background: var(--st-accent); box-shadow: 0 0 10px var(--st-glow); }
+.warp-stage-deck { display: flex; flex-direction: column; gap: 16px; min-height: 0; overflow-y: auto; padding: 4px 6px 8px 0; scrollbar-width: thin; }
+.warp-stage-group { display: flex; flex-direction: column; gap: 8px; }
+.warp-stage-moves { display: flex; flex-wrap: wrap; gap: 8px; }
+.warp-stage-move { cursor: pointer; display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 999px; border: 1px solid var(--st-line); background: var(--st-panel); font-weight: 600; font-size: 13.5px; transition: border-color 120ms, background 120ms, transform 120ms; }
+.warp-stage-move:hover:not(:disabled) { border-color: var(--st-accent); background: rgba(255, 126, 166, .1); transform: translateY(-1px); }
+.warp-stage-move:disabled { opacity: .45; cursor: not-allowed; }
+.warp-stage-move.special { border-color: rgba(255, 126, 166, .55); }
+.warp-stage-move.venue, .warp-stage-move.activity { border-color: rgba(233, 180, 79, .45); }
+.warp-stage-topics { display: flex; flex-direction: column; gap: 10px; }
+.warp-stage-cats { display: flex; flex-wrap: wrap; gap: 6px; }
+.warp-stage-cat { cursor: pointer; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--st-line); background: transparent; color: var(--st-muted); font-size: 13px; }
+.warp-stage-cat small { font-size: 10.5px; padding: 0 6px; border-radius: 999px; background: rgba(255, 255, 255, .1); color: var(--st-ink); }
+.warp-stage-cat[aria-selected=true] { color: var(--st-ink); border-color: var(--st-accent); background: rgba(255, 126, 166, .1); }
+.warp-stage-topic-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+.warp-stage .warp-date-topic { min-height: 48px; padding: 10px 12px; border-radius: 12px; background: var(--st-panel); border-color: var(--st-line); font-size: 13.5px; transition: border-color 120ms, transform 120ms, background 120ms; }
+.warp-stage .warp-date-topic:hover:not(:disabled) { border-color: var(--st-accent); background: rgba(255, 126, 166, .08); transform: translateY(-1px); }
+.warp-stage-knows { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 1px solid var(--st-line); }
+
+/* the run or date is over; the scene waits behind this until the player heads back */
+.warp-stage-ended { position: absolute; inset: 0; z-index: 3; display: grid; place-items: center; background: rgba(0, 0, 0, .55); backdrop-filter: blur(3px); animation: warp-stage-in 380ms ease both; }
+.warp-stage-ended > div { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 26px 34px; border-radius: 18px; background: var(--st-panel); border: 1px solid var(--st-line); box-shadow: 0 24px 60px rgba(0, 0, 0, .6); }
+.warp-stage-ended .warp-stage-kicker { font-size: 12px; color: var(--st-ink); }
+
+/* ── the story box ── */
+.warp-stage-story { position: relative; z-index: 2; margin: 0 24px calc(16px + env(safe-area-inset-bottom, 0px)); display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
+  max-height: 36dvh; border-radius: 16px; background: rgba(9, 9, 12, .9); border: 1px solid var(--st-line); box-shadow: 0 -10px 40px rgba(0, 0, 0, .45); backdrop-filter: blur(10px); user-select: text; -webkit-user-select: text; }
+.warp-stage[data-mode=date] .warp-stage-story { background: rgba(18, 9, 16, .9); }
+.warp-stage-story-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 16px 0; }
+.warp-stage-speaker { font-family: var(--st-display); font-weight: 600; font-size: 15px; color: var(--st-accent); letter-spacing: .02em; }
+.warp-stage-fold { cursor: pointer; border: none; background: transparent; color: var(--st-muted); font-size: 16px; padding: 2px 6px; border-radius: 6px; transition: transform 160ms; }
+.warp-stage-fold:hover { color: var(--st-ink); }
+.warp-stage-story-body { min-height: 0; overflow-y: auto; padding: 6px 18px 10px; scrollbar-width: thin; }
+.warp-stage-said { font-size: 13px; color: var(--st-muted); margin-bottom: 6px; }
+.warp-stage-said:empty { display: none; }
+.warp-stage-said span { font-weight: 700; color: var(--st-dim); margin-right: 4px; text-transform: uppercase; font-size: 10.5px; letter-spacing: .12em; }
+.warp-stage-text { font-family: var(--st-display); font-size: 16.5px; line-height: 1.62; max-width: 76ch; }
+.warp-stage-text p { margin: 0 0 .7em; }
+.warp-stage-text p:last-child { margin-bottom: 0; }
+.warp-stage-text em { color: var(--st-muted); }
+.warp-stage-text .warp-stage-q { color: #fff8ea; }
+.warp-stage[data-mode=date] .warp-stage-text .warp-stage-q { color: #ffe3ec; }
+.warp-stage-text.streaming > p:last-child::after { content: "▍"; color: var(--st-accent); animation: warp-stage-caret 1s steps(2) infinite; margin-left: 1px; }
+@keyframes warp-stage-caret { 50% { opacity: 0; } }
+.warp-stage-text:empty::before { content: "The story continues here as you play."; color: var(--st-dim); font-style: italic; font-size: 14px; }
+.warp-stage-status { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--st-muted); margin-top: 8px; }
+.warp-stage-status:empty { display: none; }
+.warp-stage-dots { display: inline-flex; gap: 3px; }
+.warp-stage-dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--st-accent); animation: warp-stage-dot 1.1s ease-in-out infinite; }
+.warp-stage-dots i:nth-child(2) { animation-delay: .15s; }
+.warp-stage-dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes warp-stage-dot { 0%, 80%, 100% { opacity: .25; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-3px); } }
+.warp-stage-say { display: flex; gap: 8px; align-items: flex-end; padding: 10px 12px 12px; border-top: 1px solid var(--st-line); }
+.warp-stage-say textarea { flex: 1; min-height: 40px; max-height: 120px; resize: none; font: inherit; font-size: 14px; line-height: 1.4; color: var(--st-ink); background: rgba(255, 255, 255, .05); border: 1px solid var(--st-line); border-radius: 12px; padding: 10px 12px; outline: none; }
+.warp-stage-say textarea:focus { border-color: var(--st-accent); background: rgba(255, 255, 255, .07); }
+.warp-stage-say textarea::placeholder { color: var(--st-dim); }
+.warp-stage-say .warp-stage-btn { height: 40px; }
+.warp-stage[data-view=gate] .warp-stage-story { display: none; }
+.warp-stage-story.folded { grid-template-rows: auto 0 auto; }
+.warp-stage-story.folded .warp-stage-story-body { display: none; }
+.warp-stage-story.folded .warp-stage-fold { transform: rotate(180deg); }
+
+/* ── narrow screens ── */
+@media (max-width: 860px) {
+  .warp-stage-top { grid-template-columns: minmax(0, 1fr) auto; padding: calc(10px + env(safe-area-inset-top, 0px)) 14px 10px; gap: 10px; }
+  .warp-stage-mid { grid-column: 1 / -1; grid-row: 2; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+  .warp-stage-title h1 { font-size: 21px; }
+  .warp-stage-main { padding: 12px 14px; overflow-y: auto; }
+  .warp-stage-run, .warp-stage-date, .warp-stage-battle { display: flex; flex-direction: column; gap: 16px; }
+  .warp-stage-run > *, .warp-stage-date > *, .warp-stage-battle > *, .warp-stage-map > * { flex: none; min-height: auto; }
+  .warp-stage-board { container-type: inline-size; flex: none; }
+  .warp-stage-board .warp-dg-board { width: min(100cqw, 64dvh); height: auto; aspect-ratio: 1; }
+  .warp-stage-side, .warp-stage-heart, .warp-stage-deck { overflow: visible; }
+  .warp-stage-portrait { width: min(150px, 42vw); }
+  .warp-stage-topic-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+  .warp-stage .warp-date-topic { min-height: 42px; padding: 8px 10px; font-size: 13px; }
+  .warp-stage-arena { min-height: 40dvh; }
+  .warp-stage-command { overflow: visible; }
+  .warp-stage-foe { width: 110px; }
+  .warp-stage-foe-img { width: 84px; height: 84px; }
+  .warp-stage-foe.boss { width: 160px; }
+  .warp-stage-foe.boss .warp-stage-foe-img { width: 132px; height: 132px; }
+  .warp-stage-ladder li:not(.now):not(.past) { display: none; }
+  .warp-stage-story { margin: 0 8px calc(8px + env(safe-area-inset-bottom, 0px)); max-height: 42dvh; }
+  .warp-stage-text { font-size: 15.5px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .warp-stage, .warp-stage *, .warp-stage *::before, .warp-stage *::after { animation: none !important; transition: none !important; }
+}
+`;
+
 // src/frontend.ts
 var CLEANUP_KEY = "__warpCleanup";
 var ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><circle cx="8.5" cy="8.5" r="1.3" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/></svg>`;
@@ -1556,6 +2106,7 @@ function setup(ctx) {
     prev();
   const cleanups = [];
   cleanups.push(ctx.dom.addStyle(STYLES));
+  cleanups.push(ctx.dom.addStyle(STAGE_STYLES));
   let state = null;
   let settings = { ...DEFAULT_SETTINGS };
   let templates = [];
@@ -1634,6 +2185,46 @@ function setup(ctx) {
   } catch {
     overlay = null;
   }
+  const stageEl = document.createElement("div");
+  stageEl.className = "warp-stage";
+  stageEl.innerHTML = `<div class="warp-stage-scene"></div>
+    <section class="warp-stage-story" aria-label="The story">
+      <div class="warp-stage-story-head"><span class="warp-stage-speaker"></span><button class="warp-stage-fold" type="button" data-stage-fold title="Fold the story" aria-label="Fold the story">▾</button></div>
+      <div class="warp-stage-story-body"><div class="warp-stage-said"></div><div class="warp-stage-text" aria-live="polite"></div><div class="warp-stage-status"></div></div>
+      <form class="warp-stage-say"><textarea rows="1" placeholder="Say or do something…" aria-label="Your line" enterkeyhint="send"></textarea><button type="submit" class="warp-stage-btn primary">Send</button></form>
+    </section>`;
+  const sceneEl = stageEl.querySelector(".warp-stage-scene");
+  const storyEl = stageEl.querySelector(".warp-stage-story");
+  const storyBody = stageEl.querySelector(".warp-stage-story-body");
+  const speakerEl = stageEl.querySelector(".warp-stage-speaker");
+  const saidEl = stageEl.querySelector(".warp-stage-said");
+  const textEl = stageEl.querySelector(".warp-stage-text");
+  const statusEl = stageEl.querySelector(".warp-stage-status");
+  const sayForm = stageEl.querySelector(".warp-stage-say");
+  const sayInput = sayForm.querySelector("textarea");
+  const sayButton = sayForm.querySelector("button");
+  let stage = null;
+  try {
+    stage = ctx.ui.createFloatWidget({ fullscreen: true, chromeless: true, snapToEdge: false });
+    stage.root.appendChild(stageEl);
+    stage.setVisible(false);
+    cleanups.push(() => stage?.destroy());
+  } catch {
+    stage = null;
+  }
+  stageEl.addEventListener("contextmenu", (e) => e.stopPropagation());
+  let stageOpen = false;
+  let stageWantGate = false;
+  let stageMode = null;
+  let stageKey = "";
+  let lingering = false;
+  const stageDismissed = new Set;
+  let reactionKey = null;
+  let storyFolded = store("storyFolded") === "1";
+  storyEl.classList.toggle("folded", storyFolded);
+  let storyShown = "";
+  let stream = { gen: "", text: "" };
+  const stageVisible = () => !!stage?.isVisible();
   function place(b) {
     if (!overlay)
       return;
@@ -1725,7 +2316,7 @@ function setup(ctx) {
   function syncDockVisibility() {
     if (!overlay)
       return;
-    const show = !!state?.hud || state?.status.state === "broken";
+    const show = (!!state?.hud || state?.status.state === "broken") && !stageVisible();
     if (show !== overlay.isVisible())
       overlay.setVisible(show);
     if (show)
@@ -1741,6 +2332,7 @@ function setup(ctx) {
       <span class="warp-overlay-title">\uD83C\uDFB2 ${clock ? `<b>${esc(clock)}</b>` : "Warp"}${where}</span>
       ${dot}
       <span class="warp-overlay-actions">
+        ${stageMode && !stageVisible() ? `<button class="warp-btn warp-btn-ghost" data-open-stage title="Back to the ${stageMode === "date" ? "date" : "dungeon"}" aria-label="Back to the ${stageMode === "date" ? "date" : "dungeon"}">${stageMode === "date" ? "\uD83D\uDCAC" : "⚔"}</button>` : ""}
         ${overlayOpen && edge ? `<button class="warp-btn warp-btn-ghost" data-detach title="Float" aria-label="Detach">⇱</button>` : ""}
         ${overlayOpen ? `<button class="warp-btn warp-btn-ghost" data-open-sheet title="Open full sheet" aria-label="Open full sheet">⤢</button>` : ""}
         <button class="warp-btn warp-btn-ghost" data-toggle-overlay title="${overlayOpen ? "Collapse" : "Expand"}" aria-label="${overlayOpen ? "Collapse" : "Expand"}">${overlayOpen ? "–" : "+"}</button>
@@ -1751,6 +2343,10 @@ function setup(ctx) {
     if (t.closest("[data-open-sheet]")) {
       drawerView = "sheet";
       tab.activate();
+      return;
+    }
+    if (t.closest("[data-open-stage]")) {
+      openStage();
       return;
     }
     if (t.closest("[data-detach]")) {
@@ -1935,10 +2531,234 @@ function setup(ctx) {
   function syncCue() {
     cue.update({ state, enabled: settings.enabled, showOdds: settings.showOdds, busy: busy.on && busy.chatId === state?.chatId, busyLabel: busy.label });
   }
+  function raiseStage() {
+    const host = stage?.root.parentElement?.parentElement;
+    if (host instanceof HTMLElement)
+      host.style.zIndex = "9992";
+  }
+  function syncStage() {
+    const mode = settings.enabled ? stageModeOf(state, stageWantGate) : null;
+    const key = mode ? `${state?.chatId}:${mode}` : "";
+    if (key !== stageKey) {
+      const sameChat = !!stageKey && stageKey.startsWith(`${state?.chatId}:`);
+      if (stageKey)
+        stageDismissed.delete(stageKey);
+      stageKey = key;
+      reactionKey = null;
+      if (mode) {
+        lingering = false;
+        stageMode = mode;
+        if (!stageDismissed.has(key))
+          stageOpen = true;
+      } else if (sameChat && stageVisible() && stageMode && stageMode !== "gate") {
+        lingering = true;
+        sceneEl.insertAdjacentHTML("beforeend", `<div class="warp-stage-ended"><div><div class="warp-stage-kicker">${stageMode === "date" ? "The date is over" : "Out of the dungeon"}</div><button class="warp-stage-btn primary" data-stage-close>Back to the chat</button></div></div>`);
+      } else {
+        stageOpen = false;
+        stageMode = null;
+        stageWantGate = false;
+        lingering = false;
+      }
+      stageEl.dataset.mode = stageMode === "date" ? "date" : stageMode ? "dungeon" : "";
+      stageEl.dataset.view = stageMode ?? "";
+    }
+    const show = !!stage && stageOpen && (!!mode || lingering);
+    if (show !== stageVisible()) {
+      stage?.setVisible(show);
+      if (show) {
+        raiseStage();
+        requestAnimationFrame(() => requestAnimationFrame(raiseStage));
+      }
+    }
+    if (show)
+      renderStageScene();
+  }
+  function openStage() {
+    if (!stage) {
+      openDungeonDrawer();
+      return;
+    }
+    if (stageKey)
+      stageDismissed.delete(stageKey);
+    stageOpen = true;
+    syncStage();
+    syncDockVisibility();
+    renderHead();
+  }
+  function closeStage() {
+    if (stageKey)
+      stageDismissed.add(stageKey);
+    stageOpen = false;
+    if (lingering) {
+      lingering = false;
+      stageMode = null;
+      stageWantGate = false;
+      stageKey = "";
+    }
+    if (stageMode === "gate") {
+      stageWantGate = false;
+      stageMode = null;
+      stageKey = "";
+    }
+    stage?.setVisible(false);
+    syncDockVisibility();
+    renderHead();
+  }
+  const SCROLLERS = [".warp-stage-side", ".warp-stage-deck", ".warp-stage-heart", ".warp-stage-main"];
+  function renderStageScene() {
+    if (!state || !stageMode || lingering || !stageVisible()) {
+      renderStory();
+      return;
+    }
+    const isBusy = busy.on && busy.chatId === state.chatId;
+    const sess = state.date?.session;
+    const rk = sess?.last ? `${sess.who}|${sess.last.label}|${sess.last.reaction}|${sess.fatigue}` : "";
+    const fresh = reactionKey !== null && rk !== "" && rk !== reactionKey;
+    reactionKey = rk;
+    const kept = SCROLLERS.map((sel) => sceneEl.querySelector(sel)?.scrollTop ?? 0);
+    sceneEl.innerHTML = renderStage(state, stageMode, { pick: dgPick, mates: dgMates, busy: isBusy, cat: dateCat, freshReaction: fresh });
+    SCROLLERS.forEach((sel, i) => {
+      const el = sceneEl.querySelector(sel);
+      if (el && kept[i])
+        el.scrollTop = kept[i];
+    });
+    renderStory();
+  }
+  let storyFrame = 0;
+  function renderStory() {
+    if (!stageVisible())
+      return;
+    const isBusy = busy.on && busy.chatId === state?.chatId;
+    speakerEl.textContent = storySpeaker(state, stageMode);
+    const said = state?.story?.said?.trim();
+    saidEl.innerHTML = said ? `<span>You</span>${esc(said.length > 280 ? `${said.slice(0, 280)}…` : said)}` : "";
+    const live = !!stream.gen;
+    const text = live || stream.text ? stream.text : state?.story?.text ?? "";
+    const html = formatStory(text);
+    if (html !== storyShown) {
+      const newReply = !live && !stream.text && state?.story?.messageId !== textEl.dataset.id;
+      textEl.innerHTML = html;
+      storyShown = html;
+      textEl.dataset.id = state?.story?.messageId ?? "";
+      if (live)
+        storyBody.scrollTop = storyBody.scrollHeight;
+      else if (newReply)
+        storyBody.scrollTop = 0;
+    }
+    textEl.classList.toggle("streaming", live);
+    statusEl.innerHTML = isBusy && !live ? `<span class="warp-stage-dots" aria-hidden="true"><i></i><i></i><i></i></span>${esc(busy.label && busy.label !== "Rolling…" ? busy.label : "The story continues…")}` : "";
+    sayButton.disabled = isBusy;
+  }
+  function scheduleStory() {
+    if (storyFrame)
+      return;
+    storyFrame = requestAnimationFrame(() => {
+      storyFrame = 0;
+      renderStory();
+    });
+  }
+  function growSay() {
+    sayInput.style.height = "auto";
+    sayInput.style.height = `${Math.min(120, sayInput.scrollHeight)}px`;
+  }
+  function sendLine() {
+    const text = sayInput.value.trim();
+    const cid = chatId();
+    if (!text || !cid || busy.on && busy.chatId === cid)
+      return;
+    send({ type: "say", chatId: cid, text });
+    sayInput.value = "";
+    growSay();
+    lockUntilReply(cid);
+  }
+  stageEl.addEventListener("click", (e) => {
+    const t = e.target;
+    if (t.closest("[data-stage-close]")) {
+      closeStage();
+      return;
+    }
+    if (t.closest("[data-stage-fold]")) {
+      storyFolded = !storyFolded;
+      store("storyFolded", storyFolded ? "1" : "0");
+      storyEl.classList.toggle("folded", storyFolded);
+      return;
+    }
+    if (onDungeonClick(t))
+      return;
+    const dateCatEl = t.closest("[data-date-cat]");
+    if (dateCatEl) {
+      dateCat = dateCatEl.dataset.dateCat;
+      renderPick();
+      return;
+    }
+    const dateAct = t.closest("[data-date-act]");
+    if (dateAct && !dateAct.disabled)
+      act(dateAct.dataset.dateAct);
+  });
+  stageEl.addEventListener("change", (e) => onPanelChange(e));
+  sayForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    sendLine();
+  });
+  sayInput.addEventListener("input", growSay);
+  sayInput.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      sendLine();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      closeStage();
+    }
+  });
+  const onStageKey = (e) => {
+    if (e.key !== "Escape" || !stageVisible())
+      return;
+    const a = document.activeElement;
+    if (a && a !== document.body && !stageEl.contains(a))
+      return;
+    e.preventDefault();
+    closeStage();
+  };
+  document.addEventListener("keydown", onStageKey);
+  cleanups.push(() => document.removeEventListener("keydown", onStageKey));
+  const onHost = (ev, fn) => {
+    try {
+      cleanups.push(ctx.events.on(ev, (p) => fn(p && typeof p === "object" ? p : null)));
+    } catch {}
+  };
+  onHost("GENERATION_STARTED", (p) => {
+    if (!p || p.chatId !== state?.chatId || /quiet|impersonate/i.test(String(p.generationType ?? "")))
+      return;
+    stream = { gen: String(p.generationId ?? "live"), text: "" };
+    scheduleStory();
+  });
+  onHost("STREAM_TOKEN_RECEIVED", (p) => {
+    if (!stream.gen || !p || typeof p.token !== "string" || p.type === "reasoning")
+      return;
+    if (p.generationId && stream.gen !== "live" && p.generationId !== stream.gen)
+      return;
+    const at = typeof p.offset === "number" && p.offset <= stream.text.length ? p.offset : stream.text.length;
+    stream.text = stream.text.slice(0, at) + p.token;
+    scheduleStory();
+  });
+  const endStream = (p) => {
+    if (!stream.gen || p?.generationId && stream.gen !== "live" && p.generationId !== stream.gen)
+      return;
+    stream.gen = "";
+    scheduleStory();
+  };
+  onHost("GENERATION_ENDED", endStream);
+  onHost("GENERATION_STOPPED", endStream);
+  function renderPick() {
+    renderDrawer();
+    renderStageScene();
+  }
   function renderAll() {
     renderDock();
     renderDrawer();
     reconcileMessages();
+    syncStage();
     syncDockVisibility();
     syncCue();
     if (state?.hud)
@@ -2271,10 +3091,19 @@ function setup(ctx) {
     dgPick = null;
     send({ type: "dungeon", chatId: cid, ...op });
   }
-  function openDungeon() {
-    drawerView = "dungeon";
+  function openDungeonDrawer() {
+    drawerView = state?.date?.session && !state.dungeon ? "date" : "dungeon";
     tab.activate();
     renderDrawer();
+  }
+  function openDungeon() {
+    if (!stage) {
+      openDungeonDrawer();
+      return;
+    }
+    if (!state?.dungeon)
+      stageWantGate = true;
+    openStage();
   }
   async function confirmLeave() {
     const res = await ctx.ui.showConfirm({
@@ -2303,7 +3132,7 @@ function setup(ctx) {
     }
     if (d.dgCancel !== undefined) {
       dgPick = null;
-      renderDrawer();
+      renderPick();
       return true;
     }
     if (d.dgSkill) {
@@ -2311,12 +3140,12 @@ function setup(ctx) {
       const foes = v?.battle?.fighters.filter((f) => f.side === "foe" && f.alive) ?? [];
       if (target === "foe" && foes.length > 1) {
         dgPick = { kind: "skill", id: d.dgSkill, target: "foe" };
-        renderDrawer();
+        renderPick();
         return true;
       }
       if (target === "ally") {
         dgPick = { kind: "skill", id: d.dgSkill, target: "ally" };
-        renderDrawer();
+        renderPick();
         return true;
       }
       dg({ op: "battle", skill: d.dgSkill, target: foes[0]?.id });
@@ -2328,12 +3157,12 @@ function setup(ctx) {
         return true;
       }
       dgPick = { kind: "item", id: d.dgItem, target: "ally" };
-      renderDrawer();
+      renderPick();
       return true;
     }
     if (d.dgUse) {
       dgPick = { kind: "use", id: d.dgUse, target: "ally" };
-      renderDrawer();
+      renderPick();
       return true;
     }
     if (d.dgTarget && dgPick) {
@@ -2398,7 +3227,7 @@ function setup(ctx) {
         dgMates.add(t.dataset.dgMate);
       else
         dgMates.delete(t.dataset.dgMate);
-      renderDrawer();
+      renderPick();
       return;
     }
     if (t.dataset.wearSlot) {
@@ -2439,9 +3268,13 @@ function setup(ctx) {
   }
   function act(actionId) {
     if (actionId === "date:open") {
-      drawerView = "date";
-      tab.activate();
-      renderDrawer();
+      if (stage && state?.date?.session)
+        openStage();
+      else {
+        drawerView = "date";
+        tab.activate();
+        renderDrawer();
+      }
       return;
     }
     if (actionId.startsWith("run:") && actionId !== "run:epilogue") {
@@ -2458,15 +3291,20 @@ function setup(ctx) {
     const cid = chatId();
     if (!cid || busy.on && busy.chatId === cid)
       return;
+    send({ type: "act", chatId: cid, actionId });
+    lockUntilReply(cid);
+  }
+  function lockUntilReply(cid) {
     busy = { chatId: cid, on: true, label: "Rolling…" };
     placeChoices(true);
     syncCue();
-    send({ type: "act", chatId: cid, actionId });
+    renderStageScene();
     setTimeout(() => {
       if (busy.on && busy.label === "Rolling…" && busy.chatId === cid) {
         busy = { chatId: "", on: false, label: "" };
         placeChoices(true);
         syncCue();
+        renderStageScene();
       }
     }, 15000);
   }
@@ -2566,7 +3404,7 @@ function setup(ctx) {
   document.addEventListener("click", onDocClick, true);
   cleanups.push(() => document.removeEventListener("click", onDocClick, true));
   const onKey = (e) => {
-    if (!settings.hotkeys || e.ctrlKey || e.metaKey || e.altKey)
+    if (!settings.hotkeys || e.ctrlKey || e.metaKey || e.altKey || stageVisible())
       return;
     const t = e.target;
     if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)))
@@ -2603,6 +3441,8 @@ function setup(ctx) {
           busy = { chatId: "", on: false, label: "" };
         if (m.busy && m.chatId)
           busy = { chatId: m.chatId, on: true, label: busy.label };
+        if (!stream.gen)
+          stream.text = "";
         renderAll();
         break;
       }
@@ -2610,6 +3450,7 @@ function setup(ctx) {
         busy = { chatId: m.chatId, on: m.busy, label: m.busy ? m.label ?? busy.label ?? "" : "" };
         placeChoices(true);
         syncCue();
+        renderStageScene();
         break;
       case "builder": {
         const prev = builder;

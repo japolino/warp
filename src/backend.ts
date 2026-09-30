@@ -170,6 +170,14 @@ spindle.onFrontendMessage(async (raw, userId) => {
         await pushState(msg.chatId, userId, true);
         break;
 
+      case "say": {
+        const text = String(msg.text ?? "").trim().slice(0, 4000);
+        if (!text) return;
+        if (busyChats.has(msg.chatId)) { toast("info", "Wait for the story to catch up first.", userId); return; }
+        await spindle.chat.appendMessage(msg.chatId, { role: "user", content: text }, { triggerGeneration: true });
+        break;
+      }
+
       case "act": {
         const loaded = await getRuleset(msg.chatId, userId);
         const r = loaded?.ruleset;

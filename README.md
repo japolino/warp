@@ -31,6 +31,10 @@ A game engine under your roleplay. Warp owns stats, dice, time, inventory and re
 | Dating | Talk topic by topic: each person has hidden tastes (authored, read from the card by the decision model, or seeded) that you discover as you go. Reactions move love and fear, which set the stage (stranger → acquaintance → friend → close → partner, or hostile) that unlocks more topics. Mood, conversation fatigue and a streak bonus shape every reaction, and a line you type is judged on its own words. Ask people out, pick a venue, and play the outing moment by moment for an enjoyment score; confess, kiss, give gifts. Romance is only ever offered between adults |
 | Dungeons | Roguelike diving: floors of face-down tiles (monsters, elites, guardians, treasure, traps, springs, merchants, events, surprises, romance moments) with one way down. Party battles with HP/MP/TP, skills, items, escape and auto-battle; quit any time and keep the loot, or get wiped out and lose it. Story moments are written up by the narrator. Built-in bestiary, events and art |
 
+## The stage
+
+A dungeon run and a date each take the whole screen as their own experience, apart from the chat. The dungeon is a torch-lit floor to walk, a party panel and a JRPG-style battle screen; a date puts the person across from you — their mood, how they took your last line, where you stand (stranger → partner), and every topic to raise. The story box at the bottom shows the narrator's reply as it's written, and you can type your own line there. **Chat ⤓** (or Esc) drops back to the chat; the ⚔ / 💬 button on the status panel brings the stage back. It opens by itself when a run or date begins, and when it ends the closing lines finish on the stage before you head back.
+
 ## Typing freely
 
 Most roleplay is typed, so the core systems follow the story rather than waiting for a button:

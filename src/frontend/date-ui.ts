@@ -11,10 +11,10 @@ export interface DateUi {
   busy: boolean;
 }
 
-const REACT_ICON: Record<string, string> = { love: "♥♥", like: "♥", neutral: "–", dislike: "✕", hate: "✕✕" };
-const REACT_TONE: Record<string, string> = { love: "good", like: "good", neutral: "neutral", dislike: "warn", hate: "bad" };
+export const REACT_ICON: Record<string, string> = { love: "♥♥", like: "♥", neutral: "–", dislike: "✕", hate: "✕✕" };
+export const REACT_TONE: Record<string, string> = { love: "good", like: "good", neutral: "neutral", dislike: "warn", hate: "bad" };
 
-function hue(name: string): number {
+export function hue(name: string): number {
   let h = 0;
   for (const c of name) h = (h * 31 + c.charCodeAt(0)) % 360;
   return h;
@@ -24,16 +24,16 @@ function avatar(name: string, big = false): string {
   return `<span class="warp-date-avatar${big ? " big" : ""}" style="--warp-hue:${hue(name)}" aria-hidden="true">${esc(name.trim().charAt(0).toUpperCase() || "?")}</span>`;
 }
 
-function meter(label: string, value: number, text: string | null, cls: string): string {
+export function meter(label: string, value: number, text: string | null, cls: string): string {
   const pct = Math.round(Math.max(0, Math.min(1, value)) * 100);
   return `<div class="warp-date-meter ${cls}" title="${esc(`${label}: ${text ?? `${pct}%`}`)}"><span class="warp-date-meter-l">${esc(label)}</span><div class="warp-date-meter-track"><div style="width:${pct}%"></div></div><span class="warp-date-meter-t">${esc(text ?? `${pct}%`)}</span></div>`;
 }
 
-function stageBadge(p: DatePersonView): string {
+export function stageBadge(p: DatePersonView): string {
   return `<span class="warp-date-stage${p.hostile ? " hostile" : ""}${p.partner ? " partner" : ""}">${p.partner ? "♥ " : ""}${esc(p.stage)}</span>`;
 }
 
-function knows(p: DatePersonView): string {
+export function knows(p: DatePersonView): string {
   const bits = [
     p.loves.length ? `<span class="warp-tone-good">♥♥ ${esc(p.loves.join(", "))}</span>` : "",
     p.likes.length ? `<span class="warp-tone-good">♥ ${esc(p.likes.join(", "))}</span>` : "",
@@ -55,13 +55,13 @@ function personRow(p: DatePersonView, busy: boolean): string {
   </div>`;
 }
 
-function odds(p: number | null): string {
+export function odds(p: number | null): string {
   if (p === null) return "";
   const tone = p >= 0.67 ? "good" : p >= 0.34 ? "warn" : "bad";
   return `<span class="warp-choice-odds warp-tone-${tone}">${Math.round(p * 100)}%</span>`;
 }
 
-function topicTile(t: DateTopicView, busy: boolean): string {
+export function topicTile(t: DateTopicView, busy: boolean): string {
   const react = t.known ? `<span class="warp-date-react warp-tone-${REACT_TONE[t.known]}" title="${esc(t.knownLabel ?? "")}">${REACT_ICON[t.known]}</span>` : `<span class="warp-date-react warp-dim" title="You don't know how they feel about this yet">?</span>`;
   const title = [t.desc, t.lock, t.knownLabel ? `Last time: ${t.knownLabel.toLowerCase()}` : null, t.used ? `Raised ${t.used}× this time — it wears thin` : null].filter(Boolean).join("\n");
   return `<button class="warp-date-topic${t.lock ? " locked" : ""}" ${t.lock || busy ? "disabled" : ""} data-date-act="date:topic:${esc(t.id)}" title="${esc(title)}">

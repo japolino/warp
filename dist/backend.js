@@ -14361,8 +14361,9 @@ function buildDateView(r, s, lines = []) {
   const here = new Set(presentPeople(r, s, makeEnv(r, s)));
   const people = talkablePeople(r, s).map((id) => personView(r, s, id, here)).sort((a, b) => Number(b.here) - Number(a.here) || b.love - a.love);
   const sess = activeSession(r, s);
+  const stages = r.dating.stages.map((st) => st.label);
   if (!sess)
-    return { session: null, person: null, people, categories: [], moves: [] };
+    return { session: null, person: null, people, categories: [], moves: [], stages };
   const who = sess.who;
   const blocked = new Set(lines.map((l) => l.toLowerCase()));
   const moves = dateMoves(r, s, lines);
@@ -14408,7 +14409,8 @@ function buildDateView(r, s, lines = []) {
     person: personView(r, s, who, here),
     people,
     categories,
-    moves: moves.filter((m) => m.kind !== "topic").map((m) => ({ id: m.id, label: m.label, desc: m.desc, odds: m.odds, kind: m.kind, group: m.group }))
+    moves: moves.filter((m) => m.kind !== "topic").map((m) => ({ id: m.id, label: m.label, desc: m.desc, odds: m.odds, kind: m.kind, group: m.group })),
+    stages
   };
 }
 var init_view3 = __esm(() => {
@@ -16037,7 +16039,7 @@ async function pushState(chatId, userId, force = false) {
     const loaded = await getRuleset(chatId, userId, force);
     const status = statusOf(loaded);
     if (!chatId || !loaded?.ruleset) {
-      send({ type: "state", chatId, status, hud: null, map: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false, dungeon: null, dungeonEntries: [], date: null }, userId);
+      send({ type: "state", chatId, status, hud: null, map: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false, dungeon: null, dungeonEntries: [], date: null, story: null }, userId);
       return;
     }
     const r = loaded.ruleset;
@@ -16066,6 +16068,15 @@ async function pushState(chatId, userId, force = false) {
     }
     const latest = msgs[msgs.length - 1] ?? null;
     const anchor = latest && !latest.is_user ? latest.id : null;
+    let story = null;
+    if (settings.enabled && (state.dungeon || state.date && activeSession(r, state))) {
+      const reply = [...msgs].reverse().find((m) => !m.is_user && m.content.trim());
+      if (reply) {
+        const prev = msgs[(indexOf.get(reply.id) ?? 0) - 1];
+        const clipped = reply.content.length > 8000 ? `…${reply.content.slice(-8000)}` : reply.content;
+        story = { messageId: reply.id, text: clipped, said: prev?.is_user ? prev.content.slice(0, 600) : null };
+      }
+    }
     send({
       type: "state",
       chatId,
@@ -16080,7 +16091,8 @@ async function pushState(chatId, userId, force = false) {
       busy: busyChats.has(chatId),
       dungeon: settings.enabled ? await withName(buildDungeonView(r, state), chatId, userId) : null,
       dungeonEntries: settings.enabled ? buildDungeonEntries(r, state) : [],
-      date: settings.enabled ? buildDateView(r, state, settings.lines) : null
+      date: settings.enabled ? buildDateView(r, state, settings.lines) : null,
+      story: story ? await withName(story, chatId, userId) : null
     }, userId);
   } catch (e) {
     logError("pushState", e);
@@ -16125,6 +16137,7 @@ var init_state_push = __esm(() => {
   init_view();
   init_view2();
   init_view3();
+  init_talk();
   init_drafts();
   init_ledger();
   init_settings();
@@ -17497,6 +17510,17 @@ spindle.onFrontendMessage(async (raw, userId) => {
       case "reload":
         await pushState(msg.chatId, userId, true);
         break;
+      case "say": {
+        const text = String(msg.text ?? "").trim().slice(0, 4000);
+        if (!text)
+          return;
+        if (busyChats.has(msg.chatId)) {
+          toast("info", "Wait for the story to catch up first.", userId);
+          return;
+        }
+        await spindle.chat.appendMessage(msg.chatId, { role: "user", content: text }, { triggerGeneration: true });
+        break;
+      }
       case "act": {
         const loaded = await getRuleset(msg.chatId, userId);
         const r = loaded?.ruleset;

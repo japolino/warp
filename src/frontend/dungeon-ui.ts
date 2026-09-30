@@ -16,19 +16,19 @@ function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-const you = (s: string) => s.replace(/\{\{user\}\}/g, "You");
+export const you = (s: string) => s.replace(/\{\{user\}\}/g, "You");
 
 export function sprite(key: string, cls = ""): string {
   const src = SPRITES[key] ?? SPRITES.skull;
   return `<img class="warp-px ${cls}" src="${src}" alt="" draggable="false">`;
 }
 
-function bar(cur: number, max: number, cls: string, label: string): string {
+export function bar(cur: number, max: number, cls: string, label: string): string {
   const pct = max > 0 ? Math.max(0, Math.min(100, (cur / max) * 100)) : 0;
   return `<div class="warp-dg-bar ${cls}" title="${label} ${Math.round(cur)} / ${Math.round(max)}"><span class="warp-dg-bar-l">${label}</span><div class="warp-dg-bar-track"><div style="width:${pct.toFixed(1)}%"></div></div><span class="warp-dg-bar-n">${Math.round(cur)}</span></div>`;
 }
 
-function memberCard(f: FighterView, opts: { targetable: boolean }): string {
+export function memberCard(f: FighterView, opts: { targetable: boolean }): string {
   const cls = ["warp-dg-member", f.alive ? "" : "down", f.active ? "active" : "", opts.targetable && f.alive ? "targetable" : ""].filter(Boolean).join(" ");
   const tag = opts.targetable && f.alive ? "button" : "div";
   return `<${tag} class="${cls}" ${opts.targetable && f.alive ? `data-dg-target="${esc(f.id)}"` : ""}>
@@ -56,7 +56,7 @@ function tileIcon(kind: string | null, cleared: boolean): string {
   return sprite(TILE_ICON[kind] ?? "surprise", `warp-dg-icon${kind === "elite" || kind === "boss" ? " danger" : ""}`);
 }
 
-function board(v: DungeonView): string {
+export function board(v: DungeonView): string {
   const floor = SPRITES[`floor_${v.theme}`] ?? SPRITES.floor_cave;
   const wall = SPRITES[`wall_${v.theme}`] ?? SPRITES.wall_cave;
   const leader = v.party[0]?.sprite ?? "pc_adventurer_1";
@@ -72,7 +72,7 @@ function board(v: DungeonView): string {
   return `<div class="warp-dg-board" style="grid-template-columns:repeat(${v.size},1fr)">${cells}</div>`;
 }
 
-function herePanel(v: DungeonView, ui: DungeonUi): string {
+export function herePanel(v: DungeonView, ui: DungeonUi): string {
   if (v.event) {
     return `<div class="warp-card warp-dg-event${v.event.romance ? " romance" : ""}">
       <p>${esc(you(v.event.text))}</p>

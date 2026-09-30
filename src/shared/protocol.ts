@@ -248,6 +248,8 @@ export interface DateView {
   categories: { id: string; label: string; icon: string; topics: DateTopicView[] }[];
   /** Non-topic moves (asking out, venues, activities, gifts, goodbye). */
   moves: { id: string; label: string; desc: string | null; odds: number | null; kind: string; group: string }[];
+  /** The relationship ladder, lowest first (stranger … partner). */
+  stages: string[];
 }
 
 export type DungeonOp =
@@ -469,6 +471,8 @@ export type BackendToFrontend =
       dungeonEntries: DungeonEntryView[];
       /** Dating: people, and the conversation or date in progress (null when the ruleset has no dating). */
       date: DateView | null;
+      /** During a dungeon run or a date: the narrator's latest reply (and the line it answers), for the stage. */
+      story: { messageId: string; text: string; said: string | null } | null;
     }
   | { type: "busy"; chatId: string; busy: boolean; label?: string }
   | { type: "settings"; settings: Settings; templates: TemplateInfo[]; connections: { id: string; name: string }[]; jevKeySet: boolean }
@@ -480,6 +484,8 @@ export type FrontendToBackend =
   | { type: "hello"; chatId: string | null }
   | { type: "refresh"; chatId: string | null }
   | { type: "act"; chatId: string; actionId: string; params?: Record<string, string> }
+  /** A line typed on the stage: posted as the player's message, and the story goes on. */
+  | { type: "say"; chatId: string; text: string }
   | { type: "undo"; chatId: string; messageId: string; swipe: number; events: number[] }
   | { type: "adjust"; chatId: string; stat: string; value: number }
   | { type: "settings"; patch: Partial<Settings> }
