@@ -1,18 +1,17 @@
 import type { SpindleAPI } from "lumiverse-spindle-types";
-import { availableChoices, canExplore, EXPLORE, buyPerk, changeClothes, forgetPerson, LIVE_PREFIX, manualSet, manualSetRel, RUN_EPILOGUE, runOp, TARGET_SEP, TRAVEL_PREFIX, travelTargets, type Intent, type TurnRecord } from "./engine/resolve.js";
+import { buyPerk, changeClothes, forgetPerson, manualSet, manualSetRel, runOp, type TurnRecord } from "./engine/resolve.js";
 import type { Ruleset } from "./engine/ruleset.js";
 import type { GameState, WarpEvent } from "./engine/state.js";
 import { TEMPLATES } from "./engine/templates/index.js";
-import { dateMoves } from "./engine/date/talk.js";
-import { JOB_PREFIX, PAY_PREFIX, workMoves } from "./engine/work.js";
-import { DATE_PREFIX } from "./engine/date/types.js";
 import type { FrontendToBackend } from "./shared/protocol.js";
 import { logError, send, toast } from "./backend/host.js";
-import { foldPath, getMessages, liveChoicesOf, patchWarpMeta, shiftAfterSwipeDelete, warpMeta, writeRecord } from "./backend/ledger.js";
+import { foldPath, getMessages, patchWarpMeta, shiftAfterSwipeDelete, warpMeta, writeRecord } from "./backend/ledger.js";
 import { getSettings, patchSettings } from "./backend/settings.js";
 import { getRuleset, installTemplate, invalidateCharacter, knownRulesetBookIds, knownRulesetEntryIds } from "./backend/source.js";
-import { connectionsFor, getActiveChat, lastStates, pushState, schedulePush, setActiveChat } from "./backend/state-push.js";
-import { interceptor, onGenerationEnded, onGenerationStarted } from "./backend/turn.js";
+import { busyChats, connectionsFor, getActiveChat, lastStates, pushState, schedulePush, setActiveChat } from "./backend/state-push.js";
+import { afterReply, interceptor, onGenerationEnded, onGenerationStarted, playerName } from "./backend/turn.js";
+import { intentFor } from "./backend/intents.js";
+import { momentKey, takePrewritten } from "./backend/drafts.js";
 import { isRulesetEntryTitle } from "./engine/loader.js";
 import { getDecider, JEV_KEY } from "./backend/deciders.js";
 import { runDungeonOp } from "./backend/dungeon.js";
@@ -178,41 +177,35 @@ spindle.onFrontendMessage(async (raw, userId) => {
         const settings = await getSettings(userId);
         const msgs = await getMessages(msg.chatId);
         const { state } = foldPath(r, msgs);
-        let say: string;
-        let intent: Intent = { actionId: msg.actionId, params: msg.params, via: "choice" };
-        if (msg.actionId === EXPLORE) {
-          if (!canExplore(r, state)) { toast("warning", "There's nowhere new to find here.", userId); await pushState(msg.chatId, userId); return; }
-          say = "*I explore around, looking for somewhere I haven't been.*";
-          intent = { actionId: EXPLORE, via: "choice", label: "Explore" };
-        } else if (msg.actionId === RUN_EPILOGUE) {
-          if (!state.ended || state.ended.told) { await pushState(msg.chatId, userId); return; }
-          say = "*The end.*";
-          intent = { actionId: RUN_EPILOGUE, via: "choice", label: "The ending" };
-        } else if (msg.actionId.startsWith(LIVE_PREFIX)) {
-          // Choices written for the latest reply: the tag decides what happens, the label is what the player saw.
-          const c = liveChoicesOf(msgs[msgs.length - 1])[Number(msg.actionId.slice(LIVE_PREFIX.length))];
-          if (!c || !r.liveChoices.tags[c.tag]) { toast("warning", "That choice isn't available anymore.", userId); await pushState(msg.chatId, userId); return; }
-          say = `*${c.label}*`;
-          intent = { actionId: `${LIVE_PREFIX}${c.tag}${c.target ? `${TARGET_SEP}${c.target}` : ""}`, via: "choice", label: c.label };
-        } else if (msg.actionId.startsWith(PAY_PREFIX) || msg.actionId.startsWith(JOB_PREFIX)) {
-          const m = workMoves(r, state).find((x) => x.id === msg.actionId);
-          if (!m) { toast("warning", "That isn't possible right now.", userId); await pushState(msg.chatId, userId); return; }
-          say = m.say;
-          intent = { actionId: m.id, via: "choice", label: m.label };
-        } else if (msg.actionId.startsWith(DATE_PREFIX)) {
-          const m = dateMoves(r, state, settings.lines).find((x) => x.id === msg.actionId);
-          if (!m) { toast("warning", "That isn't possible right now.", userId); await pushState(msg.chatId, userId); return; }
-          say = m.say;
-          intent = { actionId: m.id, via: "choice", label: m.label };
-        } else if (msg.actionId.startsWith(TRAVEL_PREFIX)) {
-          const to = msg.actionId.slice(TRAVEL_PREFIX.length);
-          if (!travelTargets(r, state).includes(to)) { toast("warning", "You can't get there from here.", userId); await pushState(msg.chatId, userId); return; }
-          say = `*I head to ${r.locations[to].name}.*`;
-        } else {
-          const c = availableChoices(r, state, settings.lines).find((x) => x.id === msg.actionId);
-          if (!c) { toast("warning", "That choice isn't available anymore.", userId); await pushState(msg.chatId, userId); return; }
-          const who = c.target ? state.people[c.target]?.name ?? c.target : "";
-          say = c.a.say ? c.a.say.replace(/\{\{target\}\}|\{target\}/gi, who) : `*${c.label}*`;
+        const ci = intentFor(r, state, settings, msgs, msg.actionId, msg.params);
+        if ("error" in ci) {
+          if (ci.error) toast("warning", ci.error, userId);
+          await pushState(msg.chatId, userId);
+          return;
+        }
+        const { say, intent } = ci;
+        // Already written while the player read: post it at once, then catch up on the bookkeeping.
+        const ready = takePrewritten(msg.chatId, momentKey(msgs, state), msg.actionId);
+        if (ready) {
+          await spindle.chat.appendMessage(msg.chatId, { role: "user", content: say, metadata: { warp: { intent, judged: true } } });
+          const reply = await spindle.chat.appendMessage(msg.chatId, { role: "assistant", content: ready.text });
+          await writeRecord(msg.chatId, reply.id, 0, ready.rec);
+          await pushState(msg.chatId, userId);
+          const fresh = (await getMessages(msg.chatId)).find((m) => m.id === reply.id);
+          if (fresh) {
+            busyChats.add(msg.chatId);
+            try {
+              await afterReply({
+                chatId: msg.chatId, userId, rec: ready.rec, after: ready.after, playerText: say, ruleset: r, at: Date.now(),
+                outcome: ready.outcome, player: await playerName(msg.chatId, userId), prompt: ready.prompt,
+              }, fresh, ready.text, userId);
+            } finally {
+              busyChats.delete(msg.chatId);
+              send({ type: "busy", chatId: msg.chatId, busy: false }, userId);
+              schedulePush(msg.chatId, userId, 0);
+            }
+          }
+          break;
         }
         await spindle.chat.appendMessage(msg.chatId, {
           role: "user",

@@ -8,7 +8,9 @@ import { randomSeed } from "../engine/dice.js";
 import { actionTags, applyProposal, resolveTurnFull, type Intent, type Proposal, type TurnRecord } from "../engine/resolve.js";
 import type { Ruleset } from "../engine/ruleset.js";
 import { applyEvent, cloneState, type GameState } from "../engine/state.js";
-import { narratorKnowledge, outcomePacket, perception, sceneHints, stateDigest } from "../engine/view.js";
+import { outcomePacket, sceneHints, stateDigest } from "../engine/view.js";
+import { buildInjection, fillNames, injectInto } from "./inject.js";
+import { dropPrewritten, judgeDrafts, prewrite, writeDrafts } from "./drafts.js";
 import type { Settings } from "../shared/protocol.js";
 import { bookkeeping, contradiction, odds, readTurn } from "./decisions.js";
 import { getDecider } from "./deciders.js";
@@ -21,7 +23,7 @@ import { getSettings } from "./settings.js";
 import { characterBrief, getRuleset } from "./source.js";
 import { busyChats, pushState, schedulePush } from "./state-push.js";
 
-interface Pending {
+export interface Pending {
   chatId: string;
   userId?: string;
   rec: TurnRecord;
@@ -33,6 +35,8 @@ interface Pending {
   verdict?: { messageId: string; intent: Intent | null; suggestion: Suggestion | null };
   outcome: string | null;
   player: string;
+  /** The prompt this reply was written from (with Warp's block), for drafts and pre-writing. */
+  prompt?: LlmMessageDTO[];
 }
 
 /** Keyed by generation id when the host gives us one, otherwise by chat id. */
@@ -78,43 +82,8 @@ export async function playerName(chatId: string, userId?: string): Promise<strin
   }
 }
 
-function fillNames(text: string, player: string) {
-  return text.replace(/\{\{user\}\}/gi, player);
-}
-
 function fillHints(h: { moods: Record<string, string>; notes: string[] }, player: string) {
   return { v: 1, source: "warp", moods: h.moods, notes: h.notes.map((n) => fillNames(n, player)) };
-}
-
-function buildInjection(r: Ruleset, rec: TurnRecord | null, before: GameState, after: GameState, player: string): string {
-  const parts: string[] = [];
-  parts.push(`[Warp — current game state. The rules engine owns these facts; keep narration consistent with them.]\n${stateDigest(r, after)}`);
-  if (r.narration.notes) parts.push(`[Warp — narrator notes]\n${r.narration.notes}`);
-  const felt = perception(r, after);
-  if (felt) parts.push(`[Warp — how {{user}} experiences things right now. Filter the narration through this.]\n${felt}`);
-  const known = narratorKnowledge(r, after);
-  if (known) parts.push(`[Warp — background only you know. The player hasn't seen it. Play it as subtext: never explain it, and reveal no more than the scene earns.]\n${known}`);
-  const packet = rec ? outcomePacket(r, rec, before, after, player) : null;
-  if (packet && (rec?.action || rec?.hints.length)) {
-    parts.push(`[Warp — this turn's outcome, already decided by the dice. Narrate it faithfully and do not change the result.]\n${packet}`);
-  }
-  return fillNames(parts.join("\n\n"), player);
-}
-
-function injectInto(messages: LlmMessageDTO[], text: string): { messages: LlmMessageDTO[]; index: number } {
-  const out = [...messages];
-  let idx = -1;
-  for (let i = out.length - 1; i >= 0; i--) if (out[i].role === "user") { idx = i; break; }
-  const block = `\n\n<warp>\n${text}\n</warp>`;
-  if (idx >= 0) {
-    const m = out[idx];
-    out[idx] = typeof m.content === "string"
-      ? { ...m, content: m.content + block }
-      : { ...m, content: [...m.content, { type: "text", text: block } as never] };
-    return { messages: out, index: idx };
-  }
-  out.push({ role: "user", content: block.trim() });
-  return { messages: out, index: out.length - 1 };
 }
 
 /**
@@ -219,6 +188,8 @@ export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorCon
 
     const text = buildInjection(r, rec, before, after, player);
     const { messages: out, index } = injectInto(messages, text);
+    const waiting = pending.get(info.generationId ?? ctx.chatId);
+    if (waiting && !info.isDryRun) waiting.prompt = out;
     return { messages: out, breakdown: [{ messageIndex: index, name: "Warp game state" }] };
   } catch (e) {
     logError("interceptor", e);
@@ -245,6 +216,69 @@ async function proposeChanges(decider: Decider, r: Ruleset, p: Pending, reply: s
     if (named?.feelings) proposal.feelings = { ...(proposal.feelings ?? {}), ...named.feelings };
   }
   return proposal;
+}
+
+/**
+ * Everything after a reply lands: best-of-several drafts, reading the story's
+ * changes, the consistency check, live choices, then pre-writing the next replies.
+ */
+export async function afterReply(p: Pending, msg: Msg, content: string, userId?: string): Promise<void> {
+  const chatId = p.chatId;
+  const settings = await getSettings(userId);
+  const r = p.ruleset;
+  let swipe = msg.swipe_id ?? 0;
+  const decider = await getDecider(settings, userId);
+  dropPrewritten(chatId);
+
+  // Best of several drafts: the one already shown stays unless another is clearly better.
+  if (settings.drafts > 1 && p.prompt && decider.id !== "rules") {
+    host().sendToFrontend({ type: "busy", chatId, busy: true, label: `Writing ${settings.drafts - 1} more draft${settings.drafts > 2 ? "s" : ""}…` }, userId);
+    const extra = await writeDrafts(p.prompt, settings.drafts - 1, userId);
+    if (extra.length) {
+      const all = [content, ...extra];
+      const pick = await judgeDrafts(decider, all, p.outcome ? fillNames(p.outcome, p.player) : null, fillNames(stateDigest(r, p.after), p.player));
+      const swipes = [...(msg.swipes?.length ? msg.swipes : [content]), ...extra];
+      const base = swipes.length - extra.length;
+      const dates = [...(msg.swipe_dates ?? []), ...extra.map(() => Math.floor(Date.now() / 1000))];
+      await host().chat.updateMessage(chatId, msg.id, { swipes, swipe_dates: dates, ...(pick > 0 ? { swipe_id: base + pick - 1 } : {}) });
+      // Every draft carries the same decided outcome, so swiping between them keeps the state.
+      for (let i = 0; i < extra.length; i++) await writeRecord(chatId, msg.id, base + i, p.rec);
+      if (pick > 0) { swipe = base + pick - 1; content = all[pick]; }
+    }
+  }
+
+  const wantLive = r.liveChoices.enabled;
+  if (settings.narratorUpdates || settings.consistencyCheck || wantLive) {
+    host().sendToFrontend({ type: "busy", chatId, busy: true, label: "Updating state…" }, userId);
+    const [proposal, contra, live] = await Promise.all([
+      settings.narratorUpdates ? proposeChanges(decider, r, p, content, settings, userId) : Promise.resolve(null),
+      settings.consistencyCheck && decider.id !== "rules"
+        ? contradiction({ decider, r, s: p.after, reply: content, outcome: p.outcome })
+        : Promise.resolve(null),
+      wantLive
+        ? writeLiveChoices({ r, s: p.after, reply: content, player: p.player, settings, userId, decider })
+        : Promise.resolve([]),
+    ]);
+    const rec: TurnRecord = { ...p.rec };
+    if (proposal) {
+      const action = p.rec.action ? { id: p.rec.action.id, tags: actionTags(r, p.rec.action.id) } : undefined;
+      const events = applyProposal(r, p.after, proposal, { text: `${p.playerText}\n${content}`, action });
+      if (events.length) rec.events = [...rec.events, ...events];
+    }
+    if (contra !== null) rec.contradiction = contra;
+    if (rec.events !== p.rec.events || contra !== null) await writeRecord(chatId, msg.id, swipe, rec);
+    if (live.length) {
+      await patchWarpMeta(chatId, msg.id, (w) => ({ ...w, live: { ...(w.live ?? {}), [String(swipe)]: live } }));
+    }
+  }
+
+  // Pre-write the first few choices while the player reads.
+  if (settings.prewrite > 0 && p.prompt) {
+    await pushState(chatId, userId);
+    host().sendToFrontend({ type: "busy", chatId, busy: false }, userId);
+    void prewrite({ chatId, userId, r, settings, decider, prompt: p.prompt, reply: content, player: p.player, onReady: () => schedulePush(chatId, userId, 100) })
+      .catch((e) => logError("pre-write", e));
+  }
 }
 
 export async function onGenerationStarted(payload: { generationId: string; chatId: string; targetMessageId?: string; generationType?: string }, userId?: string) {
@@ -281,34 +315,7 @@ export async function onGenerationEnded(payload: { generationId: string; chatId:
       })).catch((e) => logError("save verdict", e));
     }
     await pushState(payload.chatId, userId);
-
-    const settings = await getSettings(userId);
-    const r = p.ruleset;
-    const wantLive = r.liveChoices.enabled;
-    if (!payload.content || (!settings.narratorUpdates && !settings.consistencyCheck && !wantLive)) return;
-    host().sendToFrontend({ type: "busy", chatId: payload.chatId, busy: true, label: "Updating state…" }, userId);
-    const decider = await getDecider(settings, userId);
-
-    const [proposal, contra, live] = await Promise.all([
-      settings.narratorUpdates ? proposeChanges(decider, r, p, payload.content, settings, userId) : Promise.resolve(null),
-      settings.consistencyCheck && decider.id !== "rules"
-        ? contradiction({ decider, r, s: p.after, reply: payload.content, outcome: p.outcome })
-        : Promise.resolve(null),
-      wantLive
-        ? writeLiveChoices({ r, s: p.after, reply: payload.content, player: p.player, settings, userId, decider })
-        : Promise.resolve([]),
-    ]);
-    const rec: TurnRecord = { ...p.rec };
-    if (proposal) {
-      const action = p.rec.action ? { id: p.rec.action.id, tags: actionTags(r, p.rec.action.id) } : undefined;
-      const events = applyProposal(r, p.after, proposal, { text: `${p.playerText}\n${payload.content}`, action });
-      if (events.length) rec.events = [...rec.events, ...events];
-    }
-    if (contra !== null) rec.contradiction = contra;
-    if (rec.events !== p.rec.events || contra !== null) await writeRecord(payload.chatId, msg.id, swipe, rec);
-    if (live.length) {
-      await patchWarpMeta(payload.chatId, msg.id, (w) => ({ ...w, live: { ...(w.live ?? {}), [String(swipe)]: live } }));
-    }
+    if (payload.content) await afterReply(p, msg, payload.content, userId);
   } catch (e) {
     logError("generation ended", e);
   } finally {

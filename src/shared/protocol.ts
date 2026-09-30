@@ -120,6 +120,8 @@ export interface ChoiceView {
   checkLabel: string | null;
   veiled: boolean;
   params: { id: string; label: string; options: string[]; default: string }[];
+  /** Its reply is already written: clicking it is instant. */
+  ready?: boolean;
 }
 
 export interface FighterView {
@@ -353,6 +355,10 @@ export interface Settings {
   askConfidence: number;
   /** After each reply, check whether it contradicts the game state. */
   consistencyCheck: boolean;
+  /** Drafts per reply (1 = off): extras are written and the decision model keeps the best. */
+  drafts: number;
+  /** Pre-write replies for this many of the first choices, so clicking them is instant (0 = off). */
+  prewrite: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -371,6 +377,8 @@ export const DEFAULT_SETTINGS: Settings = {
   autoConfidence: 0.75,
   askConfidence: 0.4,
   consistencyCheck: false,
+  drafts: 1,
+  prewrite: 0,
 };
 
 export interface TemplateInfo { id: string; name: string; blurb: string }

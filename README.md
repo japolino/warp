@@ -59,6 +59,15 @@ Confidence sets the friction when you type instead of clicking:
 
 Optional **consistency check** flags replies that contradict the state (⚠ chip).
 
+## Fast models: drafts and instant replies
+
+Both are off by default (Settings), and both use your chat's own connection — worth it with a fast, cheap writer.
+
+- **Drafts per reply (2–4):** after a reply lands, Warp writes the extra drafts from the same prompt and the decision model keeps the one that narrates the decided outcome most faithfully and reads best. The one you already saw stays unless another is clearly better; every draft stays as a swipe with the same outcome.
+- **Pre-write replies (first 1–4 choices):** while you read, Warp rolls and writes the replies for the first choices. Those buttons show ⚡ and post instantly when clicked. A pre-written reply is only used if nothing changed since it was written.
+
+**Why?** — every change chip on a reply can be opened to see what caused it: the roll, the rule and its condition, the time that passed, a companion's own choice, or what was read from the story.
+
 ## Where rules live
 
 In the character's lorebook, so they travel with the card:

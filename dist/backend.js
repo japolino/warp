@@ -8183,7 +8183,9 @@ var init_protocol = __esm(() => {
     jevModel: "jev-latest",
     autoConfidence: 0.75,
     askConfidence: 0.4,
-    consistencyCheck: false
+    consistencyCheck: false,
+    drafts: 1,
+    prewrite: 0
   };
 });
 
@@ -8205,6 +8207,8 @@ async function patchSettings(patch, userId) {
   const next = { ...cur, ...patch };
   next.lines = (next.lines ?? []).map((t) => t.trim().toLowerCase()).filter(Boolean);
   next.veils = (next.veils ?? []).map((t) => t.trim().toLowerCase()).filter(Boolean);
+  next.drafts = Math.max(1, Math.min(4, Math.round(Number(next.drafts) || 1)));
+  next.prewrite = Math.max(0, Math.min(4, Math.round(Number(next.prewrite) || 0)));
   cache2.set(key(userId), next);
   await host().userStorage.setJson("settings.json", next, { indent: 2, userId });
   return next;
@@ -14303,6 +14307,232 @@ var init_decisions = __esm(() => {
   TIME_MINUTES = [0, 5, 30, 60, 180, 480];
 });
 
+// src/backend/inject.ts
+function fillNames(text, player) {
+  return text.replace(/\{\{user\}\}/gi, player);
+}
+function buildInjection(r, rec, before, after, player) {
+  const parts = [];
+  parts.push(`[Warp — current game state. The rules engine owns these facts; keep narration consistent with them.]
+${stateDigest(r, after)}`);
+  if (r.narration.notes)
+    parts.push(`[Warp — narrator notes]
+${r.narration.notes}`);
+  const felt = perception(r, after);
+  if (felt)
+    parts.push(`[Warp — how {{user}} experiences things right now. Filter the narration through this.]
+${felt}`);
+  const known = narratorKnowledge(r, after);
+  if (known)
+    parts.push(`[Warp — background only you know. The player hasn't seen it. Play it as subtext: never explain it, and reveal no more than the scene earns.]
+${known}`);
+  const packet = rec ? outcomePacket(r, rec, before, after, player) : null;
+  if (packet && (rec?.action || rec?.hints.length)) {
+    parts.push(`[Warp — this turn's outcome, already decided by the dice. Narrate it faithfully and do not change the result.]
+${packet}`);
+  }
+  return fillNames(parts.join(`
+
+`), player);
+}
+function injectInto(messages, text) {
+  const out = [...messages];
+  let idx = -1;
+  for (let i = out.length - 1;i >= 0; i--)
+    if (out[i].role === "user") {
+      idx = i;
+      break;
+    }
+  const block = `
+
+<warp>
+${text}
+</warp>`;
+  if (idx >= 0) {
+    const m = out[idx];
+    out[idx] = typeof m.content === "string" ? { ...m, content: m.content + block } : { ...m, content: [...m.content, { type: "text", text: block }] };
+    return { messages: out, index: idx };
+  }
+  out.push({ role: "user", content: block.trim() });
+  return { messages: out, index: out.length - 1 };
+}
+function nextPrompt(prompt, reply, say, injection) {
+  const clean = prompt.map((m) => typeof m.content === "string" && m.role === "user" ? { ...m, content: m.content.replace(WARP_BLOCK, "") } : m);
+  let idx = -1;
+  for (let i = clean.length - 1;i >= 0; i--)
+    if (clean[i].role === "user") {
+      idx = i;
+      break;
+    }
+  const turn = [
+    { role: "assistant", content: reply },
+    { role: "user", content: `${say}
+
+<warp>
+${injection}
+</warp>` }
+  ];
+  return idx >= 0 ? [...clean.slice(0, idx + 1), ...turn, ...clean.slice(idx + 1)] : [...clean, ...turn];
+}
+var WARP_BLOCK;
+var init_inject = __esm(() => {
+  init_view();
+  WARP_BLOCK = /\n*<warp>[\s\S]*?<\/warp>/g;
+});
+
+// src/backend/intents.ts
+function intentFor(r, state, settings, msgs, actionId, params) {
+  if (actionId === EXPLORE) {
+    if (!canExplore(r, state))
+      return { error: "There's nowhere new to find here." };
+    return { say: "*I explore around, looking for somewhere I haven't been.*", intent: { actionId: EXPLORE, via: "choice", label: "Explore" } };
+  }
+  if (actionId === RUN_EPILOGUE) {
+    if (!state.ended || state.ended.told)
+      return { error: "" };
+    return { say: "*The end.*", intent: { actionId: RUN_EPILOGUE, via: "choice", label: "The ending" } };
+  }
+  if (actionId.startsWith(LIVE_PREFIX)) {
+    const c = liveChoicesOf(msgs[msgs.length - 1])[Number(actionId.slice(LIVE_PREFIX.length))];
+    if (!c || !r.liveChoices.tags[c.tag])
+      return { error: "That choice isn't available anymore." };
+    return { say: `*${c.label}*`, intent: { actionId: `${LIVE_PREFIX}${c.tag}${c.target ? `${TARGET_SEP}${c.target}` : ""}`, via: "choice", label: c.label } };
+  }
+  if (actionId.startsWith(PAY_PREFIX) || actionId.startsWith(JOB_PREFIX)) {
+    const m = workMoves(r, state).find((x) => x.id === actionId);
+    if (!m)
+      return { error: "That isn't possible right now." };
+    return { say: m.say, intent: { actionId: m.id, via: "choice", label: m.label } };
+  }
+  if (actionId.startsWith(DATE_PREFIX)) {
+    const m = dateMoves(r, state, settings.lines).find((x) => x.id === actionId);
+    if (!m)
+      return { error: "That isn't possible right now." };
+    return { say: m.say, intent: { actionId: m.id, via: "choice", label: m.label } };
+  }
+  if (actionId.startsWith(TRAVEL_PREFIX)) {
+    const to = actionId.slice(TRAVEL_PREFIX.length);
+    if (!travelTargets(r, state).includes(to))
+      return { error: "You can't get there from here." };
+    return { say: `*I head to ${r.locations[to].name}.*`, intent: { actionId, params, via: "choice" } };
+  }
+  const c = availableChoices(r, state, settings.lines).find((x) => x.id === actionId);
+  if (!c)
+    return { error: "That choice isn't available anymore." };
+  const who = c.target ? state.people[c.target]?.name ?? c.target : "";
+  return { say: c.a.say ? c.a.say.replace(/\{\{target\}\}|\{target\}/gi, who) : `*${c.label}*`, intent: { actionId, params, via: "choice" } };
+}
+var init_intents = __esm(() => {
+  init_resolve();
+  init_talk();
+  init_types2();
+  init_work();
+  init_ledger();
+});
+
+// src/backend/drafts.ts
+function textOf(res) {
+  return typeof res === "string" ? res : res?.content ?? "";
+}
+async function writeReply(messages, userId, timeoutMs = 120000) {
+  const res = await host().generate.quiet({ type: "quiet", messages, userId, signal: AbortSignal.timeout(timeoutMs) });
+  return textOf(res).trim();
+}
+async function writeDrafts(prompt, n, userId) {
+  const out = await Promise.allSettled(Array.from({ length: n }, () => writeReply(prompt, userId)));
+  return out.flatMap((x) => x.status === "fulfilled" && x.value ? [x.value] : []);
+}
+async function judgeDrafts(decider, drafts, outcome, state) {
+  if (drafts.length < 2)
+    return 0;
+  try {
+    const ans = await decider.ask({ game_state: state, decided_outcome: outcome ?? "(nothing decided this turn — free roleplay)" }, { best: {
+      type: "choice",
+      instructions: "Which draft narrates the decided outcome most faithfully (every decided result, nothing that contradicts the game state), keeps characters in voice, and reads best?",
+      criteria: Object.fromEntries(drafts.map((d, i) => [`d${i}`, clip2(d, 2500)]))
+    } });
+    const a = ans.best;
+    if (a?.type !== "choice")
+      return 0;
+    const i = Number(a.choice.slice(1));
+    return Number.isInteger(i) && i > 0 && (a.probabilities[a.choice] ?? 0) >= (a.probabilities.d0 ?? 0) + 0.15 ? i : 0;
+  } catch (e) {
+    logError("judge drafts", e);
+    return 0;
+  }
+}
+function momentKey(msgs, state) {
+  const last = msgs[msgs.length - 1];
+  const s = JSON.stringify(state);
+  let h = 2166136261;
+  for (let i = 0;i < s.length; i++)
+    h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+  return `${last?.id ?? ""}:${last?.swipe_id ?? 0}:${(h >>> 0).toString(36)}`;
+}
+function readyChoices(chatId, key) {
+  const c = cache3.get(chatId);
+  return c?.key === key ? new Set(c.replies.keys()) : new Set;
+}
+function takePrewritten(chatId, key, actionId) {
+  const c = cache3.get(chatId);
+  if (!c || c.key !== key)
+    return null;
+  const hit = c.replies.get(actionId) ?? null;
+  if (hit)
+    cache3.delete(chatId);
+  return hit;
+}
+function dropPrewritten(chatId) {
+  cache3.delete(chatId);
+}
+async function prewrite(opts) {
+  const { chatId, userId, r, settings, decider } = opts;
+  if (settings.prewrite <= 0)
+    return;
+  const msgs = await getMessages(chatId);
+  const { state } = foldPath(r, msgs);
+  const key = momentKey(msgs, state);
+  const choices = buildChoices(r, state, { ...settings, live: liveChoicesOf(msgs[msgs.length - 1]) }).filter((c) => writable(c.id) && !c.params.length).slice(0, settings.prewrite);
+  const replies = new Map;
+  cache3.set(chatId, { key, replies });
+  await Promise.allSettled(choices.map(async (c) => {
+    const ci = intentFor(r, state, settings, msgs, c.id);
+    if ("error" in ci)
+      return;
+    const seed = randomSeed();
+    let res = resolveTurnFull(r, state, ci.intent, { seed, veils: settings.veils, playerText: ci.say });
+    if (res.needs.length && decider.id !== "rules") {
+      const o = await odds2({ decider, r, s: state, specs: res.needs, playerText: ci.say, sceneText: opts.reply, player: opts.player, timeoutMs: 20000 });
+      if (Object.keys(o).length)
+        res = resolveTurnFull(r, state, ci.intent, { seed, veils: settings.veils, odds: o, playerText: ci.say });
+    }
+    const rec = res.record;
+    if (rec.discover)
+      return;
+    const after = cloneState(state);
+    for (const e of rec.events)
+      applyEvent(after, e, r);
+    const prompt = nextPrompt(opts.prompt, opts.reply, ci.say, buildInjection(r, rec, state, after, opts.player));
+    const text = await writeReply(prompt, userId);
+    if (!text || cache3.get(chatId)?.replies !== replies)
+      return;
+    replies.set(c.id, { say: ci.say, intent: ci.intent, rec, text, prompt, outcome: outcomePacket(r, rec, state, after, opts.player), after });
+    opts.onReady();
+  }));
+}
+var clip2 = (s, n) => s.length > n ? `${s.slice(0, n)}…` : s, cache3, writable = (id) => !id.startsWith("dungeon:") && id !== "date:open" && !(id.startsWith("run:") && id !== "run:epilogue");
+var init_drafts = __esm(() => {
+  init_dice();
+  init_resolve();
+  init_state();
+  init_view();
+  init_decisions();
+  init_inject();
+  init_intents();
+  init_ledger();
+  cache3 = new Map;
+});
+
 // src/backend/deciders.ts
 async function post(url, headers, body, timeoutMs) {
   const timeout = new Promise((_, rej) => setTimeout(() => rej(new DeciderError("Decision model timed out")), timeoutMs));
@@ -14545,7 +14775,7 @@ async function ask(system, user, settings, userId, timeoutMs, opts = {}) {
   });
   return typeof res === "string" ? res : res?.content ?? "";
 }
-function clip2(s, n) {
+function clip3(s, n) {
   return s.length > n ? `…${s.slice(-n)}` : s;
 }
 async function extract(r, s, playerText, reply, settings, userId, only, applied) {
@@ -14606,10 +14836,10 @@ async function extract(r, s, playerText, reply, settings, userId, only, applied)
     stateDigest(r, s),
     "",
     "Player's message:",
-    clip2(playerText, 1200) || "(none)",
+    clip3(playerText, 1200) || "(none)",
     "",
     "Narrator's reply:",
-    clip2(reply, 4000),
+    clip3(reply, 4000),
     ...applied ? ["", "Already applied by the rules this turn (don't report these again):", applied] : []
   ].join(`
 `);
@@ -14627,7 +14857,7 @@ var init_helpers = __esm(() => {
 });
 
 // src/backend/live.ts
-function clip3(s, n) {
+function clip4(s, n) {
   return s.length > n ? `…${s.slice(-n)}` : s;
 }
 function usableTags(r, settings) {
@@ -14681,7 +14911,7 @@ function cleanChoices(r, s, tags, raw, count) {
 async function pickTags(decider, r, s, tags, reply, player) {
   if (decider.id !== "jev" || tags.length <= 1)
     return null;
-  const ans = await decider.ask({ game_state: stateDigest(r, s), narrator_reply: clip3(reply, 4000) }, {
+  const ans = await decider.ask({ game_state: stateDigest(r, s), narrator_reply: clip4(reply, 4000) }, {
     kinds: {
       type: "choice",
       instructions: `Right after this reply, which kind of move would be most natural and interesting for ${player} to make next?`,
@@ -14725,7 +14955,7 @@ async function writeLiveChoices(opts) {
     'Reply with JSON only: {"choices": [{"label": "...", "tag": "...", "target": "..."}]}'
   ].join(`
 `);
-  const user = ["Current state:", stateDigest(r, s), "", "Narrator's latest reply:", clip3(opts.reply, 4000)].join(`
+  const user = ["Current state:", stateDigest(r, s), "", "Narrator's latest reply:", clip4(opts.reply, 4000)].join(`
 `);
   try {
     const out = firstJson2(await ask(system, user, settings, opts.userId, 25000, { temperature: 0.8, maxTokens: 450 }));
@@ -14837,56 +15067,8 @@ async function playerName(chatId, userId) {
     return "The player";
   }
 }
-function fillNames(text, player) {
-  return text.replace(/\{\{user\}\}/gi, player);
-}
 function fillHints(h, player) {
   return { v: 1, source: "warp", moods: h.moods, notes: h.notes.map((n) => fillNames(n, player)) };
-}
-function buildInjection(r, rec, before, after, player) {
-  const parts = [];
-  parts.push(`[Warp — current game state. The rules engine owns these facts; keep narration consistent with them.]
-${stateDigest(r, after)}`);
-  if (r.narration.notes)
-    parts.push(`[Warp — narrator notes]
-${r.narration.notes}`);
-  const felt = perception(r, after);
-  if (felt)
-    parts.push(`[Warp — how {{user}} experiences things right now. Filter the narration through this.]
-${felt}`);
-  const known = narratorKnowledge(r, after);
-  if (known)
-    parts.push(`[Warp — background only you know. The player hasn't seen it. Play it as subtext: never explain it, and reveal no more than the scene earns.]
-${known}`);
-  const packet = rec ? outcomePacket(r, rec, before, after, player) : null;
-  if (packet && (rec?.action || rec?.hints.length)) {
-    parts.push(`[Warp — this turn's outcome, already decided by the dice. Narrate it faithfully and do not change the result.]
-${packet}`);
-  }
-  return fillNames(parts.join(`
-
-`), player);
-}
-function injectInto(messages, text) {
-  const out = [...messages];
-  let idx = -1;
-  for (let i = out.length - 1;i >= 0; i--)
-    if (out[i].role === "user") {
-      idx = i;
-      break;
-    }
-  const block = `
-
-<warp>
-${text}
-</warp>`;
-  if (idx >= 0) {
-    const m = out[idx];
-    out[idx] = typeof m.content === "string" ? { ...m, content: m.content + block } : { ...m, content: [...m.content, { type: "text", text: block }] };
-    return { messages: out, index: idx };
-  }
-  out.push({ role: "user", content: block.trim() });
-  return { messages: out, index: out.length - 1 };
 }
 function targetOf(ctx, targetId, msgs) {
   if (targetId) {
@@ -14990,6 +15172,9 @@ async function interceptor(messages, ctx) {
     }
     const text = buildInjection(r, rec, before, after, player);
     const { messages: out, index } = injectInto(messages, text);
+    const waiting = pending.get(info.generationId ?? ctx.chatId);
+    if (waiting && !info.isDryRun)
+      waiting.prompt = out;
     return { messages: out, breakdown: [{ messageIndex: index, name: "Warp game state" }] };
   } catch (e) {
     logError("interceptor", e);
@@ -15017,6 +15202,61 @@ async function proposeChanges(decider, r, p, reply, settings, userId) {
       proposal.feelings = { ...proposal.feelings ?? {}, ...named.feelings };
   }
   return proposal;
+}
+async function afterReply(p, msg, content, userId) {
+  const chatId = p.chatId;
+  const settings = await getSettings(userId);
+  const r = p.ruleset;
+  let swipe = msg.swipe_id ?? 0;
+  const decider = await getDecider(settings, userId);
+  dropPrewritten(chatId);
+  if (settings.drafts > 1 && p.prompt && decider.id !== "rules") {
+    host().sendToFrontend({ type: "busy", chatId, busy: true, label: `Writing ${settings.drafts - 1} more draft${settings.drafts > 2 ? "s" : ""}…` }, userId);
+    const extra = await writeDrafts(p.prompt, settings.drafts - 1, userId);
+    if (extra.length) {
+      const all = [content, ...extra];
+      const pick = await judgeDrafts(decider, all, p.outcome ? fillNames(p.outcome, p.player) : null, fillNames(stateDigest(r, p.after), p.player));
+      const swipes = [...msg.swipes?.length ? msg.swipes : [content], ...extra];
+      const base = swipes.length - extra.length;
+      const dates = [...msg.swipe_dates ?? [], ...extra.map(() => Math.floor(Date.now() / 1000))];
+      await host().chat.updateMessage(chatId, msg.id, { swipes, swipe_dates: dates, ...pick > 0 ? { swipe_id: base + pick - 1 } : {} });
+      for (let i = 0;i < extra.length; i++)
+        await writeRecord(chatId, msg.id, base + i, p.rec);
+      if (pick > 0) {
+        swipe = base + pick - 1;
+        content = all[pick];
+      }
+    }
+  }
+  const wantLive = r.liveChoices.enabled;
+  if (settings.narratorUpdates || settings.consistencyCheck || wantLive) {
+    host().sendToFrontend({ type: "busy", chatId, busy: true, label: "Updating state…" }, userId);
+    const [proposal, contra, live] = await Promise.all([
+      settings.narratorUpdates ? proposeChanges(decider, r, p, content, settings, userId) : Promise.resolve(null),
+      settings.consistencyCheck && decider.id !== "rules" ? contradiction({ decider, r, s: p.after, reply: content, outcome: p.outcome }) : Promise.resolve(null),
+      wantLive ? writeLiveChoices({ r, s: p.after, reply: content, player: p.player, settings, userId, decider }) : Promise.resolve([])
+    ]);
+    const rec = { ...p.rec };
+    if (proposal) {
+      const action = p.rec.action ? { id: p.rec.action.id, tags: actionTags(r, p.rec.action.id) } : undefined;
+      const events = applyProposal(r, p.after, proposal, { text: `${p.playerText}
+${content}`, action });
+      if (events.length)
+        rec.events = [...rec.events, ...events];
+    }
+    if (contra !== null)
+      rec.contradiction = contra;
+    if (rec.events !== p.rec.events || contra !== null)
+      await writeRecord(chatId, msg.id, swipe, rec);
+    if (live.length) {
+      await patchWarpMeta(chatId, msg.id, (w) => ({ ...w, live: { ...w.live ?? {}, [String(swipe)]: live } }));
+    }
+  }
+  if (settings.prewrite > 0 && p.prompt) {
+    await pushState(chatId, userId);
+    host().sendToFrontend({ type: "busy", chatId, busy: false }, userId);
+    prewrite({ chatId, userId, r, settings, decider, prompt: p.prompt, reply: content, player: p.player, onReady: () => schedulePush(chatId, userId, 100) }).catch((e) => logError("pre-write", e));
+  }
 }
 async function onGenerationStarted(payload, userId) {
   const { chatId } = payload;
@@ -15055,33 +15295,8 @@ async function onGenerationEnded(payload, userId) {
       })).catch((e) => logError("save verdict", e));
     }
     await pushState(payload.chatId, userId);
-    const settings = await getSettings(userId);
-    const r = p.ruleset;
-    const wantLive = r.liveChoices.enabled;
-    if (!payload.content || !settings.narratorUpdates && !settings.consistencyCheck && !wantLive)
-      return;
-    host().sendToFrontend({ type: "busy", chatId: payload.chatId, busy: true, label: "Updating state…" }, userId);
-    const decider = await getDecider(settings, userId);
-    const [proposal, contra, live] = await Promise.all([
-      settings.narratorUpdates ? proposeChanges(decider, r, p, payload.content, settings, userId) : Promise.resolve(null),
-      settings.consistencyCheck && decider.id !== "rules" ? contradiction({ decider, r, s: p.after, reply: payload.content, outcome: p.outcome }) : Promise.resolve(null),
-      wantLive ? writeLiveChoices({ r, s: p.after, reply: payload.content, player: p.player, settings, userId, decider }) : Promise.resolve([])
-    ]);
-    const rec = { ...p.rec };
-    if (proposal) {
-      const action = p.rec.action ? { id: p.rec.action.id, tags: actionTags(r, p.rec.action.id) } : undefined;
-      const events = applyProposal(r, p.after, proposal, { text: `${p.playerText}
-${payload.content}`, action });
-      if (events.length)
-        rec.events = [...rec.events, ...events];
-    }
-    if (contra !== null)
-      rec.contradiction = contra;
-    if (rec.events !== p.rec.events || contra !== null)
-      await writeRecord(payload.chatId, msg.id, swipe, rec);
-    if (live.length) {
-      await patchWarpMeta(payload.chatId, msg.id, (w) => ({ ...w, live: { ...w.live ?? {}, [String(swipe)]: live } }));
-    }
+    if (payload.content)
+      await afterReply(p, msg, payload.content, userId);
   } catch (e) {
     logError("generation ended", e);
   } finally {
@@ -15095,6 +15310,8 @@ var init_turn = __esm(() => {
   init_resolve();
   init_state();
   init_view();
+  init_inject();
+  init_drafts();
   init_decisions();
   init_deciders();
   init_helpers();
@@ -15156,7 +15373,7 @@ async function pushState(chatId, userId, force = false) {
       status,
       hud: settings.enabled ? buildHud(r, state) : null,
       map: settings.enabled ? buildMap(r, state) : null,
-      choices: settings.enabled ? buildChoices(r, state, { ...settings, live: liveChoicesOf(latest) }) : [],
+      choices: settings.enabled ? markReady(buildChoices(r, state, { ...settings, live: liveChoicesOf(latest) }), readyChoices(chatId, momentKey(msgs, state))) : [],
       records: settings.enabled ? records : [],
       suggestions: settings.enabled ? suggestions.filter((s) => s.canRedo) : [],
       latestMessageId: latest?.id ?? null,
@@ -15169,6 +15386,9 @@ async function pushState(chatId, userId, force = false) {
   } catch (e) {
     logError("pushState", e);
   }
+}
+function markReady(choices, ready) {
+  return ready.size ? choices.map((c) => ready.has(c.id) ? { ...c, ready: true } : c) : choices;
 }
 async function withName(v, chatId, userId) {
   if (!v)
@@ -15206,6 +15426,7 @@ var init_state_push = __esm(() => {
   init_view();
   init_view2();
   init_view3();
+  init_drafts();
   init_ledger();
   init_settings();
   init_source();
@@ -15218,14 +15439,13 @@ var init_state_push = __esm(() => {
 // src/backend.ts
 init_resolve();
 init_templates();
-init_talk();
-init_work();
-init_types2();
 init_ledger();
 init_settings();
 init_source();
 init_state_push();
 init_turn();
+init_intents();
+init_drafts();
 init_loader();
 init_deciders();
 
@@ -16574,67 +16794,43 @@ spindle.onFrontendMessage(async (raw, userId) => {
         const settings = await getSettings(userId);
         const msgs = await getMessages(msg.chatId);
         const { state } = foldPath(r, msgs);
-        let say;
-        let intent = { actionId: msg.actionId, params: msg.params, via: "choice" };
-        if (msg.actionId === EXPLORE) {
-          if (!canExplore(r, state)) {
-            toast("warning", "There's nowhere new to find here.", userId);
-            await pushState(msg.chatId, userId);
-            return;
+        const ci = intentFor(r, state, settings, msgs, msg.actionId, msg.params);
+        if ("error" in ci) {
+          if (ci.error)
+            toast("warning", ci.error, userId);
+          await pushState(msg.chatId, userId);
+          return;
+        }
+        const { say, intent } = ci;
+        const ready = takePrewritten(msg.chatId, momentKey(msgs, state), msg.actionId);
+        if (ready) {
+          await spindle.chat.appendMessage(msg.chatId, { role: "user", content: say, metadata: { warp: { intent, judged: true } } });
+          const reply = await spindle.chat.appendMessage(msg.chatId, { role: "assistant", content: ready.text });
+          await writeRecord(msg.chatId, reply.id, 0, ready.rec);
+          await pushState(msg.chatId, userId);
+          const fresh = (await getMessages(msg.chatId)).find((m) => m.id === reply.id);
+          if (fresh) {
+            busyChats.add(msg.chatId);
+            try {
+              await afterReply({
+                chatId: msg.chatId,
+                userId,
+                rec: ready.rec,
+                after: ready.after,
+                playerText: say,
+                ruleset: r,
+                at: Date.now(),
+                outcome: ready.outcome,
+                player: await playerName(msg.chatId, userId),
+                prompt: ready.prompt
+              }, fresh, ready.text, userId);
+            } finally {
+              busyChats.delete(msg.chatId);
+              send({ type: "busy", chatId: msg.chatId, busy: false }, userId);
+              schedulePush(msg.chatId, userId, 0);
+            }
           }
-          say = "*I explore around, looking for somewhere I haven't been.*";
-          intent = { actionId: EXPLORE, via: "choice", label: "Explore" };
-        } else if (msg.actionId === RUN_EPILOGUE) {
-          if (!state.ended || state.ended.told) {
-            await pushState(msg.chatId, userId);
-            return;
-          }
-          say = "*The end.*";
-          intent = { actionId: RUN_EPILOGUE, via: "choice", label: "The ending" };
-        } else if (msg.actionId.startsWith(LIVE_PREFIX)) {
-          const c = liveChoicesOf(msgs[msgs.length - 1])[Number(msg.actionId.slice(LIVE_PREFIX.length))];
-          if (!c || !r.liveChoices.tags[c.tag]) {
-            toast("warning", "That choice isn't available anymore.", userId);
-            await pushState(msg.chatId, userId);
-            return;
-          }
-          say = `*${c.label}*`;
-          intent = { actionId: `${LIVE_PREFIX}${c.tag}${c.target ? `${TARGET_SEP}${c.target}` : ""}`, via: "choice", label: c.label };
-        } else if (msg.actionId.startsWith(PAY_PREFIX) || msg.actionId.startsWith(JOB_PREFIX)) {
-          const m = workMoves(r, state).find((x) => x.id === msg.actionId);
-          if (!m) {
-            toast("warning", "That isn't possible right now.", userId);
-            await pushState(msg.chatId, userId);
-            return;
-          }
-          say = m.say;
-          intent = { actionId: m.id, via: "choice", label: m.label };
-        } else if (msg.actionId.startsWith(DATE_PREFIX)) {
-          const m = dateMoves(r, state, settings.lines).find((x) => x.id === msg.actionId);
-          if (!m) {
-            toast("warning", "That isn't possible right now.", userId);
-            await pushState(msg.chatId, userId);
-            return;
-          }
-          say = m.say;
-          intent = { actionId: m.id, via: "choice", label: m.label };
-        } else if (msg.actionId.startsWith(TRAVEL_PREFIX)) {
-          const to = msg.actionId.slice(TRAVEL_PREFIX.length);
-          if (!travelTargets(r, state).includes(to)) {
-            toast("warning", "You can't get there from here.", userId);
-            await pushState(msg.chatId, userId);
-            return;
-          }
-          say = `*I head to ${r.locations[to].name}.*`;
-        } else {
-          const c = availableChoices(r, state, settings.lines).find((x) => x.id === msg.actionId);
-          if (!c) {
-            toast("warning", "That choice isn't available anymore.", userId);
-            await pushState(msg.chatId, userId);
-            return;
-          }
-          const who = c.target ? state.people[c.target]?.name ?? c.target : "";
-          say = c.a.say ? c.a.say.replace(/\{\{target\}\}|\{target\}/gi, who) : `*${c.label}*`;
+          break;
         }
         await spindle.chat.appendMessage(msg.chatId, {
           role: "user",

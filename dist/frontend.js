@@ -28,7 +28,9 @@ var init_protocol = __esm(() => {
     jevModel: "jev-latest",
     autoConfidence: 0.75,
     askConfidence: 0.4,
-    consistencyCheck: false
+    consistencyCheck: false,
+    drafts: 1,
+    prewrite: 0
   };
 });
 
@@ -152,6 +154,7 @@ var STYLES = `
 .warp-choice-label { flex: 1; }
 .warp-choice-odds { font-size: 11.5px; font-variant-numeric: tabular-nums; font-weight: 600; }
 .warp-choice-veil { font-size: 11px; color: var(--warp-warn); }
+.warp-choice-ready { font-size: 11px; color: var(--warp-warn); }
 .warp-status-line { font-size: 12px; color: var(--warp-muted); display: flex; align-items: center; gap: 6px; }
 .warp-spinner { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--warp-border); border-top-color: var(--warp-accent); animation: warp-spin .8s linear infinite; }
 @keyframes warp-spin { to { transform: rotate(360deg); } }
@@ -675,7 +678,8 @@ function renderChoices(choices, opts) {
     const odds = opts.showOdds && c.odds !== null ? `<span class="warp-choice-odds warp-tone-${pctTone(c.odds + (c.partialOdds ?? 0) / 2)}" title="${esc(`${c.checkLabel ?? "Check"}: ${Math.round(c.odds * 100)}% success${c.partialOdds ? `, ${Math.round(c.partialOdds * 100)}% partial` : ""}`)}">${Math.round(c.odds * 100)}%</span>` : "";
     const tip = [c.desc, c.checkLabel ? `Check: ${c.checkLabel}` : null, c.veiled ? "Veiled: happens off-screen" : null].filter(Boolean).join(`
 `);
-    return `<button class="warp-choice" data-act="${esc(c.id)}" title="${esc(tip)}">${key}<span class="warp-choice-label">${esc(c.label)}</span>${c.veiled ? `<span class="warp-choice-veil" aria-label="veiled">◐</span>` : ""}${odds}</button>`;
+    return `<button class="warp-choice" data-act="${esc(c.id)}" title="${esc(tip)}${c.ready ? `
+Ready — this reply is already written` : ""}">${key}<span class="warp-choice-label">${esc(c.label)}</span>${c.ready ? `<span class="warp-choice-ready" aria-label="instant">⚡</span>` : ""}${c.veiled ? `<span class="warp-choice-veil" aria-label="veiled">◐</span>` : ""}${odds}</button>`;
   }).join("")}</div>
     </div>`).join("");
   const status = opts.busy ? `<div class="warp-status-line"><span class="warp-spinner"></span>${esc(opts.busyLabel ?? "The story continues…")}</div>` : "";
@@ -785,6 +789,14 @@ function renderDecider(s, jevKeySet) {
     <label class="warp-slider"><span>Offer a one-tap “Roll it?” from <b>${pct(s.askConfidence)}%</b></span>
       <input type="range" min="10" max="95" value="${pct(s.askConfidence)}" data-setting-pct="askConfidence"></label>
     ${toggle("consistencyCheck", "Check replies against the state", "Flags replies that contradict the game (wrong place, items, injuries, dice result). One extra quick question per reply — cheap with Jev.", s.consistencyCheck)}
+    <label class="warp-slider">Drafts per reply
+      <select class="warp-select" data-setting="drafts">${[1, 2, 3, 4].map((n) => `<option value="${n}"${s.drafts === n ? " selected" : ""}>${n === 1 ? "1 (off)" : `${n} — keep the best`}</option>`).join("")}</select>
+      <small class="warp-dim">Extra drafts are written with your chat's connection after each reply; the decision model keeps the one that narrates the outcome best (the others stay as swipes). Costs a generation per extra draft — best with a fast, cheap model.</small>
+    </label>
+    <label class="warp-slider">Pre-write replies
+      <select class="warp-select" data-setting="prewrite">${[0, 1, 2, 3, 4].map((n) => `<option value="${n}"${s.prewrite === n ? " selected" : ""}>${n === 0 ? "Off" : `First ${n} choice${n === 1 ? "" : "s"}`}</option>`).join("")}</select>
+      <small class="warp-dim">While you read, the first choices are rolled and written ahead, so clicking one (⚡) is instant. Costs a generation per choice each turn.</small>
+    </label>
     <div class="warp-row"><button class="warp-btn" data-test-decider>Test</button></div>
   </div>`;
 }

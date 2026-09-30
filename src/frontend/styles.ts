@@ -117,6 +117,7 @@ export const STYLES = `
 .warp-choice-label { flex: 1; }
 .warp-choice-odds { font-size: 11.5px; font-variant-numeric: tabular-nums; font-weight: 600; }
 .warp-choice-veil { font-size: 11px; color: var(--warp-warn); }
+.warp-choice-ready { font-size: 11px; color: var(--warp-warn); }
 .warp-status-line { font-size: 12px; color: var(--warp-muted); display: flex; align-items: center; gap: 6px; }
 .warp-spinner { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--warp-border); border-top-color: var(--warp-accent); animation: warp-spin .8s linear infinite; }
 @keyframes warp-spin { to { transform: rotate(360deg); } }

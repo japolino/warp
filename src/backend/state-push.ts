@@ -3,7 +3,8 @@
 import { buildChoices, buildHud, buildMap, buildRecordView } from "../engine/view.js";
 import { buildDungeonEntries, buildDungeonView } from "../engine/dungeon/view.js";
 import { buildDateView } from "../engine/date/view.js";
-import type { RecordView, SuggestionView } from "../shared/protocol.js";
+import type { ChoiceView, RecordView, SuggestionView } from "../shared/protocol.js";
+import { momentKey, readyChoices } from "./drafts.js";
 import { getMessages, foldPath, liveChoicesOf, warpMeta } from "./ledger.js";
 import { getSettings } from "./settings.js";
 import { getRuleset, statusOf } from "./source.js";
@@ -73,7 +74,7 @@ export async function pushState(chatId: string | null, userId?: string, force = 
       status,
       hud: settings.enabled ? buildHud(r, state) : null,
       map: settings.enabled ? buildMap(r, state) : null,
-      choices: settings.enabled ? buildChoices(r, state, { ...settings, live: liveChoicesOf(latest) }) : [],
+      choices: settings.enabled ? markReady(buildChoices(r, state, { ...settings, live: liveChoicesOf(latest) }), readyChoices(chatId, momentKey(msgs, state))) : [],
       records: settings.enabled ? records : [],
       suggestions: settings.enabled ? suggestions.filter((s) => s.canRedo) : [],
       latestMessageId: latest?.id ?? null,
@@ -86,6 +87,10 @@ export async function pushState(chatId: string | null, userId?: string, force = 
   } catch (e) {
     logError("pushState", e);
   }
+}
+
+function markReady(choices: ChoiceView[], ready: Set<string>): ChoiceView[] {
+  return ready.size ? choices.map((c) => (ready.has(c.id) ? { ...c, ready: true } : c)) : choices;
 }
 
 /** Dungeon lines name the player "{{user}}"; show their persona's name. */
