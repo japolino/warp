@@ -8,7 +8,7 @@ export type PartLabel = (typeof PART_LABELS)[number];
 export const PART_CONTENTS: Record<PartLabel, string> = {
   core: "name, description, player, clock, start, hud, narration",
   stats: "stats",
-  people: "relationships (stats + people with schedules), companions",
+  people: "relationships (stats + people with schedules), companions, lineage",
   world: "weather, locations, items (incl. clothing), wardrobe, body, conditions, flags, start.items",
   actions: "actions",
   encounters: "encounters, dungeons",
@@ -24,7 +24,7 @@ export function partForIssue(where: string): PartLabel {
   const head = w.split(/[›,]/)[0].trim().toLowerCase();
   if ((PART_LABELS as readonly string[]).includes(head)) return head as PartLabel;
   if (head.startsWith("stats")) return "stats";
-  if (head.startsWith("relationships") || head.startsWith("people") || head.startsWith("companions")) return "people";
+  if (["relationships", "people", "companions", "lineage"].some((k) => head.startsWith(k))) return "people";
   if (["locations", "items", "wardrobe", "weather", "conditions", "flags", "body"].some((k) => head.startsWith(k))) return "world";
   if (head.startsWith("actions")) return "actions";
   if (head.startsWith("encounters") || head.startsWith("dungeons")) return "encounters";
@@ -66,6 +66,11 @@ companions:       # people with lives of their own (ids from relationships.peopl
     bonds: { dex: 30 }                       # how they feel about others, −100…100
     knows: [ward_accident]                   # secrets only they know: the narrator plays them with it, nobody else can mention it
 EFFECTS for companions: arc: { jo: +5 }, bond: { jo: { dex: -10 } }. FUNCTIONS: arc(person), bond(a, b).
+
+lineage:          # pregnancy and children; only ever between two people known to be adults (declare ages, or the decision model is asked)
+  pregnancy: { weeks: 36, stages: [ { week: 6, text: "{carrier} has been sick in the mornings." }, { week: 16, text: "It's starting to show." } ] }   # hidden until the first stage
+  children: { speed: 1, join_at: 18, inherit: [hair, eyes] }   # speed = how much faster than the calendar they age; they stay off-stage family until join_at (never below 18) and are never part of romance
+EFFECT: conceive: { with: target, chance: 20, carrier: player }   # carrier: player | partner. FUNCTIONS: children(), age(person); names: pregnant, pregnancy_weeks.
 
 clock: { start: "Mon 07:00", date: "Sep 4", minutes_per_action: 15, narrator_max: 240 }
 start: { location: home, items: { phone: 1 } }

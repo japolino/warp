@@ -34,6 +34,8 @@ export function isMinor(r: Ruleset, s: GameState, who: string): boolean | null {
  */
 export function romanceOk(r: Ruleset, s: GameState, who: string): boolean {
   if (!r.dating.enabled || !r.dating.romance) return false;
+  // Family is family: never romance with the player's own children, at any age.
+  if (s.kin[who]) return false;
   if (r.player.age !== undefined && r.player.age < 18) return false;
   return isMinor(r, s, who) === false;
 }

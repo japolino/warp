@@ -9,7 +9,7 @@ import { SKILLS } from "./dungeon/content.js";
 export const FUNCTIONS = [
   "has", "count", "flag", "cond", "at", "rel", "met", "between", "roll",
   "wearing", "worn", "trait", "present", "where", "codex", "feat", "perk",
-  "secret", "front", "front_stage", "happened", "deepest", "partner", "dates", "stage", "saved", "body", "transformed", "bond", "arc",
+  "secret", "front", "front_stage", "happened", "deepest", "partner", "dates", "stage", "saved", "body", "transformed", "bond", "arc", "age", "children",
   "min", "max", "clamp", "floor", "ceil", "round", "abs",
 ];
 
@@ -93,6 +93,7 @@ export function lintRuleset(r: Ruleset): Issue[] {
     else if (!r.body.open) for (const part of Object.keys(e.body)) {
       if (!r.body.parts[part]) issues.push({ level: "warning", where, message: `"${part}" isn't a body part (body › parts) and the body is closed (open: false)` });
     }
+    if (e.conceive && !r.lineage.enabled) issues.push({ level: "warning", where, message: "uses `conceive`, but the ruleset has no `lineage:` section" });
     for (const id of Object.keys(e.arc)) if (!r.companions[id]?.arc) issues.push({ level: "warning", where, message: `"${id}" isn't a companion with an arc` });
     if (e.startEncounter && !r.encounters[e.startEncounter]) {
       issues.push({ level: "warning", where, message: `starts encounter "${e.startEncounter}", which doesn't exist${suggest(e.startEncounter, Object.keys(r.encounters))}` });
@@ -216,6 +217,8 @@ export function lintRuleset(r: Ruleset): Issue[] {
   }
   for (const e of Object.values(r.endings)) check(e.when, `Endings › ${e.id} › when`);
   const people = Object.keys(r.people);
+  r.lineage.stages.forEach((st, i) => checkEffect(st.effects, `Lineage › stage ${i + 1}`));
+  for (const part of r.lineage.inherit) if (r.body.enabled && !r.body.parts[part]) issues.push({ level: "warning", where: "Lineage › children › inherit", message: `"${part}" isn't a body part${suggest(part, Object.keys(r.body.parts))}` });
   for (const c of Object.values(r.companions)) {
     const w = `Companions › ${c.id}`;
     if (!r.people[c.id]) issues.push({ level: "warning", where: w, message: `"${c.id}" isn't a person in relationships › people${suggest(c.id, people)}` });

@@ -6,11 +6,11 @@ import { rollDice, seededRng, type Rng } from "./dice.js";
 import type { ActionDef, CheckDef, DecideSpec, Effect, NarratorGate, RandomEventDef, Ruleset, Tier } from "./ruleset.js";
 import { normalize, sample } from "./decide.js";
 import { emptyEffect, slug } from "./ruleset.js";
-import { applyEvent, cloneState, formatClock, makeEnv, personName, timeKey, type EventSource, type GameState, type WarpEvent } from "./state.js";
+import { applyEvent, cloneState, formatClock, kinAge, makeEnv, personName, timeKey, type EventSource, type GameState, type WarpEvent } from "./state.js";
 import { endingDirection } from "./chronicle.js";
 import { presentPeople } from "./world.js";
 import { DATE_PREFIX } from "./date/types.js";
-import { activeSession, resolveDate } from "./date/talk.js";
+import { activeSession, ADULT_KEY, resolveDate } from "./date/talk.js";
 
 export interface CheckResult {
   label: string;
@@ -355,6 +355,7 @@ function effectToEvents(w: Working, e: Effect, src: EventSource, extra: Record<s
       announce(w, t.stages[stage].text ?? `${t.label}: {{user}}'s body changes (stage ${stage + 1} of ${t.stages.length}).`);
     }
   }
+  if (e.conceive) conceive(w, e.conceive, extra, src);
   for (const [id, d] of Object.entries(e.arc)) {
     const front = r.companions[id]?.arc;
     if (!front) continue;
@@ -494,6 +495,80 @@ function tickWorld(w: Working, days: number, turns: number) {
   }
   openFrontStages(w);
   tickGauge(w, days, turns);
+}
+
+// ───────────────────────── lineage ─────────────────────────
+
+/** Known to be an adult? Declared ages first; otherwise the decision model is asked once (unsure = no). */
+function knownAdult(w: Working, who: string): boolean {
+  if (who === "player") return w.r.player.age === undefined || w.r.player.age >= 18;
+  if (w.s.kin[who]) return false;
+  const age = w.r.people[who]?.age;
+  if (age !== undefined) return age >= 18;
+  const known = w.s.dating.prefs[who]?.[ADULT_KEY];
+  if (known !== undefined) return known > 0;
+  const name = personName(w.r, w.s, who);
+  const id = `date:adult:${who}`;
+  const model = w.odds[id];
+  if (!model) {
+    if (!w.needs.some((n) => n.id === id)) w.needs.push({ id, ask: `Is ${name} an adult (18 or older), going by the story and the character card?`, options: [
+      { id: "adult", desc: "Clearly an adult", weight: 1, effect: emptyEffect() },
+      { id: "minor", desc: "Under 18", weight: 1, effect: emptyEffect() },
+      { id: "unclear", desc: "Can't tell", weight: 1, effect: emptyEffect() },
+    ] });
+    return false;
+  }
+  const adult = (model.adult ?? 0) >= 0.8;
+  w.push({ t: "dt_pref", who, key: ADULT_KEY, v: adult ? 1 : -1, src: "action" });
+  return adult;
+}
+
+function conceive(w: Working, c: NonNullable<Effect["conceive"]>, extra: Record<string, Value>, src: EventSource) {
+  const r = w.r;
+  if (!r.lineage.enabled || w.s.pregnancy) return;
+  const partner = c.with === "target" ? (typeof extra.target === "string" ? extra.target : "") : c.with;
+  if (!partner || !w.s.people[partner]) return;
+  const carrier = c.carrier === "partner" ? partner : c.carrier;
+  // The hard floor: only ever between two people known to be adults (and never the player's own children).
+  if (!knownAdult(w, "player") || !knownAdult(w, partner)) return;
+  const chance = Math.max(0, Math.min(100, evalNumber(c.chance, w.env(extra), 100)));
+  if (seededRng(`${w.seed}:conceive:${w.s.turn}`)() * 100 >= chance) return;
+  w.push({ t: "conceive", carrier, with: partner, src });
+}
+
+/** Pregnancy stages and birth, and children coming of age. */
+function lineageLife(w: Working) {
+  const r = w.r;
+  if (!r.lineage.enabled) return;
+  const p = w.s.pregnancy;
+  if (p) {
+    const weeks = (w.s.minutes - p.since) / 1440 / 7;
+    r.lineage.stages.forEach((st, i) => {
+      if (i + 1 <= (w.s.pregnancy?.told ?? 0) || weeks < st.week) return;
+      w.push({ t: "preg_stage", n: i + 1, src: "world" });
+      effectToEvents(w, st.effects, "world", {});
+      announce(w, st.text.replace(/\{carrier\}/g, p.carrier === "player" ? "{{user}}" : personName(r, w.s, p.carrier)));
+    });
+    if (weeks >= r.lineage.weeks) {
+      const n = Object.keys(w.s.kin).length + 1;
+      const rng = seededRng(`${w.seed}:birth:${n}`);
+      const taken = new Set(Object.values(w.s.kin).map((k) => k.name));
+      const names = r.lineage.names.filter((x) => !taken.has(x));
+      const name = names.length ? names[Math.floor(rng() * names.length)] : `Child ${n}`;
+      const sex = rng() < 0.5 ? "girl" : "boy";
+      const body = Object.fromEntries(r.lineage.inherit.filter((part) => w.s.body[part]).map((part) => [part, { ...w.s.body[part] }]));
+      const id = `child_${n}`;
+      w.push({ t: "birth", id, kin: { name, sex, born: w.s.minutes, parents: ["player", p.with], body, joined: false }, src: "world" });
+      const other = personName(r, w.s, p.with === "player" ? p.carrier : p.with);
+      w.push({ t: "news", text: `${name} is born — a ${sex}, ${other}'s child with {{user}}.`, src: "world" });
+      announce(w, `The baby is born: a ${sex}, named ${name} — ${other}'s child with {{user}}. ${name} is an infant: family, never part of anything romantic or sexual.`);
+    }
+  }
+  for (const [id, k] of Object.entries(w.s.kin)) {
+    if (k.joined || kinAge(r, w.s, id) < r.lineage.joinAt) continue;
+    w.push({ t: "kin_join", id, src: "world" });
+    announce(w, `${k.name}, {{user}}'s ${k.sex === "girl" ? "daughter" : "son"}, is grown up now (${kinAge(r, w.s, id)}) and steps into the story as an adult.`);
+  }
 }
 
 // ───────────────────────── companions ─────────────────────────
@@ -940,6 +1015,7 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   tickWorld(w, days, 1);
   if (w.events.length > worldBefore) runTriggers(w, false);
   companionLife(w, before);
+  lineageLife(w);
   checkRun(w, before);
   w.push({ t: "turn", src: "action" });
   rec.events = w.events;
@@ -1128,6 +1204,7 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
     if (w.events.length > n) runTriggers(w, false);
   }
   companionLife(w, before);
+  lineageLife(w);
   checkRun(w, before);
   return w.events;
 }
@@ -1186,6 +1263,7 @@ export function buildTurn(r: Ruleset, before: GameState, seed: string, fn: (t: T
     if (w.events.length > n) runTriggers(w, false);
   }
   companionLife(w, before);
+  lineageLife(w);
   checkRun(w, before);
   return w.events;
 }

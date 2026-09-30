@@ -1446,7 +1446,9 @@ function emptyEffect() {
     front: {},
     reveal: [],
     body: {},
-    transform: {}
+    transform: {},
+    arc: {},
+    bond: {}
   };
 }
 function normTraits(raw, where, c) {
@@ -1690,13 +1692,46 @@ function normEffect(raw, where, c, known) {
           for (const id of list(v))
             e.transform[id] = 1;
         break;
+      case "conceive":
+      case "pregnancy": {
+        const x = isObj(v) ? v : { with: v };
+        const chance = c.expr(x.chance ?? 100, `${w} › chance`) ?? 100;
+        e.conceive = { with: String(x.with ?? "target"), carrier: String(x.carrier ?? "player"), chance };
+        break;
+      }
+      case "arc":
+        if (isObj(v))
+          for (const [id, n] of Object.entries(v)) {
+            const x = c.expr(n, `${w} › ${id}`);
+            if (x !== undefined)
+              e.arc[id] = x;
+          }
+        else
+          c.warn(w, "expected arc changes by companion, like `jo: +5`");
+        break;
+      case "bond":
+      case "bonds":
+        if (isObj(v))
+          for (const [a, m] of Object.entries(v)) {
+            if (!isObj(m)) {
+              c.warn(`${w} › ${a}`, "expected feelings toward others, like `dex: +3`");
+              continue;
+            }
+            e.bond[a] = {};
+            for (const [b, n] of Object.entries(m)) {
+              const x = c.expr(n, `${w} › ${a} › ${b}`);
+              if (x !== undefined)
+                e.bond[a][b] = x;
+            }
+          }
+        break;
       default:
         if (known.stats.has(k)) {
           const x = c.expr(v, w);
           if (x !== undefined)
             e.stats[k] = x;
         } else
-          c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, unlock, wear, undress, damage, front, reveal, gauge, momentum, body, transform)`);
+          c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, unlock, wear, undress, damage, front, reveal, gauge, momentum, body, transform, arc, bond, conceive)`);
     }
   }
   return e;
@@ -1996,7 +2031,7 @@ function normSecrets(raw, c) {
   }
   return out;
 }
-function normFronts(raw, c, known) {
+function normFronts(raw, c, known, where = (id) => `Fronts › ${id}`) {
   const out = {};
   if (raw === undefined)
     return out;
@@ -2005,7 +2040,7 @@ function normFronts(raw, c, known) {
     return out;
   }
   for (const [id, fRaw] of Object.entries(raw)) {
-    const w = `Fronts › ${id}`;
+    const w = where(id);
     if (!isObj(fRaw)) {
       c.warn(w, "expected a front definition with `per_day:` and `stages:`");
       continue;
@@ -2283,6 +2318,80 @@ function normBody(raw, c) {
   }
   return def;
 }
+function normCompanions(raw, c, known, fronts, bonds) {
+  const out = {};
+  for (const [id, cr] of Object.entries(isObj(raw) ? raw : {})) {
+    const w = `Companions › ${id}`;
+    if (!isObj(cr)) {
+      c.warn(w, "expected `goal:`, `arc:`, `daily:`…");
+      continue;
+    }
+    let arc = null;
+    if (isObj(cr.arc)) {
+      const f = normFronts({ [`arc_${id}`]: { label: `${titleCase(id)}'s arc`, ...cr.arc } }, c, known, () => `${w} › arc`);
+      const def = f[`arc_${id}`];
+      if (def) {
+        def.when = def.when ? `met('${id}') and (${def.when})` : `met('${id}')`;
+        fronts[`arc_${id}`] = def;
+        arc = `arc_${id}`;
+      }
+    }
+    let daily = null;
+    if (isObj(cr.daily)) {
+      const d = { ...cr.daily, options: Object.fromEntries(Object.entries(isObj(cr.daily.options) ? cr.daily.options : {}).map(([oid, o]) => {
+        if (!isObj(o))
+          return [oid, o];
+        const x = { ...o };
+        if (x.arc !== undefined && !isObj(x.arc))
+          x.arc = { [id]: x.arc };
+        if (isObj(x.bond) && !Object.values(x.bond).some(isObj))
+          x.bond = { [id]: x.bond };
+        return [oid, x];
+      })) };
+      daily = normDecide(d, `${w} › daily`, c, known)[0] ?? null;
+      if (daily)
+        daily = { ...daily, id: `companion_${id}_daily` };
+    }
+    if (isObj(cr.bonds)) {
+      bonds[id] = {};
+      for (const [b, n] of Object.entries(cr.bonds))
+        bonds[id][b] = Math.max(-100, Math.min(100, c.num(n, `${w} › bonds › ${b}`, 0)));
+    }
+    out[id] = {
+      id,
+      arc,
+      daily,
+      ...typeof cr.goal === "string" ? { goal: cr.goal } : {},
+      jealousOf: list(cr.jealous_of ?? cr.jealous),
+      knows: list(cr.knows)
+    };
+  }
+  return out;
+}
+function normLineage(raw, c, known) {
+  const def = { enabled: false, weeks: 36, stages: [], speed: 1, joinAt: 18, inherit: [], names: CHILD_NAMES };
+  if (raw === undefined || raw === false)
+    return def;
+  const r = isObj(raw) ? raw : {};
+  def.enabled = true;
+  const preg = isObj(r.pregnancy) ? r.pregnancy : r;
+  def.weeks = Math.max(1, c.num(preg.weeks, "Lineage › weeks", 36));
+  (Array.isArray(preg.stages) ? preg.stages : []).forEach((st, i) => {
+    if (!isObj(st) || typeof st.text !== "string") {
+      c.warn(`Lineage › stage ${i + 1}`, "needs `week:` and `text:`");
+      return;
+    }
+    def.stages.push({ week: c.num(st.week, `Lineage › stage ${i + 1} › week`, 1), text: st.text, effects: normEffect(st.do ?? st.effects, `Lineage › stage ${i + 1} › do`, c, known) });
+  });
+  def.stages.sort((a, b) => a.week - b.week);
+  const kids = isObj(r.children) ? r.children : r;
+  def.speed = Math.max(0.01, c.num(kids.speed, "Lineage › children › speed", 1));
+  def.joinAt = Math.max(18, c.num(kids.join_at, "Lineage › children › join_at", 18));
+  def.inherit = list(kids.inherit);
+  if (Array.isArray(kids.names) && kids.names.length)
+    def.names = kids.names.map(String);
+  return def;
+}
 function normalizeRuleset(raw) {
   const c = new Ctx3;
   if (!isObj(raw)) {
@@ -2553,6 +2662,9 @@ function normalizeRuleset(raw) {
   const legacy = normKeep(endingsRaw.legacy, "Endings › legacy", c, { codex: true, feats: true, perks: true });
   const checkpoints = normCheckpoints(raw.checkpoints, Object.keys(endings).length > 0, c, known);
   const body = normBody(raw.body, c);
+  const bonds = {};
+  const companions = normCompanions(raw.companions, c, known, fronts, bonds);
+  const lineage = normLineage(raw.lineage, c, known);
   const ruleset = {
     name: typeof raw.name === "string" ? raw.name : "Untitled ruleset",
     description: typeof raw.description === "string" ? raw.description : undefined,
@@ -2604,7 +2716,10 @@ function normalizeRuleset(raw) {
     checkpoints,
     endings,
     legacy,
-    body
+    body,
+    companions,
+    bonds,
+    lineage
   };
   for (const p of Object.values(people))
     for (const e of p.schedule) {
@@ -2632,7 +2747,7 @@ function normalizeRuleset(raw) {
   }
   return { ruleset, issues: c.issues };
 }
-var isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v), DEFAULT_WEEKDAYS, KIND_ALIASES, list = (v) => Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : [], TIER_KEYS, MONTHS, DEFAULT_WEATHER, DEFAULT_SLOTS, KEEP_FLAGS, KEEP_LISTS, SEXUAL_TAGS;
+var isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v), DEFAULT_WEEKDAYS, KIND_ALIASES, list = (v) => Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : [], TIER_KEYS, MONTHS, DEFAULT_WEATHER, DEFAULT_SLOTS, KEEP_FLAGS, KEEP_LISTS, CHILD_NAMES, SEXUAL_TAGS;
 var init_ruleset = __esm(() => {
   init_expr();
   init_dice();
@@ -2678,6 +2793,7 @@ var init_ruleset = __esm(() => {
   DEFAULT_SLOTS = ["head", "outer", "top", "bottom", "under_top", "under_bottom", "legs", "feet"];
   KEEP_FLAGS = ["codex", "feats", "perks", "secrets", "people", "dating", "deepest"];
   KEEP_LISTS = ["stats", "flags", "items", "rel"];
+  CHILD_NAMES = ["Ada", "Ben", "Cleo", "Dan", "Elin", "Finn", "Greta", "Hugo", "Iris", "Jonah", "Kira", "Leo", "Maya", "Nico", "Orla", "Pip", "Rosa", "Sam", "Tess", "Theo", "Uma", "Vic", "Wren", "Zoe"];
   SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
 });
 
@@ -2825,6 +2941,10 @@ var init_world = __esm(() => {
 });
 
 // src/engine/state.ts
+function kinAge(r, s, id) {
+  const k = s.kin[id];
+  return k ? Math.floor((s.minutes - k.born) / 1440 / 365 * r.lineage.speed) : 0;
+}
 function timeKey(r, s) {
   return r.clock.enabled ? s.minutes : s.turn;
 }
@@ -2865,7 +2985,10 @@ function initialState(r) {
     loops: 0,
     ended: null,
     body: structuredClone(r.body.parts),
-    tf: {}
+    tf: {},
+    bonds: structuredClone(r.bonds),
+    pregnancy: null,
+    kin: {}
   };
   for (const id of r.statOrder)
     s.stats[id] = r.stats[id].start;
@@ -3137,6 +3260,37 @@ function applyEvent(s, e, r) {
     case "tf":
       s.tf = { ...s.tf, [e.id]: Math.max(s.tf[e.id] ?? 0, e.stage) };
       break;
+    case "conceive":
+      if (!s.pregnancy)
+        s.pregnancy = { carrier: e.carrier, with: e.with, since: s.minutes, told: 0 };
+      break;
+    case "preg_stage":
+      if (s.pregnancy)
+        s.pregnancy = { ...s.pregnancy, told: Math.max(s.pregnancy.told, e.n) };
+      break;
+    case "birth":
+      s.pregnancy = null;
+      s.kin = { ...s.kin, [e.id]: structuredClone(e.kin) };
+      break;
+    case "kin_join": {
+      const k = s.kin[e.id];
+      if (!k || k.joined)
+        break;
+      s.kin = { ...s.kin, [e.id]: { ...k, joined: true } };
+      s.people[e.id] = { name: k.name };
+      if (!s.rel[e.id]) {
+        s.rel[e.id] = {};
+        for (const rs of r.relStatOrder)
+          s.rel[e.id][rs] = r.relStats[rs].start;
+      }
+      break;
+    }
+    case "news":
+      s.news = [...s.news, { text: e.text, at: s.minutes }].slice(-NEWS_KEPT);
+      break;
+    case "bond":
+      s.bonds = { ...s.bonds, [e.a]: { ...s.bonds[e.a] ?? {}, [e.b]: clamp((s.bonds[e.a]?.[e.b] ?? 0) + e.d, -100, 100) } };
+      break;
     case "save":
       s.saves = { ...s.saves, [e.slot]: { at: s.minutes, turn: s.turn, label: e.label, snap: snapshotOf(s) } };
       break;
@@ -3324,6 +3478,8 @@ function makeEnv(r, s, extra = {}) {
       in_date: !!s.date,
       loops: s.loops,
       runs: s.runs,
+      pregnant: !!s.pregnancy && s.pregnancy.carrier === "player",
+      pregnancy_weeks: s.pregnancy ? Math.floor((s.minutes - s.pregnancy.since) / 1440 / 7) : 0,
       on_outing: s.date?.kind === "outing",
       round: s.encounter?.round ?? 0,
       target: ""
@@ -3441,6 +3597,14 @@ function makeEnv(r, s, extra = {}) {
           return s.body[a0]?.[String(args[1] ?? "type")] ?? "";
         case "transformed":
           return s.tf[a0] ?? 0;
+        case "bond":
+          return s.bonds[a0]?.[String(args[1] ?? "")] ?? 0;
+        case "arc":
+          return s.fronts[`arc_${a0}`]?.v ?? 0;
+        case "age":
+          return s.kin[a0] ? kinAge(r, s, a0) : r.people[a0]?.age ?? 0;
+        case "children":
+          return Object.keys(s.kin).length;
         case "dates":
           return s.dating.dates[a0]?.count ?? 0;
       }
@@ -3521,7 +3685,9 @@ var init_state = __esm(() => {
     "in_date",
     "on_outing",
     "loops",
-    "runs"
+    "runs",
+    "pregnant",
+    "pregnancy_weeks"
   ];
 });
 
@@ -3581,6 +3747,8 @@ function isMinor(r, s, who) {
 }
 function romanceOk(r, s, who) {
   if (!r.dating.enabled || !r.dating.romance)
+    return false;
+  if (s.kin[who])
     return false;
   if (r.player.age !== undefined && r.player.age < 18)
     return false;
@@ -4614,6 +4782,22 @@ function effectToEvents(w, e, src, extra) {
       announce(w, t.stages[stage].text ?? `${t.label}: {{user}}'s body changes (stage ${stage + 1} of ${t.stages.length}).`);
     }
   }
+  if (e.conceive)
+    conceive(w, e.conceive, extra, src);
+  for (const [id, d] of Object.entries(e.arc)) {
+    const front = r.companions[id]?.arc;
+    if (!front)
+      continue;
+    const v = evalNumber(d, w.env(extra), 0);
+    if (v !== 0)
+      w.push({ t: "clock", id: front, d: v, src });
+  }
+  for (const [a, m] of Object.entries(e.bond))
+    for (const [b, d] of Object.entries(m)) {
+      const v = evalNumber(d, w.env(extra), 0);
+      if (v !== 0 && a !== b)
+        w.push({ t: "bond", a, b, d: v, src });
+    }
   if (e.momentum !== undefined && w.s.encounter?.momentum !== undefined) {
     const v = evalNumber(e.momentum, w.env(extra), 0);
     if (v !== 0)
@@ -4744,6 +4928,135 @@ function tickWorld(w, days, turns) {
   }
   openFrontStages(w);
   tickGauge(w, days, turns);
+}
+function knownAdult(w, who) {
+  if (who === "player")
+    return w.r.player.age === undefined || w.r.player.age >= 18;
+  if (w.s.kin[who])
+    return false;
+  const age = w.r.people[who]?.age;
+  if (age !== undefined)
+    return age >= 18;
+  const known = w.s.dating.prefs[who]?.[ADULT_KEY];
+  if (known !== undefined)
+    return known > 0;
+  const name = personName(w.r, w.s, who);
+  const id = `date:adult:${who}`;
+  const model = w.odds[id];
+  if (!model) {
+    if (!w.needs.some((n) => n.id === id))
+      w.needs.push({ id, ask: `Is ${name} an adult (18 or older), going by the story and the character card?`, options: [
+        { id: "adult", desc: "Clearly an adult", weight: 1, effect: emptyEffect() },
+        { id: "minor", desc: "Under 18", weight: 1, effect: emptyEffect() },
+        { id: "unclear", desc: "Can't tell", weight: 1, effect: emptyEffect() }
+      ] });
+    return false;
+  }
+  const adult = (model.adult ?? 0) >= 0.8;
+  w.push({ t: "dt_pref", who, key: ADULT_KEY, v: adult ? 1 : -1, src: "action" });
+  return adult;
+}
+function conceive(w, c, extra, src) {
+  const r = w.r;
+  if (!r.lineage.enabled || w.s.pregnancy)
+    return;
+  const partner = c.with === "target" ? typeof extra.target === "string" ? extra.target : "" : c.with;
+  if (!partner || !w.s.people[partner])
+    return;
+  const carrier = c.carrier === "partner" ? partner : c.carrier;
+  if (!knownAdult(w, "player") || !knownAdult(w, partner))
+    return;
+  const chance = Math.max(0, Math.min(100, evalNumber(c.chance, w.env(extra), 100)));
+  if (seededRng(`${w.seed}:conceive:${w.s.turn}`)() * 100 >= chance)
+    return;
+  w.push({ t: "conceive", carrier, with: partner, src });
+}
+function lineageLife(w) {
+  const r = w.r;
+  if (!r.lineage.enabled)
+    return;
+  const p = w.s.pregnancy;
+  if (p) {
+    const weeks = (w.s.minutes - p.since) / 1440 / 7;
+    r.lineage.stages.forEach((st, i) => {
+      if (i + 1 <= (w.s.pregnancy?.told ?? 0) || weeks < st.week)
+        return;
+      w.push({ t: "preg_stage", n: i + 1, src: "world" });
+      effectToEvents(w, st.effects, "world", {});
+      announce(w, st.text.replace(/\{carrier\}/g, p.carrier === "player" ? "{{user}}" : personName(r, w.s, p.carrier)));
+    });
+    if (weeks >= r.lineage.weeks) {
+      const n = Object.keys(w.s.kin).length + 1;
+      const rng = seededRng(`${w.seed}:birth:${n}`);
+      const taken = new Set(Object.values(w.s.kin).map((k) => k.name));
+      const names = r.lineage.names.filter((x) => !taken.has(x));
+      const name = names.length ? names[Math.floor(rng() * names.length)] : `Child ${n}`;
+      const sex = rng() < 0.5 ? "girl" : "boy";
+      const body = Object.fromEntries(r.lineage.inherit.filter((part) => w.s.body[part]).map((part) => [part, { ...w.s.body[part] }]));
+      const id = `child_${n}`;
+      w.push({ t: "birth", id, kin: { name, sex, born: w.s.minutes, parents: ["player", p.with], body, joined: false }, src: "world" });
+      const other = personName(r, w.s, p.with === "player" ? p.carrier : p.with);
+      w.push({ t: "news", text: `${name} is born — a ${sex}, ${other}'s child with {{user}}.`, src: "world" });
+      announce(w, `The baby is born: a ${sex}, named ${name} — ${other}'s child with {{user}}. ${name} is an infant: family, never part of anything romantic or sexual.`);
+    }
+  }
+  for (const [id, k] of Object.entries(w.s.kin)) {
+    if (k.joined || kinAge(r, w.s, id) < r.lineage.joinAt)
+      continue;
+    w.push({ t: "kin_join", id, src: "world" });
+    announce(w, `${k.name}, {{user}}'s ${k.sex === "girl" ? "daughter" : "son"}, is grown up now (${kinAge(r, w.s, id)}) and steps into the story as an adult.`);
+  }
+}
+function loveStat(r) {
+  if (r.dating.enabled)
+    return r.dating.love;
+  return r.relStatOrder.find((id) => r.relStats[id].good === "high") ?? null;
+}
+function companionLife(w, before) {
+  const r = w.r;
+  const comps = Object.values(r.companions);
+  if (!comps.length)
+    return;
+  const d0 = Math.floor(before.minutes / 1440);
+  const d1 = r.clock.enabled ? Math.floor(w.s.minutes / 1440) : d0;
+  const n = w.events.length;
+  for (let day = d0 + 1;day <= Math.min(d1, d0 + 3); day++) {
+    for (const c of comps) {
+      if (!c.daily || !w.s.people[c.id])
+        continue;
+      const spec = c.daily;
+      const keys = spec.options.map((o) => o.id);
+      const model = w.odds[spec.id];
+      if (!model && !w.needs.some((n) => n.id === spec.id))
+        w.needs.push(spec);
+      const p = normalize(model ?? Object.fromEntries(spec.options.map((o) => [o.id, o.weight])), keys);
+      const picked = sample(p, seededRng(`${w.seed}:daily:${c.id}:${day}`));
+      const opt = spec.options.find((o) => o.id === picked);
+      effectToEvents(w, opt.effect, "world", {});
+      const line = `${personName(r, w.s, c.id)}: ${opt.desc.charAt(0).toLowerCase()}${opt.desc.slice(1)}`;
+      w.push({ t: "news", text: line, src: "world" });
+      announce(w, `Off-screen, ${line}. (Their own choice — it may come up later.)`);
+    }
+  }
+  if (w.events.length > n)
+    runTriggers(w, false);
+  const love = loveStat(r);
+  if (!love)
+    return;
+  for (const c of comps) {
+    if (!c.jealousOf.length || !w.s.people[c.id])
+      continue;
+    const rivals = c.jealousOf.includes("anyone") ? Object.keys(w.s.people).filter((id) => id !== c.id) : c.jealousOf.filter((id) => id !== c.id);
+    const gains = rivals.map((id) => [id, (w.s.rel[id]?.[love] ?? 0) - (before.rel[id]?.[love] ?? 0)]).filter(([, g]) => g >= 1);
+    if (!gains.length)
+      continue;
+    const total = gains.reduce((a, [, g]) => a + g, 0);
+    const drop = Math.max(1, Math.round(total / 2));
+    w.push({ t: "rel", who: c.id, stat: love, d: -drop, src: "world" });
+    for (const [id, g] of gains)
+      w.push({ t: "bond", a: c.id, b: id, d: -Math.max(1, Math.round(g / 2)), src: "world" });
+    announce(w, `${personName(r, w.s, c.id)} notices {{user}} getting closer to ${gains.map(([id]) => personName(r, w.s, id)).join(" and ")} — and it stings.`);
+  }
 }
 function checkRun(w, before) {
   const r = w.r;
@@ -5112,6 +5425,8 @@ function resolveInner(r, before, intent, opts, needs) {
   tickWorld(w, days, 1);
   if (w.events.length > worldBefore)
     runTriggers(w, false);
+  companionLife(w, before);
+  lineageLife(w);
   checkRun(w, before);
   w.push({ t: "turn", src: "action" });
   rec.events = w.events;
@@ -5291,6 +5606,8 @@ function applyProposal(r, before, p, ctx) {
     if (w.events.length > n)
       runTriggers(w, false);
   }
+  companionLife(w, before);
+  lineageLife(w);
   checkRun(w, before);
   return w.events;
 }
@@ -5333,6 +5650,8 @@ function buildTurn(r, before, seed, fn) {
     if (w.events.length > n)
       runTriggers(w, false);
   }
+  companionLife(w, before);
+  lineageLife(w);
   checkRun(w, before);
   return w.events;
 }
@@ -6463,7 +6782,34 @@ live_choices:
       },
       {
         label: "dating",
-        yaml: `# Date mode: talk topic by topic, learn what people like, ask them out.
+        yaml: `# Companions live between replies: goals, arcs they push by their own choices, feelings about each other.
+companions:
+  jo:
+    goal: Buy the café outright before the landlord sells it
+    arc:
+      per_day: 1
+      stages:
+        - { at: 30, hint: "Jo has been doing sums at closing time.", surface: "Jo tells people she's trying to buy the café." }
+        - { at: 70, hint: "Jo looks exhausted; she's taken on extra shifts.", surface: "Jo makes the landlord an offer on the café.", do: { flags: { jo_offer: true } } }
+      story: { "{{user}} helps Jo at the café": 8 }
+    daily:
+      ask: How does Jo spend her evening?
+      options:
+        extra_shift: { desc: Works a late extra shift, weight: 3, arc: +4 }
+        the_strip: { desc: Goes out on the Strip and runs into Dex, weight: 1, arc: -2, bond: { dex: +4 } }
+        night_in: { desc: Stays in and rests, weight: 2 }
+    jealous_of: [dex]
+    bonds: { dex: 10, professor_ward: 20 }
+  dex:
+    goal: Clear a debt to people you don't owe money to
+    daily:
+      ask: What does Dex get up to tonight?
+      options:
+        job: { desc: Takes a job for the wrong people, weight: 2 }
+        café: { desc: Hangs around Jo's café until closing, weight: 1, bond: { jo: +5 } }
+    bonds: { jo: 25, professor_ward: -30 }
+
+# Date mode: talk topic by topic, learn what people like, ask them out.
 # Love is the "love" relationship stat; "fear" is added automatically.
 dating:
   love: love
@@ -10513,6 +10859,11 @@ function lintRuleset(r) {
         if (!r.body.parts[part])
           issues.push({ level: "warning", where, message: `"${part}" isn't a body part (body › parts) and the body is closed (open: false)` });
       }
+    if (e.conceive && !r.lineage.enabled)
+      issues.push({ level: "warning", where, message: "uses `conceive`, but the ruleset has no `lineage:` section" });
+    for (const id of Object.keys(e.arc))
+      if (!r.companions[id]?.arc)
+        issues.push({ level: "warning", where, message: `"${id}" isn't a companion with an arc` });
     if (e.startEncounter && !r.encounters[e.startEncounter]) {
       issues.push({ level: "warning", where, message: `starts encounter "${e.startEncounter}", which doesn't exist${suggest(e.startEncounter, Object.keys(r.encounters))}` });
     }
@@ -10681,6 +11032,30 @@ function lintRuleset(r) {
   }
   for (const e of Object.values(r.endings))
     check(e.when, `Endings › ${e.id} › when`);
+  const people = Object.keys(r.people);
+  r.lineage.stages.forEach((st, i) => checkEffect(st.effects, `Lineage › stage ${i + 1}`));
+  for (const part of r.lineage.inherit)
+    if (r.body.enabled && !r.body.parts[part])
+      issues.push({ level: "warning", where: "Lineage › children › inherit", message: `"${part}" isn't a body part${suggest(part, Object.keys(r.body.parts))}` });
+  for (const c of Object.values(r.companions)) {
+    const w = `Companions › ${c.id}`;
+    if (!r.people[c.id])
+      issues.push({ level: "warning", where: w, message: `"${c.id}" isn't a person in relationships › people${suggest(c.id, people)}` });
+    for (const id of c.jealousOf)
+      if (id !== "anyone" && !r.people[id])
+        issues.push({ level: "warning", where: `${w} › jealous_of`, message: `"${id}" isn't a person${suggest(id, people)}` });
+    for (const id of c.knows)
+      if (!r.secrets[id])
+        issues.push({ level: "warning", where: `${w} › knows`, message: `"${id}" isn't a secret${suggest(id, Object.keys(r.secrets))}` });
+    if (c.daily)
+      for (const o of c.daily.options)
+        checkEffect(o.effect, `${w} › daily › ${o.id}`);
+  }
+  for (const [a, m] of Object.entries(r.bonds))
+    for (const b of Object.keys(m)) {
+      if (!r.people[b])
+        issues.push({ level: "warning", where: `Companions › ${a} › bonds`, message: `"${b}" isn't a person${suggest(b, people)}` });
+    }
   const slotIds = r.wardrobe.slots.map((s) => s.id);
   for (const [part, slots] of Object.entries(r.body.hiddenBy))
     for (const slot of slots) {
@@ -10762,6 +11137,10 @@ var init_lint = __esm(() => {
     "saved",
     "body",
     "transformed",
+    "bond",
+    "arc",
+    "age",
+    "children",
     "min",
     "max",
     "clamp",
@@ -11989,7 +12368,9 @@ function buildHud(r, s) {
         return { id: rs, label: def.label, value: v, min: def.min, max: def.max, display: formatNumber(v), pct: pp, text: band?.text ?? null, tone: band?.tone ?? toneFromPct(pp, def.good) };
       }),
       present: here.has(id),
-      whereabouts: where ? r.locations[where]?.name ?? where : null
+      whereabouts: where ? r.locations[where]?.name ?? where : null,
+      goal: r.companions[id]?.goal ?? null,
+      bonds: Object.entries(s.bonds[id] ?? {}).filter(([b, v]) => s.people[b] && Math.abs(v) >= 25).map(([b, v]) => `${bondWord(v)} ${personName(r, s, b)}`)
     };
   }).sort((a, b) => Number(b.present) - Number(a.present));
   const wornIds = new Set(Object.values(s.worn));
@@ -12082,6 +12463,10 @@ function buildHud(r, s) {
       text: traitText(traits) || "—",
       covered: bodyCovered(r, s, part)
     })) : null,
+    family: [
+      ...s.pregnancy && s.pregnancy.told > 0 ? [{ name: s.pregnancy.carrier === "player" ? "Expecting" : `${personName(r, s, s.pregnancy.carrier)} is expecting`, text: `${Math.floor((s.minutes - s.pregnancy.since) / 1440 / 7)} of ${r.lineage.weeks} weeks` }] : [],
+      ...Object.entries(s.kin).map(([id, k]) => ({ name: k.name, text: `${k.sex === "girl" ? "Daughter" : "Son"}, ${kinAge(r, s, id)}${k.joined ? " · grown up" : ""}` }))
+    ],
     transforms: Object.values(r.body.transforms).filter((t) => (s.tf[t.id] ?? 0) > 0).map((t) => ({ label: t.label, stage: s.tf[t.id], of: t.stages.length })),
     run: r.checkpoints.enabled ? {
       slots: Array.from({ length: r.checkpoints.slots }, (_, i) => ({ id: String(i + 1), label: s.saves[String(i + 1)]?.label ?? null })),
@@ -12182,6 +12567,20 @@ function bodyLine(r, s) {
     return null;
   const covered = parts.filter(([p]) => bodyCovered(r, s, p)).map(([p]) => p.replace(/_/g, " "));
   return `Body: ${parts.map(([p, t]) => `${p.replace(/_/g, " ")} — ${t}`).join("; ")}${covered.length ? ` (covered, not visible to others: ${covered.join(", ")})` : ""}`;
+}
+function bondWord(v) {
+  return v >= 60 ? "devoted to" : v >= 25 ? "fond of" : v > -25 ? "neutral toward" : v > -60 ? "cool toward" : "hostile toward";
+}
+function bondLines(r, s) {
+  const out = [];
+  for (const [a, m] of Object.entries(s.bonds)) {
+    if (!s.people[a])
+      continue;
+    for (const [b, v] of Object.entries(m))
+      if (s.people[b] && Math.abs(v) >= 25)
+        out.push(`${personName(r, s, a)} is ${bondWord(v)} ${personName(r, s, b)}`);
+  }
+  return out;
 }
 function keepWords(r, k) {
   const parts = [
@@ -12573,6 +12972,18 @@ function stateDigest(r, s) {
   const inv = Object.entries(s.items).filter(([id]) => !wornSet.has(id)).map(([id, n]) => `${itemName(r, s, id)}${n > 1 ? ` ×${n}` : ""}`);
   if (inv.length)
     lines.push(`Carrying: ${inv.join(", ")}`);
+  if (s.pregnancy && s.pregnancy.told > 0) {
+    const weeks = Math.floor((s.minutes - s.pregnancy.since) / 1440 / 7);
+    const carrier = s.pregnancy.carrier === "player" ? "{{user}}" : personName(r, s, s.pregnancy.carrier);
+    const other = s.pregnancy.carrier === "player" ? personName(r, s, s.pregnancy.with) : "{{user}}";
+    lines.push(`${carrier} is ${weeks} week${weeks === 1 ? "" : "s"} pregnant (${other}'s child).`);
+  }
+  const kids = Object.entries(s.kin).filter(([, k]) => !k.joined).map(([id, k]) => `${k.name} (${k.sex === "girl" ? "daughter" : "son"}, age ${kinAge(r, s, id)})`);
+  if (kids.length)
+    lines.push(`Family — {{user}}'s children: ${kids.join(", ")}. They are minors: never part of anything romantic or sexual, and kept out of any sexual scene.`);
+  const between = bondLines(r, s);
+  if (between.length)
+    lines.push(`Between people: ${between.join("; ")}`);
   const ppl = Object.entries(s.people).map(([id, p]) => {
     const parts = r.relStatOrder.map((rs) => {
       const def = r.relStats[rs];
@@ -12591,6 +13002,20 @@ function stateDigest(r, s) {
 }
 function narratorKnowledge(r, s) {
   const lines = [];
+  if (s.pregnancy && s.pregnancy.told === 0) {
+    const who = s.pregnancy.carrier === "player" ? "{{user}}" : personName(r, s, s.pregnancy.carrier);
+    lines.push(`Behind the scenes: ${who} is pregnant. Nobody knows yet — show no signs until the rules say so.`);
+  }
+  for (const c of Object.values(r.companions)) {
+    if (!s.people[c.id])
+      continue;
+    for (const id of c.knows) {
+      const sec = r.secrets[id];
+      if (!sec)
+        continue;
+      lines.push(`Only ${personName(r, s, c.id)} knows this (no one else can mention it; ${personName(r, s, c.id)} reveals it only if the scene truly earns it): ${sec.about} — ${sec.stages.map((st) => st.text).join(" ")}`);
+    }
+  }
   for (const sec of Object.values(r.secrets)) {
     const open = s.secrets[sec.id] ?? -1;
     for (let i = 0;i <= open && i < sec.stages.length; i++)
@@ -14291,7 +14716,7 @@ var PART_LABELS = ["core", "stats", "people", "world", "actions", "encounters", 
 var PART_CONTENTS = {
   core: "name, description, player, clock, start, hud, narration",
   stats: "stats",
-  people: "relationships (stats + people with schedules)",
+  people: "relationships (stats + people with schedules), companions, lineage",
   world: "weather, locations, items (incl. clothing), wardrobe, body, conditions, flags, start.items",
   actions: "actions",
   encounters: "encounters, dungeons",
@@ -14307,7 +14732,7 @@ function partForIssue(where) {
     return head;
   if (head.startsWith("stats"))
     return "stats";
-  if (head.startsWith("relationships") || head.startsWith("people"))
+  if (["relationships", "people", "companions", "lineage"].some((k) => head.startsWith(k)))
     return "people";
   if (["locations", "items", "wardrobe", "weather", "conditions", "flags", "body"].some((k) => head.startsWith(k)))
     return "world";
@@ -14344,6 +14769,23 @@ relationships:
       desc: Runs the café.
       schedule:                    # first matching entry wins; entry without when = default; no match = not around
         - { when: "between(hour, 7, 18) and weekday != 'Sun'", at: high_street }
+
+companions:       # people with lives of their own (ids from relationships.people)
+  jo:
+    goal: Buy the café outright              # shown on the sheet
+    arc: { per_day: 2, stages: [ { at: 40, hint: "Jo's doing sums at closing time.", surface: "Jo makes an offer on the café." } ], story: { "{{user}} helps Jo at the café": 10 } }   # a hidden clock, same shape as a front; runs once met
+    daily:                                   # a choice they make each in-game day; the decision model weighs it; arc/bond here mean Jo
+      ask: How does Jo spend her evening?
+      options: { shift: { desc: Works an extra shift, weight: 2, arc: +6 }, out: { desc: Goes drinking with Dex, weight: 1, bond: { dex: +5 } } }
+    jealous_of: [dex]                        # or [anyone]: cools toward {{user}} (and the rival) when {{user}} grows close to them
+    bonds: { dex: 30 }                       # how they feel about others, −100…100
+    knows: [ward_accident]                   # secrets only they know: the narrator plays them with it, nobody else can mention it
+EFFECTS for companions: arc: { jo: +5 }, bond: { jo: { dex: -10 } }. FUNCTIONS: arc(person), bond(a, b).
+
+lineage:          # pregnancy and children; only ever between two people known to be adults (declare ages, or the decision model is asked)
+  pregnancy: { weeks: 36, stages: [ { week: 6, text: "{carrier} has been sick in the mornings." }, { week: 16, text: "It's starting to show." } ] }   # hidden until the first stage
+  children: { speed: 1, join_at: 18, inherit: [hair, eyes] }   # speed = how much faster than the calendar they age; they stay off-stage family until join_at (never below 18) and are never part of romance
+EFFECT: conceive: { with: target, chance: 20, carrier: player }   # carrier: player | partner. FUNCTIONS: children(), age(person); names: pregnant, pregnancy_weeks.
 
 clock: { start: "Mon 07:00", date: "Sep 4", minutes_per_action: 15, narrator_max: 240 }
 start: { location: home, items: { phone: 1 } }

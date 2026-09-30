@@ -66,12 +66,14 @@ export function renderHud(h: HudView, opts: { editing: string | null; compact: b
 
   const body = h.body ? section("Body", 0, `${h.body.map((b) => `<div class="warp-item"><span>${esc(b.label)}</span><span class="${b.covered ? "warp-dim" : ""}" title="${b.covered ? "Covered by clothing" : "Visible"}">${esc(b.text)}${b.covered ? " 👕" : ""}</span></div>`).join("")}${h.transforms.map((t) => `<div class="warp-item"><span>✦ ${esc(t.label)}</span><span class="warp-dim">stage ${t.stage} / ${t.of}</span></div>`).join("")}`, false) : "";
 
+  const family = h.family.length ? section("Family", h.family.length, h.family.map((f) => `<div class="warp-item"><span>${esc(f.name)}</span><span class="warp-dim">${esc(f.text)}</span></div>`).join(""), !opts.compact) : "";
+
   const loose = h.items.filter((i) => !i.worn);
   const items = section("Inventory", loose.length, loose.length
     ? loose.map((i) => `<div class="warp-item"><span>${esc(i.name)}</span>${i.count > 1 ? `<span class="warp-kbd">×${i.count}</span>` : ""}</div>`).join("")
     : `<div class="warp-empty">Empty-handed.</div>`, !opts.compact);
 
-  return `${renderEncounter(h)}<div class="warp-hud-top">${top}</div>${renderWarmth(h)}<div class="warp-bars">${bars}</div>${renderOutfit(h, opts.compact)}${skills}${people}${body}${items}${renderPerks(h, opts.compact)}`;
+  return `${renderEncounter(h)}<div class="warp-hud-top">${top}</div>${renderWarmth(h)}<div class="warp-bars">${bars}</div>${renderOutfit(h, opts.compact)}${skills}${people}${family}${body}${items}${renderPerks(h, opts.compact)}`;
 }
 
 function renderEncounter(h: HudView): string {
