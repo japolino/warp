@@ -76,7 +76,7 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
         const v = s.rel[id]?.[rs] ?? def.start;
         const band = bandFor(def, v);
         const pp = pct(v, def.min, def.max);
-        return { id: rs, label: def.label, display: formatNumber(v), pct: pp, text: band?.text ?? null, tone: band?.tone ?? toneFromPct(pp, def.good) };
+        return { id: rs, label: def.label, value: v, min: def.min, max: def.max, display: formatNumber(v), pct: pp, text: band?.text ?? null, tone: band?.tone ?? toneFromPct(pp, def.good) };
       }),
       present: here.has(id),
       whereabouts: where ? r.locations[where]?.name ?? where : null,
@@ -213,7 +213,7 @@ export function buildMap(r: Ruleset, s: GameState): MapView | null {
   }
   const env = makeEnv(r, s);
   const peopleAt = new Map<string, string[]>();
-  for (const pid of Object.keys(r.people)) {
+  for (const pid of Object.keys(r.people).filter((id) => !s.forgotten[id])) {
     const at = personLocation(r, s, pid, env);
     if (at) peopleAt.set(at, [...(peopleAt.get(at) ?? []), personName(r, s, pid)]);
   }
@@ -276,7 +276,7 @@ function signed(n: number) {
 export function summarizeEvents(r: Ruleset, before: GameState, after: GameState, events: WarpEvent[]): ChangeView[] {
   const out: ChangeView[] = [];
   const statAgg = new Map<string, { d: number; idx: number[]; src: string; set: boolean }>();
-  const relAgg = new Map<string, { d: number; idx: number[]; src: string }>();
+  const relAgg = new Map<string, { d: number; idx: number[]; src: string; set: boolean }>();
   const itemAgg = new Map<string, { d: number; idx: number[]; src: string }>();
   const timeAgg = { min: 0, idx: [] as number[], narrIdx: [] as number[] };
 
@@ -294,7 +294,8 @@ export function summarizeEvents(r: Ruleset, before: GameState, after: GameState,
       }
       case "rel": {
         const key = `${e.who}|${e.stat}|${e.src === "narrator" ? "n" : "e"}`;
-        const a = relAgg.get(key) ?? { d: 0, idx: [], src: e.src };
+        const a = relAgg.get(key) ?? { d: 0, idx: [], src: e.src, set: false };
+        if (e.set !== undefined) a.set = true;
         a.d += e.d ?? 0;
         a.idx.push(i);
         relAgg.set(key, a);
@@ -384,9 +385,13 @@ export function summarizeEvents(r: Ruleset, before: GameState, after: GameState,
   for (const [key, a] of relAgg) {
     const [who, stat] = key.split("|");
     const def = r.relStats[stat];
-    if (!def || Math.abs(a.d) < 0.05) continue;
-    const good = def.good === "none" ? null : (a.d > 0) === (def.good === "high");
-    out.push({ text: `${personName(r, after, who)} · ${def.label} ${signed(a.d)}`, tone: good === null ? "neutral" : good ? "good" : "bad", src: a.src, undo: a.idx });
+    if (!def) continue;
+    // A starting read sets the value outright; show how far it moved from the default.
+    const d = a.set ? (after.rel[who]?.[stat] ?? def.start) - (before.rel[who]?.[stat] ?? def.start) : a.d;
+    if (Math.abs(d) < 0.05) continue;
+    const good = def.good === "none" ? null : (d > 0) === (def.good === "high");
+    const band = a.set ? bandFor(def, after.rel[who]?.[stat] ?? def.start)?.text : undefined;
+    out.push({ text: `${personName(r, after, who)} · ${def.label} ${signed(d)}`, tone: good === null ? "neutral" : good ? "good" : "bad", src: a.src, ...(band ? { band } : {}), undo: a.idx });
   }
   for (const [key, a] of itemAgg) {
     const id = key.split("|")[0];

@@ -1534,7 +1534,7 @@ function personLocation(r, s, id, env) {
 function presentPeople(r, s, env) {
   if (!s.location)
     return [];
-  return Object.keys(r.people).filter((id) => personLocation(r, s, id, env) === s.location);
+  return Object.keys(r.people).filter((id) => !s.forgotten[id] && personLocation(r, s, id, env) === s.location);
 }
 
 // src/engine/state.ts
@@ -1547,6 +1547,8 @@ function initialState(r) {
     codex: {},
     feats: {},
     perks: {},
+    calibrated: {},
+    forgotten: {},
     stats: {},
     flags: {},
     items: { ...r.startItems },
@@ -1569,6 +1571,8 @@ function initialState(r) {
     s.rel[p.id] = {};
     for (const rs of r.relStatOrder)
       s.rel[p.id][rs] = p.start[rs] ?? r.relStats[rs].start;
+    if (Object.keys(p.start).length)
+      s.calibrated[p.id] = true;
   }
   for (const id of r.wardrobe.startWorn) {
     const slot = r.items[id]?.slot;
@@ -1672,8 +1676,18 @@ function applyEvent(s, e, r) {
     case "perk":
       s.perks[e.id] = true;
       break;
+    case "calib":
+      s.calibrated[e.who] = true;
+      break;
+    case "forget":
+      delete s.people[e.who];
+      delete s.rel[e.who];
+      delete s.calibrated[e.who];
+      s.forgotten[e.who] = true;
+      break;
     case "person":
       s.people[e.id] = { name: e.name };
+      delete s.forgotten[e.id];
       if (!s.rel[e.id]) {
         s.rel[e.id] = {};
         for (const rs of r.relStatOrder)
@@ -2393,11 +2407,21 @@ function applyProposal(r, before, p) {
   for (const person of p.people ?? []) {
     if (!person?.name || !r.peopleOpen)
       continue;
-    if (findPerson(r, w.s, person.name))
+    const known = findPerson(r, w.s, person.name);
+    if (known) {
+      if (person.feelings)
+        calibrate(w, known, person.feelings, src);
       continue;
+    }
     const id = slug(person.id || person.name);
     if (!w.s.people[id])
       w.push({ t: "person", id, name: person.name, src });
+    calibrate(w, id, person.feelings ?? {}, src);
+  }
+  for (const [who, feelings] of Object.entries(p.feelings ?? {})) {
+    const id = findPerson(r, w.s, who);
+    if (id)
+      calibrate(w, id, feelings ?? {}, src);
   }
   for (const [id, d] of Object.entries(p.stats ?? {})) {
     const def = r.stats[id];
@@ -2530,6 +2554,39 @@ function fillTarget(w, text, extra) {
   if (typeof extra.target !== "string" || !extra.target || !text.includes("{target}"))
     return text;
   return text.replace(/\{target\}/g, personName(w.r, w.s, extra.target));
+}
+function calibrate(w, who, feelings, src) {
+  if (w.s.calibrated[who])
+    return;
+  let read = false;
+  for (const [stat, v] of Object.entries(feelings)) {
+    const def = w.r.relStats[stat];
+    if (!def || def.narrator <= 0 || typeof v !== "number" || !Number.isFinite(v))
+      continue;
+    read = true;
+    const value = Math.max(def.min, Math.min(def.max, v));
+    if (value !== (w.s.rel[who]?.[stat] ?? def.start))
+      w.push({ t: "rel", who, stat, set: value, src });
+  }
+  if (read)
+    w.push({ t: "calib", who, src });
+}
+function manualSetRel(r, before, who, stat, value) {
+  if (!before.people[who])
+    return "Unknown person.";
+  if (!r.relStats[stat])
+    return "Unknown relationship stat.";
+  const w = new Working(r, cloneState(before));
+  w.push({ t: "rel", who, stat, set: value, src: "manual" });
+  if (!w.s.calibrated[who])
+    w.push({ t: "calib", who, src: "manual" });
+  runTriggers(w, false);
+  return w.events;
+}
+function forgetPerson(r, before, who) {
+  if (!before.people[who])
+    return "Unknown person.";
+  return [{ t: "forget", who, src: "manual" }];
 }
 
 // src/engine/templates/universal.ts
@@ -3712,6 +3769,29 @@ feats:
 var TEMPLATES = [universal, hometown, starfarer];
 function getTemplate(id) {
   return TEMPLATES.find((t) => t.id === id);
+}
+function looksLikeScenario(c) {
+  const tags = (c.tags ?? []).map((t) => t.toLowerCase());
+  if (tags.some((t) => /scenario|\brpg\b|narrator|simulator|multiple characters|multi-?char|multi-?character|\bgroup\b|text adventure|\bworld\b|setting|dungeon|sandbox/.test(t)))
+    return true;
+  const text = `${c.description ?? ""}
+${c.personality ?? ""}
+${c.scenario ?? ""}`.toLowerCase();
+  const narratorPhrases = [
+    /\b(?:the )?narrator\b/,
+    /\bgame ?master\b/,
+    /\bdungeon master\b/,
+    /\bstoryteller\b/,
+    /\{\{char\}\} (?:is|will be) (?:not a (?:single |specific )?character|the (?:narrator|world|setting|game))/,
+    /\{\{char\}\} (?:will )?(?:play|voice|control)s? (?:all |every |each )?(?:of )?(?:the )?(?:other )?(?:characters|npcs|side characters|cast)/,
+    /\bmultiple characters\b/,
+    /\bvarious characters\b/,
+    /\ball (?:the )?npcs\b/
+  ];
+  if (narratorPhrases.some((re) => re.test(text)))
+    return true;
+  const settingName = /\b(simulator|scenario|rpg|academy|world|kingdom|empire|city|town|village|school|university|dungeon|adventure|quest|game|isekai|apocalypse|station)\b/i;
+  return settingName.test(c.name) && !(c.personality ?? "").trim();
 }
 function withCharacter(yaml, name) {
   if (!/^relationships:/m.test(yaml))
@@ -7242,6 +7322,7 @@ async function loadForCharacter(characterId, userId) {
   const base = {
     characterId,
     characterName: character?.name ?? null,
+    cardKind: character && looksLikeScenario(character) ? "scenario" : "character",
     ruleset: null,
     issues: [],
     source: null,
@@ -7315,7 +7396,7 @@ function invalidateCharacter(characterId) {
 }
 function statusOf(l) {
   if (!l || !l.source) {
-    return { state: "none", name: null, source: null, issues: l?.issues ?? [], characterName: l?.characterName ?? null, tags: [] };
+    return { state: "none", name: null, source: null, issues: l?.issues ?? [], characterName: l?.characterName ?? null, cardKind: l?.cardKind ?? "character", tags: [] };
   }
   const tags = new Set;
   for (const a of Object.values(l.ruleset?.actions ?? {}))
@@ -7327,10 +7408,11 @@ function statusOf(l) {
     source: l.source,
     issues: l.issues,
     characterName: l.characterName,
+    cardKind: l.cardKind,
     tags: [...tags].sort()
   };
 }
-async function installTemplate(chatId, templateId, userId) {
+async function installTemplate(chatId, templateId, userId, trackCharacter) {
   const t = getTemplate(templateId);
   if (!t)
     throw new Error("Unknown template");
@@ -7348,7 +7430,8 @@ async function installTemplate(chatId, templateId, userId) {
   let order = 10;
   for (const part of t.parts) {
     let content = part.yaml;
-    if (part.label === "people" && character.name)
+    const track = trackCharacter ?? !looksLikeScenario(character);
+    if (part.label === "people" && character.name && track)
       content = withCharacter(content, character.name);
     await host().world_books.entries.create(book.id, {
       comment: `warp-ruleset · ${part.label}`,
@@ -7434,7 +7517,7 @@ function buildHud(r, s) {
         const v = s.rel[id]?.[rs] ?? def.start;
         const band = bandFor(def, v);
         const pp = pct(v, def.min, def.max);
-        return { id: rs, label: def.label, display: formatNumber(v), pct: pp, text: band?.text ?? null, tone: band?.tone ?? toneFromPct(pp, def.good) };
+        return { id: rs, label: def.label, value: v, min: def.min, max: def.max, display: formatNumber(v), pct: pp, text: band?.text ?? null, tone: band?.tone ?? toneFromPct(pp, def.good) };
       }),
       present: here.has(id),
       whereabouts: where ? r.locations[where]?.name ?? where : null
@@ -7571,7 +7654,7 @@ function buildMap(r, s) {
   }
   const env = makeEnv(r, s);
   const peopleAt = new Map;
-  for (const pid of Object.keys(r.people)) {
+  for (const pid of Object.keys(r.people).filter((id) => !s.forgotten[id])) {
     const at = personLocation(r, s, pid, env);
     if (at)
       peopleAt.set(at, [...peopleAt.get(at) ?? [], personName(r, s, pid)]);
@@ -7651,7 +7734,9 @@ function summarizeEvents(r, before, after, events) {
       }
       case "rel": {
         const key = `${e.who}|${e.stat}|${e.src === "narrator" ? "n" : "e"}`;
-        const a = relAgg.get(key) ?? { d: 0, idx: [], src: e.src };
+        const a = relAgg.get(key) ?? { d: 0, idx: [], src: e.src, set: false };
+        if (e.set !== undefined)
+          a.set = true;
         a.d += e.d ?? 0;
         a.idx.push(i);
         relAgg.set(key, a);
@@ -7748,10 +7833,14 @@ function summarizeEvents(r, before, after, events) {
   for (const [key, a] of relAgg) {
     const [who, stat] = key.split("|");
     const def = r.relStats[stat];
-    if (!def || Math.abs(a.d) < 0.05)
+    if (!def)
       continue;
-    const good = def.good === "none" ? null : a.d > 0 === (def.good === "high");
-    out.push({ text: `${personName(r, after, who)} · ${def.label} ${signed(a.d)}`, tone: good === null ? "neutral" : good ? "good" : "bad", src: a.src, undo: a.idx });
+    const d = a.set ? (after.rel[who]?.[stat] ?? def.start) - (before.rel[who]?.[stat] ?? def.start) : a.d;
+    if (Math.abs(d) < 0.05)
+      continue;
+    const good = def.good === "none" ? null : d > 0 === (def.good === "high");
+    const band = a.set ? bandFor(def, after.rel[who]?.[stat] ?? def.start)?.text : undefined;
+    out.push({ text: `${personName(r, after, who)} · ${def.label} ${signed(d)}`, tone: good === null ? "neutral" : good ? "good" : "bad", src: a.src, ...band ? { band } : {}, undo: a.idx });
   }
   for (const [key, a] of itemAgg) {
     const id = key.split("|")[0];
@@ -8135,6 +8224,16 @@ var TIME_LEVELS = [
   "Most of a day or night"
 ];
 var TIME_MINUTES = [0, 5, 30, 60, 180, 480];
+function feelLevels(d) {
+  if (d.bands.length >= 2) {
+    return d.bands.map((b, i) => {
+      const next = d.bands[i + 1]?.at ?? d.max;
+      return { text: b.text, value: Math.round((b.at + next) / 2) };
+    });
+  }
+  const names = ["Very low", "Low", "Middling", "High", "Very high"];
+  return names.map((text, i) => ({ text, value: Math.round(d.min + (d.max - d.min) * i / (names.length - 1)) }));
+}
 function stepDelta(step, limit) {
   const raw = STEP_FACTOR[step] * limit;
   const rounded = Math.round(raw);
@@ -8171,7 +8270,12 @@ async function bookkeeping(opts) {
       if (d.narrator <= 0)
         continue;
       const name = personName(r, s, pid);
-      q[`rel:${pid}:${rs}`] = { type: "choice", instructions: `How did ${name}'s ${d.label} toward ${player} change during the reply?`, criteria: stepCriteria(`${name}'s ${d.label}`) };
+      if (!s.calibrated[pid]) {
+        const levels = feelLevels(d);
+        q[`feel:${pid}:${rs}`] = { type: "score", instructions: `Right now, how does ${name} feel toward ${player} — ${d.label}?`, criteria: levels.map((l) => l.text) };
+      } else {
+        q[`rel:${pid}:${rs}`] = { type: "choice", instructions: `How did ${name}'s ${d.label} toward ${player} change during the reply?`, criteria: stepCriteria(`${name}'s ${d.label}`) };
+      }
     }
   const locs = Object.values(r.locations);
   if (locs.length && !r.locationsOpen) {
@@ -8214,6 +8318,14 @@ async function bookkeeping(opts) {
     if (!confident(a) || a.choice === "same")
       continue;
     (p.stats ??= {})[id] = stepDelta(a.choice, r.stats[id].narrator);
+  }
+  for (const [key, a] of Object.entries(ans)) {
+    if (!key.startsWith("feel:") || a.type !== "score" || a.confidence < 0.3)
+      continue;
+    const [, pid, rs] = key.split(":");
+    const levels = feelLevels(r.relStats[rs]);
+    const i = Math.max(0, Math.min(levels.length - 1, Math.round(a.score)));
+    ((p.feelings ??= {})[personName(r, s, pid)] ??= {})[rs] = levels[i].value;
   }
   for (const [key, a] of Object.entries(ans)) {
     if (!key.startsWith("rel:") || !confident(a) || a.choice === "same")
@@ -8524,8 +8636,14 @@ async function extract(r, s, playerText, reply, settings, userId, only) {
     allowed.push(`- "stats": changes (deltas) to: ${stats.map((d) => `${d.id} (±${formatNumber(d.narrator)})`).join(", ")}`);
   if (want("rel") && rels.length)
     allowed.push(`- "rel": per person name, deltas to: ${rels.map((d) => `${d.id} (±${formatNumber(d.narrator)})`).join(", ")}`);
-  if (want("people") && r.peopleOpen)
-    allowed.push(`- "people": newly introduced named characters, as [{"name": "..."}]`);
+  const feelScale = rels.map((d) => `${d.id} ${d.min}–${d.max}${d.bands.length ? ` (${d.bands.map((b) => `${b.at}=${b.text}`).join(", ")})` : ""}`).join("; ");
+  if (want("people") && r.peopleOpen) {
+    allowed.push(`- "people": characters who appear for the first time, as [{"name": "...", "feelings": {<how they feel toward the player RIGHT NOW, absolute values>}}]${rels.length ? ` — scales: ${feelScale}` : ""}`);
+  }
+  const uncalibrated = Object.keys(s.people).filter((id) => !s.calibrated[id]).map((id) => s.people[id].name);
+  if (want("people") && rels.length && uncalibrated.length) {
+    allowed.push(`- "feelings": for these tracked people who appear in the reply, where they stand toward the player right now (absolute values, same scales): ${uncalibrated.join(", ")} — as {"Name": {"stat": value}}`);
+  }
   if (want("items") && (r.itemsOpen || Object.keys(r.items).length))
     allowed.push(`- "items": item name → count gained (+) or lost (−). Held: ${Object.keys(s.items).map((id) => itemName(r, s, id)).join(", ") || "nothing"}`);
   if (want("move") && (locs.length || r.locationsOpen))
@@ -8546,7 +8664,8 @@ async function extract(r, s, playerText, reply, settings, userId, only) {
   const system = [
     "You are the bookkeeper for a text roleplay game. You never write story.",
     "Read the narrator's latest reply and record only what CLEARLY happened in it.",
-    "Small, sensible deltas. Omit anything unchanged. Do not re-apply dice outcomes that were already applied.",
+    "Small, sensible deltas for changes. Omit anything unchanged. Do not re-apply dice outcomes that were already applied.",
+    'Exception: "feelings" (and people.feelings) are where someone stands overall right now — read them from how they act, even if that means strong values.',
     "You may report:",
     ...allowed,
     'Reply with JSON only, e.g. {"minutes": 20, "stats": {"stress": 300}, "rel": {"Robin": {"trust": 3}}}. Use {} if nothing changed.'
@@ -8753,6 +8872,8 @@ async function proposeChanges(decider, r, p, reply, settings, userId) {
       proposal.items = { ...proposal.items ?? {}, ...named.items };
     if (named?.move && !proposal.move)
       proposal.move = named.move;
+    if (named?.feelings)
+      proposal.feelings = { ...proposal.feelings ?? {}, ...named.feelings };
   }
   return proposal;
 }
@@ -9276,6 +9397,10 @@ function brief(s) {
     `Character: ${s.characterName}`,
     s.analysis ? `Card summary: ${s.analysis.summary}` : "",
     s.analysis?.statusBlock?.found ? `The card currently makes the model print a status block with: ${s.analysis.statusBlock.fields.join(", ")}. Cover these as proper stats; the narrator should no longer print status blocks.` : "",
+    s.analysis?.cardType === "scenario" ? `This is a scenario/narrator card: "${s.characterName}" is the setting, NOT a person — never add it to people.` : "",
+    s.analysis?.cast?.length ? `Main cast — add each to relationships.people with a start: block that matches how they feel about {{user}} at the beginning (use the relationship stats' scales; strong feelings mean strong numbers):
+${s.analysis.cast.map((c) => `- ${c.name}: ${c.relation}`).join(`
+`)}` : "",
     qa.length ? `The player's answers:
 ${qa.join(`
 `)}` : "",
@@ -9474,6 +9599,8 @@ Reply with JSON:
  "reason": "one sentence: why that template fits",
  "systems": ["<system ids that fit this card>"],
  "statusBlock": {"found": <does the card tell the model to print a status/stat block?>, "fields": ["<fields it tracks>"]},
+ "cardType": "character" if the card IS one character, "scenario" if it is a narrator / world / multi-character card (its name is a setting or premise, not a person),
+ "cast": [ the main named characters in the story (for a character card, the character first) with how each feels about the player at the start, e.g. {"name": "Aina", "relation": "secretly adores {{user}} but hides it behind insults"} ],
  "followUps": [ up to 5 questions specific to THIS card, e.g. {"text": "Aina gets jealous easily. Track jealousy as its own meter?", "kind": "single", "options": ["Yes", "No"], "why": "The description mentions jealousy"} — kinds: single, multi, text ]}`;
     const out = parseJson(await llm(s, system, user, userId, 1500)) ?? {};
     const suggested = typeof out.suggestedTemplate === "string" && (getTemplate(out.suggestedTemplate) || out.suggestedTemplate === "blank") ? out.suggestedTemplate : "universal";
@@ -9482,7 +9609,9 @@ Reply with JSON:
       summary: typeof out.summary === "string" ? out.summary : `${card.name}.`,
       suggestedTemplate: suggested,
       reason: typeof out.reason === "string" ? out.reason : "",
-      statusBlock: sb && sb.found === true ? { found: true, fields: Array.isArray(sb.fields) ? sb.fields.map(String).slice(0, 12) : [] } : null
+      statusBlock: sb && sb.found === true ? { found: true, fields: Array.isArray(sb.fields) ? sb.fields.map(String).slice(0, 12) : [] } : null,
+      cardType: out.cardType === "scenario" ? "scenario" : "character",
+      cast: Array.isArray(out.cast) ? out.cast.slice(0, 12).map((c) => ({ name: String(c?.name ?? ""), relation: String(c?.relation ?? "") })).filter((c) => c.name) : []
     };
     s.base = opts.base || suggested;
     const defaults = Array.isArray(out.systems) ? out.systems.map(String).filter((x) => SYSTEMS.some((y) => y.id === x)) : ["needs", "relationships", "money", "skills"];
@@ -9537,7 +9666,7 @@ async function draftAll(s, userId) {
   };
   const baseOf = (label) => {
     const y = t?.parts.find((p) => p.label === label)?.yaml ?? null;
-    return y && label === "people" ? withCharacter(y, s.characterName) : y;
+    return y && label === "people" && s.analysis?.cardType !== "scenario" ? withCharacter(y, s.characterName) : y;
   };
   const labels = PART_LABELS.filter(want);
   s.parts = labels.map((label) => ({ label, yaml: "", status: "ok", issues: [] }));
@@ -9926,6 +10055,14 @@ spindle.onFrontendMessage(async (raw, userId) => {
         await applyManual(msg.chatId, userId, (r, state) => changeClothes(r, state, msg.slot, msg.item));
         break;
       }
+      case "adjust_rel": {
+        await applyManual(msg.chatId, userId, (r, state) => manualSetRel(r, state, msg.who, msg.stat, msg.value));
+        break;
+      }
+      case "forget": {
+        await applyManual(msg.chatId, userId, (r, state) => forgetPerson(r, state, msg.who));
+        break;
+      }
       case "buy_perk": {
         const ok = await applyManual(msg.chatId, userId, (r, state) => buyPerk(r, state, msg.perk));
         if (ok)
@@ -10026,7 +10163,7 @@ spindle.onFrontendMessage(async (raw, userId) => {
       case "install_template": {
         if (!msg.chatId)
           return;
-        const name = await installTemplate(msg.chatId, msg.templateId, userId);
+        const name = await installTemplate(msg.chatId, msg.templateId, userId, msg.trackCharacter);
         toast("success", `Added the ${name} ruleset. It lives in the "warp-ruleset" lorebook — edit it there any time.`, userId);
         await pushState(msg.chatId, userId, true);
         break;

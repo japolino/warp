@@ -1,5 +1,5 @@
 import type { SpindleAPI } from "lumiverse-spindle-types";
-import { availableChoices, buyPerk, changeClothes, manualSet, TRAVEL_PREFIX, travelTargets, type TurnRecord } from "./engine/resolve.js";
+import { availableChoices, buyPerk, changeClothes, forgetPerson, manualSet, manualSetRel, TRAVEL_PREFIX, travelTargets, type TurnRecord } from "./engine/resolve.js";
 import type { Ruleset } from "./engine/ruleset.js";
 import type { GameState, WarpEvent } from "./engine/state.js";
 import { TEMPLATES } from "./engine/templates/index.js";
@@ -205,6 +205,16 @@ spindle.onFrontendMessage(async (raw, userId) => {
         break;
       }
 
+      case "adjust_rel": {
+        await applyManual(msg.chatId, userId, (r, state) => manualSetRel(r, state, msg.who, msg.stat, msg.value));
+        break;
+      }
+
+      case "forget": {
+        await applyManual(msg.chatId, userId, (r, state) => forgetPerson(r, state, msg.who));
+        break;
+      }
+
       case "buy_perk": {
         const ok = await applyManual(msg.chatId, userId, (r, state) => buyPerk(r, state, msg.perk));
         if (ok) toast("success", "Perk taken.", userId);
@@ -291,7 +301,7 @@ spindle.onFrontendMessage(async (raw, userId) => {
 
       case "install_template": {
         if (!msg.chatId) return;
-        const name = await installTemplate(msg.chatId, msg.templateId, userId);
+        const name = await installTemplate(msg.chatId, msg.templateId, userId, msg.trackCharacter);
         toast("success", `Added the ${name} ruleset. It lives in the "warp-ruleset" lorebook — edit it there any time.`, userId);
         await pushState(msg.chatId, userId, true);
         break;

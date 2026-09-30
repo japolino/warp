@@ -116,5 +116,5 @@ export function personLocation(r: Ruleset, s: GameState, id: string, env: ExprEn
 /** People here now: scheduled people whose schedule puts them at the player's location. */
 export function presentPeople(r: Ruleset, s: GameState, env: ExprEnv): string[] {
   if (!s.location) return [];
-  return Object.keys(r.people).filter((id) => personLocation(r, s, id, env) === s.location);
+  return Object.keys(r.people).filter((id) => !s.forgotten[id] && personLocation(r, s, id, env) === s.location);
 }

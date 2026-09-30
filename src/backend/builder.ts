@@ -177,6 +177,8 @@ function brief(s: BuilderSession): string {
     `Character: ${s.characterName}`,
     s.analysis ? `Card summary: ${s.analysis.summary}` : "",
     s.analysis?.statusBlock?.found ? `The card currently makes the model print a status block with: ${s.analysis.statusBlock.fields.join(", ")}. Cover these as proper stats; the narrator should no longer print status blocks.` : "",
+    s.analysis?.cardType === "scenario" ? `This is a scenario/narrator card: "${s.characterName}" is the setting, NOT a person — never add it to people.` : "",
+    s.analysis?.cast?.length ? `Main cast — add each to relationships.people with a start: block that matches how they feel about {{user}} at the beginning (use the relationship stats' scales; strong feelings mean strong numbers):\n${s.analysis.cast.map((c) => `- ${c.name}: ${c.relation}`).join("\n")}` : "",
     qa.length ? `The player's answers:\n${qa.join("\n")}` : "",
     adds.length ? `The player's own additions (build each in — the stat/item/place/etc., what changes it, and which actions check it):\n${adds.join("\n")}` : "",
     s.creative
@@ -333,6 +335,8 @@ export async function builderStart(chatId: string, opts: { connectionId: string;
  "reason": "one sentence: why that template fits",
  "systems": ["<system ids that fit this card>"],
  "statusBlock": {"found": <does the card tell the model to print a status/stat block?>, "fields": ["<fields it tracks>"]},
+ "cardType": "character" if the card IS one character, "scenario" if it is a narrator / world / multi-character card (its name is a setting or premise, not a person),
+ "cast": [ the main named characters in the story (for a character card, the character first) with how each feels about the player at the start, e.g. {"name": "Aina", "relation": "secretly adores {{user}} but hides it behind insults"} ],
  "followUps": [ up to 5 questions specific to THIS card, e.g. {"text": "Aina gets jealous easily. Track jealousy as its own meter?", "kind": "single", "options": ["Yes", "No"], "why": "The description mentions jealousy"} — kinds: single, multi, text ]}`;
     const out = parseJson(await llm(s, system, user, userId, 1500)) ?? {};
     const suggested = typeof out.suggestedTemplate === "string" && (getTemplate(out.suggestedTemplate) || out.suggestedTemplate === "blank") ? out.suggestedTemplate : "universal";
@@ -342,6 +346,8 @@ export async function builderStart(chatId: string, opts: { connectionId: string;
       suggestedTemplate: suggested,
       reason: typeof out.reason === "string" ? out.reason : "",
       statusBlock: sb && sb.found === true ? { found: true, fields: Array.isArray(sb.fields) ? sb.fields.map(String).slice(0, 12) : [] } : null,
+      cardType: out.cardType === "scenario" ? "scenario" : "character",
+      cast: Array.isArray(out.cast) ? out.cast.slice(0, 12).map((c) => ({ name: String((c as Record<string, unknown>)?.name ?? ""), relation: String((c as Record<string, unknown>)?.relation ?? "") })).filter((c) => c.name) : [],
     };
     s.base = opts.base || suggested;
     const defaults = Array.isArray(out.systems) ? out.systems.map(String).filter((x) => SYSTEMS.some((y) => y.id === x)) : ["needs", "relationships", "money", "skills"];
@@ -387,7 +393,7 @@ async function draftAll(s: BuilderSession, userId?: string) {
   };
   const baseOf = (label: string) => {
     const y = t?.parts.find((p) => p.label === label)?.yaml ?? null;
-    return y && label === "people" ? withCharacter(y, s.characterName) : y;
+    return y && label === "people" && s.analysis?.cardType !== "scenario" ? withCharacter(y, s.characterName) : y;
   };
   const labels = PART_LABELS.filter(want);
   s.parts = labels.map((label) => ({ label, yaml: "", status: "ok", issues: [] }));

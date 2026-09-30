@@ -175,6 +175,9 @@ var STYLES = `
 .warp-perk { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12.5px; }
 .warp-perk-owned { opacity: .75; }
 .warp-person-here { border: 1px solid color-mix(in srgb, var(--warp-good) 55%, transparent); }
+.warp-rel { cursor: pointer; border-radius: 4px; }
+.warp-rel:hover { background: var(--warp-fill); }
+.warp-forget { float: right; font-size: 11px; padding: 0 4px; }
 .warp-here { font-size: 10.5px; color: var(--warp-good); border: 1px solid currentColor; border-radius: 999px; padding: 0 6px; margin-left: 4px; font-weight: 500; }
 
 /* ───────── map & journal ───────── */
@@ -370,8 +373,14 @@ Click to adjust`)}">
   const presentCount = h.people.filter((p) => p.present).length;
   const people = section(presentCount ? `People · ${presentCount} here` : "People", presentCount ? 0 : h.people.length, h.people.length ? h.people.map((p) => `
     <div class="warp-person${p.present ? " warp-person-here" : ""}">
-      <div class="warp-person-name">${esc(p.name)}${p.present ? ` <span class="warp-here">here</span>` : p.whereabouts ? ` <span class="warp-dim">· ${esc(p.whereabouts)}</span>` : ""}</div>
-      <div class="warp-person-stats">${p.stats.map((s) => `<span>${esc(s.label)}: <span class="warp-tone-${s.tone}">${esc(s.text ?? s.display)}</span></span>`).join("")}</div>
+      <div class="warp-person-name">${esc(p.name)}${p.present ? ` <span class="warp-here">here</span>` : p.whereabouts ? ` <span class="warp-dim">· ${esc(p.whereabouts)}</span>` : ""}${opts.compact ? "" : ` <button class="warp-btn warp-btn-ghost warp-forget" data-forget="${esc(p.id)}" data-name="${esc(p.name)}" title="Stop tracking ${esc(p.name)}">Forget</button>`}</div>
+      <div class="warp-person-stats">${p.stats.map((s) => `<span class="warp-rel" data-rel="${esc(`${p.id}:${s.id}`)}" title="${esc(`${s.label}: ${s.display} (${s.min}–${s.max}) — click to set`)}">${esc(s.label)}: <span class="warp-tone-${s.tone}">${esc(s.text ?? s.display)}</span></span>`).join("")}</div>
+      ${p.stats.filter((s) => opts.editing === `rel:${p.id}:${s.id}`).map((s) => `<div class="warp-bar-edit">
+        <span class="warp-dim">${esc(s.label)}</span>
+        <input type="range" min="${s.min}" max="${s.max}" step="1" value="${Math.round(s.value)}" data-range="rel" aria-label="${esc(s.label)}">
+        <input class="warp-input" type="number" min="${s.min}" max="${s.max}" value="${Math.round(s.value)}" data-num="rel" aria-label="${esc(s.label)} value">
+        <button class="warp-btn warp-btn-primary" data-save-rel="${esc(`${p.id}:${s.id}`)}">Set</button>
+      </div>`).join("")}
     </div>`).join("") : `<div class="warp-empty">No one yet.</div>`, !opts.compact || presentCount > 0);
   const loose = h.items.filter((i) => !i.worn);
   const items = section("Inventory", loose.length, loose.length ? loose.map((i) => `<div class="warp-item"><span>${esc(i.name)}</span>${i.count > 1 ? `<span class="warp-kbd">×${i.count}</span>` : ""}</div>`).join("") : `<div class="warp-empty">Empty-handed.</div>`, !opts.compact);
@@ -556,9 +565,11 @@ function renderRulesetCard(s, hasChat) {
     <div class="warp-row"><button class="warp-btn" data-reload>Reload</button><button class="warp-btn warp-btn-ghost" data-install>Replace with a template…</button></div>
   </div>`;
 }
-function renderTemplatePicker(templates) {
+function renderTemplatePicker(templates, card = null) {
+  const track = card ? `<label class="warp-toggle"><span>Track <b>${esc(card.name)}</b> as a character</span><small>${card.track ? "Their relationship with you is tracked from the start." : "This looks like a scenario or narrator card, so its name isn't added as a person. Tick if it really is one character."}</small><input type="checkbox" data-track${card.track ? " checked" : ""}></label>` : "";
   return `<div class="warp-modal">
     <p style="margin:0;color:var(--warp-muted)">Pick a starting point. Warp creates a <b>warp-ruleset</b> lorebook on this character, split into readable entries (stats, people, world, actions, rules) that you can edit like any lorebook. It's never sent to the model.</p>
+    ${track}
     <button class="warp-card warp-template warp-builder-cta" data-template="__ai"><h3>✨ Build with AI</h3><p>Reads this character's card, asks you a few questions, and drafts a ruleset made for it — previewed and balance-checked before anything is saved.</p></button>
     ${templates.map((t) => `<button class="warp-card warp-template" data-template="${esc(t.id)}"><h3>${esc(t.name)}</h3><p>${esc(t.blurb)}</p></button>`).join("")}
   </div>`;
@@ -726,6 +737,8 @@ function renderBuilder(s, d, templates, connections, hasRuleset) {
         <h3>What I read</h3>
         <p>${esc(a.summary)}</p>
         <p><b>Starting from:</b> ${esc(templates.find((t) => t.id === s.base)?.name ?? (s.base === "blank" ? "Blank" : s.base))}${s.base === a.suggestedTemplate && a.reason ? ` — ${esc(a.reason)}` : ""}</p>
+        ${a.cardType === "scenario" ? `<p>This reads as a <b>scenario card</b> — “${esc(s.characterName)}” is the setting, so it won't be tracked as a person.</p>` : ""}
+        ${a.cast?.length ? `<p><b>Cast</b> (tracked from the start, with these starting feelings):</p><ul class="warp-cast">${a.cast.map((c) => `<li><b>${esc(c.name)}</b> — ${esc(c.relation)}</li>`).join("")}</ul>` : ""}
         ${a.statusBlock?.found ? `<p class="warp-tone-warn">This card prints its own status block (${esc(a.statusBlock.fields.join(", ") || "stats")}). Warp will track those properly and tell the narrator to stop printing it.</p>` : ""}
       </div>` : "";
     const rounds = s.rounds.map((r, i) => `<div class="warp-card">
@@ -1056,7 +1069,7 @@ function setup(ctx) {
   function renderDrawer() {
     rememberSections(drawerRoot);
     const hasChat = !!state?.chatId;
-    const status = state?.status ?? { state: "none", name: null, source: null, issues: [], characterName: null, tags: [] };
+    const status = state?.status ?? { state: "none", name: null, source: null, issues: [], characterName: null, cardKind: "character", tags: [] };
     const views = [
       ["sheet", "Sheet"],
       ...state?.map ? [["map", "Map"]] : [],
@@ -1185,7 +1198,7 @@ function setup(ctx) {
     if (!id)
       return;
     const modal = ctx.ui.showModal({ title: "Add a Warp ruleset", width: 520, maxHeight: 640 });
-    modal.root.innerHTML = renderTemplatePicker(templates);
+    modal.root.innerHTML = renderTemplatePicker(templates, state?.status.characterName ? { name: state.status.characterName, track: state.status.cardKind !== "scenario" } : null);
     modal.root.addEventListener("click", (e) => {
       const btn = e.target.closest("[data-template]");
       if (!btn)
@@ -1194,8 +1207,10 @@ function setup(ctx) {
         drawerView = "rules";
         tab.activate();
         send({ type: "builder_open", chatId: id, mode: "build" });
-      } else
-        send({ type: "install_template", chatId: id, templateId: btn.dataset.template });
+      } else {
+        const track = modal.root.querySelector("[data-track]");
+        send({ type: "install_template", chatId: id, templateId: btn.dataset.template, ...track ? { trackCharacter: track.checked } : {} });
+      }
       modal.dismiss();
     });
   }
@@ -1408,6 +1423,16 @@ function setup(ctx) {
       editingBar = null;
       return;
     }
+    const saveRel = t.closest("[data-save-rel]");
+    if (saveRel) {
+      const [who, stat] = saveRel.dataset.saveRel.split(":");
+      const v = Number(saveRel.parentElement?.querySelector("[data-num]")?.value);
+      const cid = chatId();
+      if (cid && Number.isFinite(v))
+        send({ type: "adjust_rel", chatId: cid, who, stat, value: v });
+      editingBar = null;
+      return;
+    }
     if (t.closest(".warp-bar-edit"))
       return;
     const bar = t.closest("[data-bar]");
@@ -1415,6 +1440,29 @@ function setup(ctx) {
       editingBar = editingBar === bar.dataset.bar ? null : bar.dataset.bar;
       renderDock();
       renderDrawer();
+      return;
+    }
+    const rel = t.closest("[data-rel]");
+    if (rel) {
+      const k = `rel:${rel.dataset.rel}`;
+      editingBar = editingBar === k ? null : k;
+      renderDock();
+      renderDrawer();
+      return;
+    }
+    const forget = t.closest("[data-forget]");
+    if (forget) {
+      const cid = chatId();
+      const who = forget.dataset.forget;
+      ctx.ui.showConfirm({
+        title: `Stop tracking ${forget.dataset.name}?`,
+        message: "They're removed from People and relationships. If the story brings them back, they're tracked again from scratch.",
+        confirmLabel: "Forget",
+        variant: "warning"
+      }).then((res) => {
+        if (res.confirmed && cid)
+          send({ type: "forget", chatId: cid, who });
+      });
       return;
     }
     if (t.closest("[data-save-jev]")) {

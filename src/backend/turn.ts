@@ -219,6 +219,7 @@ async function proposeChanges(decider: Decider, r: Ruleset, p: Pending, reply: s
     if (named?.people) proposal.people = named.people;
     if (named?.items) proposal.items = { ...(proposal.items ?? {}), ...named.items };
     if (named?.move && !proposal.move) proposal.move = named.move;
+    if (named?.feelings) proposal.feelings = { ...(proposal.feelings ?? {}), ...named.feelings };
   }
   return proposal;
 }

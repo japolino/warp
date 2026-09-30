@@ -5,13 +5,14 @@ import type { WorldBookEntryDTO } from "lumiverse-spindle-types";
 import { isRulesetBookName, isRulesetEntryTitle, loadRuleset, type RulesetPart } from "../engine/loader.js";
 import { lintRuleset } from "../engine/lint.js";
 import type { Issue, Ruleset } from "../engine/ruleset.js";
-import { getTemplate, withCharacter } from "../engine/templates/index.js";
+import { getTemplate, looksLikeScenario, withCharacter } from "../engine/templates/index.js";
 import type { RulesetStatus } from "../shared/protocol.js";
 import { host, logError } from "./host.js";
 
 export interface Loaded {
   characterId: string | null;
   characterName: string | null;
+  cardKind: "character" | "scenario";
   ruleset: Ruleset | null;
   issues: Issue[];
   /** "warp-ruleset (3 entries)" etc. */
@@ -50,6 +51,7 @@ async function loadForCharacter(characterId: string, userId?: string): Promise<L
   const character = await host().characters.get(characterId, userId);
   const base: Loaded = {
     characterId, characterName: character?.name ?? null,
+    cardKind: character && looksLikeScenario(character) ? "scenario" : "character",
     ruleset: null, issues: [], source: null, entryIds: [], bookIds: [], at: Date.now(),
   };
   if (!character) return base;
@@ -109,7 +111,7 @@ export function invalidateCharacter(characterId?: string | null) {
 
 export function statusOf(l: Loaded | null): RulesetStatus {
   if (!l || !l.source) {
-    return { state: "none", name: null, source: null, issues: l?.issues ?? [], characterName: l?.characterName ?? null, tags: [] };
+    return { state: "none", name: null, source: null, issues: l?.issues ?? [], characterName: l?.characterName ?? null, cardKind: l?.cardKind ?? "character", tags: [] };
   }
   const tags = new Set<string>();
   for (const a of Object.values(l.ruleset?.actions ?? {})) for (const t of a.tags) tags.add(t);
@@ -119,12 +121,13 @@ export function statusOf(l: Loaded | null): RulesetStatus {
     source: l.source,
     issues: l.issues,
     characterName: l.characterName,
+    cardKind: l.cardKind,
     tags: [...tags].sort(),
   };
 }
 
 /** Create a "warp-ruleset" lorebook from a template and attach it to the chat's character. */
-export async function installTemplate(chatId: string, templateId: string, userId?: string): Promise<string> {
+export async function installTemplate(chatId: string, templateId: string, userId?: string, trackCharacter?: boolean): Promise<string> {
   const t = getTemplate(templateId);
   if (!t) throw new Error("Unknown template");
   const characterId = await characterForChat(chatId, userId);
@@ -142,7 +145,8 @@ export async function installTemplate(chatId: string, templateId: string, userId
   for (const part of t.parts) {
     let content = part.yaml;
     // Seed the card's own character as a tracked person so relationships work from turn one.
-    if (part.label === "people" && character.name) content = withCharacter(content, character.name);
+    const track = trackCharacter ?? !looksLikeScenario(character);
+    if (part.label === "people" && character.name && track) content = withCharacter(content, character.name);
     await host().world_books.entries.create(book.id, {
       comment: `warp-ruleset · ${part.label}`,
       content,

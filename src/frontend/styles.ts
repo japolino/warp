@@ -158,6 +158,9 @@ export const STYLES = `
 .warp-perk { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12.5px; }
 .warp-perk-owned { opacity: .75; }
 .warp-person-here { border: 1px solid color-mix(in srgb, var(--warp-good) 55%, transparent); }
+.warp-rel { cursor: pointer; border-radius: 4px; }
+.warp-rel:hover { background: var(--warp-fill); }
+.warp-forget { float: right; font-size: 11px; padding: 0 4px; }
 .warp-here { font-size: 10.5px; color: var(--warp-good); border: 1px solid currentColor; border-radius: 999px; padding: 0 6px; margin-left: 4px; font-weight: 500; }
 
 /* ───────── map & journal ───────── */

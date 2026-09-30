@@ -72,7 +72,15 @@ export async function extract(
   if (want("minutes") && r.clock.enabled) allowed.push(`- "minutes": how much in-story time the reply covers (0–${r.clock.narratorMax}).`);
   if (want("stats") && stats.length) allowed.push(`- "stats": changes (deltas) to: ${stats.map((d) => `${d.id} (±${formatNumber(d.narrator)})`).join(", ")}`);
   if (want("rel") && rels.length) allowed.push(`- "rel": per person name, deltas to: ${rels.map((d) => `${d.id} (±${formatNumber(d.narrator)})`).join(", ")}`);
-  if (want("people") && r.peopleOpen) allowed.push(`- "people": newly introduced named characters, as [{"name": "..."}]`);
+  // Starting feelings are absolute values on each stat's scale, read once when someone first appears.
+  const feelScale = rels.map((d) => `${d.id} ${d.min}–${d.max}${d.bands.length ? ` (${d.bands.map((b) => `${b.at}=${b.text}`).join(", ")})` : ""}`).join("; ");
+  if (want("people") && r.peopleOpen) {
+    allowed.push(`- "people": characters who appear for the first time, as [{"name": "...", "feelings": {<how they feel toward the player RIGHT NOW, absolute values>}}]${rels.length ? ` — scales: ${feelScale}` : ""}`);
+  }
+  const uncalibrated = Object.keys(s.people).filter((id) => !s.calibrated[id]).map((id) => s.people[id].name);
+  if (want("people") && rels.length && uncalibrated.length) {
+    allowed.push(`- "feelings": for these tracked people who appear in the reply, where they stand toward the player right now (absolute values, same scales): ${uncalibrated.join(", ")} — as {"Name": {"stat": value}}`);
+  }
   if (want("items") && (r.itemsOpen || Object.keys(r.items).length)) allowed.push(`- "items": item name → count gained (+) or lost (−). Held: ${Object.keys(s.items).map((id) => itemName(r, s, id)).join(", ") || "nothing"}`);
   if (want("move") && (locs.length || r.locationsOpen)) allowed.push(`- "move": where the player character ends up, if they moved${locs.length && !r.locationsOpen ? ` (one of: ${locs.map((l) => l.name).join(", ")})` : ""}`);
   if (want("conditions") && conds.length) allowed.push(`- "conditions": {"add": [...], "remove": [...]} from: ${conds.map((c) => c.id).join(", ")}`);
@@ -88,7 +96,8 @@ export async function extract(
   const system = [
     "You are the bookkeeper for a text roleplay game. You never write story.",
     "Read the narrator's latest reply and record only what CLEARLY happened in it.",
-    "Small, sensible deltas. Omit anything unchanged. Do not re-apply dice outcomes that were already applied.",
+    "Small, sensible deltas for changes. Omit anything unchanged. Do not re-apply dice outcomes that were already applied.",
+    "Exception: \"feelings\" (and people.feelings) are where someone stands overall right now — read them from how they act, even if that means strong values.",
     "You may report:",
     ...allowed,
     'Reply with JSON only, e.g. {"minutes": 20, "stats": {"stress": 300}, "rel": {"Robin": {"trust": 3}}}. Use {} if nothing changed.',

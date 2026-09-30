@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Answers, Decider, Questions } from "../engine/decide.js";
 import { loadRuleset } from "../engine/loader.js";
 import { normalizeRuleset } from "../engine/ruleset.js";
-import { resolveTurnFull } from "../engine/resolve.js";
+import { applyProposal, forgetPerson, manualSetRel, resolveTurnFull } from "../engine/resolve.js";
 import { foldEvents, initialState } from "../engine/state.js";
 import { TEMPLATES } from "../engine/templates/index.js";
 import { DEFAULT_SETTINGS } from "../shared/protocol.js";
@@ -133,6 +133,7 @@ describe("System-1 bookkeeping", () => {
     const s = initialState(r);
     s.people.robin = { name: "Robin" };
     s.rel.robin = { love: 0, lust: 0, trust: 10, dominance: 0 };
+    s.calibrated.robin = true; // already known — changes are small deltas
     const d = new Scripted((q) => {
       const a: Answers = {};
       for (const [k, v] of Object.entries(q)) {
@@ -191,5 +192,44 @@ describe("Jev adapter", () => {
     } finally {
       g.spindle = prev;
     }
+  });
+});
+
+describe("starting feelings", () => {
+  test("someone new to the story is read once on the stat's own scale, then only nudged", async () => {
+    const r = hometown();
+    const s = initialState(r);
+    s.people.aria = { name: "Aria" };
+    s.rel.aria = { love: 0, lust: 0, trust: 10, dominance: 0 };
+    const d = new Scripted((q) => {
+      const a: Answers = {};
+      for (const [k, v] of Object.entries(q)) {
+        if (k === "feel:aria:love") a[k] = { type: "score", score: 3, confidence: 0.8, probabilities: {} }; // "In love"
+        else if (k.startsWith("feel:")) a[k] = { type: "score", score: 1, confidence: 0.8, probabilities: {} };
+        else if (v.type === "noul") a[k] = { type: "noul", noul: 0.1 };
+      }
+      return a;
+    });
+    const out = await bookkeeping({ decider: d, r, s, playerText: "…", reply: "Aria throws her arms around you — she's clearly head over heels.", player: "Sam" });
+    expect(Object.keys(d.asked[0]).some((k) => k.startsWith("rel:aria"))).toBe(false);
+    expect(out.proposal.feelings?.Aria.love).toBeGreaterThanOrEqual(75);
+    const after = foldEvents(r, [applyProposal(r, s, out.proposal)], s);
+    expect(after.rel.aria.love).toBeGreaterThanOrEqual(75); // not capped at +5
+    expect(after.calibrated.aria).toBe(true);
+    // A second read is ignored: from now on only bounded deltas apply.
+    const again = foldEvents(r, [applyProposal(r, after, { feelings: { Aria: { love: 0 } } })], after);
+    expect(again.rel.aria.love).toBe(after.rel.aria.love);
+  });
+
+  test("new people arrive with their feelings; forgetting and hand edits work", () => {
+    const r = hometown();
+    const s = initialState(r);
+    const after = foldEvents(r, [applyProposal(r, s, { people: [{ name: "Mara", feelings: { trust: 70, dominance: 50 } }] })], s);
+    expect(after.rel.mara.trust).toBe(70);
+    expect(after.rel.mara.dominance).toBe(50);
+    const edited = foldEvents(r, [manualSetRel(r, after, "mara", "love", 40) as never], after);
+    expect(edited.rel.mara.love).toBe(40);
+    const gone = foldEvents(r, [forgetPerson(r, edited, "mara") as never], edited);
+    expect(gone.people.mara).toBeUndefined();
   });
 });

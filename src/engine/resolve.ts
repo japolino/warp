@@ -525,7 +525,10 @@ export interface Proposal {
   minutes?: number;
   stats?: Record<string, number>;
   rel?: Record<string, Record<string, number>>;
-  people?: { id?: string; name: string }[];
+  /** Newly introduced people, with where they stand toward the player right now. */
+  people?: { id?: string; name: string; feelings?: Record<string, number> }[];
+  /** One-time starting feelings for tracked people who have never been calibrated. */
+  feelings?: Record<string, Record<string, number>>;
   items?: Record<string, number>;
   move?: string;
   conditions?: { add?: string[]; remove?: string[] };
@@ -554,9 +557,19 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal): WarpE
 
   for (const person of p.people ?? []) {
     if (!person?.name || !r.peopleOpen) continue;
-    if (findPerson(r, w.s, person.name)) continue;
+    const known = findPerson(r, w.s, person.name);
+    if (known) {
+      // Already tracked: treat any feelings as a starting read if they've never been calibrated.
+      if (person.feelings) calibrate(w, known, person.feelings, src);
+      continue;
+    }
     const id = slug(person.id || person.name);
     if (!w.s.people[id]) w.push({ t: "person", id, name: person.name, src });
+    calibrate(w, id, person.feelings ?? {}, src);
+  }
+  for (const [who, feelings] of Object.entries(p.feelings ?? {})) {
+    const id = findPerson(r, w.s, who);
+    if (id) calibrate(w, id, feelings ?? {}, src);
   }
 
   for (const [id, d] of Object.entries(p.stats ?? {})) {
@@ -680,4 +693,40 @@ export function buyPerk(r: Ruleset, before: GameState, id: string): WarpEvent[] 
 function fillTarget(w: Working, text: string, extra: Record<string, Value>): string {
   if (typeof extra.target !== "string" || !extra.target || !text.includes("{target}")) return text;
   return text.replace(/\{target\}/g, personName(w.r, w.s, extra.target));
+}
+
+/**
+ * One-time starting feelings. A person first seen in the story (or seeded with
+ * defaults) gets their relationship values set to where the story shows them —
+ * not nudged a few points per reply. Only stats the ruleset lets the story move.
+ */
+function calibrate(w: Working, who: string, feelings: Record<string, number>, src: EventSource) {
+  if (w.s.calibrated[who]) return;
+  let read = false;
+  for (const [stat, v] of Object.entries(feelings)) {
+    const def = w.r.relStats[stat];
+    if (!def || def.narrator <= 0 || typeof v !== "number" || !Number.isFinite(v)) continue;
+    read = true;
+    const value = Math.max(def.min, Math.min(def.max, v));
+    if (value !== (w.s.rel[who]?.[stat] ?? def.start)) w.push({ t: "rel", who, stat, set: value, src });
+  }
+  // No usable read yet (e.g. they barely appeared) — try again next time they show up.
+  if (read) w.push({ t: "calib", who, src });
+}
+
+/** Hand-edit a relationship value from the sheet. */
+export function manualSetRel(r: Ruleset, before: GameState, who: string, stat: string, value: number): WarpEvent[] | string {
+  if (!before.people[who]) return "Unknown person.";
+  if (!r.relStats[stat]) return "Unknown relationship stat.";
+  const w = new Working(r, cloneState(before));
+  w.push({ t: "rel", who, stat, set: value, src: "manual" });
+  if (!w.s.calibrated[who]) w.push({ t: "calib", who, src: "manual" });
+  runTriggers(w, false);
+  return w.events;
+}
+
+/** Stop tracking a person (e.g. a scenario card's name that isn't a character). */
+export function forgetPerson(r: Ruleset, before: GameState, who: string): WarpEvent[] | string {
+  if (!before.people[who]) return "Unknown person.";
+  return [{ t: "forget", who, src: "manual" }];
 }

@@ -266,7 +266,7 @@ export function setup(ctx: SpindleFrontendContext) {
   function renderDrawer() {
     rememberSections(drawerRoot);
     const hasChat = !!state?.chatId;
-    const status: RulesetStatus = state?.status ?? { state: "none", name: null, source: null, issues: [], characterName: null, tags: [] };
+    const status: RulesetStatus = state?.status ?? { state: "none", name: null, source: null, issues: [], characterName: null, cardKind: "character", tags: [] };
     const views: [typeof drawerView, string][] = [
       ["sheet", "Sheet"],
       ...(state?.map ? [["map", "Map"] as [typeof drawerView, string]] : []),
@@ -384,12 +384,15 @@ export function setup(ctx: SpindleFrontendContext) {
     const id = chatId();
     if (!id) return;
     const modal = ctx.ui.showModal({ title: "Add a Warp ruleset", width: 520, maxHeight: 640 });
-    modal.root.innerHTML = renderTemplatePicker(templates);
+    modal.root.innerHTML = renderTemplatePicker(templates, state?.status.characterName ? { name: state.status.characterName, track: state.status.cardKind !== "scenario" } : null);
     modal.root.addEventListener("click", (e) => {
       const btn = (e.target as Element).closest<HTMLElement>("[data-template]");
       if (!btn) return;
       if (btn.dataset.template === "__ai") { drawerView = "rules"; tab.activate(); send({ type: "builder_open", chatId: id, mode: "build" }); }
-      else send({ type: "install_template", chatId: id, templateId: btn.dataset.template! });
+      else {
+        const track = modal.root.querySelector<HTMLInputElement>("[data-track]");
+        send({ type: "install_template", chatId: id, templateId: btn.dataset.template!, ...(track ? { trackCharacter: track.checked } : {}) });
+      }
       modal.dismiss();
     });
   }
@@ -531,9 +534,32 @@ export function setup(ctx: SpindleFrontendContext) {
       editingBar = null;
       return;
     }
+    const saveRel = t.closest<HTMLElement>("[data-save-rel]");
+    if (saveRel) {
+      const [who, stat] = saveRel.dataset.saveRel!.split(":");
+      const v = Number(saveRel.parentElement?.querySelector<HTMLInputElement>("[data-num]")?.value);
+      const cid = chatId();
+      if (cid && Number.isFinite(v)) send({ type: "adjust_rel", chatId: cid, who, stat, value: v });
+      editingBar = null;
+      return;
+    }
     if (t.closest(".warp-bar-edit")) return;
     const bar = t.closest<HTMLElement>("[data-bar]");
     if (bar) { editingBar = editingBar === bar.dataset.bar ? null : bar.dataset.bar!; renderDock(); renderDrawer(); return; }
+    const rel = t.closest<HTMLElement>("[data-rel]");
+    if (rel) { const k = `rel:${rel.dataset.rel}`; editingBar = editingBar === k ? null : k; renderDock(); renderDrawer(); return; }
+    const forget = t.closest<HTMLElement>("[data-forget]");
+    if (forget) {
+      const cid = chatId();
+      const who = forget.dataset.forget!;
+      void ctx.ui.showConfirm({
+        title: `Stop tracking ${forget.dataset.name}?`,
+        message: "They're removed from People and relationships. If the story brings them back, they're tracked again from scratch.",
+        confirmLabel: "Forget",
+        variant: "warning",
+      }).then((res) => { if (res.confirmed && cid) send({ type: "forget", chatId: cid, who }); });
+      return;
+    }
     if (t.closest("[data-save-jev]")) {
       const input = drawerRoot.querySelector<HTMLInputElement>("[data-jevkey]");
       if (input?.value.trim()) { send({ type: "set_jev_key", key: input.value.trim() }); input.value = ""; }

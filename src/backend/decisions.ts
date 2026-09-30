@@ -8,7 +8,7 @@
 import type { Answer, Answers, Decider, Questions } from "../engine/decide.js";
 import { normalize, noulConfidence } from "../engine/decide.js";
 import { availableChoices, TRAVEL_PREFIX, travelTargets, type Intent, type Proposal } from "../engine/resolve.js";
-import type { DecideSpec, Ruleset } from "../engine/ruleset.js";
+import type { DecideSpec, Ruleset, StatDef } from "../engine/ruleset.js";
 import { personName, type GameState } from "../engine/state.js";
 import { stateDigest } from "../engine/view.js";
 import type { Settings } from "../shared/protocol.js";
@@ -165,6 +165,18 @@ const TIME_LEVELS = [
 ];
 const TIME_MINUTES = [0, 5, 30, 60, 180, 480];
 
+/** Rungs for reading someone's starting feelings: the stat's bands if it has them, else five even steps. */
+function feelLevels(d: StatDef): { text: string; value: number }[] {
+  if (d.bands.length >= 2) {
+    return d.bands.map((b, i) => {
+      const next = d.bands[i + 1]?.at ?? d.max;
+      return { text: b.text, value: Math.round((b.at + next) / 2) };
+    });
+  }
+  const names = ["Very low", "Low", "Middling", "High", "Very high"];
+  return names.map((text, i) => ({ text, value: Math.round(d.min + ((d.max - d.min) * i) / (names.length - 1)) }));
+}
+
 /** A step's delta, rounded so chips read "+2", not "+1.667". Never rounds a real change to zero. */
 function stepDelta(step: string, limit: number): number {
   const raw = STEP_FACTOR[step] * limit;
@@ -211,7 +223,13 @@ export async function bookkeeping(opts: {
     const d = r.relStats[rs];
     if (d.narrator <= 0) continue;
     const name = personName(r, s, pid);
-    q[`rel:${pid}:${rs}`] = { type: "choice", instructions: `How did ${name}'s ${d.label} toward ${player} change during the reply?`, criteria: stepCriteria(`${name}'s ${d.label}`) };
+    if (!s.calibrated[pid]) {
+      // First real appearance: ask where they stand, on the stat's own scale.
+      const levels = feelLevels(d);
+      q[`feel:${pid}:${rs}`] = { type: "score", instructions: `Right now, how does ${name} feel toward ${player} — ${d.label}?`, criteria: levels.map((l) => l.text) };
+    } else {
+      q[`rel:${pid}:${rs}`] = { type: "choice", instructions: `How did ${name}'s ${d.label} toward ${player} change during the reply?`, criteria: stepCriteria(`${name}'s ${d.label}`) };
+    }
   }
   const locs = Object.values(r.locations);
   if (locs.length && !r.locationsOpen) {
@@ -251,6 +269,13 @@ export async function bookkeeping(opts: {
     const a = ans[`stat:${id}`];
     if (!confident(a) || a.choice === "same") continue;
     (p.stats ??= {})[id] = stepDelta(a.choice, r.stats[id].narrator);
+  }
+  for (const [key, a] of Object.entries(ans)) {
+    if (!key.startsWith("feel:") || a.type !== "score" || a.confidence < 0.3) continue;
+    const [, pid, rs] = key.split(":");
+    const levels = feelLevels(r.relStats[rs]);
+    const i = Math.max(0, Math.min(levels.length - 1, Math.round(a.score)));
+    ((p.feelings ??= {})[personName(r, s, pid)] ??= {})[rs] = levels[i].value;
   }
   for (const [key, a] of Object.entries(ans)) {
     if (!key.startsWith("rel:") || !confident(a) || a.choice === "same") continue;

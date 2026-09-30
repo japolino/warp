@@ -33,7 +33,7 @@ export interface SkillView {
 export interface PersonView {
   id: string;
   name: string;
-  stats: { id: string; label: string; display: string; pct: number; text: string | null; tone: Tone }[];
+  stats: { id: string; label: string; value: number; min: number; max: number; display: string; pct: number; text: string | null; tone: Tone }[];
   /** Here with the player right now. */
   present: boolean;
   /** Where their schedule puts them, when they have one. */
@@ -155,6 +155,8 @@ export interface RulesetStatus {
   source: string | null;
   issues: IssueView[];
   characterName: string | null;
+  /** Guess: one character, or a scenario/narrator card (whose name isn't a person). */
+  cardKind: "character" | "scenario";
   /** Content tags used by this ruleset's actions, for the Lines & Veils picker. */
   tags: string[];
 }
@@ -249,6 +251,10 @@ export interface BuilderSession {
     suggestedTemplate: string;
     reason: string;
     statusBlock: { found: boolean; fields: string[] } | null;
+    /** "scenario" = a narrator/world card whose name isn't a person. */
+    cardType: "character" | "scenario";
+    /** The main people in the story and how each starts out toward the player. */
+    cast: { name: string; relation: string }[];
   } | null;
   rounds: { questions: BuilderQuestion[]; answers: Record<string, BuilderAnswer> }[];
   additions: BuilderAddition[];
@@ -297,7 +303,7 @@ export type FrontendToBackend =
   | { type: "undo"; chatId: string; messageId: string; swipe: number; events: number[] }
   | { type: "adjust"; chatId: string; stat: string; value: number }
   | { type: "settings"; patch: Partial<Settings> }
-  | { type: "install_template"; chatId: string | null; templateId: string }
+  | { type: "install_template"; chatId: string | null; templateId: string; trackCharacter?: boolean }
   | { type: "reload"; chatId: string | null }
   /** Replace the reply to `userMessageId` and resend it with this intent (null = "not an action"). */
   | { type: "redo"; chatId: string; userMessageId: string; actionId: string | null; params?: Record<string, string> }
@@ -305,6 +311,8 @@ export type FrontendToBackend =
   /** Wardrobe: put on an item, or take off a slot (item null). */
   | { type: "wear"; chatId: string; slot: string; item: string | null }
   | { type: "buy_perk"; chatId: string; perk: string }
+  | { type: "adjust_rel"; chatId: string; who: string; stat: string; value: number }
+  | { type: "forget"; chatId: string; who: string }
   | { type: "builder_open"; chatId: string; mode: "build" | "refine" }
   | { type: "builder_start"; chatId: string; connectionId: string; creative: boolean; base?: string }
   | { type: "builder_answer"; chatId: string; answers: Record<string, BuilderAnswer>; additions: BuilderAddition[]; more: boolean }

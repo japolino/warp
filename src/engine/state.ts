@@ -30,6 +30,10 @@ export interface GameState {
   codex: Record<string, true>;
   feats: Record<string, true>;
   perks: Record<string, true>;
+  /** People whose starting feelings have been set (by the author, the story or by hand). */
+  calibrated: Record<string, true>;
+  /** Ruleset people the player removed from tracking. */
+  forgotten: Record<string, true>;
   stats: Record<string, number>;
   flags: Record<string, Value>;
   items: Record<string, number>;
@@ -67,6 +71,8 @@ export type WarpEvent = { src: EventSource; note?: string } & (
   | { t: "codex"; id: string }
   | { t: "feat"; id: string }
   | { t: "perk"; id: string }
+  | { t: "calib"; who: string }
+  | { t: "forget"; who: string }
 );
 
 export function initialState(r: Ruleset): GameState {
@@ -78,6 +84,8 @@ export function initialState(r: Ruleset): GameState {
     codex: {},
     feats: {},
     perks: {},
+    calibrated: {},
+    forgotten: {},
     stats: {},
     flags: {},
     items: { ...r.startItems },
@@ -97,6 +105,8 @@ export function initialState(r: Ruleset): GameState {
     s.people[p.id] = { name: p.name };
     s.rel[p.id] = {};
     for (const rs of r.relStatOrder) s.rel[p.id][rs] = p.start[rs] ?? r.relStats[rs].start;
+    // An author who wrote starting feelings has calibrated them; a bare entry gets read from the story on first appearance.
+    if (Object.keys(p.start).length) s.calibrated[p.id] = true;
   }
   for (const id of r.wardrobe.startWorn) {
     const slot = r.items[id]?.slot;
@@ -175,8 +185,16 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
     case "codex": s.codex[e.id] = true; break;
     case "feat": s.feats[e.id] = true; break;
     case "perk": s.perks[e.id] = true; break;
+    case "calib": s.calibrated[e.who] = true; break;
+    case "forget":
+      delete s.people[e.who];
+      delete s.rel[e.who];
+      delete s.calibrated[e.who];
+      s.forgotten[e.who] = true;
+      break;
     case "person":
       s.people[e.id] = { name: e.name };
+      delete s.forgotten[e.id];
       if (!s.rel[e.id]) {
         s.rel[e.id] = {};
         for (const rs of r.relStatOrder) s.rel[e.id][rs] = r.relStats[rs].start;
