@@ -7534,7 +7534,7 @@ function buildMap(r, s) {
     for (const id of ids)
       pos.set(id, r.locations[id].pos);
   } else {
-    const root = r.startLocation && r.locations[r.startLocation] ? r.startLocation : ids[0];
+    const root = ids.reduce((best, id) => r.locations[id].exits.length > r.locations[best].exits.length ? id : best, r.startLocation && r.locations[r.startLocation] ? r.startLocation : ids[0]);
     const children = new Map;
     const depth = new Map([[root, 0]]);
     const queue = [root];

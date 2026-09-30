@@ -140,6 +140,47 @@ export const STYLES = `
 .warp-slider { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--warp-muted); }
 .warp-slider input { accent-color: var(--warp-accent); }
 
+/* ───────── world: weather, warmth, outfit, encounter, perks ───────── */
+.warp-weather { color: var(--warp-muted); font-size: 12.5px; }
+.warp-warmth { padding: 2px 0 4px; }
+.warp-warmth-track { position: relative; height: 8px; border-radius: 6px; margin-top: 4px;
+  background: linear-gradient(90deg, #4f8cff 0%, #7fd1ff 25%, #f3e7b0 55%, #ffb347 78%, #e0505a 100%); opacity: .9; }
+.warp-warmth-band { position: absolute; top: -2px; bottom: -2px; border: 2px solid var(--warp-good); border-radius: 6px; box-sizing: border-box; }
+.warp-warmth-mark { position: absolute; top: -4px; width: 4px; height: 16px; margin-left: -2px; border-radius: 2px; box-shadow: 0 0 0 2px var(--warp-fill-strong, #16141d); }
+.warp-warmth-mark.warp-bg-good { background: var(--warp-good); }
+.warp-warmth-mark.warp-bg-warn { background: var(--warp-warn); }
+.warp-warmth-mark.warp-bg-bad { background: var(--warp-bad); }
+.warp-encounter { border: 1px solid var(--warp-bad); border-radius: var(--warp-radius); padding: 8px 10px; display: flex; flex-direction: column; gap: 4px;
+  background: color-mix(in srgb, var(--warp-bad) 10%, transparent); }
+.warp-encounter-foe { font-weight: 700; font-size: 14px; }
+.warp-outfit-row { display: grid; grid-template-columns: 78px 1fr auto; gap: 6px; align-items: center; font-size: 12.5px; }
+.warp-mini-select { width: auto; max-width: 110px; padding: 2px 4px; font-size: 12px; }
+.warp-perk { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12.5px; }
+.warp-perk-owned { opacity: .75; }
+.warp-person-here { border: 1px solid color-mix(in srgb, var(--warp-good) 55%, transparent); }
+.warp-here { font-size: 10.5px; color: var(--warp-good); border: 1px solid currentColor; border-radius: 999px; padding: 0 6px; margin-left: 4px; font-weight: 500; }
+
+/* ───────── map & journal ───────── */
+.warp-map-card { padding: 8px; }
+.warp-map { width: 100%; height: auto; max-height: 420px; }
+.warp-map-edge { stroke: var(--warp-border); stroke-width: 2; }
+.warp-map-node circle { fill: var(--warp-fill); stroke: var(--warp-border); stroke-width: 2; }
+.warp-map-node text { fill: var(--warp-muted); font-size: 11px; }
+.warp-map-node .warp-map-people { fill: var(--warp-good); font-size: 10px; }
+.warp-map-node .warp-map-icon { fill: var(--warp-dim); font-size: 10px; }
+.warp-map-node.here circle { fill: var(--warp-accent); stroke: var(--warp-accent); }
+.warp-map-node.here text { fill: var(--warp-text); font-weight: 700; }
+.warp-map-node.reachable { cursor: pointer; }
+.warp-map-node.reachable circle { stroke: var(--warp-accent); }
+.warp-map-node.reachable:hover circle, .warp-map-node.reachable:focus circle { fill: color-mix(in srgb, var(--warp-accent) 35%, transparent); }
+.warp-codex summary { cursor: pointer; padding: 3px 0; }
+.warp-codex p { margin: 2px 0 6px 14px; }
+.warp-feat { display: flex; gap: 8px; align-items: flex-start; opacity: .55; font-size: 12.5px; }
+.warp-feat.unlocked { opacity: 1; }
+.warp-timeline-row { font: inherit; color: inherit; text-align: left; background: none; border: none; border-top: 1px solid var(--warp-border); padding: 6px 2px; display: grid; grid-template-columns: 1fr; gap: 1px; cursor: pointer; }
+.warp-timeline-row:hover { background: var(--warp-fill-subtle); }
+.warp-timeline-changes { font-size: 11.5px; }
+
 /* ───────── floating status overlay ───────── */
 .warp-overlay {
   --warp-good: #34b89a; --warp-warn: #d9a441; --warp-bad: #e05a7e; --warp-info: #6f8cff;

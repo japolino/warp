@@ -157,6 +157,47 @@ var STYLES = `
 .warp-slider { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--warp-muted); }
 .warp-slider input { accent-color: var(--warp-accent); }
 
+/* ───────── world: weather, warmth, outfit, encounter, perks ───────── */
+.warp-weather { color: var(--warp-muted); font-size: 12.5px; }
+.warp-warmth { padding: 2px 0 4px; }
+.warp-warmth-track { position: relative; height: 8px; border-radius: 6px; margin-top: 4px;
+  background: linear-gradient(90deg, #4f8cff 0%, #7fd1ff 25%, #f3e7b0 55%, #ffb347 78%, #e0505a 100%); opacity: .9; }
+.warp-warmth-band { position: absolute; top: -2px; bottom: -2px; border: 2px solid var(--warp-good); border-radius: 6px; box-sizing: border-box; }
+.warp-warmth-mark { position: absolute; top: -4px; width: 4px; height: 16px; margin-left: -2px; border-radius: 2px; box-shadow: 0 0 0 2px var(--warp-fill-strong, #16141d); }
+.warp-warmth-mark.warp-bg-good { background: var(--warp-good); }
+.warp-warmth-mark.warp-bg-warn { background: var(--warp-warn); }
+.warp-warmth-mark.warp-bg-bad { background: var(--warp-bad); }
+.warp-encounter { border: 1px solid var(--warp-bad); border-radius: var(--warp-radius); padding: 8px 10px; display: flex; flex-direction: column; gap: 4px;
+  background: color-mix(in srgb, var(--warp-bad) 10%, transparent); }
+.warp-encounter-foe { font-weight: 700; font-size: 14px; }
+.warp-outfit-row { display: grid; grid-template-columns: 78px 1fr auto; gap: 6px; align-items: center; font-size: 12.5px; }
+.warp-mini-select { width: auto; max-width: 110px; padding: 2px 4px; font-size: 12px; }
+.warp-perk { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12.5px; }
+.warp-perk-owned { opacity: .75; }
+.warp-person-here { border: 1px solid color-mix(in srgb, var(--warp-good) 55%, transparent); }
+.warp-here { font-size: 10.5px; color: var(--warp-good); border: 1px solid currentColor; border-radius: 999px; padding: 0 6px; margin-left: 4px; font-weight: 500; }
+
+/* ───────── map & journal ───────── */
+.warp-map-card { padding: 8px; }
+.warp-map { width: 100%; height: auto; max-height: 420px; }
+.warp-map-edge { stroke: var(--warp-border); stroke-width: 2; }
+.warp-map-node circle { fill: var(--warp-fill); stroke: var(--warp-border); stroke-width: 2; }
+.warp-map-node text { fill: var(--warp-muted); font-size: 11px; }
+.warp-map-node .warp-map-people { fill: var(--warp-good); font-size: 10px; }
+.warp-map-node .warp-map-icon { fill: var(--warp-dim); font-size: 10px; }
+.warp-map-node.here circle { fill: var(--warp-accent); stroke: var(--warp-accent); }
+.warp-map-node.here text { fill: var(--warp-text); font-weight: 700; }
+.warp-map-node.reachable { cursor: pointer; }
+.warp-map-node.reachable circle { stroke: var(--warp-accent); }
+.warp-map-node.reachable:hover circle, .warp-map-node.reachable:focus circle { fill: color-mix(in srgb, var(--warp-accent) 35%, transparent); }
+.warp-codex summary { cursor: pointer; padding: 3px 0; }
+.warp-codex p { margin: 2px 0 6px 14px; }
+.warp-feat { display: flex; gap: 8px; align-items: flex-start; opacity: .55; font-size: 12.5px; }
+.warp-feat.unlocked { opacity: 1; }
+.warp-timeline-row { font: inherit; color: inherit; text-align: left; background: none; border: none; border-top: 1px solid var(--warp-border); padding: 6px 2px; display: grid; grid-template-columns: 1fr; gap: 1px; cursor: pointer; }
+.warp-timeline-row:hover { background: var(--warp-fill-subtle); }
+.warp-timeline-changes { font-size: 11.5px; }
+
 /* ───────── floating status overlay ───────── */
 .warp-overlay {
   --warp-good: #34b89a; --warp-warn: #d9a441; --warp-bad: #e05a7e; --warp-info: #6f8cff;
@@ -264,7 +305,8 @@ function pctTone(p) {
 function renderHud(h, opts) {
   const top = [
     `<div class="warp-eyebrow"><span>${esc(h.rulesetName)}</span><span title="Turn">T${h.turn}</span></div>`,
-    h.clock ? `<div class="warp-clock"><span class="warp-phase" aria-hidden="true">${PHASE_ICON[h.clock.phase] ?? ""}</span><span class="warp-clock-time">${esc(h.clock.time)}</span><span class="warp-clock-day">${esc(h.clock.day)}</span></div>` : "",
+    h.clock ? `<div class="warp-clock"><span class="warp-phase" aria-hidden="true">${PHASE_ICON[h.clock.phase] ?? ""}</span><span class="warp-clock-time">${esc(h.clock.time)}</span><span class="warp-clock-day">${esc(h.date ?? h.clock.day)}</span></div>` : "",
+    h.weather ? `<div class="warp-weather">${esc(h.weather.icon)} ${esc(h.weather.label)} · <b>${esc(h.weather.temp)}°C</b>${h.weather.season ? ` · ${esc(h.weather.season)}` : ""}</div>` : "",
     h.location || h.money ? `<div class="warp-where">${h.location ? `<span title="${esc(h.location.desc ?? "")}">\uD83D\uDCCD <b>${esc(h.location.name)}</b></span>` : ""}${h.money ? `<span class="warp-money">${esc(h.money)}</span>` : ""}</div>` : "",
     h.conditions.length ? `<div class="warp-pills">${h.conditions.map((c) => `<span class="warp-pill warp-tone-${c.tone}" title="${esc(c.desc ?? "")}">${esc(c.label)}${c.remaining ? ` · ${esc(c.remaining)}` : ""}</span>`).join("")}</div>` : ""
   ].join("");
@@ -292,13 +334,112 @@ Click to adjust`)}">
       <span class="warp-grade ${s.grade ? `warp-tone-${pctTone(s.pct)}` : ""}">${esc(s.grade ?? s.display)}</span>
       <div class="warp-mini-track"><div class="warp-mini-fill" style="width:${(s.pct * 100).toFixed(1)}%"></div></div>
     </div>`).join(""), !opts.compact) : "";
-  const people = section("People", h.people.length, h.people.length ? h.people.map((p) => `
-    <div class="warp-person">
-      <div class="warp-person-name">${esc(p.name)}</div>
+  const presentCount = h.people.filter((p) => p.present).length;
+  const people = section(presentCount ? `People · ${presentCount} here` : "People", presentCount ? 0 : h.people.length, h.people.length ? h.people.map((p) => `
+    <div class="warp-person${p.present ? " warp-person-here" : ""}">
+      <div class="warp-person-name">${esc(p.name)}${p.present ? ` <span class="warp-here">here</span>` : p.whereabouts ? ` <span class="warp-dim">· ${esc(p.whereabouts)}</span>` : ""}</div>
       <div class="warp-person-stats">${p.stats.map((s) => `<span>${esc(s.label)}: <span class="warp-tone-${s.tone}">${esc(s.text ?? s.display)}</span></span>`).join("")}</div>
-    </div>`).join("") : `<div class="warp-empty">No one yet.</div>`, !opts.compact);
-  const items = section("Inventory", h.items.length, h.items.length ? h.items.map((i) => `<div class="warp-item"><span>${esc(i.name)}</span>${i.count > 1 ? `<span class="warp-kbd">×${i.count}</span>` : ""}</div>`).join("") : `<div class="warp-empty">Empty-handed.</div>`, !opts.compact);
-  return `<div class="warp-hud-top">${top}</div><div class="warp-bars">${bars}</div>${skills}${people}${items}`;
+    </div>`).join("") : `<div class="warp-empty">No one yet.</div>`, !opts.compact || presentCount > 0);
+  const loose = h.items.filter((i) => !i.worn);
+  const items = section("Inventory", loose.length, loose.length ? loose.map((i) => `<div class="warp-item"><span>${esc(i.name)}</span>${i.count > 1 ? `<span class="warp-kbd">×${i.count}</span>` : ""}</div>`).join("") : `<div class="warp-empty">Empty-handed.</div>`, !opts.compact);
+  return `${renderEncounter(h)}<div class="warp-hud-top">${top}</div>${renderWarmth(h)}<div class="warp-bars">${bars}</div>${renderOutfit(h, opts.compact)}${skills}${people}${items}${renderPerks(h, opts.compact)}`;
+}
+function renderEncounter(h) {
+  const e = h.encounter;
+  if (!e)
+    return "";
+  return `<div class="warp-encounter">
+    <div class="warp-eyebrow"><span>⚔ ${esc(e.name)}</span><span>Round ${e.round + 1}</span></div>
+    <div class="warp-encounter-foe">${esc(e.foe)}</div>
+    ${e.stats.map((s) => `<div class="warp-bar-head"><span>${esc(s.label)}</span><span class="warp-dim">${esc(Math.round(s.value))} / ${esc(s.max)}</span></div>
+      <div class="warp-bar-track"><div class="warp-bar-fill warp-bg-${s.tone}" style="width:${(s.pct * 100).toFixed(1)}%"></div></div>`).join("")}
+  </div>`;
+}
+function renderWarmth(h) {
+  const w = h.warmth;
+  if (!w)
+    return "";
+  const scale = Math.max(30, w.max + 6, w.value + 4);
+  const at = (v) => `${Math.max(0, Math.min(100, v / scale * 100)).toFixed(1)}%`;
+  return `<div class="warp-warmth" title="${esc(`Clothing warmth ${w.value} · comfortable between ${w.min} and ${w.max}`)}">
+    <div class="warp-bar-head"><span class="warp-bar-label">Warmth</span><span class="warp-bar-text warp-tone-${w.tone}">${esc(w.text)}</span></div>
+    <div class="warp-warmth-track">
+      <div class="warp-warmth-band" style="left:${at(w.min)};width:calc(${at(w.max)} - ${at(w.min)})"></div>
+      <div class="warp-warmth-mark warp-bg-${w.tone}" style="left:${at(w.value)}"></div>
+    </div>
+  </div>`;
+}
+function renderOutfit(h, compact) {
+  if (!h.outfit)
+    return "";
+  const rows = h.outfit.map((o) => {
+    const options = h.clothing.filter((c) => c.slot === o.slot && c.id !== o.item?.id);
+    const status = o.item ? `${esc(o.item.name)}${o.item.integrity !== null ? ` <span class="warp-tone-${o.item.integrity < 40 ? "bad" : "warn"}">${o.item.integrity}%</span>` : ""}` : `<span class="warp-dim">${h.exposed.includes(o.slot) ? "<span class='warp-tone-bad'>nothing</span>" : "—"}</span>`;
+    const picker = options.length || o.item ? `<select class="warp-select warp-mini-select" data-wear-slot="${esc(o.slot)}" aria-label="Change ${esc(o.label)}">
+          <option value="" selected disabled>Change…</option>
+          ${options.map((c) => `<option value="${esc(c.id)}">${esc(c.name)} (warmth ${esc(c.warmth)}${c.traits.length ? `, ${esc(c.traits.join(", "))}` : ""})</option>`).join("")}
+          ${o.item ? `<option value="__off">Take off</option>` : ""}
+        </select>` : "";
+    return `<div class="warp-outfit-row"><span class="warp-dim">${esc(o.label)}</span><span>${status}</span>${picker}</div>`;
+  }).join("");
+  const worn = h.outfit.filter((o) => o.item).length;
+  return section("Outfit", worn, rows, !compact);
+}
+function renderPerks(h, compact) {
+  if (!h.perks.length)
+    return "";
+  const rows = h.perks.map((p) => `<div class="warp-perk${p.owned ? " warp-perk-owned" : ""}">
+      <div><b>${esc(p.name)}</b> <span class="warp-dim">${esc(p.desc)}</span></div>
+      ${p.owned ? `<span class="warp-tone-good">✓</span>` : p.blocker ? `<span class="warp-dim" title="${esc(p.blocker)}">${esc(p.cost)} pt</span>` : `<button class="warp-btn warp-mini" data-buy-perk="${esc(p.id)}">Take · ${esc(p.cost)} pt</button>`}
+    </div>`).join("");
+  const label = h.perkPoints !== null ? `Perks · ${h.perkPoints} point${h.perkPoints === 1 ? "" : "s"}` : "Perks";
+  return section(label, 0, rows, !compact && (h.perkPoints ?? 0) > 0);
+}
+function renderMap(m) {
+  if (!m)
+    return `<div class="warp-card"><p>This ruleset doesn't define places yet.</p></div>`;
+  const xs = m.nodes.map((n) => n.x), ys = m.nodes.map((n) => n.y);
+  const pad = 70;
+  const minX = Math.min(...xs) - pad, minY = Math.min(...ys) - pad;
+  const w = Math.max(...xs) - minX + pad, hgt = Math.max(...ys) - minY + pad;
+  const byId = new Map(m.nodes.map((n) => [n.id, n]));
+  const edges = m.edges.map(([a, b]) => {
+    const p = byId.get(a), q = byId.get(b);
+    return `<line x1="${p.x}" y1="${p.y}" x2="${q.x}" y2="${q.y}" class="warp-map-edge" />`;
+  }).join("");
+  const nodes = m.nodes.map((n) => `
+    <g class="warp-map-node${n.here ? " here" : ""}${n.reachable ? " reachable" : ""}" ${n.reachable ? `data-go="${esc(n.id)}" tabindex="0" role="button" aria-label="Go to ${esc(n.name)}"` : ""}>
+      <circle cx="${n.x}" cy="${n.y}" r="${n.here ? 13 : 10}" />
+      <text x="${n.x}" y="${n.y + 26}" text-anchor="middle">${esc(n.name)}</text>
+      ${n.people.length ? `<text x="${n.x}" y="${n.y + 40}" text-anchor="middle" class="warp-map-people">${esc(n.people.join(", "))}</text>` : ""}
+      ${n.indoors ? `<text x="${n.x}" y="${n.y + 4}" text-anchor="middle" class="warp-map-icon">⌂</text>` : ""}
+    </g>`).join("");
+  return `<div class="warp-card warp-map-card">
+    <svg class="warp-map" viewBox="${minX} ${minY} ${w} ${hgt}" role="img" aria-label="Map">${edges}${nodes}</svg>
+    <p class="warp-dim">Click a highlighted place next to you to travel there. People show where their schedules put them right now.</p>
+  </div>`;
+}
+function renderJournal(h, records) {
+  if (!h)
+    return `<div class="warp-card"><p>No game running in this chat.</p></div>`;
+  const byCat = new Map;
+  for (const c of h.codex)
+    byCat.set(c.category ?? "Notes", [...byCat.get(c.category ?? "Notes") ?? [], c]);
+  const codex = h.codexTotal ? `<div class="warp-card"><h3>Codex <span class="warp-dim">${h.codex.length} / ${h.codexTotal}</span></h3>
+        ${h.codex.length ? [...byCat].map(([cat, list]) => `<div class="warp-choice-group-label">${esc(cat)}</div>${list.map((c) => `<details class="warp-codex"><summary>${esc(c.title)}</summary><p>${esc(c.text)}</p></details>`).join("")}`).join("") : `<p>Nothing discovered yet.</p>`}
+      </div>` : "";
+  const feats = h.feats.length ? `<div class="warp-card"><h3>Feats <span class="warp-dim">${h.feats.filter((f) => f.unlocked).length} / ${h.feats.length}</span></h3>
+        ${h.feats.map((f) => `<div class="warp-feat${f.unlocked ? " unlocked" : ""}"><span>${f.unlocked ? "\uD83C\uDFC6" : "\uD83D\uDD12"}</span><div><b>${esc(f.name)}</b><div class="warp-dim">${esc(f.desc)}</div></div></div>`).join("")}
+      </div>` : "";
+  const turns = records.filter((r) => r.action || r.check || r.changes.length).slice().reverse().slice(0, 40);
+  const timeline = `<div class="warp-card"><h3>Timeline</h3>
+    ${turns.length ? turns.map((r) => `<button class="warp-timeline-row" data-jump="${esc(r.messageId)}" title="Jump to this message">
+        <span class="warp-dim">${esc(r.clock ?? "")}</span>
+        <span>${r.action ? esc(r.action) : "<span class='warp-dim'>Story</span>"}${r.check ? ` · <span class="warp-tone-${r.check.tier.includes("success") ? "good" : r.check.tier === "partial" ? "warn" : "bad"}">${esc(r.check.tierLabel)}</span>` : ""}</span>
+        <span class="warp-dim warp-timeline-changes">${esc(r.changes.slice(0, 4).map((c) => c.text).join(" · "))}</span>
+      </button>`).join("") : `<p>Nothing has happened yet.</p>`}
+  </div>`;
+  return codex + feats + timeline;
 }
 function section(title, count, body, open) {
   return `<details class="warp-section" data-section="${esc(title)}"${open ? " open" : ""}><summary><span>${esc(title)}${count ? ` · ${count}` : ""}</span></summary><div class="warp-section-body">${body}</div></details>`;
@@ -719,12 +860,25 @@ function setup(ctx) {
     rememberSections(drawerRoot);
     const hasChat = !!state?.chatId;
     const status = state?.status ?? { state: "none", name: null, source: null, issues: [], characterName: null, tags: [] };
+    const views = [
+      ["sheet", "Sheet"],
+      ...state?.map ? [["map", "Map"]] : [],
+      ...state?.hud ? [["journal", "Journal"]] : [],
+      ["rules", `Ruleset${status.issues.some((i) => i.level === "error") ? " ⚠" : ""}`],
+      ["settings", "Settings"]
+    ];
+    if (!views.some(([v]) => v === drawerView))
+      drawerView = "sheet";
     const tabs = `<div class="warp-tabs" role="tablist">
-      ${["sheet", "rules", "settings"].map((v) => `<button class="warp-tab" role="tab" data-view="${v}" aria-selected="${drawerView === v}">${v === "sheet" ? "Sheet" : v === "rules" ? `Ruleset${status.issues.some((i) => i.level === "error") ? " ⚠" : ""}` : "Settings"}</button>`).join("")}
+      ${views.map(([v, label]) => `<button class="warp-tab" role="tab" data-view="${v}" aria-selected="${drawerView === v}">${label}</button>`).join("")}
     </div>`;
     let body = "";
     if (drawerView === "sheet") {
       body = state?.hud ? renderHud(state.hud, { editing: editingBar, compact: false }) : renderRulesetCard(status, hasChat);
+    } else if (drawerView === "map") {
+      body = renderMap(state?.map ?? null);
+    } else if (drawerView === "journal") {
+      body = renderJournal(state?.hud ?? null, state?.records ?? []);
     } else if (drawerView === "rules") {
       body = renderRulesetCard(status, hasChat) + `<div class="warp-card"><h3>Writing rules</h3><p>Rules live in entries titled <b>warp-ruleset · …</b> (or any lorebook named <b>warp-ruleset</b>). Each entry is YAML; entries merge together. Warp keeps them out of the prompt automatically.</p></div>`;
     } else {
@@ -861,6 +1015,27 @@ function setup(ctx) {
       renderDrawer();
       return;
     }
+    const go = t.closest("[data-go]");
+    if (go) {
+      act(`go:${go.dataset.go}`);
+      return;
+    }
+    const jump = t.closest("[data-jump]");
+    if (jump) {
+      const el = ctx.dom.findMessageElement(jump.dataset.jump);
+      if (el)
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      else
+        jump.setAttribute("title", "That message isn't loaded — scroll up in the chat to find it.");
+      return;
+    }
+    const perk = t.closest("[data-buy-perk]");
+    if (perk) {
+      const cid = chatId();
+      if (cid)
+        send({ type: "buy_perk", chatId: cid, perk: perk.dataset.buyPerk });
+      return;
+    }
     if (t.closest("[data-install]")) {
       confirmReplace();
       return;
@@ -932,6 +1107,12 @@ function setup(ctx) {
   }
   function onPanelChange(e) {
     const t = e.target;
+    if (t.dataset.wearSlot) {
+      const cid = chatId();
+      if (cid && t.value)
+        send({ type: "wear", chatId: cid, slot: t.dataset.wearSlot, item: t.value === "__off" ? null : t.value });
+      return;
+    }
     const pctKey = t.dataset.settingPct;
     if (pctKey) {
       let v = Number(t.value) / 100;

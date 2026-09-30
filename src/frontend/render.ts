@@ -1,7 +1,7 @@
 // Pure view → HTML renderers. Every interpolated string goes through `esc`.
 
 import type {
-  ChoiceView, HudView, RecordView, RulesetStatus, Settings, SuggestionView, TemplateInfo,
+  ChoiceView, HudView, MapView, RecordView, RulesetStatus, Settings, SuggestionView, TemplateInfo,
 } from "../shared/protocol.js";
 
 export function esc(v: unknown): string {
@@ -19,7 +19,8 @@ function pctTone(p: number): "good" | "warn" | "bad" {
 export function renderHud(h: HudView, opts: { editing: string | null; compact: boolean }): string {
   const top = [
     `<div class="warp-eyebrow"><span>${esc(h.rulesetName)}</span><span title="Turn">T${h.turn}</span></div>`,
-    h.clock ? `<div class="warp-clock"><span class="warp-phase" aria-hidden="true">${PHASE_ICON[h.clock.phase] ?? ""}</span><span class="warp-clock-time">${esc(h.clock.time)}</span><span class="warp-clock-day">${esc(h.clock.day)}</span></div>` : "",
+    h.clock ? `<div class="warp-clock"><span class="warp-phase" aria-hidden="true">${PHASE_ICON[h.clock.phase] ?? ""}</span><span class="warp-clock-time">${esc(h.clock.time)}</span><span class="warp-clock-day">${esc(h.date ?? h.clock.day)}</span></div>` : "",
+    h.weather ? `<div class="warp-weather">${esc(h.weather.icon)} ${esc(h.weather.label)} · <b>${esc(h.weather.temp)}°C</b>${h.weather.season ? ` · ${esc(h.weather.season)}` : ""}</div>` : "",
     h.location || h.money ? `<div class="warp-where">${h.location ? `<span title="${esc(h.location.desc ?? "")}">📍 <b>${esc(h.location.name)}</b></span>` : ""}${h.money ? `<span class="warp-money">${esc(h.money)}</span>` : ""}</div>` : "",
     h.conditions.length ? `<div class="warp-pills">${h.conditions.map((c) => `<span class="warp-pill warp-tone-${c.tone}" title="${esc(c.desc ?? "")}">${esc(c.label)}${c.remaining ? ` · ${esc(c.remaining)}` : ""}</span>`).join("")}</div>` : "",
   ].join("");
@@ -49,17 +50,128 @@ export function renderHud(h: HudView, opts: { editing: string | null; compact: b
       <div class="warp-mini-track"><div class="warp-mini-fill" style="width:${(s.pct * 100).toFixed(1)}%"></div></div>
     </div>`).join(""), !opts.compact) : "";
 
-  const people = section("People", h.people.length, h.people.length ? h.people.map((p) => `
-    <div class="warp-person">
-      <div class="warp-person-name">${esc(p.name)}</div>
+  const presentCount = h.people.filter((p) => p.present).length;
+  const people = section(presentCount ? `People · ${presentCount} here` : "People", presentCount ? 0 : h.people.length, h.people.length ? h.people.map((p) => `
+    <div class="warp-person${p.present ? " warp-person-here" : ""}">
+      <div class="warp-person-name">${esc(p.name)}${p.present ? ` <span class="warp-here">here</span>` : p.whereabouts ? ` <span class="warp-dim">· ${esc(p.whereabouts)}</span>` : ""}</div>
       <div class="warp-person-stats">${p.stats.map((s) => `<span>${esc(s.label)}: <span class="warp-tone-${s.tone}">${esc(s.text ?? s.display)}</span></span>`).join("")}</div>
-    </div>`).join("") : `<div class="warp-empty">No one yet.</div>`, !opts.compact);
+    </div>`).join("") : `<div class="warp-empty">No one yet.</div>`, !opts.compact || presentCount > 0);
 
-  const items = section("Inventory", h.items.length, h.items.length
-    ? h.items.map((i) => `<div class="warp-item"><span>${esc(i.name)}</span>${i.count > 1 ? `<span class="warp-kbd">×${i.count}</span>` : ""}</div>`).join("")
+  const loose = h.items.filter((i) => !i.worn);
+  const items = section("Inventory", loose.length, loose.length
+    ? loose.map((i) => `<div class="warp-item"><span>${esc(i.name)}</span>${i.count > 1 ? `<span class="warp-kbd">×${i.count}</span>` : ""}</div>`).join("")
     : `<div class="warp-empty">Empty-handed.</div>`, !opts.compact);
 
-  return `<div class="warp-hud-top">${top}</div><div class="warp-bars">${bars}</div>${skills}${people}${items}`;
+  return `${renderEncounter(h)}<div class="warp-hud-top">${top}</div>${renderWarmth(h)}<div class="warp-bars">${bars}</div>${renderOutfit(h, opts.compact)}${skills}${people}${items}${renderPerks(h, opts.compact)}`;
+}
+
+function renderEncounter(h: HudView): string {
+  const e = h.encounter;
+  if (!e) return "";
+  return `<div class="warp-encounter">
+    <div class="warp-eyebrow"><span>⚔ ${esc(e.name)}</span><span>Round ${e.round + 1}</span></div>
+    <div class="warp-encounter-foe">${esc(e.foe)}</div>
+    ${e.stats.map((s) => `<div class="warp-bar-head"><span>${esc(s.label)}</span><span class="warp-dim">${esc(Math.round(s.value))} / ${esc(s.max)}</span></div>
+      <div class="warp-bar-track"><div class="warp-bar-fill warp-bg-${s.tone}" style="width:${(s.pct * 100).toFixed(1)}%"></div></div>`).join("")}
+  </div>`;
+}
+
+/** Warmth gauge: the comfortable range as a band, your warmth as a marker. */
+function renderWarmth(h: HudView): string {
+  const w = h.warmth;
+  if (!w) return "";
+  const scale = Math.max(30, w.max + 6, w.value + 4);
+  const at = (v: number) => `${Math.max(0, Math.min(100, (v / scale) * 100)).toFixed(1)}%`;
+  return `<div class="warp-warmth" title="${esc(`Clothing warmth ${w.value} · comfortable between ${w.min} and ${w.max}`)}">
+    <div class="warp-bar-head"><span class="warp-bar-label">Warmth</span><span class="warp-bar-text warp-tone-${w.tone}">${esc(w.text)}</span></div>
+    <div class="warp-warmth-track">
+      <div class="warp-warmth-band" style="left:${at(w.min)};width:calc(${at(w.max)} - ${at(w.min)})"></div>
+      <div class="warp-warmth-mark warp-bg-${w.tone}" style="left:${at(w.value)}"></div>
+    </div>
+  </div>`;
+}
+
+function renderOutfit(h: HudView, compact: boolean): string {
+  if (!h.outfit) return "";
+  const rows = h.outfit.map((o) => {
+    const options = h.clothing.filter((c) => c.slot === o.slot && c.id !== o.item?.id);
+    const status = o.item
+      ? `${esc(o.item.name)}${o.item.integrity !== null ? ` <span class="warp-tone-${o.item.integrity < 40 ? "bad" : "warn"}">${o.item.integrity}%</span>` : ""}`
+      : `<span class="warp-dim">${h.exposed.includes(o.slot) ? "<span class='warp-tone-bad'>nothing</span>" : "—"}</span>`;
+    const picker = options.length || o.item
+      ? `<select class="warp-select warp-mini-select" data-wear-slot="${esc(o.slot)}" aria-label="Change ${esc(o.label)}">
+          <option value="" selected disabled>Change…</option>
+          ${options.map((c) => `<option value="${esc(c.id)}">${esc(c.name)} (warmth ${esc(c.warmth)}${c.traits.length ? `, ${esc(c.traits.join(", "))}` : ""})</option>`).join("")}
+          ${o.item ? `<option value="__off">Take off</option>` : ""}
+        </select>`
+      : "";
+    return `<div class="warp-outfit-row"><span class="warp-dim">${esc(o.label)}</span><span>${status}</span>${picker}</div>`;
+  }).join("");
+  const worn = h.outfit.filter((o) => o.item).length;
+  return section("Outfit", worn, rows, !compact);
+}
+
+function renderPerks(h: HudView, compact: boolean): string {
+  if (!h.perks.length) return "";
+  const rows = h.perks.map((p) => `<div class="warp-perk${p.owned ? " warp-perk-owned" : ""}">
+      <div><b>${esc(p.name)}</b> <span class="warp-dim">${esc(p.desc)}</span></div>
+      ${p.owned ? `<span class="warp-tone-good">✓</span>` : p.blocker ? `<span class="warp-dim" title="${esc(p.blocker)}">${esc(p.cost)} pt</span>` : `<button class="warp-btn warp-mini" data-buy-perk="${esc(p.id)}">Take · ${esc(p.cost)} pt</button>`}
+    </div>`).join("");
+  const label = h.perkPoints !== null ? `Perks · ${h.perkPoints} point${h.perkPoints === 1 ? "" : "s"}` : "Perks";
+  return section(label, 0, rows, !compact && (h.perkPoints ?? 0) > 0);
+}
+
+// ───────────────────────── map ─────────────────────────
+
+export function renderMap(m: MapView | null): string {
+  if (!m) return `<div class="warp-card"><p>This ruleset doesn't define places yet.</p></div>`;
+  const xs = m.nodes.map((n) => n.x), ys = m.nodes.map((n) => n.y);
+  const pad = 70;
+  const minX = Math.min(...xs) - pad, minY = Math.min(...ys) - pad;
+  const w = Math.max(...xs) - minX + pad, hgt = Math.max(...ys) - minY + pad;
+  const byId = new Map(m.nodes.map((n) => [n.id, n]));
+  const edges = m.edges.map(([a, b]) => {
+    const p = byId.get(a)!, q = byId.get(b)!;
+    return `<line x1="${p.x}" y1="${p.y}" x2="${q.x}" y2="${q.y}" class="warp-map-edge" />`;
+  }).join("");
+  const nodes = m.nodes.map((n) => `
+    <g class="warp-map-node${n.here ? " here" : ""}${n.reachable ? " reachable" : ""}" ${n.reachable ? `data-go="${esc(n.id)}" tabindex="0" role="button" aria-label="Go to ${esc(n.name)}"` : ""}>
+      <circle cx="${n.x}" cy="${n.y}" r="${n.here ? 13 : 10}" />
+      <text x="${n.x}" y="${n.y + 26}" text-anchor="middle">${esc(n.name)}</text>
+      ${n.people.length ? `<text x="${n.x}" y="${n.y + 40}" text-anchor="middle" class="warp-map-people">${esc(n.people.join(", "))}</text>` : ""}
+      ${n.indoors ? `<text x="${n.x}" y="${n.y + 4}" text-anchor="middle" class="warp-map-icon">⌂</text>` : ""}
+    </g>`).join("");
+  return `<div class="warp-card warp-map-card">
+    <svg class="warp-map" viewBox="${minX} ${minY} ${w} ${hgt}" role="img" aria-label="Map">${edges}${nodes}</svg>
+    <p class="warp-dim">Click a highlighted place next to you to travel there. People show where their schedules put them right now.</p>
+  </div>`;
+}
+
+// ───────────────────────── journal ─────────────────────────
+
+export function renderJournal(h: HudView | null, records: RecordView[]): string {
+  if (!h) return `<div class="warp-card"><p>No game running in this chat.</p></div>`;
+  const byCat = new Map<string, HudView["codex"]>();
+  for (const c of h.codex) byCat.set(c.category ?? "Notes", [...(byCat.get(c.category ?? "Notes") ?? []), c]);
+  const codex = h.codexTotal
+    ? `<div class="warp-card"><h3>Codex <span class="warp-dim">${h.codex.length} / ${h.codexTotal}</span></h3>
+        ${h.codex.length ? [...byCat].map(([cat, list]) => `<div class="warp-choice-group-label">${esc(cat)}</div>${list.map((c) => `<details class="warp-codex"><summary>${esc(c.title)}</summary><p>${esc(c.text)}</p></details>`).join("")}`).join("") : `<p>Nothing discovered yet.</p>`}
+      </div>`
+    : "";
+  const feats = h.feats.length
+    ? `<div class="warp-card"><h3>Feats <span class="warp-dim">${h.feats.filter((f) => f.unlocked).length} / ${h.feats.length}</span></h3>
+        ${h.feats.map((f) => `<div class="warp-feat${f.unlocked ? " unlocked" : ""}"><span>${f.unlocked ? "🏆" : "🔒"}</span><div><b>${esc(f.name)}</b><div class="warp-dim">${esc(f.desc)}</div></div></div>`).join("")}
+      </div>`
+    : "";
+  const turns = records.filter((r) => r.action || r.check || r.changes.length).slice().reverse().slice(0, 40);
+  const timeline = `<div class="warp-card"><h3>Timeline</h3>
+    ${turns.length ? turns.map((r) => `<button class="warp-timeline-row" data-jump="${esc(r.messageId)}" title="Jump to this message">
+        <span class="warp-dim">${esc(r.clock ?? "")}</span>
+        <span>${r.action ? esc(r.action) : "<span class='warp-dim'>Story</span>"}${r.check ? ` · <span class="warp-tone-${r.check.tier.includes("success") ? "good" : r.check.tier === "partial" ? "warn" : "bad"}">${esc(r.check.tierLabel)}</span>` : ""}</span>
+        <span class="warp-dim warp-timeline-changes">${esc(r.changes.slice(0, 4).map((c) => c.text).join(" · "))}</span>
+      </button>`).join("") : `<p>Nothing has happened yet.</p>`}
+  </div>`;
+  return codex + feats + timeline;
 }
 
 function section(title: string, count: number, body: string, open: boolean): string {

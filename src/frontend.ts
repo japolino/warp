@@ -5,7 +5,7 @@ import type {
 import { DEFAULT_SETTINGS } from "./shared/protocol.js";
 import { STYLES } from "./frontend/styles.js";
 import { attachedBox, edgeForDrop, PAD, PANEL_W, PILL, type Box, type Edge, type Viewport } from "./frontend/overlay-layout.js";
-import { esc, renderChips, renderChoices, renderHud, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
+import { esc, renderChips, renderChoices, renderHud, renderJournal, renderMap, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
 
 type StateMsg = Extract<BackendToFrontend, { type: "state" }>;
 
@@ -33,7 +33,7 @@ export function setup(ctx: SpindleFrontendContext) {
   let jevKeySet = false;
   let busy = { chatId: "", on: false, label: "" };
   let editingBar: string | null = null;
-  let drawerView: "sheet" | "rules" | "settings" = "sheet";
+  let drawerView: "sheet" | "map" | "journal" | "rules" | "settings" = "sheet";
   const openSections = new Map<string, boolean>();
 
   const send = (m: FrontendToBackend) => ctx.sendToBackend(m);
@@ -264,12 +264,24 @@ export function setup(ctx: SpindleFrontendContext) {
     rememberSections(drawerRoot);
     const hasChat = !!state?.chatId;
     const status: RulesetStatus = state?.status ?? { state: "none", name: null, source: null, issues: [], characterName: null, tags: [] };
+    const views: [typeof drawerView, string][] = [
+      ["sheet", "Sheet"],
+      ...(state?.map ? [["map", "Map"] as [typeof drawerView, string]] : []),
+      ...(state?.hud ? [["journal", "Journal"] as [typeof drawerView, string]] : []),
+      ["rules", `Ruleset${status.issues.some((i) => i.level === "error") ? " ⚠" : ""}`],
+      ["settings", "Settings"],
+    ];
+    if (!views.some(([v]) => v === drawerView)) drawerView = "sheet";
     const tabs = `<div class="warp-tabs" role="tablist">
-      ${(["sheet", "rules", "settings"] as const).map((v) => `<button class="warp-tab" role="tab" data-view="${v}" aria-selected="${drawerView === v}">${v === "sheet" ? "Sheet" : v === "rules" ? `Ruleset${status.issues.some((i) => i.level === "error") ? " ⚠" : ""}` : "Settings"}</button>`).join("")}
+      ${views.map(([v, label]) => `<button class="warp-tab" role="tab" data-view="${v}" aria-selected="${drawerView === v}">${label}</button>`).join("")}
     </div>`;
     let body = "";
     if (drawerView === "sheet") {
       body = state?.hud ? renderHud(state.hud, { editing: editingBar, compact: false }) : renderRulesetCard(status, hasChat);
+    } else if (drawerView === "map") {
+      body = renderMap(state?.map ?? null);
+    } else if (drawerView === "journal") {
+      body = renderJournal(state?.hud ?? null, state?.records ?? []);
     } else if (drawerView === "rules") {
       body = renderRulesetCard(status, hasChat) + `<div class="warp-card"><h3>Writing rules</h3><p>Rules live in entries titled <b>warp-ruleset · …</b> (or any lorebook named <b>warp-ruleset</b>). Each entry is YAML; entries merge together. Warp keeps them out of the prompt automatically.</p></div>`;
     } else {
@@ -392,6 +404,17 @@ export function setup(ctx: SpindleFrontendContext) {
     const t = e.target as Element;
     const view = t.closest<HTMLElement>("[data-view]");
     if (view) { drawerView = view.dataset.view as typeof drawerView; renderDrawer(); return; }
+    const go = t.closest<HTMLElement>("[data-go]");
+    if (go) { act(`go:${go.dataset.go}`); return; }
+    const jump = t.closest<HTMLElement>("[data-jump]");
+    if (jump) {
+      const el = ctx.dom.findMessageElement(jump.dataset.jump!);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+      else jump.setAttribute("title", "That message isn't loaded — scroll up in the chat to find it.");
+      return;
+    }
+    const perk = t.closest<HTMLElement>("[data-buy-perk]");
+    if (perk) { const cid = chatId(); if (cid) send({ type: "buy_perk", chatId: cid, perk: perk.dataset.buyPerk! }); return; }
     if (t.closest("[data-install]")) { void confirmReplace(); return; }
     if (t.closest("[data-reload]")) { send({ type: "reload", chatId: chatId() }); return; }
     const save = t.closest<HTMLElement>("[data-save]");
@@ -438,6 +461,11 @@ export function setup(ctx: SpindleFrontendContext) {
   }
   function onPanelChange(e: Event) {
     const t = e.target as HTMLInputElement | HTMLSelectElement;
+    if (t.dataset.wearSlot) {
+      const cid = chatId();
+      if (cid && t.value) send({ type: "wear", chatId: cid, slot: t.dataset.wearSlot, item: t.value === "__off" ? null : t.value });
+      return;
+    }
     const pctKey = t.dataset.settingPct as "autoConfidence" | "askConfidence" | undefined;
     if (pctKey) {
       let v = Number(t.value) / 100;

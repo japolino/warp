@@ -177,7 +177,9 @@ export function buildMap(r: Ruleset, s: GameState): MapView | null {
   if (ids.every((id) => r.locations[id].pos)) {
     for (const id of ids) pos.set(id, r.locations[id].pos!);
   } else {
-    const root = r.startLocation && r.locations[r.startLocation] ? r.startLocation : ids[0];
+    // Centre on the best-connected place (the hub), so spokes radiate from it.
+    const root = ids.reduce((best, id) => (r.locations[id].exits.length > r.locations[best].exits.length ? id : best),
+      r.startLocation && r.locations[r.startLocation] ? r.startLocation : ids[0]);
     // BFS tree, then give each subtree an angular slice proportional to its size.
     const children = new Map<string, string[]>();
     const depth = new Map<string, number>([[root, 0]]);
