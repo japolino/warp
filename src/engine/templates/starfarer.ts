@@ -121,7 +121,23 @@ hud:
     },
     {
       label: "world",
-      yaml: `locations:
+      yaml: `# {{user}}'s body. Gene-splices change it in stages; the story can change it too.
+body:
+  parts:
+    hair: { color: dark, length: short }
+    eyes: { color: brown }
+    ears: human
+    skin: { tone: tanned }
+  transforms:
+    feline_splice:
+      label: Feline gene-splice
+      chance: 75
+      stages:
+        - { set: { eyes: { color: gold, pupils: slit } }, text: "{{user}}'s eyes sting, then clear: gold, with slit pupils." }
+        - { set: { ears: { type: feline } }, text: "Tufted feline ears push up through {{user}}'s hair." }
+        - { set: { tail: { type: feline, length: long } }, text: "A long feline tail finishes growing in." }
+
+locations:
   bridge:
     name: Ship — Bridge
     desc: Your ship's cramped cockpit and nav console.
@@ -213,6 +229,13 @@ conditions:
     say: "*I pop a shield booster.*"
     time: 1
     effects: { take: shield_booster, shields: +30 }
+  gene_splice:
+    label: Buy a feline gene-splice (₡250)
+    group: Trade
+    at: merchant
+    when: credits >= 250 and transformed('feline_splice') < 3
+    say: "*I pay for a feline gene-splice and take the injector.*"
+    effects: { credits: -250, transform: { feline_splice: 1 } }
   buy_booster:
     label: Buy shield booster (₡150)
     group: Trade

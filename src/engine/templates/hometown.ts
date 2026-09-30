@@ -178,7 +178,15 @@ narration:
     },
     {
       label: "world",
-      yaml: `weather:
+      yaml: `# {{user}}'s body, as the story changes it (haircuts, tattoos, lasting marks…).
+body:
+  parts:
+    hair: { color: brown, length: shoulder-length }
+    eyes: { color: hazel }
+    skin: { marks: none }
+  hidden_by: { chest: [top, under_top], hips: [bottom, under_bottom] }
+
+weather:
   temps: { spring: 12, summer: 21, autumn: 11, winter: 3 }
 
 locations:

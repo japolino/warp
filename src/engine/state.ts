@@ -76,6 +76,10 @@ export interface GameState {
   runs: number;
   /** Times the story has been rewound to a save. */
   loops: number;
+  /** The player character's body: part → trait → value. */
+  body: Record<string, Record<string, string>>;
+  /** Transformation → stages applied. */
+  tf: Record<string, number>;
   /** The story reached an ending (told = the narrator has written it). */
   ended: { id: string; at: number; told: boolean } | null;
 }
@@ -137,6 +141,8 @@ export type WarpEvent = { src: EventSource; note?: string } & (
   | { t: "dt_seen"; who: string; topic: string; reaction: Reaction }
   | { t: "dt_partner"; who: string; on: boolean }
   | { t: "dt_dated"; who: string; enjoy: number }
+  | { t: "body"; part: string; trait: string; v: string | null }
+  | { t: "tf"; id: string; stage: number }
   | { t: "save"; slot: string; label: string }
   | { t: "load"; slot: string }
   | { t: "restart" }
@@ -190,6 +196,8 @@ export function initialState(r: Ruleset): GameState {
     runs: 1,
     loops: 0,
     ended: null,
+    body: structuredClone(r.body.parts),
+    tf: {},
   };
   for (const id of r.statOrder) s.stats[id] = r.stats[id].start;
   // Stages with no condition at the top of a secret's ladder are known from the start.
@@ -372,6 +380,15 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       s.dating.partners = partners;
       break;
     }
+    case "body": {
+      const part = { ...(s.body[e.part] ?? {}) };
+      if (e.v === null) delete part[e.trait]; else part[e.trait] = e.v;
+      const next = { ...s.body };
+      if (Object.keys(part).length) next[e.part] = part; else delete next[e.part];
+      s.body = next;
+      break;
+    }
+    case "tf": s.tf = { ...s.tf, [e.id]: Math.max(s.tf[e.id] ?? 0, e.stage) }; break;
     case "save":
       s.saves = { ...s.saves, [e.slot]: { at: s.minutes, turn: s.turn, label: e.label, snap: snapshotOf(s) } };
       break;
@@ -620,6 +637,9 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
         case "stage": return stageIndex(r, s, a0);
         // Checkpoints: whether a slot holds a save.
         case "saved": return a0 in s.saves;
+        // Body: a trait's value ('' when absent), and how far a transformation has gone.
+        case "body": return s.body[a0]?.[String(args[1] ?? "type")] ?? "";
+        case "transformed": return s.tf[a0] ?? 0;
         case "dates": return s.dating.dates[a0]?.count ?? 0;
       }
       return undefined;

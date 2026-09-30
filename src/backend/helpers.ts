@@ -59,7 +59,7 @@ function clip(s: string, n: number) {
 
 // ───────────────────────── extractor ─────────────────────────
 
-export type ExtractPart = "minutes" | "stats" | "rel" | "people" | "items" | "move" | "conditions" | "flags" | "wardrobe";
+export type ExtractPart = "minutes" | "stats" | "rel" | "people" | "items" | "move" | "conditions" | "flags" | "wardrobe" | "body";
 
 export async function extract(
   r: Ruleset, s: GameState, playerText: string, reply: string,
@@ -94,6 +94,10 @@ export async function extract(
     const owned = Object.keys(s.items).filter((id) => r.items[id]?.slot && !Object.values(s.worn).includes(id));
     allowed.push(`- "undress": slots whose clothing came off (currently worn — ${worn})`);
     if (owned.length) allowed.push(`- "wear": ids of owned clothing put on (${owned.join(", ")})`);
+  }
+  if (want("body") && r.body.enabled && r.body.narrator) {
+    const now = Object.entries(s.body).map(([p, t]) => `${p}: ${Object.entries(t).map(([k, v]) => `${k} ${v}`).join(", ")}`).join("; ") || "nothing recorded";
+    allowed.push(`- "body": lasting changes to the player's body as {"part": {"trait": "new value"}} (null removes a trait)${r.body.open ? "; new parts are allowed" : `; parts: ${Object.keys(r.body.parts).join(", ")}`}. Now: ${now}`);
   }
   if (!allowed.length) return null;
 

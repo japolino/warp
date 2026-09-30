@@ -215,7 +215,7 @@ function confident(a: Answer | undefined): a is Extract<Answer, { type: "choice"
 export interface Bookkeeping {
   proposal: Proposal;
   /** Open-ended things a writing model should fill in (names). */
-  needsWriting: Set<"people" | "items" | "move">;
+  needsWriting: Set<"people" | "items" | "move" | "body">;
 }
 
 export async function bookkeeping(opts: {
@@ -267,6 +267,7 @@ export async function bookkeeping(opts: {
       q[`cloth:${slot}`] = { type: "noul", instructions: `By the end of the reply, ${player} no longer has their ${r.items[id]?.name ?? id} on (taken off, removed or lost)` };
     }
   }
+  if (r.body.enabled && r.body.narrator) q["gate:body"] = { type: "noul", instructions: `${player}'s body changes during the reply (a transformation, new mark or tattoo, haircut or dye, a lasting injury…)` };
   if (r.peopleOpen) q["gate:people"] = { type: "noul", instructions: "The reply introduces a named character who wasn't in the game state before" };
   if (r.itemsOpen) q["gate:items"] = { type: "noul", instructions: `${player} gains, loses or uses up an item during the reply` };
   if (r.locationsOpen) q["gate:move"] = { type: "noul", instructions: `${player} ends the reply somewhere different from ${s.locationName ?? "where they started"}` };
@@ -317,8 +318,8 @@ export async function bookkeeping(opts: {
     const a = ans[`cloth:${slot}`];
     if (a?.type === "noul" && a.noul >= 0.7) (p.undress ??= []).push(slot);
   }
-  const needsWriting = new Set<"people" | "items" | "move">();
-  for (const g of ["people", "items", "move"] as const) {
+  const needsWriting = new Set<"people" | "items" | "move" | "body">();
+  for (const g of ["people", "items", "move", "body"] as const) {
     const a = ans[`gate:${g}`];
     if (a?.type === "noul" && a.noul >= 0.6) needsWriting.add(g);
   }

@@ -171,6 +171,10 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
     perks: Object.values(r.perks).map((p) => ({ id: p.id, name: p.name, desc: p.desc, cost: p.cost, owned: !!s.perks[p.id], blocker: s.perks[p.id] ? null : perkBlocker(r, s, p.id) })),
     perkPoints: r.perkPoints ? s.stats[r.perkPoints] ?? 0 : null,
     news: s.news.slice().reverse().slice(0, 12).map((n) => ({ text: n.text, when: r.clock.enabled ? formatClock(r, n.at).day : null })),
+    body: r.body.enabled ? Object.entries(s.body).map(([part, traits]) => ({
+      part, label: part.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()), text: traitText(traits) || "—", covered: bodyCovered(r, s, part),
+    })) : null,
+    transforms: Object.values(r.body.transforms).filter((t) => (s.tf[t.id] ?? 0) > 0).map((t) => ({ label: t.label, stage: s.tf[t.id], of: t.stages.length })),
     run: r.checkpoints.enabled ? {
       slots: Array.from({ length: r.checkpoints.slots }, (_, i) => ({ id: String(i + 1), label: s.saves[String(i + 1)]?.label ?? null })),
       auto: s.saves.auto?.label ?? null,
@@ -247,6 +251,26 @@ export function buildMap(r: Ruleset, s: GameState): MapView | null {
     }),
     edges,
   };
+}
+
+/** Is a body part covered by what's worn (so others can't see it)? */
+export function bodyCovered(r: Ruleset, s: GameState, part: string): boolean {
+  const slots = r.body.hiddenBy[part];
+  return !!slots?.length && r.wardrobe.enabled && slots.every((slot) => !!s.worn[slot]);
+}
+
+function traitText(traits: Record<string, string>): string {
+  const t = Object.entries(traits).filter(([, v]) => v && v !== "none");
+  return t.map(([k, v]) => (k === "type" ? v : `${k.replace(/_/g, " ")} ${v}`)).join(", ");
+}
+
+/** The body as the narrator sees it: every part, and which are covered right now. */
+export function bodyLine(r: Ruleset, s: GameState): string | null {
+  if (!r.body.enabled) return null;
+  const parts = Object.entries(s.body).map(([part, traits]) => [part, traitText(traits)] as const).filter(([, t]) => t);
+  if (!parts.length) return null;
+  const covered = parts.filter(([p]) => bodyCovered(r, s, p)).map(([p]) => p.replace(/_/g, " "));
+  return `Body: ${parts.map(([p, t]) => `${p.replace(/_/g, " ")} — ${t}`).join("; ")}${covered.length ? ` (covered, not visible to others: ${covered.join(", ")})` : ""}`;
 }
 
 /** "codex, feats and trust" — what a rewind keeps, in words. */
@@ -604,6 +628,8 @@ export function stateDigest(r: Ruleset, s: GameState): string {
   } else if (here.length) lines.push(`Present here: ${here.join(", ")}`);
   const date = dateDigest(r, s);
   if (date) lines.push(date);
+  const body = bodyLine(r, s);
+  if (body) lines.push(body);
 
   const meters = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "meter" || d.kind === "money");
   const other = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "attribute" || d.kind === "skill");

@@ -332,6 +332,29 @@ function effectToEvents(w: Working, e: Effect, src: EventSource, extra: Record<s
     const v = evalNumber(e.gauge, w.env(extra), 0);
     if (v !== 0) w.push({ t: "gauge", d: v, src });
   }
+  // Body: direct trait changes, then transformations stage by stage (each step rolls its chance).
+  for (const [part, traits] of Object.entries(e.body)) for (const [trait, v] of Object.entries(traits)) {
+    if ((w.s.body[part]?.[trait] ?? null) !== v) w.push({ t: "body", part, trait, v, src });
+  }
+  for (const [id, n] of Object.entries(e.transform)) {
+    const t = r.body.transforms[id];
+    if (!t) continue;
+    const steps = Math.round(evalNumber(n, w.env(extra), 0));
+    for (let i = 0; i < steps; i++) {
+      const stage = w.s.tf[id] ?? 0;
+      if (stage >= t.stages.length) break;
+      const chance = Math.max(0, Math.min(100, evalNumber(t.chance, w.env(extra), 100)));
+      if (seededRng(`${w.seed}:tf:${id}:${stage}:${w.s.turn}`)() * 100 >= chance) {
+        announce(w, `${t.label}: nothing changes this time.`);
+        break;
+      }
+      w.push({ t: "tf", id, stage: stage + 1, src });
+      for (const [part, traits] of Object.entries(t.stages[stage].set)) for (const [trait, v] of Object.entries(traits)) {
+        if ((w.s.body[part]?.[trait] ?? null) !== v) w.push({ t: "body", part, trait, v, src });
+      }
+      announce(w, t.stages[stage].text ?? `${t.label}: {{user}}'s body changes (stage ${stage + 1} of ${t.stages.length}).`);
+    }
+  }
   if (e.momentum !== undefined && w.s.encounter?.momentum !== undefined) {
     const v = evalNumber(e.momentum, w.env(extra), 0);
     if (v !== 0) w.push({ t: "swing", d: v, src });
@@ -885,6 +908,8 @@ export interface Proposal {
   undress?: string[];
   /** Owned clothing the player put on. */
   wear?: string[];
+  /** Body changes: part → trait → value (null removes). */
+  body?: Record<string, Record<string, string | null>>;
 }
 
 /** What the story's changes are checked against: the exchange's text and the action that was taken. */
@@ -1008,6 +1033,23 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
     for (const id of p.wear ?? []) {
       const slot = r.items[id]?.slot;
       if (slot && w.s.items[id] > 0 && w.s.worn[slot] !== id) w.push({ t: "wear", slot, item: id, src });
+    }
+  }
+
+  if (r.body.enabled && r.body.narrator && p.body && typeof p.body === "object") {
+    let n = 0;
+    for (const [rawPart, traits] of Object.entries(p.body)) {
+      const part = slug(rawPart);
+      if (!traits || typeof traits !== "object") continue;
+      if (!r.body.open && !(part in r.body.parts) && !(part in w.s.body)) continue;
+      for (const [rawTrait, v] of Object.entries(traits)) {
+        if (n >= 8) break;
+        const trait = slug(rawTrait);
+        const value = v === null || v === undefined || v === "" ? null : String(v).slice(0, 60);
+        if ((w.s.body[part]?.[trait] ?? null) === value) continue;
+        w.push({ t: "body", part, trait, v: value, src });
+        n++;
+      }
     }
   }
 

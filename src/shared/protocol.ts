@@ -77,6 +77,10 @@ export interface HudView {
   perkPoints: number | null;
   /** What has surfaced in the world (newest first). */
   news: { text: string; when: string | null }[];
+  /** Body parts and their traits, when the ruleset has a body. */
+  body: { part: string; label: string; text: string; covered: boolean }[] | null;
+  /** Transformations under way. */
+  transforms: { label: string; stage: number; of: number }[];
   /** Checkpoints and endings, when the ruleset has them. */
   run: {
     slots: { id: string; label: string | null }[];

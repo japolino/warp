@@ -1444,8 +1444,29 @@ function emptyEffect() {
     undress: [],
     damage: {},
     front: {},
-    reveal: []
+    reveal: [],
+    body: {},
+    transform: {}
   };
+}
+function normTraits(raw, where, c) {
+  const out = {};
+  if (!isObj(raw)) {
+    c.warn(where, "expected parts with traits, like `hair: { color: red }`");
+    return out;
+  }
+  for (const [part, traits] of Object.entries(raw)) {
+    if (typeof traits === "string") {
+      out[part] = { type: traits };
+      continue;
+    }
+    if (!isObj(traits)) {
+      c.warn(`${where} › ${part}`, "expected traits, like `{ color: red }`");
+      continue;
+    }
+    out[part] = Object.fromEntries(Object.entries(traits).map(([k, v]) => [k, v === null || v === false ? null : String(v)]));
+  }
+  return out;
 }
 function normDecide(raw, where, c, known, minOptions = 2) {
   if (!isObj(raw)) {
@@ -1643,13 +1664,39 @@ function normEffect(raw, where, c, known) {
           e.gauge = x;
         break;
       }
+      case "momentum":
+      case "swing": {
+        const x = c.expr(v, w);
+        if (x !== undefined)
+          e.momentum = x;
+        break;
+      }
+      case "body":
+        if (known.stats.has(k) && !isObj(v)) {
+          const x = c.expr(v, w);
+          if (x !== undefined)
+            e.stats[k] = x;
+        } else
+          Object.assign(e.body, normTraits(v, w, c));
+        break;
+      case "transform":
+        if (isObj(v))
+          for (const [id, n] of Object.entries(v)) {
+            const x = c.expr(n, `${w} › ${id}`);
+            if (x !== undefined)
+              e.transform[id] = x;
+          }
+        else
+          for (const id of list(v))
+            e.transform[id] = 1;
+        break;
       default:
         if (known.stats.has(k)) {
           const x = c.expr(v, w);
           if (x !== undefined)
             e.stats[k] = x;
         } else
-          c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, unlock, wear, undress, damage, front, reveal, gauge)`);
+          c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, unlock, wear, undress, damage, front, reveal, gauge, momentum, body, transform)`);
     }
   }
   return e;
@@ -1884,6 +1931,22 @@ function normEncounter(id, raw, c, known) {
   for (const [o, e] of Object.entries(isObj(raw.outcomes) ? raw.outcomes : {}))
     outcomes[o] = normEffect(e, `${w} › outcomes › ${o}`, c, known);
   const startRaw = raw.start ?? (typeof raw.start_hint === "string" ? { hint: raw.start_hint } : undefined);
+  let momentum = null;
+  if (raw.momentum !== undefined && raw.momentum !== false) {
+    const m = isObj(raw.momentum) ? raw.momentum : {};
+    const swing = { crit_success: 40, success: 25, partial: 10, fail: -20, crit_fail: -35 };
+    if (isObj(m.swing))
+      for (const [k, v] of Object.entries(m.swing)) {
+        const tier = TIER_KEYS[k];
+        if (tier)
+          swing[tier] = c.num(v, `${w} › momentum › swing › ${k}`, swing[tier]);
+        else
+          c.warn(`${w} › momentum › swing › ${k}`, "tiers are crit_success, success, partial, fail, crit_fail");
+      }
+    const win = typeof m.win === "string" ? m.win : "won";
+    const lose = typeof m.lose === "string" ? m.lose : "lost";
+    momentum = { win, lose, start: Math.max(-99, Math.min(99, c.num(m.start, `${w} › momentum › start`, 0))), swing };
+  }
   return {
     id,
     name: typeof raw.name === "string" ? raw.name : titleCase(id),
@@ -1895,7 +1958,8 @@ function normEncounter(id, raw, c, known) {
     foeMoves,
     endWhen,
     outcomes,
-    start: normEffect(startRaw, `${w} › start`, c, known)
+    start: normEffect(startRaw, `${w} › start`, c, known),
+    momentum
   };
 }
 function normSecrets(raw, c) {
@@ -2187,6 +2251,38 @@ function normEndings(raw, c) {
   }
   return out;
 }
+function normBody(raw, c) {
+  const def = { enabled: false, narrator: true, open: true, parts: {}, hiddenBy: {}, transforms: {} };
+  if (raw === undefined || raw === false)
+    return def;
+  if (!isObj(raw)) {
+    c.warn("Body", "should be a map with `parts:`");
+    return def;
+  }
+  def.enabled = true;
+  def.narrator = raw.narrator !== false;
+  def.open = raw.open !== false;
+  for (const [part, traits] of Object.entries(normTraits(raw.parts ?? {}, "Body › parts", c))) {
+    def.parts[part] = Object.fromEntries(Object.entries(traits).filter(([, v]) => v !== null));
+  }
+  if (isObj(raw.hidden_by))
+    for (const [part, slots] of Object.entries(raw.hidden_by))
+      def.hiddenBy[part] = list(slots);
+  for (const [id, t] of Object.entries(isObj(raw.transforms) ? raw.transforms : {})) {
+    const w = `Body › transforms › ${id}`;
+    if (!isObj(t) || !Array.isArray(t.stages) || !t.stages.length) {
+      c.warn(w, "needs `stages:` — a list of `{ set: { part: { trait: value } }, text }`");
+      continue;
+    }
+    const chance = c.expr(t.chance ?? 100, `${w} › chance`) ?? 100;
+    const stages = t.stages.map((st, i) => {
+      const sr = isObj(st) ? st : {};
+      return { set: normTraits(sr.set ?? {}, `${w} › stage ${i + 1}`, c), ...typeof sr.text === "string" ? { text: sr.text } : {} };
+    });
+    def.transforms[id] = { id, label: typeof t.label === "string" ? t.label : titleCase(id), chance, stages };
+  }
+  return def;
+}
 function normalizeRuleset(raw) {
   const c = new Ctx3;
   if (!isObj(raw)) {
@@ -2456,6 +2552,7 @@ function normalizeRuleset(raw) {
   const endings = normEndings(Object.fromEntries(Object.entries(endingsRaw).filter(([k]) => k !== "legacy")), c);
   const legacy = normKeep(endingsRaw.legacy, "Endings › legacy", c, { codex: true, feats: true, perks: true });
   const checkpoints = normCheckpoints(raw.checkpoints, Object.keys(endings).length > 0, c, known);
+  const body = normBody(raw.body, c);
   const ruleset = {
     name: typeof raw.name === "string" ? raw.name : "Untitled ruleset",
     description: typeof raw.description === "string" ? raw.description : undefined,
@@ -2506,7 +2603,8 @@ function normalizeRuleset(raw) {
     mind,
     checkpoints,
     endings,
-    legacy
+    legacy,
+    body
   };
   for (const p of Object.values(people))
     for (const e of p.schedule) {
@@ -2765,7 +2863,9 @@ function initialState(r) {
     saves: {},
     runs: 1,
     loops: 0,
-    ended: null
+    ended: null,
+    body: structuredClone(r.body.parts),
+    tf: {}
   };
   for (const id of r.statOrder)
     s.stats[id] = r.stats[id].start;
@@ -2865,7 +2965,11 @@ function applyEvent(s, e, r) {
       break;
     }
     case "enc":
-      s.encounter = e.id ? { id: e.id, round: 0, foe: { ...e.foe ?? {} } } : null;
+      s.encounter = e.id ? { id: e.id, round: 0, foe: { ...e.foe ?? {} }, ...e.momentum !== undefined ? { momentum: e.momentum } : {} } : null;
+      break;
+    case "swing":
+      if (s.encounter && s.encounter.momentum !== undefined)
+        s.encounter.momentum = clamp(s.encounter.momentum + e.d, -100, 100);
       break;
     case "foe": {
       if (!s.encounter)
@@ -3016,6 +3120,23 @@ function applyEvent(s, e, r) {
       s.dating.partners = partners;
       break;
     }
+    case "body": {
+      const part = { ...s.body[e.part] ?? {} };
+      if (e.v === null)
+        delete part[e.trait];
+      else
+        part[e.trait] = e.v;
+      const next = { ...s.body };
+      if (Object.keys(part).length)
+        next[e.part] = part;
+      else
+        delete next[e.part];
+      s.body = next;
+      break;
+    }
+    case "tf":
+      s.tf = { ...s.tf, [e.id]: Math.max(s.tf[e.id] ?? 0, e.stage) };
+      break;
     case "save":
       s.saves = { ...s.saves, [e.slot]: { at: s.minutes, turn: s.turn, label: e.label, snap: snapshotOf(s) } };
       break;
@@ -3197,6 +3318,7 @@ function makeEnv(r, s, extra = {}) {
       exposed,
       naked: r.wardrobe.enabled && exposed === r.wardrobe.cover.length && r.wardrobe.cover.length > 0,
       in_encounter: !!s.encounter,
+      momentum: s.encounter?.momentum ?? 0,
       in_dungeon: !!s.dungeon,
       dungeon_depth: s.dungeon?.depth ?? 0,
       in_date: !!s.date,
@@ -3315,6 +3437,10 @@ function makeEnv(r, s, extra = {}) {
           return stageIndex(r, s, a0);
         case "saved":
           return a0 in s.saves;
+        case "body":
+          return s.body[a0]?.[String(args[1] ?? "type")] ?? "";
+        case "transformed":
+          return s.tf[a0] ?? 0;
         case "dates":
           return s.dating.dates[a0]?.count ?? 0;
       }
@@ -3388,6 +3514,7 @@ var init_state = __esm(() => {
     "naked",
     "in_encounter",
     "round",
+    "momentum",
     "target",
     "in_dungeon",
     "dungeon_depth",
@@ -4459,6 +4586,39 @@ function effectToEvents(w, e, src, extra) {
     if (v !== 0)
       w.push({ t: "gauge", d: v, src });
   }
+  for (const [part, traits] of Object.entries(e.body))
+    for (const [trait, v] of Object.entries(traits)) {
+      if ((w.s.body[part]?.[trait] ?? null) !== v)
+        w.push({ t: "body", part, trait, v, src });
+    }
+  for (const [id, n] of Object.entries(e.transform)) {
+    const t = r.body.transforms[id];
+    if (!t)
+      continue;
+    const steps = Math.round(evalNumber(n, w.env(extra), 0));
+    for (let i = 0;i < steps; i++) {
+      const stage = w.s.tf[id] ?? 0;
+      if (stage >= t.stages.length)
+        break;
+      const chance = Math.max(0, Math.min(100, evalNumber(t.chance, w.env(extra), 100)));
+      if (seededRng(`${w.seed}:tf:${id}:${stage}:${w.s.turn}`)() * 100 >= chance) {
+        announce(w, `${t.label}: nothing changes this time.`);
+        break;
+      }
+      w.push({ t: "tf", id, stage: stage + 1, src });
+      for (const [part, traits] of Object.entries(t.stages[stage].set))
+        for (const [trait, v] of Object.entries(traits)) {
+          if ((w.s.body[part]?.[trait] ?? null) !== v)
+            w.push({ t: "body", part, trait, v, src });
+        }
+      announce(w, t.stages[stage].text ?? `${t.label}: {{user}}'s body changes (stage ${stage + 1} of ${t.stages.length}).`);
+    }
+  }
+  if (e.momentum !== undefined && w.s.encounter?.momentum !== undefined) {
+    const v = evalNumber(e.momentum, w.env(extra), 0);
+    if (v !== 0)
+      w.push({ t: "swing", d: v, src });
+  }
   if (e.time)
     advanceTime(w, e.time, src);
   if (e.hint)
@@ -4657,7 +4817,7 @@ function startEncounter(w, id, src) {
   if (!enc)
     return;
   const foe = Object.fromEntries(enc.foe.stats.map((s) => [s.id, s.start]));
-  w.push({ t: "enc", id, foe, src });
+  w.push({ t: "enc", id, foe, ...enc.momentum ? { momentum: enc.momentum.start } : {}, src });
   announce(w, `An encounter begins: ${enc.name}${enc.desc ? ` — ${enc.desc}` : ""}. Opponent: ${enc.foe.name}.`);
   effectToEvents(w, enc.start, src, {});
 }
@@ -4668,6 +4828,12 @@ function encounterOutcome(w) {
   if (w.pendingEnd)
     return w.pendingEnd;
   const enc = w.r.encounters[s.id];
+  if (enc?.momentum && s.momentum !== undefined) {
+    if (s.momentum >= 100)
+      return enc.momentum.win;
+    if (s.momentum <= -100)
+      return enc.momentum.lose;
+  }
   for (const e of enc?.endWhen ?? [])
     if (evalBool(e.when, w.env(), false))
       return e.outcome;
@@ -4700,6 +4866,44 @@ function encounterRound(w, src) {
   out = encounterOutcome(w);
   if (out)
     endEncounter(w, out, src);
+}
+function momentumWords(m, foe) {
+  if (m >= 100)
+    return "{{user}} has won the exchange";
+  if (m <= -100)
+    return `${foe} has won the exchange`;
+  if (m >= 60)
+    return "{{user}} is close to winning";
+  if (m >= 20)
+    return "{{user}} has the upper hand";
+  if (m > -20)
+    return "evenly matched";
+  if (m > -60)
+    return `${foe} has the upper hand`;
+  return `${foe} is close to winning`;
+}
+function beatSheet(w, before, rec, playerText) {
+  const enc = before.encounter ? w.r.encounters[before.encounter.id] : undefined;
+  if (!enc?.momentum || before.encounter?.momentum === undefined)
+    return;
+  const foe = enc.foe.name;
+  const beats = [];
+  const typed = (playerText ?? "").trim();
+  const mine = rec.action ? `${rec.action.label}${rec.check ? ` — ${TIER_LABEL[rec.check.tier].toLowerCase()}` : ""}` : "no clear move";
+  if (rec.action && typed.length >= 240)
+    beats.push(`1. {{user}}: keep the move exactly as {{user}} wrote it; only how well it lands is decided (${rec.check ? TIER_LABEL[rec.check.tier].toLowerCase() : "it happens"}).`);
+  else
+    beats.push(`1. {{user}}: ${mine}.${typed.length < 80 ? " Write the move itself in your own words as the opening beat." : ""}`);
+  const foeMove = enc.foeMoves ? w.decisions.find((d) => d.id === enc.foeMoves.id) : undefined;
+  if (foeMove)
+    beats.push(`2. ${foe}: ${foeMove.pickedDesc}.`);
+  const shift = w.events.reduce((sum, e) => sum + (e.t === "swing" ? e.d : 0), 0);
+  const now = Math.max(-100, Math.min(100, before.encounter.momentum + shift));
+  beats.push(`${beats.length + 1}. Where it stands: ${momentumWords(now, foe)}${shift ? ` (it swung ${shift > 0 ? "toward {{user}}" : `toward ${foe}`})` : ""}.`);
+  w.hints.push(`This round's beats, in order:
+${beats.join(`
+`)}
+Narrate them in order. ${w.s.encounter ? "The fight isn't over until the rules end it — don't finish it early." : ""}`.trim());
 }
 function decide(w, d, src, extra) {
   if (w.decisions.some((x) => x.id === d.id))
@@ -4890,10 +5094,17 @@ function resolveInner(r, before, intent, opts, needs) {
     const encTags = inEncounter ? r.encounters[before.encounter.id]?.tags ?? [] : [];
     if ([...a.tags, ...encTags].some((t) => veils.has(t)))
       rec.veiled = true;
-    if (inEncounter)
+    if (inEncounter) {
+      const tier = rec.check?.tier ?? (rec.mind?.kind === "fail" ? "fail" : null);
+      const m = r.encounters[before.encounter.id]?.momentum;
+      if (m && tier && w.s.encounter?.momentum !== undefined)
+        w.push({ t: "swing", d: m.swing[tier], src: "check" });
       encounterRound(w, "action");
+      beatSheet(w, before, rec, opts.playerText);
+    }
   } else if (inEncounter && w.s.encounter) {
     encounterRound(w, "action");
+    beatSheet(w, before, rec, opts.playerText);
   }
   runTriggers(w, true);
   const days = r.clock.enabled ? (w.s.minutes - before.minutes) / 1440 : 1;
@@ -5048,6 +5259,26 @@ function applyProposal(r, before, p, ctx) {
       const slot = r.items[id]?.slot;
       if (slot && w.s.items[id] > 0 && w.s.worn[slot] !== id)
         w.push({ t: "wear", slot, item: id, src });
+    }
+  }
+  if (r.body.enabled && r.body.narrator && p.body && typeof p.body === "object") {
+    let n = 0;
+    for (const [rawPart, traits] of Object.entries(p.body)) {
+      const part = slug(rawPart);
+      if (!traits || typeof traits !== "object")
+        continue;
+      if (!r.body.open && !(part in r.body.parts) && !(part in w.s.body))
+        continue;
+      for (const [rawTrait, v] of Object.entries(traits)) {
+        if (n >= 8)
+          break;
+        const trait = slug(rawTrait);
+        const value = v === null || v === undefined || v === "" ? null : String(v).slice(0, 60);
+        if ((w.s.body[part]?.[trait] ?? null) === value)
+          continue;
+        w.push({ t: "body", part, trait, v: value, src });
+        n++;
+      }
     }
   }
   if (typeof p.minutes === "number" && Number.isFinite(p.minutes) && p.minutes > 0) {
@@ -5633,7 +5864,15 @@ narration:
       },
       {
         label: "world",
-        yaml: `weather:
+        yaml: `# {{user}}'s body, as the story changes it (haircuts, tattoos, lasting marks…).
+body:
+  parts:
+    hair: { color: brown, length: shoulder-length }
+    eyes: { color: hazel }
+    skin: { marks: none }
+  hidden_by: { chest: [top, under_top], hips: [bottom, under_bottom] }
+
+weather:
   temps: { spring: 12, summer: 21, autumn: 11, winter: 3 }
 
 locations:
@@ -6385,7 +6624,23 @@ hud:
       },
       {
         label: "world",
-        yaml: `locations:
+        yaml: `# {{user}}'s body. Gene-splices change it in stages; the story can change it too.
+body:
+  parts:
+    hair: { color: dark, length: short }
+    eyes: { color: brown }
+    ears: human
+    skin: { tone: tanned }
+  transforms:
+    feline_splice:
+      label: Feline gene-splice
+      chance: 75
+      stages:
+        - { set: { eyes: { color: gold, pupils: slit } }, text: "{{user}}'s eyes sting, then clear: gold, with slit pupils." }
+        - { set: { ears: { type: feline } }, text: "Tufted feline ears push up through {{user}}'s hair." }
+        - { set: { tail: { type: feline, length: long } }, text: "A long feline tail finishes growing in." }
+
+locations:
   bridge:
     name: Ship — Bridge
     desc: Your ship's cramped cockpit and nav console.
@@ -6477,6 +6732,13 @@ conditions:
     say: "*I pop a shield booster.*"
     time: 1
     effects: { take: shield_booster, shields: +30 }
+  gene_splice:
+    label: Buy a feline gene-splice (₡250)
+    group: Trade
+    at: merchant
+    when: credits >= 250 and transformed('feline_splice') < 3
+    say: "*I pay for a feline gene-splice and take the injector.*"
+    effects: { credits: -250, transform: { feline_splice: 1 } }
   buy_booster:
     label: Buy shield booster (₡150)
     group: Trade
@@ -10239,6 +10501,18 @@ function lintRuleset(r) {
     }
     for (const [slot, v] of Object.entries(e.damage))
       check(v, `${where} › damage › ${slot}`, extra);
+    for (const [id, v] of Object.entries(e.transform)) {
+      if (!r.body.transforms[id])
+        issues.push({ level: "warning", where, message: `"${id}" isn't a transformation under body › transforms${suggest(id, Object.keys(r.body.transforms))}` });
+      check(v, `${where} › transform › ${id}`, extra);
+    }
+    if (Object.keys(e.body).length && !r.body.enabled)
+      issues.push({ level: "warning", where, message: "changes the body, but the ruleset has no `body:` section" });
+    else if (!r.body.open)
+      for (const part of Object.keys(e.body)) {
+        if (!r.body.parts[part])
+          issues.push({ level: "warning", where, message: `"${part}" isn't a body part (body › parts) and the body is closed (open: false)` });
+      }
     if (e.startEncounter && !r.encounters[e.startEncounter]) {
       issues.push({ level: "warning", where, message: `starts encounter "${e.startEncounter}", which doesn't exist${suggest(e.startEncounter, Object.keys(r.encounters))}` });
     }
@@ -10407,6 +10681,14 @@ function lintRuleset(r) {
   }
   for (const e of Object.values(r.endings))
     check(e.when, `Endings › ${e.id} › when`);
+  const slotIds = r.wardrobe.slots.map((s) => s.id);
+  for (const [part, slots] of Object.entries(r.body.hiddenBy))
+    for (const slot of slots) {
+      if (!slotIds.includes(slot))
+        issues.push({ level: "warning", where: `Body › hidden_by › ${part}`, message: `"${slot}" isn't a wardrobe slot${suggest(slot, slotIds)}` });
+    }
+  for (const t of Object.values(r.body.transforms))
+    check(t.chance, `Body › transforms › ${t.id} › chance`);
   for (const o of r.mind.overrides) {
     const w = `Mind › overrides › ${o.id}`;
     check(o.when, `${w} › when`, { target: "someone" });
@@ -10478,6 +10760,8 @@ var init_lint = __esm(() => {
     "dates",
     "stage",
     "saved",
+    "body",
+    "transformed",
     "min",
     "max",
     "clamp",
@@ -11748,6 +12032,7 @@ function buildHud(r, s) {
       name: enc?.name ?? s.encounter.id,
       foe: enc?.foe.name ?? "Opponent",
       round: s.encounter.round,
+      momentum: s.encounter.momentum ?? null,
       stats: (enc?.foe.stats ?? []).map((fs) => {
         const v = s.encounter.foe[fs.id] ?? fs.start;
         const p = pct(v, 0, fs.max);
@@ -11791,6 +12076,13 @@ function buildHud(r, s) {
     perks: Object.values(r.perks).map((p) => ({ id: p.id, name: p.name, desc: p.desc, cost: p.cost, owned: !!s.perks[p.id], blocker: s.perks[p.id] ? null : perkBlocker(r, s, p.id) })),
     perkPoints: r.perkPoints ? s.stats[r.perkPoints] ?? 0 : null,
     news: s.news.slice().reverse().slice(0, 12).map((n) => ({ text: n.text, when: r.clock.enabled ? formatClock(r, n.at).day : null })),
+    body: r.body.enabled ? Object.entries(s.body).map(([part, traits]) => ({
+      part,
+      label: part.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+      text: traitText(traits) || "—",
+      covered: bodyCovered(r, s, part)
+    })) : null,
+    transforms: Object.values(r.body.transforms).filter((t) => (s.tf[t.id] ?? 0) > 0).map((t) => ({ label: t.label, stage: s.tf[t.id], of: t.stages.length })),
     run: r.checkpoints.enabled ? {
       slots: Array.from({ length: r.checkpoints.slots }, (_, i) => ({ id: String(i + 1), label: s.saves[String(i + 1)]?.label ?? null })),
       auto: s.saves.auto?.label ?? null,
@@ -11873,6 +12165,23 @@ function buildMap(r, s) {
     }),
     edges
   };
+}
+function bodyCovered(r, s, part) {
+  const slots = r.body.hiddenBy[part];
+  return !!slots?.length && r.wardrobe.enabled && slots.every((slot) => !!s.worn[slot]);
+}
+function traitText(traits) {
+  const t = Object.entries(traits).filter(([, v]) => v && v !== "none");
+  return t.map(([k, v]) => k === "type" ? v : `${k.replace(/_/g, " ")} ${v}`).join(", ");
+}
+function bodyLine(r, s) {
+  if (!r.body.enabled)
+    return null;
+  const parts = Object.entries(s.body).map(([part, traits]) => [part, traitText(traits)]).filter(([, t]) => t);
+  if (!parts.length)
+    return null;
+  const covered = parts.filter(([p]) => bodyCovered(r, s, p)).map(([p]) => p.replace(/_/g, " "));
+  return `Body: ${parts.map(([p, t]) => `${p.replace(/_/g, " ")} — ${t}`).join("; ")}${covered.length ? ` (covered, not visible to others: ${covered.join(", ")})` : ""}`;
 }
 function keepWords(r, k) {
   const parts = [
@@ -12221,7 +12530,7 @@ function stateDigest(r, s) {
     lines.push(head.join(" · "));
   if (hud.encounter) {
     const e = hud.encounter;
-    lines.push(`ENCOUNTER in progress: ${e.name} vs ${e.foe}, round ${e.round}${e.stats.length ? ` — ${e.stats.map((x) => `${x.label} ${formatNumber(x.value)}/${formatNumber(x.max)}`).join(", ")}` : ""}`);
+    lines.push(`ENCOUNTER in progress: ${e.name} vs ${e.foe}, round ${e.round}${e.stats.length ? ` — ${e.stats.map((x) => `${x.label} ${formatNumber(x.value)}/${formatNumber(x.max)}`).join(", ")}` : ""}${e.momentum !== null ? ` — momentum ${e.momentum > 0 ? "+" : ""}${Math.round(e.momentum)} (−100 = ${e.foe} wins, +100 = {{user}} wins)` : ""}`);
   }
   if (hud.outfit) {
     const worn = hud.outfit.filter((o) => o.item).map((o) => `${o.item.name}${o.item.integrity !== null && o.item.integrity < 60 ? " (torn)" : ""}`);
@@ -12246,6 +12555,9 @@ function stateDigest(r, s) {
   const date = dateDigest(r, s);
   if (date)
     lines.push(date);
+  const body = bodyLine(r, s);
+  if (body)
+    lines.push(body);
   const meters = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "meter" || d.kind === "money");
   const other = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "attribute" || d.kind === "skill");
   const ml = meters.map((d) => statLine(r, d, s, r.narration.numbers)).filter(Boolean);
@@ -12788,6 +13100,8 @@ async function bookkeeping(opts) {
       q[`cloth:${slot}`] = { type: "noul", instructions: `By the end of the reply, ${player} no longer has their ${r.items[id]?.name ?? id} on (taken off, removed or lost)` };
     }
   }
+  if (r.body.enabled && r.body.narrator)
+    q["gate:body"] = { type: "noul", instructions: `${player}'s body changes during the reply (a transformation, new mark or tattoo, haircut or dye, a lasting injury…)` };
   if (r.peopleOpen)
     q["gate:people"] = { type: "noul", instructions: "The reply introduces a named character who wasn't in the game state before" };
   if (r.itemsOpen)
@@ -12850,7 +13164,7 @@ async function bookkeeping(opts) {
       (p.undress ??= []).push(slot);
   }
   const needsWriting = new Set;
-  for (const g of ["people", "items", "move"]) {
+  for (const g of ["people", "items", "move", "body"]) {
     const a = ans[`gate:${g}`];
     if (a?.type === "noul" && a.noul >= 0.6)
       needsWriting.add(g);
@@ -13175,6 +13489,10 @@ async function extract(r, s, playerText, reply, settings, userId, only, applied)
     if (owned.length)
       allowed.push(`- "wear": ids of owned clothing put on (${owned.join(", ")})`);
   }
+  if (want("body") && r.body.enabled && r.body.narrator) {
+    const now = Object.entries(s.body).map(([p, t]) => `${p}: ${Object.entries(t).map(([k, v]) => `${k} ${v}`).join(", ")}`).join("; ") || "nothing recorded";
+    allowed.push(`- "body": lasting changes to the player's body as {"part": {"trait": "new value"}} (null removes a trait)${r.body.open ? "; new parts are allowed" : `; parts: ${Object.keys(r.body.parts).join(", ")}`}. Now: ${now}`);
+  }
   if (!allowed.length)
     return null;
   const system = [
@@ -13466,12 +13784,13 @@ async function interceptor(messages, ctx) {
         }
       }
       const seed = settings.swipesReroll ? randomSeed() : `${lastUser?.id ?? "start"}:${intent?.actionId ?? "none"}`;
-      let res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene });
+      const playerText = lastUser?.content ?? "";
+      let res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene, playerText });
       if (decider && res.needs.length) {
         const card = res.needs.some((n) => n.id.startsWith("date:pref:") || n.id.startsWith("date:adult:")) ? await characterBrief(ctx.chatId, ctx.userId) : undefined;
         const o = await odds2({ decider, r, s: before, specs: res.needs, playerText: lastUser?.content ?? "", sceneText, player, timeoutMs: budget(), card });
         if (Object.keys(o).length)
-          res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene, odds: o });
+          res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene, odds: o, playerText });
       }
       rec = res.record;
       if (confidence !== undefined && rec.action)
@@ -13523,6 +13842,8 @@ async function proposeChanges(decider, r, p, reply, settings, userId) {
       proposal.items = { ...proposal.items ?? {}, ...named.items };
     if (named?.move && !proposal.move)
       proposal.move = named.move;
+    if (named?.body)
+      proposal.body = named.body;
     if (named?.feelings)
       proposal.feelings = { ...proposal.feelings ?? {}, ...named.feelings };
   }
@@ -13971,7 +14292,7 @@ var PART_CONTENTS = {
   core: "name, description, player, clock, start, hud, narration",
   stats: "stats",
   people: "relationships (stats + people with schedules)",
-  world: "weather, locations, items (incl. clothing), wardrobe, conditions, flags, start.items",
+  world: "weather, locations, items (incl. clothing), wardrobe, body, conditions, flags, start.items",
   actions: "actions",
   encounters: "encounters, dungeons",
   journal: "codex, feats, perks, checkpoints, endings",
@@ -13988,7 +14309,7 @@ function partForIssue(where) {
     return "stats";
   if (head.startsWith("relationships") || head.startsWith("people"))
     return "people";
-  if (["locations", "items", "wardrobe", "weather", "conditions", "flags"].some((k) => head.startsWith(k)))
+  if (["locations", "items", "wardrobe", "weather", "conditions", "flags", "body"].some((k) => head.startsWith(k)))
     return "world";
   if (head.startsWith("actions"))
     return "actions";
@@ -14083,6 +14404,9 @@ encounters:
     foe_moves: { grab: { desc: "Grabs you", weight: 2, pain: +8 }, threaten: { desc: "Threatens", weight: 1, stress: +6 } }
     end_when: { won: "foe.nerve <= 0", beaten: "pain >= 80" }
     outcomes: { won: { hint: "They flee." }, escaped: { stress: +3 }, beaten: { money: "-min(money, 30)" } }
+    # momentum: { win: won, lose: beaten, swing: { crit_success: 40, success: 25, partial: 10, fail: -20, crit_fail: -35 } }
+    #   a fight that swings (−100…+100): each check moves it, foe moves can too (effect momentum: -15), and only a full swing ends it;
+    #   each round reaches the narrator as ordered beats (a long typed move is kept as written). Formula name: momentum.
 
 dungeons:         # roguelike diving: floors of face-down tiles, one way down, quit any time (keep the loot; get wiped out and lose it)
   old_mines:
@@ -14100,6 +14424,14 @@ dungeons:         # roguelike diving: floors of face-down tiles, one way down, q
       smugglers_cache: { text: "A smugglers' cache behind a loose stone.", choices: { take: { label: Take it, gold: "30 + depth * 10", crime: +5 }, leave: { label: Leave it } } }
     # choice outcome keys: text, heal, hurt, mana (percent), gold, xp, bag { potion: 1 }, fight (enemy|elite|monster id), bond, desire, plus any effect; chance: "60" rolls d100
     # monsters: { id: { name, like: goblin, tier: 1-4, hp, atk, def, mat, mdf, agi, skills: [attack, smash], xp, gold } }; bosses: [orc_warlord, hydra]
+
+body:             # the player character's body; the story may change it after a reply (narrator: false to stop that; open: false = only these parts)
+  parts: { hair: { color: brown, length: shoulder-length }, eyes: { color: green }, ears: human, build: { height: average } }   # any parts, any traits
+  hidden_by: { chest: [top, under_top] }       # wardrobe slots covering a part: others see it when any of them is empty
+  transforms:
+    feline_splice: { label: Feline splice, chance: 70, stages: [ { set: { ears: { type: cat } }, text: "Soft cat ears push up through {{user}}'s hair." }, { set: { tail: { type: cat } } } ] }
+EFFECTS for the body: body: { hair: { color: red } } (null removes a trait), transform: { feline_splice: 1 } (advance stages; each rolls its chance).
+FUNCTIONS: body('hair', 'color') ('' when absent), transformed('feline_splice') (stages so far).
 
 codex: { docks: { title: The Docks, category: Places, text: "...", unlock: "location == 'docks'", lore: [Lorebook entry title] } }
 feats: { night_owl: { name: Night owl, desc: "...", unlock: "hour >= 2 and hour < 5", reward: { stress: -5 } } }

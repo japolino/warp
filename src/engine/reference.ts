@@ -9,7 +9,7 @@ export const PART_CONTENTS: Record<PartLabel, string> = {
   core: "name, description, player, clock, start, hud, narration",
   stats: "stats",
   people: "relationships (stats + people with schedules)",
-  world: "weather, locations, items (incl. clothing), wardrobe, conditions, flags, start.items",
+  world: "weather, locations, items (incl. clothing), wardrobe, body, conditions, flags, start.items",
   actions: "actions",
   encounters: "encounters, dungeons",
   journal: "codex, feats, perks, checkpoints, endings",
@@ -25,7 +25,7 @@ export function partForIssue(where: string): PartLabel {
   if ((PART_LABELS as readonly string[]).includes(head)) return head as PartLabel;
   if (head.startsWith("stats")) return "stats";
   if (head.startsWith("relationships") || head.startsWith("people")) return "people";
-  if (["locations", "items", "wardrobe", "weather", "conditions", "flags"].some((k) => head.startsWith(k))) return "world";
+  if (["locations", "items", "wardrobe", "weather", "conditions", "flags", "body"].some((k) => head.startsWith(k))) return "world";
   if (head.startsWith("actions")) return "actions";
   if (head.startsWith("encounters") || head.startsWith("dungeons")) return "encounters";
   if (["codex", "feats", "perks", "checkpoints", "endings"].some((k) => head.startsWith(k))) return "journal";
@@ -134,6 +134,14 @@ dungeons:         # roguelike diving: floors of face-down tiles, one way down, q
       smugglers_cache: { text: "A smugglers' cache behind a loose stone.", choices: { take: { label: Take it, gold: "30 + depth * 10", crime: +5 }, leave: { label: Leave it } } }
     # choice outcome keys: text, heal, hurt, mana (percent), gold, xp, bag { potion: 1 }, fight (enemy|elite|monster id), bond, desire, plus any effect; chance: "60" rolls d100
     # monsters: { id: { name, like: goblin, tier: 1-4, hp, atk, def, mat, mdf, agi, skills: [attack, smash], xp, gold } }; bosses: [orc_warlord, hydra]
+
+body:             # the player character's body; the story may change it after a reply (narrator: false to stop that; open: false = only these parts)
+  parts: { hair: { color: brown, length: shoulder-length }, eyes: { color: green }, ears: human, build: { height: average } }   # any parts, any traits
+  hidden_by: { chest: [top, under_top] }       # wardrobe slots covering a part: others see it when any of them is empty
+  transforms:
+    feline_splice: { label: Feline splice, chance: 70, stages: [ { set: { ears: { type: cat } }, text: "Soft cat ears push up through {{user}}'s hair." }, { set: { tail: { type: cat } } } ] }
+EFFECTS for the body: body: { hair: { color: red } } (null removes a trait), transform: { feline_splice: 1 } (advance stages; each rolls its chance).
+FUNCTIONS: body('hair', 'color') ('' when absent), transformed('feline_splice') (stages so far).
 
 codex: { docks: { title: The Docks, category: Places, text: "...", unlock: "location == 'docks'", lore: [Lorebook entry title] } }
 feats: { night_owl: { name: Night owl, desc: "...", unlock: "hour >= 2 and hour < 5", reward: { stress: -5 } } }

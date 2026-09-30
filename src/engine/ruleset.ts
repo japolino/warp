@@ -83,6 +83,10 @@ export interface Effect {
   gauge?: string | number;
   /** Swing the encounter's momentum toward the player (+) or the foe (−). */
   momentum?: string | number;
+  /** Set body traits: `body: { hair: { color: red } }` (null removes a trait). */
+  body: Record<string, Record<string, string | null>>;
+  /** Advance transformations by this many stages: `transform: { fox_charm: 1 }`. */
+  transform: Record<string, string | number>;
 }
 
 export interface DecideOption { id: string; desc: string; weight: number; effect: Effect }
@@ -356,6 +360,27 @@ export interface CheckpointsDef {
 
 export interface EndingDef { id: string; title: string; kind: "good" | "bad" | "neutral"; when: string; text: string }
 
+/** A transformation in stages; each step advances one stage with `chance` percent. */
+export interface TransformDef {
+  id: string;
+  label: string;
+  chance: string | number;
+  stages: { set: Record<string, Record<string, string | null>>; text?: string }[];
+}
+
+/** The player character's body: parts with free-form traits, what covers them, and transformations. */
+export interface BodyDef {
+  enabled: boolean;
+  /** The story may change the body after a reply. */
+  narrator: boolean;
+  /** The story may add parts the ruleset didn't list (horns, wings…). */
+  open: boolean;
+  parts: Record<string, Record<string, string>>;
+  /** Clothing slots that cover a part; it's visible when any of them is empty. */
+  hiddenBy: Record<string, string[]>;
+  transforms: Record<string, TransformDef>;
+}
+
 export interface Ruleset {
   name: string;
   description?: string;
@@ -411,6 +436,7 @@ export interface Ruleset {
   endings: Record<string, EndingDef>;
   /** What carries over to a new run after an ending. */
   legacy: KeepSpec;
+  body: BodyDef;
 }
 
 export interface Issue {
@@ -578,8 +604,20 @@ function normStat(id: string, raw: unknown, where: string, c: Ctx, forRel = fals
 export function emptyEffect(): Effect {
   return {
     stats: {}, set: {}, flags: {}, items: {}, rel: {}, addConditions: {}, removeConditions: [], decide: [],
-    foe: {}, unlock: [], wear: [], undress: [], damage: {}, front: {}, reveal: [],
+    foe: {}, unlock: [], wear: [], undress: [], damage: {}, front: {}, reveal: [], body: {}, transform: {},
   };
+}
+
+/** `{ hair: { color: red, length: null } }` → part → trait → value (null removes). */
+function normTraits(raw: unknown, where: string, c: Ctx): Record<string, Record<string, string | null>> {
+  const out: Record<string, Record<string, string | null>> = {};
+  if (!isObj(raw)) { c.warn(where, "expected parts with traits, like `hair: { color: red }`"); return out; }
+  for (const [part, traits] of Object.entries(raw)) {
+    if (typeof traits === "string") { out[part] = { type: traits }; continue; }
+    if (!isObj(traits)) { c.warn(`${where} › ${part}`, "expected traits, like `{ color: red }`"); continue; }
+    out[part] = Object.fromEntries(Object.entries(traits).map(([k, v]) => [k, v === null || v === false ? null : String(v)]));
+  }
+  return out;
 }
 
 export const list = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : []);
@@ -698,10 +736,19 @@ export function normEffect(raw: unknown, where: string, c: Ctx, known: { stats: 
         if (x !== undefined) e.momentum = x;
         break;
       }
+      case "body":
+        // A stat called "body" keeps its shorthand (`body: +1`); a map sets body traits.
+        if (known.stats.has(k) && !isObj(v)) { const x = c.expr(v, w); if (x !== undefined) e.stats[k] = x; }
+        else Object.assign(e.body, normTraits(v, w, c));
+        break;
+      case "transform":
+        if (isObj(v)) for (const [id, n] of Object.entries(v)) { const x = c.expr(n, `${w} › ${id}`); if (x !== undefined) e.transform[id] = x; }
+        else for (const id of list(v)) e.transform[id] = 1;
+        break;
       default:
         // Flat shorthand: a known stat name maps to a delta.
         if (known.stats.has(k)) { const x = c.expr(v, w); if (x !== undefined) e.stats[k] = x; }
-        else c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, unlock, wear, undress, damage, front, reveal, gauge, momentum)`);
+        else c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, unlock, wear, undress, damage, front, reveal, gauge, momentum, body, transform)`);
     }
   }
   return e;
@@ -1149,6 +1196,30 @@ function normEndings(raw: unknown, c: Ctx): Record<string, EndingDef> {
   return out;
 }
 
+function normBody(raw: unknown, c: Ctx): BodyDef {
+  const def: BodyDef = { enabled: false, narrator: true, open: true, parts: {}, hiddenBy: {}, transforms: {} };
+  if (raw === undefined || raw === false) return def;
+  if (!isObj(raw)) { c.warn("Body", "should be a map with `parts:`"); return def; }
+  def.enabled = true;
+  def.narrator = raw.narrator !== false;
+  def.open = raw.open !== false;
+  for (const [part, traits] of Object.entries(normTraits(raw.parts ?? {}, "Body › parts", c))) {
+    def.parts[part] = Object.fromEntries(Object.entries(traits).filter(([, v]) => v !== null)) as Record<string, string>;
+  }
+  if (isObj(raw.hidden_by)) for (const [part, slots] of Object.entries(raw.hidden_by)) def.hiddenBy[part] = list(slots);
+  for (const [id, t] of Object.entries(isObj(raw.transforms) ? raw.transforms : {})) {
+    const w = `Body › transforms › ${id}`;
+    if (!isObj(t) || !Array.isArray(t.stages) || !t.stages.length) { c.warn(w, "needs `stages:` — a list of `{ set: { part: { trait: value } }, text }`"); continue; }
+    const chance = c.expr(t.chance ?? 100, `${w} › chance`) ?? 100;
+    const stages = (t.stages as unknown[]).map((st, i) => {
+      const sr: Raw = isObj(st) ? st : {};
+      return { set: normTraits(sr.set ?? {}, `${w} › stage ${i + 1}`, c), ...(typeof sr.text === "string" ? { text: sr.text } : {}) };
+    });
+    def.transforms[id] = { id, label: typeof t.label === "string" ? t.label : titleCase(id), chance, stages };
+  }
+  return def;
+}
+
 const SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
 
 export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issues: Issue[] } {
@@ -1404,6 +1475,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const endings = normEndings(Object.fromEntries(Object.entries(endingsRaw).filter(([k]) => k !== "legacy")), c);
   const legacy = normKeep(endingsRaw.legacy, "Endings › legacy", c, { codex: true, feats: true, perks: true });
   const checkpoints = normCheckpoints(raw.checkpoints, Object.keys(endings).length > 0, c, known);
+  const body = normBody(raw.body, c);
 
   const ruleset: Ruleset = {
     name: typeof raw.name === "string" ? raw.name : "Untitled ruleset",
@@ -1433,7 +1505,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     narration: { notes: typeof narrRaw.notes === "string" ? narrRaw.notes : undefined, numbers: narrRaw.numbers === true },
     weather, wardrobe, encounters, codex, feats, perks,
     ...(perkPoints && stats[perkPoints] ? { perkPoints } : {}),
-    secrets, fronts, randomEvents, liveChoices, dungeons, dating, mind, checkpoints, endings, legacy,
+    secrets, fronts, randomEvents, liveChoices, dungeons, dating, mind, checkpoints, endings, legacy, body,
   };
 
   // Cross-references that need everything loaded.

@@ -357,6 +357,11 @@ var STYLES = `
 .warp-dg-mates { display: flex; flex-direction: column; gap: 4px; }
 .warp-dg-mate { display: flex; align-items: center; gap: 6px; }
 
+/* ───────── swinging fights ───────── */
+.warp-momentum { position: relative; height: 8px; border-radius: 4px; background: linear-gradient(90deg, var(--warp-good), var(--warp-fill) 45%, var(--warp-fill) 55%, var(--warp-bad)); }
+.warp-momentum-mid { position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--warp-border); }
+.warp-momentum-mark { position: absolute; top: -3px; width: 4px; height: 14px; margin-left: -2px; border-radius: 2px; background: var(--warp-text); transition: left 400ms ease; }
+
 /* ───────── checkpoints ───────── */
 .warp-run-slot { display: grid; grid-template-columns: 52px 1fr auto auto; gap: 6px; align-items: center; font-size: 12.5px; }
 .warp-run-slot-name { color: var(--warp-dim); }
@@ -513,9 +518,10 @@ Click to adjust`)}">
         <button class="warp-btn warp-btn-primary" data-save-rel="${esc(`${p.id}:${s.id}`)}">Set</button>
       </div>`).join("")}
     </div>`).join("") : `<div class="warp-empty">No one yet.</div>`, !opts.compact || presentCount > 0);
+  const body = h.body ? section("Body", 0, `${h.body.map((b) => `<div class="warp-item"><span>${esc(b.label)}</span><span class="${b.covered ? "warp-dim" : ""}" title="${b.covered ? "Covered by clothing" : "Visible"}">${esc(b.text)}${b.covered ? " \uD83D\uDC55" : ""}</span></div>`).join("")}${h.transforms.map((t) => `<div class="warp-item"><span>✦ ${esc(t.label)}</span><span class="warp-dim">stage ${t.stage} / ${t.of}</span></div>`).join("")}`, false) : "";
   const loose = h.items.filter((i) => !i.worn);
   const items = section("Inventory", loose.length, loose.length ? loose.map((i) => `<div class="warp-item"><span>${esc(i.name)}</span>${i.count > 1 ? `<span class="warp-kbd">×${i.count}</span>` : ""}</div>`).join("") : `<div class="warp-empty">Empty-handed.</div>`, !opts.compact);
-  return `${renderEncounter(h)}<div class="warp-hud-top">${top}</div>${renderWarmth(h)}<div class="warp-bars">${bars}</div>${renderOutfit(h, opts.compact)}${skills}${people}${items}${renderPerks(h, opts.compact)}`;
+  return `${renderEncounter(h)}<div class="warp-hud-top">${top}</div>${renderWarmth(h)}<div class="warp-bars">${bars}</div>${renderOutfit(h, opts.compact)}${skills}${people}${body}${items}${renderPerks(h, opts.compact)}`;
 }
 function renderEncounter(h) {
   const e = h.encounter;
@@ -524,6 +530,8 @@ function renderEncounter(h) {
   return `<div class="warp-encounter">
     <div class="warp-eyebrow"><span>⚔ ${esc(e.name)}</span><span>Round ${e.round + 1}</span></div>
     <div class="warp-encounter-foe">${esc(e.foe)}</div>
+    ${e.momentum !== null ? `<div class="warp-bar-head"><span>You</span><span class="warp-dim">Momentum</span><span>${esc(e.foe)}</span></div>
+      <div class="warp-momentum" title="Momentum ${Math.round(e.momentum)} — a full swing either way ends the fight"><div class="warp-momentum-mid"></div><div class="warp-momentum-mark" style="left:${((100 - e.momentum) / 2).toFixed(1)}%"></div></div>` : ""}
     ${e.stats.map((s) => `<div class="warp-bar-head"><span>${esc(s.label)}</span><span class="warp-dim">${esc(Math.round(s.value))} / ${esc(s.max)}</span></div>
       <div class="warp-bar-track"><div class="warp-bar-fill warp-bg-${s.tone}" style="width:${(s.pct * 100).toFixed(1)}%"></div></div>`).join("")}
   </div>`;

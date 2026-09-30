@@ -9,7 +9,7 @@ import { SKILLS } from "./dungeon/content.js";
 export const FUNCTIONS = [
   "has", "count", "flag", "cond", "at", "rel", "met", "between", "roll",
   "wearing", "worn", "trait", "present", "where", "codex", "feat", "perk",
-  "secret", "front", "front_stage", "happened", "deepest", "partner", "dates", "stage", "saved",
+  "secret", "front", "front_stage", "happened", "deepest", "partner", "dates", "stage", "saved", "body", "transformed",
   "min", "max", "clamp", "floor", "ceil", "round", "abs",
 ];
 
@@ -85,6 +85,14 @@ export function lintRuleset(r: Ruleset): Issue[] {
       if (!slots.includes(slot)) issues.push({ level: "warning", where, message: `"${slot}" isn't a wardrobe slot${suggest(slot, slots)}` });
     }
     for (const [slot, v] of Object.entries(e.damage)) check(v, `${where} › damage › ${slot}`, extra);
+    for (const [id, v] of Object.entries(e.transform)) {
+      if (!r.body.transforms[id]) issues.push({ level: "warning", where, message: `"${id}" isn't a transformation under body › transforms${suggest(id, Object.keys(r.body.transforms))}` });
+      check(v, `${where} › transform › ${id}`, extra);
+    }
+    if (Object.keys(e.body).length && !r.body.enabled) issues.push({ level: "warning", where, message: "changes the body, but the ruleset has no `body:` section" });
+    else if (!r.body.open) for (const part of Object.keys(e.body)) {
+      if (!r.body.parts[part]) issues.push({ level: "warning", where, message: `"${part}" isn't a body part (body › parts) and the body is closed (open: false)` });
+    }
     if (e.startEncounter && !r.encounters[e.startEncounter]) {
       issues.push({ level: "warning", where, message: `starts encounter "${e.startEncounter}", which doesn't exist${suggest(e.startEncounter, Object.keys(r.encounters))}` });
     }
@@ -206,6 +214,11 @@ export function lintRuleset(r: Ruleset): Issue[] {
     for (const id of k.flags) if (!r.flags[id]) issues.push({ level: "warning", where: "Checkpoints › keep", message: `"${id}" isn't a declared flag` });
   }
   for (const e of Object.values(r.endings)) check(e.when, `Endings › ${e.id} › when`);
+  const slotIds = r.wardrobe.slots.map((s) => s.id);
+  for (const [part, slots] of Object.entries(r.body.hiddenBy)) for (const slot of slots) {
+    if (!slotIds.includes(slot)) issues.push({ level: "warning", where: `Body › hidden_by › ${part}`, message: `"${slot}" isn't a wardrobe slot${suggest(slot, slotIds)}` });
+  }
+  for (const t of Object.values(r.body.transforms)) check(t.chance, `Body › transforms › ${t.id} › chance`);
   for (const o of r.mind.overrides) {
     const w = `Mind › overrides › ${o.id}`;
     check(o.when, `${w} › when`, { target: "someone" });
