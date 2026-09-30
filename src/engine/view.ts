@@ -6,7 +6,7 @@ import {
   bandFor, formatClock, formatNumber, gradeFor, initialState, itemName, kinAge, makeEnv, personName, statMax,
   type GameState, type WarpEvent,
 } from "./state.js";
-import { availableChoices, LIVE_PREFIX, odds, perkBlocker, RUN_EPILOGUE, TIER_LABEL, TRAVEL_PREFIX, travelTargets, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
+import { availableChoices, canExplore, EXPLORE, LIVE_PREFIX, odds, perkBlocker, RUN_EPILOGUE, TIER_LABEL, TRAVEL_PREFIX, travelTargets, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
 import {
   dateAt, exposedSlots, isIndoors, ordinal, personLocation, presentPeople, seasonAt, temperatureAt, warmthNeeded, warmthOf, weatherAt,
 } from "./world.js";
@@ -374,6 +374,7 @@ export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; 
       params: [],
     });
   });
+  const explore = canExplore(r, s) ? [plain(EXPLORE, r.discovery.label, "Travel", "Look for somewhere you haven't been")] : [];
   const travel: ChoiceView[] = travelTargets(r, s).map((id) => ({
     id: `${TRAVEL_PREFIX}${id}`,
     label: `Go to ${r.locations[id].name}`,
@@ -398,7 +399,7 @@ export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; 
         params: a.params.map((p) => ({ id: p.id, label: p.label, options: Object.keys(p.options), default: p.default })),
       };
     });
-  return [...live, ...actions, ...talk, ...work, ...dungeons, ...travel];
+  return [...live, ...actions, ...talk, ...work, ...dungeons, ...travel, ...explore];
 }
 
 // ───────────────────────── change summaries ─────────────────────────

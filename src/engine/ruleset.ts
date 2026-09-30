@@ -468,6 +468,21 @@ export interface ObserversDef {
 export type SeenReaction = "unnoticed" | "glance" | "interested" | "disapproving" | "predatory";
 export const SEEN_REACTIONS: SeenReaction[] = ["unnoticed", "glance", "interested", "disapproving", "predatory"];
 
+/** Exploring can turn up places the ruleset never had; they're written into the ruleset for good. */
+export interface DiscoveryDef {
+  enabled: boolean;
+  /** Where exploring can find somewhere new (empty = any place). */
+  at: string[];
+  /** Percent chance per exploration (formula); each fruitless try adds 10. */
+  chance: string | number;
+  /** Places that can be discovered in total. */
+  max: number;
+  time: number;
+  label: string;
+  /** Guidance for the writer inventing places ("small, grounded places…"). */
+  guide?: string;
+}
+
 export interface Ruleset {
   name: string;
   description?: string;
@@ -531,6 +546,7 @@ export interface Ruleset {
   obligations: Record<string, ObligationDef>;
   jobs: Record<string, JobDef>;
   observers: ObserversDef;
+  discovery: DiscoveryDef;
 }
 
 export interface Issue {
@@ -1465,6 +1481,20 @@ function normObservers(raw: unknown, c: Ctx, known: { stats: Set<string> }): Obs
   return def;
 }
 
+function normDiscovery(raw: unknown, c: Ctx): DiscoveryDef {
+  const def: DiscoveryDef = { enabled: false, at: [], chance: 25, max: 12, time: 60, label: "Explore around here" };
+  if (raw === undefined || raw === false) return def;
+  const r: Raw = isObj(raw) ? raw : {};
+  def.enabled = true;
+  def.at = list(r.at);
+  def.chance = c.expr(r.chance ?? 25, "Discovery › chance") ?? 25;
+  def.max = Math.max(0, Math.round(c.num(r.max, "Discovery › max", 12)));
+  def.time = Math.max(0, c.num(r.time, "Discovery › time", 60));
+  if (typeof r.label === "string") def.label = r.label;
+  if (typeof r.guide === "string") def.guide = r.guide;
+  return def;
+}
+
 const SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
 
 export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issues: Issue[] } {
@@ -1728,6 +1758,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const obligations = normObligations(raw.obligations ?? raw.debts, c, known, moneyId);
   const jobs = normJobs(raw.jobs, c, known);
   const observers = normObservers(raw.observers ?? raw.being_seen, c, known);
+  const discovery = normDiscovery(raw.discovery, c);
 
   const ruleset: Ruleset = {
     name: typeof raw.name === "string" ? raw.name : "Untitled ruleset",
@@ -1757,7 +1788,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     narration: { notes: typeof narrRaw.notes === "string" ? narrRaw.notes : undefined, numbers: narrRaw.numbers === true },
     weather, wardrobe, encounters, codex, feats, perks,
     ...(perkPoints && stats[perkPoints] ? { perkPoints } : {}),
-    secrets, fronts, randomEvents, liveChoices, dungeons, dating, mind, checkpoints, endings, legacy, body, companions, bonds, lineage, obligations, jobs, observers,
+    secrets, fronts, randomEvents, liveChoices, dungeons, dating, mind, checkpoints, endings, legacy, body, companions, bonds, lineage, obligations, jobs, observers, discovery,
   };
 
   // Cross-references that need everything loaded.

@@ -16,6 +16,7 @@ import { extract, type ExtractPart } from "./helpers.js";
 import { host, logError } from "./host.js";
 import { activeRecord, foldPath, getMessages, patchMeta, patchWarpMeta, warpMeta, writeRecord, type Msg, type Suggestion } from "./ledger.js";
 import { writeLiveChoices } from "./live.js";
+import { discoverPlace } from "./discover.js";
 import { getSettings } from "./settings.js";
 import { characterBrief, getRuleset } from "./source.js";
 import { busyChats, pushState, schedulePush } from "./state-push.js";
@@ -196,6 +197,8 @@ export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorCon
       }
       rec = res.record;
       if (confidence !== undefined && rec.action) rec.confidence = confidence;
+      // Exploring found somewhere new: invent it, save it to the ruleset, step into it.
+      if (rec.discover && !info.isDryRun && loaded) await discoverPlace(loaded, r, before, rec, ctx.chatId, settings, ctx.userId);
       after = cloneState(before);
       for (const e of rec.events) applyEvent(after, e, r);
       if (!info.isDryRun) {

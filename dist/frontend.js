@@ -168,6 +168,9 @@ var STYLES = `
 .warp-die { display: inline-grid; place-items: center; min-width: 24px; height: 24px; padding: 0 4px; border-radius: 6px; border: 1px solid var(--warp-border); font-weight: 700; font-variant-numeric: tabular-nums; color: var(--warp-text); }
 .warp-die[data-dropped] { opacity: .35; text-decoration: line-through; }
 .warp-band { color: var(--warp-dim); font-style: italic; }
+.warp-why-btn { font: inherit; cursor: pointer; border: 1px dashed var(--warp-border); background: transparent; color: var(--warp-muted); }
+.warp-why-detail { flex-basis: 100%; display: none; flex-direction: column; gap: 3px; padding: 4px 2px 0; font-size: 12px; color: var(--warp-muted); white-space: normal; }
+.warp-chips[data-why-open] .warp-why-detail { display: flex; }
 
 .warp-decision { border: 1px solid var(--warp-info); color: var(--warp-text); }
 .warp-suggest { background: color-mix(in srgb, var(--warp-accent) 14%, transparent); border: 1px solid var(--warp-accent); gap: 8px; padding: 3px 4px 3px 10px; }
@@ -520,10 +523,11 @@ Click to adjust`)}">
       </div>`).join("")}
     </div>`).join("") : `<div class="warp-empty">No one yet.</div>`, !opts.compact || presentCount > 0);
   const body = h.body ? section("Body", 0, `${h.body.map((b) => `<div class="warp-item"><span>${esc(b.label)}</span><span class="${b.covered ? "warp-dim" : ""}" title="${b.covered ? "Covered by clothing" : "Visible"}">${esc(b.text)}${b.covered ? " \uD83D\uDC55" : ""}</span></div>`).join("")}${h.transforms.map((t) => `<div class="warp-item"><span>✦ ${esc(t.label)}</span><span class="warp-dim">stage ${t.stage} / ${t.of}</span></div>`).join("")}`, false) : "";
+  const dues = h.dues.length ? section("Bills", h.dues.filter((d) => d.tone === "bad").length, h.dues.map((d) => `<div class="warp-item"><span>${esc(d.label)}${d.owed > 0 ? ` <span class="warp-dim">${esc(h.money?.replace(/[\d.,]+/, "") ?? "")}${esc(d.owed)}</span>` : ""}</span><span class="warp-tone-${d.tone}">${esc(d.text)}</span></div>`).join(""), !opts.compact || h.dues.some((d) => d.tone === "bad")) : "";
   const family = h.family.length ? section("Family", h.family.length, h.family.map((f) => `<div class="warp-item"><span>${esc(f.name)}</span><span class="warp-dim">${esc(f.text)}</span></div>`).join(""), !opts.compact) : "";
   const loose = h.items.filter((i) => !i.worn);
   const items = section("Inventory", loose.length, loose.length ? loose.map((i) => `<div class="warp-item"><span>${esc(i.name)}</span>${i.count > 1 ? `<span class="warp-kbd">×${i.count}</span>` : ""}</div>`).join("") : `<div class="warp-empty">Empty-handed.</div>`, !opts.compact);
-  return `${renderEncounter(h)}<div class="warp-hud-top">${top}</div>${renderWarmth(h)}<div class="warp-bars">${bars}</div>${renderOutfit(h, opts.compact)}${skills}${people}${family}${body}${items}${renderPerks(h, opts.compact)}`;
+  return `${renderEncounter(h)}<div class="warp-hud-top">${top}</div>${renderWarmth(h)}<div class="warp-bars">${bars}</div>${renderOutfit(h, opts.compact)}${skills}${dues}${people}${family}${body}${items}${renderPerks(h, opts.compact)}`;
 }
 function renderEncounter(h) {
   const e = h.encounter;
@@ -704,13 +708,20 @@ ${m.cause}: ${what} (${Math.round(m.chance)}% chance at the time)`)}">\uD83E\uDD
   if ((rec.contradiction ?? 0) >= 0.6) {
     out.push(`<span class="warp-chip warp-tone-warn" title="The decision model thinks this reply may contradict the game state (${Math.round(rec.contradiction * 100)}%). Consider swiping.">⚠ may contradict the state</span>`);
   }
+  const whys = [];
   for (const ch of rec.changes) {
     const narr = ch.src === "narrator" || ch.src === "manual";
+    if (ch.why?.length)
+      whys.push(`<div><b>${esc(ch.text)}</b> <span class="warp-dim">←</span> ${ch.why.map(esc).join(" · ")}</div>`);
     const undo = narr && ch.undo?.length ? `<button class="warp-chip-undo" data-undo="${esc(ch.undo.join(","))}" title="Undo this change" aria-label="Undo">×</button>` : "";
     out.push(`<span class="warp-chip warp-tone-${ch.tone}${narr ? " warp-chip-narr" : ""}" title="${esc(narr ? ch.src === "manual" ? "You set this" : "Read from the story — click × to undo" : "Applied by the rules")}">${esc(ch.text)}${ch.band ? ` <span class="warp-band">${esc(ch.band)}</span>` : ""}${undo}</span>`);
   }
   if (rec.veiled)
     out.push(`<span class="warp-chip warp-tone-warn" title="Narrated off-screen by your Veils setting">◐ veiled</span>`);
+  if (whys.length) {
+    out.push(`<button class="warp-chip warp-why-btn" data-why title="Show what caused each change">Why?</button>`);
+    out.push(`<div class="warp-why-detail">${whys.join("")}</div>`);
+  }
   return out.join("");
 }
 function renderSuggestion(s) {
@@ -2494,6 +2505,15 @@ function setup(ctx) {
         row.removeAttribute("data-open");
       else
         row.setAttribute("data-open", "");
+      return;
+    }
+    const why = t.closest(".warp-chips [data-why]");
+    if (why) {
+      const row = why.closest(".warp-chips");
+      if (row.hasAttribute("data-why-open"))
+        row.removeAttribute("data-why-open");
+      else
+        row.setAttribute("data-why-open", "");
       return;
     }
     const redo = t.closest(".warp-chips [data-redo]");

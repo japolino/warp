@@ -160,6 +160,11 @@ body:             # the player character's body; the story may change it after a
 EFFECTS for the body: body: { hair: { color: red } } (null removes a trait), transform: { feline_splice: 1 } (advance stages; each rolls its chance).
 FUNCTIONS: body('hair', 'color') ('' when absent), transformed('feline_splice') (stages so far).
 
+discovery:        # exploring can turn up places the ruleset never had; each is written into the ruleset lorebook and stays on the map
+  at: [docks, park]                # where (empty = anywhere); found places can be explored too
+  chance: 25                       # percent per try (formula); each fruitless try adds 10
+  max: 12
+  guide: "Small, grounded places: a back-alley bar, a hidden garden."
 observers:        # being seen: while \`when\` holds, each adult present reacts individually (the decision model reads them; children never take part)
   when: "exposed > 0"
   crowd: 2                         # anonymous passers-by when outdoors

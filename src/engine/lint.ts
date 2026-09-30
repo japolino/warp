@@ -217,6 +217,10 @@ export function lintRuleset(r: Ruleset): Issue[] {
   }
   for (const e of Object.values(r.endings)) check(e.when, `Endings › ${e.id} › when`);
   const people = Object.keys(r.people);
+  if (r.discovery.enabled) {
+    check(r.discovery.chance, "Discovery › chance");
+    for (const loc of r.discovery.at) if (!r.locations[loc]) issues.push({ level: "warning", where: "Discovery › at", message: `"${loc}" isn't a location${suggest(loc, Object.keys(r.locations))}` });
+  }
   if (r.observers.enabled) {
     check(r.observers.when, "Observers › when");
     for (const [k, eff] of Object.entries(r.observers.reactions)) if (eff) checkEffect(eff, `Observers › reactions › ${k}`, { target: "someone" });

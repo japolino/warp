@@ -1,5 +1,5 @@
 import type { SpindleAPI } from "lumiverse-spindle-types";
-import { availableChoices, buyPerk, changeClothes, forgetPerson, LIVE_PREFIX, manualSet, manualSetRel, RUN_EPILOGUE, runOp, TARGET_SEP, TRAVEL_PREFIX, travelTargets, type Intent, type TurnRecord } from "./engine/resolve.js";
+import { availableChoices, canExplore, EXPLORE, buyPerk, changeClothes, forgetPerson, LIVE_PREFIX, manualSet, manualSetRel, RUN_EPILOGUE, runOp, TARGET_SEP, TRAVEL_PREFIX, travelTargets, type Intent, type TurnRecord } from "./engine/resolve.js";
 import type { Ruleset } from "./engine/ruleset.js";
 import type { GameState, WarpEvent } from "./engine/state.js";
 import { TEMPLATES } from "./engine/templates/index.js";
@@ -180,7 +180,11 @@ spindle.onFrontendMessage(async (raw, userId) => {
         const { state } = foldPath(r, msgs);
         let say: string;
         let intent: Intent = { actionId: msg.actionId, params: msg.params, via: "choice" };
-        if (msg.actionId === RUN_EPILOGUE) {
+        if (msg.actionId === EXPLORE) {
+          if (!canExplore(r, state)) { toast("warning", "There's nowhere new to find here.", userId); await pushState(msg.chatId, userId); return; }
+          say = "*I explore around, looking for somewhere I haven't been.*";
+          intent = { actionId: EXPLORE, via: "choice", label: "Explore" };
+        } else if (msg.actionId === RUN_EPILOGUE) {
           if (!state.ended || state.ended.told) { await pushState(msg.chatId, userId); return; }
           say = "*The end.*";
           intent = { actionId: RUN_EPILOGUE, via: "choice", label: "The ending" };

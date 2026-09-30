@@ -121,7 +121,14 @@ hud:
     },
     {
       label: "world",
-      yaml: `# {{user}}'s body. Gene-splices change it in stages; the story can change it too.
+      yaml: `# The frontier is barely charted: exploring the jungle can find new sites.
+discovery:
+  at: [jungle_edge, jungle_deep]
+  chance: 25
+  max: 10
+  guide: "Frontier-world sites: a crashed survey drone, a hunter's blind, ancient ruins, a smugglers' landing pad, a strange grove."
+
+# {{user}}'s body. Gene-splices change it in stages; the story can change it too.
 body:
   parts:
     hair: { color: dark, length: short }

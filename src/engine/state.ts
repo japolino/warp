@@ -90,6 +90,9 @@ export interface GameState {
   dues: Record<string, { due: number; owed: number; missed: number }>;
   /** Who has seen {{user}} exposed (and what), and who only heard about it. */
   seen: Record<string, { what: string; at: number; where: string; heard?: boolean }>;
+  /** Fruitless explorations per place since the last find, and the places found. */
+  explored: Record<string, number>;
+  discovered: string[];
   /** A work shift in progress. */
   job: { id: string; n: number; patron: number; earned: number; tips: number; log: { who: string; result: string }[] } | null;
   /** The story reached an ending (told = the narrator has written it). */
@@ -173,6 +176,8 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "due"; id: string; due?: number; owed?: number; missed?: number }
   | { t: "job"; job: GameState["job"] }
   | { t: "seen"; who: string; what: string; where: string; heard?: boolean }
+  | { t: "explored"; loc: string; found: boolean }
+  | { t: "discovered"; id: string }
   | { t: "save"; slot: string; label: string }
   | { t: "load"; slot: string }
   | { t: "restart" }
@@ -234,6 +239,8 @@ export function initialState(r: Ruleset): GameState {
     dues: {},
     job: null,
     seen: {},
+    explored: {},
+    discovered: [],
   };
   // Obligations: the first payment is due `first` days in; its amount is read now.
   for (const o of Object.values(r.obligations)) {
@@ -449,6 +456,8 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
     case "seen":
       if (!e.heard || !s.seen[e.who]) s.seen = { ...s.seen, [e.who]: { what: e.what, at: s.minutes, where: e.where, ...(e.heard ? { heard: true } : {}) } };
       break;
+    case "explored": s.explored = { ...s.explored, [e.loc]: e.found ? 0 : (s.explored[e.loc] ?? 0) + 1 }; break;
+    case "discovered": if (!s.discovered.includes(e.id)) s.discovered = [...s.discovered, e.id]; break;
     case "job": s.job = e.job ? structuredClone(e.job) : null; break;
     case "news": s.news = [...s.news, { text: e.text, at: s.minutes }].slice(-NEWS_KEPT); break;
     case "bond": s.bonds = { ...s.bonds, [e.a]: { ...(s.bonds[e.a] ?? {}), [e.b]: clamp((s.bonds[e.a]?.[e.b] ?? 0) + e.d, -100, 100) } }; break;

@@ -42,6 +42,8 @@ export interface TurnRecord {
   confidence?: number;
   /** Consistency check: probability the reply contradicts the state. */
   contradiction?: number;
+  /** Exploring found somewhere new: the backend writes the place and moves the player there. */
+  discover?: { from: string };
   /** The player character's mind overruled the player this turn. */
   mind?: { id: string; cause: string; kind: "fail" | "alter" | "redirect"; meant: string; chance: number };
   at: number;
@@ -121,6 +123,17 @@ class Working {
       },
     };
   }
+}
+
+/** Exploring the current place for somewhere new: `explore:`. */
+export const EXPLORE = "explore:";
+
+/** Can the player explore here for somewhere new? */
+export function canExplore(r: Ruleset, s: GameState): boolean {
+  const d = r.discovery;
+  if (!d.enabled || !s.location || s.encounter || s.dungeon || s.job || s.date || s.ended) return false;
+  if (s.discovered.length >= d.max) return false;
+  return !d.at.length || d.at.includes(s.location) || s.discovered.includes(s.location);
 }
 
 /** Pseudo-actions for walking between connected locations: `go:<location id>`. */
@@ -1031,7 +1044,19 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   // A conversation the player walked away from is over.
   if (before.date && !activeSession(r, before)) w.push({ t: "dt_end", src: "action" });
 
-  if (workIntent) {
+  if (intent?.actionId === EXPLORE) {
+    if (canExplore(r, before)) {
+      const loc = before.location!;
+      const name = before.locationName ?? loc;
+      rec.action = { id: EXPLORE, label: `Explore ${name}`, via: intent.via };
+      const chance = Math.min(100, evalNumber(r.discovery.chance, w.env(), 25) + 10 * (before.explored[loc] ?? 0));
+      const found = seededRng(`${opts.seed}:explore`)() * 100 < chance;
+      w.push({ t: "explored", loc, found, src: "action" });
+      advanceTime(w, r.discovery.time, "action");
+      if (found) rec.discover = { from: loc };
+      else w.hints.push(`{{user}} explores around ${name} but finds nothing new this time — though they're getting to know the area.`);
+    }
+  } else if (workIntent) {
     const label = because(w, "Work and bills", () => resolveWork(builderOf(w), workIntent));
     if (label) rec.action = { id: workIntent.actionId, label, via: workIntent.via };
   } else if (dateIntent) {

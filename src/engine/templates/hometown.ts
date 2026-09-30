@@ -178,7 +178,14 @@ narration:
     },
     {
       label: "world",
-      yaml: `# {{user}}'s body, as the story changes it (haircuts, tattoos, lasting marks…).
+      yaml: `# Exploring the rougher edges of town can turn up places that aren't on the map yet.
+discovery:
+  at: [docks, park, the_strip]
+  chance: 20
+  max: 8
+  guide: "Small, grounded places in a run-down seaside town: a back-alley bar, a bait shop, an abandoned pier, a late-night launderette."
+
+# {{user}}'s body, as the story changes it (haircuts, tattoos, lasting marks…).
 body:
   parts:
     hair: { color: brown, length: shoulder-length }

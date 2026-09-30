@@ -439,37 +439,6 @@ var init_dice = __esm(() => {
   TERM = /([+-]?)\s*(?:(\d*)d(\d+|%)(?:(kh|kl)(\d+))?(!)?|(\d+))/gy;
 });
 
-// src/engine/decide.ts
-function normalize(p, keys) {
-  const out = {};
-  let sum = 0;
-  for (const k of keys) {
-    const v = Number(p[k]);
-    out[k] = Number.isFinite(v) && v > 0 ? v : 0;
-    sum += out[k];
-  }
-  if (sum <= 0)
-    for (const k of keys)
-      out[k] = 1 / keys.length;
-  else
-    for (const k of keys)
-      out[k] /= sum;
-  return out;
-}
-function sample(p, rng) {
-  const keys = Object.keys(p);
-  let x = rng();
-  for (const k of keys) {
-    x -= p[k];
-    if (x <= 0)
-      return k;
-  }
-  return keys[keys.length - 1];
-}
-function noulConfidence(p) {
-  return Math.abs(2 * p - 1);
-}
-
 // src/engine/dungeon/content.ts
 var m = (id, name, tier, s, skills, xp, gold, sprite = id) => ({ id, name, sprite, tier, ...s, skills, xp, gold }), BESTIARY, DEFAULT_BOSSES, sk = (id, name, target, kind, power, mp = 0, tp = 0, extra = {}) => ({ id, name, target, kind, power, mp, tp, ...extra }), SKILLS, CLASSES, CLASS_IDS, PARTY_SPRITES, out = (o = {}) => ({ ...o, effect: emptyEffect() }), ch = (id, label, success, extra = {}) => ({ id, label, success, ...extra }), ev = (id, text, choices, minDepth = 1, weight = 1) => ({ id, text, choices, minDepth, weight }), BUILTIN_EVENTS, BUILTIN_ROMANCE, SHOP;
 var init_content = __esm(() => {
@@ -2392,6 +2361,124 @@ function normLineage(raw, c, known) {
     def.names = kids.names.map(String);
   return def;
 }
+function normObligations(raw, c, known, money) {
+  const out = {};
+  for (const [id, o] of Object.entries(isObj(raw) ? raw : {})) {
+    const w = `Obligations › ${id}`;
+    if (!isObj(o)) {
+      c.warn(w, "needs `amount:` and `every:`");
+      continue;
+    }
+    const amount = c.expr(o.amount ?? 0, `${w} › amount`) ?? 0;
+    const payWith = typeof o.pay_with === "string" ? o.pay_with : money;
+    if (!payWith) {
+      c.warn(w, "needs `pay_with:` (a stat) — the ruleset has no money stat");
+      continue;
+    }
+    const every = Math.max(0, c.num(o.every, `${w} › every`, 7));
+    let late = null;
+    if (isObj(o.late))
+      late = normDecide({ ask: o.late.ask ?? `${titleCase(id)} is overdue. What happens?`, options: o.late.options ?? o.late }, `${w} › late`, c, known)[0] ?? null;
+    out[id] = {
+      id,
+      label: typeof o.label === "string" ? o.label : titleCase(id),
+      amount,
+      every,
+      first: Math.max(0, c.num(o.first, `${w} › first`, every || 7)),
+      payWith,
+      grace: Math.max(0, c.num(o.grace, `${w} › grace`, 1)),
+      at: list(o.at),
+      late: late ? { ...late, id: `due_${id}_late` } : null,
+      ...typeof o.creditor === "string" ? { creditor: o.creditor } : {}
+    };
+  }
+  return out;
+}
+function normJobs(raw, c, known) {
+  const out = {};
+  for (const [id, j] of Object.entries(isObj(raw) ? raw : {})) {
+    const w = `Jobs › ${id}`;
+    if (!isObj(j)) {
+      c.warn(w, "needs `patrons:` and `styles:`");
+      continue;
+    }
+    const styles = {};
+    for (const [k, v] of Object.entries(isObj(j.styles) ? j.styles : {}))
+      styles[k] = typeof v === "string" ? v : titleCase(k);
+    if (!Object.keys(styles).length)
+      Object.assign(styles, { quick: "Serve them quickly", friendly: "Be warm and chatty", careful: "Take care to get it exactly right" });
+    const patrons = [];
+    (Array.isArray(j.patrons) ? j.patrons : []).forEach((p, i) => {
+      const pr = isObj(p) ? p : typeof p === "string" ? { who: p } : {};
+      if (typeof pr.who !== "string") {
+        c.warn(`${w} › patrons #${i + 1}`, "needs `who:`");
+        return;
+      }
+      const want = typeof pr.want === "string" ? pr.want : Object.keys(styles)[0];
+      if (!styles[want])
+        c.warn(`${w} › patrons #${i + 1}`, `wants "${want}", which isn't one of the styles (${Object.keys(styles).join(", ")})`);
+      patrons.push({ who: pr.who, want });
+    });
+    if (!patrons.length) {
+      c.warn(w, "needs `patrons:` — who comes in, and what they want");
+      continue;
+    }
+    const when = j.when !== undefined ? c.expr(j.when, `${w} › when`) : undefined;
+    out[id] = {
+      id,
+      label: typeof j.label === "string" ? j.label : `Work: ${titleCase(id)}`,
+      at: list(j.at),
+      customers: Math.max(1, Math.min(8, Math.round(c.num(j.customers, `${w} › customers`, 3)))),
+      pay: c.expr(j.pay ?? 0, `${w} › pay`) ?? 0,
+      tip: c.expr(j.tip ?? 0, `${w} › tip`) ?? 0,
+      gain: normEffect(j.gain ?? j.effects, `${w} › gain`, c, known),
+      minutes: Math.max(0, c.num(j.minutes, `${w} › minutes`, 45)),
+      patrons,
+      styles,
+      ...typeof j.skill === "string" ? { skill: j.skill } : {},
+      ...when !== undefined ? { when: String(when) } : {}
+    };
+  }
+  return out;
+}
+function normObservers(raw, c, known) {
+  const def = { enabled: false, when: "exposed > 0", crowd: 2, reactions: {}, rumours: true };
+  if (raw === undefined || raw === false)
+    return def;
+  const r = isObj(raw) ? raw : {};
+  def.enabled = true;
+  if (r.when !== undefined) {
+    const x = c.expr(r.when, "Observers › when");
+    if (x !== undefined)
+      def.when = String(x);
+  }
+  def.crowd = Math.max(0, Math.min(6, Math.round(c.num(r.crowd, "Observers › crowd", 2))));
+  def.rumours = r.rumours !== false;
+  for (const [k, v] of Object.entries(isObj(r.reactions) ? r.reactions : {})) {
+    if (!SEEN_REACTIONS.includes(k)) {
+      c.warn(`Observers › reactions › ${k}`, `reactions are ${SEEN_REACTIONS.join(", ")}`);
+      continue;
+    }
+    def.reactions[k] = normEffect(v, `Observers › reactions › ${k}`, c, known);
+  }
+  return def;
+}
+function normDiscovery(raw, c) {
+  const def = { enabled: false, at: [], chance: 25, max: 12, time: 60, label: "Explore around here" };
+  if (raw === undefined || raw === false)
+    return def;
+  const r = isObj(raw) ? raw : {};
+  def.enabled = true;
+  def.at = list(r.at);
+  def.chance = c.expr(r.chance ?? 25, "Discovery › chance") ?? 25;
+  def.max = Math.max(0, Math.round(c.num(r.max, "Discovery › max", 12)));
+  def.time = Math.max(0, c.num(r.time, "Discovery › time", 60));
+  if (typeof r.label === "string")
+    def.label = r.label;
+  if (typeof r.guide === "string")
+    def.guide = r.guide;
+  return def;
+}
 function normalizeRuleset(raw) {
   const c = new Ctx3;
   if (!isObj(raw)) {
@@ -2665,6 +2752,11 @@ function normalizeRuleset(raw) {
   const bonds = {};
   const companions = normCompanions(raw.companions, c, known, fronts, bonds);
   const lineage = normLineage(raw.lineage, c, known);
+  const moneyId = typeof hudRaw.money === "string" ? hudRaw.money : statOrder.find((s) => stats[s].kind === "money");
+  const obligations = normObligations(raw.obligations ?? raw.debts, c, known, moneyId);
+  const jobs = normJobs(raw.jobs, c, known);
+  const observers = normObservers(raw.observers ?? raw.being_seen, c, known);
+  const discovery = normDiscovery(raw.discovery, c);
   const ruleset = {
     name: typeof raw.name === "string" ? raw.name : "Untitled ruleset",
     description: typeof raw.description === "string" ? raw.description : undefined,
@@ -2719,7 +2811,11 @@ function normalizeRuleset(raw) {
     body,
     companions,
     bonds,
-    lineage
+    lineage,
+    obligations,
+    jobs,
+    observers,
+    discovery
   };
   for (const p of Object.values(people))
     for (const e of p.schedule) {
@@ -2747,12 +2843,13 @@ function normalizeRuleset(raw) {
   }
   return { ruleset, issues: c.issues };
 }
-var isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v), DEFAULT_WEEKDAYS, KIND_ALIASES, list = (v) => Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : [], TIER_KEYS, MONTHS, DEFAULT_WEATHER, DEFAULT_SLOTS, KEEP_FLAGS, KEEP_LISTS, CHILD_NAMES, SEXUAL_TAGS;
+var SEEN_REACTIONS, isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v), DEFAULT_WEEKDAYS, KIND_ALIASES, list = (v) => Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : [], TIER_KEYS, MONTHS, DEFAULT_WEATHER, DEFAULT_SLOTS, KEEP_FLAGS, KEEP_LISTS, CHILD_NAMES, SEXUAL_TAGS;
 var init_ruleset = __esm(() => {
   init_expr();
   init_dice();
   init_defs();
   init_defs2();
+  SEEN_REACTIONS = ["unnoticed", "glance", "interested", "disapproving", "predatory"];
   DEFAULT_WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   KIND_ALIASES = {
     meter: "meter",
@@ -2796,6 +2893,37 @@ var init_ruleset = __esm(() => {
   CHILD_NAMES = ["Ada", "Ben", "Cleo", "Dan", "Elin", "Finn", "Greta", "Hugo", "Iris", "Jonah", "Kira", "Leo", "Maya", "Nico", "Orla", "Pip", "Rosa", "Sam", "Tess", "Theo", "Uma", "Vic", "Wren", "Zoe"];
   SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
 });
+
+// src/engine/decide.ts
+function normalize(p, keys) {
+  const out = {};
+  let sum = 0;
+  for (const k of keys) {
+    const v = Number(p[k]);
+    out[k] = Number.isFinite(v) && v > 0 ? v : 0;
+    sum += out[k];
+  }
+  if (sum <= 0)
+    for (const k of keys)
+      out[k] = 1 / keys.length;
+  else
+    for (const k of keys)
+      out[k] /= sum;
+  return out;
+}
+function sample(p, rng) {
+  const keys = Object.keys(p);
+  let x = rng();
+  for (const k of keys) {
+    x -= p[k];
+    if (x <= 0)
+      return k;
+  }
+  return keys[keys.length - 1];
+}
+function noulConfidence(p) {
+  return Math.abs(2 * p - 1);
+}
 
 // src/engine/date/stage.ts
 function relPct(r, s, who, stat) {
@@ -2988,8 +3116,17 @@ function initialState(r) {
     tf: {},
     bonds: structuredClone(r.bonds),
     pregnancy: null,
-    kin: {}
+    kin: {},
+    dues: {},
+    job: null,
+    seen: {},
+    explored: {},
+    discovered: []
   };
+  for (const o of Object.values(r.obligations)) {
+    const owed = typeof o.amount === "number" ? o.amount : evalNumber(o.amount, makeEnv(r, s), 0);
+    s.dues[o.id] = { due: r.clock.start + o.first * 1440, owed: Math.max(0, owed), missed: 0 };
+  }
   for (const id of r.statOrder)
     s.stats[id] = r.stats[id].start;
   for (const sec of Object.values(r.secrets)) {
@@ -3285,6 +3422,25 @@ function applyEvent(s, e, r) {
       }
       break;
     }
+    case "due": {
+      const cur = s.dues[e.id] ?? { due: 0, owed: 0, missed: 0 };
+      s.dues = { ...s.dues, [e.id]: { due: e.due ?? cur.due, owed: Math.max(0, e.owed ?? cur.owed), missed: e.missed ?? cur.missed } };
+      break;
+    }
+    case "seen":
+      if (!e.heard || !s.seen[e.who])
+        s.seen = { ...s.seen, [e.who]: { what: e.what, at: s.minutes, where: e.where, ...e.heard ? { heard: true } : {} } };
+      break;
+    case "explored":
+      s.explored = { ...s.explored, [e.loc]: e.found ? 0 : (s.explored[e.loc] ?? 0) + 1 };
+      break;
+    case "discovered":
+      if (!s.discovered.includes(e.id))
+        s.discovered = [...s.discovered, e.id];
+      break;
+    case "job":
+      s.job = e.job ? structuredClone(e.job) : null;
+      break;
     case "news":
       s.news = [...s.news, { text: e.text, at: s.minutes }].slice(-NEWS_KEPT);
       break;
@@ -3478,6 +3634,7 @@ function makeEnv(r, s, extra = {}) {
       in_date: !!s.date,
       loops: s.loops,
       runs: s.runs,
+      at_work: !!s.job,
       pregnant: !!s.pregnancy && s.pregnancy.carrier === "player",
       pregnancy_weeks: s.pregnancy ? Math.floor((s.minutes - s.pregnancy.since) / 1440 / 7) : 0,
       on_outing: s.date?.kind === "outing",
@@ -3605,6 +3762,16 @@ function makeEnv(r, s, extra = {}) {
           return s.kin[a0] ? kinAge(r, s, a0) : r.people[a0]?.age ?? 0;
         case "children":
           return Object.keys(s.kin).length;
+        case "owed":
+          return s.dues[a0]?.owed ?? 0;
+        case "seen_by":
+          return !!s.seen[a0] && !s.seen[a0].heard;
+        case "fame":
+          return Object.keys(s.seen).length;
+        case "missed":
+          return s.dues[a0]?.missed ?? 0;
+        case "days_until":
+          return s.dues[a0] ? Math.floor((s.dues[a0].due - s.minutes) / 1440) : 0;
         case "dates":
           return s.dating.dates[a0]?.count ?? 0;
       }
@@ -3687,7 +3854,8 @@ var init_state = __esm(() => {
     "loops",
     "runs",
     "pregnant",
-    "pregnancy_weeks"
+    "pregnancy_weeks",
+    "at_work"
   ];
 });
 
@@ -4488,7 +4656,244 @@ var init_talk = __esm(() => {
   ENJOY = { love: 14, like: 7, neutral: 1, dislike: -8, hate: -15 };
 });
 
+// src/engine/work.ts
+function amountOf(t, o) {
+  return Math.max(0, Math.round(evalNumber(o.amount, t.env(), 0) * 100) / 100);
+}
+function creditorName(r, s, o) {
+  return o.creditor ? personName(r, s, o.creditor) : "the creditor";
+}
+function obligationLife(t) {
+  const { r } = t;
+  for (const o of Object.values(r.obligations)) {
+    for (let guard = 0;guard < 6; guard++) {
+      const d = t.s.dues[o.id];
+      if (!d)
+        break;
+      if (d.owed <= 0) {
+        if (o.every <= 0 || t.s.minutes < d.due)
+          break;
+        t.push({ t: "due", id: o.id, due: d.due + o.every * 1440, owed: amountOf(t, o), src: "world", why: `${o.label}: a new period` });
+        continue;
+      }
+      if (t.s.minutes < d.due + o.grace * 1440)
+        break;
+      const missed = d.missed + 1;
+      const owed = d.owed + (o.every > 0 ? amountOf(t, o) : 0);
+      t.push({ t: "due", id: o.id, due: d.due + (o.every > 0 ? o.every : 7) * 1440, owed, missed, src: "world", why: `${o.label} went unpaid` });
+      const who = creditorName(r, t.s, o);
+      const cur = r.hud.currency;
+      t.push({ t: "news", text: `${o.label} is overdue — ${cur}${owed} owed (${missed} missed).`, src: "world" });
+      if (o.late) {
+        const spec = { ...o.late, ask: o.late.ask.replace(/\{creditor\}/g, who) };
+        const model = t.modelOdds(spec);
+        const prior = Object.fromEntries(spec.options.map((x) => [x.id, x.weight]));
+        const p = model ? Object.fromEntries(Object.keys(prior).map((k) => [k, Math.pow(Math.max(prior[k], 0.000001), 0.5) * Math.max(model[k] ?? 0, 0.000001)])) : prior;
+        const descs = Object.fromEntries(spec.options.map((x) => [x.id, x.desc.replace(/\{creditor\}/g, who)]));
+        const pick = t.roll(`${spec.id}:${missed}`, spec.ask, p, descs, model ? "model" : "weights");
+        const opt = spec.options.find((x) => x.id === pick);
+        t.apply(opt.effect, "world");
+        t.announce(`${o.label} is overdue (${cur}${owed} owed, ${missed} missed). ${who}'s response: ${descs[pick]}.`);
+      } else {
+        t.announce(`${o.label} is overdue: ${cur}${owed} owed, ${missed} missed.`);
+      }
+    }
+  }
+}
+function payable(r, s, o) {
+  const d = s.dues[o.id];
+  if (!d || d.owed <= 0)
+    return 0;
+  if (o.at.length && !o.at.includes(s.location ?? ""))
+    return 0;
+  const cash = s.stats[o.payWith] ?? r.stats[o.payWith]?.start ?? 0;
+  return Math.max(0, Math.min(d.owed, Math.floor(cash * 100) / 100));
+}
+function jobOpen(r, s, j) {
+  if (j.at.length && !j.at.includes(s.location ?? ""))
+    return false;
+  return !j.when || evalBool(j.when, makeEnv(r, s), false);
+}
+function workMoves(r, s) {
+  const out = [];
+  const cur = r.hud.currency;
+  if (s.job) {
+    const j = r.jobs[s.job.id];
+    const p = j?.patrons[s.job.patron];
+    if (!j || !p)
+      return [];
+    const group = `${j.label} · customer ${s.job.n + 1} of ${j.customers}`;
+    for (const [k, label] of Object.entries(j.styles))
+      out.push({ id: `${JOB_PREFIX}style:${k}`, label, say: `*${label}.*`, group, desc: p.who });
+    out.push({ id: `${JOB_PREFIX}quit`, label: "Walk out", say: "*I walk out on the shift.*", group, desc: "Leave now — no pay for the shift" });
+    return out;
+  }
+  for (const o of Object.values(r.obligations)) {
+    const amt = payable(r, s, o);
+    if (amt <= 0)
+      continue;
+    const d = s.dues[o.id];
+    const all = amt >= d.owed;
+    out.push({
+      id: `${PAY_PREFIX}${o.id}`,
+      label: `Pay ${o.label.toLowerCase()} (${cur}${amt}${all ? "" : ` of ${cur}${d.owed}`})`,
+      say: `*I pay ${cur}${amt} toward the ${o.label.toLowerCase()}.*`,
+      group: "Bills",
+      desc: d.missed ? `${d.missed} payment${d.missed === 1 ? "" : "s"} missed` : `Due ${r.clock.enabled ? formatClock(r, d.due).day : "soon"}`
+    });
+  }
+  for (const j of Object.values(r.jobs))
+    if (jobOpen(r, s, j)) {
+      out.push({ id: `${JOB_PREFIX}start:${j.id}`, label: j.label, say: `*I start a shift: ${j.label.toLowerCase()}.*`, group: "Work", desc: `${j.customers} customers` });
+    }
+  return out;
+}
+function satisfaction(center) {
+  const c = Math.max(-2.5, Math.min(2.5, center));
+  const raw = Object.fromEntries(REACTIONS.map((x) => [x, Math.exp(-((REACTION_VALUE[x] - c) ** 2) / (2 * 0.9 ** 2))]));
+  const sum = REACTIONS.reduce((a, x) => a + raw[x], 0);
+  for (const x of REACTIONS)
+    raw[x] /= sum;
+  return raw;
+}
+function skillBonus(t, j) {
+  if (!j.skill || !t.r.stats[j.skill])
+    return 0;
+  const def = t.r.stats[j.skill];
+  const v = t.s.stats[j.skill] ?? def.start;
+  return def.max > def.min ? (v - def.min) / (def.max - def.min) * 1.2 : 0;
+}
+function nextPatron(t, j, n) {
+  return Math.floor(seededRng(`${t.seed}:patron:${j.id}:${n}`)() * j.patrons.length);
+}
+function serve(t, j, reaction, how) {
+  const job = t.s.job;
+  const p = j.patrons[job.patron];
+  const tip = Math.round(evalNumber(j.tip, t.env(), 0) * TIP[reaction] * 100) / 100;
+  const cur = t.r.hud.currency;
+  t.announce(`Customer ${job.n + 1} of ${j.customers} — ${p.who}. {{user}}: ${how}. They ${MOOD2[reaction]}${tip > 0 ? ` and tip ${cur}${tip}` : tip < 0 ? `; ${cur}${-tip} is docked from {{user}}'s pay` : ""}. (What they wanted: ${j.styles[p.want] ?? p.want} — show it in how they act, don't state it.)`);
+  const log = [...job.log, { who: p.who, result: REACTION_LABEL[reaction] }];
+  t.time(j.minutes, "action");
+  if (job.n + 1 >= j.customers) {
+    const pay = Math.round(evalNumber(j.pay, t.env(), 0) * 100) / 100;
+    const total = Math.max(0, pay + job.tips + tip);
+    if (t.r.hud.money && total)
+      t.push({ t: "stat", id: t.r.hud.money, d: total, src: "action", why: `${j.label}: pay ${cur}${pay} + tips ${cur}${Math.round((job.tips + tip) * 100) / 100}` });
+    t.apply(j.gain, "action");
+    t.push({ t: "job", job: null, src: "action" });
+    const happy = log.filter((x) => x.result === REACTION_LABEL.love || x.result === REACTION_LABEL.like).length;
+    t.announce(`The shift is over: ${happy} of ${j.customers} customers left happy; {{user}} takes home ${cur}${total}.`);
+  } else {
+    t.push({ t: "job", job: { ...job, n: job.n + 1, patron: nextPatron(t, j, job.n + 1), tips: job.tips + tip, log }, src: "action" });
+  }
+}
+function resolveWork(t, intent) {
+  const { r } = t;
+  const id = intent.actionId;
+  if (id.startsWith(PAY_PREFIX)) {
+    const o = r.obligations[id.slice(PAY_PREFIX.length)];
+    if (!o)
+      return null;
+    const amt = payable(r, t.s, o);
+    if (amt <= 0)
+      return null;
+    const d = t.s.dues[o.id];
+    t.push({ t: "stat", id: o.payWith, d: -amt, src: "action" });
+    t.push({ t: "due", id: o.id, owed: d.owed - amt, src: "action" });
+    const left = Math.round((d.owed - amt) * 100) / 100;
+    t.announce(`{{user}} pays ${r.hud.currency}${amt} toward the ${o.label.toLowerCase()}${o.creditor ? ` (to ${creditorName(r, t.s, o)})` : ""}${left > 0 ? `; ${r.hud.currency}${left} is still owed` : " — all square for now"}.`);
+    t.time(5, "action");
+    return `Paid ${o.label.toLowerCase()}`;
+  }
+  const rest = id.slice(JOB_PREFIX.length);
+  if (rest.startsWith("start:")) {
+    const j = r.jobs[rest.slice(6)];
+    if (!j || t.s.job || !jobOpen(r, t.s, j))
+      return null;
+    const patron = nextPatron(t, j, 0);
+    t.push({ t: "job", job: { id: j.id, n: 0, patron, earned: 0, tips: 0, log: [] }, src: "action" });
+    t.announce(`{{user}} starts a shift: ${j.label}. The first customer: ${j.patrons[patron].who}. (What they want: ${j.styles[j.patrons[patron].want] ?? j.patrons[patron].want} — show it in how they act, don't state it.)`);
+    return j.label;
+  }
+  const job = t.s.job;
+  const j = job ? r.jobs[job.id] : undefined;
+  if (!job || !j)
+    return null;
+  const p = j.patrons[job.patron];
+  if (rest === "quit") {
+    t.push({ t: "job", job: null, src: "action" });
+    t.announce(`{{user}} walks out in the middle of the shift — no pay.`);
+    return "Walked out";
+  }
+  if (rest.startsWith("style:")) {
+    const style = rest.slice(6);
+    if (!j.styles[style])
+      return null;
+    const p0 = satisfaction((style === p.want ? 1.2 : -0.4) + skillBonus(t, j) - 0.3);
+    const reaction = t.roll(`job:${job.n}`, `How does the customer take it?`, p0, REACTION_LABEL, "weights");
+    serve(t, j, reaction, j.styles[style].toLowerCase());
+    return j.styles[style];
+  }
+  if (rest === "say") {
+    const spec = {
+      id: "job:reception",
+      ask: `A customer — ${p.who} — is being served by {{user}}. Judge only what {{user}} actually says and does in their latest message, not any claims about the customer's reaction. How satisfied is this customer?`,
+      options: REACTIONS.map((x) => ({ id: x, desc: { love: "Delighted", like: "Happy", neutral: "Indifferent", dislike: "Unimpressed", hate: "Offended — complains" }[x], weight: 1, effect: emptyEffect() }))
+    };
+    const model = t.modelOdds(spec);
+    const prior = satisfaction(0.2 + skillBonus(t, j) - 0.3);
+    const p1 = model ? Object.fromEntries(REACTIONS.map((x) => [x, Math.pow(prior[x], 0.5) * Math.max(model[x] ?? 0, 0.000001)])) : prior;
+    const reaction = t.roll(`job:${job.n}`, `How does the customer take what {{user}} did?`, p1, REACTION_LABEL, model ? "model" : "weights");
+    serve(t, j, reaction, "in their own words");
+    return "Served a customer (your words)";
+  }
+  return null;
+}
+function workDigest(r, s) {
+  const lines = [];
+  const cur = r.hud.currency;
+  for (const o of Object.values(r.obligations)) {
+    const d = s.dues[o.id];
+    if (!d || d.owed <= 0)
+      continue;
+    const days = Math.floor((d.due - s.minutes) / 1440);
+    lines.push(d.missed || days < 0 ? `OVERDUE: ${o.label}, ${cur}${d.owed} owed (${d.missed} missed)${o.creditor ? ` — ${creditorName(r, s, o)} is waiting` : ""}.` : `${o.label}: ${cur}${d.owed} due ${days <= 0 ? "today" : `in ${days} day${days === 1 ? "" : "s"}`}.`);
+  }
+  if (s.job) {
+    const j = r.jobs[s.job.id];
+    if (j)
+      lines.push(`AT WORK: ${j.label}, customer ${s.job.n + 1} of ${j.customers} — ${j.patrons[s.job.patron]?.who ?? "a customer"}.`);
+  }
+  return lines;
+}
+var PAY_PREFIX = "pay:", JOB_PREFIX = "job:", TIP, MOOD2;
+var init_work = __esm(() => {
+  init_dice();
+  init_expr();
+  init_ruleset();
+  init_state();
+  init_types2();
+  TIP = { love: 1.5, like: 1, neutral: 0.4, dislike: 0, hate: -1 };
+  MOOD2 = {
+    love: "is delighted",
+    like: "is happy with it",
+    neutral: "is indifferent",
+    dislike: "is unimpressed",
+    hate: "is furious and complains"
+  };
+});
+
 // src/engine/resolve.ts
+function because(w, cause, fn) {
+  const prev = w.cause;
+  w.cause = prev ? `${prev} → ${cause}` : cause;
+  try {
+    return fn();
+  } finally {
+    w.cause = prev;
+  }
+}
+
 class Working {
   r;
   s;
@@ -4510,7 +4915,10 @@ class Working {
     this.odds = odds;
     this.scene = scene;
   }
+  cause = null;
   push(e) {
+    if (this.cause && !e.why)
+      e = { ...e, why: this.cause };
     applyEvent(this.s, e, this.r);
     this.events.push(e);
   }
@@ -4530,6 +4938,14 @@ class Working {
       }
     };
   }
+}
+function canExplore(r, s) {
+  const d = r.discovery;
+  if (!d.enabled || !s.location || s.encounter || s.dungeon || s.job || s.date || s.ended)
+    return false;
+  if (s.discovered.length >= d.max)
+    return false;
+  return !d.at.length || d.at.includes(s.location) || s.discovered.includes(s.location);
 }
 function travelTargets(r, s) {
   if (s.encounter)
@@ -4834,8 +5250,10 @@ function openFrontStages(w) {
       const st = f.stages[n];
       if ((w.s.fronts[f.id]?.v ?? f.start) < st.at)
         break;
-      w.push({ t: "stage", id: f.id, n, src: "world" });
-      effectToEvents(w, st.effects, "world", {});
+      because(w, `World: ${f.label} reached stage ${n + 1}`, () => {
+        w.push({ t: "stage", id: f.id, n, src: "world" });
+        effectToEvents(w, st.effects, "world", {});
+      });
       if (st.surface)
         announce(w, `In the wider world: ${st.surface}`);
     }
@@ -4902,7 +5320,7 @@ function tickGauge(w, days, turns) {
       w.push({ t: "omen", id: null, src: "world" });
     if (ev.restDays > 0)
       w.push({ t: "rest", days: ev.restDays, src: "world" });
-    effectToEvents(w, e.effects, "world", {});
+    because(w, `Random event: ${e.label}`, () => effectToEvents(w, e.effects, "world", {}));
     announce(w, e.text);
   } else if (ev.omenAt > 0 && g.v >= ev.omenAt && !g.next) {
     w.push({ t: "omen", id: pickEvent(w, candidates), src: "world" });
@@ -4928,6 +5346,85 @@ function tickWorld(w, days, turns) {
   }
   openFrontStages(w);
   tickGauge(w, days, turns);
+}
+function lookOf(r, s) {
+  const exposed = exposedSlots(r, s);
+  const reveal = revealOf(r, s);
+  const parts = [
+    exposed.length ? `exposed: ${exposed.join(", ")}` : null,
+    reveal > 0 ? `revealing clothes (${reveal})` : null
+  ].filter(Boolean);
+  return parts.length ? parts.join("; ") : "dressed ordinarily";
+}
+function beingSeen(w) {
+  const r = w.r;
+  const ob = r.observers;
+  if (!ob.enabled || !w.s.location || !evalBool(ob.when, w.env(), false))
+    return;
+  const look = lookOf(r, w.s);
+  const here = new Set(presentPeople(r, w.s, makeEnv(r, w.s)));
+  const watchers = Object.keys(w.s.people).filter((id) => here.has(id) || r.people[id] && !r.people[id].schedule.length);
+  const exposure = exposedSlots(r, w.s).length + revealOf(r, w.s) / 3;
+  const prior = {
+    unnoticed: Math.max(0.5, 3 - exposure),
+    glance: 2,
+    interested: 0.6 + exposure * 0.4,
+    disapproving: 0.5 + exposure * 0.3,
+    predatory: 0.1 + exposure * 0.1
+  };
+  const where = w.s.locationName ?? w.s.location;
+  const lines = [];
+  for (const who of watchers) {
+    if (!knownAdult(w, who))
+      continue;
+    const name = personName(r, w.s, who);
+    const spec = {
+      id: `seen:${who}`,
+      ask: `${name} can see {{user}} (${look}). Given who ${name} is, and the moment, how do they react?`,
+      options: SEEN_REACTIONS.map((x) => ({ id: x, desc: SEEN_DESC[x], weight: prior[x], effect: ob.reactions[x] ?? emptyEffect() }))
+    };
+    const model = w.odds[spec.id];
+    if (!model && !w.needs.some((n) => n.id === spec.id))
+      w.needs.push(spec);
+    const p = normalize(model ? Object.fromEntries(SEEN_REACTIONS.map((x) => [x, Math.sqrt(prior[x]) * Math.max(model[x] ?? 0, 0.000001)])) : prior, SEEN_REACTIONS);
+    const picked = sample(p, seededRng(`${w.seed}:seen:${who}`));
+    w.decisions.push({ id: spec.id, ask: `How does ${name} react to how {{user}} looks?`, picked, pickedDesc: SEEN_DESC[picked], p, source: model ? "model" : "weights", descs: SEEN_DESC });
+    if (picked === "unnoticed")
+      continue;
+    w.push({ t: "seen", who, what: look, where, src: "world", why: `${name} saw {{user}} (${look})` });
+    const eff = ob.reactions[picked];
+    if (eff)
+      because(w, `${name}: ${SEEN_DESC[picked].toLowerCase()}`, () => effectToEvents(w, eff, "world", { target: who }));
+    lines.push(`${name}: ${SEEN_DESC[picked].toLowerCase()}`);
+  }
+  if (ob.crowd > 0 && !isIndoors(r, w.s)) {
+    const rng = seededRng(`${w.seed}:crowd:${w.s.turn}`);
+    const crowd = Array.from({ length: ob.crowd }, () => {
+      const q = normalize(prior, SEEN_REACTIONS);
+      return sample(q, rng);
+    }).filter((x) => x !== "unnoticed");
+    if (crowd.length)
+      lines.push(`passers-by: ${crowd.map((x) => SEEN_DESC[x].toLowerCase()).join("; ")}`);
+  }
+  if (lines.length)
+    w.hints.push(`How people react to {{user}} (${look}) — show it, individually: ${lines.join(" · ")}.`);
+}
+function rumours(w, before) {
+  const r = w.r;
+  if (!r.observers.enabled || !r.observers.rumours)
+    return;
+  if (Math.floor(w.s.minutes / 1440) <= Math.floor(before.minutes / 1440))
+    return;
+  for (const [who, rec] of Object.entries(before.seen)) {
+    if (rec.heard)
+      continue;
+    for (const [other, v] of Object.entries(w.s.bonds[who] ?? {})) {
+      if (v < 25 || w.s.seen[other] || !w.s.people[other])
+        continue;
+      w.push({ t: "seen", who: other, what: rec.what, where: rec.where, heard: true, src: "world", why: `${personName(r, w.s, who)} told ${personName(r, w.s, other)}` });
+      announce(w, `Word gets around: ${personName(r, w.s, who)} told ${personName(r, w.s, other)} about seeing {{user}} (${rec.what}) at ${rec.where}.`);
+    }
+  }
 }
 function knownAdult(w, who) {
   if (who === "player")
@@ -4982,7 +5479,7 @@ function lineageLife(w) {
       if (i + 1 <= (w.s.pregnancy?.told ?? 0) || weeks < st.week)
         return;
       w.push({ t: "preg_stage", n: i + 1, src: "world" });
-      effectToEvents(w, st.effects, "world", {});
+      because(w, `Pregnancy, week ${st.week}`, () => effectToEvents(w, st.effects, "world", {}));
       announce(w, st.text.replace(/\{carrier\}/g, p.carrier === "player" ? "{{user}}" : personName(r, w.s, p.carrier)));
     });
     if (weeks >= r.lineage.weeks) {
@@ -5032,7 +5529,7 @@ function companionLife(w, before) {
       const p = normalize(model ?? Object.fromEntries(spec.options.map((o) => [o.id, o.weight])), keys);
       const picked = sample(p, seededRng(`${w.seed}:daily:${c.id}:${day}`));
       const opt = spec.options.find((o) => o.id === picked);
-      effectToEvents(w, opt.effect, "world", {});
+      because(w, `${personName(r, w.s, c.id)}'s own choice: ${opt.desc}`, () => effectToEvents(w, opt.effect, "world", {}));
       const line = `${personName(r, w.s, c.id)}: ${opt.desc.charAt(0).toLowerCase()}${opt.desc.slice(1)}`;
       w.push({ t: "news", text: line, src: "world" });
       announce(w, `Off-screen, ${line}. (Their own choice — it may come up later.)`);
@@ -5052,9 +5549,12 @@ function companionLife(w, before) {
       continue;
     const total = gains.reduce((a, [, g]) => a + g, 0);
     const drop = Math.max(1, Math.round(total / 2));
-    w.push({ t: "rel", who: c.id, stat: love, d: -drop, src: "world" });
-    for (const [id, g] of gains)
-      w.push({ t: "bond", a: c.id, b: id, d: -Math.max(1, Math.round(g / 2)), src: "world" });
+    const jealous = `${personName(r, w.s, c.id)} is jealous of ${gains.map(([id]) => personName(r, w.s, id)).join(" and ")}`;
+    because(w, jealous, () => {
+      w.push({ t: "rel", who: c.id, stat: love, d: -drop, src: "world" });
+      for (const [id, g] of gains)
+        w.push({ t: "bond", a: c.id, b: id, d: -Math.max(1, Math.round(g / 2)), src: "world" });
+    });
     announce(w, `${personName(r, w.s, c.id)} notices {{user}} getting closer to ${gains.map(([id]) => personName(r, w.s, id)).join(" and ")} — and it stings.`);
   }
 }
@@ -5076,8 +5576,10 @@ function checkRun(w, before) {
   if (loop && evalBool(loop.when, w.env(), false)) {
     const to = loop.to !== "start" && w.s.saves[loop.to] ? loop.to : "start";
     const label = to === "start" ? "the very beginning" : w.s.saves[to].label;
-    w.push({ t: "load", slot: to, src: "world" });
-    effectToEvents(w, loop.effects, "world", {});
+    because(w, "Time loop", () => {
+      w.push({ t: "load", slot: to, src: "world" });
+      effectToEvents(w, loop.effects, "world", {});
+    });
     announce(w, `${loop.text} The story rewinds to ${label}: treat everything after it as undone, except what {{user}} remembers.`);
     return;
   }
@@ -5132,7 +5634,7 @@ function startEncounter(w, id, src) {
   const foe = Object.fromEntries(enc.foe.stats.map((s) => [s.id, s.start]));
   w.push({ t: "enc", id, foe, ...enc.momentum ? { momentum: enc.momentum.start } : {}, src });
   announce(w, `An encounter begins: ${enc.name}${enc.desc ? ` — ${enc.desc}` : ""}. Opponent: ${enc.foe.name}.`);
-  effectToEvents(w, enc.start, src, {});
+  because(w, `${enc.name} begins`, () => effectToEvents(w, enc.start, src, {}));
 }
 function encounterOutcome(w) {
   const s = w.s.encounter;
@@ -5162,7 +5664,7 @@ function endEncounter(w, outcome, src) {
   announce(w, `The encounter ends: ${outcome.replace(/_/g, " ")}.`);
   const eff = enc?.outcomes[outcome];
   if (eff)
-    effectToEvents(w, eff, src, {});
+    because(w, `${enc?.name ?? "Encounter"} ended: ${outcome.replace(/_/g, " ")}`, () => effectToEvents(w, eff, src, {}));
 }
 function encounterRound(w, src) {
   if (!w.s.encounter)
@@ -5229,7 +5731,7 @@ function decide(w, d, src, extra) {
   const picked = sample(p, seededRng(`${w.seed}:decide:${d.id}`));
   const opt = d.options.find((o) => o.id === picked);
   w.decisions.push({ id: d.id, ask: fillTarget(w, d.ask, extra), picked, pickedDesc: fillTarget(w, opt.desc, extra), p, source: model ? "model" : "weights" });
-  effectToEvents(w, opt.effect, src, extra);
+  because(w, `${fillTarget(w, d.ask, extra)} → ${fillTarget(w, opt.desc, extra)} (${Math.round((p[picked] ?? 0) * 100)}% odds)`, () => effectToEvents(w, opt.effect, src, extra));
 }
 function advanceTime(w, minutes, src) {
   if (!w.r.clock.enabled || minutes <= 0)
@@ -5241,7 +5743,7 @@ function advanceTime(w, minutes, src) {
       continue;
     const d = def.perHour * minutes / 60;
     if (Math.abs(d) > 0.000000001)
-      w.push({ t: "stat", id, d, src: "drift" });
+      w.push({ t: "stat", id, d, src: "drift", why: `${minutes >= 60 ? `${Math.round(minutes / 6) / 10}h` : `${minutes} min`} passed (${def.label} drifts ${def.perHour > 0 ? "+" : ""}${def.perHour}/h)` });
   }
   for (const [id, c] of Object.entries(w.s.conditions)) {
     if (c.until !== null && c.until <= w.s.minutes)
@@ -5257,13 +5759,14 @@ function runTriggers(w, includeRepeat) {
         continue;
       const now = (t.when === undefined || evalBool(t.when, w.env(), false)) && (!t.whenScene || w.scene[t.id] === true);
       const prev = w.s.triggers[t.id] ?? false;
+      const why = `Rule "${t.id.replace(/_/g, " ")}"${t.when ? ` (${t.when})` : ""}${t.whenScene ? ` — judged: ${t.whenScene}` : ""}`;
       if (now && !prev) {
         w.push({ t: "trig", id: t.id, v: true, src: "trigger" });
-        effectToEvents(w, t.effects, "trigger", {});
+        because(w, why, () => effectToEvents(w, t.effects, "trigger", {}));
         fired.add(t.id);
         changed = true;
       } else if (now && t.repeat && includeRepeat && !fired.has(t.id)) {
-        effectToEvents(w, t.effects, "trigger", {});
+        because(w, `${why}, every turn while true`, () => effectToEvents(w, t.effects, "trigger", {}));
         fired.add(t.id);
         changed = true;
       } else if (!now && prev) {
@@ -5281,7 +5784,7 @@ function runTriggers(w, includeRepeat) {
   for (const f of Object.values(w.r.feats)) {
     if (!w.s.feats[f.id] && evalBool(f.unlock, w.env(), false)) {
       w.push({ t: "feat", id: f.id, src: "trigger" });
-      effectToEvents(w, f.reward, "trigger", {});
+      because(w, `Feat: ${f.name}`, () => effectToEvents(w, f.reward, "trigger", {}));
     }
   }
   openSecrets(w);
@@ -5327,7 +5830,7 @@ function resolveInner(r, before, intent, opts, needs) {
     w.push({ t: "end_told", src: "world" });
     rec.action = { id: RUN_EPILOGUE, label: `The end: ${e?.title ?? "the story ends"}`, via: intent?.via ?? "choice" };
   }
-  let found = intent && !intent.actionId.startsWith(TRAVEL_PREFIX) && !intent.actionId.startsWith(DATE_PREFIX) ? findAction(r, before, intent.actionId) : null;
+  let found = intent && !intent.actionId.startsWith(TRAVEL_PREFIX) && !intent.actionId.startsWith(DATE_PREFIX) && !intent.actionId.startsWith(PAY_PREFIX) && !intent.actionId.startsWith(JOB_PREFIX) ? findAction(r, before, intent.actionId) : null;
   let mind = found ? mindOverride(r, before, found.a, found.target, opts.seed) : null;
   const meant = found ? found.target ? `${found.a.label} (${personName(r, before, found.target)})` : intent.label ?? found.a.label : "";
   if (found && mind?.kind === "redirect") {
@@ -5339,11 +5842,30 @@ function resolveInner(r, before, intent, opts, needs) {
   }
   const a = found?.a;
   const inEncounter = !!before.encounter;
-  const dateIntent = intent?.actionId.startsWith(DATE_PREFIX) ? intent : activeSession(r, before) && !intent ? { actionId: `${DATE_PREFIX}say`, via: "adjudicator" } : null;
+  const dateIntent = intent?.actionId.startsWith(DATE_PREFIX) ? intent : activeSession(r, before) && !intent && !before.job ? { actionId: `${DATE_PREFIX}say`, via: "adjudicator" } : null;
+  const workIntent = intent && (intent.actionId.startsWith(PAY_PREFIX) || intent.actionId.startsWith(JOB_PREFIX)) ? intent : before.job && !intent ? { actionId: `${JOB_PREFIX}say`, via: "adjudicator" } : null;
   if (before.date && !activeSession(r, before))
     w.push({ t: "dt_end", src: "action" });
-  if (dateIntent) {
-    const done = resolveDate(builderOf(w), dateIntent);
+  if (intent?.actionId === EXPLORE) {
+    if (canExplore(r, before)) {
+      const loc = before.location;
+      const name = before.locationName ?? loc;
+      rec.action = { id: EXPLORE, label: `Explore ${name}`, via: intent.via };
+      const chance = Math.min(100, evalNumber(r.discovery.chance, w.env(), 25) + 10 * (before.explored[loc] ?? 0));
+      const found = seededRng(`${opts.seed}:explore`)() * 100 < chance;
+      w.push({ t: "explored", loc, found, src: "action" });
+      advanceTime(w, r.discovery.time, "action");
+      if (found)
+        rec.discover = { from: loc };
+      else
+        w.hints.push(`{{user}} explores around ${name} but finds nothing new this time — though they're getting to know the area.`);
+    }
+  } else if (workIntent) {
+    const label = because(w, "Work and bills", () => resolveWork(builderOf(w), workIntent));
+    if (label)
+      rec.action = { id: workIntent.actionId, label, via: workIntent.via };
+  } else if (dateIntent) {
+    const done = because(w, "Conversation", () => resolveDate(builderOf(w), dateIntent));
     if (done) {
       rec.action = { id: dateIntent.actionId, label: done.label, via: dateIntent.via };
       const veils = new Set((opts.veils ?? []).map((v) => v.toLowerCase()));
@@ -5356,8 +5878,10 @@ function resolveInner(r, before, intent, opts, needs) {
     if (dest) {
       const from = before.location ? r.locations[before.location] : undefined;
       rec.action = { id: intent.actionId, label: `Go to ${dest.name}`, via: intent.via };
-      w.push({ t: "move", to, src: "action" });
-      advanceTime(w, from?.travel ?? dest.travel, "action");
+      because(w, `Travel to ${dest.name}`, () => {
+        w.push({ t: "move", to, src: "action" });
+        advanceTime(w, from?.travel ?? dest.travel, "action");
+      });
       if (dest.desc)
         w.hints.push(`Arriving at ${dest.name}: ${dest.desc}`);
     }
@@ -5372,11 +5896,11 @@ function resolveInner(r, before, intent, opts, needs) {
       const why = mind.text.replace(/\{target\}/g, who ? personName(r, before, who) : "them");
       w.hints.push(mind.kind === "fail" ? `{{user}} tries to ${meant.toLowerCase()}, but can't: ${why} It fails — no roll.` : mind.kind === "redirect" ? `{{user}} meant to ${meant.toLowerCase()}, but ${why} What actually happens: ${label.toLowerCase()}.` : `{{user}} goes ahead, but ${mind.cause.toLowerCase()} colours it: ${why}`);
     }
-    effectToEvents(w, a.cost, "cost", extra);
+    because(w, `Cost of "${label}"`, () => effectToEvents(w, a.cost, "cost", extra));
     if (mind?.kind === "fail") {
       const fail = a.outcomes.fail ?? a.outcomes.crit_fail;
       if (fail)
-        effectToEvents(w, fail, "check", extra);
+        because(w, `"${meant}" — ${mind.cause} stopped it`, () => effectToEvents(w, fail, "check", extra));
     } else if (a.check) {
       const rng = seededRng(opts.seed);
       const { add, target } = checkNumbers(r, w.s, a, intent.params, who);
@@ -5396,11 +5920,11 @@ function resolveInner(r, before, intent, opts, needs) {
       };
       const key = TIER_FALLBACK[tier].find((t) => a.outcomes[t]);
       if (key)
-        effectToEvents(w, a.outcomes[key], "check", extra);
+        because(w, `"${label}": ${rec.check.label} rolled ${rec.check.total}${target !== null ? ` vs ${target}` : ""} → ${TIER_LABEL[tier]}`, () => effectToEvents(w, a.outcomes[key], "check", extra));
       if (tier === "partial" && key === "success")
         w.hints.push("It works, but not cleanly — introduce a cost or complication.");
     } else {
-      effectToEvents(w, a.effects, "action", extra);
+      because(w, `"${label}"`, () => effectToEvents(w, a.effects, "action", extra));
     }
     advanceTime(w, a.time ?? (inEncounter ? 1 : r.clock.minutesPerAction), "action");
     const veils = new Set((opts.veils ?? []).map((v) => v.toLowerCase()));
@@ -5427,6 +5951,9 @@ function resolveInner(r, before, intent, opts, needs) {
     runTriggers(w, false);
   companionLife(w, before);
   lineageLife(w);
+  obligationLife(builderOf(w));
+  beingSeen(w);
+  rumours(w, before);
   checkRun(w, before);
   w.push({ t: "turn", src: "action" });
   rec.events = w.events;
@@ -5481,6 +6008,7 @@ function findPerson(r, s, key) {
 }
 function applyProposal(r, before, p, ctx) {
   const w = new Working(r, cloneState(before), seededRng(`narrator:${before.turn}`));
+  w.cause = "Read from the story";
   const src = "narrator";
   for (const person of p.people ?? []) {
     if (!person?.name || !r.peopleOpen)
@@ -5599,6 +6127,7 @@ function applyProposal(r, before, p, ctx) {
   if (typeof p.minutes === "number" && Number.isFinite(p.minutes) && p.minutes > 0) {
     advanceTime(w, Math.round(Math.min(p.minutes, r.clock.narratorMax)), src);
   }
+  w.cause = null;
   runTriggers(w, false);
   if (r.clock.enabled && w.s.minutes > before.minutes) {
     const n = w.events.length;
@@ -5608,6 +6137,8 @@ function applyProposal(r, before, p, ctx) {
   }
   companionLife(w, before);
   lineageLife(w);
+  obligationLife(builderOf(w));
+  rumours(w, before);
   checkRun(w, before);
   return w.events;
 }
@@ -5652,6 +6183,7 @@ function buildTurn(r, before, seed, fn) {
   }
   companionLife(w, before);
   lineageLife(w);
+  obligationLife(builderOf(w));
   checkRun(w, before);
   return w.events;
 }
@@ -5743,16 +6275,25 @@ function forgetPerson(r, before, who) {
     return "Unknown person.";
   return [{ t: "forget", who, src: "manual" }];
 }
-var TRAVEL_PREFIX = "go:", TARGET_SEP = "@", LIVE_PREFIX = "live:", NEXT_EVENT = "world:next_event", RUN_EPILOGUE = "run:epilogue", TIER_FALLBACK, TIER_LABEL;
+var EXPLORE = "explore:", TRAVEL_PREFIX = "go:", TARGET_SEP = "@", LIVE_PREFIX = "live:", NEXT_EVENT = "world:next_event", SEEN_DESC, RUN_EPILOGUE = "run:epilogue", TIER_FALLBACK, TIER_LABEL;
 var init_resolve = __esm(() => {
   init_expr();
   init_dice();
+  init_ruleset();
   init_ruleset();
   init_state();
   init_chronicle();
   init_world();
   init_types2();
   init_talk();
+  init_work();
+  SEEN_DESC = {
+    unnoticed: "Doesn't notice",
+    glance: "Notices, then looks away",
+    interested: "Is interested — keeps looking",
+    disapproving: "Disapproves",
+    predatory: "Pays the wrong kind of attention"
+  };
   TIER_FALLBACK = {
     crit_success: ["crit_success", "success"],
     success: ["success"],
@@ -6183,7 +6724,14 @@ narration:
       },
       {
         label: "world",
-        yaml: `# {{user}}'s body, as the story changes it (haircuts, tattoos, lasting marks…).
+        yaml: `# Exploring the rougher edges of town can turn up places that aren't on the map yet.
+discovery:
+  at: [docks, park, the_strip]
+  chance: 20
+  max: 8
+  guide: "Small, grounded places in a run-down seaside town: a back-alley bar, a bait shop, an abandoned pier, a late-night launderette."
+
+# {{user}}'s body, as the story changes it (haircuts, tattoos, lasting marks…).
 body:
   parts:
     hair: { color: brown, length: shoulder-length }
@@ -6782,7 +7330,52 @@ live_choices:
       },
       {
         label: "dating",
-        yaml: `# Companions live between replies: goals, arcs they push by their own choices, feelings about each other.
+        yaml: `# When {{user}} is exposed, everyone present reacts in their own way, and word gets around.
+observers:
+  when: "exposed > 0"
+  crowd: 2
+  reactions:
+    interested: { rel: { target: { lust: +4 } } }
+    disapproving: { rel: { target: { trust: -3 } }, stress: +3 }
+    predatory: { stress: +6, hint: "{target} starts paying the wrong kind of attention." }
+
+# Rent is due every Monday. Miss it and the landlord decides what that costs.
+obligations:
+  rent:
+    label: Rent
+    amount: 120
+    every: 7
+    first: 7
+    grace: 1
+    late:
+      ask: "{{user}}'s rent is late. What does the landlord do?"
+      options:
+        warning: { desc: "Slips a stern note under the door", weight: 3, stress: +8 }
+        late_fee: { desc: "Adds a £25 late fee", weight: 2, stress: +10, money: "-min(money, 25)" }
+        lockout: { desc: "Changes the lock until it's paid", weight: 1, stress: +25, flags: { locked_out: true } }
+
+# A busy shift at Jo's café: every customer wants something different.
+jobs:
+  rush_hour:
+    label: Cover the lunch rush at the café
+    at: [high_street]
+    when: "between(hour, 11, 14) and weekday != 'Sun'"
+    customers: 3
+    pay: 25
+    tip: 4
+    skill: tending
+    minutes: 30
+    gain: { tending: +1, fatigue: +15 }
+    styles: { quick: "Get their order out fast", friendly: "Be warm and chatty", careful: "Get every detail exactly right" }
+    patrons:
+      - { who: "A nurse coming off a night shift, swaying on her feet", want: quick }
+      - { who: "A student with a laptop and nowhere to be", want: friendly }
+      - { who: "A regular who orders the same thing, very precisely, every day", want: careful }
+      - { who: "Two builders on a twenty-minute break", want: quick }
+      - { who: "An elderly man who's lonely and wants someone to talk to", want: friendly }
+      - { who: "A woman with a long list of allergies", want: careful }
+
+# Companions live between replies: goals, arcs they push by their own choices, feelings about each other.
 companions:
   jo:
     goal: Buy the café outright before the landlord sells it
@@ -6970,7 +7563,14 @@ hud:
       },
       {
         label: "world",
-        yaml: `# {{user}}'s body. Gene-splices change it in stages; the story can change it too.
+        yaml: `# The frontier is barely charted: exploring the jungle can find new sites.
+discovery:
+  at: [jungle_edge, jungle_deep]
+  chance: 25
+  max: 10
+  guide: "Frontier-world sites: a crashed survey drone, a hunter's blind, ancient ruins, a smugglers' landing pad, a strange grove."
+
+# {{user}}'s body. Gene-splices change it in stages; the story can change it too.
 body:
   parts:
     hair: { color: dark, length: short }
@@ -11033,6 +11633,44 @@ function lintRuleset(r) {
   for (const e of Object.values(r.endings))
     check(e.when, `Endings › ${e.id} › when`);
   const people = Object.keys(r.people);
+  if (r.discovery.enabled) {
+    check(r.discovery.chance, "Discovery › chance");
+    for (const loc of r.discovery.at)
+      if (!r.locations[loc])
+        issues.push({ level: "warning", where: "Discovery › at", message: `"${loc}" isn't a location${suggest(loc, Object.keys(r.locations))}` });
+  }
+  if (r.observers.enabled) {
+    check(r.observers.when, "Observers › when");
+    for (const [k, eff] of Object.entries(r.observers.reactions))
+      if (eff)
+        checkEffect(eff, `Observers › reactions › ${k}`, { target: "someone" });
+  }
+  for (const o of Object.values(r.obligations)) {
+    const w = `Obligations › ${o.id}`;
+    check(o.amount, `${w} › amount`);
+    if (!r.stats[o.payWith])
+      issues.push({ level: "warning", where: `${w} › pay_with`, message: `"${o.payWith}" isn't a stat` });
+    if (o.creditor && !r.people[o.creditor])
+      issues.push({ level: "warning", where: `${w} › creditor`, message: `"${o.creditor}" isn't a person${suggest(o.creditor, people)}` });
+    for (const loc of o.at)
+      if (!r.locations[loc])
+        issues.push({ level: "warning", where: `${w} › at`, message: `"${loc}" isn't a location` });
+    if (o.late)
+      for (const opt of o.late.options)
+        checkEffect(opt.effect, `${w} › late › ${opt.id}`);
+  }
+  for (const j of Object.values(r.jobs)) {
+    const w = `Jobs › ${j.id}`;
+    check(j.when, `${w} › when`);
+    check(j.pay, `${w} › pay`);
+    check(j.tip, `${w} › tip`);
+    if (j.skill && !r.stats[j.skill])
+      issues.push({ level: "warning", where: `${w} › skill`, message: `"${j.skill}" isn't a stat` });
+    for (const loc of j.at)
+      if (!r.locations[loc])
+        issues.push({ level: "warning", where: `${w} › at`, message: `"${loc}" isn't a location` });
+    checkEffect(j.gain, `${w} › gain`);
+  }
   r.lineage.stages.forEach((st, i) => checkEffect(st.effects, `Lineage › stage ${i + 1}`));
   for (const part of r.lineage.inherit)
     if (r.body.enabled && !r.body.parts[part])
@@ -11141,6 +11779,11 @@ var init_lint = __esm(() => {
     "arc",
     "age",
     "children",
+    "owed",
+    "missed",
+    "days_until",
+    "seen_by",
+    "fame",
     "min",
     "max",
     "clamp",
@@ -12463,6 +13106,16 @@ function buildHud(r, s) {
       text: traitText(traits) || "—",
       covered: bodyCovered(r, s, part)
     })) : null,
+    dues: Object.values(r.obligations).map((o) => {
+      const d = s.dues[o.id];
+      const days = d ? Math.floor((d.due - s.minutes) / 1440) : 0;
+      return {
+        label: o.label,
+        owed: d?.owed ?? 0,
+        text: !d || d.owed <= 0 ? `Paid · next ${r.clock.enabled && d ? formatClock(r, d.due).day : "later"}` : d.missed || days < 0 ? `Overdue · ${d.missed} missed` : days <= 0 ? "Due today" : `Due in ${days} day${days === 1 ? "" : "s"}`,
+        tone: !d || d.owed <= 0 ? "good" : d.missed || days < 0 ? "bad" : days <= 1 ? "warn" : "neutral"
+      };
+    }),
     family: [
       ...s.pregnancy && s.pregnancy.told > 0 ? [{ name: s.pregnancy.carrier === "player" ? "Expecting" : `${personName(r, s, s.pregnancy.carrier)} is expecting`, text: `${Math.floor((s.minutes - s.pregnancy.since) / 1440 / 7)} of ${r.lineage.weeks} weeks` }] : [],
       ...Object.entries(s.kin).map(([id, k]) => ({ name: k.name, text: `${k.sex === "girl" ? "Daughter" : "Son"}, ${kinAge(r, s, id)}${k.joined ? " · grown up" : ""}` }))
@@ -12620,6 +13273,9 @@ function buildChoices(r, s, opts) {
       plain("dungeon:leave", "Leave the dungeon", d?.name ?? "Dungeon", "Climb back out with what you've found")
     ];
   }
+  const work = s.encounter ? [] : workMoves(r, s).map((m) => plain(m.id, m.label, m.group, m.desc));
+  if (s.job)
+    return work;
   const asChoice = (m) => ({
     id: m.id,
     label: m.label,
@@ -12658,6 +13314,7 @@ function buildChoices(r, s, opts) {
         params: []
       });
     });
+  const explore = canExplore(r, s) ? [plain(EXPLORE, r.discovery.label, "Travel", "Look for somewhere you haven't been")] : [];
   const travel = travelTargets(r, s).map((id) => ({
     id: `${TRAVEL_PREFIX}${id}`,
     label: `Go to ${r.locations[id].name}`,
@@ -12684,7 +13341,7 @@ function buildChoices(r, s, opts) {
       params: a.params.map((p) => ({ id: p.id, label: p.label, options: Object.keys(p.options), default: p.default }))
     };
   });
-  return [...live, ...actions, ...talk, ...dungeons, ...travel];
+  return [...live, ...actions, ...talk, ...work, ...dungeons, ...travel, ...explore];
 }
 function signed(n) {
   const f = formatNumber(n);
@@ -12827,6 +13484,12 @@ function summarizeEvents(r, before, after, events) {
     const name = itemName(r, after.items[id] ? after : before, id);
     out.push({ text: `${a.d > 0 ? "+" : "−"} ${name}${Math.abs(a.d) > 1 ? ` ×${Math.abs(a.d)}` : ""}`, tone: "neutral", src: a.src, undo: a.idx });
   }
+  const causeOf = (ev) => ev.why ?? (ev.src === "narrator" ? "Read from the story" : ev.src === "manual" ? "You set this" : null);
+  for (const c of out) {
+    const why = [...new Set((c.undo ?? []).map((i) => events[i] && causeOf(events[i])).filter((x) => !!x))];
+    if (why.length)
+      c.why = why;
+  }
   return out;
 }
 function checkSummary(c) {
@@ -12957,6 +13620,13 @@ function stateDigest(r, s) {
   const body = bodyLine(r, s);
   if (body)
     lines.push(body);
+  lines.push(...workDigest(r, s));
+  const saw = Object.entries(s.seen).filter(([id]) => s.people[id]);
+  if (saw.length) {
+    const eyes = saw.filter(([, v]) => !v.heard).map(([id]) => personName(r, s, id));
+    const ears = saw.filter(([, v]) => v.heard).map(([id]) => personName(r, s, id));
+    lines.push(`Reputation: ${eyes.length ? `${eyes.join(", ")} ${eyes.length === 1 ? "has" : "have"} seen {{user}} exposed` : ""}${eyes.length && ears.length ? "; " : ""}${ears.length ? `${ears.join(", ")} heard about it` : ""}.`);
+  }
   const meters = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "meter" || d.kind === "money");
   const other = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "attribute" || d.kind === "skill");
   const ml = meters.map((d) => statLine(r, d, s, r.narration.numbers)).filter(Boolean);
@@ -13103,6 +13773,7 @@ var init_view = __esm(() => {
   init_run();
   init_talk();
   init_types2();
+  init_work();
   init_expr();
 });
 
@@ -13351,7 +14022,7 @@ async function safeAsk(d, state, q, timeoutMs, what) {
 async function readTurn(opts) {
   const { decider, r, s, settings, playerText, player } = opts;
   const q = {};
-  const talking = !!activeSession(r, s);
+  const talking = !!activeSession(r, s) || !!s.job;
   const actions = playerText && !talking ? availableChoices(r, s, settings.lines) : [];
   const travel = playerText && !talking ? travelTargets(r, s) : [];
   if (playerText && (actions.length || travel.length)) {
@@ -14071,6 +14742,77 @@ var init_live = __esm(() => {
   init_helpers();
 });
 
+// src/backend/discover.ts
+async function inventPlace(r, s, card, settings, userId, timeoutMs = 12000) {
+  const from = s.location ? r.locations[s.location] : undefined;
+  const places = Object.values(r.locations).map((l) => l.name).join(", ");
+  const system = [
+    "You add one new place to the map of a roleplay game. Reply with JSON only:",
+    '{"name": "Short place name", "desc": "One or two vivid sentences about what it is and what you might find there.", "indoors": true|false}',
+    "It must fit the setting and tone, be reachable from where the player is exploring, and not duplicate an existing place.",
+    r.discovery.guide ? `Guidance: ${r.discovery.guide}` : ""
+  ].filter(Boolean).join(`
+`);
+  const user = [
+    card ? `The card:
+${card}` : "",
+    `Existing places: ${places || "(none)"}`,
+    `The player is exploring around: ${from?.name ?? s.locationName ?? "here"}${from?.desc ? ` — ${from.desc}` : ""}`
+  ].filter(Boolean).join(`
+
+`);
+  try {
+    const out = firstJson2(await ask(system, user, settings, userId, timeoutMs, { temperature: 0.9, maxTokens: 300 }));
+    const name = typeof out?.name === "string" ? out.name.trim().slice(0, 60) : "";
+    if (!name)
+      return null;
+    let id = slug(name);
+    for (let n = 2;r.locations[id]; n++)
+      id = `${slug(name)}_${n}`;
+    return { id, name, desc: typeof out?.desc === "string" ? out.desc.trim().slice(0, 400) : "", indoors: out?.indoors === true };
+  } catch (e) {
+    logError("invent place", e);
+    return null;
+  }
+}
+function placeYaml(from, p) {
+  return yaml.dump({ locations: { [from]: { exits: [p.id] }, [p.id]: { name: p.name, desc: p.desc, indoors: p.indoors, exits: [from] } } }, { lineWidth: 120 });
+}
+async function discoverPlace(loaded, r, before, rec, chatId, settings, userId) {
+  if (!rec.discover)
+    return;
+  const card = await characterBrief(chatId, userId).catch(() => "");
+  const p = await inventPlace(r, before, card, settings, userId);
+  if (!p) {
+    rec.hints.push("{{user}} explores but finds nothing new this time.");
+    return;
+  }
+  const book = loaded.bookIds[0];
+  if (book) {
+    try {
+      await host().world_books.entries.create(book, {
+        comment: `warp-ruleset · discovered · ${p.name}`,
+        content: placeYaml(rec.discover.from, p),
+        key: [],
+        disabled: true,
+        constant: false,
+        order_value: 900
+      }, userId);
+      invalidateCharacter(loaded.characterId);
+    } catch (e) {
+      logError("save discovered place", e);
+    }
+  }
+  rec.events.push({ t: "move", to: p.id, name: p.name, src: "action", why: "Exploring found somewhere new" }, { t: "discovered", id: p.id, src: "action" }, { t: "news", text: `Discovered ${p.name}.`, src: "action" });
+  rec.hints.push(`{{user}} discovers somewhere new: ${p.name}${p.indoors ? " (indoors)" : ""} — ${p.desc} Describe finding it and arriving for the first time.`);
+}
+var init_discover = __esm(() => {
+  init_js_yaml();
+  init_ruleset();
+  init_helpers();
+  init_source();
+});
+
 // src/backend/turn.ts
 function ctxInfo(ctx) {
   const raw = ctx;
@@ -14220,6 +14962,8 @@ async function interceptor(messages, ctx) {
       rec = res.record;
       if (confidence !== undefined && rec.action)
         rec.confidence = confidence;
+      if (rec.discover && !info.isDryRun && loaded)
+        await discoverPlace(loaded, r, before, rec, ctx.chatId, settings, ctx.userId);
       after = cloneState(before);
       for (const e of rec.events)
         applyEvent(after, e, r);
@@ -14356,6 +15100,7 @@ var init_turn = __esm(() => {
   init_helpers();
   init_ledger();
   init_live();
+  init_discover();
   init_settings();
   init_source();
   init_state_push();
@@ -14474,6 +15219,7 @@ var init_state_push = __esm(() => {
 init_resolve();
 init_templates();
 init_talk();
+init_work();
 init_types2();
 init_ledger();
 init_settings();
@@ -14718,7 +15464,7 @@ var PART_CONTENTS = {
   stats: "stats",
   people: "relationships (stats + people with schedules), companions, lineage",
   world: "weather, locations, items (incl. clothing), wardrobe, body, conditions, flags, start.items",
-  actions: "actions",
+  actions: "actions, obligations, jobs",
   encounters: "encounters, dungeons",
   journal: "codex, feats, perks, checkpoints, endings",
   rules: "triggers, mind",
@@ -14736,7 +15482,7 @@ function partForIssue(where) {
     return "people";
   if (["locations", "items", "wardrobe", "weather", "conditions", "flags", "body"].some((k) => head.startsWith(k)))
     return "world";
-  if (head.startsWith("actions"))
+  if (["actions", "obligations", "jobs"].some((k) => head.startsWith(k)))
     return "actions";
   if (head.startsWith("encounters") || head.startsWith("dungeons"))
     return "encounters";
@@ -14874,6 +15620,31 @@ body:             # the player character's body; the story may change it after a
     feline_splice: { label: Feline splice, chance: 70, stages: [ { set: { ears: { type: cat } }, text: "Soft cat ears push up through {{user}}'s hair." }, { set: { tail: { type: cat } } } ] }
 EFFECTS for the body: body: { hair: { color: red } } (null removes a trait), transform: { feline_splice: 1 } (advance stages; each rolls its chance).
 FUNCTIONS: body('hair', 'color') ('' when absent), transformed('feline_splice') (stages so far).
+
+discovery:        # exploring can turn up places the ruleset never had; each is written into the ruleset lorebook and stays on the map
+  at: [docks, park]                # where (empty = anywhere); found places can be explored too
+  chance: 25                       # percent per try (formula); each fruitless try adds 10
+  max: 12
+  guide: "Small, grounded places: a back-alley bar, a hidden garden."
+observers:        # being seen: while \`when\` holds, each adult present reacts individually (the decision model reads them; children never take part)
+  when: "exposed > 0"
+  crowd: 2                         # anonymous passers-by when outdoors
+  reactions: { interested: { rel: { target: { lust: +4 } } }, disapproving: { rel: { target: { trust: -3 } } } }   # unnoticed | glance | interested | disapproving | predatory
+  rumours: true                    # witnesses tell people they're close to (bonds ≥ 25), once a day. FUNCTIONS seen_by(person), fame()
+obligations:      # bills on the calendar: "Pay…" choices appear while something is owed; a missed one lets the creditor decide
+  rent: { amount: 120, every: 7, first: 7, grace: 1, creditor: landlord, at: [apartment], late: { ask: "The rent is late. What does {creditor} do?", options: { warn: { desc: A warning, weight: 3 }, fee: { desc: A late fee, weight: 1, money: -25 } } } }
+  # arrears pile up; FUNCTIONS owed(id), missed(id), days_until(id)
+jobs:             # a shift of customers, each wanting a style; your pick (or your typed words, judged by the model) sets their mood and tip
+  lunch_rush:
+    label: Cover the lunch rush
+    at: [high_street]
+    customers: 3
+    pay: 25                        # for the shift (formula); tip: per customer, scaled by how happy they are
+    tip: 4
+    skill: tending                 # helps every customer's mood
+    gain: { tending: +1 }
+    styles: { quick: Get their order out fast, friendly: Be warm and chatty }
+    patrons: [ { who: "A nurse off a night shift", want: quick }, { who: "A lonely old man", want: friendly } ]
 
 codex: { docks: { title: The Docks, category: Places, text: "...", unlock: "location == 'docks'", lore: [Lorebook entry title] } }
 feats: { night_owl: { name: Night owl, desc: "...", unlock: "hour >= 2 and hour < 5", reward: { stress: -5 } } }
@@ -15805,7 +16576,15 @@ spindle.onFrontendMessage(async (raw, userId) => {
         const { state } = foldPath(r, msgs);
         let say;
         let intent = { actionId: msg.actionId, params: msg.params, via: "choice" };
-        if (msg.actionId === RUN_EPILOGUE) {
+        if (msg.actionId === EXPLORE) {
+          if (!canExplore(r, state)) {
+            toast("warning", "There's nowhere new to find here.", userId);
+            await pushState(msg.chatId, userId);
+            return;
+          }
+          say = "*I explore around, looking for somewhere I haven't been.*";
+          intent = { actionId: EXPLORE, via: "choice", label: "Explore" };
+        } else if (msg.actionId === RUN_EPILOGUE) {
           if (!state.ended || state.ended.told) {
             await pushState(msg.chatId, userId);
             return;
@@ -15821,6 +16600,15 @@ spindle.onFrontendMessage(async (raw, userId) => {
           }
           say = `*${c.label}*`;
           intent = { actionId: `${LIVE_PREFIX}${c.tag}${c.target ? `${TARGET_SEP}${c.target}` : ""}`, via: "choice", label: c.label };
+        } else if (msg.actionId.startsWith(PAY_PREFIX) || msg.actionId.startsWith(JOB_PREFIX)) {
+          const m = workMoves(r, state).find((x) => x.id === msg.actionId);
+          if (!m) {
+            toast("warning", "That isn't possible right now.", userId);
+            await pushState(msg.chatId, userId);
+            return;
+          }
+          say = m.say;
+          intent = { actionId: m.id, via: "choice", label: m.label };
         } else if (msg.actionId.startsWith(DATE_PREFIX)) {
           const m = dateMoves(r, state, settings.lines).find((x) => x.id === msg.actionId);
           if (!m) {
