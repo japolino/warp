@@ -104,7 +104,7 @@ function parseJson(text: string): Record<string, unknown> | null {
 }
 
 /** The model's YAML: the fenced block if there is one, else the text minus chatter before the first key. */
-function extractYaml(text: string): string {
+export function extractYaml(text: string): string {
   const fenced = /```(?:ya?ml)?\s*\n([\s\S]*?)```/i.exec(text);
   let y = fenced ? fenced[1] : text;
   const lines = y.split("\n");
@@ -621,7 +621,7 @@ function labelOf(comment: string): string {
   return comment.replace(/^\s*(?:\[[^\]]*\]\s*)?warp[-_ ]?ruleset\s*[·:\-–—|]?\s*/i, "").trim().toLowerCase() || "core";
 }
 
-async function rulesetEntries(characterId: string, userId?: string): Promise<{ entries: RulesetEntry[]; rulesetBook: string | null; bookIds: string[] }> {
+export async function rulesetEntries(characterId: string, userId?: string): Promise<{ entries: RulesetEntry[]; rulesetBook: string | null; bookIds: string[] }> {
   const c = await host().characters.get(characterId, userId);
   const entries: RulesetEntry[] = [];
   let rulesetBook: string | null = null;
@@ -639,7 +639,7 @@ async function rulesetEntries(characterId: string, userId?: string): Promise<{ e
   return { entries, rulesetBook, bookIds: c?.world_book_ids ?? [] };
 }
 
-async function currentParts(characterId: string, userId?: string): Promise<BuilderPart[]> {
+export async function currentParts(characterId: string, userId?: string): Promise<BuilderPart[]> {
   const { entries } = await rulesetEntries(characterId, userId);
   const parts: BuilderPart[] = entries.map((e) => ({ label: e.label, yaml: e.content, status: "ok", issues: [] }));
   check(parts);

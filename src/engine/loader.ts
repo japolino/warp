@@ -43,6 +43,8 @@ export function deepMerge(a: unknown, b: unknown): unknown {
     for (const [k, v] of Object.entries(b)) out[k] = k in out ? deepMerge(out[k], v) : v;
     return out;
   }
+  // `dating: true` after a `dating: { … }` block means "on", not "forget the block".
+  if (isObj(a) && b === true) return a;
   return b === undefined ? a : b;
 }
 

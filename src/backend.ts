@@ -343,6 +343,13 @@ spindle.onFrontendMessage(async (raw, userId) => {
         break;
       }
       case "builder_deepen": await builderDeepen(msg.chatId, { connectionId: msg.connectionId, effort: msg.effort }, userId); break;
+      case "theme_dating": {
+        const { themeDating } = await import("./backend/flavour.js");
+        const done = await themeDating(msg.chatId, userId, true).catch((e) => { logError("theme dating", e); return null; });
+        toast(done ? "success" : "info", done ? `Dating re-themed: ${done.topics} topics, ${done.venues} outings.` : "Dating wasn't changed — the card may already fit, or the draft didn't check out.", userId);
+        await pushState(msg.chatId, userId, true);
+        break;
+      }
       case "draft_item_uses": {
         const names = await draftItemUses(msg.chatId, userId);
         toast(names.length ? "success" : "info", names.length ? `Drafted uses for ${names.join(", ")} — see the Ruleset tab.` : "No items needed a use, or the draft didn't check out.", userId);

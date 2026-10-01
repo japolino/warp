@@ -411,6 +411,8 @@ export interface Settings {
   sceneLines: "model" | "scripted";
   /** Items that do nothing get a use drafted from their description (saved as an editable lorebook entry). */
   draftItemUses: boolean;
+  /** Dating's built-in topics and outings are rewritten once to fit the card's setting. */
+  themeDating: boolean;
   /** Generate a picture for each date (the place, with them in the middle). */
   dateImages: boolean;
   /** Image connection for date pictures; empty = the user's default. */
@@ -437,6 +439,7 @@ export const DEFAULT_SETTINGS: Settings = {
   prewrite: 0,
   sceneLines: "model",
   draftItemUses: true,
+  themeDating: true,
   dateImages: true,
   imageConnectionId: "",
 };
@@ -591,6 +594,8 @@ export type FrontendToBackend =
   | { type: "builder_deepen"; chatId: string; connectionId?: string; effort?: "quick" | "thorough" }
   /** Draft uses for items that do nothing, from their descriptions, into a "warp-ruleset · item uses" entry. */
   | { type: "draft_item_uses"; chatId: string }
+  /** Rewrite dating's topics and outings for this card's setting (again, if it was done before). */
+  | { type: "theme_dating"; chatId: string }
   | { type: "builder_answer"; chatId: string; answers: Record<string, BuilderAnswer>; additions: BuilderAddition[]; more: boolean }
   | { type: "builder_redo"; chatId: string; part: string; note?: string }
   | { type: "builder_fix"; chatId: string; warning: string }

@@ -8690,6 +8690,7 @@ var init_protocol = __esm(() => {
     prewrite: 0,
     sceneLines: "model",
     draftItemUses: true,
+    themeDating: true,
     dateImages: true,
     imageConnectionId: ""
   };
@@ -8717,6 +8718,7 @@ async function patchSettings(patch, userId) {
   next.prewrite = Math.max(0, Math.min(4, Math.round(Number(next.prewrite) || 0)));
   next.sceneLines = next.sceneLines === "scripted" ? "scripted" : "model";
   next.draftItemUses = next.draftItemUses !== false;
+  next.themeDating = next.themeDating !== false;
   next.dateImages = next.dateImages !== false && next.dateImages !== "false";
   cache2.set(key(userId), next);
   await host().userStorage.setJson("settings.json", next, { indent: 2, userId });
@@ -11838,6 +11840,8 @@ function deepMerge(a, b) {
       out[k] = k in out ? deepMerge(out[k], v) : v;
     return out;
   }
+  if (isObj2(a) && b === true)
+    return a;
   return b === undefined ? a : b;
 }
 function loadRuleset(parts) {
@@ -17898,6 +17902,9 @@ Give each tracked person a schedule (where they are by hour and day) so the play
 ## money
 Money needs income (jobs, paid actions, loot) AND spending (shops, rent, bribes, fares). If either is missing it's just a number.
 
+## dating
+The built-in topics and outings are modern (films, games, a café, an arcade). For any other setting, rewrite them under dating: — topics: { books_films: { label: Tales and songs, say: "*I ask {{target}} which ballads they know.*" }, games: false } and venues: for outings that exist there (fairs, taverns, tea houses, orbital gardens). Give people tastes (loves/likes/dislikes/hates) so conversations reward learning who they are.
+
 ## flags and story machinery
 Set a flag only if something reads it (an action's when, a trigger, a codex unlock, a secret's stage). Fronts, secrets and random events make the world move without the player — use them to put pressure on the core loop.
 
@@ -19324,6 +19331,108 @@ ${DESIGN_GUIDE}
 ${REFERENCE}`;
 });
 
+// src/backend/flavour.ts
+function defaultsInUse(r) {
+  if (!r.dating.enabled)
+    return { topics: [], venues: [] };
+  const topics = Object.values(r.dating.topics).filter((t) => DEFAULT_TOPICS[t.id] && DEFAULT_TOPICS[t.id].label === t.label).map((t) => t.id);
+  const venues = Object.values(r.dating.venues).filter((v) => DEFAULT_VENUES[v.id] && DEFAULT_VENUES[v.id].name === v.name).map((v) => v.id);
+  return { topics, venues };
+}
+async function themeDating(chatId, userId, force = false) {
+  const loaded = await getRuleset(chatId, userId, true);
+  const r = loaded?.ruleset;
+  if (!r || !loaded?.characterId || !r.dating.enabled)
+    return null;
+  const { entries, rulesetBook } = await rulesetEntries(loaded.characterId, userId);
+  const existing = entries.find((e) => e.label === FLAVOUR_LABEL);
+  if (existing && !force)
+    return null;
+  const used = defaultsInUse(r);
+  if (!force && used.topics.length < 6 && used.venues.length < 2)
+    return null;
+  const settings = await getSettings(userId);
+  const card = await characterBrief(chatId, userId);
+  const topics = Object.values(r.dating.topics).filter((t) => DEFAULT_TOPICS[t.id]).map((t) => `- ${t.id} (${t.category}): ${t.label}${t.desc ? ` — ${t.desc}` : ""}`);
+  const venues = Object.values(r.dating.venues).filter((v) => DEFAULT_VENUES[v.id]).map((v) => `- ${v.id}: ${v.name} — ${v.desc ?? ""} (cost ${v.cost}; activities: ${v.activities.map((a) => a.label).join(", ")})`);
+  const money = r.statOrder.find((id) => r.stats[id].kind === "money");
+  const text = await ask(SYSTEM2, [
+    `The card:
+${card.slice(0, 4000)}`,
+    `The game: ${r.name}${r.description ? ` — ${r.description}` : ""}. Places: ${Object.values(r.locations).map((l) => l.name).join(", ") || "unknown"}.${money ? ` Money: ${r.stats[money].label}.` : ""}`,
+    `Default topics:
+${topics.join(`
+`)}`,
+    `Default outings:
+${venues.join(`
+`)}`
+  ].join(`
+
+`), settings, userId, 60000, { temperature: 0.6, maxTokens: 3500 });
+  let doc;
+  try {
+    doc = yaml.load(extractYaml(text));
+  } catch (e) {
+    logError("dating flavour", e);
+    return null;
+  }
+  if (!doc || doc.fits_already === true) {
+    if (doc?.fits_already === true && !existing)
+      await writeEntry(loaded.characterId, rulesetBook ?? loaded.bookIds[0], null, `# The built-in dating topics already fit this card.
+`, userId);
+    return null;
+  }
+  const dt = doc.dating ?? {};
+  const clean = {
+    ...dt.topics && typeof dt.topics === "object" ? { topics: dt.topics } : {},
+    ...dt.venues && typeof dt.venues === "object" ? { venues: dt.venues } : {}
+  };
+  if (!Object.keys(clean).length)
+    return null;
+  const body = `# Dating re-themed for this card by Warp. Edit or delete freely — your own dating: section wins.
+${yaml.dump({ dating: clean }, { lineWidth: 160 })}`;
+  const parts = (await currentParts(loaded.characterId, userId)).filter((p) => p.label !== FLAVOUR_LABEL);
+  const probe = loadRuleset([...parts.map((p, i) => ({ label: `warp-ruleset · ${p.label}`, content: p.yaml, order: i })), { label: `warp-ruleset · ${FLAVOUR_LABEL}`, content: body, order: 5 }]);
+  if (!probe.ruleset || probe.issues.some((i) => i.level === "error") || !probe.ruleset.dating.topicOrder.length)
+    return null;
+  await writeEntry(loaded.characterId, rulesetBook ?? loaded.bookIds[0], existing?.id ?? null, body, userId);
+  invalidateCharacter(loaded.characterId);
+  return { topics: Object.keys(clean.topics ?? {}).length, venues: Object.keys(clean.venues ?? {}).length };
+}
+async function writeEntry(characterId, bookId, id, content, userId) {
+  if (id) {
+    await host().world_books.entries.update(id, { content, disabled: true }, userId);
+    return;
+  }
+  if (!bookId)
+    return;
+  await host().world_books.entries.create(bookId, { comment: `warp-ruleset · ${FLAVOUR_LABEL}`, content, key: [], disabled: true, constant: false, order_value: 5 }, userId);
+}
+var FLAVOUR_LABEL = "dating flavour", SYSTEM2;
+var init_flavour = __esm(() => {
+  init_js_yaml();
+  init_loader();
+  init_content2();
+  init_helpers();
+  init_settings();
+  init_source();
+  init_builder();
+  SYSTEM2 = [
+    "You adapt a dating mini-game's conversation topics and outings to the setting of a roleplay card.",
+    "The defaults are modern (films, games, a café, an arcade). Rewrite them so they belong in THIS setting and era.",
+    "For each topic: keep its id; give a label that fits, and a `say` — the player's line in first person, wrapped in *asterisks*, that brings it up (use {{target}} for the other person's name).",
+    "Remove topics or outings that can't exist in the setting (`id: false`) and add up to 5 new ones that fit (new snake_case ids, same categories: small_talk, interests, personal, charm, romance).",
+    "For each outing (venue): keep or replace it; give name, desc, cost (in the game's money), 3–4 activities (id: { label, tags: [...] }, romance ones romantic: true) and 2–3 events (id: { text, enjoy: -10..10 }).",
+    "Keep tags plain words (food, music, nature, thrill, calm, luxury, romance, humor, conversation…): people's hidden tastes are matched on them.",
+    "Romance only between adults. Reply with YAML only, in this shape:",
+    "fits_already: false   # true if the defaults already suit this setting (then nothing else)",
+    "dating:",
+    '  topics: { books_films: { label: Tales and songs, say: "*I ask {{target}} which ballads they know.*" }, games: { label: Dice and chess }, fashion: false, swordplay: { label: Swordplay, category: interests } }',
+    "  venues: { cinema: false, fair: { name: The harvest fair, desc: ..., cost: 5, activities: {...}, events: {...} } }"
+  ].join(`
+`);
+});
+
 // src/backend/state-push.ts
 function setActiveChat(userId, chatId) {
   activeChat.set(key4(userId), chatId);
@@ -19343,6 +19452,8 @@ async function pushState(chatId, userId, force = false) {
     const settings = await getSettings(userId);
     if (settings.enabled && settings.draftItemUses)
       maybeDraftItems(chatId, loaded.characterId, r, status.depth, userId);
+    if (settings.enabled && settings.themeDating && r.dating.enabled)
+      maybeThemeDating(chatId, loaded.characterId, userId);
     const msgs = await getMessages(chatId);
     const { state, steps } = foldPath(r, msgs);
     lastStates.set(chatId, state);
@@ -19422,6 +19533,17 @@ function maybeDraftItems(chatId, characterId, r, depth, userId) {
     }
   }).catch((e) => logError("draft item uses", e));
 }
+function maybeThemeDating(chatId, characterId, userId) {
+  if (!characterId || themed.has(characterId))
+    return;
+  themed.add(characterId);
+  Promise.resolve().then(() => (init_flavour(), {})).then(({}) => themeDating(chatId, userId)).then((done) => {
+    if (done) {
+      send({ type: "toast", level: "info", message: `Dating re-themed for this card: ${done.topics} topics, ${done.venues} outings. Edit it in the "dating flavour" lorebook entry.` }, userId);
+      pushState(chatId, userId, true);
+    }
+  }).catch((e) => logError("theme dating", e));
+}
 function markReady(choices, ready) {
   return ready.size ? choices.map((c) => ready.has(c.id) ? { ...c, ready: true } : c) : choices;
 }
@@ -19456,7 +19578,7 @@ async function connectionsFor(userId) {
     return [];
   }
 }
-var lastStates, busyChats, activeChat, timers, key4 = (userId) => userId ?? "_", MAX_RECORDS = 60, drafted;
+var lastStates, busyChats, activeChat, timers, key4 = (userId) => userId ?? "_", MAX_RECORDS = 60, drafted, themed;
 var init_state_push = __esm(() => {
   init_view();
   init_view2();
@@ -19471,6 +19593,7 @@ var init_state_push = __esm(() => {
   activeChat = new Map;
   timers = new Map;
   drafted = new Set;
+  themed = new Set;
 });
 
 // src/backend.ts
@@ -19888,6 +20011,16 @@ spindle.onFrontendMessage(async (raw, userId) => {
       case "builder_deepen":
         await builderDeepen(msg.chatId, { connectionId: msg.connectionId, effort: msg.effort }, userId);
         break;
+      case "theme_dating": {
+        await Promise.resolve().then(() => init_flavour());
+        const done = await themeDating(msg.chatId, userId, true).catch((e) => {
+          logError("theme dating", e);
+          return null;
+        });
+        toast(done ? "success" : "info", done ? `Dating re-themed: ${done.topics} topics, ${done.venues} outings.` : "Dating wasn't changed — the card may already fit, or the draft didn't check out.", userId);
+        await pushState(msg.chatId, userId, true);
+        break;
+      }
       case "draft_item_uses": {
         const names = await draftItemUses(msg.chatId, userId);
         toast(names.length ? "success" : "info", names.length ? `Drafted uses for ${names.join(", ")} — see the Ruleset tab.` : "No items needed a use, or the draft didn't check out.", userId);

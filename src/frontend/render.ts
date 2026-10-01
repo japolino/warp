@@ -530,6 +530,8 @@ export function renderSettings(s: Settings, status: RulesetStatus | null, connec
         <option value="scripted"${s.sceneLines === "scripted" ? " selected" : ""}>Scripted lines only — instant, free</option>
       </select>
     </label>
+    ${toggle("themeDating", "Dating that fits the card", "The built-in topics and outings (films, a café, an arcade…) are rewritten once for the card's setting — a medieval card gets tales and the harvest fair.", s.themeDating)}
+    ${status?.state === "ok" ? `<div class="warp-row"><button class="warp-btn warp-mini" data-theme-dating title="Rewrite dating's topics and outings for this card now">Re-theme dating now</button></div>` : ""}
     ${toggle("draftItemUses", "Give useless items a purpose", "Items the rules never use get one drafted from their description (a use or a gear bonus), saved as an editable \"item uses\" lorebook entry.", s.draftItemUses)}
     ${toggle("dateImages", "A picture for each date", "The place, with them in the middle — made once per person and place, then reused.", s.dateImages)}
     <label class="warp-slider">Image connection

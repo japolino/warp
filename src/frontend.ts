@@ -834,6 +834,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const perk = t.closest<HTMLElement>("[data-buy-perk]");
     if (perk) { const cid = chatId(); if (cid) send({ type: "buy_perk", chatId: cid, perk: perk.dataset.buyPerk! }); return; }
     if (t.closest("[data-install]")) { void confirmReplace(); return; }
+    if (t.closest("[data-theme-dating]")) { const cid = chatId(); if (cid) send({ type: "theme_dating", chatId: cid }); return; }
     if (t.closest("[data-draft-items]")) { const cid = chatId(); if (cid) send({ type: "draft_item_uses", chatId: cid }); return; }
     if (t.closest("[data-reload]")) { send({ type: "reload", chatId: chatId() }); return; }
     const save = t.closest<HTMLElement>("[data-save]");

@@ -25,6 +25,7 @@ export async function patchSettings(patch: Partial<Settings>, userId?: string): 
   next.prewrite = Math.max(0, Math.min(4, Math.round(Number(next.prewrite) || 0)));
   next.sceneLines = next.sceneLines === "scripted" ? "scripted" : "model";
   next.draftItemUses = next.draftItemUses !== false;
+  next.themeDating = next.themeDating !== false;
   next.dateImages = next.dateImages !== false && (next.dateImages as unknown) !== "false";
   cache.set(key(userId), next);
   await host().userStorage.setJson("settings.json", next, { indent: 2, userId });

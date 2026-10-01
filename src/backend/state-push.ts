@@ -42,6 +42,7 @@ export async function pushState(chatId: string | null, userId?: string, force = 
     const r = loaded.ruleset;
     const settings = await getSettings(userId);
     if (settings.enabled && settings.draftItemUses) maybeDraftItems(chatId, loaded.characterId, r, status.depth, userId);
+    if (settings.enabled && settings.themeDating && r.dating.enabled) maybeThemeDating(chatId, loaded.characterId, userId);
     const msgs = await getMessages(chatId);
     const { state, steps } = foldPath(r, msgs);
     lastStates.set(chatId, state);
@@ -122,6 +123,17 @@ function maybeDraftItems(chatId: string, characterId: string | null, r: Ruleset,
     .then((names) => { if (names.length) { send({ type: "toast", level: "info", message: `Drafted what ${names.join(", ")} do — check the Ruleset tab.` }, userId); void pushState(chatId, userId, true); } })
     .catch((e) => logError("draft item uses", e));
   void r;
+}
+
+const themed = new Set<string>();
+
+/** Dating still in its modern defaults gets re-themed for the card, once, in the background. */
+function maybeThemeDating(chatId: string, characterId: string | null, userId?: string) {
+  if (!characterId || themed.has(characterId)) return;
+  themed.add(characterId);
+  void import("./flavour.js").then(({ themeDating }) => themeDating(chatId, userId))
+    .then((done) => { if (done) { send({ type: "toast", level: "info", message: `Dating re-themed for this card: ${done.topics} topics, ${done.venues} outings. Edit it in the "dating flavour" lorebook entry.` }, userId); void pushState(chatId, userId, true); } })
+    .catch((e) => logError("theme dating", e));
 }
 
 function markReady(choices: ChoiceView[], ready: Set<string>): ChoiceView[] {
