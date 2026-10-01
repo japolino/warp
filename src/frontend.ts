@@ -423,10 +423,36 @@ export function setup(ctx: SpindleFrontendContext) {
   const chipEls = new Map<string, { el: Element; html: string }>();
   const wantChips = new Map<string, string>();
 
+  // Where our rows go: right after the message card, inside its list row.
+  // Not "inside the row": the host registers an injection relative to the
+  // nearest [data-message-id] and, when the card remounts (scrolled away and
+  // back), replays it relative to the card. Something added to the row would
+  // be moved into the card — a side-by-side flex box — and squeeze the text
+  // into a sliver. Anchoring on the card itself replays to the same spot.
+  function messageSlot(messageId: string): { target: Element; position: InsertPosition } | null {
+    const row = ctx.dom.findMessageElement(messageId);
+    if (!row) return null;
+    const card = row.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
+    return card ? { target: card, position: "afterend" } : { target: row, position: "beforeend" };
+  }
+
+  /** Undo a replay that put our row in the wrong place, and keep choices under the chips. */
+  function healPlacement() {
+    const fix = (el: Element | undefined | null, id: string | null) => {
+      if (!el?.isConnected || !id) return;
+      const slot = messageSlot(id);
+      if (slot?.position === "afterend" && slot.target.contains(el)) slot.target.after(el);
+    };
+    for (const [id, { el }] of chipEls) fix(el, id);
+    fix(choicesEl, choicesFor);
+    const chips = choicesFor ? chipEls.get(choicesFor)?.el : null;
+    if (chips?.isConnected && choicesEl?.isConnected && chips.parentElement === choicesEl.parentElement && chips.nextElementSibling !== choicesEl) chips.after(choicesEl);
+  }
+
   function injectChips(messageId: string, html: string): boolean {
-    const bubble = ctx.dom.findMessageElement(messageId);
-    if (!bubble) return false;
-    const el = ctx.dom.inject(bubble, `<div class="warp-chips" data-warp-chips="${messageId}">${html}</div>`, "beforeend");
+    const slot = messageSlot(messageId);
+    if (!slot) return false;
+    const el = ctx.dom.inject(slot.target, `<div class="warp-chips" data-warp-chips="${messageId}">${html}</div>`, slot.position);
     chipEls.set(messageId, { el, html });
     return true;
   }
@@ -442,9 +468,11 @@ export function setup(ctx: SpindleFrontendContext) {
     choicesFor = anchor;
     choicesHtml = html;
     if (!anchor || !html) return;
-    const bubble = ctx.dom.findMessageElement(anchor);
-    if (!bubble) return;
-    choicesEl = ctx.dom.inject(bubble, `<div class="warp-choices${isBusy ? " warp-busy" : ""}">${html}</div>`, "beforeend");
+    const slot = messageSlot(anchor);
+    if (!slot) return;
+    choicesEl = ctx.dom.inject(slot.target, `<div class="warp-choices${isBusy ? " warp-busy" : ""}">${html}</div>`, slot.position);
+    // "afterend" puts it straight after the card — above the chips; move it below them.
+    healPlacement();
   }
 
   function reconcileMessages() {
@@ -487,6 +515,7 @@ export function setup(ctx: SpindleFrontendContext) {
     let touched = false;
     for (const [id, html] of wantChips) if (!chipEls.has(id) && injectChips(id, html)) touched = touched || id === state?.choicesAnchor;
     if (touched || (choicesFor && choicesHtml && !choicesEl?.isConnected)) placeChoices(true);
+    healPlacement();
   };
   try {
     mo = new MutationObserver(() => { if (!moTimer) moTimer = setTimeout(pendingCheck, 200); });

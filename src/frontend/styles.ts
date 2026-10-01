@@ -129,6 +129,10 @@ export const STYLES = `
 @keyframes warp-spin { to { transform: rotate(360deg); } }
 
 /* ───────── per-message dice & change chips ───────── */
+/* If the host ever re-attaches our row inside a message card (a side-by-side
+   flex box), wrap it onto its own full-width line rather than squeezing the text. */
+[data-message-id]:has(> [data-spindle-inj-id] > .warp-chips, > [data-spindle-inj-id] > .warp-choices) { flex-wrap: wrap; }
+[data-message-id] > [data-spindle-inj-id]:has(> .warp-chips, > .warp-choices) { flex: 1 0 100%; min-width: 0; }
 .warp-chips { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 5px; align-items: center; font-size: 12px; }
 .warp-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; background: var(--warp-fill); border: 1px solid transparent; white-space: nowrap; }
 .warp-chip-narr { border-style: dashed; border-color: var(--warp-border); }

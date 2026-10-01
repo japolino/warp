@@ -174,6 +174,10 @@ var STYLES = `
 @keyframes warp-spin { to { transform: rotate(360deg); } }
 
 /* ───────── per-message dice & change chips ───────── */
+/* If the host ever re-attaches our row inside a message card (a side-by-side
+   flex box), wrap it onto its own full-width line rather than squeezing the text. */
+[data-message-id]:has(> [data-spindle-inj-id] > .warp-chips, > [data-spindle-inj-id] > .warp-choices) { flex-wrap: wrap; }
+[data-message-id] > [data-spindle-inj-id]:has(> .warp-chips, > .warp-choices) { flex: 1 0 100%; min-width: 0; }
 .warp-chips { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 5px; align-items: center; font-size: 12px; }
 .warp-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; background: var(--warp-fill); border: 1px solid transparent; white-space: nowrap; }
 .warp-chip-narr { border-style: dashed; border-color: var(--warp-border); }
@@ -3994,11 +3998,33 @@ function setup(ctx) {
   let choicesHtml = "";
   const chipEls = new Map;
   const wantChips = new Map;
+  function messageSlot(messageId) {
+    const row = ctx.dom.findMessageElement(messageId);
+    if (!row)
+      return null;
+    const card = row.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
+    return card ? { target: card, position: "afterend" } : { target: row, position: "beforeend" };
+  }
+  function healPlacement() {
+    const fix = (el, id) => {
+      if (!el?.isConnected || !id)
+        return;
+      const slot = messageSlot(id);
+      if (slot?.position === "afterend" && slot.target.contains(el))
+        slot.target.after(el);
+    };
+    for (const [id, { el }] of chipEls)
+      fix(el, id);
+    fix(choicesEl, choicesFor);
+    const chips = choicesFor ? chipEls.get(choicesFor)?.el : null;
+    if (chips?.isConnected && choicesEl?.isConnected && chips.parentElement === choicesEl.parentElement && chips.nextElementSibling !== choicesEl)
+      chips.after(choicesEl);
+  }
   function injectChips(messageId, html) {
-    const bubble = ctx.dom.findMessageElement(messageId);
-    if (!bubble)
+    const slot = messageSlot(messageId);
+    if (!slot)
       return false;
-    const el = ctx.dom.inject(bubble, `<div class="warp-chips" data-warp-chips="${messageId}">${html}</div>`, "beforeend");
+    const el = ctx.dom.inject(slot.target, `<div class="warp-chips" data-warp-chips="${messageId}">${html}</div>`, slot.position);
     chipEls.set(messageId, { el, html });
     return true;
   }
@@ -4016,10 +4042,11 @@ function setup(ctx) {
     choicesHtml = html;
     if (!anchor || !html)
       return;
-    const bubble = ctx.dom.findMessageElement(anchor);
-    if (!bubble)
+    const slot = messageSlot(anchor);
+    if (!slot)
       return;
-    choicesEl = ctx.dom.inject(bubble, `<div class="warp-choices${isBusy ? " warp-busy" : ""}">${html}</div>`, "beforeend");
+    choicesEl = ctx.dom.inject(slot.target, `<div class="warp-choices${isBusy ? " warp-busy" : ""}">${html}</div>`, slot.position);
+    healPlacement();
   }
   function reconcileMessages() {
     const records = state?.records ?? [];
@@ -4065,6 +4092,7 @@ function setup(ctx) {
         touched = touched || id === state?.choicesAnchor;
     if (touched || choicesFor && choicesHtml && !choicesEl?.isConnected)
       placeChoices(true);
+    healPlacement();
   };
   try {
     mo = new MutationObserver(() => {
