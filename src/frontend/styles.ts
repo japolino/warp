@@ -111,7 +111,7 @@ export const STYLES = `
 .warp-kbd { font-family: ui-monospace, monospace; font-size: 10.5px; padding: 0 5px; border-radius: 4px; border: 1px solid var(--warp-border); color: var(--warp-muted); }
 
 /* ───────── choices under the latest reply ───────── */
-.warp-choices { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--warp-border); display: flex; flex-direction: column; gap: 8px; transition: opacity 200ms; }
+.warp-choices { container-type: inline-size; margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--warp-border); display: flex; flex-direction: column; gap: 8px; transition: opacity 200ms; }
 .warp-choices.warp-busy { opacity: .45; pointer-events: none; }
 .warp-choice-group { display: flex; flex-direction: column; gap: 5px; }
 .warp-choice-group-label { font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--warp-dim); }
@@ -296,26 +296,38 @@ export const STYLES = `
 .warp-depth-drafted { font-size: 12px; border-left: 3px solid var(--warp-accent); padding-left: 8px; }
 
 /* ───────── encounters: goal, danger, rounds ───────── */
-.warp-enc-guide { border: 1px solid color-mix(in srgb, var(--warp-bad) 55%, var(--warp-border)); border-radius: var(--warp-radius); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; background: color-mix(in srgb, var(--warp-bad) 6%, transparent); }
-.warp-enc-head { display: flex; justify-content: space-between; gap: 8px; font-weight: 700; }
-.warp-enc-goal { font-size: 12.5px; }
-.warp-enc-meter { display: grid; grid-template-columns: minmax(70px, auto) 1fr auto; align-items: center; gap: 8px; font-size: 12px; font-variant-numeric: tabular-nums; }
-.warp-enc-danger { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }
+.warp-enc-guide { border: 1px solid color-mix(in srgb, var(--warp-bad) 45%, var(--warp-border)); border-radius: var(--warp-radius); padding: 8px 10px; display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px; background: color-mix(in srgb, var(--warp-bad) 5%, transparent); font-size: 12.5px; }
+.warp-enc-head { display: flex; justify-content: space-between; gap: 8px; font-weight: 700; font-size: 13px; }
+.warp-enc-goal b, .warp-enc-danger b, .warp-enc-last-head b { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--warp-dim); font-weight: 600; margin-right: 4px; }
+.warp-enc-meters { display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px 18px; }
+@container (min-width: 520px) { .warp-enc-meters { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.warp-enc-meter { display: grid; grid-template-columns: minmax(64px, auto) 1fr auto; align-items: center; gap: 8px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.warp-enc-danger { font-size: 12px; font-variant-numeric: tabular-nums; }
+.warp-enc-last { border-top: 1px dashed var(--warp-border); padding-top: 5px; display: flex; flex-direction: column; gap: 3px; }
+.warp-enc-last-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
 .warp-enc-say { display: flex; gap: 6px; }
-.warp-enc-say .warp-input { flex: 1; min-width: 0; }
+.warp-enc-say .warp-input { flex: 1; min-width: 0; padding-top: 4px; padding-bottom: 4px; }
 .warp-choice-why { display: block; font-size: 11px; color: var(--warp-dim); margin-top: 1px; }
 .warp-choice-locked { opacity: .55; cursor: not-allowed; }
 .warp-choice-item { border-style: dashed; }
-.warp-enc-log { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; font-size: 12px; }
-.warp-round { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 5px 8px; border-radius: 8px; background: var(--warp-fill-subtle); border: 1px solid var(--warp-border); }
-.warp-round-n { font-variant-numeric: tabular-nums; color: var(--warp-dim); min-width: 1.2em; }
-.warp-round-what { flex: 1 1 220px; min-width: 0; }
-.warp-round-changes { display: flex; flex-wrap: wrap; gap: 4px 10px; font-variant-numeric: tabular-nums; }
-.warp-round-end { flex-basis: 100%; font-weight: 700; }
-.warp-round-on { flex-basis: 100%; font-size: 11px; }
-.warp-round-final { padding: 6px 8px; border-radius: 8px; border: 1px solid currentColor; background: var(--warp-fill-subtle); }
-.warp-rounds > summary { cursor: pointer; color: var(--warp-dim); font-size: 11px; }
-.warp-rounds[open] { display: flex; flex-direction: column; gap: 4px; }
+.warp-enc-log { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; font-size: 12px; }
+.warp-enc-log > .warp-round, .warp-rounds-list > .warp-round { padding: 5px 8px; border-radius: 8px; background: var(--warp-fill-subtle); border: 1px solid var(--warp-border); }
+.warp-enc-log-foot { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
+.warp-round { display: flex; flex-direction: column; gap: 1px; font-size: 12px; min-width: 0; }
+.warp-round-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.warp-round-n { font-variant-numeric: tabular-nums; color: var(--warp-dim); min-width: 1.1em; }
+.warp-round-foe, .warp-round-changes, .warp-round-end { padding-left: calc(1.1em + 8px); }
+.warp-round-changes { display: flex; flex-wrap: wrap; gap: 0 10px; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.warp-round-end { font-weight: 700; }
+.warp-round-final { padding: 5px 8px; border-radius: 8px; border: 1px solid currentColor; background: var(--warp-fill-subtle); }
+.warp-rounds, .warp-enc-why { font-size: 11.5px; }
+.warp-rounds > summary, .warp-enc-why > summary { cursor: pointer; color: var(--warp-dim); list-style: none; }
+.warp-rounds > summary::-webkit-details-marker, .warp-enc-why > summary::-webkit-details-marker { display: none; }
+.warp-rounds > summary:hover, .warp-enc-why > summary:hover { color: var(--warp-text); }
+.warp-rounds > summary::after { content: " ▾"; }
+.warp-rounds[open], .warp-enc-why[open] { flex-basis: 100%; }
+.warp-rounds-list { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.warp-enc-why-body { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; color: var(--warp-muted); }
 .warp-item-usable .warp-item-name { min-width: 0; }
 .warp-item-side { display: flex; align-items: center; gap: 6px; }
 .warp-item-bonus { display: block; font-size: 11px; color: var(--warp-good); }

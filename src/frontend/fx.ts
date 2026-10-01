@@ -85,10 +85,10 @@ export function playFx(events: FxEvent[], o: FxOptions) {
         if (e.ended) sound(e.ended === "win" ? "victory" : "defeat", true);
         const msg = o.message(e.messageId);
         if (!visual || !msg) break;
-        const card = msg.querySelector(".warp-enc-log .warp-round:last-of-type, .warp-enc-log .warp-round-final");
+        const card = msg.querySelector(".warp-round-latest, .warp-enc-log .warp-round-final");
         pulse(card, `warp-fx-pop`, 1200);
         if (e.ended) {
-          const host = msg.querySelector(".warp-enc-log") ?? msg;
+          const host = msg.querySelector(".warp-enc-log, .warp-enc-guide") ?? msg;
           temp(host, `warp-fx-stamp warp-fx-${e.ended === "win" ? "crit" : "critbad"}${motion ? " moving" : ""}`, `<b>${e.ended === "win" ? "Over — you came out on top" : "Over — it went badly"}</b>`, 2600);
           if (motion && e.ended === "loss") pulse(msg, "warp-fx-shake", 600);
         }

@@ -12381,7 +12381,7 @@ function encounterGuide(r, s) {
     const value = s.stats[t.stat] ?? def.start;
     const span = Math.max(1, def.max - def.min);
     const gap = t.op.startsWith(">") ? t.value - value : value - t.value;
-    danger.push({ label: def.label, value, at: t.value, text: `${def.label} ${Math.round(value)} / ${t.value}`, close: gap / span <= 0.2 });
+    danger.push({ label: def.label, value, at: t.value, text: `${def.label} ${Math.round(value)}, out at ${t.value}`, close: gap / span <= 0.2 });
   }
   danger.sort((a, b) => Math.abs(a.at - a.value) - Math.abs(b.at - b.value));
   const loss = th.find((x) => !x.foe && isLoss(enc, x.outcome));
@@ -14482,6 +14482,7 @@ function summarizeEvents(r, before, after, events) {
   const statAgg = new Map;
   const relAgg = new Map;
   const itemAgg = new Map;
+  const foeAgg = new Map;
   const timeAgg = { min: 0, idx: [], narrIdx: [] };
   events.forEach((e, i) => {
     if (e.src === "drift")
@@ -14573,11 +14574,10 @@ function summarizeEvents(r, before, after, events) {
           out.push({ text: `⚔ Over: ${(e.outcome ?? "ended").replace(/_/g, " ")}`, tone: "neutral", src: e.src });
         break;
       case "foe": {
-        const enc = before.encounter ?? after.encounter;
-        const def = enc ? r.encounters[enc.id] : undefined;
-        const fs = def?.foe.stats.find((x) => x.id === e.stat);
-        if (e.d)
-          out.push({ text: `${(after.encounter ?? before.encounter)?.foeName ?? def?.foe.name ?? "Foe"} ${fs?.label ?? e.stat} ${signed(e.d)}`, tone: e.d < 0 === (fs?.good !== "high") ? "good" : "bad", src: e.src });
+        const a = foeAgg.get(e.stat) ?? { d: 0, idx: [], src: e.src };
+        a.d += e.d ?? 0;
+        a.idx.push(i);
+        foeAgg.set(e.stat, a);
         break;
       }
       case "codex":
@@ -14594,6 +14594,15 @@ function summarizeEvents(r, before, after, events) {
   if (timeAgg.min >= 1) {
     const m = timeAgg.min;
     out.unshift({ text: m >= 60 ? `⏱ +${formatNumber(m / 60)}h` : `⏱ +${Math.round(m)}m`, tone: "neutral", src: timeAgg.narrIdx.length === timeAgg.idx.length ? "narrator" : "action" });
+  }
+  for (const [stat, a] of foeAgg) {
+    if (Math.abs(a.d) < 0.05)
+      continue;
+    const enc = before.encounter ?? after.encounter;
+    const def = enc ? r.encounters[enc.id] : undefined;
+    const fs = def?.foe.stats.find((x) => x.id === stat);
+    const foe = (after.encounter ?? before.encounter)?.foeName ?? def?.foe.name ?? "Foe";
+    out.push({ text: `${foe} · ${fs?.label ?? stat} ${signed(a.d)}`, tone: a.d < 0 === (fs?.good !== "high") ? "good" : "bad", src: a.src, undo: a.idx });
   }
   for (const [key, a] of statAgg) {
     const id = key.split("|")[0];

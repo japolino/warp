@@ -1,6 +1,6 @@
 import type { SpindleFloatWidgetHandle, SpindleFrontendContext } from "lumiverse-spindle-types";
 import type {
-  BackendToFrontend, BuilderAnswer, BuilderSession, FrontendToBackend, RecordView, RulesetStatus, Settings, TemplateInfo,
+  BackendToFrontend, BuilderAnswer, BuilderSession, EncounterLogView, FrontendToBackend, RecordView, RulesetStatus, Settings, TemplateInfo,
 } from "./shared/protocol.js";
 import { DEFAULT_SETTINGS } from "./shared/protocol.js";
 import { STYLES } from "./frontend/styles.js";
@@ -12,7 +12,7 @@ import { renderDate } from "./frontend/date-ui.js";
 import { formatStory, renderStage, stageModeOf, type StageMode } from "./frontend/stage.js";
 import { STAGE_STYLES } from "./frontend/stage-styles.js";
 import { FX_STYLES } from "./frontend/fx-styles.js";
-import { esc, hudParts, renderChips, renderDepthCard, renderEncounterLog, renderChoices, renderHud, renderJournal, renderPart, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
+import { esc, hudParts, renderChips, renderDepthCard, renderEncounterLog, renderWhyFold, renderChoices, renderHud, renderJournal, renderPart, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
 import { createPanels } from "./frontend/panel-windows.js";
 import { fxEvents } from "./frontend/fx-events.js";
 import { playFx, typewrite } from "./frontend/fx.js";
@@ -457,11 +457,23 @@ export function setup(ctx: SpindleFrontendContext) {
     return true;
   }
 
+  /**
+   * The encounter that's on, when its log is the message the moves sit under:
+   * its rounds go in the panel above the moves rather than in a second box.
+   */
+  function liveLog(): EncounterLogView | null {
+    const anchor = state?.choicesAnchor;
+    if (!anchor || !state?.hud?.encounter) return null;
+    return (state.encounterLogs ?? []).find((l) => l.messageId === anchor && l.status !== "ended" && l.rounds.length) ?? null;
+  }
+
   function placeChoices(force = false) {
     const anchor = state?.choicesAnchor ?? null;
     const isBusy = busy.on && busy.chatId === state?.chatId;
+    const live = liveLog();
+    const recap = live ? { foe: live.foe, rounds: live.rounds, why: renderWhyFold(state?.records.find((r) => r.messageId === live.messageId)) } : null;
     const html = settings.enabled && state?.hud && anchor
-      ? renderChoices(state.choices, { showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined, encounter: state.hud.encounter })
+      ? renderChoices(state.choices, { showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined, encounter: state.hud.encounter, recap })
       : "";
     if (!force && anchor === choicesFor && html === choicesHtml && choicesEl?.isConnected) return;
     if (choicesEl) { ctx.dom.uninject(choicesEl); choicesEl = null; }
@@ -479,15 +491,20 @@ export function setup(ctx: SpindleFrontendContext) {
     const records: RecordView[] = state?.records ?? [];
     wantChips.clear();
     if (settings.enabled) {
+      // A quiet encounter's message shows its rounds instead: the same facts, once.
+      const logs = new Map((state?.encounterLogs ?? []).map((l) => [l.messageId, l]));
       for (const r of records) {
+        if (logs.has(r.messageId)) continue;
         const html = renderChips(r, { showDice: settings.showDiceChips });
         if (html) wantChips.set(r.messageId, html);
       }
       // Suggestions sit on the player's own message.
       for (const s of state?.suggestions ?? []) wantChips.set(s.messageId, (wantChips.get(s.messageId) ?? "") + renderSuggestion(s));
       // A quiet encounter's message carries its round cards (and every round behind "Show rounds").
+      const live = liveLog();
       for (const log of state?.encounterLogs ?? []) {
-        const html = renderEncounterLog(log);
+        if (log === live) continue;
+        const html = renderEncounterLog(log, renderWhyFold(records.find((r) => r.messageId === log.messageId)));
         if (html) wantChips.set(log.messageId, (wantChips.get(log.messageId) ?? "") + html);
       }
     }

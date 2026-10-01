@@ -271,7 +271,7 @@ function section(title: string, count: number, body: string, open: boolean, key 
 
 // ───────────────────────── choices ─────────────────────────
 
-export function renderChoices(choices: ChoiceView[], opts: { showOdds: boolean; hotkeys: boolean; busy: boolean; busyLabel?: string; encounter?: HudView["encounter"] }): string {
+export function renderChoices(choices: ChoiceView[], opts: { showOdds: boolean; hotkeys: boolean; busy: boolean; busyLabel?: string; encounter?: HudView["encounter"]; recap?: EncounterRecap | null }): string {
   if (!choices.length && !opts.busy && !opts.encounter) return "";
   const groups = new Map<string, { c: ChoiceView; n: number }[]>();
   choices.forEach((c, i) => {
@@ -293,54 +293,86 @@ export function renderChoices(choices: ChoiceView[], opts: { showOdds: boolean; 
       }).join("")}</div>
     </div>`).join("");
   const status = opts.busy ? `<div class="warp-status-line"><span class="warp-spinner"></span>${esc(opts.busyLabel ?? "The story continues…")}</div>` : "";
-  return `${status}${opts.encounter ? renderEncounterGuide(opts.encounter, opts.busy) : ""}${body}`;
+  return `${status}${opts.encounter ? renderEncounterGuide(opts.encounter, opts.busy, opts.recap) : ""}${body}`;
 }
 
-/** Above an encounter's moves: what you're trying to do, how far along, what could end it badly — and a box to try anything else. */
-export function renderEncounterGuide(e: NonNullable<HudView["encounter"]>, busy: boolean): string {
-  const progress = e.progress.map((p) => {
+/** The latest round and every round behind it, for the encounter panel while it's on. */
+export interface EncounterRecap { foe: string; rounds: RoundCardView[]; why: string }
+
+/**
+ * Above an encounter's moves, in one box: what you're after, how far along,
+ * what could end it badly, how the last round went — and a box to try anything else.
+ */
+export function renderEncounterGuide(e: NonNullable<HudView["encounter"]>, busy: boolean, recap?: EncounterRecap | null): string {
+  const meters = e.progress.map((p) => {
     const span = Math.abs(p.max - p.target) || 1;
     const done = Math.max(0, Math.min(1, 1 - Math.abs(p.value - p.target) / span));
-    return `<div class="warp-enc-meter" title="${esc(`${p.label}: ${Math.round(p.value)} — it ends at ${p.target}`)}"><span>${esc(p.label)}</span><div class="warp-bar-track"><div class="warp-bar-fill warp-bg-good" style="width:${(done * 100).toFixed(1)}%"></div></div><span class="warp-dim">${esc(Math.round(p.value))} → ${esc(p.target)}</span></div>`;
-  }).join("");
-  const momentum = e.momentum !== null ? `<div class="warp-enc-meter" title="Momentum: a full swing either way ends it"><span>Momentum</span><div class="warp-momentum"><div class="warp-momentum-mid"></div><div class="warp-momentum-mark" style="left:${((e.momentum + 100) / 2).toFixed(1)}%"></div></div><span class="warp-dim">${e.momentum > 0 ? "+" : ""}${esc(Math.round(e.momentum))}</span></div>` : "";
-  const danger = e.danger.slice(0, 2).map((d) => `<span class="warp-pill warp-tone-${d.close ? "bad" : "warn"}" title="${esc(`Reaching ${d.at} ends it badly`)}">${esc(d.text)}</span>`).join("");
+    return `<div class="warp-enc-meter" title="${esc(`${p.label}: ${Math.round(p.value)} — get it to ${p.target} (the bar is how close you are)`)}"><span>${esc(p.label)}</span><div class="warp-bar-track"><div class="warp-bar-fill warp-bg-good" style="width:${(done * 100).toFixed(1)}%"></div></div><span class="warp-dim">${esc(Math.round(p.value))} → ${esc(p.target)}</span></div>`;
+  });
+  if (e.momentum !== null) meters.push(`<div class="warp-enc-meter" title="Momentum: a full swing either way ends it"><span>Momentum</span><div class="warp-momentum"><div class="warp-momentum-mid"></div><div class="warp-momentum-mark" style="left:${((e.momentum + 100) / 2).toFixed(1)}%"></div></div><span class="warp-dim">${e.momentum > 0 ? "+" : ""}${esc(Math.round(e.momentum))}</span></div>`);
+  const danger = e.danger.slice(0, 2).map((d) => `<span class="warp-tone-${d.close ? "bad" : "warn"}">${esc(d.text)}</span>`).join(`<span class="warp-dim"> · </span>`);
+  const last = recap?.rounds[recap.rounds.length - 1];
   return `<div class="warp-enc-guide" role="group" aria-label="${esc(e.name)}">
     <div class="warp-enc-head"><span>⚔ ${esc(e.name)} <span class="warp-dim">vs ${esc(e.foe)}</span></span><span class="warp-dim">Round ${e.round + 1}</span></div>
-    ${e.goal ? `<div class="warp-enc-goal"><b>Goal:</b> ${esc(e.goal)}</div>` : ""}
-    ${progress}${momentum}
-    ${danger || e.dangerText ? `<div class="warp-enc-danger">${danger}${e.dangerText ? `<span class="warp-dim">${esc(e.dangerText)}</span>` : ""}</div>` : ""}
+    ${e.goal ? `<div class="warp-enc-goal"><b>Goal</b> ${esc(e.goal)}</div>` : ""}
+    ${meters.length ? `<div class="warp-enc-meters">${meters.join("")}</div>` : ""}
+    ${danger ? `<div class="warp-enc-danger"${e.dangerText ? ` title="${esc(e.dangerText)}"` : ""}><b>Danger</b> ${danger}</div>` : ""}
+    ${last && recap ? `<div class="warp-enc-last"><div class="warp-enc-last-head"><b>Last round</b>${recap.rounds.length > 1 ? roundsList(recap.rounds, recap.foe) : ""}${recap.why}</div>${renderRoundCard(last, recap.foe, true)}</div>` : ""}
     ${e.quiet ? `<div class="warp-enc-say"><input type="text" class="warp-input" data-enc-say placeholder="Or try something else…" aria-label="Try something else" maxlength="400"${busy ? " disabled" : ""}><button class="warp-btn" data-enc-send${busy ? " disabled" : ""}>Try</button></div>` : ""}
   </div>`;
 }
 
-const changeText = (c: RoundCardView["changes"][number]) => `${c.label} ${Math.round(c.from)} → ${Math.round(c.to)}${c.of !== null ? ` / ${c.of}` : ""}`;
+const TIER_MARK: Record<string, string> = { "great success": "✓✓", success: "✓", partial: "~", failed: "✕", "badly failed": "✕✕" };
 
-/** One round as a compact line: the move, the check (not the encounter), the other side, what moved. */
-export function renderRoundCard(c: RoundCardView): string {
+/** "Aggression +20": what a round moved, as a change (the panel shows where things stand). */
+function roundChange(c: RoundCardView["changes"][number]): string {
+  const d = Math.round(c.to - c.from);
+  if (!d) return "";
+  // The foe's stats come as "Foe: Stat"; mark them instead of repeating the name.
+  const i = c.label.indexOf(": ");
+  const label = i > 0 ? `⚔ ${c.label.slice(i + 2)}` : c.label;
+  return `<span class="warp-tone-${c.good ? "good" : "bad"}">${esc(label)} ${d > 0 ? "+" : "−"}${Math.abs(d)}</span>`;
+}
+
+/** One round, short: the move and how it went; the other side's answer; what it moved. */
+export function renderRoundCard(c: RoundCardView, foe = "", latest = false): string {
   const tone = !c.check ? "neutral" : /success/.test(c.check.tier) ? "good" : c.check.tier === "partial" ? "warn" : "bad";
   const chance = c.check && c.check.odds !== null ? `${Math.round(c.check.odds * 100)}%` : "";
   const tip = c.check ? `${c.check.label}${chance ? `: ${chance} chance this check succeeds (not the chance of winning)` : ""}${c.check.gear.length ? `\nHelped by ${c.check.gear.join(", ")}` : ""}` : "";
-  return `<div class="warp-round">
-    <span class="warp-round-n">${c.round}</span>
-    <span class="warp-round-what"><b>${esc(c.move)}</b>${c.check ? ` · <span title="${esc(tip)}">${esc(c.check.label)}${chance ? ` ${chance}` : ""}</span> · <span class="warp-tone-${tone}">${esc(c.check.tier)}</span>${c.check.gear.length ? ` <span class="warp-dim" title="${esc(c.check.gear.join(", "))}">🛠</span>` : ""}` : ""}${c.foe ? ` <span class="warp-dim">· they: ${esc(c.foe)}</span>` : ""}</span>
-    ${c.changes.length ? `<span class="warp-round-changes">${c.changes.map((x) => `<span class="warp-tone-${x.good ? "good" : "bad"}">${esc(changeText(x))}</span>`).join("")}</span>` : ""}
-    ${c.ended ? `<span class="warp-round-end warp-tone-${c.ended.loss ? "bad" : "good"}">${c.ended.loss ? "✕" : "✓"} ${esc(c.ended.label)} — the encounter is over</span>` : c.check && /success|partial/.test(c.check.tier) ? `<span class="warp-dim warp-round-on">The check worked; the encounter goes on.</span>` : ""}
+  const tier = c.check?.tier ?? "";
+  const changes = c.changes.map(roundChange).filter(Boolean);
+  return `<div class="warp-round${latest ? " warp-round-latest" : ""}">
+    <div class="warp-round-line"><span class="warp-round-n">${c.round}</span><b>${esc(c.move)}</b>${c.check ? ` <span class="warp-tone-${tone}" title="${esc(tip)}">${esc(TIER_MARK[tier] ?? "")} ${esc(tier.charAt(0).toUpperCase() + tier.slice(1))}</span>${chance ? ` <span class="warp-dim" title="${esc(tip)}">${esc(c.check.label)} ${chance}</span>` : ""}${c.check.gear.length ? ` <span class="warp-dim" title="${esc(c.check.gear.join(", "))}">🛠</span>` : ""}` : ""}</div>
+    ${c.foe ? `<div class="warp-round-foe"><span class="warp-dim">${esc(foe || "They")}:</span> ${esc(c.foe)}</div>` : ""}
+    ${changes.length ? `<div class="warp-round-changes">${changes.join("")}</div>` : ""}
+    ${c.ended ? `<div class="warp-round-end warp-tone-${c.ended.loss ? "bad" : "good"}">${c.ended.loss ? "✕" : "✓"} ${esc(c.ended.label)}</div>` : ""}
   </div>`;
 }
 
-/** Under an encounter's message: the latest round (or how it ended), with every round one click away. */
-export function renderEncounterLog(v: EncounterLogView): string {
+function roundsList(rounds: RoundCardView[], foe: string): string {
+  return `<details class="warp-rounds"><summary>${rounds.length === 1 ? "Show the round" : `All ${rounds.length} rounds`}</summary><div class="warp-rounds-list">${rounds.map((r) => renderRoundCard(r, foe)).join("")}</div></details>`;
+}
+
+/** "Why?" for a message: every cause behind each change, folded away. */
+export function renderWhyFold(rec: RecordView | undefined): string {
+  const whys = (rec?.changes ?? []).filter((ch) => ch.why?.length).map((ch) => `<div><b>${esc(ch.text)}</b> <span class="warp-dim">←</span> ${ch.why!.map(esc).join(" · ")}</div>`);
+  return whys.length ? `<details class="warp-enc-why"><summary title="Show what caused each change">Why?</summary><div class="warp-enc-why-body">${whys.join("")}</div></details>` : "";
+}
+
+/**
+ * Under an encounter's message, in place of the usual chips: how it ended (or
+ * the latest round), with every round and the "Why?" one click away. While
+ * the encounter is on, the panel above the moves shows this instead.
+ */
+export function renderEncounterLog(v: EncounterLogView, why = ""): string {
   const mine = v.rounds.slice(v.from);
   if (!mine.length && v.status !== "ended") return "";
   const last = mine[mine.length - 1];
   const head = v.status === "ended" && v.ended
-    ? `<div class="warp-round-final warp-tone-${v.ended.loss ? "bad" : "good"}"><b>${esc(v.name)}: ${esc(v.ended.label)}</b> <span class="warp-dim">after ${v.rounds.length} round${v.rounds.length === 1 ? "" : "s"}</span></div>`
-    : last ? renderRoundCard(last) : "";
-  const all = v.rounds.length > 1 || (v.status === "ended" && v.rounds.length)
-    ? `<details class="warp-rounds"><summary>Show rounds (${v.rounds.length})</summary>${v.rounds.map(renderRoundCard).join("")}</details>`
-    : "";
-  return `<div class="warp-enc-log">${head}${all}</div>`;
+    ? `<div class="warp-round-final warp-tone-${v.ended.loss ? "bad" : "good"}"><b>⚔ ${esc(v.name)}: ${esc(v.ended.label)}</b> <span class="warp-dim">after ${v.rounds.length} round${v.rounds.length === 1 ? "" : "s"}</span></div>`
+    : last ? renderRoundCard(last, v.foe, true) : "";
+  const more = v.rounds.length > 1 || (v.status === "ended" && v.rounds.length) ? roundsList(v.rounds, v.foe) : "";
+  return `<div class="warp-enc-log">${head}${more || why ? `<div class="warp-enc-log-foot">${more}${why}</div>` : ""}</div>`;
 }
 
 // ───────────────────────── per-message chips ─────────────────────────

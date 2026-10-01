@@ -156,7 +156,7 @@ var STYLES = `
 .warp-kbd { font-family: ui-monospace, monospace; font-size: 10.5px; padding: 0 5px; border-radius: 4px; border: 1px solid var(--warp-border); color: var(--warp-muted); }
 
 /* ───────── choices under the latest reply ───────── */
-.warp-choices { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--warp-border); display: flex; flex-direction: column; gap: 8px; transition: opacity 200ms; }
+.warp-choices { container-type: inline-size; margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--warp-border); display: flex; flex-direction: column; gap: 8px; transition: opacity 200ms; }
 .warp-choices.warp-busy { opacity: .45; pointer-events: none; }
 .warp-choice-group { display: flex; flex-direction: column; gap: 5px; }
 .warp-choice-group-label { font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--warp-dim); }
@@ -341,26 +341,38 @@ var STYLES = `
 .warp-depth-drafted { font-size: 12px; border-left: 3px solid var(--warp-accent); padding-left: 8px; }
 
 /* ───────── encounters: goal, danger, rounds ───────── */
-.warp-enc-guide { border: 1px solid color-mix(in srgb, var(--warp-bad) 55%, var(--warp-border)); border-radius: var(--warp-radius); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; background: color-mix(in srgb, var(--warp-bad) 6%, transparent); }
-.warp-enc-head { display: flex; justify-content: space-between; gap: 8px; font-weight: 700; }
-.warp-enc-goal { font-size: 12.5px; }
-.warp-enc-meter { display: grid; grid-template-columns: minmax(70px, auto) 1fr auto; align-items: center; gap: 8px; font-size: 12px; font-variant-numeric: tabular-nums; }
-.warp-enc-danger { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }
+.warp-enc-guide { border: 1px solid color-mix(in srgb, var(--warp-bad) 45%, var(--warp-border)); border-radius: var(--warp-radius); padding: 8px 10px; display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px; background: color-mix(in srgb, var(--warp-bad) 5%, transparent); font-size: 12.5px; }
+.warp-enc-head { display: flex; justify-content: space-between; gap: 8px; font-weight: 700; font-size: 13px; }
+.warp-enc-goal b, .warp-enc-danger b, .warp-enc-last-head b { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--warp-dim); font-weight: 600; margin-right: 4px; }
+.warp-enc-meters { display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px 18px; }
+@container (min-width: 520px) { .warp-enc-meters { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.warp-enc-meter { display: grid; grid-template-columns: minmax(64px, auto) 1fr auto; align-items: center; gap: 8px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.warp-enc-danger { font-size: 12px; font-variant-numeric: tabular-nums; }
+.warp-enc-last { border-top: 1px dashed var(--warp-border); padding-top: 5px; display: flex; flex-direction: column; gap: 3px; }
+.warp-enc-last-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
 .warp-enc-say { display: flex; gap: 6px; }
-.warp-enc-say .warp-input { flex: 1; min-width: 0; }
+.warp-enc-say .warp-input { flex: 1; min-width: 0; padding-top: 4px; padding-bottom: 4px; }
 .warp-choice-why { display: block; font-size: 11px; color: var(--warp-dim); margin-top: 1px; }
 .warp-choice-locked { opacity: .55; cursor: not-allowed; }
 .warp-choice-item { border-style: dashed; }
-.warp-enc-log { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; font-size: 12px; }
-.warp-round { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 5px 8px; border-radius: 8px; background: var(--warp-fill-subtle); border: 1px solid var(--warp-border); }
-.warp-round-n { font-variant-numeric: tabular-nums; color: var(--warp-dim); min-width: 1.2em; }
-.warp-round-what { flex: 1 1 220px; min-width: 0; }
-.warp-round-changes { display: flex; flex-wrap: wrap; gap: 4px 10px; font-variant-numeric: tabular-nums; }
-.warp-round-end { flex-basis: 100%; font-weight: 700; }
-.warp-round-on { flex-basis: 100%; font-size: 11px; }
-.warp-round-final { padding: 6px 8px; border-radius: 8px; border: 1px solid currentColor; background: var(--warp-fill-subtle); }
-.warp-rounds > summary { cursor: pointer; color: var(--warp-dim); font-size: 11px; }
-.warp-rounds[open] { display: flex; flex-direction: column; gap: 4px; }
+.warp-enc-log { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; font-size: 12px; }
+.warp-enc-log > .warp-round, .warp-rounds-list > .warp-round { padding: 5px 8px; border-radius: 8px; background: var(--warp-fill-subtle); border: 1px solid var(--warp-border); }
+.warp-enc-log-foot { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
+.warp-round { display: flex; flex-direction: column; gap: 1px; font-size: 12px; min-width: 0; }
+.warp-round-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.warp-round-n { font-variant-numeric: tabular-nums; color: var(--warp-dim); min-width: 1.1em; }
+.warp-round-foe, .warp-round-changes, .warp-round-end { padding-left: calc(1.1em + 8px); }
+.warp-round-changes { display: flex; flex-wrap: wrap; gap: 0 10px; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.warp-round-end { font-weight: 700; }
+.warp-round-final { padding: 5px 8px; border-radius: 8px; border: 1px solid currentColor; background: var(--warp-fill-subtle); }
+.warp-rounds, .warp-enc-why { font-size: 11.5px; }
+.warp-rounds > summary, .warp-enc-why > summary { cursor: pointer; color: var(--warp-dim); list-style: none; }
+.warp-rounds > summary::-webkit-details-marker, .warp-enc-why > summary::-webkit-details-marker { display: none; }
+.warp-rounds > summary:hover, .warp-enc-why > summary:hover { color: var(--warp-text); }
+.warp-rounds > summary::after { content: " ▾"; }
+.warp-rounds[open], .warp-enc-why[open] { flex-basis: 100%; }
+.warp-rounds-list { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.warp-enc-why-body { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; color: var(--warp-muted); }
 .warp-item-usable .warp-item-name { min-width: 0; }
 .warp-item-side { display: flex; align-items: center; gap: 6px; }
 .warp-item-bonus { display: block; font-size: 11px; color: var(--warp-good); }
@@ -797,45 +809,65 @@ Ready — this reply is already written` : ""}">${key}<span class="warp-choice-l
   }).join("")}</div>
     </div>`).join("");
   const status = opts.busy ? `<div class="warp-status-line"><span class="warp-spinner"></span>${esc(opts.busyLabel ?? "The story continues…")}</div>` : "";
-  return `${status}${opts.encounter ? renderEncounterGuide(opts.encounter, opts.busy) : ""}${body}`;
+  return `${status}${opts.encounter ? renderEncounterGuide(opts.encounter, opts.busy, opts.recap) : ""}${body}`;
 }
-function renderEncounterGuide(e, busy) {
-  const progress = e.progress.map((p) => {
+function renderEncounterGuide(e, busy, recap) {
+  const meters = e.progress.map((p) => {
     const span = Math.abs(p.max - p.target) || 1;
     const done = Math.max(0, Math.min(1, 1 - Math.abs(p.value - p.target) / span));
-    return `<div class="warp-enc-meter" title="${esc(`${p.label}: ${Math.round(p.value)} — it ends at ${p.target}`)}"><span>${esc(p.label)}</span><div class="warp-bar-track"><div class="warp-bar-fill warp-bg-good" style="width:${(done * 100).toFixed(1)}%"></div></div><span class="warp-dim">${esc(Math.round(p.value))} → ${esc(p.target)}</span></div>`;
-  }).join("");
-  const momentum = e.momentum !== null ? `<div class="warp-enc-meter" title="Momentum: a full swing either way ends it"><span>Momentum</span><div class="warp-momentum"><div class="warp-momentum-mid"></div><div class="warp-momentum-mark" style="left:${((e.momentum + 100) / 2).toFixed(1)}%"></div></div><span class="warp-dim">${e.momentum > 0 ? "+" : ""}${esc(Math.round(e.momentum))}</span></div>` : "";
-  const danger = e.danger.slice(0, 2).map((d) => `<span class="warp-pill warp-tone-${d.close ? "bad" : "warn"}" title="${esc(`Reaching ${d.at} ends it badly`)}">${esc(d.text)}</span>`).join("");
+    return `<div class="warp-enc-meter" title="${esc(`${p.label}: ${Math.round(p.value)} — get it to ${p.target} (the bar is how close you are)`)}"><span>${esc(p.label)}</span><div class="warp-bar-track"><div class="warp-bar-fill warp-bg-good" style="width:${(done * 100).toFixed(1)}%"></div></div><span class="warp-dim">${esc(Math.round(p.value))} → ${esc(p.target)}</span></div>`;
+  });
+  if (e.momentum !== null)
+    meters.push(`<div class="warp-enc-meter" title="Momentum: a full swing either way ends it"><span>Momentum</span><div class="warp-momentum"><div class="warp-momentum-mid"></div><div class="warp-momentum-mark" style="left:${((e.momentum + 100) / 2).toFixed(1)}%"></div></div><span class="warp-dim">${e.momentum > 0 ? "+" : ""}${esc(Math.round(e.momentum))}</span></div>`);
+  const danger = e.danger.slice(0, 2).map((d) => `<span class="warp-tone-${d.close ? "bad" : "warn"}">${esc(d.text)}</span>`).join(`<span class="warp-dim"> · </span>`);
+  const last = recap?.rounds[recap.rounds.length - 1];
   return `<div class="warp-enc-guide" role="group" aria-label="${esc(e.name)}">
     <div class="warp-enc-head"><span>⚔ ${esc(e.name)} <span class="warp-dim">vs ${esc(e.foe)}</span></span><span class="warp-dim">Round ${e.round + 1}</span></div>
-    ${e.goal ? `<div class="warp-enc-goal"><b>Goal:</b> ${esc(e.goal)}</div>` : ""}
-    ${progress}${momentum}
-    ${danger || e.dangerText ? `<div class="warp-enc-danger">${danger}${e.dangerText ? `<span class="warp-dim">${esc(e.dangerText)}</span>` : ""}</div>` : ""}
+    ${e.goal ? `<div class="warp-enc-goal"><b>Goal</b> ${esc(e.goal)}</div>` : ""}
+    ${meters.length ? `<div class="warp-enc-meters">${meters.join("")}</div>` : ""}
+    ${danger ? `<div class="warp-enc-danger"${e.dangerText ? ` title="${esc(e.dangerText)}"` : ""}><b>Danger</b> ${danger}</div>` : ""}
+    ${last && recap ? `<div class="warp-enc-last"><div class="warp-enc-last-head"><b>Last round</b>${recap.rounds.length > 1 ? roundsList(recap.rounds, recap.foe) : ""}${recap.why}</div>${renderRoundCard(last, recap.foe, true)}</div>` : ""}
     ${e.quiet ? `<div class="warp-enc-say"><input type="text" class="warp-input" data-enc-say placeholder="Or try something else…" aria-label="Try something else" maxlength="400"${busy ? " disabled" : ""}><button class="warp-btn" data-enc-send${busy ? " disabled" : ""}>Try</button></div>` : ""}
   </div>`;
 }
-var changeText = (c) => `${c.label} ${Math.round(c.from)} → ${Math.round(c.to)}${c.of !== null ? ` / ${c.of}` : ""}`;
-function renderRoundCard(c) {
+var TIER_MARK = { "great success": "✓✓", success: "✓", partial: "~", failed: "✕", "badly failed": "✕✕" };
+function roundChange(c) {
+  const d = Math.round(c.to - c.from);
+  if (!d)
+    return "";
+  const i = c.label.indexOf(": ");
+  const label = i > 0 ? `⚔ ${c.label.slice(i + 2)}` : c.label;
+  return `<span class="warp-tone-${c.good ? "good" : "bad"}">${esc(label)} ${d > 0 ? "+" : "−"}${Math.abs(d)}</span>`;
+}
+function renderRoundCard(c, foe = "", latest = false) {
   const tone = !c.check ? "neutral" : /success/.test(c.check.tier) ? "good" : c.check.tier === "partial" ? "warn" : "bad";
   const chance = c.check && c.check.odds !== null ? `${Math.round(c.check.odds * 100)}%` : "";
   const tip = c.check ? `${c.check.label}${chance ? `: ${chance} chance this check succeeds (not the chance of winning)` : ""}${c.check.gear.length ? `
 Helped by ${c.check.gear.join(", ")}` : ""}` : "";
-  return `<div class="warp-round">
-    <span class="warp-round-n">${c.round}</span>
-    <span class="warp-round-what"><b>${esc(c.move)}</b>${c.check ? ` · <span title="${esc(tip)}">${esc(c.check.label)}${chance ? ` ${chance}` : ""}</span> · <span class="warp-tone-${tone}">${esc(c.check.tier)}</span>${c.check.gear.length ? ` <span class="warp-dim" title="${esc(c.check.gear.join(", "))}">\uD83D\uDEE0</span>` : ""}` : ""}${c.foe ? ` <span class="warp-dim">· they: ${esc(c.foe)}</span>` : ""}</span>
-    ${c.changes.length ? `<span class="warp-round-changes">${c.changes.map((x) => `<span class="warp-tone-${x.good ? "good" : "bad"}">${esc(changeText(x))}</span>`).join("")}</span>` : ""}
-    ${c.ended ? `<span class="warp-round-end warp-tone-${c.ended.loss ? "bad" : "good"}">${c.ended.loss ? "✕" : "✓"} ${esc(c.ended.label)} — the encounter is over</span>` : c.check && /success|partial/.test(c.check.tier) ? `<span class="warp-dim warp-round-on">The check worked; the encounter goes on.</span>` : ""}
+  const tier = c.check?.tier ?? "";
+  const changes = c.changes.map(roundChange).filter(Boolean);
+  return `<div class="warp-round${latest ? " warp-round-latest" : ""}">
+    <div class="warp-round-line"><span class="warp-round-n">${c.round}</span><b>${esc(c.move)}</b>${c.check ? ` <span class="warp-tone-${tone}" title="${esc(tip)}">${esc(TIER_MARK[tier] ?? "")} ${esc(tier.charAt(0).toUpperCase() + tier.slice(1))}</span>${chance ? ` <span class="warp-dim" title="${esc(tip)}">${esc(c.check.label)} ${chance}</span>` : ""}${c.check.gear.length ? ` <span class="warp-dim" title="${esc(c.check.gear.join(", "))}">\uD83D\uDEE0</span>` : ""}` : ""}</div>
+    ${c.foe ? `<div class="warp-round-foe"><span class="warp-dim">${esc(foe || "They")}:</span> ${esc(c.foe)}</div>` : ""}
+    ${changes.length ? `<div class="warp-round-changes">${changes.join("")}</div>` : ""}
+    ${c.ended ? `<div class="warp-round-end warp-tone-${c.ended.loss ? "bad" : "good"}">${c.ended.loss ? "✕" : "✓"} ${esc(c.ended.label)}</div>` : ""}
   </div>`;
 }
-function renderEncounterLog(v) {
+function roundsList(rounds, foe) {
+  return `<details class="warp-rounds"><summary>${rounds.length === 1 ? "Show the round" : `All ${rounds.length} rounds`}</summary><div class="warp-rounds-list">${rounds.map((r) => renderRoundCard(r, foe)).join("")}</div></details>`;
+}
+function renderWhyFold(rec) {
+  const whys = (rec?.changes ?? []).filter((ch) => ch.why?.length).map((ch) => `<div><b>${esc(ch.text)}</b> <span class="warp-dim">←</span> ${ch.why.map(esc).join(" · ")}</div>`);
+  return whys.length ? `<details class="warp-enc-why"><summary title="Show what caused each change">Why?</summary><div class="warp-enc-why-body">${whys.join("")}</div></details>` : "";
+}
+function renderEncounterLog(v, why = "") {
   const mine = v.rounds.slice(v.from);
   if (!mine.length && v.status !== "ended")
     return "";
   const last = mine[mine.length - 1];
-  const head = v.status === "ended" && v.ended ? `<div class="warp-round-final warp-tone-${v.ended.loss ? "bad" : "good"}"><b>${esc(v.name)}: ${esc(v.ended.label)}</b> <span class="warp-dim">after ${v.rounds.length} round${v.rounds.length === 1 ? "" : "s"}</span></div>` : last ? renderRoundCard(last) : "";
-  const all = v.rounds.length > 1 || v.status === "ended" && v.rounds.length ? `<details class="warp-rounds"><summary>Show rounds (${v.rounds.length})</summary>${v.rounds.map(renderRoundCard).join("")}</details>` : "";
-  return `<div class="warp-enc-log">${head}${all}</div>`;
+  const head = v.status === "ended" && v.ended ? `<div class="warp-round-final warp-tone-${v.ended.loss ? "bad" : "good"}"><b>⚔ ${esc(v.name)}: ${esc(v.ended.label)}</b> <span class="warp-dim">after ${v.rounds.length} round${v.rounds.length === 1 ? "" : "s"}</span></div>` : last ? renderRoundCard(last, v.foe, true) : "";
+  const more = v.rounds.length > 1 || v.status === "ended" && v.rounds.length ? roundsList(v.rounds, v.foe) : "";
+  return `<div class="warp-enc-log">${head}${more || why ? `<div class="warp-enc-log-foot">${more}${why}</div>` : ""}</div>`;
 }
 var TIER_TONE = { crit_success: "good", success: "good", partial: "warn", fail: "bad", crit_fail: "bad" };
 function renderChips(rec, opts) {
@@ -3417,10 +3449,10 @@ function playFx(events, o) {
         const msg = o.message(e.messageId);
         if (!visual || !msg)
           break;
-        const card = msg.querySelector(".warp-enc-log .warp-round:last-of-type, .warp-enc-log .warp-round-final");
+        const card = msg.querySelector(".warp-round-latest, .warp-enc-log .warp-round-final");
         pulse(card, `warp-fx-pop`, 1200);
         if (e.ended) {
-          const host = msg.querySelector(".warp-enc-log") ?? msg;
+          const host = msg.querySelector(".warp-enc-log, .warp-enc-guide") ?? msg;
           temp(host, `warp-fx-stamp warp-fx-${e.ended === "win" ? "crit" : "critbad"}${motion ? " moving" : ""}`, `<b>${e.ended === "win" ? "Over — you came out on top" : "Over — it went badly"}</b>`, 2600);
           if (motion && e.ended === "loss")
             pulse(msg, "warp-fx-shake", 600);
@@ -4028,10 +4060,18 @@ function setup(ctx) {
     chipEls.set(messageId, { el, html });
     return true;
   }
+  function liveLog() {
+    const anchor = state?.choicesAnchor;
+    if (!anchor || !state?.hud?.encounter)
+      return null;
+    return (state.encounterLogs ?? []).find((l) => l.messageId === anchor && l.status !== "ended" && l.rounds.length) ?? null;
+  }
   function placeChoices(force = false) {
     const anchor = state?.choicesAnchor ?? null;
     const isBusy = busy.on && busy.chatId === state?.chatId;
-    const html = settings.enabled && state?.hud && anchor ? renderChoices(state.choices, { showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined, encounter: state.hud.encounter }) : "";
+    const live = liveLog();
+    const recap = live ? { foe: live.foe, rounds: live.rounds, why: renderWhyFold(state?.records.find((r) => r.messageId === live.messageId)) } : null;
+    const html = settings.enabled && state?.hud && anchor ? renderChoices(state.choices, { showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined, encounter: state.hud.encounter, recap }) : "";
     if (!force && anchor === choicesFor && html === choicesHtml && choicesEl?.isConnected)
       return;
     if (choicesEl) {
@@ -4052,15 +4092,21 @@ function setup(ctx) {
     const records = state?.records ?? [];
     wantChips.clear();
     if (settings.enabled) {
+      const logs = new Map((state?.encounterLogs ?? []).map((l) => [l.messageId, l]));
       for (const r of records) {
+        if (logs.has(r.messageId))
+          continue;
         const html = renderChips(r, { showDice: settings.showDiceChips });
         if (html)
           wantChips.set(r.messageId, html);
       }
       for (const s of state?.suggestions ?? [])
         wantChips.set(s.messageId, (wantChips.get(s.messageId) ?? "") + renderSuggestion(s));
+      const live = liveLog();
       for (const log of state?.encounterLogs ?? []) {
-        const html = renderEncounterLog(log);
+        if (log === live)
+          continue;
+        const html = renderEncounterLog(log, renderWhyFold(records.find((r) => r.messageId === log.messageId)));
         if (html)
           wantChips.set(log.messageId, (wantChips.get(log.messageId) ?? "") + html);
       }

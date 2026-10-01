@@ -81,7 +81,7 @@ export function encounterGuide(r: Ruleset, s: GameState): EncounterGuide | null 
     const value = s.stats[t.stat] ?? def.start;
     const span = Math.max(1, def.max - def.min);
     const gap = t.op.startsWith(">") ? t.value - value : value - t.value;
-    danger.push({ label: def.label, value, at: t.value, text: `${def.label} ${Math.round(value)} / ${t.value}`, close: gap / span <= 0.2 });
+    danger.push({ label: def.label, value, at: t.value, text: `${def.label} ${Math.round(value)}, out at ${t.value}`, close: gap / span <= 0.2 });
   }
   danger.sort((a, b) => Math.abs(a.at - a.value) - Math.abs(b.at - b.value));
   const loss = th.find((x) => !x.foe && isLoss(enc, x.outcome));

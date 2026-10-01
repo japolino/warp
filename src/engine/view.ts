@@ -469,6 +469,7 @@ export function summarizeEvents(r: Ruleset, before: GameState, after: GameState,
   const statAgg = new Map<string, { d: number; idx: number[]; src: string; set: boolean }>();
   const relAgg = new Map<string, { d: number; idx: number[]; src: string; set: boolean }>();
   const itemAgg = new Map<string, { d: number; idx: number[]; src: string }>();
+  const foeAgg = new Map<string, { d: number; idx: number[]; src: string }>();
   const timeAgg = { min: 0, idx: [] as number[], narrIdx: [] as number[] };
 
   events.forEach((e, i) => {
@@ -551,10 +552,11 @@ export function summarizeEvents(r: Ruleset, before: GameState, after: GameState,
         else out.push({ text: `⚔ Over: ${(e.outcome ?? "ended").replace(/_/g, " ")}`, tone: "neutral", src: e.src });
         break;
       case "foe": {
-        const enc = before.encounter ?? after.encounter;
-        const def = enc ? r.encounters[enc.id] : undefined;
-        const fs = def?.foe.stats.find((x) => x.id === e.stat);
-        if (e.d) out.push({ text: `${(after.encounter ?? before.encounter)?.foeName ?? def?.foe.name ?? "Foe"} ${fs?.label ?? e.stat} ${signed(e.d)}`, tone: (e.d < 0) === (fs?.good !== "high") ? "good" : "bad", src: e.src });
+        // Your move and their answer can both push the same stat: one chip, summed.
+        const a = foeAgg.get(e.stat) ?? { d: 0, idx: [], src: e.src };
+        a.d += e.d ?? 0;
+        a.idx.push(i);
+        foeAgg.set(e.stat, a);
         break;
       }
       case "codex":
@@ -573,6 +575,14 @@ export function summarizeEvents(r: Ruleset, before: GameState, after: GameState,
     // One clock chip per turn; only the narrator's share of it can be undone.
     const m = timeAgg.min;
     out.unshift({ text: m >= 60 ? `⏱ +${formatNumber(m / 60)}h` : `⏱ +${Math.round(m)}m`, tone: "neutral", src: timeAgg.narrIdx.length === timeAgg.idx.length ? "narrator" : "action" });
+  }
+  for (const [stat, a] of foeAgg) {
+    if (Math.abs(a.d) < 0.05) continue;
+    const enc = before.encounter ?? after.encounter;
+    const def = enc ? r.encounters[enc.id] : undefined;
+    const fs = def?.foe.stats.find((x) => x.id === stat);
+    const foe = (after.encounter ?? before.encounter)?.foeName ?? def?.foe.name ?? "Foe";
+    out.push({ text: `${foe} · ${fs?.label ?? stat} ${signed(a.d)}`, tone: (a.d < 0) === (fs?.good !== "high") ? "good" : "bad", src: a.src, undo: a.idx });
   }
   for (const [key, a] of statAgg) {
     const id = key.split("|")[0];
