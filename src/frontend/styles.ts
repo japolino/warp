@@ -2,7 +2,7 @@
 // the user's theme; tone colours are the only fixed hues.
 
 export const STYLES = `
-.warp-root, .warp-chips, .warp-choices, .warp-modal {
+.warp-root, .warp-chips, .warp-choices, .warp-modal, .warp-overlay, .warp-drag-ghost {
   --warp-good: #34b89a;
   --warp-warn: #d9a441;
   --warp-bad: #e05a7e;
@@ -174,8 +174,16 @@ export const STYLES = `
 .warp-here { font-size: 10.5px; color: var(--warp-good); border: 1px solid currentColor; border-radius: 999px; padding: 0 6px; margin-left: 4px; font-weight: 500; }
 
 /* ───────── map & journal ───────── */
-.warp-map-card { padding: 8px; }
-.warp-map { width: 100%; height: auto; max-height: 420px; }
+.warp-map-view { position: relative; height: 220px; border-radius: 10px; background: var(--warp-fill-subtle); overflow: hidden; touch-action: none; cursor: grab; }
+.warp-root:not(.warp-overlay-body) .warp-map-view { height: 360px; }
+.warp-panel-solo .warp-map-view { height: 300px; }
+.warp-map-view.panning { cursor: grabbing; }
+.warp-map-view.panning .warp-map-node { pointer-events: none; }
+.warp-map { display: block; width: 100%; height: 100%; }
+.warp-map-tools { position: absolute; right: 6px; bottom: 6px; display: flex; flex-direction: column; gap: 4px; }
+.warp-map-tool { width: 26px; height: 26px; padding: 0; border-radius: 7px; border: 1px solid var(--warp-border); background: color-mix(in srgb, var(--lumiverse-fill-strong, #16141d) 82%, transparent); color: inherit; font: inherit; font-size: 14px; line-height: 1; cursor: pointer; }
+.warp-map-tool:hover { border-color: var(--warp-accent); }
+.warp-map-hint { font-size: 11px; margin: 2px 0 0; }
 .warp-map-edge { stroke: var(--warp-border); stroke-width: 2; }
 .warp-map-node circle { fill: var(--warp-fill); stroke: var(--warp-border); stroke-width: 2; }
 .warp-map-node text { fill: var(--warp-muted); font-size: 11px; }
@@ -268,6 +276,24 @@ export const STYLES = `
 .warp-overlay[data-edge=top] .warp-section,
 .warp-overlay[data-edge=bottom] .warp-section { grid-column: 1 / -1; }.warp-overlay-collapsed .warp-overlay-head { cursor: pointer; }
 .warp-overlay-collapsed .warp-overlay-body { display: none; }
+
+/* ───────── torn-off panels ───────── */
+.warp-section > summary > span { flex: 1; }
+.warp-section > summary[data-part] { position: relative; }
+.warp-section > summary[data-part]::before { content: "⠿"; position: absolute; left: -11px; opacity: 0; transition: opacity var(--warp-fast); cursor: grab; }
+.warp-section > summary[data-part]:hover::before { opacity: .7; }
+.warp-section.warp-dragging { opacity: .35; }
+.warp-panel .warp-overlay-title { font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--warp-dim); }
+.warp-panel .warp-overlay-body { padding-bottom: 8px; }
+.warp-panel-solo { display: flex; flex-direction: column; gap: 6px; padding-top: 6px; }
+.warp-overlay.warp-drop-target { border-color: var(--warp-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warp-accent) 35%, transparent), 0 12px 32px rgba(0,0,0,.35); }
+.warp-drag-ghost {
+  position: fixed; left: 0; top: 0; z-index: 2147483000; pointer-events: none;
+  padding: 7px 12px; border-radius: 10px; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--lumiverse-text, #e8e8ee); background: color-mix(in srgb, var(--lumiverse-fill-strong, #16141d) 92%, transparent);
+  border: 1px solid var(--warp-accent, #8b7cff); box-shadow: 0 10px 24px rgba(0,0,0,.4);
+}
+.warp-drag-ghost.warp-ghost-new::after { content: "  ·  new window"; opacity: .6; }
 
 /* ───────── modal ───────── */
 .warp-modal { display: flex; flex-direction: column; gap: 10px; padding: 4px 2px; }

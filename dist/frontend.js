@@ -42,7 +42,7 @@ init_protocol();
 
 // src/frontend/styles.ts
 var STYLES = `
-.warp-root, .warp-chips, .warp-choices, .warp-modal {
+.warp-root, .warp-chips, .warp-choices, .warp-modal, .warp-overlay, .warp-drag-ghost {
   --warp-good: #34b89a;
   --warp-warn: #d9a441;
   --warp-bad: #e05a7e;
@@ -214,8 +214,16 @@ var STYLES = `
 .warp-here { font-size: 10.5px; color: var(--warp-good); border: 1px solid currentColor; border-radius: 999px; padding: 0 6px; margin-left: 4px; font-weight: 500; }
 
 /* ───────── map & journal ───────── */
-.warp-map-card { padding: 8px; }
-.warp-map { width: 100%; height: auto; max-height: 420px; }
+.warp-map-view { position: relative; height: 220px; border-radius: 10px; background: var(--warp-fill-subtle); overflow: hidden; touch-action: none; cursor: grab; }
+.warp-root:not(.warp-overlay-body) .warp-map-view { height: 360px; }
+.warp-panel-solo .warp-map-view { height: 300px; }
+.warp-map-view.panning { cursor: grabbing; }
+.warp-map-view.panning .warp-map-node { pointer-events: none; }
+.warp-map { display: block; width: 100%; height: 100%; }
+.warp-map-tools { position: absolute; right: 6px; bottom: 6px; display: flex; flex-direction: column; gap: 4px; }
+.warp-map-tool { width: 26px; height: 26px; padding: 0; border-radius: 7px; border: 1px solid var(--warp-border); background: color-mix(in srgb, var(--lumiverse-fill-strong, #16141d) 82%, transparent); color: inherit; font: inherit; font-size: 14px; line-height: 1; cursor: pointer; }
+.warp-map-tool:hover { border-color: var(--warp-accent); }
+.warp-map-hint { font-size: 11px; margin: 2px 0 0; }
 .warp-map-edge { stroke: var(--warp-border); stroke-width: 2; }
 .warp-map-node circle { fill: var(--warp-fill); stroke: var(--warp-border); stroke-width: 2; }
 .warp-map-node text { fill: var(--warp-muted); font-size: 11px; }
@@ -308,6 +316,24 @@ var STYLES = `
 .warp-overlay[data-edge=top] .warp-section,
 .warp-overlay[data-edge=bottom] .warp-section { grid-column: 1 / -1; }.warp-overlay-collapsed .warp-overlay-head { cursor: pointer; }
 .warp-overlay-collapsed .warp-overlay-body { display: none; }
+
+/* ───────── torn-off panels ───────── */
+.warp-section > summary > span { flex: 1; }
+.warp-section > summary[data-part] { position: relative; }
+.warp-section > summary[data-part]::before { content: "⠿"; position: absolute; left: -11px; opacity: 0; transition: opacity var(--warp-fast); cursor: grab; }
+.warp-section > summary[data-part]:hover::before { opacity: .7; }
+.warp-section.warp-dragging { opacity: .35; }
+.warp-panel .warp-overlay-title { font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--warp-dim); }
+.warp-panel .warp-overlay-body { padding-bottom: 8px; }
+.warp-panel-solo { display: flex; flex-direction: column; gap: 6px; padding-top: 6px; }
+.warp-overlay.warp-drop-target { border-color: var(--warp-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warp-accent) 35%, transparent), 0 12px 32px rgba(0,0,0,.35); }
+.warp-drag-ghost {
+  position: fixed; left: 0; top: 0; z-index: 2147483000; pointer-events: none;
+  padding: 7px 12px; border-radius: 10px; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--lumiverse-text, #e8e8ee); background: color-mix(in srgb, var(--lumiverse-fill-strong, #16141d) 92%, transparent);
+  border: 1px solid var(--warp-accent, #8b7cff); box-shadow: 0 10px 24px rgba(0,0,0,.4);
+}
+.warp-drag-ghost.warp-ghost-new::after { content: "  ·  new window"; opacity: .6; }
 
 /* ───────── modal ───────── */
 .warp-modal { display: flex; flex-direction: column; gap: 10px; padding: 4px 2px; }
@@ -490,6 +516,11 @@ function pctTone(p) {
   return p >= 0.66 ? "good" : p >= 0.33 ? "warn" : "bad";
 }
 function renderHud(h, opts) {
+  const { head, parts } = hudParts(h, opts);
+  return head + parts.map((p) => renderPart(p)).join("");
+}
+var renderPart = (p, movable = false) => section(p.title, p.count, p.body, p.open, p.id, movable);
+function hudParts(h, opts) {
   const top = [
     `<div class="warp-eyebrow"><span>${esc(h.rulesetName)}</span><span title="Turn">T${h.turn}</span></div>`,
     h.clock ? `<div class="warp-clock"><span class="warp-phase" aria-hidden="true">${PHASE_ICON[h.clock.phase] ?? ""}</span><span class="warp-clock-time">${esc(h.clock.time)}</span><span class="warp-clock-day">${esc(h.date ?? h.clock.day)}</span></div>` : "",
@@ -515,7 +546,7 @@ Click to adjust`)}">
     })() : ""}
     </div>`;
   }).join("");
-  const skills = h.skills.length ? section("Skills & attributes", h.skills.length, h.skills.map((s) => `
+  const skills = h.skills.length ? part("skills", "Skills & attributes", h.skills.length, h.skills.map((s) => `
     <div class="warp-skill" title="${esc(`${s.label}: ${s.display}${s.text ? ` — ${s.text}` : ""}${s.practice !== null ? `
 Practice toward the next point: ${Math.round(s.practice * 100)}% — it grows every time you use it` : ""}`)}">
       <span>${esc(s.label)}</span>
@@ -524,7 +555,7 @@ Practice toward the next point: ${Math.round(s.practice * 100)}% — it grows ev
         <div class="warp-mini-track"><div class="warp-mini-fill" style="width:${(s.pct * 100).toFixed(1)}%"></div></div>
         ${s.practice !== null ? `<div class="warp-practice-track"><div class="warp-practice-fill" style="width:${(s.practice * 100).toFixed(1)}%"></div></div>` : ""}
       </div>
-    </div>`).join(""), !opts.compact) : "";
+    </div>`).join(""), !opts.compact) : null;
   const here = h.people.filter((p) => p.present);
   const away = h.people.filter((p) => !p.present);
   const personRow = (p) => `
@@ -539,13 +570,17 @@ Practice toward the next point: ${Math.round(s.practice * 100)}% — it grows ev
         <button class="warp-btn warp-btn-primary" data-save-rel="${esc(`${p.id}:${s.id}`)}">Set</button>
       </div>`).join("")}
     </div>`;
-  const people = section(here.length ? "People here" : "People", here.length, h.people.length ? `${here.length ? here.map(personRow).join("") : `<div class="warp-empty">No one you know is here.</div>`}${away.length ? `<details class="warp-away" data-section="people-away"><summary>Elsewhere · ${away.length}</summary><div class="warp-section-body">${away.map(personRow).join("")}</div></details>` : ""}` : `<div class="warp-empty">No one yet.</div>`, !opts.compact || here.length > 0, "people");
-  const body = h.body ? section("Body", 0, `${h.body.map((b) => `<div class="warp-item"><span>${esc(b.label)}</span><span class="${b.covered ? "warp-dim" : ""}" title="${b.covered ? "Covered by clothing" : "Visible"}">${esc(b.text)}${b.covered ? " \uD83D\uDC55" : ""}</span></div>`).join("")}${h.transforms.map((t) => `<div class="warp-item"><span>✦ ${esc(t.label)}</span><span class="warp-dim">stage ${t.stage} / ${t.of}</span></div>`).join("")}`, false) : "";
-  const dues = h.dues.length ? section("Bills", h.dues.filter((d) => d.tone === "bad").length, h.dues.map((d) => `<div class="warp-item"><span>${esc(d.label)}${d.owed > 0 ? ` <span class="warp-dim">${esc(h.money?.replace(/[\d.,]+/, "") ?? "")}${esc(d.owed)}</span>` : ""}</span><span class="warp-tone-${d.tone}">${esc(d.text)}</span></div>`).join(""), !opts.compact || h.dues.some((d) => d.tone === "bad")) : "";
-  const family = h.family.length ? section("Family", h.family.length, h.family.map((f) => `<div class="warp-item"><span>${esc(f.name)}</span><span class="warp-dim">${esc(f.text)}</span></div>`).join(""), !opts.compact) : "";
+  const people = part("people", here.length ? "People here" : "People", here.length, h.people.length ? `${here.length ? here.map(personRow).join("") : `<div class="warp-empty">No one you know is here.</div>`}${away.length ? `<details class="warp-away" data-section="people-away"><summary>Elsewhere · ${away.length}</summary><div class="warp-section-body">${away.map(personRow).join("")}</div></details>` : ""}` : `<div class="warp-empty">No one yet.</div>`, !opts.compact || here.length > 0);
+  const body = h.body ? part("body", "Body", 0, `${h.body.map((b) => `<div class="warp-item"><span>${esc(b.label)}</span><span class="${b.covered ? "warp-dim" : ""}" title="${b.covered ? "Covered by clothing" : "Visible"}">${esc(b.text)}${b.covered ? " \uD83D\uDC55" : ""}</span></div>`).join("")}${h.transforms.map((t) => `<div class="warp-item"><span>✦ ${esc(t.label)}</span><span class="warp-dim">stage ${t.stage} / ${t.of}</span></div>`).join("")}`, false) : null;
+  const dues = h.dues.length ? part("bills", "Bills", h.dues.filter((d) => d.tone === "bad").length, h.dues.map((d) => `<div class="warp-item"><span>${esc(d.label)}${d.owed > 0 ? ` <span class="warp-dim">${esc(h.money?.replace(/[\d.,]+/, "") ?? "")}${esc(d.owed)}</span>` : ""}</span><span class="warp-tone-${d.tone}">${esc(d.text)}</span></div>`).join(""), !opts.compact || h.dues.some((d) => d.tone === "bad")) : null;
+  const family = h.family.length ? part("family", "Family", h.family.length, h.family.map((f) => `<div class="warp-item"><span>${esc(f.name)}</span><span class="warp-dim">${esc(f.text)}</span></div>`).join(""), !opts.compact) : null;
   const loose = h.items.filter((i) => !i.worn);
-  const items = section("Inventory", loose.length, loose.length ? loose.map((i) => `<div class="warp-item"><span>${esc(i.name)}${i.uses ? ` <span class="warp-dim" title="Uses left in the one in hand">· ${esc(i.uses)}</span>` : ""}</span>${i.count > 1 ? `<span class="warp-kbd">×${i.count}</span>` : ""}</div>`).join("") : `<div class="warp-empty">Empty-handed.</div>`, !opts.compact);
-  return `${renderEncounter(h)}<div class="warp-hud-top">${top}</div>${renderWarmth(h)}<div class="warp-bars">${bars}</div>${renderOutfit(h, opts.compact)}${skills}${dues}${people}${family}${body}${items}${renderPerks(h, opts.compact)}`;
+  const items = part("inventory", "Inventory", loose.length, loose.length ? loose.map((i) => `<div class="warp-item"><span>${esc(i.name)}${i.uses ? ` <span class="warp-dim" title="Uses left in the one in hand">· ${esc(i.uses)}</span>` : ""}</span>${i.count > 1 ? `<span class="warp-kbd">×${i.count}</span>` : ""}</div>`).join("") : `<div class="warp-empty">Empty-handed.</div>`, !opts.compact);
+  const map = opts.map ? part("map", "Map", 0, renderMapView(opts.map), !opts.compact) : null;
+  return {
+    head: `${renderEncounter(h)}<div class="warp-hud-top">${top}</div>${renderWarmth(h)}<div class="warp-bars">${bars}</div>`,
+    parts: [renderOutfit(h, opts.compact), skills, dues, people, map, family, body, items, renderPerks(h, opts.compact)].filter((p) => !!p)
+  };
 }
 function renderEncounter(h) {
   const e = h.encounter;
@@ -574,9 +609,10 @@ function renderWarmth(h) {
     </div>
   </div>`;
 }
+var part = (id, title, count, body, open) => ({ id, title, count, body, open });
 function renderOutfit(h, compact) {
   if (!h.outfit)
-    return "";
+    return null;
   const rows = h.outfit.map((o) => {
     const options = h.clothing.filter((c) => c.slot === o.slot && c.id !== o.item?.id);
     const status = o.item ? `${esc(o.item.name)}${o.item.integrity !== null ? ` <span class="warp-tone-${o.item.integrity < 40 ? "bad" : "warn"}">${o.item.integrity}%</span>` : ""}` : `<span class="warp-dim">${h.exposed.includes(o.slot) ? "<span class='warp-tone-bad'>nothing</span>" : "—"}</span>`;
@@ -588,21 +624,21 @@ function renderOutfit(h, compact) {
     return `<div class="warp-outfit-row"><span class="warp-dim">${esc(o.label)}</span><span>${status}</span>${picker}</div>`;
   }).join("");
   const worn = h.outfit.filter((o) => o.item).length;
-  return section("Outfit", worn, rows, !compact);
+  return part("outfit", "Outfit", worn, rows, !compact);
 }
 function renderPerks(h, compact) {
   if (!h.perks.length)
-    return "";
+    return null;
   const rows = h.perks.map((p) => `<div class="warp-perk${p.owned ? " warp-perk-owned" : ""}">
       <div><b>${esc(p.name)}</b> <span class="warp-dim">${esc(p.desc)}</span></div>
       ${p.owned ? `<span class="warp-tone-good">✓</span>` : p.blocker ? `<span class="warp-dim" title="${esc(p.blocker)}">${esc(p.cost)} pt</span>` : `<button class="warp-btn warp-mini" data-buy-perk="${esc(p.id)}">Take · ${esc(p.cost)} pt</button>`}
     </div>`).join("");
   const label = h.perkPoints !== null ? `Perks · ${h.perkPoints} point${h.perkPoints === 1 ? "" : "s"}` : "Perks";
-  return section(label, 0, rows, !compact && (h.perkPoints ?? 0) > 0);
+  return part("perks", label, 0, rows, !compact && (h.perkPoints ?? 0) > 0);
 }
-function renderMap(m) {
-  if (!m)
-    return `<div class="warp-card"><p>This ruleset doesn't define places yet.</p></div>`;
+function renderMapView(m) {
+  if (!m.nodes.length)
+    return `<div class="warp-empty">No places yet.</div>`;
   const xs = m.nodes.map((n) => n.x), ys = m.nodes.map((n) => n.y);
   const pad = 70;
   const minX = Math.min(...xs) - pad, minY = Math.min(...ys) - pad;
@@ -610,19 +646,27 @@ function renderMap(m) {
   const byId = new Map(m.nodes.map((n) => [n.id, n]));
   const edges = m.edges.map(([a, b]) => {
     const p = byId.get(a), q = byId.get(b);
-    return `<line x1="${p.x}" y1="${p.y}" x2="${q.x}" y2="${q.y}" class="warp-map-edge" />`;
+    return p && q ? `<line x1="${p.x}" y1="${p.y}" x2="${q.x}" y2="${q.y}" class="warp-map-edge" />` : "";
   }).join("");
   const nodes = m.nodes.map((n) => `
     <g class="warp-map-node${n.here ? " here" : ""}${n.reachable ? " reachable" : ""}" ${n.reachable ? `data-go="${esc(n.id)}" tabindex="0" role="button" aria-label="Go to ${esc(n.name)}"` : ""}>
+      <title>${esc(n.reachable ? `Go to ${n.name}` : n.name)}</title>
       <circle cx="${n.x}" cy="${n.y}" r="${n.here ? 13 : 10}" />
       <text x="${n.x}" y="${n.y + 26}" text-anchor="middle">${esc(n.name)}</text>
       ${n.people.length ? `<text x="${n.x}" y="${n.y + 40}" text-anchor="middle" class="warp-map-people">${esc(n.people.join(", "))}</text>` : ""}
       ${n.indoors ? `<text x="${n.x}" y="${n.y + 4}" text-anchor="middle" class="warp-map-icon">⌂</text>` : ""}
     </g>`).join("");
-  return `<div class="warp-card warp-map-card">
-    <svg class="warp-map" viewBox="${minX} ${minY} ${w} ${hgt}" role="img" aria-label="Map">${edges}${nodes}</svg>
-    <p class="warp-dim">Click a highlighted place next to you to travel there. People show where their schedules put them right now.</p>
-  </div>`;
+  const here = m.nodes.find((n) => n.here);
+  const base = `${minX} ${minY} ${w} ${hgt}`;
+  return `<div class="warp-map-view" data-map="${esc(base)}"${here ? ` data-map-here="${here.x} ${here.y}"` : ""}>
+    <svg class="warp-map" viewBox="${base}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Map">${edges}${nodes}</svg>
+    <div class="warp-map-tools">
+      <button class="warp-map-tool" type="button" data-map-zoom="in" title="Zoom in" aria-label="Zoom in">+</button>
+      <button class="warp-map-tool" type="button" data-map-zoom="out" title="Zoom out" aria-label="Zoom out">−</button>
+      <button class="warp-map-tool" type="button" data-map-zoom="here" title="Centre on where you are" aria-label="Centre on where you are">◎</button>
+    </div>
+  </div>
+  <p class="warp-dim warp-map-hint">Scroll to zoom, drag to look around. Click a lit place next to you to go there.</p>`;
 }
 function renderJournal(h, records) {
   if (!h)
@@ -672,8 +716,8 @@ function checkpoints(h) {
     <p class="warp-dim">Loading keeps: ${esc(run.keeps)}. A new playthrough carries over: ${esc(run.legacy)}.</p>
   </div>`;
 }
-function section(title, count, body, open, key = title) {
-  return `<details class="warp-section" data-section="${esc(key)}"${open ? " open" : ""}><summary><span>${esc(title)}${count ? ` · ${count}` : ""}</span></summary><div class="warp-section-body">${body}</div></details>`;
+function section(title, count, body, open, key = title, movable = false) {
+  return `<details class="warp-section" data-section="${esc(key)}"${open ? " open" : ""}><summary${movable ? ` data-part="${esc(key)}" title="Hold and drag out to give it a window of its own"` : ""}><span>${esc(title)}${count ? ` · ${count}` : ""}</span></summary><div class="warp-section-body">${body}</div></details>`;
 }
 function renderChoices(choices, opts) {
   if (!choices.length && !opts.busy)
@@ -2146,6 +2190,645 @@ var STAGE_STYLES = `
 }
 `;
 
+// src/frontend/panels.ts
+var GAP = 6;
+var emptyLayout = () => ({ panels: [] });
+function panelOf(l, part) {
+  return l.panels.find((p) => p.parts.includes(part)) ?? null;
+}
+function without(l, parts) {
+  return l.panels.map((p) => ({ ...p, parts: p.parts.filter((x) => !parts.includes(x)) })).filter((p) => p.parts.length);
+}
+function nextId(l) {
+  let n = 1;
+  while (l.panels.some((p) => p.id === `p${n}`))
+    n++;
+  return `p${n}`;
+}
+function movePart(l, part, to, index) {
+  const from = panelOf(l, part);
+  if (to && from?.id === to) {
+    const parts = from.parts.filter((x) => x !== part);
+    const was = from.parts.indexOf(part);
+    const i = index === undefined ? parts.length : index > was ? index - 1 : index;
+    parts.splice(Math.max(0, Math.min(i, parts.length)), 0, part);
+    return updatePanel(l, from.id, { parts });
+  }
+  if (to && !l.panels.some((p) => p.id === to))
+    return l;
+  const panels = without(l, [part]);
+  if (!to)
+    return { panels };
+  return {
+    panels: panels.map((p) => {
+      if (p.id !== to)
+        return p;
+      const parts = [...p.parts];
+      parts.splice(index === undefined ? parts.length : Math.max(0, Math.min(index, parts.length)), 0, part);
+      return { ...p, parts };
+    })
+  };
+}
+function tearOff(l, part, x, y) {
+  const panels = without(l, [part]);
+  return { panels: [...panels, { id: nextId({ panels: l.panels }), parts: [part], x, y, attach: null }] };
+}
+function mergePanel(l, id, to) {
+  const src = l.panels.find((p) => p.id === id);
+  if (!src || id === to)
+    return l;
+  const rest = l.panels.filter((p) => p.id !== id);
+  if (!to)
+    return { panels: rest };
+  return { panels: rest.map((p) => p.id === to ? { ...p, parts: [...p.parts, ...src.parts] } : p) };
+}
+function updatePanel(l, id, patch) {
+  return { panels: l.panels.map((p) => p.id === id ? { ...p, ...patch } : p) };
+}
+var inside = (pt, b) => pt.x >= b.x && pt.x <= b.x + b.w && pt.y >= b.y && pt.y <= b.y + b.h;
+function overlapShare(a, b) {
+  const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+  if (w <= 0 || h <= 0)
+    return 0;
+  return w * h / Math.max(1, Math.min(a.w * a.h, b.w * b.h));
+}
+function sideFor(b, main, snap = SNAP) {
+  const vOverlap = Math.min(b.y + b.h, main.y + main.h) - Math.max(b.y, main.y);
+  const hOverlap = Math.min(b.x + b.w, main.x + main.w) - Math.max(b.x, main.x);
+  const near = (a, c) => Math.abs(a - c) <= snap;
+  const offY = Math.round(b.y - main.y), offX = Math.round(b.x - main.x);
+  if (vOverlap > 24 && near(b.x + b.w, main.x - GAP))
+    return { side: "left", offset: offY };
+  if (vOverlap > 24 && near(b.x, main.x + main.w + GAP))
+    return { side: "right", offset: offY };
+  if (hOverlap > 24 && near(b.y, main.y + main.h + GAP))
+    return { side: "bottom", offset: offX };
+  return null;
+}
+function clampBox(b, vp) {
+  return {
+    ...b,
+    x: Math.round(Math.max(PAD, Math.min(b.x, vp.width - b.w - PAD))),
+    y: Math.round(Math.max(PAD, Math.min(b.y, vp.height - Math.min(b.h, vp.height - 2 * PAD) - PAD)))
+  };
+}
+function attachedAt(a, w, h, main, vp) {
+  const fits = (b) => b.x >= PAD / 2 && b.y >= PAD / 2 && b.x + b.w <= vp.width - PAD / 2 && b.y + b.h <= vp.height - PAD / 2;
+  const along = (b) => ({ ...b, y: Math.round(Math.max(PAD, Math.min(b.y, vp.height - Math.min(h, vp.height - 2 * PAD) - PAD))) });
+  const across = (b) => ({ ...b, x: Math.round(Math.max(PAD, Math.min(b.x, vp.width - w - PAD))) });
+  const left = along({ x: main.x - GAP - w, y: main.y + a.offset, w, h });
+  const right = along({ x: main.x + main.w + GAP, y: main.y + a.offset, w, h });
+  const x = a.side === "bottom" ? main.x + a.offset : a.side === "left" ? main.x : main.x + main.w - w;
+  const below = across({ x, y: main.y + main.h + GAP, w, h });
+  const above = across({ x, y: main.y - GAP - h, w, h });
+  const order = a.side === "left" ? [left, right, above, below] : a.side === "right" ? [right, left, above, below] : [below, above, right, left];
+  return order.find(fits) ?? clampBox(order[0], vp);
+}
+function snapToScreen(b, vp, snap = SNAP) {
+  let { x, y } = b;
+  if (x < PAD + snap)
+    x = PAD;
+  if (x + b.w > vp.width - PAD - snap)
+    x = vp.width - PAD - b.w;
+  if (y < PAD + snap)
+    y = PAD;
+  if (y + b.h > vp.height - PAD - snap)
+    y = vp.height - PAD - b.h;
+  return clampBox({ ...b, x, y }, vp);
+}
+function slotAt(y, rows) {
+  const i = rows.findIndex((r) => y < r.y + r.h / 2);
+  return i < 0 ? rows.length : i;
+}
+function parseLayout(raw) {
+  try {
+    const v = JSON.parse(raw ?? "");
+    if (!Array.isArray(v?.panels))
+      return emptyLayout();
+    const seen = new Set;
+    const panels = [];
+    for (const p of v.panels) {
+      if (!p || typeof p.id !== "string" || !Array.isArray(p.parts))
+        continue;
+      const parts = p.parts.filter((x) => typeof x === "string" && !seen.has(x));
+      parts.forEach((x) => seen.add(x));
+      if (!parts.length || panels.some((q) => q.id === p.id))
+        continue;
+      const side = p.attach?.side;
+      panels.push({
+        id: p.id,
+        parts,
+        x: Number.isFinite(p.x) ? p.x : 80,
+        y: Number.isFinite(p.y) ? p.y : 80,
+        attach: side === "left" || side === "right" || side === "bottom" ? { side, offset: Number(p.attach.offset) || 0 } : null,
+        ...p.folded ? { folded: true } : {}
+      });
+    }
+    return { panels };
+  } catch {
+    return emptyLayout();
+  }
+}
+
+// src/frontend/map-view.ts
+var MAX_ZOOM = 5;
+function parseBox(s) {
+  const n = (s ?? "").trim().split(/[\s,]+/).map(Number);
+  return n.length === 4 && n.every(Number.isFinite) && n[2] > 0 && n[3] > 0 ? { x: n[0], y: n[1], w: n[2], h: n[3] } : null;
+}
+var fmt = (b) => [b.x, b.y, b.w, b.h].map((v) => Math.round(v * 100) / 100).join(" ");
+function clampView(v, base) {
+  const w = Math.max(base.w / MAX_ZOOM, Math.min(base.w, v.w));
+  const h = w * (base.h / base.w);
+  const x = Math.max(base.x, Math.min(v.x, base.x + base.w - w));
+  const y = Math.max(base.y, Math.min(v.y, base.y + base.h - h));
+  return { x, y, w, h };
+}
+function zoomAt(v, base, factor, px, py) {
+  const w = Math.max(base.w / MAX_ZOOM, Math.min(base.w, v.w / factor));
+  const k = w / v.w;
+  return clampView({ x: px - (px - v.x) * k, y: py - (py - v.y) * k, w, h: v.h * k }, base);
+}
+var panBy = (v, base, dx, dy) => clampView({ ...v, x: v.x - dx, y: v.y - dy }, base);
+function centreOn(v, base, px, py, zoom) {
+  const w = Math.min(v.w, base.w / zoom);
+  const h = w * (base.h / base.w);
+  return clampView({ x: px - w / 2, y: py - h / 2, w, h }, base);
+}
+var views = new Map;
+function restoreMaps(root) {
+  root.querySelectorAll("[data-map]").forEach((el) => {
+    const v = views.get(el.dataset.map);
+    const svg = el.querySelector("svg");
+    if (v && svg)
+      svg.setAttribute("viewBox", fmt(v));
+    el.classList.toggle("zoomed", !!v);
+  });
+}
+function setView(el, v) {
+  const base = parseBox(el.dataset.map);
+  const whole = v.w >= base.w - 0.01;
+  if (whole)
+    views.delete(el.dataset.map);
+  else
+    views.set(el.dataset.map, v);
+  el.querySelector("svg")?.setAttribute("viewBox", fmt(whole ? base : v));
+  el.classList.toggle("zoomed", !whole);
+}
+function current(el) {
+  const base = parseBox(el.dataset.map);
+  if (!base)
+    return null;
+  return { base, v: views.get(el.dataset.map) ?? base };
+}
+function toMap(svg, x, y) {
+  const m = svg.getScreenCTM?.();
+  if (!m)
+    return null;
+  const p = new DOMPoint(x, y).matrixTransform(m.inverse());
+  return { x: p.x, y: p.y };
+}
+function wireMaps(root) {
+  let drag = null;
+  let swallowClick = false;
+  const onWheel = (e) => {
+    const el = e.target.closest?.("[data-map]");
+    const svg = el?.querySelector("svg");
+    if (!el || !svg || !root.contains(el))
+      return;
+    const c = current(el);
+    const p = toMap(svg, e.clientX, e.clientY);
+    if (!c || !p)
+      return;
+    e.preventDefault();
+    const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
+    setView(el, zoomAt(c.v, c.base, Math.exp(-dy * 0.0018), p.x, p.y));
+  };
+  const onDown = (e) => {
+    if (e.button !== 0)
+      return;
+    const t = e.target;
+    if (t.closest?.("[data-map-zoom]"))
+      return;
+    const el = t.closest?.("[data-map]");
+    const svg = el?.querySelector("svg");
+    const m = svg?.getScreenCTM?.();
+    if (!el || !svg || !m)
+      return;
+    drag = { el, svg, id: e.pointerId, x: e.clientX, y: e.clientY, scale: m.a || 1, moved: false };
+  };
+  const onMove = (e) => {
+    if (!drag || e.pointerId !== drag.id)
+      return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (!drag.moved && Math.hypot(dx, dy) < 5)
+      return;
+    if (!drag.moved) {
+      drag.moved = true;
+      drag.el.classList.add("panning");
+      try {
+        drag.svg.setPointerCapture(e.pointerId);
+      } catch {}
+    }
+    const c = current(drag.el);
+    if (c)
+      setView(drag.el, panBy(c.v, c.base, dx / drag.scale, dy / drag.scale));
+    drag.x = e.clientX;
+    drag.y = e.clientY;
+  };
+  const onUp = (e) => {
+    if (!drag || e.pointerId !== drag.id)
+      return;
+    if (drag.moved) {
+      swallowClick = true;
+      setTimeout(() => {
+        swallowClick = false;
+      }, 0);
+    }
+    drag.el.classList.remove("panning");
+    drag = null;
+  };
+  const onClick = (e) => {
+    if (swallowClick) {
+      e.preventDefault();
+      e.stopPropagation();
+      swallowClick = false;
+      return;
+    }
+    const btn = e.target.closest?.("[data-map-zoom]");
+    const el = btn?.closest("[data-map]");
+    if (!btn || !el)
+      return;
+    e.stopPropagation();
+    const c = current(el);
+    if (!c)
+      return;
+    const cx = c.v.x + c.v.w / 2, cy = c.v.y + c.v.h / 2;
+    const z = btn.dataset.mapZoom;
+    if (z === "in")
+      setView(el, zoomAt(c.v, c.base, 1.5, cx, cy));
+    else if (z === "out")
+      setView(el, zoomAt(c.v, c.base, 1 / 1.5, cx, cy));
+    else {
+      const here = (el.dataset.mapHere ?? "").split(" ").map(Number);
+      if (here.length === 2 && here.every(Number.isFinite))
+        setView(el, centreOn(c.v, c.base, here[0], here[1], 2));
+    }
+  };
+  root.addEventListener("wheel", onWheel, { passive: false });
+  root.addEventListener("pointerdown", onDown);
+  root.addEventListener("click", onClick, true);
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+  window.addEventListener("pointercancel", onUp);
+  return () => {
+    root.removeEventListener("wheel", onWheel);
+    root.removeEventListener("pointerdown", onDown);
+    root.removeEventListener("click", onClick, true);
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    window.removeEventListener("pointercancel", onUp);
+  };
+}
+
+// src/frontend/panel-windows.ts
+var MAP_W = 340;
+var widthFor = (parts) => parts.includes("map") ? MAP_W : PANEL_W;
+function createPanels(o) {
+  let layout = parseLayout(o.load());
+  let parts = [];
+  const wins = new Map;
+  const cleanups = [];
+  const scale = () => {
+    try {
+      return o.ctx.ui.geometry?.getUiScale() || 1;
+    } catch {
+      return 1;
+    }
+  };
+  const toLayout = (v) => v / scale();
+  const rect = (el) => {
+    const r = el.getBoundingClientRect();
+    return { x: r.left, y: r.top, w: r.width, h: r.height };
+  };
+  function commit(next) {
+    layout = next;
+    o.save(JSON.stringify(layout));
+    o.changed();
+  }
+  function makeWin(p) {
+    const el = document.createElement("div");
+    el.className = "warp-overlay warp-panel";
+    el.innerHTML = `<div class="warp-overlay-head" title="Drag to move · drop on the main window to put it back, or on another panel to merge"></div><div class="warp-overlay-body warp-root"></div>`;
+    const head = el.firstElementChild;
+    const body = el.lastElementChild;
+    const w = widthFor(p.parts);
+    let handle;
+    try {
+      handle = o.ctx.ui.createFloatWidget({ width: w, height: 200, initialPosition: { x: p.x, y: p.y }, snapToEdge: false, tooltip: "Warp", chromeless: true });
+    } catch {
+      return null;
+    }
+    handle.root.appendChild(el);
+    handle.setVisible(false);
+    const win = { id: p.id, handle, el, head, body, box: { x: p.x, y: p.y, w, h: 200 }, shown: false, html: "" };
+    body.addEventListener("pointerdown", (e) => {
+      if (!e.target.closest?.("input, select, textarea"))
+        e.preventDefault();
+    });
+    body.addEventListener("pointerdown", (e) => startSectionDrag(e, p.id));
+    o.wire(body);
+    cleanups.push(wireMaps(body));
+    head.addEventListener("pointerdown", (e) => {
+      if (e.button === 0)
+        panelDrag = { id: win.id, at: { x: e.clientX, y: e.clientY } };
+    });
+    head.addEventListener("click", (e) => {
+      const t = e.target;
+      if (t.closest("[data-panel-home]")) {
+        commit(mergePanel(layout, win.id, null));
+        return;
+      }
+      if (t.closest("[data-panel-fold]")) {
+        const cur = layout.panels.find((q) => q.id === win.id);
+        if (cur)
+          commit(updatePanel(layout, win.id, { folded: !cur.folded }));
+      }
+    });
+    cleanups.push(handle.onDragEnd((pos) => dropPanel(win, pos)));
+    return win;
+  }
+  function destroyWin(w) {
+    try {
+      w.handle.destroy();
+    } catch {}
+    wins.delete(w.id);
+  }
+  function place(w, b) {
+    if (b.w !== w.box.w || b.h !== w.box.h)
+      w.handle.setSize(b.w, b.h);
+    const p = w.handle.getPosition();
+    if (Math.round(p.x) !== Math.round(b.x) || Math.round(p.y) !== Math.round(b.y))
+      w.handle.moveTo(b.x, b.y);
+    w.box = b;
+  }
+  function boxFor(p, w, h) {
+    const vp = o.viewport();
+    const m = o.main();
+    if (p.attach && m)
+      return attachedAt(p.attach, w, h, m.box, vp);
+    return snapToScreen({ x: p.x, y: p.y, w, h }, vp, 0);
+  }
+  function heightFor(win, folded) {
+    if (folded)
+      return PILL.h;
+    const vp = o.viewport();
+    const maxH = Math.max(160, vp.height - 140);
+    win.el.style.setProperty("--warp-overlay-max", `${maxH - PILL.h}px`);
+    return Math.min(maxH, PILL.h + win.body.scrollHeight + 2);
+  }
+  function sync() {
+    const byId = new Map(parts.map((p) => [p.id, p]));
+    const m = o.main();
+    const show = o.shown();
+    for (const w of wins.values())
+      if (!layout.panels.some((p) => p.id === w.id))
+        destroyWin(w);
+    for (const p of layout.panels) {
+      const here = p.parts.map((id) => byId.get(id)).filter((x) => !!x);
+      const visible = show && here.length > 0 && (!p.attach || !!m && m.open);
+      let w = wins.get(p.id);
+      if (!visible) {
+        if (w?.shown) {
+          w.handle.setVisible(false);
+          w.shown = false;
+        }
+        continue;
+      }
+      if (!w) {
+        const made = makeWin(p);
+        if (!made)
+          continue;
+        w = made;
+        wins.set(p.id, w);
+      }
+      const single = here.length === 1;
+      const title = here.map((x) => `${x.title}${x.count ? ` · ${x.count}` : ""}`).join(" · ");
+      w.head.innerHTML = `<span class="warp-overlay-title">${esc(title)}</span>
+        <span class="warp-overlay-actions">
+          <button class="warp-btn warp-btn-ghost" data-panel-home title="Put back in the main window" aria-label="Put back in the main window">⤺</button>
+          <button class="warp-btn warp-btn-ghost" data-panel-fold title="${p.folded ? "Expand" : "Collapse"}" aria-label="${p.folded ? "Expand" : "Collapse"}">${p.folded ? "+" : "–"}</button>
+        </span>`;
+      w.el.classList.toggle("warp-overlay-collapsed", !!p.folded);
+      w.el.dataset.attach = p.attach?.side ?? "";
+      const html = single ? `<div class="warp-panel-solo" data-solo="${esc(here[0].id)}">${here[0].body}</div>` : here.map((x) => renderPart(x, true)).join("");
+      if (html !== w.html) {
+        const kept = w.body.scrollTop;
+        o.rememberSections(w.body);
+        w.body.innerHTML = html;
+        w.html = html;
+        o.restoreSections(w.body);
+        restoreMaps(w.body);
+        w.body.scrollTop = kept;
+      }
+      if (!w.shown) {
+        w.handle.setVisible(true);
+        w.shown = true;
+      }
+      const win = w;
+      const width = widthFor(p.parts);
+      place(win, boxFor(p, width, win.box.h));
+      requestAnimationFrame(() => place(win, boxFor(p, width, heightFor(win, !!p.folded))));
+    }
+  }
+  function follow() {
+    const m = o.main();
+    if (!m)
+      return;
+    for (const p of layout.panels) {
+      const w = wins.get(p.id);
+      if (w?.shown && p.attach)
+        place(w, attachedAt(p.attach, w.box.w, w.box.h, m.box, o.viewport()));
+    }
+  }
+  let panelDrag = null;
+  let pointer = null;
+  function targetAt(pt, skip) {
+    for (const w of wins.values())
+      if (w.shown && w.id !== skip && inside(pt, rect(w.el)))
+        return { kind: "panel", id: w.id };
+    const m = o.main();
+    if (m?.open && inside(pt, rect(m.el)))
+      return { kind: "main" };
+    return null;
+  }
+  function highlight(t) {
+    const m = o.main();
+    m?.el.classList.toggle("warp-drop-target", t?.kind === "main");
+    for (const w of wins.values())
+      w.el.classList.toggle("warp-drop-target", t?.kind === "panel" && t.id === w.id);
+  }
+  function dropPanel(win, pos) {
+    const pt = pointer;
+    panelDrag = null;
+    highlight(null);
+    const p = layout.panels.find((q) => q.id === win.id);
+    if (!p)
+      return;
+    const box = { ...win.box, x: pos.x, y: pos.y };
+    win.box = box;
+    const m = o.main();
+    const t = pt ? targetAt(pt, win.id) : null;
+    if (t?.kind === "main" || !t && m?.open && overlapShare(box, m.box) > 0.5) {
+      commit(mergePanel(layout, win.id, null));
+      return;
+    }
+    const other = t?.kind === "panel" ? t.id : [...wins.values()].find((w) => w.id !== win.id && w.shown && overlapShare(box, w.box) > 0.5)?.id;
+    if (other) {
+      commit(mergePanel(layout, win.id, other));
+      return;
+    }
+    const attach = m?.open ? sideFor(box, m.box) : null;
+    const b = attach ? box : snapToScreen(box, o.viewport());
+    commit(updatePanel(layout, win.id, { x: b.x, y: b.y, attach }));
+  }
+  let sec = null;
+  let swallowClick = false;
+  function startSectionDrag(e, from) {
+    if (e.button !== 0)
+      return;
+    const summary = e.target.closest?.("summary[data-part]");
+    if (!summary)
+      return;
+    sec = { part: summary.dataset.part, from, id: e.pointerId, x: e.clientX, y: e.clientY, started: false, ghost: null, summary };
+  }
+  const onMove = (e) => {
+    pointer = { x: e.clientX, y: e.clientY };
+    if (panelDrag) {
+      if (Math.hypot(e.clientX - panelDrag.at.x, e.clientY - panelDrag.at.y) > 4)
+        highlight(targetAt(pointer, panelDrag.id));
+      return;
+    }
+    if (!sec || e.pointerId !== sec.id)
+      return;
+    if (!sec.started) {
+      if (Math.hypot(e.clientX - sec.x, e.clientY - sec.y) < 7)
+        return;
+      sec.started = true;
+      const ghost = document.createElement("div");
+      ghost.className = "warp-drag-ghost";
+      ghost.textContent = sec.summary.textContent?.trim() ?? "";
+      document.body.appendChild(ghost);
+      sec.ghost = ghost;
+      sec.summary.closest("details")?.classList.add("warp-dragging");
+      try {
+        sec.summary.setPointerCapture(e.pointerId);
+      } catch {}
+    }
+    const t = targetAt(pointer, null);
+    highlight(t?.kind === "main" && sec.from === null ? null : t);
+    sec.ghost.style.transform = `translate(${e.clientX + 12}px, ${e.clientY + 8}px)`;
+    sec.ghost.classList.toggle("warp-ghost-new", !t);
+  };
+  const onUp = (e) => {
+    if (panelDrag && !sec) {
+      setTimeout(() => {
+        if (panelDrag) {
+          panelDrag = null;
+          highlight(null);
+        }
+      }, 50);
+    }
+    if (!sec || e.pointerId !== sec.id)
+      return;
+    const s = sec;
+    sec = null;
+    if (!s.started)
+      return;
+    s.ghost?.remove();
+    s.summary.closest("details")?.classList.remove("warp-dragging");
+    highlight(null);
+    swallowClick = true;
+    setTimeout(() => {
+      swallowClick = false;
+    }, 0);
+    const pt = { x: e.clientX, y: e.clientY };
+    const t = targetAt(pt, null);
+    if (t?.kind === "main") {
+      if (s.from !== null)
+        commit(movePart(layout, s.part, null));
+      return;
+    }
+    if (t?.kind === "panel") {
+      const w = wins.get(t.id);
+      const rows = [...w.body.querySelectorAll(":scope > details[data-section]")].map((d) => rect(d));
+      const index = rows.length ? slotAt(pt.y, rows) : undefined;
+      commit(movePart(layout, s.part, t.id, index));
+      return;
+    }
+    const x = toLayout(pt.x) - 24, y = toLayout(pt.y) - 14;
+    let next = tearOff(layout, s.part, x, y);
+    const made = panelOf(next, s.part);
+    const m = o.main();
+    const box = { x, y, w: widthFor([s.part]), h: 200 };
+    const attach = m?.open ? sideFor(box, m.box, 60) : null;
+    const b = attach ? box : snapToScreen(box, o.viewport());
+    next = updatePanel(next, made.id, { x: b.x, y: b.y, attach });
+    commit(next);
+  };
+  const onClickCapture = (e) => {
+    if (swallowClick) {
+      e.preventDefault();
+      e.stopPropagation();
+      swallowClick = false;
+    }
+  };
+  const onKey = (e) => {
+    if (e.key !== "Escape" || !sec?.started)
+      return;
+    sec.ghost?.remove();
+    sec.summary.closest("details")?.classList.remove("warp-dragging");
+    highlight(null);
+    sec = null;
+  };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+  window.addEventListener("pointercancel", onUp);
+  document.addEventListener("click", onClickCapture, true);
+  document.addEventListener("keydown", onKey);
+  cleanups.push(() => {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    window.removeEventListener("pointercancel", onUp);
+    document.removeEventListener("click", onClickCapture, true);
+    document.removeEventListener("keydown", onKey);
+  });
+  return {
+    inMain: (id) => !panelOf(layout, id),
+    render(next) {
+      parts = next;
+      sync();
+    },
+    sync,
+    follow,
+    startSectionDrag,
+    reset() {
+      commit({ panels: [] });
+    },
+    hasPanels: () => layout.panels.length > 0,
+    destroy() {
+      for (const c of cleanups.splice(0)) {
+        try {
+          c();
+        } catch {}
+      }
+      for (const w of [...wins.values()])
+        destroyWin(w);
+    }
+  };
+}
+
 // src/frontend.ts
 var CLEANUP_KEY = "__warpCleanup";
 var ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><circle cx="8.5" cy="8.5" r="1.3" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/></svg>`;
@@ -2222,6 +2905,7 @@ function setup(ctx) {
   dockRoot.addEventListener("pointerdown", (e) => {
     if (!e.target.closest?.("input, select, textarea"))
       e.preventDefault();
+    panels.startSectionDrag(e, null);
   });
   let cur = { x: 0, y: 72, w: PILL.w, h: PILL.h };
   try {
@@ -2285,6 +2969,24 @@ function setup(ctx) {
   let sceneKey = "";
   let lineAt = 0;
   const stageVisible = () => !!stage?.isVisible();
+  const panels = createPanels({
+    ctx,
+    viewport,
+    main: () => overlay?.isVisible() ? { box: cur, el: overlayEl, open: overlayOpen } : null,
+    shown: () => !!overlay && (!!state?.hud || state?.status.state === "broken") && !stageVisible(),
+    wire: (body) => wirePanel(body),
+    rememberSections: (root) => rememberSections(root),
+    restoreSections: (root) => restoreSections(root),
+    changed: () => {
+      renderDock();
+      fitOverlay();
+    },
+    load: () => store("panels"),
+    save: (v) => {
+      store("panels", v);
+    }
+  });
+  cleanups.push(() => panels.destroy());
   function place(b) {
     if (!overlay)
       return;
@@ -2294,6 +2996,7 @@ function setup(ctx) {
     if (p.x !== b.x || p.y !== b.y)
       overlay.moveTo(b.x, b.y);
     cur = b;
+    panels.follow();
   }
   function resizeFloating(w, h) {
     if (!overlay)
@@ -2330,8 +3033,21 @@ function setup(ctx) {
       return;
     pressAt = { x: e.clientX, y: e.clientY };
     dragStart = overlay.getPosition();
+    mainDrag = true;
   });
+  let mainDrag = false;
+  let followFrame = 0;
   const onPointerMove = (e) => {
+    if (mainDrag && overlay && !followFrame && panels.hasPanels()) {
+      followFrame = requestAnimationFrame(() => {
+        followFrame = 0;
+        if (!overlay || !mainDrag)
+          return;
+        const p = overlay.getPosition();
+        cur = { ...cur, x: p.x, y: p.y };
+        panels.follow();
+      });
+    }
     if (!pressAt || !overlay)
       return;
     if (Math.hypot(e.clientX - pressAt.x, e.clientY - pressAt.y) < 4)
@@ -2349,6 +3065,7 @@ function setup(ctx) {
   };
   const onPointerUp = () => {
     pressAt = null;
+    mainDrag = false;
   };
   window.addEventListener("pointermove", onPointerMove);
   window.addEventListener("pointerup", onPointerUp);
@@ -2360,6 +3077,7 @@ function setup(ctx) {
     cleanups.push(overlay.onDragEnd((pos) => {
       const from = dragStart ?? pos;
       dragStart = null;
+      mainDrag = false;
       cur = { ...cur, x: pos.x, y: pos.y };
       edge = edgeForDrop(from, cur, viewport());
       store("overlayEdge", edge ?? "");
@@ -2381,6 +3099,7 @@ function setup(ctx) {
       overlay.setVisible(show);
     if (show)
       fitOverlay();
+    panels.sync();
   }
   function renderHead() {
     const h = state?.hud;
@@ -2423,6 +3142,7 @@ function setup(ctx) {
       store("overlayOpen", overlayOpen ? "1" : "0");
       renderHead();
       fitOverlay();
+      panels.sync();
     }
   });
   function rememberSections(root) {
@@ -2450,14 +3170,22 @@ function setup(ctx) {
       return;
     renderHead();
     rememberSections(dockRoot);
+    const kept = dockRoot.scrollTop;
     if (state?.hud) {
-      dockRoot.innerHTML = renderHud(state.hud, { editing: editingBar, compact: true });
+      const { head, parts } = hudParts(state.hud, { editing: editingBar, compact: true, map: state.map });
+      const mine = parts.filter((p) => panels.inMain(p.id));
+      dockRoot.innerHTML = head + mine.map((p) => renderPart(p, true)).join("");
+      panels.render(parts);
     } else if (state?.status.state === "broken") {
       dockRoot.innerHTML = renderRulesetCard(state.status, true);
+      panels.render([]);
     } else {
       dockRoot.innerHTML = "";
+      panels.render([]);
     }
     restoreSections(dockRoot);
+    restoreMaps(dockRoot);
+    dockRoot.scrollTop = kept;
     flashChangedBars(dockRoot);
   }
   function renderDrawer() {
@@ -2466,7 +3194,6 @@ function setup(ctx) {
     const status = state?.status ?? { state: "none", name: null, source: null, issues: [], characterName: null, cardKind: "character", tags: [] };
     const views = [
       ["sheet", "Sheet"],
-      ...state?.map ? [["map", "Map"]] : [],
       ...state?.hud ? [["journal", "Journal"]] : [],
       ...state?.date ? [["date", state.date.session ? "Dating \uD83D\uDCAC" : "Dating"]] : [],
       ...state?.dungeon || state?.dungeonEntries?.length ? [["dungeon", state?.dungeon ? "Dungeon ⚔" : "Dungeon"]] : [],
@@ -2480,9 +3207,7 @@ function setup(ctx) {
     </div>`;
     let body = "";
     if (drawerView === "sheet") {
-      body = state?.hud ? renderHud(state.hud, { editing: editingBar, compact: false }) : renderRulesetCard(status, hasChat);
-    } else if (drawerView === "map") {
-      body = renderMap(state?.map ?? null);
+      body = state?.hud ? renderHud(state.hud, { editing: editingBar, compact: false, map: state.map }) : renderRulesetCard(status, hasChat);
     } else if (drawerView === "date") {
       body = renderDate(state?.date ?? null, { cat: dateCat, busy: busy.on && busy.chatId === state?.chatId });
     } else if (drawerView === "dungeon") {
@@ -2499,6 +3224,7 @@ function setup(ctx) {
     }
     drawerRoot.innerHTML = tabs + body;
     restoreSections(drawerRoot);
+    restoreMaps(drawerRoot);
     flashChangedBars(drawerRoot);
     tab.setBadge(status.issues.some((i) => i.level === "error") ? "!" : null);
   }
@@ -3316,12 +4042,16 @@ function setup(ctx) {
       t.value = "";
     }
   }
-  for (const root of [drawerRoot, dockRoot]) {
+  function wirePanel(root) {
     root.addEventListener("click", onPanelClick);
     root.addEventListener("input", onPanelInput);
     root.addEventListener("change", onPanelChange);
     root.addEventListener("keydown", onPanelKey);
     root.addEventListener("toggle", () => rememberSections(root), true);
+  }
+  for (const root of [drawerRoot, dockRoot]) {
+    wirePanel(root);
+    cleanups.push(wireMaps(root));
   }
   function act(actionId) {
     if (actionId === "date:open") {

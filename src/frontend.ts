@@ -11,7 +11,9 @@ import { connectCue } from "./frontend/cue-bridge.js";
 import { renderDate } from "./frontend/date-ui.js";
 import { formatStory, renderStage, stageModeOf, type StageMode } from "./frontend/stage.js";
 import { STAGE_STYLES } from "./frontend/stage-styles.js";
-import { esc, renderChips, renderChoices, renderHud, renderJournal, renderMap, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
+import { esc, hudParts, renderChips, renderChoices, renderHud, renderJournal, renderPart, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
+import { createPanels } from "./frontend/panel-windows.js";
+import { restoreMaps, wireMaps } from "./frontend/map-view.js";
 
 type StateMsg = Extract<BackendToFrontend, { type: "state" }>;
 
@@ -43,7 +45,7 @@ export function setup(ctx: SpindleFrontendContext) {
   let bDraft: BuilderDraft = emptyDraft();
   let busy = { chatId: "", on: false, label: "" };
   let editingBar: string | null = null;
-  let drawerView: "sheet" | "map" | "journal" | "date" | "dungeon" | "rules" | "settings" = "sheet";
+  let drawerView: "sheet" | "journal" | "date" | "dungeon" | "rules" | "settings" = "sheet";
   let dateCat: string | null = null;
   let dgPick: DungeonPick = null;
   const dgMates = new Set<string>();
@@ -89,6 +91,8 @@ export function setup(ctx: SpindleFrontendContext) {
   // (Form controls are already exempt from dragging, and need their default to take focus.)
   dockRoot.addEventListener("pointerdown", (e) => {
     if (!(e.target as Element).closest?.("input, select, textarea")) e.preventDefault();
+    // Holding a section's header and dragging tears it out into a panel of its own.
+    panels.startSectionDrag(e, null);
   });
   let cur: Box = { x: 0, y: 72, w: PILL.w, h: PILL.h };
   try {
@@ -160,12 +164,28 @@ export function setup(ctx: SpindleFrontendContext) {
   let lineAt = 0;
   const stageVisible = () => !!stage?.isVisible();
 
+  // Sections torn off the main window into panels of their own (see panel-windows.ts).
+  const panels = createPanels({
+    ctx,
+    viewport,
+    main: () => (overlay?.isVisible() ? { box: cur, el: overlayEl, open: overlayOpen } : null),
+    shown: () => !!overlay && (!!state?.hud || state?.status.state === "broken") && !stageVisible(),
+    wire: (body) => wirePanel(body),
+    rememberSections: (root) => rememberSections(root),
+    restoreSections: (root) => restoreSections(root),
+    changed: () => { renderDock(); fitOverlay(); },
+    load: () => store("panels"),
+    save: (v) => { store("panels", v); },
+  });
+  cleanups.push(() => panels.destroy());
+
   function place(b: Box) {
     if (!overlay) return;
     if (b.w !== cur.w || b.h !== cur.h) overlay.setSize(b.w, b.h);
     const p = overlay.getPosition();
     if (p.x !== b.x || p.y !== b.y) overlay.moveTo(b.x, b.y);
     cur = b;
+    panels.follow();
   }
 
   /** Floating resize that keeps whichever side is nearer the screen edge fixed, so it doesn't jump. */
@@ -203,8 +223,21 @@ export function setup(ctx: SpindleFrontendContext) {
     if (!overlay || e.button !== 0) return;
     pressAt = { x: e.clientX, y: e.clientY };
     dragStart = overlay.getPosition();
+    mainDrag = true;
   });
+  let mainDrag = false;
+  let followFrame = 0;
   const onPointerMove = (e: PointerEvent) => {
+    // Panels attached to the main window come along while it's dragged.
+    if (mainDrag && overlay && !followFrame && panels.hasPanels()) {
+      followFrame = requestAnimationFrame(() => {
+        followFrame = 0;
+        if (!overlay || !mainDrag) return;
+        const p = overlay.getPosition();
+        cur = { ...cur, x: p.x, y: p.y };
+        panels.follow();
+      });
+    }
     if (!pressAt || !overlay) return;
     if (Math.hypot(e.clientX - pressAt.x, e.clientY - pressAt.y) < 4) return;
     pressAt = null;
@@ -218,7 +251,7 @@ export function setup(ctx: SpindleFrontendContext) {
       cur = { ...cur, w, h };
     }
   };
-  const onPointerUp = () => { pressAt = null; };
+  const onPointerUp = () => { pressAt = null; mainDrag = false; };
   window.addEventListener("pointermove", onPointerMove);
   window.addEventListener("pointerup", onPointerUp);
   cleanups.push(() => {
@@ -230,6 +263,7 @@ export function setup(ctx: SpindleFrontendContext) {
     cleanups.push(overlay.onDragEnd((pos) => {
       const from = dragStart ?? pos;
       dragStart = null;
+      mainDrag = false;
       cur = { ...cur, x: pos.x, y: pos.y };
       edge = edgeForDrop(from, cur, viewport());
       store("overlayEdge", edge ?? "");
@@ -247,6 +281,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const show = (!!state?.hud || state?.status.state === "broken") && !stageVisible();
     if (show !== overlay.isVisible()) overlay.setVisible(show);
     if (show) fitOverlay();
+    panels.sync();
   }
 
   function renderHead() {
@@ -285,6 +320,7 @@ export function setup(ctx: SpindleFrontendContext) {
       store("overlayOpen", overlayOpen ? "1" : "0");
       renderHead();
       fitOverlay();
+      panels.sync();
     }
   });
 
@@ -312,14 +348,23 @@ export function setup(ctx: SpindleFrontendContext) {
     if (!overlay) return;
     renderHead();
     rememberSections(dockRoot);
+    const kept = dockRoot.scrollTop;
     if (state?.hud) {
-      dockRoot.innerHTML = renderHud(state.hud, { editing: editingBar, compact: true });
+      // The head always stays here; each section sits here unless it's been torn off into a panel.
+      const { head, parts } = hudParts(state.hud, { editing: editingBar, compact: true, map: state.map });
+      const mine = parts.filter((p) => panels.inMain(p.id));
+      dockRoot.innerHTML = head + mine.map((p) => renderPart(p, true)).join("");
+      panels.render(parts);
     } else if (state?.status.state === "broken") {
       dockRoot.innerHTML = renderRulesetCard(state.status, true);
+      panels.render([]);
     } else {
       dockRoot.innerHTML = "";
+      panels.render([]);
     }
     restoreSections(dockRoot);
+    restoreMaps(dockRoot);
+    dockRoot.scrollTop = kept;
     flashChangedBars(dockRoot);
   }
 
@@ -329,7 +374,6 @@ export function setup(ctx: SpindleFrontendContext) {
     const status: RulesetStatus = state?.status ?? { state: "none", name: null, source: null, issues: [], characterName: null, cardKind: "character", tags: [] };
     const views: [typeof drawerView, string][] = [
       ["sheet", "Sheet"],
-      ...(state?.map ? [["map", "Map"] as [typeof drawerView, string]] : []),
       ...(state?.hud ? [["journal", "Journal"] as [typeof drawerView, string]] : []),
       ...(state?.date ? [["date", state.date.session ? "Dating 💬" : "Dating"] as [typeof drawerView, string]] : []),
       ...(state?.dungeon || state?.dungeonEntries?.length ? [["dungeon", state?.dungeon ? "Dungeon ⚔" : "Dungeon"] as [typeof drawerView, string]] : []),
@@ -342,9 +386,7 @@ export function setup(ctx: SpindleFrontendContext) {
     </div>`;
     let body = "";
     if (drawerView === "sheet") {
-      body = state?.hud ? renderHud(state.hud, { editing: editingBar, compact: false }) : renderRulesetCard(status, hasChat);
-    } else if (drawerView === "map") {
-      body = renderMap(state?.map ?? null);
+      body = state?.hud ? renderHud(state.hud, { editing: editingBar, compact: false, map: state.map }) : renderRulesetCard(status, hasChat);
     } else if (drawerView === "date") {
       body = renderDate(state?.date ?? null, { cat: dateCat, busy: busy.on && busy.chatId === state?.chatId });
     } else if (drawerView === "dungeon") {
@@ -361,6 +403,7 @@ export function setup(ctx: SpindleFrontendContext) {
     }
     drawerRoot.innerHTML = tabs + body;
     restoreSections(drawerRoot);
+    restoreMaps(drawerRoot);
     flashChangedBars(drawerRoot);
     tab.setBadge(status.issues.some((i) => i.level === "error") ? "!" : null);
   }
@@ -950,12 +993,16 @@ export function setup(ctx: SpindleFrontendContext) {
       t.value = "";
     }
   }
-  for (const root of [drawerRoot, dockRoot]) {
+  function wirePanel(root: HTMLElement) {
     root.addEventListener("click", onPanelClick);
     root.addEventListener("input", onPanelInput);
     root.addEventListener("change", onPanelChange);
     root.addEventListener("keydown", onPanelKey as EventListener);
     root.addEventListener("toggle", () => rememberSections(root), true);
+  }
+  for (const root of [drawerRoot, dockRoot]) {
+    wirePanel(root);
+    cleanups.push(wireMaps(root));
   }
 
   // ───────── events: in-chat clicks (delegated; injected nodes are sanitized) ─────────

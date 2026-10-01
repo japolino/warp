@@ -16,7 +16,22 @@ function pctTone(p: number): "good" | "warn" | "bad" {
 
 // ───────────────────────── HUD ─────────────────────────
 
-export function renderHud(h: HudView, opts: { editing: string | null; compact: boolean }): string {
+/** One of the HUD's sections: it can sit in the main window or be torn off into a panel of its own. */
+export interface HudPart { id: string; title: string; count: number; body: string; open: boolean }
+
+export interface HudOpts { editing: string | null; compact: boolean; map?: MapView | null }
+
+/** The HUD in full: the head (clock, place, bars) and every section, in order. */
+export function renderHud(h: HudView, opts: HudOpts): string {
+  const { head, parts } = hudParts(h, opts);
+  return head + parts.map((p) => renderPart(p)).join("");
+}
+
+/** A section; `movable` ones can be dragged out into a window of their own. */
+export const renderPart = (p: HudPart, movable = false) => section(p.title, p.count, p.body, p.open, p.id, movable);
+
+/** The HUD split into its fixed head and its movable sections. */
+export function hudParts(h: HudView, opts: HudOpts): { head: string; parts: HudPart[] } {
   const top = [
     `<div class="warp-eyebrow"><span>${esc(h.rulesetName)}</span><span title="Turn">T${h.turn}</span></div>`,
     h.clock ? `<div class="warp-clock"><span class="warp-phase" aria-hidden="true">${PHASE_ICON[h.clock.phase] ?? ""}</span><span class="warp-clock-time">${esc(h.clock.time)}</span><span class="warp-clock-day">${esc(h.date ?? h.clock.day)}</span></div>` : "",
@@ -43,7 +58,7 @@ export function renderHud(h: HudView, opts: { editing: string | null; compact: b
     </div>`;
   }).join("");
 
-  const skills = h.skills.length ? section("Skills & attributes", h.skills.length, h.skills.map((s) => `
+  const skills: HudPart | null = h.skills.length ? part("skills", "Skills & attributes", h.skills.length, h.skills.map((s) => `
     <div class="warp-skill" title="${esc(`${s.label}: ${s.display}${s.text ? ` — ${s.text}` : ""}${s.practice !== null ? `\nPractice toward the next point: ${Math.round(s.practice * 100)}% — it grows every time you use it` : ""}`)}">
       <span>${esc(s.label)}</span>
       <span class="warp-grade ${s.grade ? `warp-tone-${pctTone(s.pct)}` : ""}">${esc(s.grade ?? s.display)}</span>
@@ -51,7 +66,7 @@ export function renderHud(h: HudView, opts: { editing: string | null; compact: b
         <div class="warp-mini-track"><div class="warp-mini-fill" style="width:${(s.pct * 100).toFixed(1)}%"></div></div>
         ${s.practice !== null ? `<div class="warp-practice-track"><div class="warp-practice-fill" style="width:${(s.practice * 100).toFixed(1)}%"></div></div>` : ""}
       </div>
-    </div>`).join(""), !opts.compact) : "";
+    </div>`).join(""), !opts.compact) : null;
 
   // Who's in the scene comes first; everyone else waits, folded, under "Elsewhere".
   const here = h.people.filter((p) => p.present);
@@ -68,23 +83,27 @@ export function renderHud(h: HudView, opts: { editing: string | null; compact: b
         <button class="warp-btn warp-btn-primary" data-save-rel="${esc(`${p.id}:${s.id}`)}">Set</button>
       </div>`).join("")}
     </div>`;
-  const people = section(here.length ? "People here" : "People", here.length, h.people.length
+  const people = part("people", here.length ? "People here" : "People", here.length, h.people.length
     ? `${here.length ? here.map(personRow).join("") : `<div class="warp-empty">No one you know is here.</div>`}${away.length
       ? `<details class="warp-away" data-section="people-away"><summary>Elsewhere · ${away.length}</summary><div class="warp-section-body">${away.map(personRow).join("")}</div></details>`
       : ""}`
-    : `<div class="warp-empty">No one yet.</div>`, !opts.compact || here.length > 0, "people");
+    : `<div class="warp-empty">No one yet.</div>`, !opts.compact || here.length > 0);
 
-  const body = h.body ? section("Body", 0, `${h.body.map((b) => `<div class="warp-item"><span>${esc(b.label)}</span><span class="${b.covered ? "warp-dim" : ""}" title="${b.covered ? "Covered by clothing" : "Visible"}">${esc(b.text)}${b.covered ? " 👕" : ""}</span></div>`).join("")}${h.transforms.map((t) => `<div class="warp-item"><span>✦ ${esc(t.label)}</span><span class="warp-dim">stage ${t.stage} / ${t.of}</span></div>`).join("")}`, false) : "";
+  const body = h.body ? part("body", "Body", 0, `${h.body.map((b) => `<div class="warp-item"><span>${esc(b.label)}</span><span class="${b.covered ? "warp-dim" : ""}" title="${b.covered ? "Covered by clothing" : "Visible"}">${esc(b.text)}${b.covered ? " 👕" : ""}</span></div>`).join("")}${h.transforms.map((t) => `<div class="warp-item"><span>✦ ${esc(t.label)}</span><span class="warp-dim">stage ${t.stage} / ${t.of}</span></div>`).join("")}`, false) : null;
 
-  const dues = h.dues.length ? section("Bills", h.dues.filter((d) => d.tone === "bad").length, h.dues.map((d) => `<div class="warp-item"><span>${esc(d.label)}${d.owed > 0 ? ` <span class="warp-dim">${esc(h.money?.replace(/[\d.,]+/, "") ?? "")}${esc(d.owed)}</span>` : ""}</span><span class="warp-tone-${d.tone}">${esc(d.text)}</span></div>`).join(""), !opts.compact || h.dues.some((d) => d.tone === "bad")) : "";
-  const family = h.family.length ? section("Family", h.family.length, h.family.map((f) => `<div class="warp-item"><span>${esc(f.name)}</span><span class="warp-dim">${esc(f.text)}</span></div>`).join(""), !opts.compact) : "";
+  const dues = h.dues.length ? part("bills", "Bills", h.dues.filter((d) => d.tone === "bad").length, h.dues.map((d) => `<div class="warp-item"><span>${esc(d.label)}${d.owed > 0 ? ` <span class="warp-dim">${esc(h.money?.replace(/[\d.,]+/, "") ?? "")}${esc(d.owed)}</span>` : ""}</span><span class="warp-tone-${d.tone}">${esc(d.text)}</span></div>`).join(""), !opts.compact || h.dues.some((d) => d.tone === "bad")) : null;
+  const family = h.family.length ? part("family", "Family", h.family.length, h.family.map((f) => `<div class="warp-item"><span>${esc(f.name)}</span><span class="warp-dim">${esc(f.text)}</span></div>`).join(""), !opts.compact) : null;
 
   const loose = h.items.filter((i) => !i.worn);
-  const items = section("Inventory", loose.length, loose.length
+  const items = part("inventory", "Inventory", loose.length, loose.length
     ? loose.map((i) => `<div class="warp-item"><span>${esc(i.name)}${i.uses ? ` <span class="warp-dim" title="Uses left in the one in hand">· ${esc(i.uses)}</span>` : ""}</span>${i.count > 1 ? `<span class="warp-kbd">×${i.count}</span>` : ""}</div>`).join("")
     : `<div class="warp-empty">Empty-handed.</div>`, !opts.compact);
 
-  return `${renderEncounter(h)}<div class="warp-hud-top">${top}</div>${renderWarmth(h)}<div class="warp-bars">${bars}</div>${renderOutfit(h, opts.compact)}${skills}${dues}${people}${family}${body}${items}${renderPerks(h, opts.compact)}`;
+  const map = opts.map ? part("map", "Map", 0, renderMapView(opts.map), !opts.compact) : null;
+  return {
+    head: `${renderEncounter(h)}<div class="warp-hud-top">${top}</div>${renderWarmth(h)}<div class="warp-bars">${bars}</div>`,
+    parts: [renderOutfit(h, opts.compact), skills, dues, people, map, family, body, items, renderPerks(h, opts.compact)].filter((p): p is HudPart => !!p),
+  };
 }
 
 function renderEncounter(h: HudView): string {
@@ -115,8 +134,10 @@ function renderWarmth(h: HudView): string {
   </div>`;
 }
 
-function renderOutfit(h: HudView, compact: boolean): string {
-  if (!h.outfit) return "";
+const part = (id: string, title: string, count: number, body: string, open: boolean): HudPart => ({ id, title, count, body, open });
+
+function renderOutfit(h: HudView, compact: boolean): HudPart | null {
+  if (!h.outfit) return null;
   const rows = h.outfit.map((o) => {
     const options = h.clothing.filter((c) => c.slot === o.slot && c.id !== o.item?.id);
     const status = o.item
@@ -132,43 +153,52 @@ function renderOutfit(h: HudView, compact: boolean): string {
     return `<div class="warp-outfit-row"><span class="warp-dim">${esc(o.label)}</span><span>${status}</span>${picker}</div>`;
   }).join("");
   const worn = h.outfit.filter((o) => o.item).length;
-  return section("Outfit", worn, rows, !compact);
+  return part("outfit", "Outfit", worn, rows, !compact);
 }
 
-function renderPerks(h: HudView, compact: boolean): string {
-  if (!h.perks.length) return "";
+function renderPerks(h: HudView, compact: boolean): HudPart | null {
+  if (!h.perks.length) return null;
   const rows = h.perks.map((p) => `<div class="warp-perk${p.owned ? " warp-perk-owned" : ""}">
       <div><b>${esc(p.name)}</b> <span class="warp-dim">${esc(p.desc)}</span></div>
       ${p.owned ? `<span class="warp-tone-good">✓</span>` : p.blocker ? `<span class="warp-dim" title="${esc(p.blocker)}">${esc(p.cost)} pt</span>` : `<button class="warp-btn warp-mini" data-buy-perk="${esc(p.id)}">Take · ${esc(p.cost)} pt</button>`}
     </div>`).join("");
   const label = h.perkPoints !== null ? `Perks · ${h.perkPoints} point${h.perkPoints === 1 ? "" : "s"}` : "Perks";
-  return section(label, 0, rows, !compact && (h.perkPoints ?? 0) > 0);
+  return part("perks", label, 0, rows, !compact && (h.perkPoints ?? 0) > 0);
 }
 
 // ───────────────────────── map ─────────────────────────
 
-export function renderMap(m: MapView | null): string {
-  if (!m) return `<div class="warp-card"><p>This ruleset doesn't define places yet.</p></div>`;
+/** The map: scroll to zoom, drag to look around, click a lit place next to you to go there. */
+export function renderMapView(m: MapView): string {
+  if (!m.nodes.length) return `<div class="warp-empty">No places yet.</div>`;
   const xs = m.nodes.map((n) => n.x), ys = m.nodes.map((n) => n.y);
   const pad = 70;
   const minX = Math.min(...xs) - pad, minY = Math.min(...ys) - pad;
   const w = Math.max(...xs) - minX + pad, hgt = Math.max(...ys) - minY + pad;
   const byId = new Map(m.nodes.map((n) => [n.id, n]));
   const edges = m.edges.map(([a, b]) => {
-    const p = byId.get(a)!, q = byId.get(b)!;
-    return `<line x1="${p.x}" y1="${p.y}" x2="${q.x}" y2="${q.y}" class="warp-map-edge" />`;
+    const p = byId.get(a), q = byId.get(b);
+    return p && q ? `<line x1="${p.x}" y1="${p.y}" x2="${q.x}" y2="${q.y}" class="warp-map-edge" />` : "";
   }).join("");
   const nodes = m.nodes.map((n) => `
     <g class="warp-map-node${n.here ? " here" : ""}${n.reachable ? " reachable" : ""}" ${n.reachable ? `data-go="${esc(n.id)}" tabindex="0" role="button" aria-label="Go to ${esc(n.name)}"` : ""}>
+      <title>${esc(n.reachable ? `Go to ${n.name}` : n.name)}</title>
       <circle cx="${n.x}" cy="${n.y}" r="${n.here ? 13 : 10}" />
       <text x="${n.x}" y="${n.y + 26}" text-anchor="middle">${esc(n.name)}</text>
       ${n.people.length ? `<text x="${n.x}" y="${n.y + 40}" text-anchor="middle" class="warp-map-people">${esc(n.people.join(", "))}</text>` : ""}
       ${n.indoors ? `<text x="${n.x}" y="${n.y + 4}" text-anchor="middle" class="warp-map-icon">⌂</text>` : ""}
     </g>`).join("");
-  return `<div class="warp-card warp-map-card">
-    <svg class="warp-map" viewBox="${minX} ${minY} ${w} ${hgt}" role="img" aria-label="Map">${edges}${nodes}</svg>
-    <p class="warp-dim">Click a highlighted place next to you to travel there. People show where their schedules put them right now.</p>
-  </div>`;
+  const here = m.nodes.find((n) => n.here);
+  const base = `${minX} ${minY} ${w} ${hgt}`;
+  return `<div class="warp-map-view" data-map="${esc(base)}"${here ? ` data-map-here="${here.x} ${here.y}"` : ""}>
+    <svg class="warp-map" viewBox="${base}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Map">${edges}${nodes}</svg>
+    <div class="warp-map-tools">
+      <button class="warp-map-tool" type="button" data-map-zoom="in" title="Zoom in" aria-label="Zoom in">+</button>
+      <button class="warp-map-tool" type="button" data-map-zoom="out" title="Zoom out" aria-label="Zoom out">−</button>
+      <button class="warp-map-tool" type="button" data-map-zoom="here" title="Centre on where you are" aria-label="Centre on where you are">◎</button>
+    </div>
+  </div>
+  <p class="warp-dim warp-map-hint">Scroll to zoom, drag to look around. Click a lit place next to you to go there.</p>`;
 }
 
 // ───────────────────────── journal ─────────────────────────
@@ -228,8 +258,8 @@ function checkpoints(h: HudView): string {
   </div>`;
 }
 
-function section(title: string, count: number, body: string, open: boolean, key = title): string {
-  return `<details class="warp-section" data-section="${esc(key)}"${open ? " open" : ""}><summary><span>${esc(title)}${count ? ` · ${count}` : ""}</span></summary><div class="warp-section-body">${body}</div></details>`;
+function section(title: string, count: number, body: string, open: boolean, key = title, movable = false): string {
+  return `<details class="warp-section" data-section="${esc(key)}"${open ? " open" : ""}><summary${movable ? ` data-part="${esc(key)}" title="Hold and drag out to give it a window of its own"` : ""}><span>${esc(title)}${count ? ` · ${count}` : ""}</span></summary><div class="warp-section-body">${body}</div></details>`;
 }
 
 // ───────────────────────── choices ─────────────────────────
