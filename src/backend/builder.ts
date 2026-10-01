@@ -24,6 +24,7 @@ import { getTemplate, TEMPLATES, withCharacter } from "../engine/templates/index
 import { buildChoices, buildHud } from "../engine/view.js";
 import type { BuilderAddition, BuilderAnswer, BuilderPart, BuilderQuestion, BuilderSession } from "../shared/protocol.js";
 import { host, logError, send } from "./host.js";
+import { BUILDER_SESSION_VERSION, restoreBuilderSession } from "./builder-session.js";
 import { characterForChat, invalidateCharacter, knownRulesetBookIds } from "./source.js";
 
 // ───────────────────────── sessions ─────────────────────────
@@ -33,6 +34,7 @@ const key = (userId: string | undefined, characterId: string) => `${userId ?? "_
 const path = (characterId: string) => `builder/${characterId}.json`;
 
 async function save(s: BuilderSession, userId?: string) {
+  s.schemaVersion = BUILDER_SESSION_VERSION;
   s.updatedAt = Date.now();
   sessions.set(key(userId, s.characterId), s);
   try { await host().userStorage.setJson(path(s.characterId), s, { userId }); } catch (e) { logError("builder save", e); }
@@ -54,11 +56,14 @@ async function sessionFor(chatId: string, userId?: string): Promise<BuilderSessi
   if (!characterId) return null;
   const hit = sessions.get(key(userId, characterId));
   if (hit) return hit;
-  try {
-    const stored = await host().userStorage.getJson<BuilderSession | null>(path(characterId), { fallback: null, userId });
-    if (stored) { stored.busy = null; sessions.set(key(userId, characterId), stored); return stored; }
-  } catch { /* none */ }
-  return null;
+  let stored: unknown;
+  try { stored = await host().userStorage.getJson<unknown>(path(characterId), { fallback: null, userId }); }
+  catch { return null; }
+  if (stored == null) return null;
+  const restored = restoreBuilderSession(stored, characterId);
+  if (restored.parts.length) buildPreview(restored);
+  await save(restored, userId);
+  return restored;
 }
 
 // ───────────────────────── model calls ─────────────────────────

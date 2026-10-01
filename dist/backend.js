@@ -19829,6 +19829,32 @@ var init_decisions = __esm(() => {
   TIME_MINUTES = [0, 5, 30, 60, 180, 480];
 });
 
+// src/shared/classifier-config.ts
+function classifierIssue(format, model, url) {
+  const path = (() => {
+    try {
+      return new URL(url).pathname.replace(/\/+$/, "");
+    } catch {
+      return "";
+    }
+  })();
+  const jev = /^(?:~?typesafe\/)?jev(?:[-./]|$)/i.test(model.trim());
+  if (format === "openai" && (jev || /\/(?:alpha\/decisions|systemone)(?:\/chat\/completions)?$/.test(path)))
+    return `Jev and decisions endpoints require Typed questions (TypeSafe API). For Jev on OpenRouter, use ${OPENROUTER_JEV.jevUrl} with model ${OPENROUTER_JEV.jevModel}, or choose the Jev on OpenRouter preset.`;
+  if (format === "typesafe" && /\/chat\/completions$/.test(path))
+    return `This URL is a chat endpoint. For Jev on OpenRouter, use ${OPENROUTER_JEV.jevUrl} with Typed questions (TypeSafe API). For a text model, select OpenAI-compatible chat.`;
+  return null;
+}
+var OPENROUTER_JEV;
+var init_classifier_config = __esm(() => {
+  OPENROUTER_JEV = {
+    decider: "jev",
+    jevFormat: "typesafe",
+    jevModel: "typesafe/jev-1.13",
+    jevUrl: "https://openrouter.ai/api/alpha/decisions"
+  };
+});
+
 // src/backend/deciders.ts
 async function post(url, headers, body, timeoutMs) {
   const timeout = new Promise((_, rej) => setTimeout(() => rej(new DeciderError("Decision model timed out")), timeoutMs));
@@ -19876,6 +19902,9 @@ class JevDecider {
   async ask(state, questions, opts = {}) {
     if (!Object.keys(questions).length)
       return {};
+    const issue = classifierIssue("typesafe", this.model, this.url);
+    if (issue)
+      throw new DeciderError(issue);
     const body = JSON.stringify({ model: this.model || "jev-latest", state, questions });
     const who = this.url === JEV_URL ? "Jev" : "The classifier";
     const parsed = JSON.parse(await postJson(this.url || JEV_URL, this.key, body, opts.timeoutMs ?? 8000, who));
@@ -19898,6 +19927,9 @@ class ChatEndpointDecider {
     const ids = Object.keys(questions);
     if (!ids.length)
       return {};
+    const issue = classifierIssue("openai", this.model, this.url);
+    if (issue)
+      throw new DeciderError(issue);
     const { system, user } = typedPrompt(state, questions);
     const url = /\/chat\/completions\/?$/.test(this.url) ? this.url : `${this.url.replace(/\/+$/, "")}/chat/completions`;
     const body = JSON.stringify({ model: this.model, messages: [{ role: "system", content: system }, { role: "user", content: user }], temperature: 0, max_tokens: 60 + ids.length * 30 });
@@ -20044,6 +20076,9 @@ async function getDecider(settings, userId) {
   if (settings.decider === "rules")
     return new RulesDecider;
   if (settings.decider === "jev") {
+    const issue = classifierIssue(settings.jevFormat ?? "typesafe", settings.jevModel, settings.jevUrl || JEV_URL);
+    if (issue)
+      throw new DeciderError(issue);
     let key = null;
     try {
       key = await host().enclave.get(JEV_KEY, userId);
@@ -20058,6 +20093,7 @@ async function getDecider(settings, userId) {
 }
 var JEV_KEY = "jev_api_key", JEV_URL = "https://api.typesafe.ai/v1/systemone", DeciderError, STOP, words = (s) => new Set(s.toLowerCase().split(/[^a-z0-9']+/).filter((w) => w.length > 2 && !STOP.has(w)));
 var init_deciders = __esm(() => {
+  init_classifier_config();
   DeciderError = class DeciderError extends Error {
   };
   STOP = new Set("a an the to of and or in on at for with my i me you your it is be do try tries trying".split(" "));
@@ -22749,8 +22785,73 @@ var init_rulebook = __esm(() => {
   DOC_HEAD = /^---[ \t]*(?:#[ \t]*(?:warp-ruleset[ \t]*·[ \t]*)?([\w -]+?))?[ \t]*$/;
 });
 
+// src/backend/builder-session.ts
+function array(v, valid, label) {
+  if (v === undefined || v === null)
+    return [];
+  if (!Array.isArray(v) || !v.every(valid))
+    throw new Error(`The saved draft has invalid ${label}. Its stored data has been kept.`);
+  return structuredClone(v);
+}
+function restoreBuilderSession(raw, characterId) {
+  if (!object(raw) || raw.characterId !== characterId)
+    throw new Error("The saved draft doesn't match this character. Its stored data has been kept.");
+  if (typeof raw.schemaVersion === "number" && raw.schemaVersion > BUILDER_SESSION_VERSION)
+    throw new Error("This draft was saved by a newer Warp version. Update Warp to reopen it.");
+  if (!["build", "refine", "deepen", "import"].includes(String(raw.mode)) || !["start", "questions", "review", "done"].includes(String(raw.step)))
+    throw new Error("The saved draft has an unknown screen. Its stored data has been kept.");
+  const parts = array(raw.parts, (p) => object(p) && typeof p.label === "string" && typeof p.yaml === "string", "sections").map((p) => ({ ...p, status: "ok", issues: [] }));
+  const rounds = array(raw.rounds, object, "question rounds").map((r) => ({
+    questions: array(r.questions, (q) => object(q) && typeof q.id === "string" && typeof q.text === "string" && ["single", "multi", "scale", "text"].includes(String(q.kind)), "questions").map((q) => ({
+      ...q,
+      options: array(q.options, (o) => object(o) && typeof o.id === "string" && typeof o.label === "string", "question options"),
+      ...answer(q.default) ? {} : { default: undefined }
+    })),
+    answers: answers(r.answers)
+  }));
+  const additions = array(raw.additions, (a) => object(a) && typeof a.name === "string" && ["skill", "meter", "item", "place", "action", "rule", "person", "other"].includes(String(a.kind)), "additions").map((a) => ({ ...a, note: string(a.note) }));
+  const a = object(raw.analysis) ? raw.analysis : null;
+  const sb = a && object(a.statusBlock) ? a.statusBlock : null;
+  const depth = object(raw.depth) ? raw.depth : null;
+  return {
+    ...raw,
+    schemaVersion: BUILDER_SESSION_VERSION,
+    characterId,
+    characterName: string(raw.characterName, "This character"),
+    mode: raw.mode,
+    step: raw.step,
+    connectionId: string(raw.connectionId),
+    creative: raw.creative === true,
+    base: string(raw.base),
+    analysis: a ? {
+      summary: string(a.summary),
+      suggestedTemplate: string(a.suggestedTemplate),
+      reason: string(a.reason),
+      cardType: a.cardType === "scenario" ? "scenario" : "character",
+      cast: Array.isArray(a.cast) ? a.cast.filter(object).map((c) => ({ name: string(c.name), relation: string(c.relation) })) : [],
+      statusBlock: sb ? { found: sb.found === true, fields: strings(sb.fields) } : null
+    } : null,
+    parts,
+    rounds,
+    additions,
+    preview: null,
+    busy: null,
+    request: typeof raw.request === "string" ? raw.request : null,
+    changeSummary: typeof raw.changeSummary === "string" ? raw.changeSummary : null,
+    error: typeof raw.error === "string" ? raw.error : null,
+    updatedAt: typeof raw.updatedAt === "number" && Number.isFinite(raw.updatedAt) ? raw.updatedAt : 0,
+    effort: raw.effort === "quick" ? "quick" : "thorough",
+    plan: typeof raw.plan === "string" ? raw.plan : null,
+    log: strings(raw.log),
+    waived: object(raw.waived) ? Object.fromEntries(Object.entries(raw.waived).filter(([, v]) => typeof v === "string")) : {},
+    depth: depth && [depth.before, depth.after, depth.open].every((v) => typeof v === "number" && Number.isFinite(v)) ? depth : null
+  };
+}
+var BUILDER_SESSION_VERSION = 1, object = (v) => !!v && typeof v === "object" && !Array.isArray(v), string = (v, fallback = "") => typeof v === "string" ? v : fallback, strings = (v) => Array.isArray(v) ? v.filter((x) => typeof x === "string") : [], answer = (v) => typeof v === "string" || typeof v === "number" && Number.isFinite(v) || Array.isArray(v) && v.every((x) => typeof x === "string"), answers = (v) => object(v) ? Object.fromEntries(Object.entries(v).filter((entry) => answer(entry[1]))) : {};
+
 // src/backend/builder.ts
 async function save(s, userId) {
+  s.schemaVersion = BUILDER_SESSION_VERSION;
   s.updatedAt = Date.now();
   sessions.set(key3(userId, s.characterId), s);
   try {
@@ -22777,15 +22878,19 @@ async function sessionFor(chatId, userId) {
   const hit = sessions.get(key3(userId, characterId));
   if (hit)
     return hit;
+  let stored;
   try {
-    const stored = await host().userStorage.getJson(path(characterId), { fallback: null, userId });
-    if (stored) {
-      stored.busy = null;
-      sessions.set(key3(userId, characterId), stored);
-      return stored;
-    }
-  } catch {}
-  return null;
+    stored = await host().userStorage.getJson(path(characterId), { fallback: null, userId });
+  } catch {
+    return null;
+  }
+  if (stored == null)
+    return null;
+  const restored = restoreBuilderSession(stored, characterId);
+  if (restored.parts.length)
+    buildPreview(restored);
+  await save(restored, userId);
+  return restored;
 }
 async function llm(s, system, user, userId, maxTokens = 3000) {
   const res = await host().generate.quiet({

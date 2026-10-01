@@ -7,6 +7,7 @@
 import type { GenerationResponseDTO } from "lumiverse-spindle-types";
 import { normalize, type Answer, type Answers, type Decider, type DecideOptions, type Questions } from "../engine/decide.js";
 import type { Settings } from "../shared/protocol.js";
+import { classifierIssue } from "../shared/classifier-config.js";
 import { host } from "./host.js";
 
 export const JEV_KEY = "jev_api_key";
@@ -59,6 +60,8 @@ export class JevDecider implements Decider {
 
   async ask(state: unknown, questions: Questions, opts: DecideOptions & { timeoutMs?: number } = {}): Promise<Answers> {
     if (!Object.keys(questions).length) return {};
+    const issue = classifierIssue("typesafe", this.model, this.url);
+    if (issue) throw new DeciderError(issue);
     const body = JSON.stringify({ model: this.model || "jev-latest", state, questions });
     const who = this.url === JEV_URL ? "Jev" : "The classifier";
     const parsed = JSON.parse(await postJson(this.url || JEV_URL, this.key, body, opts.timeoutMs ?? 8000, who)) as { answers?: Answers };
@@ -75,6 +78,8 @@ export class ChatEndpointDecider implements Decider {
   async ask(state: unknown, questions: Questions, opts: DecideOptions & { timeoutMs?: number } = {}): Promise<Answers> {
     const ids = Object.keys(questions);
     if (!ids.length) return {};
+    const issue = classifierIssue("openai", this.model, this.url);
+    if (issue) throw new DeciderError(issue);
     const { system, user } = typedPrompt(state, questions);
     const url = /\/chat\/completions\/?$/.test(this.url) ? this.url : `${this.url.replace(/\/+$/, "")}/chat/completions`;
     const body = JSON.stringify({ model: this.model, messages: [{ role: "system", content: system }, { role: "user", content: user }], temperature: 0, max_tokens: 60 + ids.length * 30 });
@@ -207,6 +212,8 @@ function clamp01(n: number) {
 export async function getDecider(settings: Settings, userId?: string): Promise<Decider> {
   if (settings.decider === "rules") return new RulesDecider();
   if (settings.decider === "jev") {
+    const issue = classifierIssue(settings.jevFormat ?? "typesafe", settings.jevModel, settings.jevUrl || JEV_URL);
+    if (issue) throw new DeciderError(issue);
     let key: string | null = null;
     try { key = await host().enclave.get(JEV_KEY, userId); } catch { /* enclave unavailable */ }
     const url = settings.jevUrl?.trim() || JEV_URL;

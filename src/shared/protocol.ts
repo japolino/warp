@@ -542,6 +542,8 @@ export interface BuilderPart {
 }
 
 export interface BuilderSession {
+  /** Persisted draft format; absent on drafts written before migrations. */
+  schemaVersion?: number;
   characterId: string;
   characterName: string;
   /** build = from the card; refine = change by request; deepen = close the depth audit's gaps in the installed rules; import = a rulebook written elsewhere. */

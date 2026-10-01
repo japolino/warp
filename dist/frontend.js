@@ -45,8 +45,35 @@ var init_protocol = __esm(() => {
   };
 });
 
+// src/shared/classifier-config.ts
+function classifierIssue(format, model, url) {
+  const path = (() => {
+    try {
+      return new URL(url).pathname.replace(/\/+$/, "");
+    } catch {
+      return "";
+    }
+  })();
+  const jev = /^(?:~?typesafe\/)?jev(?:[-./]|$)/i.test(model.trim());
+  if (format === "openai" && (jev || /\/(?:alpha\/decisions|systemone)(?:\/chat\/completions)?$/.test(path)))
+    return `Jev and decisions endpoints require Typed questions (TypeSafe API). For Jev on OpenRouter, use ${OPENROUTER_JEV.jevUrl} with model ${OPENROUTER_JEV.jevModel}, or choose the Jev on OpenRouter preset.`;
+  if (format === "typesafe" && /\/chat\/completions$/.test(path))
+    return `This URL is a chat endpoint. For Jev on OpenRouter, use ${OPENROUTER_JEV.jevUrl} with Typed questions (TypeSafe API). For a text model, select OpenAI-compatible chat.`;
+  return null;
+}
+var OPENROUTER_JEV;
+var init_classifier_config = __esm(() => {
+  OPENROUTER_JEV = {
+    decider: "jev",
+    jevFormat: "typesafe",
+    jevModel: "typesafe/jev-1.13",
+    jevUrl: "https://openrouter.ai/api/alpha/decisions"
+  };
+});
+
 // src/frontend.ts
 init_protocol();
+init_classifier_config();
 
 // src/frontend/styles.ts
 var STYLES = `
@@ -598,6 +625,7 @@ function wh(s) {
 
 // src/frontend/render.ts
 init_protocol();
+init_classifier_config();
 function esc(v) {
   return String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
@@ -1069,6 +1097,7 @@ function renderDecider(s, jevKeySet) {
     </select>
     ${s.decider === "jev" ? (() => {
     const typesafe = s.jevFormat !== "openai" && s.jevUrl === DEFAULT_SETTINGS.jevUrl;
+    const issue = classifierIssue(s.jevFormat, s.jevModel, s.jevUrl);
     const host = (() => {
       try {
         return new URL(s.jevUrl).host;
@@ -1088,6 +1117,8 @@ function renderDecider(s, jevKeySet) {
         </select>
         <input class="warp-input" data-setting="jevModel" value="${esc(s.jevModel)}" placeholder="${s.jevFormat === "openai" ? "Model name (e.g. llama-3.1-8b-instant)" : "jev-latest"}" title="Model" style="flex:1">
       </div>
+      ${issue ? `<p class="warp-tone-warn" role="alert">${esc(issue)}</p>` : ""}
+      <div class="warp-row"><button class="warp-btn" data-jev-openrouter>Jev on OpenRouter</button><span class="warp-dim">Sets the typed format, endpoint and model. Uses an OpenRouter key.</span></div>
       <div class="warp-row">
         <input class="warp-input" type="password" data-jevkey placeholder="${jevKeySet ? "Key saved — paste to replace" : typesafe ? "TypeSafe API key (sk-…)" : "API key (leave empty for a local server)"}" autocomplete="off" style="flex:1">
         <button class="warp-btn" data-save-jev>${jevKeySet ? "Replace" : "Save"}</button>
@@ -1271,6 +1302,14 @@ function additions(d) {
   </div>`;
 }
 function renderBuilder(s, d, templates, connections, hasRuleset) {
+  try {
+    return builderHtml(s, d, templates, connections, hasRuleset);
+  } catch (error) {
+    console.error("[warp] Could not display the builder draft", error);
+    return `<div class="warp-card"><h3>The draft couldn't be displayed</h3><p>Your saved draft is kept. Reload Warp to reopen it. You can still use the other tabs.</p></div>`;
+  }
+}
+function builderHtml(s, d, templates, connections, hasRuleset) {
   const busy = !!s.busy;
   const dis = busy ? " disabled" : "";
   const head = `<div class="warp-builder-head">
@@ -4773,6 +4812,10 @@ function setup(ctx) {
   }
   function onPanelClick(e) {
     const t = e.target;
+    if (t.closest("[data-jev-openrouter]")) {
+      send({ type: "settings", patch: { ...OPENROUTER_JEV } });
+      return;
+    }
     const view = t.closest("[data-view]");
     if (view) {
       drawerView = view.dataset.view;

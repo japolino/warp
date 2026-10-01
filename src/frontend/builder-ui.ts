@@ -110,6 +110,14 @@ function additions(d: BuilderDraft): string {
 }
 
 export function renderBuilder(s: BuilderSession, d: BuilderDraft, templates: TemplateInfo[], connections: { id: string; name: string }[], hasRuleset: boolean): string {
+  try { return builderHtml(s, d, templates, connections, hasRuleset); }
+  catch (error) {
+    console.error("[warp] Could not display the builder draft", error);
+    return `<div class="warp-card"><h3>The draft couldn't be displayed</h3><p>Your saved draft is kept. Reload Warp to reopen it. You can still use the other tabs.</p></div>`;
+  }
+}
+
+function builderHtml(s: BuilderSession, d: BuilderDraft, templates: TemplateInfo[], connections: { id: string; name: string }[], hasRuleset: boolean): string {
   const busy = !!s.busy;
   const dis = busy ? " disabled" : "";
   const head = `<div class="warp-builder-head">

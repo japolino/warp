@@ -4,6 +4,7 @@ import type {
   ChoiceView, EncounterLogView, HudView, MapView, RoundCardView, RecordView, RulesetStatus, Settings, SuggestionView, TemplateInfo,
 } from "../shared/protocol.js";
 import { DEFAULT_SETTINGS } from "../shared/protocol.js";
+import { classifierIssue } from "../shared/classifier-config.js";
 
 export function esc(v: unknown): string {
   return String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
@@ -577,6 +578,7 @@ function renderDecider(s: Settings, jevKeySet: boolean): string {
     </select>
     ${s.decider === "jev" ? (() => {
       const typesafe = s.jevFormat !== "openai" && s.jevUrl === DEFAULT_SETTINGS.jevUrl;
+      const issue = classifierIssue(s.jevFormat, s.jevModel, s.jevUrl);
       const host = (() => { try { return new URL(s.jevUrl).host; } catch { return s.jevUrl; } })();
       return `
       <label class="warp-slider">Endpoint
@@ -590,6 +592,8 @@ function renderDecider(s: Settings, jevKeySet: boolean): string {
         </select>
         <input class="warp-input" data-setting="jevModel" value="${esc(s.jevModel)}" placeholder="${s.jevFormat === "openai" ? "Model name (e.g. llama-3.1-8b-instant)" : "jev-latest"}" title="Model" style="flex:1">
       </div>
+      ${issue ? `<p class="warp-tone-warn" role="alert">${esc(issue)}</p>` : ""}
+      <div class="warp-row"><button class="warp-btn" data-jev-openrouter>Jev on OpenRouter</button><span class="warp-dim">Sets the typed format, endpoint and model. Uses an OpenRouter key.</span></div>
       <div class="warp-row">
         <input class="warp-input" type="password" data-jevkey placeholder="${jevKeySet ? "Key saved — paste to replace" : typesafe ? "TypeSafe API key (sk-…)" : "API key (leave empty for a local server)"}" autocomplete="off" style="flex:1">
         <button class="warp-btn" data-save-jev>${jevKeySet ? "Replace" : "Save"}</button>

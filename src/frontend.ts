@@ -3,6 +3,7 @@ import type {
   BackendToFrontend, BuilderAnswer, BuilderSession, EncounterLogView, FrontendToBackend, RecordView, RulesetStatus, Settings, TemplateInfo,
 } from "./shared/protocol.js";
 import { DEFAULT_SETTINGS } from "./shared/protocol.js";
+import { OPENROUTER_JEV } from "./shared/classifier-config.js";
 import { STYLES } from "./frontend/styles.js";
 import { attachedBox, edgeForDrop, PAD, PANEL_W, PILL, type Box, type Edge, type Viewport } from "./frontend/overlay-layout.js";
 import { emptyDraft, renderBuilder, renderBuilderCta, type BuilderDraft } from "./frontend/builder-ui.js";
@@ -903,6 +904,7 @@ export function setup(ctx: SpindleFrontendContext) {
 
   function onPanelClick(e: Event) {
     const t = e.target as Element;
+    if (t.closest("[data-jev-openrouter]")) { send({ type: "settings", patch: { ...OPENROUTER_JEV } }); return; }
     const view = t.closest<HTMLElement>("[data-view]");
     if (view) { drawerView = view.dataset.view as typeof drawerView; renderDrawer(); return; }
     if (onBuilderClick(t)) return;
