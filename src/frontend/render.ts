@@ -3,6 +3,7 @@
 import type {
   ChoiceView, EncounterLogView, HudView, MapView, RoundCardView, RecordView, RulesetStatus, Settings, SuggestionView, TemplateInfo,
 } from "../shared/protocol.js";
+import { DEFAULT_SETTINGS } from "../shared/protocol.js";
 
 export function esc(v: unknown): string {
   return String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
@@ -75,6 +76,8 @@ export function hudParts(h: HudView, opts: HudOpts): { head: string; parts: HudP
     <div class="warp-person${p.present ? " warp-person-here" : ""}">
       <div class="warp-person-name">${esc(p.name)}${p.present ? ` <span class="warp-here">here</span>` : p.whereabouts ? ` <span class="warp-dim">· ${esc(p.whereabouts)}</span>` : ""}${opts.compact ? "" : ` <button class="warp-btn warp-btn-ghost warp-forget" data-forget="${esc(p.id)}" data-name="${esc(p.name)}" title="Stop tracking ${esc(p.name)}">Forget</button>`}</div>
       ${p.goal || p.bonds.length ? `<div class="warp-person-stats">${p.goal ? `<span>Wants: ${esc(p.goal)}</span>` : ""}${p.bonds.length ? `<span>${esc(p.bonds.join(", "))}</span>` : ""}</div>` : ""}
+      ${p.conditions.length ? `<div class="warp-pills">${p.conditions.map((c) => `<span class="warp-pill warp-tone-${c.tone}">${esc(c.label)}${c.remaining ? ` · ${esc(c.remaining)}` : ""}</span>`).join("")}</div>` : ""}
+      ${p.memories.length ? `<details class="warp-memories"><summary>💭 Remembers · ${p.memories.length}</summary>${p.memories.map((m) => `<div class="warp-memory">${esc(m.text)}${m.when ? ` <span class="warp-dim">· ${esc(m.when)}</span>` : ""}</div>`).join("")}</details>` : ""}
       <div class="warp-person-stats">${p.stats.map((s) => `<span class="warp-rel" data-rel="${esc(`${p.id}:${s.id}`)}" title="${esc(`${s.label}: ${s.display} (${s.min}–${s.max}) — click to set`)}">${esc(s.label)}: <span class="warp-tone-${s.tone}">${esc(s.text ?? s.display)}</span></span>`).join("")}</div>
       ${p.stats.filter((s) => opts.editing === `rel:${p.id}:${s.id}`).map((s) => `<div class="warp-bar-edit">
         <span class="warp-dim">${esc(s.label)}</span>
@@ -109,7 +112,7 @@ export function hudParts(h: HudView, opts: HudOpts): { head: string; parts: HudP
   const map = opts.map ? part("map", "Map", 0, renderMapView(opts.map), !opts.compact) : null;
   return {
     head: `${renderEncounter(h)}<div class="warp-hud-top">${top}</div>${renderWarmth(h)}<div class="warp-bars">${bars}</div>`,
-    parts: [renderOutfit(h, opts.compact), skills, renderAbilities(h, opts.compact), dues, people, map, family, body, items, renderPerks(h, opts.compact)].filter((p): p is HudPart => !!p),
+    parts: [renderOutfit(h, opts.compact), skills, renderAbilities(h, opts.compact), renderQuests(h, opts.compact), dues, people, map, family, body, items, renderPerks(h, opts.compact)].filter((p): p is HudPart => !!p),
   };
 }
 
@@ -118,12 +121,23 @@ function renderEncounter(h: HudView): string {
   if (!e) return "";
   return `<div class="warp-encounter">
     <div class="warp-eyebrow"><span>⚔ ${esc(e.name)}</span><span>Round ${e.round + 1}</span></div>
-    <div class="warp-encounter-foe">${esc(e.foe)}</div>
+    <div class="warp-encounter-foe">${esc(e.foe)}${foeTags(e)}</div>
     ${e.momentum !== null ? `<div class="warp-bar-head"><span>You</span><span class="warp-dim">Momentum</span><span>${esc(e.foe)}</span></div>
       <div class="warp-momentum" title="Momentum ${Math.round(e.momentum)} — a full swing either way ends the fight"><div class="warp-momentum-mid"></div><div class="warp-momentum-mark" style="left:${((100 - e.momentum) / 2).toFixed(1)}%"></div></div>` : ""}
     ${e.stats.map((s) => `<div class="warp-bar-head"><span>${esc(s.label)}</span><span class="warp-dim">${esc(Math.round(s.value))} / ${esc(s.max)}</span></div>
       <div class="warp-bar-track"><div class="warp-bar-fill warp-bg-${s.tone}" style="width:${(s.pct * 100).toFixed(1)}%"></div></div>`).join("")}
   </div>`;
+}
+
+/** Statuses on the opponent (a bad one is good news, so it reads green) and armor on both sides. */
+function foeTags(e: NonNullable<HudView["encounter"]>): string {
+  const flip = (t: string) => (t === "bad" ? "good" : t === "good" ? "bad" : t);
+  const tags = [
+    ...e.foeConds.map((c) => `<span class="warp-pill warp-tone-${flip(c.tone)}" title="${esc(c.desc ?? c.label)}">${esc(c.label)}${c.rounds ? ` · ${c.rounds}` : ""}</span>`),
+    ...(e.foeArmor ? [`<span class="warp-pill" title="Their armor: each blow to them is ${e.foeArmor} smaller — piercing moves ignore it">🛡 ${esc(e.foeArmor)}</span>`] : []),
+    ...(e.yourArmor ? [`<span class="warp-pill warp-tone-good" title="Your armor: each of their blows is ${e.yourArmor} smaller">You 🛡 ${esc(e.yourArmor)}</span>`] : []),
+  ];
+  return tags.length ? ` <span class="warp-foe-tags">${tags.join("")}</span>` : "";
 }
 
 /** Warmth gauge: the comfortable range as a band, your warmth as a marker. */
@@ -183,6 +197,43 @@ function renderPerks(h: HudView, compact: boolean): HudPart | null {
   const body = `${pick}${owned.map((p) => perkCard(p, false)).join("")}${h.perkPick ? "" : rest.map((p) => perkCard(p, true)).join("")}${!pick && !owned.length && h.perkPick ? `<div class="warp-empty">Earn a point to choose your first perk.</div>` : ""}`;
   const label = h.perkPoints !== null ? `Perks · ${h.perkPoints} point${h.perkPoints === 1 ? "" : "s"}` : "Perks";
   return part("perks", label, offer.length, body, !compact && ((h.perkPoints ?? 0) > 0 || offer.length > 0));
+}
+
+/** One quest: what it is, who it's for, goals ticked off, time left, what it pays and what failing costs. */
+function questCard(q: HudView["quests"][number]): string {
+  const mark = q.status === "done" ? "✅" : q.status === "failed" ? "✗" : q.status === "ready" ? "📜" : q.status === "offered" ? "❔" : "📜";
+  const goals = q.goals.length && q.status !== "done" && q.status !== "failed"
+    ? `<ul class="warp-quest-goals">${q.goals.map((g) => `<li class="${g.done ? "done" : ""}${g.optional ? " optional" : ""}">${g.done ? "✓" : "☐"} ${esc(g.text)}${g.progress ? ` <span class="warp-dim">${esc(g.progress)}</span>` : ""}${g.optional ? ` <span class="warp-dim">(optional)</span>` : ""}</li>`).join("")}</ul>`
+    : "";
+  const buttons = [
+    q.take ? `<button class="warp-btn warp-mini warp-btn-primary" data-use="${esc(q.take)}">Take it on</button>` : "",
+    q.report ? `<button class="warp-btn warp-mini warp-btn-primary" data-use="${esc(q.report)}">Hand in</button>` : "",
+    q.status === "ready" && !q.report ? `<span class="warp-dim">${q.giver ? `Find ${esc(q.giver)} to hand it in` : "Hand it in at the board"}</span>` : "",
+    q.drop ? `<button class="warp-btn warp-mini warp-btn-ghost" data-confirm-use="${esc(q.drop)}" title="Giving up counts as failing">Give up</button>` : "",
+  ].filter(Boolean).join("");
+  return `<div class="warp-quest warp-quest-${q.status}">
+    <div class="warp-quest-head"><span>${mark} <b>${esc(q.name)}</b>${q.kind && q.kind !== "quest" ? ` <span class="warp-quest-kind">${esc(q.kind)}</span>` : ""}${q.story ? ` <span class="warp-quest-kind" title="Asked of you in the story; the story decides when it's done">story</span>` : ""}</span>${q.due ? `<span class="warp-tone-${q.dueTone}">${esc(q.due)}</span>` : ""}</div>
+    ${q.giver || q.from || q.desc ? `<div class="warp-dim">${q.from && q.status === "offered" ? `${esc(q.from)}${q.desc ? " · " : ""}` : q.giver ? `For ${esc(q.giver)}${q.desc ? " · " : ""}` : ""}${esc(q.desc ?? "")}</div>` : ""}
+    ${goals}
+    ${q.reward && q.status !== "failed" ? `<div class="warp-quest-reward">${q.status === "done" ? "Earned" : "Reward"}: ${esc(q.reward)}</div>` : ""}
+    ${q.stakes && q.status !== "done" ? `<div class="warp-quest-stakes">⚠ ${esc(q.stakes)}</div>` : ""}
+    ${buttons ? `<div class="warp-row warp-quest-actions">${buttons}</div>` : ""}
+  </div>`;
+}
+
+/** Quests: on offer here, under way (ready to hand in first), and the last few that ended, folded. */
+function renderQuests(h: HudView, compact: boolean): HudPart | null {
+  if (!h.quests.length) return null;
+  const offered = h.quests.filter((q) => q.status === "offered");
+  const open = h.quests.filter((q) => q.status === "active" || q.status === "ready").sort((a, b) => Number(b.status === "ready") - Number(a.status === "ready"));
+  const ended = h.quests.filter((q) => q.status === "done" || q.status === "failed");
+  const body = [
+    open.map(questCard).join(""),
+    offered.length ? `<div class="warp-choice-group-label">On offer here</div>${offered.map(questCard).join("")}` : "",
+    !open.length && !offered.length ? `<div class="warp-empty">No quests under way. Look for a notice board, or people who need a hand.</div>` : "",
+    ended.length ? `<details class="warp-away" data-section="quests-ended"><summary>Finished · ${ended.length}</summary><div class="warp-section-body">${ended.map(questCard).join("")}</div></details>` : "",
+  ].join("");
+  return part("quests", "Quests", open.length, body, !compact || open.some((q) => q.status === "ready") || offered.length > 0);
 }
 
 /** The player's own abilities: cost, uses left, and a button when it can be used now. */
@@ -337,7 +388,7 @@ export function renderEncounterGuide(e: NonNullable<HudView["encounter"]>, busy:
   const danger = e.danger.slice(0, 2).map((d) => `<span class="warp-tone-${d.close ? "bad" : "warn"}">${esc(d.text)}</span>`).join(`<span class="warp-dim"> · </span>`);
   const last = recap?.rounds[recap.rounds.length - 1];
   return `<div class="warp-enc-guide" role="group" aria-label="${esc(e.name)}">
-    <div class="warp-enc-head"><span>⚔ ${esc(e.name)} <span class="warp-dim">vs ${esc(e.foe)}</span></span><span class="warp-dim">Round ${e.round + 1}</span></div>
+    <div class="warp-enc-head"><span>⚔ ${esc(e.name)} <span class="warp-dim">vs ${esc(e.foe)}</span>${foeTags(e)}</span><span class="warp-dim">Round ${e.round + 1}</span></div>
     ${e.goal ? `<div class="warp-enc-goal"><b>Goal</b> ${esc(e.goal)}</div>` : ""}
     ${meters.length ? `<div class="warp-enc-meters">${meters.join("")}</div>` : ""}
     ${danger ? `<div class="warp-enc-danger"${e.dangerText ? ` title="${esc(e.dangerText)}"` : ""}><b>Danger</b> ${danger}</div>` : ""}
@@ -521,17 +572,31 @@ function renderDecider(s: Settings, jevKeySet: boolean): string {
     <p>Answers Warp's quick typed questions: what your message attempts, NPC odds, plain-language triggers, bookkeeping. It never picks outcomes — it gives odds, and the dice roll on them.</p>
     <select class="warp-select" data-setting="decider">
       ${opt("llm", "Helper LLM (uses the helper model below)")}
-      ${opt("jev", "Jev — TypeSafe System-1 model (fast, cheap)")}
+      ${opt("jev", "Classifier endpoint — TypeSafe's Jev or any compatible model (fast, cheap)")}
       ${opt("rules", "Rules only — no model calls (suggests, never acts)")}
     </select>
-    ${s.decider === "jev" ? `
+    ${s.decider === "jev" ? (() => {
+      const typesafe = s.jevFormat !== "openai" && s.jevUrl === DEFAULT_SETTINGS.jevUrl;
+      const host = (() => { try { return new URL(s.jevUrl).host; } catch { return s.jevUrl; } })();
+      return `
+      <label class="warp-slider">Endpoint
+        <input class="warp-input" data-setting="jevUrl" value="${esc(s.jevUrl)}" placeholder="${esc(DEFAULT_SETTINGS.jevUrl)}" spellcheck="false" autocomplete="off">
+        <small class="warp-dim">TypeSafe's Jev by default. Paste any URL that speaks the same typed-question API — or pick the OpenAI-compatible format below to use any chat model as the classifier (Groq, OpenRouter, a local llama.cpp, Ollama or vLLM server…).</small>
+      </label>
       <div class="warp-row">
-        <input class="warp-input" type="password" data-jevkey placeholder="${jevKeySet ? "Key saved — paste to replace" : "TypeSafe API key (sk-…)"}" autocomplete="off" style="flex:1">
+        <select class="warp-select" data-setting="jevFormat" style="flex:1">
+          <option value="typesafe"${s.jevFormat !== "openai" ? " selected" : ""}>Typed questions (TypeSafe API)</option>
+          <option value="openai"${s.jevFormat === "openai" ? " selected" : ""}>OpenAI-compatible chat (/chat/completions)</option>
+        </select>
+        <input class="warp-input" data-setting="jevModel" value="${esc(s.jevModel)}" placeholder="${s.jevFormat === "openai" ? "Model name (e.g. llama-3.1-8b-instant)" : "jev-latest"}" title="Model" style="flex:1">
+      </div>
+      <div class="warp-row">
+        <input class="warp-input" type="password" data-jevkey placeholder="${jevKeySet ? "Key saved — paste to replace" : typesafe ? "TypeSafe API key (sk-…)" : "API key (leave empty for a local server)"}" autocomplete="off" style="flex:1">
         <button class="warp-btn" data-save-jev>${jevKeySet ? "Replace" : "Save"}</button>
         ${jevKeySet ? `<button class="warp-btn warp-btn-ghost" data-clear-jev>Remove</button>` : ""}
       </div>
-      <p>${jevKeySet ? "✓ Key stored encrypted on the server." : "No key yet — until you add one, the helper LLM is used."} Your roleplay text is sent to TypeSafe for these questions.</p>
-      <input class="warp-input" data-setting="jevModel" value="${esc(s.jevModel)}" title="Model (jev-latest, or a pinned version)">` : ""}
+      <p>${jevKeySet ? "✓ Key stored encrypted on the server." : typesafe ? "No key yet — until you add one, the helper LLM is used." : "No key saved — fine for a local server."} Your roleplay text is sent to <b>${esc(host)}</b> for these questions. Use <b>Test</b> below to check it answers.</p>`;
+    })() : ""}
     <label class="warp-slider"><span>Roll automatically when at least <b>${pct(s.autoConfidence)}%</b> sure</span>
       <input type="range" min="40" max="99" value="${pct(s.autoConfidence)}" data-setting-pct="autoConfidence"></label>
     <label class="warp-slider"><span>Offer a one-tap “Roll it?” from <b>${pct(s.askConfidence)}%</b></span>
@@ -560,6 +625,7 @@ export function renderSettings(s: Settings, status: RulesetStatus | null, connec
     ${toggle("enabled", "Warp is on", "Turn the engine off without removing any rules.", s.enabled)}
     ${toggle("freeTextChecks", "Read my typed messages for actions", "When you type something risky, a quick referee call picks the matching action and the dice decide.", s.freeTextChecks)}
     ${toggle("narratorUpdates", "Keep state in sync with the story", "After each reply, small changes the story describes (time, mood, items, people) are recorded within the ruleset's limits. You can undo any of them.", s.narratorUpdates)}
+    ${toggle("storyQuests", "Quests from the story", "When someone in the story asks you for a favour or a job and you agree, it's tracked as a quest with stakes; the story decides when it's done or failed, and they remember how it went.", s.storyQuests)}
     ${toggle("swipesReroll", "Swiping rerolls the dice", "Casual: a new swipe is a new roll. Turn off for Ironman: rolls stay fixed for the same move.", s.swipesReroll)}
   </div>
   <div class="warp-card">

@@ -46,6 +46,9 @@ interface Seen {
   condRemoved: Set<string>;
   flagsSet: Set<string>;
   encStarted: Set<string>;
+  /** Quests some effect finishes, and quests something counts toward. */
+  questDone: Set<string>;
+  questProgress: Set<string>;
   moves: Set<string>;
   unlocked: Set<string>;
   moneyUp: boolean;
@@ -59,7 +62,7 @@ function isEffect(o: unknown): o is Effect {
 function readFormula(v: string, seen: Seen) {
   try { compile(v); } catch { return; }
   for (const id of identifiers(v)) seen.reads.add(id);
-  for (const m of v.matchAll(/\b(has|count|cond|flag|at|present|where|wearing|met|rel|worn|secret|front|codex|feat|perk|deepest|stage|partner|dates|transformed|saved|happened|owed|missed|days_until|arc|bond|seen_by)\(\s*'([^']+)'/g)) seen.calls.add(`${m[1]}:${m[2]}`);
+  for (const m of v.matchAll(/\b(has|count|cond|flag|at|present|where|wearing|met|rel|worn|secret|front|codex|feat|perk|deepest|stage|partner|dates|transformed|saved|happened|owed|missed|days_until|arc|bond|seen_by|quest|quest_active|quest_done|quest_failed|goal|cond_of|foe_cond|memories)\(\s*'([^']+)'/g)) seen.calls.add(`${m[1]}:${m[2]}`);
 }
 
 function walk(o: unknown, seen: Seen, money: string | undefined, key = "") {
@@ -79,6 +82,11 @@ function walk(o: unknown, seen: Seen, money: string | undefined, key = "") {
     for (const [k, v] of Object.entries(o.items)) (v > 0 ? seen.itemsGiven : seen.itemsTaken).add(k);
     for (const [k, d] of Object.entries(o.addConditions)) { seen.condAdded.add(k); if (d !== null) seen.condTimed.add(k); }
     for (const k of o.removeConditions) seen.condRemoved.add(k);
+    // Statuses put on the opponent or on people are caused too; cleansing cures them.
+    for (const k of [...Object.keys(o.inflict), ...Object.values(o.afflict).flatMap((m) => Object.keys(m))]) seen.condAdded.add(k);
+    for (const k of o.cleanse) seen.condRemoved.add(k);
+    for (const [k, op] of Object.entries(o.quest)) if (op === "done" || op === "report") seen.questDone.add(k);
+    for (const k of Object.keys(o.progress)) seen.questProgress.add(k.split(".")[0]);
     for (const k of Object.keys(o.flags)) seen.flagsSet.add(k);
     if (o.startEncounter) seen.encStarted.add(o.startEncounter);
     if (o.move) seen.moves.add(o.move);
@@ -91,7 +99,7 @@ export function auditRuleset(r: Ruleset): AuditReport {
   const money = r.statOrder.find((id) => r.stats[id].kind === "money");
   const seen: Seen = {
     changed: new Set(), reads: new Set(), calls: new Set(), itemsGiven: new Set(), itemsTaken: new Set(),
-    condAdded: new Set(), condTimed: new Set(), condRemoved: new Set(), flagsSet: new Set(), encStarted: new Set(), moves: new Set(), unlocked: new Set(),
+    condAdded: new Set(), condTimed: new Set(), condRemoved: new Set(), flagsSet: new Set(), encStarted: new Set(), questDone: new Set(), questProgress: new Set(), moves: new Set(), unlocked: new Set(),
     moneyUp: false, moneyDown: false,
   };
   walk(r, seen, money);
@@ -174,12 +182,15 @@ export function auditRuleset(r: Ruleset): AuditReport {
   // ── conditions ──
   for (const c of Object.values(r.conditions)) {
     const added = seen.condAdded.has(c.id) || c.narrator;
-    // A bonus: is read by every check on those stats.
-    const read = seen.calls.has(`cond:${c.id}`) || Object.keys(c.bonus).length > 0;
+    // A bonus is read by every check on those stats; damage over time, lost turns and armor act by themselves.
+    const read = seen.calls.has(`cond:${c.id}`) || seen.calls.has(`foe_cond:${c.id}`) || seen.calls.has(`cond_of:${c.id}`) || Object.keys(c.bonus).length > 0
+      || c.dot !== undefined || c.skip !== undefined || Object.keys(c.armor).length > 0 || effectDoes(c.tick);
+    if (c.rounds || c.lasts) seen.condTimed.add(c.id);
     if (!added) gap({ id: `cond-never:${c.id}`, severity: "gap", part: "rules", text: `Nothing ever causes ${c.label}.`, fix: `Add it from an action, a foe move, a trigger or an event (add_condition: [${c.id}]).` });
     else {
       // Buffs given for a few rounds wear off; that's their cure.
-      const cured = seen.condRemoved.has(c.id) || (seen.condTimed.has(c.id) && !c.narrator);
+      // A status with rounds ends with the fight; one with lasts: wears off by itself, however it was caused.
+      const cured = seen.condRemoved.has(c.id) || !!c.rounds || !!c.lasts || (seen.condTimed.has(c.id) && !c.narrator);
       if (!cured) gap({ id: `cond-uncured:${c.id}`, severity: "thin", part: "world", text: `Nothing cures ${c.label} (unless it has a duration).`, fix: `Add something that removes it — an item's use:, resting somewhere, a trigger (remove_condition: [${c.id}]), or give it a duration.` });
       else for (const it of Object.values(r.items)) if (it.use && [it.use.effects, ...Object.values(it.use.outcomes)].some((e) => e?.removeConditions.includes(c.id))) links.push(`${it.name} clears ${c.label}`);
     }
@@ -242,12 +253,30 @@ export function auditRuleset(r: Ruleset): AuditReport {
     if (!e.foeMoves) gap({ id: `enc-passive:${e.id}`, severity: "thin", part: "encounters", text: `${e.name}'s other side never acts.`, fix: "Add foe_moves with weights and effects, so standing still has a cost." });
   }
 
+  // ── quests ──
+  const quests = Object.values(r.quests);
+  if (Object.keys(r.locations).length >= 3 && !Object.values(r.locations).some((l) => l.board)) {
+    gap({ id: "quest-no-board", severity: "thin", part: "world", text: "There's no notice board: nowhere the player can always find work.", fix: "Put board: true on a central place (a tavern, a guild hall, a station concourse, a school noticeboard) and post a few quests there with board: true." });
+  }
+  if (!quests.length && Object.keys(r.locations).length >= 2) {
+    gap({ id: "quests-none", severity: "thin", part: "story", text: "There are no quests: nothing to work toward beyond the daily loop.", fix: "Add quests: — a bounty on the board, a favour someone asks, a story job — each with goals the rules can see, a reward, and a price for failing (failure:, stakes:, days:)." });
+  }
+  for (const q of quests) {
+    const counted = q.goals.filter((g) => g.count !== undefined && !g.when && !g.on);
+    const finished = !!q.succeed || !!q.judge.done || seen.questDone.has(q.id) || (q.goals.some((g) => !g.optional) && (!counted.length || seen.questProgress.has(q.id)));
+    if (!finished) gap({ id: `quest-stuck:${q.id}`, severity: "gap", part: "story", text: `Nothing can finish "${q.name}": no formula, judge: or quest: done, and nothing counts toward its goals.`, fix: `Count toward it (progress: { ${q.id}: +1 } on the action or encounter outcome that does the job), give goals a when: formula, or finish it with quest: { ${q.id}: done }.` });
+    if (!effectDoes(q.reward) && !q.giver) gap({ id: `quest-no-reward:${q.id}`, severity: "thin", part: "story", text: `"${q.name}" pays nothing.`, fix: "Give it a reward: money, items, xp, a relationship, renown, a codex entry, an ability (learn:) or the next quest." });
+    const stakes = effectDoes(q.failure) || !!q.fail || q.days > 0 || !!q.stakes || !!q.judge.fail;
+    if (!stakes) gap({ id: `quest-no-stakes:${q.id}`, severity: "thin", part: "story", text: `Failing "${q.name}" costs nothing — it can't really fail.`, fix: "Give it a way to fail (days:, fail:, or a quest: fail effect on a bad roll) and a failure: with consequences — money, standing, someone's mood, a door that closes." });
+    else links.push(`Quest "${q.name}"${q.giver ? ` from ${r.people[q.giver]?.name ?? q.giver}` : ""}`);
+  }
+
   // ── codex ──
   for (const c of Object.values(r.codex)) {
     if (!c.unlock && !seen.unlocked.has(c.id)) gap({ id: `codex-locked:${c.id}`, severity: "thin", part: "journal", text: `Codex entry "${c.title}" can never be found.`, fix: "Give it an unlock: formula, or unlock it from an action or event." });
   }
 
-  const declared = Object.keys(r.items).length + r.statOrder.length + Object.keys(r.conditions).length + Object.keys(r.flags).length + Object.keys(r.locations).length + Object.keys(r.encounters).length * 3 + 1;
+  const declared = Object.keys(r.items).length + r.statOrder.length + Object.keys(r.conditions).length + Object.keys(r.flags).length + Object.keys(r.locations).length + Object.keys(r.encounters).length * 3 + quests.length * 2 + 1;
   const weight = gaps.reduce((n, g) => n + (g.severity === "gap" ? 1 : 0.4), 0);
   const depth = Math.max(0, Math.min(100, Math.round(100 * (1 - weight / declared))));
   return { gaps, links, depth };

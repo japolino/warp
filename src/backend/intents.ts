@@ -7,6 +7,7 @@ import type { GameState } from "../engine/state.js";
 import { dateMoves } from "../engine/date/talk.js";
 import { DATE_PREFIX } from "../engine/date/types.js";
 import { JOB_PREFIX, PAY_PREFIX, workMoves } from "../engine/work.js";
+import { QUEST_PREFIX, questDef, questOffers, questsToReport } from "../engine/quests.js";
 import type { Settings } from "../shared/protocol.js";
 import { liveChoicesOf, type Msg } from "./ledger.js";
 
@@ -48,6 +49,29 @@ export function intentFor(r: Ruleset, state: GameState, settings: Settings, msgs
     if (u.locked) return { error: u.locked };
     const name = r.items[actionId.slice(ITEM_PREFIX.length)]?.name ?? "it";
     return { say: u.a.say ?? `*I use the ${name}.*`, intent: { actionId, params, via: "choice", label: u.a.label } };
+  }
+  if (actionId.startsWith(QUEST_PREFIX)) {
+    // Taking a quest, handing one in, giving one up: what the player says depends on who's asking.
+    const [, verb, id] = actionId.split(":");
+    const q = questDef(r, state, id ?? "");
+    if (!q) return { error: "That quest isn't here anymore." };
+    const giver = q.giver ? state.people[q.giver]?.name ?? r.people[q.giver]?.name ?? null : null;
+    if (verb === "take") {
+      const o = questOffers(r, state).find((x) => x.id === id);
+      if (!o) return { error: "That isn't on offer here." };
+      return { say: o.via === "giver" && giver ? `*I tell ${giver} I'll do it: ${q.name.toLowerCase()}.*` : o.via === "board" ? `*I take the notice down: "${q.name}".*` : `*I take on "${q.name}".*`, intent: { actionId, via: "choice", label: `Take on "${q.name}"` } };
+    }
+    if (verb === "report") {
+      const to = questsToReport(r, state).find((x) => x.id === id);
+      if (!to) return { error: "There's nobody to hand that in to here." };
+      return { say: to.to ? `*I tell ${to.to} it's done.*` : `*I hand in "${q.name}".*`, intent: { actionId, via: "choice", label: `Hand in "${q.name}"` } };
+    }
+    if (verb === "drop") {
+      const st = state.quests?.[id ?? ""]?.st;
+      if (st !== "active" && st !== "ready") return { error: "That quest isn't under way." };
+      return { say: `*I give up on ${q.name.toLowerCase()}.*`, intent: { actionId, via: "choice", label: `Give up on "${q.name}"` } };
+    }
+    return { error: "That isn't possible right now." };
   }
   if (actionId.startsWith(ABILITY_PREFIX)) {
     const u = usableAbilities(r, state).find((x) => x.id === actionId);

@@ -69,6 +69,8 @@ export function improvAction(r: Ruleset, s: GameState, actionId: string): Action
     tags: ["improvised"],
     order: 0,
     perPerson: false,
+    requires: [],
+    showLocked: false,
   };
 }
 

@@ -44,6 +44,35 @@ export interface PersonView {
   goal: string | null;
   /** How they feel about other people ("fond of Dex"). */
   bonds: string[];
+  /** Conditions they're under (drugged, sick, charmed…). */
+  conditions: { label: string; tone: Tone; remaining: string | null }[];
+  /** What they remember about {{user}}, newest first. */
+  memories: { text: string; when: string | null }[];
+}
+
+/** A quest as the journal shows it: offered here, under way, waiting to be handed in, or over. */
+export interface QuestView {
+  id: string;
+  name: string;
+  kind: string;
+  status: "offered" | "active" | "ready" | "done" | "failed";
+  giver: string | null;
+  desc: string | null;
+  goals: { text: string; done: boolean; progress: string | null; optional: boolean }[];
+  /** "2 days left", "overdue". */
+  due: string | null;
+  dueTone: Tone;
+  reward: string | null;
+  /** What failing costs. */
+  stakes: string | null;
+  /** Handed out by the story rather than the ruleset. */
+  story: boolean;
+  /** Choice ids: take it (offered), hand it in (ready, where that's possible), give up (under way). */
+  take: string | null;
+  report: string | null;
+  drop: string | null;
+  /** Where it was offered: by whom, or on a board. */
+  from: string | null;
 }
 
 export interface ClothingView { id: string; name: string; slot: string; warmth: number; reveal: number; traits: string[]; integrity: number | null; worn: boolean }
@@ -67,6 +96,8 @@ export interface HudView {
     bonus: string | null;
   }[];
   conditions: { id: string; label: string; tone: Tone; desc?: string; remaining?: string }[];
+  /** Quests: offered here, under way, waiting to be handed in, and the last few that ended. */
+  quests: QuestView[];
   /** Clothing warmth vs what the weather calls for. */
   warmth: { value: number; min: number; max: number; tone: Tone; text: string } | null;
   /** One row per wardrobe slot. */
@@ -90,6 +121,11 @@ export interface HudView {
     dangerText: string | null;
     /** Rounds play quietly in one growing message (false: each round is narrated in full). */
     quiet: boolean;
+    /** Statuses on the opponent (rounds null = until the fight ends). */
+    foeConds: { id: string; label: string; tone: Tone; rounds: number | null; desc?: string }[];
+    /** Armor on the opponent's main meter, and {{user}}'s on what the fight is lost on (null = none). */
+    foeArmor: number | null;
+    yourArmor: number | null;
   } | null;
   codex: { id: string; title: string; text: string; category: string | null }[];
   codexTotal: number;
@@ -409,6 +445,12 @@ export interface Settings {
   /** Which model answers Warp's typed questions (reading actions, bookkeeping, NPC odds, scene triggers). */
   decider: "llm" | "jev" | "rules";
   jevModel: string;
+  /** The classifier endpoint: TypeSafe's by default, or any compatible URL (or an OpenAI-style chat endpoint). */
+  jevUrl: string;
+  /** How to talk to it: TypeSafe's typed-questions API, or an OpenAI-compatible /chat/completions endpoint. */
+  jevFormat: "typesafe" | "openai";
+  /** Track the favours and jobs people ask {{user}} for in the story as quests. */
+  storyQuests: boolean;
   /** Read typed actions and roll automatically at or above this confidence. */
   autoConfidence: number;
   /** Between this and autoConfidence, offer the action as a one-tap suggestion instead. */
@@ -450,6 +492,9 @@ export const DEFAULT_SETTINGS: Settings = {
   veils: [],
   decider: "llm",
   jevModel: "jev-latest",
+  jevUrl: "https://api.typesafe.ai/v1/systemone",
+  jevFormat: "typesafe",
+  storyQuests: true,
   autoConfidence: 0.75,
   askConfidence: 0.4,
   consistencyCheck: false,
@@ -499,8 +544,8 @@ export interface BuilderPart {
 export interface BuilderSession {
   characterId: string;
   characterName: string;
-  /** build = from the card; refine = change by request; deepen = close the depth audit's gaps in the installed rules. */
-  mode: "build" | "refine" | "deepen";
+  /** build = from the card; refine = change by request; deepen = close the depth audit's gaps in the installed rules; import = a rulebook written elsewhere. */
+  mode: "build" | "refine" | "deepen" | "import";
   /** The player's persona (who {{user}} is), so their own powers and training become abilities. */
   persona?: string | null;
   step: "start" | "questions" | "review" | "done";
@@ -590,7 +635,9 @@ export type BackendToFrontend =
   | { type: "settings"; settings: Settings; templates: TemplateInfo[]; connections: { id: string; name: string }[]; imageConnections: { id: string; name: string }[]; jevKeySet: boolean }
   | { type: "toast"; level: "info" | "success" | "warning" | "error"; message: string }
   | { type: "command"; command: "open" | "install" | "dungeon" }
-  | { type: "builder"; session: BuilderSession | null };
+  | { type: "builder"; session: BuilderSession | null }
+  /** The installed rulebook as one file, for editing elsewhere. */
+  | { type: "rulebook_export"; name: string; text: string };
 
 export type FrontendToBackend =
   | { type: "hello"; chatId: string | null }
@@ -612,6 +659,9 @@ export type FrontendToBackend =
   | { type: "adjust_rel"; chatId: string; who: string; stat: string; value: number }
   | { type: "forget"; chatId: string; who: string }
   | { type: "builder_open"; chatId: string; mode: "build" | "refine" | "deepen" }
+  /** A rulebook written elsewhere: split, checked and previewed in the builder before anything is saved. */
+  | { type: "builder_import"; chatId: string; text: string }
+  | { type: "export_rulebook"; chatId: string }
   | { type: "builder_start"; chatId: string; connectionId: string; creative: boolean; base?: string; effort?: "quick" | "thorough" }
   /** Run the designer over the current draft (or the installed rules) until the audit is clean. */
   | { type: "builder_deepen"; chatId: string; connectionId?: string; effort?: "quick" | "thorough" }

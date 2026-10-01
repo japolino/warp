@@ -5,7 +5,7 @@ import type { Template } from "./index.js";
 export const starfarer: Template = {
   id: "starfarer",
   name: "Starfarer (sci-fi RPG)",
-  blurb: "Sci-fi RPG / space opera: Physique, Reflexes, Aim, Intelligence, Willpower and Libido capped at 5× level; Shields/HP/Lust/Energy pools; credits; XP and levels with a pick-one-of-three perk; tech abilities (Stim Shot, Overcharge, Target Lock, Smoke Screen); a ship and a frontier world; turn-based combat you can win by force or by seduction; a codex that fills in as you explore.",
+  blurb: "Sci-fi RPG / space opera: Physique, Reflexes, Aim, Intelligence, Willpower and Libido capped at 5× level; Shields/HP/Lust/Energy pools; credits; XP and levels with a pick-one-of-three perk; tech abilities (Stim Shot, Overcharge, Target Lock, Smoke Screen, Flamer); burst fire, EMP stuns, armor and armor-piercing rounds; contracts from the concourse board and favours from the locals; a ship and a frontier world; turn-based combat you can win by force or by seduction; a codex that fills in as you explore.",
   parts: [
     {
       label: "core",
@@ -169,6 +169,7 @@ locations:
     indoors: true
     exits: [cargo_bay, bar, merchant]
     travel: 10
+    board: true
   bar:
     name: The Dry Dock (bar)
     desc: Spacers, mercs, and rumours.
@@ -195,11 +196,21 @@ items:
   medkit: Medkit
   codex: { name: Codex, bonus: { intelligence: 1 } }
   shield_booster: Shield booster
+  armored_vest: { name: Armored vest, desc: "Ceramic plates: every blow to the body lands 3 lighter.", armor: { hp: 3 } }
+  emp_grenade:
+    name: EMP grenade
+    tags: [consumable]
+    use: { label: Throw an EMP grenade, when: in_encounter, foe: { shields: "-50%" }, inflict: { stunned: 1 }, hint: "A white crack — their shields gutter and their gear locks up." }
+  ap_rounds:
+    name: Armor-piercing rounds
+    uses: 3
+    use: { label: Load an AP clip and fire, when: in_encounter, check: { vs: 12, add: floor(aim / 2), label: Aim }, success: { foe: { hp: -9 }, pierce: all }, fail: { hint: "The round sparks off a bulkhead." } }
 
+# Statuses: rounds = how long in a fight; skip = a chance to lose the turn; dot = damage each round.
 conditions:
-  stunned: { label: Stunned, tone: bad, narrator: true, bonus: { reflexes: -3, aim: -2 } }
-  grappled: { label: Grappled, tone: bad, narrator: true, bonus: { reflexes: -4 } }
-  burning: { label: Burning, tone: bad, narrator: true }
+  stunned: { label: Stunned, tone: bad, narrator: true, rounds: 1, skip: true, bonus: { reflexes: -3, aim: -2 } }
+  grappled: { label: Grappled, tone: bad, narrator: true, rounds: 2, skip: 30, bonus: { reflexes: -4 } }
+  burning: { label: Burning, tone: bad, narrator: true, rounds: 3, dot: 4, stat: hp }
   stimmed: { label: Stimmed, tone: good, bonus: { reflexes: 2, physique: 1 } }
   locked_on: { label: Target lock, tone: good, bonus: { aim: 3 } }
 `,
@@ -264,6 +275,27 @@ conditions:
     when: credits >= 250 and transformed('feline_splice') < 3
     say: "*I pay for a feline gene-splice and take the injector.*"
     effects: { credits: -250, transform: { feline_splice: 1 } }
+  buy_vest:
+    label: Buy an armored vest (₡300)
+    group: Trade
+    at: merchant
+    when: credits >= 300 and not has('armored_vest')
+    say: "*I buy the armored vest.*"
+    effects: { credits: -300, give: armored_vest }
+  buy_emp:
+    label: Buy an EMP grenade (₡80)
+    group: Trade
+    at: merchant
+    when: credits >= 80
+    say: "*I buy an EMP grenade.*"
+    effects: { credits: -80, give: emp_grenade }
+  buy_ap:
+    label: Buy armor-piercing rounds (₡120)
+    group: Trade
+    at: merchant
+    when: credits >= 120
+    say: "*I buy a box of AP rounds.*"
+    effects: { credits: -120, give: ap_rounds }
   buy_booster:
     label: Buy shield booster (₡150)
     group: Trade
@@ -329,6 +361,7 @@ encounters:
     desc: A hostile scavenger jumps {{user}}.
     foe:
       name: Scavenger
+      armor: { hp: 2 }            # scavenged plating: blows to the body land 2 lighter
       stats:
         shields: { label: Shields, start: 12, max: 12 }
         hp: { label: HP, start: 30, max: 30 }
@@ -341,6 +374,12 @@ encounters:
         crit_success: { foe: { shields: -14, hp: "foe.shields <= 0 ? -12 : 0" }, hint: "A perfect shot." }
         success: { foe: { shields: -8, hp: "foe.shields <= 0 ? -7 : 0" }, hint: "The shot lands." }
         fail: { hint: "Missed." }
+      burst:
+        label: Burst fire
+        cost: { energy: -8 }
+        check: { vs: 11, add: floor(aim / 2), label: Aim }
+        success: { foe: { shields: -4 }, hits: 3, hint: "Three rounds rake their shields." }
+        fail: { hint: "The burst goes wide." }
       melee:
         label: Melee
         cost: { energy: -8 }
@@ -363,7 +402,7 @@ encounters:
         fail: { hint: "Cut off — the fight goes on." }
     foe_moves:
       blast: { desc: "Fires a blaster", weight: 3, shields: -8, hp: "shields <= 0 ? -6 : 0" }
-      grapple: { desc: "Tries to grapple", weight: 1, hp: -4, add_condition: { grappled: 2 } }
+      grapple: { desc: "Tries to grapple", weight: 1, hp: -4, add_condition: [grappled] }
       taunt: { desc: "Puts on a lewd display", weight: 1, lust: "+(8 + floor(libido / 10))" }
     end_when:
       won: foe.hp <= 0
@@ -395,6 +434,61 @@ dungeons:
 `,
     },
     {
+      label: "quests",
+      yaml: `# Contracts off the concourse board, favours from the locals, and the Red Veil — which
+# comes for {{user}} whether they're ready or not.
+quests:
+  scav_bounty:
+    name: "Bounty: jungle scavengers"
+    kind: contract
+    board: true
+    repeat: 4
+    desc: Station security pays per scavenger crew put down on the jungle edge.
+    days: 5
+    goals:
+      - { text: Win fights against scavengers, count: 2, on: { encounter: ambush, outcome: [won, seduced] } }
+    reward: { credits: 200, xp: 30 }
+    failure: { xp: -10 }
+    stakes: Security stops posting your name on the good jobs.
+  kade_parts:
+    name: Salvage run for Kade
+    kind: favour
+    giver: kade
+    desc: Kade needs reactor couplings — any salvage will do, as long as it's today's.
+    days: 2
+    goals:
+      - { text: Strip salvage in your cargo bay, count: 2, on: salvage }
+    reward: { credits: 120, rel: { kade: { affinity: 6 } } }
+    failure: { rel: { kade: { affinity: -6 } } }
+    remember: { failed: "{{user}} promised Kade couplings and never delivered." }
+  vex_relic:
+    name: A relic for Vex
+    kind: favour
+    giver: vex
+    when: "rel('vex', 'affinity') >= 20"
+    desc: Vex wants something old from the ruins under the jungle, and pays in secrets.
+    days: 6
+    goals:
+      - { text: Reach the third floor of the Deep Ruins, when: "deepest('ruins') >= 3" }
+    reward: { credits: 100, reveal: [vex_informant], rel: { vex: { affinity: 8 } } }
+    failure: { rel: { vex: { affinity: -6 } } }
+    stakes: Vex stops pouring for you — and stops talking.
+  red_veil_hunt:
+    name: The Red Veil
+    kind: main
+    auto: true
+    when: "front_stage('red_veil') >= 1"
+    desc: Someone broke into {{user}}'s ship. The Red Veil syndicate has marked them — find out why before they come back.
+    goals:
+      - { text: "Learn who's selling {{user}} out", when: "secret('vex_informant') >= 2" }
+      - { text: Survive the Red Veil's move, when: "front_stage('red_veil') >= 2 and not in_encounter" }
+    fail: "hp <= 1 and front_stage('red_veil') >= 2"
+    reward: { xp: 120, credits: 300, perk_points: 1 }
+    failure: { credits: -200 }
+    stakes: The Red Veil takes the ship, or worse.
+`,
+    },
+    {
       label: "journal",
       yaml: `# The player's own tech and tricks. Stim Shot everyone has; the rest come with perks.
 abilities:
@@ -416,6 +510,16 @@ abilities:
     where: encounter
     cost: { energy: -8 }
     add_condition: { locked_on: 3 }
+  flamer:
+    name: Flamer
+    desc: A wrist-mounted burst of burning gel that keeps on burning
+    where: encounter
+    known: false
+    cost: { energy: -12 }
+    check: { vs: 11, add: floor(aim / 2), label: Aim }
+    success: { harm: 4, inflict: { burning: 3 } }
+    fail: { hint: "The gel sputters onto the deck." }
+    per_encounter: 1
   smoke_screen:
     name: Smoke Screen
     desc: A grenade of thick, sensor-blinding smoke
@@ -470,6 +574,16 @@ perks:
     desc: Gone before they look up.
     abilities: [smoke_screen]
     bonus: { reflexes: 1 }
+  pyro:
+    name: Pyro
+    desc: Likes it hot.
+    abilities: [flamer]
+    narrator: "{{user}} smells faintly of accelerant and doesn't mind at all."
+  hollow_point:
+    name: Hollow Point
+    desc: Knows where armor is thin.
+    tags: [aim]
+    rule: { pierce: { amount: 3, stats: [aim, physique] } }
   tactician:
     name: Tactician
     desc: Reads a fight three moves ahead.
@@ -486,6 +600,7 @@ codex:
 feats:
   first_blood: { name: First blood, desc: "Win a fight.", unlock: "xp >= 40 or level >= 2" }
   explorer: { name: Explorer, desc: "Reach the deep jungle.", unlock: "location == 'jungle_deep'", reward: { xp: +20 } }
+  contractor: { name: Contractor, desc: "Finish three contracts or favours.", unlock: "quests_done() >= 3", reward: { xp: +40, perk_points: +1 } }
 `,
     },
     {

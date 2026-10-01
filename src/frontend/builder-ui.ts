@@ -30,9 +30,9 @@ const REFINE_CHIPS = [
 ];
 
 /** Entry point shown on the Ruleset tab when no builder is open. */
-export function renderBuilderCta(hasRuleset: boolean, hasChat: boolean): string {
+export function renderBuilderCta(hasRuleset: boolean, hasChat: boolean, exported: { name: string; text: string } | null = null): string {
   if (!hasChat) return "";
-  return `<div class="warp-card warp-builder-cta">
+  return `${renderRulebookIo(hasRuleset, exported)}<div class="warp-card warp-builder-cta">
     <h3>✨ Build with AI</h3>
     <p>Warp reads the card, asks you a few questions, and drafts a ruleset that fits — checked, balance-reviewed and previewed before anything is saved.</p>
     <div class="warp-row">
@@ -42,8 +42,34 @@ export function renderBuilderCta(hasRuleset: boolean, hasChat: boolean): string 
   </div>`;
 }
 
+/**
+ * Rulebooks written elsewhere: paste or pick a file to import (checked and previewed before anything is saved),
+ * or export the installed one to edit with another tool.
+ */
+function renderRulebookIo(hasRuleset: boolean, exported: { name: string; text: string } | null): string {
+  const out = exported ? `<div class="warp-export">
+      <textarea class="warp-input warp-yaml-input" rows="8" readonly data-export-text spellcheck="false">${esc(exported.text)}</textarea>
+      <div class="warp-row">
+        <button class="warp-btn warp-btn-primary" data-b="export-copy">Copy</button>
+        <button class="warp-btn" data-b="export-save" data-name="${esc(exported.name)}">Save as file</button>
+        <button class="warp-btn warp-btn-ghost" data-b="export-close">Close</button>
+      </div>
+    </div>` : "";
+  return `<details class="warp-card warp-rulebook-io"${exported ? " open" : ""}>
+    <summary><b>📥 Import or export a rulebook</b> <span class="warp-dim">— write it with another tool</span></summary>
+    <p>Rulebooks can be written outside Lumiverse — by hand, or with an agent harness (Claude Code, Codex, Cursor…) using <b>docs/RULEBOOK_GUIDE.md</b> from the Warp repository and its checker. Paste the YAML or pick the file; it's checked, balance-reviewed and previewed before anything is saved.</p>
+    <textarea class="warp-input warp-yaml-input" rows="5" data-import-text spellcheck="false" placeholder="name: My game&#10;stats:&#10;  hp: { kind: meter, … }&#10;…"></textarea>
+    <div class="warp-row">
+      <button class="warp-btn warp-btn-primary" data-b="import">Check & preview</button>
+      <label class="warp-btn">Choose a file…<input type="file" accept=".yaml,.yml,.txt,.md" data-import-file hidden></label>
+      ${hasRuleset ? `<button class="warp-btn" data-b="export" title="The installed rulebook as one file, to edit elsewhere and import back">📤 Export this rulebook</button>` : ""}
+    </div>
+    ${out}
+  </details>`;
+}
+
 function steps(s: BuilderSession): string {
-  const list = s.mode === "refine" ? ["Describe", "Review", "Install"] : s.mode === "deepen" ? ["Audit", "Review", "Install"] : ["Read", "Ask", "Plan & build", "Review", "Install"];
+  const list = s.mode === "refine" ? ["Describe", "Review", "Install"] : s.mode === "deepen" ? ["Audit", "Review", "Install"] : s.mode === "import" ? ["Import", "Review", "Install"] : ["Read", "Ask", "Plan & build", "Review", "Install"];
   const at = s.mode !== "build"
     ? (s.step === "done" ? 2 : 1)
     : s.step === "start" ? 0 : s.step === "questions" ? (s.busy ? 2 : 1) : s.step === "review" ? 3 : 4;
@@ -87,7 +113,7 @@ export function renderBuilder(s: BuilderSession, d: BuilderDraft, templates: Tem
   const busy = !!s.busy;
   const dis = busy ? " disabled" : "";
   const head = `<div class="warp-builder-head">
-      <div><div class="warp-eyebrow"><span>✨ ${s.mode === "refine" ? "Refine" : s.mode === "deepen" ? "Deepen" : "Build"} with AI</span></div><b>${esc(s.characterName)}</b></div>
+      <div><div class="warp-eyebrow"><span>${s.mode === "import" ? "📥 Imported rulebook" : `✨ ${s.mode === "refine" ? "Refine" : s.mode === "deepen" ? "Deepen" : "Build"} with AI`}</span></div><b>${esc(s.characterName)}</b></div>
       <button class="warp-btn warp-btn-ghost" data-b="close" title="Close the builder (discards the draft)" aria-label="Close">×</button>
     </div>${steps(s)}`;
   const log = s.log?.length ? `<details class="warp-designer-log"${busy ? " open" : ""}><summary>What the designer did · ${s.log.length}</summary><ol>${s.log.slice(-40).map((l) => `<li>${esc(l)}</li>`).join("")}</ol></details>` : "";
@@ -184,7 +210,7 @@ export function renderBuilder(s: BuilderSession, d: BuilderDraft, templates: Tem
       <div class="warp-row warp-builder-foot">
         ${s.mode === "build" ? `<button class="warp-btn warp-btn-ghost" data-b="back"${dis}>← Back to questions</button>` : ""}
         ${!s.depth ? `<button class="warp-btn" data-b="deepen"${dis} title="Audit these rules and wire in what doesn't connect yet">Deepen</button>` : ""}
-        <button class="warp-btn warp-btn-primary" data-b="install" data-replacing="${hasRuleset ? 1 : 0}"${errors || busy ? " disabled" : ""} title="${errors ? "Fix or redo the sections marked in red first" : ""}">${s.mode !== "build" ? "Save changes" : "Install to lorebook"}</button>
+        <button class="warp-btn warp-btn-primary" data-b="install" data-replacing="${hasRuleset ? 1 : 0}"${errors || busy ? " disabled" : ""} title="${errors ? "Fix or redo the sections marked in red first" : ""}">${s.mode === "build" || s.mode === "import" ? "Install to lorebook" : "Save changes"}</button>
       </div>`;
   } else {
     body = `<div class="warp-card">

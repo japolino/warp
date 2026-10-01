@@ -8,6 +8,7 @@ import type { Proposal } from "../engine/resolve.js";
 import type { Ruleset } from "../engine/ruleset.js";
 import { formatNumber, itemName, makeEnv, type GameState } from "../engine/state.js";
 import { presentPeople } from "../engine/world.js";
+import { questDef } from "../engine/quests.js";
 import { stateDigest } from "../engine/view.js";
 import type { Settings } from "../shared/protocol.js";
 import { host, logError } from "./host.js";
@@ -90,7 +91,7 @@ function clip(s: string, n: number) {
 
 // ───────────────────────── extractor ─────────────────────────
 
-export type ExtractPart = "minutes" | "stats" | "rel" | "people" | "items" | "move" | "conditions" | "flags" | "wardrobe" | "body" | "scene" | "used" | "train" | "encounter";
+export type ExtractPart = "minutes" | "stats" | "rel" | "people" | "items" | "move" | "conditions" | "flags" | "wardrobe" | "body" | "scene" | "used" | "train" | "encounter" | "quests" | "memories";
 
 const sameName = (a: string, b: string) => {
   const x = a.trim().toLowerCase(), y = b.trim().toLowerCase();
@@ -101,6 +102,7 @@ export async function extract(
   r: Ruleset, s: GameState, playerText: string, reply: string,
   settings: Settings, userId: string | undefined, only?: Set<ExtractPart>, applied?: string | null,
 ): Promise<Proposal | null> {
+  const judged = judgedQuests(r, s);
   const stats = r.statOrder.map((id) => r.stats[id]).filter((d) => d.narrator > 0);
   const rels = r.relStatOrder.map((id) => r.relStats[id]).filter((d) => d.narrator > 0);
   const conds = Object.values(r.conditions).filter((c) => c.narrator);
@@ -152,6 +154,13 @@ export async function extract(
     const now = Object.entries(s.body).map(([p, t]) => `${p}: ${Object.entries(t).map(([k, v]) => `${k} ${v}`).join(", ")}`).join("; ") || "nothing recorded";
     allowed.push(`- "body": lasting changes to the player's body as {"part": {"trait": "new value"}} (null removes a trait)${r.body.open ? "; new parts are allowed" : `; parts: ${Object.keys(r.body.parts).join(", ")}`}. Now: ${now}`);
   }
+  if (want("quests") && (judged.length || (r.storyQuests.enabled && settings.storyQuests))) {
+    const open = judged.map((j) => `${j.id} (done: ${j.done}${j.fail ? `; failed: ${j.fail}` : ""})`).join("; ");
+    allowed.push(`- "quests": {${r.storyQuests.enabled && settings.storyQuests ? `"new": [{"name": "short title", "giver": "who asked", "goal": "what counts as done", "fail": "what would count as failing (optional)", "stakes": "what's at stake (optional)", "hours": in-game hours until it's due (only if a time was set)}], ` : ""}"done": [ids], "failed": [ids]}${r.storyQuests.enabled && settings.storyQuests ? ` — new: ONLY when someone in the reply asked the player for a specific task or favour (or the player promised one) and it isn't one of these already` : ""}${open ? `; done/failed: only quests the reply clearly finished or failed. Open quests: ${open}` : ""}`);
+  }
+  if (want("memories") && Object.keys(s.people).length) {
+    allowed.push(`- "memories": {"Name": "one line, from their side, of what they'll remember about the player"} — ONLY for moments that will matter to them for a long time (a kindness, a betrayal, a promise made or broken, a humiliation, a first). Usually {}.`);
+  }
   if (!allowed.length) return null;
 
   const system = [
@@ -199,4 +208,16 @@ export async function extract(
     logError("extractor", e);
     return null;
   }
+}
+
+/** Open quests the story decides: story favours, and ruleset quests with a judge:. */
+export function judgedQuests(r: Ruleset, s: GameState): { id: string; name: string; done: string; fail?: string }[] {
+  const out: { id: string; name: string; done: string; fail?: string }[] = [];
+  for (const [id, st] of Object.entries(s.quests ?? {})) {
+    if (st.st !== "active") continue;
+    const q = questDef(r, s, id);
+    if (!q?.judge.done && !q?.judge.fail) continue;
+    out.push({ id, name: q.name, done: q.judge.done ?? q.goals.map((g) => g.text).join("; "), ...(q.judge.fail ? { fail: q.judge.fail } : {}) });
+  }
+  return out;
 }

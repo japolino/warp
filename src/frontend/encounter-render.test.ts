@@ -35,6 +35,7 @@ describe("a round, short", () => {
       name: "Predatory Pursuit", foe: "Prowling Monster Girl", round: 1, stats: [], momentum: null, goal: "Lose her", quiet: true,
       progress: [{ label: "Aggression", value: 70, target: 0, max: 100 }],
       danger: [{ label: "Stamina", value: 84, at: 0, text: "Stamina 84, out at 0", close: false }], dangerText: "Run out of stamina",
+      foeConds: [], foeArmor: null, yourArmor: null,
     };
     const html = renderEncounterGuide(e, false, { foe: "Prowling Monster Girl", rounds: [round, { ...round, round: 2 }], why: "<details class=\"warp-enc-why\"></details>" });
     expect(html).toContain("Last round");

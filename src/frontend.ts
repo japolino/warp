@@ -48,6 +48,8 @@ export function setup(ctx: SpindleFrontendContext) {
   let imageConnections: { id: string; name: string }[] = [];
   let jevKeySet = false;
   let builder: BuilderSession | null = null;
+  /** The installed rulebook, exported as one file (shown in the Ruleset tab until closed). */
+  let exported: { name: string; text: string } | null = null;
   let bDraft: BuilderDraft = emptyDraft();
   let busy = { chatId: "", on: false, label: "" };
   let editingBar: string | null = null;
@@ -405,7 +407,7 @@ export function setup(ctx: SpindleFrontendContext) {
     } else if (drawerView === "rules" && builder) {
       body = renderBuilder(builder, bDraft, templates, connections, status.state !== "none");
     } else if (drawerView === "rules") {
-      body = renderBuilderCta(status.state !== "none", hasChat) + renderRulesetCard(status, hasChat) + renderDepthCard(status) + `<div class="warp-card"><h3>Writing rules</h3><p>Rules live in entries titled <b>warp-ruleset · …</b> (or any lorebook named <b>warp-ruleset</b>). Each entry is YAML; entries merge together. Warp keeps them out of the prompt automatically.</p></div>`;
+      body = renderBuilderCta(status.state !== "none", hasChat, exported) + renderRulesetCard(status, hasChat) + renderDepthCard(status) + `<div class="warp-card"><h3>Writing rules</h3><p>Rules live in entries titled <b>warp-ruleset · …</b> (or any lorebook named <b>warp-ruleset</b>). Each entry is YAML; entries merge together. Warp keeps them out of the prompt automatically.</p></div>`;
     } else {
       body = renderSettings(settings, state?.status ?? null, connections, jevKeySet, imageConnections);
     }
@@ -808,6 +810,34 @@ export function setup(ctx: SpindleFrontendContext) {
     if (!cid) return true;
     switch (b.dataset.b) {
       case "open-build": drawerView = "rules"; send({ type: "builder_open", chatId: cid, mode: "build" }); break;
+      case "import": {
+        const text = drawerRoot.querySelector<HTMLTextAreaElement>("[data-import-text]")?.value ?? "";
+        if (!text.trim()) {
+          const ta = drawerRoot.querySelector<HTMLTextAreaElement>("[data-import-text]");
+          if (ta) { ta.placeholder = "Paste a rulebook (YAML) here, or choose a file first."; ta.focus(); }
+          break;
+        }
+        drawerView = "rules";
+        send({ type: "builder_import", chatId: cid, text });
+        break;
+      }
+      case "export": send({ type: "export_rulebook", chatId: cid }); break;
+      case "export-close": exported = null; renderDrawer(); break;
+      case "export-copy": {
+        const ta = drawerRoot.querySelector<HTMLTextAreaElement>("[data-export-text]");
+        if (!ta) break;
+        void navigator.clipboard?.writeText(ta.value).then(() => { b.textContent = "Copied ✓"; }, () => { ta.select(); b.textContent = "Press Ctrl+C"; });
+        break;
+      }
+      case "export-save": {
+        if (!exported) break;
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(new Blob([exported.text], { type: "text/yaml" }));
+        a.download = `${(b.dataset.name || "rulebook").replace(/[^\w -]+/g, "").trim() || "rulebook"}.warp.yaml`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+        break;
+      }
       case "open-refine": drawerView = "rules"; send({ type: "builder_open", chatId: cid, mode: "refine" }); break;
       case "open-deepen": drawerView = "rules"; tab.activate(); send({ type: "builder_open", chatId: cid, mode: "deepen" }); break;
       case "deepen": send({ type: "builder_deepen", chatId: cid, connectionId: bDraft.connectionId, effort: bDraft.effort }); break;
@@ -894,6 +924,16 @@ export function setup(ctx: SpindleFrontendContext) {
     }
     const use = t.closest<HTMLElement>("[data-use]");
     if (use) { if (!(use as HTMLButtonElement).disabled) act(use.dataset.use!); return; }
+    // Two taps for anything that can't be taken back (giving up a quest).
+    const sure = t.closest<HTMLElement>("[data-confirm-use]");
+    if (sure) {
+      if (sure.dataset.armed) { act(sure.dataset.confirmUse!); return; }
+      sure.dataset.armed = "1";
+      sure.textContent = "Really? Tap again";
+      sure.classList.add("warp-btn-danger");
+      setTimeout(() => { if (sure.isConnected) { delete sure.dataset.armed; sure.textContent = "Give up"; sure.classList.remove("warp-btn-danger"); } }, 4000);
+      return;
+    }
     const perk = t.closest<HTMLElement>("[data-buy-perk]");
     if (perk) { const cid = chatId(); if (cid) send({ type: "buy_perk", chatId: cid, perk: perk.dataset.buyPerk! }); return; }
     if (t.closest("[data-install]")) { void confirmReplace(); return; }
@@ -1038,6 +1078,15 @@ export function setup(ctx: SpindleFrontendContext) {
   function onPanelChange(e: Event) {
     const t = e.target as HTMLInputElement | HTMLSelectElement;
     if (onBuilderInput(t as HTMLInputElement)) return;
+    // A rulebook file picked for import: its text goes into the box to check and preview.
+    if ("importFile" in t.dataset) {
+      const file = (t as HTMLInputElement).files?.[0];
+      if (file) void file.text().then((text) => {
+        const ta = drawerRoot.querySelector<HTMLTextAreaElement>("[data-import-text]");
+        if (ta) ta.value = text;
+      });
+      return;
+    }
     if (t.dataset.dgMate) {
       if ((t as HTMLInputElement).checked) dgMates.add(t.dataset.dgMate); else dgMates.delete(t.dataset.dgMate);
       renderPick();
@@ -1286,6 +1335,11 @@ export function setup(ctx: SpindleFrontendContext) {
         if (m.command === "install") void confirmReplace();
         else if (m.command === "dungeon") openDungeon();
         else { drawerView = "sheet"; tab.activate(); }
+        break;
+      case "rulebook_export":
+        exported = { name: m.name, text: m.text };
+        drawerView = "rules";
+        renderDrawer();
         break;
       case "toast":
         // Backend normally uses native toasts; this is a fallback.

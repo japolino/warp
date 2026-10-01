@@ -6,7 +6,7 @@ import type { Template } from "./index.js";
 export const hometown: Template = {
   id: "hometown",
   name: "Hometown (life-sim)",
-  blurb: "Survival life-sim: Pain, Arousal, Fatigue, Stress, Trauma, Control and Allure described in words, graded skills, a calendar with weather and temperature, clothing that matters, townsfolk on schedules, a mugging encounter, and meters that feed into each other.",
+  blurb: "Survival life-sim: Pain, Arousal, Fatigue, Stress, Trauma, Control and Allure described in words, graded skills, a calendar with weather and temperature, clothing that matters, townsfolk on schedules with favours to ask (and long memories), odd jobs on the café corkboard, a mugging encounter, and meters that feed into each other.",
   parts: [
     {
       label: "core",
@@ -204,8 +204,9 @@ locations:
     exits: [high_street]
   high_street:
     name: High Street
-    desc: Shops, a café, a busy bus stop. Crowded by day, emptier at night.
+    desc: Shops, a café with a corkboard of odd jobs in the window, a busy bus stop. Crowded by day, emptier at night.
     exits: [apartment, campus, park, docks, the_strip]
+    board: true
   campus:
     name: University Campus
     desc: Lecture halls, a library, a gym with a pool.
@@ -227,9 +228,18 @@ locations:
     exits: [high_street]
 
 items:
-  phone: Phone
-  keys: Apartment keys
-  coffee: Coffee
+  phone:
+    name: Phone
+    keep: true
+    use: { label: Call a cab home (£12), when: "money >= 12 and not at('apartment')", time: 20, money: -12, stress: -3, move: apartment, hint: "{{user}} calls a cab and rides home." }
+  keys:
+    name: Apartment keys
+    keep: true
+    use: { label: Lock yourself in, when: "at('apartment')", time: 5, stress: -4, hint: "The sticky lock finally catches. {{user}} feels a little safer." }
+  coffee:
+    name: Coffee
+    tags: [consumable]
+    use: { label: Drink the coffee, time: 10, fatigue: -8, stress: -1 }
   # Clothing: slot, warmth, how revealing, traits.
   t_shirt: { name: T-shirt, slot: top, warmth: 2 }
   hoodie: { name: Hoodie, slot: top, warmth: 6 }
@@ -251,14 +261,15 @@ start:
   items: { hoodie: 1, skirt: 1 }
 
 conditions:
-  exhausted: { label: Exhausted, tone: bad, desc: Stress builds fast while this tired. }
+  # bonus: counts in every check that reads those stats while it lasts (negative = a penalty).
+  exhausted: { label: Exhausted, tone: bad, desc: Stress builds fast while this tired., bonus: { athletics: -10, studies: -10, dancing: -10 } }
   scared: { label: Scared, tone: bad, desc: Low control — trauma comes to the surface. }
-  shaken: { label: Shaken, tone: warn, desc: Recently overwhelmed. }
-  wanted: { label: Wanted, tone: bad, desc: The police are looking for you. }
-  cold: { label: Cold, tone: bad, desc: Underdressed for the weather. }
-  overheating: { label: Overheating, tone: warn, desc: Overdressed for the weather. }
-  soaked: { label: Soaked, tone: warn, desc: Caught in the rain without a coat. }
-  exposed: { label: Exposed, tone: bad, desc: Not decently covered in public. }
+  shaken: { label: Shaken, tone: warn, desc: Recently overwhelmed., bonus: { athletics: -5, skulduggery: -10 } }
+  wanted: { label: Wanted, tone: bad, desc: "The police are looking for you — every pickpocket is a bigger risk.", bonus: { skulduggery: -15 } }
+  cold: { label: Cold, tone: bad, desc: Underdressed for the weather., bonus: { athletics: -5, dancing: -5 } }
+  overheating: { label: Overheating, tone: warn, desc: Overdressed for the weather., bonus: { athletics: -5 } }
+  soaked: { label: Soaked, tone: warn, desc: Caught in the rain without a coat., bonus: { allure: -10 } }
+  exposed: { label: Exposed, tone: bad, desc: Not decently covered in public — nobody's slipping past unnoticed like this., bonus: { skulduggery: -20 } }
 `,
     },
     {
@@ -293,7 +304,7 @@ conditions:
     at: campus
     say: "*I find a quiet corner in the library and study.*"
     time: 60
-    check: { chance: 50 + studies / 2 - fatigue / 2, label: Studies }
+    check: { chance: 50 + studies / 2 - fatigue / 2 - arousal / 5, label: Studies }
     success: { studies: +1.2, hint: "The material clicks." }
     fail: { studies: +0.3, stress: +2, hint: "The words swim; very little sticks." }
   swim:
@@ -302,7 +313,9 @@ conditions:
     at: campus
     say: "*I swim laps in the university pool.*"
     time: 45
-    effects: { swimming: +1, athletics: +0.4, fatigue: +12, stress: -3 }
+    check: { chance: 55 + swimming / 2 - fatigue / 3, label: Swimming }
+    success: { athletics: +0.4, fatigue: +12, stress: -4, hint: "Smooth, steady laps." }
+    fail: { fatigue: +16, stress: +1, hint: "{{user}} swallows half the pool and climbs out spluttering." }
 
   jog:
     label: Go for a jog
@@ -349,13 +362,35 @@ conditions:
     time: 15
     effects: { money: -20, give: swimsuit }
   buy_coffee:
-    label: Buy a coffee (£3)
+    label: Buy a coffee to go (£3)
     group: Shops
     at: high_street
     when: money >= 3
-    say: "*I grab a coffee.*"
+    say: "*I grab a coffee to go.*"
     time: 10
-    effects: { money: -3, fatigue: -4 }
+    effects: { money: -3, give: coffee }
+
+  # Quest work: only offered while the job is taken.
+  hand_out_flyers:
+    label: Hand out club flyers
+    group: Work
+    at: [high_street, the_strip]
+    requires: { quest: flyers }
+    say: "*I stand on the corner pushing flyers into people's hands.*"
+    time: 60
+    check: { chance: 45 + allure / 2, label: Allure }
+    success: { progress: { flyers: 1 }, fatigue: +6, hint: "The stack goes down fast." }
+    fail: { fatigue: +8, stress: +3, hint: "Everyone walks straight past {{user}}." }
+  search_lawns:
+    label: Search the lawns for the lost ring
+    group: Park
+    at: park
+    requires: { quest: lost_ring }
+    say: "*I comb the grass by the duck pond, looking for a glint of gold.*"
+    time: 45
+    check: { chance: "30 + (between(hour, 8, 18) ? 15 : 0) - fatigue / 4", label: Luck }
+    success: { progress: { lost_ring: 1 }, hint: "Something glints in the grass — the ring." }
+    fail: { fatigue: +6, hint: "Bottle caps and a lot of mud." }
 
   pickpocket:
     label: Pick a pocket
@@ -623,6 +658,12 @@ encounters:
         check: { chance: 35 + athletics / 2 - fatigue / 3 - pain / 2, label: Athletics }
         success: { fatigue: +5, end: escaped }
         fail: { pain: +5, hint: "{{user}} is caught before getting far." }
+      jump_in:
+        label: Jump into the harbour
+        when: "at('docks')"
+        check: { chance: 30 + swimming / 2 - pain / 3, label: Swimming }
+        success: { end: swam_off }
+        fail: { pain: +8, fatigue: +10, hint: "The cold knocks the wind out of {{user}}, and they have to haul themselves back out." }
     foe_moves:
       grab: { desc: "Grabs and shoves {{user}}", weight: 2, pain: +8, stress: +4, damage: { top: 20 } }
       threaten: { desc: "Makes an ugly threat", weight: 2, stress: +6, control: -3 }
@@ -632,6 +673,7 @@ encounters:
       beaten: pain >= 80
     outcomes:
       won: { stress: -5, control: +5, flags: { fought_off_mugger: true }, hint: "The mugger loses their nerve and bolts." }
+      swam_off: { stress: +2, fatigue: +10, hint: "{{user}} comes up spluttering by the far ladder; the mugger is long gone." }
       robbed: { stress: +8, control: -8, hint: "They take the money and vanish." }
       escaped: { stress: +3, hint: "{{user}} gets clear." }
       beaten: { trauma: +5, money: "-min(money, 30)", hint: "{{user}} is left hurt on the pavement, pockets emptied." }
@@ -652,6 +694,72 @@ dungeons:
 `,
     },
     {
+      label: "quests",
+      yaml: `# Quests: favours the townsfolk ask (they remember how it went) and odd jobs pinned to the
+# café corkboard. Favours people ask for in the story itself are tracked too (from_story).
+quests:
+  jo_cover:
+    name: Cover Jo's shift
+    kind: favour
+    giver: jo
+    desc: Jo's other server quit. She needs someone behind the counter this week.
+    when: "rel('jo', 'trust') >= 15"
+    days: 3
+    goals:
+      - { text: Work a shift at the café, on: { action: cafe_shift, tier: [crit_success, success, partial, fail] } }
+    reward: { money: 20, rel: { jo: { trust: 8, love: 3 } } }
+    failure: { rel: { jo: { trust: -8 } } }
+    stakes: Jo has nobody else to ask.
+    remember: { done: "{{user}} covered for her when the café was short-staffed.", failed: "{{user}} said they'd cover her shift and never showed." }
+  ward_essay:
+    name: The overdue essay
+    kind: coursework
+    giver: professor_ward
+    desc: Professor Ward wants the essay on her desk by Friday — no extensions.
+    days: 4
+    goals:
+      - { text: Put in proper study sessions, count: 3, on: study }
+    reward: { studies: 3, stress: -5, rel: { professor_ward: { trust: 10 } } }
+    failure: { stress: 10, rel: { professor_ward: { trust: -12 } } }
+    stakes: A fail goes on {{user}}'s record, and Ward doesn't forget.
+  dex_package:
+    name: Hold a package for Dex
+    kind: favour
+    giver: dex
+    desc: A taped-up box. Keep it safe for a couple of days. Don't open it.
+    when: "rel('dex', 'trust') >= 20"
+    days: 2
+    goals:
+      - { text: Keep it safe and give it back unopened }
+    judge: { done: "{{user}} gives Dex his package back, unopened", fail: "{{user}} opens, loses or hands over Dex's package" }
+    start: { crime: +4 }
+    reward: { money: 40, rel: { dex: { trust: 10 } } }
+    failure: { stress: 8, rel: { dex: { trust: -20 } } }
+    stakes: Dex doesn't forgive, and the people he works for forgive less.
+  lost_ring:
+    name: Lost engagement ring
+    kind: errand
+    board: true
+    desc: "REWARD £50 — gold ring with a small stone, lost near the duck pond in Seaview Park."
+    days: 3
+    goals:
+      - { text: Find the ring in Seaview Park }
+    reward: { money: 50, stress: -3 }
+    stakes: Someone else will find it first.
+  flyers:
+    name: Hand out club flyers
+    kind: odd job
+    board: true
+    repeat: 3
+    desc: The new club on the Strip pays cash to get its name around.
+    days: 2
+    goals:
+      - { text: Hand out stacks of flyers, count: 2 }
+    reward: { money: 25 }
+    failure: { stress: 2 }
+`,
+    },
+    {
       label: "journal",
       yaml: `# Codex entries unlock as you play. Add "lore: [Lorebook entry title]" to one and that
 # lorebook entry stays off until the codex entry unlocks.
@@ -666,6 +774,7 @@ feats:
   first_pay: { name: First paycheque, desc: "Finish a shift at the café.", unlock: "flag('worked')", reward: { stress: -5 } }
   night_owl: { name: Night owl, desc: "Be out on the Strip after 2am.", unlock: "location == 'the_strip' and between(hour, 2, 5)" }
   stood_ground: { name: Stood your ground, desc: "Fight off a mugger.", unlock: "flag('fought_off_mugger')", reward: { control: +10 } }
+  good_neighbour: { name: Good neighbour, desc: "Come through on three favours or jobs.", unlock: "quests_done() >= 3", reward: { stress: -10, control: +5 } }
   well_dressed: { name: Dressed for it, desc: "Own a raincoat and a winter coat.", unlock: "has('raincoat') and has('winter_coat')" }
 `,
     },

@@ -3,11 +3,11 @@
 import type { ExprEnv, Value } from "./expr.js";
 import { evalBool, evalNumber, evaluate, identifiers } from "./expr.js";
 import { rollDice, seededRng, type Rng } from "./dice.js";
-import type { ActionDef, CheckDef, DecideSpec, Effect, NarratorGate, RandomEventDef, Ruleset, SeenReaction, Tier } from "./ruleset.js";
+import type { ActionDef, CheckDef, DecideSpec, Effect, NarratorGate, RandomEventDef, Requirement, Ruleset, SeenReaction, Tier } from "./ruleset.js";
 import { SEEN_REACTIONS } from "./ruleset.js";
 import { normalize, sample } from "./decide.js";
-import { emptyEffect, slug } from "./ruleset.js";
-import { applyEvent, cloneState, dayOf, encounterKey, foeName, formatClock, itemName, kinAge, makeEnv, personName, timeKey, usesOf, type EventSource, type GameState, type WarpEvent } from "./state.js";
+import { emptyEffect, percentOf, slug } from "./ruleset.js";
+import { applyEvent, cloneState, dayOf, encounterKey, foeName, formatClock, formatNumber, itemName, kinAge, makeEnv, personName, statMax, timeKey, usesOf, type EventSource, type GameState, type WarpEvent } from "./state.js";
 import { isLoss, thresholds } from "./encounter-view.js";
 import { checkGains, checkStats, DIFFICULTY_WORD, hardnessFrom, IMPROV, IMPROV_DIRECTION, improvAction, isDifficulty, practise, trainingGain } from "./freeform.js";
 import { endingDirection } from "./chronicle.js";
@@ -15,6 +15,7 @@ import { exposedSlots, isIndoors, presentPeople, revealOf, SCENE_HOLDS, sceneWor
 import { DATE_PREFIX } from "./date/types.js";
 import { activeSession, ADULT_KEY, resolveDate } from "./date/talk.js";
 import { JOB_PREFIX, obligationLife, PAY_PREFIX, resolveWork } from "./work.js";
+import { QUEST_PREFIX, questHooks, questLife, questOp, questProgress, resolveQuest, storyQuestNews, type StoryQuestNews } from "./quests.js";
 
 export interface CheckResult {
   label: string;
@@ -111,6 +112,12 @@ class Working {
   ) {}
   /** The cause stamped on events pushed right now (the "Why?" trace). */
   cause: string | null = null;
+  /** The move being resolved (perks that pierce armor look at it). */
+  action: ActionDef | null = null;
+  /** Whose turn it is in an encounter: blows on the foe's turn land on {{user}} (and their armor). */
+  turnOf: "player" | "foe" | null = null;
+  /** Statuses put on during their holder's own turn don't tick down until the next one. */
+  fresh = { player: new Set<string>(), foe: new Set<string>() };
   push(e: WarpEvent) {
     if (this.cause && !e.why) e = { ...e, why: this.cause };
     if (e.t === "stat" && e.d && e.set === undefined && e.src !== "manual" && e.src !== "start") {
@@ -226,9 +233,39 @@ export function usableItems(r: Ruleset, s: GameState): { id: string; a: ActionDe
   return out;
 }
 
+/** One unmet requirement, in words: "Lockpicking 30 (you have 18)", "Brann with you". */
+export function requirementText(r: Ruleset, s: GameState, q: Requirement): string {
+  const id = q.id ?? "";
+  switch (q.kind) {
+    case "stat": {
+      const def = r.stats[id];
+      const have = s.stats[id] ?? def?.start ?? 0;
+      return `${def?.label ?? id} ${formatNumber(q.n ?? 0)} (you have ${formatNumber(Math.floor(have * 10) / 10)})`;
+    }
+    case "with": return `${personName(r, s, id)} with you`;
+    case "has": return `${(q.n ?? 1) > 1 ? `${q.n}× ` : ""}${itemName(r, s, id)}`;
+    case "rel": return `${personName(r, s, id)}'s ${r.relStats[q.stat ?? ""]?.label ?? q.stat} at ${formatNumber(q.n ?? 0)}`;
+    case "quest": {
+      const name = r.quests[id]?.name ?? id;
+      return q.state === "active" ? `the quest "${name}"` : q.state === "done" ? `"${name}" done` : `"${name}" ${q.state}`;
+    }
+    case "flag": return `${q.state === "off" ? "not " : ""}${r.flags[id]?.label ?? id.replace(/_/g, " ")}`;
+    case "perk": return `★ ${r.perks[id]?.name ?? id}`;
+    default: return q.text ?? "the right moment";
+  }
+}
+
 /** A plain reason a choice is locked, read from simple conditions ("Needs a Cream Brioche"). */
 export function lockReason(r: Ruleset, s: GameState, a: ActionDef): string {
   if (a.whyNot) return a.whyNot;
+  if (a.requires.length) {
+    const env = makeEnv(r, s);
+    const unmet = a.requires.filter((q) => !evalBool(q.when, env, false));
+    const needs = unmet.filter((q) => q.kind !== "formula").map((q) => requirementText(r, s, q));
+    const other = unmet.filter((q) => q.kind === "formula").map((q) => requirementText(r, s, q));
+    const words = [needs.length ? `Needs ${needs.join(", ")}` : "", ...other].filter(Boolean).join(" · ");
+    if (words) return words;
+  }
   const need = [...(a.when ?? "").matchAll(/has\(\s*'([^']+)'/g)].map((m) => m[1]).filter((id) => !(s.items[id] > 0));
   if (need.length && /\bor\b/.test(a.when ?? "")) return `Needs ${need.map((id) => itemName(r, s, id)).join(" or ")}`;
   if (need.length) return `Needs ${need.map((id) => itemName(r, s, id)).join(" and ")}`;
@@ -340,11 +377,75 @@ export function usableAbilities(r: Ruleset, s: GameState): { id: string; a: Acti
 }
 
 /** The encounter's main meter (what a `harm:` wears down): the first foe stat whose threshold wins it. */
-function mainMeter(r: Ruleset, s: GameState): { stat: string; down: boolean } | null {
+export function mainMeter(r: Ruleset, s: GameState): { stat: string; down: boolean } | null {
   const enc = s.encounter ? r.encounters[s.encounter.id] : undefined;
   if (!enc) return null;
   const t = thresholds(enc).find((x) => x.foe && !isLoss(enc, x.outcome));
   return t ? { stat: t.stat, down: t.op.startsWith("<") } : null;
+}
+
+/** Player stats the current encounter can be lost on (pain, HP…): where "_" armor and plain damage over time land. */
+export function dangerStats(r: Ruleset, s: GameState): string[] {
+  const enc = s.encounter ? r.encounters[s.encounter.id] : undefined;
+  if (!enc) return [];
+  return [...new Set(thresholds(enc).filter((x) => !x.foe && isLoss(enc, x.outcome) && r.stats[x.stat]).map((x) => x.stat))];
+}
+
+/** {{user}}'s armor against blows to a stat: gear held (worn, for clothing) and conditions. "_" counts for what the fight beats you on. */
+export function playerArmor(r: Ruleset, s: GameState, stat: string): number {
+  const main = dangerStats(r, s).includes(stat);
+  const pick = (m: Record<string, number>) => (m[stat] ?? 0) + (main ? m._ ?? 0 : 0);
+  const worn = new Set(Object.values(s.worn));
+  let n = 0;
+  for (const [id, have] of Object.entries(s.items)) {
+    const it = r.items[id];
+    if (!it || have <= 0 || (it.slot && !worn.has(id))) continue;
+    n += pick(it.armor);
+  }
+  for (const id of Object.keys(s.conditions)) n += pick(r.conditions[id]?.armor ?? {});
+  return n;
+}
+
+/** The opponent's armor on a stat: its own, plus statuses on it (negative when sundered). */
+export function foeArmor(r: Ruleset, s: GameState, stat: string): number {
+  const enc = s.encounter ? r.encounters[s.encounter.id] : undefined;
+  if (!enc) return 0;
+  const main = mainMeter(r, s)?.stat === stat;
+  const pick = (m: Record<string, number>) => (m[stat] ?? 0) + (main ? m._ ?? 0 : 0);
+  let n = pick(enc.foe.armor);
+  for (const id of Object.keys(s.encounter!.conds ?? {})) n += pick(r.conditions[id]?.armor ?? {});
+  return n;
+}
+
+/** Armor a move ignores, from the perks held (a pierce rule matching its stats or tags). */
+function perkPierce(r: Ruleset, s: GameState, a: ActionDef | null): number {
+  if (!a) return 0;
+  const used = new Set(checkStats(r, a));
+  let n = 0;
+  for (const id of Object.keys(s.perks)) for (const rule of r.perks[id]?.rules ?? []) {
+    if (rule.kind !== "pierce") continue;
+    const fits = (!rule.stats.length && !rule.tags.length) || rule.stats.some((x) => used.has(x)) || rule.tags.some((t) => a.tags.includes(t));
+    if (fits) n += rule.amount;
+  }
+  return n;
+}
+
+/** Is this change to a foe stat a blow (toward what's good for the player)? */
+function hurtsFoe(def: { good: "high" | "low" | "none" } | undefined, d: number): boolean {
+  return def?.good === "high" ? d > 0 : def?.good === "none" ? false : d < 0;
+}
+
+/** Is this change to a player stat a blow (toward what's bad for them)? */
+function hurtsPlayer(r: Ruleset, stat: string, d: number): boolean {
+  const g = r.stats[stat]?.good;
+  return g === "high" ? d < 0 : g === "low" ? d > 0 : false;
+}
+
+/** "-25%" → a quarter of `max`; otherwise the formula's value. Whole numbers once they're bigger than one. */
+function amountOf(w: Working, v: string | number, extra: Record<string, Value>, max: number): number {
+  const p = percentOf(v);
+  const x = p !== null ? p * max : evalNumber(v, w.env(extra), 0);
+  return Math.abs(x) >= 1 && p !== null ? Math.round(x) : x;
 }
 
 /** A perk that steps in when this check fails: a reroll or a softened result, if it has uses left today. */
@@ -465,9 +566,20 @@ function flagValue(v: Value, env: ExprEnv): Value {
 
 function effectToEvents(w: Working, e: Effect, src: EventSource, extra: Record<string, Value>) {
   const r = w.r;
+  // A blow that lands more than once: on the foe's turn it's aimed at {{user}}, otherwise at the foe.
+  const hits = e.hits !== undefined ? Math.max(1, Math.min(10, Math.round(evalNumber(e.hits, w.env(extra), 1)))) : 1;
+  const foeTurn = !!w.s.encounter && w.turnOf === "foe";
   for (const [id, d] of Object.entries(e.stats)) {
-    const v = evalNumber(d, w.env(extra), 0);
-    if (v !== 0) w.push({ t: "stat", id, d: v, src });
+    const def = r.stats[id];
+    const v = amountOf(w, d, extra, def ? statMax(r, def, w.s) : 100);
+    if (v === 0) continue;
+    if (!foeTurn || !hurtsPlayer(r, id, v)) { w.push({ t: "stat", id, d: v, src }); continue; }
+    // The foe's blows meet {{user}}'s armor, hit by hit.
+    const armor = playerArmor(r, w.s, id);
+    const per = Math.max(0, Math.abs(v) - armor);
+    for (let i = 0; i < hits && per > 0; i++) w.push({ t: "stat", id, d: Math.sign(v) * per, src, ...(hits > 1 ? { note: `hit ${i + 1} of ${hits}` } : {}) });
+    if (armor > 0) announce(w, per > 0 ? `{{user}}'s armor takes ${Math.min(armor, Math.abs(v))} off ${hits > 1 ? "each hit" : "the blow"}.` : `{{user}}'s armor turns the blow aside — no ${def?.label ?? id} lost.`);
+    else if (hits > 1) announce(w, `It lands ${hits} times.`);
   }
   for (const [id, d] of Object.entries(e.set)) {
     w.push({ t: "stat", id, set: evalNumber(d, w.env(extra), 0), src });
@@ -491,9 +603,17 @@ function effectToEvents(w: Working, e: Effect, src: EventSource, extra: Record<s
   }
   if (e.move) w.push({ t: "move", to: e.move, src });
   for (const [id, dur] of Object.entries(e.addConditions)) {
-    w.push({ t: "cond", id, on: true, until: dur === null ? null : w.s.minutes + dur, src });
+    w.push(condOn(w, id, dur, src));
+    if (!foeTurn) w.fresh.player.add(id);
   }
   for (const id of e.removeConditions) if (w.s.conditions[id]) w.push({ t: "cond", id, on: false, src });
+  inflictEffects(w, e, src, extra);
+  for (const [id, op] of Object.entries(e.quest)) questOp(builderOf(w), id, op, src);
+  for (const [key, d] of Object.entries(e.progress)) questProgress(builderOf(w), key, Math.round(evalNumber(d, w.env(extra), 0)), src);
+  for (const [who, text] of Object.entries(e.remember)) {
+    const person = who === "target" && typeof extra.target === "string" ? extra.target : who;
+    if (person !== "target") w.push({ t: "memory", who: person, text: fillTarget(w, text, extra), src });
+  }
 
   // Clothing
   for (const id of e.wear) {
@@ -510,17 +630,34 @@ function effectToEvents(w: Working, e: Effect, src: EventSource, extra: Record<s
   // Encounters
   if (w.s.encounter) {
     const foeStats = r.encounters[w.s.encounter.id]?.foe.stats;
+    const blows: { stat: string; v: number }[] = [];
     for (const [stat, d] of Object.entries(e.foe)) {
       // An ability written for one kind of foe ("hp") simply misses one that doesn't have it.
       if (foeStats?.length && !foeStats.some((x) => x.id === stat)) continue;
-      const v = evalNumber(d, w.env(extra), 0);
-      if (v !== 0) w.push({ t: "foe", stat, d: v, src });
+      const v = amountOf(w, d, extra, foeStats?.find((x) => x.id === stat)?.max ?? 100);
+      if (v !== 0) blows.push({ stat, v });
     }
     if (e.harm !== undefined) {
-      const v = evalNumber(e.harm, w.env(extra), 0);
       const m = mainMeter(r, w.s);
-      if (v && m) w.push({ t: "foe", stat: m.stat, d: m.down ? -v : v, src });
+      const v = amountOf(w, e.harm, extra, (m && foeStats?.find((x) => x.id === m.stat)?.max) || 100);
+      if (v && m) blows.push({ stat: m.stat, v: m.down ? -v : v });
       else if (v && w.s.encounter.momentum !== undefined) w.push({ t: "swing", d: v, src });
+    }
+    const pierce = Math.max(0, (e.pierce !== undefined ? evalNumber(e.pierce, w.env(extra), 0) : 0) + (foeTurn ? 0 : perkPierce(r, w.s, w.action)));
+    for (const { stat, v } of blows) {
+      const fs = foeStats?.find((x) => x.id === stat);
+      // Healing, rallying and the like land once and ignore armor.
+      if (foeTurn || !hurtsFoe(fs, v)) { w.push({ t: "foe", stat, d: v, src }); continue; }
+      const raw = foeArmor(r, w.s, stat);
+      const armor = raw > 0 ? Math.max(0, raw - pierce) : raw;
+      const per = Math.max(0, Math.abs(v) - armor);
+      for (let i = 0; i < hits && per > 0; i++) w.push({ t: "foe", stat, d: Math.sign(v) * per, src, ...(hits > 1 ? { note: `hit ${i + 1} of ${hits}` } : {}) });
+      const foe = foeName(r, w.s);
+      if (raw > 0 && per === 0) announce(w, `${foe}'s armor stops it — ${fs?.label ?? stat} untouched.`);
+      else if (raw > 0 && armor < raw) announce(w, `It ${pierce >= raw ? "goes straight through" : "partly pierces"} ${foe}'s armor${hits > 1 ? ` and lands ${hits} times` : ""}.`);
+      else if (raw > 0) announce(w, `${foe}'s armor blunts ${hits > 1 ? `each of ${hits} hits` : "the blow"}.`);
+      else if (raw < 0) announce(w, `${foe} is wide open — it hits harder.`);
+      else if (hits > 1) announce(w, `It lands ${hits} times.`);
     }
     if (e.end) w.pendingEnd = e.end;
   }
@@ -586,6 +723,125 @@ function effectToEvents(w: Working, e: Effect, src: EventSource, extra: Record<s
   if (e.time) advanceTime(w, e.time, src);
   if (e.hint) announce(w, fillTarget(w, e.hint, extra));
   for (const d of e.decide) decide(w, d, src, extra);
+}
+
+// ───────────────────────── statuses: on the opponent, on people, ticking ─────────────────────────
+
+/** A condition put on {{user}}: in a fight a status counts rounds (and ends with it); elsewhere it lasts its minutes (or until cured). */
+function condOn(w: Working, id: string, minutes: number | null, src: EventSource): WarpEvent {
+  const def = w.r.conditions[id];
+  if (minutes === null && def?.rounds && w.s.encounter) return { t: "cond", id, on: true, until: null, rounds: def.rounds, src };
+  return { t: "cond", id, on: true, until: minutes === null ? (def?.lasts ? w.s.minutes + def.lasts : null) : w.s.minutes + minutes, src };
+}
+
+/** `inflict:` on the opponent (or whoever a per-person action is aimed at), `afflict:` on named people, `cleanse:` to lift them. */
+function inflictEffects(w: Working, e: Effect, src: EventSource, extra: Record<string, Value>) {
+  const r = w.r;
+  const target = typeof extra.target === "string" && extra.target ? extra.target : null;
+  for (const [id, spec] of Object.entries(e.inflict)) {
+    const def = r.conditions[id];
+    if (!def) continue;
+    const who = w.s.encounter ? foeName(r, w.s) : target ? personName(r, w.s, target) : null;
+    if (!who) continue;
+    if (spec.chance !== undefined) {
+      const chance = Math.max(0, Math.min(100, evalNumber(spec.chance, w.env(extra), 100)));
+      if (seededRng(`${w.seed}:inflict:${id}:${w.events.length}`)() * 100 >= chance) { announce(w, `${who} shrugs it off — not ${def.label.toLowerCase()}.`); continue; }
+    }
+    const n = spec.rounds !== undefined ? Math.max(1, Math.round(evalNumber(spec.rounds, w.env(extra), 1))) : null;
+    if (w.s.encounter) {
+      const rounds = n ?? def.rounds ?? null;
+      w.push({ t: "fcond", id, on: true, rounds, src });
+      if (w.turnOf === "foe") w.fresh.foe.add(id);
+      announce(w, `${who} is ${def.label.toLowerCase()}${rounds ? ` for ${rounds} round${rounds === 1 ? "" : "s"}` : ""}.`);
+    } else if (target) {
+      // Outside a fight the number is minutes.
+      const mins = n ?? def.lasts ?? null;
+      w.push({ t: "pcond", who: target, id, on: true, until: mins ? w.s.minutes + mins : null, src });
+      announce(w, `${who} is ${def.label.toLowerCase()}.`);
+    }
+  }
+  for (const [key, m] of Object.entries(e.afflict)) {
+    const who = key === "target" ? target : key;
+    if (!who) continue;
+    for (const [id, mins] of Object.entries(m)) {
+      const def = r.conditions[id];
+      if (!def) continue;
+      const len = mins ?? def.lasts ?? null;
+      w.push({ t: "pcond", who, id, on: true, until: len ? w.s.minutes + len : null, src });
+    }
+  }
+  for (const id of e.cleanse) {
+    if (w.s.encounter?.conds && id in w.s.encounter.conds) w.push({ t: "fcond", id, on: false, src });
+    else if (target && w.s.pconds?.[target]?.[id]) w.push({ t: "pcond", who: target, id, on: false, src });
+  }
+}
+
+/** Does a status cost its holder this turn? Rolls each lost-turn status they have; the first that lands says why. */
+function lostTurn(w: Working, side: "player" | "foe"): string | null {
+  const ids = side === "player" ? Object.keys(w.s.conditions) : Object.keys(w.s.encounter?.conds ?? {});
+  for (const id of ids) {
+    const def = w.r.conditions[id];
+    if (def?.skip === undefined) continue;
+    const chance = Math.max(0, Math.min(100, evalNumber(def.skip, w.env(), 100)));
+    if (seededRng(`${w.seed}:skip:${side}:${id}:${w.s.encounter?.round ?? 0}`)() * 100 < chance) return def.label;
+  }
+  return null;
+}
+
+/** Where damage over time lands on {{user}}: the status's own stat, else what the fight can be lost on, else the first health-like bar. */
+function playerDotStat(r: Ruleset, s: GameState, stat?: string): string | null {
+  if (stat && r.stats[stat]) return stat;
+  return dangerStats(r, s)[0] ?? r.hud.bars.find((id) => r.stats[id]?.good === "high" && r.stats[id].kind === "meter") ?? null;
+}
+
+/** One status ticking on {{user}}: damage (or healing) over time (scaled for hourly statuses) and its tick effect. */
+function tickPlayer(w: Working, id: string, scale = 1, ticks = 1) {
+  const def = w.r.conditions[id];
+  if (!def) return;
+  because(w, `${def.label} (status)`, () => {
+    if (def.dot !== undefined) {
+      const stat = playerDotStat(w.r, w.s, def.stat);
+      const dmg = amountOf(w, def.dot, {}, stat ? statMax(w.r, w.r.stats[stat], w.s) : 100) * scale;
+      if (stat && dmg) w.push({ t: "stat", id: stat, d: (w.r.stats[stat].good === "low" ? 1 : -1) * dmg, src: "trigger" });
+    }
+    for (let i = 0; i < ticks; i++) effectToEvents(w, def.tick, "trigger", {});
+  });
+}
+
+/** A round passes for one side: their statuses bite, then count down (unless they were put on this very turn). */
+function tickSide(w: Working, side: "player" | "foe") {
+  const enc = w.s.encounter;
+  if (!enc) return;
+  if (side === "player") {
+    for (const id of Object.keys(w.s.conditions)) {
+      const def = w.r.conditions[id];
+      if (def && def.every !== "hour") tickPlayer(w, id);
+    }
+    for (const [id, c] of Object.entries(w.s.conditions)) {
+      if (c.rounds === undefined || w.fresh.player.has(id)) continue;
+      w.push({ t: "cleft", side: "player", id, rounds: c.rounds - 1, src: "drift" });
+      if (c.rounds - 1 <= 0) announce(w, `{{user}} is no longer ${w.r.conditions[id]?.label.toLowerCase() ?? id}.`);
+    }
+    return;
+  }
+  const foe = foeName(w.r, w.s);
+  for (const id of Object.keys(enc.conds ?? {})) {
+    const def = w.r.conditions[id];
+    if (def?.dot === undefined) continue;
+    const m = mainMeter(w.r, w.s);
+    const stat = def.stat && w.r.encounters[enc.id]?.foe.stats.some((x) => x.id === def.stat) ? def.stat : m?.stat;
+    if (!stat) continue;
+    const fs = w.r.encounters[enc.id]?.foe.stats.find((x) => x.id === stat);
+    const dmg = amountOf(w, def.dot, {}, fs?.max ?? 100);
+    // Damage over time wears the meter the same way a blow would; negative heals.
+    const down = stat === m?.stat ? m.down : fs?.good !== "high";
+    if (dmg) because(w, `${def.label} (on ${foe})`, () => w.push({ t: "foe", stat, d: (down ? -1 : 1) * dmg, src: "trigger" }));
+  }
+  for (const [id, n] of Object.entries(w.s.encounter?.conds ?? {})) {
+    if (n === null || w.fresh.foe.has(id)) continue;
+    w.push({ t: "cleft", side: "foe", id, rounds: n - 1, src: "drift" });
+    if (n - 1 <= 0) announce(w, `${foe} is no longer ${w.r.conditions[id]?.label.toLowerCase() ?? id}.`);
+  }
 }
 
 // ───────────────────────── the living world ─────────────────────────
@@ -1040,6 +1296,7 @@ function endEncounter(w: Working, outcome: string, src: EventSource) {
   announce(w, `The encounter ends: ${outcome.replace(/_/g, " ")}.`);
   const eff = enc?.outcomes[outcome];
   if (eff) because(w, `${enc?.name ?? "Encounter"} ended: ${outcome.replace(/_/g, " ")}`, () => effectToEvents(w, eff, src, {}));
+  questHooks(builderOf(w), { kind: "encounter", id: s.id, result: outcome, good: !isLoss(enc, outcome) });
 }
 
 /** After the player's move: a round passes, the foe acts (odds from the decider or weights), then end checks. */
@@ -1049,7 +1306,14 @@ function encounterRound(w: Working, src: EventSource) {
   if (out) { endEncounter(w, out, src); return; }
   w.push({ t: "round", src });
   const enc = w.r.encounters[w.s.encounter.id];
-  if (enc?.foeMoves) decide(w, enc.foeMoves, src, {});
+  // The foe's turn: a status may cost it the move; its blows meet {{user}}'s armor; then its statuses bite and count down.
+  const prev = w.turnOf;
+  w.turnOf = "foe";
+  const lost = lostTurn(w, "foe");
+  if (lost) announce(w, `${foeName(w.r, w.s)} is ${lost.toLowerCase()} and loses the turn.`);
+  else if (enc?.foeMoves) decide(w, enc.foeMoves, src, {});
+  tickSide(w, "foe");
+  w.turnOf = prev;
   out = encounterOutcome(w);
   if (out) endEncounter(w, out, src);
 }
@@ -1103,8 +1367,19 @@ function advanceTime(w: Working, minutes: number, src: EventSource) {
     const d = (def.perHour * minutes) / 60;
     if (Math.abs(d) > 1e-9) w.push({ t: "stat", id, d, src: "drift", why: `${minutes >= 60 ? `${Math.round(minutes / 6) / 10}h` : `${minutes} min`} passed (${def.label} drifts ${def.perHour > 0 ? "+" : ""}${def.perHour}/h)` });
   }
+  // Hourly statuses: damage over time scales with the time that passed; tick effects run once per hour crossed.
+  const from = w.s.minutes - minutes;
+  for (const [id, c] of Object.entries(w.s.conditions)) {
+    if (w.r.conditions[id]?.every !== "hour") continue;
+    // Only the time it actually lasted counts.
+    const end = c.until !== null ? Math.min(w.s.minutes, c.until) : w.s.minutes;
+    if (end > from) tickPlayer(w, id, (end - from) / 60, Math.min(24, Math.floor(end / 60) - Math.floor(from / 60)));
+  }
   for (const [id, c] of Object.entries(w.s.conditions)) {
     if (c.until !== null && c.until <= w.s.minutes) w.push({ t: "cond", id, on: false, src: "drift", note: "expired" });
+  }
+  for (const [who, conds] of Object.entries(w.s.pconds ?? {})) for (const [id, c] of Object.entries(conds)) {
+    if (c.until !== null && c.until <= w.s.minutes) w.push({ t: "pcond", who, id, on: false, src: "drift", note: "expired" });
   }
 }
 
@@ -1146,6 +1421,7 @@ function runTriggers(w: Working, includeRepeat: boolean) {
   }
   openSecrets(w);
   openFrontStages(w);
+  questLife(builderOf(w));
 }
 
 // ───────────────────────── the turn ─────────────────────────
@@ -1259,7 +1535,11 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   // A conversation the player walked away from is over.
   if (before.date && !activeSession(r, before)) w.push({ t: "dt_end", src: "action" });
 
-  if (intent?.actionId === EXPLORE) {
+  let stunned: string | null = null;
+  if (intent?.actionId.startsWith(QUEST_PREFIX)) {
+    const label = because(w, "Quests", () => resolveQuest(builderOf(w), intent.actionId));
+    if (label) rec.action = { id: intent.actionId, label, via: intent.via };
+  } else if (intent?.actionId === EXPLORE) {
     if (canExplore(r, before)) {
       const loc = before.location!;
       const name = before.locationName ?? loc;
@@ -1293,8 +1573,19 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
       });
       if (dest.desc) w.hints.push(`Arriving at ${dest.name}: ${dest.desc}`);
     }
+  } else if (a && inEncounter && (stunned = lostTurn(w, "player"))) {
+    // A status costs {{user}} the turn: the move simply doesn't happen, and the foe still acts.
+    rec.action = { id: intent!.actionId, label: `${a.label} — ${stunned.toLowerCase()}, turn lost`, via: intent!.via };
+    w.hints.push(`{{user}} tries to ${a.label.toLowerCase()}, but is ${stunned.toLowerCase()} and loses the turn — it doesn't happen.`);
+    w.turnOf = "player";
+    advanceTime(w, 1, "action");
+    tickSide(w, "player");
+    encounterRound(w, "action");
+    beatSheet(w, encBase, rec, opts.playerText);
   } else if (a) {
     const who = found?.target;
+    w.action = a;
+    w.turnOf = inEncounter ? "player" : null;
     const extra = paramValues(a, intent!.params, who);
     const own = mind?.kind === "redirect" ? (who ? `${a.label} (${personName(r, before, who)})` : a.label) : null;
     const difficulty = improvised && isDifficulty(intent!.params?.difficulty) ? intent!.params!.difficulty : "fair";
@@ -1365,6 +1656,7 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
       const gear = gearFor(r, w.s, a).notes;
       if (gear.length) rec.check.gear = gear;
       if (perkNote) rec.check.perk = perkNote;
+      questHooks(builderOf(w), { kind: "action", id: a.id, result: tier, good: tier === "success" || tier === "crit_success" });
       const key = TIER_FALLBACK[tier].find((t) => a.outcomes[t]);
       if (key) because(w, `"${label}": ${rec.check.label} rolled ${rec.check.total}${target !== null ? ` vs ${target}` : ""} → ${TIER_LABEL[tier]}`, () => effectToEvents(w, a.outcomes[key]!, "check", extra));
       if (improvised) {
@@ -1380,6 +1672,7 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
       }
     } else {
       because(w, `"${label}"`, () => effectToEvents(w, a.effects, "action", extra));
+      questHooks(builderOf(w), { kind: "action", id: a.id, result: "success", good: true });
     }
 
     // Encounter rounds are quick; ordinary actions take the ruleset's default.
@@ -1392,14 +1685,22 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
       const tier: Tier | null = rec.check?.tier ?? (rec.mind?.kind === "fail" ? "fail" : null);
       const m = r.encounters[encBase.encounter!.id]?.momentum;
       if (m && tier && w.s.encounter?.momentum !== undefined) w.push({ t: "swing", d: m.swing[tier], src: "check" });
+      tickSide(w, "player");
       encounterRound(w, "action");
       beatSheet(w, encBase, rec, opts.playerText);
     }
+    w.action = null;
+    w.turnOf = null;
   } else if (inEncounter && w.s.encounter) {
     // Typed a non-move during an encounter: the opponent still gets their turn.
+    w.turnOf = "player";
+    tickSide(w, "player");
+    w.turnOf = null;
     encounterRound(w, "action");
     beatSheet(w, encBase, rec, opts.playerText);
   }
+  // Statuses that tick every turn (outside a fight; in one, rounds do it).
+  if (!inEncounter) for (const id of Object.keys(w.s.conditions)) if (r.conditions[id]?.every === "turn") tickPlayer(w, id);
 
   runTriggers(w, true);
   // The world moves with in-game time (without a clock, each turn counts as a day).
@@ -1458,6 +1759,10 @@ export interface Proposal {
   encounterEnd?: string;
   /** The story is sure this is a genuinely new incident, not the one that just ended. */
   encounterFresh?: boolean;
+  /** Quests the story handed out, finished or failed. */
+  quests?: StoryQuestNews;
+  /** Moments people will remember about {{user}}, by name. */
+  memories?: Record<string, string>;
 }
 
 /** What the story's changes are checked against: the exchange's text and the action that was taken. */
@@ -1589,7 +1894,7 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
 
   for (const id of p.conditions?.add ?? []) {
     const def = r.conditions[id];
-    if (def?.narrator && !w.s.conditions[id] && gateOpen(def.gate, w, ctx)) w.push({ t: "cond", id, on: true, until: null, src });
+    if (def?.narrator && !w.s.conditions[id] && gateOpen(def.gate, w, ctx)) w.push(condOn(w, id, null, src));
   }
   for (const id of p.conditions?.remove ?? []) {
     const def = r.conditions[id];
@@ -1652,6 +1957,16 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
   } else if (p.encounterEnd && w.s.encounter) {
     const name = r.encounters[w.s.encounter.id]?.name ?? "The encounter";
     because(w, `${name} ended`, () => endEncounter(w, slug(String(p.encounterEnd)), src));
+  }
+
+  // Quests the story handed out, finished or failed; moments people will remember.
+  if (p.quests && typeof p.quests === "object") because(w, "Quests", () => storyQuestNews(builderOf(w), p.quests!, (name) => findPerson(r, w.s, name)));
+  let remembered = 0;
+  for (const [who, text] of Object.entries(p.memories ?? {})) {
+    const id = findPerson(r, w.s, who);
+    if (!id || typeof text !== "string" || !text.trim() || remembered >= 3) continue;
+    w.push({ t: "memory", who: id, text: text.trim().slice(0, 200), src });
+    remembered++;
   }
 
   // Practice the story described: training, studying, rehearsing.

@@ -1,43 +1,75 @@
-// The ruleset format, condensed for a model to write against. Kept in code so
-// the AI builder and the engine can't drift apart.
+# Writing a Warp rulebook
 
-export const PART_LABELS = ["core", "stats", "people", "world", "actions", "encounters", "quests", "journal", "rules", "story", "dating"] as const;
-export type PartLabel = (typeof PART_LABELS)[number];
+<!-- Generated from src/engine/reference.ts and src/tools/rulebook-tools.ts by `bun run guide`. Don't edit by hand. -->
 
-/** What each lorebook entry ("part") holds. */
-export const PART_CONTENTS: Record<PartLabel, string> = {
-  core: "name, description, player, clock, start, hud, narration",
-  stats: "stats, growth",
-  people: "relationships (stats + people with schedules), companions, lineage",
-  world: "weather, locations, items (incl. clothing, uses and gear bonuses), item_uses, wardrobe, body, conditions, flags, start.items",
-  actions: "actions, improvise, obligations, jobs",
-  encounters: "encounters, dungeons",
-  quests: "quests (bounties on a notice board, favours people ask, story jobs: goals, deadline, reward, failure)",
-  journal: "codex, feats, perks, abilities, checkpoints, endings",
-  rules: "triggers, mind",
-  story: "secrets, fronts, random_events, live_choices",
-  dating: "dating (tastes, topics, venues), plus gift items and actions to get them",
-};
+This guide is for writing a rulebook **outside Lumiverse** — by hand, or with an agent harness (Claude Code, Codex, Cursor, Aider…) that can run the checker. Building in Lumiverse (Warp → Ruleset → Build with AI) uses the same format and the same checks.
 
-/** Which part an issue's "where" belongs to. */
-export function partForIssue(where: string): PartLabel {
-  const w = where.replace(/^warp-ruleset\s*·\s*/i, "");
-  const head = w.split(/[›,]/)[0].trim().toLowerCase();
-  if ((PART_LABELS as readonly string[]).includes(head)) return head as PartLabel;
-  if (head.startsWith("stats") || head.startsWith("growth")) return "stats";
-  if (["relationships", "people", "companions", "lineage"].some((k) => head.startsWith(k))) return "people";
-  if (["locations", "items", "item uses", "wardrobe", "weather", "conditions", "flags", "body"].some((k) => head.startsWith(k))) return "world";
-  if (["actions", "improvise", "obligations", "jobs"].some((k) => head.startsWith(k))) return "actions";
-  if (head.startsWith("encounters") || head.startsWith("dungeons")) return "encounters";
-  if (head.startsWith("quests")) return "quests";
-  if (["codex", "feats", "perks", "abilities", "checkpoints", "endings"].some((k) => head.startsWith(k))) return "journal";
-  if (head.startsWith("triggers") || head.startsWith("rules") || head.startsWith("mind")) return "rules";
-  if (["secrets", "fronts", "random events", "live choices"].some((k) => head.startsWith(k))) return "story";
-  if (head.startsWith("dating")) return "dating";
-  return "core";
-}
+## Tools
 
-export const REFERENCE = `WARP RULESET FORMAT (YAML). Numbers may be formulas in quotes. Meters are 0–100 unless there's a reason.
+```bash
+node dist/warp-rulebook.js guide            # this guide, as plain text
+node dist/warp-rulebook.js templates        # the starting templates
+node dist/warp-rulebook.js template questbound > rulebook.yaml
+node dist/warp-rulebook.js check rulebook.yaml
+node dist/warp-rulebook.js simulate rulebook.yaml
+node dist/warp-rulebook.js preview rulebook.yaml
+node dist/warp-rulebook.js mcp              # the same, as an MCP server over stdio
+```
+
+Without cloning: `npx -y github:japolino/warp check rulebook.yaml`. As an MCP server (Claude Code: `claude mcp add warp -- npx -y github:japolino/warp mcp`) it offers `warp_guide`, `warp_templates`, `warp_template`, `warp_check`, `warp_simulate` and `warp_preview`.
+
+## Workflow
+
+```text
+HOW TO WRITE A WARP RULEBOOK (with an agent harness or by hand)
+
+Warp is a game engine that runs underneath a roleplay chat in Lumiverse. The rulebook is YAML: stats, places,
+people, items, actions with dice checks, encounters, quests, statuses, perks and abilities, and the story machinery.
+The engine decides outcomes; the narrator model only writes them. A good rulebook is a GAME: every piece creates a
+decision, applies pressure or rewards play — and it fits the character card or setting it's for.
+
+1. Read the card (or the brief) and name the core loop before writing YAML: what the player does most days, what
+   pushes back, what they're working toward. Pick the systems that serve it (see the sections below).
+2. Start from the closest template (`warp-rulebook templates`, then `warp-rulebook template <id>`) or from scratch.
+   Templates are complete, balanced games — rename, retune, trim and extend rather than copying blindly.
+3. Write ONE file. Either plain YAML with all top-level keys, or documents headed "--- # <section>" (that's what
+   Warp's export writes). Sections: core, stats, people, world, actions, encounters, quests, journal, rules, story, dating.
+4. Run the checker after every meaningful change: `warp-rulebook check rulebook.yaml`
+   - Errors: the game can't run — fix all of them.
+   - Lint warnings: names that don't resolve, effects pointing at nothing — fix them.
+   - Balance: odds that are hopeless or automatic, meters that run away, encounters that are unwinnable or free.
+   - Depth audit: what doesn't connect (items that do nothing, stats nothing reads, quests nothing finishes…).
+     Aim for depth 90+; fix every [gap]; fix or knowingly accept each [thin].
+5. Simulate each encounter (`warp-rulebook simulate rulebook.yaml`): no route should be pointless, none a sure win,
+   and the escape should cost something. Tune numbers until random play wins roughly 30–70% of the time.
+6. Preview (`warp-rulebook preview rulebook.yaml`): the sidebar, choices and the narrator's view at the start.
+   Check it reads well: bands in words, choices with sensible odds, quests on offer, nothing confusing.
+7. Hand the file over. In Lumiverse: Warp → Ruleset → Import a rulebook (paste or choose the file) → review → Install.
+   It lands in the character's "warp-ruleset" lorebook, one entry per section, and can be refined there later.
+
+Rules of thumb: snake_case ids; meters 0–100 unless there's a reason; quote formulas that contain commas;
+in-world text in the card's voice; refer to the player as {{user}}. Never anything sexual involving anyone under 18 —
+Warp refuses to run a rulebook that declares minors alongside sexual actions.
+```
+
+## Sections
+
+- **core** — name, description, player, clock, start, hud, narration
+- **stats** — stats, growth
+- **people** — relationships (stats + people with schedules), companions, lineage
+- **world** — weather, locations, items (incl. clothing, uses and gear bonuses), item_uses, wardrobe, body, conditions, flags, start.items
+- **actions** — actions, improvise, obligations, jobs
+- **encounters** — encounters, dungeons
+- **quests** — quests (bounties on a notice board, favours people ask, story jobs: goals, deadline, reward, failure)
+- **journal** — codex, feats, perks, abilities, checkpoints, endings
+- **rules** — triggers, mind
+- **story** — secrets, fronts, random_events, live_choices
+- **dating** — dating (tastes, topics, venues), plus gift items and actions to get them
+
+## Format reference
+
+```yaml
+WARP RULESET FORMAT (YAML). Numbers may be formulas in quotes. Meters are 0–100 unless there's a reason.
 
 stats:            # kinds: meter (bar) | attribute | skill | money | hidden
   stress: { kind: meter, good: low, start: 0, per_hour: -0.5, narrator: 10, bands: { 0: You are calm., 30: You are stressed., 70: You are distressed. } }
@@ -218,7 +250,7 @@ discovery:        # exploring can turn up places the ruleset never had; each is 
   chance: 25                       # percent per try (formula); each fruitless try adds 10
   max: 12
   guide: "Small, grounded places: a back-alley bar, a hidden garden."
-observers:        # being seen: while \`when\` holds, each adult present reacts individually (the decision model reads them; children never take part)
+observers:        # being seen: while `when` holds, each adult present reacts individually (the decision model reads them; children never take part)
   when: "exposed > 0"
   crowd: 2                         # anonymous passers-by when outdoors
   reactions: { interested: { rel: { target: { lust: +4 } } }, disapproving: { rel: { target: { trust: -3 } } } }   # unnoticed | glance | interested | disapproving | predatory
@@ -361,7 +393,7 @@ live_choices:     # a writer phrases options for the moment; each must carry one
 STORY EFFECTS: front: { harbour_gangs: -20 }, reveal: [ward_accident] (opens its next stage), gauge: +30 (brings the next event closer).
 
 DATING (the "dating" part):
-dating:           # talk topic by topic (tastes stay hidden until learned), ask people out, go on outings. \`dating: true\` = all built-ins
+dating:           # talk topic by topic (tastes stay hidden until learned), ask people out, go on outings. `dating: true` = all built-ins
   love: love                       # relationship stat used as love (created if missing); fear: fear likewise
   romance: true                    # false = friendship only. Romance is never offered with anyone under 18 or of unknown age
   stages: { stranger: 0, acquaintance: 10, friend: 30, close: 55, partner: { at: 80, partner: true } }   # love (0–100 of its range) per rung; partner only through a returned confession
@@ -387,33 +419,31 @@ quest(id) ('' | 'active' | 'ready' | 'done' | 'failed'), quest_active(id), quest
 memories(person) (how many), cond_of(person, cond), foe_cond(cond), stat_max(stat), foe_max(stat),
 min, max, clamp, floor, ceil, round, abs.
 Operators: + - * / % < <= > >= == != and or not, a ? b : c. Strings in single quotes.
-`;
+```
 
-/**
- * How to use the format well — what each piece is FOR, what good looks like, and
- * the usual mistakes. The syntax above says what's possible; this says what's worth doing.
- */
-export const DESIGN_GUIDE = `WARP DESIGN GUIDE — what makes a ruleset worth playing.
+## Design guide
+
+**Warp design guide —** what makes a ruleset worth playing.
 A ruleset is a game the player feels through the story. Every piece should either create a decision, apply pressure, or reward play.
 Anything declared but connected to nothing is a broken promise: the player sees it and can't use it.
 
-## the core loop
+### the core loop
 Name it before writing YAML: what the player does most days, what pushes back, what they're working toward.
 Pressures (needs, money, threats, rivals) should pull against each other so choices cost something.
 
-## stats
+### stats
 Every stat needs a SOURCE (what raises it), a SINK (what lowers it), and a CONSEQUENCE (a check, trigger, ending or encounter that reads it).
 A meter nothing reads is decoration. Use per_hour drift for needs; narrator: lets the story nudge it within limits.
 Skills grow when checks read them — so every skill should appear in at least two checks, in different places.
 Mistake: ten meters that only the narrator touches. Fewer stats, each wired into play, beat many idle ones.
 
-## items
+### items
 Every item should DO something: a use: (an action with effects), a bonus: (gear that helps the checks that read a stat), a gift tag, or an action/encounter move that needs it (when: "has('x')").
 Read the item's description and make it true mechanically: "neutralizes scent, lowering visibility" → use: { visibility: -25, remove_condition: [scented] }.
 Consumables get uses: (charges); tools get keep: true. Give the player a way to GET each item that matters (start.items, shops via an action that costs money and gives it, loot, rewards).
 Mistake: flavour items in the starting inventory that no option ever offers — the player will look for the button.
 
-## encounters
+### encounters
 An encounter is a small puzzle with a visible goal. Give it:
 - a goal the player can read: end_when on a foe stat ("foe.resolve <= 0") the moves wear down, or goal: in words;
 - two or three ROUTES with different stats and trade-offs (talk / trick / force), plus an ESCAPE (a move with end: escaped, at a cost);
@@ -426,30 +456,30 @@ a status (inflict: poisoned — damage each round; stunned — it loses its turn
 percent damage (harm: "25%") cuts down big foes; a blood-price move costs hp: -5 for a big effect. The foe's moves should use the same tools on {{user}} (add_condition: [stunned], hits: 2).
 Mistake: three moves that all lower the same stat by the same amount; a defeat threshold above the stat's max; no way out.
 
-## abilities and perks
+### abilities and perks
 Abilities are the player's own moves — spells, techniques, tricks — not the place's. Give each a cost (mana, stamina, money), a limit (per_day / per_encounter) and a reason to use it now rather than a plain move: a buff (add_condition with a bonus:), harm: in a fight, a heal, a way out. Make power scale with a stat (check: "40 + arcana", harm: "6 + arcana / 5") so growth shows.
 Perks change how the player plays, not just a number: an edge in a situation the card has (night, crowds, a weapon), a rule bent (reroll, soften), a stat that rises slower or faster, an ability taught, something true the narrator shows (narrator:). The best ones trade off (drawback:). Use pick: 3 so every point is a choice between directions, give perk_points a source, and use excludes: for exclusive paths.
 Mistake: perks that are only "+2 stat" — that's a level-up, not a choice.
 
-## conditions
+### conditions
 A condition should change play: penalise a check (- 10 when cond('x')), open or close actions, feed an encounter, drive a trigger.
 Each needs a cause (add_condition somewhere) and a cure (an item, rest, time, a place) or a duration.
 Statuses do the work themselves: dot: (damage each round, or every: hour for bleeding and hunger pangs), skip: (a lost turn), armor:, bonus:, and rounds:/lasts: so they wear off.
 The same condition can sit on {{user}}, on the opponent (inflict:) or on someone in the story (inflict: on a per-person action — a sleeping draught, a love charm, a cold they caught).
 
-## places
+### places
 Every place needs a reason to go there: actions at: it, people scheduled there, a job, a shop, a dungeon entrance, a venue, a quest board.
 Connect them with exits so the map is walkable from the start.
 Put a notice board (board: true) somewhere central — a tavern, a guild hall, a station concourse, a school corridor, a café corkboard — so there's always work to find.
 Gate the best actions behind things the player can work toward, with requires: (a skill level, someone who has to come along, an item, a quest, trust) — a locked choice that says "Needs Lockpicking 30, Brann with you" is a goal, not a dead end.
 
-## people
+### people
 Give each tracked person a schedule (where they are by hour and day) so the player can find them, starting feelings that match the card, and — for companions — a goal and a daily choice so they live on their own.
 
-## money
+### money
 Money needs income (jobs, paid actions, loot) AND spending (shops, rent, bribes, fares). If either is missing it's just a number.
 
-## quests
+### quests
 Quests turn the loop into a story with goals: what someone wants done, what it pays, what failing costs — and who remembers.
 They fit any setting: slaying three goblins, the dragon of the plains, a delivery across town, cooking the best breakfast for someone, finding a lost cat, a case to crack, a contract to fulfil.
 Give each a clear way to WIN (goals the rules can see: count + on: an encounter or action, a when: formula, or judge: for what only the story can tell) and a clear way to FAIL (days:, fail:, quest: { id: fail } on a bad roll, judge: fail).
@@ -459,16 +489,15 @@ Mix sizes: a few small repeatable jobs on the board (repeat: 1), favours from th
 Scale rewards to the economy: the king's 50,000 is a life-changing sum only if daily work pays tens.
 Mistake: a quest with no way to fail; goals nothing counts toward; rewards that are only flavour text.
 
-## dating
+### dating
 The built-in topics and outings are modern (films, games, a café, an arcade). For any other setting, rewrite them under dating: — topics: { books_films: { label: Tales and songs, say: "*I ask {{target}} which ballads they know.*" }, games: false } and venues: for outings that exist there (fairs, taverns, tea houses, orbital gardens). Give people tastes (loves/likes/dislikes/hates) so conversations reward learning who they are.
 
-## flags and story machinery
+### flags and story machinery
 Set a flag only if something reads it (an action's when, a trigger, a codex unlock, a secret's stage). Fronts, secrets and random events make the world move without the player — use them to put pressure on the core loop.
 
-## checks
+### checks
 Odds should usually sit between 25% and 85% at the start and improve with skill; show the player what helps (skills, gear bonuses, conditions as penalties).
 Partial outcomes and costs make failures interesting: a fail should change something, not just waste a turn.
 
-## finishing
+### finishing
 You're done when every piece connects: run the audit and either fix each gap or say why it's deliberate. Simulate each encounter — no route should be pointless, none should be a guaranteed win, and the escape should cost something.
-`;

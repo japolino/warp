@@ -42,6 +42,8 @@ function effectsOf(r: Ruleset): Effect[] {
   Object.values(r.liveChoices.tags).forEach(addAction);
   Object.values(r.abilities).forEach((ab) => addAction(ab.action));
   for (const it of Object.values(r.items)) if (it.use) addAction(it.use);
+  for (const q of Object.values(r.quests)) { add(q.start); add(q.reward); add(q.failure); }
+  for (const c of Object.values(r.conditions)) add(c.tick);
   return out;
 }
 
@@ -118,6 +120,7 @@ export function reviewBalance(r: Ruleset): BalanceWarning[] {
   const touched = new Set<string>();
   const rolled = new Set(checkedActions(r).flatMap((a) => checkStats(r, a)));
   for (const e of effectsOf(r)) { Object.keys(e.stats).forEach((k) => touched.add(k)); Object.keys(e.set).forEach((k) => touched.add(k)); }
+  for (const c of Object.values(r.conditions)) if (c.dot !== undefined && c.stat) touched.add(c.stat);
   for (const id of r.statOrder) {
     const d = r.stats[id];
     if (d.kind === "money" && d.narrator > 0) continue;

@@ -225,7 +225,7 @@ async function proposeChanges(decider: Decider, r: Ruleset, p: Pending, reply: s
   const applied = p.outcome ? fillNames(p.outcome, p.player) : null;
   if (decider.id === "llm") return extract(r, p.after, p.playerText, reply, settings, userId, undefined, applied);
   if (decider.id === "rules") return null;
-  const { proposal, needsWriting } = await bookkeeping({ decider, r, s: p.after, playerText: p.playerText, reply, player: p.player, applied });
+  const { proposal, needsWriting } = await bookkeeping({ decider, r, s: p.after, playerText: p.playerText, reply, player: p.player, applied, storyQuests: settings.storyQuests });
   if (needsWriting.size) {
     const named = await extract(r, p.after, p.playerText, reply, settings, userId, needsWriting as Set<ExtractPart>, applied);
     if (named?.people) proposal.people = named.people;
@@ -234,6 +234,8 @@ async function proposeChanges(decider: Decider, r: Ruleset, p: Pending, reply: s
     if (named?.body) proposal.body = named.body;
     if (named?.feelings) proposal.feelings = { ...(proposal.feelings ?? {}), ...named.feelings };
     if (named?.used) proposal.used = { ...(proposal.used ?? {}), ...named.used };
+    if (named?.quests?.new?.length) proposal.quests = { ...(proposal.quests ?? {}), new: named.quests.new };
+    if (named?.memories) proposal.memories = named.memories;
   }
   return proposal;
 }

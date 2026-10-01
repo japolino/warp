@@ -26,7 +26,17 @@ export interface EncounterState {
   foeName?: string;
   /** In-game minute it started: tells one encounter from the next (uses per encounter). */
   at?: number;
+  /** Statuses on the opponent: rounds left (null = until the fight ends). */
+  conds?: Record<string, number | null>;
 }
+
+export type QuestStatus = "active" | "ready" | "done" | "failed";
+/** A quest the story handed out (it has no ruleset entry): what was asked, by whom, and what's at stake. */
+export interface StoryQuest { name: string; giver?: string; goal: string; fail?: string; stakes?: string }
+/** A quest taken: where it stands, when it was taken and is due, goal counts, and (for story quests) what it is. */
+export interface QuestState { st: QuestStatus; at: number; due: number | null; prog: Record<string, number>; story?: StoryQuest; ended?: number }
+/** Something a person remembers about {{user}}. */
+export interface Memory { text: string; at: number }
 
 /** Uses of something limited (an ability, a perk's reroll): today's count, and this encounter's. */
 export interface Charge { day: number; n: number; enc?: string; encN: number }
@@ -62,7 +72,14 @@ export interface GameState {
   location: string | null;
   locationName: string | null;
   minutes: number;
-  conditions: Record<string, { until: number | null }>;
+  /** until: the minute it wears off; rounds: encounter rounds left (rounds-only statuses end with the fight). */
+  conditions: Record<string, { until: number | null; rounds?: number }>;
+  /** Conditions on other people (drugged, sick, charmed…): person → condition → until. */
+  pconds: Record<string, Record<string, { until: number | null }>>;
+  /** Quests taken, done or failed. */
+  quests: Record<string, QuestState>;
+  /** What people remember about {{user}}, oldest first. */
+  memories: Record<string, Memory[]>;
   triggers: Record<string, boolean>;
   turn: number;
   /** Secret id → index of the highest stage the narrator has been told (−1 = none). */
@@ -141,7 +158,16 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "person"; id: string; name: string }
   | { t: "move"; to: string; name?: string }
   | { t: "time"; min: number }
-  | { t: "cond"; id: string; on: boolean; until?: number | null }
+  | { t: "cond"; id: string; on: boolean; until?: number | null; rounds?: number }
+  /** A status on the opponent (rounds null = until the fight ends), or taken off. */
+  | { t: "fcond"; id: string; on: boolean; rounds?: number | null }
+  /** Rounds left on a status, after a round passes. */
+  | { t: "cleft"; side: "player" | "foe"; id: string; rounds: number }
+  | { t: "pcond"; who: string; id: string; on: boolean; until?: number | null }
+  /** A quest moves on (st null: forgotten, so a repeatable one can be taken again). */
+  | { t: "quest"; id: string; st: QuestStatus | null; due?: number | null; story?: StoryQuest }
+  | { t: "qprog"; id: string; goal: string; d: number }
+  | { t: "memory"; who: string; text: string }
   | { t: "trig"; id: string; v: boolean }
   | { t: "turn" }
   | { t: "seed"; v: string }
@@ -216,6 +242,9 @@ const DG_LOG_KEPT = 12;
 
 const NEWS_KEPT = 30;
 
+/** Memories kept per person (the oldest fade first). */
+const MEMORIES_KEPT = 12;
+
 /** The unit random-event cooldowns are measured in: minutes with a clock, turns without. */
 export function timeKey(r: Ruleset, s: GameState): number {
   return r.clock.enabled ? s.minutes : s.turn;
@@ -273,6 +302,9 @@ export function initialState(r: Ruleset): GameState {
     scene: {},
     lastLocation: null,
     uses: {},
+    pconds: {},
+    quests: {},
+    memories: {},
   };
   // Obligations: the first payment is due `first` days in; its amount is read now.
   for (const o of Object.values(r.obligations)) {
@@ -365,7 +397,11 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       break;
     }
     case "enc":
-      if (!e.id && s.encounter) s.lastEncounter = { id: s.encounter.id, ...(s.encounter.foeName ? { foeName: s.encounter.foeName } : {}), outcome: e.outcome ?? "ended", at: s.minutes, loc: s.location };
+      if (!e.id && s.encounter) {
+        s.lastEncounter = { id: s.encounter.id, ...(s.encounter.foeName ? { foeName: s.encounter.foeName } : {}), outcome: e.outcome ?? "ended", at: s.minutes, loc: s.location };
+        // Statuses that only last rounds end with the fight.
+        for (const [id, c] of Object.entries(s.conditions)) if (c.rounds !== undefined && c.until === null) delete s.conditions[id];
+      }
       s.encounter = e.id ? { id: e.id, round: 0, foe: { ...(e.foe ?? {}) }, ...(e.momentum !== undefined ? { momentum: e.momentum } : {}), ...(e.foeName ? { foeName: e.foeName } : {}), at: s.minutes } : null;
       break;
     case "swing":
@@ -446,9 +482,59 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
     }
     case "time": s.minutes += Math.max(0, e.min); break;
     case "cond":
-      if (e.on) s.conditions[e.id] = { until: e.until ?? null };
+      if (e.on) s.conditions[e.id] = { until: e.until ?? null, ...(e.rounds !== undefined ? { rounds: e.rounds } : {}) };
       else delete s.conditions[e.id];
       break;
+    case "fcond": {
+      if (!s.encounter) break;
+      const conds = { ...(s.encounter.conds ?? {}) };
+      if (e.on) conds[e.id] = e.rounds ?? null; else delete conds[e.id];
+      s.encounter.conds = conds;
+      break;
+    }
+    case "cleft":
+      if (e.side === "player") {
+        const c = s.conditions[e.id];
+        if (!c) break;
+        if (e.rounds <= 0) delete s.conditions[e.id];
+        else s.conditions[e.id] = { ...c, rounds: e.rounds };
+      } else if (s.encounter?.conds && e.id in s.encounter.conds) {
+        const conds = { ...s.encounter.conds };
+        if (e.rounds <= 0) delete conds[e.id]; else conds[e.id] = e.rounds;
+        s.encounter.conds = conds;
+      }
+      break;
+    case "pcond": {
+      const all = { ...(s.pconds ?? {}) };
+      const mine = { ...(all[e.who] ?? {}) };
+      if (e.on) mine[e.id] = { until: e.until ?? null }; else delete mine[e.id];
+      if (Object.keys(mine).length) all[e.who] = mine; else delete all[e.who];
+      s.pconds = all;
+      break;
+    }
+    case "quest": {
+      const all = { ...(s.quests ?? {}) };
+      const cur = all[e.id];
+      if (e.st === null) delete all[e.id];
+      else if (e.st === "active" && (!cur || cur.st === "done" || cur.st === "failed")) {
+        all[e.id] = { st: "active", at: s.minutes, due: e.due ?? null, prog: {}, ...(e.story ? { story: e.story } : {}) };
+      } else if (cur) {
+        all[e.id] = { ...cur, st: e.st, ...(e.due !== undefined ? { due: e.due } : {}), ...(e.st === "done" || e.st === "failed" ? { ended: s.minutes } : {}) };
+      }
+      s.quests = all;
+      break;
+    }
+    case "qprog": {
+      const q = s.quests?.[e.id];
+      if (!q) break;
+      s.quests = { ...s.quests, [e.id]: { ...q, prog: { ...q.prog, [e.goal]: Math.max(0, (q.prog[e.goal] ?? 0) + e.d) } } };
+      break;
+    }
+    case "memory": {
+      const list = [...(s.memories?.[e.who] ?? []), { text: e.text, at: s.minutes }].slice(-MEMORIES_KEPT);
+      s.memories = { ...(s.memories ?? {}), [e.who]: list };
+      break;
+    }
     case "trig": s.triggers[e.id] = e.v; break;
     case "turn": s.turn += 1; break;
     case "secret": s.secrets[e.id] = Math.max(s.secrets[e.id] ?? -1, e.stage); break;
@@ -818,6 +904,20 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
         case "missed": return s.dues[a0]?.missed ?? 0;
         case "days_until": return s.dues[a0] ? Math.floor((s.dues[a0].due - s.minutes) / 1440) : 0;
         case "dates": return s.dating.dates[a0]?.count ?? 0;
+        // Quests: '' (not taken), 'active', 'ready' (to hand in), 'done' or 'failed'; goal counts; how many are done.
+        case "quest": return s.quests?.[a0]?.st ?? "";
+        case "quest_active": return s.quests?.[a0]?.st === "active" || s.quests?.[a0]?.st === "ready";
+        case "quest_done": return s.quests?.[a0]?.st === "done";
+        case "quest_failed": return s.quests?.[a0]?.st === "failed";
+        case "goal": return s.quests?.[a0]?.prog[String(args[1] ?? "")] ?? 0;
+        case "quests_done": return Object.entries(s.quests ?? {}).filter(([id, q]) => q.st === "done" && (!args.length || r.quests[id]?.kind === a0)).length;
+        // What people remember, and the conditions other people (or the opponent) are under.
+        case "memories": return s.memories?.[a0]?.length ?? 0;
+        case "cond_of": return !!s.pconds?.[a0]?.[String(args[1] ?? "")];
+        case "foe_cond": return !!s.encounter?.conds && a0 in s.encounter.conds;
+        // A stat's current maximum (for "25% of max" by hand), and the opponent's.
+        case "stat_max": return r.stats[a0] ? statMax(r, r.stats[a0], s) : 0;
+        case "foe_max": return s.encounter ? r.encounters[s.encounter.id]?.foe.stats.find((x) => x.id === a0)?.max ?? 0 : 0;
       }
       return undefined;
     },

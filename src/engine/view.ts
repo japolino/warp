@@ -8,11 +8,12 @@ import {
 } from "./state.js";
 import { practiceProgress } from "./freeform.js";
 import { encounterGuide, itemRelevance } from "./encounter-view.js";
-import { ABILITY_PREFIX, abilityStatus, actionPool, availableChoices, canExplore, EXPLORE, isAvailable, knowsAbility, LIVE_PREFIX, lockReason, odds, perkOffers, usableAbilities, usableItems, perkBlocker, RUN_EPILOGUE, TIER_LABEL, TRAVEL_PREFIX, travelTargets, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
+import { ABILITY_PREFIX, abilityStatus, actionPool, availableChoices, canExplore, dangerStats, EXPLORE, foeArmor, isAvailable, knowsAbility, LIVE_PREFIX, lockReason, mainMeter, odds, perkOffers, playerArmor, usableAbilities, usableItems, perkBlocker, RUN_EPILOGUE, TIER_LABEL, TRAVEL_PREFIX, travelTargets, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
+import { dueWords, effectWords, goalDone, questDef, questDigest, questOffers, questsToReport, QUEST_PREFIX } from "./quests.js";
 import {
   dateAt, exposedSlots, isIndoors, ordinal, personLocation, presentPeople, seasonAt, temperatureAt, warmthNeeded, warmthOf, weatherAt,
 } from "./world.js";
-import type { ChangeView, ChoiceView, ClothingView, HudView, MapView, RecordView, Tone } from "../shared/protocol.js";
+import type { ChangeView, ChoiceView, ClothingView, HudView, MapView, QuestView, RecordView, Tone } from "../shared/protocol.js";
 import { dungeonOf, dungeonsHere, levelOf, memberFighter } from "./dungeon/run.js";
 import { activeSession, dateDigest, dateMoves, moodOf, type DateMove } from "./date/talk.js";
 import { REACTION_LABEL } from "./date/types.js";
@@ -90,6 +91,10 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
       whereabouts: where ? r.locations[where]?.name ?? where : null,
       goal: r.companions[id]?.goal ?? null,
       bonds: Object.entries(s.bonds[id] ?? {}).filter(([b, v]) => s.people[b] && Math.abs(v) >= 25).map(([b, v]) => `${bondWord(v)} ${personName(r, s, b)}`),
+      conditions: Object.entries(s.pconds?.[id] ?? {}).map(([cid, c]) => ({
+        label: r.conditions[cid]?.label ?? cid, tone: r.conditions[cid]?.tone ?? "warn" as Tone, remaining: c.until !== null ? minutesLeft(c.until - s.minutes) : null,
+      })),
+      memories: (s.memories?.[id] ?? []).slice().reverse().slice(0, 5).map((m) => ({ text: m.text, when: r.clock.enabled ? formatClock(r, m.at).day : null })),
     };
   }).sort((a, b) => Number(b.present) - Number(a.present));
 
@@ -153,6 +158,11 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
         const p = pct(v, 0, fs.max);
         return { id: fs.id, label: fs.label, value: v, max: fs.max, pct: p, tone: toneFromPct(p, fs.good === "none" ? "none" : fs.good === "high" ? "high" : "low") };
       }),
+      foeConds: Object.entries(s.encounter.conds ?? {}).map(([id, n]) => ({
+        id, label: r.conditions[id]?.label ?? id, tone: r.conditions[id]?.tone ?? "warn" as Tone, rounds: n, ...(r.conditions[id]?.desc ? { desc: r.conditions[id].desc } : {}),
+      })),
+      foeArmor: (() => { const m = mainMeter(r, s); const n = m ? foeArmor(r, s, m.stat) : 0; return n ? n : null; })(),
+      yourArmor: (() => { const d = dangerStats(r, s)[0]; const n = d ? playerArmor(r, s, d) : 0; return n ? n : null; })(),
     };
   }
 
@@ -164,7 +174,7 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
       label: def?.label ?? id,
       tone: def?.tone ?? "warn",
       desc: def?.desc,
-      remaining: left !== null && left > 0 ? (left >= 60 ? `${Math.round(left / 60)}h` : `${left}m`) : undefined,
+      remaining: c.rounds !== undefined ? `${c.rounds} round${c.rounds === 1 ? "" : "s"}` : left !== null && left > 0 ? minutesLeft(left) : undefined,
     };
   });
 
@@ -183,6 +193,7 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
     people,
     items,
     conditions,
+    quests: questViews(r, s),
     warmth,
     outfit,
     clothing,
@@ -232,6 +243,56 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
     } : null,
     turn: s.turn,
   };
+}
+
+function agoWords(min: number): string {
+  if (min < 60) return "just now";
+  if (min < 1440) return `${Math.round(min / 60)}h ago`;
+  const d = Math.round(min / 1440);
+  return d === 1 ? "yesterday" : `${d} days ago`;
+}
+
+function minutesLeft(left: number): string {
+  return left >= 1440 ? `${Math.round(left / 1440)}d` : left >= 60 ? `${Math.round(left / 60)}h` : `${Math.max(1, Math.round(left))}m`;
+}
+
+/** Quests for the journal: offered here first, then under way, then the last few that ended. */
+function questViews(r: Ruleset, s: GameState): QuestView[] {
+  const reportable = new Set(questsToReport(r, s).map((x) => x.id));
+  const view = (id: string, status: QuestView["status"], from: string | null): QuestView | null => {
+    const q = questDef(r, s, id);
+    if (!q) return null;
+    const st = s.quests?.[id];
+    const left = st?.due !== null && st?.due !== undefined && (status === "active" || status === "ready") ? st.due - s.minutes : null;
+    const giver = q.giver ? personName(r, s, q.giver) : null;
+    const reward = effectWords(r, s, q.reward) || (st?.story && giver ? `${giver} will think better of you` : "");
+    const price = effectWords(r, s, q.failure);
+    return {
+      id, name: q.name, kind: q.kind, status, giver, desc: q.desc ?? null,
+      goals: q.goals.map((g) => ({
+        text: g.text,
+        done: status === "done" || (!!st && status !== "offered" && goalDone(r, s, st, g)),
+        progress: g.count && g.count > 1 ? `${Math.min(st?.prog[g.id] ?? 0, g.count)}/${g.count}` : null,
+        optional: g.optional,
+      })),
+      due: left !== null ? dueWords(left) : status === "offered" && q.days ? `${q.days} day${q.days === 1 ? "" : "s"} to do it` : null,
+      dueTone: left === null ? "neutral" : left < 1440 ? "bad" : left < 2880 ? "warn" : "neutral",
+      reward: reward || null,
+      stakes: q.stakes ?? (price ? `If it fails: ${price}` : st?.story && giver ? `${giver} will remember if you don't` : null),
+      story: !!st?.story,
+      take: status === "offered" ? `${QUEST_PREFIX}take:${id}` : null,
+      report: status === "ready" && reportable.has(id) ? `${QUEST_PREFIX}report:${id}` : null,
+      drop: status === "active" || status === "ready" ? `${QUEST_PREFIX}drop:${id}` : null,
+      from,
+    };
+  };
+  const out: (QuestView | null)[] = questOffers(r, s).map((o) => view(o.id, "offered", o.via === "giver" ? o.from : o.via === "board" ? "Notice board" : s.locationName));
+  const taken = Object.entries(s.quests ?? {});
+  for (const [id, st] of taken) if (st.st === "active" || st.st === "ready") out.push(view(id, st.st, null));
+  taken.filter(([, st]) => st.st === "done" || st.st === "failed")
+    .sort((a, b) => (b[1].ended ?? 0) - (a[1].ended ?? 0)).slice(0, 6)
+    .forEach(([id, st]) => out.push(view(id, st.st, null)));
+  return out.filter((x): x is QuestView => !!x);
 }
 
 /** A radial map: the start location in the middle, neighbours around it (authored `pos:` wins). */
@@ -347,7 +408,7 @@ export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; 
   const lines = new Set(opts.lines.map((v) => v.toLowerCase()));
   // Choices written for this moment come first; their tag decides the check and the odds.
   const live: ChoiceView[] = [];
-  const plain = (id: string, label: string, group: string, desc: string | null = null): ChoiceView =>
+  const plain = (id: string, label: string, group: string | null, desc: string | null = null): ChoiceView =>
     ({ id, label, group, desc, odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [] });
   // The story has ended: see it written, rewind, start over, or (unless hard mode) keep going.
   if (s.ended) {
@@ -427,18 +488,40 @@ export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; 
         params: a.params.map((p) => ({ id: p.id, label: p.label, options: Object.keys(p.options), default: p.default })),
       };
     });
-  // Encounter moves that are out of reach say why, when it's something the player could fix (an item, say).
+  // Moves out of reach say why, when it's something the player could work toward: an item, a skill level, someone to bring.
   const locked: ChoiceView[] = [];
-  if (s.encounter) {
-    const pool = actionPool(r, s);
-    for (const id of pool.order) {
-      const a = pool.defs[id];
-      if (a.hidden || a.perPerson || isAvailable(r, s, a) || a.tags.some((t) => lines.has(t))) continue;
-      if (!a.whyNot && !/has\(/.test(a.when ?? "")) continue;
-      locked.push({ ...plain(id, a.label, encName ?? "Encounter", a.desc ?? null), locked: lockReason(r, s, a) });
-    }
+  const pool = actionPool(r, s);
+  for (const id of pool.order) {
+    const a = pool.defs[id];
+    if (a.hidden || a.perPerson || a.tags.some((t) => lines.has(t))) continue;
+    if (!s.encounter && (!a.showLocked || (a.at.length && !a.at.includes(s.location ?? "")))) continue;
+    if (s.encounter && !a.showLocked && !a.whyNot && !/has\(/.test(a.when ?? "")) continue;
+    if (isAvailable(r, s, a)) continue;
+    locked.push({ ...plain(id, a.label, encName ?? a.group ?? null, a.desc ?? null), locked: lockReason(r, s, a) });
   }
-  return [...live, ...actions, ...abilityChoices(r, s, lines), ...itemChoices(r, s, lines), ...locked, ...talk, ...work, ...dungeons, ...travel, ...explore];
+  return [...live, ...actions, ...abilityChoices(r, s, lines), ...itemChoices(r, s, lines), ...locked, ...questChoices(r, s), ...talk, ...work, ...dungeons, ...travel, ...explore];
+}
+
+/** Quests to hand in here, and a few on offer (from whoever's here first, then the board). */
+function questChoices(r: Ruleset, s: GameState): ChoiceView[] {
+  if (s.encounter || s.job || s.ended || s.dungeon) return [];
+  const plain = (id: string, label: string, desc: string | null, why?: string): ChoiceView =>
+    ({ id, label, group: "Quests", desc, odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [], ...(why ? { why } : {}) });
+  const out: ChoiceView[] = [];
+  for (const { id, to } of questsToReport(r, s)) {
+    const q = questDef(r, s, id);
+    if (!q) continue;
+    const reward = effectWords(r, s, q.reward);
+    out.push(plain(`${QUEST_PREFIX}report:${id}`, to ? `Tell ${to}: "${q.name}" is done` : `Hand in "${q.name}"`, q.desc ?? null, reward ? `Reward: ${reward}` : undefined));
+  }
+  const offers = questOffers(r, s).sort((a, b) => Number(b.via === "giver") - Number(a.via === "giver")).slice(0, 3);
+  for (const o of offers) {
+    const q = r.quests[o.id];
+    const reward = effectWords(r, s, q.reward);
+    const label = o.via === "giver" ? `${o.from} asks: "${q.name}"` : o.via === "board" ? `Notice: "${q.name}"` : `"${q.name}"`;
+    out.push(plain(`${QUEST_PREFIX}take:${o.id}`, label, q.desc ?? null, [reward ? `Reward: ${reward}` : "", q.days ? `${q.days}d` : ""].filter(Boolean).join(" · ") || undefined));
+  }
+  return out;
 }
 
 /** "8 Mana, 5 Stamina": what using something costs, from its `cost:`. */
@@ -486,7 +569,8 @@ function perkViews(r: Ruleset, s: GameState): HudView["perks"] {
       if (Object.keys(p.bonus).length) notes.push(plus(p.bonus));
       for (const e of p.edges) notes.push(`${plus(e.stats)}${e.when ? " (sometimes)" : ""}`);
       for (const rule of p.rules) {
-        if ("stat" in rule) notes.push(`${r.stats[rule.stat]?.label ?? rule.stat} ${rule.kind === "gains" ? "rises" : "drops"} ${Math.round(Math.abs(rule.pct) * 100)}% ${rule.pct > 0 ? "faster" : "slower"}`);
+        if (rule.kind === "pierce") notes.push(`Ignores ${rule.amount >= 999 ? "all" : rule.amount} armor${rule.stats.length || rule.tags.length ? ` (${[...rule.stats.map((x) => r.stats[x]?.label ?? x), ...rule.tags].join(", ")})` : ""}`);
+        else if ("stat" in rule) notes.push(`${r.stats[rule.stat]?.label ?? rule.stat} ${rule.kind === "gains" ? "rises" : "drops"} ${Math.round(Math.abs(rule.pct) * 100)}% ${rule.pct > 0 ? "faster" : "slower"}`);
         else {
           const left = rule.perDay ? rule.perDay - usesOf(s, `perk:${p.id}:${rule.kind}`).today : null;
           notes.push(`${rule.kind === "reroll" ? "Rerolls a failure" : "Softens a failure"}${rule.perDay ? ` ${rule.perDay}×/day${s.perks[p.id] ? ` (${Math.max(0, left!)} left)` : ""}` : ""}`);
@@ -579,9 +663,41 @@ export function summarizeEvents(r: Ruleset, before: GameState, after: GameState,
       case "cond": {
         const label = r.conditions[e.id]?.label ?? e.id;
         if (e.note === "expired") break;
-        out.push({ text: e.on ? `${label}` : `${label} ended`, tone: e.on ? r.conditions[e.id]?.tone ?? "warn" : "good", src: e.src, undo: [i] });
+        out.push({ text: e.on ? `${label}${e.rounds ? ` · ${e.rounds} rounds` : ""}` : `${label} ended`, tone: e.on ? r.conditions[e.id]?.tone ?? "warn" : "good", src: e.src, undo: [i] });
         break;
       }
+      case "fcond": {
+        // A bad status on the opponent is good news for {{user}}.
+        const def = r.conditions[e.id];
+        const foe = (after.encounter ?? before.encounter) ? foeName(r, after.encounter ? after : before) : "Foe";
+        const tone: Tone = !e.on ? "neutral" : def?.tone === "bad" ? "good" : def?.tone === "good" ? "bad" : "neutral";
+        out.push({ text: e.on ? `${foe}: ${def?.label ?? e.id}${e.rounds ? ` · ${e.rounds} rounds` : ""}` : `${foe}: ${def?.label ?? e.id} ended`, tone, src: e.src, undo: [i] });
+        break;
+      }
+      case "pcond": {
+        if (e.note === "expired") break;
+        const label = r.conditions[e.id]?.label ?? e.id;
+        out.push({ text: `${personName(r, after, e.who)}: ${label}${e.on ? "" : " ended"}`, tone: "neutral", src: e.src, undo: [i] });
+        break;
+      }
+      case "quest": {
+        if (e.st === null) break;
+        const name = (e.story?.name ?? r.quests[e.id]?.name ?? questDef(r, after, e.id)?.name) ?? e.id;
+        const text = e.st === "active" ? `📜 New quest: ${name}` : e.st === "ready" ? `📜 ${name}: ready to hand in` : e.st === "done" ? `✅ Quest complete: ${name}` : `✗ Quest failed: ${name}`;
+        out.push({ text, tone: e.st === "failed" ? "bad" : e.st === "done" || e.st === "ready" ? "good" : "neutral", src: e.src, undo: [i] });
+        break;
+      }
+      case "qprog": {
+        const q = questDef(r, after, e.id);
+        const g = q?.goals.find((x) => x.id === e.goal);
+        if (!q || !g) break;
+        const n = after.quests?.[e.id]?.prog[e.goal] ?? 0;
+        out.push({ text: `📜 ${g.text}${g.count && g.count > 1 ? ` ${Math.min(n, g.count)}/${g.count}` : " ✓"}`, tone: "good", src: e.src, undo: [i] });
+        break;
+      }
+      case "memory":
+        out.push({ text: `💭 ${personName(r, after, e.who)} will remember that`, tone: "neutral", src: e.src, undo: [i], why: [e.text] });
+        break;
       case "person":
         out.push({ text: `Met ${e.name}`, tone: "neutral", src: e.src, undo: [i] });
         break;
@@ -800,6 +916,11 @@ export function stateDigest(r: Ruleset, s: GameState): string {
   if (hud.encounter) {
     const e = hud.encounter;
     lines.push(`ENCOUNTER in progress: ${e.name} vs ${e.foe}, round ${e.round}${e.stats.length ? ` — ${e.stats.map((x) => `${x.label} ${formatNumber(x.value)}/${formatNumber(x.max)}`).join(", ")}` : ""}${e.momentum !== null ? ` — momentum ${e.momentum > 0 ? "+" : ""}${Math.round(e.momentum)} (−100 = ${e.foe} wins, +100 = {{user}} wins)` : ""}`);
+    const on = [
+      ...e.foeConds.map((c) => `${c.label.toLowerCase()}${c.rounds ? ` (${c.rounds} round${c.rounds === 1 ? "" : "s"})` : ""}`),
+      ...(e.foeArmor ? [`armored (${e.foeArmor})`] : []),
+    ];
+    if (on.length) lines.push(`${e.foe} is ${on.join(", ")}.`);
   }
 
   if (hud.outfit) {
@@ -845,13 +966,21 @@ export function stateDigest(r: Ruleset, s: GameState): string {
   const ol = other.map((d) => statLine(r, d, s, r.narration.numbers)).filter(Boolean);
   if (ol.length) lines.push(`Skills: ${ol.join(" · ")}`);
 
-  const conds = Object.keys(s.conditions).map((id) => r.conditions[id]?.label ?? id);
+  const conds = Object.entries(s.conditions).map(([id, c]) => `${r.conditions[id]?.label ?? id}${c.rounds !== undefined ? ` (${c.rounds} round${c.rounds === 1 ? "" : "s"})` : ""}`);
   if (conds.length) lines.push(`Conditions: ${conds.join(", ")}`);
   // What's true of {{user}} because of their perks, and what they can do: the story should show both.
   const perks = Object.keys(s.perks).map((id) => r.perks[id]).filter((p) => p);
   if (perks.length) lines.push(`Perks: ${perks.map((p) => (p.narrator ? `${p.name} — ${p.narrator}` : p.name)).join("; ")}`);
   const known = Object.values(r.abilities).filter((ab) => knowsAbility(r, s, ab.id));
   if (known.length) lines.push(`{{user}}'s own abilities (they work as the rules say; only the rules decide when one is used): ${known.map((ab) => `${ab.name}${ab.desc ? ` (${ab.desc})` : ""}`).join("; ")}`);
+  // Quests: what {{user}} is working on, and work on offer from the people here (they may bring it up).
+  const quests = questDigest(r, s);
+  if (quests.length) lines.push(`Quests under way (only the rules decide when one is done or failed): ${quests.join(" | ")}`);
+  const offers = questOffers(r, s);
+  const asks = offers.filter((o) => o.via === "giver").map((o) => `${o.from} ("${r.quests[o.id].name}"${r.quests[o.id].desc ? ` — ${r.quests[o.id].desc}` : ""})`);
+  if (asks.length) lines.push(`Has something to ask of {{user}} (may bring it up when it fits; {{user}} decides whether to take it on): ${asks.join("; ")}`);
+  const posted = offers.filter((o) => o.via === "board").map((o) => `"${r.quests[o.id].name}"`);
+  if (posted.length) lines.push(`Posted on the notice board here: ${posted.join(", ")}`);
 
   const wornSet = new Set(Object.values(s.worn));
   const loose = Object.entries(s.items).filter(([id]) => !wornSet.has(id));
@@ -888,6 +1017,12 @@ export function stateDigest(r: Ruleset, s: GameState): string {
   // Only the people in the scene are "in play"; the rest are named apart so the narrator doesn't write them back in.
   const inScene = hud.people.filter((p) => p.present);
   if (inScene.length) lines.push(`Relationships (here): ${inScene.map((p) => feel(p.id, p.name)).join("; ")}`);
+  // What the people here are going through, and what they remember about {{user}}: the story should show both.
+  for (const p of inScene) {
+    if (p.conditions.length) lines.push(`${p.name} is ${p.conditions.map((c) => c.label.toLowerCase()).join(", ")}.`);
+    const mem = (s.memories?.[p.id] ?? []).slice(-3).map((m) => `${m.text}${r.clock.enabled ? ` (${agoWords(s.minutes - m.at)})` : ""}`);
+    if (mem.length) lines.push(`${p.name} remembers: ${mem.join("; ")}`);
+  }
   const away = hud.people.filter((p) => !p.present)
     .sort((a, b) => (s.scene[b.id]?.at ?? -1) - (s.scene[a.id]?.at ?? -1))
     .slice(0, 8);

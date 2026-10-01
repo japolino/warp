@@ -1303,6 +1303,8 @@ class Ctx3 {
     if (typeof v === "boolean")
       return v ? 1 : 0;
     const s = String(v);
+    if (percentOf(s) !== null)
+      return s.trim();
     try {
       compile(s);
       return s;
@@ -1311,6 +1313,46 @@ class Ctx3 {
       return;
     }
   }
+}
+function percentOf(v) {
+  if (typeof v !== "string")
+    return null;
+  const m = /^\s*([+-]?)\s*(\d+(?:\.\d+)?)\s*%\s*$/.exec(v);
+  return m ? (m[1] === "-" ? -1 : 1) * Number(m[2]) / 100 : null;
+}
+function diceExpr(v) {
+  if (typeof v !== "string")
+    return v;
+  const m = /^\s*([+-]?)\s*(\d*d\d+)\s*(?:([+-])\s*(\d+))?\s*$/i.exec(v);
+  if (!m)
+    return v;
+  return `${m[1] === "-" ? "-" : ""}(roll('${m[2].toLowerCase()}')${m[3] ? ` ${m[3]} ${m[4]}` : ""})`;
+}
+function minutesOf(v, where, c, fallback) {
+  if (typeof v === "string") {
+    const m = /^\s*(\d+(?:\.\d+)?)\s*(m|min|mins|minutes?|h|hrs?|hours?|d|days?)?\s*$/i.exec(v);
+    if (m) {
+      const n = Number(m[1]);
+      const u = (m[2] ?? "m").toLowerCase();
+      return Math.round(u.startsWith("d") ? n * 1440 : u.startsWith("h") ? n * 60 : n);
+    }
+  }
+  return c.num(v, where, fallback);
+}
+function armorMap(v, where, c) {
+  if (v === undefined || v === null || v === false)
+    return {};
+  if (!isObj(v)) {
+    const n = c.num(v, where, 0);
+    return n ? { _: n } : {};
+  }
+  const out = {};
+  for (const [k, n] of Object.entries(v)) {
+    const x = c.num(n, `${where} › ${k}`, 0);
+    if (x)
+      out[k] = x;
+  }
+  return out;
 }
 function normGate(r, where, c) {
   const g = {};
@@ -1454,7 +1496,13 @@ function emptyEffect() {
     transform: {},
     arc: {},
     bond: {},
-    learn: []
+    learn: [],
+    inflict: {},
+    afflict: {},
+    cleanse: [],
+    quest: {},
+    progress: {},
+    remember: {}
   };
 }
 function normTraits(raw, where, c) {
@@ -1716,13 +1764,117 @@ function normEffect(raw, where, c, known) {
           c.warn(w, "expected arc changes by companion, like `jo: +5`");
         break;
       case "harm": {
-        const x = c.expr(v, w);
+        const x = c.expr(diceExpr(v), w);
         if (x !== undefined)
           e.harm = x;
         break;
       }
       case "learn":
         e.learn.push(...list(v));
+        break;
+      case "inflict":
+      case "afflict":
+      case "status":
+        if (typeof v === "string")
+          e.inflict[v] = {};
+        else if (Array.isArray(v))
+          for (const x of v)
+            e.inflict[String(x)] = {};
+        else if (isObj(v))
+          for (const [key, x] of Object.entries(v)) {
+            const xw = `${w} › ${key}`;
+            if (Array.isArray(x)) {
+              e.afflict[key] = Object.fromEntries(x.map((id) => [String(id), null]));
+              continue;
+            }
+            if (isObj(x) && !Object.keys(x).every((kk) => INFLICT_KEYS.has(kk))) {
+              e.afflict[key] = {};
+              for (const [cid, d] of Object.entries(x))
+                e.afflict[key][cid] = d === null || d === true ? null : minutesOf(d, `${xw} › ${cid}`, c, 60);
+              continue;
+            }
+            const spec = {};
+            if (isObj(x)) {
+              const rounds = x.rounds ?? x.for;
+              if (rounds !== undefined) {
+                const r = c.expr(rounds, `${xw} › rounds`);
+                if (r !== undefined)
+                  spec.rounds = r;
+              }
+              if (x.chance !== undefined) {
+                const ch = c.expr(x.chance, `${xw} › chance`);
+                if (ch !== undefined)
+                  spec.chance = ch;
+              }
+            } else if (x !== true && x !== null) {
+              const r = c.expr(x, xw);
+              if (r !== undefined)
+                spec.rounds = r;
+            }
+            e.inflict[key] = spec;
+          }
+        break;
+      case "cleanse":
+        e.cleanse.push(...list(v));
+        break;
+      case "hits":
+      case "pierce": {
+        if (known.stats.has(k)) {
+          const x = c.expr(v, w);
+          if (x !== undefined)
+            e.stats[k] = x;
+          break;
+        }
+        const x = v === true || v === "all" ? 999 : c.expr(diceExpr(v), w);
+        if (x !== undefined) {
+          if (k === "hits")
+            e.hits = x;
+          else
+            e.pierce = x;
+        }
+        break;
+      }
+      case "quest":
+      case "quests":
+        if (typeof v === "string")
+          e.quest[v] = "start";
+        else if (Array.isArray(v))
+          for (const id of v)
+            e.quest[String(id)] = "start";
+        else if (isObj(v))
+          for (const [id, op] of Object.entries(v)) {
+            const o = QUEST_OPS[String(op).toLowerCase()];
+            if (o)
+              e.quest[id] = o;
+            else
+              c.warn(`${w} › ${id}`, `"${op}" isn't a quest step (start, done, fail, drop, report)`);
+          }
+        break;
+      case "progress":
+        if (known.stats.has(k)) {
+          const x = c.expr(v, w);
+          if (x !== undefined)
+            e.stats[k] = x;
+          break;
+        }
+        if (typeof v === "string")
+          e.progress[v] = 1;
+        else if (isObj(v))
+          for (const [id, n] of Object.entries(v)) {
+            const x = c.expr(n, `${w} › ${id}`);
+            if (x !== undefined)
+              e.progress[id] = x;
+          }
+        break;
+      case "remember":
+      case "memory":
+        if (isObj(v))
+          for (const [who, text] of Object.entries(v)) {
+            if (typeof text === "string" && text.trim())
+              e.remember[who] = text.trim();
+          }
+        else
+          c.warn(w, 'expected who remembers what, like `mia: "{{user}} burned her breakfast"`');
         break;
       case "bond":
       case "bonds":
@@ -1746,7 +1898,7 @@ function normEffect(raw, where, c, known) {
           if (x !== undefined)
             e.stats[k] = x;
         } else
-          c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, unlock, wear, undress, damage, front, reveal, gauge, momentum, body, transform, arc, bond, conceive, harm, learn)`);
+          c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, unlock, wear, undress, damage, front, reveal, gauge, momentum, body, transform, arc, bond, conceive, harm, hits, pierce, learn, inflict, cleanse, quest, progress, remember)`);
     }
   }
   return e;
@@ -1831,7 +1983,10 @@ function normAction(id, raw, where, c, known, order) {
   if (!check && Object.keys(outcomes).length)
     c.warn(where, "has outcomes but no check — put always-on changes under `effects:`");
   const at = raw.at === undefined ? [] : Array.isArray(raw.at) ? raw.at.map(String) : [String(raw.at)];
-  const when = raw.when !== undefined ? c.expr(raw.when, `${where} › when`) : undefined;
+  const own = raw.when !== undefined ? c.expr(raw.when, `${where} › when`) : undefined;
+  const requires = normRequires(raw.requires ?? raw.needs, `${where} › requires`, c, known);
+  const parts = [...own !== undefined ? [String(own)] : [], ...requires.map((q) => q.when)];
+  const when = parts.length > 1 ? parts.map((p) => `(${p})`).join(" and ") : parts[0];
   return {
     id,
     label: typeof raw.label === "string" ? raw.label : titleCase(id),
@@ -1850,8 +2005,115 @@ function normAction(id, raw, where, c, known, order) {
     params,
     tags: Array.isArray(raw.tags) ? raw.tags.map((t) => String(t).toLowerCase()) : [],
     order: typeof raw.order === "number" ? raw.order : order,
-    perPerson: raw.per_person === true || raw.with === "person" || raw.with === "people"
+    perPerson: raw.per_person === true || raw.with === "person" || raw.with === "people",
+    requires,
+    showLocked: raw.show_locked === true || raw.show_locked !== false && requires.length > 0
   };
+}
+function normRequires(raw, where, c, known) {
+  const out = [];
+  if (raw === undefined || raw === null)
+    return out;
+  const formula = (f, text, w) => {
+    const x = c.expr(f, w);
+    if (x !== undefined)
+      out.push({ when: String(x), kind: "formula", ...text ? { text } : {} });
+  };
+  if (typeof raw === "string") {
+    formula(raw, undefined, where);
+    return out;
+  }
+  if (Array.isArray(raw)) {
+    raw.forEach((x, i) => {
+      if (isObj(x) && x.when !== undefined)
+        formula(x.when, typeof x.text === "string" ? x.text : undefined, `${where} #${i + 1}`);
+      else if (isObj(x))
+        out.push(...normRequires(x, `${where} #${i + 1}`, c, known));
+      else
+        formula(x, undefined, `${where} #${i + 1}`);
+    });
+    return out;
+  }
+  if (!isObj(raw)) {
+    c.warn(where, "expected requirements like `{ lockpicking: 30, with: brann, has: crowbar }`");
+    return out;
+  }
+  const q = (s) => s.replace(/'/g, "");
+  for (const [k, v] of Object.entries(raw)) {
+    const w = `${where} › ${k}`;
+    if (known.stats.has(k)) {
+      const n = c.num(v, w, 0);
+      out.push({ when: `${k} >= ${n}`, kind: "stat", id: k, n });
+      continue;
+    }
+    switch (k) {
+      case "with":
+      case "present":
+      case "companion":
+        for (const p of list(v))
+          out.push({ when: `present('${q(p)}')`, kind: "with", id: p });
+        break;
+      case "has":
+      case "item":
+      case "items":
+        if (isObj(v))
+          for (const [it, n] of Object.entries(v)) {
+            const m = c.num(n, `${w} › ${it}`, 1);
+            out.push({ when: `has('${q(it)}', ${m})`, kind: "has", id: it, n: m });
+          }
+        else
+          for (const it of list(v))
+            out.push({ when: `has('${q(it)}')`, kind: "has", id: it, n: 1 });
+        break;
+      case "rel":
+        if (isObj(v))
+          for (const [who, m] of Object.entries(v)) {
+            if (!isObj(m)) {
+              c.warn(`${w} › ${who}`, "expected `trust: 40`");
+              continue;
+            }
+            for (const [stat, n] of Object.entries(m)) {
+              const x = c.num(n, `${w} › ${who} › ${stat}`, 0);
+              out.push({ when: `rel('${q(who)}', '${q(stat)}') >= ${x}`, kind: "rel", id: who, stat, n: x });
+            }
+          }
+        break;
+      case "quest":
+      case "quests":
+        if (isObj(v))
+          for (const [id, st] of Object.entries(v))
+            out.push({ when: `quest('${q(id)}') == '${q(String(st))}'`, kind: "quest", id, state: String(st) });
+        else
+          for (const id of list(v))
+            out.push({ when: `quest('${q(id)}') == 'active'`, kind: "quest", id, state: "active" });
+        break;
+      case "flag":
+      case "flags":
+        if (isObj(v))
+          for (const [f, val] of Object.entries(v))
+            out.push({ when: val === false ? `not flag('${q(f)}')` : `flag('${q(f)}')`, kind: "flag", id: f, state: val === false ? "off" : "on" });
+        else
+          for (const f of list(v))
+            out.push({ when: `flag('${q(f)}')`, kind: "flag", id: f, state: "on" });
+        break;
+      case "perk":
+      case "perks":
+        for (const p of list(v))
+          out.push({ when: `perk('${q(p)}')`, kind: "perk", id: p });
+        break;
+      case "when":
+      case "formula":
+        if (isObj(v))
+          for (const [f, text] of Object.entries(v))
+            formula(f, typeof text === "string" ? text : undefined, w);
+        else
+          formula(v, undefined, w);
+        break;
+      default:
+        c.warn(w, `"${k}" isn't a stat or a requirement (with, has, rel, quest, flag, perk, when)`);
+    }
+  }
+  return out;
 }
 function parseDate(v) {
   if (isObj(v)) {
@@ -1968,6 +2230,25 @@ function applyItemUse(it, r, w, c, known, drafted) {
   if (drafted && (it.use || Object.keys(it.bonus).length))
     it.drafted = true;
 }
+function condTiming(r, w, c, known) {
+  const every = String(r.every ?? "round").toLowerCase();
+  const dotRaw = r.dot ?? r.per_round ?? r.damage;
+  const dot = dotRaw !== undefined ? c.expr(diceExpr(dotRaw), `${w} › dot`) : undefined;
+  const heal = r.heal !== undefined ? c.expr(diceExpr(r.heal), `${w} › heal`) : undefined;
+  const skipRaw = r.skip ?? r.stun ?? r.lose_turn;
+  const skip = skipRaw === true ? 100 : skipRaw !== undefined && skipRaw !== false ? c.expr(skipRaw, `${w} › skip`) : undefined;
+  const lastsRaw = r.lasts ?? r.minutes ?? r.duration;
+  return {
+    ...r.rounds !== undefined ? { rounds: Math.max(1, Math.round(c.num(r.rounds, `${w} › rounds`, 1))) } : {},
+    ...lastsRaw !== undefined ? { lasts: Math.max(1, minutesOf(lastsRaw, `${w} › lasts`, c, 60)) } : {},
+    ...dot !== undefined ? { dot } : heal !== undefined ? { dot: typeof heal === "number" ? -heal : `-(${heal})` } : {},
+    ...typeof r.stat === "string" ? { stat: r.stat } : {},
+    every: every === "turn" ? "turn" : every === "hour" ? "hour" : "round",
+    ...skip !== undefined ? { skip } : {},
+    armor: armorMap(r.armor, `${w} › armor`, c),
+    tick: normEffect(r.tick ?? r.each, `${w} › tick`, c, known)
+  };
+}
 function statNums(v, where, c, known) {
   const out = {};
   if (!isObj(v))
@@ -2030,8 +2311,12 @@ function normPerkRules(v, where, c, known) {
         if (p !== null && p !== 0)
           out.push({ kind: k, stat, pct: Math.max(-1, p) });
       }
+    } else if (k === "pierce") {
+      const r = isObj(x) ? x : { amount: x };
+      const amount = r.amount === true || r.amount === "all" ? 999 : c.num(r.amount ?? r.by, `${w} › amount`, 999);
+      out.push({ kind: "pierce", amount, stats: list(r.stats ?? r.stat), tags: list(r.tags).map((t) => t.toLowerCase()) });
     } else
-      c.warn(w, "isn't a perk rule (reroll, soften, gains, losses)");
+      c.warn(w, "isn't a perk rule (reroll, soften, gains, losses, pierce)");
   }
   return out;
 }
@@ -2185,7 +2470,7 @@ function normEncounter(id, raw, c, known) {
     name: typeof raw.name === "string" ? raw.name : titleCase(id),
     desc: typeof raw.desc === "string" ? raw.desc : undefined,
     tags: list(raw.tags).map((t) => t.toLowerCase()),
-    foe: { name: typeof foeRaw.name === "string" ? foeRaw.name : "Opponent", stats },
+    foe: { name: typeof foeRaw.name === "string" ? foeRaw.name : "Opponent", stats, armor: foeArmor(foeRaw, stats, w, c) },
     actions,
     actionOrder,
     foeMoves,
@@ -2199,6 +2484,102 @@ function normEncounter(id, raw, c, known) {
     ...typeof raw.danger === "string" ? { danger: raw.danger } : {},
     labels: Object.fromEntries(Object.entries(isObj(raw.labels) ? raw.labels : {}).filter(([, v]) => typeof v === "string"))
   };
+}
+function foeArmor(foeRaw, stats, w, c) {
+  const armor = armorMap(foeRaw.armor ?? foeRaw.defense, `${w} › foe › armor`, c);
+  for (const k of Object.keys(armor)) {
+    if (k !== "_" && !stats.some((x) => x.id === k)) {
+      c.warn(`${w} › foe › armor`, `"${k}" isn't one of the foe's stats`);
+      delete armor[k];
+    }
+  }
+  return armor;
+}
+function normQuests(raw, c, known, ids) {
+  const quests = {};
+  const order = [];
+  const r = isObj(raw) ? raw : {};
+  if (raw !== undefined && !isObj(raw))
+    c.warn("Quests", "should be a map of quest ids to quests");
+  const storyRaw = r.from_story ?? r.story;
+  const story = { enabled: storyRaw !== false, max: Math.max(0, Math.round(c.num(r.story_max ?? r.max_story, "Quests › story_max", 3))) };
+  let n = 0;
+  for (const [id, qRaw] of Object.entries(r)) {
+    if (QUEST_META.has(id))
+      continue;
+    const w = `Quests › ${id}`;
+    if (!isObj(qRaw)) {
+      c.warn(w, "expected a quest (name, goals, reward…)");
+      continue;
+    }
+    const q = qRaw;
+    const goals = [];
+    const goalList = Array.isArray(q.goals ?? q.objectives) ? (q.goals ?? q.objectives).map((g, i) => [isObj(g) && typeof g.id === "string" ? g.id : `goal_${i + 1}`, g]) : isObj(q.goals ?? q.objectives) ? Object.entries(q.goals ?? q.objectives) : [];
+    for (const [gid, g] of goalList) {
+      const gw = `${w} › goals › ${gid}`;
+      const gr = isObj(g) ? g : { text: String(g) };
+      const when = gr.when !== undefined ? c.expr(gr.when, `${gw} › when`) : undefined;
+      const count = gr.count !== undefined ? Math.max(1, Math.round(c.num(gr.count, `${gw} › count`, 1))) : undefined;
+      let on;
+      if (gr.on !== undefined) {
+        const o = isObj(gr.on) ? gr.on : { id: gr.on };
+        const id = String(o.encounter ?? o.action ?? o.id ?? "");
+        const kind = o.encounter !== undefined ? "encounter" : o.action !== undefined ? "action" : ids.encounters.has(id) ? "encounter" : "action";
+        if (kind === "encounter" ? !ids.encounters.has(id) : !ids.actions.has(id))
+          c.warn(`${gw} › on`, `"${id}" isn't ${kind === "encounter" ? "an encounter" : "an action or encounter"}`);
+        else
+          on = { kind, id, outcomes: list(o.outcome ?? o.outcomes ?? o.tier ?? o.tiers) };
+      }
+      goals.push({
+        id: gid,
+        text: typeof gr.text === "string" ? gr.text : typeof gr.label === "string" ? gr.label : titleCase(gid),
+        ...when !== undefined ? { when: String(when) } : {},
+        ...when === undefined ? { count: count ?? 1 } : count !== undefined ? { count } : {},
+        optional: gr.optional === true,
+        ...on ? { on } : {}
+      });
+    }
+    const judgeRaw = q.judge ?? q.judged;
+    const judge = typeof judgeRaw === "string" ? { done: judgeRaw } : isObj(judgeRaw) ? { ...typeof judgeRaw.done === "string" ? { done: judgeRaw.done } : {}, ...typeof judgeRaw.fail === "string" ? { fail: judgeRaw.fail } : {} } : {};
+    const succeed = q.succeed ?? q.done_when ?? q.complete_when;
+    const fail = q.fail ?? q.fail_when;
+    const when = q.when !== undefined ? c.expr(q.when, `${w} › when`) : undefined;
+    const succeedX = succeed !== undefined ? c.expr(succeed, `${w} › succeed`) : undefined;
+    const failX = fail !== undefined ? c.expr(fail, `${w} › fail`) : undefined;
+    const giver = typeof q.giver === "string" ? q.giver : typeof q.from === "string" ? q.from : undefined;
+    const rem = q.remember;
+    const remember = rem === false ? false : isObj(rem) ? { ...typeof rem.done === "string" ? { done: rem.done } : {}, ...typeof rem.failed === "string" ? { failed: rem.failed } : typeof rem.fail === "string" ? { failed: rem.fail } : {} } : {};
+    const repeat = q.repeat === true ? 0 : q.repeat === undefined || q.repeat === false ? null : Math.max(0, c.num(q.repeat, `${w} › repeat`, 0));
+    if (!goals.length && succeedX === undefined && !judge.done)
+      c.warn(w, "has no goals, `succeed:` or `judge:` — only a `quest: { " + id + ": done }` effect can finish it");
+    quests[id] = {
+      id,
+      name: typeof q.name === "string" ? q.name : titleCase(id),
+      ...typeof q.desc === "string" ? { desc: q.desc } : {},
+      kind: typeof q.kind === "string" ? q.kind.toLowerCase() : giver ? "favour" : "quest",
+      ...giver ? { giver } : {},
+      board: q.board === true,
+      at: list(q.at),
+      ...when !== undefined ? { when: String(when) } : {},
+      auto: q.auto === true,
+      goals,
+      ...succeedX !== undefined ? { succeed: String(succeedX) } : {},
+      ...failX !== undefined ? { fail: String(failX) } : {},
+      judge,
+      days: Math.max(0, c.num(q.days ?? q.deadline, `${w} › days`, 0)),
+      report: q.report === undefined ? !!giver || q.board === true : q.report === true,
+      start: normEffect(q.start ?? q.on_start, `${w} › start`, c, known),
+      reward: normEffect(q.reward ?? q.rewards ?? q.success, `${w} › reward`, c, known),
+      failure: normEffect(q.failure ?? q.on_fail ?? q.penalty, `${w} › failure`, c, known),
+      remember,
+      repeat,
+      hidden: q.hidden === true,
+      ...typeof q.stakes === "string" ? { stakes: q.stakes } : {},
+      order: n++
+    };
+    order.push(id);
+  }
+  return { quests, order, story };
 }
 function normSecrets(raw, c) {
   const out = {};
@@ -2848,7 +3229,8 @@ function normalizeRuleset(raw) {
       traits: list(r.traits).map((t) => t.toLowerCase()),
       uses: Math.max(0, Math.round(c.num(r.uses ?? r.charges, `${w} › uses`, list(r.tags).map((t) => t.toLowerCase()).includes("consumable") ? 1 : 0))),
       keep: r.keep === true,
-      bonus: {}
+      bonus: {},
+      armor: armorMap(r.armor, `${w} › armor`, c)
     };
     applyItemUse(items[id], r, w, c, known, false);
   }
@@ -2876,6 +3258,7 @@ function normalizeRuleset(raw) {
       exits: Array.isArray(r.exits) ? r.exits.map(String) : [],
       travel: c.num(r.travel, `Locations › ${id} › travel`, 10),
       indoors: r.indoors === true || r.inside === true,
+      board: r.board === true || r.quest_board === true,
       ...Array.isArray(r.pos) && r.pos.length === 2 && r.pos.every((n) => Number.isFinite(Number(n))) ? { pos: [Number(r.pos[0]), Number(r.pos[1])] } : {}
     };
   }
@@ -2895,7 +3278,8 @@ function normalizeRuleset(raw) {
       desc: typeof r.desc === "string" ? r.desc : undefined,
       narrator: r.narrator === true,
       ...gate ? { gate } : {},
-      bonus: statNums(r.bonus, `Conditions › ${id} › bonus`, c, known)
+      bonus: statNums(r.bonus, `Conditions › ${id} › bonus`, c, known),
+      ...condTiming(r, `Conditions › ${id}`, c, known)
     };
   }
   const flags = {};
@@ -3050,6 +3434,17 @@ function normalizeRuleset(raw) {
   if (perkPoints && !stats[perkPoints])
     c.warn("Perks › points", `"${perkPoints}" isn't a declared stat`);
   const perkPick = Math.max(0, Math.round(c.num(perksRaw.pick ?? perksRaw.offer, "Perks › pick", 0)));
+  const { quests, order: questOrder, story: storyQuests } = normQuests(raw.quests, c, known, { encounters: new Set(Object.keys(encounters)), actions: new Set(Object.keys(actions)) });
+  for (const q of Object.values(quests)) {
+    const w = `Quests › ${q.id}`;
+    if (q.giver && !people[q.giver])
+      c.warn(`${w} › giver`, `"${q.giver}" isn't a person in relationships › people`);
+    for (const loc of q.at)
+      if (Object.keys(locations).length && !locations[loc])
+        c.warn(`${w} › at`, `"${loc}" isn't a declared location`);
+    if (q.board && !Object.values(locations).some((l) => l.board))
+      c.warn(`${w} › board`, "is posted on a board, but no location has `board: true`");
+  }
   const secrets = normSecrets(raw.secrets, c);
   const fronts = normFronts(raw.fronts, c, known);
   const randomEvents = normRandomEvents(raw.random_events ?? raw.events, c, known);
@@ -3115,6 +3510,9 @@ function normalizeRuleset(raw) {
     ...perkPoints && stats[perkPoints] ? { perkPoints } : {},
     perkPick,
     abilities,
+    quests,
+    questOrder,
+    storyQuests,
     secrets,
     fronts,
     randomEvents,
@@ -3163,7 +3561,7 @@ function normalizeRuleset(raw) {
   }
   return { ruleset, issues: c.issues };
 }
-var SEEN_REACTIONS, DIFFICULTIES, isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v), DEFAULT_WEEKDAYS, KIND_ALIASES, list = (v) => Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : [], TIER_KEYS, MONTHS, DEFAULT_WEATHER, DEFAULT_SLOTS, USE_KEYS, PERK_META, DEFAULT_KNOWN = "\x00default", ABILITY_META, KEEP_FLAGS, KEEP_LISTS, CHILD_NAMES, SEXUAL_TAGS;
+var SEEN_REACTIONS, DIFFICULTIES, isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v), DEFAULT_WEEKDAYS, KIND_ALIASES, INFLICT_KEYS, QUEST_OPS, list = (v) => Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : [], TIER_KEYS, MONTHS, DEFAULT_WEATHER, DEFAULT_SLOTS, USE_KEYS, PERK_META, DEFAULT_KNOWN = "\x00default", ABILITY_META, QUEST_META, KEEP_FLAGS, KEEP_LISTS, CHILD_NAMES, SEXUAL_TAGS;
 var init_ruleset = __esm(() => {
   init_expr();
   init_dice();
@@ -3184,6 +3582,30 @@ var init_ruleset = __esm(() => {
     money: "money",
     currency: "money",
     hidden: "hidden"
+  };
+  INFLICT_KEYS = new Set(["rounds", "chance", "for"]);
+  QUEST_OPS = {
+    start: "start",
+    take: "start",
+    begin: "start",
+    give: "start",
+    offer: "start",
+    done: "done",
+    complete: "done",
+    completed: "done",
+    succeed: "done",
+    success: "done",
+    finish: "done",
+    win: "done",
+    fail: "fail",
+    failed: "fail",
+    lose: "fail",
+    drop: "drop",
+    abandon: "drop",
+    cancel: "drop",
+    report: "report",
+    turn_in: "report",
+    hand_in: "report"
   };
   TIER_KEYS = {
     crit_success: "crit_success",
@@ -3209,9 +3631,10 @@ var init_ruleset = __esm(() => {
     { id: "snow", label: "Snow", icon: "❄️", weight: 2, temp: -6, seasons: ["winter"], tags: ["wet", "cold"] }
   ];
   DEFAULT_SLOTS = ["head", "outer", "top", "bottom", "under_top", "under_bottom", "legs", "feet"];
-  USE_KEYS = new Set(["label", "say", "desc", "description", "when", "time", "tags", "check", "params", "why_not", "locked", "group", "cost", "effects", "effect", "outcomes", "per_person", "hidden", "at", "order", "success", "fail", "partial", "crit_success", "crit_fail", "critical_success", "critical_fail", "failure"]);
+  USE_KEYS = new Set(["label", "say", "desc", "description", "when", "time", "tags", "check", "params", "why_not", "locked", "group", "cost", "effects", "effect", "outcomes", "per_person", "hidden", "at", "order", "success", "fail", "partial", "crit_success", "crit_fail", "critical_success", "critical_fail", "failure", "requires", "needs", "show_locked"]);
   PERK_META = new Set(["points", "pick", "offer", "list"]);
   ABILITY_META = new Set(["name", "known", "per_day", "per_encounter", "where"]);
+  QUEST_META = new Set(["from_story", "story", "story_max", "max_story"]);
   KEEP_FLAGS = ["codex", "feats", "perks", "secrets", "people", "dating", "deepest"];
   KEEP_LISTS = ["stats", "flags", "items", "rel"];
   CHILD_NAMES = ["Ada", "Ben", "Cleo", "Dan", "Elin", "Finn", "Greta", "Hugo", "Iris", "Jonah", "Kira", "Leo", "Maya", "Nico", "Orla", "Pip", "Rosa", "Sam", "Tess", "Theo", "Uma", "Vic", "Wren", "Zoe"];
@@ -3467,7 +3890,10 @@ function initialState(r) {
     practice: {},
     scene: {},
     lastLocation: null,
-    uses: {}
+    uses: {},
+    pconds: {},
+    quests: {},
+    memories: {}
   };
   for (const o of Object.values(r.obligations)) {
     const owed = typeof o.amount === "number" ? o.amount : evalNumber(o.amount, makeEnv(r, s), 0);
@@ -3581,8 +4007,12 @@ function applyEvent(s, e, r) {
       break;
     }
     case "enc":
-      if (!e.id && s.encounter)
+      if (!e.id && s.encounter) {
         s.lastEncounter = { id: s.encounter.id, ...s.encounter.foeName ? { foeName: s.encounter.foeName } : {}, outcome: e.outcome ?? "ended", at: s.minutes, loc: s.location };
+        for (const [id, c] of Object.entries(s.conditions))
+          if (c.rounds !== undefined && c.until === null)
+            delete s.conditions[id];
+      }
       s.encounter = e.id ? { id: e.id, round: 0, foe: { ...e.foe ?? {} }, ...e.momentum !== undefined ? { momentum: e.momentum } : {}, ...e.foeName ? { foeName: e.foeName } : {}, at: s.minutes } : null;
       break;
     case "swing":
@@ -3701,10 +4131,78 @@ function applyEvent(s, e, r) {
       break;
     case "cond":
       if (e.on)
-        s.conditions[e.id] = { until: e.until ?? null };
+        s.conditions[e.id] = { until: e.until ?? null, ...e.rounds !== undefined ? { rounds: e.rounds } : {} };
       else
         delete s.conditions[e.id];
       break;
+    case "fcond": {
+      if (!s.encounter)
+        break;
+      const conds = { ...s.encounter.conds ?? {} };
+      if (e.on)
+        conds[e.id] = e.rounds ?? null;
+      else
+        delete conds[e.id];
+      s.encounter.conds = conds;
+      break;
+    }
+    case "cleft":
+      if (e.side === "player") {
+        const c = s.conditions[e.id];
+        if (!c)
+          break;
+        if (e.rounds <= 0)
+          delete s.conditions[e.id];
+        else
+          s.conditions[e.id] = { ...c, rounds: e.rounds };
+      } else if (s.encounter?.conds && e.id in s.encounter.conds) {
+        const conds = { ...s.encounter.conds };
+        if (e.rounds <= 0)
+          delete conds[e.id];
+        else
+          conds[e.id] = e.rounds;
+        s.encounter.conds = conds;
+      }
+      break;
+    case "pcond": {
+      const all = { ...s.pconds ?? {} };
+      const mine = { ...all[e.who] ?? {} };
+      if (e.on)
+        mine[e.id] = { until: e.until ?? null };
+      else
+        delete mine[e.id];
+      if (Object.keys(mine).length)
+        all[e.who] = mine;
+      else
+        delete all[e.who];
+      s.pconds = all;
+      break;
+    }
+    case "quest": {
+      const all = { ...s.quests ?? {} };
+      const cur = all[e.id];
+      if (e.st === null)
+        delete all[e.id];
+      else if (e.st === "active" && (!cur || cur.st === "done" || cur.st === "failed")) {
+        all[e.id] = { st: "active", at: s.minutes, due: e.due ?? null, prog: {}, ...e.story ? { story: e.story } : {} };
+      } else if (cur) {
+        all[e.id] = { ...cur, st: e.st, ...e.due !== undefined ? { due: e.due } : {}, ...e.st === "done" || e.st === "failed" ? { ended: s.minutes } : {} };
+      }
+      s.quests = all;
+      break;
+    }
+    case "qprog": {
+      const q = s.quests?.[e.id];
+      if (!q)
+        break;
+      s.quests = { ...s.quests, [e.id]: { ...q, prog: { ...q.prog, [e.goal]: Math.max(0, (q.prog[e.goal] ?? 0) + e.d) } } };
+      break;
+    }
+    case "memory": {
+      const list = [...s.memories?.[e.who] ?? [], { text: e.text, at: s.minutes }].slice(-MEMORIES_KEPT);
+      s.memories = { ...s.memories ?? {}, [e.who]: list };
+      break;
+    }
     case "trig":
       s.triggers[e.id] = e.v;
       break;
@@ -4198,6 +4696,28 @@ function makeEnv(r, s, extra = {}) {
           return s.dues[a0] ? Math.floor((s.dues[a0].due - s.minutes) / 1440) : 0;
         case "dates":
           return s.dating.dates[a0]?.count ?? 0;
+        case "quest":
+          return s.quests?.[a0]?.st ?? "";
+        case "quest_active":
+          return s.quests?.[a0]?.st === "active" || s.quests?.[a0]?.st === "ready";
+        case "quest_done":
+          return s.quests?.[a0]?.st === "done";
+        case "quest_failed":
+          return s.quests?.[a0]?.st === "failed";
+        case "goal":
+          return s.quests?.[a0]?.prog[String(args[1] ?? "")] ?? 0;
+        case "quests_done":
+          return Object.entries(s.quests ?? {}).filter(([id, q]) => q.st === "done" && (!args.length || r.quests[id]?.kind === a0)).length;
+        case "memories":
+          return s.memories?.[a0]?.length ?? 0;
+        case "cond_of":
+          return !!s.pconds?.[a0]?.[String(args[1] ?? "")];
+        case "foe_cond":
+          return !!s.encounter?.conds && a0 in s.encounter.conds;
+        case "stat_max":
+          return r.stats[a0] ? statMax(r, r.stats[a0], s) : 0;
+        case "foe_max":
+          return s.encounter ? r.encounters[s.encounter.id]?.foe.stats.find((x) => x.id === a0)?.max ?? 0 : 0;
       }
       return;
     }
@@ -4242,7 +4762,7 @@ function itemName(r, s, id) {
 function personName(r, s, id) {
   return s.people[id]?.name ?? r.people[id]?.name ?? id;
 }
-var DG_LOG_KEPT = 12, NEWS_KEPT = 30, BUILTIN_NAMES;
+var DG_LOG_KEPT = 12, NEWS_KEPT = 30, MEMORIES_KEPT = 12, BUILTIN_NAMES;
 var init_state = __esm(() => {
   init_expr();
   init_world();
@@ -4512,7 +5032,9 @@ function improvAction(r, s, actionId) {
     params: [{ id: "difficulty", label: "Difficulty", options: Object.fromEntries(DIFFICULTIES.map((d) => [d, r.improvise.dc[d]])), default: "fair" }],
     tags: ["improvised"],
     order: 0,
-    perPerson: false
+    perPerson: false,
+    requires: [],
+    showLocked: false
   };
 }
 function checkStats(r, a) {
@@ -5620,6 +6142,376 @@ var init_work = __esm(() => {
   };
 });
 
+// src/engine/quests.ts
+function questDef(r, s, id) {
+  const q = r.quests[id];
+  if (q)
+    return q;
+  const st = s.quests?.[id]?.story;
+  return st ? storyDef(id, st) : null;
+}
+function storyDef(id, st) {
+  return {
+    id,
+    name: st.name,
+    desc: st.goal,
+    kind: "favour",
+    ...st.giver ? { giver: st.giver } : {},
+    board: false,
+    at: [],
+    auto: false,
+    goals: [{ id: "done", text: st.goal, count: 1, optional: false }],
+    judge: { done: st.goal, ...st.fail ? { fail: st.fail } : {} },
+    days: 0,
+    report: false,
+    start: emptyEffect(),
+    reward: emptyEffect(),
+    failure: emptyEffect(),
+    remember: {},
+    repeat: null,
+    hidden: false,
+    ...st.stakes ? { stakes: st.stakes } : {},
+    order: 1000
+  };
+}
+function goalDone(r, s, st, g) {
+  return g.when ? evalBool(g.when, makeEnv(r, s), false) : (st.prog[g.id] ?? 0) >= (g.count ?? 1);
+}
+function complete(r, s, q, st) {
+  if (q.succeed)
+    return evalBool(q.succeed, makeEnv(r, s), false);
+  const need = q.goals.filter((g) => !g.optional);
+  return need.length > 0 && !q.judge.done && need.every((g) => goalDone(r, s, st, g));
+}
+function handIn(q) {
+  return !!q.giver || q.board || q.at.length > 0;
+}
+function questOffers(r, s) {
+  if (!r.questOrder.length || s.encounter || s.dungeon || s.ended)
+    return [];
+  const env = makeEnv(r, s);
+  const here = new Set(presentPeople(r, s, env));
+  const board = !!(s.location && r.locations[s.location]?.board);
+  const out = [];
+  for (const id of r.questOrder) {
+    const q = r.quests[id];
+    if (q.auto || q.hidden || s.quests?.[id])
+      continue;
+    if (q.when && !evalBool(q.when, env, false))
+      continue;
+    if (q.giver && here.has(q.giver))
+      out.push({ id, via: "giver", from: personName(r, s, q.giver) });
+    else if (q.board && board)
+      out.push({ id, via: "board", from: null });
+    else if (s.location && q.at.includes(s.location))
+      out.push({ id, via: "place", from: null });
+  }
+  return out;
+}
+function questsToReport(r, s) {
+  const out = [];
+  if (s.encounter || s.dungeon)
+    return out;
+  const here = new Set(presentPeople(r, s, makeEnv(r, s)));
+  const board = !!(s.location && r.locations[s.location]?.board);
+  for (const [id, st] of Object.entries(s.quests ?? {})) {
+    if (st.st !== "ready")
+      continue;
+    const q = questDef(r, s, id);
+    if (!q)
+      continue;
+    if (q.giver) {
+      if (here.has(q.giver))
+        out.push({ id, to: personName(r, s, q.giver) });
+    } else if (q.board && board || s.location && q.at.includes(s.location))
+      out.push({ id, to: null });
+  }
+  return out;
+}
+function effectWords(r, s, e) {
+  const env = makeEnv(r, s);
+  const num = (v) => {
+    try {
+      return Math.round(evalNumber(v, env, 0) * 10) / 10;
+    } catch {
+      return 0;
+    }
+  };
+  const parts = [];
+  for (const [id, v] of Object.entries(e.stats)) {
+    const n = typeof v === "string" && /%$/.test(v.trim()) ? null : num(v);
+    if (n === 0)
+      continue;
+    const def = r.stats[id];
+    const label = def?.label ?? id;
+    parts.push(n === null ? `${v} ${label}` : def?.kind === "money" ? `${n > 0 ? "" : "−"}${r.hud.currency}${Math.abs(n)}` : `${n > 0 ? "+" : "−"}${Math.abs(n)} ${label}`);
+  }
+  for (const [id, n] of Object.entries(e.items))
+    parts.push(`${n > 0 ? "" : "loses "}${Math.abs(n) > 1 ? `${Math.abs(n)}× ` : "a "}${itemName(r, s, id)}`);
+  for (const [who, m] of Object.entries(e.rel))
+    for (const [stat, v] of Object.entries(m)) {
+      const n = num(v);
+      if (n)
+        parts.push(`${n > 0 ? "+" : "−"}${Math.abs(n)} ${r.relStats[stat]?.label ?? stat} with ${who === "target" ? "them" : personName(r, s, who)}`);
+    }
+  for (const id of e.learn)
+    if (r.abilities[id])
+      parts.push(`learns ${r.abilities[id].name}`);
+  for (const id of e.unlock)
+    if (r.codex[id])
+      parts.push(`codex: ${r.codex[id].title}`);
+  for (const [id, op] of Object.entries(e.quest))
+    if (op === "start" && r.quests[id])
+      parts.push(`leads to "${r.quests[id].name}"`);
+  return parts.join(", ");
+}
+function warmth2(r) {
+  return r.relStatOrder.find((id) => r.relStats[id].narrator > 0 && r.relStats[id].good !== "low") ?? r.relStatOrder.find((id) => r.relStats[id].good !== "low") ?? null;
+}
+function moveGiver(t, who, sign, src) {
+  const stat = warmth2(t.r);
+  if (!who || !stat || !t.s.people[who])
+    return;
+  const def = t.r.relStats[stat];
+  t.push({ t: "rel", who, stat, d: sign * Math.max(2, Math.round((def.max - def.min) * 0.05)), src });
+}
+function remember(t, q, how, why) {
+  if (!q.giver || q.remember === false || !t.s.people[q.giver])
+    return;
+  const text = q.remember[how] ?? (how === "done" ? `{{user}} came through on "${q.name}".` : why === "gave up" ? `{{user}} gave up on "${q.name}".` : `{{user}} let them down on "${q.name}"${why ? ` (${why})` : ""}.`);
+  t.push({ t: "memory", who: q.giver, text, src: "trigger" });
+}
+function goalLine(q) {
+  return q.goals.filter((g) => !g.optional).map((g) => g.count && g.count > 1 ? `${g.text} (×${g.count})` : g.text).join("; ");
+}
+function startQuest(t, id, src, story) {
+  const q = story ? storyDef(id, story) : t.r.quests[id];
+  if (!q)
+    return;
+  const st = t.s.quests?.[id];
+  if (st && st.st !== "done" && st.st !== "failed")
+    return;
+  if (st)
+    t.push({ t: "quest", id, st: null, src });
+  const due = q.days ? t.s.minutes + Math.round(q.days * 1440) : null;
+  t.push({ t: "quest", id, st: "active", due, ...story ? { story } : {}, src });
+  t.apply(q.start, src);
+  const giver = q.giver ? personName(t.r, t.s, q.giver) : null;
+  const reward = effectWords(t.r, t.s, q.reward);
+  t.announce([
+    `NEW QUEST — "${q.name}"${giver ? `, for ${giver}` : ""}: ${q.desc ?? goalLine(q)}.`,
+    q.desc && q.goals.length ? `Goals: ${goalLine(q)}.` : "",
+    q.days ? `Due within ${q.days} day${q.days === 1 ? "" : "s"}.` : "",
+    reward ? `Reward: ${reward}.` : "",
+    q.stakes ? `At stake: ${q.stakes}` : "",
+    giver && src === "action" ? `Let ${giver} lay it out in their own words.` : ""
+  ].filter(Boolean).join(" "));
+}
+function finishQuest(t, id, src) {
+  const q = questDef(t.r, t.s, id);
+  if (!q)
+    return;
+  const reward = effectWords(t.r, t.s, q.reward);
+  t.push({ t: "quest", id, st: "done", src });
+  t.apply(q.reward, src);
+  if (t.s.quests?.[id]?.story)
+    moveGiver(t, q.giver, 1, src);
+  remember(t, q, "done");
+  const giver = q.giver ? personName(t.r, t.s, q.giver) : null;
+  t.announce(`QUEST COMPLETE — "${q.name}".${reward ? ` Reward: ${reward}.` : ""} Narrate the payoff${giver ? `, and how ${giver} takes it` : ""}.`);
+}
+function failQuest(t, id, src, why) {
+  const q = questDef(t.r, t.s, id);
+  if (!q)
+    return;
+  const price = effectWords(t.r, t.s, q.failure);
+  t.push({ t: "quest", id, st: "failed", src });
+  t.apply(q.failure, src);
+  if (t.s.quests?.[id]?.story)
+    moveGiver(t, q.giver, -1, src);
+  remember(t, q, "failed", why);
+  const giver = q.giver ? personName(t.r, t.s, q.giver) : null;
+  t.announce(`QUEST FAILED — "${q.name}"${why ? ` (${why})` : ""}.${q.stakes ? ` ${q.stakes}` : ""}${price ? ` It costs: ${price}.` : ""} Show the consequences${giver ? ` — ${giver} won't forget it` : ""}.`);
+}
+function questOp(t, id, op, src) {
+  const st = t.s.quests?.[id];
+  const open = st?.st === "active" || st?.st === "ready";
+  const q = questDef(t.r, t.s, id);
+  if (!q)
+    return;
+  switch (op) {
+    case "start":
+      if (!st || q.repeat !== null && !open)
+        startQuest(t, id, src);
+      break;
+    case "done":
+      if (open)
+        finishQuest(t, id, src);
+      break;
+    case "fail":
+      if (open)
+        failQuest(t, id, src);
+      break;
+    case "drop":
+      if (open)
+        failQuest(t, id, src, "gave up");
+      break;
+    case "report":
+      if (st?.st === "ready" || st?.st === "active" && complete(t.r, t.s, q, st))
+        finishQuest(t, id, src);
+      break;
+  }
+}
+function questProgress(t, key, d, src) {
+  const [qid, gid] = key.split(".");
+  const q = t.r.quests[qid];
+  const st = t.s.quests?.[qid];
+  if (!q || st?.st !== "active" || !d)
+    return;
+  const counted = q.goals.filter((g) => g.count !== undefined && !g.when);
+  const goal = gid ? q.goals.find((g) => g.id === gid) : counted.find((g) => (st.prog[g.id] ?? 0) < (g.count ?? 1)) ?? counted[0];
+  if (goal)
+    t.push({ t: "qprog", id: qid, goal: goal.id, d, src });
+}
+function questHooks(t, hook) {
+  for (const [qid, st] of Object.entries(t.s.quests ?? {})) {
+    if (st.st !== "active")
+      continue;
+    for (const g of t.r.quests[qid]?.goals ?? []) {
+      if (!g.on || g.on.kind !== hook.kind || g.on.id !== hook.id)
+        continue;
+      if (g.on.outcomes.length ? g.on.outcomes.includes(hook.result) : hook.good)
+        t.push({ t: "qprog", id: qid, goal: g.id, d: 1, src: "trigger" });
+    }
+  }
+}
+function questLife(t) {
+  const { r } = t;
+  for (const id of r.questOrder) {
+    const q = r.quests[id];
+    if (!t.s.quests?.[id] && q.auto && (!q.when || evalBool(q.when, t.env(), false)))
+      startQuest(t, id, "trigger");
+    const st = t.s.quests?.[id];
+    if (!st)
+      continue;
+    if (st.st === "done" || st.st === "failed") {
+      if (q.repeat !== null && !q.auto && st.ended !== undefined && t.s.minutes - st.ended >= q.repeat * 1440)
+        t.push({ t: "quest", id, st: null, src: "world" });
+      continue;
+    }
+    if (st.st !== "active")
+      continue;
+    if (st.due !== null && t.s.minutes > st.due)
+      failQuest(t, id, "trigger", "time ran out");
+    else if (q.fail && evalBool(q.fail, t.env(), false))
+      failQuest(t, id, "trigger");
+    else if (complete(r, t.s, q, st)) {
+      if (q.report && handIn(q)) {
+        t.push({ t: "quest", id, st: "ready", src: "trigger" });
+        t.announce(`"${q.name}" is done — ${q.giver ? `${personName(r, t.s, q.giver)} is waiting to hear about it` : "it can be handed in at the board"}.`);
+      } else
+        finishQuest(t, id, "trigger");
+    }
+  }
+  for (const [id, st] of Object.entries(t.s.quests ?? {})) {
+    if (st.story && st.st === "active" && st.due !== null && t.s.minutes > st.due)
+      failQuest(t, id, "trigger", "time ran out");
+  }
+}
+function resolveQuest(t, actionId) {
+  const [, verb, id] = actionId.split(":");
+  const q = questDef(t.r, t.s, id ?? "");
+  if (!q)
+    return null;
+  if (verb === "take") {
+    if (!questOffers(t.r, t.s).some((o) => o.id === id))
+      return null;
+    startQuest(t, id, "action");
+    t.time(5, "action");
+    return `Take on "${q.name}"`;
+  }
+  if (verb === "report") {
+    if (!questsToReport(t.r, t.s).some((o) => o.id === id))
+      return null;
+    finishQuest(t, id, "action");
+    t.time(10, "action");
+    return `Hand in "${q.name}"`;
+  }
+  if (verb === "drop") {
+    const st = t.s.quests?.[id];
+    if (st?.st !== "active" && st?.st !== "ready")
+      return null;
+    failQuest(t, id, "action", "gave up");
+    return `Give up on "${q.name}"`;
+  }
+  return null;
+}
+function storyQuestNews(t, news, findPerson) {
+  const { r } = t;
+  for (const id of news.done ?? []) {
+    const st = t.s.quests?.[id];
+    if (st?.st === "active" || st?.st === "ready")
+      finishQuest(t, id, "narrator");
+  }
+  for (const id of news.failed ?? []) {
+    const st = t.s.quests?.[id];
+    if (st?.st === "active" || st?.st === "ready")
+      failQuest(t, id, "narrator");
+  }
+  if (!r.storyQuests.enabled)
+    return;
+  let open = Object.values(t.s.quests ?? {}).filter((q) => q.story && q.st === "active").length;
+  for (const n of news.new ?? []) {
+    if (open >= r.storyQuests.max)
+      break;
+    const name = String(n.name ?? "").trim().slice(0, 80);
+    const goal = String(n.goal ?? "").trim().slice(0, 240);
+    if (!name || !goal)
+      continue;
+    const taken = Object.values(t.s.quests ?? {}).some((q) => q.story && q.st !== "done" && q.st !== "failed" && q.story.name.toLowerCase() === name.toLowerCase());
+    if (taken || Object.values(r.quests).some((q) => q.name.toLowerCase() === name.toLowerCase()))
+      continue;
+    const giver = n.giver ? findPerson(n.giver) ?? undefined : undefined;
+    let id = `${STORY_QUEST}${slug(name) || "favour"}`;
+    for (let i = 2;t.s.quests?.[id]; i++)
+      id = `${STORY_QUEST}${slug(name)}_${i}`;
+    const story = { name, goal, ...giver ? { giver } : {}, ...n.fail ? { fail: String(n.fail).slice(0, 240) } : {}, ...n.stakes ? { stakes: String(n.stakes).slice(0, 200) } : {} };
+    t.push({ t: "quest", id, st: "active", due: n.hours && n.hours > 0 ? t.s.minutes + Math.round(n.hours * 60) : null, story, src: "narrator" });
+    open++;
+  }
+}
+function questDigest(r, s) {
+  const out = [];
+  for (const [id, st] of Object.entries(s.quests ?? {})) {
+    if (st.st !== "active" && st.st !== "ready")
+      continue;
+    const q = questDef(r, s, id);
+    if (!q)
+      continue;
+    const giver = q.giver ? personName(r, s, q.giver) : null;
+    const goals = q.goals.filter((g) => !g.optional).map((g) => `${goalDone(r, s, st, g) ? "✓" : "☐"} ${g.text}${g.count && g.count > 1 ? ` (${Math.min(st.prog[g.id] ?? 0, g.count)}/${g.count})` : ""}`).join("; ");
+    const due = st.due !== null ? dueWords(st.due - s.minutes) : null;
+    out.push(`"${q.name}"${giver ? ` for ${giver}` : ""}${st.st === "ready" ? " — done, to be handed in" : ""}${goals ? ` — ${goals}` : ""}${due ? ` — ${due}` : ""}${q.stakes ? ` — at stake: ${q.stakes}` : ""}`);
+  }
+  return out;
+}
+function dueWords(minutesLeft) {
+  if (minutesLeft < 0)
+    return "overdue";
+  if (minutesLeft < 60)
+    return `${Math.max(1, Math.round(minutesLeft))} min left`;
+  if (minutesLeft < 48 * 60)
+    return `${Math.round(minutesLeft / 60)}h left`;
+  return `${Math.round(minutesLeft / 1440)} days left`;
+}
+var QUEST_PREFIX = "quest:", STORY_QUEST = "story_";
+var init_quests = __esm(() => {
+  init_expr();
+  init_ruleset();
+  init_state();
+  init_world();
+});
+
 // src/engine/resolve.ts
 function because(w, cause, fn) {
   const prev = w.cause;
@@ -5653,6 +6545,9 @@ class Working {
     this.scene = scene;
   }
   cause = null;
+  action = null;
+  turnOf = null;
+  fresh = { player: new Set, foe: new Set };
   push(e) {
     if (this.cause && !e.why)
       e = { ...e, why: this.cause };
@@ -5753,9 +6648,44 @@ function usableItems(r, s) {
   }
   return out;
 }
+function requirementText(r, s, q) {
+  const id = q.id ?? "";
+  switch (q.kind) {
+    case "stat": {
+      const def = r.stats[id];
+      const have = s.stats[id] ?? def?.start ?? 0;
+      return `${def?.label ?? id} ${formatNumber(q.n ?? 0)} (you have ${formatNumber(Math.floor(have * 10) / 10)})`;
+    }
+    case "with":
+      return `${personName(r, s, id)} with you`;
+    case "has":
+      return `${(q.n ?? 1) > 1 ? `${q.n}× ` : ""}${itemName(r, s, id)}`;
+    case "rel":
+      return `${personName(r, s, id)}'s ${r.relStats[q.stat ?? ""]?.label ?? q.stat} at ${formatNumber(q.n ?? 0)}`;
+    case "quest": {
+      const name = r.quests[id]?.name ?? id;
+      return q.state === "active" ? `the quest "${name}"` : q.state === "done" ? `"${name}" done` : `"${name}" ${q.state}`;
+    }
+    case "flag":
+      return `${q.state === "off" ? "not " : ""}${r.flags[id]?.label ?? id.replace(/_/g, " ")}`;
+    case "perk":
+      return `★ ${r.perks[id]?.name ?? id}`;
+    default:
+      return q.text ?? "the right moment";
+  }
+}
 function lockReason(r, s, a) {
   if (a.whyNot)
     return a.whyNot;
+  if (a.requires.length) {
+    const env = makeEnv(r, s);
+    const unmet = a.requires.filter((q) => !evalBool(q.when, env, false));
+    const needs = unmet.filter((q) => q.kind !== "formula").map((q) => requirementText(r, s, q));
+    const other = unmet.filter((q) => q.kind === "formula").map((q) => requirementText(r, s, q));
+    const words = [needs.length ? `Needs ${needs.join(", ")}` : "", ...other].filter(Boolean).join(" · ");
+    if (words)
+      return words;
+  }
   const need = [...(a.when ?? "").matchAll(/has\(\s*'([^']+)'/g)].map((m) => m[1]).filter((id) => !(s.items[id] > 0));
   if (need.length && /\bor\b/.test(a.when ?? ""))
     return `Needs ${need.map((id) => itemName(r, s, id)).join(" or ")}`;
@@ -5868,6 +6798,65 @@ function mainMeter(r, s) {
     return null;
   const t = thresholds(enc).find((x) => x.foe && !isLoss(enc, x.outcome));
   return t ? { stat: t.stat, down: t.op.startsWith("<") } : null;
+}
+function dangerStats(r, s) {
+  const enc = s.encounter ? r.encounters[s.encounter.id] : undefined;
+  if (!enc)
+    return [];
+  return [...new Set(thresholds(enc).filter((x) => !x.foe && isLoss(enc, x.outcome) && r.stats[x.stat]).map((x) => x.stat))];
+}
+function playerArmor(r, s, stat) {
+  const main = dangerStats(r, s).includes(stat);
+  const pick = (m) => (m[stat] ?? 0) + (main ? m._ ?? 0 : 0);
+  const worn = new Set(Object.values(s.worn));
+  let n = 0;
+  for (const [id, have] of Object.entries(s.items)) {
+    const it = r.items[id];
+    if (!it || have <= 0 || it.slot && !worn.has(id))
+      continue;
+    n += pick(it.armor);
+  }
+  for (const id of Object.keys(s.conditions))
+    n += pick(r.conditions[id]?.armor ?? {});
+  return n;
+}
+function foeArmor2(r, s, stat) {
+  const enc = s.encounter ? r.encounters[s.encounter.id] : undefined;
+  if (!enc)
+    return 0;
+  const main = mainMeter(r, s)?.stat === stat;
+  const pick = (m) => (m[stat] ?? 0) + (main ? m._ ?? 0 : 0);
+  let n = pick(enc.foe.armor);
+  for (const id of Object.keys(s.encounter.conds ?? {}))
+    n += pick(r.conditions[id]?.armor ?? {});
+  return n;
+}
+function perkPierce(r, s, a) {
+  if (!a)
+    return 0;
+  const used = new Set(checkStats(r, a));
+  let n = 0;
+  for (const id of Object.keys(s.perks))
+    for (const rule of r.perks[id]?.rules ?? []) {
+      if (rule.kind !== "pierce")
+        continue;
+      const fits = !rule.stats.length && !rule.tags.length || rule.stats.some((x) => used.has(x)) || rule.tags.some((t) => a.tags.includes(t));
+      if (fits)
+        n += rule.amount;
+    }
+  return n;
+}
+function hurtsFoe(def, d) {
+  return def?.good === "high" ? d > 0 : def?.good === "none" ? false : d < 0;
+}
+function hurtsPlayer(r, stat, d) {
+  const g = r.stats[stat]?.good;
+  return g === "high" ? d < 0 : g === "low" ? d > 0 : false;
+}
+function amountOf2(w, v, extra, max) {
+  const p = percentOf(v);
+  const x = p !== null ? p * max : evalNumber(v, w.env(extra), 0);
+  return Math.abs(x) >= 1 && p !== null ? Math.round(x) : x;
 }
 function perkRuleFor(r, s, a, kind) {
   const used = new Set(checkStats(r, a));
@@ -5989,10 +6978,25 @@ function flagValue(v, env) {
 }
 function effectToEvents(w, e, src, extra) {
   const r = w.r;
+  const hits = e.hits !== undefined ? Math.max(1, Math.min(10, Math.round(evalNumber(e.hits, w.env(extra), 1)))) : 1;
+  const foeTurn = !!w.s.encounter && w.turnOf === "foe";
   for (const [id, d] of Object.entries(e.stats)) {
-    const v = evalNumber(d, w.env(extra), 0);
-    if (v !== 0)
+    const def = r.stats[id];
+    const v = amountOf2(w, d, extra, def ? statMax(r, def, w.s) : 100);
+    if (v === 0)
+      continue;
+    if (!foeTurn || !hurtsPlayer(r, id, v)) {
       w.push({ t: "stat", id, d: v, src });
+      continue;
+    }
+    const armor = playerArmor(r, w.s, id);
+    const per = Math.max(0, Math.abs(v) - armor);
+    for (let i = 0;i < hits && per > 0; i++)
+      w.push({ t: "stat", id, d: Math.sign(v) * per, src, ...hits > 1 ? { note: `hit ${i + 1} of ${hits}` } : {} });
+    if (armor > 0)
+      announce(w, per > 0 ? `{{user}}'s armor takes ${Math.min(armor, Math.abs(v))} off ${hits > 1 ? "each hit" : "the blow"}.` : `{{user}}'s armor turns the blow aside — no ${def?.label ?? id} lost.`);
+    else if (hits > 1)
+      announce(w, `It lands ${hits} times.`);
   }
   for (const [id, d] of Object.entries(e.set)) {
     w.push({ t: "stat", id, set: evalNumber(d, w.env(extra), 0), src });
@@ -6020,11 +7024,23 @@ function effectToEvents(w, e, src, extra) {
   if (e.move)
     w.push({ t: "move", to: e.move, src });
   for (const [id, dur] of Object.entries(e.addConditions)) {
-    w.push({ t: "cond", id, on: true, until: dur === null ? null : w.s.minutes + dur, src });
+    w.push(condOn(w, id, dur, src));
+    if (!foeTurn)
+      w.fresh.player.add(id);
   }
   for (const id of e.removeConditions)
     if (w.s.conditions[id])
       w.push({ t: "cond", id, on: false, src });
+  inflictEffects(w, e, src, extra);
+  for (const [id, op] of Object.entries(e.quest))
+    questOp(builderOf(w), id, op, src);
+  for (const [key, d] of Object.entries(e.progress))
+    questProgress(builderOf(w), key, Math.round(evalNumber(d, w.env(extra), 0)), src);
+  for (const [who, text] of Object.entries(e.remember)) {
+    const person = who === "target" && typeof extra.target === "string" ? extra.target : who;
+    if (person !== "target")
+      w.push({ t: "memory", who: person, text: fillTarget(w, text, extra), src });
+  }
   for (const id of e.wear) {
     const slot = r.items[id]?.slot;
     if (slot && w.s.worn[slot] !== id)
@@ -6041,20 +7057,45 @@ function effectToEvents(w, e, src, extra) {
   }
   if (w.s.encounter) {
     const foeStats = r.encounters[w.s.encounter.id]?.foe.stats;
+    const blows = [];
     for (const [stat, d] of Object.entries(e.foe)) {
       if (foeStats?.length && !foeStats.some((x) => x.id === stat))
         continue;
-      const v = evalNumber(d, w.env(extra), 0);
+      const v = amountOf2(w, d, extra, foeStats?.find((x) => x.id === stat)?.max ?? 100);
       if (v !== 0)
-        w.push({ t: "foe", stat, d: v, src });
+        blows.push({ stat, v });
     }
     if (e.harm !== undefined) {
-      const v = evalNumber(e.harm, w.env(extra), 0);
       const m = mainMeter(r, w.s);
+      const v = amountOf2(w, e.harm, extra, m && foeStats?.find((x) => x.id === m.stat)?.max || 100);
       if (v && m)
-        w.push({ t: "foe", stat: m.stat, d: m.down ? -v : v, src });
+        blows.push({ stat: m.stat, v: m.down ? -v : v });
       else if (v && w.s.encounter.momentum !== undefined)
         w.push({ t: "swing", d: v, src });
+    }
+    const pierce = Math.max(0, (e.pierce !== undefined ? evalNumber(e.pierce, w.env(extra), 0) : 0) + (foeTurn ? 0 : perkPierce(r, w.s, w.action)));
+    for (const { stat, v } of blows) {
+      const fs = foeStats?.find((x) => x.id === stat);
+      if (foeTurn || !hurtsFoe(fs, v)) {
+        w.push({ t: "foe", stat, d: v, src });
+        continue;
+      }
+      const raw = foeArmor2(r, w.s, stat);
+      const armor = raw > 0 ? Math.max(0, raw - pierce) : raw;
+      const per = Math.max(0, Math.abs(v) - armor);
+      for (let i = 0;i < hits && per > 0; i++)
+        w.push({ t: "foe", stat, d: Math.sign(v) * per, src, ...hits > 1 ? { note: `hit ${i + 1} of ${hits}` } : {} });
+      const foe = foeName(r, w.s);
+      if (raw > 0 && per === 0)
+        announce(w, `${foe}'s armor stops it — ${fs?.label ?? stat} untouched.`);
+      else if (raw > 0 && armor < raw)
+        announce(w, `It ${pierce >= raw ? "goes straight through" : "partly pierces"} ${foe}'s armor${hits > 1 ? ` and lands ${hits} times` : ""}.`);
+      else if (raw > 0)
+        announce(w, `${foe}'s armor blunts ${hits > 1 ? `each of ${hits} hits` : "the blow"}.`);
+      else if (raw < 0)
+        announce(w, `${foe} is wide open — it hits harder.`);
+      else if (hits > 1)
+        announce(w, `It lands ${hits} times.`);
     }
     if (e.end)
       w.pendingEnd = e.end;
@@ -6140,6 +7181,135 @@ function effectToEvents(w, e, src, extra) {
     announce(w, fillTarget(w, e.hint, extra));
   for (const d of e.decide)
     decide(w, d, src, extra);
+}
+function condOn(w, id, minutes, src) {
+  const def = w.r.conditions[id];
+  if (minutes === null && def?.rounds && w.s.encounter)
+    return { t: "cond", id, on: true, until: null, rounds: def.rounds, src };
+  return { t: "cond", id, on: true, until: minutes === null ? def?.lasts ? w.s.minutes + def.lasts : null : w.s.minutes + minutes, src };
+}
+function inflictEffects(w, e, src, extra) {
+  const r = w.r;
+  const target = typeof extra.target === "string" && extra.target ? extra.target : null;
+  for (const [id, spec] of Object.entries(e.inflict)) {
+    const def = r.conditions[id];
+    if (!def)
+      continue;
+    const who = w.s.encounter ? foeName(r, w.s) : target ? personName(r, w.s, target) : null;
+    if (!who)
+      continue;
+    if (spec.chance !== undefined) {
+      const chance = Math.max(0, Math.min(100, evalNumber(spec.chance, w.env(extra), 100)));
+      if (seededRng(`${w.seed}:inflict:${id}:${w.events.length}`)() * 100 >= chance) {
+        announce(w, `${who} shrugs it off — not ${def.label.toLowerCase()}.`);
+        continue;
+      }
+    }
+    const n = spec.rounds !== undefined ? Math.max(1, Math.round(evalNumber(spec.rounds, w.env(extra), 1))) : null;
+    if (w.s.encounter) {
+      const rounds = n ?? def.rounds ?? null;
+      w.push({ t: "fcond", id, on: true, rounds, src });
+      if (w.turnOf === "foe")
+        w.fresh.foe.add(id);
+      announce(w, `${who} is ${def.label.toLowerCase()}${rounds ? ` for ${rounds} round${rounds === 1 ? "" : "s"}` : ""}.`);
+    } else if (target) {
+      const mins = n ?? def.lasts ?? null;
+      w.push({ t: "pcond", who: target, id, on: true, until: mins ? w.s.minutes + mins : null, src });
+      announce(w, `${who} is ${def.label.toLowerCase()}.`);
+    }
+  }
+  for (const [key, m] of Object.entries(e.afflict)) {
+    const who = key === "target" ? target : key;
+    if (!who)
+      continue;
+    for (const [id, mins] of Object.entries(m)) {
+      const def = r.conditions[id];
+      if (!def)
+        continue;
+      const len = mins ?? def.lasts ?? null;
+      w.push({ t: "pcond", who, id, on: true, until: len ? w.s.minutes + len : null, src });
+    }
+  }
+  for (const id of e.cleanse) {
+    if (w.s.encounter?.conds && id in w.s.encounter.conds)
+      w.push({ t: "fcond", id, on: false, src });
+    else if (target && w.s.pconds?.[target]?.[id])
+      w.push({ t: "pcond", who: target, id, on: false, src });
+  }
+}
+function lostTurn(w, side) {
+  const ids = side === "player" ? Object.keys(w.s.conditions) : Object.keys(w.s.encounter?.conds ?? {});
+  for (const id of ids) {
+    const def = w.r.conditions[id];
+    if (def?.skip === undefined)
+      continue;
+    const chance = Math.max(0, Math.min(100, evalNumber(def.skip, w.env(), 100)));
+    if (seededRng(`${w.seed}:skip:${side}:${id}:${w.s.encounter?.round ?? 0}`)() * 100 < chance)
+      return def.label;
+  }
+  return null;
+}
+function playerDotStat(r, s, stat) {
+  if (stat && r.stats[stat])
+    return stat;
+  return dangerStats(r, s)[0] ?? r.hud.bars.find((id) => r.stats[id]?.good === "high" && r.stats[id].kind === "meter") ?? null;
+}
+function tickPlayer(w, id, scale = 1, ticks = 1) {
+  const def = w.r.conditions[id];
+  if (!def)
+    return;
+  because(w, `${def.label} (status)`, () => {
+    if (def.dot !== undefined) {
+      const stat = playerDotStat(w.r, w.s, def.stat);
+      const dmg = amountOf2(w, def.dot, {}, stat ? statMax(w.r, w.r.stats[stat], w.s) : 100) * scale;
+      if (stat && dmg)
+        w.push({ t: "stat", id: stat, d: (w.r.stats[stat].good === "low" ? 1 : -1) * dmg, src: "trigger" });
+    }
+    for (let i = 0;i < ticks; i++)
+      effectToEvents(w, def.tick, "trigger", {});
+  });
+}
+function tickSide(w, side) {
+  const enc = w.s.encounter;
+  if (!enc)
+    return;
+  if (side === "player") {
+    for (const id of Object.keys(w.s.conditions)) {
+      const def = w.r.conditions[id];
+      if (def && def.every !== "hour")
+        tickPlayer(w, id);
+    }
+    for (const [id, c] of Object.entries(w.s.conditions)) {
+      if (c.rounds === undefined || w.fresh.player.has(id))
+        continue;
+      w.push({ t: "cleft", side: "player", id, rounds: c.rounds - 1, src: "drift" });
+      if (c.rounds - 1 <= 0)
+        announce(w, `{{user}} is no longer ${w.r.conditions[id]?.label.toLowerCase() ?? id}.`);
+    }
+    return;
+  }
+  const foe = foeName(w.r, w.s);
+  for (const id of Object.keys(enc.conds ?? {})) {
+    const def = w.r.conditions[id];
+    if (def?.dot === undefined)
+      continue;
+    const m = mainMeter(w.r, w.s);
+    const stat = def.stat && w.r.encounters[enc.id]?.foe.stats.some((x) => x.id === def.stat) ? def.stat : m?.stat;
+    if (!stat)
+      continue;
+    const fs = w.r.encounters[enc.id]?.foe.stats.find((x) => x.id === stat);
+    const dmg = amountOf2(w, def.dot, {}, fs?.max ?? 100);
+    const down = stat === m?.stat ? m.down : fs?.good !== "high";
+    if (dmg)
+      because(w, `${def.label} (on ${foe})`, () => w.push({ t: "foe", stat, d: (down ? -1 : 1) * dmg, src: "trigger" }));
+  }
+  for (const [id, n] of Object.entries(w.s.encounter?.conds ?? {})) {
+    if (n === null || w.fresh.foe.has(id))
+      continue;
+    w.push({ t: "cleft", side: "foe", id, rounds: n - 1, src: "drift" });
+    if (n - 1 <= 0)
+      announce(w, `${foe} is no longer ${w.r.conditions[id]?.label.toLowerCase() ?? id}.`);
+  }
 }
 function announce(w, text) {
   if (w.defer)
@@ -6590,6 +7760,7 @@ function endEncounter(w, outcome, src) {
   const eff = enc?.outcomes[outcome];
   if (eff)
     because(w, `${enc?.name ?? "Encounter"} ended: ${outcome.replace(/_/g, " ")}`, () => effectToEvents(w, eff, src, {}));
+  questHooks(builderOf(w), { kind: "encounter", id: s.id, result: outcome, good: !isLoss(enc, outcome) });
 }
 function encounterRound(w, src) {
   if (!w.s.encounter)
@@ -6601,8 +7772,15 @@ function encounterRound(w, src) {
   }
   w.push({ t: "round", src });
   const enc = w.r.encounters[w.s.encounter.id];
-  if (enc?.foeMoves)
+  const prev = w.turnOf;
+  w.turnOf = "foe";
+  const lost = lostTurn(w, "foe");
+  if (lost)
+    announce(w, `${foeName(w.r, w.s)} is ${lost.toLowerCase()} and loses the turn.`);
+  else if (enc?.foeMoves)
     decide(w, enc.foeMoves, src, {});
+  tickSide(w, "foe");
+  w.turnOf = prev;
   out = encounterOutcome(w);
   if (out)
     endEncounter(w, out, src);
@@ -6670,10 +7848,23 @@ function advanceTime(w, minutes, src) {
     if (Math.abs(d) > 0.000000001)
       w.push({ t: "stat", id, d, src: "drift", why: `${minutes >= 60 ? `${Math.round(minutes / 6) / 10}h` : `${minutes} min`} passed (${def.label} drifts ${def.perHour > 0 ? "+" : ""}${def.perHour}/h)` });
   }
+  const from = w.s.minutes - minutes;
+  for (const [id, c] of Object.entries(w.s.conditions)) {
+    if (w.r.conditions[id]?.every !== "hour")
+      continue;
+    const end = c.until !== null ? Math.min(w.s.minutes, c.until) : w.s.minutes;
+    if (end > from)
+      tickPlayer(w, id, (end - from) / 60, Math.min(24, Math.floor(end / 60) - Math.floor(from / 60)));
+  }
   for (const [id, c] of Object.entries(w.s.conditions)) {
     if (c.until !== null && c.until <= w.s.minutes)
       w.push({ t: "cond", id, on: false, src: "drift", note: "expired" });
   }
+  for (const [who, conds] of Object.entries(w.s.pconds ?? {}))
+    for (const [id, c] of Object.entries(conds)) {
+      if (c.until !== null && c.until <= w.s.minutes)
+        w.push({ t: "pcond", who, id, on: false, src: "drift", note: "expired" });
+    }
 }
 function runTriggers(w, includeRepeat) {
   const fired = new Set;
@@ -6714,6 +7905,7 @@ function runTriggers(w, includeRepeat) {
   }
   openSecrets(w);
   openFrontStages(w);
+  questLife(builderOf(w));
 }
 function resolveTurnFull(r, before, intent, opts) {
   const needs = [];
@@ -6783,7 +7975,12 @@ function resolveInner(r, before, intent, opts, needs) {
   const workIntent = intent && (intent.actionId.startsWith(PAY_PREFIX) || intent.actionId.startsWith(JOB_PREFIX)) ? intent : before.job && !intent ? { actionId: `${JOB_PREFIX}say`, via: "adjudicator" } : null;
   if (before.date && !activeSession(r, before))
     w.push({ t: "dt_end", src: "action" });
-  if (intent?.actionId === EXPLORE) {
+  let stunned = null;
+  if (intent?.actionId.startsWith(QUEST_PREFIX)) {
+    const label = because(w, "Quests", () => resolveQuest(builderOf(w), intent.actionId));
+    if (label)
+      rec.action = { id: intent.actionId, label, via: intent.via };
+  } else if (intent?.actionId === EXPLORE) {
     if (canExplore(r, before)) {
       const loc = before.location;
       const name = before.locationName ?? loc;
@@ -6822,8 +8019,18 @@ function resolveInner(r, before, intent, opts, needs) {
       if (dest.desc)
         w.hints.push(`Arriving at ${dest.name}: ${dest.desc}`);
     }
+  } else if (a && inEncounter && (stunned = lostTurn(w, "player"))) {
+    rec.action = { id: intent.actionId, label: `${a.label} — ${stunned.toLowerCase()}, turn lost`, via: intent.via };
+    w.hints.push(`{{user}} tries to ${a.label.toLowerCase()}, but is ${stunned.toLowerCase()} and loses the turn — it doesn't happen.`);
+    w.turnOf = "player";
+    advanceTime(w, 1, "action");
+    tickSide(w, "player");
+    encounterRound(w, "action");
+    beatSheet(w, encBase, rec, opts.playerText);
   } else if (a) {
     const who = found?.target;
+    w.action = a;
+    w.turnOf = inEncounter ? "player" : null;
     const extra = paramValues(a, intent.params, who);
     const own = mind?.kind === "redirect" ? who ? `${a.label} (${personName(r, before, who)})` : a.label : null;
     const difficulty = improvised && isDifficulty(intent.params?.difficulty) ? intent.params.difficulty : "fair";
@@ -6889,6 +8096,7 @@ function resolveInner(r, before, intent, opts, needs) {
         rec.check.gear = gear;
       if (perkNote)
         rec.check.perk = perkNote;
+      questHooks(builderOf(w), { kind: "action", id: a.id, result: tier, good: tier === "success" || tier === "crit_success" });
       const key = TIER_FALLBACK[tier].find((t) => a.outcomes[t]);
       if (key)
         because(w, `"${label}": ${rec.check.label} rolled ${rec.check.total}${target !== null ? ` vs ${target}` : ""} → ${TIER_LABEL[tier]}`, () => effectToEvents(w, a.outcomes[key], "check", extra));
@@ -6905,6 +8113,7 @@ function resolveInner(r, before, intent, opts, needs) {
       }
     } else {
       because(w, `"${label}"`, () => effectToEvents(w, a.effects, "action", extra));
+      questHooks(builderOf(w), { kind: "action", id: a.id, result: "success", good: true });
     }
     advanceTime(w, a.time ?? (inEncounter ? 1 : r.clock.minutesPerAction), "action");
     const veils = new Set((opts.veils ?? []).map((v) => v.toLowerCase()));
@@ -6916,12 +8125,23 @@ function resolveInner(r, before, intent, opts, needs) {
       const m = r.encounters[encBase.encounter.id]?.momentum;
       if (m && tier && w.s.encounter?.momentum !== undefined)
         w.push({ t: "swing", d: m.swing[tier], src: "check" });
+      tickSide(w, "player");
       encounterRound(w, "action");
       beatSheet(w, encBase, rec, opts.playerText);
     }
+    w.action = null;
+    w.turnOf = null;
   } else if (inEncounter && w.s.encounter) {
+    w.turnOf = "player";
+    tickSide(w, "player");
+    w.turnOf = null;
     encounterRound(w, "action");
     beatSheet(w, encBase, rec, opts.playerText);
+  }
+  if (!inEncounter) {
+    for (const id of Object.keys(w.s.conditions))
+      if (r.conditions[id]?.every === "turn")
+        tickPlayer(w, id);
   }
   runTriggers(w, true);
   const days = r.clock.enabled ? (w.s.minutes - before.minutes) / 1440 : 1;
@@ -7085,7 +8305,7 @@ function applyProposal(r, before, p, ctx) {
   for (const id of p.conditions?.add ?? []) {
     const def = r.conditions[id];
     if (def?.narrator && !w.s.conditions[id] && gateOpen(def.gate, w, ctx))
-      w.push({ t: "cond", id, on: true, until: null, src });
+      w.push(condOn(w, id, null, src));
   }
   for (const id of p.conditions?.remove ?? []) {
     const def = r.conditions[id];
@@ -7152,6 +8372,16 @@ function applyProposal(r, before, p, ctx) {
   } else if (p.encounterEnd && w.s.encounter) {
     const name = r.encounters[w.s.encounter.id]?.name ?? "The encounter";
     because(w, `${name} ended`, () => endEncounter(w, slug(String(p.encounterEnd)), src));
+  }
+  if (p.quests && typeof p.quests === "object")
+    because(w, "Quests", () => storyQuestNews(builderOf(w), p.quests, (name) => findPerson(r, w.s, name)));
+  let remembered = 0;
+  for (const [who, text] of Object.entries(p.memories ?? {})) {
+    const id = findPerson(r, w.s, who);
+    if (!id || typeof text !== "string" || !text.trim() || remembered >= 3)
+      continue;
+    w.push({ t: "memory", who: id, text: text.trim().slice(0, 200), src });
+    remembered++;
   }
   if (r.growth.enabled && r.growth.train) {
     const gains = {};
@@ -7380,6 +8610,7 @@ var init_resolve = __esm(() => {
   init_types2();
   init_talk();
   init_work();
+  init_quests();
   SEEN_DESC = {
     unnoticed: "Doesn't notice",
     glance: "Notices, then looks away",
@@ -7645,7 +8876,7 @@ var init_hometown = __esm(() => {
   hometown = {
     id: "hometown",
     name: "Hometown (life-sim)",
-    blurb: "Survival life-sim: Pain, Arousal, Fatigue, Stress, Trauma, Control and Allure described in words, graded skills, a calendar with weather and temperature, clothing that matters, townsfolk on schedules, a mugging encounter, and meters that feed into each other.",
+    blurb: "Survival life-sim: Pain, Arousal, Fatigue, Stress, Trauma, Control and Allure described in words, graded skills, a calendar with weather and temperature, clothing that matters, townsfolk on schedules with favours to ask (and long memories), odd jobs on the café corkboard, a mugging encounter, and meters that feed into each other.",
     parts: [
       {
         label: "core",
@@ -7843,8 +9074,9 @@ locations:
     exits: [high_street]
   high_street:
     name: High Street
-    desc: Shops, a café, a busy bus stop. Crowded by day, emptier at night.
+    desc: Shops, a café with a corkboard of odd jobs in the window, a busy bus stop. Crowded by day, emptier at night.
     exits: [apartment, campus, park, docks, the_strip]
+    board: true
   campus:
     name: University Campus
     desc: Lecture halls, a library, a gym with a pool.
@@ -7866,9 +9098,18 @@ locations:
     exits: [high_street]
 
 items:
-  phone: Phone
-  keys: Apartment keys
-  coffee: Coffee
+  phone:
+    name: Phone
+    keep: true
+    use: { label: Call a cab home (£12), when: "money >= 12 and not at('apartment')", time: 20, money: -12, stress: -3, move: apartment, hint: "{{user}} calls a cab and rides home." }
+  keys:
+    name: Apartment keys
+    keep: true
+    use: { label: Lock yourself in, when: "at('apartment')", time: 5, stress: -4, hint: "The sticky lock finally catches. {{user}} feels a little safer." }
+  coffee:
+    name: Coffee
+    tags: [consumable]
+    use: { label: Drink the coffee, time: 10, fatigue: -8, stress: -1 }
   # Clothing: slot, warmth, how revealing, traits.
   t_shirt: { name: T-shirt, slot: top, warmth: 2 }
   hoodie: { name: Hoodie, slot: top, warmth: 6 }
@@ -7890,14 +9131,15 @@ start:
   items: { hoodie: 1, skirt: 1 }
 
 conditions:
-  exhausted: { label: Exhausted, tone: bad, desc: Stress builds fast while this tired. }
+  # bonus: counts in every check that reads those stats while it lasts (negative = a penalty).
+  exhausted: { label: Exhausted, tone: bad, desc: Stress builds fast while this tired., bonus: { athletics: -10, studies: -10, dancing: -10 } }
   scared: { label: Scared, tone: bad, desc: Low control — trauma comes to the surface. }
-  shaken: { label: Shaken, tone: warn, desc: Recently overwhelmed. }
-  wanted: { label: Wanted, tone: bad, desc: The police are looking for you. }
-  cold: { label: Cold, tone: bad, desc: Underdressed for the weather. }
-  overheating: { label: Overheating, tone: warn, desc: Overdressed for the weather. }
-  soaked: { label: Soaked, tone: warn, desc: Caught in the rain without a coat. }
-  exposed: { label: Exposed, tone: bad, desc: Not decently covered in public. }
+  shaken: { label: Shaken, tone: warn, desc: Recently overwhelmed., bonus: { athletics: -5, skulduggery: -10 } }
+  wanted: { label: Wanted, tone: bad, desc: "The police are looking for you — every pickpocket is a bigger risk.", bonus: { skulduggery: -15 } }
+  cold: { label: Cold, tone: bad, desc: Underdressed for the weather., bonus: { athletics: -5, dancing: -5 } }
+  overheating: { label: Overheating, tone: warn, desc: Overdressed for the weather., bonus: { athletics: -5 } }
+  soaked: { label: Soaked, tone: warn, desc: Caught in the rain without a coat., bonus: { allure: -10 } }
+  exposed: { label: Exposed, tone: bad, desc: Not decently covered in public — nobody's slipping past unnoticed like this., bonus: { skulduggery: -20 } }
 `
       },
       {
@@ -7932,7 +9174,7 @@ conditions:
     at: campus
     say: "*I find a quiet corner in the library and study.*"
     time: 60
-    check: { chance: 50 + studies / 2 - fatigue / 2, label: Studies }
+    check: { chance: 50 + studies / 2 - fatigue / 2 - arousal / 5, label: Studies }
     success: { studies: +1.2, hint: "The material clicks." }
     fail: { studies: +0.3, stress: +2, hint: "The words swim; very little sticks." }
   swim:
@@ -7941,7 +9183,9 @@ conditions:
     at: campus
     say: "*I swim laps in the university pool.*"
     time: 45
-    effects: { swimming: +1, athletics: +0.4, fatigue: +12, stress: -3 }
+    check: { chance: 55 + swimming / 2 - fatigue / 3, label: Swimming }
+    success: { athletics: +0.4, fatigue: +12, stress: -4, hint: "Smooth, steady laps." }
+    fail: { fatigue: +16, stress: +1, hint: "{{user}} swallows half the pool and climbs out spluttering." }
 
   jog:
     label: Go for a jog
@@ -7988,13 +9232,35 @@ conditions:
     time: 15
     effects: { money: -20, give: swimsuit }
   buy_coffee:
-    label: Buy a coffee (£3)
+    label: Buy a coffee to go (£3)
     group: Shops
     at: high_street
     when: money >= 3
-    say: "*I grab a coffee.*"
+    say: "*I grab a coffee to go.*"
     time: 10
-    effects: { money: -3, fatigue: -4 }
+    effects: { money: -3, give: coffee }
+
+  # Quest work: only offered while the job is taken.
+  hand_out_flyers:
+    label: Hand out club flyers
+    group: Work
+    at: [high_street, the_strip]
+    requires: { quest: flyers }
+    say: "*I stand on the corner pushing flyers into people's hands.*"
+    time: 60
+    check: { chance: 45 + allure / 2, label: Allure }
+    success: { progress: { flyers: 1 }, fatigue: +6, hint: "The stack goes down fast." }
+    fail: { fatigue: +8, stress: +3, hint: "Everyone walks straight past {{user}}." }
+  search_lawns:
+    label: Search the lawns for the lost ring
+    group: Park
+    at: park
+    requires: { quest: lost_ring }
+    say: "*I comb the grass by the duck pond, looking for a glint of gold.*"
+    time: 45
+    check: { chance: "30 + (between(hour, 8, 18) ? 15 : 0) - fatigue / 4", label: Luck }
+    success: { progress: { lost_ring: 1 }, hint: "Something glints in the grass — the ring." }
+    fail: { fatigue: +6, hint: "Bottle caps and a lot of mud." }
 
   pickpocket:
     label: Pick a pocket
@@ -8262,6 +9528,12 @@ encounters:
         check: { chance: 35 + athletics / 2 - fatigue / 3 - pain / 2, label: Athletics }
         success: { fatigue: +5, end: escaped }
         fail: { pain: +5, hint: "{{user}} is caught before getting far." }
+      jump_in:
+        label: Jump into the harbour
+        when: "at('docks')"
+        check: { chance: 30 + swimming / 2 - pain / 3, label: Swimming }
+        success: { end: swam_off }
+        fail: { pain: +8, fatigue: +10, hint: "The cold knocks the wind out of {{user}}, and they have to haul themselves back out." }
     foe_moves:
       grab: { desc: "Grabs and shoves {{user}}", weight: 2, pain: +8, stress: +4, damage: { top: 20 } }
       threaten: { desc: "Makes an ugly threat", weight: 2, stress: +6, control: -3 }
@@ -8271,6 +9543,7 @@ encounters:
       beaten: pain >= 80
     outcomes:
       won: { stress: -5, control: +5, flags: { fought_off_mugger: true }, hint: "The mugger loses their nerve and bolts." }
+      swam_off: { stress: +2, fatigue: +10, hint: "{{user}} comes up spluttering by the far ladder; the mugger is long gone." }
       robbed: { stress: +8, control: -8, hint: "They take the money and vanish." }
       escaped: { stress: +3, hint: "{{user}} gets clear." }
       beaten: { trauma: +5, money: "-min(money, 30)", hint: "{{user}} is left hurt on the pavement, pockets emptied." }
@@ -8291,6 +9564,72 @@ dungeons:
 `
       },
       {
+        label: "quests",
+        yaml: `# Quests: favours the townsfolk ask (they remember how it went) and odd jobs pinned to the
+# café corkboard. Favours people ask for in the story itself are tracked too (from_story).
+quests:
+  jo_cover:
+    name: Cover Jo's shift
+    kind: favour
+    giver: jo
+    desc: Jo's other server quit. She needs someone behind the counter this week.
+    when: "rel('jo', 'trust') >= 15"
+    days: 3
+    goals:
+      - { text: Work a shift at the café, on: { action: cafe_shift, tier: [crit_success, success, partial, fail] } }
+    reward: { money: 20, rel: { jo: { trust: 8, love: 3 } } }
+    failure: { rel: { jo: { trust: -8 } } }
+    stakes: Jo has nobody else to ask.
+    remember: { done: "{{user}} covered for her when the café was short-staffed.", failed: "{{user}} said they'd cover her shift and never showed." }
+  ward_essay:
+    name: The overdue essay
+    kind: coursework
+    giver: professor_ward
+    desc: Professor Ward wants the essay on her desk by Friday — no extensions.
+    days: 4
+    goals:
+      - { text: Put in proper study sessions, count: 3, on: study }
+    reward: { studies: 3, stress: -5, rel: { professor_ward: { trust: 10 } } }
+    failure: { stress: 10, rel: { professor_ward: { trust: -12 } } }
+    stakes: A fail goes on {{user}}'s record, and Ward doesn't forget.
+  dex_package:
+    name: Hold a package for Dex
+    kind: favour
+    giver: dex
+    desc: A taped-up box. Keep it safe for a couple of days. Don't open it.
+    when: "rel('dex', 'trust') >= 20"
+    days: 2
+    goals:
+      - { text: Keep it safe and give it back unopened }
+    judge: { done: "{{user}} gives Dex his package back, unopened", fail: "{{user}} opens, loses or hands over Dex's package" }
+    start: { crime: +4 }
+    reward: { money: 40, rel: { dex: { trust: 10 } } }
+    failure: { stress: 8, rel: { dex: { trust: -20 } } }
+    stakes: Dex doesn't forgive, and the people he works for forgive less.
+  lost_ring:
+    name: Lost engagement ring
+    kind: errand
+    board: true
+    desc: "REWARD £50 — gold ring with a small stone, lost near the duck pond in Seaview Park."
+    days: 3
+    goals:
+      - { text: Find the ring in Seaview Park }
+    reward: { money: 50, stress: -3 }
+    stakes: Someone else will find it first.
+  flyers:
+    name: Hand out club flyers
+    kind: odd job
+    board: true
+    repeat: 3
+    desc: The new club on the Strip pays cash to get its name around.
+    days: 2
+    goals:
+      - { text: Hand out stacks of flyers, count: 2 }
+    reward: { money: 25 }
+    failure: { stress: 2 }
+`
+      },
+      {
         label: "journal",
         yaml: `# Codex entries unlock as you play. Add "lore: [Lorebook entry title]" to one and that
 # lorebook entry stays off until the codex entry unlocks.
@@ -8305,6 +9644,7 @@ feats:
   first_pay: { name: First paycheque, desc: "Finish a shift at the café.", unlock: "flag('worked')", reward: { stress: -5 } }
   night_owl: { name: Night owl, desc: "Be out on the Strip after 2am.", unlock: "location == 'the_strip' and between(hour, 2, 5)" }
   stood_ground: { name: Stood your ground, desc: "Fight off a mugger.", unlock: "flag('fought_off_mugger')", reward: { control: +10 } }
+  good_neighbour: { name: Good neighbour, desc: "Come through on three favours or jobs.", unlock: "quests_done() >= 3", reward: { stress: -10, control: +5 } }
   well_dressed: { name: Dressed for it, desc: "Own a raincoat and a winter coat.", unlock: "has('raincoat') and has('winter_coat')" }
 `
       },
@@ -8540,7 +9880,7 @@ var init_starfarer = __esm(() => {
   starfarer = {
     id: "starfarer",
     name: "Starfarer (sci-fi RPG)",
-    blurb: "Sci-fi RPG / space opera: Physique, Reflexes, Aim, Intelligence, Willpower and Libido capped at 5× level; Shields/HP/Lust/Energy pools; credits; XP and levels with a pick-one-of-three perk; tech abilities (Stim Shot, Overcharge, Target Lock, Smoke Screen); a ship and a frontier world; turn-based combat you can win by force or by seduction; a codex that fills in as you explore.",
+    blurb: "Sci-fi RPG / space opera: Physique, Reflexes, Aim, Intelligence, Willpower and Libido capped at 5× level; Shields/HP/Lust/Energy pools; credits; XP and levels with a pick-one-of-three perk; tech abilities (Stim Shot, Overcharge, Target Lock, Smoke Screen, Flamer); burst fire, EMP stuns, armor and armor-piercing rounds; contracts from the concourse board and favours from the locals; a ship and a frontier world; turn-based combat you can win by force or by seduction; a codex that fills in as you explore.",
     parts: [
       {
         label: "core",
@@ -8704,6 +10044,7 @@ locations:
     indoors: true
     exits: [cargo_bay, bar, merchant]
     travel: 10
+    board: true
   bar:
     name: The Dry Dock (bar)
     desc: Spacers, mercs, and rumours.
@@ -8730,11 +10071,21 @@ items:
   medkit: Medkit
   codex: { name: Codex, bonus: { intelligence: 1 } }
   shield_booster: Shield booster
+  armored_vest: { name: Armored vest, desc: "Ceramic plates: every blow to the body lands 3 lighter.", armor: { hp: 3 } }
+  emp_grenade:
+    name: EMP grenade
+    tags: [consumable]
+    use: { label: Throw an EMP grenade, when: in_encounter, foe: { shields: "-50%" }, inflict: { stunned: 1 }, hint: "A white crack — their shields gutter and their gear locks up." }
+  ap_rounds:
+    name: Armor-piercing rounds
+    uses: 3
+    use: { label: Load an AP clip and fire, when: in_encounter, check: { vs: 12, add: floor(aim / 2), label: Aim }, success: { foe: { hp: -9 }, pierce: all }, fail: { hint: "The round sparks off a bulkhead." } }
 
+# Statuses: rounds = how long in a fight; skip = a chance to lose the turn; dot = damage each round.
 conditions:
-  stunned: { label: Stunned, tone: bad, narrator: true, bonus: { reflexes: -3, aim: -2 } }
-  grappled: { label: Grappled, tone: bad, narrator: true, bonus: { reflexes: -4 } }
-  burning: { label: Burning, tone: bad, narrator: true }
+  stunned: { label: Stunned, tone: bad, narrator: true, rounds: 1, skip: true, bonus: { reflexes: -3, aim: -2 } }
+  grappled: { label: Grappled, tone: bad, narrator: true, rounds: 2, skip: 30, bonus: { reflexes: -4 } }
+  burning: { label: Burning, tone: bad, narrator: true, rounds: 3, dot: 4, stat: hp }
   stimmed: { label: Stimmed, tone: good, bonus: { reflexes: 2, physique: 1 } }
   locked_on: { label: Target lock, tone: good, bonus: { aim: 3 } }
 `
@@ -8799,6 +10150,27 @@ conditions:
     when: credits >= 250 and transformed('feline_splice') < 3
     say: "*I pay for a feline gene-splice and take the injector.*"
     effects: { credits: -250, transform: { feline_splice: 1 } }
+  buy_vest:
+    label: Buy an armored vest (₡300)
+    group: Trade
+    at: merchant
+    when: credits >= 300 and not has('armored_vest')
+    say: "*I buy the armored vest.*"
+    effects: { credits: -300, give: armored_vest }
+  buy_emp:
+    label: Buy an EMP grenade (₡80)
+    group: Trade
+    at: merchant
+    when: credits >= 80
+    say: "*I buy an EMP grenade.*"
+    effects: { credits: -80, give: emp_grenade }
+  buy_ap:
+    label: Buy armor-piercing rounds (₡120)
+    group: Trade
+    at: merchant
+    when: credits >= 120
+    say: "*I buy a box of AP rounds.*"
+    effects: { credits: -120, give: ap_rounds }
   buy_booster:
     label: Buy shield booster (₡150)
     group: Trade
@@ -8864,6 +10236,7 @@ encounters:
     desc: A hostile scavenger jumps {{user}}.
     foe:
       name: Scavenger
+      armor: { hp: 2 }            # scavenged plating: blows to the body land 2 lighter
       stats:
         shields: { label: Shields, start: 12, max: 12 }
         hp: { label: HP, start: 30, max: 30 }
@@ -8876,6 +10249,12 @@ encounters:
         crit_success: { foe: { shields: -14, hp: "foe.shields <= 0 ? -12 : 0" }, hint: "A perfect shot." }
         success: { foe: { shields: -8, hp: "foe.shields <= 0 ? -7 : 0" }, hint: "The shot lands." }
         fail: { hint: "Missed." }
+      burst:
+        label: Burst fire
+        cost: { energy: -8 }
+        check: { vs: 11, add: floor(aim / 2), label: Aim }
+        success: { foe: { shields: -4 }, hits: 3, hint: "Three rounds rake their shields." }
+        fail: { hint: "The burst goes wide." }
       melee:
         label: Melee
         cost: { energy: -8 }
@@ -8898,7 +10277,7 @@ encounters:
         fail: { hint: "Cut off — the fight goes on." }
     foe_moves:
       blast: { desc: "Fires a blaster", weight: 3, shields: -8, hp: "shields <= 0 ? -6 : 0" }
-      grapple: { desc: "Tries to grapple", weight: 1, hp: -4, add_condition: { grappled: 2 } }
+      grapple: { desc: "Tries to grapple", weight: 1, hp: -4, add_condition: [grappled] }
       taunt: { desc: "Puts on a lewd display", weight: 1, lust: "+(8 + floor(libido / 10))" }
     end_when:
       won: foe.hp <= 0
@@ -8930,6 +10309,61 @@ dungeons:
 `
       },
       {
+        label: "quests",
+        yaml: `# Contracts off the concourse board, favours from the locals, and the Red Veil — which
+# comes for {{user}} whether they're ready or not.
+quests:
+  scav_bounty:
+    name: "Bounty: jungle scavengers"
+    kind: contract
+    board: true
+    repeat: 4
+    desc: Station security pays per scavenger crew put down on the jungle edge.
+    days: 5
+    goals:
+      - { text: Win fights against scavengers, count: 2, on: { encounter: ambush, outcome: [won, seduced] } }
+    reward: { credits: 200, xp: 30 }
+    failure: { xp: -10 }
+    stakes: Security stops posting your name on the good jobs.
+  kade_parts:
+    name: Salvage run for Kade
+    kind: favour
+    giver: kade
+    desc: Kade needs reactor couplings — any salvage will do, as long as it's today's.
+    days: 2
+    goals:
+      - { text: Strip salvage in your cargo bay, count: 2, on: salvage }
+    reward: { credits: 120, rel: { kade: { affinity: 6 } } }
+    failure: { rel: { kade: { affinity: -6 } } }
+    remember: { failed: "{{user}} promised Kade couplings and never delivered." }
+  vex_relic:
+    name: A relic for Vex
+    kind: favour
+    giver: vex
+    when: "rel('vex', 'affinity') >= 20"
+    desc: Vex wants something old from the ruins under the jungle, and pays in secrets.
+    days: 6
+    goals:
+      - { text: Reach the third floor of the Deep Ruins, when: "deepest('ruins') >= 3" }
+    reward: { credits: 100, reveal: [vex_informant], rel: { vex: { affinity: 8 } } }
+    failure: { rel: { vex: { affinity: -6 } } }
+    stakes: Vex stops pouring for you — and stops talking.
+  red_veil_hunt:
+    name: The Red Veil
+    kind: main
+    auto: true
+    when: "front_stage('red_veil') >= 1"
+    desc: Someone broke into {{user}}'s ship. The Red Veil syndicate has marked them — find out why before they come back.
+    goals:
+      - { text: "Learn who's selling {{user}} out", when: "secret('vex_informant') >= 2" }
+      - { text: Survive the Red Veil's move, when: "front_stage('red_veil') >= 2 and not in_encounter" }
+    fail: "hp <= 1 and front_stage('red_veil') >= 2"
+    reward: { xp: 120, credits: 300, perk_points: 1 }
+    failure: { credits: -200 }
+    stakes: The Red Veil takes the ship, or worse.
+`
+      },
+      {
         label: "journal",
         yaml: `# The player's own tech and tricks. Stim Shot everyone has; the rest come with perks.
 abilities:
@@ -8951,6 +10385,16 @@ abilities:
     where: encounter
     cost: { energy: -8 }
     add_condition: { locked_on: 3 }
+  flamer:
+    name: Flamer
+    desc: A wrist-mounted burst of burning gel that keeps on burning
+    where: encounter
+    known: false
+    cost: { energy: -12 }
+    check: { vs: 11, add: floor(aim / 2), label: Aim }
+    success: { harm: 4, inflict: { burning: 3 } }
+    fail: { hint: "The gel sputters onto the deck." }
+    per_encounter: 1
   smoke_screen:
     name: Smoke Screen
     desc: A grenade of thick, sensor-blinding smoke
@@ -9005,6 +10449,16 @@ perks:
     desc: Gone before they look up.
     abilities: [smoke_screen]
     bonus: { reflexes: 1 }
+  pyro:
+    name: Pyro
+    desc: Likes it hot.
+    abilities: [flamer]
+    narrator: "{{user}} smells faintly of accelerant and doesn't mind at all."
+  hollow_point:
+    name: Hollow Point
+    desc: Knows where armor is thin.
+    tags: [aim]
+    rule: { pierce: { amount: 3, stats: [aim, physique] } }
   tactician:
     name: Tactician
     desc: Reads a fight three moves ahead.
@@ -9021,6 +10475,7 @@ codex:
 feats:
   first_blood: { name: First blood, desc: "Win a fight.", unlock: "xp >= 40 or level >= 2" }
   explorer: { name: Explorer, desc: "Reach the deep jungle.", unlock: "location == 'jungle_deep'", reward: { xp: +20 } }
+  contractor: { name: Contractor, desc: "Finish three contracts or favours.", unlock: "quests_done() >= 3", reward: { xp: +40, perk_points: +1 } }
 `
       },
       {
@@ -9210,7 +10665,7 @@ var init_questbound = __esm(() => {
   questbound = {
     id: "questbound",
     name: "Questbound (fantasy RPG)",
-    blurb: "Fantasy adventure RPG: HP, stamina and mana; Might, Agility, Wits and Spirit with skills that grow (blades, archery, arcana, stealth, persuasion, survival, lore); spells and techniques with costs and uses (Firebolt, Mend, Haste, Second Wind, Vanish); levels with a pick-one-of-three perk; buffs and poisons; bounties; wolves, bandits and a barrow-wight you can beat by steel, spell or words; a dungeon under the barrow; a dark threat that grows on its own.",
+    blurb: "Fantasy adventure RPG: HP, stamina and mana; Might, Agility, Wits and Spirit with skills that grow (blades, archery, arcana, stealth, persuasion, survival, lore); spells and techniques with costs and uses (Firebolt, Mend, Haste, Flurry, Smite, Blood Price, Vanish); levels with a pick-one-of-three perk; armor, poison, stuns and bleeding; quests from the guild board and the villagers, with rewards and a price for failing; wolves, bandits and a barrow-wight you can beat by steel, spell or words; a dungeon under the barrow; a dark threat that grows on its own.",
     parts: [
       {
         label: "core",
@@ -9339,6 +10794,7 @@ narration:
     indoors: true
     exits: [village_square]
     travel: 2
+    board: true
   village_square:
     name: Village Square
     desc: A well, a market, the temple steps and the guild's iron sign.
@@ -9358,6 +10814,7 @@ narration:
     desc: Bounty boards, a training yard and Hesk's ledger.
     indoors: true
     exits: [village_square]
+    board: true
   forest_road:
     name: The Forest Road
     desc: A rutted road under old pines. Wolves, bandits, and worse after dark.
@@ -9384,19 +10841,21 @@ items:
   antidote: { name: Antidote, uses: 1, use: { label: Drink the antidote, remove_condition: [poisoned] } }
   rations: { name: Rations, uses: 1, use: { label: Eat a ration, stamina: +30 } }
   torch: { name: Torch, keep: true, bonus: { survival: 5 } }
+  chainmail: { name: Chainmail, desc: "Every blow to the body lands 2 lighter — but it clinks.", armor: { hp: 2 }, bonus: { stealth: -10 } }
   wolf_pelt: { name: Wolf pelt }
 
+# Statuses work on {{user}} and on whoever they're fighting (inflict:). rounds: how long in a fight;
+# lasts: how long outside one; dot: damage each round (or turn); skip: a chance to lose the turn.
 conditions:
-  poisoned: { label: Poisoned, tone: bad, narrator: true, bonus: { might: -1, agility: -1 } }
-  bleeding: { label: Bleeding, tone: bad, narrator: true }
+  poisoned: { label: Poisoned, tone: bad, narrator: true, rounds: 3, lasts: 2h, every: turn, dot: 2, stat: hp, bonus: { might: -1, agility: -1 } }
+  bleeding: { label: Bleeding, tone: bad, narrator: true, lasts: 1h, every: turn, dot: 2, stat: hp }
+  stunned: { label: Stunned, tone: bad, rounds: 1, skip: true }
+  chilled: { label: Grave-chilled, tone: bad, rounds: 2, skip: 35, bonus: { agility: -2 } }
+  guarded: { label: Shield up, tone: good, rounds: 2, armor: { hp: 4 } }
   hasted: { label: Hasted, tone: good, bonus: { agility: 3 } }
   blessed: { label: Blessed, tone: good, bonus: { spirit: 2, persuasion: 10 } }
   inspired: { label: Inspired, tone: good, bonus: { might: 2 } }
   exhausted: { label: Exhausted, tone: bad, narrator: true, bonus: { might: -2, agility: -2 } }
-
-flags:
-  bounty_wolves: { start: false }
-  bounty_bandits: { start: false }
 `
       },
       {
@@ -9419,21 +10878,6 @@ flags:
     check: { chance: "30 + persuasion / 2 + spirit * 3", label: Persuasion }
     success: { xp: +5, hint: "A useful rumour: a bounty, a lead on the barrow, or a warning about the road." }
     fail: { hint: "Nothing but gossip about the miller's goat." }
-  wolf_bounty:
-    label: Take the wolf bounty
-    group: Guild
-    at: guild_hall
-    when: not flag('bounty_wolves')
-    say: "*I take the wolf bounty off the board.*"
-    effects: { flags: { bounty_wolves: true }, hint: "Hesk: wolves have been taking travellers on the forest road. Ten gold a pelt, thirty for clearing the pack." }
-  bandit_bounty:
-    label: Take the bridge bounty
-    group: Guild
-    at: guild_hall
-    when: not flag('bounty_bandits') and level >= 2
-    why_not: "Hesk wants level 2 for this one"
-    say: "*I take the bounty on the bridge bandits.*"
-    effects: { flags: { bounty_bandits: true }, hint: "Hesk: bandits are charging a toll at the old bridge. Get it open again — however you like." }
   spar:
     label: Spar in the training yard
     group: Guild
@@ -9496,6 +10940,13 @@ flags:
     when: gold >= 40 and not has('longbow')
     say: "*I buy the longbow.*"
     effects: { gold: -40, give: longbow }
+  buy_mail:
+    label: Buy a chainmail shirt (45g)
+    group: Market
+    at: market
+    when: gold >= 45 and not has('chainmail')
+    say: "*I haggle over a second-hand mail shirt.*"
+    effects: { gold: -45, give: chainmail }
   buy_picks:
     label: Buy lockpicks (20g)
     group: Market
@@ -9543,7 +10994,7 @@ flags:
     label: Track the wolf pack
     group: Explore
     at: forest_road
-    when: flag('bounty_wolves')
+    requires: { quest: wolf_bounty }
     say: "*I follow the wolf tracks off the road.*"
     time: 30
     effects: { start_encounter: wolves }
@@ -9590,6 +11041,7 @@ encounters:
     actions:
       strike:
         label: Strike
+        tags: [melee]
         cost: { stamina: -8 }
         check: { chance: "35 + blades / 2 + might * 3", label: Blades }
         crit_success: { foe: { hp: "-(10 + might * 2)", nerve: -3 } }
@@ -9615,7 +11067,8 @@ encounters:
         success: { end: escaped }
         fail: { hp: -6, hint: "A wolf catches {{user}}'s boot and drags them back down." }
     foe_moves:
-      bite: { desc: "Lunges and bites", weight: 3, hp: -6 }
+      bite: { desc: "Lunges and bites", weight: 2, hp: -6 }
+      pack: { desc: "Three of them snap at once", weight: 1, hp: -2, hits: 3 }
       hamstring: { desc: "Goes for the legs", weight: 1, hp: -3, add_condition: { bleeding: 30 } }
       howl: { desc: "Howls to rally the pack", weight: 1, stamina: -6 }
     end_when:
@@ -9624,8 +11077,8 @@ encounters:
       beaten: hp <= 0
     labels: { won: The pack is dead, scattered: The pack runs, escaped: You got up a tree, beaten: The wolves dragged you down }
     outcomes:
-      won: { xp: +40, give: wolf_pelt, gold: "flag('bounty_wolves') ? 30 : 0", flags: { bounty_wolves: false } }
-      scattered: { xp: +30, gold: "flag('bounty_wolves') ? 20 : 0", flags: { bounty_wolves: false } }
+      won: { xp: +40, give: wolf_pelt }
+      scattered: { xp: +30 }
       escaped: { stamina: -10, hint: "{{user}} waits in the branches until the pack loses interest." }
       beaten: { set: { hp: 1 }, gold: "-min(gold, 10)", hint: "{{user}} comes to on the road, mauled and lighter in the purse — a passing cart picked them up." }
 
@@ -9636,6 +11089,7 @@ encounters:
     goal: Get across — pay, talk them out of it, slip past, or put them down
     foe:
       name: Bandit Captain
+      armor: { hp: 3 }            # a mail shirt: every blow lands 3 lighter
       stats:
         resolve: { label: Resolve, start: 16, max: 16 }
         hp: { label: HP, start: 30, max: 30 }
@@ -9656,10 +11110,18 @@ encounters:
         fail: { hint: "Nobody's impressed." }
       fight:
         label: Fight
+        tags: [melee]
         cost: { stamina: -8 }
         check: { chance: "35 + blades / 2 + might * 3", label: Blades }
         success: { foe: { hp: "-(6 + might)", resolve: -2 } }
         fail: { hp: -5 }
+      bash:
+        label: Shield-bash the captain
+        tags: [melee]
+        cost: { stamina: -10 }
+        check: { chance: "30 + might * 4", label: Might }
+        success: { inflict: [stunned], foe: { resolve: -2 }, hint: "The captain staggers, ears ringing." }
+        fail: { stamina: -4, hint: "{{user}} bounces off his shield." }
       sneak:
         label: Slip past in the reeds
         cost: { stamina: -6 }
@@ -9669,6 +11131,7 @@ encounters:
     foe_moves:
       threaten: { desc: "Threatens {{user}}", weight: 2, stamina: -4 }
       swing: { desc: "Swings a cudgel", weight: 2, hp: -6 }
+      shield_up: { desc: "Sets his shield and waits", weight: 1, inflict: { guarded: 2 } }
       call_out: { desc: "Calls more bandits from the trees", weight: 1, foe: { resolve: +3 } }
     end_when:
       backed_down: foe.resolve <= 0
@@ -9676,8 +11139,8 @@ encounters:
       beaten: hp <= 0
     labels: { backed_down: The bandits let you pass, won: The bandits are beaten, paid: You paid your way across, slipped_by: You slipped past unseen, beaten: The bandits beat you and took your purse }
     outcomes:
-      backed_down: { xp: +50, gold: "flag('bounty_bandits') ? 40 : 0", flags: { bounty_bandits: false } }
-      won: { xp: +60, gold: "20 + (flag('bounty_bandits') ? 40 : 0)", flags: { bounty_bandits: false } }
+      backed_down: { xp: +50 }
+      won: { xp: +60, gold: +20 }
       paid: { xp: +5 }
       slipped_by: { xp: +30 }
       beaten: { set: { hp: 1 }, gold: "-min(gold, 20)" }
@@ -9689,12 +11152,14 @@ encounters:
     goal: Destroy it, or break the oath that binds it with a dawn-blessing
     foe:
       name: Barrow-Wight
+      armor: { hp: 3 }            # rusted plate: steel bites less, the rite doesn't care
       stats:
         hp: { label: HP, start: 45, max: 45 }
         oath: { label: Oath, start: 20, max: 20 }
     actions:
       strike:
         label: Strike
+        tags: [melee]
         cost: { stamina: -8 }
         check: { chance: "30 + blades / 2 + might * 3", label: Blades }
         success: { foe: { hp: "-(5 + might) * (cond('blessed') ? 2 : 1)" } }
@@ -9713,7 +11178,7 @@ encounters:
         success: { end: fled }
         fail: { hp: -6 }
     foe_moves:
-      grave_chill: { desc: "Breathes a grave-chill", weight: 2, stamina: -12 }
+      grave_chill: { desc: "Breathes a grave-chill", weight: 2, stamina: -12, add_condition: [chilled] }
       blade: { desc: "Swings a rusted blade", weight: 2, hp: -8 }
       dread: { desc: "Fills the air with dread", weight: 1, mana: -5 }
     end_when:
@@ -9740,6 +11205,65 @@ dungeons:
     loot: { healing_draught: 3, mana_tonic: 2, antidote: 1 }
     on_leave: { stamina: -20 }
     on_defeat: { hp: -20, gold: "-min(gold, 30)" }
+`
+      },
+      {
+        label: "quests",
+        yaml: `# Bounties on the guild board, favours from the villagers, and the barrow — which comes
+# looking for {{user}} whether they take it on or not.
+quests:
+  wolf_bounty:
+    name: Thin the wolf pack
+    kind: bounty
+    giver: hesk
+    board: true
+    desc: Wolves have been taking travellers on the forest road.
+    days: 4
+    goals:
+      - { text: Kill the pack or send it running, on: { encounter: wolves, outcome: [won, scattered] } }
+    reward: { gold: 30, xp: 20, rel: { hesk: { trust: 5 } } }
+    failure: { rel: { hesk: { trust: -5 } } }
+    stakes: Another traveller goes missing on the road, and Hesk marks {{user}} as unreliable.
+    repeat: 7
+  bridge_bounty:
+    name: Open the old bridge
+    kind: bounty
+    giver: hesk
+    board: true
+    when: "level >= 2"
+    desc: Bandits are charging a toll at the old bridge. Get it open again — however you like.
+    days: 5
+    goals:
+      - { text: Make the bandits back down, or beat them, on: { encounter: bandits, outcome: [backed_down, won] } }
+    reward: { gold: 40, xp: 30, rel: { hesk: { trust: 8 } } }
+    failure: { rel: { hesk: { trust: -8 } } }
+    stakes: Trade dries up while the toll stands.
+  marta_herbs:
+    name: Herbs for the stew pot
+    kind: favour
+    giver: marta
+    desc: Marta's out of wild garlic and thyme, and the stew won't make itself.
+    days: 2
+    goals:
+      - { text: Forage along the forest road, count: 2, on: forage }
+    reward: { gold: 6, give: rations, rel: { marta: { affinity: 6, trust: 4 } } }
+    failure: { rel: { marta: { affinity: -4 } } }
+    remember: { failed: "{{user}} promised herbs for the stew and came back empty-handed." }
+    repeat: 3
+  barrow_oath:
+    name: The barrow-king's oath
+    kind: main
+    giver: aldous
+    auto: true
+    when: "front_stage('barrow_wakes') >= 1"
+    desc: The barrow's dead are walking. Brother Aldous begs {{user}} to end it — by steel or by rite.
+    goals:
+      - { text: Learn how the oath was broken before, when: "codex('wights')", optional: true }
+      - { text: Lay the barrow-wight to rest, when: "flag('barrow_quiet')" }
+    fail: "front('barrow_wakes') >= 100"
+    reward: { xp: 100, gold: 60, perk_points: 1, rel: { aldous: { trust: 15 } } }
+    failure: { rel: { aldous: { trust: -10 } } }
+    stakes: If the barrow fully wakes, the wight comes for the village itself.
 `
       },
       {
@@ -9781,6 +11305,44 @@ abilities:
     cost: { stamina: -8 }
     add_condition: { inspired: 3 }
     per_encounter: 1
+  flurry:
+    name: Flurry
+    desc: Three quick cuts — deadly on the unarmored, wasted on plate
+    where: encounter
+    known: false
+    tags: [melee]
+    cost: { stamina: -10 }
+    check: { chance: "40 + blades / 2 + agility * 3", label: Blades }
+    success: { harm: "3 + agility / 2", hits: 3 }
+    fail: { stamina: -4 }
+    per_encounter: 2
+  venomed_edge:
+    name: Venomed Edge
+    desc: A nick that keeps on hurting
+    where: encounter
+    known: false
+    tags: [melee]
+    cost: { stamina: -6 }
+    check: { chance: "35 + blades / 2 + agility * 3", label: Blades }
+    success: { harm: 2, inflict: { poisoned: 3 } }
+    per_encounter: 1
+  smite:
+    name: Smite
+    desc: The dawn's light through a holy symbol — a quarter of whatever stands against you, armor or not
+    where: encounter
+    requires: { has: holy_symbol }
+    cost: { mana: -10 }
+    check: { chance: "30 + spirit * 5 + lore / 4", label: Spirit }
+    success: { harm: "25%", pierce: all }
+    fail: { hint: "The light flickers and dies." }
+    per_encounter: 1
+  blood_price:
+    name: Blood Price
+    desc: Bleed a little, and the magic answers
+    known: false
+    cost: { hp: -8 }
+    mana: +14
+    per_day: 2
   vanish:
     name: Vanish
     desc: Step into a shadow and out of the fight
@@ -9797,8 +11359,9 @@ perks:
   pick: 3
   blade_dancer:
     name: Blade Dancer
-    desc: Fights like a duelist while there's breath in them.
+    desc: Fights like a duelist while there's breath in them — and learns the Flurry.
     tags: [blades]
+    abilities: [flurry]
     edge: { blades: 15, when: "stamina >= 50" }
     narrator: "{{user}} moves with a duelist's economy — no wasted motion."
   hedge_mage:
@@ -9809,15 +11372,16 @@ perks:
     bonus: { arcana: 5 }
   arcane_scholar:
     name: Arcane Scholar
-    desc: Mana returns faster; spells come easier.
+    desc: Mana returns faster; spells come easier — and the old blood-magic opens up.
     requires: "arcana >= 25"
+    abilities: [blood_price]
     bonus: { arcana: 10 }
     rule: { gains: { mana: "+50%" } }
   shadow_step:
     name: Shadow Step
-    desc: The dark is a friend.
+    desc: The dark is a friend, and so is a poisoned blade.
     tags: [stealth]
-    abilities: [vanish]
+    abilities: [vanish, venomed_edge]
     edge: { stealth: 15, when: "hour >= 20 or hour < 5" }
   battle_hardened:
     name: Battle-Hardened
@@ -9844,6 +11408,12 @@ perks:
     desc: Commands, and people listen.
     abilities: [battle_cry]
     bonus: { persuasion: 5 }
+  sunderer:
+    name: Sunderer
+    desc: Knows where plate is thin.
+    tags: [blades]
+    rule: { pierce: { amount: 3, stats: [blades] } }
+    narrator: "{{user}} fights like someone who has opened armor before — at the joints."
   berserker:
     name: Berserker
     desc: Strongest when hurt.
@@ -9859,7 +11429,8 @@ codex:
 
 feats:
   first_blood: { name: First blood, desc: "Win your first fight.", unlock: "xp >= 40 or level >= 2" }
-  pack_breaker: { name: Pack-breaker, desc: "Clear the wolf bounty.", unlock: "has('wolf_pelt')", reward: { perk_points: +1 } }
+  pack_breaker: { name: Pack-breaker, desc: "Clear the wolf bounty.", unlock: "quest_done('wolf_bounty')", reward: { perk_points: +1 } }
+  sellsword: { name: Sellsword, desc: "Finish three quests.", unlock: "quests_done() >= 3", reward: { xp: +40 } }
   oathbreaker: { name: Oathbreaker, desc: "Lay the barrow-wight to rest.", unlock: "flag('barrow_quiet')", reward: { xp: +50, perk_points: +1 } }
 `
       },
@@ -9881,14 +11452,6 @@ triggers:
       perk_points: +1
       hp: +15
       hint: "Level up! {{user}} feels stronger — and a new perk is theirs to choose."
-  bleeding_out:
-    when: cond('bleeding')
-    repeat: true
-    do: { hp: -2 }
-  poison:
-    when: cond('poisoned')
-    repeat: true
-    do: { hp: -1, stamina: -3 }
   worn_out:
     when: stamina <= 0
     do: { add_condition: { exhausted: 240 }, hint: "{{user}} is running on nothing." }
@@ -10728,6 +12291,9 @@ var init_protocol = __esm(() => {
     veils: [],
     decider: "llm",
     jevModel: "jev-latest",
+    jevUrl: "https://api.typesafe.ai/v1/systemone",
+    jevFormat: "typesafe",
+    storyQuests: true,
     autoConfidence: 0.75,
     askConfidence: 0.4,
     consistencyCheck: false,
@@ -10771,6 +12337,9 @@ async function patchSettings(patch, userId) {
   next.sfx = next.sfx === "all" || next.sfx === "off" ? next.sfx : "games";
   next.sfxVolume = Math.max(0, Math.min(1, Number.isFinite(Number(next.sfxVolume)) ? Number(next.sfxVolume) : 0.4));
   next.dateImages = next.dateImages !== false && next.dateImages !== "false";
+  next.jevFormat = next.jevFormat === "openai" ? "openai" : "typesafe";
+  next.jevUrl = /^https?:\/\/\S+$/i.test(String(next.jevUrl ?? "").trim()) ? String(next.jevUrl).trim() : DEFAULT_SETTINGS.jevUrl;
+  next.storyQuests = next.storyQuests !== false && next.storyQuests !== "false";
   cache2.set(key(userId), next);
   await host().userStorage.setJson("settings.json", next, { indent: 2, userId });
   return next;
@@ -14059,7 +15628,44 @@ function lintRuleset(r) {
         issues.push({ level: "warning", where, message: "moves the event gauge, but there are no random events" });
       check(e.gauge, `${where} › gauge`, extra);
     }
+    const conds = Object.keys(r.conditions);
+    for (const [id, spec] of Object.entries(e.inflict)) {
+      if (!r.conditions[id])
+        issues.push({ level: "warning", where, message: `inflicts "${id}", which isn't declared under conditions:${suggest(id, conds)}` });
+      check(spec.rounds, `${where} › inflict › ${id}`, extra);
+      check(spec.chance, `${where} › inflict › ${id} › chance`, extra);
+    }
+    for (const [who, m] of Object.entries(e.afflict)) {
+      if (who !== "target" && !r.people[who])
+        issues.push({ level: "warning", where, message: `puts conditions on "${who}", who isn't a person${suggest(who, people)}` });
+      for (const id of Object.keys(m))
+        if (!r.conditions[id])
+          issues.push({ level: "warning", where, message: `"${id}" isn't declared under conditions:${suggest(id, conds)}` });
+    }
+    for (const id of e.cleanse)
+      if (!r.conditions[id])
+        issues.push({ level: "warning", where, message: `cleanses "${id}", which isn't a condition${suggest(id, conds)}` });
+    check(e.hits, `${where} › hits`, extra);
+    check(e.pierce, `${where} › pierce`, extra);
+    for (const id of Object.keys(e.quest))
+      if (!r.quests[id])
+        issues.push({ level: "warning", where, message: `"${id}" isn't a quest${suggest(id, r.questOrder)}` });
+    for (const [key, v] of Object.entries(e.progress)) {
+      const [qid, gid] = key.split(".");
+      const q = r.quests[qid];
+      if (!q)
+        issues.push({ level: "warning", where, message: `counts toward "${qid}", which isn't a quest${suggest(qid, r.questOrder)}` });
+      else if (gid && !q.goals.some((g) => g.id === gid))
+        issues.push({ level: "warning", where, message: `"${gid}" isn't one of ${q.name}'s goals (${q.goals.map((g) => g.id).join(", ")})` });
+      else if (!gid && !q.goals.some((g) => g.count !== undefined && !g.when))
+        issues.push({ level: "warning", where, message: `"${q.name}" has no counted goal for progress to count toward (give a goal \`count:\`)` });
+      check(v, `${where} › progress › ${key}`, extra);
+    }
+    for (const who of Object.keys(e.remember))
+      if (who !== "target" && !r.people[who])
+        issues.push({ level: "warning", where, message: `"${who}" isn't a person to remember it${suggest(who, people)}` });
   };
+  const people = Object.keys(r.people);
   for (const id of r.statOrder)
     check(r.stats[id].maxExpr, `Stats › ${id} › max`);
   const checkAction = (a, w) => {
@@ -14079,6 +15685,57 @@ function lintRuleset(r) {
   };
   for (const a of Object.values(r.actions))
     checkAction(a, `Actions › ${a.id}`);
+  const checkRequires = (a, w) => {
+    for (const q of a.requires) {
+      const id = q.id ?? "";
+      const miss = (what, pool) => issues.push({ level: "warning", where: `${w} › requires`, message: `"${id}" isn't ${what}${suggest(id, pool)}` });
+      if ((q.kind === "with" || q.kind === "rel") && !r.people[id])
+        miss("a person", people);
+      if (q.kind === "has" && !r.items[id] && !r.itemsOpen)
+        miss("an item", Object.keys(r.items));
+      if (q.kind === "quest" && !r.quests[id])
+        miss("a quest", r.questOrder);
+      if (q.kind === "flag" && !r.flags[id])
+        miss("a flag", Object.keys(r.flags));
+      if (q.kind === "perk" && !r.perks[id])
+        miss("a perk", Object.keys(r.perks));
+      if (q.kind === "rel" && !r.relStats[q.stat ?? ""])
+        issues.push({ level: "warning", where: `${w} › requires`, message: `"${q.stat}" isn't a relationship stat${suggest(q.stat ?? "", r.relStatOrder)}` });
+    }
+  };
+  for (const a of Object.values(r.actions))
+    checkRequires(a, `Actions › ${a.id}`);
+  for (const enc of Object.values(r.encounters))
+    for (const a of Object.values(enc.actions))
+      checkRequires(a, `Encounters › ${enc.id} › actions › ${a.id}`);
+  for (const c of Object.values(r.conditions)) {
+    const w = `Conditions › ${c.id}`;
+    check(c.dot, `${w} › dot`);
+    check(c.skip, `${w} › skip`);
+    checkEffect(c.tick, `${w} › tick`);
+    if (c.stat && !r.stats[c.stat] && !Object.values(r.encounters).some((e) => e.foe.stats.some((x) => x.id === c.stat)))
+      issues.push({ level: "warning", where: `${w} › stat`, message: `"${c.stat}" isn't a stat or a foe stat${suggest(c.stat, r.statOrder)}` });
+    if (c.every === "hour" && c.dot !== undefined && !c.lasts)
+      issues.push({ level: "warning", where: w, message: "hurts every hour and never wears off on its own — give it `lasts:` (or a cure)" });
+  }
+  for (const it of Object.values(r.items))
+    for (const k of Object.keys(it.armor)) {
+      if (k !== "_" && !r.stats[k])
+        issues.push({ level: "warning", where: `Items › ${it.id} › armor`, message: `"${k}" isn't a stat${suggest(k, r.statOrder)}` });
+    }
+  for (const q of Object.values(r.quests)) {
+    const w = `Quests › ${q.id}`;
+    check(q.when, `${w} › when`);
+    check(q.succeed, `${w} › succeed`);
+    check(q.fail, `${w} › fail`);
+    for (const g of q.goals)
+      check(g.when, `${w} › goals › ${g.id}`);
+    checkEffect(q.start, `${w} › start`);
+    checkEffect(q.reward, `${w} › reward`);
+    checkEffect(q.failure, `${w} › failure`);
+    if (!q.auto && !q.giver && !q.board && !q.at.length && !q.hidden)
+      issues.push({ level: "warning", where: w, message: "has no giver, board or place, so nothing offers it — add `giver:`, `board: true`, `at:`, `auto: true` or `hidden: true` (started by an effect)" });
+  }
   for (const t of r.triggers) {
     check(t.when, `Triggers › ${t.id} › when`);
     checkEffect(t.effects, `Triggers › ${t.id}`);
@@ -14200,7 +15857,6 @@ function lintRuleset(r) {
   }
   for (const e of Object.values(r.endings))
     check(e.when, `Endings › ${e.id} › when`);
-  const people = Object.keys(r.people);
   if (r.discovery.enabled) {
     check(r.discovery.chance, "Discovery › chance");
     for (const loc of r.discovery.at)
@@ -14352,6 +16008,17 @@ var init_lint = __esm(() => {
     "days_until",
     "seen_by",
     "fame",
+    "quest",
+    "quest_active",
+    "quest_done",
+    "quest_failed",
+    "goal",
+    "quests_done",
+    "memories",
+    "cond_of",
+    "foe_cond",
+    "stat_max",
+    "foe_max",
     "min",
     "max",
     "clamp",
@@ -14374,7 +16041,7 @@ function readFormula(v, seen) {
   }
   for (const id of identifiers(v))
     seen.reads.add(id);
-  for (const m of v.matchAll(/\b(has|count|cond|flag|at|present|where|wearing|met|rel|worn|secret|front|codex|feat|perk|deepest|stage|partner|dates|transformed|saved|happened|owed|missed|days_until|arc|bond|seen_by)\(\s*'([^']+)'/g))
+  for (const m of v.matchAll(/\b(has|count|cond|flag|at|present|where|wearing|met|rel|worn|secret|front|codex|feat|perk|deepest|stage|partner|dates|transformed|saved|happened|owed|missed|days_until|arc|bond|seen_by|quest|quest_active|quest_done|quest_failed|goal|cond_of|foe_cond|memories)\(\s*'([^']+)'/g))
     seen.calls.add(`${m[1]}:${m[2]}`);
 }
 function walk(o, seen, money, key = "") {
@@ -14414,6 +16081,15 @@ function walk(o, seen, money, key = "") {
     }
     for (const k of o.removeConditions)
       seen.condRemoved.add(k);
+    for (const k of [...Object.keys(o.inflict), ...Object.values(o.afflict).flatMap((m) => Object.keys(m))])
+      seen.condAdded.add(k);
+    for (const k of o.cleanse)
+      seen.condRemoved.add(k);
+    for (const [k, op] of Object.entries(o.quest))
+      if (op === "done" || op === "report")
+        seen.questDone.add(k);
+    for (const k of Object.keys(o.progress))
+      seen.questProgress.add(k.split(".")[0]);
     for (const k of Object.keys(o.flags))
       seen.flagsSet.add(k);
     if (o.startEncounter)
@@ -14439,6 +16115,8 @@ function auditRuleset(r) {
     condRemoved: new Set,
     flagsSet: new Set,
     encStarted: new Set,
+    questDone: new Set,
+    questProgress: new Set,
     moves: new Set,
     unlocked: new Set,
     moneyUp: false,
@@ -14529,11 +16207,13 @@ function auditRuleset(r) {
   }
   for (const c of Object.values(r.conditions)) {
     const added = seen.condAdded.has(c.id) || c.narrator;
-    const read = seen.calls.has(`cond:${c.id}`) || Object.keys(c.bonus).length > 0;
+    const read = seen.calls.has(`cond:${c.id}`) || seen.calls.has(`foe_cond:${c.id}`) || seen.calls.has(`cond_of:${c.id}`) || Object.keys(c.bonus).length > 0 || c.dot !== undefined || c.skip !== undefined || Object.keys(c.armor).length > 0 || effectDoes(c.tick);
+    if (c.rounds || c.lasts)
+      seen.condTimed.add(c.id);
     if (!added)
       gap({ id: `cond-never:${c.id}`, severity: "gap", part: "rules", text: `Nothing ever causes ${c.label}.`, fix: `Add it from an action, a foe move, a trigger or an event (add_condition: [${c.id}]).` });
     else {
-      const cured = seen.condRemoved.has(c.id) || seen.condTimed.has(c.id) && !c.narrator;
+      const cured = seen.condRemoved.has(c.id) || !!c.rounds || !!c.lasts || seen.condTimed.has(c.id) && !c.narrator;
       if (!cured)
         gap({ id: `cond-uncured:${c.id}`, severity: "thin", part: "world", text: `Nothing cures ${c.label} (unless it has a duration).`, fix: `Add something that removes it — an item's use:, resting somewhere, a trigger (remove_condition: [${c.id}]), or give it a duration.` });
       else
@@ -14626,11 +16306,31 @@ function auditRuleset(r) {
     if (!e.foeMoves)
       gap({ id: `enc-passive:${e.id}`, severity: "thin", part: "encounters", text: `${e.name}'s other side never acts.`, fix: "Add foe_moves with weights and effects, so standing still has a cost." });
   }
+  const quests = Object.values(r.quests);
+  if (Object.keys(r.locations).length >= 3 && !Object.values(r.locations).some((l) => l.board)) {
+    gap({ id: "quest-no-board", severity: "thin", part: "world", text: "There's no notice board: nowhere the player can always find work.", fix: "Put board: true on a central place (a tavern, a guild hall, a station concourse, a school noticeboard) and post a few quests there with board: true." });
+  }
+  if (!quests.length && Object.keys(r.locations).length >= 2) {
+    gap({ id: "quests-none", severity: "thin", part: "story", text: "There are no quests: nothing to work toward beyond the daily loop.", fix: "Add quests: — a bounty on the board, a favour someone asks, a story job — each with goals the rules can see, a reward, and a price for failing (failure:, stakes:, days:)." });
+  }
+  for (const q of quests) {
+    const counted = q.goals.filter((g) => g.count !== undefined && !g.when && !g.on);
+    const finished = !!q.succeed || !!q.judge.done || seen.questDone.has(q.id) || q.goals.some((g) => !g.optional) && (!counted.length || seen.questProgress.has(q.id));
+    if (!finished)
+      gap({ id: `quest-stuck:${q.id}`, severity: "gap", part: "story", text: `Nothing can finish "${q.name}": no formula, judge: or quest: done, and nothing counts toward its goals.`, fix: `Count toward it (progress: { ${q.id}: +1 } on the action or encounter outcome that does the job), give goals a when: formula, or finish it with quest: { ${q.id}: done }.` });
+    if (!effectDoes(q.reward) && !q.giver)
+      gap({ id: `quest-no-reward:${q.id}`, severity: "thin", part: "story", text: `"${q.name}" pays nothing.`, fix: "Give it a reward: money, items, xp, a relationship, renown, a codex entry, an ability (learn:) or the next quest." });
+    const stakes = effectDoes(q.failure) || !!q.fail || q.days > 0 || !!q.stakes || !!q.judge.fail;
+    if (!stakes)
+      gap({ id: `quest-no-stakes:${q.id}`, severity: "thin", part: "story", text: `Failing "${q.name}" costs nothing — it can't really fail.`, fix: "Give it a way to fail (days:, fail:, or a quest: fail effect on a bad roll) and a failure: with consequences — money, standing, someone's mood, a door that closes." });
+    else
+      links.push(`Quest "${q.name}"${q.giver ? ` from ${r.people[q.giver]?.name ?? q.giver}` : ""}`);
+  }
   for (const c of Object.values(r.codex)) {
     if (!c.unlock && !seen.unlocked.has(c.id))
       gap({ id: `codex-locked:${c.id}`, severity: "thin", part: "journal", text: `Codex entry "${c.title}" can never be found.`, fix: "Give it an unlock: formula, or unlock it from an action or event." });
   }
-  const declared = Object.keys(r.items).length + r.statOrder.length + Object.keys(r.conditions).length + Object.keys(r.flags).length + Object.keys(r.locations).length + Object.keys(r.encounters).length * 3 + 1;
+  const declared = Object.keys(r.items).length + r.statOrder.length + Object.keys(r.conditions).length + Object.keys(r.flags).length + Object.keys(r.locations).length + Object.keys(r.encounters).length * 3 + quests.length * 2 + 1;
   const weight = gaps.reduce((n, g) => n + (g.severity === "gap" ? 1 : 0.4), 0);
   const depth = Math.max(0, Math.min(100, Math.round(100 * (1 - weight / declared))));
   return { gaps, links, depth };
@@ -15972,7 +17672,13 @@ function buildHud(r, s) {
       present: here.has(id),
       whereabouts: where ? r.locations[where]?.name ?? where : null,
       goal: r.companions[id]?.goal ?? null,
-      bonds: Object.entries(s.bonds[id] ?? {}).filter(([b, v]) => s.people[b] && Math.abs(v) >= 25).map(([b, v]) => `${bondWord(v)} ${personName(r, s, b)}`)
+      bonds: Object.entries(s.bonds[id] ?? {}).filter(([b, v]) => s.people[b] && Math.abs(v) >= 25).map(([b, v]) => `${bondWord(v)} ${personName(r, s, b)}`),
+      conditions: Object.entries(s.pconds?.[id] ?? {}).map(([cid, c]) => ({
+        label: r.conditions[cid]?.label ?? cid,
+        tone: r.conditions[cid]?.tone ?? "warn",
+        remaining: c.until !== null ? minutesLeft(c.until - s.minutes) : null
+      })),
+      memories: (s.memories?.[id] ?? []).slice().reverse().slice(0, 5).map((m) => ({ text: m.text, when: r.clock.enabled ? formatClock(r, m.at).day : null }))
     };
   }).sort((a, b) => Number(b.present) - Number(a.present));
   const wornIds = new Set(Object.values(s.worn));
@@ -16041,7 +17747,24 @@ function buildHud(r, s) {
         const v = s.encounter.foe[fs.id] ?? fs.start;
         const p = pct2(v, 0, fs.max);
         return { id: fs.id, label: fs.label, value: v, max: fs.max, pct: p, tone: toneFromPct(p, fs.good === "none" ? "none" : fs.good === "high" ? "high" : "low") };
-      })
+      }),
+      foeConds: Object.entries(s.encounter.conds ?? {}).map(([id, n]) => ({
+        id,
+        label: r.conditions[id]?.label ?? id,
+        tone: r.conditions[id]?.tone ?? "warn",
+        rounds: n,
+        ...r.conditions[id]?.desc ? { desc: r.conditions[id].desc } : {}
+      })),
+      foeArmor: (() => {
+        const m = mainMeter(r, s);
+        const n = m ? foeArmor2(r, s, m.stat) : 0;
+        return n ? n : null;
+      })(),
+      yourArmor: (() => {
+        const d = dangerStats(r, s)[0];
+        const n = d ? playerArmor(r, s, d) : 0;
+        return n ? n : null;
+      })()
     };
   }
   const conditions = Object.entries(s.conditions).map(([id, c]) => {
@@ -16052,7 +17775,7 @@ function buildHud(r, s) {
       label: def?.label ?? id,
       tone: def?.tone ?? "warn",
       desc: def?.desc,
-      remaining: left !== null && left > 0 ? left >= 60 ? `${Math.round(left / 60)}h` : `${left}m` : undefined
+      remaining: c.rounds !== undefined ? `${c.rounds} round${c.rounds === 1 ? "" : "s"}` : left !== null && left > 0 ? minutesLeft(left) : undefined
     };
   });
   const money = r.hud.money ? statDisplay(r.stats[r.hud.money], s.stats[r.hud.money] ?? 0, 0, r.hud.currency) : null;
@@ -16069,6 +17792,7 @@ function buildHud(r, s) {
     people,
     items,
     conditions,
+    quests: questViews(r, s),
     warmth,
     outfit,
     clothing,
@@ -16126,6 +17850,60 @@ function buildHud(r, s) {
     } : null,
     turn: s.turn
   };
+}
+function agoWords(min) {
+  if (min < 60)
+    return "just now";
+  if (min < 1440)
+    return `${Math.round(min / 60)}h ago`;
+  const d = Math.round(min / 1440);
+  return d === 1 ? "yesterday" : `${d} days ago`;
+}
+function minutesLeft(left) {
+  return left >= 1440 ? `${Math.round(left / 1440)}d` : left >= 60 ? `${Math.round(left / 60)}h` : `${Math.max(1, Math.round(left))}m`;
+}
+function questViews(r, s) {
+  const reportable = new Set(questsToReport(r, s).map((x) => x.id));
+  const view = (id, status, from) => {
+    const q = questDef(r, s, id);
+    if (!q)
+      return null;
+    const st = s.quests?.[id];
+    const left = st?.due !== null && st?.due !== undefined && (status === "active" || status === "ready") ? st.due - s.minutes : null;
+    const giver = q.giver ? personName(r, s, q.giver) : null;
+    const reward = effectWords(r, s, q.reward) || (st?.story && giver ? `${giver} will think better of you` : "");
+    const price = effectWords(r, s, q.failure);
+    return {
+      id,
+      name: q.name,
+      kind: q.kind,
+      status,
+      giver,
+      desc: q.desc ?? null,
+      goals: q.goals.map((g) => ({
+        text: g.text,
+        done: status === "done" || !!st && status !== "offered" && goalDone(r, s, st, g),
+        progress: g.count && g.count > 1 ? `${Math.min(st?.prog[g.id] ?? 0, g.count)}/${g.count}` : null,
+        optional: g.optional
+      })),
+      due: left !== null ? dueWords(left) : status === "offered" && q.days ? `${q.days} day${q.days === 1 ? "" : "s"} to do it` : null,
+      dueTone: left === null ? "neutral" : left < 1440 ? "bad" : left < 2880 ? "warn" : "neutral",
+      reward: reward || null,
+      stakes: q.stakes ?? (price ? `If it fails: ${price}` : st?.story && giver ? `${giver} will remember if you don't` : null),
+      story: !!st?.story,
+      take: status === "offered" ? `${QUEST_PREFIX}take:${id}` : null,
+      report: status === "ready" && reportable.has(id) ? `${QUEST_PREFIX}report:${id}` : null,
+      drop: status === "active" || status === "ready" ? `${QUEST_PREFIX}drop:${id}` : null,
+      from
+    };
+  };
+  const out = questOffers(r, s).map((o) => view(o.id, "offered", o.via === "giver" ? o.from : o.via === "board" ? "Notice board" : s.locationName));
+  const taken = Object.entries(s.quests ?? {});
+  for (const [id, st] of taken)
+    if (st.st === "active" || st.st === "ready")
+      out.push(view(id, st.st, null));
+  taken.filter(([, st]) => st.st === "done" || st.st === "failed").sort((a, b) => (b[1].ended ?? 0) - (a[1].ended ?? 0)).slice(0, 6).forEach(([id, st]) => out.push(view(id, st.st, null)));
+  return out.filter((x) => !!x);
 }
 function buildMap(r, s) {
   const ids = Object.keys(r.locations);
@@ -16335,18 +18113,41 @@ function buildChoices(r, s, opts) {
     };
   });
   const locked = [];
-  if (s.encounter) {
-    const pool = actionPool(r, s);
-    for (const id of pool.order) {
-      const a = pool.defs[id];
-      if (a.hidden || a.perPerson || isAvailable(r, s, a) || a.tags.some((t) => lines.has(t)))
-        continue;
-      if (!a.whyNot && !/has\(/.test(a.when ?? ""))
-        continue;
-      locked.push({ ...plain(id, a.label, encName ?? "Encounter", a.desc ?? null), locked: lockReason(r, s, a) });
-    }
+  const pool = actionPool(r, s);
+  for (const id of pool.order) {
+    const a = pool.defs[id];
+    if (a.hidden || a.perPerson || a.tags.some((t) => lines.has(t)))
+      continue;
+    if (!s.encounter && (!a.showLocked || a.at.length && !a.at.includes(s.location ?? "")))
+      continue;
+    if (s.encounter && !a.showLocked && !a.whyNot && !/has\(/.test(a.when ?? ""))
+      continue;
+    if (isAvailable(r, s, a))
+      continue;
+    locked.push({ ...plain(id, a.label, encName ?? a.group ?? null, a.desc ?? null), locked: lockReason(r, s, a) });
   }
-  return [...live, ...actions, ...abilityChoices(r, s, lines), ...itemChoices(r, s, lines), ...locked, ...talk, ...work, ...dungeons, ...travel, ...explore];
+  return [...live, ...actions, ...abilityChoices(r, s, lines), ...itemChoices(r, s, lines), ...locked, ...questChoices(r, s), ...talk, ...work, ...dungeons, ...travel, ...explore];
+}
+function questChoices(r, s) {
+  if (s.encounter || s.job || s.ended || s.dungeon)
+    return [];
+  const plain = (id, label, desc, why) => ({ id, label, group: "Quests", desc, odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [], ...why ? { why } : {} });
+  const out = [];
+  for (const { id, to } of questsToReport(r, s)) {
+    const q = questDef(r, s, id);
+    if (!q)
+      continue;
+    const reward = effectWords(r, s, q.reward);
+    out.push(plain(`${QUEST_PREFIX}report:${id}`, to ? `Tell ${to}: "${q.name}" is done` : `Hand in "${q.name}"`, q.desc ?? null, reward ? `Reward: ${reward}` : undefined));
+  }
+  const offers = questOffers(r, s).sort((a, b) => Number(b.via === "giver") - Number(a.via === "giver")).slice(0, 3);
+  for (const o of offers) {
+    const q = r.quests[o.id];
+    const reward = effectWords(r, s, q.reward);
+    const label = o.via === "giver" ? `${o.from} asks: "${q.name}"` : o.via === "board" ? `Notice: "${q.name}"` : `"${q.name}"`;
+    out.push(plain(`${QUEST_PREFIX}take:${o.id}`, label, q.desc ?? null, [reward ? `Reward: ${reward}` : "", q.days ? `${q.days}d` : ""].filter(Boolean).join(" · ") || undefined));
+  }
+  return out;
 }
 function costText(r, s, a) {
   const env = makeEnv(r, s);
@@ -16395,7 +18196,9 @@ function perkViews(r, s) {
     for (const e of p.edges)
       notes.push(`${plus(e.stats)}${e.when ? " (sometimes)" : ""}`);
     for (const rule of p.rules) {
-      if ("stat" in rule)
+      if (rule.kind === "pierce")
+        notes.push(`Ignores ${rule.amount >= 999 ? "all" : rule.amount} armor${rule.stats.length || rule.tags.length ? ` (${[...rule.stats.map((x) => r.stats[x]?.label ?? x), ...rule.tags].join(", ")})` : ""}`);
+      else if ("stat" in rule)
         notes.push(`${r.stats[rule.stat]?.label ?? rule.stat} ${rule.kind === "gains" ? "rises" : "drops"} ${Math.round(Math.abs(rule.pct) * 100)}% ${rule.pct > 0 ? "faster" : "slower"}`);
       else {
         const left = rule.perDay ? rule.perDay - usesOf(s, `perk:${p.id}:${rule.kind}`).today : null;
@@ -16495,9 +18298,43 @@ function summarizeEvents(r, before, after, events) {
         const label = r.conditions[e.id]?.label ?? e.id;
         if (e.note === "expired")
           break;
-        out.push({ text: e.on ? `${label}` : `${label} ended`, tone: e.on ? r.conditions[e.id]?.tone ?? "warn" : "good", src: e.src, undo: [i] });
+        out.push({ text: e.on ? `${label}${e.rounds ? ` · ${e.rounds} rounds` : ""}` : `${label} ended`, tone: e.on ? r.conditions[e.id]?.tone ?? "warn" : "good", src: e.src, undo: [i] });
         break;
       }
+      case "fcond": {
+        const def = r.conditions[e.id];
+        const foe = after.encounter ?? before.encounter ? foeName(r, after.encounter ? after : before) : "Foe";
+        const tone = !e.on ? "neutral" : def?.tone === "bad" ? "good" : def?.tone === "good" ? "bad" : "neutral";
+        out.push({ text: e.on ? `${foe}: ${def?.label ?? e.id}${e.rounds ? ` · ${e.rounds} rounds` : ""}` : `${foe}: ${def?.label ?? e.id} ended`, tone, src: e.src, undo: [i] });
+        break;
+      }
+      case "pcond": {
+        if (e.note === "expired")
+          break;
+        const label = r.conditions[e.id]?.label ?? e.id;
+        out.push({ text: `${personName(r, after, e.who)}: ${label}${e.on ? "" : " ended"}`, tone: "neutral", src: e.src, undo: [i] });
+        break;
+      }
+      case "quest": {
+        if (e.st === null)
+          break;
+        const name = e.story?.name ?? r.quests[e.id]?.name ?? questDef(r, after, e.id)?.name ?? e.id;
+        const text = e.st === "active" ? `\uD83D\uDCDC New quest: ${name}` : e.st === "ready" ? `\uD83D\uDCDC ${name}: ready to hand in` : e.st === "done" ? `✅ Quest complete: ${name}` : `✗ Quest failed: ${name}`;
+        out.push({ text, tone: e.st === "failed" ? "bad" : e.st === "done" || e.st === "ready" ? "good" : "neutral", src: e.src, undo: [i] });
+        break;
+      }
+      case "qprog": {
+        const q = questDef(r, after, e.id);
+        const g = q?.goals.find((x) => x.id === e.goal);
+        if (!q || !g)
+          break;
+        const n = after.quests?.[e.id]?.prog[e.goal] ?? 0;
+        out.push({ text: `\uD83D\uDCDC ${g.text}${g.count && g.count > 1 ? ` ${Math.min(n, g.count)}/${g.count}` : " ✓"}`, tone: "good", src: e.src, undo: [i] });
+        break;
+      }
+      case "memory":
+        out.push({ text: `\uD83D\uDCAD ${personName(r, after, e.who)} will remember that`, tone: "neutral", src: e.src, undo: [i], why: [e.text] });
+        break;
       case "person":
         out.push({ text: `Met ${e.name}`, tone: "neutral", src: e.src, undo: [i] });
         break;
@@ -16727,6 +18564,12 @@ function stateDigest(r, s) {
   if (hud.encounter) {
     const e = hud.encounter;
     lines.push(`ENCOUNTER in progress: ${e.name} vs ${e.foe}, round ${e.round}${e.stats.length ? ` — ${e.stats.map((x) => `${x.label} ${formatNumber(x.value)}/${formatNumber(x.max)}`).join(", ")}` : ""}${e.momentum !== null ? ` — momentum ${e.momentum > 0 ? "+" : ""}${Math.round(e.momentum)} (−100 = ${e.foe} wins, +100 = {{user}} wins)` : ""}`);
+    const on = [
+      ...e.foeConds.map((c) => `${c.label.toLowerCase()}${c.rounds ? ` (${c.rounds} round${c.rounds === 1 ? "" : "s"})` : ""}`),
+      ...e.foeArmor ? [`armored (${e.foeArmor})`] : []
+    ];
+    if (on.length)
+      lines.push(`${e.foe} is ${on.join(", ")}.`);
   }
   if (hud.outfit) {
     const worn = hud.outfit.filter((o) => o.item).map((o) => `${o.item.name}${o.item.integrity !== null && o.item.integrity < 60 ? " (torn)" : ""}`);
@@ -16774,7 +18617,7 @@ function stateDigest(r, s) {
   const ol = other.map((d) => statLine(r, d, s, r.narration.numbers)).filter(Boolean);
   if (ol.length)
     lines.push(`Skills: ${ol.join(" · ")}`);
-  const conds = Object.keys(s.conditions).map((id) => r.conditions[id]?.label ?? id);
+  const conds = Object.entries(s.conditions).map(([id, c]) => `${r.conditions[id]?.label ?? id}${c.rounds !== undefined ? ` (${c.rounds} round${c.rounds === 1 ? "" : "s"})` : ""}`);
   if (conds.length)
     lines.push(`Conditions: ${conds.join(", ")}`);
   const perks = Object.keys(s.perks).map((id) => r.perks[id]).filter((p) => p);
@@ -16783,6 +18626,16 @@ function stateDigest(r, s) {
   const known = Object.values(r.abilities).filter((ab) => knowsAbility(r, s, ab.id));
   if (known.length)
     lines.push(`{{user}}'s own abilities (they work as the rules say; only the rules decide when one is used): ${known.map((ab) => `${ab.name}${ab.desc ? ` (${ab.desc})` : ""}`).join("; ")}`);
+  const quests = questDigest(r, s);
+  if (quests.length)
+    lines.push(`Quests under way (only the rules decide when one is done or failed): ${quests.join(" | ")}`);
+  const offers = questOffers(r, s);
+  const asks = offers.filter((o) => o.via === "giver").map((o) => `${o.from} ("${r.quests[o.id].name}"${r.quests[o.id].desc ? ` — ${r.quests[o.id].desc}` : ""})`);
+  if (asks.length)
+    lines.push(`Has something to ask of {{user}} (may bring it up when it fits; {{user}} decides whether to take it on): ${asks.join("; ")}`);
+  const posted = offers.filter((o) => o.via === "board").map((o) => `"${r.quests[o.id].name}"`);
+  if (posted.length)
+    lines.push(`Posted on the notice board here: ${posted.join(", ")}`);
   const wornSet = new Set(Object.values(s.worn));
   const loose = Object.entries(s.items).filter(([id]) => !wornSet.has(id));
   const uses = (id) => {
@@ -16821,6 +18674,13 @@ function stateDigest(r, s) {
   const inScene = hud.people.filter((p) => p.present);
   if (inScene.length)
     lines.push(`Relationships (here): ${inScene.map((p) => feel(p.id, p.name)).join("; ")}`);
+  for (const p of inScene) {
+    if (p.conditions.length)
+      lines.push(`${p.name} is ${p.conditions.map((c) => c.label.toLowerCase()).join(", ")}.`);
+    const mem = (s.memories?.[p.id] ?? []).slice(-3).map((m) => `${m.text}${r.clock.enabled ? ` (${agoWords(s.minutes - m.at)})` : ""}`);
+    if (mem.length)
+      lines.push(`${p.name} remembers: ${mem.join("; ")}`);
+  }
   const away = hud.people.filter((p) => !p.present).sort((a, b) => (s.scene[b.id]?.at ?? -1) - (s.scene[a.id]?.at ?? -1)).slice(0, 8);
   if (away.length)
     lines.push(`Not in this scene (bring them in only if the story calls for it): ${away.map((p) => feel(p.id, p.name)).join("; ")}`);
@@ -16928,6 +18788,7 @@ var init_view = __esm(() => {
   init_freeform();
   init_encounter_view();
   init_resolve();
+  init_quests();
   init_world();
   init_run();
   init_talk();
@@ -17163,6 +19024,207 @@ var init_view3 = __esm(() => {
   init_types2();
 });
 
+// src/backend/helpers.ts
+function firstJson(text) {
+  const cleaned = text.replace(/```(?:json)?/gi, "");
+  const start = cleaned.indexOf("{");
+  if (start < 0)
+    return null;
+  let depth = 0;
+  let inStr = false;
+  for (let i = start;i < cleaned.length; i++) {
+    const c = cleaned[i];
+    if (inStr) {
+      if (c === "\\")
+        i++;
+      else if (c === '"')
+        inStr = false;
+      continue;
+    }
+    if (c === '"')
+      inStr = true;
+    else if (c === "{")
+      depth++;
+    else if (c === "}" && --depth === 0) {
+      try {
+        return JSON.parse(cleaned.slice(start, i + 1));
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+async function ask(system, user, settings, userId, timeoutMs, opts = {}) {
+  return (await askRaw(system, user, settings, userId, timeoutMs, opts)).content;
+}
+async function askProse(system, user, settings, userId, timeoutMs, opts = {}) {
+  const res = await askRaw(system, user, settings, userId, timeoutMs, opts);
+  const text = res.content.trim().replace(/^```\w*|```$/g, "").trim();
+  return res.finish === "length" || !finishedProse(text) ? "" : text;
+}
+async function askRaw(system, user, settings, userId, timeoutMs, opts) {
+  const res = await host().generate.quiet({
+    type: "quiet",
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: user }
+    ],
+    connection_id: settings.helperConnectionId || undefined,
+    reasoning: { source: "off" },
+    parameters: { temperature: opts.temperature ?? 0.1, ...opts.maxTokens ? { max_tokens: opts.maxTokens } : {} },
+    userId,
+    signal: AbortSignal.timeout(Math.max(3000, timeoutMs))
+  });
+  return typeof res === "string" ? { content: res, finish: "" } : { content: res?.content ?? "", finish: res?.finish_reason ?? "" };
+}
+function clip(s, n) {
+  return s.length > n ? `…${s.slice(-n)}` : s;
+}
+async function extract(r, s, playerText, reply, settings, userId, only, applied) {
+  const judged = judgedQuests(r, s);
+  const stats = r.statOrder.map((id) => r.stats[id]).filter((d) => d.narrator > 0);
+  const rels = r.relStatOrder.map((id) => r.relStats[id]).filter((d) => d.narrator > 0);
+  const conds = Object.values(r.conditions).filter((c) => c.narrator);
+  const flags = Object.values(r.flags).filter((f) => f.narrator);
+  const locs = Object.values(r.locations);
+  const want = (k) => !only || only.has(k);
+  const allowed = [];
+  if (want("minutes") && r.clock.enabled)
+    allowed.push(`- "minutes": how much in-story time the reply covers (0–${r.clock.narratorMax}).`);
+  if (want("stats") && stats.length)
+    allowed.push(`- "stats": changes (deltas) to: ${stats.map((d) => `${d.id} (±${formatNumber(d.narrator)})`).join(", ")}`);
+  if (want("rel") && rels.length)
+    allowed.push(`- "rel": per person name, deltas to: ${rels.map((d) => `${d.id} (±${formatNumber(d.narrator)})`).join(", ")}`);
+  const feelScale = rels.map((d) => `${d.id} ${d.min}–${d.max}${d.bands.length ? ` (${d.bands.map((b) => `${b.at}=${b.text}`).join(", ")})` : ""}`).join("; ");
+  const tracked = Object.values(s.people).map((p) => p.name);
+  if (want("people") && r.peopleOpen) {
+    allowed.push(`- "people": named characters who appear in the reply (speak, act, or are spoken to) and aren't tracked yet${tracked.length ? ` (already tracked: ${tracked.join(", ")})` : ""}, as [{"name": "...", "feelings": {<how they feel toward the player RIGHT NOW, absolute values>}}]${rels.length ? ` — scales: ${feelScale}` : ""}`);
+  }
+  if (want("scene") && (tracked.length || r.peopleOpen)) {
+    allowed.push(`- "present": names of everyone (tracked or new) physically in the scene with the player at the end of the reply — not people only mentioned, remembered, on the phone, or left behind. Always include it, even as [].`);
+  }
+  const uncalibrated = Object.keys(s.people).filter((id) => !s.calibrated[id]).map((id) => s.people[id].name);
+  if (want("people") && rels.length && uncalibrated.length) {
+    allowed.push(`- "feelings": for these tracked people who appear in the reply, where they stand toward the player right now (absolute values, same scales): ${uncalibrated.join(", ")} — as {"Name": {"stat": value}}`);
+  }
+  if (want("items") && (r.itemsOpen || Object.keys(r.items).length))
+    allowed.push(`- "items": item name → count gained (+) or lost (−); lost includes used up, eaten, drunk, emptied, broken, given away or taken. Held: ${Object.entries(s.items).map(([id, n]) => `${itemName(r, s, id)}${n > 1 ? ` ×${n}` : ""}`).join(", ") || "nothing"}`);
+  const withUses = Object.keys(s.items).filter((id) => (r.items[id]?.uses ?? 0) > 0);
+  if (want("used") && withUses.length)
+    allowed.push(`- "used": item name → times used, for items that have uses: ${withUses.map((id) => `${itemName(r, s, id)} (${s.uses[id] ?? r.items[id].uses}/${r.items[id].uses} uses left)`).join(", ")}`);
+  const growable = r.growth.enabled && r.growth.train ? r.statOrder.filter((id) => (r.stats[id].kind === "skill" || r.stats[id].kind === "attribute") && r.stats[id].growth > 0) : [];
+  if (want("train") && growable.length)
+    allowed.push(`- "trained": ids of abilities the player spent real effort practising, training, studying or rehearsing during the reply: ${growable.join(", ")}`);
+  if (want("encounter")) {
+    const storyEnc = !s.encounter && !s.dungeon && !s.job ? Object.values(r.encounters).filter((x) => x.fromStory) : [];
+    if (storyEnc.length)
+      allowed.push(`- "encounter": the id of one of these if it actually broke out in the reply (not just threatened): ${storyEnc.map((x) => `${x.id} (${x.name})`).join(", ")}; with "foe": the opponent's name when it's a specific person`);
+    else if (s.encounter) {
+      const def = r.encounters[s.encounter.id];
+      const outcomes = [...new Set([...Object.keys(def?.outcomes ?? {}), ...def?.momentum ? [def.momentum.win, def.momentum.lose] : []]), "broke_off"];
+      allowed.push(`- "encounter_end": only if ${def?.name ?? "the encounter"} is clearly over by the end of the reply, how it ended: ${outcomes.join(", ")}`);
+    }
+  }
+  if (want("move") && (locs.length || r.locationsOpen))
+    allowed.push(`- "move": where the player character ends up, if they moved${locs.length && !r.locationsOpen ? ` (one of: ${locs.map((l) => l.name).join(", ")})` : ""}`);
+  if (want("conditions") && conds.length)
+    allowed.push(`- "conditions": {"add": [...], "remove": [...]} from: ${conds.map((c) => c.id).join(", ")}`);
+  if (want("flags") && flags.length)
+    allowed.push(`- "flags": set any of: ${flags.map((f) => f.id).join(", ")}`);
+  if (want("wardrobe") && r.wardrobe.enabled && r.wardrobe.narrator) {
+    const worn = Object.entries(s.worn).map(([slot, id]) => `${slot}: ${itemName(r, s, id)}`).join(", ") || "nothing";
+    const owned = Object.keys(s.items).filter((id) => r.items[id]?.slot && !Object.values(s.worn).includes(id));
+    allowed.push(`- "undress": slots whose clothing came off (currently worn — ${worn})`);
+    if (owned.length)
+      allowed.push(`- "wear": ids of carried clothing put on, or that the reply shows the player wearing (${owned.join(", ")})`);
+  }
+  if (want("body") && r.body.enabled && r.body.narrator) {
+    const now = Object.entries(s.body).map(([p, t]) => `${p}: ${Object.entries(t).map(([k, v]) => `${k} ${v}`).join(", ")}`).join("; ") || "nothing recorded";
+    allowed.push(`- "body": lasting changes to the player's body as {"part": {"trait": "new value"}} (null removes a trait)${r.body.open ? "; new parts are allowed" : `; parts: ${Object.keys(r.body.parts).join(", ")}`}. Now: ${now}`);
+  }
+  if (want("quests") && (judged.length || r.storyQuests.enabled && settings.storyQuests)) {
+    const open = judged.map((j) => `${j.id} (done: ${j.done}${j.fail ? `; failed: ${j.fail}` : ""})`).join("; ");
+    allowed.push(`- "quests": {${r.storyQuests.enabled && settings.storyQuests ? `"new": [{"name": "short title", "giver": "who asked", "goal": "what counts as done", "fail": "what would count as failing (optional)", "stakes": "what's at stake (optional)", "hours": in-game hours until it's due (only if a time was set)}], ` : ""}"done": [ids], "failed": [ids]}${r.storyQuests.enabled && settings.storyQuests ? ` — new: ONLY when someone in the reply asked the player for a specific task or favour (or the player promised one) and it isn't one of these already` : ""}${open ? `; done/failed: only quests the reply clearly finished or failed. Open quests: ${open}` : ""}`);
+  }
+  if (want("memories") && Object.keys(s.people).length) {
+    allowed.push(`- "memories": {"Name": "one line, from their side, of what they'll remember about the player"} — ONLY for moments that will matter to them for a long time (a kindness, a betrayal, a promise made or broken, a humiliation, a first). Usually {}.`);
+  }
+  if (!allowed.length)
+    return null;
+  const system = [
+    "You are the bookkeeper for a text roleplay game. You never write story.",
+    "Read the narrator's latest reply and record only what CLEARLY happened in it.",
+    "Small, sensible deltas for changes. Omit anything unchanged. Do not re-apply dice outcomes that were already applied.",
+    'Exception: "feelings" (and people.feelings) are where someone stands overall right now — read them from how they act, even if that means strong values.',
+    "You may report:",
+    ...allowed,
+    'Reply with JSON only, e.g. {"minutes": 20, "stats": {"stress": 300}, "rel": {"Robin": {"trust": 3}}}. Use {} if nothing changed.'
+  ].join(`
+`);
+  const user = [
+    "Current state:",
+    stateDigest(r, s),
+    "",
+    "Player's message:",
+    clip(playerText, 1200) || "(none)",
+    "",
+    "Narrator's reply:",
+    clip(reply, 4000),
+    ...applied ? ["", "Already applied by the rules this turn (don't report these again):", applied] : []
+  ].join(`
+`);
+  try {
+    const out = firstJson(await ask(system, user, settings, userId, 30000));
+    if (!out)
+      return null;
+    const p = out;
+    if (Array.isArray(p.present)) {
+      const listed = p.present.map(String).filter(Boolean);
+      const scene = Object.fromEntries(listed.map((n) => [n, true]));
+      for (const id of presentPeople(r, s, makeEnv(r, s))) {
+        const name = s.people[id]?.name;
+        if (name && !listed.some((l) => sameName(l, name)))
+          scene[id] = false;
+      }
+      p.scene = scene;
+    }
+    delete p.present;
+    if (Array.isArray(p.trained))
+      p.train = p.trained.map(String);
+    delete p.trained;
+    if (typeof p.encounter_end === "string" && p.encounter_end)
+      p.encounterEnd = p.encounter_end;
+    delete p.encounter_end;
+    return p;
+  } catch (e) {
+    logError("extractor", e);
+    return null;
+  }
+}
+function judgedQuests(r, s) {
+  const out = [];
+  for (const [id, st] of Object.entries(s.quests ?? {})) {
+    if (st.st !== "active")
+      continue;
+    const q = questDef(r, s, id);
+    if (!q?.judge.done && !q?.judge.fail)
+      continue;
+    out.push({ id, name: q.name, done: q.judge.done ?? q.goals.map((g) => g.text).join("; "), ...q.judge.fail ? { fail: q.judge.fail } : {} });
+  }
+  return out;
+}
+var finishedProse = (t) => /[.!?…]["”’'*_)\]]*$/.test(t.trim()), sameName = (a, b) => {
+  const x = a.trim().toLowerCase(), y = b.trim().toLowerCase();
+  return x === y || x.split(/\s+/)[0] === y.split(/\s+/)[0];
+};
+var init_helpers = __esm(() => {
+  init_state();
+  init_world();
+  init_quests();
+  init_view();
+});
+
 // src/backend/decisions.ts
 function newNames(text, known) {
   const knownWords = new Set(known.flatMap((n) => n.toLowerCase().split(/[^\p{L}\p{N}']+/u)).filter(Boolean));
@@ -17195,7 +19257,7 @@ function mentions(text, name) {
     return true;
   return words.filter(has).length * 2 >= words.length && words.length > 1;
 }
-function clip(s, n) {
+function clip2(s, n) {
   return s.length > n ? `…${s.slice(-n)}` : s;
 }
 function fill(text, player) {
@@ -17221,9 +19283,18 @@ async function readTurn(opts) {
     ...usableAbilities(r, s).filter((u) => !u.status.locked).map((u) => ({ id: u.id, a: u.a, label: u.a.label }))
   ] : [];
   const travel = playerText && !talking ? travelTargets(r, s) : [];
+  const questMoves = {};
+  if (playerText && !talking) {
+    for (const o of questOffers(r, s).filter((x) => x.via === "giver")) {
+      const q = r.quests[o.id];
+      questMoves[`${QUEST_PREFIX}take:${o.id}`] = `Agree to take on "${q.name}"${o.from ? ` for ${o.from}` : ""}${q.desc ? ` — ${q.desc}` : ""}`;
+    }
+    for (const x of questsToReport(r, s))
+      questMoves[`${QUEST_PREFIX}report:${x.id}`] = `Tell ${x.to ?? "them"} that "${questDef(r, s, x.id)?.name ?? x.id}" is done`;
+  }
   const improv = !!playerText && !talking && r.improvise.enabled && !s.dungeon;
   const approach = improv ? improvStats(r) : [];
-  if (playerText && (actions.length || travel.length || improv)) {
+  if (playerText && (actions.length || travel.length || improv || Object.keys(questMoves).length)) {
     const criteria = {
       [NONE]: "None of these: dialogue, thoughts, feelings, plans, questions, or something trivial that can't fail"
     };
@@ -17231,6 +19302,7 @@ async function readTurn(opts) {
       criteria[c.id] = `${c.label}${c.a.desc ? ` — ${c.a.desc}` : ""}`;
     for (const t of travel)
       criteria[`${TRAVEL_PREFIX}${t}`] = `Go to ${r.locations[t].name}`;
+    Object.assign(criteria, questMoves);
     if (improv)
       criteria[ATTEMPT] = "Something else with a real chance of failing that matters to the story, not listed above (sneaking, persuading, lying, fighting, climbing, stealing, resisting, performing…)";
     q.action = { type: "choice", instructions: `Which of these does ${player}'s latest message actually attempt right now?`, criteria };
@@ -17278,8 +19350,8 @@ async function readTurn(opts) {
     });
   const state = {
     game_state: stateDigest(r, s),
-    scene_so_far: clip(opts.sceneText, 2000) || "(start of story)",
-    ...playerText ? { player_message: clip(playerText, 1500) } : {}
+    scene_so_far: clip2(opts.sceneText, 2000) || "(start of story)",
+    ...playerText ? { player_message: clip2(playerText, 1500) } : {}
   };
   const ans = await safeAsk(decider, state, q, opts.timeoutMs, "read turn");
   const scene = {};
@@ -17320,6 +19392,11 @@ async function readTurn(opts) {
     const difficulty = DIFFICULTIES[Math.max(0, Math.min(DIFFICULTIES.length - 1, Math.round(level)))];
     intent = { actionId: `${IMPROV}${stat}`, via: "adjudicator", params: { difficulty } };
     label = `${stat ? r.stats[stat].label : "Luck"} check (${difficulty})`;
+  } else if (id.startsWith(QUEST_PREFIX)) {
+    if (!questMoves[id])
+      return out;
+    intent = { actionId: id, via: "adjudicator" };
+    label = questMoves[id];
   } else if (id.startsWith(TRAVEL_PREFIX)) {
     const to = id.slice(TRAVEL_PREFIX.length);
     if (!travel.includes(to))
@@ -17357,8 +19434,8 @@ async function odds2(opts) {
   }
   const state = {
     game_state: stateDigest(opts.r, opts.s),
-    scene_so_far: clip(opts.sceneText, 2000),
-    player_message: clip(opts.playerText, 1200),
+    scene_so_far: clip2(opts.sceneText, 2000),
+    player_message: clip2(opts.playerText, 1200),
     ...opts.card ? { character_card: opts.card } : {}
   };
   const ans = await safeAsk(opts.decider, state, q, opts.timeoutMs, "decide odds");
@@ -17509,6 +19586,19 @@ async function bookkeeping(opts) {
       }
     };
   }
+  const judged = judgedQuests(r, s);
+  for (const j of judged) {
+    q[`quest:${j.id}`] = {
+      type: "choice",
+      instructions: `Where does ${player}'s quest "${j.name}" stand at the end of the reply?`,
+      criteria: { ongoing: "Still under way, or the reply doesn't say", done: `Done: ${fill(j.done, player)}`, failed: j.fail ? `Failed: ${fill(j.fail, player)}` : "Failed, abandoned or made impossible" }
+    };
+  }
+  const storyQuests = opts.storyQuests !== false && r.storyQuests.enabled;
+  if (storyQuests)
+    q["gate:quests"] = { type: "noul", instructions: `During the reply, someone asked ${player} to do a specific task or favour for them (or ${player} promised one) that ${player} agreed to and that isn't already one of ${player}'s quests` };
+  if (Object.keys(s.people).length)
+    q["gate:memories"] = { type: "noul", instructions: `During the reply, something happened between ${player} and someone there that they'll remember for a long time: a real kindness, a betrayal, a promise made or broken, a humiliation, a first` };
   if (r.body.enabled && r.body.narrator)
     q["gate:body"] = { type: "noul", instructions: `${player}'s body changes during the reply (a transformation, new mark or tattoo, haircut or dye, a lasting injury…)` };
   if (r.peopleOpen)
@@ -17519,8 +19609,8 @@ async function bookkeeping(opts) {
     q["gate:move"] = { type: "noul", instructions: `${player} ends the reply somewhere different from ${s.locationName ?? "where they started"}` };
   const state = {
     game_state: stateDigest(r, s),
-    player_message: clip(opts.playerText, 1200),
-    narrator_reply: clip(opts.reply, 6000),
+    player_message: clip2(opts.playerText, 1200),
+    narrator_reply: clip2(opts.reply, 6000),
     already_applied: opts.applied || "(nothing — the rules applied no changes this turn)"
   };
   const ans = await safeAsk(opts.decider, state, q, 12000, "bookkeeping");
@@ -17610,7 +19700,17 @@ async function bookkeeping(opts) {
     if (a?.type === "noul" && a.noul >= 0.7)
       (p.undress ??= []).push(slot);
   }
+  for (const j of judged) {
+    const a = ans[`quest:${j.id}`];
+    if (a?.type !== "choice" || a.choice === "ongoing" || (a.probabilities[a.choice] ?? a.confidence) < 0.6)
+      continue;
+    ((p.quests ??= {})[a.choice === "done" ? "done" : "failed"] ??= []).push(j.id);
+  }
   const needsWriting = new Set;
+  if (ans["gate:quests"]?.type === "noul" && ans["gate:quests"].noul >= 0.65)
+    needsWriting.add("quests");
+  if (ans["gate:memories"]?.type === "noul" && ans["gate:memories"].noul >= 0.7)
+    needsWriting.add("memories");
   const known = [player, ...Object.values(s.people).map((x) => x.name), ...Object.values(r.locations).map((l) => l.name), s.locationName ?? "", ...Object.keys(s.items).map((id) => itemName(r, s, id))];
   const peopleBar = newNames(opts.reply, known).length ? 0.35 : 0.6;
   for (const g of ["people", "items", "move", "body"]) {
@@ -17627,7 +19727,7 @@ async function contradiction(opts) {
       instructions: "The narrator's reply contradicts the game state or the decided outcome (wrong location, items, injuries, relationships, time of day, or a different result than the dice gave)"
     }
   };
-  const state = { game_state: stateDigest(opts.r, opts.s), decided_outcome: opts.outcome ?? "(none)", narrator_reply: clip(opts.reply, 6000) };
+  const state = { game_state: stateDigest(opts.r, opts.s), decided_outcome: opts.outcome ?? "(none)", narrator_reply: clip2(opts.reply, 6000) };
   const ans = await safeAsk(opts.decider, state, q, 8000, "consistency");
   const a = ans.contradicts;
   return a?.type === "noul" ? a.noul : null;
@@ -17635,6 +19735,8 @@ async function contradiction(opts) {
 var NONE = "none", ATTEMPT = "attempt", ENCOUNTER_SURE = 0.6, ENCOUNTER_OVER = 0.7, COMMON_CAPS, DIFFICULTY, STEP_FACTOR, TIME_LEVELS, TIME_MINUTES;
 var init_decisions = __esm(() => {
   init_resolve();
+  init_quests();
+  init_helpers();
   init_ruleset();
   init_state();
   init_freeform();
@@ -17743,39 +19845,67 @@ async function post(url, headers, body, timeoutMs) {
   })();
   return Promise.race([call, timeout]);
 }
+async function postJson(url, key, body, timeoutMs, who) {
+  const headers = { "Content-Type": "application/json", ...key ? { Authorization: `Bearer ${key}` } : {} };
+  let delay = 400;
+  for (let attempt = 0;; attempt++) {
+    const res = await post(url, headers, body, timeoutMs);
+    if (res.status === 200)
+      return res.body;
+    if ((res.status === 429 || res.status === 529 || res.status === 503) && attempt < 2) {
+      await new Promise((r) => setTimeout(r, delay));
+      delay *= 3;
+      continue;
+    }
+    const hint = res.status === 401 || res.status === 403 ? `the ${who} API key was rejected` : res.status === 404 ? `${who} wasn't found at ${url}` : res.status === 422 ? `${who} rejected the request` : `${who} returned ${res.status}`;
+    throw new DeciderError(`${hint}${res.body ? `: ${res.body.slice(0, 200)}` : ""}`);
+  }
+}
 
 class JevDecider {
   key;
   model;
+  url;
   id = "jev";
   canWrite = false;
-  constructor(key, model) {
+  constructor(key, model, url = JEV_URL) {
     this.key = key;
     this.model = model;
+    this.url = url;
   }
   async ask(state, questions, opts = {}) {
     if (!Object.keys(questions).length)
       return {};
     const body = JSON.stringify({ model: this.model || "jev-latest", state, questions });
-    const headers = { Authorization: `Bearer ${this.key}`, "Content-Type": "application/json" };
-    let delay = 400;
-    for (let attempt = 0;; attempt++) {
-      const res = await post(JEV_URL, headers, body, opts.timeoutMs ?? 8000);
-      if (res.status === 200) {
-        const parsed = JSON.parse(res.body);
-        return parsed.answers ?? {};
-      }
-      if ((res.status === 429 || res.status === 529) && attempt < 2) {
-        await new Promise((r) => setTimeout(r, delay));
-        delay *= 3;
-        continue;
-      }
-      const hint = res.status === 401 ? "the Jev API key was rejected" : res.status === 422 ? "Jev rejected the request" : `Jev returned ${res.status}`;
-      throw new DeciderError(`${hint}${res.body ? `: ${res.body.slice(0, 200)}` : ""}`);
-    }
+    const who = this.url === JEV_URL ? "Jev" : "The classifier";
+    const parsed = JSON.parse(await postJson(this.url || JEV_URL, this.key, body, opts.timeoutMs ?? 8000, who));
+    return parsed.answers ?? {};
   }
 }
-function firstJson(text) {
+
+class ChatEndpointDecider {
+  key;
+  model;
+  url;
+  id = "jev";
+  canWrite = false;
+  constructor(key, model, url) {
+    this.key = key;
+    this.model = model;
+    this.url = url;
+  }
+  async ask(state, questions, opts = {}) {
+    const ids = Object.keys(questions);
+    if (!ids.length)
+      return {};
+    const { system, user } = typedPrompt(state, questions);
+    const url = /\/chat\/completions\/?$/.test(this.url) ? this.url : `${this.url.replace(/\/+$/, "")}/chat/completions`;
+    const body = JSON.stringify({ model: this.model, messages: [{ role: "system", content: system }, { role: "user", content: user }], temperature: 0, max_tokens: 60 + ids.length * 30 });
+    const parsed = JSON.parse(await postJson(url, this.key, body, opts.timeoutMs ?? 15000, "The classifier"));
+    return typedAnswers(firstJson2(parsed.choices?.[0]?.message?.content ?? "") ?? {}, questions);
+  }
+}
+function firstJson2(text) {
   const s = text.replace(/```(?:json)?/gi, "");
   const start = s.indexOf("{");
   const end = s.lastIndexOf("}");
@@ -17786,6 +19916,66 @@ function firstJson(text) {
   } catch {
     return null;
   }
+}
+function typedPrompt(state, questions) {
+  const ids = Object.keys(questions);
+  const lines = ids.map((id) => {
+    const q = questions[id];
+    if (q.type === "choice")
+      return `${id} (choice) — ${q.instructions}
+${Object.entries(q.criteria).map(([k, v]) => `    "${k}": ${v}`).join(`
+`)}`;
+    if (q.type === "score")
+      return `${id} (score 0–${q.criteria.length - 1}) — ${q.instructions}
+${q.criteria.map((c, i) => `    ${i}: ${c}`).join(`
+`)}`;
+    return `${id} (yes/no) — ${q.instructions}`;
+  });
+  const system = [
+    "You answer typed questions about a roleplay game's current situation. You never write story.",
+    "Answer every question. Reply with JSON only, one key per question id:",
+    '  choice → {"choice": "<option key>", "confidence": 0.0–1.0}',
+    '  score  → {"level": <integer>, "confidence": 0.0–1.0}',
+    '  yes/no → {"p": <probability it is true, 0.0–1.0>}',
+    "Be honest about confidence: 0.5 means a coin flip."
+  ].join(`
+`);
+  const user = `State:
+${typeof state === "string" ? state : JSON.stringify(state, null, 1)}
+
+Questions:
+${lines.join(`
+
+`)}`;
+  return { system, user };
+}
+function typedAnswers(raw, questions) {
+  const out = {};
+  for (const id of Object.keys(questions)) {
+    const q = questions[id];
+    const a = raw[id] ?? {};
+    const conf = clamp01(Number(a.confidence ?? 0.6));
+    if (q.type === "choice") {
+      const keys = Object.keys(q.criteria);
+      const pick = typeof a.choice === "string" && keys.includes(a.choice) ? a.choice : null;
+      if (!pick)
+        continue;
+      const rest = keys.length > 1 ? (1 - conf) / (keys.length - 1) : 0;
+      out[id] = { type: "choice", choice: pick, confidence: conf, probabilities: Object.fromEntries(keys.map((k) => [k, k === pick ? conf : rest])) };
+    } else if (q.type === "score") {
+      const n = q.criteria.length;
+      const level = Math.max(0, Math.min(n - 1, Math.round(Number(a.level))));
+      if (!Number.isFinite(level))
+        continue;
+      const rest = n > 1 ? (1 - conf) / (n - 1) : 0;
+      out[id] = { type: "score", score: level, confidence: conf, probabilities: Object.fromEntries(q.criteria.map((_, i) => [String(i), i === level ? conf : rest])) };
+    } else {
+      const p = Number(a.p ?? a.probability ?? a.noul);
+      if (Number.isFinite(p))
+        out[id] = { type: "noul", noul: clamp01(p) };
+    }
+  }
+  return out;
 }
 
 class LlmDecider {
@@ -17801,34 +19991,7 @@ class LlmDecider {
     const ids = Object.keys(questions);
     if (!ids.length)
       return {};
-    const lines = ids.map((id) => {
-      const q = questions[id];
-      if (q.type === "choice")
-        return `${id} (choice) — ${q.instructions}
-${Object.entries(q.criteria).map(([k, v]) => `    "${k}": ${v}`).join(`
-`)}`;
-      if (q.type === "score")
-        return `${id} (score 0–${q.criteria.length - 1}) — ${q.instructions}
-${q.criteria.map((c, i) => `    ${i}: ${c}`).join(`
-`)}`;
-      return `${id} (yes/no) — ${q.instructions}`;
-    });
-    const system = [
-      "You answer typed questions about a roleplay game's current situation. You never write story.",
-      "Answer every question. Reply with JSON only, one key per question id:",
-      '  choice → {"choice": "<option key>", "confidence": 0.0–1.0}',
-      '  score  → {"level": <integer>, "confidence": 0.0–1.0}',
-      '  yes/no → {"p": <probability it is true, 0.0–1.0>}',
-      "Be honest about confidence: 0.5 means a coin flip."
-    ].join(`
-`);
-    const user = `State:
-${typeof state === "string" ? state : JSON.stringify(state, null, 1)}
-
-Questions:
-${lines.join(`
-
-`)}`;
+    const { system, user } = typedPrompt(state, questions);
     const res = await host().generate.quiet({
       type: "quiet",
       messages: [{ role: "system", content: system }, { role: "user", content: user }],
@@ -17838,33 +20001,7 @@ ${lines.join(`
       userId: this.userId,
       signal: opts.signal ?? AbortSignal.timeout(Math.max(3000, opts.timeoutMs ?? 20000))
     });
-    const raw = firstJson(typeof res === "string" ? res : res?.content ?? "") ?? {};
-    const out = {};
-    for (const id of ids) {
-      const q = questions[id];
-      const a = raw[id] ?? {};
-      const conf = clamp01(Number(a.confidence ?? 0.6));
-      if (q.type === "choice") {
-        const keys = Object.keys(q.criteria);
-        const pick = typeof a.choice === "string" && keys.includes(a.choice) ? a.choice : null;
-        if (!pick)
-          continue;
-        const rest = keys.length > 1 ? (1 - conf) / (keys.length - 1) : 0;
-        out[id] = { type: "choice", choice: pick, confidence: conf, probabilities: Object.fromEntries(keys.map((k) => [k, k === pick ? conf : rest])) };
-      } else if (q.type === "score") {
-        const n = q.criteria.length;
-        const level = Math.max(0, Math.min(n - 1, Math.round(Number(a.level))));
-        if (!Number.isFinite(level))
-          continue;
-        const rest = n > 1 ? (1 - conf) / (n - 1) : 0;
-        out[id] = { type: "score", score: level, confidence: conf, probabilities: Object.fromEntries(q.criteria.map((_, i) => [String(i), i === level ? conf : rest])) };
-      } else {
-        const p = Number(a.p ?? a.probability ?? a.noul);
-        if (Number.isFinite(p))
-          out[id] = { type: "noul", noul: clamp01(p) };
-      }
-    }
-    return out;
+    return typedAnswers(firstJson2(typeof res === "string" ? res : res?.content ?? "") ?? {}, questions);
   }
 }
 
@@ -17911,8 +20048,11 @@ async function getDecider(settings, userId) {
     try {
       key = await host().enclave.get(JEV_KEY, userId);
     } catch {}
-    if (key)
-      return new JevDecider(key, settings.jevModel);
+    const url = settings.jevUrl?.trim() || JEV_URL;
+    if (settings.jevFormat === "openai")
+      return new ChatEndpointDecider(key ?? "", settings.jevModel, url);
+    if (key || url !== JEV_URL)
+      return new JevDecider(key ?? "", settings.jevModel, url);
   }
   return new LlmDecider(settings, userId);
 }
@@ -17921,186 +20061,6 @@ var init_deciders = __esm(() => {
   DeciderError = class DeciderError extends Error {
   };
   STOP = new Set("a an the to of and or in on at for with my i me you your it is be do try tries trying".split(" "));
-});
-
-// src/backend/helpers.ts
-function firstJson2(text) {
-  const cleaned = text.replace(/```(?:json)?/gi, "");
-  const start = cleaned.indexOf("{");
-  if (start < 0)
-    return null;
-  let depth = 0;
-  let inStr = false;
-  for (let i = start;i < cleaned.length; i++) {
-    const c = cleaned[i];
-    if (inStr) {
-      if (c === "\\")
-        i++;
-      else if (c === '"')
-        inStr = false;
-      continue;
-    }
-    if (c === '"')
-      inStr = true;
-    else if (c === "{")
-      depth++;
-    else if (c === "}" && --depth === 0) {
-      try {
-        return JSON.parse(cleaned.slice(start, i + 1));
-      } catch {
-        return null;
-      }
-    }
-  }
-  return null;
-}
-async function ask(system, user, settings, userId, timeoutMs, opts = {}) {
-  return (await askRaw(system, user, settings, userId, timeoutMs, opts)).content;
-}
-async function askProse(system, user, settings, userId, timeoutMs, opts = {}) {
-  const res = await askRaw(system, user, settings, userId, timeoutMs, opts);
-  const text = res.content.trim().replace(/^```\w*|```$/g, "").trim();
-  return res.finish === "length" || !finishedProse(text) ? "" : text;
-}
-async function askRaw(system, user, settings, userId, timeoutMs, opts) {
-  const res = await host().generate.quiet({
-    type: "quiet",
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: user }
-    ],
-    connection_id: settings.helperConnectionId || undefined,
-    reasoning: { source: "off" },
-    parameters: { temperature: opts.temperature ?? 0.1, ...opts.maxTokens ? { max_tokens: opts.maxTokens } : {} },
-    userId,
-    signal: AbortSignal.timeout(Math.max(3000, timeoutMs))
-  });
-  return typeof res === "string" ? { content: res, finish: "" } : { content: res?.content ?? "", finish: res?.finish_reason ?? "" };
-}
-function clip2(s, n) {
-  return s.length > n ? `…${s.slice(-n)}` : s;
-}
-async function extract(r, s, playerText, reply, settings, userId, only, applied) {
-  const stats = r.statOrder.map((id) => r.stats[id]).filter((d) => d.narrator > 0);
-  const rels = r.relStatOrder.map((id) => r.relStats[id]).filter((d) => d.narrator > 0);
-  const conds = Object.values(r.conditions).filter((c) => c.narrator);
-  const flags = Object.values(r.flags).filter((f) => f.narrator);
-  const locs = Object.values(r.locations);
-  const want = (k) => !only || only.has(k);
-  const allowed = [];
-  if (want("minutes") && r.clock.enabled)
-    allowed.push(`- "minutes": how much in-story time the reply covers (0–${r.clock.narratorMax}).`);
-  if (want("stats") && stats.length)
-    allowed.push(`- "stats": changes (deltas) to: ${stats.map((d) => `${d.id} (±${formatNumber(d.narrator)})`).join(", ")}`);
-  if (want("rel") && rels.length)
-    allowed.push(`- "rel": per person name, deltas to: ${rels.map((d) => `${d.id} (±${formatNumber(d.narrator)})`).join(", ")}`);
-  const feelScale = rels.map((d) => `${d.id} ${d.min}–${d.max}${d.bands.length ? ` (${d.bands.map((b) => `${b.at}=${b.text}`).join(", ")})` : ""}`).join("; ");
-  const tracked = Object.values(s.people).map((p) => p.name);
-  if (want("people") && r.peopleOpen) {
-    allowed.push(`- "people": named characters who appear in the reply (speak, act, or are spoken to) and aren't tracked yet${tracked.length ? ` (already tracked: ${tracked.join(", ")})` : ""}, as [{"name": "...", "feelings": {<how they feel toward the player RIGHT NOW, absolute values>}}]${rels.length ? ` — scales: ${feelScale}` : ""}`);
-  }
-  if (want("scene") && (tracked.length || r.peopleOpen)) {
-    allowed.push(`- "present": names of everyone (tracked or new) physically in the scene with the player at the end of the reply — not people only mentioned, remembered, on the phone, or left behind. Always include it, even as [].`);
-  }
-  const uncalibrated = Object.keys(s.people).filter((id) => !s.calibrated[id]).map((id) => s.people[id].name);
-  if (want("people") && rels.length && uncalibrated.length) {
-    allowed.push(`- "feelings": for these tracked people who appear in the reply, where they stand toward the player right now (absolute values, same scales): ${uncalibrated.join(", ")} — as {"Name": {"stat": value}}`);
-  }
-  if (want("items") && (r.itemsOpen || Object.keys(r.items).length))
-    allowed.push(`- "items": item name → count gained (+) or lost (−); lost includes used up, eaten, drunk, emptied, broken, given away or taken. Held: ${Object.entries(s.items).map(([id, n]) => `${itemName(r, s, id)}${n > 1 ? ` ×${n}` : ""}`).join(", ") || "nothing"}`);
-  const withUses = Object.keys(s.items).filter((id) => (r.items[id]?.uses ?? 0) > 0);
-  if (want("used") && withUses.length)
-    allowed.push(`- "used": item name → times used, for items that have uses: ${withUses.map((id) => `${itemName(r, s, id)} (${s.uses[id] ?? r.items[id].uses}/${r.items[id].uses} uses left)`).join(", ")}`);
-  const growable = r.growth.enabled && r.growth.train ? r.statOrder.filter((id) => (r.stats[id].kind === "skill" || r.stats[id].kind === "attribute") && r.stats[id].growth > 0) : [];
-  if (want("train") && growable.length)
-    allowed.push(`- "trained": ids of abilities the player spent real effort practising, training, studying or rehearsing during the reply: ${growable.join(", ")}`);
-  if (want("encounter")) {
-    const storyEnc = !s.encounter && !s.dungeon && !s.job ? Object.values(r.encounters).filter((x) => x.fromStory) : [];
-    if (storyEnc.length)
-      allowed.push(`- "encounter": the id of one of these if it actually broke out in the reply (not just threatened): ${storyEnc.map((x) => `${x.id} (${x.name})`).join(", ")}; with "foe": the opponent's name when it's a specific person`);
-    else if (s.encounter) {
-      const def = r.encounters[s.encounter.id];
-      const outcomes = [...new Set([...Object.keys(def?.outcomes ?? {}), ...def?.momentum ? [def.momentum.win, def.momentum.lose] : []]), "broke_off"];
-      allowed.push(`- "encounter_end": only if ${def?.name ?? "the encounter"} is clearly over by the end of the reply, how it ended: ${outcomes.join(", ")}`);
-    }
-  }
-  if (want("move") && (locs.length || r.locationsOpen))
-    allowed.push(`- "move": where the player character ends up, if they moved${locs.length && !r.locationsOpen ? ` (one of: ${locs.map((l) => l.name).join(", ")})` : ""}`);
-  if (want("conditions") && conds.length)
-    allowed.push(`- "conditions": {"add": [...], "remove": [...]} from: ${conds.map((c) => c.id).join(", ")}`);
-  if (want("flags") && flags.length)
-    allowed.push(`- "flags": set any of: ${flags.map((f) => f.id).join(", ")}`);
-  if (want("wardrobe") && r.wardrobe.enabled && r.wardrobe.narrator) {
-    const worn = Object.entries(s.worn).map(([slot, id]) => `${slot}: ${itemName(r, s, id)}`).join(", ") || "nothing";
-    const owned = Object.keys(s.items).filter((id) => r.items[id]?.slot && !Object.values(s.worn).includes(id));
-    allowed.push(`- "undress": slots whose clothing came off (currently worn — ${worn})`);
-    if (owned.length)
-      allowed.push(`- "wear": ids of carried clothing put on, or that the reply shows the player wearing (${owned.join(", ")})`);
-  }
-  if (want("body") && r.body.enabled && r.body.narrator) {
-    const now = Object.entries(s.body).map(([p, t]) => `${p}: ${Object.entries(t).map(([k, v]) => `${k} ${v}`).join(", ")}`).join("; ") || "nothing recorded";
-    allowed.push(`- "body": lasting changes to the player's body as {"part": {"trait": "new value"}} (null removes a trait)${r.body.open ? "; new parts are allowed" : `; parts: ${Object.keys(r.body.parts).join(", ")}`}. Now: ${now}`);
-  }
-  if (!allowed.length)
-    return null;
-  const system = [
-    "You are the bookkeeper for a text roleplay game. You never write story.",
-    "Read the narrator's latest reply and record only what CLEARLY happened in it.",
-    "Small, sensible deltas for changes. Omit anything unchanged. Do not re-apply dice outcomes that were already applied.",
-    'Exception: "feelings" (and people.feelings) are where someone stands overall right now — read them from how they act, even if that means strong values.',
-    "You may report:",
-    ...allowed,
-    'Reply with JSON only, e.g. {"minutes": 20, "stats": {"stress": 300}, "rel": {"Robin": {"trust": 3}}}. Use {} if nothing changed.'
-  ].join(`
-`);
-  const user = [
-    "Current state:",
-    stateDigest(r, s),
-    "",
-    "Player's message:",
-    clip2(playerText, 1200) || "(none)",
-    "",
-    "Narrator's reply:",
-    clip2(reply, 4000),
-    ...applied ? ["", "Already applied by the rules this turn (don't report these again):", applied] : []
-  ].join(`
-`);
-  try {
-    const out = firstJson2(await ask(system, user, settings, userId, 30000));
-    if (!out)
-      return null;
-    const p = out;
-    if (Array.isArray(p.present)) {
-      const listed = p.present.map(String).filter(Boolean);
-      const scene = Object.fromEntries(listed.map((n) => [n, true]));
-      for (const id of presentPeople(r, s, makeEnv(r, s))) {
-        const name = s.people[id]?.name;
-        if (name && !listed.some((l) => sameName(l, name)))
-          scene[id] = false;
-      }
-      p.scene = scene;
-    }
-    delete p.present;
-    if (Array.isArray(p.trained))
-      p.train = p.trained.map(String);
-    delete p.trained;
-    if (typeof p.encounter_end === "string" && p.encounter_end)
-      p.encounterEnd = p.encounter_end;
-    delete p.encounter_end;
-    return p;
-  } catch (e) {
-    logError("extractor", e);
-    return null;
-  }
-}
-var finishedProse = (t) => /[.!?…]["”’'*_)\]]*$/.test(t.trim()), sameName = (a, b) => {
-  const x = a.trim().toLowerCase(), y = b.trim().toLowerCase();
-  return x === y || x.split(/\s+/)[0] === y.split(/\s+/)[0];
-};
-var init_helpers = __esm(() => {
-  init_state();
-  init_world();
-  init_view();
 });
 
 // src/backend/inject.ts
@@ -18251,7 +20211,7 @@ ${fillNames(outcome, o.player)}` : ""
 
 `);
   try {
-    const raw = firstJson2(await ask(SYSTEM, user, settings, userId, 15000, { temperature: 0.85 }));
+    const raw = firstJson(await ask(SYSTEM, user, settings, userId, 15000, { temperature: 0.85 }));
     const lines = Array.isArray(raw?.lines) ? raw.lines : [];
     const out = [];
     for (const l of lines.slice(0, MAX_LINES)) {
@@ -18380,6 +20340,32 @@ function intentFor(r, state, settings, msgs, actionId, params) {
     const name = r.items[actionId.slice(ITEM_PREFIX.length)]?.name ?? "it";
     return { say: u.a.say ?? `*I use the ${name}.*`, intent: { actionId, params, via: "choice", label: u.a.label } };
   }
+  if (actionId.startsWith(QUEST_PREFIX)) {
+    const [, verb, id] = actionId.split(":");
+    const q = questDef(r, state, id ?? "");
+    if (!q)
+      return { error: "That quest isn't here anymore." };
+    const giver = q.giver ? state.people[q.giver]?.name ?? r.people[q.giver]?.name ?? null : null;
+    if (verb === "take") {
+      const o = questOffers(r, state).find((x) => x.id === id);
+      if (!o)
+        return { error: "That isn't on offer here." };
+      return { say: o.via === "giver" && giver ? `*I tell ${giver} I'll do it: ${q.name.toLowerCase()}.*` : o.via === "board" ? `*I take the notice down: "${q.name}".*` : `*I take on "${q.name}".*`, intent: { actionId, via: "choice", label: `Take on "${q.name}"` } };
+    }
+    if (verb === "report") {
+      const to = questsToReport(r, state).find((x) => x.id === id);
+      if (!to)
+        return { error: "There's nobody to hand that in to here." };
+      return { say: to.to ? `*I tell ${to.to} it's done.*` : `*I hand in "${q.name}".*`, intent: { actionId, via: "choice", label: `Hand in "${q.name}"` } };
+    }
+    if (verb === "drop") {
+      const st = state.quests?.[id ?? ""]?.st;
+      if (st !== "active" && st !== "ready")
+        return { error: "That quest isn't under way." };
+      return { say: `*I give up on ${q.name.toLowerCase()}.*`, intent: { actionId, via: "choice", label: `Give up on "${q.name}"` } };
+    }
+    return { error: "That isn't possible right now." };
+  }
   if (actionId.startsWith(ABILITY_PREFIX)) {
     const u = usableAbilities(r, state).find((x) => x.id === actionId);
     if (!u)
@@ -18399,6 +20385,7 @@ var init_intents = __esm(() => {
   init_talk();
   init_types2();
   init_work();
+  init_quests();
   init_ledger();
 });
 
@@ -18609,7 +20596,7 @@ async function writeLiveChoices(opts) {
   const user = ["Current state:", stateDigest(r, s), "", "Narrator's latest reply:", clip4(opts.reply, 4000)].join(`
 `);
   try {
-    const out = firstJson2(await ask(system, user, settings, opts.userId, 25000, { temperature: 0.8 }));
+    const out = firstJson(await ask(system, user, settings, opts.userId, 25000, { temperature: 0.8 }));
     return cleanChoices(r, s, tags, out?.choices, count);
   } catch (e) {
     logError("live choices", e);
@@ -18643,7 +20630,7 @@ ${card}` : "",
 
 `);
   try {
-    const out = firstJson2(await ask(system, user, settings, userId, timeoutMs, { temperature: 0.9 }));
+    const out = firstJson(await ask(system, user, settings, userId, timeoutMs, { temperature: 0.9 }));
     const name = typeof out?.name === "string" ? out.name.trim().slice(0, 60) : "";
     if (!name)
       return null;
@@ -19244,7 +21231,7 @@ async function proposeChanges(decider, r, p, reply, settings, userId) {
     return extract(r, p.after, p.playerText, reply, settings, userId, undefined, applied);
   if (decider.id === "rules")
     return null;
-  const { proposal, needsWriting } = await bookkeeping({ decider, r, s: p.after, playerText: p.playerText, reply, player: p.player, applied });
+  const { proposal, needsWriting } = await bookkeeping({ decider, r, s: p.after, playerText: p.playerText, reply, player: p.player, applied, storyQuests: settings.storyQuests });
   if (needsWriting.size) {
     const named = await extract(r, p.after, p.playerText, reply, settings, userId, needsWriting, applied);
     if (named?.people)
@@ -19259,6 +21246,10 @@ async function proposeChanges(decider, r, p, reply, settings, userId) {
       proposal.feelings = { ...proposal.feelings ?? {}, ...named.feelings };
     if (named?.used)
       proposal.used = { ...proposal.used ?? {}, ...named.used };
+    if (named?.quests?.new?.length)
+      proposal.quests = { ...proposal.quests ?? {}, new: named.quests.new };
+    if (named?.memories)
+      proposal.memories = named.memories;
   }
   return proposal;
 }
@@ -19602,6 +21593,8 @@ function partForIssue(where) {
     return "actions";
   if (head.startsWith("encounters") || head.startsWith("dungeons"))
     return "encounters";
+  if (head.startsWith("quests"))
+    return "quests";
   if (["codex", "feats", "perks", "abilities", "checkpoints", "endings"].some((k) => head.startsWith(k)))
     return "journal";
   if (head.startsWith("triggers") || head.startsWith("rules") || head.startsWith("mind"))
@@ -19663,6 +21656,7 @@ player: { age: 20 }
 weather: { temps: { spring: 12, summer: 22, autumn: 11, winter: 3 } }     # enables weather + temperature
 locations:
   home: { name: Home, desc: "...", indoors: true, exits: [street], travel: 10 }   # exits become travel buttons
+  tavern: { name: The Drowned Rat, exits: [street], board: true }   # board: a notice board — quests with board: true are posted here
 locations_open: true             # the story may name places the ruleset doesn't list (on by default when there are none)
 items:
   phone: Phone
@@ -19673,9 +21667,16 @@ items:
     use: { label: Spray it, foe: { nerve: -6 }, hint: "{{user}} empties a burst into their face." }   # effects (or check/success/fail like any action); when:, why_not: "…" optional
   lucky_boots: { name: Lucky Boots, slot: feet, bonus: { athletics: 10 } }   # gear: added to every check that reads athletics while worn (carried, for non-clothing)
   house_keys: { name: Keys, keep: true, use: { label: Lock the door behind you, stress: -5, when: "at('home')" } }   # keep: true = using it doesn't spend it
+  chainmail: { name: Chainmail, slot: outer, armor: { hp: 3 } }   # armor: blows that would lower hp in a fight are 3 smaller (per hit); armor: 2 = whatever the fight beats you on
 item_uses: { phone: { label: Call a friend for a lift, check: { chance: 60 }, success: { move: home }, fail: { stress: +3 } } }   # uses/bonuses for items declared elsewhere (Warp writes drafted ones here)
 wardrobe: { slots: [outer, top, bottom, under_top, under_bottom, feet], cover: [top, bottom], start: [t_shirt, jeans] }
 conditions: { cold: { label: Cold, tone: bad }, hasted: { label: Hasted, tone: good, bonus: { evasion: 20 } } }   # bonus: a buff (or debuff, negative) counted in checks while it lasts
+# statuses — the same conditions work on {{user}}, on the opponent (inflict:) and on people (inflict on a per-person action's target):
+#   poisoned: { label: Poisoned, tone: bad, rounds: 3, dot: 4 }             # rounds: how long in a fight (they end with it); dot: damage each round ("1d4+1" ok; heal: 5 = negative)
+#   stunned:  { label: Stunned, tone: bad, rounds: 1, skip: true }          # skip: loses its turn (true, or a chance 0–100: skip: 50 = paralysed half the time)
+#   shielded: { label: Shield up, tone: good, rounds: 2, armor: 4 }         # armor while it lasts; negative = sundered (armor: -3 → blows land harder)
+#   bleeding: { label: Bleeding, tone: bad, every: hour, dot: 2, stat: hp, lasts: 3h }   # every: round (default, fights) | turn | hour; lasts: minutes outside a fight ("3h", "2d")
+#   drowsy:   { label: Drowsy, lasts: 2h, tick: { stress: -1 } }           # tick: any effect each round/turn/hour on {{user}}; stat: where dot lands (default: what the fight is lost on / the opponent's main meter)
 flags: { met_boss: { start: false, narrator: true } }
 
 actions:
@@ -19698,6 +21699,13 @@ actions:
     label: Chat with {target}
     per_person: true               # one button per person present; {target} = their name
     effects: { rel: { target: { trust: +2 } } }
+  crack_vault:
+    label: Crack the vault
+    at: [bank]
+    requires: { lockpicking: 30, with: brann, has: drill, rel: { brann: { trust: 40 } }, quest: heist, flag: alarm_cut, perk: safecracker, when: { "hour >= 22": "After closing" } }
+    # requires: shown LOCKED at its place with what's missing ("Needs Lockpicking 30 (you have 18), Brann with you · After closing");
+    #   a stat name = at least that much; with: someone here; has: items; quest: id (taken) or { id: done }; folds into when:. show_locked: false hides it instead
+    effects: { give: bearer_bonds }
   sneak:
     hidden: true                   # free-text only: the referee maps typed attempts to it
     desc: Staying unseen.
@@ -19718,6 +21726,12 @@ EFFECTS (any success/fail/effects/cost/do block):
   hint: "direction for the narrator", wear: [raincoat], undress: [top], damage: { top: 20 },
   start_encounter: id, foe: { hp: -6 }, end: outcome_id, unlock: [codex_id],
   harm: "6 + arcana / 5" (wears down the current encounter's main meter — HP, resolve, composure — so one ability works in any encounter),
+  hits: 3 (the blow lands 3 times, each meeting armor — weak multi-hits lose to heavy armor; on a foe move it's aimed at {{user}}), pierce: 3 (ignores 3 armor; pierce: all),
+  percentages: hp: "+30%" heals 30% of max hp; harm: "25%" takes a quarter of the opponent's max; foe: { hp: "-10%" }. Of what's LEFT: foe: { hp: "-foe.hp / 2" },
+  inflict: { poisoned: 3 } or [stunned] or { stunned: { rounds: 1, chance: "30 + might * 2" } } (a status on the opponent; on a per-person action outside a fight, on the target, for that many minutes),
+  inflict: { mia: { drowsy: 120 } } (on named people), cleanse: [poisoned] (lift it off the opponent / target),
+  quest: { wolves: start } (start | done | fail | drop | report), progress: { wolves: +1 } or { "wolves.pelts": +1 } (count toward a goal),
+  remember: { mia: "{{user}} burned her birthday breakfast." } (something a person remembers; the narrator sees it whenever they're around),
   learn: [ability_id] (teaches an ability),
   decide: { ask: "How does Jo react?", options: { yes: { desc: "Agrees", weight: 2, rel: { jo: { trust: +2 } } }, no: { desc: "Refuses", weight: 1 } } }
   Formulas with commas MUST be quoted: money: "-min(money, 20)".
@@ -19726,7 +21740,7 @@ encounters:
   mugging:
     name: Mugging
     tags: [violence]
-    foe: { name: Mugger, stats: { nerve: { start: 10, max: 10 } } }
+    foe: { name: Mugger, armor: 2, stats: { nerve: { start: 10, max: 10 } } }   # armor: blows to its main meter are 2 smaller each (or { nerve: 2 }); damage over time ignores it
     actions: { fight: { label: Fight back, check: { chance: "30 + athletics / 2" }, success: { foe: { nerve: -6 } }, fail: { pain: +10 } }, run: { label: Run, effects: { end: escaped } } }
     foe_moves: { grab: { desc: "Grabs you", weight: 2, pain: +8 }, threaten: { desc: "Threatens", weight: 1, stress: +6 } }
     end_when: { won: "foe.nerve <= 0", beaten: "pain >= 80" }   # simple comparisons let Warp show the goal and the danger to the player
@@ -19816,6 +21830,7 @@ perks:
   sharp: { name: Sharpshooter, desc: "+2 Aim", cost: 1, requires: "level >= 2", effects: { aim: +2 } }   # effects: once, when taken
   crowd_ghost: { name: Crowd Ghost, bonus: { stealth: 10 }, edge: { stealth: 15, when: "at('plaza')" }, tags: [stealth] }   # bonus: always counts in checks; edge: only while when holds
   silver_tongue: { name: Silver Tongue, rule: { reroll: { stats: [persuasion], per_day: 1 } } }   # rules: reroll / soften (a failure becomes partial) on these stats or tags; gains / losses: { scent: -30% } (rises or drops that much bigger/smaller)
+  armor_breaker: { name: Armor Breaker, rule: { pierce: { amount: 3, tags: [melee] } } }   # pierce: your blows (from moves with these stats or tags; none = all) ignore that much armor
   mage_blood: { name: Mage Blood, abilities: [firebolt], narrator: "Sparks dance on {{user}}'s fingertips when angry.", excludes: [iron_will] }   # teaches abilities; narrator: what the story should show; excludes: can't have both
   adrenaline: { name: Adrenaline Junkie, edge: { athletics: 20, when: "stress >= 60" }, drawback: { desc: "Stress builds faster", gains: { stress: +10% } }, weight: 1 }
 
@@ -19841,6 +21856,45 @@ mind:             # the character's mind can overrule the player (in the "rules"
     urge: { when: "lust >= 70", chance: 30, on: [talk], do: flirt, cause: Desire }      # do: <action id> = that happens instead
     nerves: { when: "control < 50", chance: 50, do: alter, cause: Nerves }               # do: alter = goes ahead, coloured by the cause; on: [] = any action with a check
   perception: [ { when: "awareness < 20", text: "{{user}} is naive: describe only what they understand." } ]   # filters the narration while true
+
+QUESTS (the "quests" part): things to do for someone or for yourself — a bounty, a favour, cooking the best breakfast, slaying the dragon.
+quests:
+  wolves:
+    name: Thin the wolf pack
+    kind: bounty                     # a word shown as a tag: bounty, favour, errand, contract, case, main…
+    desc: Wolves are taking travellers on the forest road.
+    giver: hesk                      # offered while they're with {{user}} ("Hesk asks: …"); they remember how it went
+    board: true                      # also posted on notice boards (locations with board: true); at: [guild] = offered at a place
+    when: "level >= 2"               # offered only while this holds
+    days: 3                          # deadline once taken (it fails when time runs out)
+    goals:
+      - { id: kills, text: Kill wolves, count: 3, on: wolves }        # on: an encounter (counts each time it ends well) or an action (each success); or outcome: [won]
+      - { text: Bring back a pelt, when: "has('wolf_pelt')" }          # a formula goal: done while it holds
+      - { text: Find their den, count: 1, optional: true }             # ticked off by progress: { "wolves.goal_3": +1 } or the story
+    reward: { gold: +30, xp: +40, rel: { hesk: { trust: +5 } } }      # any effect; it's read out on the quest card before it's taken
+    failure: { renown: -5, rel: { hesk: { trust: -10 } } }            # the price of failing (time running out, fail:, a quest: fail effect, giving up)
+    stakes: Hesk stops trusting you with work.                         # what's at stake, in a line (shown, and told to the narrator)
+    remember: { done: "{{user}} cleared the wolves when nobody else would.", failed: "{{user}} took the wolf bounty and vanished." }   # default lines otherwise; false = forget it
+    report: true                     # hand it in to the giver for the reward (default with a giver or board); false = paid the moment it's done
+  breakfast:
+    name: Breakfast in bed
+    giver: mia
+    when: "hour < 10 and not quest_done('breakfast')"
+    goals: [ { text: Cook Mia the best breakfast of her life } ]
+    judge: { done: "{{user}} serves Mia a breakfast she loves", fail: "Mia is let down by the breakfast" }   # the story decides (read after each reply)
+    reward: { rel: { mia: { mood: +15 } } }
+    failure: { rel: { mia: { mood: -10 } } }
+    remember: { failed: "{{user}} burned her birthday breakfast." }
+  dragon:
+    name: The great dragon of the plains
+    giver: king
+    auto: true                       # starts by itself once when holds (a summons); hidden: true = never offered, only started by quest: { dragon: start }
+    when: "renown >= 50"
+    succeed: "flag('dragon_slain')"  # done when this holds (default: every non-optional goal done); fail: "front('dragon') >= 100"
+    reward: { gold: +50000, renown: +40, unlock: [dragonslayer] }
+    repeat: 1                        # can be taken again 1 day after it ends (repeat: true = right away)
+  from_story: true                   # (default) favours people ask in the story become quests too, judged by the story; story_max: 3 at a time
+CHECK ACTIONS against quests: success: { quest: { breakfast: done } }, fail: { quest: { breakfast: fail } }, requires: { quest: wolves }.
 
 STORY MACHINERY (the "story" part):
 secrets:          # only opened stages ever reach the narrator — what isn't in the prompt can't leak
@@ -19897,6 +21951,8 @@ wearing(item), worn(slot), trait(t), present(person), where(person), codex(id), 
 secret(id) (stages the narrator knows), front(id) (clock value), front_stage(id) (stages surfaced), happened(event),
 deepest(dungeon) (deepest floor reached), in_dungeon, dungeon_depth,
 stage(person) (relationship rung, −1 hostile), partner(person), dates(person), in_date, on_outing,
+quest(id) ('' | 'active' | 'ready' | 'done' | 'failed'), quest_active(id), quest_done(id), quest_failed(id), goal(quest, goal) (count so far), quests_done() / quests_done('bounty'),
+memories(person) (how many), cond_of(person, cond), foe_cond(cond), stat_max(stat), foe_max(stat),
 min, max, clamp, floor, ceil, round, abs.
 Operators: + - * / % < <= > >= == != and or not, a ? b : c. Strings in single quotes.
 `, DESIGN_GUIDE = `WARP DESIGN GUIDE — what makes a ruleset worth playing.
@@ -19927,6 +21983,9 @@ An encounter is a small puzzle with a visible goal. Give it:
 - items that matter in it (a use: that changes what its checks read, a bonus: on those checks, a move that needs an item);
 - labels: for how each ending reads, and outcomes: with consequences (what it cost, what was won).
 Rounds are told briefly by default; narrate: true only for set-pieces that deserve full prose every round.
+Make moves DIFFER, not just in which stat they roll: armor on a tough foe (foe: { armor: 3 }) makes a heavy blow and a pierce: move worth more than a flurry (hits: 3);
+a status (inflict: poisoned — damage each round; stunned — it loses its turn; sundered — negative armor) pays off over the next rounds; a heal or a shield (a condition with armor:) buys time;
+percent damage (harm: "25%") cuts down big foes; a blood-price move costs hp: -5 for a big effect. The foe's moves should use the same tools on {{user}} (add_condition: [stunned], hits: 2).
 Mistake: three moves that all lower the same stat by the same amount; a defeat threshold above the stat's max; no way out.
 
 ## abilities and perks
@@ -19937,16 +21996,30 @@ Mistake: perks that are only "+2 stat" — that's a level-up, not a choice.
 ## conditions
 A condition should change play: penalise a check (- 10 when cond('x')), open or close actions, feed an encounter, drive a trigger.
 Each needs a cause (add_condition somewhere) and a cure (an item, rest, time, a place) or a duration.
+Statuses do the work themselves: dot: (damage each round, or every: hour for bleeding and hunger pangs), skip: (a lost turn), armor:, bonus:, and rounds:/lasts: so they wear off.
+The same condition can sit on {{user}}, on the opponent (inflict:) or on someone in the story (inflict: on a per-person action — a sleeping draught, a love charm, a cold they caught).
 
 ## places
-Every place needs a reason to go there: actions at: it, people scheduled there, a job, a shop, a dungeon entrance, a venue.
+Every place needs a reason to go there: actions at: it, people scheduled there, a job, a shop, a dungeon entrance, a venue, a quest board.
 Connect them with exits so the map is walkable from the start.
+Put a notice board (board: true) somewhere central — a tavern, a guild hall, a station concourse, a school corridor, a café corkboard — so there's always work to find.
+Gate the best actions behind things the player can work toward, with requires: (a skill level, someone who has to come along, an item, a quest, trust) — a locked choice that says "Needs Lockpicking 30, Brann with you" is a goal, not a dead end.
 
 ## people
 Give each tracked person a schedule (where they are by hour and day) so the player can find them, starting feelings that match the card, and — for companions — a goal and a daily choice so they live on their own.
 
 ## money
 Money needs income (jobs, paid actions, loot) AND spending (shops, rent, bribes, fares). If either is missing it's just a number.
+
+## quests
+Quests turn the loop into a story with goals: what someone wants done, what it pays, what failing costs — and who remembers.
+They fit any setting: slaying three goblins, the dragon of the plains, a delivery across town, cooking the best breakfast for someone, finding a lost cat, a case to crack, a contract to fulfil.
+Give each a clear way to WIN (goals the rules can see: count + on: an encounter or action, a when: formula, or judge: for what only the story can tell) and a clear way to FAIL (days:, fail:, quest: { id: fail } on a bad roll, judge: fail).
+Make both matter: reward: (money, items, xp, renown, trust, a codex entry, learn: an ability, the next quest) and failure: (money, standing, someone's mood, a door that closes), plus stakes: in a line.
+Givers remember: a quest from someone leaves a memory either way (remember: for your own words). A failed favour should come back later — a colder greeting, a trigger on quest_failed('x').
+Mix sizes: a few small repeatable jobs on the board (repeat: 1), favours from the people the player cares about, and one or two big quests that start by themselves when the time comes (auto: true).
+Scale rewards to the economy: the king's 50,000 is a life-changing sum only if daily work pays tens.
+Mistake: a quest with no way to fail; goals nothing counts toward; rewards that are only flavour text.
 
 ## dating
 The built-in topics and outings are modern (films, games, a café, an arcade). For any other setting, rewrite them under dating: — topics: { books_films: { label: Tales and songs, say: "*I ask {{target}} which ballads they know.*" }, games: false } and venues: for outings that exist there (fairs, taverns, tea houses, orbital gardens). Give people tastes (loves/likes/dislikes/hates) so conversations reward learning who they are.
@@ -19962,7 +22035,7 @@ Partial outcomes and costs make failures interesting: a fail should change somet
 You're done when every piece connects: run the audit and either fix each gap or say why it's deliberate. Simulate each encounter — no route should be pointless, none should be a guaranteed win, and the escape should cost something.
 `;
 var init_reference = __esm(() => {
-  PART_LABELS = ["core", "stats", "people", "world", "actions", "encounters", "journal", "rules", "story", "dating"];
+  PART_LABELS = ["core", "stats", "people", "world", "actions", "encounters", "quests", "journal", "rules", "story", "dating"];
   PART_CONTENTS = {
     core: "name, description, player, clock, start, hud, narration",
     stats: "stats, growth",
@@ -19970,6 +22043,7 @@ var init_reference = __esm(() => {
     world: "weather, locations, items (incl. clothing, uses and gear bonuses), item_uses, wardrobe, body, conditions, flags, start.items",
     actions: "actions, improvise, obligations, jobs",
     encounters: "encounters, dungeons",
+    quests: "quests (bounties on a notice board, favours people ask, story jobs: goals, deadline, reward, failure)",
     journal: "codex, feats, perks, abilities, checkpoints, endings",
     rules: "triggers, mind",
     story: "secrets, fronts, random_events, live_choices",
@@ -20376,6 +22450,13 @@ function effectsOf(r) {
   for (const it of Object.values(r.items))
     if (it.use)
       addAction(it.use);
+  for (const q of Object.values(r.quests)) {
+    add(q.start);
+    add(q.reward);
+    add(q.failure);
+  }
+  for (const c of Object.values(r.conditions))
+    add(c.tick);
   return out;
 }
 function checkedActions(r) {
@@ -20445,6 +22526,9 @@ function reviewBalance(r) {
     Object.keys(e.stats).forEach((k) => touched.add(k));
     Object.keys(e.set).forEach((k) => touched.add(k));
   }
+  for (const c of Object.values(r.conditions))
+    if (c.dot !== undefined && c.stat)
+      touched.add(c.stat);
   for (const id of r.statOrder) {
     const d = r.stats[id];
     if (d.kind === "money" && d.narrator > 0)
@@ -20508,6 +22592,161 @@ var init_balance = __esm(() => {
   init_encounter_view();
   init_freeform();
   CONCESSION = /paid|pay|robbed|bribe|surrender|gave_?in|submit|walked|walk_away|left|gave_up/i;
+});
+
+// src/engine/rulebook.ts
+function splitRulebook(text) {
+  const src = text.replace(/\r\n?/g, `
+`).replace(/^﻿/, "");
+  const lines = src.split(`
+`);
+  if (lines.some((l) => DOC_HEAD.test(l) && /#/.test(l))) {
+    const out = [];
+    let label = null;
+    let buf = [];
+    const flush = () => {
+      const yaml = buf.join(`
+`).trim();
+      if (yaml && !/^(#.*\n?)*$/.test(yaml)) {
+        const l = (label ?? "core").trim().toLowerCase();
+        for (const p of splitPlain(yaml, l, true))
+          merge2(out, p);
+      }
+      buf = [];
+    };
+    for (const l of lines) {
+      const m = DOC_HEAD.exec(l);
+      if (m) {
+        flush();
+        label = m[1] ?? null;
+        continue;
+      }
+      buf.push(l);
+    }
+    flush();
+    return out.map((p) => ({ ...p, yaml: `${p.yaml.trim()}
+` }));
+  }
+  return order(splitPlain(src.replace(/^---[ \t]*\n/, ""), null));
+}
+function splitPlain(src, label, keep = false) {
+  const known = keep && !!label;
+  const lines = src.split(`
+`);
+  const out = [];
+  let cur = null;
+  let pending = [];
+  for (const l of lines) {
+    const key = /^([A-Za-z_][\w]*)\s*:/.exec(l)?.[1];
+    if (key) {
+      const to = known ? label : PART_OF_KEY[key] ?? label ?? "core";
+      if (cur)
+        merge2(out, { label: cur.label, yaml: cur.lines.join(`
+`) });
+      cur = { label: to, lines: [...pending, l] };
+      pending = [];
+    } else if (!l.trim() || /^#/.test(l) || !cur) {
+      pending.push(l);
+    } else {
+      cur.lines.push(...pending, l);
+      pending = [];
+    }
+  }
+  if (cur)
+    merge2(out, { label: cur.label, yaml: [...cur.lines, ...pending].join(`
+`) });
+  return out;
+}
+function merge2(out, p) {
+  const yaml = p.yaml.replace(/\s+$/, "");
+  if (!yaml.trim())
+    return;
+  const hit = out.find((x) => x.label === p.label);
+  if (hit)
+    hit.yaml = `${hit.yaml}
+${yaml}`;
+  else
+    out.push({ label: p.label, yaml });
+}
+function order(parts) {
+  const rank = (l) => {
+    const i = PART_LABELS.indexOf(l);
+    return i < 0 ? 99 : i;
+  };
+  return parts.map((p) => ({ ...p, yaml: `${p.yaml.trim()}
+` })).sort((a, b) => rank(a.label) - rank(b.label));
+}
+function joinRulebook(parts, title) {
+  const head = [
+    `# Warp rulebook — ${title}`,
+    '# Each document below is one section of the ruleset (a lorebook entry named "warp-ruleset · <section>").',
+    "# Edit it anywhere, then import it back: Warp → Ruleset → Import a rulebook.",
+    "# Format reference and design guide: docs/RULEBOOK_GUIDE.md in the Warp repository."
+  ].join(`
+`);
+  return `${head}
+${parts.map((p) => `--- # ${p.label}
+${p.yaml.trim()}
+`).join(`
+`)}`;
+}
+var PART_OF_KEY, DOC_HEAD;
+var init_rulebook = __esm(() => {
+  init_reference();
+  PART_OF_KEY = {
+    name: "core",
+    description: "core",
+    player: "core",
+    clock: "core",
+    start: "core",
+    hud: "core",
+    narration: "core",
+    stats: "stats",
+    growth: "stats",
+    practice: "stats",
+    relationships: "people",
+    people: "people",
+    companions: "people",
+    lineage: "people",
+    weather: "world",
+    locations: "world",
+    locations_open: "world",
+    items: "world",
+    inventory: "world",
+    item_uses: "world",
+    wardrobe: "world",
+    body: "world",
+    conditions: "world",
+    flags: "world",
+    discovery: "world",
+    observers: "world",
+    being_seen: "world",
+    actions: "actions",
+    improvise: "actions",
+    improvised: "actions",
+    obligations: "actions",
+    debts: "actions",
+    jobs: "actions",
+    encounters: "encounters",
+    dungeons: "encounters",
+    quests: "quests",
+    codex: "journal",
+    feats: "journal",
+    perks: "journal",
+    abilities: "journal",
+    checkpoints: "journal",
+    endings: "journal",
+    triggers: "rules",
+    rules: "rules",
+    mind: "rules",
+    secrets: "story",
+    fronts: "story",
+    random_events: "story",
+    events: "story",
+    live_choices: "story",
+    dating: "dating"
+  };
+  DOC_HEAD = /^---[ \t]*(?:#[ \t]*(?:warp-ruleset[ \t]*·[ \t]*)?([\w -]+?))?[ \t]*$/;
 });
 
 // src/backend/builder.ts
@@ -20775,7 +23014,9 @@ function contextOf(parts) {
     list("Wardrobe slots", r.wardrobe.enabled ? r.wardrobe.slots.map((x) => x.id) : []),
     list("Conditions", Object.keys(r.conditions)),
     list("Flags", Object.keys(r.flags)),
-    list("Encounters", Object.keys(r.encounters)),
+    list("Encounters", Object.keys(r.encounters).map((id) => `${id} (outcomes: ${[...new Set([...Object.keys(r.encounters[id].outcomes), ...r.encounters[id].endWhen.map((e) => e.outcome)])].join(", ")})`)),
+    list("Quests", r.questOrder),
+    list("Notice boards", Object.values(r.locations).filter((l) => l.board).map((l) => l.id)),
     list("Codex", Object.keys(r.codex))
   ].filter(Boolean).join(`
 `);
@@ -20841,6 +23082,7 @@ function buildPreview(s) {
     items: Object.keys(r.items).length,
     actions: Object.keys(r.actions).length,
     encounters: Object.keys(r.encounters).length,
+    quests: r.questOrder.length,
     dungeons: Object.keys(r.dungeons).length,
     rules: r.triggers.length,
     codex: Object.keys(r.codex).length,
@@ -21030,7 +23272,8 @@ Reply with JSON:
       cast: Array.isArray(out.cast) ? out.cast.slice(0, 12).map((c) => ({ name: String(c?.name ?? ""), relation: String(c?.relation ?? "") })).filter((c) => c.name) : []
     };
     s.base = opts.base || suggested;
-    const defaults = Array.isArray(out.systems) ? out.systems.map(String).filter((x) => SYSTEMS.some((y) => y.id === x)) : ["needs", "relationships", "money", "skills", "story"];
+    const picked = Array.isArray(out.systems) ? out.systems.map(String).filter((x) => SYSTEMS.some((y) => y.id === x)) : ["needs", "relationships", "money", "skills", "story"];
+    const defaults = [...new Set([...picked, "quests"])];
     s.rounds = [{ questions: [...coreQuestions(defaults), ...normQuestions(out.followUps, "f1_")], answers: {} }];
     s.step = "questions";
   } catch (e) {
@@ -21076,6 +23319,8 @@ async function draftAll(s, userId) {
   const want = (label) => {
     if (label === "encounters")
       return systems.has("encounters") || systems.has("dungeon");
+    if (label === "quests")
+      return systems.has("quests");
     if (label === "journal")
       return systems.has("journal") || systems.has("perks") || systems.has("abilities");
     if (label === "story")
@@ -21293,6 +23538,58 @@ async function builderInstall(chatId, userId) {
   }
   await progress(s, null, userId);
 }
+async function builderImport(chatId, text, userId) {
+  const characterId = await characterForChat(chatId, userId);
+  if (!characterId)
+    throw new Error("Open a chat with a character first.");
+  const split = splitRulebook(text);
+  if (!split.length)
+    throw new Error("That doesn't look like a rulebook — it should be YAML with sections like stats:, actions:, encounters:.");
+  const card = await cardText(characterId, userId);
+  const s = {
+    characterId,
+    characterName: card.name,
+    mode: "import",
+    step: "review",
+    connectionId: "",
+    creative: false,
+    base: "",
+    analysis: null,
+    rounds: [],
+    additions: [],
+    parts: split.map((p) => ({ label: p.label, yaml: p.yaml, status: "ok", issues: [] })),
+    preview: null,
+    request: null,
+    changeSummary: null,
+    busy: null,
+    error: null,
+    updatedAt: Date.now(),
+    effort: "thorough",
+    plan: null,
+    log: [],
+    waived: {},
+    depth: null
+  };
+  buildPreview(s);
+  const { ruleset } = check(s.parts);
+  if (ruleset) {
+    const a = auditRuleset(ruleset);
+    s.depth = { before: a.depth, after: a.depth, open: a.gaps.filter((g) => g.severity === "gap").length };
+  }
+  s.changeSummary = `Imported ${s.parts.length} section${s.parts.length === 1 ? "" : "s"}: ${s.parts.map((p) => p.label).join(", ")}.${card.hasRuleset ? " Installing replaces the current ruleset." : ""}`;
+  await save(s, userId);
+  emit(s, userId);
+}
+async function exportRulebook(chatId, userId) {
+  const characterId = await characterForChat(chatId, userId);
+  if (!characterId)
+    throw new Error("Open a chat with a character first.");
+  const parts = await currentParts(characterId, userId);
+  if (!parts.length)
+    throw new Error("This character has no ruleset to export yet.");
+  const card = await cardText(characterId, userId);
+  return { name: card.name, text: joinRulebook(parts.map((p) => ({ label: p.label, yaml: p.yaml })), card.name) };
+}
 async function draftItemUses(chatId, userId) {
   const loaded = await getRuleset(chatId, userId, true);
   const r = loaded?.ruleset;
@@ -21381,6 +23678,7 @@ var init_builder = __esm(() => {
   init_loader();
   init_lint();
   init_reference();
+  init_rulebook();
   init_state();
   init_templates();
   init_view();
@@ -21394,6 +23692,7 @@ var init_builder = __esm(() => {
     { id: "clothing", label: "Clothing, weather & temperature" },
     { id: "schedules", label: "NPC schedules & places" },
     { id: "encounters", label: "Encounters / combat" },
+    { id: "quests", label: "Quests (a notice board, favours people ask, bounties)" },
     { id: "dungeon", label: "Dungeon diving (roguelike floors, party battles)" },
     { id: "dating", label: "Dating (topics, hidden tastes, outings)" },
     { id: "crime", label: "Crime & consequences" },
@@ -22093,6 +24392,14 @@ spindle.onFrontendMessage(async (raw, userId) => {
       case "builder_deepen":
         await builderDeepen(msg.chatId, { connectionId: msg.connectionId, effort: msg.effort }, userId);
         break;
+      case "builder_import":
+        await builderImport(msg.chatId, msg.text, userId);
+        break;
+      case "export_rulebook": {
+        const out = await exportRulebook(msg.chatId, userId);
+        send({ type: "rulebook_export", ...out }, userId);
+        break;
+      }
       case "theme_dating": {
         await Promise.resolve().then(() => init_flavour());
         const done = await themeDating(msg.chatId, userId, true).catch((e) => {

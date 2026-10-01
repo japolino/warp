@@ -19,7 +19,7 @@ import { momentKey, takePrewritten } from "./backend/drafts.js";
 import { isRulesetEntryTitle } from "./engine/loader.js";
 import { getDecider, JEV_KEY } from "./backend/deciders.js";
 import { runDungeonOp } from "./backend/dungeon.js";
-import { builderAnswer, builderBack, builderDeepen, draftItemUses, builderClose, builderCurrent, builderFix, builderInstall, builderOpen, builderRedo, builderRefine, builderStart } from "./backend/builder.js";
+import { builderAnswer, builderBack, builderDeepen, builderImport, exportRulebook, draftItemUses, builderClose, builderCurrent, builderFix, builderInstall, builderOpen, builderRedo, builderRefine, builderStart } from "./backend/builder.js";
 
 declare const spindle: SpindleAPI;
 
@@ -343,6 +343,12 @@ spindle.onFrontendMessage(async (raw, userId) => {
         break;
       }
       case "builder_deepen": await builderDeepen(msg.chatId, { connectionId: msg.connectionId, effort: msg.effort }, userId); break;
+      case "builder_import": await builderImport(msg.chatId, msg.text, userId); break;
+      case "export_rulebook": {
+        const out = await exportRulebook(msg.chatId, userId);
+        send({ type: "rulebook_export", ...out }, userId);
+        break;
+      }
       case "theme_dating": {
         const { themeDating } = await import("./backend/flavour.js");
         const done = await themeDating(msg.chatId, userId, true).catch((e) => { logError("theme dating", e); return null; });

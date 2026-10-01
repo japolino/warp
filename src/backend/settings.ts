@@ -30,6 +30,10 @@ export async function patchSettings(patch: Partial<Settings>, userId?: string): 
   next.sfx = next.sfx === "all" || next.sfx === "off" ? next.sfx : "games";
   next.sfxVolume = Math.max(0, Math.min(1, Number.isFinite(Number(next.sfxVolume)) ? Number(next.sfxVolume) : 0.4));
   next.dateImages = next.dateImages !== false && (next.dateImages as unknown) !== "false";
+  next.jevFormat = next.jevFormat === "openai" ? "openai" : "typesafe";
+  // Only web addresses: the classifier gets the roleplay text, so nothing that isn't plainly a URL.
+  next.jevUrl = /^https?:\/\/\S+$/i.test(String(next.jevUrl ?? "").trim()) ? String(next.jevUrl).trim() : DEFAULT_SETTINGS.jevUrl;
+  next.storyQuests = next.storyQuests !== false && (next.storyQuests as unknown) !== "false";
   cache.set(key(userId), next);
   await host().userStorage.setJson("settings.json", next, { indent: 2, userId });
   return next;

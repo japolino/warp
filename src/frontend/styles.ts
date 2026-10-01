@@ -176,6 +176,25 @@ export const STYLES = `
 .warp-perk-drawback { font-size: 11.5px; color: var(--warp-warn); }
 .warp-perk-pick { display: flex; flex-direction: column; gap: 6px; padding: 8px; margin-bottom: 6px; border-radius: var(--warp-radius); border: 1px solid color-mix(in srgb, var(--warp-accent) 55%, var(--warp-border)); background: color-mix(in srgb, var(--warp-accent) 7%, transparent); }
 .warp-perk-pick-head { font-weight: 700; font-size: 12px; color: var(--warp-accent); }
+.warp-quest { display: flex; flex-direction: column; gap: 3px; padding: 7px 8px; margin-bottom: 6px; border-radius: var(--warp-radius); border: 1px solid var(--warp-border); background: var(--warp-fill-subtle); font-size: 12.5px; }
+.warp-quest-ready { border-color: color-mix(in srgb, var(--warp-good) 60%, var(--warp-border)); background: color-mix(in srgb, var(--warp-good) 7%, transparent); }
+.warp-quest-offered { border-style: dashed; }
+.warp-quest-done, .warp-quest-failed { opacity: .75; }
+.warp-quest-failed .warp-quest-head b { text-decoration: line-through; text-decoration-color: var(--warp-bad); }
+.warp-quest-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.warp-quest-kind { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--warp-dim); border: 1px solid var(--warp-border); border-radius: 999px; padding: 0 6px; margin-left: 4px; }
+.warp-quest-goals { list-style: none; margin: 2px 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+.warp-quest-goals li.done { color: var(--warp-good); }
+.warp-quest-goals li.optional { color: var(--warp-muted); }
+.warp-quest-reward { color: var(--warp-warn); }
+.warp-quest-stakes { color: var(--warp-bad); font-size: 11.5px; }
+.warp-quest-actions { margin-top: 2px; align-items: center; }
+.warp-btn-danger { border-color: var(--warp-bad); color: var(--warp-bad); }
+.warp-foe-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: 6px; vertical-align: middle; }
+.warp-foe-tags .warp-pill { font-size: 10px; padding: 0 6px; }
+.warp-memories { margin-top: 3px; font-size: 11.5px; }
+.warp-memories > summary { cursor: pointer; color: var(--warp-muted); }
+.warp-memory { padding: 2px 0 2px 10px; border-left: 2px solid var(--warp-border); margin-top: 2px; color: var(--warp-muted); }
 .warp-perk-offer + .warp-perk-offer { border-top: 1px dashed var(--warp-border); padding-top: 6px; }
 .warp-person-here { border: 1px solid color-mix(in srgb, var(--warp-good) 55%, transparent); }
 .warp-rel { cursor: pointer; border-radius: 4px; }

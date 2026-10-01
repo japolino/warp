@@ -7,7 +7,7 @@ import type { Template } from "./index.js";
 export const questbound: Template = {
   id: "questbound",
   name: "Questbound (fantasy RPG)",
-  blurb: "Fantasy adventure RPG: HP, stamina and mana; Might, Agility, Wits and Spirit with skills that grow (blades, archery, arcana, stealth, persuasion, survival, lore); spells and techniques with costs and uses (Firebolt, Mend, Haste, Second Wind, Vanish); levels with a pick-one-of-three perk; buffs and poisons; bounties; wolves, bandits and a barrow-wight you can beat by steel, spell or words; a dungeon under the barrow; a dark threat that grows on its own.",
+  blurb: "Fantasy adventure RPG: HP, stamina and mana; Might, Agility, Wits and Spirit with skills that grow (blades, archery, arcana, stealth, persuasion, survival, lore); spells and techniques with costs and uses (Firebolt, Mend, Haste, Flurry, Smite, Blood Price, Vanish); levels with a pick-one-of-three perk; armor, poison, stuns and bleeding; quests from the guild board and the villagers, with rewards and a price for failing; wolves, bandits and a barrow-wight you can beat by steel, spell or words; a dungeon under the barrow; a dark threat that grows on its own.",
   parts: [
     {
       label: "core",
@@ -136,6 +136,7 @@ narration:
     indoors: true
     exits: [village_square]
     travel: 2
+    board: true
   village_square:
     name: Village Square
     desc: A well, a market, the temple steps and the guild's iron sign.
@@ -155,6 +156,7 @@ narration:
     desc: Bounty boards, a training yard and Hesk's ledger.
     indoors: true
     exits: [village_square]
+    board: true
   forest_road:
     name: The Forest Road
     desc: A rutted road under old pines. Wolves, bandits, and worse after dark.
@@ -181,19 +183,21 @@ items:
   antidote: { name: Antidote, uses: 1, use: { label: Drink the antidote, remove_condition: [poisoned] } }
   rations: { name: Rations, uses: 1, use: { label: Eat a ration, stamina: +30 } }
   torch: { name: Torch, keep: true, bonus: { survival: 5 } }
+  chainmail: { name: Chainmail, desc: "Every blow to the body lands 2 lighter — but it clinks.", armor: { hp: 2 }, bonus: { stealth: -10 } }
   wolf_pelt: { name: Wolf pelt }
 
+# Statuses work on {{user}} and on whoever they're fighting (inflict:). rounds: how long in a fight;
+# lasts: how long outside one; dot: damage each round (or turn); skip: a chance to lose the turn.
 conditions:
-  poisoned: { label: Poisoned, tone: bad, narrator: true, bonus: { might: -1, agility: -1 } }
-  bleeding: { label: Bleeding, tone: bad, narrator: true }
+  poisoned: { label: Poisoned, tone: bad, narrator: true, rounds: 3, lasts: 2h, every: turn, dot: 2, stat: hp, bonus: { might: -1, agility: -1 } }
+  bleeding: { label: Bleeding, tone: bad, narrator: true, lasts: 1h, every: turn, dot: 2, stat: hp }
+  stunned: { label: Stunned, tone: bad, rounds: 1, skip: true }
+  chilled: { label: Grave-chilled, tone: bad, rounds: 2, skip: 35, bonus: { agility: -2 } }
+  guarded: { label: Shield up, tone: good, rounds: 2, armor: { hp: 4 } }
   hasted: { label: Hasted, tone: good, bonus: { agility: 3 } }
   blessed: { label: Blessed, tone: good, bonus: { spirit: 2, persuasion: 10 } }
   inspired: { label: Inspired, tone: good, bonus: { might: 2 } }
   exhausted: { label: Exhausted, tone: bad, narrator: true, bonus: { might: -2, agility: -2 } }
-
-flags:
-  bounty_wolves: { start: false }
-  bounty_bandits: { start: false }
 `,
     },
     {
@@ -216,21 +220,6 @@ flags:
     check: { chance: "30 + persuasion / 2 + spirit * 3", label: Persuasion }
     success: { xp: +5, hint: "A useful rumour: a bounty, a lead on the barrow, or a warning about the road." }
     fail: { hint: "Nothing but gossip about the miller's goat." }
-  wolf_bounty:
-    label: Take the wolf bounty
-    group: Guild
-    at: guild_hall
-    when: not flag('bounty_wolves')
-    say: "*I take the wolf bounty off the board.*"
-    effects: { flags: { bounty_wolves: true }, hint: "Hesk: wolves have been taking travellers on the forest road. Ten gold a pelt, thirty for clearing the pack." }
-  bandit_bounty:
-    label: Take the bridge bounty
-    group: Guild
-    at: guild_hall
-    when: not flag('bounty_bandits') and level >= 2
-    why_not: "Hesk wants level 2 for this one"
-    say: "*I take the bounty on the bridge bandits.*"
-    effects: { flags: { bounty_bandits: true }, hint: "Hesk: bandits are charging a toll at the old bridge. Get it open again — however you like." }
   spar:
     label: Spar in the training yard
     group: Guild
@@ -293,6 +282,13 @@ flags:
     when: gold >= 40 and not has('longbow')
     say: "*I buy the longbow.*"
     effects: { gold: -40, give: longbow }
+  buy_mail:
+    label: Buy a chainmail shirt (45g)
+    group: Market
+    at: market
+    when: gold >= 45 and not has('chainmail')
+    say: "*I haggle over a second-hand mail shirt.*"
+    effects: { gold: -45, give: chainmail }
   buy_picks:
     label: Buy lockpicks (20g)
     group: Market
@@ -340,7 +336,7 @@ flags:
     label: Track the wolf pack
     group: Explore
     at: forest_road
-    when: flag('bounty_wolves')
+    requires: { quest: wolf_bounty }
     say: "*I follow the wolf tracks off the road.*"
     time: 30
     effects: { start_encounter: wolves }
@@ -387,6 +383,7 @@ encounters:
     actions:
       strike:
         label: Strike
+        tags: [melee]
         cost: { stamina: -8 }
         check: { chance: "35 + blades / 2 + might * 3", label: Blades }
         crit_success: { foe: { hp: "-(10 + might * 2)", nerve: -3 } }
@@ -412,7 +409,8 @@ encounters:
         success: { end: escaped }
         fail: { hp: -6, hint: "A wolf catches {{user}}'s boot and drags them back down." }
     foe_moves:
-      bite: { desc: "Lunges and bites", weight: 3, hp: -6 }
+      bite: { desc: "Lunges and bites", weight: 2, hp: -6 }
+      pack: { desc: "Three of them snap at once", weight: 1, hp: -2, hits: 3 }
       hamstring: { desc: "Goes for the legs", weight: 1, hp: -3, add_condition: { bleeding: 30 } }
       howl: { desc: "Howls to rally the pack", weight: 1, stamina: -6 }
     end_when:
@@ -421,8 +419,8 @@ encounters:
       beaten: hp <= 0
     labels: { won: The pack is dead, scattered: The pack runs, escaped: You got up a tree, beaten: The wolves dragged you down }
     outcomes:
-      won: { xp: +40, give: wolf_pelt, gold: "flag('bounty_wolves') ? 30 : 0", flags: { bounty_wolves: false } }
-      scattered: { xp: +30, gold: "flag('bounty_wolves') ? 20 : 0", flags: { bounty_wolves: false } }
+      won: { xp: +40, give: wolf_pelt }
+      scattered: { xp: +30 }
       escaped: { stamina: -10, hint: "{{user}} waits in the branches until the pack loses interest." }
       beaten: { set: { hp: 1 }, gold: "-min(gold, 10)", hint: "{{user}} comes to on the road, mauled and lighter in the purse — a passing cart picked them up." }
 
@@ -433,6 +431,7 @@ encounters:
     goal: Get across — pay, talk them out of it, slip past, or put them down
     foe:
       name: Bandit Captain
+      armor: { hp: 3 }            # a mail shirt: every blow lands 3 lighter
       stats:
         resolve: { label: Resolve, start: 16, max: 16 }
         hp: { label: HP, start: 30, max: 30 }
@@ -453,10 +452,18 @@ encounters:
         fail: { hint: "Nobody's impressed." }
       fight:
         label: Fight
+        tags: [melee]
         cost: { stamina: -8 }
         check: { chance: "35 + blades / 2 + might * 3", label: Blades }
         success: { foe: { hp: "-(6 + might)", resolve: -2 } }
         fail: { hp: -5 }
+      bash:
+        label: Shield-bash the captain
+        tags: [melee]
+        cost: { stamina: -10 }
+        check: { chance: "30 + might * 4", label: Might }
+        success: { inflict: [stunned], foe: { resolve: -2 }, hint: "The captain staggers, ears ringing." }
+        fail: { stamina: -4, hint: "{{user}} bounces off his shield." }
       sneak:
         label: Slip past in the reeds
         cost: { stamina: -6 }
@@ -466,6 +473,7 @@ encounters:
     foe_moves:
       threaten: { desc: "Threatens {{user}}", weight: 2, stamina: -4 }
       swing: { desc: "Swings a cudgel", weight: 2, hp: -6 }
+      shield_up: { desc: "Sets his shield and waits", weight: 1, inflict: { guarded: 2 } }
       call_out: { desc: "Calls more bandits from the trees", weight: 1, foe: { resolve: +3 } }
     end_when:
       backed_down: foe.resolve <= 0
@@ -473,8 +481,8 @@ encounters:
       beaten: hp <= 0
     labels: { backed_down: The bandits let you pass, won: The bandits are beaten, paid: You paid your way across, slipped_by: You slipped past unseen, beaten: The bandits beat you and took your purse }
     outcomes:
-      backed_down: { xp: +50, gold: "flag('bounty_bandits') ? 40 : 0", flags: { bounty_bandits: false } }
-      won: { xp: +60, gold: "20 + (flag('bounty_bandits') ? 40 : 0)", flags: { bounty_bandits: false } }
+      backed_down: { xp: +50 }
+      won: { xp: +60, gold: +20 }
       paid: { xp: +5 }
       slipped_by: { xp: +30 }
       beaten: { set: { hp: 1 }, gold: "-min(gold, 20)" }
@@ -486,12 +494,14 @@ encounters:
     goal: Destroy it, or break the oath that binds it with a dawn-blessing
     foe:
       name: Barrow-Wight
+      armor: { hp: 3 }            # rusted plate: steel bites less, the rite doesn't care
       stats:
         hp: { label: HP, start: 45, max: 45 }
         oath: { label: Oath, start: 20, max: 20 }
     actions:
       strike:
         label: Strike
+        tags: [melee]
         cost: { stamina: -8 }
         check: { chance: "30 + blades / 2 + might * 3", label: Blades }
         success: { foe: { hp: "-(5 + might) * (cond('blessed') ? 2 : 1)" } }
@@ -510,7 +520,7 @@ encounters:
         success: { end: fled }
         fail: { hp: -6 }
     foe_moves:
-      grave_chill: { desc: "Breathes a grave-chill", weight: 2, stamina: -12 }
+      grave_chill: { desc: "Breathes a grave-chill", weight: 2, stamina: -12, add_condition: [chilled] }
       blade: { desc: "Swings a rusted blade", weight: 2, hp: -8 }
       dread: { desc: "Fills the air with dread", weight: 1, mana: -5 }
     end_when:
@@ -537,6 +547,65 @@ dungeons:
     loot: { healing_draught: 3, mana_tonic: 2, antidote: 1 }
     on_leave: { stamina: -20 }
     on_defeat: { hp: -20, gold: "-min(gold, 30)" }
+`,
+    },
+    {
+      label: "quests",
+      yaml: `# Bounties on the guild board, favours from the villagers, and the barrow — which comes
+# looking for {{user}} whether they take it on or not.
+quests:
+  wolf_bounty:
+    name: Thin the wolf pack
+    kind: bounty
+    giver: hesk
+    board: true
+    desc: Wolves have been taking travellers on the forest road.
+    days: 4
+    goals:
+      - { text: Kill the pack or send it running, on: { encounter: wolves, outcome: [won, scattered] } }
+    reward: { gold: 30, xp: 20, rel: { hesk: { trust: 5 } } }
+    failure: { rel: { hesk: { trust: -5 } } }
+    stakes: Another traveller goes missing on the road, and Hesk marks {{user}} as unreliable.
+    repeat: 7
+  bridge_bounty:
+    name: Open the old bridge
+    kind: bounty
+    giver: hesk
+    board: true
+    when: "level >= 2"
+    desc: Bandits are charging a toll at the old bridge. Get it open again — however you like.
+    days: 5
+    goals:
+      - { text: Make the bandits back down, or beat them, on: { encounter: bandits, outcome: [backed_down, won] } }
+    reward: { gold: 40, xp: 30, rel: { hesk: { trust: 8 } } }
+    failure: { rel: { hesk: { trust: -8 } } }
+    stakes: Trade dries up while the toll stands.
+  marta_herbs:
+    name: Herbs for the stew pot
+    kind: favour
+    giver: marta
+    desc: Marta's out of wild garlic and thyme, and the stew won't make itself.
+    days: 2
+    goals:
+      - { text: Forage along the forest road, count: 2, on: forage }
+    reward: { gold: 6, give: rations, rel: { marta: { affinity: 6, trust: 4 } } }
+    failure: { rel: { marta: { affinity: -4 } } }
+    remember: { failed: "{{user}} promised herbs for the stew and came back empty-handed." }
+    repeat: 3
+  barrow_oath:
+    name: The barrow-king's oath
+    kind: main
+    giver: aldous
+    auto: true
+    when: "front_stage('barrow_wakes') >= 1"
+    desc: The barrow's dead are walking. Brother Aldous begs {{user}} to end it — by steel or by rite.
+    goals:
+      - { text: Learn how the oath was broken before, when: "codex('wights')", optional: true }
+      - { text: Lay the barrow-wight to rest, when: "flag('barrow_quiet')" }
+    fail: "front('barrow_wakes') >= 100"
+    reward: { xp: 100, gold: 60, perk_points: 1, rel: { aldous: { trust: 15 } } }
+    failure: { rel: { aldous: { trust: -10 } } }
+    stakes: If the barrow fully wakes, the wight comes for the village itself.
 `,
     },
     {
@@ -578,6 +647,44 @@ abilities:
     cost: { stamina: -8 }
     add_condition: { inspired: 3 }
     per_encounter: 1
+  flurry:
+    name: Flurry
+    desc: Three quick cuts — deadly on the unarmored, wasted on plate
+    where: encounter
+    known: false
+    tags: [melee]
+    cost: { stamina: -10 }
+    check: { chance: "40 + blades / 2 + agility * 3", label: Blades }
+    success: { harm: "3 + agility / 2", hits: 3 }
+    fail: { stamina: -4 }
+    per_encounter: 2
+  venomed_edge:
+    name: Venomed Edge
+    desc: A nick that keeps on hurting
+    where: encounter
+    known: false
+    tags: [melee]
+    cost: { stamina: -6 }
+    check: { chance: "35 + blades / 2 + agility * 3", label: Blades }
+    success: { harm: 2, inflict: { poisoned: 3 } }
+    per_encounter: 1
+  smite:
+    name: Smite
+    desc: The dawn's light through a holy symbol — a quarter of whatever stands against you, armor or not
+    where: encounter
+    requires: { has: holy_symbol }
+    cost: { mana: -10 }
+    check: { chance: "30 + spirit * 5 + lore / 4", label: Spirit }
+    success: { harm: "25%", pierce: all }
+    fail: { hint: "The light flickers and dies." }
+    per_encounter: 1
+  blood_price:
+    name: Blood Price
+    desc: Bleed a little, and the magic answers
+    known: false
+    cost: { hp: -8 }
+    mana: +14
+    per_day: 2
   vanish:
     name: Vanish
     desc: Step into a shadow and out of the fight
@@ -594,8 +701,9 @@ perks:
   pick: 3
   blade_dancer:
     name: Blade Dancer
-    desc: Fights like a duelist while there's breath in them.
+    desc: Fights like a duelist while there's breath in them — and learns the Flurry.
     tags: [blades]
+    abilities: [flurry]
     edge: { blades: 15, when: "stamina >= 50" }
     narrator: "{{user}} moves with a duelist's economy — no wasted motion."
   hedge_mage:
@@ -606,15 +714,16 @@ perks:
     bonus: { arcana: 5 }
   arcane_scholar:
     name: Arcane Scholar
-    desc: Mana returns faster; spells come easier.
+    desc: Mana returns faster; spells come easier — and the old blood-magic opens up.
     requires: "arcana >= 25"
+    abilities: [blood_price]
     bonus: { arcana: 10 }
     rule: { gains: { mana: "+50%" } }
   shadow_step:
     name: Shadow Step
-    desc: The dark is a friend.
+    desc: The dark is a friend, and so is a poisoned blade.
     tags: [stealth]
-    abilities: [vanish]
+    abilities: [vanish, venomed_edge]
     edge: { stealth: 15, when: "hour >= 20 or hour < 5" }
   battle_hardened:
     name: Battle-Hardened
@@ -641,6 +750,12 @@ perks:
     desc: Commands, and people listen.
     abilities: [battle_cry]
     bonus: { persuasion: 5 }
+  sunderer:
+    name: Sunderer
+    desc: Knows where plate is thin.
+    tags: [blades]
+    rule: { pierce: { amount: 3, stats: [blades] } }
+    narrator: "{{user}} fights like someone who has opened armor before — at the joints."
   berserker:
     name: Berserker
     desc: Strongest when hurt.
@@ -656,7 +771,8 @@ codex:
 
 feats:
   first_blood: { name: First blood, desc: "Win your first fight.", unlock: "xp >= 40 or level >= 2" }
-  pack_breaker: { name: Pack-breaker, desc: "Clear the wolf bounty.", unlock: "has('wolf_pelt')", reward: { perk_points: +1 } }
+  pack_breaker: { name: Pack-breaker, desc: "Clear the wolf bounty.", unlock: "quest_done('wolf_bounty')", reward: { perk_points: +1 } }
+  sellsword: { name: Sellsword, desc: "Finish three quests.", unlock: "quests_done() >= 3", reward: { xp: +40 } }
   oathbreaker: { name: Oathbreaker, desc: "Lay the barrow-wight to rest.", unlock: "flag('barrow_quiet')", reward: { xp: +50, perk_points: +1 } }
 `,
     },
@@ -678,14 +794,6 @@ triggers:
       perk_points: +1
       hp: +15
       hint: "Level up! {{user}} feels stronger — and a new perk is theirs to choose."
-  bleeding_out:
-    when: cond('bleeding')
-    repeat: true
-    do: { hp: -2 }
-  poison:
-    when: cond('poisoned')
-    repeat: true
-    do: { hp: -1, stamina: -3 }
   worn_out:
     when: stamina <= 0
     do: { add_condition: { exhausted: 240 }, hint: "{{user}} is running on nothing." }

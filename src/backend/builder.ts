@@ -17,6 +17,7 @@ import { reviewBalance } from "../engine/balance.js";
 import { isRulesetBookName, isRulesetEntryTitle, loadRuleset, type RulesetPart } from "../engine/loader.js";
 import { lintRuleset } from "../engine/lint.js";
 import { PART_CONTENTS, PART_LABELS, partForIssue, REFERENCE, type PartLabel } from "../engine/reference.js";
+import { joinRulebook, splitRulebook } from "../engine/rulebook.js";
 import type { Issue, Ruleset } from "../engine/ruleset.js";
 import { initialState } from "../engine/state.js";
 import { getTemplate, TEMPLATES, withCharacter } from "../engine/templates/index.js";
@@ -164,6 +165,7 @@ const SYSTEMS: { id: string; label: string }[] = [
   { id: "clothing", label: "Clothing, weather & temperature" },
   { id: "schedules", label: "NPC schedules & places" },
   { id: "encounters", label: "Encounters / combat" },
+  { id: "quests", label: "Quests (a notice board, favours people ask, bounties)" },
   { id: "dungeon", label: "Dungeon diving (roguelike floors, party battles)" },
   { id: "dating", label: "Dating (topics, hidden tastes, outings)" },
   { id: "crime", label: "Crime & consequences" },
@@ -269,7 +271,9 @@ function contextOf(parts: BuilderPart[]): string {
     list("Wardrobe slots", r.wardrobe.enabled ? r.wardrobe.slots.map((x) => x.id) : []),
     list("Conditions", Object.keys(r.conditions)),
     list("Flags", Object.keys(r.flags)),
-    list("Encounters", Object.keys(r.encounters)),
+    list("Encounters", Object.keys(r.encounters).map((id) => `${id} (outcomes: ${[...new Set([...Object.keys(r.encounters[id].outcomes), ...r.encounters[id].endWhen.map((e) => e.outcome)])].join(", ")})`)),
+    list("Quests", r.questOrder),
+    list("Notice boards", Object.values(r.locations).filter((l) => l.board).map((l) => l.id)),
     list("Codex", Object.keys(r.codex)),
   ].filter(Boolean).join("\n");
 }
@@ -324,6 +328,7 @@ function buildPreview(s: BuilderSession) {
     items: Object.keys(r.items).length,
     actions: Object.keys(r.actions).length,
     encounters: Object.keys(r.encounters).length,
+    quests: r.questOrder.length,
     dungeons: Object.keys(r.dungeons).length,
     rules: r.triggers.length,
     codex: Object.keys(r.codex).length,
@@ -475,7 +480,9 @@ export async function builderStart(chatId: string, opts: { connectionId: string;
       cast: Array.isArray(out.cast) ? out.cast.slice(0, 12).map((c) => ({ name: String((c as Record<string, unknown>)?.name ?? ""), relation: String((c as Record<string, unknown>)?.relation ?? "") })).filter((c) => c.name) : [],
     };
     s.base = opts.base || suggested;
-    const defaults = Array.isArray(out.systems) ? out.systems.map(String).filter((x) => SYSTEMS.some((y) => y.id === x)) : ["needs", "relationships", "money", "skills", "story"];
+    // Quests give almost any game goals with stakes, so they're on unless the player turns them off.
+    const picked = Array.isArray(out.systems) ? out.systems.map(String).filter((x) => SYSTEMS.some((y) => y.id === x)) : ["needs", "relationships", "money", "skills", "story"];
+    const defaults = [...new Set([...picked, "quests"])];
     s.rounds = [{ questions: [...coreQuestions(defaults), ...normQuestions(out.followUps, "f1_")], answers: {} }];
     s.step = "questions";
   } catch (e) {
@@ -513,6 +520,7 @@ async function draftAll(s: BuilderSession, userId?: string) {
   const systems = chosenSystems(s);
   const want = (label: PartLabel) => {
     if (label === "encounters") return systems.has("encounters") || systems.has("dungeon");
+    if (label === "quests") return systems.has("quests");
     if (label === "journal") return systems.has("journal") || systems.has("perks") || systems.has("abilities");
     if (label === "story") return systems.has("story");
     if (label === "dating") return systems.has("dating");
@@ -700,6 +708,43 @@ export async function builderInstall(chatId: string, userId?: string) {
     s.error = `Couldn't save: ${e instanceof Error ? e.message : String(e)}`;
   }
   await progress(s, null, userId);
+}
+
+// ───────────────────────── import & export ─────────────────────────
+
+/** A rulebook written elsewhere (another tool, an agent harness): split into sections, then checked and previewed like a draft. */
+export async function builderImport(chatId: string, text: string, userId?: string) {
+  const characterId = await characterForChat(chatId, userId);
+  if (!characterId) throw new Error("Open a chat with a character first.");
+  const split = splitRulebook(text);
+  if (!split.length) throw new Error("That doesn't look like a rulebook — it should be YAML with sections like stats:, actions:, encounters:.");
+  const card = await cardText(characterId, userId);
+  const s: BuilderSession = {
+    characterId, characterName: card.name, mode: "import", step: "review",
+    connectionId: "", creative: false, base: "", analysis: null, rounds: [], additions: [],
+    parts: split.map((p) => ({ label: p.label, yaml: p.yaml, status: "ok", issues: [] })), preview: null,
+    request: null, changeSummary: null, busy: null, error: null, updatedAt: Date.now(),
+    effort: "thorough", plan: null, log: [], waived: {}, depth: null,
+  };
+  buildPreview(s);
+  const { ruleset } = check(s.parts);
+  if (ruleset) {
+    const a = auditRuleset(ruleset);
+    s.depth = { before: a.depth, after: a.depth, open: a.gaps.filter((g) => g.severity === "gap").length };
+  }
+  s.changeSummary = `Imported ${s.parts.length} section${s.parts.length === 1 ? "" : "s"}: ${s.parts.map((p) => p.label).join(", ")}.${card.hasRuleset ? " Installing replaces the current ruleset." : ""}`;
+  await save(s, userId);
+  emit(s, userId);
+}
+
+/** The installed rulebook as one file, sections kept apart so importing it puts everything back. */
+export async function exportRulebook(chatId: string, userId?: string): Promise<{ name: string; text: string }> {
+  const characterId = await characterForChat(chatId, userId);
+  if (!characterId) throw new Error("Open a chat with a character first.");
+  const parts = await currentParts(characterId, userId);
+  if (!parts.length) throw new Error("This character has no ruleset to export yet.");
+  const card = await cardText(characterId, userId);
+  return { name: card.name, text: joinRulebook(parts.map((p) => ({ label: p.label, yaml: p.yaml })), card.name) };
 }
 
 // ───────────────────────── item uses, drafted ─────────────────────────

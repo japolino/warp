@@ -8,6 +8,8 @@
 import type { Answer, Answers, Decider, Questions } from "../engine/decide.js";
 import { normalize, noulConfidence } from "../engine/decide.js";
 import { usableAbilities, usableItems, availableChoices, TRAVEL_PREFIX, travelTargets, type Intent, type Proposal } from "../engine/resolve.js";
+import { QUEST_PREFIX, questDef, questOffers, questsToReport } from "../engine/quests.js";
+import { judgedQuests } from "./helpers.js";
 import { DIFFICULTIES, type DecideSpec, type Ruleset, type StatDef } from "../engine/ruleset.js";
 import { itemName, makeEnv, personName, type GameState } from "../engine/state.js";
 import { IMPROV, improvStats } from "../engine/freeform.js";
@@ -119,16 +121,27 @@ export async function readTurn(opts: {
       ]
     : [];
   const travel = playerText && !talking ? travelTargets(r, s) : [];
+  // Saying yes to someone's request, or telling them it's done, takes or hands in the quest.
+  const questMoves: Record<string, string> = {};
+  if (playerText && !talking) {
+    // Only what someone here is asking: notices on a board are taken by clicking them.
+    for (const o of questOffers(r, s).filter((x) => x.via === "giver")) {
+      const q = r.quests[o.id];
+      questMoves[`${QUEST_PREFIX}take:${o.id}`] = `Agree to take on "${q.name}"${o.from ? ` for ${o.from}` : ""}${q.desc ? ` — ${q.desc}` : ""}`;
+    }
+    for (const x of questsToReport(r, s)) questMoves[`${QUEST_PREFIX}report:${x.id}`] = `Tell ${x.to ?? "them"} that "${questDef(r, s, x.id)?.name ?? x.id}" is done`;
+  }
   // Anything risky the list doesn't cover is still an attempt: it rolls on the closest ability.
   const improv = !!playerText && !talking && r.improvise.enabled && !s.dungeon;
   const approach = improv ? improvStats(r) : [];
 
-  if (playerText && (actions.length || travel.length || improv)) {
+  if (playerText && (actions.length || travel.length || improv || Object.keys(questMoves).length)) {
     const criteria: Record<string, string> = {
       [NONE]: "None of these: dialogue, thoughts, feelings, plans, questions, or something trivial that can't fail",
     };
     for (const c of actions) criteria[c.id] = `${c.label}${c.a.desc ? ` — ${c.a.desc}` : ""}`;
     for (const t of travel) criteria[`${TRAVEL_PREFIX}${t}`] = `Go to ${r.locations[t].name}`;
+    Object.assign(criteria, questMoves);
     if (improv) criteria[ATTEMPT] = "Something else with a real chance of failing that matters to the story, not listed above (sneaking, persuading, lying, fighting, climbing, stealing, resisting, performing…)";
     q.action = { type: "choice", instructions: `Which of these does ${player}'s latest message actually attempt right now?`, criteria };
     if (improv || actions.some((c) => c.a.params.length)) {
@@ -220,6 +233,10 @@ export async function readTurn(opts: {
     const difficulty = DIFFICULTIES[Math.max(0, Math.min(DIFFICULTIES.length - 1, Math.round(level)))];
     intent = { actionId: `${IMPROV}${stat}`, via: "adjudicator", params: { difficulty } };
     label = `${stat ? r.stats[stat].label : "Luck"} check (${difficulty})`;
+  } else if (id.startsWith(QUEST_PREFIX)) {
+    if (!questMoves[id]) return out;
+    intent = { actionId: id, via: "adjudicator" };
+    label = questMoves[id];
   } else if (id.startsWith(TRAVEL_PREFIX)) {
     const to = id.slice(TRAVEL_PREFIX.length);
     if (!travel.includes(to)) return out;
@@ -324,14 +341,16 @@ function confident(a: Answer | undefined): a is Extract<Answer, { type: "choice"
 
 export interface Bookkeeping {
   proposal: Proposal;
-  /** Open-ended things a writing model should fill in (names). */
-  needsWriting: Set<"people" | "items" | "move" | "body">;
+  /** Open-ended things a writing model should fill in (names, new quests, what someone will remember). */
+  needsWriting: Set<"people" | "items" | "move" | "body" | "quests" | "memories">;
 }
 
 export async function bookkeeping(opts: {
   decider: Decider; r: Ruleset; s: GameState; playerText: string; reply: string; player: string;
   /** The turn's outcome the rules already applied (not to be counted again). */
   applied?: string | null;
+  /** Track favours people ask for in the story as quests. */
+  storyQuests?: boolean;
 }): Promise<Bookkeeping> {
   const { r, s, player } = opts;
   const q: Questions = {};
@@ -445,6 +464,18 @@ export async function bookkeeping(opts: {
       },
     };
   }
+  // Quests the story decides: did the reply finish or fail them?
+  const judged = judgedQuests(r, s);
+  for (const j of judged) {
+    q[`quest:${j.id}`] = {
+      type: "choice",
+      instructions: `Where does ${player}'s quest "${j.name}" stand at the end of the reply?`,
+      criteria: { ongoing: "Still under way, or the reply doesn't say", done: `Done: ${fill(j.done, player)}`, failed: j.fail ? `Failed: ${fill(j.fail, player)}` : "Failed, abandoned or made impossible" },
+    };
+  }
+  const storyQuests = opts.storyQuests !== false && r.storyQuests.enabled;
+  if (storyQuests) q["gate:quests"] = { type: "noul", instructions: `During the reply, someone asked ${player} to do a specific task or favour for them (or ${player} promised one) that ${player} agreed to and that isn't already one of ${player}'s quests` };
+  if (Object.keys(s.people).length) q["gate:memories"] = { type: "noul", instructions: `During the reply, something happened between ${player} and someone there that they'll remember for a long time: a real kindness, a betrayal, a promise made or broken, a humiliation, a first` };
   if (r.body.enabled && r.body.narrator) q["gate:body"] = { type: "noul", instructions: `${player}'s body changes during the reply (a transformation, new mark or tattoo, haircut or dye, a lasting injury…)` };
   if (r.peopleOpen) q["gate:people"] = { type: "noul", instructions: "The reply introduces a named character who wasn't in the game state before" };
   if (r.itemsOpen) q["gate:items"] = { type: "noul", instructions: `${player} gains, loses or uses up an item during the reply` };
@@ -525,7 +556,14 @@ export async function bookkeeping(opts: {
     const a = ans[`cloth:${slot}`];
     if (a?.type === "noul" && a.noul >= 0.7) (p.undress ??= []).push(slot);
   }
-  const needsWriting = new Set<"people" | "items" | "move" | "body">();
+  for (const j of judged) {
+    const a = ans[`quest:${j.id}`];
+    if (a?.type !== "choice" || a.choice === "ongoing" || (a.probabilities[a.choice] ?? a.confidence) < 0.6) continue;
+    ((p.quests ??= {})[a.choice === "done" ? "done" : "failed"] ??= []).push(j.id);
+  }
+  const needsWriting = new Set<"people" | "items" | "move" | "body" | "quests" | "memories">();
+  if (ans["gate:quests"]?.type === "noul" && (ans["gate:quests"] as { noul: number }).noul >= 0.65) needsWriting.add("quests");
+  if (ans["gate:memories"]?.type === "noul" && (ans["gate:memories"] as { noul: number }).noul >= 0.7) needsWriting.add("memories");
   // A name nobody knows in the middle of a sentence makes "someone new?" easier to say yes to.
   const known = [player, ...Object.values(s.people).map((x) => x.name), ...Object.values(r.locations).map((l) => l.name), s.locationName ?? "", ...Object.keys(s.items).map((id) => itemName(r, s, id))];
   const peopleBar = newNames(opts.reply, known).length ? 0.35 : 0.6;

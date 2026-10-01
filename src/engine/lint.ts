@@ -10,6 +10,7 @@ export const FUNCTIONS = [
   "has", "count", "flag", "cond", "at", "rel", "met", "between", "roll",
   "wearing", "worn", "trait", "present", "where", "codex", "feat", "perk",
   "secret", "front", "front_stage", "happened", "deepest", "partner", "dates", "stage", "saved", "body", "transformed", "bond", "arc", "age", "children", "owed", "missed", "days_until", "seen_by", "fame",
+  "quest", "quest_active", "quest_done", "quest_failed", "goal", "quests_done", "memories", "cond_of", "foe_cond", "stat_max", "foe_max",
   "min", "max", "clamp", "floor", "ceil", "round", "abs",
 ];
 
@@ -117,8 +118,32 @@ export function lintRuleset(r: Ruleset): Issue[] {
       if (!r.randomEvents.enabled) issues.push({ level: "warning", where, message: "moves the event gauge, but there are no random events" });
       check(e.gauge, `${where} › gauge`, extra);
     }
+    const conds = Object.keys(r.conditions);
+    for (const [id, spec] of Object.entries(e.inflict)) {
+      if (!r.conditions[id]) issues.push({ level: "warning", where, message: `inflicts "${id}", which isn't declared under conditions:${suggest(id, conds)}` });
+      check(spec.rounds, `${where} › inflict › ${id}`, extra);
+      check(spec.chance, `${where} › inflict › ${id} › chance`, extra);
+    }
+    for (const [who, m] of Object.entries(e.afflict)) {
+      if (who !== "target" && !r.people[who]) issues.push({ level: "warning", where, message: `puts conditions on "${who}", who isn't a person${suggest(who, people)}` });
+      for (const id of Object.keys(m)) if (!r.conditions[id]) issues.push({ level: "warning", where, message: `"${id}" isn't declared under conditions:${suggest(id, conds)}` });
+    }
+    for (const id of e.cleanse) if (!r.conditions[id]) issues.push({ level: "warning", where, message: `cleanses "${id}", which isn't a condition${suggest(id, conds)}` });
+    check(e.hits, `${where} › hits`, extra);
+    check(e.pierce, `${where} › pierce`, extra);
+    for (const id of Object.keys(e.quest)) if (!r.quests[id]) issues.push({ level: "warning", where, message: `"${id}" isn't a quest${suggest(id, r.questOrder)}` });
+    for (const [key, v] of Object.entries(e.progress)) {
+      const [qid, gid] = key.split(".");
+      const q = r.quests[qid];
+      if (!q) issues.push({ level: "warning", where, message: `counts toward "${qid}", which isn't a quest${suggest(qid, r.questOrder)}` });
+      else if (gid && !q.goals.some((g) => g.id === gid)) issues.push({ level: "warning", where, message: `"${gid}" isn't one of ${q.name}'s goals (${q.goals.map((g) => g.id).join(", ")})` });
+      else if (!gid && !q.goals.some((g) => g.count !== undefined && !g.when)) issues.push({ level: "warning", where, message: `"${q.name}" has no counted goal for progress to count toward (give a goal \`count:\`)` });
+      check(v, `${where} › progress › ${key}`, extra);
+    }
+    for (const who of Object.keys(e.remember)) if (who !== "target" && !r.people[who]) issues.push({ level: "warning", where, message: `"${who}" isn't a person to remember it${suggest(who, people)}` });
   };
 
+  const people = Object.keys(r.people);
   for (const id of r.statOrder) check(r.stats[id].maxExpr, `Stats › ${id} › max`);
 
   const checkAction = (a: ActionDef, w: string) => {
@@ -134,6 +159,42 @@ export function lintRuleset(r: Ruleset): Issue[] {
     for (const [tier, e] of Object.entries(a.outcomes)) if (e) checkEffect(e, `${w} › ${tier}`, extra);
   };
   for (const a of Object.values(r.actions)) checkAction(a, `Actions › ${a.id}`);
+  const checkRequires = (a: ActionDef, w: string) => {
+    for (const q of a.requires) {
+      const id = q.id ?? "";
+      const miss = (what: string, pool: string[]) => issues.push({ level: "warning", where: `${w} › requires`, message: `"${id}" isn't ${what}${suggest(id, pool)}` });
+      if ((q.kind === "with" || q.kind === "rel") && !r.people[id]) miss("a person", people);
+      if (q.kind === "has" && !r.items[id] && !r.itemsOpen) miss("an item", Object.keys(r.items));
+      if (q.kind === "quest" && !r.quests[id]) miss("a quest", r.questOrder);
+      if (q.kind === "flag" && !r.flags[id]) miss("a flag", Object.keys(r.flags));
+      if (q.kind === "perk" && !r.perks[id]) miss("a perk", Object.keys(r.perks));
+      if (q.kind === "rel" && !r.relStats[q.stat ?? ""]) issues.push({ level: "warning", where: `${w} › requires`, message: `"${q.stat}" isn't a relationship stat${suggest(q.stat ?? "", r.relStatOrder)}` });
+    }
+  };
+  for (const a of Object.values(r.actions)) checkRequires(a, `Actions › ${a.id}`);
+  for (const enc of Object.values(r.encounters)) for (const a of Object.values(enc.actions)) checkRequires(a, `Encounters › ${enc.id} › actions › ${a.id}`);
+  for (const c of Object.values(r.conditions)) {
+    const w = `Conditions › ${c.id}`;
+    check(c.dot, `${w} › dot`);
+    check(c.skip, `${w} › skip`);
+    checkEffect(c.tick, `${w} › tick`);
+    if (c.stat && !r.stats[c.stat] && !Object.values(r.encounters).some((e) => e.foe.stats.some((x) => x.id === c.stat))) issues.push({ level: "warning", where: `${w} › stat`, message: `"${c.stat}" isn't a stat or a foe stat${suggest(c.stat, r.statOrder)}` });
+    if (c.every === "hour" && c.dot !== undefined && !c.lasts) issues.push({ level: "warning", where: w, message: "hurts every hour and never wears off on its own — give it `lasts:` (or a cure)" });
+  }
+  for (const it of Object.values(r.items)) for (const k of Object.keys(it.armor)) {
+    if (k !== "_" && !r.stats[k]) issues.push({ level: "warning", where: `Items › ${it.id} › armor`, message: `"${k}" isn't a stat${suggest(k, r.statOrder)}` });
+  }
+  for (const q of Object.values(r.quests)) {
+    const w = `Quests › ${q.id}`;
+    check(q.when, `${w} › when`);
+    check(q.succeed, `${w} › succeed`);
+    check(q.fail, `${w} › fail`);
+    for (const g of q.goals) check(g.when, `${w} › goals › ${g.id}`);
+    checkEffect(q.start, `${w} › start`);
+    checkEffect(q.reward, `${w} › reward`);
+    checkEffect(q.failure, `${w} › failure`);
+    if (!q.auto && !q.giver && !q.board && !q.at.length && !q.hidden) issues.push({ level: "warning", where: w, message: "has no giver, board or place, so nothing offers it — add `giver:`, `board: true`, `at:`, `auto: true` or `hidden: true` (started by an effect)" });
+  }
   for (const t of r.triggers) {
     check(t.when, `Triggers › ${t.id} › when`);
     checkEffect(t.effects, `Triggers › ${t.id}`);
@@ -216,7 +277,6 @@ export function lintRuleset(r: Ruleset): Issue[] {
     for (const id of k.flags) if (!r.flags[id]) issues.push({ level: "warning", where: "Checkpoints › keep", message: `"${id}" isn't a declared flag` });
   }
   for (const e of Object.values(r.endings)) check(e.when, `Endings › ${e.id} › when`);
-  const people = Object.keys(r.people);
   if (r.discovery.enabled) {
     check(r.discovery.chance, "Discovery › chance");
     for (const loc of r.discovery.at) if (!r.locations[loc]) issues.push({ level: "warning", where: "Discovery › at", message: `"${loc}" isn't a location${suggest(loc, Object.keys(r.locations))}` });
