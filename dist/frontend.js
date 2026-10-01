@@ -205,7 +205,7 @@ function parseImageResult(v) {
     return v;
   if (v.status === "error" && text(v.error, 1000))
     return v;
-  if (v.status === "ready" && text(v.imageUrl, 4000) && /^(https?:\/\/|\/api\/v1\/images\/)/i.test(v.imageUrl) && IMAGE_FITS.includes(v.fit))
+  if (v.status === "ready" && text(v.imageUrl, 4000) && /^(https?:\/\/|\/api\/v1\/(?:images\/|image-gen\/results\/))/i.test(v.imageUrl) && IMAGE_FITS.includes(v.fit))
     return v;
   return null;
 }

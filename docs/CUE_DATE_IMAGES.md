@@ -12,9 +12,11 @@ Ending the date, changing chats, disabling Warp date pictures or unloading the f
 
 ## Offline checks
 
-Verified on October 1: 389 tests passed, type checking passed and the production bundles were rebuilt. The matching Cue change passed 1,088 tests, type checking and its production build.
+Verified on October 1: 390 tests passed, type checking passed and the production bundles were rebuilt. The matching Cue change passed 1,089 tests, type checking and its production build.
 
 The host emits `MESSAGE_EDITED` for metadata saves as well as text changes. Warp compares the scene's message IDs, active swipes and text before clearing it. Recording a dating move or saving Cue metadata therefore preserves dialogue and the pending picture. Real narrative edits, deletion, swipe changes and undo still discard stale presentation and reject late pictures.
+
+Generated pictures use Lumiverse's `/api/v1/image-gen/results/<id>` endpoint. Both sides of the bridge accept this path alongside native `/api/v1/images/<id>` URLs. Earlier bridge validators silently rejected generated-result URLs after a successful provider render. The contract test and the real Cue pipeline bridge test now use this host endpoint.
 
 ```powershell
 bun run verify

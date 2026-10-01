@@ -519,9 +519,9 @@ for (const mode of ["scripted", "model"] as const) test(`host metadata edit even
   const request = next.imageRequest!;
   await frontendMessage({ type: "cue_image_result", chatId: f.id, result: {
     version: 1, provider: "warp", chatId: f.id, requestId: request.requestId,
-    status: "ready", imageUrl: "/api/v1/images/date", fit: "contain",
+    status: "ready", imageUrl: "/api/v1/image-gen/results/date", fit: "contain",
   } }, f.id);
-  expect(sceneViewFor(f.id, f.r, state)).toMatchObject({ seq: 2, image: "/api/v1/images/date", writing: false });
+  expect(sceneViewFor(f.id, f.r, state)).toMatchObject({ seq: 2, image: "/api/v1/image-gen/results/date", writing: false });
   expect(f.sent.filter((m: any) => m.type === "state").at(-1).scene.lines.length).toBeGreaterThan(0);
   expect(f.calls).toBe(mode === "model" ? 2 : 0);
   expect(f.narratorCalls ?? 0).toBe(0);
