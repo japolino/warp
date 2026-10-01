@@ -4469,7 +4469,7 @@ var init_encounter_view = __esm(() => {
   init_ruleset();
   init_state();
   init_expr();
-  FAILURE = /^(lost|lose|loss|beaten|defeat(ed)?|overwhelmed|caught|captured|ko|knocked_out|dead|died|fled_in_panic|broken|failed?)$/i;
+  FAILURE = /^(lost|lose|loss|beaten|defeat(ed)?|overwhelmed|caught|captured|ko|knocked_out|downed|fallen|slain|killed|dead|died|wiped(_out)?|fled_in_panic|broken|failed?)$/i;
   TIER_WORD = { crit_success: "great success", success: "success", partial: "partial", fail: "failed", crit_fail: "badly failed" };
 });
 
@@ -8537,7 +8537,7 @@ var init_starfarer = __esm(() => {
   starfarer = {
     id: "starfarer",
     name: "Starfarer (sci-fi RPG)",
-    blurb: "Sci-fi RPG: Physique, Reflexes, Aim, Intelligence, Willpower and Libido capped at 5× level; Shields/HP/Lust/Energy pools; credits; XP, levels and perks; a ship and a frontier world; turn-based combat you can win by force or by seduction; a codex that fills in as you explore.",
+    blurb: "Sci-fi RPG / space opera: Physique, Reflexes, Aim, Intelligence, Willpower and Libido capped at 5× level; Shields/HP/Lust/Energy pools; credits; XP and levels with a pick-one-of-three perk; tech abilities (Stim Shot, Overcharge, Target Lock, Smoke Screen); a ship and a frontier world; turn-based combat you can win by force or by seduction; a codex that fills in as you explore.",
     parts: [
       {
         label: "core",
@@ -8723,20 +8723,41 @@ locations:
     travel: 45
 
 items:
-  holdout_pistol: Holdout pistol
+  holdout_pistol: { name: Holdout pistol, bonus: { aim: 1 } }
   medkit: Medkit
-  codex: Codex
+  codex: { name: Codex, bonus: { intelligence: 1 } }
   shield_booster: Shield booster
 
 conditions:
-  stunned: { label: Stunned, tone: bad, narrator: true }
-  grappled: { label: Grappled, tone: bad, narrator: true }
+  stunned: { label: Stunned, tone: bad, narrator: true, bonus: { reflexes: -3, aim: -2 } }
+  grappled: { label: Grappled, tone: bad, narrator: true, bonus: { reflexes: -4 } }
   burning: { label: Burning, tone: bad, narrator: true }
+  stimmed: { label: Stimmed, tone: good, bonus: { reflexes: 2, physique: 1 } }
+  locked_on: { label: Target lock, tone: good, bonus: { aim: 3 } }
 `
       },
       {
         label: "actions",
         yaml: `actions:
+  plot_course:
+    label: Check the nav charts
+    group: Ship
+    at: bridge
+    say: "*I pull up the nav charts and scan for traffic and signals.*"
+    time: 20
+    check: { vs: 11, add: floor(intelligence / 2), label: Intelligence }
+    success: { xp: +5, hint: "Something on the charts is worth a look: a derelict, a beacon, a smuggler's lane." }
+    fail: { hint: "Static and freighter chatter." }
+  salvage:
+    label: Strip salvage for parts
+    group: Ship
+    at: cargo_bay
+    say: "*I sort through the cargo bay for anything worth selling.*"
+    time: 60
+    cost: { energy: -10 }
+    check: { vs: 11, add: floor(intelligence / 3) + floor(physique / 3), label: Tech }
+    success: { credits: roll('2d20') }
+    fail: { energy: -5 }
   rest_quarters:
     label: Rest in your bunk
     group: Ship
@@ -8907,14 +8928,86 @@ dungeons:
       },
       {
         label: "journal",
-        yaml: `# Perks cost points (one per level). Codex entries unlock as you explore.
+        yaml: `# The player's own tech and tricks. Stim Shot everyone has; the rest come with perks.
+abilities:
+  stim_shot:
+    name: Stim Shot
+    desc: A combat stim straight into the neck
+    cost: { energy: -15 }
+    add_condition: { stimmed: 3 }
+    per_encounter: 1
+  overcharge:
+    name: Overcharge Shields
+    desc: Dump reactor power into the shield emitter
+    cost: { energy: -20 }
+    shields: "+(10 + intelligence * 2)"
+    per_encounter: 1
+  target_lock:
+    name: Target Lock
+    desc: The visor paints the target
+    where: encounter
+    cost: { energy: -8 }
+    add_condition: { locked_on: 3 }
+  smoke_screen:
+    name: Smoke Screen
+    desc: A grenade of thick, sensor-blinding smoke
+    where: encounter
+    cost: { energy: -12 }
+    per_day: 1
+    check: { vs: 10, add: floor(reflexes / 2), label: Reflexes }
+    success: { end: fled }
+    fail: { hint: "The smoke billows the wrong way." }
+
+# One point per level; each point offers three perks to choose from.
 perks:
   points: perk_points
-  sharpshooter: { name: Sharpshooter, desc: "+2 Aim.", cost: 1, effects: { aim: +2 } }
-  bruiser: { name: Bruiser, desc: "+2 Physique.", cost: 1, effects: { physique: +2 } }
-  iron_will: { name: Iron Will, desc: "+2 Willpower.", cost: 1, effects: { willpower: +2 } }
-  silver_tongue: { name: Silver Tongue, desc: "+10 Libido.", cost: 1, effects: { libido: +10 } }
-  tactician: { name: Tactician, desc: "+2 Intelligence and Reflexes.", cost: 2, requires: "level >= 3", effects: { intelligence: +2, reflexes: +2 } }
+  pick: 3
+  sharpshooter:
+    name: Sharpshooter
+    desc: Every shot counts — more so with a lock.
+    tags: [aim]
+    bonus: { aim: 1 }
+    edge: { aim: 2, when: "cond('locked_on')" }
+    abilities: [target_lock]
+  bruiser:
+    name: Bruiser
+    desc: Built to take hits.
+    tags: [physique]
+    bonus: { physique: 1 }
+    rule: { losses: { hp: "-20%" } }
+    narrator: "{{user}} is built like a cargo loader and takes a hit like one."
+  shield_tech:
+    name: Shield Tech
+    desc: Knows emitters inside out.
+    abilities: [overcharge]
+    rule: { losses: { shields: "-15%" } }
+  iron_will:
+    name: Iron Will
+    desc: Hard to tempt, harder to break.
+    bonus: { willpower: 2 }
+    rule: { gains: { lust: "-30%" } }
+  silver_tongue:
+    name: Silver Tongue
+    desc: Even a bad line half-lands.
+    tags: [libido]
+    bonus: { libido: 10 }
+    rule: { soften: { stats: [libido], per_day: 2 } }
+    excludes: [iron_will]
+  spacer_luck:
+    name: Spacer's Luck
+    desc: Once a day the universe blinks first.
+    rule: { reroll: { per_day: 1 } }
+  ghost:
+    name: Ghost
+    desc: Gone before they look up.
+    abilities: [smoke_screen]
+    bonus: { reflexes: 1 }
+  tactician:
+    name: Tactician
+    desc: Reads a fight three moves ahead.
+    requires: "level >= 3"
+    bonus: { intelligence: 1, reflexes: 1 }
+    edge: { aim: 2, when: "shields > 0" }
 
 codex:
   station: { title: The Station, category: Places, text: "A trade hub bolted onto an asteroid. Everything's for sale.", unlock: "location == 'concourse'" }
@@ -9108,6 +9201,775 @@ actions:
   };
 });
 
+// src/engine/templates/questbound.ts
+var questbound;
+var init_questbound = __esm(() => {
+  questbound = {
+    id: "questbound",
+    name: "Questbound (fantasy RPG)",
+    blurb: "Fantasy adventure RPG: HP, stamina and mana; Might, Agility, Wits and Spirit with skills that grow (blades, archery, arcana, stealth, persuasion, survival, lore); spells and techniques with costs and uses (Firebolt, Mend, Haste, Second Wind, Vanish); levels with a pick-one-of-three perk; buffs and poisons; bounties; wolves, bandits and a barrow-wight you can beat by steel, spell or words; a dungeon under the barrow; a dark threat that grows on its own.",
+    parts: [
+      {
+        label: "core",
+        yaml: `name: Questbound
+description: A frontier village, a road through dark woods, and a barrow that remembers an old war.
+
+clock:
+  start: Day 1 07:00
+  minutes_per_action: 10
+  narrator_max: 720
+
+start:
+  location: inn
+  items: { short_sword: 1, healing_draught: 2, rations: 3, torch: 1 }
+
+hud:
+  currency: "g"
+  bars: [hp, stamina, mana, xp]
+
+narration:
+  notes: A grounded fantasy world. Magic is rare and costs something; steel is honest; people remember favours.
+`
+      },
+      {
+        label: "stats",
+        yaml: `stats:
+  level: { kind: attribute, start: 1, max: 20 }
+  xp:
+    kind: meter
+    label: XP
+    start: 0
+    max: level * 100
+    good: none
+    narrator: 50
+  perk_points: { kind: attribute, label: Perk points, start: 1, max: 20 }
+  hp:
+    kind: meter
+    label: HP
+    max: 20 + might * 2 + level * 8
+    start: 34
+    per_hour: 3
+    narrator: 15
+    bands:
+      0: Down.
+      10: Barely standing.
+      40: Wounded.
+      75: Hale.
+  stamina:
+    kind: meter
+    start: 100
+    per_hour: 12
+    narrator: 20
+    bands:
+      0: Spent.
+      30: Winded.
+      70: Fresh.
+  mana:
+    kind: meter
+    max: 10 + wits * 2 + level * 3
+    start: 20
+    per_hour: 4
+    narrator: 10
+  gold:
+    kind: money
+    start: 25
+    narrator: 40
+
+  might:   { kind: attribute, start: 3, max: 10, desc: Strength — blows, carrying, forcing things. }
+  agility: { kind: attribute, start: 3, max: 10, desc: Speed and balance — dodging, aiming, sneaking. }
+  wits:    { kind: attribute, start: 3, max: 10, desc: Cleverness and magic. }
+  spirit:  { kind: attribute, start: 3, max: 10, desc: Nerve, faith and presence. }
+
+  blades:     { kind: skill, start: 20, max: 100, grades: [F, D, C, B, A, S] }
+  archery:    { kind: skill, start: 10, max: 100, grades: [F, D, C, B, A, S] }
+  arcana:     { kind: skill, start: 10, max: 100, grades: [F, D, C, B, A, S] }
+  stealth:    { kind: skill, start: 15, max: 100, grades: [F, D, C, B, A, S] }
+  persuasion: { kind: skill, start: 15, max: 100, grades: [F, D, C, B, A, S] }
+  survival:   { kind: skill, start: 15, max: 100, grades: [F, D, C, B, A, S] }
+  lore:       { kind: skill, start: 10, max: 100, grades: [F, D, C, B, A, S] }
+`
+      },
+      {
+        label: "people",
+        yaml: `relationships:
+  open: true
+  stats:
+    affinity:
+      start: 10
+      narrator: 5
+      bands: { 0: Hostile, 10: Wary, 35: Friendly, 65: Close, 90: Devoted }
+    trust:
+      start: 10
+      narrator: 5
+      bands: { 0: Suspicious, 30: Willing, 60: Trusting, 90: Unshakeable }
+  people:
+    marta:
+      name: Marta
+      desc: Keeps the Crooked Lantern. Hears everything, repeats what she likes.
+      schedule:
+        - { at: inn }
+    aldous:
+      name: Brother Aldous
+      desc: The village priest. Kind, tired, and afraid of what's waking in the barrow.
+      schedule:
+        - { when: "between(hour, 6, 20)", at: temple }
+        - { at: inn }
+    wren:
+      name: Wren
+      desc: A ranger who works the forest road. Competes for the same bounties — and keeps secrets.
+      schedule:
+        - { when: "between(hour, 7, 18)", at: forest_road }
+        - { at: inn }
+    hesk:
+      name: Guildmaster Hesk
+      desc: Runs the adventurers' guild. Pays well, forgives nothing.
+      schedule:
+        - { when: "between(hour, 8, 20)", at: guild_hall }
+`
+      },
+      {
+        label: "world",
+        yaml: `locations:
+  inn:
+    name: The Crooked Lantern
+    desc: A smoky inn with a hearth, a notice board and rooms upstairs.
+    indoors: true
+    exits: [village_square]
+    travel: 2
+  village_square:
+    name: Village Square
+    desc: A well, a market, the temple steps and the guild's iron sign.
+    exits: [inn, market, temple, guild_hall, forest_road]
+    travel: 5
+  market:
+    name: Market Stalls
+    desc: Herbs, draughts, arrows and second-hand gear.
+    exits: [village_square]
+  temple:
+    name: Temple of the Dawn
+    desc: Cold stone, warm candles. Brother Aldous tends both.
+    indoors: true
+    exits: [village_square]
+  guild_hall:
+    name: Adventurers' Guild
+    desc: Bounty boards, a training yard and Hesk's ledger.
+    indoors: true
+    exits: [village_square]
+  forest_road:
+    name: The Forest Road
+    desc: A rutted road under old pines. Wolves, bandits, and worse after dark.
+    exits: [village_square, old_bridge, barrow_ruins]
+    travel: 40
+  old_bridge:
+    name: The Old Bridge
+    desc: A mossy stone bridge over a fast river — a natural place for a toll, or an ambush.
+    exits: [forest_road]
+    travel: 20
+  barrow_ruins:
+    name: The Barrow
+    desc: A grassy mound ringed with standing stones. The air is colder near the door.
+    exits: [forest_road]
+    travel: 30
+
+items:
+  short_sword: { name: Short sword, bonus: { blades: 10 } }
+  longbow: { name: Longbow, bonus: { archery: 15 } }
+  lockpicks: { name: Lockpicks, uses: 5, bonus: { stealth: 10 } }
+  holy_symbol: { name: Holy symbol, bonus: { spirit: 2 } }
+  healing_draught: { name: Healing draught, uses: 1, use: { label: Drink a healing draught, hp: +20, remove_condition: [bleeding] } }
+  mana_tonic: { name: Mana tonic, uses: 1, use: { label: Drink a mana tonic, mana: +15 } }
+  antidote: { name: Antidote, uses: 1, use: { label: Drink the antidote, remove_condition: [poisoned] } }
+  rations: { name: Rations, uses: 1, use: { label: Eat a ration, stamina: +30 } }
+  torch: { name: Torch, keep: true, bonus: { survival: 5 } }
+  wolf_pelt: { name: Wolf pelt }
+
+conditions:
+  poisoned: { label: Poisoned, tone: bad, narrator: true, bonus: { might: -1, agility: -1 } }
+  bleeding: { label: Bleeding, tone: bad, narrator: true }
+  hasted: { label: Hasted, tone: good, bonus: { agility: 3 } }
+  blessed: { label: Blessed, tone: good, bonus: { spirit: 2, persuasion: 10 } }
+  inspired: { label: Inspired, tone: good, bonus: { might: 2 } }
+  exhausted: { label: Exhausted, tone: bad, narrator: true, bonus: { might: -2, agility: -2 } }
+
+flags:
+  bounty_wolves: { start: false }
+  bounty_bandits: { start: false }
+`
+      },
+      {
+        label: "actions",
+        yaml: `actions:
+  rest:
+    label: Take a room for the night (5g)
+    group: Rest
+    at: inn
+    when: gold >= 5
+    say: "*I pay for a room and sleep.*"
+    time: 480
+    effects: { gold: -5, hp: +40, stamina: +100, mana: +30, remove_condition: [exhausted] }
+  rumours:
+    label: Listen for rumours
+    group: Social
+    at: inn
+    say: "*I nurse a drink and listen.*"
+    time: 30
+    check: { chance: "30 + persuasion / 2 + spirit * 3", label: Persuasion }
+    success: { xp: +5, hint: "A useful rumour: a bounty, a lead on the barrow, or a warning about the road." }
+    fail: { hint: "Nothing but gossip about the miller's goat." }
+  wolf_bounty:
+    label: Take the wolf bounty
+    group: Guild
+    at: guild_hall
+    when: not flag('bounty_wolves')
+    say: "*I take the wolf bounty off the board.*"
+    effects: { flags: { bounty_wolves: true }, hint: "Hesk: wolves have been taking travellers on the forest road. Ten gold a pelt, thirty for clearing the pack." }
+  bandit_bounty:
+    label: Take the bridge bounty
+    group: Guild
+    at: guild_hall
+    when: not flag('bounty_bandits') and level >= 2
+    why_not: "Hesk wants level 2 for this one"
+    say: "*I take the bounty on the bridge bandits.*"
+    effects: { flags: { bounty_bandits: true }, hint: "Hesk: bandits are charging a toll at the old bridge. Get it open again — however you like." }
+  spar:
+    label: Spar in the training yard
+    group: Guild
+    at: guild_hall
+    say: "*I pick up a practice blade and find a sparring partner.*"
+    time: 60
+    cost: { stamina: -20 }
+    check: { chance: "35 + blades / 2 + might * 3", label: Blades }
+    success: { xp: +15 }
+    fail: { xp: +5, hp: -4 }
+  study:
+    label: Study old texts
+    group: Temple
+    at: temple
+    say: "*I ask Brother Aldous for the old texts and read by candlelight.*"
+    time: 120
+    check: { chance: "35 + lore / 2 + wits * 3", label: Lore }
+    success: { xp: +10, arcana: +1, hint: "The texts speak of the barrow-king's oath and the dawn-blessing that broke him once before." }
+    fail: { mana: +5, hint: "Dry reading, but the quiet helps." }
+  holy_symbol:
+    label: Take a holy symbol (donate 25g)
+    group: Temple
+    at: temple
+    when: gold >= 25 and not has('holy_symbol')
+    say: "*I make a donation and accept a holy symbol from Brother Aldous.*"
+    effects: { gold: -25, give: holy_symbol, rel: { aldous: { trust: +3 } } }
+  pray:
+    label: Pray for a blessing (donate 5g)
+    group: Temple
+    at: temple
+    when: gold >= 5
+    say: "*I leave a few coins and kneel.*"
+    time: 20
+    effects: { gold: -5, add_condition: { blessed: 240 }, remove_condition: [poisoned] }
+  buy_draught:
+    label: Buy a healing draught (12g)
+    group: Market
+    at: market
+    when: gold >= 12
+    say: "*I buy a healing draught.*"
+    effects: { gold: -12, give: healing_draught }
+  buy_tonic:
+    label: Buy a mana tonic (15g)
+    group: Market
+    at: market
+    when: gold >= 15
+    say: "*I buy a mana tonic.*"
+    effects: { gold: -15, give: mana_tonic }
+  buy_antidote:
+    label: Buy an antidote (8g)
+    group: Market
+    at: market
+    when: gold >= 8
+    say: "*I buy an antidote.*"
+    effects: { gold: -8, give: antidote }
+  buy_bow:
+    label: Buy a longbow (40g)
+    group: Market
+    at: market
+    when: gold >= 40 and not has('longbow')
+    say: "*I buy the longbow.*"
+    effects: { gold: -40, give: longbow }
+  buy_picks:
+    label: Buy lockpicks (20g)
+    group: Market
+    at: market
+    when: gold >= 20 and not has('lockpicks')
+    say: "*I buy a set of lockpicks.*"
+    effects: { gold: -20, give: lockpicks }
+  sell_pelt:
+    label: Sell a wolf pelt (10g)
+    group: Market
+    at: market
+    when: has('wolf_pelt')
+    say: "*I sell a wolf pelt.*"
+    effects: { take: wolf_pelt, gold: +10 }
+  odd_jobs:
+    label: Do odd jobs around the square
+    group: Work
+    at: village_square
+    say: "*I ask around for work — hauling, mending, minding stalls.*"
+    time: 120
+    cost: { stamina: -15 }
+    check: { chance: "45 + might * 3", label: Might }
+    success: { gold: +8, xp: +5 }
+    fail: { gold: +3 }
+  notice_board:
+    label: Read the notice board
+    group: Explore
+    at: village_square
+    say: "*I read the notices pinned by the well.*"
+    time: 10
+    check: { chance: "40 + lore / 2 + wits * 3", label: Lore }
+    success: { xp: +5, hint: "A notice worth following: a bounty, a missing person, or a warning about the barrow." }
+    fail: { hint: "Lost cats and grain prices." }
+  forage:
+    label: Forage along the road
+    group: Explore
+    at: forest_road
+    say: "*I search the roadside for herbs and game.*"
+    time: 45
+    cost: { stamina: -10 }
+    check: { chance: "35 + survival / 2 + wits * 2", label: Survival }
+    success: { give: rations, xp: +5 }
+    fail: { start_encounter: wolves }
+  hunt_wolves:
+    label: Track the wolf pack
+    group: Explore
+    at: forest_road
+    when: flag('bounty_wolves')
+    say: "*I follow the wolf tracks off the road.*"
+    time: 30
+    effects: { start_encounter: wolves }
+  cross_bridge:
+    label: Cross the old bridge
+    group: Explore
+    at: old_bridge
+    say: "*I walk onto the bridge.*"
+    time: 5
+    effects: { start_encounter: bandits }
+  talk:
+    label: Talk to {target}
+    group: Social
+    per_person: true
+    say: "*I talk with {target} for a while.*"
+    time: 15
+    effects: { rel: { target: { affinity: +2 } } }
+  persuade:
+    label: Ask {target} for a favour
+    group: Social
+    per_person: true
+    say: "*I ask {target} for help.*"
+    time: 15
+    check: { chance: "20 + persuasion / 2 + spirit * 3 + target.trust / 4", label: Persuasion }
+    success: { rel: { target: { trust: +4 } }, hint: "{target} agrees to help, in their own way." }
+    fail: { rel: { target: { affinity: -2 } }, hint: "{target} turns it down." }
+`
+      },
+      {
+        label: "encounters",
+        yaml: `# Fights are small puzzles: each foe has more than one way to beat it, and your
+# own abilities (spells, techniques) are offered alongside these moves.
+encounters:
+  wolves:
+    name: The Wolf Pack
+    desc: Grey wolves circle {{user}} on the forest road.
+    tags: [violence]
+    goal: Cut the pack down, or break its nerve and send it running
+    foe:
+      name: Grey Wolves
+      stats:
+        hp: { label: HP, start: 24, max: 24 }
+        nerve: { label: Nerve, start: 12, max: 12 }
+    actions:
+      strike:
+        label: Strike
+        cost: { stamina: -8 }
+        check: { chance: "35 + blades / 2 + might * 3", label: Blades }
+        crit_success: { foe: { hp: "-(10 + might * 2)", nerve: -3 } }
+        success: { foe: { hp: "-(6 + might)" } }
+        fail: { stamina: -5 }
+      shoot:
+        label: Loose an arrow
+        when: has('longbow')
+        cost: { stamina: -4 }
+        check: { chance: "30 + archery / 2 + agility * 3", label: Archery }
+        success: { foe: { hp: "-(5 + agility * 2)" } }
+        fail: { hint: "The arrow thuds into a tree." }
+      brandish:
+        label: Brandish the torch
+        when: has('torch')
+        check: { chance: "40 + spirit * 4", label: Spirit }
+        success: { foe: { nerve: -6 } }
+        fail: { hint: "The wolves flinch, then close in again." }
+      climb:
+        label: Climb a tree
+        cost: { stamina: -12 }
+        check: { chance: "10 + survival / 2 + agility * 2", label: Survival }
+        success: { end: escaped }
+        fail: { hp: -6, hint: "A wolf catches {{user}}'s boot and drags them back down." }
+    foe_moves:
+      bite: { desc: "Lunges and bites", weight: 3, hp: -6 }
+      hamstring: { desc: "Goes for the legs", weight: 1, hp: -3, add_condition: { bleeding: 30 } }
+      howl: { desc: "Howls to rally the pack", weight: 1, stamina: -6 }
+    end_when:
+      won: foe.hp <= 0
+      scattered: foe.nerve <= 0
+      beaten: hp <= 0
+    labels: { won: The pack is dead, scattered: The pack runs, escaped: You got up a tree, beaten: The wolves dragged you down }
+    outcomes:
+      won: { xp: +40, give: wolf_pelt, gold: "flag('bounty_wolves') ? 30 : 0", flags: { bounty_wolves: false } }
+      scattered: { xp: +30, gold: "flag('bounty_wolves') ? 20 : 0", flags: { bounty_wolves: false } }
+      escaped: { stamina: -10, hint: "{{user}} waits in the branches until the pack loses interest." }
+      beaten: { set: { hp: 1 }, gold: "-min(gold, 10)", hint: "{{user}} comes to on the road, mauled and lighter in the purse — a passing cart picked them up." }
+
+  bandits:
+    name: Toll at the Old Bridge
+    desc: Bandits block the bridge and want gold to let {{user}} pass.
+    tags: [violence]
+    goal: Get across — pay, talk them out of it, slip past, or put them down
+    foe:
+      name: Bandit Captain
+      stats:
+        resolve: { label: Resolve, start: 16, max: 16 }
+        hp: { label: HP, start: 30, max: 30 }
+    actions:
+      pay:
+        label: Pay the toll (15g)
+        when: gold >= 15
+        effects: { gold: -15, end: paid }
+      parley:
+        label: Talk them down
+        check: { chance: "30 + persuasion / 2 + spirit * 3", label: Persuasion }
+        success: { foe: { resolve: -6 } }
+        fail: { foe: { resolve: +2 }, hint: "The captain laughs it off." }
+      intimidate:
+        label: Intimidate
+        check: { chance: "25 + might * 4 + level * 2", label: Might }
+        success: { foe: { resolve: -8 } }
+        fail: { hint: "Nobody's impressed." }
+      fight:
+        label: Fight
+        cost: { stamina: -8 }
+        check: { chance: "35 + blades / 2 + might * 3", label: Blades }
+        success: { foe: { hp: "-(6 + might)", resolve: -2 } }
+        fail: { hp: -5 }
+      sneak:
+        label: Slip past in the reeds
+        cost: { stamina: -6 }
+        check: { chance: "25 + stealth / 2 + agility * 3", label: Stealth }
+        success: { end: slipped_by }
+        fail: { foe: { resolve: +3 }, hint: "A sentry spots {{user}} in the reeds." }
+    foe_moves:
+      threaten: { desc: "Threatens {{user}}", weight: 2, stamina: -4 }
+      swing: { desc: "Swings a cudgel", weight: 2, hp: -6 }
+      call_out: { desc: "Calls more bandits from the trees", weight: 1, foe: { resolve: +3 } }
+    end_when:
+      backed_down: foe.resolve <= 0
+      won: foe.hp <= 0
+      beaten: hp <= 0
+    labels: { backed_down: The bandits let you pass, won: The bandits are beaten, paid: You paid your way across, slipped_by: You slipped past unseen, beaten: The bandits beat you and took your purse }
+    outcomes:
+      backed_down: { xp: +50, gold: "flag('bounty_bandits') ? 40 : 0", flags: { bounty_bandits: false } }
+      won: { xp: +60, gold: "20 + (flag('bounty_bandits') ? 40 : 0)", flags: { bounty_bandits: false } }
+      paid: { xp: +5 }
+      slipped_by: { xp: +30 }
+      beaten: { set: { hp: 1 }, gold: "-min(gold, 20)" }
+
+  wight:
+    name: The Barrow-Wight
+    desc: Something in old armour climbs out of the barrow, cold light where its eyes should be.
+    tags: [violence, horror]
+    goal: Destroy it, or break the oath that binds it with a dawn-blessing
+    foe:
+      name: Barrow-Wight
+      stats:
+        hp: { label: HP, start: 45, max: 45 }
+        oath: { label: Oath, start: 20, max: 20 }
+    actions:
+      strike:
+        label: Strike
+        cost: { stamina: -8 }
+        check: { chance: "30 + blades / 2 + might * 3", label: Blades }
+        success: { foe: { hp: "-(5 + might) * (cond('blessed') ? 2 : 1)" } }
+        fail: { hp: -4 }
+      rite:
+        label: Speak the dawn-rite
+        when: has('holy_symbol') or cond('blessed')
+        why_not: "Needs a holy symbol or a blessing"
+        check: { chance: "25 + lore / 2 + spirit * 4", label: Lore }
+        success: { foe: { oath: -8 } }
+        fail: { mana: -4 }
+      flee:
+        label: Run for the treeline
+        cost: { stamina: -15 }
+        check: { chance: "35 + agility * 4", label: Agility }
+        success: { end: fled }
+        fail: { hp: -6 }
+    foe_moves:
+      grave_chill: { desc: "Breathes a grave-chill", weight: 2, stamina: -12 }
+      blade: { desc: "Swings a rusted blade", weight: 2, hp: -8 }
+      dread: { desc: "Fills the air with dread", weight: 1, mana: -5 }
+    end_when:
+      destroyed: foe.hp <= 0
+      released: foe.oath <= 0
+      beaten: hp <= 0
+    labels: { destroyed: The wight falls apart, released: The oath breaks and the wight rests, fled: You ran, beaten: The wight's chill takes you }
+    outcomes:
+      destroyed: { xp: +100, gold: +40, flags: { barrow_quiet: true } }
+      released: { xp: +140, flags: { barrow_quiet: true }, rel: { aldous: { trust: +20 } } }
+      fled: { stamina: -20 }
+      beaten: { set: { hp: 1 }, add_condition: { exhausted: 480 }, hint: "{{user}} wakes at the temple; Brother Aldous found them at the barrow's edge." }
+
+dungeons:
+  barrow:
+    name: The Barrow Halls
+    desc: Burial halls under the mound, deeper than any barrow has a right to be.
+    at: [barrow_ruins]
+    theme: crypt
+    floors: 15
+    party: { max: 3 }
+    player: { class: adventurer, hp: "30 + might * 5 + level * 8", atk: "6 + might * 1.5 + blades / 10", def: "6 + might", mat: "6 + wits * 1.5 + arcana / 10", agi: "6 + agility * 1.2" }
+    currency: gold
+    loot: { healing_draught: 3, mana_tonic: 2, antidote: 1 }
+    on_leave: { stamina: -20 }
+    on_defeat: { hp: -20, gold: "-min(gold, 30)" }
+`
+      },
+      {
+        label: "journal",
+        yaml: `# The player's own moves. Firebolt is known once arcana is high enough; the
+# others are taught by perks. Second Wind everyone knows.
+abilities:
+  second_wind:
+    name: Second Wind
+    desc: Grit your teeth and push through
+    cost: { stamina: -15 }
+    hp: "+(8 + might * 2)"
+    per_encounter: 1
+  firebolt:
+    name: Firebolt
+    desc: A bolt of fire from the palm
+    where: encounter
+    known: "arcana >= 30"
+    cost: { mana: -6 }
+    check: { chance: "35 + arcana / 2 + wits * 3", label: Arcana }
+    success: { harm: "8 + arcana / 5" }
+    fail: { hint: "The fire gutters out in {{user}}'s hand." }
+  mend:
+    name: Mend
+    desc: Knit flesh with a whispered word
+    cost: { mana: -8 }
+    hp: "+(10 + arcana / 4)"
+    remove_condition: [bleeding]
+  haste:
+    name: Haste
+    desc: The world slows; {{user}} doesn't
+    cost: { mana: -5 }
+    add_condition: { hasted: 3 }
+    per_encounter: 1
+  battle_cry:
+    name: Battle Cry
+    desc: A roar that steadies the arm
+    where: encounter
+    cost: { stamina: -8 }
+    add_condition: { inspired: 3 }
+    per_encounter: 1
+  vanish:
+    name: Vanish
+    desc: Step into a shadow and out of the fight
+    where: encounter
+    cost: { stamina: -10 }
+    per_day: 1
+    check: { chance: "30 + stealth / 2 + agility * 3", label: Stealth }
+    success: { end: escaped }
+    fail: { hint: "{{user}} steps into the shadow — and is still seen." }
+
+# One point per level; each point offers three perks to choose from.
+perks:
+  points: perk_points
+  pick: 3
+  blade_dancer:
+    name: Blade Dancer
+    desc: Fights like a duelist while there's breath in them.
+    tags: [blades]
+    edge: { blades: 15, when: "stamina >= 50" }
+    narrator: "{{user}} moves with a duelist's economy — no wasted motion."
+  hedge_mage:
+    name: Hedge Mage
+    desc: A village witch's tricks.
+    tags: [arcana]
+    abilities: [mend, haste]
+    bonus: { arcana: 5 }
+  arcane_scholar:
+    name: Arcane Scholar
+    desc: Mana returns faster; spells come easier.
+    requires: "arcana >= 25"
+    bonus: { arcana: 10 }
+    rule: { gains: { mana: "+50%" } }
+  shadow_step:
+    name: Shadow Step
+    desc: The dark is a friend.
+    tags: [stealth]
+    abilities: [vanish]
+    edge: { stealth: 15, when: "hour >= 20 or hour < 5" }
+  battle_hardened:
+    name: Battle-Hardened
+    desc: Wounds land lighter.
+    rule: { losses: { hp: "-20%" } }
+    narrator: "{{user}} carries old scars and shrugs off blows that would fell others."
+  lucky:
+    name: Lucky
+    desc: Once a day, fortune turns a failure around.
+    rule: { reroll: { per_day: 1 } }
+  silver_tongue:
+    name: Silver Tongue
+    desc: Even a bad pitch half-works.
+    bonus: { persuasion: 5 }
+    rule: { soften: { stats: [persuasion], per_day: 2 } }
+  woodwise:
+    name: Woodwise
+    desc: At home under the pines.
+    bonus: { survival: 15 }
+    edge: { archery: 10, when: "at('forest_road')" }
+    narrator: "Animals read {{user}} as one of their own; birds don't go quiet when they pass."
+  warlord:
+    name: Warlord's Voice
+    desc: Commands, and people listen.
+    abilities: [battle_cry]
+    bonus: { persuasion: 5 }
+  berserker:
+    name: Berserker
+    desc: Strongest when hurt.
+    edge: { might: 3, when: "hp < 15" }
+    drawback: { desc: "Stamina burns faster", losses: { stamina: "+25%" } }
+    excludes: [battle_hardened]
+
+codex:
+  village: { title: The Village, category: Places, text: "A frontier village at the edge of the old woods, too small for a wall and too stubborn to leave.", unlock: "location == 'village_square'" }
+  road: { title: The Forest Road, category: Places, text: "The only road out. Wolves by day, bandits at the bridge, worse at night.", unlock: "location == 'forest_road'" }
+  barrow: { title: The Barrow, category: Places, text: "The grave of the barrow-king, who swore an oath to guard the valley and kept it past death.", unlock: "location == 'barrow_ruins'" }
+  wights: { title: Barrow-Wights, category: Threats, text: "Oath-bound dead. Steel hurts them; a dawn-blessing hurts them more; breaking the oath frees them.", unlock: "flag('barrow_quiet') or level >= 3" }
+
+feats:
+  first_blood: { name: First blood, desc: "Win your first fight.", unlock: "xp >= 40 or level >= 2" }
+  pack_breaker: { name: Pack-breaker, desc: "Clear the wolf bounty.", unlock: "has('wolf_pelt')", reward: { perk_points: +1 } }
+  oathbreaker: { name: Oathbreaker, desc: "Lay the barrow-wight to rest.", unlock: "flag('barrow_quiet')", reward: { xp: +50, perk_points: +1 } }
+`
+      },
+      {
+        label: "rules",
+        yaml: `flags:
+  barrow_quiet: { start: false }
+
+triggers:
+  fight_starts:
+    when_scene: "A fight has broken out and {{user}} is in it"
+    do: { start_encounter: wolves }
+  level_up:
+    when: xp >= level * 100
+    repeat: true
+    do:
+      set: { xp: 0 }
+      level: +1
+      perk_points: +1
+      hp: +15
+      hint: "Level up! {{user}} feels stronger — and a new perk is theirs to choose."
+  bleeding_out:
+    when: cond('bleeding')
+    repeat: true
+    do: { hp: -2 }
+  poison:
+    when: cond('poisoned')
+    repeat: true
+    do: { hp: -1, stamina: -3 }
+  worn_out:
+    when: stamina <= 0
+    do: { add_condition: { exhausted: 240 }, hint: "{{user}} is running on nothing." }
+`
+      },
+      {
+        label: "story",
+        yaml: `secrets:
+  wren_oath:
+    about: Wren
+    cue: "Wren never goes near the barrow and touches an old ring whenever it's mentioned."
+    tell: exists
+    stages:
+      - when: "rel('wren', 'trust') >= 50"
+        text: "Wren is the barrow-king's last descendant. The ring is his seal — and the key to breaking his oath."
+      - when: "rel('wren', 'trust') >= 80"
+        text: "Wren has been feeding the wight's oath with their own blood each new moon, believing it keeps the valley safe."
+
+fronts:
+  barrow_wakes:
+    label: The barrow wakes
+    per_day: 10
+    story:
+      "{{user}} disturbs the barrow or its dead": 15
+      "{{user}} brings a blessing or the dawn-rite to the barrow": -10
+    stages:
+      - at: 30
+        hint: "Livestock won't graze near the forest road anymore."
+        backstage: "The wight has begun walking the barrow's edge at night."
+        surface: "A traveller stumbles into the inn, pale, babbling about cold light in the trees."
+        news: "Something walks near the barrow at night."
+      - at: 70
+        hint: "Frost on the temple steps in summer."
+        backstage: "The wight's oath has turned to the village itself."
+        surface: "The barrow-wight comes for whoever is nearest the road."
+        news: "The barrow-wight walked."
+        do: { start_encounter: wight }
+
+random_events:
+  pace: { per_day: 20, jitter: 0.3, rest_days: 2, omen_at: 80 }
+  events:
+    caravan:
+      label: A merchant caravan
+      omen: "Wheel ruts and fresh dung on the road — traders are coming."
+      text: "A merchant caravan stops in the square with goods from the city."
+      cooldown: 6
+      do: { gold: +5 }
+    storm:
+      label: A storm
+      omen: "The wind smells of iron and the birds have gone quiet."
+      text: "A storm rolls in off the hills and the road turns to mud."
+      cooldown: 8
+      do: { stamina: -10 }
+
+live_choices:
+  label: Right now
+  count: 3
+  when: not in_encounter
+  tags:
+    daring:
+      desc: "A bold, risky or athletic move"
+      check: { chance: "35 + agility * 4", label: Agility }
+      success: { xp: +10 }
+      fail: { hp: -5 }
+    charm:
+      desc: "Winning someone here over, bargaining or talking"
+      per_person: true
+      check: { chance: "30 + persuasion / 2 + spirit * 3", label: Persuasion }
+      success: { rel: { target: { affinity: +3, trust: +2 } } }
+      fail: { rel: { target: { affinity: -2 } } }
+    clever:
+      desc: "Noticing, recalling lore, working something out"
+      check: { chance: "30 + lore / 2 + wits * 3", label: Lore }
+      success: { xp: +10 }
+      fail: { stamina: -5 }
+    careful:
+      desc: "The cautious option: waiting, watching, backing off"
+      effects: { stamina: +5 }
+`
+      }
+    ]
+  };
+});
+
 // src/engine/templates/index.ts
 function getTemplate(id) {
   return TEMPLATES.find((t) => t.id === id);
@@ -9156,7 +10018,8 @@ var init_templates = __esm(() => {
   init_universal();
   init_hometown();
   init_starfarer();
-  TEMPLATES = [universal, hometown, starfarer];
+  init_questbound();
+  TEMPLATES = [universal, hometown, starfarer, questbound];
 });
 
 // src/backend/host.ts
@@ -12950,8 +13813,11 @@ function walk(o, seen, money, key = "") {
     }
     for (const [k, v] of Object.entries(o.items))
       (v > 0 ? seen.itemsGiven : seen.itemsTaken).add(k);
-    for (const k of Object.keys(o.addConditions))
+    for (const [k, d] of Object.entries(o.addConditions)) {
       seen.condAdded.add(k);
+      if (d !== null)
+        seen.condTimed.add(k);
+    }
     for (const k of o.removeConditions)
       seen.condRemoved.add(k);
     for (const k of Object.keys(o.flags))
@@ -12975,6 +13841,7 @@ function auditRuleset(r) {
     itemsGiven: new Set,
     itemsTaken: new Set,
     condAdded: new Set,
+    condTimed: new Set,
     condRemoved: new Set,
     flagsSet: new Set,
     encStarted: new Set,
@@ -12998,7 +13865,8 @@ function auditRuleset(r) {
   const gaps = [];
   const links = [];
   const gap = (g) => gaps.push(g);
-  const readsStat = (id) => seen.reads.has(id) || r.hud.bars.includes(id) && false;
+  const costs = new Set(Object.values(r.abilities).flatMap((ab) => Object.keys(ab.action.cost.stats)));
+  const readsStat = (id) => seen.reads.has(id) || costs.has(id);
   for (const it of Object.values(r.items)) {
     const referenced = seen.calls.has(`has:${it.id}`) || seen.calls.has(`count:${it.id}`) || seen.calls.has(`wearing:${it.id}`) || seen.itemsTaken.has(it.id);
     const gift = it.tags.includes("gift") && r.dating.enabled;
@@ -13049,7 +13917,7 @@ function auditRuleset(r) {
     const read = readsStat(id);
     if (!changes)
       gap({ id: `stat-static:${id}`, severity: "gap", part: "stats", text: `${def.label} never changes: no action, event or drift moves it.`, fix: `Have actions, foe moves, triggers or time move ${def.label}${def.kind === "meter" ? " (per_hour drift, costs, consequences)" : ""}.` });
-    if ((def.kind === "skill" || def.kind === "attribute") && !read) {
+    if ((def.kind === "skill" || def.kind === "attribute") && !read && id !== r.perkPoints) {
       gap({ id: `skill-unused:${id}`, severity: "gap", part: "actions", text: `${def.label} is a ${def.kind} no check uses.`, fix: `Make some action or encounter checks read ${id} (e.g. chance: "30 + ${id} / 2"), so it matters and grows.` });
     } else if (def.kind === "meter" && !read && id !== money) {
       gap({ id: `stat-unread:${id}`, severity: "thin", part: "rules", text: `${def.label} is shown but has no consequence.`, fix: `Let something read it: a trigger at a threshold, a check penalty ("- ${id} / 4"), an ending, an encounter's end_when, or an action's when.` });
@@ -13067,11 +13935,11 @@ function auditRuleset(r) {
   }
   for (const c of Object.values(r.conditions)) {
     const added = seen.condAdded.has(c.id) || c.narrator;
-    const read = seen.calls.has(`cond:${c.id}`);
+    const read = seen.calls.has(`cond:${c.id}`) || Object.keys(c.bonus).length > 0;
     if (!added)
       gap({ id: `cond-never:${c.id}`, severity: "gap", part: "rules", text: `Nothing ever causes ${c.label}.`, fix: `Add it from an action, a foe move, a trigger or an event (add_condition: [${c.id}]).` });
     else {
-      const cured = seen.condRemoved.has(c.id);
+      const cured = seen.condRemoved.has(c.id) || seen.condTimed.has(c.id) && !c.narrator;
       if (!cured)
         gap({ id: `cond-uncured:${c.id}`, severity: "thin", part: "world", text: `Nothing cures ${c.label} (unless it has a duration).`, fix: `Add something that removes it — an item's use:, resting somewhere, a trigger (remove_condition: [${c.id}]), or give it a duration.` });
       else
@@ -18909,7 +19777,20 @@ function effectsOf(r) {
   for (const e of Object.values(r.randomEvents.events))
     add(e.effects);
   Object.values(r.liveChoices.tags).forEach(addAction);
+  Object.values(r.abilities).forEach((ab) => addAction(ab.action));
+  for (const it of Object.values(r.items))
+    if (it.use)
+      addAction(it.use);
   return out;
+}
+function checkedActions(r) {
+  return [
+    ...Object.values(r.actions),
+    ...Object.values(r.encounters).flatMap((e) => Object.values(e.actions)),
+    ...Object.values(r.liveChoices.tags),
+    ...Object.values(r.abilities).map((ab) => ab.action),
+    ...Object.values(r.items).flatMap((it) => it.use ? [it.use] : [])
+  ].filter((a) => a.check);
 }
 function reviewBalance(r) {
   const out = [];
@@ -18964,6 +19845,7 @@ function reviewBalance(r) {
     }
   }
   const touched = new Set;
+  const rolled = new Set(checkedActions(r).flatMap((a) => checkStats(r, a)));
   for (const e of effectsOf(r)) {
     Object.keys(e.stats).forEach((k) => touched.add(k));
     Object.keys(e.set).forEach((k) => touched.add(k));
@@ -18972,7 +19854,8 @@ function reviewBalance(r) {
     const d = r.stats[id];
     if (d.kind === "money" && d.narrator > 0)
       continue;
-    if (!touched.has(id) && !d.perHour && d.narrator <= 0) {
+    const grows = (d.kind === "skill" || d.kind === "attribute") && r.growth.enabled && d.growth > 0 && rolled.has(id);
+    if (!touched.has(id) && !d.perHour && d.narrator <= 0 && !grows) {
       out.push({ id: `dead:${id}`, part: "stats", text: `${d.label} never changes — no action, rule or story update touches it.`, fix: `Give the "${id}" stat a way to change: at least one action or rule that raises or lowers it, or allow the narrator to adjust it.` });
     }
   }
@@ -18980,7 +19863,7 @@ function reviewBalance(r) {
     const sim = simulateEncounter2(r, start, enc.id, 120);
     if (!sim)
       continue;
-    const goodEnds = Object.keys(enc.outcomes).filter((o) => /won|win|victory|escaped|fled|seduced/i.test(o));
+    const goodEnds = [...new Set([...Object.keys(enc.outcomes), ...enc.endWhen.map((e) => e.outcome)])].filter((o) => !isLoss(enc, o) && !CONCESSION.test(o));
     const wins = goodEnds.reduce((n, o) => n + (sim.outcomes[o] ?? 0), 0) / sim.runs;
     if (sim.stuck / sim.runs > 0.2) {
       out.push({ id: `enc-stuck:${enc.id}`, part: "encounters", text: `“${enc.name}” often doesn't end within 25 rounds.`, fix: `Make the "${enc.id}" encounter reliably end within about 4–10 rounds (stronger effects on foe stats or tighter end_when conditions).` });
@@ -19021,11 +19904,15 @@ function simulateEncounter2(r, from, id, runs) {
   }
   return { runs, outcomes, stuck, rounds: rounds / runs };
 }
+var CONCESSION;
 var init_balance = __esm(() => {
   init_dice();
   init_expr();
   init_state();
   init_resolve();
+  init_encounter_view();
+  init_freeform();
+  CONCESSION = /paid|pay|robbed|bribe|surrender|gave_?in|submit/i;
 });
 
 // src/backend/builder.ts

@@ -41,6 +41,8 @@ interface Seen {
   itemsGiven: Set<string>;
   itemsTaken: Set<string>;
   condAdded: Set<string>;
+  /** Conditions added with a duration somewhere (they wear off on their own). */
+  condTimed: Set<string>;
   condRemoved: Set<string>;
   flagsSet: Set<string>;
   encStarted: Set<string>;
@@ -75,7 +77,7 @@ function walk(o: unknown, seen: Seen, money: string | undefined, key = "") {
       }
     }
     for (const [k, v] of Object.entries(o.items)) (v > 0 ? seen.itemsGiven : seen.itemsTaken).add(k);
-    for (const k of Object.keys(o.addConditions)) seen.condAdded.add(k);
+    for (const [k, d] of Object.entries(o.addConditions)) { seen.condAdded.add(k); if (d !== null) seen.condTimed.add(k); }
     for (const k of o.removeConditions) seen.condRemoved.add(k);
     for (const k of Object.keys(o.flags)) seen.flagsSet.add(k);
     if (o.startEncounter) seen.encStarted.add(o.startEncounter);
@@ -89,7 +91,7 @@ export function auditRuleset(r: Ruleset): AuditReport {
   const money = r.statOrder.find((id) => r.stats[id].kind === "money");
   const seen: Seen = {
     changed: new Set(), reads: new Set(), calls: new Set(), itemsGiven: new Set(), itemsTaken: new Set(),
-    condAdded: new Set(), condRemoved: new Set(), flagsSet: new Set(), encStarted: new Set(), moves: new Set(), unlocked: new Set(),
+    condAdded: new Set(), condTimed: new Set(), condRemoved: new Set(), flagsSet: new Set(), encStarted: new Set(), moves: new Set(), unlocked: new Set(),
     moneyUp: false, moneyDown: false,
   };
   walk(r, seen, money);
@@ -102,7 +104,9 @@ export function auditRuleset(r: Ruleset): AuditReport {
   const gaps: AuditGap[] = [];
   const links: string[] = [];
   const gap = (g: AuditGap) => gaps.push(g);
-  const readsStat = (id: string) => seen.reads.has(id) || r.hud.bars.includes(id) && false;
+  // A cost is a read too: an ability can't be used without enough mana.
+  const costs = new Set(Object.values(r.abilities).flatMap((ab) => Object.keys(ab.action.cost.stats)));
+  const readsStat = (id: string) => seen.reads.has(id) || costs.has(id);
 
   // ── items ──
   for (const it of Object.values(r.items)) {
@@ -154,7 +158,7 @@ export function auditRuleset(r: Ruleset): AuditReport {
     const changes = seen.changed.has(id) || def.perHour !== 0 || def.narrator > 0 || grows;
     const read = readsStat(id);
     if (!changes) gap({ id: `stat-static:${id}`, severity: "gap", part: "stats", text: `${def.label} never changes: no action, event or drift moves it.`, fix: `Have actions, foe moves, triggers or time move ${def.label}${def.kind === "meter" ? " (per_hour drift, costs, consequences)" : ""}.` });
-    if ((def.kind === "skill" || def.kind === "attribute") && !read) {
+    if ((def.kind === "skill" || def.kind === "attribute") && !read && id !== r.perkPoints) {
       gap({ id: `skill-unused:${id}`, severity: "gap", part: "actions", text: `${def.label} is a ${def.kind} no check uses.`, fix: `Make some action or encounter checks read ${id} (e.g. chance: "30 + ${id} / 2"), so it matters and grows.` });
     } else if (def.kind === "meter" && !read && id !== money) {
       gap({ id: `stat-unread:${id}`, severity: "thin", part: "rules", text: `${def.label} is shown but has no consequence.`, fix: `Let something read it: a trigger at a threshold, a check penalty ("- ${id} / 4"), an ending, an encounter's end_when, or an action's when.` });
@@ -170,10 +174,12 @@ export function auditRuleset(r: Ruleset): AuditReport {
   // ── conditions ──
   for (const c of Object.values(r.conditions)) {
     const added = seen.condAdded.has(c.id) || c.narrator;
-    const read = seen.calls.has(`cond:${c.id}`);
+    // A bonus: is read by every check on those stats.
+    const read = seen.calls.has(`cond:${c.id}`) || Object.keys(c.bonus).length > 0;
     if (!added) gap({ id: `cond-never:${c.id}`, severity: "gap", part: "rules", text: `Nothing ever causes ${c.label}.`, fix: `Add it from an action, a foe move, a trigger or an event (add_condition: [${c.id}]).` });
     else {
-      const cured = seen.condRemoved.has(c.id);
+      // Buffs given for a few rounds wear off; that's their cure.
+      const cured = seen.condRemoved.has(c.id) || (seen.condTimed.has(c.id) && !c.narrator);
       if (!cured) gap({ id: `cond-uncured:${c.id}`, severity: "thin", part: "world", text: `Nothing cures ${c.label} (unless it has a duration).`, fix: `Add something that removes it — an item's use:, resting somewhere, a trigger (remove_condition: [${c.id}]), or give it a duration.` });
       else for (const it of Object.values(r.items)) if (it.use && [it.use.effects, ...Object.values(it.use.outcomes)].some((e) => e?.removeConditions.includes(c.id))) links.push(`${it.name} clears ${c.label}`);
     }

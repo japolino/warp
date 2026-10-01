@@ -23,7 +23,7 @@ export function thresholds(enc: EncounterDef): Threshold[] {
   return out;
 }
 
-const FAILURE = /^(lost|lose|loss|beaten|defeat(ed)?|overwhelmed|caught|captured|ko|knocked_out|dead|died|fled_in_panic|broken|failed?)$/i;
+const FAILURE = /^(lost|lose|loss|beaten|defeat(ed)?|overwhelmed|caught|captured|ko|knocked_out|downed|fallen|slain|killed|dead|died|wiped(_out)?|fled_in_panic|broken|failed?)$/i;
 
 /** How an ending reads to the player. */
 export function outcomeLabel(enc: EncounterDef | undefined, outcome: string): string {

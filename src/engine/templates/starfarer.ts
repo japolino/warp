@@ -5,7 +5,7 @@ import type { Template } from "./index.js";
 export const starfarer: Template = {
   id: "starfarer",
   name: "Starfarer (sci-fi RPG)",
-  blurb: "Sci-fi RPG: Physique, Reflexes, Aim, Intelligence, Willpower and Libido capped at 5× level; Shields/HP/Lust/Energy pools; credits; XP, levels and perks; a ship and a frontier world; turn-based combat you can win by force or by seduction; a codex that fills in as you explore.",
+  blurb: "Sci-fi RPG / space opera: Physique, Reflexes, Aim, Intelligence, Willpower and Libido capped at 5× level; Shields/HP/Lust/Energy pools; credits; XP and levels with a pick-one-of-three perk; tech abilities (Stim Shot, Overcharge, Target Lock, Smoke Screen); a ship and a frontier world; turn-based combat you can win by force or by seduction; a codex that fills in as you explore.",
   parts: [
     {
       label: "core",
@@ -191,20 +191,41 @@ locations:
     travel: 45
 
 items:
-  holdout_pistol: Holdout pistol
+  holdout_pistol: { name: Holdout pistol, bonus: { aim: 1 } }
   medkit: Medkit
-  codex: Codex
+  codex: { name: Codex, bonus: { intelligence: 1 } }
   shield_booster: Shield booster
 
 conditions:
-  stunned: { label: Stunned, tone: bad, narrator: true }
-  grappled: { label: Grappled, tone: bad, narrator: true }
+  stunned: { label: Stunned, tone: bad, narrator: true, bonus: { reflexes: -3, aim: -2 } }
+  grappled: { label: Grappled, tone: bad, narrator: true, bonus: { reflexes: -4 } }
   burning: { label: Burning, tone: bad, narrator: true }
+  stimmed: { label: Stimmed, tone: good, bonus: { reflexes: 2, physique: 1 } }
+  locked_on: { label: Target lock, tone: good, bonus: { aim: 3 } }
 `,
     },
     {
       label: "actions",
       yaml: `actions:
+  plot_course:
+    label: Check the nav charts
+    group: Ship
+    at: bridge
+    say: "*I pull up the nav charts and scan for traffic and signals.*"
+    time: 20
+    check: { vs: 11, add: floor(intelligence / 2), label: Intelligence }
+    success: { xp: +5, hint: "Something on the charts is worth a look: a derelict, a beacon, a smuggler's lane." }
+    fail: { hint: "Static and freighter chatter." }
+  salvage:
+    label: Strip salvage for parts
+    group: Ship
+    at: cargo_bay
+    say: "*I sort through the cargo bay for anything worth selling.*"
+    time: 60
+    cost: { energy: -10 }
+    check: { vs: 11, add: floor(intelligence / 3) + floor(physique / 3), label: Tech }
+    success: { credits: roll('2d20') }
+    fail: { energy: -5 }
   rest_quarters:
     label: Rest in your bunk
     group: Ship
@@ -375,14 +396,86 @@ dungeons:
     },
     {
       label: "journal",
-      yaml: `# Perks cost points (one per level). Codex entries unlock as you explore.
+      yaml: `# The player's own tech and tricks. Stim Shot everyone has; the rest come with perks.
+abilities:
+  stim_shot:
+    name: Stim Shot
+    desc: A combat stim straight into the neck
+    cost: { energy: -15 }
+    add_condition: { stimmed: 3 }
+    per_encounter: 1
+  overcharge:
+    name: Overcharge Shields
+    desc: Dump reactor power into the shield emitter
+    cost: { energy: -20 }
+    shields: "+(10 + intelligence * 2)"
+    per_encounter: 1
+  target_lock:
+    name: Target Lock
+    desc: The visor paints the target
+    where: encounter
+    cost: { energy: -8 }
+    add_condition: { locked_on: 3 }
+  smoke_screen:
+    name: Smoke Screen
+    desc: A grenade of thick, sensor-blinding smoke
+    where: encounter
+    cost: { energy: -12 }
+    per_day: 1
+    check: { vs: 10, add: floor(reflexes / 2), label: Reflexes }
+    success: { end: fled }
+    fail: { hint: "The smoke billows the wrong way." }
+
+# One point per level; each point offers three perks to choose from.
 perks:
   points: perk_points
-  sharpshooter: { name: Sharpshooter, desc: "+2 Aim.", cost: 1, effects: { aim: +2 } }
-  bruiser: { name: Bruiser, desc: "+2 Physique.", cost: 1, effects: { physique: +2 } }
-  iron_will: { name: Iron Will, desc: "+2 Willpower.", cost: 1, effects: { willpower: +2 } }
-  silver_tongue: { name: Silver Tongue, desc: "+10 Libido.", cost: 1, effects: { libido: +10 } }
-  tactician: { name: Tactician, desc: "+2 Intelligence and Reflexes.", cost: 2, requires: "level >= 3", effects: { intelligence: +2, reflexes: +2 } }
+  pick: 3
+  sharpshooter:
+    name: Sharpshooter
+    desc: Every shot counts — more so with a lock.
+    tags: [aim]
+    bonus: { aim: 1 }
+    edge: { aim: 2, when: "cond('locked_on')" }
+    abilities: [target_lock]
+  bruiser:
+    name: Bruiser
+    desc: Built to take hits.
+    tags: [physique]
+    bonus: { physique: 1 }
+    rule: { losses: { hp: "-20%" } }
+    narrator: "{{user}} is built like a cargo loader and takes a hit like one."
+  shield_tech:
+    name: Shield Tech
+    desc: Knows emitters inside out.
+    abilities: [overcharge]
+    rule: { losses: { shields: "-15%" } }
+  iron_will:
+    name: Iron Will
+    desc: Hard to tempt, harder to break.
+    bonus: { willpower: 2 }
+    rule: { gains: { lust: "-30%" } }
+  silver_tongue:
+    name: Silver Tongue
+    desc: Even a bad line half-lands.
+    tags: [libido]
+    bonus: { libido: 10 }
+    rule: { soften: { stats: [libido], per_day: 2 } }
+    excludes: [iron_will]
+  spacer_luck:
+    name: Spacer's Luck
+    desc: Once a day the universe blinks first.
+    rule: { reroll: { per_day: 1 } }
+  ghost:
+    name: Ghost
+    desc: Gone before they look up.
+    abilities: [smoke_screen]
+    bonus: { reflexes: 1 }
+  tactician:
+    name: Tactician
+    desc: Reads a fight three moves ahead.
+    requires: "level >= 3"
+    bonus: { intelligence: 1, reflexes: 1 }
+    edge: { aim: 2, when: "shields > 0" }
 
 codex:
   station: { title: The Station, category: Places, text: "A trade hub bolted onto an asteroid. Everything's for sale.", unlock: "location == 'concourse'" }

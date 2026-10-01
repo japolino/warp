@@ -8,6 +8,8 @@ import type { ActionDef, Effect, Ruleset } from "./ruleset.js";
 import { applyEvent, cloneState, initialState, makeEnv, type GameState } from "./state.js";
 import { availableChoices, odds, resolveTurnFull } from "./resolve.js";
 import type { PartLabel } from "./reference.js";
+import { isLoss } from "./encounter-view.js";
+import { checkStats } from "./freeform.js";
 
 export interface BalanceWarning {
   id: string;
@@ -38,8 +40,22 @@ function effectsOf(r: Ruleset): Effect[] {
   for (const f of Object.values(r.fronts)) for (const st of f.stages) add(st.effects);
   for (const e of Object.values(r.randomEvents.events)) add(e.effects);
   Object.values(r.liveChoices.tags).forEach(addAction);
+  Object.values(r.abilities).forEach((ab) => addAction(ab.action));
+  for (const it of Object.values(r.items)) if (it.use) addAction(it.use);
   return out;
 }
+
+/** Every move with a check: actions, encounter moves, live choices, abilities, item uses. */
+function checkedActions(r: Ruleset): ActionDef[] {
+  return [
+    ...Object.values(r.actions), ...Object.values(r.encounters).flatMap((e) => Object.values(e.actions)),
+    ...Object.values(r.liveChoices.tags), ...Object.values(r.abilities).map((ab) => ab.action),
+    ...Object.values(r.items).flatMap((it) => (it.use ? [it.use] : [])),
+  ].filter((a) => a.check);
+}
+
+/** Endings the player chose to buy their way out of (pay the toll, hand over the money): not a win. */
+const CONCESSION = /paid|pay|robbed|bribe|surrender|gave_?in|submit/i;
 
 export function reviewBalance(r: Ruleset): BalanceWarning[] {
   const out: BalanceWarning[] = [];
@@ -100,11 +116,14 @@ export function reviewBalance(r: Ruleset): BalanceWarning[] {
 
   // Stats nothing can ever change.
   const touched = new Set<string>();
+  const rolled = new Set(checkedActions(r).flatMap((a) => checkStats(r, a)));
   for (const e of effectsOf(r)) { Object.keys(e.stats).forEach((k) => touched.add(k)); Object.keys(e.set).forEach((k) => touched.add(k)); }
   for (const id of r.statOrder) {
     const d = r.stats[id];
     if (d.kind === "money" && d.narrator > 0) continue;
-    if (!touched.has(id) && !d.perHour && d.narrator <= 0) {
+    // Skills and attributes grow each time a check reads them.
+    const grows = (d.kind === "skill" || d.kind === "attribute") && r.growth.enabled && d.growth > 0 && rolled.has(id);
+    if (!touched.has(id) && !d.perHour && d.narrator <= 0 && !grows) {
       out.push({ id: `dead:${id}`, part: "stats", text: `${d.label} never changes — no action, rule or story update touches it.`, fix: `Give the "${id}" stat a way to change: at least one action or rule that raises or lowers it, or allow the narrator to adjust it.` });
     }
   }
@@ -113,7 +132,8 @@ export function reviewBalance(r: Ruleset): BalanceWarning[] {
   for (const enc of Object.values(r.encounters)) {
     const sim = simulateEncounter(r, start, enc.id, 120);
     if (!sim) continue;
-    const goodEnds = Object.keys(enc.outcomes).filter((o) => /won|win|victory|escaped|fled|seduced/i.test(o));
+    // Any ending that isn't a loss went the player's way: paid off, talked down, slipped past, fled.
+    const goodEnds = [...new Set([...Object.keys(enc.outcomes), ...enc.endWhen.map((e) => e.outcome)])].filter((o) => !isLoss(enc, o) && !CONCESSION.test(o));
     const wins = goodEnds.reduce((n, o) => n + (sim.outcomes[o] ?? 0), 0) / sim.runs;
     if (sim.stuck / sim.runs > 0.2) {
       out.push({ id: `enc-stuck:${enc.id}`, part: "encounters", text: `“${enc.name}” often doesn't end within 25 rounds.`, fix: `Make the "${enc.id}" encounter reliably end within about 4–10 rounds (stronger effects on foe stats or tighter end_when conditions).` });
