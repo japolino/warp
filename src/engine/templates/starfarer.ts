@@ -234,7 +234,7 @@ conditions:
     say: "*I sort through the cargo bay for anything worth selling.*"
     time: 60
     cost: { energy: -10 }
-    check: { vs: 11, add: floor(intelligence / 3) + floor(physique / 3), label: Tech }
+    check: { vs: 11, add: floor(intelligence / 3) + floor(physique / 3), label: Tech, game: stack }
     success: { credits: roll('2d20') }
     fail: { energy: -5 }
   rest_quarters:
@@ -249,7 +249,7 @@ conditions:
     group: Explore
     say: "*I sweep the area with my codex scanner.*"
     time: 5
-    check: { vs: 12, add: floor(intelligence / 2), label: Intelligence }
+    check: { vs: 12, add: floor(intelligence / 2), label: Intelligence, game: mines }
     success: { hint: "The scan reveals something valuable: a hidden route, loot, or a threat before it strikes." }
     fail: { hint: "Interference. Nothing useful." }
   explore:
@@ -258,7 +258,7 @@ conditions:
     at: [jungle_edge, jungle_deep]
     say: "*I push deeper into the jungle.*"
     time: 45
-    check: { vs: 11, add: floor(reflexes / 3), label: Reflexes }
+    check: { vs: 11, add: floor(reflexes / 3), label: Reflexes, game: snake }
     success: { xp: +15, credits: roll('3d20'), hint: "A discovery: salvage or something worth selling." }
     fail: { start_encounter: ambush }
   use_booster:
@@ -303,6 +303,27 @@ conditions:
     when: credits >= 150
     say: "*I buy a shield booster.*"
     effects: { credits: -150, give: shield_booster }
+  void_blackjack:
+    label: Void blackjack at the back tables
+    group: Social
+    at: bar
+    say: "*I buy in at the blackjack table under the neon.*"
+    time: 60
+    gamble: { game: blackjack, stakes: [50, 200, 500], rounds: 5, win: { xp: +5 }, broke: { energy: -20 } }
+  zero_g_roulette:
+    label: Zero-G roulette
+    group: Social
+    at: bar
+    say: "*I put chips down at the roulette wheel spinning in its zero-g bubble.*"
+    time: 30
+    gamble: { game: roulette, stakes: [50, 200, 500], rounds: 4, win: { xp: +5 }, broke: { energy: -20 } }
+  neon_slots:
+    label: Feed the neon slots
+    group: Social
+    at: bar
+    say: "*I feed credits into a slot machine that sings my name.*"
+    time: 20
+    gamble: { game: slots, stakes: [10, 25, 50], rounds: 6 }
   drink:
     label: Have a drink (₡20)
     group: Social
@@ -370,14 +391,14 @@ encounters:
       shoot:
         label: Shoot
         cost: { energy: -5 }
-        check: { vs: 12, add: floor(aim / 2), label: Aim }
+        check: { vs: 12, add: floor(aim / 2), label: Aim, game: aim }
         crit_success: { foe: { shields: -14, hp: "foe.shields <= 0 ? -12 : 0" }, hint: "A perfect shot." }
         success: { foe: { shields: -8, hp: "foe.shields <= 0 ? -7 : 0" }, hint: "The shot lands." }
         fail: { hint: "Missed." }
       burst:
         label: Burst fire
         cost: { energy: -8 }
-        check: { vs: 11, add: floor(aim / 2), label: Aim }
+        check: { vs: 11, add: floor(aim / 2), label: Aim, game: aim }
         success: { foe: { shields: -4 }, hits: 3, hint: "Three rounds rake their shields." }
         fail: { hint: "The burst goes wide." }
       melee:
@@ -397,7 +418,7 @@ encounters:
         effects: { take: medkit, hp: +25 }
       flee:
         label: Flee
-        check: { vs: 13, add: floor(reflexes / 2), label: Reflexes }
+        check: { vs: 13, add: floor(reflexes / 2), label: Reflexes, game: snake }
         success: { energy: -10, end: fled }
         fail: { hint: "Cut off — the fight goes on." }
     foe_moves:
@@ -516,7 +537,7 @@ abilities:
     where: encounter
     known: false
     cost: { energy: -12 }
-    check: { vs: 11, add: floor(aim / 2), label: Aim }
+    check: { vs: 11, add: floor(aim / 2), label: Aim, game: aim }
     success: { harm: 4, inflict: { burning: 3 } }
     fail: { hint: "The gel sputters onto the deck." }
     per_encounter: 1
@@ -534,6 +555,11 @@ abilities:
 perks:
   points: perk_points
   pick: 3
+  high_roller:
+    name: High Roller
+    desc: The house edge doesn't apply to you. Mostly.
+    rule: { game: { luck: 15, lives: 1, games: [blackjack, roulette, slots] } }
+    narrator: "{{user}} has the easy grin of someone the dice like."
   sharpshooter:
     name: Sharpshooter
     desc: Every shot counts — more so with a lock.

@@ -183,6 +183,14 @@ conditions:
     check: { chance: "25 + deduction / 2 + clues * 3", label: Deduction }
     success: { clues: +1, hint: "Two loose threads tie together." }
     fail: { nerve: -5, hint: "The pieces won't fit tonight." }
+  card_game:
+    label: The card game upstairs
+    group: Social
+    at: jazz_club
+    when: hour >= 21 or hour < 3
+    say: "*I climb the back stairs to the card game nobody admits is there.*"
+    time: 90
+    gamble: { game: blackjack, stakes: [5, 20, 50], rounds: 5, win: { nerve: +5 }, lose: { nerve: -3 }, broke: { nerve: -8, heat: +1 } }
   buy_bottle:
     label: Buy a bottle of rye ($12)
     group: Shopping
@@ -212,7 +220,7 @@ conditions:
     at: precinct
     say: "*I wait for the desk sergeant to look away and slip into records.*"
     time: 30
-    check: { chance: "25 + stealth / 2", label: Stealth }
+    check: { chance: "25 + stealth / 2", label: Stealth, game: mines }
     success: { clues: +2, hint: "The autopsy says the councilman was dead before the fall." }
     fail: { heat: +15, hint: "Okafor catches {{user}} in records and isn't amused." }
   search_office:
@@ -222,7 +230,7 @@ conditions:
     when: not has('ledger')
     say: "*I let myself into the dead man's office.*"
     time: 45
-    check: { chance: "30 + stealth / 2 + deduction / 4", label: Stealth }
+    check: { chance: "30 + stealth / 2 + deduction / 4", label: Stealth, game: mines }
     success: { give: ledger, clues: +2, hint: "A ledger taped under the drawer: payments to a shell company on the docks." }
     fail: { heat: +10, start_encounter: tail }
   stake_out:
@@ -336,7 +344,7 @@ encounters:
     actions:
       lose:
         label: Duck through the crowd
-        check: { chance: "30 + stealth / 2 + streetwise / 4", label: Stealth }
+        check: { chance: "30 + stealth / 2 + streetwise / 4", label: Stealth, game: snake }
         success: { foe: { distance: +5 } }
         fail: { foe: { distance: -2 } }
       corner:
@@ -347,13 +355,13 @@ encounters:
       draw:
         label: Draw the revolver
         when: has('revolver')
-        check: { chance: "30 + shooting / 2", label: Shooting }
+        check: { chance: "30 + shooting / 2", label: Shooting, game: aim }
         success: { foe: { cornered: +6 }, heat: +5 }
         fail: { heat: +8, nerve: -6 }
       streetcar:
         label: Jump on a passing streetcar
         cost: { nerve: -5 }
-        check: { chance: "15 + stealth / 3", label: Stealth }
+        check: { chance: "15 + stealth / 3", label: Stealth, game: snake }
         success: { end: escaped }
         fail: { grit: -4, hint: "The streetcar pulls away without {{user}}." }
     foe_moves:
@@ -398,7 +406,7 @@ encounters:
         fail: { grit: -10 }
       run:
         label: Run for it
-        check: { chance: "35 + stealth / 2", label: Stealth }
+        check: { chance: "35 + stealth / 2", label: Stealth, game: snake }
         success: { end: got_away }
         fail: { grit: -5 }
     foe_moves:
@@ -446,6 +454,12 @@ encounters:
 perks:
   points: perk_points
   pick: 3
+  poker_face:
+    name: Poker Face
+    desc: You read a dealer the way you read a suspect.
+    tags: [charm]
+    bonus: { charm: 5 }
+    rule: { game: { hint: 3, peek: 1, games: [blackjack] } }
   bloodhound:
     name: Bloodhound
     desc: Once a day, a dead end turns out not to be.

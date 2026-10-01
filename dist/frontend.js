@@ -40,6 +40,8 @@ var init_protocol = __esm(() => {
     fx: "full",
     sfx: "games",
     sfxVolume: 0.4,
+    minigames: "ask",
+    minigameScope: "rulebook",
     dateImages: true,
     imageConnectionId: ""
   };
@@ -68,6 +70,127 @@ var init_classifier_config = __esm(() => {
     jevFormat: "typesafe",
     jevModel: "typesafe/jev-1.13",
     jevUrl: "https://openrouter.ai/api/alpha/decisions"
+  };
+});
+
+// src/engine/game-ids.ts
+function isGameId(x) {
+  return typeof x === "string" && GAME_IDS.includes(x);
+}
+function gameAlias(x) {
+  const k = x.toLowerCase().replace(/[^a-z]/g, "");
+  const map = {
+    aim: "aim",
+    osu: "aim",
+    circles: "aim",
+    aimtrainer: "aim",
+    shooting: "aim",
+    tiles: "tiles",
+    keys: "tiles",
+    pianotiles: "tiles",
+    piano: "tiles",
+    rhythm: "tiles",
+    mines: "mines",
+    minesweeper: "mines",
+    sweeper: "mines",
+    stack: "stack",
+    tetris: "stack",
+    blocks: "stack",
+    snake: "snake",
+    race: "race",
+    threeleggedrace: "race",
+    threelegged: "race",
+    threelegrun: "race",
+    threelegrace: "race",
+    pinball: "pinball",
+    flipper: "pinball",
+    blackjack: "blackjack",
+    cards: "blackjack",
+    twentyone: "blackjack",
+    roulette: "roulette",
+    wheel: "roulette",
+    slots: "slots",
+    slot: "slots",
+    slotmachine: "slots",
+    fruitmachine: "slots"
+  };
+  return map[k] ?? null;
+}
+function gameBar(chance, opts = {}) {
+  const p = Math.max(0.01, Math.min(0.99, chance));
+  const success = round2(0.3 + 0.62 * (1 - p));
+  const band = 0.1 + Math.min(0.12, (opts.partial ?? 0) * 0.6);
+  const partial = round2(Math.max(0.05, success - band));
+  const crit = round2(Math.min(0.99, success + (1 - success) * 0.62));
+  const critFail = opts.crits === false ? null : round2(Math.max(0, partial * 0.3));
+  return { critFail, partial, success, crit };
+}
+function shiftBar(bar, by) {
+  const f = (x) => round2(Math.max(0.05, Math.min(0.99, x + by)));
+  return { critFail: bar.critFail === null ? null : f(bar.critFail), partial: f(bar.partial), success: f(bar.success), crit: f(bar.crit) };
+}
+function tierFromScore(bar, score) {
+  const s = Math.max(0, Math.min(1, score));
+  if (s >= bar.crit)
+    return "crit_success";
+  if (s >= bar.success)
+    return "success";
+  if (s >= bar.partial)
+    return "partial";
+  if (bar.critFail !== null && s < bar.critFail)
+    return "crit_fail";
+  return "fail";
+}
+function aidTotal(aids, kind) {
+  const n = aids.filter((a) => a.kind === kind).reduce((t, a) => t + a.amount, 0);
+  const cap = { window: 80, size: 60, slow: 35, lives: 3, hint: 3, peek: 1, preview: 4, hold: 1, wrap: 1, time: 60, saver: 2, luck: 40 };
+  return Math.max(0, Math.min(cap[kind], n));
+}
+function aidWords(kind, n) {
+  const s = (one, many) => `+${n} ${n === 1 ? one : many}`;
+  switch (kind) {
+    case "window":
+      return `+${n}% timing window`;
+    case "size":
+      return `+${n}% bigger targets`;
+    case "slow":
+      return `${n}% slower`;
+    case "time":
+      return `+${n}% time`;
+    case "luck":
+      return `+${n}% luck`;
+    case "lives":
+      return s("life", "lives");
+    case "hint":
+      return s("hint", "hints");
+    case "peek":
+      return "sees the dealer's hidden card";
+    case "preview":
+      return s("piece preview", "piece previews");
+    case "hold":
+      return "can hold";
+    case "wrap":
+      return "walls wrap around";
+    case "saver":
+      return s("ball saver", "ball savers");
+  }
+}
+var GAME_IDS, GAMBLE_GAMES, AID_KINDS, GAMES, round2 = (x) => Math.round(x * 100) / 100;
+var init_game_ids = __esm(() => {
+  GAME_IDS = ["aim", "tiles", "mines", "stack", "snake", "race", "pinball", "blackjack", "roulette", "slots"];
+  GAMBLE_GAMES = ["blackjack", "roulette", "slots"];
+  AID_KINDS = ["window", "size", "slow", "lives", "hint", "peek", "preview", "hold", "wrap", "time", "saver", "luck"];
+  GAMES = {
+    aim: { name: "Aim", icon: "◎", pitch: "Hit the circles on the beat, follow the sliders, keep the combo alive.", kind: "rhythm", aids: ["window", "size", "slow", "lives"] },
+    tiles: { name: "Keys", icon: "▮", pitch: "Four lanes, one song: every note you hit plays the melody.", kind: "rhythm", aids: ["window", "slow", "lives"] },
+    mines: { name: "Mines", icon: "✹", pitch: "Clear the board before the clock runs out. One wrong square and it's over.", kind: "skill", aids: ["hint", "lives", "time"] },
+    stack: { name: "Stack", icon: "▦", pitch: "Fit the falling blocks together and clear lines before the stack tops out.", kind: "skill", aids: ["slow", "preview", "hold", "time"] },
+    snake: { name: "Snake", icon: "∿", pitch: "Eat, grow, don't bite yourself. Get enough before time's up.", kind: "skill", aids: ["slow", "wrap", "lives", "time"] },
+    race: { name: "Three-legged race", icon: "⟫", pitch: "Tied at the ankle: step when your partner steps, and beat the other pair to the line.", kind: "skill", aids: ["window", "lives"] },
+    pinball: { name: "Pinball", icon: "◐", pitch: "Flippers, bumpers, three balls. Rack up the score before the last one drains.", kind: "skill", aids: ["saver", "lives", "size"] },
+    blackjack: { name: "Blackjack", icon: "♠", pitch: "A few hands against the dealer. Get closer to 21 than they do without going over.", kind: "luck", aids: ["peek", "hint", "lives"] },
+    roulette: { name: "Roulette", icon: "◉", pitch: "Place your chips and spin. Safe bets pay little, single numbers pay big.", kind: "luck", aids: ["luck", "lives"] },
+    slots: { name: "Slots", icon: "7", pitch: "Stop each reel yourself — line them up on the payline.", kind: "luck", aids: ["slow", "hold", "lives"] }
   };
 });
 
@@ -198,6 +321,7 @@ var STYLES = `
 .warp-choice-label { flex: 1; }
 .warp-choice-odds { font-size: 11.5px; font-variant-numeric: tabular-nums; font-weight: 600; }
 .warp-choice-veil { font-size: 11px; color: var(--warp-warn); }
+.warp-choice-game { font-size: 12px; color: var(--warp-accent); opacity: .85; }
 .warp-choice-ready { font-size: 11px; color: var(--warp-warn); }
 .warp-status-line { font-size: 12px; color: var(--warp-muted); display: flex; align-items: center; gap: 6px; }
 .warp-spinner { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--warp-border); border-top-color: var(--warp-accent); animation: warp-spin .8s linear infinite; }
@@ -624,6 +748,7 @@ function wh(s) {
 }
 
 // src/frontend/render.ts
+init_game_ids();
 init_protocol();
 init_classifier_config();
 function esc(v) {
@@ -925,7 +1050,7 @@ function renderChoices(choices, opts) {
       return `<button class="warp-choice warp-choice-locked" disabled title="${esc(`${c.desc ?? c.label}
 Locked: ${c.locked}`)}"><span class="warp-choice-label">${esc(c.label)}<span class="warp-choice-why">\uD83D\uDD12 ${esc(c.locked)}</span></span></button>`;
     return `<button class="warp-choice${c.id.startsWith("item:") ? " warp-choice-item" : ""}" data-act="${esc(c.id)}" title="${esc(tip)}${c.ready ? `
-Ready — this reply is already written` : ""}">${key}<span class="warp-choice-label">${esc(c.label)}${c.why ? `<span class="warp-choice-why">${esc(c.why)}</span>` : ""}</span>${c.ready ? `<span class="warp-choice-ready" aria-label="instant">⚡</span>` : ""}${c.veiled ? `<span class="warp-choice-veil" aria-label="veiled">◐</span>` : ""}${odds}</button>`;
+Ready — this reply is already written` : ""}">${key}<span class="warp-choice-label">${esc(c.label)}${c.why ? `<span class="warp-choice-why">${esc(c.why)}</span>` : ""}</span>${c.ready ? `<span class="warp-choice-ready" aria-label="instant">⚡</span>` : ""}${c.veiled ? `<span class="warp-choice-veil" aria-label="veiled">◐</span>` : ""}${c.game || c.gamble ? `<span class="warp-choice-game" title="${esc(c.gamble ? `A table: ${GAMES[c.gamble.game].name} for real money` : `Can be played as ${GAMES[c.game.game].name} instead of rolled`)}">${GAMES[(c.game ?? c.gamble).game].icon}</span>` : ""}${odds}</button>`;
   }).join("")}</div>
     </div>`).join("");
   const status = opts.busy ? `<div class="warp-status-line"><span class="warp-spinner"></span>${esc(opts.busyLabel ?? "The story continues…")}</div>` : "";
@@ -994,13 +1119,20 @@ function renderChips(rec, opts) {
   const out = [];
   const read = rec.via === "adjudicator" ? `<span class="warp-dim">· read from your message${rec.confidence !== null ? ` (${Math.round(rec.confidence * 100)}% sure)` : ""}</span>` : rec.via === "confirmed" ? `<span class="warp-dim">· you confirmed</span>` : "";
   const notAction = rec.redoFrom ? `<button class="warp-btn warp-btn-ghost" data-redo="${esc(rec.redoFrom)}" data-redo-action="" title="Redo this turn without a roll">Not an action?</button>` : "";
-  if (rec.check && opts.showDice) {
+  if (rec.check?.game && opts.showDice) {
+    const c = rec.check;
+    out.push(`<span class="warp-chip warp-tone-${TIER_TONE[c.tier]}" title="${esc(`Played instead of rolled: ${c.game.summary}`)}">${esc(c.game.summary.split(" ")[0])} ${esc(c.label)} · ${esc(c.tierLabel)} <span class="warp-dim">${Math.round(c.game.score * 100)}% / ${Math.round(c.game.needed * 100)}%</span></span>`);
+    if (read || notAction)
+      out.push(`<span class="warp-chip">${read}${notAction}</span>`);
+  } else if (rec.check && opts.showDice) {
     const c = rec.check;
     out.push(`<button class="warp-chip warp-dice warp-tone-${TIER_TONE[c.tier]}" data-dice title="Show the roll">\uD83C\uDFB2 ${esc(c.label)} · ${esc(c.tierLabel)}</button>`);
     out.push(`<div class="warp-dice-detail">${c.faces.map((f) => `<span class="warp-die" title="d${f.sides}"${f.kept ? "" : " data-dropped"}>${f.value}</span>`).join("")}<span>${esc(c.summary)}</span>${read}${notAction}</div>`);
   } else if (rec.action && opts.showDice) {
     out.push(`<span class="warp-chip">▸ ${esc(rec.action)}</span>${notAction ? `<span class="warp-chip">${notAction}</span>` : ""}`);
   }
+  if (rec.gamble)
+    out.push(`<span class="warp-chip warp-tone-${rec.gamble.net > 0 ? "good" : rec.gamble.net < 0 ? "bad" : "neutral"}">${esc(rec.gamble.text)}</span>`);
   for (const d of rec.decisions) {
     const odds = d.odds.map((o) => `${o.desc} ${Math.round(o.p * 100)}%`).join(" · ");
     out.push(`<span class="warp-chip warp-decision" title="${esc(`${d.ask}
@@ -1190,6 +1322,23 @@ function renderSettings(s, status, connections, jevKeySet = false, imageConnecti
         ${imageConnections.map((c) => `<option value="${esc(c.id)}"${c.id === s.imageConnectionId ? " selected" : ""}>${esc(c.name)}</option>`).join("")}
       </select>
       ${imageConnections.length ? "" : `<small class="warp-dim">No image connections found — add one in Lumiverse, or allow Warp's image permission.</small>`}
+    </label>
+  </div>
+  <div class="warp-card">
+    <h3>Minigames</h3>
+    <p class="warp-dim">Play a check instead of rolling it: Aim, Keys, Mines, Stack, Snake, a three-legged race, Pinball, Blackjack, Roulette or Slots. The dice's odds set the score to beat; your stats and perks make the game easier. Casino tables bet real in-game money.</p>
+    <label class="warp-slider">When a check can be played
+      <select class="warp-select" data-setting="minigames">
+        <option value="ask"${s.minigames === "ask" ? " selected" : ""}>Show the briefing — play it or roll the dice</option>
+        <option value="always"${s.minigames === "always" ? " selected" : ""}>Straight into the game</option>
+        <option value="off"${s.minigames === "off" ? " selected" : ""}>Off — always dice</option>
+      </select>
+    </label>
+    <label class="warp-slider">Which checks
+      <select class="warp-select" data-setting="minigameScope">
+        <option value="rulebook"${s.minigameScope === "rulebook" ? " selected" : ""}>Only the ones the rulebook gives a game</option>
+        <option value="all"${s.minigameScope === "all" ? " selected" : ""}>Every check (a game that fits the skill is picked)</option>
+      </select>
     </label>
   </div>
   <div class="warp-card">
@@ -3799,10 +3948,6100 @@ function typewrite(el, cps = 55) {
   };
 }
 
+// src/frontend/response-gate.ts
+function acceptsResponse(message, activeChat, current) {
+  if (message.type === "state")
+    return message.chatId === activeChat && (current?.chatId !== message.chatId || (message.revision ?? 0) >= (current.revision ?? 0));
+  if (message.type === "busy")
+    return message.chatId === activeChat;
+  if (message.type === "builder")
+    return message.chatId === undefined || message.chatId === activeChat;
+  return true;
+}
+
+// src/frontend/arcade/arcade.ts
+init_game_ids();
+
+// src/frontend/arcade/kit.ts
+function seeded(seed) {
+  let h = 1779033703 ^ seed.length;
+  for (let i = 0;i < seed.length; i++) {
+    h = Math.imul(h ^ seed.charCodeAt(i), 3432918353);
+    h = h << 13 | h >>> 19;
+  }
+  let a = h >>> 0;
+  return () => {
+    a |= 0;
+    a = a + 1831565813 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+var clamp = (x, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, x));
+var easeOut = (t) => 1 - Math.pow(1 - clamp(t), 3);
+function shuffle(xs, rng) {
+  const a = [...xs];
+  for (let i = a.length - 1;i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+function arcBeats(samples, final) {
+  if (samples.length < 3)
+    return final >= 0.95 ? ["flawless"] : [];
+  const third = Math.max(1, Math.floor(samples.length / 3));
+  const avg = (xs) => xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length);
+  const a = avg(samples.slice(0, third)), b = avg(samples.slice(third, third * 2)), c = avg(samples.slice(third * 2));
+  const out = [];
+  if (final >= 0.97)
+    return ["flawless from start to finish"];
+  if (a < 0.45 && c > a + 0.2)
+    out.push("a shaky start", "found their footing", c > 0.75 ? "finished strong" : "steadied by the end");
+  else if (a > 0.7 && c < a - 0.25)
+    out.push("a confident start", b < a - 0.15 ? "lost the thread midway" : "held on for a while", "fell apart at the end");
+  else if (b < Math.min(a, c) - 0.2)
+    out.push("a good start", "a bad stumble in the middle", c > 0.6 ? "recovered" : "never quite recovered");
+  else if (Math.abs(a - c) < 0.12)
+    out.push(c > 0.75 ? "steady and sure throughout" : c > 0.45 ? "uneven throughout" : "struggled throughout");
+  else
+    out.push(c > a ? "got better as it went" : "got worse as it went");
+  return out;
+}
+function makeCanvas(host) {
+  const el = document.createElement("canvas");
+  el.className = "warp-ar-canvas";
+  host.appendChild(el);
+  const g = el.getContext("2d");
+  const subs = [];
+  const c = {
+    el,
+    g,
+    w: 1,
+    h: 1,
+    onResize(fn) {
+      subs.push(fn);
+    },
+    dispose() {
+      ro.disconnect();
+      el.remove();
+    }
+  };
+  const fit = () => {
+    const r = host.getBoundingClientRect();
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    c.w = Math.max(1, r.width);
+    c.h = Math.max(1, r.height);
+    el.width = Math.round(c.w * dpr);
+    el.height = Math.round(c.h * dpr);
+    el.style.width = `${c.w}px`;
+    el.style.height = `${c.h}px`;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    for (const f of subs)
+      f();
+  };
+  const ro = new ResizeObserver(fit);
+  ro.observe(host);
+  fit();
+  return c;
+}
+function rrect(g, x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  g.beginPath();
+  g.moveTo(x + rr, y);
+  g.arcTo(x + w, y, x + w, y + h, rr);
+  g.arcTo(x + w, y + h, x, y + h, rr);
+  g.arcTo(x, y + h, x, y, rr);
+  g.arcTo(x, y, x + w, y, rr);
+  g.closePath();
+}
+
+class Sparks {
+  ps = [];
+  burst(x, y, color, n = 14, speed = 220, size = 3) {
+    for (let i = 0;i < n; i++) {
+      const a = Math.random() * Math.PI * 2, s = speed * (0.35 + Math.random() * 0.65);
+      this.ps.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0, max: 0.4 + Math.random() * 0.45, color, size: size * (0.6 + Math.random() * 0.8) });
+    }
+  }
+  step(dt, gravity = 0) {
+    for (const p of this.ps) {
+      p.life += dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vy += gravity * dt;
+      p.vx *= 1 - dt * 2.2;
+      p.vy *= 1 - dt * 2.2;
+    }
+    this.ps = this.ps.filter((p) => p.life < p.max);
+  }
+  draw(g) {
+    for (const p of this.ps) {
+      const k = 1 - p.life / p.max;
+      g.globalAlpha = k;
+      g.fillStyle = p.color;
+      g.beginPath();
+      g.arc(p.x, p.y, p.size * k + 0.5, 0, Math.PI * 2);
+      g.fill();
+    }
+    g.globalAlpha = 1;
+  }
+}
+
+class Floaters {
+  fs = [];
+  add(x, y, text, color, size = 18) {
+    this.fs.push({ x, y, text, color, life: 0, size });
+  }
+  step(dt) {
+    for (const f of this.fs) {
+      f.life += dt;
+      f.y -= 40 * dt;
+    }
+    this.fs = this.fs.filter((f) => f.life < 0.7);
+  }
+  draw(g) {
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    for (const f of this.fs) {
+      const k = 1 - f.life / 0.7;
+      g.globalAlpha = k;
+      g.font = `800 ${f.size * (1 + (1 - k) * 0.15)}px ${FONT_UI}`;
+      g.fillStyle = f.color;
+      g.fillText(f.text, f.x, f.y);
+    }
+    g.globalAlpha = 1;
+  }
+}
+var FONT_UI = `"Bahnschrift", "DIN Alternate", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif`;
+var FONT_NUM = `ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace`;
+function withMusic(kit, start) {
+  let stop = () => {};
+  kit.onPause((p) => {
+    stop();
+    stop = () => {};
+    if (!p)
+      stop = start();
+  });
+  return () => stop();
+}
+
+// src/frontend/arcade/songs.ts
+var TIER_EASE = { easy: 0.06, normal: 0, hard: -0.06, brutal: -0.12 };
+var TIER_LABEL = { easy: "Easy", normal: "Normal", hard: "Hard", brutal: "Brutal" };
+var NAMES = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+function noteMidi(n) {
+  const m = /^([A-Ga-g])(#|b)?(-?\d)$/.exec(n.trim());
+  if (!m)
+    return null;
+  return 12 * (Number(m[3]) + 1) + NAMES[m[1].toUpperCase()] + (m[2] === "#" ? 1 : m[2] === "b" ? -1 : 0);
+}
+function parseLine(src) {
+  const out = [];
+  let beat = 0, last = 1;
+  for (const tok of src.split(/\s+/)) {
+    if (!tok || tok === "|")
+      continue;
+    const [pitch, dur] = tok.split("/");
+    if (dur !== undefined) {
+      const [a, b] = dur.split(":");
+      last = b ? Number(a) / Number(b) : Number(dur);
+      if (!Number.isFinite(last) || last <= 0)
+        last = 1;
+    }
+    if (pitch !== "-") {
+      const midi = pitch.split("+").map(noteMidi).filter((x) => x !== null);
+      if (midi.length)
+        out.push({ b: beat, d: last, midi });
+    }
+    beat += last;
+  }
+  return out;
+}
+var SCALE = { major: [0, 2, 4, 5, 7, 9, 11], minor: [0, 2, 3, 5, 7, 8, 11] };
+function chordsOf(tonic, mode) {
+  const sc = SCALE[mode];
+  const pick = mode === "major" ? [0, 3, 4, 5, 1] : [0, 3, 4, 5, 2];
+  const weight = [1.2, 1.05, 1.1, 0.95, 0.85];
+  return pick.map((deg, i) => {
+    const tones = [0, 2, 4].map((k) => (tonic + sc[(deg + k) % 7] + (deg + k >= 7 ? 12 : 0)) % 12);
+    return { root: (tonic + sc[deg]) % 12, tones, weight: weight[i] };
+  });
+}
+function autoBacking(mel, def, beats) {
+  const chords = chordsOf(def.key[0], def.key[1]);
+  const span = def.harmony ?? 2;
+  const out = [];
+  let prev = chords[0];
+  for (let b = 0;b < beats - 0.01; b += span) {
+    const inside = mel.filter((n) => n.b < b + span && n.b + n.d > b);
+    let best = prev, bestScore = -1;
+    for (const ch of chords) {
+      let sc = 0;
+      for (const n of inside) {
+        const w = Math.min(n.b + n.d, b + span) - Math.max(n.b, b) + (Math.abs(n.b - b) < 0.01 ? 0.75 : 0);
+        for (const m of n.midi)
+          sc += ch.tones.includes(m % 12) ? w : -w * 0.6;
+      }
+      sc *= ch.weight;
+      if (ch === prev)
+        sc += 0.15;
+      if (sc > bestScore) {
+        bestScore = sc;
+        best = ch;
+      }
+    }
+    prev = best;
+    const root = 36 + best.root + (best.root > 7 ? -12 : 0);
+    out.push({ b, d: span * 0.48, midi: root, voice: "bass" });
+    out.push({ b: b + span / 2, d: span * 0.45, midi: root + 7, voice: "bass" });
+    for (const t of best.tones)
+      out.push({ b, d: span * 0.95, midi: 60 + (t - 60 % 12 + 12) % 12 - (t > 7 ? 12 : 0), voice: "pad" });
+  }
+  return out;
+}
+var DEFS = [
+  {
+    id: "twinkle",
+    title: "Twinkle, Twinkle, Little Star",
+    by: "Traditional",
+    tier: "easy",
+    bpm: 96,
+    key: [60, "major"],
+    melody: "C5/1 C5 G5 G5 | A5 A5 G5/2 | F5/1 F5 E5 E5 | D5 D5 C5/2 | G5/1 G5 F5 F5 | E5 E5 D5/2 | G5/1 G5 F5 F5 | E5 E5 D5/2 | C5/1 C5 G5 G5 | A5 A5 G5/2 | F5/1 F5 E5 E5 | D5 D5 C5/2"
+  },
+  {
+    id: "ode",
+    title: "Ode to Joy",
+    by: "Beethoven",
+    tier: "easy",
+    bpm: 112,
+    key: [60, "major"],
+    melody: "E5/1 E5 F5 G5 | G5 F5 E5 D5 | C5 C5 D5 E5 | E5/1.5 D5/.5 D5/2 | E5/1 E5 F5 G5 | G5 F5 E5 D5 | C5 C5 D5 E5 | D5/1.5 C5/.5 C5/2 | D5/1 D5 E5 C5 | D5 E5/.5 F5 E5/1 C5 | D5 E5/.5 F5 E5/1 D5 | C5 D5 G4/2 | E5/1 E5 F5 G5 | G5 F5 E5 D5 | C5 C5 D5 E5 | D5/1.5 C5/.5 C5/2"
+  },
+  {
+    id: "canon",
+    title: "Canon in D",
+    by: "Pachelbel",
+    tier: "easy",
+    bpm: 72,
+    key: [62, "major"],
+    melody: "F#5/2 E5 D5 C#5 | B4 A4 B4 C#5 | D5 C#5 B4 A4 | G4 F#4 G4 E4 | D4/.5 F#4 A4 G4 F#4 D4 F#4 E4 | D4 B3 D4 A4 G4 B4 A4 G4 | F#4 D4 E4 C#5 D5 F#5 A5 A4 | B4 G4 A4 F#4 D4 D5 D5/1 | F#5/1 F#5 E5 D5 C#5 B4 A4 B4 C#5/1 | D5 C#5 B4 A4 G4 F#4 G4 E4/2",
+    bass: "D3/2 A2 B2 F#2 | G2 D2 G2 A2 | D3/2 A2 B2 F#2 | G2 D2 G2 A2 | D3/2 A2 B2 F#2 | G2 D2 G2 A2 | D3/2 A2 B2 F#2 | G2 D2 G2 A2/2"
+  },
+  {
+    id: "greensleeves",
+    title: "Greensleeves",
+    by: "Traditional",
+    tier: "normal",
+    bpm: 132,
+    key: [57, "minor"],
+    harmony: 3,
+    melody: "A4/1 | C5/2 D5/1 | E5/1.5 F5/.5 E5/1 | D5/2 B4/1 | G4/1.5 A4/.5 B4/1 | C5/2 A4/1 | A4/1.5 G#4/.5 A4/1 | B4/2 G#4/1 | E4/2 A4/1 | C5/2 D5/1 | E5/1.5 F5/.5 E5/1 | D5/2 B4/1 | G4/1.5 A4/.5 B4/1 | C5/1.5 B4/.5 A4/1 | G#4/1.5 F#4/.5 G#4/1 | A4/3 | G5/3 | G5/1.5 F#5/.5 E5/1 | D5/2 B4/1 | G4/1.5 A4/.5 B4/1 | C5/2 A4/1 | A4/1.5 G#4/.5 A4/1 | B4/2 G#4/1 | E4/3 | G5/3 | G5/1.5 F#5/.5 E5/1 | D5/2 B4/1 | G4/1.5 A4/.5 B4/1 | C5/1.5 B4/.5 A4/1 | G#4/1.5 F#4/.5 G#4/1 | A4/3",
+    bass: "-/1 A2/3 C3 G2 E2 A2 E2 E2 A2 A2 C3 G2 E2 A2 E2 A2 C3 C3 G2 E2 A2 E2 E2 A2 C3 C3 G2 E2 A2 E2 A2"
+  },
+  {
+    id: "elise",
+    title: "Für Elise",
+    by: "Beethoven",
+    tier: "normal",
+    bpm: 84,
+    key: [57, "minor"],
+    harmony: 1.5,
+    melody: "E5/.25 D#5 | E5 D#5 E5 B4 D5 C5 | A4/.75 C4/.25 E4 A4 | B4/.75 E4/.25 G#4 B4 | C5/.75 E4/.25 E5 D#5 | E5 D#5 E5 B4 D5 C5 | A4/.75 C4/.25 E4 A4 | B4/.75 E4/.25 C5 B4 | A4/.75 B4/.25 C5 D5 | E5/.75 G4/.25 F5 E5 | D5/.75 F4/.25 E5 D5 | C5/.75 E4/.25 D5 C5 | B4/.5 E4/.25 E5 E4 E5 | E6/.25 D#5 E5 D#5 E5 D#5 | E5 D#5 E5 B4 D5 C5 | A4/.75 C4/.25 E4 A4 | B4/.75 E4/.25 G#4 B4 | C5/.75 E4/.25 E5 D#5 | E5 D#5 E5 B4 D5 C5 | A4/.75 C4/.25 E4 A4 | B4/.75 E4/.25 C5 B4 | A4/1.5"
+  },
+  {
+    id: "mountain_king",
+    title: "In the Hall of the Mountain King",
+    by: "Grieg",
+    tier: "normal",
+    bpm: 112,
+    accel: 1.6,
+    key: [59, "minor"],
+    melody: "B3/.5 C#4 D4 E4 F#4 D4 F#4/1 | F4/.5 C#4 F4/1 E4/.5 C4 E4/1 | B3/.5 C#4 D4 E4 F#4 D4 F#4 B4 | A4 F#4 D4 F#4 A4/2 | B3/.5 C#4 D4 E4 F#4 D4 F#4/1 | F4/.5 C#4 F4/1 E4/.5 C4 E4/1 | B3/.5 C#4 D4 E4 F#4 D4 F#4 B4 | A4 F#4 D4 F#4 A4/2 | F#4/.5 G#4 A#4 B4 C#5 A#4 C#5/1 | D5/.5 A#4 D5/1 C#5/.5 A#4 C#5/1 | F#4/.5 G#4 A#4 B4 C#5 A#4 C#5/1 | D5/.5 A#4 D5/1 C#5/2 | B4/.5 C#5 D5 E5 F#5 D5 F#5/1 | F5/.5 C#5 F5/1 E5/.5 C5 E5/1 | B4/.5 C#5 D5 E5 F#5 D5 F#5 B5 | A5 F#5 D5 F#5 A5/2",
+    bass: "B2/1 F#2 B2 F#2 | C#3 F2 C3 E2 | B2 F#2 B2 F#2 | F#2 A2 D3 F#2 | B2/1 F#2 B2 F#2 | C#3 F2 C3 E2 | B2 F#2 B2 F#2 | F#2 A2 D3 F#2 | F#2 C#3 F#2 C#3 | D3 A#2 C#3 F#2 | F#2 C#3 F#2 C#3 | D3 A#2 C#3/2 | B2/1 F#2 B2 F#2 | C#3 F2 C3 E2 | B2 F#2 B2 F#2 | F#2 A2 D3 F#2"
+  },
+  {
+    id: "entertainer",
+    title: "The Entertainer",
+    by: "Scott Joplin",
+    tier: "normal",
+    bpm: 96,
+    key: [60, "major"],
+    harmony: 2,
+    melody: "D5/.25 D#5 | E5 C6/.5 E5/.25 C6/.5 E5/.25 C6/1.25 | C6/.25 D6 D#6 E6 C6 D6 E6/.5 B5/.25 D6/.5 C6/1.5 | D5/.25 D#5 E5 C6/.5 E5/.25 C6/.5 E5/.25 C6/1.25 | A5/.25 G5 F#5 A5 C6 E6/.5 D6/.25 C6 A5 D6/1.5 | D5/.25 D#5 E5 C6/.5 E5/.25 C6/.5 E5/.25 C6/1.25 | C6/.25 D6 D#6 E6 C6 D6 E6/.5 B5/.25 D6/.5 C6/1 | C6/.25 D6 E6 C6 D6 E6/.5 C6/.25 D6 C6 E6 C6 D6 E6/.5 | C6/.25 D6 C6 E6 C6 D6 E6/.5 B5/.25 D6/.5 C6/1.5"
+  },
+  {
+    id: "cancan",
+    title: "Galop Infernal (Can-can)",
+    by: "Offenbach",
+    tier: "hard",
+    bpm: 152,
+    key: [60, "major"],
+    harmony: 2,
+    repeat: 2,
+    melody: "C5/1 D5/.5 F5 E5 D5 G5/1 G5 G5/.5 A5 E5 F5 D5/1 D5 D5/.5 F5 E5 D5 C5 C6 B5 A5 G5 F5 E5 D5 | C5/1 D5/.5 F5 E5 D5 G5/1 G5 G5/.5 A5 E5 F5 D5/1 D5 D5/.5 F5 E5 D5 C5 G5 E5 D5 C5/1 -/1"
+  },
+  {
+    id: "turca",
+    title: "Rondo alla Turca",
+    by: "Mozart",
+    tier: "hard",
+    bpm: 120,
+    key: [57, "minor"],
+    harmony: 1,
+    repeat: 2,
+    melody: "B4/.25 A4 G#4 A4 C5/1 D5/.25 C5 B4 C5 E5/1 F5/.25 E5 D#5 E5 B5 A5 G#5 A5 B5 A5 G#5 A5 C6/1 A5/.5 C6 | B5/.25 A5 G5 A5 B5 A5 G5 A5 B5 A5 G5 F#5 E5/1 | B4/.25 A4 G#4 A4 C5/1 D5/.25 C5 B4 C5 E5/1 F5/.25 E5 D#5 E5 B5 A5 G#5 A5 B5 A5 G#5 A5 C6/1 A5/.5 B5 | C6/.5 B5 A5 G#5 A5 E5 F5 D5 C5/1 B4/.5 A4/1.5"
+  },
+  {
+    id: "william_tell",
+    title: "William Tell Overture (Finale)",
+    by: "Rossini",
+    tier: "hard",
+    bpm: 150,
+    key: [57, "major"],
+    harmony: 2,
+    repeat: 2,
+    melody: "E4/.25 E4 E4/.5 E4/.25 E4 E4/.5 E4/.25 E4 A4/.5 B4 C#5 | E4/.25 E4 E4/.5 E4/.25 E4 E4/.5 E4/.25 E4 A4/.5 C#5 B4 G#4 | E4/.25 E4 E4/.5 E4/.25 E4 E4/.5 E4/.25 E4 A4/.5 B4 C#5 | A4/.5 C#5 E5/1.5 D5/.5 C#5 B4 A4/1 -/1 | E4/.25 E4 E4/.5 E4/.25 E4 E4/.5 E4/.25 E4 A4/.5 B4 C#5 | E4/.25 E4 E4/.5 E4/.25 E4 E4/.5 E4/.25 E4 A4/.5 C#5 B4 G#4 | E4/.25 E4 E4/.5 E4/.25 E4 E4/.5 E4/.25 E4 A4/.5 B4 C#5 | A4/.5 C#5 E5/1 C#5/.5 A4/.5 E4 A4/2"
+  },
+  {
+    id: "bumblebee",
+    title: "Flight of the Bumblebee",
+    by: "Rimsky-Korsakov",
+    tier: "brutal",
+    bpm: 140,
+    key: [57, "minor"],
+    harmony: 2,
+    repeat: 2,
+    melody: "E6/.25 D#6 D6 C#6 D6 C#6 C6 B5 | C6 B5 A#5 A5 G#5 G5 F#5 F5 | E5 D#5 D5 C#5 C5 F5 E5 D#5 | E5 D#5 D5 C#5 C5 F5 E5 D#5 | E5 F5 E5 D#5 E5 F#5 G5 G#5 | A5 A#5 A5 G#5 A5 A#5 B5 C6 | C#6 D6 C#6 C6 C#6 D6 D#6 E6 | F6 E6 D#6 D6 C#6 C6 B5 A#5 | A5 G#5 G5 F#5 F5 E5 D#5 D5 | C#5 D5 C#5 C5 B4 C5 C#5 D5 | E5 D#5 D5 C#5 D5 C#5 C5 B4 | C5 B4 A#4 A4 G#4 G4 F#4 F4 | E4 F4 F#4 G4 G#4 A4 A#4 B4 | C5 C#5 D5 D#5 E5 F5 F#5 G5 | G#5 A5 A#5 B5 C6 C#6 D6 D#6 | E6/1 -/1 A4/1 -/1",
+    bass: "A2/2 A2 A2 A2 | A2 A2 A2 A2 | D3 D3 A2 A2 | E2 E2 A2/4"
+  }
+];
+var KOROBEINIKI = "E5/1 B4/.5 C5 D5/1 C5/.5 B4 A4/1 A4/.5 C5 E5/1 D5/.5 C5 B4/1.5 C5/.5 D5/1 E5 C5 A4 A4/2 | -/.5 D5/1 F5/.5 A5/1 G5/.5 F5 E5/1.5 C5/.5 E5/1 D5/.5 C5 B4/1 B4/.5 C5 D5/1 E5 C5 A4 A4/2";
+function build(def) {
+  let mel = parseLine(def.melody);
+  let beats = mel.reduce((m, n) => Math.max(m, n.b + n.d), 0);
+  const rep = def.repeat ?? 1;
+  if (rep > 1) {
+    const one = mel, len = beats;
+    mel = [];
+    for (let i = 0;i < rep; i++)
+      mel.push(...one.map((n) => ({ ...n, b: n.b + len * i })));
+    beats = len * rep;
+  }
+  const back = def.bass ? parseLine(def.bass).flatMap((n) => n.midi.map((m) => ({ b: n.b, d: n.d * 0.9, midi: m, voice: "bass" }))) : autoBacking(mel, def, beats);
+  const accel = def.accel ?? 1;
+  const secAt = (b) => {
+    if (accel === 1)
+      return b * 60 / def.bpm;
+    const k = (accel - 1) / beats;
+    return 60 / (def.bpm * k) * Math.log(1 + k * b);
+  };
+  const melody = mel.map((n) => ({ t: secAt(n.b), d: secAt(n.b + n.d) - secAt(n.b), midi: Math.max(...n.midi) }));
+  const backing = back.filter((n) => n.b < beats).map((n) => ({ t: secAt(n.b), d: Math.max(0.05, secAt(n.b + n.d) - secAt(n.b)), midi: n.midi, voice: n.voice }));
+  const length = secAt(beats);
+  return { id: def.id, title: def.title, by: def.by, tier: def.tier, source: "builtin", length, melody, backing, nps: melody.length / Math.max(1, length) };
+}
+var built = null;
+function builtinSongs() {
+  if (!built)
+    built = DEFS.map(build);
+  return built;
+}
+function suggestSong(songs, level, seed) {
+  const want = level < 0.3 ? "easy" : level < 0.6 ? "normal" : level < 0.85 ? "hard" : "brutal";
+  const order = ["easy", "normal", "hard", "brutal"];
+  for (let d = 0;d < 4; d++) {
+    const pool = songs.filter((s) => Math.abs(order.indexOf(s.tier) - order.indexOf(want)) === d && s.source === "builtin");
+    if (pool.length)
+      return pool[Math.floor(seed() * pool.length)];
+  }
+  return songs[0];
+}
+function tileChart(notes) {
+  const out = [];
+  let lane = 1;
+  for (let i = 0;i < notes.length; i++) {
+    const n = notes[i];
+    const win = notes.slice(Math.max(0, i - 6), i + 7).map((x) => x.midi);
+    const lo = Math.min(...win), hi = Math.max(...win);
+    let want = hi > lo ? Math.round((n.midi - lo) / (hi - lo) * 3) : lane;
+    const prev = notes[i - 1];
+    if (prev) {
+      if (n.midi === prev.midi)
+        want = lane;
+      else if (want === lane)
+        want = n.midi > prev.midi ? lane < 3 ? lane + 1 : lane - 1 : lane > 0 ? lane - 1 : lane + 1;
+    }
+    lane = Math.max(0, Math.min(3, want));
+    const hold = n.d >= 0.55 ? n.d * 0.85 : 0;
+    out.push({ t: n.t, lane, d: hold, midi: n.midi });
+  }
+  return out;
+}
+function aimChart(notes, seed) {
+  const out = [];
+  let x = 0.5, y = 0.5, ang = seed() * Math.PI * 2;
+  for (let i = 0;i < notes.length; i++) {
+    const n = notes[i], prev = notes[i - 1];
+    if (prev) {
+      const gap = n.t - prev.t;
+      ang += (n.midi - prev.midi) * 0.28 + (seed() - 0.5) * 0.6;
+      const dist = Math.max(0.07, Math.min(0.34, gap * 0.55));
+      x += Math.cos(ang) * dist;
+      y += Math.sin(ang) * dist * 0.85;
+      if (x < 0.1 || x > 0.9) {
+        ang = Math.PI - ang;
+        x = Math.max(0.1, Math.min(0.9, x));
+      }
+      if (y < 0.12 || y > 0.88) {
+        ang = -ang;
+        y = Math.max(0.12, Math.min(0.88, y));
+      }
+    }
+    const note = { t: n.t, x, y, midi: n.midi };
+    const next = notes[i + 1];
+    if (n.d >= 0.75 && (!next || next.t - n.t >= 0.75)) {
+      const len = Math.min(0.32, n.d * 0.35);
+      const pts = [[x, y]];
+      let sx = x, sy = y, sa = ang;
+      for (let k = 1;k <= 8; k++) {
+        sa += (seed() - 0.5) * 0.35;
+        sx += Math.cos(sa) * len / 8;
+        sy += Math.sin(sa) * len / 8;
+        if (sx < 0.08 || sx > 0.92) {
+          sa = Math.PI - sa;
+          sx = Math.max(0.08, Math.min(0.92, sx));
+        }
+        if (sy < 0.1 || sy > 0.9) {
+          sa = -sa;
+          sy = Math.max(0.1, Math.min(0.9, sy));
+        }
+        pts.push([sx, sy]);
+      }
+      note.slider = { pts, d: n.d * 0.85 };
+      x = sx;
+      y = sy;
+      ang = sa;
+    }
+    out.push(note);
+  }
+  return out;
+}
+var mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+
+// src/frontend/arcade/rhythm.ts
+var JUDGE_WEIGHT = { perfect: 1, great: 0.7, ok: 0.4, miss: 0 };
+var JUDGE_LABEL = { perfect: "Perfect", great: "Great", ok: "OK", miss: "Miss" };
+var JUDGE_COLOR = { perfect: "#ffe066", great: "#4fe0a4", ok: "#6cc7ff", miss: "#ff5d6c" };
+function offsetMs() {
+  try {
+    return Number(localStorage.getItem("warp:arcade:offset") ?? 0) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+class SongClock {
+  kit;
+  song;
+  origin = 0;
+  at = -1.6;
+  running = false;
+  scheduled = 0;
+  stopAudio = null;
+  buffer = null;
+  rate;
+  lead = 1.6;
+  ready;
+  constructor(kit, song) {
+    this.kit = kit;
+    this.song = song;
+    this.rate = song.source === "builtin" ? 1 - kit.aid("slow") / 100 : 1;
+    this.ready = song.audio ? song.audio().then(async (buf) => {
+      this.buffer = buf ? await kit.synth.decode(buf) : null;
+    }) : Promise.resolve();
+    this.at = -this.lead;
+  }
+  time() {
+    if (!this.running)
+      return this.at;
+    return (this.kit.synth.now() - this.origin) * this.rate - offsetMs() / 1000 - this.kit.synth.latency();
+  }
+  get length() {
+    return this.song.length;
+  }
+  start() {
+    if (this.running)
+      return;
+    const now = this.kit.synth.now();
+    this.origin = now - this.at / this.rate;
+    this.running = true;
+    this.scheduled = Math.max(0, this.at);
+    if (this.buffer) {
+      const startAt = this.at < 0 ? now - this.at / this.rate : now;
+      const from = Math.max(0, this.at);
+      this.stopAudio = this.kit.synth.playBuffer(this.buffer, startAt, this.rate, from);
+    }
+  }
+  pause() {
+    if (!this.running)
+      return;
+    this.at = this.time() + offsetMs() / 1000 + this.kit.synth.latency();
+    this.running = false;
+    this.stopAudio?.();
+    this.stopAudio = null;
+    this.kit.synth.hush();
+  }
+  stop() {
+    this.pause();
+  }
+  tick() {
+    if (!this.running || !this.song.backing)
+      return;
+    const now = this.time();
+    const until = now + 0.5;
+    const toAudio = (t) => this.origin + t / this.rate;
+    for (const n of this.song.backing) {
+      if (n.t < this.scheduled || n.t >= until)
+        continue;
+      this.kit.synth.note(n.midi, toAudio(n.t), n.d / this.rate, n.voice, n.voice === "pad" ? 0.22 : n.voice === "bass" ? 0.5 : 0.35);
+    }
+    this.scheduled = until;
+  }
+  melody(midi, dur = 0.3, vel = 0.75) {
+    if (midi === null || this.song.source !== "builtin")
+      return;
+    this.kit.synth.note(midi, this.kit.synth.now(), Math.max(0.12, dur / this.rate), "piano", vel);
+  }
+}
+function windows(kit) {
+  const k = (1.3 - 0.55 * kit.play.level) * (1 + kit.aid("window") / 100);
+  return { perfect: 0.042 * k, great: 0.085 * k, ok: 0.13 * k };
+}
+function judgeOf(dt, w) {
+  const a = Math.abs(dt);
+  if (a <= w.perfect)
+    return "perfect";
+  if (a <= w.great)
+    return "great";
+  if (a <= w.ok)
+    return "ok";
+  return null;
+}
+
+class Tally {
+  total;
+  hits = 0;
+  sum = 0;
+  combo = 0;
+  maxCombo = 0;
+  misses = 0;
+  streak = 0;
+  counts = { perfect: 0, great: 0, ok: 0, miss: 0 };
+  window = [];
+  constructor(total) {
+    this.total = total;
+  }
+  add(j, weight = 1) {
+    this.hits += weight;
+    this.sum += JUDGE_WEIGHT[j] * weight;
+    this.counts[j]++;
+    if (j === "miss") {
+      this.combo = 0;
+      this.misses++;
+      this.streak++;
+    } else {
+      this.combo++;
+      this.streak = 0;
+      this.maxCombo = Math.max(this.maxCombo, this.combo);
+    }
+    this.window.push(JUDGE_WEIGHT[j]);
+    if (this.window.length > 10)
+      this.window.shift();
+  }
+  form() {
+    return this.window.length ? this.window.reduce((a, b) => a + b, 0) / this.window.length : 1;
+  }
+  score() {
+    return this.total ? this.sum / this.total * 0.9 + this.maxCombo / this.total * 0.1 : 0;
+  }
+  accuracy() {
+    return this.hits ? this.sum / this.hits : 1;
+  }
+}
+var missLimit = (level) => Math.round(14 - level * 8);
+function aimNotes(song, rng) {
+  return song.aim ??= aimChart(song.melody ?? [], rng);
+}
+function tileNotes(song) {
+  return song.tiles ??= tileChart(song.melody ?? []);
+}
+function rhythmBeats(t) {
+  const out = [];
+  if (t.counts.miss === 0)
+    out.push("never missed a beat");
+  else if (t.maxCombo >= t.total * 0.6)
+    out.push("one long unbroken run");
+  if (t.counts.perfect >= t.total * 0.7)
+    out.push("precise, almost mechanical");
+  return out;
+}
+
+// src/frontend/arcade/games/aim.ts
+var AIM = {
+  id: "aim",
+  title: "Aim",
+  theme: { bg: "#0b0716", bg2: "#2a1240", accent: "#ff5fa2", accent2: "#7c5cff" },
+  rhythm: true,
+  howTo: [
+    "Circles appear with a ring closing in — hit each one as the ring meets its edge.",
+    "Sliders: press on the head, keep holding, and follow the ball to the end.",
+    "Too many misses in a row ends the song. Hits play the melody."
+  ],
+  controls: "Mouse or touch to aim · click, Z or X to hit",
+  start(kit) {
+    const song = kit.play.song;
+    const clock = new SongClock(kit, song);
+    const chart = aimNotes(song, kit.rng);
+    const notes = chart.map((n, i) => ({ n, i, done: false, judged: null, at: 0, holding: false, follow: 0, followN: 0, combo: i % 8 + 1 }));
+    const tally = new Tally(notes.length);
+    const win = windows(kit);
+    const approach = (1.25 - 0.6 * kit.play.level) * (1 + kit.aid("slow") / 200);
+    const limit = missLimit(kit.play.level);
+    const c = kit.canvas();
+    const g = c.g;
+    const sparks = new Sparks, floats = new Floaters;
+    let mx = -100, my = -100, down = false, keyDown = 0;
+    const trail = [];
+    let pulse = 0, started = false, ended = false;
+    const field = () => {
+      const pad = Math.min(c.w, c.h) * 0.08;
+      const w = Math.min(c.w - pad * 2, (c.h - pad * 2) * (4 / 3));
+      const h = w * 0.75;
+      return { x: (c.w - w) / 2, y: (c.h - h) / 2, w, h };
+    };
+    const radius = () => {
+      const f = field();
+      return Math.min(f.w, f.h) * 0.072 * (1 + kit.aid("size") / 100) * (1.22 - 0.38 * kit.play.level);
+    };
+    const pos = (x, y) => {
+      const f = field();
+      return [f.x + x * f.w, f.y + y * f.h];
+    };
+    const sliderPos = (n, k) => {
+      const pts = n.slider.pts;
+      const f = clamp(k) * (pts.length - 1);
+      const i = Math.min(pts.length - 2, Math.floor(f));
+      const t = f - i;
+      return pos(pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t);
+    };
+    const judge = (l, j, x, y) => {
+      l.judged = j;
+      tally.add(j);
+      floats.add(x, y - radius() * 0.2, JUDGE_LABEL[j], JUDGE_COLOR[j], j === "miss" ? 17 : 19);
+      if (j === "miss") {
+        kit.synth.fx("miss");
+        if (tally.streak >= limit) {
+          if (kit.lives.spend("Second wind!"))
+            tally.streak = 0;
+          else
+            end(true);
+        }
+      } else {
+        sparks.burst(x, y, JUDGE_COLOR[j], j === "perfect" ? 18 : 10, 260);
+        if (tally.combo > 0 && tally.combo % 25 === 0) {
+          kit.synth.fx("combo");
+          kit.banner(`${tally.combo} combo`, "gold");
+        }
+      }
+      kit.score(tally.score());
+      kit.track(tally.form());
+      kit.status(`${tally.combo}× combo
+${Math.round(tally.accuracy() * 100)}% accuracy`);
+    };
+    const press = () => {
+      const t = clock.time();
+      const r = radius();
+      const target = notes.find((l) => !l.done && l.judged === null && Math.abs(t - l.n.t) <= approach && Math.hypot(mx - pos(l.n.x, l.n.y)[0], my - pos(l.n.x, l.n.y)[1]) <= r * 1.15);
+      if (!target)
+        return;
+      const j = judgeOf(t - target.n.t, win);
+      if (!j) {
+        if (t < target.n.t) {
+          target.at = t;
+          return;
+        }
+        return;
+      }
+      const [x, y] = pos(target.n.x, target.n.y);
+      clock.melody(target.n.midi, target.n.slider ? target.n.slider.d : 0.35);
+      kit.synth.fx(j === "perfect" ? "perfect" : "hit");
+      pulse = 1;
+      if (target.n.slider) {
+        target.holding = true;
+        target.judged = j;
+        floats.add(x, y - r * 0.2, JUDGE_LABEL[j], JUDGE_COLOR[j], 17);
+        sparks.burst(x, y, JUDGE_COLOR[j], 8, 200);
+      } else {
+        target.done = true;
+        judge(target, j, x, y);
+      }
+    };
+    const end = (early = false) => {
+      if (ended)
+        return;
+      ended = true;
+      clock.stop();
+      for (const l of notes)
+        if (!l.done && l.judged === null) {
+          l.judged = "miss";
+          tally.add("miss");
+        }
+      const beats = rhythmBeats(tally);
+      if (early)
+        beats.unshift("lost the rhythm and couldn't get it back");
+      kit.score(tally.score());
+      kit.finish({ score: tally.score(), beats, detail: `${tally.counts.perfect} perfect, ${tally.counts.miss} missed, best run ${tally.maxCombo}` });
+    };
+    const toLocal = (e) => {
+      const r = c.el.getBoundingClientRect();
+      mx = e.clientX - r.left;
+      my = e.clientY - r.top;
+    };
+    c.el.style.cursor = "none";
+    c.el.addEventListener("pointermove", (e) => {
+      toLocal(e);
+    });
+    c.el.addEventListener("pointerdown", (e) => {
+      toLocal(e);
+      c.el.setPointerCapture(e.pointerId);
+      if (!kit.paused) {
+        down = true;
+        press();
+      }
+    });
+    c.el.addEventListener("pointerup", () => {
+      down = false;
+    });
+    kit.onKey((e, isDown) => {
+      const k = e.key.toLowerCase();
+      if (k !== "z" && k !== "x")
+        return false;
+      if (isDown && !e.repeat) {
+        keyDown++;
+        press();
+      } else if (!isDown)
+        keyDown = Math.max(0, keyDown - 1);
+      return true;
+    });
+    kit.onPause((p) => {
+      if (p)
+        clock.pause();
+      else
+        clock.ready.then(() => {
+          if (!kit.paused && !ended) {
+            clock.start();
+            started = true;
+          }
+        });
+    });
+    kit.onQuit(() => end());
+    kit.loop((dt) => {
+      const t = clock.time();
+      clock.tick();
+      const r = radius();
+      const held = down || keyDown > 0;
+      for (const l of notes) {
+        if (l.done)
+          continue;
+        if (l.n.slider && l.holding) {
+          const k = (t - l.n.t) / l.n.slider.d;
+          const [bx, by] = sliderPos(l.n, k);
+          l.followN++;
+          if (held && Math.hypot(mx - bx, my - by) <= r * 2.4)
+            l.follow++;
+          if (k >= 1) {
+            l.done = true;
+            const ratio = l.followN ? l.follow / l.followN : 0;
+            const base = l.judged ?? "ok";
+            const j = ratio >= 0.85 ? base : ratio >= 0.5 ? base === "perfect" ? "great" : "ok" : "miss";
+            tally.add(j);
+            if (j !== "miss") {
+              sparks.burst(bx, by, JUDGE_COLOR[j], 12, 220);
+              kit.synth.fx("hit");
+            } else
+              kit.synth.fx("miss");
+            floats.add(bx, by - r * 0.2, j === "miss" ? "Slider broke" : JUDGE_LABEL[j], JUDGE_COLOR[j], 16);
+            kit.score(tally.score());
+            kit.track(tally.form());
+          }
+        } else if (l.judged === null && t - l.n.t > win.ok) {
+          l.done = true;
+          const [x, y] = pos(l.n.x, l.n.y);
+          judge(l, "miss", x, y);
+        }
+      }
+      if (started && !ended && t > clock.length + 0.8)
+        end();
+      pulse = Math.max(0, pulse - dt * 3.5);
+      trail.push({ x: mx, y: my, t: performance.now() });
+      while (trail.length && performance.now() - trail[0].t > 120)
+        trail.shift();
+      sparks.step(dt);
+      floats.step(dt);
+      draw(t, r);
+    });
+    function draw(t, r) {
+      const f = field();
+      g.clearRect(0, 0, c.w, c.h);
+      const grd = g.createRadialGradient(c.w / 2, c.h / 2, 10, c.w / 2, c.h / 2, Math.max(c.w, c.h) * 0.7);
+      grd.addColorStop(0, `rgba(124, 92, 255, ${0.16 + pulse * 0.14})`);
+      grd.addColorStop(1, "rgba(0, 0, 0, 0)");
+      g.fillStyle = grd;
+      g.fillRect(0, 0, c.w, c.h);
+      g.strokeStyle = "rgba(255,255,255,.05)";
+      g.lineWidth = 1;
+      g.strokeRect(f.x - r, f.y - r, f.w + r * 2, f.h + r * 2);
+      const prog = clamp(t / clock.length);
+      g.fillStyle = "rgba(255,255,255,.08)";
+      g.fillRect(0, 0, c.w, 4);
+      g.fillStyle = "#ff5fa2";
+      g.fillRect(0, 0, c.w * prog, 4);
+      const visible = notes.filter((l) => !l.done && l.n.t - t <= approach && l.n.t - t > -(l.n.slider ? l.n.slider.d + 0.2 : 0.3));
+      for (let k = 0;k < visible.length - 1; k++) {
+        const a = visible[k], b = visible[k + 1];
+        const [ax, ay] = pos(a.n.slider ? a.n.slider.pts[a.n.slider.pts.length - 1][0] : a.n.x, a.n.slider ? a.n.slider.pts[a.n.slider.pts.length - 1][1] : a.n.y);
+        const [bx, by] = pos(b.n.x, b.n.y);
+        const d = Math.hypot(bx - ax, by - ay);
+        if (d < r * 2.5)
+          continue;
+        g.strokeStyle = "rgba(255,255,255,.18)";
+        g.lineWidth = 2;
+        g.setLineDash([4, 10]);
+        g.beginPath();
+        g.moveTo(ax + (bx - ax) * (r / d), ay + (by - ay) * (r / d));
+        g.lineTo(bx - (bx - ax) * (r / d), by - (by - ay) * (r / d));
+        g.stroke();
+        g.setLineDash([]);
+      }
+      for (const l of [...visible].reverse()) {
+        const [x, y] = pos(l.n.x, l.n.y);
+        const k = 1 - (l.n.t - t) / approach;
+        const alpha = clamp(k * 2.4);
+        if (l.n.slider) {
+          const pts = l.n.slider.pts.map(([px, py]) => pos(px, py));
+          g.globalAlpha = alpha * 0.9;
+          g.lineCap = "round";
+          g.lineJoin = "round";
+          g.strokeStyle = "rgba(255,255,255,.9)";
+          g.lineWidth = r * 2;
+          g.beginPath();
+          pts.forEach(([px, py], i) => i ? g.lineTo(px, py) : g.moveTo(px, py));
+          g.stroke();
+          g.strokeStyle = "rgba(40, 18, 64, .95)";
+          g.lineWidth = r * 2 - 6;
+          g.stroke();
+          const [ex, ey] = pts[pts.length - 1];
+          g.fillStyle = "rgba(255,95,162,.35)";
+          g.beginPath();
+          g.arc(ex, ey, r * 0.85, 0, Math.PI * 2);
+          g.fill();
+          g.globalAlpha = 1;
+          if (l.holding) {
+            const kk = (t - l.n.t) / l.n.slider.d;
+            const [bx, by] = sliderPos(l.n, kk);
+            g.strokeStyle = "rgba(255,224,102,.75)";
+            g.lineWidth = 3;
+            g.beginPath();
+            g.arc(bx, by, r * 2.4, 0, Math.PI * 2);
+            g.stroke();
+            ball(bx, by, r);
+            continue;
+          }
+        }
+        if (l.judged !== null && !l.n.slider)
+          continue;
+        circle(x, y, r, alpha, l.combo);
+        if (k < 1 && l.judged === null) {
+          const ar = r * (1 + (1 - k) * 2.2);
+          g.globalAlpha = alpha;
+          g.strokeStyle = "#ffffff";
+          g.lineWidth = 3;
+          g.beginPath();
+          g.arc(x, y, ar, 0, Math.PI * 2);
+          g.stroke();
+          g.globalAlpha = 1;
+        }
+      }
+      sparks.draw(g);
+      floats.draw(g);
+      if (tally.combo > 1) {
+        g.textAlign = "left";
+        g.textBaseline = "bottom";
+        g.font = `800 ${Math.round(Math.min(48, c.h * 0.08))}px ${FONT_NUM}`;
+        g.fillStyle = "rgba(255,255,255,.85)";
+        g.fillText(`${tally.combo}×`, 18, c.h - 14);
+      }
+      for (let k = 0;k < trail.length; k++) {
+        const p = trail[k];
+        g.globalAlpha = k / trail.length * 0.5;
+        g.fillStyle = "#ffd1e6";
+        g.beginPath();
+        g.arc(p.x, p.y, 4 + k / trail.length * 5, 0, Math.PI * 2);
+        g.fill();
+      }
+      g.globalAlpha = 1;
+      const held = down || keyDown > 0;
+      g.fillStyle = held ? "#ffe066" : "#ffffff";
+      g.shadowColor = "#ff5fa2";
+      g.shadowBlur = 14;
+      g.beginPath();
+      g.arc(mx, my, held ? 8 : 10, 0, Math.PI * 2);
+      g.fill();
+      g.shadowBlur = 0;
+    }
+    function circle(x, y, r, alpha, n) {
+      g.globalAlpha = alpha;
+      const grd = g.createRadialGradient(x - r * 0.3, y - r * 0.3, r * 0.1, x, y, r);
+      grd.addColorStop(0, "#ff8cc0");
+      grd.addColorStop(1, "#c2306f");
+      g.fillStyle = grd;
+      g.beginPath();
+      g.arc(x, y, r, 0, Math.PI * 2);
+      g.fill();
+      g.strokeStyle = "#fff";
+      g.lineWidth = Math.max(3, r * 0.1);
+      g.stroke();
+      g.fillStyle = "#fff";
+      g.textAlign = "center";
+      g.textBaseline = "middle";
+      g.font = `800 ${Math.round(r * 0.85)}px ${FONT_UI}`;
+      g.fillText(String(n), x, y + 1);
+      g.globalAlpha = 1;
+    }
+    function ball(x, y, r) {
+      g.fillStyle = "#ffe066";
+      g.shadowColor = "#ffe066";
+      g.shadowBlur = 18;
+      g.beginPath();
+      g.arc(x, y, r * 0.8, 0, Math.PI * 2);
+      g.fill();
+      g.shadowBlur = 0;
+    }
+    return () => clock.stop();
+  }
+};
+
+// src/frontend/arcade/synth.ts
+var A4 = 440;
+var midiHz = (m) => A4 * Math.pow(2, (m - 69) / 12);
+
+class Synth {
+  ctx;
+  master = null;
+  musicBus = null;
+  fxBus = null;
+  noise = null;
+  stops = [];
+  _muted = false;
+  constructor(volume, muted) {
+    let c = null;
+    try {
+      const C = window.AudioContext ?? window.webkitAudioContext;
+      c = C ? new C({ latencyHint: "interactive" }) : null;
+    } catch {
+      c = null;
+    }
+    this.ctx = c;
+    if (!c)
+      return;
+    this.master = c.createGain();
+    const comp = c.createDynamicsCompressor();
+    comp.threshold.value = -14;
+    comp.ratio.value = 4;
+    this.master.connect(comp).connect(c.destination);
+    this.musicBus = c.createGain();
+    this.musicBus.gain.value = 0.55;
+    this.musicBus.connect(this.master);
+    this.fxBus = c.createGain();
+    this.fxBus.gain.value = 0.6;
+    this.fxBus.connect(this.master);
+    this._muted = muted;
+    this.setVolume(volume);
+    const len = c.sampleRate;
+    this.noise = c.createBuffer(1, len, c.sampleRate);
+    const d = this.noise.getChannelData(0);
+    for (let i = 0;i < len; i++)
+      d[i] = Math.random() * 2 - 1;
+  }
+  vol = 0.5;
+  setVolume(v) {
+    this.vol = Math.max(0, Math.min(1, v));
+    if (this.master)
+      this.master.gain.value = this._muted ? 0 : this.vol;
+  }
+  get muted() {
+    return this._muted;
+  }
+  set muted(m) {
+    this._muted = m;
+    this.setVolume(this.vol);
+  }
+  resume() {
+    try {
+      this.ctx?.resume();
+    } catch {}
+  }
+  now() {
+    return this.ctx?.currentTime ?? performance.now() / 1000;
+  }
+  latency() {
+    const c = this.ctx;
+    return (c?.outputLatency ?? 0) + (c?.baseLatency ?? 0);
+  }
+  note(midi, at, dur, voice = "piano", vel = 0.7, bus = "music") {
+    const c = this.ctx;
+    const out = bus === "music" ? this.musicBus : this.fxBus;
+    if (!c || !out)
+      return;
+    const t = Math.max(c.currentTime, at);
+    const f = midiHz(midi);
+    const g = c.createGain();
+    const filt = c.createBiquadFilter();
+    filt.type = "lowpass";
+    g.connect(filt).connect(out);
+    const oscs = [];
+    const osc = (type, mult, gain, detune = 0) => {
+      const o = c.createOscillator();
+      o.type = type;
+      o.frequency.value = f * mult;
+      o.detune.value = detune;
+      const og = c.createGain();
+      og.gain.value = gain;
+      o.connect(og).connect(g);
+      oscs.push(o);
+    };
+    let attack = 0.005, decay = 0.6, sustain = 0, release = 0.12, peak = vel * 0.32;
+    switch (voice) {
+      case "piano":
+        osc("triangle", 1, 0.9);
+        osc("sine", 2, 0.25);
+        osc("sine", 3, 0.07);
+        filt.frequency.setValueAtTime(Math.min(9000, f * 9), t);
+        filt.frequency.exponentialRampToValueAtTime(Math.max(300, f * 2), t + 0.8);
+        decay = Math.max(0.35, 1.6 - (midi - 48) * 0.02);
+        sustain = 0.08;
+        release = 0.18;
+        break;
+      case "bell":
+        osc("sine", 1, 0.8);
+        osc("sine", 2.76, 0.3);
+        osc("sine", 5.4, 0.12);
+        filt.frequency.value = 9000;
+        decay = 1.1;
+        release = 0.4;
+        peak *= 0.8;
+        break;
+      case "bass":
+        osc("triangle", 1, 1);
+        osc("sine", 0.5, 0.4);
+        filt.frequency.value = 900;
+        attack = 0.008;
+        decay = 0.4;
+        sustain = 0.45;
+        release = 0.08;
+        peak *= 1.2;
+        break;
+      case "lead":
+        osc("square", 1, 0.35);
+        osc("sawtooth", 1, 0.25, 7);
+        filt.frequency.value = Math.min(6000, f * 6);
+        attack = 0.01;
+        decay = 0.15;
+        sustain = 0.55;
+        release = 0.08;
+        peak *= 0.6;
+        break;
+      case "pluck":
+        osc("sawtooth", 1, 0.5);
+        osc("square", 2, 0.12);
+        filt.frequency.setValueAtTime(f * 12, t);
+        filt.frequency.exponentialRampToValueAtTime(f * 1.5, t + 0.2);
+        decay = 0.25;
+        release = 0.05;
+        peak *= 0.7;
+        break;
+      case "pad":
+        osc("sawtooth", 1, 0.25, -8);
+        osc("sawtooth", 1, 0.25, 8);
+        osc("triangle", 0.5, 0.3);
+        filt.frequency.value = 1400;
+        attack = 0.25;
+        decay = 0.5;
+        sustain = 0.7;
+        release = 0.5;
+        peak *= 0.35;
+        break;
+      case "organ":
+        osc("sine", 1, 0.6);
+        osc("sine", 2, 0.35);
+        osc("sine", 4, 0.15);
+        osc("sine", 0.5, 0.25);
+        filt.frequency.value = 5000;
+        attack = 0.015;
+        decay = 0.2;
+        sustain = 0.8;
+        release = 0.1;
+        peak *= 0.55;
+        break;
+    }
+    const end = t + Math.max(dur, attack + 0.02);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t + attack);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak * sustain + 0.0002), t + attack + decay);
+    g.gain.setValueAtTime(Math.max(0.0002, peak * sustain + 0.0002), end);
+    g.gain.exponentialRampToValueAtTime(0.0001, end + release);
+    for (const o of oscs) {
+      o.start(t);
+      o.stop(end + release + 0.05);
+    }
+  }
+  drum(kind, at, vel = 0.7, bus = "music") {
+    const c = this.ctx;
+    const out = bus === "music" ? this.musicBus : this.fxBus;
+    if (!c || !out || !this.noise)
+      return;
+    const t = Math.max(c.currentTime, at);
+    if (kind === "kick") {
+      const o = c.createOscillator(), g = c.createGain();
+      o.frequency.setValueAtTime(150, t);
+      o.frequency.exponentialRampToValueAtTime(42, t + 0.12);
+      g.gain.setValueAtTime(vel * 0.9, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+      o.connect(g).connect(out);
+      o.start(t);
+      o.stop(t + 0.25);
+      return;
+    }
+    const src = c.createBufferSource();
+    src.buffer = this.noise;
+    const f = c.createBiquadFilter(), g = c.createGain();
+    const len = kind === "hat" ? 0.05 : kind === "clap" ? 0.14 : 0.16;
+    f.type = kind === "hat" ? "highpass" : "bandpass";
+    f.frequency.value = kind === "hat" ? 7000 : kind === "clap" ? 1500 : 1800;
+    g.gain.setValueAtTime(vel * (kind === "hat" ? 0.25 : 0.5), t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + len);
+    src.connect(f).connect(g).connect(out);
+    src.start(t, Math.random() * 0.5);
+    src.stop(t + len + 0.02);
+    if (kind === "snare") {
+      const o = c.createOscillator(), og = c.createGain();
+      o.frequency.value = 190;
+      og.gain.setValueAtTime(vel * 0.3, t);
+      og.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+      o.connect(og).connect(out);
+      o.start(t);
+      o.stop(t + 0.12);
+    }
+  }
+  blip(f1, f2, dur, type = "square", vel = 0.4, at = 0) {
+    const c = this.ctx;
+    if (!c || !this.fxBus)
+      return;
+    const t = c.currentTime + at;
+    const o = c.createOscillator(), g = c.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(f1, t);
+    o.frequency.exponentialRampToValueAtTime(Math.max(20, f2), t + dur);
+    g.gain.setValueAtTime(vel * 0.3, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    o.connect(g).connect(this.fxBus);
+    o.start(t);
+    o.stop(t + dur + 0.02);
+  }
+  hiss(dur, freq, vel = 0.4, at = 0, type = "bandpass") {
+    const c = this.ctx;
+    if (!c || !this.fxBus || !this.noise)
+      return;
+    const t = c.currentTime + at;
+    const src = c.createBufferSource();
+    src.buffer = this.noise;
+    const f = c.createBiquadFilter(), g = c.createGain();
+    f.type = type;
+    f.frequency.value = freq;
+    g.gain.setValueAtTime(vel * 0.4, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    src.connect(f).connect(g).connect(this.fxBus);
+    src.start(t, Math.random() * 0.5);
+    src.stop(t + dur + 0.02);
+  }
+  fx(name, pitch = 0) {
+    const c = this.ctx;
+    if (!c)
+      return;
+    const t = c.currentTime;
+    const n = (m, at, d, v = "bell", vel = 0.6) => this.note(m + pitch, t + at, d, v, vel, "fx");
+    switch (name) {
+      case "tick":
+        this.blip(1800, 1400, 0.03, "square", 0.25);
+        break;
+      case "click":
+        this.blip(900, 600, 0.04, "triangle", 0.4);
+        break;
+      case "hit":
+        this.hiss(0.05, 6000, 0.35, 0, "highpass");
+        this.blip(1200, 900, 0.05, "triangle", 0.3);
+        break;
+      case "perfect":
+        this.hiss(0.05, 8000, 0.4, 0, "highpass");
+        n(96, 0, 0.12, "bell", 0.3);
+        break;
+      case "miss":
+        this.blip(220, 110, 0.18, "sawtooth", 0.35);
+        break;
+      case "combo":
+        n(84, 0, 0.1);
+        n(88, 0.06, 0.1);
+        n(91, 0.12, 0.18);
+        break;
+      case "flag":
+        this.blip(700, 1100, 0.07, "triangle", 0.4);
+        break;
+      case "reveal":
+        this.blip(500 + pitch * 30, 700 + pitch * 30, 0.04, "triangle", 0.25);
+        break;
+      case "boom":
+        this.hiss(0.6, 300, 1, 0, "lowpass");
+        this.blip(120, 30, 0.5, "sawtooth", 0.8);
+        break;
+      case "win":
+        n(72, 0, 0.15, "bell");
+        n(76, 0.1, 0.15, "bell");
+        n(79, 0.2, 0.15, "bell");
+        n(84, 0.3, 0.5, "bell", 0.8);
+        break;
+      case "lose":
+        n(67, 0, 0.25, "piano");
+        n(63, 0.22, 0.25, "piano");
+        n(60, 0.44, 0.6, "piano");
+        break;
+      case "life":
+        n(79, 0, 0.1, "bell");
+        n(86, 0.08, 0.3, "bell");
+        break;
+      case "line":
+        n(76, 0, 0.08, "pluck");
+        n(83, 0.05, 0.12, "pluck");
+        break;
+      case "tetris":
+        n(72, 0, 0.1, "pluck");
+        n(76, 0.06, 0.1, "pluck");
+        n(79, 0.12, 0.1, "pluck");
+        n(84, 0.18, 0.3, "bell");
+        break;
+      case "drop":
+        this.blip(300, 120, 0.08, "triangle", 0.5);
+        break;
+      case "rotate":
+        this.blip(900, 1000, 0.03, "square", 0.15);
+        break;
+      case "eat":
+        this.blip(600, 1200, 0.08, "square", 0.3);
+        break;
+      case "crash":
+        this.hiss(0.3, 600, 0.8);
+        this.blip(200, 50, 0.3, "sawtooth", 0.6);
+        break;
+      case "step":
+        this.hiss(0.04, 900, 0.3, 0, "lowpass");
+        break;
+      case "stumble":
+        this.hiss(0.18, 400, 0.6, 0, "lowpass");
+        this.blip(300, 120, 0.15, "triangle", 0.4);
+        break;
+      case "whistle":
+        this.blip(2400, 2600, 0.35, "sine", 0.5);
+        this.blip(2400, 2500, 0.2, "sine", 0.4, 0.4);
+        break;
+      case "cheer":
+        this.hiss(1.2, 1500, 0.5);
+        this.hiss(1, 3000, 0.3, 0.1);
+        break;
+      case "flipper":
+        this.blip(180, 90, 0.06, "square", 0.35);
+        this.hiss(0.04, 2000, 0.25);
+        break;
+      case "bumper":
+        this.blip(1300 + pitch * 50, 500, 0.1, "square", 0.45);
+        break;
+      case "launch":
+        this.hiss(0.3, 1200, 0.5);
+        this.blip(200, 900, 0.25, "sawtooth", 0.4);
+        break;
+      case "drain":
+        this.blip(500, 60, 0.6, "sawtooth", 0.5);
+        break;
+      case "target":
+        n(88, 0, 0.12, "bell", 0.5);
+        break;
+      case "card":
+        this.hiss(0.06, 3500, 0.5);
+        break;
+      case "shuffle":
+        for (let i = 0;i < 8; i++)
+          this.hiss(0.03, 3000, 0.3, i * 0.035);
+        break;
+      case "chip":
+        this.blip(2600, 2200, 0.03, "triangle", 0.35);
+        this.blip(3100, 2900, 0.03, "triangle", 0.25, 0.035);
+        break;
+      case "spin":
+        this.hiss(1.4, 700, 0.25);
+        break;
+      case "ball":
+        this.blip(2200 + Math.random() * 400, 1800, 0.02, "triangle", 0.25);
+        break;
+      case "reel":
+        this.blip(800, 760, 0.02, "square", 0.12);
+        break;
+      case "stop":
+        this.blip(400, 200, 0.07, "square", 0.45);
+        this.hiss(0.05, 1500, 0.3);
+        break;
+      case "coins":
+        for (let i = 0;i < 6; i++)
+          this.blip(2400 + i * 120, 2000, 0.05, "triangle", 0.3, i * 0.06);
+        break;
+      case "jackpot":
+        for (let i = 0;i < 12; i++)
+          n(72 + [0, 4, 7, 12][i % 4] + Math.floor(i / 4) * 12 - 12, i * 0.07, 0.1, "bell", 0.5);
+        break;
+      case "countdown":
+        n(81, 0, 0.12, "bell", 0.5);
+        break;
+      case "go":
+        n(93, 0, 0.3, "bell", 0.7);
+        n(88, 0, 0.3, "bell", 0.5);
+        break;
+    }
+  }
+  schedule(notes) {
+    for (const n of notes)
+      this.note(n.midi, n.at, n.dur, n.voice, n.vel ?? 0.6);
+  }
+  loop(bpm, bar, beatsPerBar = 4) {
+    const c = this.ctx;
+    if (!c)
+      return () => {};
+    let next = c.currentTime + 0.1, i = 0, alive = true;
+    const tick = () => {
+      if (!alive)
+        return;
+      while (next < c.currentTime + 0.35) {
+        const beat = 60 / bpm();
+        bar(i++, next, beat);
+        next += beat * beatsPerBar;
+      }
+    };
+    const id = window.setInterval(tick, 60);
+    tick();
+    const stop = () => {
+      alive = false;
+      window.clearInterval(id);
+    };
+    this.stops.push(stop);
+    return stop;
+  }
+  hush() {
+    for (const s of this.stops)
+      s();
+    this.stops = [];
+    const c = this.ctx;
+    if (c && this.musicBus) {
+      const g = this.musicBus.gain;
+      g.cancelScheduledValues(c.currentTime);
+      g.setValueAtTime(g.value, c.currentTime);
+      g.linearRampToValueAtTime(0, c.currentTime + 0.25);
+      const fresh = c.createGain();
+      fresh.gain.value = 0.55;
+      fresh.connect(this.master);
+      this.musicBus = fresh;
+    }
+  }
+  close() {
+    this.hush();
+    try {
+      this.ctx?.close();
+    } catch {}
+  }
+  async decode(data) {
+    if (!this.ctx)
+      return null;
+    try {
+      return await this.ctx.decodeAudioData(data.slice(0));
+    } catch {
+      return null;
+    }
+  }
+  playBuffer(buf, at, rate = 1, offset = 0) {
+    const c = this.ctx;
+    if (!c || !this.musicBus)
+      return () => {};
+    const src = c.createBufferSource();
+    src.buffer = buf;
+    src.playbackRate.value = rate;
+    const g = c.createGain();
+    g.gain.value = 1.4;
+    src.connect(g).connect(this.musicBus);
+    src.start(at, offset);
+    const stop = () => {
+      try {
+        src.stop();
+      } catch {}
+    };
+    this.stops.push(stop);
+    return stop;
+  }
+}
+var PROG = {
+  bright: { root: 60, chords: [[0, 4, 7], [-3, 0, 4], [-7, -3, 0], [-5, -1, 2]] },
+  drive: { root: 57, chords: [[0, 3, 7], [-4, 0, 3], [3, 7, 10], [-2, 2, 5]] },
+  tense: { root: 62, chords: [[0, 3, 7], [0, 3, 7], [-4, 0, 3], [-5, -1, 2]] },
+  lounge: { root: 60, chords: [[0, 4, 7, 11], [-3, 0, 4, 7], [2, 5, 9, 12], [-5, -1, 2, 5]] }
+};
+function backing(s, mood, speed = () => 1) {
+  const p = PROG[mood === "retro" ? "drive" : mood];
+  const base = mood === "lounge" ? 96 : mood === "tense" ? 92 : mood === "retro" ? 136 : mood === "drive" ? 128 : 120;
+  return s.loop(() => base * speed(), (i, at, beat) => {
+    const ch = p.chords[i % p.chords.length];
+    const root = p.root + ch[0] - 24;
+    if (mood === "lounge") {
+      const walk = [0, 4, 7, 9].map((x) => root + x);
+      walk.forEach((m, k) => s.note(m, at + k * beat, beat * 0.9, "bass", 0.55));
+      for (const k of [1, 3])
+        for (const x of ch)
+          s.note(p.root + x, at + k * beat, beat * 0.6, "piano", 0.25);
+      for (let k = 0;k < 4; k++)
+        s.drum("hat", at + k * beat + beat * 0.66, 0.25);
+      return;
+    }
+    if (mood === "tense") {
+      s.note(root, at, beat * 4, "pad", 0.5);
+      for (let k = 0;k < 8; k++)
+        s.note(p.root + ch[k % ch.length] + (k % 4 === 3 ? 12 : 0), at + k * beat / 2, beat / 2, "pluck", 0.25);
+      s.drum("kick", at, 0.5);
+      s.drum("kick", at + beat * 2.5, 0.35);
+      return;
+    }
+    const arp = [0, 1, 2, 1, 0, 1, 2, 1].map((k) => p.root + ch[k % ch.length] + (mood === "retro" ? 12 : 0));
+    arp.forEach((m, k) => s.note(m, at + k * beat / 2, beat / 2 * 0.9, mood === "retro" ? "lead" : "pluck", 0.22));
+    for (let k = 0;k < 4; k++)
+      s.note(root + (k % 2 ? 7 : 0), at + k * beat, beat * 0.8, "bass", 0.5);
+    for (let k = 0;k < 4; k++) {
+      s.drum(k % 2 ? "snare" : "kick", at + k * beat, 0.45);
+      s.drum("hat", at + k * beat + beat / 2, 0.3);
+    }
+  });
+}
+
+// src/frontend/arcade/games/blackjack.ts
+var RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
+var SUITS = ["♠", "♥", "♦", "♣"];
+function handValue(cards) {
+  let total = 0, aces = 0;
+  for (const c of cards) {
+    const v = c.r === 0 ? 11 : Math.min(10, c.r + 1);
+    total += v;
+    if (c.r === 0)
+      aces++;
+  }
+  while (total > 21 && aces) {
+    total -= 10;
+    aces--;
+  }
+  return { total, soft: aces > 0 };
+}
+function advice(player, dealerUp, canDouble) {
+  const { total, soft } = handValue(player);
+  const d = dealerUp.r === 0 ? 11 : Math.min(10, dealerUp.r + 1);
+  if (soft) {
+    if (total >= 19)
+      return "stand";
+    if (total === 18)
+      return d >= 9 ? "hit" : canDouble && d >= 3 && d <= 6 ? "double" : "stand";
+    return canDouble && d >= 4 && d <= 6 ? "double" : "hit";
+  }
+  if (total >= 17)
+    return "stand";
+  if (total >= 13)
+    return d <= 6 ? "stand" : "hit";
+  if (total === 12)
+    return d >= 4 && d <= 6 ? "stand" : "hit";
+  if (total === 11)
+    return canDouble ? "double" : "hit";
+  if (total === 10)
+    return canDouble && d <= 9 ? "double" : "hit";
+  if (total === 9)
+    return canDouble && d >= 3 && d <= 6 ? "double" : "hit";
+  return "hit";
+}
+var CSS2 = `
+.bj { position: absolute; inset: 0; display: grid; grid-template-rows: 1fr auto 1fr auto; padding: 18px 18px 14px; gap: 8px;
+  background: radial-gradient(ellipse 90% 70% at 50% 40%, #14794f, #0b4a31 60%, #062a1c); color: #f7f1e1; overflow: hidden; }
+.bj::before { content: ""; position: absolute; inset: 0; background-image: radial-gradient(rgba(255,255,255,.05) 1px, transparent 1px); background-size: 5px 5px; pointer-events: none; }
+.bj-arc { position: absolute; left: 50%; top: 46%; transform: translate(-50%, -50%); width: min(70%, 620px); text-align: center; font: 700 11px/1.6 "Bahnschrift", system-ui, sans-serif; letter-spacing: .3em; color: rgba(232, 195, 106, .55); text-transform: uppercase; pointer-events: none; }
+.bj:has(.bj-msg) .bj-arc { opacity: .12; }
+.bj-arc { transition: opacity .2s; }
+.bj-arc b { display: block; font-size: 15px; letter-spacing: .24em; color: rgba(232, 195, 106, .75); }
+.bj-side { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
+.bj-label { font: 700 11px "Bahnschrift", system-ui, sans-serif; letter-spacing: .2em; text-transform: uppercase; color: rgba(247,241,225,.65); display: flex; gap: 10px; align-items: center; }
+.bj-total { font: 800 15px ui-monospace, Consolas, monospace; padding: 2px 10px; border-radius: 999px; background: rgba(0,0,0,.35); color: #fff; letter-spacing: 0; }
+.bj-total.bust { background: #b8323f; } .bj-total.bj21 { background: #e8c36a; color: #2a1d05; }
+.bj-hand { display: flex; justify-content: center; min-height: calc(var(--cw) * 1.4); }
+.bj-card { width: var(--cw); height: calc(var(--cw) * 1.4); margin-left: calc(var(--cw) * -0.38); border-radius: calc(var(--cw) * .09); position: relative; perspective: 600px; animation: bj-deal .38s cubic-bezier(.2,.9,.25,1) both; }
+.bj-card:first-child { margin-left: 0; }
+@keyframes bj-deal { from { transform: translate(40vw, -30vh) rotate(-30deg); opacity: 0; } }
+.bj-face, .bj-back { position: absolute; inset: 0; border-radius: inherit; backface-visibility: hidden; transition: transform .45s cubic-bezier(.3,.7,.3,1); box-shadow: 0 6px 14px rgba(0,0,0,.4); }
+.bj-face { background: linear-gradient(160deg, #fffdf6, #efe7d4); color: #1c1c22; display: grid; }
+.bj-face.red { color: #c0243a; }
+.bj-face .c { position: absolute; font: 800 calc(var(--cw) * .2)/1 "Georgia", serif; text-align: center; }
+.bj-face .c.tl { top: 6%; left: 8%; } .bj-face .c.br { bottom: 6%; right: 8%; transform: rotate(180deg); }
+.bj-face .c i { display: block; font-style: normal; font-size: .8em; }
+.bj-face .pip { place-self: center; font-size: calc(var(--cw) * .5); line-height: 1; }
+.bj-back { transform: rotateY(180deg); background: repeating-linear-gradient(45deg, #8c1d2c 0 6px, #a32436 6px 12px); border: 4px solid #f3ead4; }
+.bj-card.down .bj-face { transform: rotateY(180deg); } .bj-card.down .bj-back { transform: rotateY(0); }
+.bj-card.peek .bj-back { opacity: .3; }
+.bj-card.peek .bj-face { transform: none; opacity: .85; outline: 2px dashed #e8c36a; }
+.bj-mid { display: flex; justify-content: center; align-items: center; gap: 18px; min-height: 44px; position: relative; }
+.bj-msg { font: 800 clamp(20px, 3.4vw, 30px) "Bahnschrift", system-ui, sans-serif; letter-spacing: .06em; text-transform: uppercase; text-shadow: 0 3px 12px rgba(0,0,0,.5); animation: bj-pop .4s cubic-bezier(.2,1.3,.4,1) both; }
+@keyframes bj-pop { from { transform: scale(.6); opacity: 0; } }
+.bj-msg.win { color: #ffe066; } .bj-msg.lose { color: #ff8a95; } .bj-msg.push { color: #cfe; }
+.bj-bar { position: relative; display: flex; justify-content: center; align-items: center; gap: 10px; flex-wrap: wrap; }
+.bj-btn { min-width: 96px; padding: 11px 16px; border-radius: 12px; border: 1px solid rgba(232,195,106,.45); background: rgba(0,0,0,.35); color: #f7f1e1; font: 700 14px "Bahnschrift", system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; cursor: pointer; transition: transform .1s, background .12s; }
+.bj-btn:hover:not(:disabled) { background: rgba(232,195,106,.18); }
+.bj-btn:disabled { opacity: .35; cursor: not-allowed; }
+.bj-btn.main { background: linear-gradient(180deg, #f1d488, #c99a3d); color: #2a1d05; border-color: transparent; }
+.bj-btn.tip { box-shadow: 0 0 0 2px #7cff9a, 0 0 18px rgba(124,255,154,.6); }
+.bj-btn kbd { opacity: .55; font: 600 10px ui-monospace, monospace; margin-left: 6px; }
+.bj-bets { display: flex; gap: 8px; align-items: center; }
+.bj-chip { width: 52px; height: 52px; border-radius: 50%; border: 0; cursor: pointer; display: grid; place-items: center; font: 800 12px ui-monospace, monospace; color: #1b1b1b;
+  background: radial-gradient(circle, #fff 0 36%, transparent 37%), repeating-conic-gradient(var(--chip) 0 22.5deg, #f6efe2 22.5deg 30deg); box-shadow: 0 4px 10px rgba(0,0,0,.45); transition: transform .12s; }
+.bj-chip.on { transform: translateY(-5px); box-shadow: 0 0 0 3px #ffe066, 0 8px 18px rgba(0,0,0,.5); }
+.bj-chip:disabled { opacity: .3; }
+.bj-info { font: 600 12px ui-monospace, monospace; color: rgba(247,241,225,.75); }
+.bj-tip { font: 600 12px system-ui, sans-serif; color: #b9ffcf; }
+`;
+var BLACKJACK = {
+  id: "blackjack",
+  title: "Blackjack",
+  theme: { bg: "#06170f", bg2: "#0f4a31", accent: "#e8c36a", accent2: "#c0243a" },
+  howTo: [
+    "Pick a bet, then get closer to 21 than the dealer without going over.",
+    "Hit for another card, Stand to stop, Double to double the bet for exactly one more card.",
+    "Aces count 1 or 11; face cards 10. Blackjack (an ace and a ten) pays extra."
+  ],
+  controls: "H hit · S stand · D double · Enter deal · 1–3 bet size",
+  start(kit) {
+    const L = kit.play.level;
+    const gamble = kit.play.mode === "gamble";
+    const start = gamble ? kit.play.stake : 100;
+    const hands = gamble ? kit.play.rounds ?? 5 : 5;
+    const edge = kit.play.edge ?? 0;
+    const hitsSoft17 = gamble ? edge > 0.025 : L >= 0.45;
+    const bjPays = (gamble ? edge > 0.045 : L >= 0.75) ? 1.2 : 1.5;
+    const peek = kit.aid("peek") > 0;
+    let reads = kit.aid("hint");
+    const unit = Math.max(1, Math.round(start / 10));
+    const betOptions = [unit, unit * 2, unit * 5];
+    let bet = betOptions[1];
+    let chips = start, hand = 0, phase = "bet", over = false;
+    let shoe = [];
+    let player = [], dealer = [], stake = 0, doubled = false;
+    let wins = 0, losses = 0, pushes = 0, blackjacks = 0, busts = 0, saved = 0;
+    let bestMoment = "";
+    const fill = () => {
+      shoe = shuffle(Array.from({ length: 312 }, (_, i) => ({ r: i % 13, s: Math.floor(i / 13) % 4 })), kit.rng);
+      kit.synth.fx("shuffle");
+    };
+    fill();
+    const draw = () => {
+      if (shoe.length < 20)
+        fill();
+      return shoe.pop();
+    };
+    const root = document.createElement("div");
+    root.className = "bj";
+    root.innerHTML = `<style>${CSS2}</style>
+      <div class="bj-arc"><b>Blackjack pays ${bjPays === 1.5 ? "3 to 2" : "6 to 5"}</b>Dealer ${hitsSoft17 ? "hits" : "stands on"} soft 17</div>
+      <div class="bj-side"><div class="bj-label">Dealer <span class="bj-total" data-dt></span></div><div class="bj-hand" data-dealer></div></div>
+      <div class="bj-mid" data-msg></div>
+      <div class="bj-side"><div class="bj-hand" data-player></div><div class="bj-label">You <span class="bj-total" data-pt></span></div></div>
+      <div class="bj-bar" data-bar></div>`;
+    kit.root.appendChild(root);
+    const $ = (s) => root.querySelector(s);
+    const size = () => {
+      const r = root.getBoundingClientRect();
+      root.style.setProperty("--cw", `${Math.max(48, Math.min(104, Math.min(r.width / 7, r.height / 6.2)))}px`);
+    };
+    const ro = new ResizeObserver(size);
+    ro.observe(root);
+    size();
+    const cardHtml = (c, down = false) => {
+      const red = c.s === 1 || c.s === 2;
+      return `<div class="bj-card${down ? peek ? " down peek" : " down" : ""}"><div class="bj-face${red ? " red" : ""}"><span class="c tl">${RANKS[c.r]}<i>${SUITS[c.s]}</i></span><span class="pip">${c.r >= 10 ? ["J", "Q", "K"][c.r - 10] : SUITS[c.s]}</span><span class="c br">${RANKS[c.r]}<i>${SUITS[c.s]}</i></span></div><div class="bj-back"></div></div>`;
+    };
+    const showHands = (hideHole) => {
+      const put = (el, cards, hide) => {
+        while (el.children.length > cards.length)
+          el.lastElementChild.remove();
+        for (let i = el.children.length;i < cards.length; i++)
+          el.insertAdjacentHTML("beforeend", cardHtml(cards[i], i === hide));
+        if (hide < 0)
+          el.querySelectorAll(".bj-card.down").forEach((x) => x.classList.remove("down", "peek"));
+      };
+      put($("[data-dealer]"), dealer, hideHole ? 1 : -1);
+      put($("[data-player]"), player, -1);
+      const pv = handValue(player), dv = handValue(hideHole ? dealer.slice(0, 1) : dealer);
+      const pt = $("[data-pt]"), dt = $("[data-dt]");
+      pt.textContent = player.length ? `${pv.soft && pv.total < 21 ? "soft " : ""}${pv.total}` : "";
+      pt.className = `bj-total${pv.total > 21 ? " bust" : pv.total === 21 && player.length === 2 ? " bj21" : ""}`;
+      dt.textContent = dealer.length ? hideHole ? `${dv.total}${peek ? ` · ${handValue(dealer).total}` : " + ?"}` : String(dv.total) : "";
+      dt.className = `bj-total${!hideHole && dv.total > 21 ? " bust" : ""}`;
+    };
+    const msg = (text, cls = "") => {
+      $("[data-msg]").innerHTML = text ? `<div class="bj-msg ${cls}">${text}</div>` : "";
+    };
+    const sync = () => {
+      kit.chips(chips);
+      if (!gamble)
+        kit.track(clamp(chips / (start * 2)));
+      kit.status(`Hand ${Math.min(hand + 1, hands)} of ${hands}
+Chips ${Math.round(chips)}`);
+    };
+    const tip = () => reads > 0 && phase === "play" ? advice(player, dealer[0], player.length === 2 && chips >= stake) : null;
+    const bar = () => {
+      const b = $("[data-bar]");
+      if (phase === "bet") {
+        b.innerHTML = `<div class="bj-bets">${betOptions.map((x, i) => `<button class="bj-chip${x === bet ? " on" : ""}" style="--chip:${["#c0392b", "#1f6fbf", "#1d8f4e"][i]}" data-bet="${x}" ${x > chips ? "disabled" : ""}>${x}</button>`).join("")}</div>
+          <button class="bj-btn main" data-deal ${bet > chips ? "disabled" : ""}>Deal <kbd>Enter</kbd></button>
+          ${gamble && hand > 0 ? `<button class="bj-btn" data-leave>Cash out</button>` : ""}
+          <span class="bj-info">${kit.play.currency ?? ""}${Math.round(chips)} in chips</span>`;
+      } else if (phase === "play") {
+        const t = tip();
+        b.innerHTML = `<button class="bj-btn main${t === "hit" ? " tip" : ""}" data-hit>Hit <kbd>H</kbd></button>
+          <button class="bj-btn${t === "stand" ? " tip" : ""}" data-stand>Stand <kbd>S</kbd></button>
+          <button class="bj-btn${t === "double" ? " tip" : ""}" data-double ${player.length === 2 && chips >= stake ? "" : "disabled"}>Double <kbd>D</kbd></button>
+          ${t ? `<span class="bj-tip">✦ A whisper: ${t}</span>` : ""}`;
+      } else
+        b.innerHTML = `<span class="bj-info">…</span>`;
+    };
+    const deal = () => {
+      if (over || phase !== "bet" || bet > chips)
+        return;
+      stake = bet;
+      chips -= stake;
+      doubled = false;
+      player = [draw(), draw()];
+      dealer = [draw(), draw()];
+      $("[data-dealer]").innerHTML = "";
+      $("[data-player]").innerHTML = "";
+      kit.synth.fx("card");
+      setTimeout(() => kit.synth.fx("card"), 120);
+      phase = "play";
+      msg("");
+      showHands(true);
+      sync();
+      const pv = handValue(player).total, dv = handValue(dealer).total;
+      if (pv === 21 || dv === 21) {
+        setTimeout(() => settle(), 600);
+        return;
+      }
+      bar();
+    };
+    const hit = () => {
+      if (phase !== "play")
+        return;
+      if (reads > 0 && tip())
+        reads--;
+      player.push(draw());
+      kit.synth.fx("card");
+      showHands(true);
+      const v = handValue(player).total;
+      if (v > 21) {
+        if (kit.lives.spend("Took it back!")) {
+          player.pop();
+          saved++;
+          showHands(true);
+          bar();
+          return;
+        }
+        busts++;
+        settle();
+        return;
+      }
+      if (v === 21) {
+        stand();
+        return;
+      }
+      bar();
+    };
+    const stand = () => {
+      if (phase !== "play")
+        return;
+      if (reads > 0 && tip())
+        reads--;
+      phase = "dealer";
+      bar();
+      showHands(false);
+      const step = () => {
+        const d = handValue(dealer);
+        if (d.total < 17 || d.total === 17 && d.soft && hitsSoft17) {
+          dealer.push(draw());
+          kit.synth.fx("card");
+          showHands(false);
+          setTimeout(step, 520);
+        } else
+          settle();
+      };
+      setTimeout(step, 520);
+    };
+    const double = () => {
+      if (phase !== "play" || player.length !== 2 || chips < stake)
+        return;
+      if (reads > 0 && tip())
+        reads--;
+      chips -= stake;
+      stake *= 2;
+      doubled = true;
+      kit.synth.fx("chip");
+      player.push(draw());
+      kit.synth.fx("card");
+      showHands(true);
+      if (handValue(player).total > 21) {
+        if (kit.lives.spend("Took it back!")) {
+          player.pop();
+          saved++;
+          showHands(true);
+          stand();
+          return;
+        }
+        busts++;
+        settle();
+        return;
+      }
+      stand();
+    };
+    const settle = () => {
+      phase = "done";
+      showHands(false);
+      const p = handValue(player), d = handValue(dealer);
+      const pBJ = p.total === 21 && player.length === 2, dBJ = d.total === 21 && dealer.length === 2;
+      let won = 0, text = "", cls = "";
+      if (p.total > 21) {
+        text = "Bust";
+        cls = "lose";
+        losses++;
+      } else if (pBJ && !dBJ) {
+        won = stake + stake * bjPays;
+        text = "Blackjack!";
+        cls = "win";
+        wins++;
+        blackjacks++;
+        bestMoment = "dealt a natural blackjack";
+      } else if (dBJ && !pBJ) {
+        text = "Dealer blackjack";
+        cls = "lose";
+        losses++;
+      } else if (d.total > 21) {
+        won = stake * 2;
+        text = "Dealer busts";
+        cls = "win";
+        wins++;
+      } else if (p.total > d.total) {
+        won = stake * 2;
+        text = "You win";
+        cls = "win";
+        wins++;
+        if (doubled)
+          bestMoment = "doubled down and won";
+      } else if (p.total < d.total) {
+        text = "Dealer wins";
+        cls = "lose";
+        losses++;
+      } else {
+        won = stake;
+        text = "Push";
+        cls = "push";
+        pushes++;
+      }
+      chips += won;
+      msg(`${text}${won > stake ? ` · +${Math.round(won - stake)}` : ""}`, cls);
+      kit.synth.fx(cls === "win" ? pBJ ? "jackpot" : "coins" : cls === "lose" ? "miss" : "click");
+      if (cls === "win" && doubled)
+        kit.banner("Doubled!", "gold");
+      hand++;
+      sync();
+      setTimeout(() => {
+        if (over)
+          return;
+        if (hand >= hands || chips < betOptions[0]) {
+          finish();
+          return;
+        }
+        phase = "bet";
+        if (bet > chips)
+          bet = betOptions.filter((x) => x <= chips).pop() ?? betOptions[0];
+        bar();
+      }, 1300);
+    };
+    const finish = () => {
+      if (over)
+        return;
+      over = true;
+      const beats = [];
+      if (wins > losses + 1)
+        beats.push("the cards ran their way");
+      else if (losses > wins + 1)
+        beats.push("the cards went against them");
+      else
+        beats.push("a close-run thing at the table");
+      if (bestMoment)
+        beats.push(bestMoment);
+      if (busts >= 2)
+        beats.push("pushed their luck too far more than once");
+      if (saved)
+        beats.push("got away with a bad call");
+      kit.finish({ chips, score: clamp(chips / (start * 2)), beats, detail: `${wins} won, ${losses} lost${pushes ? `, ${pushes} pushed` : ""}${blackjacks ? `, ${blackjacks} blackjack` : ""}` });
+    };
+    root.addEventListener("click", (e) => {
+      if (kit.paused)
+        return;
+      const t = e.target;
+      const b = t.closest("[data-bet]");
+      if (b) {
+        bet = Number(b.dataset.bet);
+        kit.synth.fx("chip");
+        bar();
+        return;
+      }
+      if (t.closest("[data-deal]"))
+        deal();
+      else if (t.closest("[data-hit]"))
+        hit();
+      else if (t.closest("[data-stand]"))
+        stand();
+      else if (t.closest("[data-double]"))
+        double();
+      else if (t.closest("[data-leave]"))
+        finish();
+    });
+    kit.onKey((e, down) => {
+      if (!down || e.repeat)
+        return false;
+      const k = e.key.toLowerCase();
+      if (k === "enter" || k === " ") {
+        if (phase === "bet")
+          deal();
+        return true;
+      }
+      if (k === "h") {
+        hit();
+        return true;
+      }
+      if (k === "s") {
+        stand();
+        return true;
+      }
+      if (k === "d") {
+        double();
+        return true;
+      }
+      if (/^[1-3]$/.test(k) && phase === "bet") {
+        const x = betOptions[Number(k) - 1];
+        if (x <= chips) {
+          bet = x;
+          kit.synth.fx("chip");
+          bar();
+        }
+        return true;
+      }
+      return false;
+    });
+    withMusic(kit, () => backing(kit.synth, "lounge"));
+    kit.onQuit(() => finish());
+    bar();
+    sync();
+    msg(`Place your bet`, "push");
+    return () => {
+      ro.disconnect();
+      root.remove();
+    };
+  }
+};
+
+// src/frontend/arcade/games/mines.ts
+var CSS3 = `
+.mn { position: absolute; inset: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 10px; padding: 14px; align-items: center; justify-items: center; }
+.mn-bar { width: min(100%, 720px); display: flex; align-items: center; gap: 12px; font-variant-numeric: tabular-nums; }
+.mn-time { flex: 1; height: 8px; border-radius: 4px; background: rgba(255,255,255,.08); overflow: hidden; }
+.mn-time i { display: block; height: 100%; background: linear-gradient(90deg, #ffb547, #ff6a3d); transition: width .25s linear; }
+.mn-time.low i { background: #ff5d6c; animation: mn-blink .5s steps(2) infinite; }
+@keyframes mn-blink { 50% { opacity: .45; } }
+.mn-count { font-family: ui-monospace, Consolas, monospace; font-weight: 800; font-size: 15px; min-width: 64px; text-align: center; color: #ffd9a0; }
+.mn-board { display: grid; gap: 3px; padding: 8px; border-radius: 14px; background: #10141b; box-shadow: inset 0 0 0 1px rgba(255,255,255,.06), 0 20px 50px rgba(0,0,0,.5); touch-action: manipulation; }
+.mn-c { position: relative; border: 0; padding: 0; border-radius: 6px; display: grid; place-items: center; font: 800 calc(var(--cell) * .48)/1 "Bahnschrift", "Segoe UI", sans-serif;
+  background: linear-gradient(160deg, #5d6b80, #3c4657); box-shadow: inset 0 2px 0 rgba(255,255,255,.22), inset 0 -3px 0 rgba(0,0,0,.35); color: #fff; width: var(--cell); height: var(--cell); transition: transform 90ms, background 120ms; }
+.mn-c:hover:not(.open) { background: linear-gradient(160deg, #71819a, #4a5568); }
+.mn-c:active:not(.open) { transform: scale(.94); }
+.mn-c.cur { outline: 2px solid #ffb547; outline-offset: 1px; }
+.mn-c.open { background: #1b212b; box-shadow: inset 0 0 0 1px rgba(255,255,255,.04); animation: mn-pop .18s ease-out both; }
+@keyframes mn-pop { from { transform: scale(.82); filter: brightness(1.8); } }
+.mn-c.flag::after { content: "⚑"; color: #ff6a3d; font-size: calc(var(--cell) * .55); text-shadow: 0 1px 0 rgba(0,0,0,.4); }
+.mn-c.mine { background: radial-gradient(circle, #ff6a3d 0 30%, #7a1d1d 70%); }
+.mn-c.mine::after { content: "✹"; color: #1a0a0a; font-size: calc(var(--cell) * .6); }
+.mn-c.boom { background: radial-gradient(circle, #fff 0 15%, #ffcf3d 35%, #ff3d3d 70%); animation: mn-boom .5s ease-out both; z-index: 2; }
+@keyframes mn-boom { from { transform: scale(1.8); } }
+.mn-c.saved { background: radial-gradient(circle, #4fe0a4 0 30%, #11533c 70%); }
+.mn-c.saved::after { content: "✹"; color: #062b1e; }
+.mn-c.hinted { box-shadow: 0 0 0 2px #4fe0a4, 0 0 16px #4fe0a4; }
+.mn-c.wrong::after { content: "✕"; color: #ff5d6c; }
+.mn-n1 { color: #6cc7ff; } .mn-n2 { color: #4fe0a4; } .mn-n3 { color: #ff7a6b; } .mn-n4 { color: #b18cff; } .mn-n5 { color: #ffb547; } .mn-n6 { color: #4ee6e6; } .mn-n7 { color: #fff; } .mn-n8 { color: #aaa; }
+.mn-tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: center; }
+.mn-tool { padding: 8px 14px; border-radius: 10px; border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.05); color: #f6f2ea; font: 600 13px system-ui, sans-serif; }
+.mn-tool.on { background: #ffb547; color: #1a1205; border-color: transparent; }
+.mn-tool:disabled { opacity: .4; }
+`;
+var MINES = {
+  id: "mines",
+  title: "Mines",
+  theme: { bg: "#0b0e13", bg2: "#232a35", accent: "#ffb547", accent2: "#ff6a3d" },
+  howTo: [
+    "Open squares; a number says how many of the 8 around it are mines.",
+    "Flag mines you're sure of. Click a number with its mines all flagged to open the rest.",
+    "Clear every safe square before time runs out. The more you clear, the better it goes."
+  ],
+  controls: "Click to open · right-click or long-press to flag · arrows + Space / F",
+  start(kit) {
+    const L = kit.play.level;
+    const rows = 8 + Math.round(L * 3), cols = rows + 3;
+    const total = rows * cols;
+    const mines = Math.round(total * (0.11 + 0.11 * L));
+    const safe = total - mines;
+    const limit = Math.round((30 + safe * 0.7) * (1.15 - 0.3 * L) * (1 + kit.aid("time") / 100));
+    let hints = kit.aid("hint");
+    const cell = { mine: new Array(total).fill(false), open: new Array(total).fill(false), flag: new Array(total).fill(false), n: new Array(total).fill(0) };
+    let placed = false, opened = 0, over = false, timeLeft = limit, cur = Math.floor(total / 2), flagMode = false, saves = 0;
+    const root = document.createElement("div");
+    root.className = "mn";
+    root.innerHTML = `<style>${CSS3}</style>
+      <div class="mn-bar"><span class="mn-count" data-mines>✹ ${mines}</span><div class="mn-time"><i style="width:100%"></i></div><span class="mn-count" data-time>${limit}s</span></div>
+      <div class="mn-board" style="grid-template-columns:repeat(${cols}, var(--cell))"></div>
+      <div class="mn-tools"><button class="mn-tool" data-flagmode>⚑ Flag mode</button><button class="mn-tool" data-hint ${hints ? "" : "disabled"}>✦ Hint (${hints})</button></div>`;
+    kit.root.appendChild(root);
+    const board = root.querySelector(".mn-board");
+    const timeBar = root.querySelector(".mn-time");
+    const timeTxt = root.querySelector("[data-time]");
+    const mineTxt = root.querySelector("[data-mines]");
+    const hintBtn = root.querySelector("[data-hint]");
+    const flagBtn = root.querySelector("[data-flagmode]");
+    board.innerHTML = Array.from({ length: total }, (_, i) => `<button class="mn-c" data-i="${i}" aria-label="Square"></button>`).join("");
+    const btns = [...board.children];
+    const size = () => {
+      const r = root.getBoundingClientRect();
+      const s = Math.floor(Math.min((r.width - 40) / cols, (r.height - 130) / rows)) - 3;
+      board.style.setProperty("--cell", `${Math.max(22, Math.min(54, s))}px`);
+    };
+    const ro = new ResizeObserver(size);
+    ro.observe(root);
+    size();
+    const around = (i) => {
+      const x = i % cols, y = Math.floor(i / cols), out = [];
+      for (let dy = -1;dy <= 1; dy++)
+        for (let dx = -1;dx <= 1; dx++) {
+          if (!dx && !dy)
+            continue;
+          const nx = x + dx, ny = y + dy;
+          if (nx >= 0 && ny >= 0 && nx < cols && ny < rows)
+            out.push(ny * cols + nx);
+        }
+      return out;
+    };
+    const place = (first) => {
+      const keep = new Set([first, ...around(first)]);
+      const pool = shuffle([...Array(total).keys()].filter((i) => !keep.has(i)), kit.rng).slice(0, mines);
+      for (const i of pool)
+        cell.mine[i] = true;
+      for (let i = 0;i < total; i++)
+        cell.n[i] = around(i).filter((j) => cell.mine[j]).length;
+      placed = true;
+    };
+    const score = () => opened >= safe ? 1 : Math.pow(opened / safe, 1.6);
+    const paint = (i) => {
+      const b = btns[i];
+      b.className = "mn-c" + (i === cur ? " cur" : "");
+      b.textContent = "";
+      if (cell.open[i]) {
+        b.classList.add("open");
+        if (cell.n[i]) {
+          b.textContent = String(cell.n[i]);
+          b.classList.add(`mn-n${cell.n[i]}`);
+        }
+      } else if (cell.flag[i])
+        b.classList.add("flag");
+    };
+    const flood = (start) => {
+      const stack = [start];
+      let k = 0;
+      while (stack.length) {
+        const i = stack.pop();
+        if (cell.open[i] || cell.flag[i] || cell.mine[i])
+          continue;
+        cell.open[i] = true;
+        opened++;
+        k++;
+        paint(i);
+        if (cell.n[i] === 0)
+          stack.push(...around(i));
+      }
+      return k;
+    };
+    const progress = () => {
+      kit.score(score());
+      kit.status(`${opened} / ${safe} safe
+${cell.flag.filter(Boolean).length} flagged`);
+      const elapsed = 1 - timeLeft / limit;
+      kit.track(clamp(opened / safe / Math.max(0.15, elapsed)));
+      mineTxt.textContent = `✹ ${mines - cell.flag.filter(Boolean).length}`;
+      if (opened >= safe)
+        finish("cleared");
+    };
+    const open = (i) => {
+      if (over || kit.paused || cell.open[i] || cell.flag[i])
+        return;
+      if (!placed)
+        place(i);
+      if (cell.mine[i]) {
+        kit.shake(1.6);
+        kit.synth.fx("boom");
+        if (kit.lives.spend("Shielded!")) {
+          saves++;
+          cell.flag[i] = true;
+          btns[i].className = "mn-c saved";
+          return;
+        }
+        btns[i].classList.add("boom");
+        finish("boom", i);
+        return;
+      }
+      const k = flood(i);
+      kit.synth.fx("reveal", Math.min(12, k));
+      progress();
+    };
+    const chord = (i) => {
+      if (!cell.open[i] || !cell.n[i])
+        return;
+      const nb = around(i);
+      if (nb.filter((j) => cell.flag[j]).length !== cell.n[i])
+        return;
+      for (const j of nb)
+        if (!cell.open[j] && !cell.flag[j])
+          open(j);
+    };
+    const flag = (i) => {
+      if (over || kit.paused || cell.open[i])
+        return;
+      cell.flag[i] = !cell.flag[i];
+      kit.synth.fx("flag");
+      paint(i);
+      progress();
+    };
+    const hint = () => {
+      if (!hints || over || kit.paused)
+        return;
+      if (!placed) {
+        open(cur);
+      }
+      const edge = [...Array(total).keys()].filter((i) => !cell.open[i] && !cell.mine[i] && !cell.flag[i] && around(i).some((j) => cell.open[j]));
+      const pool = edge.length ? edge : [...Array(total).keys()].filter((i) => !cell.open[i] && !cell.mine[i]);
+      if (!pool.length)
+        return;
+      const i = pool[Math.floor(kit.rng() * pool.length)];
+      hints--;
+      hintBtn.textContent = `✦ Hint (${hints})`;
+      hintBtn.disabled = !hints;
+      open(i);
+      btns[i].classList.add("hinted");
+      setTimeout(() => btns[i].classList.remove("hinted"), 900);
+    };
+    const finish = (how, at) => {
+      if (over)
+        return;
+      over = true;
+      for (let i = 0;i < total; i++) {
+        if (cell.mine[i] && !cell.flag[i] && i !== at)
+          btns[i].classList.add("mine");
+        if (cell.flag[i] && !cell.mine[i])
+          btns[i].classList.add("wrong");
+      }
+      const s = score();
+      kit.score(s);
+      if (how === "cleared") {
+        kit.synth.fx("win");
+        kit.banner("Cleared!", "good");
+      } else if (how === "time") {
+        kit.synth.fx("lose");
+        kit.banner("Time!", "bad");
+      }
+      const beats = how === "cleared" ? [timeLeft > limit * 0.4 ? "cleared it with time to spare" : timeLeft < limit * 0.1 ? "cleared it with seconds left" : "cleared it"] : how === "boom" ? [s > 0.7 ? "one wrong move, late, when it was nearly done" : "one wrong move"] : ["ran out of time"];
+      if (saves)
+        beats.push("got away with a mistake");
+      kit.finish({ score: s, beats, detail: `${opened} of ${safe} safe squares, ${mines} mines` });
+    };
+    let press = null, swallow = false;
+    board.addEventListener("pointerdown", (e) => {
+      swallow = false;
+      if (e.pointerType === "mouse")
+        return;
+      const b = e.target.closest("[data-i]");
+      if (!b)
+        return;
+      const i = Number(b.dataset.i);
+      press = window.setTimeout(() => {
+        press = null;
+        swallow = true;
+        flag(i);
+      }, 380);
+    });
+    const cancel = () => {
+      if (press !== null) {
+        clearTimeout(press);
+        press = null;
+      }
+    };
+    board.addEventListener("pointerup", cancel);
+    board.addEventListener("pointercancel", cancel);
+    board.addEventListener("click", (e) => {
+      if (swallow) {
+        swallow = false;
+        return;
+      }
+      const b = e.target.closest("[data-i]");
+      if (!b)
+        return;
+      const i = Number(b.dataset.i);
+      const old = cur;
+      cur = i;
+      paint(old);
+      paint(i);
+      if (flagMode && !cell.open[i])
+        flag(i);
+      else if (cell.open[i])
+        chord(i);
+      else
+        open(i);
+    });
+    board.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      const b = e.target.closest("[data-i]");
+      if (b && !swallow)
+        flag(Number(b.dataset.i));
+    });
+    hintBtn.addEventListener("click", hint);
+    flagBtn.addEventListener("click", () => {
+      flagMode = !flagMode;
+      flagBtn.classList.toggle("on", flagMode);
+    });
+    kit.onKey((e, down) => {
+      if (!down)
+        return false;
+      const k = e.key.toLowerCase();
+      const x = cur % cols, y = Math.floor(cur / cols);
+      const move = (nx, ny) => {
+        const old = cur;
+        cur = Math.max(0, Math.min(rows - 1, ny)) * cols + Math.max(0, Math.min(cols - 1, nx));
+        paint(old);
+        paint(cur);
+      };
+      if (k === "arrowleft")
+        move(x - 1, y);
+      else if (k === "arrowright")
+        move(x + 1, y);
+      else if (k === "arrowup")
+        move(x, y - 1);
+      else if (k === "arrowdown")
+        move(x, y + 1);
+      else if (k === " " || k === "enter") {
+        if (cell.open[cur])
+          chord(cur);
+        else
+          open(cur);
+      } else if (k === "f")
+        flag(cur);
+      else if (k === "h")
+        hint();
+      else
+        return false;
+      return true;
+    });
+    kit.onQuit(() => finish("time"));
+    let acc = 0;
+    kit.loop((dt) => {
+      if (over)
+        return;
+      if (!placed)
+        return;
+      timeLeft = Math.max(0, timeLeft - dt);
+      acc += dt;
+      if (acc > 0.2) {
+        acc = 0;
+        timeBar.querySelector("i").setAttribute("style", `width:${timeLeft / limit * 100}%`);
+        timeBar.classList.toggle("low", timeLeft < Math.min(10, limit * 0.2));
+        timeTxt.textContent = `${Math.ceil(timeLeft)}s`;
+      }
+      if (timeLeft <= 0)
+        finish("time");
+    });
+    progress();
+    kit.status(`${safe} safe squares
+clock starts on your first`);
+    return () => {
+      ro.disconnect();
+      root.remove();
+    };
+  }
+};
+
+// src/frontend/arcade/games/pinball.ts
+var TW = 400;
+var TH = 720;
+var BR = 9;
+function table() {
+  const segs = [];
+  const poly = (pts, e = 0.45) => {
+    for (let i = 0;i < pts.length - 1; i++)
+      segs.push({ a: { x: pts[i][0], y: pts[i][1] }, b: { x: pts[i + 1][0], y: pts[i + 1][1] }, e });
+  };
+  const arc = [];
+  for (let k = 0;k <= 18; k++) {
+    const a = Math.PI + k / 18 * Math.PI;
+    arc.push([200 + Math.cos(a) * 182, 150 + Math.sin(a) * 135]);
+  }
+  poly([[18, 600], [18, 150], ...arc.slice(1, -1), [382, 150], [382, 720]]);
+  poly([[350, 720], [350, 230]]);
+  segs.push({ a: { x: 350, y: 700 }, b: { x: 382, y: 700 }, e: 0.15 });
+  poly([[18, 560], [112, 636]]);
+  poly([[350, 560], [288, 636]]);
+  segs.push({ a: { x: 62, y: 470 }, b: { x: 104, y: 560 }, kick: 520, e: 0.9, kind: "sling" });
+  segs.push({ a: { x: 306, y: 470 }, b: { x: 264, y: 560 }, kick: 520, e: 0.9, kind: "sling" });
+  poly([[62, 470], [62, 548], [104, 560]], 0.4);
+  poly([[306, 470], [306, 548], [264, 560]], 0.4);
+  return segs;
+}
+var PINBALL = {
+  id: "pinball",
+  title: "Pinball",
+  theme: { bg: "#0c0716", bg2: "#2b1036", accent: "#ff8a3d", accent2: "#3de1ff" },
+  howTo: [
+    "Hold Space to pull the plunger and let go to launch.",
+    "Flip to keep the ball alive. Bumpers and slingshots score; light all three top lanes to raise the multiplier.",
+    "Reach the target score before your last ball drains (or time runs out)."
+  ],
+  controls: "Z / ← left flipper · M / → right flipper · Space launch · touch the left or right half",
+  start(kit) {
+    const L = kit.play.level;
+    const goal = Math.round((4000 + L * 14000) / 500) * 500;
+    let balls = 3;
+    let savers = kit.aid("saver") + (L < 0.4 ? 1 : 0);
+    const limit = 150;
+    const flipLen = 74 * (1 + kit.aid("size") / 100) * (1.06 - 0.12 * L);
+    const segs = table();
+    const bumpers = [{ x: 140, y: 210, r: 24, lit: 0 }, { x: 258, y: 210, r: 24, lit: 0 }, { x: 199, y: 292, r: 24, lit: 0 }];
+    const lanes = [{ x: 132, y: 92, on: false, flash: 0 }, { x: 200, y: 80, on: false, flash: 0 }, { x: 268, y: 92, on: false, flash: 0 }];
+    const targets = [{ x: 30, y: 330, hit: 0 }, { x: 370 - 30, y: 330, hit: 0 }];
+    const flippers = [
+      { pivot: { x: 112, y: 640 }, len: flipLen, rest: 0.52, up: -0.48, ang: 0.52, w: 0, side: 1, pressed: false },
+      { pivot: { x: 288, y: 640 }, len: flipLen, rest: 0.52, up: -0.48, ang: 0.52, w: 0, side: -1, pressed: false }
+    ];
+    let ball = { x: 366, y: 690, vx: 0, vy: 0, live: false, inLane: true };
+    let points = 0, mult = 1, timeLeft = limit, plunge = 0, pulling = false, over = false, launched = 0, drained = 0, bestBall = 0, ballPts = 0;
+    const c = kit.canvas();
+    const g = c.g;
+    const sparks = new Sparks, floats = new Floaters;
+    const trail = [];
+    const tip = (f) => ({ x: f.pivot.x + Math.cos(f.ang) * f.len * f.side, y: f.pivot.y + Math.sin(f.ang) * f.len });
+    const add = (n, at, color = "#ffe066") => {
+      const v = n * mult;
+      points += v;
+      ballPts += v;
+      floats.add(at.x, at.y - 10, `+${v}`, color, 13);
+      kit.score(clamp(points / goal));
+      kit.status(`${points.toLocaleString()} / ${goal.toLocaleString()}
+Ball ${Math.min(3, drained + 1)} · ×${mult}`);
+      if (points >= goal && !over) {
+        kit.banner("Target reached!", "good");
+        kit.synth.fx("win");
+        setTimeout(() => finish("goal"), 900);
+      }
+    };
+    const newBall = () => {
+      ball = { x: 366, y: 690, vx: 0, vy: 0, live: true, inLane: true };
+      plunge = 0;
+      ballPts = 0;
+    };
+    newBall();
+    const collideSeg = (s, vel, radius = BR) => {
+      const ax = s.a.x, ay = s.a.y, bx = s.b.x, by = s.b.y;
+      const dx = bx - ax, dy = by - ay;
+      const len2 = dx * dx + dy * dy;
+      const k = clamp(((ball.x - ax) * dx + (ball.y - ay) * dy) / len2);
+      const px = ax + dx * k, py = ay + dy * k;
+      let nx = ball.x - px, ny = ball.y - py;
+      const d = Math.hypot(nx, ny);
+      if (d >= radius || d === 0)
+        return false;
+      nx /= d;
+      ny /= d;
+      ball.x = px + nx * radius;
+      ball.y = py + ny * radius;
+      const u = vel ? vel({ x: px, y: py }) : { x: 0, y: 0 };
+      const rvx = ball.vx - u.x, rvy = ball.vy - u.y;
+      const vn = rvx * nx + rvy * ny;
+      if (vn < 0) {
+        const e = s.e ?? 0.45;
+        ball.vx -= (1 + e) * vn * nx;
+        ball.vy -= (1 + e) * vn * ny;
+        if (s.kick) {
+          ball.vx += nx * s.kick;
+          ball.vy += ny * s.kick;
+          kit.synth.fx("bumper", 4);
+          add(50, { x: px, y: py }, "#3de1ff");
+          sparks.burst(px, py, "#3de1ff", 8, 180);
+        }
+      }
+      return true;
+    };
+    const physics = (dt) => {
+      for (const f of flippers) {
+        const target = f.pressed ? f.up : f.rest;
+        const speed = 22;
+        const prev = f.ang;
+        f.ang = f.ang < target ? Math.min(target, f.ang + speed * dt) : Math.max(target, f.ang - speed * dt);
+        f.w = (f.ang - prev) / dt;
+      }
+      if (!ball.live)
+        return;
+      ball.vy += 820 * dt;
+      ball.x += ball.vx * dt;
+      ball.y += ball.vy * dt;
+      const sp = Math.hypot(ball.vx, ball.vy);
+      if (sp > 1600) {
+        ball.vx *= 1600 / sp;
+        ball.vy *= 1600 / sp;
+      }
+      if (ball.inLane && ball.x < 345)
+        ball.inLane = false;
+      for (const s of segs)
+        collideSeg(s);
+      for (const b of bumpers) {
+        const dx = ball.x - b.x, dy = ball.y - b.y, d = Math.hypot(dx, dy);
+        if (d < b.r + BR) {
+          const nx = dx / d, ny = dy / d;
+          ball.x = b.x + nx * (b.r + BR);
+          ball.y = b.y + ny * (b.r + BR);
+          const vn = ball.vx * nx + ball.vy * ny;
+          if (vn < 0) {
+            ball.vx -= 2 * vn * nx;
+            ball.vy -= 2 * vn * ny;
+          }
+          ball.vx += nx * 380;
+          ball.vy += ny * 380;
+          b.lit = 1;
+          kit.synth.fx("bumper", bumpers.indexOf(b) * 3);
+          sparks.burst(ball.x - nx * BR, ball.y - ny * BR, "#ff8a3d", 10, 200);
+          add(100, { x: b.x, y: b.y - b.r }, "#ff8a3d");
+        }
+      }
+      for (const f of flippers) {
+        const t = tip(f);
+        const vel = (p) => {
+          const rx = p.x - f.pivot.x, ry = p.y - f.pivot.y;
+          const w = f.w;
+          return f.side === 1 ? { x: -w * ry, y: w * rx } : { x: w * ry, y: -w * rx };
+        };
+        collideSeg({ a: f.pivot, b: t, e: 0.25 }, vel, BR + 6);
+      }
+      for (const l of lanes) {
+        if (Math.hypot(ball.x - l.x, ball.y - l.y) < 16 && l.flash <= 0) {
+          l.flash = 0.6;
+          if (!l.on) {
+            l.on = true;
+            kit.synth.fx("target");
+            add(250, l, "#7cff6b");
+          }
+          if (lanes.every((x) => x.on)) {
+            for (const x of lanes)
+              x.on = false;
+            mult = Math.min(5, mult + 1);
+            kit.banner(`Multiplier ×${mult}`, "gold");
+            kit.synth.fx("combo");
+            add(1000, { x: 200, y: 120 }, "#ffe066");
+          }
+        }
+      }
+      for (const tg of targets) {
+        if (Math.abs(ball.x - tg.x) < 16 && Math.abs(ball.y - tg.y) < 30 && tg.hit <= 0) {
+          tg.hit = 0.8;
+          ball.vx = -ball.vx * 0.8 + (tg.x < 200 ? 200 : -200);
+          kit.synth.fx("target", 5);
+          add(500, tg, "#ff5fa2");
+        }
+      }
+      if (ball.y > TH + 30)
+        drain();
+    };
+    const drain = () => {
+      ball.live = false;
+      kit.synth.fx("drain");
+      if (savers > 0 && performance.now() - launched < 9000) {
+        savers--;
+        kit.banner("Ball saved!", "gold");
+        setTimeout(newBall, 500);
+        return;
+      }
+      drained++;
+      bestBall = Math.max(bestBall, ballPts);
+      kit.shake(0.8);
+      if (drained >= balls) {
+        if (kit.lives.spend("Extra ball!")) {
+          balls++;
+          setTimeout(newBall, 700);
+          return;
+        }
+        finish("drained");
+        return;
+      }
+      kit.banner(`Ball ${drained + 1}`, "info");
+      setTimeout(newBall, 700);
+    };
+    const finish = (how) => {
+      if (over)
+        return;
+      over = true;
+      bestBall = Math.max(bestBall, ballPts);
+      const s = clamp(points / goal);
+      kit.score(s);
+      const beats = how === "goal" ? [drained === 0 ? "did it all on the first ball" : "got there"] : how === "time" ? ["time ran out"] : [s > 0.8 ? "the last ball drained just short" : "the balls kept draining"];
+      if (mult >= 3)
+        beats.push("built up a real head of steam");
+      if (bestBall > goal * 0.6)
+        beats.push("one long, brilliant run");
+      kit.finish({ score: s, beats, detail: `${points.toLocaleString()} points of ${goal.toLocaleString()}` });
+    };
+    const press = (side, down) => {
+      if (side === "launch") {
+        if (down && ball.inLane && ball.live && ball.y > 660 && Math.abs(ball.vy) < 60)
+          pulling = true;
+        else if (!down && pulling) {
+          pulling = false;
+          ball.vy = -(1150 + plunge * 700);
+          ball.vx = 0;
+          launched = performance.now();
+          kit.synth.fx("launch");
+          plunge = 0;
+        }
+        return;
+      }
+      const f = flippers[side === "L" ? 0 : 1];
+      if (down && !f.pressed)
+        kit.synth.fx("flipper");
+      f.pressed = down;
+    };
+    kit.onKey((e, down) => {
+      const k = e.key.toLowerCase();
+      if (k === "z" || k === "arrowleft" || k === "shift" && e.location === 1) {
+        press("L", down);
+        return true;
+      }
+      if (k === "m" || k === "/" || k === "arrowright") {
+        press("R", down);
+        return true;
+      }
+      if (k === " " || k === "arrowdown" || k === "enter") {
+        if (!e.repeat || !down)
+          press("launch", down);
+        return true;
+      }
+      return false;
+    });
+    const touches = new Map;
+    c.el.addEventListener("pointerdown", (e) => {
+      if (kit.paused)
+        return;
+      c.el.setPointerCapture(e.pointerId);
+      const r = c.el.getBoundingClientRect();
+      const side = ball.inLane && ball.live && ball.y > 660 ? "launch" : e.clientX - r.left < r.width / 2 ? "L" : "R";
+      touches.set(e.pointerId, side);
+      press(side, true);
+    });
+    const up = (e) => {
+      const s = touches.get(e.pointerId);
+      if (s) {
+        touches.delete(e.pointerId);
+        press(s, false);
+      }
+    };
+    c.el.addEventListener("pointerup", up);
+    c.el.addEventListener("pointercancel", up);
+    withMusic(kit, () => backing(kit.synth, "drive", () => 1 + (mult - 1) * 0.05));
+    kit.onQuit(() => finish("time"));
+    let acc = 0;
+    kit.loop((dt) => {
+      if (!over) {
+        timeLeft = Math.max(0, timeLeft - dt);
+        if (timeLeft <= 0)
+          finish("time");
+        if (pulling)
+          plunge = Math.min(1, plunge + dt * 1.2);
+        acc += dt;
+        const h = 1 / 480;
+        while (acc >= h) {
+          physics(h);
+          acc -= h;
+        }
+        if (Math.floor(timeLeft) !== Math.floor(timeLeft + dt))
+          kit.track(clamp(points / goal / Math.max(0.15, 1 - timeLeft / limit)));
+      }
+      for (const b of bumpers)
+        b.lit = Math.max(0, b.lit - dt * 4);
+      for (const l of lanes)
+        l.flash = Math.max(0, l.flash - dt);
+      for (const t of targets)
+        t.hit = Math.max(0, t.hit - dt);
+      if (ball.live) {
+        trail.push({ x: ball.x, y: ball.y });
+        if (trail.length > 8)
+          trail.shift();
+      }
+      sparks.step(dt);
+      floats.step(dt);
+      draw();
+    });
+    function draw() {
+      g.clearRect(0, 0, c.w, c.h);
+      const s = Math.min((c.h - 16) / TH, (c.w - 16) / TW);
+      const ox = (c.w - TW * s) / 2, oy = (c.h - TH * s) / 2;
+      g.save();
+      g.translate(ox, oy);
+      g.scale(s, s);
+      const bg = g.createLinearGradient(0, 0, 0, TH);
+      bg.addColorStop(0, "#2a0f3d");
+      bg.addColorStop(0.6, "#160a26");
+      bg.addColorStop(1, "#0a0612");
+      g.fillStyle = bg;
+      g.beginPath();
+      g.moveTo(18, 720);
+      g.lineTo(18, 150);
+      g.arc(200, 150, 182, Math.PI, 0);
+      g.lineTo(382, 720);
+      g.closePath();
+      g.fill();
+      g.fillStyle = "rgba(255,138,61,.08)";
+      for (let i = 0;i < 5; i++) {
+        g.beginPath();
+        g.moveTo(200, 400 + i * 34);
+        g.lineTo(184, 420 + i * 34);
+        g.lineTo(216, 420 + i * 34);
+        g.fill();
+      }
+      g.lineCap = "round";
+      g.lineJoin = "round";
+      for (const sg of segs) {
+        g.strokeStyle = sg.kind === "sling" ? "#3de1ff" : "#c9b7ff";
+        g.lineWidth = sg.kind === "sling" ? 5 : 4;
+        g.shadowColor = sg.kind === "sling" ? "#3de1ff" : "#8f6bff";
+        g.shadowBlur = 10;
+        g.beginPath();
+        g.moveTo(sg.a.x, sg.a.y);
+        g.lineTo(sg.b.x, sg.b.y);
+        g.stroke();
+      }
+      g.shadowBlur = 0;
+      for (const l of lanes) {
+        g.fillStyle = l.on ? "#7cff6b" : "rgba(124,255,107,.15)";
+        g.shadowColor = "#7cff6b";
+        g.shadowBlur = l.on ? 16 : 0;
+        g.beginPath();
+        g.arc(l.x, l.y, 8 + l.flash * 6, 0, Math.PI * 2);
+        g.fill();
+        g.shadowBlur = 0;
+      }
+      for (const t of targets) {
+        g.fillStyle = t.hit > 0 ? "#fff" : "#ff5fa2";
+        g.shadowColor = "#ff5fa2";
+        g.shadowBlur = 12;
+        g.fillRect(t.x - 5, t.y - 22, 10, 44);
+        g.shadowBlur = 0;
+      }
+      for (const b of bumpers) {
+        g.fillStyle = "#3a1530";
+        g.beginPath();
+        g.arc(b.x, b.y, b.r + 4, 0, Math.PI * 2);
+        g.fill();
+        const grd = g.createRadialGradient(b.x - 6, b.y - 6, 3, b.x, b.y, b.r);
+        grd.addColorStop(0, b.lit > 0 ? "#fff" : "#ffc08a");
+        grd.addColorStop(1, "#ff8a3d");
+        g.fillStyle = grd;
+        g.shadowColor = "#ff8a3d";
+        g.shadowBlur = 10 + b.lit * 30;
+        g.beginPath();
+        g.arc(b.x, b.y, b.r * (1 + b.lit * 0.12), 0, Math.PI * 2);
+        g.fill();
+        g.shadowBlur = 0;
+        g.strokeStyle = "#fff";
+        g.lineWidth = 2;
+        g.beginPath();
+        g.arc(b.x, b.y, b.r * 0.55, 0, Math.PI * 2);
+        g.stroke();
+      }
+      for (const f of flippers) {
+        const t = tip(f);
+        g.strokeStyle = "#ffe066";
+        g.lineWidth = 16;
+        g.shadowColor = "#ffe066";
+        g.shadowBlur = f.pressed ? 18 : 6;
+        g.beginPath();
+        g.moveTo(f.pivot.x, f.pivot.y);
+        g.lineTo(t.x, t.y);
+        g.stroke();
+        g.strokeStyle = "#fff6c8";
+        g.lineWidth = 6;
+        g.shadowBlur = 0;
+        g.beginPath();
+        g.moveTo(f.pivot.x, f.pivot.y);
+        g.lineTo(t.x, t.y);
+        g.stroke();
+      }
+      g.fillStyle = "#555";
+      g.fillRect(358, 700 + plunge * 18, 16, 24);
+      g.fillStyle = "#ff3d5a";
+      g.fillRect(356, 698 + plunge * 18, 20, 6);
+      if (ball.live) {
+        trail.forEach((p, i) => {
+          g.globalAlpha = i / trail.length * 0.35;
+          g.fillStyle = "#3de1ff";
+          g.beginPath();
+          g.arc(p.x, p.y, BR * (i / trail.length), 0, Math.PI * 2);
+          g.fill();
+        });
+        g.globalAlpha = 1;
+        const bg2 = g.createRadialGradient(ball.x - 3, ball.y - 3, 1, ball.x, ball.y, BR);
+        bg2.addColorStop(0, "#ffffff");
+        bg2.addColorStop(1, "#8a93a6");
+        g.fillStyle = bg2;
+        g.beginPath();
+        g.arc(ball.x, ball.y, BR, 0, Math.PI * 2);
+        g.fill();
+      }
+      sparks.draw(g);
+      floats.draw(g);
+      g.fillStyle = "rgba(0,0,0,.55)";
+      g.fillRect(110, 118, 180, 46);
+      g.font = `800 22px ${FONT_NUM}`;
+      g.fillStyle = "#ffe066";
+      g.textAlign = "center";
+      g.textBaseline = "middle";
+      g.fillText(points.toLocaleString(), 200, 136);
+      g.font = `700 10px ${FONT_UI}`;
+      g.fillStyle = "rgba(255,255,255,.7)";
+      g.fillText(`BALL ${Math.min(balls, drained + 1)}/${balls} · ×${mult} · ${Math.ceil(timeLeft)}s`, 200, 155);
+      if (ball.inLane && ball.live && ball.y > 660) {
+        g.font = `800 12px ${FONT_UI}`;
+        g.fillStyle = "#fff";
+        g.fillText("HOLD SPACE", 366, 650);
+      }
+      g.restore();
+    }
+    kit.status(`Target ${goal.toLocaleString()}
+3 balls`);
+    return () => {};
+  }
+};
+
+// src/frontend/arcade/games/race.ts
+var RACE = {
+  id: "race",
+  title: "Three-legged race",
+  theme: { bg: "#0b1a10", bg2: "#1f4a2a", accent: "#ffd23f", accent2: "#ff7a3d" },
+  howTo: [
+    "Your partner's tied leg swings left and right along the meter.",
+    "Step LEFT when it reaches the left zone, RIGHT when it reaches the right — alternating.",
+    "Good steps build speed; stepping out of time makes you stumble, and three stumbles in a row is a fall.",
+    "Beat the other pair to the tape."
+  ],
+  controls: "A / ← left step · D / → right step · tap the left or right half on touch",
+  start(kit) {
+    const L = kit.play.level;
+    const sync = kit.play.partner?.sync ?? 0;
+    const partner = kit.play.partner?.name ?? "your partner";
+    const distance = 60;
+    const zone = clamp((0.34 - 0.12 * L) * (1 + kit.aid("window") / 100), 0.12, 0.6);
+    const basePeriod = 1 - 0.22 * L;
+    const drift = (0.26 - 0.18 * sync) * (0.6 + 0.6 * L);
+    const rivalTime = 52 - 26 * L;
+    let phase = -Math.PI / 2, t = 0, you = 0, rival = 0, speed = 0, momentum = 1, expect = null;
+    let lastZone = null, armed = { L: true, R: true };
+    let stumbles = 0, stumbleRun = 0, falls = 0, down = 0, good = 0, steps = 0, over = false, perfect = 0;
+    let legL = 0, legR = 0, rivalLeg = 0;
+    const c = kit.canvas();
+    const g = c.g;
+    const sparks = new Sparks, floats = new Floaters;
+    const seedOff = kit.rng() * 10;
+    const marker = () => Math.sin(phase);
+    const inZone = (side) => side === "L" ? marker() <= -(1 - zone) : marker() >= 1 - zone;
+    const step = (side) => {
+      if (over || down > 0)
+        return;
+      steps++;
+      const ok = inZone(side) && (expect === null || expect === side);
+      if (ok && armed[side]) {
+        armed[side] = false;
+        const q = (Math.abs(marker()) - (1 - zone)) / zone;
+        const stride = 0.55 + 0.55 * clamp(q);
+        if (q > 0.6)
+          perfect++;
+        good++;
+        stumbleRun = 0;
+        momentum = Math.min(1.5, momentum + 0.06);
+        speed += stride * momentum * 1.9;
+        expect = side === "L" ? "R" : "L";
+        if (side === "L")
+          legL = 1;
+        else
+          legR = 1;
+        kit.synth.fx("step");
+        const Y = c.h * 0.62;
+        sparks.burst(c.w * 0.3, Y + 30, "rgba(200, 160, 110, .9)", 5, 90, 2);
+        if (q > 0.6)
+          floats.add(c.w * 0.3, Y - 70, "In step!", "#ffd23f", 15);
+      } else {
+        stumbles++;
+        stumbleRun++;
+        momentum = Math.max(0.6, momentum - 0.25);
+        speed *= 0.4;
+        kit.synth.fx("stumble");
+        kit.shake(0.5);
+        floats.add(c.w * 0.3, c.h * 0.62 - 70, "Out of step", "#ff5d6c", 15);
+        if (stumbleRun >= 3) {
+          stumbleRun = 0;
+          if (kit.lives.spend("Caught each other!"))
+            return;
+          falls++;
+          down = 1.6;
+          speed = 0;
+          momentum = 1;
+          kit.synth.fx("crash");
+          kit.shake(1.2);
+          kit.banner("Down you go!", "bad");
+        }
+      }
+    };
+    kit.onKey((e, isDown) => {
+      const k = e.key.toLowerCase();
+      const side = k === "a" || k === "arrowleft" ? "L" : k === "d" || k === "arrowright" ? "R" : null;
+      if (!side)
+        return false;
+      if (isDown && !e.repeat)
+        step(side);
+      return true;
+    });
+    c.el.addEventListener("pointerdown", (e) => {
+      if (kit.paused)
+        return;
+      const r = c.el.getBoundingClientRect();
+      step(e.clientX - r.left < r.width / 2 ? "L" : "R");
+    });
+    withMusic(kit, () => backing(kit.synth, "bright", () => 1.1));
+    kit.onQuit(() => finish(false));
+    const finish = (won) => {
+      if (over)
+        return;
+      over = true;
+      const margin = won ? (distance - rival) / Math.max(0.5, distance / rivalTime) : 0;
+      const s = won ? clamp(0.75 + 0.25 * clamp(margin / 6)) : clamp(0.75 * (you / distance));
+      kit.score(s);
+      kit.synth.fx(won ? "cheer" : "lose");
+      if (won)
+        kit.banner("First across!", "good");
+      else
+        kit.banner("Beaten to the tape", "bad");
+      const beats = [];
+      if (won)
+        beats.push(margin > 4 ? `${partner} and {{user}} won going away` : margin < 1 ? `${partner} and {{user}} won by a whisker` : `${partner} and {{user}} won it`);
+      else
+        beats.push(you > distance * 0.85 ? "lost by a stride" : "the other pair ran away with it");
+      if (falls)
+        beats.push(falls > 1 ? "fell over more than once" : "went down in a heap once");
+      else if (stumbles === 0)
+        beats.push(`perfectly in step with ${partner}`);
+      else if (stumbles < 4)
+        beats.push(`mostly in step with ${partner}`);
+      else
+        beats.push(`kept tripping over each other`);
+      kit.finish({ score: s, beats, detail: `${good} good steps, ${stumbles} stumbles${falls ? `, ${falls} fall${falls > 1 ? "s" : ""}` : ""}` });
+    };
+    kit.loop((dt) => {
+      t += dt;
+      if (!over) {
+        const period = basePeriod * (1 + drift * Math.sin(t * 0.55 + seedOff) + drift * 0.5 * Math.sin(t * 1.7 + seedOff * 2));
+        phase += dt * Math.PI * 2 / Math.max(0.35, period);
+        const zoneNow = marker() <= -(1 - zone) ? "L" : marker() >= 1 - zone ? "R" : null;
+        if (zoneNow !== lastZone) {
+          if (lastZone && armed[lastZone] && down <= 0 && expect === lastZone) {
+            momentum = Math.max(0.7, momentum - 0.1);
+          }
+          if (zoneNow)
+            armed[zoneNow] = true;
+          lastZone = zoneNow;
+        }
+        if (down > 0) {
+          down -= dt;
+          if (down <= 0)
+            expect = null;
+        }
+        speed *= Math.pow(0.35, dt);
+        you = Math.min(distance, you + speed * dt);
+        rival = Math.min(distance, rival + distance / rivalTime * dt * (0.92 + 0.16 * Math.sin(t * 0.9 + seedOff)));
+        rivalLeg = (rivalLeg + dt * 3.4) % (Math.PI * 2);
+        kit.score(you >= distance ? 0.75 + 0.25 * clamp((distance - rival) / 8) : 0.75 * (you / distance));
+        if (Math.floor(t * 4) !== Math.floor((t - dt) * 4)) {
+          kit.track(clamp(0.5 + (you - rival) / 10));
+          kit.status(`${Math.round(you)} m / ${distance}
+${you >= rival ? "Ahead" : `${Math.round(rival - you)} m behind`}`);
+        }
+        if (you >= distance)
+          finish(true);
+        else if (rival >= distance)
+          finish(false);
+      }
+      legL = Math.max(0, legL - dt * 4);
+      legR = Math.max(0, legR - dt * 4);
+      sparks.step(dt);
+      floats.step(dt);
+      draw();
+    });
+    const runner = (x, y, s, swing, shirt, skin, lean) => {
+      g.save();
+      g.translate(x, y);
+      g.rotate(lean);
+      g.lineCap = "round";
+      g.strokeStyle = "#2b2b38";
+      g.lineWidth = s * 0.16;
+      g.beginPath();
+      g.moveTo(0, -s * 0.05);
+      g.lineTo(Math.sin(swing) * s * 0.35, s * 0.55);
+      g.stroke();
+      g.beginPath();
+      g.moveTo(0, -s * 0.05);
+      g.lineTo(-Math.sin(swing) * s * 0.35, s * 0.55);
+      g.stroke();
+      g.fillStyle = shirt;
+      rrect(g, -s * 0.14, -s * 0.6, s * 0.28, s * 0.6, s * 0.1);
+      g.fill();
+      g.strokeStyle = skin;
+      g.lineWidth = s * 0.1;
+      g.beginPath();
+      g.moveTo(0, -s * 0.5);
+      g.lineTo(-Math.sin(swing) * s * 0.3, -s * 0.15);
+      g.stroke();
+      g.beginPath();
+      g.moveTo(0, -s * 0.5);
+      g.lineTo(Math.sin(swing) * s * 0.3, -s * 0.15);
+      g.stroke();
+      g.fillStyle = skin;
+      g.beginPath();
+      g.arc(0, -s * 0.76, s * 0.15, 0, Math.PI * 2);
+      g.fill();
+      g.restore();
+    };
+    function draw() {
+      const { w: W, h: H } = c;
+      g.clearRect(0, 0, W, H);
+      const meterH = 84;
+      const top = Math.max(H * 0.34, 90), lane = Math.max(28, (H - meterH - top - 14) / 2);
+      const sky = g.createLinearGradient(0, 0, 0, top);
+      sky.addColorStop(0, "#7fc8ff");
+      sky.addColorStop(1, "#d8f0ff");
+      g.fillStyle = sky;
+      g.fillRect(0, 0, W, top);
+      const camera = you * 26 - W * 0.3;
+      const standTop = top * 0.35, standH = top * 0.55;
+      g.fillStyle = "#3d4a6b";
+      g.fillRect(0, standTop, W, standH);
+      g.fillStyle = "#2c3652";
+      for (let r = 1;r < 5; r++)
+        g.fillRect(0, standTop + standH / 5 * r, W, 2);
+      const head = Math.max(2.5, standH / 14);
+      for (let r = 0;r < 5; r++)
+        for (let i = 0;i < W / (head * 3) + 2; i++) {
+          const cx = ((i * head * 3 + r * head * 1.4 - camera * 0.3) % (W + head * 6) + W + head * 6) % (W + head * 6) - head * 3;
+          const cy = standTop + standH / 5 * (r + 0.6);
+          const bob = Math.sin(t * 7 + i * 1.7 + r) * (over ? head * 0.8 : head * 0.2);
+          g.fillStyle = ["#ff7a3d", "#ffd23f", "#59e3ff", "#ff5fa2", "#f5f5f5", "#7cff6b", "#b18cff"][(i * 3 + r) % 7];
+          g.beginPath();
+          g.arc(cx, cy + bob, head, 0, Math.PI * 2);
+          g.fill();
+        }
+      g.fillStyle = "#3fa34d";
+      g.fillRect(0, top - 10, W, H - top + 10);
+      g.fillStyle = "#c8613a";
+      g.fillRect(0, top, W, lane * 2 + 8);
+      g.strokeStyle = "rgba(255,255,255,.85)";
+      g.lineWidth = 2;
+      for (const y of [top, top + lane + 4, top + lane * 2 + 8]) {
+        g.beginPath();
+        g.moveTo(0, y);
+        g.lineTo(W, y);
+        g.stroke();
+      }
+      for (let m = 0;m <= distance; m += 10) {
+        const x = m * 26 - camera;
+        if (x < -50 || x > W + 50)
+          continue;
+        g.strokeStyle = m === distance ? "#fff" : "rgba(255,255,255,.4)";
+        g.lineWidth = m === distance ? 6 : 2;
+        g.beginPath();
+        g.moveTo(x, top);
+        g.lineTo(x, top + lane * 2 + 8);
+        g.stroke();
+        g.fillStyle = "rgba(255,255,255,.85)";
+        g.font = `700 12px ${FONT_UI}`;
+        g.textAlign = "center";
+        g.fillText(m === distance ? "FINISH" : `${m} m`, x, top - 6);
+        if (m === distance && !over) {
+          g.strokeStyle = "#ff3d5a";
+          g.lineWidth = 3;
+          g.beginPath();
+          g.moveTo(x, top - 2);
+          g.lineTo(x, top + lane * 2 + 10);
+          g.stroke();
+        }
+      }
+      const s = Math.min(70, lane * 0.9);
+      const rx = rival * 26 - camera, ry = top + lane * 0.72;
+      runner(rx - s * 0.18, ry, s * 0.9, Math.sin(rivalLeg) * 0.9, "#4b6bd6", "#d9a679", 0.12);
+      runner(rx + s * 0.18, ry, s * 0.9, -Math.sin(rivalLeg) * 0.9, "#4b6bd6", "#8d5a3b", 0.12);
+      const yx = you * 26 - camera, yy = top + lane * 1.76;
+      const stride = (legL - legR) * 1.1;
+      const fallen = down > 0;
+      if (fallen) {
+        g.save();
+        g.translate(yx, yy + s * 0.2);
+        g.rotate(-1.2);
+        runner(0, 0, s, 0.4, "#ff7a3d", "#f1c27d", 0);
+        g.restore();
+        g.save();
+        g.translate(yx + s * 0.4, yy + s * 0.25);
+        g.rotate(-1.4);
+        runner(0, 0, s, -0.3, "#ffd23f", "#c68642", 0);
+        g.restore();
+      } else {
+        runner(yx - s * 0.2, yy, s, stride + Math.sin(t * 12) * 0.05, "#ff7a3d", "#f1c27d", 0.08 + speed * 0.01);
+        runner(yx + s * 0.2, yy, s, -stride, "#ffd23f", "#c68642", 0.08 + speed * 0.01);
+        g.strokeStyle = "#fff";
+        g.lineWidth = 4;
+        g.beginPath();
+        g.moveTo(yx - s * 0.05, yy + s * 0.42);
+        g.lineTo(yx + s * 0.05, yy + s * 0.42);
+        g.stroke();
+      }
+      g.fillStyle = "#fff";
+      g.font = `700 12px ${FONT_UI}`;
+      g.textAlign = "center";
+      g.fillText(`You & ${partner}`, yx, yy - s * 1.05);
+      sparks.draw(g);
+      floats.draw(g);
+      const mw = Math.min(W * 0.8, 520), mx = W / 2, my = H - 40;
+      g.fillStyle = "rgba(0,0,0,.55)";
+      rrect(g, mx - mw / 2 - 16, my - 34, mw + 32, 64, 18);
+      g.fill();
+      g.fillStyle = "rgba(255,255,255,.1)";
+      rrect(g, mx - mw / 2, my - 8, mw, 16, 8);
+      g.fill();
+      const zw = mw / 2 * zone;
+      const zl = expect !== "R" && down <= 0, zr = expect !== "L" && down <= 0;
+      g.fillStyle = zl ? "rgba(255,210,63,.75)" : "rgba(255,210,63,.25)";
+      rrect(g, mx - mw / 2, my - 8, zw, 16, 8);
+      g.fill();
+      g.fillStyle = zr ? "rgba(255,210,63,.75)" : "rgba(255,210,63,.25)";
+      rrect(g, mx + mw / 2 - zw, my - 8, zw, 16, 8);
+      g.fill();
+      const px = mx + marker() * (mw / 2 - 6);
+      g.fillStyle = "#fff";
+      g.shadowColor = "#ffd23f";
+      g.shadowBlur = 14;
+      g.beginPath();
+      g.arc(px, my, 11, 0, Math.PI * 2);
+      g.fill();
+      g.shadowBlur = 0;
+      g.font = `800 15px ${FONT_NUM}`;
+      g.fillStyle = zl ? "#ffd23f" : "rgba(255,255,255,.4)";
+      g.textAlign = "left";
+      g.fillText("A ◀", mx - mw / 2 - 2, my - 18);
+      g.fillStyle = zr ? "#ffd23f" : "rgba(255,255,255,.4)";
+      g.textAlign = "right";
+      g.fillText("▶ D", mx + mw / 2 + 2, my - 18);
+      g.textAlign = "center";
+      g.fillStyle = "rgba(255,255,255,.7)";
+      g.font = `700 11px ${FONT_UI}`;
+      g.fillText(down > 0 ? "Getting up…" : `${partner}'s stride`, mx, my - 18);
+      g.font = `800 ${Math.round(Math.min(22, H * 0.04))}px ${FONT_NUM}`;
+      g.fillStyle = "#1b2a1b";
+      g.textAlign = "left";
+      g.fillText(`${Math.round(you)}m`, 14, 26);
+      g.fillStyle = "#2c3f8f";
+      g.fillText(`Rivals ${Math.round(rival)}m`, 14, 50);
+    }
+    kit.status(`Tied to ${partner}`);
+    kit.synth.fx("whistle");
+    return () => {};
+  }
+};
+
+// src/frontend/arcade/games/roulette.ts
+var ORDER = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
+var REDS = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
+var colorOf = (n) => n === 0 ? "green" : REDS.has(n) ? "red" : "black";
+function betWins(bet, n) {
+  if (bet.startsWith("n:"))
+    return Number(bet.slice(2)) === n ? 35 : -1;
+  if (n === 0)
+    return -1;
+  switch (bet) {
+    case "red":
+      return REDS.has(n) ? 1 : -1;
+    case "black":
+      return !REDS.has(n) ? 1 : -1;
+    case "odd":
+      return n % 2 ? 1 : -1;
+    case "even":
+      return n % 2 ? -1 : 1;
+    case "low":
+      return n <= 18 ? 1 : -1;
+    case "high":
+      return n >= 19 ? 1 : -1;
+    case "d1":
+      return n <= 12 ? 2 : -1;
+    case "d2":
+      return n >= 13 && n <= 24 ? 2 : -1;
+    case "d3":
+      return n >= 25 ? 2 : -1;
+    case "c1":
+      return n % 3 === 1 ? 2 : -1;
+    case "c2":
+      return n % 3 === 2 ? 2 : -1;
+    case "c3":
+      return n % 3 === 0 ? 2 : -1;
+  }
+  return -1;
+}
+var CSS4 = `
+.rl { position: absolute; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr); gap: 18px; padding: 16px; align-items: center;
+  background: radial-gradient(ellipse at 30% 50%, #1b5e3f, #0c3a27 55%, #06231a); color: #f7f1e1; }
+.rl-wheel { position: relative; height: 100%; min-height: 0; display: grid; place-items: center; }
+.rl-wheel canvas { width: 100%; height: 100%; }
+.rl-right { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.rl-board { display: grid; grid-template-columns: .9fr repeat(12, 1fr) 1.15fr; grid-template-rows: repeat(3, var(--rh)) var(--rh) var(--rh); gap: 3px; padding: 8px; border-radius: 12px; background: #0e4a32; box-shadow: inset 0 0 0 2px rgba(232,195,106,.45); }
+.rl-c { position: relative; border: 1px solid rgba(255,255,255,.35); border-radius: 4px; display: grid; place-items: center; font: 800 clamp(10px, 1.2vw, 14px) "Bahnschrift", system-ui, sans-serif; color: #fff; background: transparent; cursor: pointer; padding: 0; transition: filter .1s, box-shadow .1s; }
+.rl-c:hover { filter: brightness(1.25); box-shadow: inset 0 0 0 2px #ffe066; }
+.rl-c.red { background: #b3202f; } .rl-c.black { background: #1c1c22; } .rl-c.green { background: #198754; }
+.rl-c.zero { grid-row: 1 / 4; }
+.rl-c.out { background: rgba(0,0,0,.18); font-size: clamp(9px, 1vw, 12px); letter-spacing: .04em; }
+.rl-c.out.red { background: #b3202f; } .rl-c.out.black { background: #1c1c22; }
+.rl-c.win { animation: rl-win .9s ease-in-out 3; box-shadow: 0 0 0 3px #ffe066, 0 0 20px #ffe066; z-index: 1; }
+@keyframes rl-win { 50% { filter: brightness(1.8); } }
+.rl-chipon { position: absolute; right: -4px; top: -6px; min-width: 24px; height: 24px; padding: 0 4px; border-radius: 12px; display: grid; place-items: center; font: 800 10px ui-monospace, monospace; color: #1b1b1b;
+  background: radial-gradient(circle, #fff 0 45%, #e8c36a 46%); box-shadow: 0 2px 6px rgba(0,0,0,.5); pointer-events: none; z-index: 2; animation: rl-drop .2s ease-out both; }
+@keyframes rl-drop { from { transform: translateY(-10px) scale(1.4); opacity: 0; } }
+.rl-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.rl-chip { width: 48px; height: 48px; border-radius: 50%; border: 0; cursor: pointer; font: 800 11px ui-monospace, monospace; color: #1b1b1b;
+  background: radial-gradient(circle, #fff 0 36%, transparent 37%), repeating-conic-gradient(var(--chip) 0 22.5deg, #f6efe2 22.5deg 30deg); box-shadow: 0 4px 10px rgba(0,0,0,.45); transition: transform .12s; }
+.rl-chip.on { transform: translateY(-5px); box-shadow: 0 0 0 3px #ffe066, 0 8px 18px rgba(0,0,0,.5); }
+.rl-btn { padding: 11px 18px; border-radius: 12px; border: 1px solid rgba(232,195,106,.45); background: rgba(0,0,0,.35); color: #f7f1e1; font: 700 14px "Bahnschrift", system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; cursor: pointer; }
+.rl-btn.main { background: linear-gradient(180deg, #f1d488, #c99a3d); color: #2a1d05; border-color: transparent; min-width: 120px; }
+.rl-btn:disabled { opacity: .35; cursor: not-allowed; }
+.rl-btn.luck { background: linear-gradient(180deg, #ffe066, #e2a93a); color: #2a1d05; animation: rl-win 1s ease-in-out infinite; }
+.rl-info { font: 600 12.5px ui-monospace, monospace; color: rgba(247,241,225,.8); }
+.rl-hist { display: flex; gap: 4px; }
+.rl-hist span { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font: 800 11px ui-monospace, monospace; color: #fff; }
+.rl-hist .red { background: #b3202f; } .rl-hist .black { background: #1c1c22; } .rl-hist .green { background: #198754; }
+@media (max-width: 760px) { .rl { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, .8fr) auto; } }
+`;
+var ROULETTE = {
+  id: "roulette",
+  title: "Roulette",
+  theme: { bg: "#06170f", bg2: "#1b5e3f", accent: "#e8c36a", accent2: "#b3202f" },
+  howTo: [
+    "Pick a chip, then click the felt to bet: numbers pay 35 to 1, dozens and columns 2 to 1, red/black/odd/even 1 to 1.",
+    "Spin. Zero beats every outside bet.",
+    "Played as a check, your odds lean on the wheel: easy checks land your way more often, hard ones less."
+  ],
+  controls: "Click the felt to bet · right-click to take a chip back · Space spins",
+  start(kit) {
+    const L = kit.play.level;
+    const gamble = kit.play.mode === "gamble";
+    const start = gamble ? kit.play.stake : 100;
+    const spins = gamble ? kit.play.rounds ?? 5 : 4;
+    const unit = Math.max(1, Math.round(start / 20));
+    const denoms = [unit, unit * 2, unit * 5, unit * 10];
+    const lean = gamble ? kit.aid("luck") / 200 - Math.max(0, (kit.play.edge ?? 0.027) - 0.027) * 3 : (0.45 - L) * 0.6 + kit.aid("luck") / 100;
+    let chip = denoms[1], chips = start, spin = 0, over = false, spinning = false;
+    let bets = new Map, lastBets = new Map;
+    const history = [];
+    let bigWin = 0, rescued = 0;
+    let undo = null;
+    const root = document.createElement("div");
+    root.className = "rl";
+    const cells = [];
+    cells.push(`<button class="rl-c green zero" data-bet="n:0">0</button>`);
+    for (let col = 0;col < 12; col++)
+      for (let row = 0;row < 3; row++) {
+        const n = col * 3 + (3 - row);
+        cells.push(`<button class="rl-c ${colorOf(n)}" style="grid-column:${col + 2};grid-row:${row + 1}" data-bet="n:${n}">${n}</button>`);
+      }
+    for (let row = 0;row < 3; row++)
+      cells.push(`<button class="rl-c out" style="grid-column:14;grid-row:${row + 1}" data-bet="c${3 - row}">2 to 1</button>`);
+    ["1st 12", "2nd 12", "3rd 12"].forEach((t, i) => cells.push(`<button class="rl-c out" style="grid-column:${2 + i * 4} / span 4;grid-row:4" data-bet="d${i + 1}">${t}</button>`));
+    [["low", "1–18"], ["even", "Even"], ["red", "◆"], ["black", "◆"], ["odd", "Odd"], ["high", "19–36"]].forEach(([k, t], i) => cells.push(`<button class="rl-c out${k === "red" ? " red" : k === "black" ? " black" : ""}" style="grid-column:${2 + i * 2} / span 2;grid-row:5" data-bet="${k}">${t}</button>`));
+    root.innerHTML = `<style>${CSS4}</style>
+      <div class="rl-wheel"><canvas></canvas></div>
+      <div class="rl-right">
+        <div class="rl-row"><div class="rl-hist" data-hist></div><span class="rl-info" data-info></span></div>
+        <div class="rl-board">${cells.join("")}</div>
+        <div class="rl-row" data-chips>${denoms.map((d, i) => `<button class="rl-chip${d === chip ? " on" : ""}" style="--chip:${["#c0392b", "#1f6fbf", "#1d8f4e", "#222"][i]}" data-chip="${d}">${d}</button>`).join("")}</div>
+        <div class="rl-row" data-actions></div>
+      </div>`;
+    kit.root.appendChild(root);
+    const $ = (s) => root.querySelector(s);
+    const board = $(".rl-board");
+    const size = () => {
+      const r = root.getBoundingClientRect();
+      board.style.setProperty("--rh", `${Math.max(28, Math.min(54, (r.height - 220) / 5, r.width / 26))}px`);
+    };
+    const ro = new ResizeObserver(size);
+    ro.observe(root);
+    size();
+    const staked = () => [...bets.values()].reduce((a, b) => a + b, 0);
+    const paint = () => {
+      board.querySelectorAll(".rl-chipon").forEach((x) => x.remove());
+      for (const [k, v] of bets)
+        board.querySelector(`[data-bet="${k}"]`)?.insertAdjacentHTML("beforeend", `<span class="rl-chipon">${v}</span>`);
+      $("[data-hist]").innerHTML = history.slice(-8).map((n) => `<span class="${colorOf(n)}">${n}</span>`).join("");
+      $("[data-info]").textContent = `Spin ${Math.min(spin + 1, spins)} of ${spins} · ${kit.play.currency ?? ""}${chips} · on the felt ${staked()}`;
+      root.querySelectorAll("[data-chip]").forEach((b) => {
+        b.classList.toggle("on", Number(b.dataset.chip) === chip);
+        b.disabled = Number(b.dataset.chip) > chips;
+      });
+      const done = spin >= spins || chips + staked() < denoms[0];
+      $("[data-actions]").innerHTML = done && !spinning ? `<button class="rl-btn main" data-leave>Done</button>${undo && kit.lives.left() > 0 ? `<button class="rl-btn luck" data-luck>✦ Lucky re-spin</button>` : ""}` : `<button class="rl-btn main" data-spin ${staked() && !spinning ? "" : "disabled"}>Spin</button>
+        <button class="rl-btn" data-clear ${staked() && !spinning ? "" : "disabled"}>Clear</button>
+        <button class="rl-btn" data-rebet ${lastBets.size && !staked() && !spinning ? "" : "disabled"}>Rebet</button>
+        ${gamble && spin > 0 && !spinning ? `<button class="rl-btn" data-leave>Cash out</button>` : ""}
+        ${undo && kit.lives.left() > 0 && !spinning ? `<button class="rl-btn luck" data-luck>✦ Lucky re-spin</button>` : ""}`;
+      kit.chips(chips + staked());
+      kit.status(`Spin ${Math.min(spin + 1, spins)} of ${spins}
+Chips ${chips + staked()}`);
+    };
+    const place = (bet, sign = 1) => {
+      if (spinning || over)
+        return;
+      if (undo)
+        undo = null;
+      if (sign > 0) {
+        if (chip > chips)
+          return;
+        bets.set(bet, (bets.get(bet) ?? 0) + chip);
+        chips -= chip;
+        kit.synth.fx("chip");
+      } else {
+        const v = bets.get(bet) ?? 0;
+        if (!v)
+          return;
+        const back = Math.min(v, chip);
+        if (v - back <= 0)
+          bets.delete(bet);
+        else
+          bets.set(bet, v - back);
+        chips += back;
+        kit.synth.fx("click");
+      }
+      paint();
+    };
+    const cv = root.querySelector("canvas");
+    const g = cv.getContext("2d");
+    let wheelAng = 0, ballAng = 0, ballR = 1, anim = null;
+    const fit = () => {
+      const r = cv.getBoundingClientRect();
+      const d = Math.min(2, devicePixelRatio || 1);
+      cv.width = r.width * d;
+      cv.height = r.height * d;
+      g.setTransform(d, 0, 0, d, 0, 0);
+    };
+    const ro2 = new ResizeObserver(fit);
+    ro2.observe(cv);
+    fit();
+    const drawWheel = () => {
+      const r0 = cv.getBoundingClientRect();
+      const { width: W, height: H } = r0, R = Math.min(W, H) * 0.46, cx = W / 2, cy = H / 2;
+      g.clearRect(0, 0, W, H);
+      const bowl = g.createRadialGradient(cx, cy, R * 0.6, cx, cy, R * 1.08);
+      bowl.addColorStop(0, "#3b2412");
+      bowl.addColorStop(0.85, "#6b3f1e");
+      bowl.addColorStop(1, "#2a170a");
+      g.fillStyle = bowl;
+      g.beginPath();
+      g.arc(cx, cy, R * 1.08, 0, Math.PI * 2);
+      g.fill();
+      g.strokeStyle = "#e8c36a";
+      g.lineWidth = 3;
+      g.beginPath();
+      g.arc(cx, cy, R * 1, 0, Math.PI * 2);
+      g.stroke();
+      const n = ORDER.length, step = Math.PI * 2 / n;
+      for (let i = 0;i < n; i++) {
+        const a = wheelAng + i * step - Math.PI / 2;
+        g.fillStyle = colorOf(ORDER[i]) === "red" ? "#b3202f" : colorOf(ORDER[i]) === "black" ? "#16161b" : "#198754";
+        g.beginPath();
+        g.moveTo(cx, cy);
+        g.arc(cx, cy, R * 0.9, a - step / 2, a + step / 2);
+        g.closePath();
+        g.fill();
+        g.save();
+        g.translate(cx + Math.cos(a) * R * 0.8, cy + Math.sin(a) * R * 0.8);
+        g.rotate(a + Math.PI / 2);
+        g.fillStyle = "#fff";
+        g.font = `700 ${Math.max(8, R * 0.075)}px ${FONT_NUM}`;
+        g.textAlign = "center";
+        g.textBaseline = "middle";
+        g.fillText(String(ORDER[i]), 0, 0);
+        g.restore();
+      }
+      g.strokeStyle = "rgba(232,195,106,.7)";
+      g.lineWidth = 1.5;
+      for (let i = 0;i < n; i++) {
+        const a = wheelAng + i * step - Math.PI / 2 + step / 2;
+        g.beginPath();
+        g.moveTo(cx + Math.cos(a) * R * 0.62, cy + Math.sin(a) * R * 0.62);
+        g.lineTo(cx + Math.cos(a) * R * 0.9, cy + Math.sin(a) * R * 0.9);
+        g.stroke();
+      }
+      const hub = g.createRadialGradient(cx - R * 0.1, cy - R * 0.1, 2, cx, cy, R * 0.62);
+      hub.addColorStop(0, "#8a5a2b");
+      hub.addColorStop(1, "#3b2412");
+      g.fillStyle = hub;
+      g.beginPath();
+      g.arc(cx, cy, R * 0.62, 0, Math.PI * 2);
+      g.fill();
+      g.strokeStyle = "#e8c36a";
+      g.lineWidth = 4;
+      for (let k = 0;k < 4; k++) {
+        const a = wheelAng * 1 + k * Math.PI / 2;
+        g.beginPath();
+        g.moveTo(cx, cy);
+        g.lineTo(cx + Math.cos(a) * R * 0.45, cy + Math.sin(a) * R * 0.45);
+        g.stroke();
+      }
+      g.fillStyle = "#e8c36a";
+      g.beginPath();
+      g.arc(cx, cy, R * 0.08, 0, Math.PI * 2);
+      g.fill();
+      const br = R * (0.86 + 0.12 * ballR);
+      g.fillStyle = "#fdfdfd";
+      g.shadowColor = "rgba(0,0,0,.6)";
+      g.shadowBlur = 6;
+      g.beginPath();
+      g.arc(cx + Math.cos(ballAng - Math.PI / 2) * br, cy + Math.sin(ballAng - Math.PI / 2) * br, Math.max(4, R * 0.04), 0, Math.PI * 2);
+      g.fill();
+      g.shadowBlur = 0;
+    };
+    const pickResult = () => {
+      const fair = () => ORDER[Math.floor(kit.rng() * ORDER.length)];
+      if (Math.abs(lean) < 0.01)
+        return fair();
+      const netOf = (n) => [...bets].reduce((t, [k, v]) => t + v * betWins(k, n), 0);
+      const want = lean > 0 ? ORDER.filter((n) => netOf(n) > 0) : ORDER.filter((n) => netOf(n) < 0);
+      if (want.length && kit.rng() < Math.abs(lean))
+        return want[Math.floor(kit.rng() * want.length)];
+      return fair();
+    };
+    const doSpin = () => {
+      if (spinning || over || !staked())
+        return;
+      spinning = true;
+      lastBets = new Map(bets);
+      const result = pickResult();
+      const T = 4.2;
+      anim = { t: 0, T, from: wheelAng, to: wheelAng + 0.35 * T * 0.5 + Math.PI * 2, result };
+      kit.synth.fx("spin");
+      paint();
+    };
+    const land = (n) => {
+      history.push(n);
+      let won = 0;
+      const before = chips + staked();
+      for (const [k, v] of bets) {
+        const m = betWins(k, n);
+        if (m > 0)
+          won += v * (m + 1);
+      }
+      const stakedNow = staked();
+      chips += won;
+      bets = new Map;
+      board.querySelectorAll(".win").forEach((x) => x.classList.remove("win"));
+      board.querySelector(`[data-bet="n:${n}"]`)?.classList.add("win");
+      const net = won - stakedNow;
+      if (won > 0) {
+        kit.synth.fx(net >= stakedNow * 5 ? "jackpot" : "coins");
+        kit.banner(`${n} ${colorOf(n)} · +${net}`, net > 0 ? "good" : "info");
+        if (net > bigWin)
+          bigWin = net;
+      } else {
+        kit.synth.fx("miss");
+        kit.banner(`${n} ${colorOf(n)}`, "bad");
+      }
+      undo = net < 0 ? { chips: before, bets: new Map(lastBets) } : null;
+      spin++;
+      spinning = false;
+      kit.track(clamp(chips / (start * 2)));
+      paint();
+      if (spin >= spins || chips < denoms[0])
+        setTimeout(() => {
+          if (!undo || kit.lives.left() <= 0)
+            finish();
+        }, 1600);
+    };
+    const luckySpin = () => {
+      if (!undo || spinning)
+        return;
+      if (!kit.lives.spend("Lucky charm!"))
+        return;
+      rescued++;
+      chips = undo.chips - [...undo.bets.values()].reduce((a, b) => a + b, 0);
+      bets = new Map(undo.bets);
+      spin--;
+      undo = null;
+      paint();
+      doSpin();
+    };
+    const finish = () => {
+      if (over)
+        return;
+      over = true;
+      chips += staked();
+      bets = new Map;
+      const beats = [chips > start * 1.3 ? "the wheel was kind" : chips < start * 0.7 ? "the wheel was cruel" : "the wheel giveth and taketh"];
+      if (bigWin >= start * 0.5)
+        beats.push("one spin that made the table gasp");
+      if (rescued)
+        beats.push("a second spin saved them");
+      kit.finish({ chips, score: clamp(chips / (start * 2)), beats, detail: `${history.length} spins: ${history.join(", ")}` });
+    };
+    root.addEventListener("click", (e) => {
+      if (kit.paused)
+        return;
+      const t = e.target;
+      const b = t.closest("[data-bet]");
+      if (b) {
+        place(b.dataset.bet);
+        return;
+      }
+      const ch = t.closest("[data-chip]");
+      if (ch) {
+        chip = Number(ch.dataset.chip);
+        kit.synth.fx("chip");
+        paint();
+        return;
+      }
+      if (t.closest("[data-spin]"))
+        doSpin();
+      else if (t.closest("[data-clear]")) {
+        for (const v of bets.values())
+          chips += v;
+        bets = new Map;
+        paint();
+      } else if (t.closest("[data-rebet]")) {
+        const need = [...lastBets.values()].reduce((a, b2) => a + b2, 0);
+        if (need <= chips) {
+          bets = new Map(lastBets);
+          chips -= need;
+          kit.synth.fx("chip");
+          paint();
+        }
+      } else if (t.closest("[data-leave]"))
+        finish();
+      else if (t.closest("[data-luck]"))
+        luckySpin();
+    });
+    board.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      const b = e.target.closest("[data-bet]");
+      if (b)
+        place(b.dataset.bet, -1);
+    });
+    kit.onKey((e, down) => {
+      if (down && (e.key === " " || e.key === "Enter")) {
+        doSpin();
+        return true;
+      }
+      return false;
+    });
+    withMusic(kit, () => backing(kit.synth, "lounge"));
+    kit.onQuit(() => finish());
+    let tick = 0;
+    kit.loop((dt) => {
+      if (anim) {
+        anim.t += dt;
+        const k = clamp(anim.t / anim.T);
+        wheelAng = anim.from + (anim.to - anim.from) * easeOut(k);
+        const step = Math.PI * 2 / ORDER.length;
+        const pocket = wheelAng + ORDER.indexOf(anim.result) * step;
+        const laps = 5;
+        ballAng = pocket + laps * Math.PI * 2 * (1 - easeOut(Math.min(1, k * 1.05)));
+        ballR = k < 0.65 ? 1 : k < 0.9 ? 1 - (k - 0.65) / 0.25 * 0.85 + Math.abs(Math.sin(k * 60)) * 0.08 * (0.9 - k) : 0.15;
+        tick += dt;
+        if (k > 0.5 && k < 0.92 && tick > 0.06 + k * 0.1) {
+          tick = 0;
+          kit.synth.fx("ball");
+        }
+        if (k >= 1) {
+          const r = anim.result;
+          anim = null;
+          land(r);
+        }
+      } else {
+        wheelAng += dt * 0.25;
+        if (!history.length)
+          ballAng = wheelAng;
+        else
+          ballAng = wheelAng + ORDER.indexOf(history[history.length - 1]) * (Math.PI * 2 / ORDER.length);
+      }
+      drawWheel();
+    });
+    paint();
+    return () => {
+      ro.disconnect();
+      ro2.disconnect();
+      root.remove();
+    };
+  }
+};
+
+// src/frontend/arcade/games/slots.ts
+var STRIP_WEIGHTS = [["cherry", 5], ["lemon", 5], ["bell", 4], ["star", 3], ["bar", 2], ["diamond", 2], ["seven", 1]];
+var PAYS = { seven: 50, diamond: 25, bar: 15, star: 10, bell: 8, lemon: 5, cherry: 4 };
+var NAME = { seven: "sevens", diamond: "diamonds", bar: "bars", star: "stars", bell: "bells", lemon: "lemons", cherry: "cherries" };
+function linePays(line) {
+  if (line[0] === line[1] && line[1] === line[2])
+    return PAYS[line[0]];
+  const ch = line.filter((s) => s === "cherry").length;
+  return ch === 2 ? 2 : ch === 1 ? 1 : 0;
+}
+var CSS5 = `
+.sl { position: absolute; inset: 0; display: grid; place-items: center; padding: 14px; background: radial-gradient(ellipse at 50% 30%, #5a0f22, #2a0612 60%, #12020a); }
+.sl-cab { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; align-items: center; width: min(760px, 100%); }
+.sl-box { position: relative; padding: 18px 18px 16px; border-radius: 26px; background: linear-gradient(180deg, #7d1730, #4a0b1c); box-shadow: 0 0 0 4px #e8b94a, 0 0 0 7px #6d4a10, 0 30px 70px rgba(0,0,0,.6), inset 0 2px 0 rgba(255,255,255,.25); }
+.sl-lights { position: absolute; inset: 6px; border-radius: 22px; pointer-events: none;
+  background: radial-gradient(circle, #ffe066 0 3px, transparent 4px) 0 0 / 22px 22px; mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0); padding: 5px; animation: sl-lights .8s steps(2) infinite; opacity: .9; }
+.sl-lights.win { animation-duration: .2s; }
+@keyframes sl-lights { 50% { background-position: 11px 0; } }
+.sl-title { text-align: center; font: 900 clamp(22px, 4vw, 34px)/1 "Bahnschrift", "Arial Black", sans-serif; letter-spacing: .12em; color: #ffe066; text-shadow: 0 0 14px #ff9d2e, 0 3px 0 #8a2a00; margin-bottom: 10px; }
+.sl-window { position: relative; border-radius: 14px; overflow: hidden; background: #f4ecd8; box-shadow: inset 0 8px 20px rgba(0,0,0,.45), inset 0 -8px 20px rgba(0,0,0,.35), 0 0 0 4px #2b0510; }
+.sl-window canvas { display: block; width: 100%; height: calc(var(--sw) * .62); }
+.sl-window::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,.35), transparent 22%, transparent 78%, rgba(0,0,0,.35)), linear-gradient(110deg, rgba(255,255,255,.18), transparent 35%); pointer-events: none; }
+.sl-led { display: flex; justify-content: space-between; gap: 10px; margin-top: 12px; }
+.sl-led div { flex: 1; padding: 6px 10px; border-radius: 8px; background: #120206; box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); font: 700 11px system-ui, sans-serif; letter-spacing: .14em; text-transform: uppercase; color: #b08a8f; }
+.sl-led b { display: block; font: 800 20px ${"ui-monospace, Consolas, monospace"}; color: #ff4d4d; text-shadow: 0 0 10px rgba(255,77,77,.7); letter-spacing: .04em; }
+.sl-ctrl { display: flex; gap: 8px; justify-content: center; margin-top: 12px; flex-wrap: wrap; }
+.sl-btn { padding: 10px 16px; border-radius: 12px; border: 0; cursor: pointer; font: 800 13px "Bahnschrift", system-ui, sans-serif; letter-spacing: .1em; text-transform: uppercase; color: #2a0612; background: linear-gradient(180deg, #ffe9a8, #e2a93a); box-shadow: 0 4px 0 #8a5a12, 0 8px 16px rgba(0,0,0,.4); }
+.sl-btn:active:not(:disabled) { transform: translateY(3px); box-shadow: 0 1px 0 #8a5a12; }
+.sl-btn:disabled { opacity: .4; cursor: not-allowed; }
+.sl-btn.alt { background: linear-gradient(180deg, #f3d7dc, #c48a94); box-shadow: 0 4px 0 #6e2a37; }
+.sl-btn.on { outline: 3px solid #fff; }
+.sl-btn.hold { background: linear-gradient(180deg, #b6ffd2, #3ccf86); box-shadow: 0 4px 0 #1b7a4b; }
+.sl-lever { position: relative; width: 46px; height: 220px; cursor: pointer; touch-action: none; }
+.sl-lever .rod { position: absolute; left: 19px; top: 30px; width: 8px; height: 160px; border-radius: 4px; background: linear-gradient(90deg, #ddd, #888); transform-origin: 50% 100%; transition: transform .25s cubic-bezier(.3,1.6,.5,1); }
+.sl-lever .knob { position: absolute; left: 3px; top: 0; width: 40px; height: 40px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #ff8a8a, #c4142c 60%, #6d0a17); box-shadow: 0 6px 14px rgba(0,0,0,.5); transition: transform .25s cubic-bezier(.3,1.6,.5,1); }
+.sl-lever.pull .rod { transform: scaleY(-.3); } .sl-lever.pull .knob { transform: translateY(150px); }
+.sl-lever .base { position: absolute; left: 6px; bottom: 0; width: 34px; height: 36px; border-radius: 8px; background: linear-gradient(180deg, #444, #1a1a1a); }
+.sl-pay { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 4px 12px; justify-content: center; font: 600 11px ui-monospace, monospace; color: #f3cdd3; opacity: .85; }
+@media (max-width: 600px) { .sl-cab { grid-template-columns: minmax(0, 1fr); } .sl-lever { display: none; } }
+`;
+var SLOTS = {
+  id: "slots",
+  title: "Slots",
+  theme: { bg: "#12020a", bg2: "#5a0f22", accent: "#ffd166", accent2: "#ff3d5a" },
+  howTo: [
+    "Pick a bet and pull the lever. The reels spin until you stop them — left to right.",
+    "Line three of a kind on the middle line. Cherries pay even alone.",
+    "On easy checks the reels crawl; on hard ones they blur, and slip a little after you stop them."
+  ],
+  controls: "Space / lever pulls · Space or 1 2 3 stops reels · H holds a reel",
+  start(kit) {
+    const L = kit.play.level;
+    const gamble = kit.play.mode === "gamble";
+    const start = gamble ? kit.play.stake : 100;
+    const pulls = gamble ? kit.play.rounds ?? 6 : 6;
+    const unit = Math.max(1, Math.round(start / 20));
+    const bets = [unit, unit * 2, unit * 4];
+    const speed = (5 + L * 17) * (1 - kit.aid("slow") / 100);
+    const slipMax = Math.round(L * 2.2);
+    let holds = kit.aid("hold");
+    let bet = bets[1], chips = start, pull = 0, over = false;
+    const strips = [0, 1, 2].map(() => {
+      const base = STRIP_WEIGHTS.flatMap(([s, n]) => Array(n).fill(s));
+      const out = [];
+      const pool = [...base];
+      while (pool.length) {
+        const i = Math.floor(kit.rng() * pool.length);
+        out.push(pool.splice(i, 1)[0]);
+      }
+      return out;
+    });
+    const N = strips[0].length;
+    const reels = [0, 1, 2].map(() => ({ pos: kit.rng() * N, v: 0, state: "idle", target: 0, held: false }));
+    let wins = 0, best = 0, bestLine = "";
+    const root = document.createElement("div");
+    root.className = "sl";
+    root.innerHTML = `<style>${CSS5}</style>
+      <div class="sl-cab">
+        <div class="sl-box"><div class="sl-lights"></div>
+          <div class="sl-title">LUCKY ★ SEVENS</div>
+          <div class="sl-window"><canvas></canvas></div>
+          <div class="sl-led"><div>Credits<b data-cr>0</b></div><div>Bet<b data-bet>0</b></div><div>Win<b data-win>0</b></div></div>
+          <div class="sl-ctrl" data-ctrl></div>
+          <div class="sl-pay">7 7 7 ×50 · ♦♦♦ ×25 · BAR ×15 · ★★★ ×10 · bells ×8 · lemons ×5 · cherries ×4 · 2 cherries ×2 · 1 cherry ×1</div>
+        </div>
+        <div class="sl-lever" data-lever><div class="rod"></div><div class="knob"></div><div class="base"></div></div>
+      </div>`;
+    kit.root.appendChild(root);
+    const $ = (s) => root.querySelector(s);
+    const cv = root.querySelector("canvas");
+    const g = cv.getContext("2d");
+    const fit = () => {
+      const box = root.getBoundingClientRect();
+      const sw = Math.min(box.width - 120, (box.height - 260) / 0.62, 640);
+      $(".sl-window").style.setProperty("--sw", `${Math.max(240, sw)}px`);
+      $(".sl-box").style.width = `${Math.max(280, sw + 36)}px`;
+      const r = cv.getBoundingClientRect();
+      const d = Math.min(2, devicePixelRatio || 1);
+      cv.width = r.width * d;
+      cv.height = r.height * d;
+      g.setTransform(d, 0, 0, d, 0, 0);
+    };
+    const ro = new ResizeObserver(fit);
+    ro.observe(root);
+    fit();
+    const spinning = () => reels.some((r) => r.state !== "idle");
+    const ctrl = () => {
+      const busy = spinning();
+      $("[data-ctrl]").innerHTML = busy ? reels.map((r, i) => `<button class="sl-btn alt" data-stop="${i}" ${r.state === "spin" ? "" : "disabled"}>Stop ${i + 1}</button>`).join("") : `${bets.map((b) => `<button class="sl-btn alt${b === bet ? " on" : ""}" data-b="${b}" ${b > chips ? "disabled" : ""}>Bet ${b}</button>`).join("")}
+           <button class="sl-btn" data-pull ${bet > chips || over || pull >= pulls ? "disabled" : ""}>Pull</button>
+           ${holds > 0 && pull > 0 ? reels.map((r, i) => `<button class="sl-btn hold${r.held ? " on" : ""}" data-hold="${i}">${r.held ? "Held" : "Hold"} ${i + 1}</button>`).join("") : ""}
+           ${gamble && pull > 0 || pull >= pulls ? `<button class="sl-btn alt" data-leave>${pull >= pulls ? "Done" : "Cash out"}</button>` : ""}`;
+      $("[data-cr]").textContent = String(Math.round(chips));
+      $("[data-bet]").textContent = String(bet);
+      kit.chips(chips);
+      kit.status(`Pull ${Math.min(pull + 1, pulls)} of ${pulls}
+${holds ? `${holds} hold${holds > 1 ? "s" : ""}` : ""}`);
+    };
+    const doPull = () => {
+      if (over || spinning() || bet > chips || pull >= pulls)
+        return;
+      chips -= bet;
+      $("[data-win]").textContent = "0";
+      $(".sl-lights").classList.remove("win");
+      const lever = $("[data-lever]");
+      lever.classList.add("pull");
+      setTimeout(() => lever.classList.remove("pull"), 350);
+      kit.synth.fx("launch");
+      reels.forEach((r, i) => {
+        if (r.held) {
+          r.held = false;
+          holds--;
+          return;
+        }
+        setTimeout(() => {
+          r.state = "spin";
+          r.v = speed * (1 + i * 0.07);
+          ctrl();
+        }, i * 140);
+      });
+      ctrl();
+      const p = pull;
+      setTimeout(() => {
+        if (pull === p)
+          reels.forEach((_, i) => stop(i));
+      }, 7000);
+    };
+    const stop = (i) => {
+      const r = reels[i];
+      if (r.state !== "spin")
+        return;
+      const slip = slipMax ? Math.floor(kit.rng() * (slipMax + 1)) : 0;
+      r.target = Math.ceil(r.pos) + 1 + slip;
+      r.state = "stopping";
+      kit.synth.fx("stop");
+      ctrl();
+    };
+    const nextToStop = () => reels.findIndex((r) => r.state === "spin");
+    const settle = () => {
+      const line = reels.map((r) => strips[reels.indexOf(r)][(Math.round(r.pos) % N + N) % N]);
+      const m = linePays(line);
+      const won = bet * m;
+      chips += won;
+      pull++;
+      $("[data-win]").textContent = String(won);
+      if (m >= 4) {
+        wins++;
+        $(".sl-lights").classList.add("win");
+        kit.synth.fx(m >= 15 ? "jackpot" : "coins");
+        kit.banner(`${NAME[line[0]]}! +${won}`, m >= 15 ? "gold" : "good");
+        if (won > best) {
+          best = won;
+          bestLine = `three ${NAME[line[0]]}`;
+        }
+        kit.shake(m >= 25 ? 1 : 0.4);
+      } else if (m > 0) {
+        kit.synth.fx("chip");
+        wins++;
+      } else
+        kit.synth.fx("click");
+      kit.track(clamp(chips / (start * 2)));
+      ctrl();
+      if (pull >= pulls || chips < bets[0])
+        setTimeout(finish, 1400);
+    };
+    const finish = () => {
+      if (over)
+        return;
+      over = true;
+      const beats = [chips > start * 1.3 ? "the machine paid out" : chips < start * 0.7 ? "the machine ate their money" : "a few small wins, a few losses"];
+      if (bestLine)
+        beats.push(`lined up ${bestLine}`);
+      kit.finish({ chips, score: clamp(chips / (start * 2)), beats, detail: `${pull} pulls, ${wins} paid` });
+    };
+    root.addEventListener("click", (e) => {
+      if (kit.paused)
+        return;
+      const t = e.target;
+      const b = t.closest("[data-b]");
+      if (b) {
+        bet = Number(b.dataset.b);
+        kit.synth.fx("chip");
+        ctrl();
+        return;
+      }
+      const st = t.closest("[data-stop]");
+      if (st) {
+        stop(Number(st.dataset.stop));
+        return;
+      }
+      const h = t.closest("[data-hold]");
+      if (h) {
+        const r = reels[Number(h.dataset.hold)];
+        const heldNow = reels.filter((x) => x.held).length;
+        if (r.held || heldNow < holds) {
+          r.held = !r.held;
+          kit.synth.fx("click");
+          ctrl();
+        }
+        return;
+      }
+      if (t.closest("[data-pull]") || t.closest("[data-lever]")) {
+        if (spinning()) {
+          const i = nextToStop();
+          if (i >= 0)
+            stop(i);
+        } else
+          doPull();
+        return;
+      }
+      if (t.closest("[data-leave]"))
+        finish();
+    });
+    cv.addEventListener("pointerdown", (e) => {
+      if (kit.paused || !spinning())
+        return;
+      const r = cv.getBoundingClientRect();
+      stop(Math.min(2, Math.floor((e.clientX - r.left) / r.width * 3)));
+    });
+    kit.onKey((e, down) => {
+      if (!down || e.repeat)
+        return false;
+      const k = e.key.toLowerCase();
+      if (k === " " || k === "enter") {
+        if (spinning()) {
+          const i = nextToStop();
+          if (i >= 0)
+            stop(i);
+        } else
+          doPull();
+        return true;
+      }
+      if (/^[1-3]$/.test(k)) {
+        stop(Number(k) - 1);
+        return true;
+      }
+      if (k === "h") {
+        const r = reels.find((x) => !x.held);
+        if (r && holds > reels.filter((x) => x.held).length && !spinning() && pull > 0) {
+          r.held = true;
+          ctrl();
+        }
+        return true;
+      }
+      return false;
+    });
+    withMusic(kit, () => backing(kit.synth, "lounge"));
+    kit.onQuit(() => finish());
+    let tickAcc = 0;
+    kit.loop((dt) => {
+      let anyMoving = false;
+      for (const r of reels) {
+        if (r.state === "spin") {
+          r.pos += r.v * dt;
+          anyMoving = true;
+        } else if (r.state === "stopping") {
+          anyMoving = true;
+          const left = r.target - r.pos;
+          const v = Math.max(1.2, Math.min(r.v, left * 7));
+          r.pos = Math.min(r.target, r.pos + v * dt);
+          if (r.pos >= r.target - 0.001) {
+            r.pos = r.target;
+            r.state = "idle";
+            kit.synth.fx("reel");
+            if (!spinning())
+              settle();
+          }
+        }
+      }
+      if (anyMoving) {
+        tickAcc += dt * speed;
+        if (tickAcc > 1) {
+          tickAcc = 0;
+          kit.synth.fx("reel");
+        }
+      }
+      draw();
+    });
+    const sym = (s, x, y, z) => {
+      g.save();
+      g.translate(x, y);
+      switch (s) {
+        case "seven":
+          g.font = `900 ${z * 0.8}px "Arial Black", "Bahnschrift", sans-serif`;
+          g.textAlign = "center";
+          g.textBaseline = "middle";
+          g.fillStyle = "#d4142c";
+          g.strokeStyle = "#5a0610";
+          g.lineWidth = z * 0.05;
+          g.strokeText("7", 0, z * 0.04);
+          g.fillText("7", 0, z * 0.04);
+          break;
+        case "bar":
+          g.fillStyle = "#1c1c22";
+          rrect(g, -z * 0.38, -z * 0.18, z * 0.76, z * 0.36, z * 0.06);
+          g.fill();
+          g.fillStyle = "#fff";
+          g.font = `900 ${z * 0.24}px "Bahnschrift", sans-serif`;
+          g.textAlign = "center";
+          g.textBaseline = "middle";
+          g.fillText("BAR", 0, z * 0.01);
+          break;
+        case "diamond":
+          g.fillStyle = "#2fa6ff";
+          g.beginPath();
+          g.moveTo(0, -z * 0.36);
+          g.lineTo(z * 0.3, -z * 0.08);
+          g.lineTo(0, z * 0.36);
+          g.lineTo(-z * 0.3, -z * 0.08);
+          g.closePath();
+          g.fill();
+          g.fillStyle = "rgba(255,255,255,.55)";
+          g.beginPath();
+          g.moveTo(0, -z * 0.36);
+          g.lineTo(z * 0.12, -z * 0.08);
+          g.lineTo(-z * 0.12, -z * 0.08);
+          g.closePath();
+          g.fill();
+          break;
+        case "star":
+          g.fillStyle = "#ffbf1f";
+          g.beginPath();
+          for (let k = 0;k < 10; k++) {
+            const a = -Math.PI / 2 + k * Math.PI / 5, rr = k % 2 ? z * 0.15 : z * 0.36;
+            g.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
+          }
+          g.closePath();
+          g.fill();
+          g.strokeStyle = "#a86b00";
+          g.lineWidth = 2;
+          g.stroke();
+          break;
+        case "bell":
+          g.fillStyle = "#f2b705";
+          g.beginPath();
+          g.moveTo(-z * 0.3, z * 0.2);
+          g.quadraticCurveTo(-z * 0.26, -z * 0.32, 0, -z * 0.32);
+          g.quadraticCurveTo(z * 0.26, -z * 0.32, z * 0.3, z * 0.2);
+          g.closePath();
+          g.fill();
+          g.fillStyle = "#8a5a00";
+          g.beginPath();
+          g.arc(0, z * 0.25, z * 0.07, 0, Math.PI * 2);
+          g.fill();
+          break;
+        case "lemon":
+          g.fillStyle = "#ffe23d";
+          g.beginPath();
+          g.ellipse(0, 0, z * 0.32, z * 0.24, -0.3, 0, Math.PI * 2);
+          g.fill();
+          g.strokeStyle = "#c4a300";
+          g.lineWidth = 2;
+          g.stroke();
+          break;
+        case "cherry":
+          g.strokeStyle = "#3d8a2a";
+          g.lineWidth = z * 0.05;
+          g.beginPath();
+          g.moveTo(-z * 0.14, z * 0.08);
+          g.quadraticCurveTo(0, -z * 0.3, z * 0.12, -z * 0.34);
+          g.moveTo(z * 0.16, z * 0.12);
+          g.quadraticCurveTo(z * 0.12, -z * 0.15, z * 0.12, -z * 0.34);
+          g.stroke();
+          for (const [cx, cy] of [[-z * 0.15, z * 0.16], [z * 0.16, z * 0.2]]) {
+            g.fillStyle = "#d4142c";
+            g.beginPath();
+            g.arc(cx, cy, z * 0.15, 0, Math.PI * 2);
+            g.fill();
+            g.fillStyle = "rgba(255,255,255,.5)";
+            g.beginPath();
+            g.arc(cx - z * 0.05, cy - z * 0.05, z * 0.04, 0, Math.PI * 2);
+            g.fill();
+          }
+          break;
+      }
+      g.restore();
+    };
+    function draw() {
+      const r = cv.getBoundingClientRect();
+      const { width: W, height: H } = r, cw = W / 3, z = Math.min(cw * 0.8, H / 3 * 0.95);
+      g.clearRect(0, 0, W, H);
+      for (let i = 0;i < 3; i++) {
+        const reel = reels[i];
+        const x0 = i * cw;
+        const bg = g.createLinearGradient(x0, 0, x0 + cw, 0);
+        bg.addColorStop(0, "#e6dcc3");
+        bg.addColorStop(0.5, "#fffaf0");
+        bg.addColorStop(1, "#e6dcc3");
+        g.fillStyle = bg;
+        g.fillRect(x0 + 2, 0, cw - 4, H);
+        const rowH = H / 3;
+        const blur = reel.state === "spin" ? clamp(reel.v / 14) : 0;
+        const base = Math.floor(reel.pos), frac = reel.pos - base;
+        for (let k = -2;k <= 2; k++) {
+          const idx = ((base - k) % N + N) % N;
+          const y = H / 2 + (k + frac) * rowH;
+          if (y < -rowH || y > H + rowH)
+            continue;
+          g.globalAlpha = 1 - blur * 0.55;
+          sym(strips[i][idx], x0 + cw / 2, y, z);
+          if (blur > 0.2) {
+            g.globalAlpha = blur * 0.25;
+            sym(strips[i][idx], x0 + cw / 2, y - rowH * 0.18, z);
+          }
+          g.globalAlpha = 1;
+        }
+        if (reel.held) {
+          g.fillStyle = "rgba(60, 207, 134, .25)";
+          g.fillRect(x0 + 2, 0, cw - 4, H);
+          g.fillStyle = "#127a49";
+          g.font = `800 12px ${FONT_NUM}`;
+          g.textAlign = "center";
+          g.fillText("HELD", x0 + cw / 2, 16);
+        }
+        g.fillStyle = "rgba(43,5,16,.85)";
+        g.fillRect(x0 + cw - 2, 0, 4, H);
+      }
+      g.strokeStyle = "rgba(212, 20, 44, .75)";
+      g.lineWidth = 3;
+      g.beginPath();
+      g.moveTo(0, H / 2);
+      g.lineTo(W, H / 2);
+      g.stroke();
+      g.fillStyle = "#d4142c";
+      g.beginPath();
+      g.moveTo(0, H / 2 - 9);
+      g.lineTo(12, H / 2);
+      g.lineTo(0, H / 2 + 9);
+      g.fill();
+      g.beginPath();
+      g.moveTo(W, H / 2 - 9);
+      g.lineTo(W - 12, H / 2);
+      g.lineTo(W, H / 2 + 9);
+      g.fill();
+    }
+    ctrl();
+    return () => {
+      ro.disconnect();
+      root.remove();
+    };
+  }
+};
+
+// src/frontend/arcade/games/snake.ts
+var DIRS = { up: { x: 0, y: -1 }, down: { x: 0, y: 1 }, left: { x: -1, y: 0 }, right: { x: 1, y: 0 } };
+var KEYMAP = { arrowup: "up", w: "up", arrowdown: "down", s: "down", arrowleft: "left", a: "left", arrowright: "right", d: "right" };
+var SNAKE = {
+  id: "snake",
+  title: "Snake",
+  theme: { bg: "#03100a", bg2: "#0c2a18", accent: "#7cff6b", accent2: "#1fd1a5" },
+  howTo: [
+    "Steer the snake to the food. Every bite makes it longer — and a little faster.",
+    "Don't hit the walls, the rocks, or your own tail.",
+    "Eat enough before the clock runs out."
+  ],
+  controls: "Arrows or WASD · swipe on touch",
+  start(kit) {
+    const L = kit.play.level;
+    const cols = 24, rows = 15;
+    const goal = Math.round(8 + L * 14);
+    const limit = Math.round(goal * 4.2 * (1.25 - 0.25 * L) * (1 + kit.aid("time") / 100));
+    const wrap = kit.aid("wrap") > 0;
+    const baseSpeed = (6.5 + L * 7) * (1 - kit.aid("slow") / 100);
+    const rocks = [];
+    const nRocks = L > 0.45 ? Math.round((L - 0.45) * 22) : 0;
+    let snake = [];
+    let dir = DIRS.right, queue = [];
+    let food = { x: 0, y: 0 }, eaten = 0, timeLeft = limit, step = 0, over = false, grace = 0, crashes = 0, close = 0;
+    const c = kit.canvas();
+    const g = c.g;
+    const sparks = new Sparks, floats = new Floaters;
+    const key = (v) => `${v.x},${v.y}`;
+    const occupied = () => new Set([...snake, ...rocks].map(key));
+    const reset = () => {
+      const y = Math.floor(rows / 2);
+      snake = [{ x: 6, y }, { x: 5, y }, { x: 4, y }, { x: 3, y }];
+      dir = DIRS.right;
+      queue = [];
+    };
+    const placeFood = () => {
+      const taken = occupied();
+      const free = [];
+      for (let y = 0;y < rows; y++)
+        for (let x = 0;x < cols; x++)
+          if (!taken.has(`${x},${y}`))
+            free.push({ x, y });
+      food = free[Math.floor(kit.rng() * free.length)];
+    };
+    reset();
+    for (let i = 0;i < nRocks; i++) {
+      const taken = occupied();
+      let r;
+      do
+        r = { x: 2 + Math.floor(kit.rng() * (cols - 4)), y: 1 + Math.floor(kit.rng() * (rows - 2)) };
+      while (taken.has(key(r)) || Math.abs(r.y - rows / 2) < 2);
+      rocks.push(r);
+    }
+    placeFood();
+    const speed = () => baseSpeed * (1 + eaten * 0.012);
+    const status = () => kit.status(`Eaten ${eaten} / ${goal}
+${Math.ceil(timeLeft)}s left`);
+    const finish = (how) => {
+      if (over)
+        return;
+      over = true;
+      const s = clamp(eaten / goal);
+      kit.score(s);
+      if (how === "goal") {
+        kit.synth.fx("win");
+        kit.banner("Full!", "good");
+      }
+      const beats = how === "goal" ? [timeLeft > limit * 0.35 ? "quick and sure" : "got there in the end"] : how === "crash" ? [s > 0.7 ? "tripped up right near the end" : "a careless mistake"] : ["ran out of time"];
+      if (close > 2)
+        beats.push("a few near misses");
+      if (crashes)
+        beats.push("recovered from a fall");
+      kit.finish({ score: s, beats, detail: `${eaten} of ${goal}` });
+    };
+    const crash = () => {
+      kit.synth.fx("crash");
+      kit.shake(1.2);
+      const B = box();
+      sparks.burst(B.x + (snake[0].x + 0.5) * B.s, B.y + (snake[0].y + 0.5) * B.s, "#ff5d6c", 26, 280, 4);
+      if (kit.lives.spend("Back on your feet!")) {
+        crashes++;
+        reset();
+        grace = 1.2;
+        return;
+      }
+      finish("crash");
+    };
+    const advance = () => {
+      if (queue.length) {
+        const d = queue.shift();
+        if (d.x !== -dir.x || d.y !== -dir.y)
+          dir = d;
+      }
+      let head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
+      if (wrap)
+        head = { x: (head.x + cols) % cols, y: (head.y + rows) % rows };
+      const out = head.x < 0 || head.y < 0 || head.x >= cols || head.y >= rows;
+      const hitRock = rocks.some((r) => r.x === head.x && r.y === head.y);
+      const hitSelf = snake.slice(0, -1).some((p) => p.x === head.x && p.y === head.y);
+      if ((out || hitRock || hitSelf) && grace <= 0) {
+        crash();
+        return;
+      }
+      if (out)
+        head = { x: (head.x + cols) % cols, y: (head.y + rows) % rows };
+      snake.unshift(head);
+      const nb = [[1, 0], [-1, 0], [0, 1], [0, -1]].filter(([dx, dy]) => {
+        const x = head.x + dx, y = head.y + dy;
+        return !wrap && (x < 0 || y < 0 || x >= cols || y >= rows) || snake.slice(3).some((p) => p.x === x && p.y === y);
+      }).length;
+      if (nb >= 2)
+        close++;
+      if (head.x === food.x && head.y === food.y) {
+        eaten++;
+        kit.synth.fx("eat");
+        const B = box();
+        sparks.burst(B.x + (food.x + 0.5) * B.s, B.y + (food.y + 0.5) * B.s, "#ffe066", 16, 200);
+        floats.add(B.x + (food.x + 0.5) * B.s, B.y + food.y * B.s, `+1`, "#ffe066", 18);
+        kit.score(clamp(eaten / goal));
+        kit.track(clamp(eaten / goal / Math.max(0.15, 1 - timeLeft / limit)));
+        if (eaten >= goal) {
+          finish("goal");
+          return;
+        }
+        placeFood();
+      } else
+        snake.pop();
+      status();
+    };
+    kit.onKey((e, down) => {
+      const d = KEYMAP[e.key.toLowerCase()];
+      if (!d)
+        return false;
+      if (down && queue.length < 3) {
+        const last = queue[queue.length - 1] ?? dir;
+        const nd = DIRS[d];
+        if (!(nd.x === last.x && nd.y === last.y) && !(nd.x === -last.x && nd.y === -last.y))
+          queue.push(nd);
+      }
+      return true;
+    });
+    let sw = null;
+    c.el.addEventListener("pointerdown", (e) => {
+      sw = { x: e.clientX, y: e.clientY };
+    });
+    c.el.addEventListener("pointermove", (e) => {
+      if (!sw)
+        return;
+      const dx = e.clientX - sw.x, dy = e.clientY - sw.y;
+      if (Math.hypot(dx, dy) < 24)
+        return;
+      const d = Math.abs(dx) > Math.abs(dy) ? dx > 0 ? "right" : "left" : dy > 0 ? "down" : "up";
+      const last = queue[queue.length - 1] ?? dir, nd = DIRS[d];
+      if (!(nd.x === last.x && nd.y === last.y) && !(nd.x === -last.x && nd.y === -last.y) && queue.length < 3)
+        queue.push(nd);
+      sw = { x: e.clientX, y: e.clientY };
+    });
+    c.el.addEventListener("pointerup", () => {
+      sw = null;
+    });
+    withMusic(kit, () => backing(kit.synth, "retro", () => 1 + eaten / goal * 0.25));
+    kit.onQuit(() => finish("time"));
+    const box = () => {
+      const s = Math.floor(Math.min((c.w - 24) / cols, (c.h - 24) / rows));
+      return { s, x: Math.round((c.w - s * cols) / 2), y: Math.round((c.h - s * rows) / 2) };
+    };
+    let t = 0;
+    kit.loop((dt) => {
+      t += dt;
+      if (!over) {
+        timeLeft = Math.max(0, timeLeft - dt);
+        grace = Math.max(0, grace - dt);
+        if (timeLeft <= 0)
+          finish("time");
+        step += dt * speed();
+        while (step >= 1 && !over) {
+          step -= 1;
+          advance();
+        }
+      }
+      sparks.step(dt);
+      floats.step(dt);
+      draw();
+    });
+    function draw() {
+      const B = box();
+      g.clearRect(0, 0, c.w, c.h);
+      g.fillStyle = "#04140b";
+      rrect(g, B.x - 4, B.y - 4, B.s * cols + 8, B.s * rows + 8, 10);
+      g.fill();
+      g.strokeStyle = wrap ? "rgba(124,255,107,.25)" : "rgba(124,255,107,.75)";
+      g.lineWidth = 2;
+      if (wrap)
+        g.setLineDash([6, 6]);
+      g.shadowColor = "#7cff6b";
+      g.shadowBlur = wrap ? 0 : 14;
+      rrect(g, B.x - 4, B.y - 4, B.s * cols + 8, B.s * rows + 8, 10);
+      g.stroke();
+      g.setLineDash([]);
+      g.shadowBlur = 0;
+      g.fillStyle = "rgba(124,255,107,.06)";
+      for (let y = 0;y < rows; y++)
+        for (let x = 0;x < cols; x++)
+          if ((x + y) % 2)
+            g.fillRect(B.x + x * B.s, B.y + y * B.s, B.s, B.s);
+      for (const r of rocks) {
+        g.fillStyle = "#4a5a4f";
+        rrect(g, B.x + r.x * B.s + 2, B.y + r.y * B.s + 2, B.s - 4, B.s - 4, 4);
+        g.fill();
+        g.fillStyle = "rgba(255,255,255,.12)";
+        g.fillRect(B.x + r.x * B.s + 4, B.y + r.y * B.s + 4, B.s - 10, 3);
+      }
+      const pulse = 1 + Math.sin(t * 6) * 0.08;
+      const fx = B.x + (food.x + 0.5) * B.s, fy = B.y + (food.y + 0.5) * B.s;
+      g.fillStyle = "#ffe066";
+      g.shadowColor = "#ffe066";
+      g.shadowBlur = 18;
+      g.beginPath();
+      g.arc(fx, fy, B.s * 0.34 * pulse, 0, Math.PI * 2);
+      g.fill();
+      g.shadowBlur = 0;
+      g.fillStyle = "#3dbb4a";
+      g.beginPath();
+      g.ellipse(fx + B.s * 0.12, fy - B.s * 0.32, B.s * 0.12, B.s * 0.06, -0.6, 0, Math.PI * 2);
+      g.fill();
+      const blink = grace > 0 && Math.floor(t * 10) % 2 === 0;
+      if (!blink) {
+        g.lineCap = "round";
+        g.lineJoin = "round";
+        for (let i = snake.length - 1;i > 0; i--) {
+          const a = snake[i], b = snake[i - 1];
+          if (Math.abs(a.x - b.x) + Math.abs(a.y - b.y) > 1)
+            continue;
+          const k = 1 - i / Math.max(1, snake.length);
+          g.strokeStyle = `hsl(${150 - k * 30} 85% ${34 + k * 26}%)`;
+          g.lineWidth = B.s * (0.5 + k * 0.3);
+          g.beginPath();
+          g.moveTo(B.x + (a.x + 0.5) * B.s, B.y + (a.y + 0.5) * B.s);
+          g.lineTo(B.x + (b.x + 0.5) * B.s, B.y + (b.y + 0.5) * B.s);
+          g.stroke();
+        }
+        const h0 = snake[0];
+        g.fillStyle = "#9dff8a";
+        g.shadowColor = "#7cff6b";
+        g.shadowBlur = 12;
+        g.beginPath();
+        g.arc(B.x + (h0.x + 0.5) * B.s, B.y + (h0.y + 0.5) * B.s, B.s * 0.46, 0, Math.PI * 2);
+        g.fill();
+        g.shadowBlur = 0;
+      }
+      if (!blink && snake[0]) {
+        const h = snake[0], cx = B.x + (h.x + 0.5) * B.s, cy = B.y + (h.y + 0.5) * B.s;
+        const ex = dir.y !== 0 ? 0.2 : 0.12, ey = dir.x !== 0 ? 0.2 : 0.12;
+        for (const sgn of [-1, 1]) {
+          const x = cx + dir.x * B.s * 0.15 + (dir.y !== 0 ? sgn * ex * B.s : 0), y = cy + dir.y * B.s * 0.15 + (dir.x !== 0 ? sgn * ey * B.s : 0);
+          g.fillStyle = "#fff";
+          g.beginPath();
+          g.arc(x, y, B.s * 0.11, 0, Math.PI * 2);
+          g.fill();
+          g.fillStyle = "#061";
+          g.beginPath();
+          g.arc(x + dir.x * 2, y + dir.y * 2, B.s * 0.05, 0, Math.PI * 2);
+          g.fill();
+        }
+      }
+      sparks.draw(g);
+      floats.draw(g);
+      g.fillStyle = "rgba(0,0,0,.18)";
+      for (let y = 0;y < c.h; y += 3)
+        g.fillRect(0, y, c.w, 1);
+      g.font = `800 14px ${FONT_NUM}`;
+      g.fillStyle = "rgba(124,255,107,.85)";
+      g.textAlign = "left";
+      g.textBaseline = "top";
+      g.fillText(`${eaten}/${goal}   ${Math.ceil(timeLeft)}s`, B.x, Math.max(4, B.y - 24));
+    }
+    status();
+    return () => {};
+  }
+};
+
+// src/frontend/arcade/games/stack.ts
+var W = 10;
+var H = 20;
+var SHAPES = {
+  I: [[-1, 0], [0, 0], [1, 0], [2, 0]],
+  O: [[0, 0], [1, 0], [0, 1], [1, 1]],
+  T: [[-1, 0], [0, 0], [1, 0], [0, -1]],
+  S: [[-1, 0], [0, 0], [0, -1], [1, -1]],
+  Z: [[-1, -1], [0, -1], [0, 0], [1, 0]],
+  J: [[-1, -1], [-1, 0], [0, 0], [1, 0]],
+  L: [[1, -1], [-1, 0], [0, 0], [1, 0]]
+};
+var COLOR = {
+  I: ["#5ef0ff", "#11a4c4"],
+  O: ["#ffe45c", "#d1a512"],
+  T: ["#c38bff", "#7c3fd1"],
+  S: ["#6dff9a", "#1fae4d"],
+  Z: ["#ff6b7f", "#c22740"],
+  J: ["#6b9bff", "#2e55d1"],
+  L: ["#ffab5c", "#d66a12"]
+};
+var KICKS = [[0, 0], [-1, 0], [1, 0], [0, -1], [-2, 0], [2, 0], [0, 1]];
+var BASS = "E2/.5 E3 E2 E3 E2 E3 E2 E3 | A2 A3 A2 A3 A2 A3 A2 A3 | E2 E3 E2 E3 E2 E3 E2 E3 | A2 A3 A2 A3 A2 A3 A2 A3 | D2 D3 D2 D3 D2 D3 D2 D3 | C2 C3 C2 C3 C2 C3 C2 C3 | E2 E3 E2 E3 E2 E3 E2 E3 | A2 A3 A2 A3 A2 A3 A2 A3";
+var STACK = {
+  id: "stack",
+  title: "Stack",
+  theme: { bg: "#070914", bg2: "#141a3a", accent: "#5ef0ff", accent2: "#c38bff" },
+  howTo: [
+    "Blocks fall one at a time. Move and turn them to fill whole rows — full rows clear.",
+    "Clear enough lines before time's up. Four at once counts as five.",
+    "If the stack reaches the top, it's over."
+  ],
+  controls: "← → move · ↑ / X turn · Z turn back · ↓ soft drop · Space drop · C / Shift hold · swipe & tap on touch",
+  start(kit) {
+    const L = kit.play.level;
+    const goal = Math.round(4 + L * 10);
+    const limit = Math.round(goal * 13 * (1.25 - 0.25 * L) * (1 + kit.aid("time") / 100));
+    const gravity = (1 + L * 4.5) * (1 - kit.aid("slow") / 100);
+    const previews = Math.min(5, (L < 0.5 ? 2 : 1) + kit.aid("preview"));
+    const canHold = kit.aid("hold") > 0 || L < 0.35;
+    const grid = Array.from({ length: H }, () => Array(W).fill(null));
+    let bag = [];
+    const queue = [];
+    const next = () => {
+      if (!bag.length)
+        bag = shuffle(["I", "O", "T", "S", "Z", "J", "L"], kit.rng);
+      return bag.pop();
+    };
+    while (queue.length < 6)
+      queue.push(next());
+    let cur = { p: queue.shift(), x: 4, y: 1, r: 0 };
+    queue.push(next());
+    let hold = null, held = false;
+    let lines = 0, credit = 0, timeLeft = limit, fall = 0, lock = 0, lockResets = 0, over = false, clearing = null;
+    let tetrises = 0, maxHeight = 0;
+    const c = kit.canvas();
+    const g = c.g;
+    const sparks = new Sparks, floats = new Floaters;
+    const cells = (p, r, x, y) => SHAPES[p].map(([cx, cy]) => {
+      let a = cx, b = cy;
+      if (p !== "O")
+        for (let k = 0;k < (r & 3); k++) {
+          const t = a;
+          a = -b;
+          b = t;
+          if (p === "I") {}
+        }
+      return [x + a, y + b];
+    });
+    const fits = (p, r, x, y) => cells(p, r, x, y).every(([a, b]) => a >= 0 && a < W && b < H && (b < 0 || !grid[b][a]));
+    const ghostY = () => {
+      let y = cur.y;
+      while (fits(cur.p, cur.r, cur.x, y + 1))
+        y++;
+      return y;
+    };
+    const resetLock = () => {
+      if (lockResets < 15) {
+        lock = 0;
+        lockResets++;
+      }
+    };
+    const move = (dx) => {
+      if (fits(cur.p, cur.r, cur.x + dx, cur.y)) {
+        cur.x += dx;
+        kit.synth.fx("tick");
+        resetLock();
+      }
+    };
+    const rotate = (dir) => {
+      const r = (cur.r + dir + 4) % 4;
+      for (const [kx, ky] of KICKS)
+        if (fits(cur.p, r, cur.x + kx, cur.y + ky)) {
+          cur.x += kx;
+          cur.y += ky;
+          cur.r = r;
+          kit.synth.fx("rotate");
+          resetLock();
+          return;
+        }
+    };
+    const spawn = () => {
+      cur = { p: queue.shift(), x: 4, y: 1, r: 0 };
+      queue.push(next());
+      held = false;
+      lock = 0;
+      lockResets = 0;
+      fall = 0;
+      if (!fits(cur.p, cur.r, cur.x, cur.y))
+        topOut();
+    };
+    const doHold = () => {
+      if (!canHold || held)
+        return;
+      const p = cur.p;
+      if (hold) {
+        cur = { p: hold, x: 4, y: 1, r: 0 };
+      } else
+        spawn();
+      hold = p;
+      held = true;
+      kit.synth.fx("click");
+    };
+    const place = () => {
+      for (const [a, b] of cells(cur.p, cur.r, cur.x, cur.y))
+        if (b >= 0)
+          grid[b][a] = cur.p;
+      kit.synth.fx("drop");
+      const full = grid.map((row, i) => row.every(Boolean) ? i : -1).filter((i) => i >= 0);
+      const top = grid.findIndex((row) => row.some(Boolean));
+      maxHeight = Math.max(maxHeight, top < 0 ? 0 : H - top);
+      if (full.length) {
+        clearing = { rows: full, t: 0 };
+        const n = full.length === 4 ? 5 : full.length;
+        lines += full.length;
+        credit += n;
+        if (full.length === 4) {
+          tetrises++;
+          kit.synth.fx("tetris");
+          kit.banner("Four lines!", "gold");
+          kit.shake(0.8);
+        } else
+          kit.synth.fx("line");
+        const B = board();
+        for (const row of full)
+          for (let x = 0;x < W; x++)
+            sparks.burst(B.x + (x + 0.5) * B.s, B.y + (row + 0.5) * B.s, COLOR[grid[row][x] ?? "I"][0], 3, 180);
+        floats.add(B.x + B.w / 2, B.y + (full[0] + 0.5) * B.s, full.length === 4 ? "+5" : `+${full.length}`, "#ffe066", 26);
+        kit.score(clamp(credit / goal));
+        kit.track(clamp(credit / goal / Math.max(0.15, 1 - timeLeft / limit)));
+        if (credit >= goal)
+          setTimeout(() => finish("goal"), 400);
+      } else
+        spawn();
+      status();
+    };
+    const hardDrop = () => {
+      const y = ghostY();
+      const d = y - cur.y;
+      cur.y = y;
+      place();
+      if (d > 2)
+        kit.shake(0.3);
+    };
+    const topOut = () => {
+      kit.synth.fx("crash");
+      kit.shake(1.4);
+      if (kit.lives.spend("Cleared the top!")) {
+        for (let y = 0;y < H; y++)
+          if (y >= H / 2)
+            grid[y].fill(null);
+        const rows = grid.splice(H / 2);
+        grid.unshift(...rows);
+        cur = { p: cur.p, x: 4, y: 1, r: 0 };
+        return;
+      }
+      finish("top");
+    };
+    const status = () => kit.status(`Lines ${Math.min(credit, goal)} / ${goal}
+${Math.ceil(timeLeft)}s left`);
+    const finish = (how) => {
+      if (over)
+        return;
+      over = true;
+      const s = clamp(credit / goal);
+      kit.score(s);
+      if (how === "goal") {
+        kit.synth.fx("win");
+        kit.banner("Done!", "good");
+      }
+      const beats = how === "goal" ? [timeLeft > limit * 0.4 ? "made it look easy" : timeLeft < limit * 0.1 ? "got there with seconds left" : "got it done"] : how === "top" ? ["it all piled up"] : ["ran out of time"];
+      if (tetrises)
+        beats.push(tetrises > 1 ? "some beautifully neat work" : "one beautifully neat moment");
+      if (maxHeight > H * 0.75 && how === "goal")
+        beats.push("came close to losing it");
+      kit.finish({ score: s, beats, detail: `${lines} lines cleared${tetrises ? `, ${tetrises} four-at-once` : ""}` });
+    };
+    const held_ = { left: 0, right: 0, down: false };
+    let das = 0;
+    kit.onKey((e, down) => {
+      const k = e.key.toLowerCase();
+      if (over || clearing)
+        return ["arrowleft", "arrowright", "arrowdown", "arrowup", " "].includes(k);
+      if (k === "arrowleft") {
+        if (down && !e.repeat) {
+          move(-1);
+          das = 0;
+        }
+        held_.left = down ? 1 : 0;
+        return true;
+      }
+      if (k === "arrowright") {
+        if (down && !e.repeat) {
+          move(1);
+          das = 0;
+        }
+        held_.right = down ? 1 : 0;
+        return true;
+      }
+      if (k === "arrowdown") {
+        held_.down = down;
+        return true;
+      }
+      if (!down || e.repeat)
+        return ["arrowup", "x", "z", " ", "c", "shift"].includes(k);
+      if (k === "arrowup" || k === "x") {
+        rotate(1);
+        return true;
+      }
+      if (k === "z") {
+        rotate(-1);
+        return true;
+      }
+      if (k === " ") {
+        hardDrop();
+        return true;
+      }
+      if (k === "c" || k === "shift") {
+        doHold();
+        return true;
+      }
+      return false;
+    });
+    let drag = null;
+    c.el.addEventListener("pointerdown", (e) => {
+      c.el.setPointerCapture(e.pointerId);
+      drag = { x: e.clientX, y: e.clientY, moved: 0, t: performance.now(), cx: cur.x };
+    });
+    c.el.addEventListener("pointermove", (e) => {
+      if (!drag || over || clearing || kit.paused)
+        return;
+      const B = board();
+      const want = drag.cx + Math.round((e.clientX - drag.x) / (B.s * 0.9));
+      while (cur.x < want && fits(cur.p, cur.r, cur.x + 1, cur.y)) {
+        cur.x++;
+        drag.moved++;
+      }
+      while (cur.x > want && fits(cur.p, cur.r, cur.x - 1, cur.y)) {
+        cur.x--;
+        drag.moved++;
+      }
+    });
+    c.el.addEventListener("pointerup", (e) => {
+      if (!drag || over || clearing || kit.paused) {
+        drag = null;
+        return;
+      }
+      const dy = e.clientY - drag.y, dt = performance.now() - drag.t;
+      if (dy > 60 && dt < 350)
+        hardDrop();
+      else if (!drag.moved && Math.abs(dy) < 12 && dt < 300)
+        rotate(1);
+      else if (dy < -60 && dt < 350)
+        doHold();
+      drag = null;
+    });
+    const mel = parseLine(KOROBEINIKI), bass = parseLine(BASS);
+    const tuneBeats = 32;
+    const speed = () => 1 + clamp(maxHeight / H) * 0.35 + L * 0.15;
+    let stopMusic = () => {};
+    const startMusic = () => {
+      stopMusic();
+      stopMusic = kit.synth.loop(() => 150 * speed(), (_, at, beat) => {
+        for (const n of mel)
+          kit.synth.note(n.midi[0], at + n.b * beat, n.d * beat * 0.9, "pluck", 0.4);
+        for (const n of bass)
+          kit.synth.note(n.midi[0], at + n.b * beat, n.d * beat * 0.8, "bass", 0.38);
+        for (let k = 0;k < tuneBeats; k++) {
+          kit.synth.drum(k % 2 ? "snare" : "kick", at + k * beat, 0.3);
+          kit.synth.drum("hat", at + (k + 0.5) * beat, 0.18);
+        }
+      }, tuneBeats);
+    };
+    kit.onPause((p) => {
+      if (p) {
+        stopMusic();
+        kit.synth.hush();
+      } else if (!over)
+        startMusic();
+    });
+    kit.onQuit(() => finish("time"));
+    const board = () => {
+      const s = Math.floor(Math.min((c.h - 24) / H, (c.w - 300) / W, 36));
+      const w = s * W, h = s * H;
+      return { s: Math.max(12, s), x: Math.round((c.w - w) / 2), y: Math.round((c.h - h) / 2), w, h };
+    };
+    kit.loop((dt) => {
+      if (over) {
+        draw();
+        return;
+      }
+      timeLeft = Math.max(0, timeLeft - dt);
+      if (timeLeft <= 0) {
+        finish("time");
+        return;
+      }
+      if (clearing) {
+        clearing.t += dt;
+        if (clearing.t > 0.28) {
+          for (const row of clearing.rows.sort((a, b) => a - b)) {
+            grid.splice(row, 1);
+            grid.unshift(Array(W).fill(null));
+          }
+          clearing = null;
+          if (!over)
+            spawn();
+        }
+      } else {
+        if (held_.left || held_.right) {
+          das += dt;
+          if (das > 0.16) {
+            das -= 0.045;
+            move(held_.left ? -1 : 1);
+          }
+        }
+        const g2 = held_.down ? Math.max(gravity * 8, 18) : gravity;
+        fall += dt * g2;
+        while (fall >= 1) {
+          fall -= 1;
+          if (fits(cur.p, cur.r, cur.x, cur.y + 1)) {
+            cur.y++;
+            lock = 0;
+          } else
+            break;
+        }
+        if (!fits(cur.p, cur.r, cur.x, cur.y + 1)) {
+          lock += dt;
+          if (lock > 0.5)
+            place();
+        }
+      }
+      sparks.step(dt);
+      floats.step(dt);
+      if (Math.floor(timeLeft * 4) !== Math.floor((timeLeft + dt) * 4))
+        status();
+      draw();
+    });
+    const block = (x, y, s, p, alpha = 1) => {
+      const [hi, lo] = COLOR[p];
+      g.globalAlpha = alpha;
+      const grd = g.createLinearGradient(x, y, x + s, y + s);
+      grd.addColorStop(0, hi);
+      grd.addColorStop(1, lo);
+      g.fillStyle = grd;
+      rrect(g, x + 1, y + 1, s - 2, s - 2, Math.max(2, s * 0.14));
+      g.fill();
+      g.fillStyle = "rgba(255,255,255,.35)";
+      g.fillRect(x + 3, y + 3, s - 6, Math.max(2, s * 0.12));
+      g.globalAlpha = 1;
+    };
+    const mini = (p, cx, cy, s, alpha = 1) => {
+      const pts = cells(p, 0, 0, 0);
+      const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]);
+      const w = (Math.max(...xs) - Math.min(...xs) + 1) * s, h = (Math.max(...ys) - Math.min(...ys) + 1) * s;
+      for (const [a, b] of pts)
+        block(cx - w / 2 + (a - Math.min(...xs)) * s, cy - h / 2 + (b - Math.min(...ys)) * s, s, p, alpha);
+    };
+    function draw() {
+      const B = board();
+      g.clearRect(0, 0, c.w, c.h);
+      g.fillStyle = "rgba(4, 6, 18, .85)";
+      rrect(g, B.x - 6, B.y - 6, B.w + 12, B.h + 12, 10);
+      g.fill();
+      g.strokeStyle = "rgba(94, 240, 255, .35)";
+      g.lineWidth = 2;
+      g.shadowColor = "#5ef0ff";
+      g.shadowBlur = 16;
+      rrect(g, B.x - 6, B.y - 6, B.w + 12, B.h + 12, 10);
+      g.stroke();
+      g.shadowBlur = 0;
+      g.strokeStyle = "rgba(255,255,255,.04)";
+      g.lineWidth = 1;
+      for (let x = 1;x < W; x++) {
+        g.beginPath();
+        g.moveTo(B.x + x * B.s, B.y);
+        g.lineTo(B.x + x * B.s, B.y + B.h);
+        g.stroke();
+      }
+      for (let y = 1;y < H; y++) {
+        g.beginPath();
+        g.moveTo(B.x, B.y + y * B.s);
+        g.lineTo(B.x + B.w, B.y + y * B.s);
+        g.stroke();
+      }
+      for (let y = 0;y < H; y++)
+        for (let x = 0;x < W; x++) {
+          const p = grid[y][x];
+          if (!p)
+            continue;
+          const flashing = clearing?.rows.includes(y);
+          if (flashing) {
+            g.fillStyle = `rgba(255,255,255,${1 - clearing.t / 0.28})`;
+            g.fillRect(B.x + x * B.s, B.y + y * B.s, B.s, B.s);
+          } else
+            block(B.x + x * B.s, B.y + y * B.s, B.s, p);
+        }
+      if (!clearing && !over) {
+        const gy = ghostY();
+        for (const [a, b] of cells(cur.p, cur.r, cur.x, gy))
+          if (b >= 0) {
+            g.strokeStyle = `${COLOR[cur.p][0]}88`;
+            g.lineWidth = 2;
+            rrect(g, B.x + a * B.s + 2, B.y + b * B.s + 2, B.s - 4, B.s - 4, 4);
+            g.stroke();
+          }
+        for (const [a, b] of cells(cur.p, cur.r, cur.x, cur.y))
+          if (b >= 0)
+            block(B.x + a * B.s, B.y + b * B.s, B.s, cur.p);
+      }
+      const side = Math.min(120, (c.w - B.w) / 2 - 30);
+      const ms = Math.max(10, Math.min(20, B.s * 0.6));
+      g.font = `700 11px ${FONT_UI}`;
+      g.fillStyle = "rgba(255,255,255,.55)";
+      g.textAlign = "center";
+      if (side > 50) {
+        const lx = B.x - 18 - side / 2, rx = B.x + B.w + 18 + side / 2;
+        g.fillText(canHold ? "HOLD" : "", lx, B.y + 10);
+        if (hold)
+          mini(hold, lx, B.y + 50, ms, held ? 0.4 : 1);
+        g.fillText("NEXT", rx, B.y + 10);
+        for (let i = 0;i < previews; i++)
+          mini(queue[i], rx, B.y + 50 + i * ms * 3.3, i ? ms * 0.8 : ms);
+        g.font = `800 ${Math.round(Math.min(34, side * 0.3))}px ${FONT_NUM}`;
+        g.fillStyle = "#fff";
+        g.fillText(`${Math.min(credit, goal)}/${goal}`, lx, B.y + B.h * 0.55);
+        g.font = `700 11px ${FONT_UI}`;
+        g.fillStyle = "rgba(255,255,255,.55)";
+        g.fillText("LINES", lx, B.y + B.h * 0.55 + 20);
+        g.font = `800 ${Math.round(Math.min(28, side * 0.26))}px ${FONT_NUM}`;
+        g.fillStyle = timeLeft < 10 ? "#ff5d6c" : "#fff";
+        g.fillText(`${Math.ceil(timeLeft)}s`, lx, B.y + B.h * 0.72);
+      }
+      sparks.draw(g);
+      floats.draw(g);
+    }
+    status();
+    return () => {
+      stopMusic();
+    };
+  }
+};
+
+// src/frontend/arcade/games/tiles.ts
+var KEYS = ["d", "f", "j", "k"];
+var ALT = { a: 0, s: 1, l: 3, ";": 3, arrowleft: 0, arrowdown: 1, arrowup: 2, arrowright: 3 };
+var LANE_HUE = ["#59e3ff", "#8f7bff", "#ff7bd1", "#ffd166"];
+var TILES = {
+  id: "tiles",
+  title: "Keys",
+  theme: { bg: "#050a14", bg2: "#0d2238", accent: "#59e3ff", accent2: "#8f7bff" },
+  rhythm: true,
+  howTo: [
+    "Tiles fall down four lanes. Press the lane's key as a tile crosses the line.",
+    "Long tiles: hold until the end.",
+    "Every tile you hit plays the melody — miss and the tune stumbles."
+  ],
+  controls: "D F J K (or A S ← ↓ ↑ →) · tap the lanes on touch",
+  start(kit) {
+    const song = kit.play.song;
+    const clock = new SongClock(kit, song);
+    const chart = tileNotes(song);
+    const notes = chart.map((n) => ({ n, done: false, holding: false, judged: null, released: 0 }));
+    const tally = new Tally(notes.length + notes.filter((l) => l.n.d > 0).length * 0.5);
+    const win = windows(kit);
+    const travel = (1.55 - 0.7 * kit.play.level) * (1 + kit.aid("slow") / 150);
+    const limit = missLimit(kit.play.level);
+    const c = kit.canvas();
+    const g = c.g;
+    const sparks = new Sparks;
+    const pressed = [false, false, false, false];
+    const flash = [0, 0, 0, 0];
+    let started = false, ended = false, lastJudge = null;
+    const geo = () => {
+      const w = Math.min(c.w * 0.92, 560, c.h * 0.9);
+      const x = (c.w - w) / 2;
+      const line = c.h * 0.84;
+      return { x, w, lane: w / 4, line, speed: line / travel };
+    };
+    const judge = (l, j, lane, weight = 1) => {
+      tally.add(j, weight);
+      lastJudge = { j, at: performance.now() };
+      const G = geo();
+      const x = G.x + G.lane * (lane + 0.5);
+      if (j === "miss") {
+        kit.synth.fx("miss");
+        if (tally.streak >= limit) {
+          if (kit.lives.spend("Second wind!"))
+            tally.streak = 0;
+          else
+            end(true);
+        }
+      } else {
+        sparks.burst(x, G.line, LANE_HUE[lane], j === "perfect" ? 16 : 9, 240);
+        if (tally.combo > 0 && tally.combo % 25 === 0) {
+          kit.synth.fx("combo");
+          kit.banner(`${tally.combo} combo`, "gold");
+        }
+      }
+      kit.score(tally.score());
+      kit.track(tally.form());
+      kit.status(`${tally.combo}× combo
+${Math.round(tally.accuracy() * 100)}% accuracy`);
+    };
+    const hit = (lane) => {
+      pressed[lane] = true;
+      flash[lane] = 1;
+      const t = clock.time();
+      const l = notes.find((x) => !x.done && x.judged === null && x.n.lane === lane && Math.abs(t - x.n.t) <= win.ok * 1.6);
+      if (!l)
+        return;
+      const j = judgeOf(t - l.n.t, win);
+      if (!j)
+        return;
+      clock.melody(l.n.midi, l.n.d || 0.3);
+      kit.synth.fx(j === "perfect" ? "perfect" : "hit");
+      l.judged = j;
+      if (l.n.d > 0)
+        l.holding = true;
+      else
+        l.done = true;
+      judge(l, j, lane);
+    };
+    const release = (lane) => {
+      pressed[lane] = false;
+      const t = clock.time();
+      const l = notes.find((x) => x.holding && x.n.lane === lane);
+      if (!l)
+        return;
+      l.holding = false;
+      l.done = true;
+      const left = l.n.t + l.n.d - t;
+      judge(l, left <= win.great ? "perfect" : left <= l.n.d * 0.35 ? "ok" : "miss", lane, 0.5);
+    };
+    const end = (early = false) => {
+      if (ended)
+        return;
+      ended = true;
+      clock.stop();
+      for (const l of notes)
+        if (!l.done && l.judged === null) {
+          tally.add("miss");
+          l.done = true;
+        }
+      const beats = rhythmBeats(tally);
+      if (early)
+        beats.unshift("lost the thread of the tune and couldn't find it again");
+      kit.score(tally.score());
+      kit.finish({ score: tally.score(), beats, detail: `${tally.counts.perfect} perfect, ${tally.counts.miss} missed, best run ${tally.maxCombo}` });
+    };
+    kit.onKey((e, isDown) => {
+      const k = e.key.toLowerCase();
+      const lane = KEYS.indexOf(k) >= 0 ? KEYS.indexOf(k) : ALT[k] ?? -1;
+      if (lane < 0)
+        return false;
+      if (isDown && !e.repeat)
+        hit(lane);
+      else if (!isDown)
+        release(lane);
+      return true;
+    });
+    const laneAt = (e) => {
+      const r = c.el.getBoundingClientRect();
+      const G = geo();
+      return Math.floor((e.clientX - r.left - G.x) / G.lane);
+    };
+    const touches = new Map;
+    c.el.addEventListener("pointerdown", (e) => {
+      const lane = laneAt(e);
+      if (lane < 0 || lane > 3 || kit.paused)
+        return;
+      c.el.setPointerCapture(e.pointerId);
+      touches.set(e.pointerId, lane);
+      hit(lane);
+    });
+    const up = (e) => {
+      const lane = touches.get(e.pointerId);
+      if (lane !== undefined) {
+        touches.delete(e.pointerId);
+        release(lane);
+      }
+    };
+    c.el.addEventListener("pointerup", up);
+    c.el.addEventListener("pointercancel", up);
+    kit.onPause((p) => {
+      if (p)
+        clock.pause();
+      else
+        clock.ready.then(() => {
+          if (!kit.paused && !ended) {
+            clock.start();
+            started = true;
+          }
+        });
+    });
+    kit.onQuit(() => end());
+    kit.loop((dt) => {
+      const t = clock.time();
+      clock.tick();
+      for (const l of notes) {
+        if (l.done)
+          continue;
+        if (l.holding) {
+          if (t >= l.n.t + l.n.d) {
+            l.holding = false;
+            l.done = true;
+            judge(l, "perfect", l.n.lane, 0.5);
+            kit.synth.fx("hit");
+          } else if (Math.random() < dt * 20) {
+            const G = geo();
+            sparks.burst(G.x + G.lane * (l.n.lane + 0.5), G.line, LANE_HUE[l.n.lane], 2, 120, 2);
+          }
+        } else if (l.judged === null && t - l.n.t > win.ok) {
+          l.done = true;
+          judge(l, "miss", l.n.lane, l.n.d > 0 ? 1.5 : 1);
+        }
+      }
+      if (started && !ended && t > clock.length + 0.8)
+        end();
+      for (let i = 0;i < 4; i++)
+        flash[i] = Math.max(0, flash[i] - dt * 4);
+      sparks.step(dt);
+      draw(t);
+    });
+    function draw(t) {
+      const G = geo();
+      g.clearRect(0, 0, c.w, c.h);
+      const bg = g.createLinearGradient(0, 0, 0, c.h);
+      bg.addColorStop(0, "rgba(13, 34, 56, .0)");
+      bg.addColorStop(1, "rgba(89, 227, 255, .10)");
+      g.fillStyle = bg;
+      g.fillRect(G.x, 0, G.w, c.h);
+      for (let i = 0;i < 4; i++) {
+        const x = G.x + G.lane * i;
+        if (pressed[i] || flash[i] > 0) {
+          const lg = g.createLinearGradient(0, G.line, 0, G.line - c.h * 0.5);
+          lg.addColorStop(0, `${LANE_HUE[i]}${Math.round(40 + flash[i] * 50).toString(16)}`);
+          lg.addColorStop(1, "rgba(0,0,0,0)");
+          g.fillStyle = lg;
+          g.fillRect(x, 0, G.lane, G.line);
+        }
+        g.strokeStyle = "rgba(255,255,255,.07)";
+        g.lineWidth = 1;
+        g.beginPath();
+        g.moveTo(x, 0);
+        g.lineTo(x, c.h);
+        g.stroke();
+      }
+      g.beginPath();
+      g.moveTo(G.x + G.w, 0);
+      g.lineTo(G.x + G.w, c.h);
+      g.stroke();
+      const pad = Math.max(3, G.lane * 0.06);
+      for (const l of notes) {
+        if (l.done && !l.holding)
+          continue;
+        const yHead = G.line - (l.n.t - t) * G.speed;
+        const yTail = G.line - (l.n.t + l.n.d - t) * G.speed;
+        if (yTail > c.h + 40 || yHead < -80)
+          continue;
+        const x = G.x + G.lane * l.n.lane + pad, w = G.lane - pad * 2;
+        const th = Math.max(26, G.lane * 0.42);
+        if (l.n.d > 0) {
+          const top = yTail, bottom = l.holding ? G.line : yHead;
+          g.fillStyle = l.holding ? `${LANE_HUE[l.n.lane]}cc` : "rgba(255,255,255,.16)";
+          rrect(g, x + w * 0.22, top, w * 0.56, Math.max(0, bottom - top), 8);
+          g.fill();
+        }
+        if (l.holding)
+          continue;
+        const grd = g.createLinearGradient(0, yHead - th, 0, yHead);
+        grd.addColorStop(0, `${LANE_HUE[l.n.lane]}55`);
+        grd.addColorStop(1, LANE_HUE[l.n.lane]);
+        g.fillStyle = grd;
+        g.shadowColor = LANE_HUE[l.n.lane];
+        g.shadowBlur = 18;
+        rrect(g, x, yHead - th, w, th, 9);
+        g.fill();
+        g.shadowBlur = 0;
+        g.fillStyle = "rgba(255,255,255,.85)";
+        rrect(g, x + 6, yHead - 7, w - 12, 3, 2);
+        g.fill();
+      }
+      g.fillStyle = "rgba(255,255,255,.85)";
+      g.fillRect(G.x, G.line - 1, G.w, 2);
+      g.shadowColor = "#59e3ff";
+      g.shadowBlur = 12;
+      g.fillRect(G.x, G.line - 1, G.w, 2);
+      g.shadowBlur = 0;
+      for (let i = 0;i < 4; i++) {
+        const x = G.x + G.lane * i + pad, w = G.lane - pad * 2, y = G.line + 10, h = Math.min(54, c.h - G.line - 18);
+        g.fillStyle = pressed[i] ? LANE_HUE[i] : "rgba(255,255,255,.06)";
+        rrect(g, x, y, w, h, 10);
+        g.fill();
+        g.strokeStyle = `${LANE_HUE[i]}88`;
+        g.lineWidth = 1.5;
+        rrect(g, x, y, w, h, 10);
+        g.stroke();
+        g.fillStyle = pressed[i] ? "#07101c" : "rgba(255,255,255,.7)";
+        g.font = `700 ${Math.round(Math.min(18, h * 0.4))}px ${FONT_NUM}`;
+        g.textAlign = "center";
+        g.textBaseline = "middle";
+        g.fillText(KEYS[i].toUpperCase(), x + w / 2, y + h / 2);
+      }
+      if (tally.combo > 2) {
+        g.globalAlpha = 0.16;
+        g.fillStyle = "#fff";
+        g.font = `800 ${Math.round(Math.min(150, c.h * 0.22))}px ${FONT_UI}`;
+        g.textAlign = "center";
+        g.textBaseline = "middle";
+        g.fillText(String(tally.combo), c.w / 2, c.h * 0.38);
+        g.globalAlpha = 1;
+      }
+      if (lastJudge && performance.now() - lastJudge.at < 450) {
+        const k = (performance.now() - lastJudge.at) / 450;
+        g.globalAlpha = 1 - k;
+        g.fillStyle = JUDGE_COLOR[lastJudge.j];
+        g.font = `800 ${Math.round(30 * (1.15 - k * 0.15))}px ${FONT_UI}`;
+        g.textAlign = "center";
+        g.fillText(JUDGE_LABEL[lastJudge.j].toUpperCase(), c.w / 2, G.line - c.h * 0.22);
+        g.globalAlpha = 1;
+      }
+      const prog = clamp(t / clock.length);
+      g.fillStyle = "rgba(255,255,255,.08)";
+      g.fillRect(G.x, 0, G.w, 3);
+      g.fillStyle = "#59e3ff";
+      g.fillRect(G.x, 0, G.w * prog, 3);
+      sparks.draw(g);
+    }
+    return () => clock.stop();
+  }
+};
+
+// src/frontend/arcade/games/index.ts
+var GAME_DEFS = {
+  aim: AIM,
+  tiles: TILES,
+  mines: MINES,
+  stack: STACK,
+  snake: SNAKE,
+  race: RACE,
+  pinball: PINBALL,
+  blackjack: BLACKJACK,
+  roulette: ROULETTE,
+  slots: SLOTS
+};
+
+// src/frontend/arcade/library.ts
+async function inflate(data) {
+  const DS = globalThis.DecompressionStream;
+  if (!DS)
+    throw new Error("This browser can't unpack .osz files.");
+  const stream = new Blob([data]).stream().pipeThrough(new DS("deflate-raw"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+async function unzip(buf) {
+  const v = new DataView(buf);
+  const u8 = new Uint8Array(buf);
+  let eocd = -1;
+  for (let i = buf.byteLength - 22;i >= Math.max(0, buf.byteLength - 70000); i--)
+    if (v.getUint32(i, true) === 101010256) {
+      eocd = i;
+      break;
+    }
+  if (eocd < 0)
+    throw new Error("That isn't a .osz (zip) file.");
+  const count = v.getUint16(eocd + 10, true);
+  let p = v.getUint32(eocd + 16, true);
+  const out = new Map;
+  const dec = new TextDecoder;
+  for (let i = 0;i < count; i++) {
+    if (v.getUint32(p, true) !== 33639248)
+      break;
+    const method = v.getUint16(p + 10, true);
+    const size = v.getUint32(p + 20, true);
+    const nameLen = v.getUint16(p + 28, true), extraLen = v.getUint16(p + 30, true), commentLen = v.getUint16(p + 32, true);
+    const local = v.getUint32(p + 42, true);
+    const name = dec.decode(u8.subarray(p + 46, p + 46 + nameLen));
+    p += 46 + nameLen + extraLen + commentLen;
+    const lname = v.getUint16(local + 26, true), lextra = v.getUint16(local + 28, true);
+    const start = local + 30 + lname + lextra;
+    const raw = u8.subarray(start, start + size);
+    out.set(name.toLowerCase(), async () => method === 0 ? raw.slice() : method === 8 ? inflate(raw) : Promise.reject(new Error("Unsupported compression")));
+  }
+  return out;
+}
+function sections(text) {
+  const out = {};
+  let cur = "";
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("//"))
+      continue;
+    const m = /^\[(.+)\]$/.exec(line);
+    if (m) {
+      cur = m[1];
+      out[cur] = [];
+      continue;
+    }
+    (out[cur] ??= []).push(line);
+  }
+  return out;
+}
+var kv = (lines = []) => Object.fromEntries(lines.map((l) => {
+  const i = l.indexOf(":");
+  return [l.slice(0, i).trim(), l.slice(i + 1).trim()];
+}));
+function curve(kind, pts) {
+  if (kind === "L" || pts.length < 3)
+    return pts;
+  const segs = [[pts[0]]];
+  for (let i = 1;i < pts.length; i++) {
+    const last = segs[segs.length - 1];
+    const prev = pts[i - 1];
+    if (kind === "B" && pts[i][0] === prev[0] && pts[i][1] === prev[1])
+      segs.push([pts[i]]);
+    else
+      last.push(pts[i]);
+  }
+  const out = [];
+  for (const s of segs) {
+    for (let k = 0;k <= 12; k++) {
+      let q = s.map((x) => [...x]);
+      const t = k / 12;
+      while (q.length > 1)
+        q = q.slice(1).map((b, j) => [q[j][0] + (b[0] - q[j][0]) * t, q[j][1] + (b[1] - q[j][1]) * t]);
+      out.push(q[0]);
+    }
+  }
+  return out;
+}
+function trim(pts, len) {
+  const out = [pts[0]];
+  let left = len;
+  for (let i = 1;i < pts.length && left > 0; i++) {
+    const [ax, ay] = pts[i - 1], [bx, by] = pts[i];
+    const d = Math.hypot(bx - ax, by - ay);
+    if (d <= left) {
+      out.push(pts[i]);
+      left -= d;
+    } else {
+      const t = left / d;
+      out.push([ax + (bx - ax) * t, ay + (by - ay) * t]);
+      left = 0;
+    }
+  }
+  return out;
+}
+function parseOsu(text) {
+  const s = sections(text);
+  const gen = kv(s.General), meta = kv(s.Metadata), diff = kv(s.Difficulty);
+  const mode = Number(gen.Mode ?? 0);
+  if (mode !== 0 && mode !== 3)
+    return null;
+  const keys = Math.max(1, Math.round(Number(diff.CircleSize ?? 4)));
+  const svBase = Number(diff.SliderMultiplier ?? 1.4);
+  const timing = (s.TimingPoints ?? []).map((l) => l.split(",").map(Number)).filter((x) => x.length >= 2).map(([t, bl, , , , , inh]) => ({ t, bl, uninherited: inh === undefined ? bl > 0 : inh === 1 }));
+  const at = (t) => {
+    let bl = 500, sv = 1;
+    for (const p of timing) {
+      if (p.t > t)
+        break;
+      if (p.uninherited) {
+        bl = p.bl;
+        sv = 1;
+      } else if (p.bl < 0)
+        sv = -100 / p.bl;
+    }
+    return { bl, sv };
+  };
+  const objs = (s.HitObjects ?? []).map((l) => l.split(","));
+  const aim = [];
+  const tiles = [];
+  let end = 0;
+  for (const o of objs) {
+    const x = Number(o[0]), y = Number(o[1]), t = Number(o[2]) / 1000, type = Number(o[3]);
+    if (!Number.isFinite(t))
+      continue;
+    if (mode === 3) {
+      const lane = Math.min(3, Math.floor(Math.floor(x * keys / 512) * 4 / keys));
+      const hold = type & 128 ? Math.max(0, Number((o[5] ?? "").split(":")[0]) / 1000 - t) : 0;
+      tiles.push({ t, lane, d: hold, midi: null });
+      end = Math.max(end, t + hold);
+      continue;
+    }
+    if (type & 8)
+      continue;
+    const note = { t, x: x / 512, y: y / 384, midi: null };
+    if (type & 2 && o[5]) {
+      const [kind, ...rest] = o[5].split("|");
+      const pts = [[x, y], ...rest.map((p) => p.split(":").map(Number))];
+      const slides = Math.max(1, Number(o[6] ?? 1));
+      const length = Number(o[7] ?? 0);
+      const { bl, sv } = at(Number(o[2]));
+      const one = length > 0 ? length / (svBase * 100 * sv) * bl / 1000 : 0.3;
+      let path = length > 0 ? trim(curve(kind, pts), length) : curve(kind, pts);
+      if (slides > 1) {
+        const back = [...path].reverse();
+        const full = [...path];
+        for (let k = 1;k < slides; k++)
+          full.push(...k % 2 ? back : path);
+        path = full;
+      }
+      note.slider = { pts: path.map(([px, py]) => [px / 512, py / 384]), d: one * slides };
+      end = Math.max(end, t + one * slides);
+    }
+    aim.push(note);
+    end = Math.max(end, t);
+  }
+  const out = { title: meta.TitleUnicode || meta.Title || "Untitled", artist: meta.ArtistUnicode || meta.Artist || "", version: meta.Version || "", audio: gen.AudioFilename ?? "", mode, keys, length: end + 1 };
+  if (mode === 3)
+    out.tiles = tiles;
+  else
+    out.aim = aim;
+  return out;
+}
+var tierOf = (nps, kind) => {
+  const k = kind === "tiles" ? nps / 1.4 : nps;
+  return k < 2 ? "easy" : k < 3.6 ? "normal" : k < 5.5 ? "hard" : "brutal";
+};
+var DB = "warp-arcade";
+function db() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open(DB, 1);
+    req.onupgradeneeded = () => {
+      req.result.createObjectStore("songs", { keyPath: "id" });
+    };
+    req.onsuccess = () => res(req.result);
+    req.onerror = () => rej(req.error);
+  });
+}
+async function tx(mode, fn) {
+  const d = await db();
+  return new Promise((res, rej) => {
+    const r = fn(d.transaction("songs", mode).objectStore("songs"));
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function importOsz(file) {
+  const files = await unzip(await file.arrayBuffer());
+  const charts = [];
+  let title = "", artist = "", audioName = "";
+  for (const [name, read] of files) {
+    if (!name.endsWith(".osu"))
+      continue;
+    const m = parseOsu(new TextDecoder().decode(await read()));
+    if (!m)
+      continue;
+    title ||= m.title;
+    artist ||= m.artist;
+    audioName ||= m.audio.toLowerCase();
+    const kind = m.tiles ? "tiles" : "aim";
+    const n = (m.tiles ?? m.aim ?? []).length;
+    if (n < 8)
+      continue;
+    charts.push({ version: m.version, kind, ...m.aim ? { aim: m.aim } : {}, ...m.tiles ? { tiles: m.tiles } : {}, length: m.length, nps: n / Math.max(1, m.length) });
+  }
+  if (!charts.length)
+    throw new Error("No standard or mania difficulties in that file.");
+  const audio = files.get(audioName);
+  if (!audio)
+    throw new Error("The song's audio file is missing from the .osz.");
+  const bytes = await audio();
+  const id = `osz:${title}:${artist}`.toLowerCase();
+  const rec = { id, title, artist, audio: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), charts, added: Date.now() };
+  await tx("readwrite", (s) => s.put(rec));
+  return { title, charts: charts.length };
+}
+async function importedSongs(kind) {
+  let all = [];
+  try {
+    all = await tx("readonly", (s) => s.getAll());
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const rec of all.sort((a, b) => b.added - a.added)) {
+    for (const c of rec.charts.filter((x) => x.kind === kind)) {
+      out.push({
+        id: `${rec.id}:${c.version}`,
+        title: `${rec.title}${c.version ? ` [${c.version}]` : ""}`,
+        by: rec.artist,
+        tier: tierOf(c.nps, kind),
+        source: "import",
+        length: c.length,
+        nps: c.nps,
+        ...c.aim ? { aim: c.aim } : {},
+        ...c.tiles ? { tiles: c.tiles } : {},
+        audio: async () => rec.audio
+      });
+    }
+  }
+  return out;
+}
+async function removeImported(songId) {
+  const base = songId.split(":").slice(0, 3).join(":");
+  try {
+    await tx("readwrite", (s) => s.delete(base));
+  } catch {}
+}
+
+// src/frontend/arcade/arcade.ts
+var TIER_WORD2 = { crit_success: "Critical!", success: "Success", partial: "Partial", fail: "Failed", crit_fail: "Disaster" };
+var TIER_TONE3 = { crit_success: "crit", success: "good", partial: "warn", fail: "bad", crit_fail: "bad" };
+var esc3 = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+var pct = (x) => `${Math.round(x * 100)}%`;
+function store(key, value) {
+  try {
+    if (value !== undefined)
+      localStorage.setItem(`warp:arcade:${key}`, value);
+    return localStorage.getItem(`warp:arcade:${key}`);
+  } catch {
+    return null;
+  }
+}
+function createArcade(host) {
+  let surface = null;
+  let running = false;
+  async function run(choice, auto) {
+    if (running)
+      return { kind: "cancel" };
+    surface ??= host.surface();
+    if (!surface || !choice.game && !choice.gamble)
+      return { kind: "roll" };
+    running = true;
+    try {
+      return await session(surface, choice, auto, host);
+    } finally {
+      running = false;
+      surface.show(false);
+      surface.root.innerHTML = "";
+    }
+  }
+  return { run, busy: () => running };
+}
+async function session(surface, choice, auto, host) {
+  const root = surface.root;
+  const muted = store("muted") === "1" || !host.sound();
+  const synth = new Synth(host.volume(), muted);
+  const offer = choice.game ?? null;
+  const gamble = choice.gamble ?? null;
+  let game = offer?.game ?? gamble.game;
+  let def = GAME_DEFS[game];
+  const el = document.createElement("div");
+  el.className = "warp-ar";
+  el.tabIndex = -1;
+  root.innerHTML = "";
+  root.appendChild(el);
+  surface.show(true);
+  let songs = [];
+  let song = null;
+  let stake = gamble?.stakes[0] ?? 0;
+  const rng0 = seeded(offer?.seed ?? gamble?.seed ?? String(Date.now()));
+  const loadSongs = async () => {
+    if (!def.rhythm) {
+      songs = [];
+      song = null;
+      return;
+    }
+    const mine = await importedSongs(game === "aim" ? "aim" : "tiles").catch(() => []);
+    songs = [...builtinSongs(), ...mine];
+    const last = store(`song:${game}`);
+    song = songs.find((s) => s.id === last) ?? suggestSong(songs, offer?.level ?? 0.5, rng0);
+  };
+  await loadSongs();
+  const themeVars = () => `--ar-bg:${def.theme.bg};--ar-bg2:${def.theme.bg2};--ar-ac:${def.theme.accent};--ar-ac2:${def.theme.accent2}`;
+  const briefing = () => new Promise((resolve) => {
+    const draw = () => {
+      el.dataset.game = game;
+      el.setAttribute("style", themeVars());
+      const info = GAMES[game];
+      const aids = offer?.aids ?? gamble?.aids ?? [];
+      const ease = song ? TIER_EASE[song.tier] : 0;
+      const bar = offer ? shift(offer.bar, ease) : null;
+      const switcher = offer && offer.options.length > 1 ? `<div class="warp-ar-switch" role="tablist">${offer.options.map((g) => `<button role="tab" aria-selected="${g === game}" data-ar-game="${g}"><i>${GAMES[g].icon}</i>${esc3(GAMES[g].name)}</button>`).join("")}</div>` : "";
+      const odds = offer ? `<div class="warp-ar-odds"><span>The dice would give you</span><b>${pct(offer.chance)}</b></div>` : `<div class="warp-ar-odds"><span>House edge</span><b>${(gamble.edge * 100).toFixed(1)}%</b></div>`;
+      const barHtml = bar ? `<div class="warp-ar-need">
+          <div class="warp-ar-need-track">
+            <span class="z fail" style="width:${pct(bar.partial)}"></span><span class="z partial" style="width:${pct(bar.success - bar.partial)}"></span><span class="z success" style="width:${pct(bar.crit - bar.success)}"></span><span class="z crit" style="width:${pct(1 - bar.crit)}"></span>
+          </div>
+          <div class="warp-ar-need-legend"><span><i class="partial"></i>Partial ${pct(bar.partial)}</span><span><i class="success"></i>Success ${pct(bar.success)}</span><span><i class="crit"></i>Critical ${pct(bar.crit)}</span></div>
+        </div>` : "";
+      const aidHtml = aids.length ? `<div class="warp-ar-aids">${aids.map((a) => `<span class="warp-ar-aid${a.from.startsWith("★") ? " perk" : ""}"><b>${esc3(a.from)}</b>${esc3(aidWords(a.kind, a.amount))}</span>`).join("")}</div>` : `<div class="warp-ar-aids none">No aids — it's all you.</div>`;
+      const partner = offer?.partner ? `<div class="warp-ar-partner">Tied to <b>${esc3(offer.partner.name)}</b> · in step ${pct(offer.partner.sync)}</div>` : "";
+      const stakes = gamble ? `<div class="warp-ar-stakes">
+          <div class="warp-ar-label">Buy-in · you have ${esc3(gamble.money.currency)}${gamble.money.have}</div>
+          <div class="warp-ar-chips">${gamble.stakes.length ? gamble.stakes.map((x) => `<button class="warp-ar-chip${x === stake ? " on" : ""}" data-ar-stake="${x}"><span>${esc3(gamble.money.currency)}${x}</span></button>`).join("") : `<span class="warp-ar-dim">You can't cover the smallest buy-in.</span>`}</div>
+          <div class="warp-ar-dim">${gamble.rounds} ${game === "blackjack" ? "hands" : game === "roulette" ? "spins" : "pulls"} · walk away whenever you like</div>
+        </div>` : "";
+      const songHtml = def.rhythm ? songPicker() : "";
+      el.innerHTML = `<div class="warp-ar-bg"></div>
+        <div class="warp-ar-brief">
+          <button class="warp-ar-x" data-ar-cancel title="Back to the story (Esc)" aria-label="Close">✕</button>
+          <div class="warp-ar-brief-head">
+            <div class="warp-ar-badge">${info.icon}</div>
+            <div class="warp-ar-brief-title">
+              <div class="warp-ar-kicker">${esc3(offer ? `${offer.action} · ${offer.label}` : gamble.action)}</div>
+              <h1>${esc3(def.title)}</h1>
+              <p>${esc3(info.pitch)}</p>
+            </div>
+            ${odds}
+          </div>
+          ${switcher}
+          <div class="warp-ar-brief-body">
+            <div class="warp-ar-col">
+              ${barHtml}
+              ${stakes}
+              <div class="warp-ar-label">${offer ? "In your favour" : "Your edge"}</div>
+              ${aidHtml}
+              ${partner}
+              <div class="warp-ar-label">How to play</div>
+              <ul class="warp-ar-how">${def.howTo.map((h) => `<li>${esc3(h)}</li>`).join("")}</ul>
+              <div class="warp-ar-keys">${esc3(def.controls)}</div>
+            </div>
+            ${songHtml ? `<div class="warp-ar-col songs">${songHtml}</div>` : ""}
+          </div>
+          <div class="warp-ar-brief-foot">
+            <button class="warp-ar-btn primary" data-ar-play ${gamble && !gamble.stakes.length ? "disabled" : ""}>${gamble ? "Sit down" : "Play"} <kbd>Enter</kbd></button>
+            <button class="warp-ar-btn ghost" data-ar-roll>${gamble ? "Let it play out" : "Roll the dice instead"}</button>
+          </div>
+        </div>`;
+      el.querySelector("[data-ar-play]")?.focus({ preventScroll: true });
+    };
+    const songPicker = () => {
+      const by = {};
+      for (const s of songs)
+        (by[s.source === "import" ? "Your songs" : TIER_LABEL[s.tier]] ??= []).push(s);
+      const order = ["Easy", "Normal", "Hard", "Brutal", "Your songs"];
+      const easeTxt = (s) => {
+        const e = TIER_EASE[s.tier];
+        return e === 0 ? "bar as is" : e > 0 ? `bar +${Math.round(e * 100)}%` : `bar −${Math.round(-e * 100)}%`;
+      };
+      const offset = Number(store("offset") ?? 0);
+      return `<div class="warp-ar-label">Song <span class="warp-ar-dim">· harder songs lower the bar</span></div>
+        <div class="warp-ar-songs">${order.filter((k) => by[k]).map((k) => `<div class="warp-ar-song-group"><div class="warp-ar-song-tier t-${k.toLowerCase().replace(/\s/g, "")}">${k}</div>${by[k].map((s) => `<button class="warp-ar-song${s.id === song?.id ? " on" : ""}" data-ar-song="${esc3(s.id)}">
+            <span class="warp-ar-song-t">${esc3(s.title)}</span><span class="warp-ar-song-m">${esc3(s.by)} · ${mmss(s.length)} · ${easeTxt(s)}</span>
+            ${s.source === "import" ? `<span class="warp-ar-song-x" data-ar-unsong="${esc3(s.id)}" title="Remove from this browser">✕</span>` : ""}</button>`).join("")}</div>`).join("")}</div>
+        <label class="warp-ar-import"><input type="file" accept=".osz" data-ar-osz hidden><span>＋ Import an osu! beatmap (.osz)</span></label>
+        <div class="warp-ar-dim small">Imported songs stay in this browser. ${game === "aim" ? "Standard" : "Mania"} difficulties show up here.</div>
+        <label class="warp-ar-offset">Audio offset <input type="range" min="-150" max="150" step="5" value="${offset}" data-ar-offset><b>${offset > 0 ? "+" : ""}${offset} ms</b></label>`;
+    };
+    draw();
+    const onClick = async (e) => {
+      const t = e.target;
+      synth.resume();
+      const g = t.closest("[data-ar-game]");
+      if (g) {
+        game = g.dataset.arGame;
+        def = GAME_DEFS[game];
+        await loadSongs();
+        draw();
+        return;
+      }
+      const st = t.closest("[data-ar-stake]");
+      if (st) {
+        stake = Number(st.dataset.arStake);
+        synth.fx("chip");
+        draw();
+        return;
+      }
+      const un = t.closest("[data-ar-unsong]");
+      if (un) {
+        e.stopPropagation();
+        await removeImported(un.dataset.arUnsong);
+        await loadSongs();
+        draw();
+        return;
+      }
+      const so = t.closest("[data-ar-song]");
+      if (so) {
+        song = songs.find((s) => s.id === so.dataset.arSong) ?? song;
+        if (song)
+          store(`song:${game}`, song.id);
+        draw();
+        return;
+      }
+      if (t.closest("[data-ar-play]")) {
+        done("play");
+        return;
+      }
+      if (t.closest("[data-ar-roll]")) {
+        done("roll");
+        return;
+      }
+      if (t.closest("[data-ar-cancel]")) {
+        done("cancel");
+        return;
+      }
+    };
+    const onChange = async (e) => {
+      const t = e.target;
+      if (t.matches("[data-ar-osz]") && t.files?.[0]) {
+        const label = el.querySelector(".warp-ar-import span");
+        if (label)
+          label.textContent = "Importing…";
+        try {
+          const r = await importOsz(t.files[0]);
+          await loadSongs();
+          const mine = songs.filter((s) => s.source === "import" && s.title.startsWith(r.title));
+          if (mine[0]) {
+            song = mine[0];
+            store(`song:${game}`, song.id);
+          }
+          draw();
+        } catch (err) {
+          if (label)
+            label.textContent = `Couldn't import: ${err.message}`;
+        }
+      }
+    };
+    const onInput = (e) => {
+      const t = e.target;
+      if (t.matches("[data-ar-offset]")) {
+        store("offset", t.value);
+        const b = t.parentElement?.querySelector("b");
+        if (b)
+          b.textContent = `${Number(t.value) > 0 ? "+" : ""}${t.value} ms`;
+      }
+    };
+    const onKey = (e) => {
+      if (e.target.matches?.("input"))
+        return;
+      if (e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!gamble || gamble.stakes.length)
+          done("play");
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        done("cancel");
+      }
+    };
+    function done(v) {
+      el.removeEventListener("click", onClick);
+      el.removeEventListener("change", onChange);
+      el.removeEventListener("input", onInput);
+      document.removeEventListener("keydown", onKey, true);
+      resolve(v);
+    }
+    el.addEventListener("click", onClick);
+    el.addEventListener("change", onChange);
+    el.addEventListener("input", onInput);
+    document.addEventListener("keydown", onKey, true);
+    if (auto && (!gamble || gamble.stakes.length))
+      setTimeout(() => done("play"), 0);
+  });
+  const pick = await briefing();
+  if (pick !== "play") {
+    synth.close();
+    return pick === "roll" ? { kind: "roll", ...gamble ? { params: { stake: String(stake) } } : {} } : { kind: "cancel" };
+  }
+  const picked = song;
+  const ease = picked ? TIER_EASE[picked.tier] : 0;
+  const bar = offer ? shift(offer.bar, ease) : null;
+  const play = {
+    mode: gamble ? "gamble" : "check",
+    game,
+    level: offer?.level ?? 0.5,
+    bar,
+    aids: offer?.aids ?? gamble?.aids ?? [],
+    seed: offer?.seed ?? gamble.seed,
+    ...offer?.partner ? { partner: offer.partner } : {},
+    ...gamble ? { stake, rounds: gamble.rounds, currency: gamble.money.currency, edge: gamble.edge } : {},
+    ...picked ? { song: picked } : {}
+  };
+  const finish = await playGame(el, def, play, synth, host, gamble ? `${gamble.action}` : `${offer.action} · ${offer.label}`);
+  synth.hush();
+  const result = {
+    game,
+    beats: finish.beats,
+    ...finish.detail ? { detail: finish.detail } : {},
+    ...finish.quit ? { quit: true } : {},
+    ...picked ? { song: picked.title } : {},
+    ...ease ? { ease } : {},
+    ...finish.livesUsed ? { livesUsed: finish.livesUsed } : {},
+    ...finish.perk ? { perk: finish.perk } : {}
+  };
+  if (gamble) {
+    result.stake = stake;
+    result.net = Math.round((finish.chips ?? stake) - stake);
+  } else
+    result.score = Math.max(0, Math.min(1, finish.score ?? 0));
+  await resultCard(el, result, bar, gamble?.money.currency ?? "", synth, def);
+  synth.close();
+  return { kind: "played", result };
+}
+function shift(bar, by) {
+  const f = (x) => Math.round(Math.max(0.05, Math.min(0.99, x + by)) * 100) / 100;
+  return { critFail: bar.critFail === null ? null : f(bar.critFail), partial: f(bar.partial), success: f(bar.success), crit: f(bar.crit) };
+}
+function playGame(el, def, play, synth, host, kicker) {
+  return new Promise((resolve) => {
+    const bar = play.bar;
+    const gamble = play.mode === "gamble";
+    const lifeAids = play.aids.filter((a) => a.kind === "lives");
+    let lives = aidTotal(play.aids, "lives");
+    const startLives = lives;
+    el.innerHTML = `<div class="warp-ar-bg"></div>
+      <header class="warp-ar-top">
+        <div class="warp-ar-title"><div class="warp-ar-kicker">${esc3(kicker)}</div><h1><i>${GAMES[def.id].icon}</i>${esc3(def.title)}${play.song ? `<small>♪ ${esc3(play.song.title)}</small>` : ""}</h1></div>
+        <div class="warp-ar-lives" aria-label="Lives"></div>
+        <div class="warp-ar-tools">
+          <button class="warp-ar-tool" data-ar-mute title="Sound on/off">${synth.muted ? "\uD83D\uDD07" : "\uD83D\uDD0A"}</button>
+          <button class="warp-ar-tool" data-ar-pause title="Pause (Esc)">❚❚</button>
+        </div>
+      </header>
+      <main class="warp-ar-main">
+        <section class="warp-ar-stage"><div class="warp-ar-game"></div><div class="warp-ar-banner" aria-live="polite"></div><div class="warp-ar-count"></div></section>
+        <aside class="warp-ar-gauge${gamble ? " chips" : ""}">
+          <div class="warp-ar-gauge-num"><b>${gamble ? `${esc3(play.currency ?? "")}${play.stake}` : "0%"}</b><span>${GAMES[def.id].kind === "luck" ? "chips" : "score"}</span></div>
+          <div class="warp-ar-gauge-track">
+            <div class="warp-ar-gauge-fill"></div>
+            ${bar ? [["partial", bar.partial], ["success", bar.success], ["crit", bar.crit]].map(([k, v]) => `<div class="warp-ar-tick ${k}" style="--at:${pct(v)}"><span>${k === "crit" ? "Critical" : k === "success" ? "Success" : "Partial"}</span></div>`).join("") : `<div class="warp-ar-tick even" style="--at:50%"><span>Break even</span></div>`}
+          </div>
+          <div class="warp-ar-status"></div>
+        </aside>
+      </main>
+      <div class="warp-ar-pausecard" hidden>
+        <div class="warp-ar-card"><h2>Paused</h2>
+          <button class="warp-ar-btn primary" data-ar-resume>Resume <kbd>Esc</kbd></button>
+          <button class="warp-ar-btn ghost" data-ar-quit>${gamble ? "Cash out now" : "Give up — keep the score so far"}</button>
+        </div>
+      </div>`;
+    const stage = el.querySelector(".warp-ar-stage");
+    const gameEl = el.querySelector(".warp-ar-game");
+    const bannerEl = el.querySelector(".warp-ar-banner");
+    const countEl = el.querySelector(".warp-ar-count");
+    const fill = el.querySelector(".warp-ar-gauge-fill");
+    const num = el.querySelector(".warp-ar-gauge-num b");
+    const statusEl = el.querySelector(".warp-ar-status");
+    const livesEl = el.querySelector(".warp-ar-lives");
+    const pauseCard = el.querySelector(".warp-ar-pausecard");
+    const drawLives = () => {
+      livesEl.innerHTML = startLives ? Array.from({ length: startLives }, (_, i) => `<i class="${i < lives ? "on" : ""}">♥</i>`).join("") : "";
+    };
+    drawLives();
+    let paused = true, over = false, rafId = 0;
+    const loops = [];
+    const keys = [];
+    const canvases = [];
+    const samples = [];
+    let lastScore = 0, livesUsed = 0, perk;
+    const pauseHooks = [];
+    const tone = (x) => {
+      if (!bar)
+        return x >= 0.5 ? "good" : "bad";
+      const t = tierFromScore(bar, x);
+      return TIER_TONE3[t];
+    };
+    const quitFns = [];
+    const kit = {
+      play,
+      root: gameEl,
+      rng: seeded(`${play.seed}:${Date.now()}`),
+      synth,
+      aid: (k) => aidTotal(play.aids, k),
+      canvas() {
+        const c = makeCanvas(gameEl);
+        canvases.push(c);
+        return c;
+      },
+      loop(fn) {
+        loops.push(fn);
+      },
+      onKey(fn) {
+        keys.push(fn);
+      },
+      score(x) {
+        lastScore = Math.max(0, Math.min(1, x));
+        fill.style.setProperty("--v", pct(lastScore));
+        fill.dataset.tone = tone(lastScore);
+        num.textContent = pct(lastScore);
+      },
+      chips(n) {
+        const stake = play.stake ?? 100;
+        const x = Math.max(0, Math.min(1, n / (stake * 2)));
+        fill.style.setProperty("--v", pct(x));
+        fill.dataset.tone = n >= stake ? "good" : "bad";
+        num.textContent = gamble ? `${play.currency ?? ""}${Math.round(n)}` : `${Math.round(n)}`;
+        if (!gamble)
+          lastScore = x;
+      },
+      status(text) {
+        statusEl.textContent = text;
+      },
+      lives: {
+        left: () => lives,
+        spend(why) {
+          if (lives <= 0)
+            return false;
+          lives--;
+          livesUsed++;
+          const from = lifeAids.find((a) => a.from.startsWith("★"));
+          if (from && !perk)
+            perk = from.from.replace(/^★\s*/, "");
+          drawLives();
+          synth.fx("life");
+          kit.banner(why ?? "Second chance!", "gold");
+          return true;
+        }
+      },
+      banner(text, t = "info") {
+        const b = document.createElement("div");
+        b.className = `warp-ar-ban ${t}`;
+        b.textContent = text;
+        bannerEl.appendChild(b);
+        setTimeout(() => b.remove(), 1500);
+      },
+      shake(s = 1) {
+        if (host.reduced())
+          return;
+        stage.style.setProperty("--ar-shake", `${Math.min(14, 5 * s)}px`);
+        stage.classList.remove("shake");
+        stage.offsetWidth;
+        stage.classList.add("shake");
+      },
+      finish(f) {
+        if (over)
+          return;
+        over = true;
+        cancelAnimationFrame(rafId);
+        cleanup();
+        const final = f.score ?? lastScore;
+        const beats = [...arcBeats(samples, final), ...f.beats].slice(0, 5);
+        setTimeout(() => resolve({ ...f, beats, livesUsed, ...perk ? { perk } : {} }), 650);
+      },
+      track(x) {
+        samples.push(Math.max(0, Math.min(1, x)));
+      },
+      get paused() {
+        return paused;
+      },
+      get reduced() {
+        return host.reduced();
+      },
+      onPause(fn) {
+        pauseHooks.push(fn);
+      },
+      onQuit(fn) {
+        quitFns.push(fn);
+      }
+    };
+    const setPaused = (p) => {
+      if (over || p === paused)
+        return;
+      paused = p;
+      pauseCard.hidden = !p;
+      for (const h of pauseHooks)
+        h(p);
+    };
+    const onKey = (e, down) => {
+      if (over)
+        return;
+      if (e.target.matches?.("input, textarea"))
+        return;
+      if (down && e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        if (countEl.dataset.on)
+          return;
+        setPaused(!paused);
+        return;
+      }
+      if (paused) {
+        if (down && e.key === "Enter" && !pauseCard.hidden) {
+          e.preventDefault();
+          setPaused(false);
+        }
+        e.stopPropagation();
+        return;
+      }
+      let used = false;
+      for (const k of keys)
+        if (k(e, down))
+          used = true;
+      if (used || [" ", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key))
+        e.preventDefault();
+      e.stopPropagation();
+    };
+    const kd = (e) => onKey(e, true);
+    const ku = (e) => onKey(e, false);
+    document.addEventListener("keydown", kd, true);
+    document.addEventListener("keyup", ku, true);
+    const onClick = (e) => {
+      const t = e.target;
+      synth.resume();
+      if (t.closest("[data-ar-pause]"))
+        setPaused(!paused);
+      else if (t.closest("[data-ar-resume]"))
+        setPaused(false);
+      else if (t.closest("[data-ar-quit]")) {
+        paused = false;
+        pauseCard.hidden = true;
+        for (const h of pauseHooks)
+          h(false);
+        quit();
+      } else if (t.closest("[data-ar-mute]")) {
+        synth.muted = !synth.muted;
+        store("muted", synth.muted ? "1" : "0");
+        t.closest("[data-ar-mute]").textContent = synth.muted ? "\uD83D\uDD07" : "\uD83D\uDD0A";
+      }
+    };
+    el.addEventListener("click", onClick);
+    const onBlur = () => {
+      if (!def.rhythm)
+        setPaused(true);
+    };
+    window.addEventListener("blur", onBlur);
+    let stopGame = () => {};
+    function quit() {
+      for (const q of quitFns)
+        q();
+      if (!over)
+        kit.finish({ beats: ["gave up partway"], quit: true });
+    }
+    function cleanup() {
+      document.removeEventListener("keydown", kd, true);
+      document.removeEventListener("keyup", ku, true);
+      el.removeEventListener("click", onClick);
+      window.removeEventListener("blur", onBlur);
+      try {
+        stopGame();
+      } catch {}
+      for (const c of canvases)
+        c.dispose();
+    }
+    stopGame = def.start(kit);
+    if (gamble)
+      kit.chips(play.stake ?? 0);
+    else
+      kit.score(0);
+    el.focus({ preventScroll: true });
+    let last = performance.now();
+    const frame = (now) => {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      if (!paused && !over)
+        for (const f of loops)
+          f(dt, now / 1000);
+      if (!over)
+        rafId = requestAnimationFrame(frame);
+    };
+    rafId = requestAnimationFrame(frame);
+    const counts = ["3", "2", "1", "Go!"];
+    countEl.dataset.on = "1";
+    const step = (i) => {
+      if (over)
+        return;
+      if (i >= counts.length) {
+        countEl.textContent = "";
+        delete countEl.dataset.on;
+        paused = false;
+        for (const h of pauseHooks)
+          h(false);
+        return;
+      }
+      countEl.innerHTML = `<span>${counts[i]}</span>`;
+      synth.fx(i === counts.length - 1 ? "go" : "countdown");
+      setTimeout(() => step(i + 1), i === counts.length - 1 ? 350 : 560);
+    };
+    synth.resume();
+    for (const h of pauseHooks)
+      h(true);
+    setTimeout(() => step(0), 250);
+  });
+}
+function resultCard(el, res, bar, currency, synth, def) {
+  return new Promise((resolve) => {
+    let html;
+    if (res.net !== undefined) {
+      const net = res.net;
+      const tone = net > 0 ? "good" : net < 0 ? "bad" : "warn";
+      synth.fx(net > 0 ? "coins" : net < 0 ? "lose" : "click");
+      html = `<div class="warp-ar-stamp ${tone}">${net > 0 ? "Up" : net < 0 ? "Down" : "Even"}</div>
+        <div class="warp-ar-big ${tone}">${net > 0 ? "+" : net < 0 ? "−" : "±"}${esc3(currency)}${Math.abs(net)}</div>
+        <div class="warp-ar-dim">Stake ${esc3(currency)}${res.stake}</div>`;
+    } else {
+      const t = tierFromScore(bar, res.score ?? 0);
+      synth.fx(t === "crit_success" ? "jackpot" : t === "success" ? "win" : t === "partial" ? "click" : "lose");
+      html = `<div class="warp-ar-stamp ${TIER_TONE3[t]}">${TIER_WORD2[t]}</div>
+        <div class="warp-ar-big ${TIER_TONE3[t]}" data-count="${Math.round((res.score ?? 0) * 100)}">0%</div>
+        <div class="warp-ar-dim">needed ${pct(bar.success)} · critical ${pct(bar.crit)}</div>`;
+    }
+    const card = document.createElement("div");
+    card.className = "warp-ar-result";
+    card.innerHTML = `<div class="warp-ar-card">
+      <div class="warp-ar-kicker">${GAMES[def.id].icon} ${esc3(def.title)}${res.song ? ` · ♪ ${esc3(res.song)}` : ""}</div>
+      ${html}
+      ${res.beats.length ? `<ul class="warp-ar-beats">${res.beats.map((b) => `<li>${esc3(b[0].toUpperCase() + b.slice(1))}</li>`).join("")}</ul>` : ""}
+      ${res.detail ? `<div class="warp-ar-dim">${esc3(res.detail)}</div>` : ""}
+      <button class="warp-ar-btn primary" data-ar-back>Back to the story <kbd>Enter</kbd></button>
+    </div>`;
+    el.appendChild(card);
+    const big = card.querySelector("[data-count]");
+    if (big) {
+      const to = Number(big.dataset.count);
+      const t0 = performance.now();
+      const tick = (now) => {
+        const k = Math.min(1, (now - t0) / 700);
+        big.textContent = `${Math.round(to * (1 - Math.pow(1 - k, 3)))}%`;
+        if (k < 1)
+          requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    }
+    const btn = card.querySelector("[data-ar-back]");
+    setTimeout(() => btn.focus({ preventScroll: true }), 50);
+    const done = () => {
+      document.removeEventListener("keydown", onKey, true);
+      resolve();
+    };
+    const onKey = (e) => {
+      if (e.key === "Enter" || e.key === "Escape" || e.key === " ") {
+        e.preventDefault();
+        e.stopPropagation();
+        done();
+      } else
+        e.stopPropagation();
+    };
+    btn.addEventListener("click", done);
+    setTimeout(() => document.addEventListener("keydown", onKey, true), 300);
+  });
+}
+
+// src/frontend/arcade/styles.ts
+var ARCADE_STYLES = `
+.warp-ar {
+  --ar-bg: #0d0b16; --ar-bg2: #1b1530; --ar-ac: #ff5fa2; --ar-ac2: #7c5cff;
+  --ar-ink: #f6f2ea; --ar-muted: #b8b1c4; --ar-dim: #857e93;
+  --ar-line: rgba(255, 255, 255, .1);
+  --ar-panel: rgba(9, 8, 14, .74);
+  --ar-good: #4fe0a4; --ar-warn: #ffc24a; --ar-bad: #ff5d6c; --ar-crit: #ffe066;
+  --ar-display: "Bahnschrift", "DIN Alternate", "Arial Narrow", "Roboto Condensed", "Segoe UI", system-ui, sans-serif;
+  --ar-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --ar-num: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+  position: absolute; inset: 0; overflow: hidden; outline: none;
+  display: grid; grid-template-rows: auto minmax(0, 1fr);
+  background: radial-gradient(ellipse 120% 90% at 50% 0%, var(--ar-bg2), var(--ar-bg) 70%);
+  color: var(--ar-ink); font-family: var(--ar-ui); font-size: 14px; line-height: 1.45;
+  user-select: none; -webkit-user-select: none; touch-action: none;
+  animation: warp-ar-in 320ms cubic-bezier(.2, .8, .2, 1) both;
+}
+@keyframes warp-ar-in { from { opacity: 0; transform: scale(1.015); } }
+.warp-ar *, .warp-ar *::before, .warp-ar *::after { box-sizing: border-box; }
+.warp-ar button { font: inherit; color: inherit; cursor: pointer; }
+.warp-ar button:disabled { cursor: not-allowed; opacity: .45; }
+.warp-ar kbd { font-family: var(--ar-num); font-size: 10.5px; padding: 1px 6px; border-radius: 5px; border: 1px solid currentColor; opacity: .55; margin-left: 6px; }
+.warp-ar-bg { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+.warp-ar-bg::before { content: ""; position: absolute; inset: -40%;
+  background:
+    radial-gradient(circle at 30% 40%, color-mix(in srgb, var(--ar-ac) 22%, transparent), transparent 32%),
+    radial-gradient(circle at 70% 60%, color-mix(in srgb, var(--ar-ac2) 22%, transparent), transparent 34%);
+  animation: warp-ar-drift 18s ease-in-out infinite alternate; filter: blur(10px); }
+.warp-ar-bg::after { content: ""; position: absolute; inset: 0;
+  background-image: linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+  background-size: 44px 44px; mask-image: radial-gradient(ellipse at center, #000 30%, transparent 75%); }
+@keyframes warp-ar-drift { to { transform: translate(6%, -4%) rotate(8deg); } }
+.warp-ar-kicker { font-size: 11px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: var(--ar-muted); }
+.warp-ar-label { margin: 16px 0 8px; font-size: 10.5px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: var(--ar-muted); }
+.warp-ar-dim { color: var(--ar-dim); font-size: 12.5px; }
+.warp-ar-dim.small { font-size: 11.5px; margin-top: 6px; }
+
+/* ── buttons ── */
+.warp-ar-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; padding: 10px 22px; border-radius: 12px; border: 1px solid var(--ar-line); background: rgba(255,255,255,.05); font-weight: 700; font-size: 14.5px; letter-spacing: .02em; transition: transform 120ms, filter 120ms, background 120ms, border-color 120ms; }
+.warp-ar-btn:hover:not(:disabled) { border-color: var(--ar-ac); background: rgba(255,255,255,.09); }
+.warp-ar-btn:active:not(:disabled) { transform: translateY(1px) scale(.99); }
+.warp-ar-btn.primary { background: linear-gradient(135deg, var(--ar-ac), color-mix(in srgb, var(--ar-ac) 55%, var(--ar-ac2))); color: #120a12; border-color: transparent; box-shadow: 0 10px 30px color-mix(in srgb, var(--ar-ac) 40%, transparent), inset 0 1px 0 rgba(255,255,255,.35); font-family: var(--ar-display); text-transform: uppercase; letter-spacing: .08em; font-size: 15px; }
+.warp-ar-btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
+.warp-ar-btn.ghost { background: transparent; color: var(--ar-muted); }
+.warp-ar-btn:focus-visible, .warp-ar-chip:focus-visible, .warp-ar-song:focus-visible, .warp-ar-switch button:focus-visible { outline: 2px solid var(--ar-ac); outline-offset: 2px; }
+
+/* ── briefing ── */
+.warp-ar-brief { position: relative; z-index: 1; grid-row: 1 / -1; align-self: center; justify-self: center; width: min(1000px, calc(100% - 32px)); max-height: calc(100% - 32px);
+  display: flex; flex-direction: column; border-radius: 22px; background: var(--ar-panel); border: 1px solid color-mix(in srgb, var(--ar-ac) 28%, transparent);
+  box-shadow: 0 30px 80px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.03) inset; backdrop-filter: blur(14px); overflow: hidden; animation: warp-ar-rise 420ms cubic-bezier(.2,.8,.2,1) both; }
+@keyframes warp-ar-rise { from { opacity: 0; transform: translateY(18px); } }
+.warp-ar-x { position: absolute; top: 14px; right: 14px; width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--ar-line); background: rgba(255,255,255,.04); color: var(--ar-muted); z-index: 2; }
+.warp-ar-x:hover { color: var(--ar-ink); border-color: var(--ar-ac); }
+.warp-ar-brief-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 20px; align-items: center; padding: 26px 64px 20px 28px;
+  background: linear-gradient(120deg, color-mix(in srgb, var(--ar-ac) 16%, transparent), transparent 60%); border-bottom: 1px solid var(--ar-line); }
+.warp-ar-badge { width: 74px; height: 74px; border-radius: 20px; display: grid; place-items: center; font-size: 38px; font-weight: 800; font-family: var(--ar-display);
+  background: linear-gradient(145deg, var(--ar-ac), var(--ar-ac2)); color: #fff; text-shadow: 0 2px 10px rgba(0,0,0,.35);
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--ar-ac) 45%, transparent), inset 0 1px 0 rgba(255,255,255,.4); transform: rotate(-4deg); }
+.warp-ar-brief-title { min-width: 0; }
+.warp-ar-brief-title h1 { margin: 2px 0 4px; font-family: var(--ar-display); font-size: clamp(28px, 4vw, 42px); line-height: 1; text-transform: uppercase; letter-spacing: .03em; font-weight: 800; text-wrap: balance; }
+.warp-ar-brief-title p { margin: 0; color: var(--ar-muted); max-width: 52ch; }
+.warp-ar-odds { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; text-align: right; }
+.warp-ar-odds span { font-size: 11px; color: var(--ar-dim); letter-spacing: .06em; }
+.warp-ar-odds b { font-family: var(--ar-num); font-size: 30px; font-weight: 700; color: var(--ar-ink); }
+.warp-ar-switch { display: flex; gap: 6px; padding: 12px 28px 0; flex-wrap: wrap; }
+.warp-ar-switch button { display: inline-flex; gap: 8px; align-items: center; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--ar-line); background: transparent; color: var(--ar-muted); font-weight: 600; }
+.warp-ar-switch button i { font-style: normal; color: var(--ar-ac); }
+.warp-ar-switch button[aria-selected=true] { background: color-mix(in srgb, var(--ar-ac) 18%, transparent); color: var(--ar-ink); border-color: color-mix(in srgb, var(--ar-ac) 60%, transparent); }
+.warp-ar-brief-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; padding: 6px 28px 18px; overflow-y: auto; min-height: 0; scrollbar-width: thin; }
+.warp-ar-brief-body:has(.warp-ar-col.songs) { grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); }
+.warp-ar-col { min-width: 0; }
+.warp-ar-brief-foot { display: flex; gap: 10px; align-items: center; padding: 16px 28px 22px; border-top: 1px solid var(--ar-line); flex-wrap: wrap; }
+.warp-ar-brief-foot .primary { min-width: 180px; }
+
+.warp-ar-need { margin-top: 16px; }
+.warp-ar-need-track { display: flex; height: 16px; border-radius: 8px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); }
+.warp-ar-need-track .z { display: block; height: 100%; }
+.warp-ar-need-track .fail { background: repeating-linear-gradient(135deg, rgba(255,93,108,.25) 0 6px, rgba(255,93,108,.12) 6px 12px); }
+.warp-ar-need-track .partial { background: color-mix(in srgb, var(--ar-warn) 70%, transparent); }
+.warp-ar-need-track .success { background: var(--ar-good); }
+.warp-ar-need-track .crit { background: linear-gradient(90deg, var(--ar-crit), #fff4b8); }
+.warp-ar-need-legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px; font-size: 12.5px; color: var(--ar-muted); font-variant-numeric: tabular-nums; }
+.warp-ar-need-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 6px; vertical-align: 0; }
+.warp-ar-need-legend i.partial { background: var(--ar-warn); } .warp-ar-need-legend i.success { background: var(--ar-good); } .warp-ar-need-legend i.crit { background: var(--ar-crit); }
+.warp-ar-aids { display: flex; flex-wrap: wrap; gap: 6px; }
+.warp-ar-aids.none { color: var(--ar-dim); font-size: 13px; }
+.warp-ar-aid { display: inline-flex; gap: 6px; align-items: baseline; padding: 5px 11px; border-radius: 999px; background: rgba(79, 224, 164, .1); border: 1px solid rgba(79, 224, 164, .3); font-size: 12.5px; color: #c9f5e2; }
+.warp-ar-aid b { font-weight: 700; color: #fff; }
+.warp-ar-aid.perk { background: rgba(255, 224, 102, .1); border-color: rgba(255, 224, 102, .35); color: #fff2bf; }
+.warp-ar-partner { margin-top: 8px; font-size: 13px; color: var(--ar-muted); }
+.warp-ar-how { margin: 0; padding-left: 18px; display: grid; gap: 4px; color: #ddd7e6; }
+.warp-ar-keys { margin-top: 10px; font-family: var(--ar-num); font-size: 12px; color: var(--ar-dim); }
+.warp-ar-stakes { margin-top: 4px; }
+.warp-ar-chips { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
+.warp-ar-chip { width: 74px; height: 74px; border-radius: 50%; border: none; padding: 0; display: grid; place-items: center; position: relative;
+  background: radial-gradient(circle, #fff 0 34%, transparent 35%), repeating-conic-gradient(var(--chip, #c0392b) 0 22.5deg, #f6efe2 22.5deg 30deg);
+  box-shadow: 0 6px 14px rgba(0,0,0,.45), inset 0 0 0 4px rgba(0,0,0,.18); transition: transform 140ms; }
+.warp-ar-chip span { position: relative; font-family: var(--ar-num); font-weight: 800; font-size: 13px; color: #1d1d1d; }
+.warp-ar-chip:nth-child(2) { --chip: #1f6fbf; } .warp-ar-chip:nth-child(3) { --chip: #1d8f4e; } .warp-ar-chip:nth-child(4) { --chip: #222; } .warp-ar-chip:nth-child(5) { --chip: #7a2dbf; }
+.warp-ar-chip:hover { transform: translateY(-3px); }
+.warp-ar-chip.on { transform: translateY(-6px) scale(1.06); box-shadow: 0 0 0 3px var(--ar-crit), 0 12px 24px rgba(0,0,0,.5); }
+
+.warp-ar-songs { display: flex; flex-direction: column; gap: 10px; max-height: min(360px, 42vh); overflow-y: auto; padding-right: 4px; scrollbar-width: thin; }
+.warp-ar-song-group { display: flex; flex-direction: column; gap: 4px; }
+.warp-ar-song-tier { font-size: 10.5px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
+.warp-ar-song-tier.t-easy { color: var(--ar-good); } .warp-ar-song-tier.t-normal { color: #6cc7ff; } .warp-ar-song-tier.t-hard { color: var(--ar-warn); } .warp-ar-song-tier.t-brutal { color: var(--ar-bad); } .warp-ar-song-tier.t-yoursongs { color: var(--ar-ac); }
+.warp-ar-song { position: relative; display: flex; flex-direction: column; align-items: flex-start; text-align: left; padding: 8px 34px 8px 12px; border-radius: 10px; border: 1px solid transparent; background: rgba(255,255,255,.035); transition: background 120ms, border-color 120ms; }
+.warp-ar-song:hover { background: rgba(255,255,255,.07); }
+.warp-ar-song.on { border-color: var(--ar-ac); background: color-mix(in srgb, var(--ar-ac) 14%, transparent); }
+.warp-ar-song.on::after { content: "♪"; position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--ar-ac); font-size: 16px; }
+.warp-ar-song-t { font-weight: 650; }
+.warp-ar-song-m { font-size: 11.5px; color: var(--ar-dim); }
+.warp-ar-song-x { position: absolute; right: 30px; top: 8px; color: var(--ar-dim); font-size: 11px; padding: 2px 4px; }
+.warp-ar-song-x:hover { color: var(--ar-bad); }
+.warp-ar-import { display: block; margin-top: 10px; padding: 9px 12px; border-radius: 10px; border: 1px dashed color-mix(in srgb, var(--ar-ac) 45%, transparent); color: var(--ar-ink); cursor: pointer; text-align: center; font-weight: 600; font-size: 13px; }
+.warp-ar-import:hover { background: color-mix(in srgb, var(--ar-ac) 10%, transparent); }
+.warp-ar-offset { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 12px; color: var(--ar-muted); }
+.warp-ar-offset input { flex: 1; accent-color: var(--ar-ac); }
+.warp-ar-offset b { font-family: var(--ar-num); min-width: 56px; text-align: right; font-weight: 600; }
+
+/* ── playing ── */
+.warp-ar-top { position: relative; z-index: 2; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 16px; align-items: center;
+  padding: calc(12px + env(safe-area-inset-top, 0px)) 22px 12px; background: linear-gradient(180deg, rgba(0,0,0,.55), transparent); }
+.warp-ar-title { min-width: 0; }
+.warp-ar-title h1 { margin: 0; display: flex; align-items: baseline; gap: 10px; font-family: var(--ar-display); font-size: 24px; text-transform: uppercase; letter-spacing: .05em; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.warp-ar-title h1 i { font-style: normal; color: var(--ar-ac); }
+.warp-ar-title h1 small { font-family: var(--ar-ui); font-size: 12.5px; text-transform: none; letter-spacing: 0; color: var(--ar-muted); font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+.warp-ar-lives { display: flex; gap: 3px; font-size: 18px; }
+.warp-ar-lives i { font-style: normal; color: rgba(255,255,255,.18); transition: color 200ms, transform 200ms; }
+.warp-ar-lives i.on { color: var(--ar-bad); text-shadow: 0 0 10px rgba(255,93,108,.6); }
+.warp-ar-tools { display: flex; gap: 6px; }
+.warp-ar-tool { width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--ar-line); background: rgba(255,255,255,.04); font-size: 14px; }
+.warp-ar-tool:hover { border-color: var(--ar-ac); }
+.warp-ar-main { position: relative; z-index: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 92px; gap: 16px; padding: 4px 22px calc(18px + env(safe-area-inset-bottom, 0px)); }
+.warp-ar-stage { position: relative; min-height: 0; border-radius: 18px; overflow: hidden; background: rgba(0,0,0,.35); box-shadow: 0 0 0 1px color-mix(in srgb, var(--ar-ac) 22%, transparent), 0 20px 60px rgba(0,0,0,.45); }
+.warp-ar-stage.shake { animation: warp-ar-shake 320ms cubic-bezier(.36,.07,.19,.97); }
+@keyframes warp-ar-shake { 20% { transform: translate(calc(var(--ar-shake) * -1), 2px); } 40% { transform: translate(var(--ar-shake), -2px); } 60% { transform: translate(calc(var(--ar-shake) * -.6), 1px); } 80% { transform: translate(calc(var(--ar-shake) * .4), 0); } }
+.warp-ar-game { position: absolute; inset: 0; }
+.warp-ar-canvas { position: absolute; inset: 0; display: block; touch-action: none; }
+.warp-ar-banner { position: absolute; left: 0; right: 0; top: 14%; display: grid; place-items: center; pointer-events: none; z-index: 3; }
+.warp-ar-ban { grid-area: 1 / 1; font-family: var(--ar-display); font-weight: 800; font-size: clamp(26px, 4.5vw, 46px); text-transform: uppercase; letter-spacing: .06em; padding: 4px 18px;
+  text-shadow: 0 4px 24px rgba(0,0,0,.6); animation: warp-ar-ban 1.5s cubic-bezier(.2,.9,.2,1) both; }
+.warp-ar-ban.good { color: var(--ar-good); } .warp-ar-ban.bad { color: var(--ar-bad); } .warp-ar-ban.gold { color: var(--ar-crit); } .warp-ar-ban.info { color: var(--ar-ink); }
+@keyframes warp-ar-ban { 0% { opacity: 0; transform: scale(.6); } 12% { opacity: 1; transform: scale(1.08); } 22% { transform: scale(1); } 75% { opacity: 1; } 100% { opacity: 0; transform: translateY(-14px); } }
+.warp-ar-count { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; z-index: 4; }
+.warp-ar-count[data-on] { background: rgba(0,0,0,.35); }
+.warp-ar-count span { font-family: var(--ar-display); font-weight: 800; font-size: clamp(80px, 16vw, 170px); color: #fff; text-shadow: 0 0 40px var(--ar-ac), 0 8px 30px rgba(0,0,0,.6); animation: warp-ar-count 560ms cubic-bezier(.2,.9,.2,1) both; }
+@keyframes warp-ar-count { from { opacity: 0; transform: scale(1.8); } 40% { opacity: 1; transform: scale(1); } to { opacity: .0; transform: scale(.85); } }
+
+.warp-ar-gauge { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 10px; justify-items: center; min-height: 0; padding: 6px 0; }
+.warp-ar-gauge-num { display: flex; flex-direction: column; align-items: center; }
+.warp-ar-gauge-num b { font-family: var(--ar-num); font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.warp-ar-gauge-num span { font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--ar-dim); }
+.warp-ar-gauge-track { position: relative; width: 26px; height: 100%; min-height: 120px; border-radius: 13px; background: rgba(255,255,255,.06); box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); overflow: visible; }
+.warp-ar-gauge-fill { position: absolute; left: 0; right: 0; bottom: 0; height: var(--v, 0); border-radius: 13px; transition: height 220ms cubic-bezier(.2,.8,.2,1), background 220ms; background: var(--ar-bad); box-shadow: 0 0 18px currentColor; color: var(--ar-bad); }
+.warp-ar-gauge-fill[data-tone=warn] { background: var(--ar-warn); color: var(--ar-warn); }
+.warp-ar-gauge-fill[data-tone=good] { background: var(--ar-good); color: var(--ar-good); }
+.warp-ar-gauge-fill[data-tone=crit] { background: linear-gradient(0deg, var(--ar-good), var(--ar-crit)); color: var(--ar-crit); }
+.warp-ar-tick { position: absolute; left: -6px; right: -6px; bottom: var(--at); height: 0; border-top: 2px solid rgba(255,255,255,.75); }
+.warp-ar-tick span { position: absolute; right: calc(100% + 4px); top: -8px; font-size: 9.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; color: var(--ar-muted); }
+.warp-ar-tick.success { border-color: var(--ar-good); } .warp-ar-tick.success span { color: var(--ar-good); }
+.warp-ar-tick.crit { border-color: var(--ar-crit); } .warp-ar-tick.crit span { color: var(--ar-crit); }
+.warp-ar-tick.partial { border-color: var(--ar-warn); } .warp-ar-tick.partial span { color: var(--ar-warn); }
+.warp-ar-gauge.chips .warp-ar-tick.even span { color: var(--ar-ink); }
+.warp-ar-status { font-size: 11.5px; color: var(--ar-muted); text-align: center; line-height: 1.3; min-height: 30px; font-variant-numeric: tabular-nums; max-width: 92px; }
+
+.warp-ar-pausecard, .warp-ar-result { position: absolute; inset: 0; z-index: 10; display: grid; place-items: center; background: rgba(5,4,10,.62); backdrop-filter: blur(8px); animation: warp-ar-in 220ms ease both; }
+.warp-ar-pausecard[hidden] { display: none; }
+.warp-ar-card { width: min(440px, calc(100% - 32px)); display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 28px 26px 24px; border-radius: 22px; background: var(--ar-panel); border: 1px solid color-mix(in srgb, var(--ar-ac) 30%, transparent); box-shadow: 0 30px 80px rgba(0,0,0,.6); text-align: center; }
+.warp-ar-card h2 { margin: 0 0 6px; font-family: var(--ar-display); text-transform: uppercase; letter-spacing: .08em; font-size: 28px; }
+.warp-ar-card .warp-ar-btn { width: 100%; }
+.warp-ar-stamp { font-family: var(--ar-display); font-weight: 900; font-size: clamp(40px, 8vw, 64px); text-transform: uppercase; letter-spacing: .06em; padding: 2px 22px; border: 4px solid currentColor; border-radius: 12px; transform: rotate(-5deg); animation: warp-ar-stamp 520ms cubic-bezier(.2,1.4,.3,1) both; margin: 8px 0; }
+@keyframes warp-ar-stamp { from { opacity: 0; transform: rotate(-5deg) scale(2.2); } }
+.warp-ar-stamp.good, .warp-ar-big.good { color: var(--ar-good); } .warp-ar-stamp.warn, .warp-ar-big.warn { color: var(--ar-warn); } .warp-ar-stamp.bad, .warp-ar-big.bad { color: var(--ar-bad); }
+.warp-ar-stamp.crit, .warp-ar-big.crit { color: var(--ar-crit); text-shadow: 0 0 30px rgba(255,224,102,.55); }
+.warp-ar-big { font-family: var(--ar-num); font-size: 44px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; }
+.warp-ar-beats { list-style: none; margin: 4px 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+.warp-ar-beats li { font-size: 12.5px; padding: 4px 10px; border-radius: 999px; background: rgba(255,255,255,.06); color: var(--ar-muted); }
+
+/* ── phones ── */
+@media (max-width: 720px) {
+  .warp-ar-brief { width: 100%; max-height: 100%; border-radius: 0; align-self: stretch; }
+  .warp-ar-brief-head { grid-template-columns: auto minmax(0, 1fr); padding: calc(18px + env(safe-area-inset-top, 0px)) 52px 16px 16px; }
+  .warp-ar-odds { grid-column: 1 / -1; flex-direction: row; align-items: baseline; gap: 10px; justify-content: flex-start; }
+  .warp-ar-odds b { font-size: 22px; }
+  .warp-ar-badge { width: 54px; height: 54px; font-size: 28px; border-radius: 15px; }
+  .warp-ar-brief-body, .warp-ar-brief-body:has(.warp-ar-col.songs) { grid-template-columns: minmax(0, 1fr); padding: 4px 16px 14px; gap: 6px; }
+  .warp-ar-switch { padding: 10px 16px 0; }
+  .warp-ar-brief-foot { padding: 12px 16px calc(14px + env(safe-area-inset-bottom, 0px)); }
+  .warp-ar-brief-foot .warp-ar-btn { flex: 1; }
+  .warp-ar-main { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; padding: 0 10px calc(10px + env(safe-area-inset-bottom, 0px)); gap: 8px; }
+  .warp-ar-top { padding: calc(8px + env(safe-area-inset-top, 0px)) 12px 8px; }
+  .warp-ar-title h1 { font-size: 19px; }
+  .warp-ar-gauge { grid-template-rows: none; grid-template-columns: auto minmax(0, 1fr); align-items: center; padding: 0 6px 6px 4px; gap: 12px; }
+  .warp-ar-gauge-num { flex-direction: row; gap: 6px; align-items: baseline; }
+  .warp-ar-gauge-num b { font-size: 17px; }
+  .warp-ar-gauge-track { width: 100%; height: 14px; min-height: 0; }
+  .warp-ar-gauge-fill { top: 0; bottom: 0; right: auto; height: 100%; width: var(--v, 0); transition: width 220ms; }
+  .warp-ar-tick { left: var(--at); right: auto; top: -5px; bottom: -5px; width: 0; height: auto; border-top: 0; border-left: 2px solid rgba(255,255,255,.75); }
+  .warp-ar-tick span { right: auto; left: -14px; top: auto; bottom: calc(100% + 1px); font-size: 8.5px; }
+  .warp-ar-status { grid-column: 1 / -1; min-height: 0; max-width: none; }
+  .warp-ar-tick.partial span { display: none; }
+  .warp-ar-songs { max-height: none; overflow: visible; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .warp-ar, .warp-ar-brief, .warp-ar-ban, .warp-ar-count span, .warp-ar-stamp { animation: none !important; }
+  .warp-ar-bg::before { animation: none; }
+}
+`;
+
 // src/frontend.ts
 var CLEANUP_KEY = "__warpCleanup";
 var ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><circle cx="8.5" cy="8.5" r="1.3" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/></svg>`;
-function store(key, value) {
+function store2(key, value) {
   try {
     if (value !== undefined)
       localStorage.setItem(`warp:${key}`, value);
@@ -3819,6 +10058,7 @@ function setup(ctx) {
   cleanups.push(ctx.dom.addStyle(STYLES));
   cleanups.push(ctx.dom.addStyle(STAGE_STYLES));
   cleanups.push(ctx.dom.addStyle(FX_STYLES));
+  cleanups.push(ctx.dom.addStyle(ARCADE_STYLES));
   cleanups.push(armAudio());
   let state = null;
   let settings = { ...DEFAULT_SETTINGS };
@@ -3866,8 +10106,8 @@ function setup(ctx) {
       return { width: window.innerWidth, height: window.innerHeight };
     }
   };
-  let overlayOpen = store("overlayOpen") !== null ? store("overlayOpen") === "1" : !narrow();
-  const savedEdge = store("overlayEdge");
+  let overlayOpen = store2("overlayOpen") !== null ? store2("overlayOpen") === "1" : !narrow();
+  const savedEdge = store2("overlayEdge");
   let edge = savedEdge === "left" || savedEdge === "right" || savedEdge === "top" || savedEdge === "bottom" ? savedEdge : null;
   let overlay = null;
   const overlayEl = document.createElement("div");
@@ -3929,6 +10169,37 @@ function setup(ctx) {
     stage = null;
   }
   stageEl.addEventListener("contextmenu", (e) => e.stopPropagation());
+  let arcadeWidget = null;
+  const arcadeEl = document.createElement("div");
+  arcadeEl.className = "warp-arcade-host";
+  arcadeEl.style.cssText = "position:absolute;inset:0";
+  arcadeEl.addEventListener("contextmenu", (e) => e.stopPropagation());
+  const arcade = createArcade({
+    surface: () => {
+      try {
+        if (!arcadeWidget) {
+          arcadeWidget = ctx.ui.createFloatWidget({ fullscreen: true, chromeless: true, snapToEdge: false });
+          arcadeWidget.root.appendChild(arcadeEl);
+          cleanups.push(() => arcadeWidget?.destroy());
+        }
+        const w = arcadeWidget;
+        return {
+          root: arcadeEl,
+          show: (on) => {
+            w.setVisible(on);
+            const host = w.root.parentElement?.parentElement;
+            if (on && host instanceof HTMLElement)
+              host.style.zIndex = "9994";
+          }
+        };
+      } catch {
+        return null;
+      }
+    },
+    volume: () => settings.sfxVolume,
+    sound: () => settings.sfx !== "off",
+    reduced: () => settings.fx !== "full" || matchMedia("(prefers-reduced-motion: reduce)").matches
+  });
   let stageOpen = false;
   let stageWantGate = false;
   let stageMode = null;
@@ -3936,7 +10207,7 @@ function setup(ctx) {
   let lingering = false;
   const stageDismissed = new Set;
   let reactionKey = null;
-  let storyFolded = store("storyFolded") === "1";
+  let storyFolded = store2("storyFolded") === "1";
   storyEl.classList.toggle("folded", storyFolded);
   let shownScene = null;
   let sceneKey = "";
@@ -3956,9 +10227,9 @@ function setup(ctx) {
       renderDock();
       fitOverlay();
     },
-    load: () => store("panels"),
+    load: () => store2("panels"),
     save: (v) => {
-      store("panels", v);
+      store2("panels", v);
     }
   });
   cleanups.push(() => panels.destroy());
@@ -4030,7 +10301,7 @@ function setup(ctx) {
     pressAt = null;
     if (edge) {
       edge = null;
-      store("overlayEdge", "");
+      store2("overlayEdge", "");
       overlayEl.dataset.edge = "";
       const w = overlayOpen ? PANEL_W : PILL.w;
       const h = overlayOpen ? Math.min(420, cur.h) : PILL.h;
@@ -4055,7 +10326,7 @@ function setup(ctx) {
       mainDrag = false;
       cur = { ...cur, x: pos.x, y: pos.y };
       edge = edgeForDrop(from, cur, viewport());
-      store("overlayEdge", edge ?? "");
+      store2("overlayEdge", edge ?? "");
       renderHead();
       fitOverlay();
     }));
@@ -4106,7 +10377,7 @@ function setup(ctx) {
     if (t.closest("[data-detach]")) {
       const vp = viewport();
       edge = null;
-      store("overlayEdge", "");
+      store2("overlayEdge", "");
       place({ x: Math.max(PAD, vp.width - PANEL_W - 40), y: 72, w: PANEL_W, h: Math.min(420, cur.h) });
       renderHead();
       fitOverlay();
@@ -4114,7 +10385,7 @@ function setup(ctx) {
     }
     if (t.closest("[data-toggle-overlay]") || !overlayOpen) {
       overlayOpen = !overlayOpen;
-      store("overlayOpen", overlayOpen ? "1" : "0");
+      store2("overlayOpen", overlayOpen ? "1" : "0");
       renderHead();
       fitOverlay();
       panels.sync();
@@ -4149,7 +10420,7 @@ function setup(ctx) {
     if (state?.hud) {
       const { head, parts } = hudParts(state.hud, { editing: editingBar, compact: true, map: state.map });
       const mine = parts.filter((p) => panels.inMain(p.id));
-      dockRoot.innerHTML = head + mine.map((p) => renderPart(p, true)).join("");
+      dockRoot.innerHTML = historyNotice() + head + mine.map((p) => renderPart(p, true)).join("");
       panels.render(parts);
     } else if (state?.status.state === "broken") {
       dockRoot.innerHTML = renderRulesetCard(state.status, true);
@@ -4163,6 +10434,19 @@ function setup(ctx) {
     dockRoot.scrollTop = kept;
     flashChangedBars(dockRoot);
   }
+  function historyNotice() {
+    return state?.historyConflict ? `<div class="warp-card"><h3>History changed</h3><p>Earlier messages or rules changed. Later results are paused. Keep their recorded outcomes, or discard those results and replay from the changed turn. Your chat text stays in place.</p><button class="warp-btn" data-history="keep">Keep recorded outcomes</button> <button class="warp-btn" data-history="discard">Discard affected results</button></div>` : "";
+  }
+  const reconcileClick = (e) => {
+    const button = e.target.closest("[data-history]");
+    const id = chatId();
+    if (button && id)
+      send({ type: "reconcile_history", chatId: id, keep: button.dataset.history === "keep" });
+  };
+  dockRoot.addEventListener("click", reconcileClick);
+  drawerRoot.addEventListener("click", reconcileClick);
+  cleanups.push(() => dockRoot.removeEventListener("click", reconcileClick));
+  cleanups.push(() => drawerRoot.removeEventListener("click", reconcileClick));
   function renderDrawer() {
     rememberSections(drawerRoot);
     const hasChat = !!state?.chatId;
@@ -4197,7 +10481,7 @@ function setup(ctx) {
     } else {
       body = renderSettings(settings, state?.status ?? null, connections, jevKeySet, imageConnections);
     }
-    drawerRoot.innerHTML = tabs + body;
+    drawerRoot.innerHTML = tabs + historyNotice() + body;
     restoreSections(drawerRoot);
     restoreMaps(drawerRoot);
     flashChangedBars(drawerRoot);
@@ -4500,7 +10784,7 @@ function setup(ctx) {
     }
     if (t.closest("[data-stage-fold]")) {
       storyFolded = !storyFolded;
-      store("storyFolded", storyFolded ? "1" : "0");
+      store2("storyFolded", storyFolded ? "1" : "0");
       storyEl.classList.toggle("folded", storyFolded);
       return;
     }
@@ -5218,7 +11502,20 @@ function setup(ctx) {
     const cid = chatId();
     if (!cid || busy.on && busy.chatId === cid)
       return;
+    const choice = state?.choices.find((c) => c.id === actionId);
+    if (choice && (choice.game || choice.gamble) && settings.minigames !== "off") {
+      if (!arcade.busy())
+        playChoice(cid, actionId, choice);
+      return;
+    }
     send({ type: "act", chatId: cid, actionId });
+    lockUntilReply(cid);
+  }
+  async function playChoice(cid, actionId, choice) {
+    const out = await arcade.run(choice, settings.minigames === "always");
+    if (out.kind === "cancel" || chatId() !== cid || busy.on && busy.chatId === cid)
+      return;
+    send({ type: "act", chatId: cid, actionId, ...out.kind === "played" ? { game: out.result } : out.params ? { params: out.params } : {} });
     lockUntilReply(cid);
   }
   function lockUntilReply(cid) {
@@ -5376,11 +11673,10 @@ function setup(ctx) {
   cleanups.push(() => document.removeEventListener("keydown", onKey));
   cleanups.push(ctx.onBackendMessage((raw) => {
     const m = raw;
+    if (!acceptsResponse(m, chatId(), state))
+      return;
     switch (m.type) {
       case "state": {
-        const active = chatId();
-        if (m.chatId && active && m.chatId !== active)
-          return;
         if (state?.chatId !== m.chatId) {
           editingBar = null;
           lastBars = new Map;
@@ -5454,6 +11750,10 @@ function setup(ctx) {
     const now = chatId();
     if (now !== lastChat) {
       lastChat = now;
+      state = null;
+      builder = null;
+      busy = { chatId: "", on: false, label: "" };
+      renderAll();
       send({ type: "refresh", chatId: now });
     }
   }, 1000);

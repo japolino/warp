@@ -20,6 +20,8 @@ import { playFx, typewrite } from "./frontend/fx.js";
 import { armAudio, play, setVolume } from "./frontend/sfx.js";
 import { restoreMaps, wireMaps } from "./frontend/map-view.js";
 import { acceptsResponse } from "./frontend/response-gate.js";
+import { createArcade } from "./frontend/arcade/arcade.js";
+import { ARCADE_STYLES } from "./frontend/arcade/styles.js";
 
 type StateMsg = Extract<BackendToFrontend, { type: "state" }>;
 
@@ -41,6 +43,7 @@ export function setup(ctx: SpindleFrontendContext) {
   cleanups.push(ctx.dom.addStyle(STYLES));
   cleanups.push(ctx.dom.addStyle(STAGE_STYLES));
   cleanups.push(ctx.dom.addStyle(FX_STYLES));
+  cleanups.push(ctx.dom.addStyle(ARCADE_STYLES));
   cleanups.push(armAudio());
 
   let state: StateMsg | null = null;
@@ -157,6 +160,37 @@ export function setup(ctx: SpindleFrontendContext) {
   }
   // The host's widget menu ("hide widget") has no place on the stage.
   stageEl.addEventListener("contextmenu", (e) => e.stopPropagation());
+
+  // The arcade: a check played as a minigame instead of rolled, or a seat at a table.
+  // Its own full-screen layer, above the stage, made the first time it's needed.
+  let arcadeWidget: SpindleFloatWidgetHandle | null = null;
+  const arcadeEl = document.createElement("div");
+  arcadeEl.className = "warp-arcade-host";
+  arcadeEl.style.cssText = "position:absolute;inset:0";
+  arcadeEl.addEventListener("contextmenu", (e) => e.stopPropagation());
+  const arcade = createArcade({
+    surface: () => {
+      try {
+        if (!arcadeWidget) {
+          arcadeWidget = ctx.ui.createFloatWidget({ fullscreen: true, chromeless: true, snapToEdge: false });
+          arcadeWidget.root.appendChild(arcadeEl);
+          cleanups.push(() => arcadeWidget?.destroy());
+        }
+        const w = arcadeWidget;
+        return {
+          root: arcadeEl,
+          show: (on) => {
+            w.setVisible(on);
+            const host = w.root.parentElement?.parentElement;
+            if (on && host instanceof HTMLElement) host.style.zIndex = "9994";
+          },
+        };
+      } catch { return null; }
+    },
+    volume: () => settings.sfxVolume,
+    sound: () => settings.sfx !== "off",
+    reduced: () => settings.fx !== "full" || matchMedia("(prefers-reduced-motion: reduce)").matches,
+  });
   let stageOpen = false;
   let stageWantGate = false;
   let stageMode: StageMode | null = null;
@@ -1171,7 +1205,19 @@ export function setup(ctx: SpindleFrontendContext) {
     }
     const cid = chatId();
     if (!cid || (busy.on && busy.chatId === cid)) return;
+    // A check that can be played, or a table: the arcade first.
+    const choice = state?.choices.find((c) => c.id === actionId);
+    if (choice && (choice.game || choice.gamble) && settings.minigames !== "off") {
+      if (!arcade.busy()) void playChoice(cid, actionId, choice);
+      return;
+    }
     send({ type: "act", chatId: cid, actionId });
+    lockUntilReply(cid);
+  }
+  async function playChoice(cid: string, actionId: string, choice: NonNullable<StateMsg["choices"]>[number]) {
+    const out = await arcade.run(choice, settings.minigames === "always");
+    if (out.kind === "cancel" || chatId() !== cid || (busy.on && busy.chatId === cid)) return;
+    send({ type: "act", chatId: cid, actionId, ...(out.kind === "played" ? { game: out.result } : out.params ? { params: out.params } : {}) });
     lockUntilReply(cid);
   }
   /** Lock the choices while a turn starts; if nothing starts (rejected, network hiccup), unlock again. */

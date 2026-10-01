@@ -157,6 +157,12 @@ export function lintRuleset(r: Ruleset): Issue[] {
     checkEffect(a.cost, `${w} › cost`, extra);
     checkEffect(a.effects, `${w} › effects`, extra);
     for (const [tier, e] of Object.entries(a.outcomes)) if (e) checkEffect(e, `${w} › ${tier}`, extra);
+    if (a.gamble) {
+      const g = a.gamble;
+      if (!(g.stat ?? r.hud.money)) issues.push({ level: "warning", where: `${w} › gamble`, message: "there's no money to stake — add a stat with `kind: money`, or `stat:` on the table" });
+      check(g.luck, `${w} › gamble › luck`, extra);
+      for (const [k, e] of [["win", g.win], ["lose", g.lose], ["broke", g.broke]] as const) checkEffect(e, `${w} › gamble › ${k}`, extra);
+    }
   };
   for (const a of Object.values(r.actions)) checkAction(a, `Actions › ${a.id}`);
   const checkRequires = (a: ActionDef, w: string) => {

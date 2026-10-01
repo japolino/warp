@@ -10,6 +10,116 @@ var __esm = (fn, res, err) => () => {
   return res;
 };
 
+// src/engine/dice.ts
+function hashSeed(str) {
+  let h = 1779033703 ^ str.length;
+  for (let i = 0;i < str.length; i++) {
+    h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
+    h = h << 13 | h >>> 19;
+  }
+  h = Math.imul(h ^ h >>> 16, 2246822507);
+  h = Math.imul(h ^ h >>> 13, 3266489909);
+  return (h ^= h >>> 16) >>> 0;
+}
+function seededRng(seed) {
+  let a = hashSeed(seed);
+  return () => {
+    a = a + 1831565813 >>> 0;
+    let t = a;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function randomSeed() {
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+function parseDice(src) {
+  const s = src.replace(/\s+/g, "").toLowerCase();
+  if (!s)
+    throw new DiceError("Dice notation is empty");
+  const groups = [];
+  let flat = 0;
+  TERM.lastIndex = 0;
+  let consumed = 0;
+  let m;
+  while (consumed < s.length && (m = TERM.exec(s))) {
+    if (m[0] === "")
+      break;
+    if (consumed > 0 && !m[1])
+      break;
+    const sign = m[1] === "-" ? -1 : 1;
+    if (m[7] !== undefined) {
+      flat += sign * Number(m[7]);
+    } else {
+      const count = m[2] ? Number(m[2]) : 1;
+      const sides = m[3] === "%" ? 100 : Number(m[3]);
+      if (count < 1 || count > 100)
+        throw new DiceError(`"${src}": dice count must be 1–100`);
+      if (sides < 2 || sides > 1000)
+        throw new DiceError(`"${src}": dice need 2–1000 sides`);
+      const g = { count, sides, sign };
+      if (m[4]) {
+        const n = Number(m[5]);
+        if (n < 1 || n > count)
+          throw new DiceError(`"${src}": can't keep ${n} of ${count} dice`);
+        g.keep = { mode: m[4], n };
+      }
+      if (m[6])
+        g.explode = true;
+      groups.push(g);
+    }
+    consumed = TERM.lastIndex;
+  }
+  if (consumed !== s.length)
+    throw new DiceError(`"${src}" isn't valid dice notation (try d20, 2d6, d100, 4d6kh3)`);
+  if (!groups.length)
+    throw new DiceError(`"${src}" has no dice in it`);
+  return { groups, flat, primarySides: Math.max(...groups.map((g) => g.sides)) };
+}
+function rollDice(notation, rng) {
+  const parsed = parseDice(notation);
+  const dice = [];
+  let total = parsed.flat;
+  let natural = null;
+  parsed.groups.forEach((g, gi) => {
+    const faces = [];
+    for (let i = 0;i < g.count; i++) {
+      let face = 1 + Math.floor(rng() * g.sides);
+      faces.push(face);
+      let chain = 0;
+      while (g.explode && face === g.sides && chain++ < 20) {
+        face = 1 + Math.floor(rng() * g.sides);
+        faces.push(face);
+      }
+    }
+    const order = faces.map((v, i) => ({ v, i }));
+    let keptIdx = new Set(order.map((o) => o.i));
+    if (g.keep) {
+      order.sort((x, y) => g.keep.mode === "kh" ? y.v - x.v : x.v - y.v);
+      keptIdx = new Set(order.slice(0, g.keep.n).map((o) => o.i));
+    }
+    faces.forEach((v, i) => {
+      const kept = keptIdx.has(i);
+      dice.push({ sides: g.sides, value: v, kept });
+      if (kept)
+        total += g.sign * v;
+    });
+    const keptFaces = faces.filter((_, i) => keptIdx.has(i));
+    if (gi === 0 && keptFaces.length === 1)
+      natural = keptFaces[0];
+  });
+  return { notation, dice, total, natural, primarySides: parsed.primarySides };
+}
+var DiceError, TERM;
+var init_dice = __esm(() => {
+  DiceError = class DiceError extends Error {
+  };
+  TERM = /([+-]?)\s*(?:(\d*)d(\d+|%)(?:(kh|kl)(\d+))?(!)?|(\d+))/gy;
+});
+
 // src/engine/expr.ts
 function tokenize(src) {
   const out = [];
@@ -360,114 +470,125 @@ var init_expr = __esm(() => {
   };
 });
 
-// src/engine/dice.ts
-function hashSeed(str) {
-  let h = 1779033703 ^ str.length;
-  for (let i = 0;i < str.length; i++) {
-    h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
-    h = h << 13 | h >>> 19;
-  }
-  h = Math.imul(h ^ h >>> 16, 2246822507);
-  h = Math.imul(h ^ h >>> 13, 3266489909);
-  return (h ^= h >>> 16) >>> 0;
+// src/engine/game-ids.ts
+function isGameId(x) {
+  return typeof x === "string" && GAME_IDS.includes(x);
 }
-function seededRng(seed) {
-  let a = hashSeed(seed);
-  return () => {
-    a = a + 1831565813 >>> 0;
-    let t = a;
-    t = Math.imul(t ^ t >>> 15, t | 1);
-    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+function gameAlias(x) {
+  const k = x.toLowerCase().replace(/[^a-z]/g, "");
+  const map = {
+    aim: "aim",
+    osu: "aim",
+    circles: "aim",
+    aimtrainer: "aim",
+    shooting: "aim",
+    tiles: "tiles",
+    keys: "tiles",
+    pianotiles: "tiles",
+    piano: "tiles",
+    rhythm: "tiles",
+    mines: "mines",
+    minesweeper: "mines",
+    sweeper: "mines",
+    stack: "stack",
+    tetris: "stack",
+    blocks: "stack",
+    snake: "snake",
+    race: "race",
+    threeleggedrace: "race",
+    threelegged: "race",
+    threelegrun: "race",
+    threelegrace: "race",
+    pinball: "pinball",
+    flipper: "pinball",
+    blackjack: "blackjack",
+    cards: "blackjack",
+    twentyone: "blackjack",
+    roulette: "roulette",
+    wheel: "roulette",
+    slots: "slots",
+    slot: "slots",
+    slotmachine: "slots",
+    fruitmachine: "slots"
   };
+  return map[k] ?? null;
 }
-function randomSeed() {
-  const bytes = new Uint8Array(8);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+function gameBar(chance, opts = {}) {
+  const p = Math.max(0.01, Math.min(0.99, chance));
+  const success = round2(0.3 + 0.62 * (1 - p));
+  const band = 0.1 + Math.min(0.12, (opts.partial ?? 0) * 0.6);
+  const partial = round2(Math.max(0.05, success - band));
+  const crit = round2(Math.min(0.99, success + (1 - success) * 0.62));
+  const critFail = opts.crits === false ? null : round2(Math.max(0, partial * 0.3));
+  return { critFail, partial, success, crit };
 }
-function parseDice(src) {
-  const s = src.replace(/\s+/g, "").toLowerCase();
-  if (!s)
-    throw new DiceError("Dice notation is empty");
-  const groups = [];
-  let flat = 0;
-  TERM.lastIndex = 0;
-  let consumed = 0;
-  let m;
-  while (consumed < s.length && (m = TERM.exec(s))) {
-    if (m[0] === "")
-      break;
-    if (consumed > 0 && !m[1])
-      break;
-    const sign = m[1] === "-" ? -1 : 1;
-    if (m[7] !== undefined) {
-      flat += sign * Number(m[7]);
-    } else {
-      const count = m[2] ? Number(m[2]) : 1;
-      const sides = m[3] === "%" ? 100 : Number(m[3]);
-      if (count < 1 || count > 100)
-        throw new DiceError(`"${src}": dice count must be 1–100`);
-      if (sides < 2 || sides > 1000)
-        throw new DiceError(`"${src}": dice need 2–1000 sides`);
-      const g = { count, sides, sign };
-      if (m[4]) {
-        const n = Number(m[5]);
-        if (n < 1 || n > count)
-          throw new DiceError(`"${src}": can't keep ${n} of ${count} dice`);
-        g.keep = { mode: m[4], n };
-      }
-      if (m[6])
-        g.explode = true;
-      groups.push(g);
-    }
-    consumed = TERM.lastIndex;
+function shiftBar(bar, by) {
+  const f = (x) => round2(Math.max(0.05, Math.min(0.99, x + by)));
+  return { critFail: bar.critFail === null ? null : f(bar.critFail), partial: f(bar.partial), success: f(bar.success), crit: f(bar.crit) };
+}
+function tierFromScore(bar, score) {
+  const s = Math.max(0, Math.min(1, score));
+  if (s >= bar.crit)
+    return "crit_success";
+  if (s >= bar.success)
+    return "success";
+  if (s >= bar.partial)
+    return "partial";
+  if (bar.critFail !== null && s < bar.critFail)
+    return "crit_fail";
+  return "fail";
+}
+function aidTotal(aids, kind) {
+  const n = aids.filter((a) => a.kind === kind).reduce((t, a) => t + a.amount, 0);
+  const cap = { window: 80, size: 60, slow: 35, lives: 3, hint: 3, peek: 1, preview: 4, hold: 1, wrap: 1, time: 60, saver: 2, luck: 40 };
+  return Math.max(0, Math.min(cap[kind], n));
+}
+function aidWords(kind, n) {
+  const s = (one, many) => `+${n} ${n === 1 ? one : many}`;
+  switch (kind) {
+    case "window":
+      return `+${n}% timing window`;
+    case "size":
+      return `+${n}% bigger targets`;
+    case "slow":
+      return `${n}% slower`;
+    case "time":
+      return `+${n}% time`;
+    case "luck":
+      return `+${n}% luck`;
+    case "lives":
+      return s("life", "lives");
+    case "hint":
+      return s("hint", "hints");
+    case "peek":
+      return "sees the dealer's hidden card";
+    case "preview":
+      return s("piece preview", "piece previews");
+    case "hold":
+      return "can hold";
+    case "wrap":
+      return "walls wrap around";
+    case "saver":
+      return s("ball saver", "ball savers");
   }
-  if (consumed !== s.length)
-    throw new DiceError(`"${src}" isn't valid dice notation (try d20, 2d6, d100, 4d6kh3)`);
-  if (!groups.length)
-    throw new DiceError(`"${src}" has no dice in it`);
-  return { groups, flat, primarySides: Math.max(...groups.map((g) => g.sides)) };
 }
-function rollDice(notation, rng) {
-  const parsed = parseDice(notation);
-  const dice = [];
-  let total = parsed.flat;
-  let natural = null;
-  parsed.groups.forEach((g, gi) => {
-    const faces = [];
-    for (let i = 0;i < g.count; i++) {
-      let face = 1 + Math.floor(rng() * g.sides);
-      faces.push(face);
-      let chain = 0;
-      while (g.explode && face === g.sides && chain++ < 20) {
-        face = 1 + Math.floor(rng() * g.sides);
-        faces.push(face);
-      }
-    }
-    const order = faces.map((v, i) => ({ v, i }));
-    let keptIdx = new Set(order.map((o) => o.i));
-    if (g.keep) {
-      order.sort((x, y) => g.keep.mode === "kh" ? y.v - x.v : x.v - y.v);
-      keptIdx = new Set(order.slice(0, g.keep.n).map((o) => o.i));
-    }
-    faces.forEach((v, i) => {
-      const kept = keptIdx.has(i);
-      dice.push({ sides: g.sides, value: v, kept });
-      if (kept)
-        total += g.sign * v;
-    });
-    const keptFaces = faces.filter((_, i) => keptIdx.has(i));
-    if (gi === 0 && keptFaces.length === 1)
-      natural = keptFaces[0];
-  });
-  return { notation, dice, total, natural, primarySides: parsed.primarySides };
-}
-var DiceError, TERM;
-var init_dice = __esm(() => {
-  DiceError = class DiceError extends Error {
+var GAME_IDS, GAMBLE_GAMES, AID_KINDS, GAMES, round2 = (x) => Math.round(x * 100) / 100;
+var init_game_ids = __esm(() => {
+  GAME_IDS = ["aim", "tiles", "mines", "stack", "snake", "race", "pinball", "blackjack", "roulette", "slots"];
+  GAMBLE_GAMES = ["blackjack", "roulette", "slots"];
+  AID_KINDS = ["window", "size", "slow", "lives", "hint", "peek", "preview", "hold", "wrap", "time", "saver", "luck"];
+  GAMES = {
+    aim: { name: "Aim", icon: "◎", pitch: "Hit the circles on the beat, follow the sliders, keep the combo alive.", kind: "rhythm", aids: ["window", "size", "slow", "lives"] },
+    tiles: { name: "Keys", icon: "▮", pitch: "Four lanes, one song: every note you hit plays the melody.", kind: "rhythm", aids: ["window", "slow", "lives"] },
+    mines: { name: "Mines", icon: "✹", pitch: "Clear the board before the clock runs out. One wrong square and it's over.", kind: "skill", aids: ["hint", "lives", "time"] },
+    stack: { name: "Stack", icon: "▦", pitch: "Fit the falling blocks together and clear lines before the stack tops out.", kind: "skill", aids: ["slow", "preview", "hold", "time"] },
+    snake: { name: "Snake", icon: "∿", pitch: "Eat, grow, don't bite yourself. Get enough before time's up.", kind: "skill", aids: ["slow", "wrap", "lives", "time"] },
+    race: { name: "Three-legged race", icon: "⟫", pitch: "Tied at the ankle: step when your partner steps, and beat the other pair to the line.", kind: "skill", aids: ["window", "lives"] },
+    pinball: { name: "Pinball", icon: "◐", pitch: "Flippers, bumpers, three balls. Rack up the score before the last one drains.", kind: "skill", aids: ["saver", "lives", "size"] },
+    blackjack: { name: "Blackjack", icon: "♠", pitch: "A few hands against the dealer. Get closer to 21 than they do without going over.", kind: "luck", aids: ["peek", "hint", "lives"] },
+    roulette: { name: "Roulette", icon: "◉", pitch: "Place your chips and spin. Safe bets pay little, single numbers pay big.", kind: "luck", aids: ["luck", "lives"] },
+    slots: { name: "Slots", icon: "7", pitch: "Stop each reel yourself — line them up on the payline.", kind: "luck", aids: ["slow", "hold", "lives"] }
   };
-  TERM = /([+-]?)\s*(?:(\d*)d(\d+|%)(?:(kh|kl)(\d+))?(!)?|(\d+))/gy;
 });
 
 // src/engine/dungeon/content.ts
@@ -1935,7 +2056,46 @@ function normCheck(raw, where, c) {
     add,
     partialMargin: c.num(raw.partial ?? raw.partial_margin, `${where} › partial`, 0),
     label: typeof raw.label === "string" ? raw.label : typeof raw.skill === "string" ? raw.skill : undefined,
-    crits: raw.crits !== false
+    crits: raw.crits !== false,
+    ...raw.game !== undefined || raw.games !== undefined || raw.minigame !== undefined ? { game: normGames(raw.game ?? raw.games ?? raw.minigame, `${where} › game`, c) } : {}
+  };
+}
+function normGames(raw, where, c) {
+  if (raw === false || raw === "none" || raw === "dice")
+    return false;
+  const out = [];
+  for (const x of Array.isArray(raw) ? raw : [raw]) {
+    const g = gameAlias(String(x));
+    if (g) {
+      if (!out.includes(g))
+        out.push(g);
+    } else
+      c.warn(where, `"${String(x)}" isn't a minigame — use ${GAME_IDS.join(", ")}`);
+  }
+  return out.length ? out : false;
+}
+function normGamble(raw, where, c, known) {
+  const r = isObj(raw) ? raw : { game: raw };
+  const g = gameAlias(String(r.game ?? ""));
+  if (!g || !GAMBLE_GAMES.includes(g)) {
+    c.warn(where, `\`game:\` should be ${GAMBLE_GAMES.join(", ")}`);
+    return;
+  }
+  const stakes = (Array.isArray(r.stakes ?? r.stake) ? r.stakes ?? r.stake : [r.stakes ?? r.stake ?? 10]).map((x) => Math.round(c.num(x, `${where} › stakes`, 0))).filter((x) => x > 0).sort((a, b) => a - b);
+  const stat = typeof r.stat === "string" ? r.stat : typeof r.with === "string" ? r.with : undefined;
+  if (stat && !known.stats.has(stat))
+    c.warn(`${where} › stat`, `"${stat}" isn't a declared stat`);
+  const edge = r.edge !== undefined ? pct(r.edge, `${where} › edge`, c) : null;
+  return {
+    game: g,
+    stakes: stakes.length ? [...new Set(stakes)] : [10],
+    rounds: Math.max(1, Math.min(12, Math.round(c.num(r.rounds ?? r.hands ?? r.spins, `${where} › rounds`, g === "slots" ? 6 : 5)))),
+    ...stat ? { stat } : {},
+    ...edge !== null ? { edge } : {},
+    ...r.luck !== undefined ? { luck: c.expr(r.luck, `${where} › luck`) } : {},
+    win: normEffect(r.win ?? r.won, `${where} › win`, c, known),
+    lose: normEffect(r.lose ?? r.lost, `${where} › lose`, c, known),
+    broke: normEffect(r.broke ?? r.bust, `${where} › broke`, c, known)
   };
 }
 function normAction(id, raw, where, c, known, order) {
@@ -1982,6 +2142,11 @@ function normAction(id, raw, where, c, known, order) {
   const check = raw.check !== undefined ? normCheck(raw.check, `${where} › check`, c) : undefined;
   if (!check && Object.keys(outcomes).length)
     c.warn(where, "has outcomes but no check — put always-on changes under `effects:`");
+  const gamble = raw.gamble !== undefined ? normGamble(raw.gamble, `${where} › gamble`, c, known) : undefined;
+  if (gamble && check)
+    c.warn(where, "a gambling table doesn't take a check — the cards (or the wheel) decide");
+  if (gamble && !params.some((p) => p.id === "stake"))
+    params.unshift({ id: "stake", label: "Stake", options: Object.fromEntries(gamble.stakes.map((x) => [String(x), x])), default: String(gamble.stakes[0]) });
   const at = raw.at === undefined ? [] : Array.isArray(raw.at) ? raw.at.map(String) : [String(raw.at)];
   const own = raw.when !== undefined ? c.expr(raw.when, `${where} › when`) : undefined;
   const requires = normRequires(raw.requires ?? raw.needs, `${where} › requires`, c, known);
@@ -2007,7 +2172,8 @@ function normAction(id, raw, where, c, known, order) {
     order: typeof raw.order === "number" ? raw.order : order,
     perPerson: raw.per_person === true || raw.with === "person" || raw.with === "people",
     requires,
-    showLocked: raw.show_locked === true || raw.show_locked !== false && requires.length > 0
+    showLocked: raw.show_locked === true || raw.show_locked !== false && requires.length > 0,
+    ...gamble ? { gamble } : {}
   };
 }
 function normRequires(raw, where, c, known) {
@@ -2315,8 +2481,27 @@ function normPerkRules(v, where, c, known) {
       const r = isObj(x) ? x : { amount: x };
       const amount = r.amount === true || r.amount === "all" ? 999 : c.num(r.amount ?? r.by, `${w} › amount`, 999);
       out.push({ kind: "pierce", amount, stats: list(r.stats ?? r.stat), tags: list(r.tags).map((t) => t.toLowerCase()) });
+    } else if (k === "game" || k === "games" || k === "minigames") {
+      const r = isObj(x) ? x : {};
+      const games = list(r.games ?? r.game ?? r.only).map((g) => gameAlias(g) ?? (c.warn(`${w} › games`, `"${g}" isn't a minigame`), null)).filter((g) => !!g);
+      const aids = {};
+      for (const [ak, n] of Object.entries(r)) {
+        if (["games", "game", "only"].includes(ak))
+          continue;
+        if (!AID_KINDS.includes(ak)) {
+          c.warn(`${w} › ${ak}`, `isn't a minigame aid (${AID_KINDS.join(", ")})`);
+          continue;
+        }
+        const v = typeof n === "string" && n.trim().endsWith("%") ? parseFloat(n) : c.num(n === true ? 1 : n, `${w} › ${ak}`, 0);
+        if (v)
+          aids[ak] = v;
+      }
+      if (Object.keys(aids).length)
+        out.push({ kind: "game", games, aids });
+      else
+        c.warn(w, "names no aid — e.g. `game: { lives: 1, window: 20 }`");
     } else
-      c.warn(w, "isn't a perk rule (reroll, soften, gains, losses, pierce)");
+      c.warn(w, "isn't a perk rule (reroll, soften, gains, losses, pierce, game)");
   }
   return out;
 }
@@ -2476,6 +2661,8 @@ function normEncounter(id, raw, c, known) {
     foeMoves,
     endWhen,
     outcomes,
+    roundLimit: Math.max(1, Math.min(200, Math.round(c.num(raw.round_limit ?? raw.max_rounds, `${w} › round_limit`, 20)))),
+    timeoutOutcome: typeof raw.timeout_outcome === "string" && raw.timeout_outcome.trim() ? raw.timeout_outcome.trim() : momentum?.lose ?? "lost",
     start: normEffect(startRaw, `${w} › start`, c, known),
     momentum,
     fromStory: raw.from_story !== false,
@@ -3563,6 +3750,7 @@ function normalizeRuleset(raw) {
 }
 var SEEN_REACTIONS, DIFFICULTIES, isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v), DEFAULT_WEEKDAYS, KIND_ALIASES, INFLICT_KEYS, QUEST_OPS, list = (v) => Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : [], TIER_KEYS, MONTHS, DEFAULT_WEATHER, DEFAULT_SLOTS, USE_KEYS, PERK_META, DEFAULT_KNOWN = "\x00default", ABILITY_META, QUEST_META, KEEP_FLAGS, KEEP_LISTS, CHILD_NAMES, SEXUAL_TAGS;
 var init_ruleset = __esm(() => {
+  init_game_ids();
   init_expr();
   init_dice();
   init_defs();
@@ -3631,7 +3819,7 @@ var init_ruleset = __esm(() => {
     { id: "snow", label: "Snow", icon: "❄️", weight: 2, temp: -6, seasons: ["winter"], tags: ["wet", "cold"] }
   ];
   DEFAULT_SLOTS = ["head", "outer", "top", "bottom", "under_top", "under_bottom", "legs", "feet"];
-  USE_KEYS = new Set(["label", "say", "desc", "description", "when", "time", "tags", "check", "params", "why_not", "locked", "group", "cost", "effects", "effect", "outcomes", "per_person", "hidden", "at", "order", "success", "fail", "partial", "crit_success", "crit_fail", "critical_success", "critical_fail", "failure", "requires", "needs", "show_locked"]);
+  USE_KEYS = new Set(["label", "say", "desc", "description", "when", "time", "tags", "check", "params", "why_not", "locked", "group", "cost", "effects", "effect", "outcomes", "per_person", "hidden", "at", "order", "success", "fail", "partial", "crit_success", "crit_fail", "critical_success", "critical_fail", "failure", "requires", "needs", "show_locked", "gamble"]);
   PERK_META = new Set(["points", "pick", "offer", "list"]);
   ABILITY_META = new Set(["name", "known", "per_day", "per_encounter", "where"]);
   QUEST_META = new Set(["from_story", "story", "story_max", "max_story"]);
@@ -3640,37 +3828,6 @@ var init_ruleset = __esm(() => {
   CHILD_NAMES = ["Ada", "Ben", "Cleo", "Dan", "Elin", "Finn", "Greta", "Hugo", "Iris", "Jonah", "Kira", "Leo", "Maya", "Nico", "Orla", "Pip", "Rosa", "Sam", "Tess", "Theo", "Uma", "Vic", "Wren", "Zoe"];
   SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
 });
-
-// src/engine/decide.ts
-function normalize(p, keys) {
-  const out = {};
-  let sum = 0;
-  for (const k of keys) {
-    const v = Number(p[k]);
-    out[k] = Number.isFinite(v) && v > 0 ? v : 0;
-    sum += out[k];
-  }
-  if (sum <= 0)
-    for (const k of keys)
-      out[k] = 1 / keys.length;
-  else
-    for (const k of keys)
-      out[k] /= sum;
-  return out;
-}
-function sample(p, rng) {
-  const keys = Object.keys(p);
-  let x = rng();
-  for (const k of keys) {
-    x -= p[k];
-    if (x <= 0)
-      return k;
-  }
-  return keys[keys.length - 1];
-}
-function noulConfidence(p) {
-  return Math.abs(2 * p - 1);
-}
 
 // src/engine/date/stage.ts
 function relPct(r, s, who, stat) {
@@ -3877,6 +4034,7 @@ function initialState(r) {
     runs: 1,
     loops: 0,
     ended: null,
+    dismissedEndings: [],
     body: structuredClone(r.body.parts),
     tf: {},
     bonds: structuredClone(r.bonds),
@@ -4381,7 +4539,12 @@ function applyEvent(s, e, r) {
         s.ended = { ...s.ended, told: true };
       break;
     case "unend":
+      if (s.ended)
+        s.dismissedEndings = [...new Set([...s.dismissedEndings ?? [], s.ended.id])];
       s.ended = null;
+      break;
+    case "end_rearm":
+      s.dismissedEndings = (s.dismissedEndings ?? []).filter((id) => id !== e.id);
       break;
     case "dt_dated": {
       const prev = s.dating.dates[e.who] ?? { count: 0, best: 0 };
@@ -4520,6 +4683,13 @@ function usesOf(s, key) {
 }
 function cloneState(s) {
   return structuredClone(s);
+}
+function foldEvents(r, batches, from) {
+  const s = from ? cloneState(from) : initialState(r);
+  for (const batch of batches)
+    for (const e of batch)
+      applyEvent(s, e, r);
+  return s;
 }
 function makeEnv(r, s, extra = {}) {
   const day = Math.floor(s.minutes / 1440);
@@ -4805,197 +4975,6 @@ var init_state = __esm(() => {
   ];
 });
 
-// src/engine/encounter-view.ts
-function thresholds(enc) {
-  const out = [];
-  for (const e of enc.endWhen) {
-    for (const part of e.when.split(/\s+or\s+/i)) {
-      const m = /^\(?\s*(foe\.)?([a-z_]\w*)\s*(<=|>=|<|>|==)\s*(-?\d+(?:\.\d+)?)\s*\)?$/i.exec(part.trim());
-      if (m)
-        out.push({ outcome: e.outcome, foe: !!m[1], stat: m[2], op: m[3], value: Number(m[4]) });
-    }
-  }
-  return out;
-}
-function outcomeLabel(enc, outcome) {
-  return enc?.labels[outcome] ?? titleCase(outcome);
-}
-function isLoss(enc, outcome) {
-  if (enc?.momentum)
-    return outcome === enc.momentum.lose;
-  return FAILURE.test(outcome);
-}
-function endsIn(e) {
-  return e?.end ?? null;
-}
-function directEnds(enc) {
-  const out = [];
-  for (const id of enc.actionOrder) {
-    const a = enc.actions[id];
-    for (const e of [a.effects, a.outcomes.success, a.outcomes.crit_success, a.outcomes.partial]) {
-      const o = endsIn(e);
-      if (o && !out.some((x) => x.outcome === o && x.action === a.label))
-        out.push({ action: a.label, outcome: o });
-    }
-  }
-  return out;
-}
-function encounterGuide(r, s) {
-  const st = s.encounter;
-  const enc = st ? r.encounters[st.id] : undefined;
-  if (!st || !enc)
-    return null;
-  const th = thresholds(enc);
-  const progress = [];
-  const goals = [];
-  for (const t of th.filter((x) => x.foe && !isLoss(enc, x.outcome))) {
-    const fs = enc.foe.stats.find((f) => f.id === t.stat);
-    if (!fs)
-      continue;
-    progress.push({ label: fs.label, value: st.foe[fs.id] ?? fs.start, target: t.value, max: fs.max });
-    goals.push(`${t.op.startsWith("<") ? "bring" : "push"} their ${fs.label.toLowerCase()} to ${t.value}`);
-  }
-  if (enc.momentum)
-    goals.push("swing the fight all the way your way");
-  for (const d of directEnds(enc))
-    if (!isLoss(enc, d.outcome))
-      goals.push(`${d.action.toLowerCase()} (${d.outcome.replace(/_/g, " ")})`);
-  const goal = enc.goal ?? (goals.length ? cap(joinOr(goals)) : null);
-  const danger = [];
-  for (const t of th.filter((x) => !x.foe && isLoss(enc, x.outcome))) {
-    const def = r.stats[t.stat];
-    if (!def)
-      continue;
-    const value = s.stats[t.stat] ?? def.start;
-    const span = Math.max(1, def.max - def.min);
-    const gap = t.op.startsWith(">") ? t.value - value : value - t.value;
-    danger.push({ label: def.label, value, at: t.value, text: `${def.label} ${Math.round(value)}, out at ${t.value}`, close: gap / span <= 0.2 });
-  }
-  danger.sort((a, b) => Math.abs(a.at - a.value) - Math.abs(b.at - b.value));
-  const loss = th.find((x) => !x.foe && isLoss(enc, x.outcome));
-  const dangerText = enc.danger ?? (danger.length ? `${danger.slice(0, 2).map((d) => `${d.label} at ${d.at}`).join(" or ")} and you're ${outcomeLabel(enc, loss.outcome).toLowerCase()}` : null);
-  return { goal, progress, danger, dangerText };
-}
-function joinOr(xs) {
-  return xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} — or ${xs[xs.length - 1]}`;
-}
-function roundCard(r, rec, before, after, odds) {
-  const enc = before.encounter ? r.encounters[before.encounter.id] : undefined;
-  const changes = [];
-  if (enc && before.encounter) {
-    const fin = after.encounter?.id === before.encounter.id ? after.encounter : null;
-    for (const fs of enc.foe.stats) {
-      const from = before.encounter.foe[fs.id] ?? fs.start;
-      const touched = rec.events.some((e) => e.t === "foe" && e.stat === fs.id);
-      const to = fin ? fin.foe[fs.id] ?? fs.start : from + rec.events.reduce((n, e) => n + (e.t === "foe" && e.stat === fs.id ? e.set !== undefined ? e.set - from : e.d ?? 0 : 0), 0);
-      if (touched && to !== from)
-        changes.push({ label: `${foeName(r, before)}: ${fs.label}`, from, to: Math.max(0, to), of: fs.max, good: to < from === (fs.good !== "high") });
-    }
-    if (before.encounter.momentum !== undefined) {
-      const to = fin?.momentum ?? before.encounter.momentum + rec.events.reduce((n, e) => n + (e.t === "swing" ? e.d : 0), 0);
-      if (to !== before.encounter.momentum)
-        changes.push({ label: "Momentum", from: before.encounter.momentum, to, of: 100, good: to > before.encounter.momentum });
-    }
-  }
-  const watched = new Set(enc ? thresholds(enc).filter((t) => !t.foe).map((t) => t.stat) : []);
-  for (const id of r.statOrder) {
-    const from = before.stats[id], to = after.stats[id];
-    if (from === undefined || to === undefined || Math.abs(to - from) < 0.5)
-      continue;
-    if (!watched.has(id) && !rec.events.some((e) => e.t === "stat" && e.id === id && e.src !== "drift"))
-      continue;
-    const def = r.stats[id];
-    if (def.kind === "hidden")
-      continue;
-    const at = enc ? thresholds(enc).find((t) => !t.foe && t.stat === id && isLoss(enc, t.outcome))?.value ?? null : null;
-    changes.push({ label: def.label, from: Math.round(from), to: Math.round(to), of: at ?? (def.kind === "meter" ? def.max : null), good: def.good === "low" ? to < from : def.good === "high" ? to > from : true });
-  }
-  const endEv = rec.events.find((e) => e.t === "enc" && e.id === null);
-  const foeDec = enc?.foeMoves ? rec.decisions?.find((d) => d.id === enc.foeMoves.id) : undefined;
-  return {
-    move: rec.action?.label ?? "No clear move",
-    check: rec.check ? { label: rec.check.label, tier: TIER_WORD[rec.check.tier] ?? rec.check.tier, odds, gear: rec.check.gear ?? [] } : null,
-    foe: foeDec ? foeDec.pickedDesc : null,
-    changes,
-    ended: endEv ? { outcome: endEv.outcome ?? "ended", label: outcomeLabel(enc, endEv.outcome ?? "ended"), loss: isLoss(enc, endEv.outcome ?? "") } : null,
-    round: (before.encounter?.round ?? 0) + 1
-  };
-}
-function effectStats(a) {
-  const stats = new Map;
-  const adds = [], removes = [];
-  let foe = false, ends = false;
-  for (const e of [a.effects, ...Object.values(a.outcomes)]) {
-    if (!e)
-      continue;
-    for (const [k, v] of Object.entries(e.stats))
-      stats.set(k, (stats.get(k) ?? 0) + (typeof v === "number" ? v : 0));
-    adds.push(...Object.keys(e.addConditions));
-    removes.push(...e.removeConditions);
-    if (Object.keys(e.foe).length)
-      foe = true;
-    if (e.end)
-      ends = true;
-  }
-  return { stats, adds, removes, foe, ends };
-}
-function encounterReads(enc) {
-  const ids = new Set;
-  for (const a of Object.values(enc.actions)) {
-    if (a.check)
-      for (const x of [...identifiers(a.check.add), ...identifiers(a.check.target)])
-        ids.add(x);
-    if (a.when)
-      for (const x of identifiers(a.when))
-        ids.add(x);
-  }
-  for (const e of enc.endWhen)
-    for (const x of identifiers(e.when))
-      ids.add(x);
-  return ids;
-}
-function itemRelevance(r, s, a) {
-  const fx = effectStats(a);
-  let score = 0;
-  let best = null;
-  const add = (w, why) => {
-    score += w;
-    if (!best || w > best.w)
-      best = { w, why };
-  };
-  const enc = s.encounter ? r.encounters[s.encounter.id] : undefined;
-  const reads = enc ? encounterReads(enc) : new Set;
-  for (const [id, d] of fx.stats) {
-    const def = r.stats[id];
-    if (!def || !d)
-      continue;
-    const v = s.stats[id] ?? def.start;
-    const p = (v - def.min) / Math.max(1, statMax(r, def, s) - def.min);
-    const bad = def.good === "low" ? p >= 0.5 : def.good === "high" ? p <= 0.5 : false;
-    const helps = def.good === "low" ? d < 0 : def.good === "high" ? d > 0 : false;
-    if (bad && helps)
-      add(1.5 + p, `${def.label} is ${def.good === "low" ? "high" : "low"}`);
-    if (enc && reads.has(id))
-      add(1.5, `Changes ${def.label}, which this encounter turns on`);
-  }
-  for (const c of fx.removes)
-    if (s.conditions[c])
-      add(3, `Clears ${r.conditions[c]?.label ?? c}`);
-  if (enc && fx.foe)
-    add(2, `Works on ${foeName(r, s)}`);
-  if (enc && fx.ends)
-    add(1, "Can end the encounter");
-  return { score, why: best?.why ?? null };
-}
-var FAILURE, cap = (t) => t.charAt(0).toUpperCase() + t.slice(1), TIER_WORD;
-var init_encounter_view = __esm(() => {
-  init_ruleset();
-  init_state();
-  init_expr();
-  FAILURE = /^(lost|lose|loss|beaten|defeat(ed)?|overwhelmed|caught|captured|ko|knocked_out|downed|fallen|slain|killed|dead|died|wiped(_out)?|fled_in_panic|broken|failed?)$/i;
-  TIER_WORD = { crit_success: "great success", success: "success", partial: "partial", fail: "failed", crit_fail: "badly failed" };
-});
-
 // src/engine/freeform.ts
 function improvStats(r) {
   return r.improvise.stats.filter((id) => r.stats[id]);
@@ -5116,6 +5095,507 @@ var init_freeform = __esm(() => {
     fail: "It doesn't work. Show the failure and a consequence that makes things harder.",
     crit_fail: "It goes badly wrong — a failure that costs {{user}} something real."
   };
+});
+
+// src/engine/games.ts
+function gameFor(words, salt) {
+  const w = words.toLowerCase();
+  for (const [re, g] of HINTS)
+    if (re.test(w))
+      return g;
+  let h = 0;
+  for (const c of salt)
+    h = h * 31 + c.charCodeAt(0) >>> 0;
+  return SKILL_POOL[h % SKILL_POOL.length];
+}
+function gameOffer(r, s, a, chance, opts) {
+  const check = a.check;
+  if (!check || check.game === false)
+    return null;
+  const named = Array.isArray(check.game) ? check.game : [];
+  if (!named.length && opts.scope !== "all")
+    return null;
+  const stats = checkStats(r, a);
+  const words = [check.label ?? "", ...stats, ...stats.map((x) => r.stats[x]?.label ?? ""), ...a.tags].join(" ");
+  const game = named[0] ?? gameFor(words, a.id);
+  const p = Math.max(0, Math.min(1, chance));
+  const level = round22(1 - p);
+  const aids = aidsFor(r, s, a, game, stats);
+  const partner = game === "race" ? partnerFor(r, s, opts.target) : undefined;
+  if (partner && partner.sync > 0.05)
+    aids.push({ kind: "window", amount: Math.round(partner.sync * 35), from: `In step with ${partner.name}` });
+  return {
+    game,
+    options: named.length ? named : [game],
+    action: opts.label ?? a.label,
+    label: check.label ?? (stats[0] ? r.stats[stats[0]]?.label ?? stats[0] : "Luck"),
+    chance: round22(p),
+    level,
+    bar: gameBar(p, { partial: opts.partial, crits: check.crits }),
+    aids: mergeAids(aids),
+    ...partner ? { partner } : {},
+    seed: opts.seed ?? `${a.id}:${s.minutes}`
+  };
+}
+function aidsFor(r, s, a, game, stats) {
+  const out = [];
+  const info = GAMES[game];
+  const main = stats[0];
+  if (main && r.stats[main]) {
+    const def = r.stats[main];
+    const max = statMax(r, def, s);
+    const v = s.stats[main] ?? def.start;
+    const frac = max > def.min ? Math.max(0, Math.min(1, (v - def.min) / (max - def.min))) : 0;
+    const from = `${def.label} ${Math.round(v)}`;
+    if (frac >= 0.1) {
+      const pct = Math.round(frac * 40);
+      const kind = info.aids.find((k) => ["window", "size", "slow", "time", "luck"].includes(k));
+      if (kind)
+        out.push({ kind, amount: pct, from });
+    }
+    if (frac >= 0.6) {
+      const extra = info.aids.find((k) => ["hint", "peek", "preview", "hold", "saver", "wrap"].includes(k));
+      if (extra)
+        out.push({ kind: extra, amount: 1, from });
+    }
+  }
+  const used = new Set(stats);
+  for (const id of Object.keys(s.perks)) {
+    const p = r.perks[id];
+    for (const rule of p?.rules ?? []) {
+      if (rule.kind === "game") {
+        if (rule.games.length && !rule.games.includes(game))
+          continue;
+        for (const [k, n] of Object.entries(rule.aids))
+          if (n)
+            out.push({ kind: k, amount: n, from: `★ ${p.name}` });
+      } else if (a && (rule.kind === "reroll" || rule.kind === "soften")) {
+        const fits = !rule.stats.length && !rule.tags.length || rule.stats.some((x) => used.has(x)) || rule.tags.some((t) => a.tags.includes(t));
+        if (!fits)
+          continue;
+        if (rule.perDay && usesOf(s, `perk:${id}:${rule.kind}`).today >= rule.perDay)
+          continue;
+        if (rule.kind === "reroll")
+          out.push({ kind: "lives", amount: 1, from: `★ ${p.name}` });
+      }
+    }
+  }
+  return out.filter((x) => info.aids.includes(x.kind));
+}
+function mergeAids(list) {
+  const out = [];
+  for (const a of list) {
+    const same = out.find((x) => x.kind === a.kind && x.from === a.from);
+    if (same)
+      same.amount += a.amount;
+    else
+      out.push({ ...a });
+  }
+  return out;
+}
+function partnerFor(r, s, target) {
+  const here = presentPeople(r, s, makeEnv(r, s));
+  const pick = target && s.people[target] ? target : here.sort((x, y) => closeness(r, s, y) - closeness(r, s, x))[0];
+  if (!pick)
+    return { name: "a stranger", sync: 0 };
+  return { name: s.people[pick]?.name ?? r.people[pick]?.name ?? pick, sync: round22(closeness(r, s, pick)) };
+}
+function closeness(r, s, id) {
+  const rel = s.rel[id] ?? {};
+  const xs = [];
+  for (const k of r.relStatOrder) {
+    const def = r.relStats[k];
+    if (!def || def.good === "low")
+      continue;
+    const v = rel[k] ?? def.start;
+    if (def.max > def.min)
+      xs.push(Math.max(0, Math.min(1, (v - def.min) / (def.max - def.min))));
+  }
+  return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
+}
+function cleanResult(raw, allowed) {
+  if (!raw || typeof raw !== "object")
+    return null;
+  const g = raw;
+  if (!isGameId(g.game) || allowed.length && !allowed.includes(g.game))
+    return null;
+  const words = (x, n) => (Array.isArray(x) ? x : []).filter((w) => typeof w === "string").map((w) => w.slice(0, 120)).slice(0, n);
+  const num = (x) => typeof x === "number" && Number.isFinite(x) ? x : undefined;
+  const score = num(g.score);
+  return {
+    game: g.game,
+    ...score !== undefined ? { score: Math.max(0, Math.min(1, score)) } : {},
+    ...num(g.net) !== undefined ? { net: Math.round(num(g.net)) } : {},
+    ...num(g.stake) !== undefined ? { stake: Math.max(0, Math.round(num(g.stake))) } : {},
+    beats: words(g.beats, 6),
+    ...typeof g.detail === "string" ? { detail: g.detail.slice(0, 200) } : {},
+    ...num(g.livesUsed) ? { livesUsed: Math.max(0, Math.min(5, Math.round(num(g.livesUsed)))) } : {},
+    ...typeof g.perk === "string" ? { perk: g.perk.slice(0, 60) } : {},
+    ...typeof g.song === "string" ? { song: g.song.slice(0, 80) } : {},
+    ...g.quit === true ? { quit: true } : {},
+    ...num(g.ease) ? { ease: Math.max(-0.12, Math.min(0.08, num(g.ease))) } : {}
+  };
+}
+function gameHint(label, res, tier, bar) {
+  const score = res.score ?? 0;
+  const margin = tier === "fail" || tier === "crit_fail" ? bar.partial - score : score - (tier === "partial" ? bar.partial : bar.success);
+  const how = res.beats.length ? ` How it went: ${res.beats.join("; ")}.` : "";
+  const detail = res.detail ? ` (${res.detail})` : "";
+  const gave = res.quit ? " {{user}} gave up partway." : "";
+  return `${label}: decided by {{user}}'s own hands rather than dice.${how}${detail}${gave} ${MARGIN[tier](Math.abs(margin))} Narrate it as part of the story, in the scene's own terms — not as a game or a score.`;
+}
+function gameSummary(res, bar) {
+  const g = GAMES[res.game];
+  return `${g.icon} ${g.name} ${Math.round((res.score ?? 0) * 100)}% · needed ${Math.round(bar.success * 100)}%${res.song ? ` · ♪ ${res.song}` : ""}`;
+}
+function gambleOffer(r, s, a, seed) {
+  const g = a.gamble;
+  if (!g)
+    return null;
+  const stat = g.stat ?? r.hud.money;
+  if (!stat || !r.stats[stat])
+    return null;
+  const have = Math.floor(s.stats[stat] ?? r.stats[stat].start);
+  const env = makeEnv(r, s);
+  const luck = g.luck !== undefined ? evalNumber(g.luck, env, 0) / 100 : 0;
+  const aids = aidsFor(r, s, a, g.game, []);
+  const edge = Math.max(-0.2, Math.min(0.4, (g.edge ?? BASE_EDGE[g.game]) - luck - aidTotal(aids, "luck") / 400));
+  return {
+    game: g.game,
+    action: a.label,
+    stakes: g.stakes.filter((x) => x <= have),
+    rounds: g.rounds,
+    money: { stat, have, currency: r.hud.currency },
+    edge: round22(edge * 1000) / 1000,
+    aids: mergeAids(aids),
+    seed: seed ?? `${a.id}:${s.minutes}`
+  };
+}
+function clampNet(game, stake, net, rounds) {
+  const most = Math.round(stake * PAYOUT_CAP[game] * Math.max(1, rounds));
+  return Math.max(-stake, Math.min(most, Math.round(net)));
+}
+function simulateGamble(game, stake, rounds, edge, rng) {
+  let chips = stake;
+  const bet = Math.max(1, Math.round(stake / Math.max(1, Math.min(rounds, 5))));
+  let wins = 0, losses = 0, big = 0;
+  for (let i = 0;i < rounds && chips >= 1; i++) {
+    const b = Math.min(bet, chips);
+    const x = rng();
+    if (game === "blackjack") {
+      const winP = 0.44 - edge / 2, pushP = 0.09;
+      if (x < 0.045) {
+        chips += Math.round(b * 1.5);
+        wins++;
+        big++;
+      } else if (x < 0.045 + winP) {
+        chips += b;
+        wins++;
+      } else if (x < 0.045 + winP + pushP) {} else {
+        chips -= b;
+        losses++;
+      }
+    } else if (game === "roulette") {
+      if (rng() < 0.15) {
+        if (x < (1 - edge) / 37) {
+          chips += b * 35;
+          wins++;
+          big++;
+        } else {
+          chips -= b;
+          losses++;
+        }
+      } else if (x < 18 / 37 * (1 - edge) / (1 - 0.027)) {
+        chips += b;
+        wins++;
+      } else {
+        chips -= b;
+        losses++;
+      }
+    } else {
+      const small = Math.max(0, (0.6 - edge) / 1.5);
+      if (x < 0.004) {
+        chips += b * 39;
+        wins++;
+        big++;
+      } else if (x < 0.064) {
+        chips += b * 3;
+        wins++;
+      } else if (x < 0.064 + small) {
+        chips += Math.round(b * 0.5);
+        wins++;
+      } else {
+        chips -= b;
+        losses++;
+      }
+    }
+  }
+  const net = clampNet(game, stake, chips - stake, rounds);
+  const beats = [wins > losses ? "the table ran warm" : losses > wins ? "the table ran cold" : "it went back and forth"];
+  if (big)
+    beats.push("one big win");
+  return { net, beats, detail: `${wins} won, ${losses} lost` };
+}
+function gambleHint(name, res, currency) {
+  const amount = `${currency}${Math.abs(res.net)}`;
+  const outcome = res.net > 0 ? `walks away ${amount} up` : res.net < 0 ? res.net <= -res.stake ? `loses the whole ${currency}${res.stake} stake` : `walks away ${amount} down` : "breaks even";
+  const how = res.beats.length ? ` ${res.beats.join("; ")}.` : "";
+  return `{{user}} plays ${name} (stake ${currency}${res.stake}) and ${outcome}.${how}${res.detail ? ` (${res.detail})` : ""} Show the table, the people around it and how {{user}} takes it — not a round-by-round account.`;
+}
+var round22 = (x) => Math.round(x * 100) / 100, HINTS, SKILL_POOL, MARGIN, PAYOUT_CAP, BASE_EDGE, gambleRng = (seed) => seededRng(`gamble:${seed}`);
+var init_games = __esm(() => {
+  init_dice();
+  init_expr();
+  init_freeform();
+  init_game_ids();
+  init_state();
+  init_world();
+  init_game_ids();
+  init_game_ids();
+  HINTS = [
+    [/aim|shoot|marks|gun|archer|bow|throw|sniper|firearm|ranged/, "aim"],
+    [/music|perform|sing|piano|danc|rhythm|instrument|art\b|song/, "tiles"],
+    [/lock|stealth|sneak|hack|secur|investig|search|percep|disarm|tech|electro|trap|clue|observ|deduc/, "mines"],
+    [/craft|repair|engineer|build|mechan|pack|smith|cook|tinker|construct/, "stack"],
+    [/athlet|run|chase|agil|reflex|dodge|escape|swim|climb|acrobat|parkour/, "snake"],
+    [/charm|persua|bluff|decei|negoti|haggl|seduc|allure|social|wits|lie|intimid|barter|card/, "blackjack"],
+    [/luck|fortune|gambl|fate|chance|pray/, "slots"],
+    [/strength|physique|fight|brawl|combat|melee|might|wrestl|endur/, "pinball"]
+  ];
+  SKILL_POOL = ["aim", "tiles", "mines", "snake", "stack", "pinball"];
+  MARGIN = {
+    crit_success: () => "It goes better than anyone could have asked.",
+    success: (m) => m < 0.04 ? "It works — by a hair." : m < 0.12 ? "It works, cleanly enough." : "It works, and it isn't close.",
+    partial: () => "It half-works: there's a cost or a complication.",
+    fail: (m) => m < 0.05 ? "It fails — agonisingly close." : "It fails.",
+    crit_fail: () => "It goes badly wrong."
+  };
+  PAYOUT_CAP = { blackjack: 2.5, roulette: 35, slots: 50 };
+  BASE_EDGE = { blackjack: 0.02, roulette: 0.027, slots: 0.08 };
+});
+
+// src/engine/decide.ts
+function normalize(p, keys) {
+  const out = {};
+  let sum = 0;
+  for (const k of keys) {
+    const v = Number(p[k]);
+    out[k] = Number.isFinite(v) && v > 0 ? v : 0;
+    sum += out[k];
+  }
+  if (sum <= 0)
+    for (const k of keys)
+      out[k] = 1 / keys.length;
+  else
+    for (const k of keys)
+      out[k] /= sum;
+  return out;
+}
+function sample(p, rng) {
+  const keys = Object.keys(p);
+  let x = rng();
+  for (const k of keys) {
+    x -= p[k];
+    if (x <= 0)
+      return k;
+  }
+  return keys[keys.length - 1];
+}
+function noulConfidence(p) {
+  return Math.abs(2 * p - 1);
+}
+
+// src/engine/encounter-view.ts
+function thresholds(enc) {
+  const out = [];
+  for (const e of enc.endWhen) {
+    for (const part of e.when.split(/\s+or\s+/i)) {
+      const m = /^\(?\s*(foe\.)?([a-z_]\w*)\s*(<=|>=|<|>|==)\s*(-?\d+(?:\.\d+)?)\s*\)?$/i.exec(part.trim());
+      if (m)
+        out.push({ outcome: e.outcome, foe: !!m[1], stat: m[2], op: m[3], value: Number(m[4]) });
+    }
+  }
+  return out;
+}
+function outcomeLabel(enc, outcome) {
+  return enc?.labels[outcome] ?? titleCase(outcome);
+}
+function isLoss(enc, outcome) {
+  if (enc?.momentum && outcome === enc.momentum.lose)
+    return true;
+  return FAILURE.test(outcome);
+}
+function endsIn(e) {
+  return e?.end ?? null;
+}
+function directEnds(enc) {
+  const out = [];
+  for (const id of enc.actionOrder) {
+    const a = enc.actions[id];
+    for (const e of [a.effects, a.outcomes.success, a.outcomes.crit_success, a.outcomes.partial]) {
+      const o = endsIn(e);
+      if (o && !out.some((x) => x.outcome === o && x.action === a.label))
+        out.push({ action: a.label, outcome: o });
+    }
+  }
+  return out;
+}
+function encounterGuide(r, s) {
+  const st = s.encounter;
+  const enc = st ? r.encounters[st.id] : undefined;
+  if (!st || !enc)
+    return null;
+  const th = thresholds(enc);
+  const progress = [];
+  const goals = [];
+  for (const t of th.filter((x) => x.foe && !isLoss(enc, x.outcome))) {
+    const fs = enc.foe.stats.find((f) => f.id === t.stat);
+    if (!fs)
+      continue;
+    progress.push({ label: fs.label, value: st.foe[fs.id] ?? fs.start, target: t.value, max: fs.max });
+    goals.push(`${t.op.startsWith("<") ? "bring" : "push"} their ${fs.label.toLowerCase()} to ${t.value}`);
+  }
+  if (enc.momentum)
+    goals.push("swing the fight all the way your way");
+  for (const d of directEnds(enc))
+    if (!isLoss(enc, d.outcome))
+      goals.push(`${d.action.toLowerCase()} (${d.outcome.replace(/_/g, " ")})`);
+  const goal = enc.goal ?? (goals.length ? cap(joinOr(goals)) : null);
+  const danger = [];
+  for (const t of th.filter((x) => !x.foe && isLoss(enc, x.outcome))) {
+    const def = r.stats[t.stat];
+    if (!def)
+      continue;
+    const value = s.stats[t.stat] ?? def.start;
+    const span = Math.max(1, def.max - def.min);
+    const gap = t.op.startsWith(">") ? t.value - value : value - t.value;
+    danger.push({ label: def.label, value, at: t.value, text: `${def.label} ${Math.round(value)}, out at ${t.value}`, close: gap / span <= 0.2 });
+  }
+  danger.sort((a, b) => Math.abs(a.at - a.value) - Math.abs(b.at - b.value));
+  const loss = th.find((x) => !x.foe && isLoss(enc, x.outcome));
+  const authoredDanger = enc.danger ?? (danger.length ? `${danger.slice(0, 2).map((d) => `${d.label} at ${d.at}`).join(" or ")} and you're ${outcomeLabel(enc, loss.outcome).toLowerCase()}` : null);
+  const budget = `${Math.max(0, enc.roundLimit - st.round)} rounds left; then ${outcomeLabel(enc, enc.timeoutOutcome).toLowerCase()}.`;
+  const dangerText = authoredDanger ? `${authoredDanger}. ${budget}` : budget;
+  return { goal, progress, danger, dangerText };
+}
+function joinOr(xs) {
+  return xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} — or ${xs[xs.length - 1]}`;
+}
+function roundCard(r, rec, before, after, odds) {
+  const enc = before.encounter ? r.encounters[before.encounter.id] : undefined;
+  const changes = [];
+  if (enc && before.encounter) {
+    const fin = after.encounter?.id === before.encounter.id ? after.encounter : null;
+    for (const fs of enc.foe.stats) {
+      const from = before.encounter.foe[fs.id] ?? fs.start;
+      const touched = rec.events.some((e) => e.t === "foe" && e.stat === fs.id);
+      const to = fin ? fin.foe[fs.id] ?? fs.start : from + rec.events.reduce((n, e) => n + (e.t === "foe" && e.stat === fs.id ? e.set !== undefined ? e.set - from : e.d ?? 0 : 0), 0);
+      if (touched && to !== from)
+        changes.push({ label: `${foeName(r, before)}: ${fs.label}`, from, to: Math.max(0, to), of: fs.max, good: to < from === (fs.good !== "high") });
+    }
+    if (before.encounter.momentum !== undefined) {
+      const to = fin?.momentum ?? before.encounter.momentum + rec.events.reduce((n, e) => n + (e.t === "swing" ? e.d : 0), 0);
+      if (to !== before.encounter.momentum)
+        changes.push({ label: "Momentum", from: before.encounter.momentum, to, of: 100, good: to > before.encounter.momentum });
+    }
+  }
+  const watched = new Set(enc ? thresholds(enc).filter((t) => !t.foe).map((t) => t.stat) : []);
+  for (const id of r.statOrder) {
+    const from = before.stats[id], to = after.stats[id];
+    if (from === undefined || to === undefined || Math.abs(to - from) < 0.5)
+      continue;
+    if (!watched.has(id) && !rec.events.some((e) => e.t === "stat" && e.id === id && e.src !== "drift"))
+      continue;
+    const def = r.stats[id];
+    if (def.kind === "hidden")
+      continue;
+    const at = enc ? thresholds(enc).find((t) => !t.foe && t.stat === id && isLoss(enc, t.outcome))?.value ?? null : null;
+    changes.push({ label: def.label, from: Math.round(from), to: Math.round(to), of: at ?? (def.kind === "meter" ? def.max : null), good: def.good === "low" ? to < from : def.good === "high" ? to > from : true });
+  }
+  const endEv = rec.events.find((e) => e.t === "enc" && e.id === null);
+  const foeDec = enc?.foeMoves ? rec.decisions?.find((d) => d.id === enc.foeMoves.id) : undefined;
+  return {
+    move: rec.action?.label ?? "No clear move",
+    check: rec.check ? { label: rec.check.label, tier: TIER_WORD[rec.check.tier] ?? rec.check.tier, odds, gear: rec.check.gear ?? [] } : null,
+    foe: foeDec ? foeDec.pickedDesc : null,
+    changes,
+    ended: endEv ? { outcome: endEv.outcome ?? "ended", label: outcomeLabel(enc, endEv.outcome ?? "ended"), loss: isLoss(enc, endEv.outcome ?? "") } : null,
+    round: (before.encounter?.round ?? 0) + 1
+  };
+}
+function effectStats(a) {
+  const stats = new Map;
+  const adds = [], removes = [];
+  let foe = false, ends = false;
+  for (const e of [a.effects, ...Object.values(a.outcomes)]) {
+    if (!e)
+      continue;
+    for (const [k, v] of Object.entries(e.stats))
+      stats.set(k, (stats.get(k) ?? 0) + (typeof v === "number" ? v : 0));
+    adds.push(...Object.keys(e.addConditions));
+    removes.push(...e.removeConditions);
+    if (Object.keys(e.foe).length)
+      foe = true;
+    if (e.end)
+      ends = true;
+  }
+  return { stats, adds, removes, foe, ends };
+}
+function encounterReads(enc) {
+  const ids = new Set;
+  for (const a of Object.values(enc.actions)) {
+    if (a.check)
+      for (const x of [...identifiers(a.check.add), ...identifiers(a.check.target)])
+        ids.add(x);
+    if (a.when)
+      for (const x of identifiers(a.when))
+        ids.add(x);
+  }
+  for (const e of enc.endWhen)
+    for (const x of identifiers(e.when))
+      ids.add(x);
+  return ids;
+}
+function itemRelevance(r, s, a) {
+  const fx = effectStats(a);
+  let score = 0;
+  let best = null;
+  const add = (w, why) => {
+    score += w;
+    if (!best || w > best.w)
+      best = { w, why };
+  };
+  const enc = s.encounter ? r.encounters[s.encounter.id] : undefined;
+  const reads = enc ? encounterReads(enc) : new Set;
+  for (const [id, d] of fx.stats) {
+    const def = r.stats[id];
+    if (!def || !d)
+      continue;
+    const v = s.stats[id] ?? def.start;
+    const p = (v - def.min) / Math.max(1, statMax(r, def, s) - def.min);
+    const bad = def.good === "low" ? p >= 0.5 : def.good === "high" ? p <= 0.5 : false;
+    const helps = def.good === "low" ? d < 0 : def.good === "high" ? d > 0 : false;
+    if (bad && helps)
+      add(1.5 + p, `${def.label} is ${def.good === "low" ? "high" : "low"}`);
+    if (enc && reads.has(id))
+      add(1.5, `Changes ${def.label}, which this encounter turns on`);
+  }
+  for (const c of fx.removes)
+    if (s.conditions[c])
+      add(3, `Clears ${r.conditions[c]?.label ?? c}`);
+  if (enc && fx.foe)
+    add(2, `Works on ${foeName(r, s)}`);
+  if (enc && fx.ends)
+    add(1, "Can end the encounter");
+  return { score, why: best?.why ?? null };
+}
+var FAILURE, cap = (t) => t.charAt(0).toUpperCase() + t.slice(1), TIER_WORD;
+var init_encounter_view = __esm(() => {
+  init_ruleset();
+  init_state();
+  init_expr();
+  FAILURE = /^(lost|lose|loss|beaten|defeat(ed)?|overwhelmed|caught|captured|ko|knocked_out|downed|fallen|slain|killed|dead|died|wiped(_out)?|fled_in_panic|broken|failed?)$/i;
+  TIER_WORD = { crit_success: "great success", success: "success", partial: "partial", fail: "failed", crit_fail: "badly failed" };
 });
 
 // src/engine/chronicle.ts
@@ -5925,7 +6405,7 @@ function creditorName(r, s, o) {
 function obligationLife(t) {
   const { r } = t;
   for (const o of Object.values(r.obligations)) {
-    for (let guard = 0;guard < 6; guard++) {
+    for (let guard = 0;guard < 1024; guard++) {
       const d = t.s.dues[o.id];
       if (!d)
         break;
@@ -5956,6 +6436,12 @@ function obligationLife(t) {
       } else {
         t.announce(`${o.label} is overdue: ${cur}${owed} owed, ${missed} missed.`);
       }
+    }
+    const remaining = t.s.dues[o.id];
+    if (remaining && remaining.owed > 0 && t.s.minutes >= remaining.due + o.grace * 1440) {
+      const warning = `${o.label}: the time jump exceeded 1024 billing periods. Further overdue periods remain pending; advance another turn to continue catch-up.`;
+      t.announce(warning);
+      t.push({ t: "news", text: warning, src: "world" });
     }
   }
 }
@@ -6395,8 +6881,11 @@ function questLife(t) {
     if (!st)
       continue;
     if (st.st === "done" || st.st === "failed") {
-      if (q.repeat !== null && !q.auto && st.ended !== undefined && t.s.minutes - st.ended >= q.repeat * 1440)
+      if (q.repeat !== null && st.ended !== undefined && t.s.minutes - st.ended >= q.repeat * 1440) {
         t.push({ t: "quest", id, st: null, src: "world" });
+        if (q.auto && (!q.when || evalBool(q.when, t.env(), false)))
+          startQuest(t, id, "trigger");
+      }
       continue;
     }
     if (st.st !== "active")
@@ -6858,6 +7347,34 @@ function amountOf2(w, v, extra, max) {
   const x = p !== null ? p * max : evalNumber(v, w.env(extra), 0);
   return Math.abs(x) >= 1 && p !== null ? Math.round(x) : x;
 }
+function gambleTurn(w, a, intent, rec, label, seed) {
+  const g = a.gamble;
+  const r = w.r;
+  const offer = gambleOffer(r, w.s, a, seed);
+  if (!offer) {
+    w.hints.push(`{{user}} can't play — there's nothing to stake.`);
+    return;
+  }
+  const asked = Number(intent.game?.stake ?? intent.params?.stake ?? g.stakes[0]);
+  const stake = Math.max(0, Math.min(offer.money.have, Number.isFinite(asked) && asked > 0 ? Math.round(asked) : g.stakes[0]));
+  if (stake <= 0) {
+    w.hints.push(`{{user}} doesn't have the ${offer.money.currency}${g.stakes[0]} to sit down.`);
+    return;
+  }
+  const played = intent.game && intent.game.game === g.game && intent.game.net !== undefined ? intent.game : null;
+  const res = played ? { net: clampNet(g.game, stake, played.net, g.rounds), beats: played.beats, detail: played.detail } : simulateGamble(g.game, stake, g.rounds, offer.edge, gambleRng(seed));
+  rec.gamble = { game: g.game, stake, net: res.net, played: !!played };
+  const name = GAMES[g.game].name.toLowerCase();
+  because(w, `"${label}": ${res.net >= 0 ? "won" : "lost"} ${offer.money.currency}${Math.abs(res.net)} at ${name}`, () => {
+    if (res.net)
+      w.push({ t: "stat", id: offer.money.stat, d: res.net, src: "action" });
+    const after = res.net <= -stake && (w.s.stats[offer.money.stat] ?? 0) < (g.stakes[0] ?? 1) ? g.broke : res.net > 0 ? g.win : res.net < 0 ? g.lose : null;
+    if (after)
+      effectToEvents(w, after, "action", {});
+  });
+  w.hints.push(gambleHint(name, { net: res.net, stake, beats: res.beats, detail: res.detail }, offer.money.currency));
+  questHooks(builderOf(w), { kind: "action", id: a.id, result: res.net > 0 ? "success" : res.net < 0 ? "fail" : "partial", good: res.net > 0 });
+}
 function perkRuleFor(r, s, a, kind) {
   const used = new Set(checkStats(r, a));
   for (const id of Object.keys(s.perks)) {
@@ -6877,22 +7394,25 @@ function perkRuleFor(r, s, a, kind) {
 }
 function findAction(r, s, actionId) {
   const [base, target] = actionId.split(TARGET_SEP);
+  const allowed = (a) => isAvailable(r, s, a, target) && (!a.perPerson || !!target) && (!target || presentPeople(r, s, makeEnv(r, s)).includes(target));
   if (base.startsWith(ITEM_PREFIX)) {
-    const a = r.items[base.slice(ITEM_PREFIX.length)]?.use;
-    return a ? { a, ...target ? { target } : {} } : null;
+    const id = base.slice(ITEM_PREFIX.length);
+    const item = r.items[id];
+    const a = item?.use;
+    return a && (s.items[id] ?? 0) > 0 && !(item.uses > 0 && (s.uses[id] ?? item.uses) <= 0) && allowed(a) ? { a, ...target ? { target } : {} } : null;
   }
   if (base.startsWith(ABILITY_PREFIX)) {
     const id = base.slice(ABILITY_PREFIX.length);
     const st = abilityStatus(r, s, id);
     const a = r.abilities[id]?.action;
-    return a && st.known && st.here && !st.locked ? { a, ...target ? { target } : {} } : null;
+    return a && st.known && st.here && !st.locked && allowed(a) ? { a, ...target ? { target } : {} } : null;
   }
   if (base.startsWith(IMPROV)) {
     const a = improvAction(r, s, base);
     return a ? { a } : null;
   }
   const a = base.startsWith(LIVE_PREFIX) ? r.liveChoices.tags[base.slice(LIVE_PREFIX.length)] : actionPool(r, s).defs[base];
-  return a ? { a, ...target ? { target } : {} } : null;
+  return a && allowed(a) ? { a, ...target ? { target } : {} } : null;
 }
 function tierFor(check, roll, add, target) {
   const total = roll.total + add;
@@ -6945,19 +7465,32 @@ function checkNumbers(r, s, a, params, who) {
   }
   return { add, target };
 }
-function odds(r, s, a, params, who) {
+function odds(r, s, a, params, who, includePerks = true) {
   const check = a.check;
   if (!check)
     return null;
   const { add, target } = checkNumbers(r, s, a, params, who);
   if (check.style === "chance" && check.dice === "d100" && target !== null) {
-    return { success: target / 100, partial: 0 };
+    const success = Math.max(0, Math.min(100, target - add)) / 100;
+    const reroll = includePerks && !!perkRuleFor(r, s, a, "reroll");
+    const soften = includePerks && !!perkRuleFor(r, s, a, "soften");
+    const failed = 1 - success;
+    const critical = check.crits ? Math.min(failed, 0.05) : 0;
+    return {
+      success: reroll ? success + failed * success : success,
+      partial: soften ? (reroll ? failed : 1) * (failed - critical) : 0
+    };
   }
   const rng = seededRng(`odds:${a.id}`);
+  const reroll = includePerks && !!perkRuleFor(r, s, a, "reroll"), soften = includePerks && !!perkRuleFor(r, s, a, "soften");
   const N = 2000;
   let ok = 0, part = 0;
   for (let i = 0;i < N; i++) {
-    const t = tierFor(check, rollDice(check.dice, rng), add, target);
+    let t = tierFor(check, rollDice(check.dice, rng), add, target);
+    if ((t === "fail" || t === "crit_fail") && reroll)
+      t = tierFor(check, rollDice(check.dice, rng), add, target);
+    if ((t === "fail" || t === "crit_fail") && soften)
+      t = t === "crit_fail" ? "fail" : "partial";
     if (t === "success" || t === "crit_success")
       ok++;
     else if (t === "partial")
@@ -7649,7 +8182,13 @@ function checkRun(w, before) {
     return;
   if (!w.s.ended)
     for (const e of Object.values(r.endings)) {
-      if (!evalBool(e.when, w.env(), false))
+      const active = evalBool(e.when, w.env(), false);
+      if ((w.s.dismissedEndings ?? []).includes(e.id)) {
+        if (!active)
+          w.push({ t: "end_rearm", id: e.id, src: "world" });
+        continue;
+      }
+      if (!active)
         continue;
       w.push({ t: "end", id: e.id, told: !w.defer, src: "trigger" });
       announce(w, endingDirection(r, w.s, e));
@@ -7731,6 +8270,11 @@ function startEncounter(w, id, src, opponent) {
   announce(w, `An encounter begins: ${enc.name}${enc.desc ? ` — ${enc.desc}` : ""}. Opponent: ${opponent ?? enc.foe.name}.`);
   because(w, `${enc.name} begins`, () => effectToEvents(w, enc.start, src, {}));
 }
+function encounterStartEvents(r, before, id, seed) {
+  const w = new Working(r, cloneState(before), seededRng(`${seed}:fx`), seed);
+  startEncounter(w, id, "start");
+  return w.events;
+}
 function encounterOutcome(w) {
   const s = w.s.encounter;
   if (!s)
@@ -7747,6 +8291,10 @@ function encounterOutcome(w) {
   for (const e of enc?.endWhen ?? [])
     if (evalBool(e.when, w.env(), false))
       return e.outcome;
+  if (enc && s.round >= enc.roundLimit) {
+    announce(w, `The ${enc.roundLimit}-round limit was reached without resolving the encounter: ${enc.timeoutOutcome.replace(/_/g, " ")}.`);
+    return enc.timeoutOutcome;
+  }
   return null;
 }
 function endEncounter(w, outcome, src) {
@@ -7868,7 +8416,8 @@ function advanceTime(w, minutes, src) {
 }
 function runTriggers(w, includeRepeat) {
   const fired = new Set;
-  for (let pass = 0;pass < 5; pass++) {
+  const limit = Math.max(5, Math.min(256, w.r.triggers.length * 2 + 1));
+  for (let pass = 0;pass < limit; pass++) {
     let changed = false;
     for (const t of w.r.triggers) {
       if (t.whenScene && !(t.id in w.scene))
@@ -7892,6 +8441,16 @@ function runTriggers(w, includeRepeat) {
     }
     if (!changed)
       break;
+    if (pass === limit - 1 && w.r.triggers.some((t) => {
+      if (t.whenScene && !(t.id in w.scene))
+        return false;
+      const now = (t.when === undefined || evalBool(t.when, w.env(), false)) && (!t.whenScene || w.scene[t.id] === true);
+      return now !== (w.s.triggers[t.id] ?? false);
+    })) {
+      const warning = "Rule processing reached its safety limit. Some rules still disagree with the state; check for a cycle in the ruleset.";
+      w.hints.push(warning);
+      w.push({ t: "news", text: warning, src: "trigger" });
+    }
   }
   for (const c of Object.values(w.r.codex)) {
     if (c.unlock && !w.s.codex[c.id] && evalBool(c.unlock, w.env(), false))
@@ -7937,6 +8496,11 @@ function resolveInner(r, before, intent, opts, needs) {
   const w = new Working(r, cloneState(before), seededRng(`${opts.seed}:fx`), opts.seed, opts.odds ?? {}, opts.scene ?? {});
   w.defer = false;
   const rec = { v: 1, hints: [], events: [], at: Date.now() };
+  if (intent && !before.ended && !intent.actionId.startsWith(DATE_PREFIX) && !intent.actionId.startsWith(PAY_PREFIX) && !intent.actionId.startsWith(JOB_PREFIX) && !intent.actionId.startsWith(QUEST_PREFIX) && intent.actionId !== RUN_EPILOGUE && !(before.dungeon && intent.actionId === "dungeon")) {
+    const valid = intent.actionId === EXPLORE ? canExplore(r, before) : intent.actionId.startsWith(TRAVEL_PREFIX) ? travelTargets(r, before).includes(intent.actionId.slice(TRAVEL_PREFIX.length)) : !!findAction(r, before, intent.actionId);
+    if (!valid)
+      return { ...rec, hints: ["The attempted action isn't available in the current state. It did not happen and spent no turn or resources."] };
+  }
   if (!w.s.seed)
     w.push({ t: "seed", v: opts.seed, src: "start" });
   if (before.notices.length) {
@@ -7962,7 +8526,7 @@ function resolveInner(r, before, intent, opts, needs) {
   let mind = found ? mindOverride(r, before, found.a, found.target, opts.seed) : null;
   const meant = found ? found.target ? `${found.a.label} (${personName(r, before, found.target)})` : intent.label ?? found.a.label : "";
   if (found && mind?.kind === "redirect") {
-    const alt = findAction(r, before, mind.to);
+    const alt = findAction(r, before, mind.to.includes(TARGET_SEP) ? mind.to : `${mind.to}${found.target ? `${TARGET_SEP}${found.target}` : ""}`);
     if (alt)
       found = { a: alt.a, ...found.target && alt.a.perPerson ? { target: found.target } : {} };
     else
@@ -8041,6 +8605,7 @@ function resolveInner(r, before, intent, opts, needs) {
       const why = mind.text.replace(/\{target\}/g, who ? personName(r, before, who) : "them");
       w.hints.push(mind.kind === "fail" ? `{{user}} tries to ${meant.toLowerCase()}, but can't: ${why} It fails — no roll.` : mind.kind === "redirect" ? `{{user}} meant to ${meant.toLowerCase()}, but ${why} What actually happens: ${label.toLowerCase()}.` : `{{user}} goes ahead, but ${mind.cause.toLowerCase()} colours it: ${why}`);
     }
+    const checkBefore = cloneState(w.s);
     because(w, `Cost of "${label}"`, () => effectToEvents(w, a.cost, "cost", extra));
     if (a.id.startsWith(ITEM_PREFIX)) {
       const itemId = a.id.slice(ITEM_PREFIX.length);
@@ -8049,32 +8614,45 @@ function resolveInner(r, before, intent, opts, needs) {
         because(w, `Used ${it.name}`, () => w.push(it.uses > 0 ? { t: "use", id: itemId, n: 1, src: "action" } : { t: "item", id: itemId, d: -1, src: "action" }));
     }
     if (a.id.startsWith(ABILITY_PREFIX)) {
-      const enc = encounterKey(w.s);
-      because(w, `Used ${r.abilities[a.id.slice(ABILITY_PREFIX.length)]?.name ?? a.label}`, () => w.push({ t: "charge", key: a.id, day: dayOf(w.s), ...enc ? { enc } : {}, src: "action" }));
+      const enc = encounterKey(checkBefore);
+      because(w, `Used ${r.abilities[a.id.slice(ABILITY_PREFIX.length)]?.name ?? a.label}`, () => w.push({ t: "charge", key: a.id, day: dayOf(checkBefore), ...enc ? { enc } : {}, src: "action" }));
     }
     if (mind?.kind === "fail") {
       const fail = a.outcomes.fail ?? a.outcomes.crit_fail;
       if (fail)
         because(w, `"${meant}" — ${mind.cause} stopped it`, () => effectToEvents(w, fail, "check", extra));
+    } else if (a.gamble) {
+      gambleTurn(w, a, intent, rec, label, opts.seed);
     } else if (a.check) {
       const rng = seededRng(opts.seed);
-      const { add, target } = checkNumbers(r, w.s, a, intent.params, who);
+      const { add, target } = checkNumbers(r, checkBefore, a, intent.params, who);
       let roll = rollDice(a.check.dice, rng);
       let tier = tierFor(a.check, roll, add, target);
+      const played = intent.game && intent.game.score !== undefined && a.check.game !== false ? intent.game : null;
+      let game;
+      if (played) {
+        const o = odds(r, checkBefore, a, intent.params, who, false);
+        const bar = shiftBar(gameBar(o?.success ?? 0.5, { partial: o?.partial, crits: a.check.crits }), Math.max(-0.12, Math.min(0.08, played.ease ?? 0)));
+        tier = tierFromScore(bar, played.score);
+        game = { id: played.game, score: played.score, bar, summary: gameSummary(played, bar), beats: played.beats };
+        const re = played.perk && played.livesUsed ? perkRuleFor(r, checkBefore, a, "reroll") : null;
+        if (re && re.name === played.perk)
+          because(w, `★ ${re.name}`, () => w.push({ t: "charge", key: `perk:${re.perk}:reroll`, day: dayOf(checkBefore), src: "action" }));
+      }
       let perkNote;
-      if (tier === "fail" || tier === "crit_fail") {
-        const re = perkRuleFor(r, w.s, a, "reroll");
+      if (!played && (tier === "fail" || tier === "crit_fail")) {
+        const re = perkRuleFor(r, checkBefore, a, "reroll");
         if (re) {
-          because(w, `★ ${re.name}`, () => w.push({ t: "charge", key: `perk:${re.perk}:reroll`, day: dayOf(w.s), src: "action" }));
+          because(w, `★ ${re.name}`, () => w.push({ t: "charge", key: `perk:${re.perk}:reroll`, day: dayOf(checkBefore), src: "action" }));
           roll = rollDice(a.check.dice, seededRng(`${opts.seed}:reroll`));
           tier = tierFor(a.check, roll, add, target);
           perkNote = `${re.name} rerolled a failure`;
         }
       }
       if (tier === "fail" || tier === "crit_fail") {
-        const so = perkRuleFor(r, w.s, a, "soften");
+        const so = perkRuleFor(r, checkBefore, a, "soften");
         if (so) {
-          because(w, `★ ${so.name}`, () => w.push({ t: "charge", key: `perk:${so.perk}:soften`, day: dayOf(w.s), src: "action" }));
+          because(w, `★ ${so.name}`, () => w.push({ t: "charge", key: `perk:${so.perk}:soften`, day: dayOf(checkBefore), src: "action" }));
           tier = tier === "crit_fail" ? "fail" : "partial";
           perkNote = `${so.name}: ${tier === "partial" ? "the failure only half-failed" : "the disaster was only a failure"}`;
         }
@@ -8091,15 +8669,20 @@ function resolveInner(r, before, intent, opts, needs) {
         tier,
         seed: opts.seed
       };
-      const gear = gearFor(r, w.s, a).notes;
+      const gear = gearFor(r, checkBefore, a).notes;
       if (gear.length)
         rec.check.gear = gear;
       if (perkNote)
         rec.check.perk = perkNote;
+      if (game) {
+        rec.check.game = game;
+        w.hints.push(gameHint(rec.check.label, played, tier, game.bar));
+      }
       questHooks(builderOf(w), { kind: "action", id: a.id, result: tier, good: tier === "success" || tier === "crit_success" });
       const key = TIER_FALLBACK[tier].find((t) => a.outcomes[t]);
+      const how = game ? `played ${GAMES[game.id].name}, ${Math.round(game.score * 100)}% vs ${Math.round(game.bar.success * 100)}%` : `rolled ${rec.check.total}${target !== null ? ` vs ${target}` : ""}`;
       if (key)
-        because(w, `"${label}": ${rec.check.label} rolled ${rec.check.total}${target !== null ? ` vs ${target}` : ""} → ${TIER_LABEL[tier]}`, () => effectToEvents(w, a.outcomes[key], "check", extra));
+        because(w, `"${label}": ${rec.check.label} ${how} → ${TIER_LABEL[tier]}`, () => effectToEvents(w, a.outcomes[key], "check", extra));
       if (improvised) {
         w.hints.push(`{{user}} attempts what they wrote (${a.check.label}, ${DIFFICULTY_WORD[difficulty]}). ${IMPROV_DIRECTION[tier]} Keep {{user}}'s own words and choices; the dice decide only how it turns out.`);
       } else if (tier === "partial" && key === "success")
@@ -8287,11 +8870,16 @@ function applyProposal(r, before, p, ctx) {
       continue;
     const k = key.toLowerCase();
     const id = Object.keys(w.s.items).find((i) => i === k || itemName(r, w.s, i).toLowerCase() === k);
-    if (id && (r.items[id]?.uses ?? 0) > 0)
-      w.push({ t: "use", id, n: Math.min(10, Math.round(n)), src });
+    const item = id ? r.items[id] : undefined;
+    const alreadyUsed = id && ctx?.action?.id.split(TARGET_SEP)[0] === `${ITEM_PREFIX}${id}` ? 1 : 0;
+    const available = id && item && !item.keep && item.uses > 0 ? (w.s.uses[id] ?? item.uses) + Math.max(0, (w.s.items[id] ?? 0) - 1) * item.uses : 10;
+    const count = Math.min(available, Math.max(0, Math.min(10, Math.round(n)) - alreadyUsed));
+    if (id && item && !item.keep && item.uses > 0 && count > 0)
+      w.push({ t: "use", id, n: count, src });
     const use = id ? r.items[id]?.use : undefined;
-    if (id && use && !use.check && ctx?.action?.id !== `${ITEM_PREFIX}${id}`) {
-      because(w, `${itemName(r, w.s, id)} used in the story`, () => effectToEvents(w, use.effects, src, {}));
+    if (id && use && !use.check && count > 0) {
+      for (let useIndex = 0;useIndex < count; useIndex++)
+        because(w, `${itemName(r, w.s, id)} used in the story`, () => effectToEvents(w, use.effects, src, {}));
     }
   }
   if (p.move) {
@@ -8503,7 +9091,7 @@ function perkStats(r, id) {
   return [...new Set([
     ...Object.keys(p.bonus),
     ...p.edges.flatMap((e) => Object.keys(e.stats)),
-    ...p.rules.flatMap((x) => ("stat" in x) ? [x.stat] : x.stats),
+    ...p.rules.flatMap((x) => ("stat" in x) ? [x.stat] : ("stats" in x) ? x.stats : []),
     ...p.abilities.flatMap((a) => r.abilities[a] ? checkStats(r, r.abilities[a].action) : [])
   ])];
 }
@@ -8598,6 +9186,7 @@ function forgetPerson(r, before, who) {
 }
 var EXPLORE = "explore:", TRAVEL_PREFIX = "go:", TARGET_SEP = "@", LIVE_PREFIX = "live:", ITEM_PREFIX = "item:", ABILITY_PREFIX = "ability:", NEXT_EVENT = "world:next_event", SEEN_DESC, RUN_EPILOGUE = "run:epilogue", ENCOUNTER_REST = 60, TIER_FALLBACK, TIER_LABEL;
 var init_resolve = __esm(() => {
+  init_games();
   init_expr();
   init_dice();
   init_ruleset();
@@ -9183,7 +9772,7 @@ conditions:
     at: campus
     say: "*I swim laps in the university pool.*"
     time: 45
-    check: { chance: 55 + swimming / 2 - fatigue / 3, label: Swimming }
+    check: { chance: 55 + swimming / 2 - fatigue / 3, label: Swimming, game: keys }
     success: { athletics: +0.4, fatigue: +12, stress: -4, hint: "Smooth, steady laps." }
     fail: { fatigue: +16, stress: +1, hint: "{{user}} swallows half the pool and climbs out spluttering." }
 
@@ -9193,7 +9782,7 @@ conditions:
     at: park
     say: "*I go for a jog around the park.*"
     time: 40
-    check: { chance: 60 + athletics / 2 - fatigue * 2 / 3, label: Athletics }
+    check: { chance: 60 + athletics / 2 - fatigue * 2 / 3, label: Athletics, game: snake }
     success: { athletics: +1, fatigue: +10, stress: -4 }
     fail: { athletics: +0.4, fatigue: +17, pain: +10, hint: "{{user}} pushes too hard and ends up aching and winded." }
 
@@ -9204,7 +9793,7 @@ conditions:
     when: between(hour, 7, 18)
     say: "*I put on an apron and work a shift at the café.*"
     time: 240
-    check: { chance: 55 + tending / 1.5, label: Tending }
+    check: { chance: 55 + tending / 1.5, label: Tending, game: stack }
     success: { money: 45 + tending / 2, tending: +1.2, fatigue: +20, flags: { worked: true }, hint: "A smooth shift — good tips." }
     fail: { money: 30, tending: +0.6, fatigue: +22, stress: +6, flags: { worked: true }, hint: "A rough shift: rude customers and a smashed tray." }
   buy_raincoat:
@@ -9240,6 +9829,18 @@ conditions:
     time: 10
     effects: { money: -3, give: coffee }
 
+  three_legged:
+    label: Run the three-legged race with {target}
+    group: Park
+    at: park
+    per_person: true
+    when: "(weekday == 'Sat' or weekday == 'Sun') and between(hour, 10, 17)"
+    say: "*I talk {target} into the three-legged race at the weekend fun run.*"
+    time: 45
+    check: { chance: 35 + athletics / 3 + target.trust / 3, label: Athletics, game: race }
+    success: { stress: -6, fatigue: +8, rel: { target: { trust: +4, love: +2 } }, hint: "{{user}} and {target} cross the line in a tangle of laughter." }
+    fail: { fatigue: +10, pain: +3, rel: { target: { trust: +1 } }, hint: "They go down in a heap — grass stains, and laughing anyway." }
+
   # Quest work: only offered while the job is taken.
   hand_out_flyers:
     label: Hand out club flyers
@@ -9258,7 +9859,7 @@ conditions:
     requires: { quest: lost_ring }
     say: "*I comb the grass by the duck pond, looking for a glint of gold.*"
     time: 45
-    check: { chance: "30 + (between(hour, 8, 18) ? 15 : 0) - fatigue / 4", label: Luck }
+    check: { chance: "30 + (between(hour, 8, 18) ? 15 : 0) - fatigue / 4", label: Luck, game: mines }
     success: { progress: { lost_ring: 1 }, hint: "Something glints in the grass — the ring." }
     fail: { fatigue: +6, hint: "Bottle caps and a lot of mud." }
 
@@ -9269,7 +9870,7 @@ conditions:
     say: "*I pick out a distracted mark and go for their wallet.*"
     tags: [crime]
     time: 10
-    check: { chance: 15 + skulduggery / 1.2 - allure / 8, label: Skulduggery }
+    check: { chance: 15 + skulduggery / 1.2 - allure / 8, label: Skulduggery, game: mines }
     crit_success: { money: roll('4d10') + 20, skulduggery: +1.5, hint: "A fat wallet, and nobody noticed a thing." }
     success: { money: roll('2d10') + 5, skulduggery: +1, hint: "Clean lift. Nobody noticed." }
     fail: { crime: +6, stress: +8, skulduggery: +0.3, hint: "The mark catches {{user}}'s wrist and starts shouting." }
@@ -9282,9 +9883,24 @@ conditions:
     when: hour >= 20 or hour < 4
     say: "*I hit the dance floor.*"
     time: 60
-    check: { chance: 40 + dancing / 1.2, label: Dancing }
+    check: { chance: 40 + dancing / 1.2, label: Dancing, game: keys }
     success: { dancing: +1.2, stress: -6, allure: +3, fatigue: +10, hint: "{{user}} moves well and draws eyes." }
     fail: { dancing: +0.5, stress: +2, fatigue: +10, hint: "Awkward, off the beat, and a little embarrassing." }
+  back_room_cards:
+    label: Cards in the back room
+    group: Nightlife
+    at: the_strip
+    when: hour >= 21 or hour < 3
+    say: "*I pull up a chair at the card game in the back of the bar.*"
+    time: 60
+    gamble: { game: blackjack, stakes: [10, 40, 100], rounds: 5, win: { stress: -5 }, lose: { stress: +4 }, broke: { stress: +12, control: -5 } }
+  fruit_machine:
+    label: Play the fruit machine
+    group: Nightlife
+    at: the_strip
+    say: "*I feed coins into the fruit machine by the door.*"
+    time: 20
+    gamble: { game: slots, stakes: [2, 5, 10], rounds: 6, lose: { stress: +2 } }
   drink:
     label: Have a drink (£6)
     group: Nightlife
@@ -9512,7 +10128,7 @@ encounters:
     actions:
       fight_back:
         label: Fight back
-        check: { chance: 30 + athletics / 2 - fatigue / 3 - pain / 3, label: Athletics }
+        check: { chance: 30 + athletics / 2 - fatigue / 3 - pain / 3, label: Athletics, game: pinball }
         success: { foe: { nerve: -6 }, hint: "{{user}} lands a solid hit." }
         fail: { pain: +10, hint: "{{user}}'s swing misses and they take a blow." }
       shout:
@@ -9525,7 +10141,7 @@ encounters:
         effects: { money: "-min(money, 20)", end: robbed }
       run:
         label: Run
-        check: { chance: 35 + athletics / 2 - fatigue / 3 - pain / 2, label: Athletics }
+        check: { chance: 35 + athletics / 2 - fatigue / 3 - pain / 2, label: Athletics, game: snake }
         success: { fatigue: +5, end: escaped }
         fail: { pain: +5, hint: "{{user}} is caught before getting far." }
       jump_in:
@@ -10109,7 +10725,7 @@ conditions:
     say: "*I sort through the cargo bay for anything worth selling.*"
     time: 60
     cost: { energy: -10 }
-    check: { vs: 11, add: floor(intelligence / 3) + floor(physique / 3), label: Tech }
+    check: { vs: 11, add: floor(intelligence / 3) + floor(physique / 3), label: Tech, game: stack }
     success: { credits: roll('2d20') }
     fail: { energy: -5 }
   rest_quarters:
@@ -10124,7 +10740,7 @@ conditions:
     group: Explore
     say: "*I sweep the area with my codex scanner.*"
     time: 5
-    check: { vs: 12, add: floor(intelligence / 2), label: Intelligence }
+    check: { vs: 12, add: floor(intelligence / 2), label: Intelligence, game: mines }
     success: { hint: "The scan reveals something valuable: a hidden route, loot, or a threat before it strikes." }
     fail: { hint: "Interference. Nothing useful." }
   explore:
@@ -10133,7 +10749,7 @@ conditions:
     at: [jungle_edge, jungle_deep]
     say: "*I push deeper into the jungle.*"
     time: 45
-    check: { vs: 11, add: floor(reflexes / 3), label: Reflexes }
+    check: { vs: 11, add: floor(reflexes / 3), label: Reflexes, game: snake }
     success: { xp: +15, credits: roll('3d20'), hint: "A discovery: salvage or something worth selling." }
     fail: { start_encounter: ambush }
   use_booster:
@@ -10178,6 +10794,27 @@ conditions:
     when: credits >= 150
     say: "*I buy a shield booster.*"
     effects: { credits: -150, give: shield_booster }
+  void_blackjack:
+    label: Void blackjack at the back tables
+    group: Social
+    at: bar
+    say: "*I buy in at the blackjack table under the neon.*"
+    time: 60
+    gamble: { game: blackjack, stakes: [50, 200, 500], rounds: 5, win: { xp: +5 }, broke: { energy: -20 } }
+  zero_g_roulette:
+    label: Zero-G roulette
+    group: Social
+    at: bar
+    say: "*I put chips down at the roulette wheel spinning in its zero-g bubble.*"
+    time: 30
+    gamble: { game: roulette, stakes: [50, 200, 500], rounds: 4, win: { xp: +5 }, broke: { energy: -20 } }
+  neon_slots:
+    label: Feed the neon slots
+    group: Social
+    at: bar
+    say: "*I feed credits into a slot machine that sings my name.*"
+    time: 20
+    gamble: { game: slots, stakes: [10, 25, 50], rounds: 6 }
   drink:
     label: Have a drink (₡20)
     group: Social
@@ -10245,14 +10882,14 @@ encounters:
       shoot:
         label: Shoot
         cost: { energy: -5 }
-        check: { vs: 12, add: floor(aim / 2), label: Aim }
+        check: { vs: 12, add: floor(aim / 2), label: Aim, game: aim }
         crit_success: { foe: { shields: -14, hp: "foe.shields <= 0 ? -12 : 0" }, hint: "A perfect shot." }
         success: { foe: { shields: -8, hp: "foe.shields <= 0 ? -7 : 0" }, hint: "The shot lands." }
         fail: { hint: "Missed." }
       burst:
         label: Burst fire
         cost: { energy: -8 }
-        check: { vs: 11, add: floor(aim / 2), label: Aim }
+        check: { vs: 11, add: floor(aim / 2), label: Aim, game: aim }
         success: { foe: { shields: -4 }, hits: 3, hint: "Three rounds rake their shields." }
         fail: { hint: "The burst goes wide." }
       melee:
@@ -10272,7 +10909,7 @@ encounters:
         effects: { take: medkit, hp: +25 }
       flee:
         label: Flee
-        check: { vs: 13, add: floor(reflexes / 2), label: Reflexes }
+        check: { vs: 13, add: floor(reflexes / 2), label: Reflexes, game: snake }
         success: { energy: -10, end: fled }
         fail: { hint: "Cut off — the fight goes on." }
     foe_moves:
@@ -10391,7 +11028,7 @@ abilities:
     where: encounter
     known: false
     cost: { energy: -12 }
-    check: { vs: 11, add: floor(aim / 2), label: Aim }
+    check: { vs: 11, add: floor(aim / 2), label: Aim, game: aim }
     success: { harm: 4, inflict: { burning: 3 } }
     fail: { hint: "The gel sputters onto the deck." }
     per_encounter: 1
@@ -10409,6 +11046,11 @@ abilities:
 perks:
   points: perk_points
   pick: 3
+  high_roller:
+    name: High Roller
+    desc: The house edge doesn't apply to you. Mostly.
+    rule: { game: { luck: 15, lives: 1, games: [blackjack, roulette, slots] } }
+    narrator: "{{user}} has the easy grin of someone the dice like."
   sharpshooter:
     name: Sharpshooter
     desc: Every shot counts — more so with a lock.
@@ -10869,6 +11511,32 @@ conditions:
     say: "*I pay for a room and sleep.*"
     time: 480
     effects: { gold: -5, hp: +40, stamina: +100, mana: +30, remove_condition: [exhausted] }
+  caravan_cards:
+    label: Cards with the caravan guards
+    group: Social
+    at: inn
+    when: hour >= 18 or hour < 2
+    say: "*I sit in on the guards' card game by the fire.*"
+    time: 60
+    gamble: { game: blackjack, stakes: [2, 5, 15], rounds: 5, win: { xp: +3 }, broke: { flags: { owes_the_guards: true } } }
+  pay_guards:
+    label: Settle up with the caravan guards (10g)
+    group: Social
+    at: inn
+    when: "flag('owes_the_guards') and gold >= 10"
+    say: "*I count ten gold onto the guards' table and we're square.*"
+    effects: { gold: -10, flags: { owes_the_guards: false }, hint: "The guards stop watching {{user}} quite so closely." }
+  fair_race:
+    label: Three-legged race at the fair with {target}
+    group: Social
+    at: village_square
+    per_person: true
+    when: "weekday == 'Sat' and between(hour, 10, 16)"
+    say: "*I tie my ankle to {target}'s for the fair's three-legged race.*"
+    time: 30
+    check: { chance: "30 + agility * 4 + target.trust / 4", label: Agility, game: race }
+    success: { gold: +5, xp: +5, rel: { target: { trust: +5 } }, hint: "{{user}} and {target} win the fair's ribbon and a purse of coppers." }
+    fail: { stamina: -10, rel: { target: { trust: +1 } }, hint: "A tangle of legs in the mud, and the whole square laughing." }
   rumours:
     label: Listen for rumours
     group: Social
@@ -10968,7 +11636,7 @@ conditions:
     say: "*I ask around for work — hauling, mending, minding stalls.*"
     time: 120
     cost: { stamina: -15 }
-    check: { chance: "45 + might * 3", label: Might }
+    check: { chance: "45 + might * 3", label: Might, game: stack }
     success: { gold: +8, xp: +5 }
     fail: { gold: +3 }
   notice_board:
@@ -10987,7 +11655,7 @@ conditions:
     say: "*I search the roadside for herbs and game.*"
     time: 45
     cost: { stamina: -10 }
-    check: { chance: "35 + survival / 2 + wits * 2", label: Survival }
+    check: { chance: "35 + survival / 2 + wits * 2", label: Survival, game: mines }
     success: { give: rations, xp: +5 }
     fail: { start_encounter: wolves }
   hunt_wolves:
@@ -11051,7 +11719,7 @@ encounters:
         label: Loose an arrow
         when: has('longbow')
         cost: { stamina: -4 }
-        check: { chance: "30 + archery / 2 + agility * 3", label: Archery }
+        check: { chance: "30 + archery / 2 + agility * 3", label: Archery, game: aim }
         success: { foe: { hp: "-(5 + agility * 2)" } }
         fail: { hint: "The arrow thuds into a tree." }
       brandish:
@@ -11063,7 +11731,7 @@ encounters:
       climb:
         label: Climb a tree
         cost: { stamina: -12 }
-        check: { chance: "10 + survival / 2 + agility * 2", label: Survival }
+        check: { chance: "10 + survival / 2 + agility * 2", label: Survival, game: snake }
         success: { end: escaped }
         fail: { hp: -6, hint: "A wolf catches {{user}}'s boot and drags them back down." }
     foe_moves:
@@ -11125,7 +11793,7 @@ encounters:
       sneak:
         label: Slip past in the reeds
         cost: { stamina: -6 }
-        check: { chance: "25 + stealth / 2 + agility * 3", label: Stealth }
+        check: { chance: "25 + stealth / 2 + agility * 3", label: Stealth, game: snake }
         success: { end: slipped_by }
         fail: { foe: { resolve: +3 }, hint: "A sentry spots {{user}} in the reeds." }
     foe_moves:
@@ -11174,7 +11842,7 @@ encounters:
       flee:
         label: Run for the treeline
         cost: { stamina: -15 }
-        check: { chance: "35 + agility * 4", label: Agility }
+        check: { chance: "35 + agility * 4", label: Agility, game: snake }
         success: { end: fled }
         fail: { hp: -6 }
     foe_moves:
@@ -11283,7 +11951,7 @@ abilities:
     where: encounter
     known: "arcana >= 30"
     cost: { mana: -6 }
-    check: { chance: "35 + arcana / 2 + wits * 3", label: Arcana }
+    check: { chance: "35 + arcana / 2 + wits * 3", label: Arcana, game: keys }
     success: { harm: "8 + arcana / 5" }
     fail: { hint: "The fire gutters out in {{user}}'s hand." }
   mend:
@@ -11332,7 +12000,7 @@ abilities:
     where: encounter
     requires: { has: holy_symbol }
     cost: { mana: -10 }
-    check: { chance: "30 + spirit * 5 + lore / 4", label: Spirit }
+    check: { chance: "30 + spirit * 5 + lore / 4", label: Spirit, game: aim }
     success: { harm: "25%", pierce: all }
     fail: { hint: "The light flickers and dies." }
     per_encounter: 1
@@ -11357,6 +12025,12 @@ abilities:
 perks:
   points: perk_points
   pick: 3
+  keen_eye:
+    name: Keen Eye
+    desc: Slow breath, steady arm — the arrow goes where it's looked at.
+    tags: [archery]
+    bonus: { archery: 5 }
+    rule: { game: { window: 25, size: 15, games: [aim] } }
   blade_dancer:
     name: Blade Dancer
     desc: Fights like a duelist while there's breath in them — and learns the Flurry.
@@ -11719,6 +12393,14 @@ conditions:
     check: { chance: "25 + deduction / 2 + clues * 3", label: Deduction }
     success: { clues: +1, hint: "Two loose threads tie together." }
     fail: { nerve: -5, hint: "The pieces won't fit tonight." }
+  card_game:
+    label: The card game upstairs
+    group: Social
+    at: jazz_club
+    when: hour >= 21 or hour < 3
+    say: "*I climb the back stairs to the card game nobody admits is there.*"
+    time: 90
+    gamble: { game: blackjack, stakes: [5, 20, 50], rounds: 5, win: { nerve: +5 }, lose: { nerve: -3 }, broke: { nerve: -8, heat: +1 } }
   buy_bottle:
     label: Buy a bottle of rye ($12)
     group: Shopping
@@ -11748,7 +12430,7 @@ conditions:
     at: precinct
     say: "*I wait for the desk sergeant to look away and slip into records.*"
     time: 30
-    check: { chance: "25 + stealth / 2", label: Stealth }
+    check: { chance: "25 + stealth / 2", label: Stealth, game: mines }
     success: { clues: +2, hint: "The autopsy says the councilman was dead before the fall." }
     fail: { heat: +15, hint: "Okafor catches {{user}} in records and isn't amused." }
   search_office:
@@ -11758,7 +12440,7 @@ conditions:
     when: not has('ledger')
     say: "*I let myself into the dead man's office.*"
     time: 45
-    check: { chance: "30 + stealth / 2 + deduction / 4", label: Stealth }
+    check: { chance: "30 + stealth / 2 + deduction / 4", label: Stealth, game: mines }
     success: { give: ledger, clues: +2, hint: "A ledger taped under the drawer: payments to a shell company on the docks." }
     fail: { heat: +10, start_encounter: tail }
   stake_out:
@@ -11823,17 +12505,17 @@ encounters:
       press:
         label: Press the story
         check: { chance: "30 + deduction / 2 + clues * 3", label: Deduction }
-        success: { foe: { lie: +3, composure: -2 } }
+        success: { foe: { lie: +6, composure: -4 } }
         fail: { nerve: -4, hint: "The story holds — for now." }
       charm:
         label: Get them comfortable
         check: { chance: "30 + charm / 2", label: Charm }
-        success: { foe: { composure: -5 } }
+        success: { foe: { composure: -8 } }
         fail: { hint: "They don't warm up." }
       threaten:
         label: Lean on them
         check: { chance: "25 + intimidation / 2", label: Intimidation }
-        success: { foe: { composure: -7 }, heat: +3 }
+        success: { foe: { composure: -10 }, heat: +3 }
         fail: { heat: +5, nerve: -4, hint: "They call your bluff." }
       evidence:
         label: Lay the ledger on the table
@@ -11872,7 +12554,7 @@ encounters:
     actions:
       lose:
         label: Duck through the crowd
-        check: { chance: "30 + stealth / 2 + streetwise / 4", label: Stealth }
+        check: { chance: "30 + stealth / 2 + streetwise / 4", label: Stealth, game: snake }
         success: { foe: { distance: +5 } }
         fail: { foe: { distance: -2 } }
       corner:
@@ -11883,13 +12565,13 @@ encounters:
       draw:
         label: Draw the revolver
         when: has('revolver')
-        check: { chance: "30 + shooting / 2", label: Shooting }
+        check: { chance: "30 + shooting / 2", label: Shooting, game: aim }
         success: { foe: { cornered: +6 }, heat: +5 }
         fail: { heat: +8, nerve: -6 }
       streetcar:
         label: Jump on a passing streetcar
         cost: { nerve: -5 }
-        check: { chance: "15 + stealth / 3", label: Stealth }
+        check: { chance: "15 + stealth / 3", label: Stealth, game: snake }
         success: { end: escaped }
         fail: { grit: -4, hint: "The streetcar pulls away without {{user}}." }
     foe_moves:
@@ -11934,7 +12616,7 @@ encounters:
         fail: { grit: -10 }
       run:
         label: Run for it
-        check: { chance: "35 + stealth / 2", label: Stealth }
+        check: { chance: "35 + stealth / 2", label: Stealth, game: snake }
         success: { end: got_away }
         fail: { grit: -5 }
     foe_moves:
@@ -11982,6 +12664,12 @@ encounters:
 perks:
   points: perk_points
   pick: 3
+  poker_face:
+    name: Poker Face
+    desc: You read a dealer the way you read a suspect.
+    tags: [charm]
+    bonus: { charm: 5 }
+    rule: { game: { hint: 3, peek: 1, games: [blackjack] } }
   bloodhound:
     name: Bloodhound
     desc: Once a day, a dead end turns out not to be.
@@ -12200,155 +12888,17 @@ function logError(where, err) {
   } catch {}
 }
 
-// src/backend/ledger.ts
-function liveChoicesOf(m) {
-  if (!m || m.is_user)
-    return [];
-  return warpMeta(m).live?.[String(m.swipe_id ?? 0)] ?? [];
-}
-function warpMeta(m) {
-  const w = m.metadata?.warp;
-  return w && typeof w === "object" ? w : {};
-}
-function activeRecord(m) {
-  return warpMeta(m).swipes?.[String(m.swipe_id ?? 0)] ?? null;
-}
-async function getMessages(chatId) {
-  const msgs = await host().chat.getMessages(chatId);
-  return [...msgs].sort((a, b) => a.index_in_chat - b.index_in_chat);
-}
-function foldPath(r, msgs) {
-  let s = initialState(r);
-  const steps = [];
-  for (const m of msgs) {
-    const rec = activeRecord(m);
-    if (!rec?.events?.length)
-      continue;
-    const before = s;
-    const after = cloneState(s);
-    for (const e of rec.events)
-      applyEvent(after, e, r);
-    steps.push({ message: m, record: rec, before, after });
-    s = after;
+// src/shared/revision.ts
+function revision(value) {
+  const text = JSON.stringify(value);
+  let a = 2166136261, b = 2246822507;
+  for (let i = 0;i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    a = Math.imul(a ^ c, 16777619);
+    b = Math.imul(b ^ c, 3266489909);
   }
-  return { state: s, steps };
+  return `${(a >>> 0).toString(16)}:${(b >>> 0).toString(16)}`;
 }
-async function patchWarpMeta(chatId, messageId, fn) {
-  const msgs = await getMessages(chatId);
-  const m = msgs.find((x) => x.id === messageId);
-  if (!m)
-    throw new Error("Message not found");
-  const meta = { ...m.metadata ?? {} };
-  meta.warp = fn({ ...warpMeta(m) });
-  await host().chat.updateMessage(chatId, messageId, { metadata: meta, skipChunkRebuild: true });
-}
-async function patchMeta(chatId, messageId, key, value) {
-  const msgs = await getMessages(chatId);
-  const m = msgs.find((x) => x.id === messageId);
-  if (!m)
-    return;
-  const meta = { ...m.metadata ?? {} };
-  if (JSON.stringify(meta[key]) === JSON.stringify(value))
-    return;
-  if (value === undefined)
-    delete meta[key];
-  else
-    meta[key] = value;
-  await host().chat.updateMessage(chatId, messageId, { metadata: meta, skipChunkRebuild: true });
-}
-async function writeRecord(chatId, messageId, swipe, rec) {
-  await patchWarpMeta(chatId, messageId, (w) => ({ ...w, swipes: { ...w.swipes ?? {}, [String(swipe)]: rec } }));
-}
-async function shiftAfterSwipeDelete(chatId, messageId, deleted) {
-  await patchWarpMeta(chatId, messageId, (w) => {
-    const next = {};
-    for (const [k, v] of Object.entries(w.swipes ?? {})) {
-      const i = Number(k);
-      if (i === deleted)
-        continue;
-      next[String(i > deleted ? i - 1 : i)] = v;
-    }
-    return { ...w, swipes: next };
-  });
-}
-var init_ledger = __esm(() => {
-  init_state();
-});
-
-// src/shared/protocol.ts
-var DEFAULT_SETTINGS;
-var init_protocol = __esm(() => {
-  DEFAULT_SETTINGS = {
-    enabled: true,
-    freeTextChecks: true,
-    narratorUpdates: true,
-    swipesReroll: true,
-    helperConnectionId: "",
-    showOdds: true,
-    showDiceChips: true,
-    hotkeys: true,
-    lines: [],
-    veils: [],
-    decider: "llm",
-    jevModel: "jev-latest",
-    jevUrl: "https://api.typesafe.ai/v1/systemone",
-    jevFormat: "typesafe",
-    storyQuests: true,
-    autoConfidence: 0.75,
-    askConfidence: 0.4,
-    consistencyCheck: false,
-    drafts: 1,
-    prewrite: 0,
-    sceneLines: "model",
-    draftItemUses: true,
-    themeDating: true,
-    fx: "full",
-    sfx: "games",
-    sfxVolume: 0.4,
-    dateImages: true,
-    imageConnectionId: ""
-  };
-});
-
-// src/backend/settings.ts
-async function getSettings(userId) {
-  const hit = cache2.get(key(userId));
-  if (hit)
-    return hit;
-  let stored = {};
-  try {
-    stored = await host().userStorage.getJson("settings.json", { fallback: {}, userId });
-  } catch {}
-  const s = { ...DEFAULT_SETTINGS, ...stored };
-  cache2.set(key(userId), s);
-  return s;
-}
-async function patchSettings(patch, userId) {
-  const cur = await getSettings(userId);
-  const next = { ...cur, ...patch };
-  next.lines = (next.lines ?? []).map((t) => t.trim().toLowerCase()).filter(Boolean);
-  next.veils = (next.veils ?? []).map((t) => t.trim().toLowerCase()).filter(Boolean);
-  next.drafts = Math.max(1, Math.min(4, Math.round(Number(next.drafts) || 1)));
-  next.prewrite = Math.max(0, Math.min(4, Math.round(Number(next.prewrite) || 0)));
-  next.sceneLines = next.sceneLines === "scripted" ? "scripted" : "model";
-  next.draftItemUses = next.draftItemUses !== false;
-  next.themeDating = next.themeDating !== false;
-  next.fx = next.fx === "reduced" || next.fx === "off" ? next.fx : "full";
-  next.sfx = next.sfx === "all" || next.sfx === "off" ? next.sfx : "games";
-  next.sfxVolume = Math.max(0, Math.min(1, Number.isFinite(Number(next.sfxVolume)) ? Number(next.sfxVolume) : 0.4));
-  next.dateImages = next.dateImages !== false && next.dateImages !== "false";
-  next.jevFormat = next.jevFormat === "openai" ? "openai" : "typesafe";
-  next.jevUrl = /^https?:\/\/\S+$/i.test(String(next.jevUrl ?? "").trim()) ? String(next.jevUrl).trim() : DEFAULT_SETTINGS.jevUrl;
-  next.storyQuests = next.storyQuests !== false && next.storyQuests !== "false";
-  cache2.set(key(userId), next);
-  await host().userStorage.setJson("settings.json", next, { indent: 2, userId });
-  return next;
-}
-var cache2, key = (userId) => userId ?? "_";
-var init_settings = __esm(() => {
-  init_protocol();
-  cache2 = new Map;
-});
 
 // node_modules/js-yaml/dist/js-yaml.mjs
 function getDefaultExportFromCjs(x) {
@@ -15682,6 +16232,14 @@ function lintRuleset(r) {
     for (const [tier, e] of Object.entries(a.outcomes))
       if (e)
         checkEffect(e, `${w} › ${tier}`, extra);
+    if (a.gamble) {
+      const g = a.gamble;
+      if (!(g.stat ?? r.hud.money))
+        issues.push({ level: "warning", where: `${w} › gamble`, message: "there's no money to stake — add a stat with `kind: money`, or `stat:` on the table" });
+      check(g.luck, `${w} › gamble › luck`, extra);
+      for (const [k, e] of [["win", g.win], ["lose", g.lose], ["broke", g.broke]])
+        checkEffect(e, `${w} › gamble › ${k}`, extra);
+    }
   };
   for (const a of Object.values(r.actions))
     checkAction(a, `Actions › ${a.id}`);
@@ -16342,6 +16900,75 @@ var init_audit = __esm(() => {
   FORMULA_KEYS = new Set(["when", "add", "target", "unlock", "requires", "amount", "maxExpr", "chance", "pay", "tip", "perDay", "perTurn", "per_day", "per_turn", "momentum", "gauge", "atk", "def", "mat", "mdf", "agi", "hp", "mp"]);
 });
 
+// src/backend/rulebook-install.ts
+function isInstalledRulebook(book) {
+  const meta = book.metadata;
+  return meta?.warp?.installedRulebook === 1;
+}
+function publishRulebook(characterId, parts, userId, metadata = {}) {
+  const key = JSON.stringify([userId, characterId]);
+  const result = (installs.get(key) ?? Promise.resolve()).catch(() => {}).then(async () => {
+    const checked = loadRuleset(parts);
+    if (!checked.ruleset || checked.issues.some((i) => i.level === "error"))
+      throw new Error("Fix the rulebook errors before installing it.");
+    const character = await host().characters.get(characterId, userId);
+    if (!character)
+      throw new Error("Character not found");
+    const book = await host().world_books.create({
+      name: "warp-ruleset",
+      description: `Warp game rules for ${character.name}. A complete installed snapshot; older attached rulebooks are retained as backups.`,
+      metadata: { warp: { ...metadata, installedRulebook: 1 } }
+    }, userId);
+    let verified = false;
+    try {
+      for (const part of parts)
+        await host().world_books.entries.create(book.id, {
+          comment: `warp-ruleset · ${part.label}`,
+          content: part.content,
+          key: [],
+          disabled: true,
+          constant: false,
+          order_value: part.order
+        }, userId);
+      const persisted = [];
+      for (let offset = 0;; offset += 200) {
+        const page = await host().world_books.entries.list(book.id, { offset, limit: 200, userId });
+        persisted.push(...page.data.map((e) => ({ label: e.comment ?? "", content: e.content, order: e.order_value ?? 0 })));
+        if (page.data.length === 0 || persisted.length >= page.total)
+          break;
+      }
+      const readBack = loadRuleset(persisted);
+      if (persisted.length !== parts.length || !readBack.ruleset || readBack.issues.some((i) => i.level === "error") || JSON.stringify(readBack.ruleset) !== JSON.stringify(checked.ruleset))
+        throw new Error("The saved rulebook did not match the reviewed draft. Nothing was published.");
+      verified = true;
+      const latest = await host().characters.get(characterId, userId);
+      if (!latest)
+        throw new Error("Character not found");
+      await host().characters.update(characterId, { world_book_ids: [...latest.world_book_ids ?? [], book.id] }, userId);
+      return book.id;
+    } catch (error) {
+      const latest = await host().characters.get(characterId, userId).catch(() => null);
+      if (verified && latest?.world_book_ids?.includes(book.id))
+        return book.id;
+      if (latest && !latest.world_book_ids?.includes(book.id) && typeof host().world_books.delete === "function") {
+        await host().world_books.delete(book.id, userId).catch((e) => logError("discard staged rulebook", e));
+      }
+      throw error;
+    }
+  });
+  installs.set(key, result);
+  result.finally(() => {
+    if (installs.get(key) === result)
+      installs.delete(key);
+  }).catch(() => {});
+  return result;
+}
+var installs;
+var init_rulebook_install = __esm(() => {
+  init_loader();
+  installs = new Map;
+});
+
 // src/backend/source.ts
 async function listAllEntries(bookId, userId) {
   const out = [];
@@ -16361,6 +16988,11 @@ async function characterForChat(chatId, userId) {
   chatCharacter.set(chatId, id);
   return id;
 }
+async function attachedRulebooks(character, userId) {
+  const books = (await Promise.all((character.world_book_ids ?? []).map((id) => host().world_books.get(id, userId)))).filter((book) => !!book);
+  const active = [...books].reverse().find((book) => isRulesetBookName(book.name) && isInstalledRulebook(book));
+  return { books, active };
+}
 async function loadForCharacter(characterId, userId) {
   const character = await host().characters.get(characterId, userId);
   const base = {
@@ -16378,19 +17010,21 @@ async function loadForCharacter(characterId, userId) {
     return base;
   const parts = [];
   const books = [];
-  for (const bookId of character.world_book_ids ?? []) {
-    const book = await host().world_books.get(bookId, userId);
-    if (!book)
-      continue;
+  const attached = await attachedRulebooks(character, userId);
+  for (const book of attached.books) {
+    const bookId = book.id;
+    const included = !attached.active || attached.active.id === bookId;
     const wholeBook = isRulesetBookName(book.name);
     const entries = await listAllEntries(bookId, userId);
     let found = 0;
     for (const e of entries) {
       if (!wholeBook && !isRulesetEntryTitle(e.comment))
         continue;
+      knownRulesetEntryIds.add(e.id);
+      if (!included)
+        continue;
       parts.push({ label: e.comment?.trim() || `${book.name} entry`, content: e.content, order: e.order_value ?? 100 });
       base.entryIds.push(e.id);
-      knownRulesetEntryIds.add(e.id);
       found++;
     }
     if (wholeBook)
@@ -16403,8 +17037,8 @@ async function loadForCharacter(characterId, userId) {
   if (!parts.length)
     return base;
   const { ruleset, issues } = loadRuleset(parts);
-  base.ruleset = ruleset;
   base.issues = ruleset ? [...issues, ...lintRuleset(ruleset)] : issues;
+  base.ruleset = base.issues.some((i) => i.level === "error") ? null : ruleset;
   base.source = books.join(", ");
   return base;
 }
@@ -16423,10 +17057,13 @@ async function getRuleset(chatId, userId, force = false) {
   const hit = byCharacter.get(characterId);
   if (hit && !force && Date.now() - hit.at < TTL_MS)
     return hit;
+  const revision = (loading.get(characterId) ?? 0) + 1;
+  loading.set(characterId, revision);
   try {
     const loaded = await loadForCharacter(characterId, userId);
-    byCharacter.set(characterId, loaded);
-    return loaded;
+    if (loading.get(characterId) === revision)
+      byCharacter.set(characterId, loaded);
+    return byCharacter.get(characterId) ?? loaded;
   } catch (e) {
     logError("loadForCharacter", e);
     return hit ?? null;
@@ -16458,6 +17095,18 @@ function invalidateCharacter(characterId) {
     byCharacter.clear();
     briefs.clear();
   }
+  if (characterId)
+    loading.set(characterId, (loading.get(characterId) ?? 0) + 1);
+  else
+    for (const id of loading.keys())
+      loading.set(id, (loading.get(id) ?? 0) + 1);
+  profiles.clear();
+}
+function invalidateChat(chatId) {
+  chatCharacter.delete(chatId);
+  for (const k of profiles.keys())
+    if (k.startsWith(`${chatId}:`))
+      profiles.delete(k);
 }
 function statusOf(l) {
   if (!l || !l.source) {
@@ -16500,31 +17149,16 @@ async function installTemplate(chatId, templateId, userId, trackCharacter) {
   const character = await host().characters.get(characterId, userId);
   if (!character)
     throw new Error("Character not found");
-  const book = await host().world_books.create({
-    name: "warp-ruleset",
-    description: `Warp game rules for ${character.name} (${t.name}). Warp reads these entries directly; they are never sent to the model.`,
-    metadata: { warp: { template: t.id } }
-  }, userId);
-  let order = 10;
-  for (const part of t.parts) {
+  const parts = t.parts.map((part, i) => {
     let content = part.yaml;
     const track = trackCharacter ?? !looksLikeScenario(character);
     if (part.label === "people" && character.name && track)
       content = withCharacter(content, character.name);
-    await host().world_books.entries.create(book.id, {
-      comment: `warp-ruleset · ${part.label}`,
-      content,
-      key: [],
-      disabled: true,
-      constant: false,
-      order_value: order
-    }, userId);
-    order += 10;
-  }
-  const ids = [...character.world_book_ids ?? [], book.id];
-  await host().characters.update(characterId, { world_book_ids: ids }, userId);
+    return { label: part.label, content, order: (i + 1) * 10 };
+  });
+  const bookId = await publishRulebook(characterId, parts, userId, { template: t.id });
   invalidateCharacter(characterId);
-  knownRulesetBookIds.add(book.id);
+  knownRulesetBookIds.add(bookId);
   return t.name;
 }
 function aboutThem(text, re, budget) {
@@ -16546,7 +17180,7 @@ function aboutThem(text, re, budget) {
 `);
 }
 async function personProfile(chatId, name, userId, note) {
-  const key = `${chatId}:${name.toLowerCase()}`;
+  const key = `${chatId}:${userId ?? "_"}:${name.toLowerCase()}:${note ?? ""}`;
   const hit = profiles.get(key);
   if (hit && Date.now() - hit.at < PROFILE_TTL)
     return hit.p;
@@ -16619,8 +17253,8 @@ ${seen.join(`
   profiles.set(key, { at: Date.now(), p });
   return p;
 }
-var TTL_MS = 8000, byCharacter, chatCharacter, knownRulesetEntryIds, knownRulesetBookIds, briefs, depths, profiles, PROFILE_TTL, nameRe = (name) => {
-  const first = name.trim().split(/\s+/)[0] ?? name;
+var TTL_MS = 8000, byCharacter, chatCharacter, loading, knownRulesetEntryIds, knownRulesetBookIds, briefs, depths, profiles, PROFILE_TTL, nameRe = (name) => {
+  const first = name.trim();
   const safe = first.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(^|[^\\p{L}])${safe}(?=[^\\p{L}]|$)`, "iu");
 };
@@ -16629,14 +17263,342 @@ var init_source = __esm(() => {
   init_lint();
   init_templates();
   init_audit();
+  init_rulebook_install();
   byCharacter = new Map;
   chatCharacter = new Map;
+  loading = new Map;
   knownRulesetEntryIds = new Set;
   knownRulesetBookIds = new Set;
   briefs = new Map;
   depths = new WeakMap;
   profiles = new Map;
   PROFILE_TTL = 10 * 60000;
+});
+
+// src/backend/ledger.ts
+function liveChoicesOf(m) {
+  if (!m || m.is_user)
+    return [];
+  return warpMeta(m).live?.[String(m.swipe_id ?? 0)] ?? [];
+}
+function warpMeta(m) {
+  const w = m.metadata?.warp;
+  return w && typeof w === "object" ? w : {};
+}
+function activeRecord(m) {
+  return warpMeta(m).swipes?.[String(m.swipe_id ?? 0)] ?? null;
+}
+function encounterLogOf(m) {
+  const w = warpMeta(m);
+  return w.encounters?.[String(m.swipe_id ?? 0)] ?? (m.swipe_id ? undefined : w.encounter);
+}
+function encounterSlots(w) {
+  return { ...w.encounter ? { "0": w.encounter } : {}, ...w.encounters };
+}
+async function getMessages(chatId) {
+  const msgs = await host().chat.getMessages(chatId);
+  return [...msgs].sort((a, b) => a.index_in_chat - b.index_in_chat);
+}
+function pathRevision(msgs) {
+  return revision(msgs.map((m) => {
+    const rec = activeRecord(m);
+    return [m.id, m.swipe_id ?? 0, m.content, rec ? { ...rec, path: undefined } : null];
+  }));
+}
+function rulesRevision(r) {
+  let id = ruleRevisions.get(r);
+  if (!id) {
+    id = revision(r);
+    ruleRevisions.set(r, id);
+  }
+  return id;
+}
+function nextPath(path, m) {
+  const rec = activeRecord(m);
+  return revision([path, m.id, m.swipe_id ?? 0, encounterLogOf(m) ? "quiet log" : m.content, rec ? { ...rec, path: undefined } : null]);
+}
+function recordPath(r, msgs) {
+  let path = rulesRevision(r);
+  for (const m of msgs)
+    path = nextPath(path, m);
+  return path;
+}
+function withRecordPath(rec, r, before) {
+  return { ...rec, path: recordPath(r, before) };
+}
+function foldPath(r, msgs, stepLimit = Infinity) {
+  let s = initialState(r);
+  let path = rulesRevision(r);
+  const steps = [];
+  const skip = Math.max(0, msgs.reduce((n, m) => n + (activeRecord(m)?.events.length ? 1 : 0), 0) - Math.max(0, stepLimit));
+  let records = 0;
+  for (const m of msgs) {
+    const rec = activeRecord(m);
+    if (rec?.path && rec.path !== path)
+      return { state: s, steps, conflict: m.id };
+    path = nextPath(path, m);
+    if (!rec?.events?.length)
+      continue;
+    if (records++ < skip) {
+      for (const e of rec.events)
+        applyEvent(s, e, r);
+      continue;
+    }
+    const before = s;
+    const after = cloneState(s);
+    for (const e of rec.events)
+      applyEvent(after, e, r);
+    steps.push({ message: m, record: rec, before, after });
+    s = after;
+  }
+  return { state: s, steps, conflict: null };
+}
+function serializeMetadata(chatId, messageId, edit) {
+  const key = JSON.stringify([chatId, messageId]);
+  const result = (metadataWrites.get(key) ?? Promise.resolve()).then(edit);
+  const tail = result.catch(() => {});
+  metadataWrites.set(key, tail);
+  tail.then(() => {
+    if (metadataWrites.get(key) === tail)
+      metadataWrites.delete(key);
+  });
+  return result;
+}
+function patchWarpMeta(chatId, messageId, fn, content) {
+  return serializeMetadata(chatId, messageId, async () => {
+    const m = (await getMessages(chatId)).find((x) => x.id === messageId);
+    if (!m)
+      throw new Error("Message not found");
+    const meta = { ...m.metadata ?? {} };
+    const next = await fn({ ...warpMeta(m) }, m);
+    const unstamped = Object.entries(next.swipes ?? {}).filter(([, rec]) => !rec.path);
+    if (unstamped.length) {
+      await Promise.resolve().then(() => init_source());
+      const r = (await getRuleset(chatId))?.ruleset;
+      if (r) {
+        const messages = await getMessages(chatId);
+        const before = messages.filter((x) => x.index_in_chat < m.index_in_chat);
+        next.swipes = { ...next.swipes };
+        for (const [slot, rec] of unstamped)
+          next.swipes[slot] = withRecordPath(rec, r, before);
+      }
+    }
+    if (JSON.stringify(meta.warp) === JSON.stringify(next) && (content === undefined || content === m.content))
+      return;
+    meta.warp = next;
+    await host().chat.updateMessage(chatId, messageId, { metadata: meta, ...content === undefined ? { skipChunkRebuild: true } : { content } });
+  });
+}
+function patchMeta(chatId, messageId, key, value) {
+  return serializeMetadata(chatId, messageId, async () => {
+    const m = (await getMessages(chatId)).find((x) => x.id === messageId);
+    if (!m)
+      return;
+    const meta = { ...m.metadata ?? {} };
+    if (JSON.stringify(meta[key]) === JSON.stringify(value))
+      return;
+    if (value === undefined)
+      delete meta[key];
+    else
+      meta[key] = value;
+    await host().chat.updateMessage(chatId, messageId, { metadata: meta, skipChunkRebuild: true });
+  });
+}
+async function writeRecord(chatId, messageId, swipe, rec) {
+  await patchWarpMeta(chatId, messageId, (w) => ({ ...w, swipes: { ...w.swipes ?? {}, [String(swipe)]: rec } }));
+}
+async function appendDrafts(chatId, messageId, extra, pick, expected, current) {
+  let result = null;
+  await serializeMetadata(chatId, messageId, async () => {
+    if (!await current())
+      return;
+    const m = (await getMessages(chatId)).find((x) => x.id === messageId);
+    if (!m)
+      return;
+    const rec = activeRecord(m);
+    if (!rec || JSON.stringify(rec.action) !== JSON.stringify(expected.action) || JSON.stringify(rec.events.slice(0, expected.events.length)) !== JSON.stringify(expected.events))
+      return;
+    const swipes = [...m.swipes?.length ? m.swipes : [m.content], ...extra];
+    const base = swipes.length - extra.length, slot = pick > 0 ? base + pick - 1 : m.swipe_id ?? 0;
+    const w = warpMeta(m), records = { ...w.swipes };
+    for (let i = 0;i < extra.length; i++)
+      records[String(base + i)] = structuredClone(rec);
+    await host().chat.updateMessage(chatId, messageId, {
+      swipes,
+      swipe_dates: [...m.swipe_dates ?? [], ...extra.map(() => Math.floor(Date.now() / 1000))],
+      swipe_id: slot,
+      content: swipes[slot],
+      metadata: { ...m.metadata, warp: { ...w, swipes: records } }
+    });
+    result = { swipe: slot, content: swipes[slot] };
+  });
+  return result;
+}
+async function shiftAfterSwipeDelete(chatId, messageId, deleted) {
+  await patchWarpMeta(chatId, messageId, (w) => {
+    const shift = (slots) => Object.fromEntries(Object.entries(slots ?? {}).filter(([k]) => Number(k) !== deleted).map(([k, v]) => [String(Number(k) > deleted ? Number(k) - 1 : Number(k)), v]));
+    const encounters = w.encounters || w.encounter ? encounterSlots(w) : undefined;
+    return { ...w, encounter: undefined, swipes: shift(w.swipes), ...w.live ? { live: shift(w.live) } : {}, ...encounters ? { encounters: shift(encounters) } : {} };
+  });
+}
+async function reconcilePath(chatId, r, keep) {
+  const msgs = await getMessages(chatId);
+  const conflict = foldPath(r, msgs, 0).conflict;
+  if (!conflict)
+    return;
+  let affected = false;
+  for (const m of msgs) {
+    if (m.id === conflict)
+      affected = true;
+    if (!affected)
+      continue;
+    await patchWarpMeta(chatId, m.id, async (w, current) => {
+      const slot = String(current.swipe_id ?? 0), rec = w.swipes?.[slot];
+      if (!rec)
+        return w;
+      const swipes = { ...w.swipes };
+      if (keep) {
+        const now = await getMessages(chatId);
+        swipes[slot] = withRecordPath(rec, r, now.filter((x) => x.index_in_chat < current.index_in_chat));
+      } else
+        delete swipes[slot];
+      const live = { ...w.live };
+      delete live[slot];
+      const encounters = { ...w.encounters };
+      delete encounters[slot];
+      return { ...w, swipes, live, encounters, encounter: undefined };
+    });
+  }
+}
+async function acceptAdditiveRules(chatId, before, after) {
+  const msgs = await getMessages(chatId);
+  if (foldPath(before, msgs, 0).conflict)
+    return;
+  for (const m of msgs) {
+    if (!activeRecord(m)?.path)
+      continue;
+    await patchWarpMeta(chatId, m.id, async (w, current) => {
+      const slot = String(current.swipe_id ?? 0), rec = w.swipes?.[slot];
+      if (!rec)
+        return w;
+      const now = await getMessages(chatId);
+      return { ...w, swipes: { ...w.swipes, [slot]: withRecordPath(rec, after, now.filter((x) => x.index_in_chat < current.index_in_chat)) } };
+    });
+  }
+}
+var ruleRevisions, metadataWrites;
+var init_ledger = __esm(() => {
+  init_state();
+  ruleRevisions = new WeakMap;
+  metadataWrites = new Map;
+});
+
+// src/shared/protocol.ts
+var DEFAULT_SETTINGS;
+var init_protocol = __esm(() => {
+  DEFAULT_SETTINGS = {
+    enabled: true,
+    freeTextChecks: true,
+    narratorUpdates: true,
+    swipesReroll: true,
+    helperConnectionId: "",
+    showOdds: true,
+    showDiceChips: true,
+    hotkeys: true,
+    lines: [],
+    veils: [],
+    decider: "llm",
+    jevModel: "jev-latest",
+    jevUrl: "https://api.typesafe.ai/v1/systemone",
+    jevFormat: "typesafe",
+    storyQuests: true,
+    autoConfidence: 0.75,
+    askConfidence: 0.4,
+    consistencyCheck: false,
+    drafts: 1,
+    prewrite: 0,
+    sceneLines: "model",
+    draftItemUses: true,
+    themeDating: true,
+    fx: "full",
+    sfx: "games",
+    sfxVolume: 0.4,
+    minigames: "ask",
+    minigameScope: "rulebook",
+    dateImages: true,
+    imageConnectionId: ""
+  };
+});
+
+// src/backend/settings.ts
+function normalizeSettings(value) {
+  const raw = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const s = { ...DEFAULT_SETTINGS, lines: [], veils: [] };
+  for (const k of Object.keys(DEFAULT_SETTINGS)) {
+    const def = DEFAULT_SETTINGS[k], v = raw[k];
+    if (typeof def === "boolean")
+      s[k] = v === true || v === "true" ? true : v === false || v === "false" ? false : def;
+    else if (typeof def === "string" && typeof v === "string")
+      s[k] = v.trim();
+    else if (typeof def === "number" && (typeof v === "number" || typeof v === "string") && v !== "" && Number.isFinite(Number(v)))
+      s[k] = Number(v);
+  }
+  for (const k of ["lines", "veils"])
+    s[k] = Array.isArray(raw[k]) ? [...new Set(raw[k].filter((v) => typeof v === "string").map((v) => v.trim().toLowerCase()).filter(Boolean))] : [];
+  s.drafts = Math.max(1, Math.min(4, Math.round(s.drafts)));
+  s.prewrite = Math.max(0, Math.min(4, Math.round(s.prewrite)));
+  s.autoConfidence = Math.max(0, Math.min(1, s.autoConfidence));
+  s.askConfidence = Math.max(0, Math.min(s.autoConfidence, s.askConfidence));
+  s.sfxVolume = Math.max(0, Math.min(1, s.sfxVolume));
+  s.decider = ["llm", "jev", "rules"].includes(s.decider) ? s.decider : DEFAULT_SETTINGS.decider;
+  s.sceneLines = s.sceneLines === "scripted" ? "scripted" : "model";
+  s.jevFormat = s.jevFormat === "openai" ? "openai" : "typesafe";
+  s.fx = s.fx === "off" || s.fx === "reduced" ? s.fx : "full";
+  s.sfx = s.sfx === "off" || s.sfx === "all" ? s.sfx : "games";
+  s.minigames = s.minigames === "off" || s.minigames === "always" ? s.minigames : "ask";
+  s.minigameScope = s.minigameScope === "all" ? "all" : "rulebook";
+  s.jevUrl = /^https?:\/\/\S+$/i.test(s.jevUrl) ? s.jevUrl : DEFAULT_SETTINGS.jevUrl;
+  return s;
+}
+async function getSettings(userId) {
+  const hit = cache2.get(key(userId));
+  if (hit)
+    return hit;
+  let stored = {};
+  try {
+    stored = await host().userStorage.getJson("settings.json", { fallback: {}, userId });
+  } catch {}
+  const s = normalizeSettings(stored);
+  cache2.set(key(userId), s);
+  return s;
+}
+async function patchSettings(patch, userId) {
+  let result;
+  const k = key(userId);
+  const operation = (writes.get(k) ?? Promise.resolve()).then(async () => {
+    result = await persistSettings(patch, userId);
+  });
+  const tail = operation.catch(() => {});
+  writes.set(k, tail);
+  tail.then(() => {
+    if (writes.get(k) === tail)
+      writes.delete(k);
+  });
+  await operation;
+  return result;
+}
+async function persistSettings(patch, userId) {
+  const cur = await getSettings(userId);
+  const next = normalizeSettings({ ...cur, ...patch });
+  await host().userStorage.setJson("settings.json", next, { indent: 2, userId });
+  cache2.set(key(userId), next);
+  return next;
+}
+var cache2, writes, key = (userId) => userId ?? "_";
+var init_settings = __esm(() => {
+  init_protocol();
+  cache2 = new Map;
+  writes = new Map;
 });
 
 // src/engine/dungeon/battle.ts
@@ -17485,7 +18447,7 @@ function defeat(t, d, run, by) {
   const lostGold = run.gold;
   const lostLoot = Object.keys(run.loot).length;
   tell(t, d, run, `The party is overwhelmed by ${by} on floor ${run.depth}. Everything found on this run is lost${lostGold ? ` (${lostGold} gold${lostLoot ? " and the treasures" : ""})` : ""}. {{user}} comes to later, back outside the dungeon, battered.`);
-  t.push({ t: "dg_exit", src: "action" });
+  t.push({ t: "dg_exit", outcome: "lost", src: "action" });
   t.apply(d.onDefeat, "action");
   t.time(120, "action");
   return { say: "*Everything goes dark…*" };
@@ -17537,7 +18499,7 @@ function leaveDungeon(r, s) {
       found.push(itemName(r, s, item));
     }
     tell(t, d, run, `{{user}}'s party climbs back out of ${d.name} from floor ${run.depth}${found.length ? `, carrying ${found.join(", ")}` : ", empty-handed"}.`);
-    t.push({ t: "dg_exit", src: "action" });
+    t.push({ t: "dg_exit", outcome: "left", src: "action" });
     t.apply(d.onLeave, "action");
     t.time(Math.min(120, 10 * run.depth), "action");
   });
@@ -18023,6 +18985,39 @@ function keepWords(r, k) {
   return parts.length ? parts.join(", ") : "nothing";
 }
 function buildChoices(r, s, opts) {
+  const out = choiceList(r, s, opts);
+  if (opts.minigames && opts.minigames !== "off")
+    for (const c of out)
+      withGame(r, s, c, opts.minigameScope ?? "rulebook", opts.live ?? []);
+  return out;
+}
+function withGame(r, s, c, scope, live) {
+  if (c.locked)
+    return;
+  let found = null;
+  if (c.id.startsWith(LIVE_PREFIX)) {
+    const l = live[Number(c.id.slice(LIVE_PREFIX.length))];
+    const a = l ? r.liveChoices.tags[l.tag] : undefined;
+    found = a ? { a, ...l.target ? { target: l.target } : {} } : null;
+  } else
+    found = findAction(r, s, c.id);
+  if (!found)
+    return;
+  const seed = `${c.id}:${s.minutes}`;
+  if (found.a.gamble) {
+    const g = gambleOffer(r, s, found.a, seed);
+    if (g)
+      c.gamble = { ...g, action: c.label };
+    return;
+  }
+  if (c.odds === null)
+    return;
+  const base = odds(r, s, found.a, undefined, found.target, false);
+  const g = gameOffer(r, s, found.a, base?.success ?? c.odds, { scope, partial: base?.partial ?? 0, target: found.target, label: c.label, seed });
+  if (g)
+    c.game = g;
+}
+function choiceList(r, s, opts) {
   const veils = new Set(opts.veils.map((v) => v.toLowerCase()));
   const lines = new Set(opts.lines.map((v) => v.toLowerCase()));
   const live = [];
@@ -18070,7 +19065,7 @@ function buildChoices(r, s, opts) {
   if (!s.encounter)
     (opts.live ?? []).forEach((c, i) => {
       const a = r.liveChoices.tags[c.tag];
-      if (!a || a.tags.some((t) => lines.has(t)))
+      if (!a || a.tags.some((t) => lines.has(t)) || !isAvailable(r, s, a, c.target) || a.perPerson && !c.target || c.target && !presentPeople(r, s, makeEnv(r, s)).includes(c.target))
         return;
       const o = odds(r, s, a, undefined, c.target);
       live.push({
@@ -18198,6 +19193,8 @@ function perkViews(r, s) {
     for (const rule of p.rules) {
       if (rule.kind === "pierce")
         notes.push(`Ignores ${rule.amount >= 999 ? "all" : rule.amount} armor${rule.stats.length || rule.tags.length ? ` (${[...rule.stats.map((x) => r.stats[x]?.label ?? x), ...rule.tags].join(", ")})` : ""}`);
+      else if (rule.kind === "game")
+        notes.push(`Minigames${rule.games.length ? ` (${rule.games.map((g) => GAMES[g].name).join(", ")})` : ""}: ${Object.entries(rule.aids).map(([k, n]) => aidWords(k, n)).join(", ")}`);
       else if ("stat" in rule)
         notes.push(`${r.stats[rule.stat]?.label ?? rule.stat} ${rule.kind === "gains" ? "rises" : "drops"} ${Math.round(Math.abs(rule.pct) * 100)}% ${rule.pct > 0 ? "faster" : "slower"}`);
       else {
@@ -18492,7 +19489,13 @@ function buildRecordView(r, messageId, swipe, rec, before, after) {
       style: rec.check.style,
       tier: rec.check.tier,
       tierLabel: TIER_LABEL[rec.check.tier],
-      summary: `${checkSummary(rec.check)}${rec.check.perk ? ` · ↻ ${rec.check.perk}` : ""}`
+      summary: rec.check.game ? rec.check.game.summary : `${checkSummary(rec.check)}${rec.check.perk ? ` · ↻ ${rec.check.perk}` : ""}`,
+      game: rec.check.game ? { id: rec.check.game.id, summary: rec.check.game.summary, score: rec.check.game.score, needed: rec.check.game.bar.success } : null
+    } : null,
+    gamble: rec.gamble ? {
+      game: rec.gamble.game,
+      net: rec.gamble.net,
+      text: `${GAMES[rec.gamble.game].icon} ${GAMES[rec.gamble.game].name} · stake ${r.hud.currency}${rec.gamble.stake} · ${rec.gamble.net > 0 ? "+" : rec.gamble.net < 0 ? "−" : "±"}${r.hud.currency}${Math.abs(rec.gamble.net)}${rec.gamble.played ? "" : " (dealt without you)"}`
     } : null,
     changes: summarizeEvents(r, before, after, rec.events),
     hints: rec.hints,
@@ -18783,6 +19786,7 @@ function outcomePacket(r, rec, before, after, playerName) {
 `);
 }
 var init_view = __esm(() => {
+  init_games();
   init_ruleset();
   init_state();
   init_freeform();
@@ -19856,35 +20860,57 @@ var init_classifier_config = __esm(() => {
 });
 
 // src/backend/deciders.ts
-async function post(url, headers, body, timeoutMs) {
-  const timeout = new Promise((_, rej) => setTimeout(() => rej(new DeciderError("Decision model timed out")), timeoutMs));
+async function post(url, headers, body, signal) {
+  signal.throwIfAborted();
   const call = (async () => {
     try {
-      const r = await host().cors(url, { method: "POST", headers, body });
+      const r = await host().cors(url, { method: "POST", headers, body, signal });
+      signal.throwIfAborted();
       return { status: r.status, body: r.body };
     } catch (e) {
+      signal.throwIfAborted();
       if (typeof fetch !== "function")
         throw e;
-      const r = await fetch(url, { method: "POST", headers, body });
+      const r = await fetch(url, { method: "POST", headers, body, signal });
       return { status: r.status, body: await r.text() };
     }
   })();
-  return Promise.race([call, timeout]);
+  return abortable(call, signal);
 }
-async function postJson(url, key, body, timeoutMs, who) {
+function abortable(call, signal) {
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason ?? new DeciderError("Decision model canceled"));
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted)
+      abort();
+    call.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
+}
+async function postJson(url, key, body, timeoutMs, who, supplied) {
   const headers = { "Content-Type": "application/json", ...key ? { Authorization: `Bearer ${key}` } : {} };
   let delay = 400;
-  for (let attempt = 0;; attempt++) {
-    const res = await post(url, headers, body, timeoutMs);
-    if (res.status === 200)
-      return res.body;
-    if ((res.status === 429 || res.status === 529 || res.status === 503) && attempt < 2) {
-      await new Promise((r) => setTimeout(r, delay));
-      delay *= 3;
-      continue;
+  const controller = new AbortController;
+  const onAbort = () => controller.abort(supplied?.reason);
+  supplied?.addEventListener("abort", onAbort, { once: true });
+  if (supplied?.aborted)
+    onAbort();
+  const timer = setTimeout(() => controller.abort(new DeciderError("Decision model timed out")), Math.max(1, timeoutMs));
+  try {
+    for (let attempt = 0;; attempt++) {
+      const res = await post(url, headers, body, controller.signal);
+      if (res.status === 200)
+        return res.body;
+      if ((res.status === 429 || res.status === 529 || res.status === 503) && attempt < 2) {
+        await abortable(new Promise((r) => setTimeout(r, delay)), controller.signal);
+        delay *= 3;
+        continue;
+      }
+      const hint = res.status === 401 || res.status === 403 ? `the ${who} API key was rejected` : res.status === 404 ? `${who} wasn't found at ${url}` : res.status === 422 ? `${who} rejected the request` : `${who} returned ${res.status}`;
+      throw new DeciderError(`${hint}${res.body ? `: ${res.body.slice(0, 200)}` : ""}`);
     }
-    const hint = res.status === 401 || res.status === 403 ? `the ${who} API key was rejected` : res.status === 404 ? `${who} wasn't found at ${url}` : res.status === 422 ? `${who} rejected the request` : `${who} returned ${res.status}`;
-    throw new DeciderError(`${hint}${res.body ? `: ${res.body.slice(0, 200)}` : ""}`);
+  } finally {
+    clearTimeout(timer);
+    supplied?.removeEventListener("abort", onAbort);
   }
 }
 
@@ -19907,7 +20933,7 @@ class JevDecider {
       throw new DeciderError(issue);
     const body = JSON.stringify({ model: this.model || "jev-latest", state, questions });
     const who = this.url === JEV_URL ? "Jev" : "The classifier";
-    const parsed = JSON.parse(await postJson(this.url || JEV_URL, this.key, body, opts.timeoutMs ?? 8000, who));
+    const parsed = JSON.parse(await postJson(this.url || JEV_URL, this.key, body, opts.timeoutMs ?? 8000, who, opts.signal));
     return parsed.answers ?? {};
   }
 }
@@ -19933,7 +20959,7 @@ class ChatEndpointDecider {
     const { system, user } = typedPrompt(state, questions);
     const url = /\/chat\/completions\/?$/.test(this.url) ? this.url : `${this.url.replace(/\/+$/, "")}/chat/completions`;
     const body = JSON.stringify({ model: this.model, messages: [{ role: "system", content: system }, { role: "user", content: user }], temperature: 0, max_tokens: 60 + ids.length * 30 });
-    const parsed = JSON.parse(await postJson(url, this.key, body, opts.timeoutMs ?? 15000, "The classifier"));
+    const parsed = JSON.parse(await postJson(url, this.key, body, opts.timeoutMs ?? 15000, "The classifier", opts.signal));
     return typedAnswers(firstJson2(parsed.choices?.[0]?.message?.content ?? "") ?? {}, questions);
   }
 }
@@ -20031,7 +21057,7 @@ class LlmDecider {
       reasoning: { source: "off" },
       parameters: { temperature: 0, max_tokens: 60 + ids.length * 30 },
       userId: this.userId,
-      signal: opts.signal ?? AbortSignal.timeout(Math.max(3000, opts.timeoutMs ?? 20000))
+      signal: opts.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(Math.max(1, opts.timeoutMs ?? 20000))]) : AbortSignal.timeout(Math.max(1, opts.timeoutMs ?? 20000))
     });
     return typedAnswers(firstJson2(typeof res === "string" ? res : res?.content ?? "") ?? {}, questions);
   }
@@ -20091,12 +21117,54 @@ async function getDecider(settings, userId) {
   }
   return new LlmDecider(settings, userId);
 }
-var JEV_KEY = "jev_api_key", JEV_URL = "https://api.typesafe.ai/v1/systemone", DeciderError, STOP, words = (s) => new Set(s.toLowerCase().split(/[^a-z0-9']+/).filter((w) => w.length > 2 && !STOP.has(w)));
+async function getTurnDecider(settings, userId) {
+  try {
+    const decider = await getDecider(settings, userId);
+    fallbackNotices.delete(userId ?? "_");
+    return decider;
+  } catch (error) {
+    logError("decision model setup", error);
+    const reason = error instanceof Error ? error.message : String(error);
+    const key = userId ?? "_";
+    if (fallbackNotices.get(key) !== reason) {
+      fallbackNotices.set(key, reason);
+      toast("warning", `Using rulebook outcomes because the decision model isn't configured: ${reason}`, userId);
+    }
+    return new RulesDecider;
+  }
+}
+var JEV_KEY = "jev_api_key", JEV_URL = "https://api.typesafe.ai/v1/systemone", DeciderError, STOP, words = (s) => new Set(s.toLowerCase().split(/[^a-z0-9']+/).filter((w) => w.length > 2 && !STOP.has(w))), fallbackNotices;
 var init_deciders = __esm(() => {
   init_classifier_config();
   DeciderError = class DeciderError extends Error {
   };
   STOP = new Set("a an the to of and or in on at for with my i me you your it is be do try tries trying".split(" "));
+  fallbackNotices = new Map;
+});
+
+// src/backend/operations.ts
+function takeOperation(chatId) {
+  if (busyChats.has(chatId))
+    return null;
+  const token = Symbol(chatId);
+  owners.set(chatId, token);
+  busyChats.add(chatId);
+  return token;
+}
+function releaseOperation(chatId, token) {
+  if (!operationCurrent(chatId, token))
+    return false;
+  owners.delete(chatId);
+  busyChats.delete(chatId);
+  return true;
+}
+function supersedeOperation(chatId) {
+  owners.delete(chatId);
+}
+var owners, operationCurrent = (chatId, token) => owners.get(chatId) === token, hasOperation = (chatId) => owners.has(chatId);
+var init_operations = __esm(() => {
+  init_state_push();
+  owners = new Map;
 });
 
 // src/backend/inject.ts
@@ -20280,7 +21348,7 @@ async function summaryLine(o) {
     const where = o.venue ? ` at ${o.venue}` : o.end.locationName ? ` at ${o.end.locationName}` : "";
     fallback = `*${o.player} spent some time with ${name}${where}.${from !== to ? ` Things between them moved from ${from.toLowerCase()} to ${to.toLowerCase()}.` : ""}*`;
   } else if (o.dungeon) {
-    fallback = `*${o.player} climbed back out of ${o.dungeon.name}, having reached floor ${o.dungeon.depth}${o.dungeon.gold ? `, carrying ${o.dungeon.gold} gold` : ""}.*`;
+    fallback = o.dungeon.outcome === "lost" ? `*${o.player} was defeated on floor ${o.dungeon.depth} of ${o.dungeon.name} and returned outside, losing the run's haul${o.dungeon.lostGold ? ` of ${o.dungeon.lostGold} gold` : ""}.*` : `*${o.player} climbed back out of ${o.dungeon.name}, having reached floor ${o.dungeon.depth}${o.dungeon.gold ? `, banking ${o.dungeon.gold} gold` : ""}.*`;
   } else
     fallback = `*Some time passes.*`;
   if (o.settings.sceneLines !== "model")
@@ -20345,7 +21413,7 @@ function intentFor(r, state, settings, msgs, actionId, params) {
   }
   if (actionId.startsWith(LIVE_PREFIX)) {
     const c = liveChoicesOf(msgs[msgs.length - 1])[Number(actionId.slice(LIVE_PREFIX.length))];
-    if (!c || !r.liveChoices.tags[c.tag])
+    if (!c || !findAction(r, state, `${LIVE_PREFIX}${c.tag}${c.target ? `${TARGET_SEP}${c.target}` : ""}`))
       return { error: "That choice isn't available anymore." };
     return { say: `*${c.label}*`, intent: { actionId: `${LIVE_PREFIX}${c.tag}${c.target ? `${TARGET_SEP}${c.target}` : ""}`, via: "choice", label: c.label } };
   }
@@ -20429,12 +21497,15 @@ var init_intents = __esm(() => {
 function textOf(res) {
   return typeof res === "string" ? res : res?.content ?? "";
 }
-async function writeReply(messages, userId, timeoutMs = 120000) {
-  const res = await host().generate.quiet({ type: "quiet", messages, userId, signal: AbortSignal.timeout(timeoutMs) });
+async function writeReply(messages, userId, timeoutMs = 120000, chatId) {
+  const chat = chatId ? await host().chats.get(chatId, userId) : null;
+  const pinned = chat?.metadata?.connection_profile_id;
+  const connection_id = typeof pinned === "string" && pinned.trim() ? pinned.trim() : undefined;
+  const res = await host().generate.quiet({ type: "quiet", messages, connection_id, userId, signal: AbortSignal.timeout(timeoutMs) });
   return textOf(res).trim();
 }
-async function writeDrafts(prompt, n, userId) {
-  const out = await Promise.allSettled(Array.from({ length: n }, () => writeReply(prompt, userId)));
+async function writeDrafts(prompt, n, userId, chatId) {
+  const out = await Promise.allSettled(Array.from({ length: n }, () => writeReply(prompt, userId, 120000, chatId)));
   return out.flatMap((x) => x.status === "fulfilled" && x.value ? [x.value] : []);
 }
 async function judgeDrafts(decider, drafts, outcome, state) {
@@ -20456,9 +21527,9 @@ async function judgeDrafts(decider, drafts, outcome, state) {
     return 0;
   }
 }
-function momentKey(msgs, state) {
+function momentKey(msgs, state, context) {
   const last = msgs[msgs.length - 1];
-  const s = JSON.stringify(state);
+  const s = JSON.stringify([state, msgs.map((m) => [m.id, m.swipe_id ?? 0, m.content]), context?.r, context?.settings]);
   let h = 2166136261;
   for (let i = 0;i < s.length; i++)
     h = Math.imul(h ^ s.charCodeAt(i), 16777619);
@@ -20482,13 +21553,15 @@ function dropPrewritten(chatId) {
 }
 async function prewrite(opts) {
   const { chatId, userId, r, settings, decider } = opts;
-  if (settings.prewrite <= 0)
+  if (settings.prewrite <= 0 || !settings.swipesReroll)
     return;
   const msgs = await getMessages(chatId);
-  const { state } = foldPath(r, msgs);
+  const { state, conflict } = foldPath(r, msgs, 0);
+  if (conflict)
+    return;
   if (state.encounter && !r.encounters[state.encounter.id]?.narrate)
     return;
-  const key = momentKey(msgs, state);
+  const key = momentKey(msgs, state, { r, settings });
   const choices = buildChoices(r, state, { ...settings, live: liveChoicesOf(msgs[msgs.length - 1]) }).filter((c) => writable(c.id) && !c.params.length).slice(0, settings.prewrite);
   const replies = new Map;
   cache3.set(chatId, { key, replies });
@@ -20510,7 +21583,7 @@ async function prewrite(opts) {
     for (const e of rec.events)
       applyEvent(after, e, r);
     const prompt = nextPrompt(opts.prompt, opts.reply, ci.say, buildInjection(r, rec, state, after, opts.player));
-    const text = await writeReply(prompt, userId);
+    const text = await writeReply(prompt, userId, 120000, chatId);
     if (!text || cache3.get(chatId)?.replies !== replies)
       return;
     replies.set(c.id, { say: ci.say, intent: ci.intent, rec, text, prompt, outcome: outcomePacket(r, rec, state, after, opts.player), after });
@@ -20534,9 +21607,9 @@ var init_drafts = __esm(() => {
 function clip4(s, n) {
   return s.length > n ? `…${s.slice(-n)}` : s;
 }
-function usableTags(r, settings) {
+function usableTags(r, settings, s) {
   const blocked = new Set(settings.lines.map((l) => l.toLowerCase()));
-  return Object.values(r.liveChoices.tags).filter((a) => !a.tags.some((t) => blocked.has(t)));
+  return Object.values(r.liveChoices.tags).filter((a) => !a.hidden && !a.tags.some((t) => blocked.has(t)) && (!s || (a.perPerson ? presentPeople(r, s, makeEnv(r, s)).some((id) => !!findAction(r, s, `live:${a.id}@${id}`)) : !!findAction(r, s, `live:${a.id}`))));
 }
 function repairTag(tags, raw) {
   if (typeof raw !== "string" || !raw.trim())
@@ -20552,12 +21625,11 @@ function personId(s, name) {
   if (typeof name !== "string" || !name.trim())
     return null;
   const n = name.trim().toLowerCase();
-  for (const [id, p] of Object.entries(s.people)) {
-    const full = p.name.toLowerCase();
-    if (full === n || id === n || full.split(" ")[0] === n.split(" ")[0])
-      return id;
-  }
-  return null;
+  const exact = Object.entries(s.people).filter(([id, p]) => id === n || p.name.toLowerCase() === n);
+  if (exact.length)
+    return exact.length === 1 ? exact[0][0] : null;
+  const first = Object.entries(s.people).filter(([, p]) => p.name.toLowerCase().split(" ")[0] === n);
+  return first.length === 1 ? first[0][0] : null;
 }
 function cleanChoices(r, s, tags, raw, count) {
   const list = Array.isArray(raw) ? raw : [];
@@ -20574,6 +21646,8 @@ function cleanChoices(r, s, tags, raw, count) {
     const a = r.liveChoices.tags[tag];
     const target = personId(s, o.target);
     if (a.perPerson && !target)
+      continue;
+    if (!findAction(r, s, `live:${tag}${a.perPerson ? `@${target}` : ""}`))
       continue;
     seen.add(label.toLowerCase());
     out.push({ label, tag, ...a.perPerson && target ? { target } : {} });
@@ -20606,7 +21680,7 @@ async function writeLiveChoices(opts) {
     return [];
   if (lc.when && !evalBool(lc.when, makeEnv(r, s), true))
     return [];
-  const tags = usableTags(r, settings);
+  const tags = usableTags(r, settings, s);
   if (!tags.length)
     return [];
   let wanted = null;
@@ -20616,7 +21690,7 @@ async function writeLiveChoices(opts) {
     logError("live choice kinds", e);
   }
   const count = wanted?.length ?? lc.count;
-  const people = Object.values(s.people).map((p) => p.name);
+  const people = presentPeople(r, s, makeEnv(r, s)).map((id) => s.people[id].name);
   const tagLines = tags.map((a) => `- ${a.id}: ${a.desc ?? a.label}${a.perPerson ? ` (also give "target": the name of the person it's aimed at${people.length ? ` — one of ${people.join(", ")}` : ""})` : ""}`);
   const system = [
     "You write the clickable choices for a text roleplay game. You never write story.",
@@ -20641,6 +21715,8 @@ async function writeLiveChoices(opts) {
 }
 var init_live = __esm(() => {
   init_expr();
+  init_resolve();
+  init_world();
   init_state();
   init_view();
   init_helpers();
@@ -20692,20 +21768,26 @@ async function discoverPlace(loaded, r, before, rec, chatId, settings, userId) {
     return;
   }
   const book = loaded.bookIds[0];
-  if (book) {
-    try {
-      await host().world_books.entries.create(book, {
-        comment: `warp-ruleset · discovered · ${p.name}`,
-        content: placeYaml(rec.discover.from, p),
-        key: [],
-        disabled: true,
-        constant: false,
-        order_value: 900
-      }, userId);
-      invalidateCharacter(loaded.characterId);
-    } catch (e) {
-      logError("save discovered place", e);
-    }
+  try {
+    if (!book)
+      throw new Error("No rulebook is available for the new location");
+    await host().world_books.entries.create(book, {
+      comment: `warp-ruleset · discovered · ${p.name}`,
+      content: placeYaml(rec.discover.from, p),
+      key: [],
+      disabled: true,
+      constant: false,
+      order_value: 900
+    }, userId);
+    invalidateCharacter(loaded.characterId);
+    const next = (await getRuleset(chatId, userId, true))?.ruleset;
+    if (next)
+      await acceptAdditiveRules(chatId, r, next);
+  } catch (e) {
+    logError("save discovered place", e);
+    rec.hints.push("{{user}} explores, but does not enter a new place this turn. The map could not be saved.");
+    toast("warning", "The new place couldn't be saved. You're still where you were; try exploring again.", userId);
+    return;
   }
   rec.events.push({ t: "move", to: p.id, name: p.name, src: "action", why: "Exploring found somewhere new" }, { t: "discovered", id: p.id, src: "action" }, { t: "news", text: `Discovered ${p.name}.`, src: "action" });
   rec.hints.push(`{{user}} discovers somewhere new: ${p.name}${p.indoors ? " (indoors)" : ""} — ${p.desc} Describe finding it and arriving for the first time.`);
@@ -20714,6 +21796,7 @@ var init_discover = __esm(() => {
   init_js_yaml();
   init_ruleset();
   init_helpers();
+  init_ledger();
   init_source();
 });
 
@@ -20909,13 +21992,13 @@ function isQuiet(r, s) {
 }
 function logMessage(msgs, s) {
   const m = msgs[msgs.length - 1];
-  const log = m && !m.is_user ? warpMeta(m).encounter : undefined;
+  const log = m && !m.is_user ? encounterLogOf(m) : undefined;
   return m && log && log.status === "on" && log.enc === s.encounter?.id ? { m, log } : null;
 }
 function storyBefore(msgs) {
   const out = [];
   for (const m of [...msgs].reverse()) {
-    if (m.is_user || warpMeta(m).encounter)
+    if (m.is_user || encounterLogOf(m))
       continue;
     out.unshift(m.content);
     if (out.join(`
@@ -20937,25 +22020,40 @@ async function playRound(opts) {
   if (!r)
     return false;
   const msgs = await getMessages(chatId);
-  const { state: before } = foldPath(r, msgs);
+  const { state: before, conflict } = foldPath(r, msgs, 0);
+  if (conflict) {
+    toast("warning", "Review the changed history in the Warp sheet first.", userId);
+    return true;
+  }
   if (!isQuiet(r, before))
     return false;
   if (busyChats.has(chatId)) {
     toast("info", "One moment — the last round is still being written.", userId);
     return true;
   }
-  busyChats.add(chatId);
+  const operation = takeOperation(chatId);
+  if (!operation)
+    return true;
   send({ type: "busy", chatId, busy: true, label: "The round plays out…" }, userId);
   try {
     const settings = await getSettings(userId);
-    const decider = await getDecider(settings, userId);
+    const decider = await getTurnDecider(settings, userId);
     const player = await playerNameOf(chatId, userId);
     const story = storyBefore(msgs);
     const typed = opts.typed?.trim() || null;
     let intent = opts.intent;
-    if (!intent && typed && decider.id !== "rules") {
+    if (!intent && typed) {
       const reading = await readTurn({ decider, r, s: before, settings, playerText: typed, sceneText: story, player, timeoutMs: 15000 });
-      const read = reading.intent ?? reading.suggestion;
+      if (!operationCurrent(chatId, operation))
+        return true;
+      if (!reading.intent) {
+        await host().chat.appendMessage(chatId, { role: "user", content: typed, metadata: {
+          warp: { judged: true, ...reading.suggestion ? { suggest: reading.suggestion } : {} }
+        } });
+        toast("info", reading.suggestion ? `Roll ${reading.suggestion.label}? Confirm it below your message.` : "Pick a move or rephrase; that line didn't spend a round.", userId);
+        return true;
+      }
+      const read = reading.intent;
       intent = read ? { actionId: read.actionId, via: "adjudicator", ...read.params ? { params: read.params } : {} } : null;
     }
     const found = intent ? findAction(r, before, intent.actionId) : null;
@@ -20969,6 +22067,8 @@ async function playRound(opts) {
         res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, odds: o, playerText });
     }
     const rec = res.record;
+    if (!operationCurrent(chatId, operation))
+      return true;
     if (!rec.events.length && !rec.action) {
       toast("warning", "That isn't possible right now.", userId);
       return true;
@@ -20979,6 +22079,10 @@ async function playRound(opts) {
     const held = logMessage(msgs, before);
     const told = await tellRound({ chatId, userId, r, before, after, rec, action: found?.a ?? null, chance, msgs, player, settings, typed, prev: held?.log ?? latestLog(msgs, before)?.log ?? null, same: !!held });
     const { log, content } = told;
+    if (!operationCurrent(chatId, operation) || pathRevision(await getMessages(chatId)) !== pathRevision(msgs)) {
+      toast("info", "The story changed while this round was being written. Pick your move again.", userId);
+      return true;
+    }
     const prev = held ? activeRecord(held.m) : null;
     const merged = {
       v: 1,
@@ -20987,17 +22091,21 @@ async function playRound(opts) {
       hints: [],
       events: [...prev?.events ?? [], ...rec.events],
       ...prev?.decisions || rec.decisions ? { decisions: [...prev?.decisions ?? [], ...rec.decisions ?? []] } : {},
-      at: Date.now()
+      at: Date.now(),
+      ...prev?.path ? { path: prev.path } : {}
     };
     if (log.status === "ended")
       await foldEarlier(chatId, msgs, log.enc, held?.m.id ?? null);
     if (held) {
-      const meta = { ...held.m.metadata ?? {} };
-      const w = { ...warpMeta(held.m), encounter: log, swipes: { ...warpMeta(held.m).swipes ?? {}, [String(held.m.swipe_id ?? 0)]: merged } };
-      meta.warp = w;
-      await host().chat.updateMessage(chatId, held.m.id, { content, metadata: meta });
+      await patchWarpMeta(chatId, held.m.id, (w, current) => {
+        if ((current.swipe_id ?? 0) !== (held.m.swipe_id ?? 0) || JSON.stringify(activeRecord(current)) !== JSON.stringify(prev))
+          throw new Error("Round history changed before commit");
+        const slot = String(current.swipe_id ?? 0);
+        return { ...w, encounter: undefined, encounters: { ...encounterSlots(w), [slot]: log }, swipes: { ...w.swipes, [slot]: merged } };
+      }, content);
     } else {
-      await host().chat.appendMessage(chatId, { role: "assistant", content, metadata: { warp: { encounter: log, swipes: { "0": merged } } } });
+      const current = await getMessages(chatId);
+      await host().chat.appendMessage(chatId, { role: "assistant", content, metadata: { warp: { encounters: { "0": log }, swipes: { "0": withRecordPath(merged, r, current) } } } });
     }
     return true;
   } catch (e) {
@@ -21005,14 +22113,14 @@ async function playRound(opts) {
     toast("warning", "That round didn't go through — try again.", userId);
     return true;
   } finally {
-    busyChats.delete(chatId);
-    send({ type: "busy", chatId, busy: false }, userId);
+    if (releaseOperation(chatId, operation))
+      send({ type: "busy", chatId, busy: false }, userId);
     await pushState(chatId, userId);
   }
 }
 function latestLog(msgs, s) {
   for (const m of [...msgs].reverse()) {
-    const log = !m.is_user ? warpMeta(m).encounter : undefined;
+    const log = !m.is_user ? encounterLogOf(m) : undefined;
     if (log?.status === "on" && log.enc === s.encounter?.id)
       return { m, log };
   }
@@ -21033,7 +22141,7 @@ async function tellRound(o) {
 
 `);
   if (card.ended) {
-    const logMsg = o.msgs.find((m) => warpMeta(m).encounter === o.prev) ?? null;
+    const logMsg = o.msgs.find((m) => encounterLogOf(m) === o.prev) ?? null;
     const start = startOf(r, o.msgs, firstLogOf(o.msgs, log.enc) ?? logMsg, before);
     const enc = r.encounters[log.enc];
     const ended = { label: outcomeLabel(enc, card.ended.outcome), loss: isLoss(enc, card.ended.outcome) };
@@ -21048,7 +22156,7 @@ async function tellRound(o) {
 function firstLogOf(msgs, enc) {
   let first = null;
   for (const m of [...msgs].reverse()) {
-    const log = !m.is_user ? warpMeta(m).encounter : undefined;
+    const log = !m.is_user ? encounterLogOf(m) : undefined;
     if (log?.enc === enc && log.status === "on")
       first = m;
     else if (first)
@@ -21058,12 +22166,18 @@ function firstLogOf(msgs, enc) {
 }
 async function foldEarlier(chatId, msgs, enc, except) {
   for (const m of msgs) {
-    const log = !m.is_user && m.id !== except ? warpMeta(m).encounter : undefined;
+    const log = !m.is_user && m.id !== except ? encounterLogOf(m) : undefined;
     if (!log || log.enc !== enc || log.status !== "on")
       continue;
-    const meta = { ...m.metadata ?? {} };
-    meta.warp = { ...warpMeta(m), encounter: { ...log, status: "ended", summary: "" } };
-    await host().chat.updateMessage(chatId, m.id, { content: `*The struggle with ${log.foe} went on…*`, metadata: meta }).catch((e) => logError("fold encounter log", e));
+    await patchWarpMeta(chatId, m.id, (w, current) => {
+      if ((current.swipe_id ?? 0) !== (m.swipe_id ?? 0) || JSON.stringify(encounterLogOf(current)) !== JSON.stringify(log))
+        throw new Error("Encounter log changed before compaction");
+      return {
+        ...w,
+        encounter: undefined,
+        encounters: { ...encounterSlots(w), [String(current.swipe_id ?? 0)]: { ...log, status: "ended", summary: "" } }
+      };
+    }, `*The struggle with ${log.foe} went on…*`).catch((e) => logError("fold encounter log", e));
   }
 }
 async function quietReply(o) {
@@ -21078,10 +22192,10 @@ function startOf(r, msgs, logMsg, fallback) {
   if (!logMsg)
     return fallback;
   const i = msgs.findIndex((m) => m.id === logMsg.id);
-  return i > 0 ? foldPath(r, msgs.slice(0, i)).state : fallback;
+  return i > 0 ? foldPath(r, msgs.slice(0, i), 0).state : fallback;
 }
 function compactLog(m) {
-  const log = warpMeta(m).encounter;
+  const log = encounterLogOf(m);
   if (!log || log.status !== "on")
     return null;
   const last = log.rounds[log.rounds.length - 1];
@@ -21099,9 +22213,29 @@ var init_encounter = __esm(() => {
   init_settings();
   init_source();
   init_state_push();
+  init_operations();
 });
 
 // src/backend/turn.ts
+function closeGeneration(chatId, id) {
+  closed.set(generationKey(chatId, id), Date.now());
+  for (const [key, at] of closed)
+    if (Date.now() - at > 30 * 60000 || closed.size > 1000)
+      closed.delete(key);
+}
+function generationIsCurrent(chatId, id) {
+  if (id && closed.has(generationKey(chatId, id)))
+    return false;
+  const current = started.get(chatId);
+  return !current || !id || current.generationId === id;
+}
+function generationHistory(chatId, messages) {
+  const generation = started.get(chatId);
+  const target = generation?.targetMessageId ? messages.find((m) => m.id === generation.targetMessageId) : undefined;
+  if (!target)
+    return messages;
+  return messages.filter((m) => generation?.generationType === "continue" ? m.index_in_chat <= target.index_in_chat : m.index_in_chat < target.index_in_chat);
+}
 function ctxInfo(ctx) {
   const raw = ctx;
   const s = started.get(ctx.chatId);
@@ -21152,6 +22286,7 @@ function targetOf(ctx, targetId, msgs) {
 async function interceptor(messages, ctx) {
   if (ctx.generationType === "impersonate" || ctx.generationType === "quiet")
     return messages;
+  const info = ctxInfo(ctx);
   try {
     const settings = await getSettings(ctx.userId);
     if (!settings.enabled)
@@ -21160,21 +22295,43 @@ async function interceptor(messages, ctx) {
     const r = loaded?.ruleset;
     if (!r)
       return messages;
-    const info = ctxInfo(ctx);
     const msgs = await getMessages(ctx.chatId);
     const target = targetOf(ctx, info.targetMessageId, msgs);
     const history = target ? msgs.filter((m) => m.index_in_chat < target.index_in_chat) : msgs;
-    const { state: before } = foldPath(r, history);
+    const { state: before, conflict } = foldPath(r, history, 0);
+    if (conflict) {
+      toast("warning", "Earlier history or rules changed. Review the recorded outcomes in the Warp sheet before continuing mechanics.", ctx.userId);
+      return messages;
+    }
     const player = await playerName(ctx.chatId, ctx.userId);
     let rec = null;
     let after = before;
     if (ctx.generationType === "continue" && target) {
-      rec = activeRecord(target);
+      rec = activeRecord(target) ?? { v: 1, hints: [], events: [], at: Date.now() };
       if (rec) {
         after = cloneState(before);
         for (const e of rec.events)
           applyEvent(after, e, r);
       }
+      if (!info.isDryRun && generationIsCurrent(ctx.chatId, info.generationId))
+        pending.set(info.generationId ?? ctx.chatId, {
+          chatId: ctx.chatId,
+          userId: ctx.userId,
+          rec,
+          after,
+          playerText: "",
+          ruleset: r,
+          at: Date.now(),
+          ...info.generationId ? { generationId: info.generationId } : {},
+          targetMessageId: target.id,
+          targetSwipe: target.swipe_id ?? 0,
+          targetRecordRevision: JSON.stringify(activeRecord(target)),
+          historyRevision: pathRevision(history),
+          isCurrent: () => generationIsCurrent(ctx.chatId, info.generationId),
+          continueFrom: target.content,
+          outcome: outcomePacket(r, rec, before, after, player),
+          player
+        });
     } else {
       const lastUser = history[history.length - 1]?.is_user ? history[history.length - 1] : null;
       const meta = lastUser ? warpMeta(lastUser) : {};
@@ -21185,7 +22342,7 @@ async function interceptor(messages, ctx) {
       let confidence;
       const sceneText = [...history].reverse().find((m) => !m.is_user)?.content ?? "";
       const budget = () => Math.min(20000, (typeof ctx.interceptorDeadlineAt === "number" ? ctx.interceptorDeadlineAt : Date.now() + 20000) - Date.now() - 2000);
-      const decider = info.isDryRun ? null : await getDecider(settings, ctx.userId);
+      const decider = info.isDryRun ? null : await getTurnDecider(settings, ctx.userId);
       if (decider) {
         const readText = !intent && !meta.judged && lastUser && settings.freeTextChecks ? lastUser.content : null;
         const reading = await readTurn({ decider, r, s: before, settings, playerText: readText, sceneText, player, timeoutMs: budget() });
@@ -21209,17 +22366,27 @@ async function interceptor(messages, ctx) {
       rec = res.record;
       if (confidence !== undefined && rec.action)
         rec.confidence = confidence;
+      if (!info.isDryRun && !generationIsCurrent(ctx.chatId, info.generationId))
+        return messages;
       if (rec.discover && !info.isDryRun && loaded)
         await discoverPlace(loaded, r, before, rec, ctx.chatId, settings, ctx.userId);
       after = cloneState(before);
       for (const e of rec.events)
         applyEvent(after, e, r);
       if (!info.isDryRun) {
+        if (!generationIsCurrent(ctx.chatId, info.generationId))
+          return messages;
+        const resolvedRules = rec.discover ? (await getRuleset(ctx.chatId, ctx.userId))?.ruleset ?? r : r;
+        rec.path = recordPath(resolvedRules, history);
         pending.set(info.generationId ?? ctx.chatId, {
           chatId: ctx.chatId,
           userId: ctx.userId,
           rec,
           after,
+          ...info.generationId ? { generationId: info.generationId } : {},
+          historyRevision: pathRevision(history),
+          ...target ? { targetMessageId: target.id, targetSwipe: target.swipe_id ?? 0, targetRecordRevision: JSON.stringify(activeRecord(target)) } : {},
+          isCurrent: () => generationIsCurrent(ctx.chatId, info.generationId),
           playerText: lastUser?.content ?? "",
           ruleset: r,
           at: Date.now(),
@@ -21236,7 +22403,7 @@ async function interceptor(messages, ctx) {
       }
     }
     const shrunk = messages.map((lm) => {
-      const m = history.find((h) => !h.is_user && h.content === textOf2(lm.content) && warpMeta(h).encounter);
+      const m = history.find((h) => !h.is_user && h.content === textOf2(lm.content) && encounterLogOf(h));
       const short = m ? compactLog(m) : null;
       return short ? { ...lm, content: short } : lm;
     });
@@ -21294,83 +22461,162 @@ async function afterReply(p, msg, content, userId) {
   const settings = await getSettings(userId);
   const r = p.ruleset;
   let swipe = msg.swipe_id ?? 0;
-  const decider = await getDecider(settings, userId);
+  let expectedContent = msg.content;
+  const initialMessages = await getMessages(chatId);
+  const surroundings = pathRevision(initialMessages.filter((m) => m.id !== msg.id));
+  const currentMessages = async () => {
+    if (p.isCurrent && !p.isCurrent())
+      return null;
+    const messages = await getMessages(chatId);
+    const target = messages.find((m) => m.id === msg.id);
+    if (!target || (target.swipe_id ?? 0) !== swipe || target.content !== expectedContent)
+      return null;
+    if (pathRevision(messages.filter((m) => m.id !== msg.id)) !== surroundings)
+      return null;
+    return messages;
+  };
+  if (!await currentMessages())
+    return;
+  const decider = await getTurnDecider(settings, userId);
   dropPrewritten(chatId);
-  if (settings.drafts > 1 && p.prompt && decider.id !== "rules") {
+  if (p.continueFrom === undefined && settings.drafts > 1 && p.prompt && decider.id !== "rules") {
     host().sendToFrontend({ type: "busy", chatId, busy: true, label: `Writing ${settings.drafts - 1} more draft${settings.drafts > 2 ? "s" : ""}…` }, userId);
-    const extra = await writeDrafts(p.prompt, settings.drafts - 1, userId);
+    const extra = await writeDrafts(p.prompt, settings.drafts - 1, userId, chatId);
     if (extra.length) {
       const all = [content, ...extra];
       const pick = await judgeDrafts(decider, all, p.outcome ? fillNames(p.outcome, p.player) : null, fillNames(stateDigest(r, p.after), p.player));
-      const swipes = [...msg.swipes?.length ? msg.swipes : [content], ...extra];
-      const base = swipes.length - extra.length;
-      const dates = [...msg.swipe_dates ?? [], ...extra.map(() => Math.floor(Date.now() / 1000))];
-      await host().chat.updateMessage(chatId, msg.id, { swipes, swipe_dates: dates, ...pick > 0 ? { swipe_id: base + pick - 1 } : {} });
-      for (let i = 0;i < extra.length; i++)
-        await writeRecord(chatId, msg.id, base + i, p.rec);
-      if (pick > 0) {
-        swipe = base + pick - 1;
-        content = all[pick];
-      }
+      if (!await currentMessages())
+        return;
+      const added = await appendDrafts(chatId, msg.id, extra, pick, p.rec, async () => !!await currentMessages());
+      if (!added)
+        return;
+      swipe = added.swipe;
+      content = added.content;
+      expectedContent = content;
     }
   }
   const wantLive = r.liveChoices.enabled;
+  const appended = p.continueFrom !== undefined && content.startsWith(p.continueFrom) ? content.slice(p.continueFrom.length) : content;
   if (settings.narratorUpdates || settings.consistencyCheck || wantLive) {
     host().sendToFrontend({ type: "busy", chatId, busy: true, label: "Updating state…" }, userId);
     const [proposal, contra, live] = await Promise.all([
-      settings.narratorUpdates ? proposeChanges(decider, r, p, content, settings, userId) : Promise.resolve(null),
+      settings.narratorUpdates && appended.trim() ? proposeChanges(decider, r, p, appended, settings, userId) : Promise.resolve(null),
       settings.consistencyCheck && decider.id !== "rules" ? contradiction({ decider, r, s: p.after, reply: content, outcome: p.outcome }) : Promise.resolve(null),
       wantLive ? writeLiveChoices({ r, s: p.after, reply: content, player: p.player, settings, userId, decider }) : Promise.resolve([])
     ]);
-    const rec = { ...p.rec };
-    if (proposal) {
-      const action = p.rec.action ? { id: p.rec.action.id, tags: actionTags(r, p.rec.action.id) } : undefined;
-      const events = applyProposal(r, p.after, proposal, { text: `${p.playerText}
-${content}`, action });
-      if (events.length)
-        rec.events = [...rec.events, ...events];
-    }
-    if (contra !== null)
-      rec.contradiction = contra;
-    if (rec.events !== p.rec.events || contra !== null)
-      await writeRecord(chatId, msg.id, swipe, rec);
-    if (live.length) {
-      await patchWarpMeta(chatId, msg.id, (w) => ({ ...w, live: { ...w.live ?? {}, [String(swipe)]: live } }));
-    }
+    await patchWarpMeta(chatId, msg.id, async (w) => {
+      const messages = await currentMessages();
+      if (!messages)
+        return w;
+      const existing = w.swipes?.[String(swipe)];
+      if (!existing || JSON.stringify(existing.action) !== JSON.stringify(p.rec.action) || JSON.stringify(existing.check) !== JSON.stringify(p.rec.check) || JSON.stringify(existing.events.slice(0, p.rec.events.length)) !== JSON.stringify(p.rec.events))
+        return w;
+      const target = messages.find((m) => m.id === msg.id);
+      const state = foldPath(r, messages.filter((m) => m.index_in_chat <= target.index_in_chat), 0).state;
+      const action = p.continueFrom === undefined && p.rec.action ? { id: p.rec.action.id, tags: actionTags(r, p.rec.action.id) } : undefined;
+      const events = proposal ? applyProposal(r, state, proposal, { text: `${p.playerText}
+${appended}`, action }) : [];
+      const changed = existing.events.length !== p.rec.events.length || events.length > 0;
+      const rec = {
+        ...existing,
+        events: [...existing.events, ...events],
+        ...!changed && contra !== null ? { contradiction: contra } : {}
+      };
+      return {
+        ...w,
+        swipes: { ...w.swipes, [String(swipe)]: rec },
+        ...!changed && live.length ? { live: { ...w.live, [String(swipe)]: live } } : {}
+      };
+    });
   }
-  if (settings.prewrite > 0 && p.prompt) {
+  if (p.continueFrom === undefined && settings.prewrite > 0 && p.prompt && await currentMessages()) {
     await pushState(chatId, userId);
     host().sendToFrontend({ type: "busy", chatId, busy: false }, userId);
     prewrite({ chatId, userId, r, settings, decider, prompt: p.prompt, reply: content, player: p.player, onReady: () => schedulePush(chatId, userId, 100) }).catch((e) => logError("pre-write", e));
   }
 }
 async function onGenerationStarted(payload, userId) {
+  if (payload.generationType === "quiet" || payload.generationType === "impersonate")
+    return;
   const { chatId } = payload;
+  supersedeOperation(chatId);
+  const previous = started.get(chatId);
+  if (previous && previous.generationId !== payload.generationId) {
+    closeGeneration(chatId, previous.generationId);
+    pending.delete(previous.generationId);
+    pending.delete(chatId);
+  }
   started.set(chatId, { generationId: payload.generationId, targetMessageId: payload.targetMessageId, generationType: payload.generationType, at: Date.now() });
   busyChats.add(chatId);
   host().sendToFrontend({ type: "busy", chatId, busy: true }, userId);
 }
+async function onGenerationStopped(payload, userId) {
+  const { chatId } = payload;
+  if (!chatId)
+    return;
+  const current = started.get(chatId);
+  const id = payload.generationId ?? current?.generationId;
+  if (id) {
+    closeGeneration(chatId, id);
+    pending.delete(id);
+  }
+  const fallback = pending.get(chatId);
+  if (fallback && (!id || !fallback.generationId || fallback.generationId === id))
+    pending.delete(chatId);
+  if (current && id && current.generationId !== id)
+    return;
+  if (!current && hasOperation(chatId))
+    return;
+  started.delete(chatId);
+  busyChats.delete(chatId);
+  dropPrewritten(chatId);
+  host().sendToFrontend({ type: "busy", chatId, busy: false }, userId);
+  await pushState(chatId, userId);
+}
 async function onGenerationEnded(payload, userId) {
-  busyChats.delete(payload.chatId);
-  if (started.get(payload.chatId)?.generationId === payload.generationId)
-    started.delete(payload.chatId);
+  if (payload.generationType === "quiet" || payload.generationType === "impersonate")
+    return;
+  const token = generationKey(payload.chatId, payload.generationId);
+  if (!generationIsCurrent(payload.chatId, payload.generationId) || completing.has(token))
+    return;
   const key = pending.has(payload.generationId) ? payload.generationId : payload.chatId;
   const p = pending.get(key);
+  if (p?.generationId && p.generationId !== payload.generationId)
+    return;
   pending.delete(key);
+  completing.add(token);
+  if (p && !payload.error)
+    busyChats.add(payload.chatId);
   for (const [id, x] of pending)
     if (Date.now() - x.at > 10 * 60000)
       pending.delete(id);
-  if (!p || payload.error || !payload.messageId) {
-    await pushState(payload.chatId, userId);
-    return;
-  }
   try {
+    if (!p || payload.error || !payload.messageId)
+      return;
+    const originalGuard = p.isCurrent;
+    p.isCurrent = () => generationIsCurrent(payload.chatId, payload.generationId) && (!originalGuard || originalGuard());
     const msgs = await getMessages(payload.chatId);
+    if (!p.isCurrent())
+      return;
     const msg = msgs.find((m) => m.id === payload.messageId);
     if (!msg)
       return;
     const swipe = msg.swipe_id ?? 0;
-    await writeRecord(payload.chatId, msg.id, swipe, p.rec);
+    if (p.targetMessageId && p.targetMessageId !== msg.id || p.targetSwipe !== undefined && p.targetSwipe !== swipe || p.historyRevision !== undefined && pathRevision(msgs.filter((m) => m.index_in_chat < msg.index_in_chat)) !== p.historyRevision) {
+      toast("info", "The chat changed while this reply was being written. Its game changes were not applied.", userId);
+      return;
+    }
+    let attached = false;
+    await patchWarpMeta(payload.chatId, msg.id, async (w, current) => {
+      if (!p.isCurrent() || (current.swipe_id ?? 0) !== swipe || p.targetRecordRevision !== undefined && JSON.stringify(activeRecord(current)) !== p.targetRecordRevision)
+        return w;
+      if (p.historyRevision !== undefined && pathRevision((await getMessages(payload.chatId)).filter((m) => m.index_in_chat < current.index_in_chat)) !== p.historyRevision)
+        return w;
+      attached = true;
+      return { ...w, swipes: { ...w.swipes, [String(swipe)]: p.rec } };
+    });
+    if (!attached || !p.isCurrent())
+      return;
     if (p.verdict) {
       const { messageId, intent, suggestion } = p.verdict;
       await patchWarpMeta(payload.chatId, messageId, (w) => ({
@@ -21382,7 +22628,7 @@ async function onGenerationEnded(payload, userId) {
     }
     await pushState(payload.chatId, userId);
     if (p.quiet && (payload.content ?? msg.content).trim() === p.quiet.content.trim()) {
-      await patchWarpMeta(payload.chatId, msg.id, (w) => ({ ...w, encounter: p.quiet.log }));
+      await patchWarpMeta(payload.chatId, msg.id, (w, current) => ({ ...w, encounter: undefined, encounters: { ...encounterSlots(w), [String(current.swipe_id ?? 0)]: p.quiet.log } }));
       if (p.quiet.log.status === "ended")
         await p.quiet.fold();
       await pushState(payload.chatId, userId);
@@ -21393,11 +22639,18 @@ async function onGenerationEnded(payload, userId) {
   } catch (e) {
     logError("generation ended", e);
   } finally {
-    host().sendToFrontend({ type: "busy", chatId: payload.chatId, busy: false }, userId);
-    schedulePush(payload.chatId, userId, 0);
+    completing.delete(token);
+    closeGeneration(payload.chatId, payload.generationId);
+    const current = started.get(payload.chatId);
+    if (!current || current.generationId === payload.generationId) {
+      started.delete(payload.chatId);
+      busyChats.delete(payload.chatId);
+      host().sendToFrontend({ type: "busy", chatId: payload.chatId, busy: false }, userId);
+      await pushState(payload.chatId, userId);
+    }
   }
 }
-var pending, playerNames, started;
+var pending, playerNames, started, closed, completing, generationKey = (chatId, id) => JSON.stringify([chatId, id]);
 var init_turn = __esm(() => {
   init_dice();
   init_resolve();
@@ -21415,9 +22668,12 @@ var init_turn = __esm(() => {
   init_source();
   init_state_push();
   init_encounter();
+  init_operations();
   pending = new Map;
   playerNames = new Map;
   started = new Map;
+  closed = new Map;
+  completing = new Set;
 });
 
 // src/backend/scene.ts
@@ -21455,20 +22711,29 @@ async function playScene(opts) {
     toast("warning", "Send a message first — the game attaches to the latest message.", userId);
     return;
   }
+  const operation = opts.operation ?? takeOperation(chatId);
+  if (!operation || !operationCurrent(chatId, operation)) {
+    toast("info", "Wait for the current turn to finish first.", userId);
+    return;
+  }
+  if (foldPath(r, msgs, 0).conflict) {
+    if (!opts.operation)
+      releaseOperation(chatId, operation);
+    return;
+  }
   const log = logFor(chatId, kind);
-  busyChats.add(chatId);
   log.writing = true;
   log.said = opts.said;
   send({ type: "busy", chatId, busy: true, label: kind === "date" ? "…" : "The dungeon stirs…" }, userId);
   try {
-    const { state: before } = foldPath(r, msgs);
+    const before = opts.resolved?.before ?? foldPath(r, msgs, 0).state;
     if (!log.start)
       log.start = cloneState(before);
     const player = await playerNameOf2(chatId, userId);
     const seed = randomSeed();
     const playerText = opts.typed ?? opts.said ?? "";
-    let res = resolveTurnFull(r, before, opts.intent, { seed, veils: settings.veils, playerText });
-    const decider = await getDecider(settings, userId);
+    let res = kind === "dungeon" ? { record: opts.resolved?.rec ?? { v: 1, hints: [], events: [], at: Date.now() }, needs: [] } : resolveTurnFull(r, before, opts.intent, { seed, veils: settings.veils, playerText });
+    const decider = res.needs.length ? await getTurnDecider(settings, userId) : null;
     const partner = activeSession(r, before) ?? null;
     let card = "";
     if (kind === "date" || opts.intent?.actionId.startsWith("date:talk@")) {
@@ -21486,7 +22751,7 @@ ${prof.setting}` : ""].filter(Boolean).join(`
     }
     if (!card)
       card = await characterBrief(chatId, userId).catch(() => "");
-    if (res.needs.length && decider.id !== "rules") {
+    if (res.needs.length && decider && decider.id !== "rules") {
       const recent = log.history.slice(-4).map((l) => `${l.speaker ?? ""}${l.speaker ? ": " : ""}${l.text}`).join(`
 `);
       const o = await odds2({ decider, r, s: before, specs: res.needs, playerText, sceneText: recent, player, timeoutMs: 15000, card });
@@ -21494,18 +22759,27 @@ ${prof.setting}` : ""].filter(Boolean).join(`
         res = resolveTurnFull(r, before, opts.intent, { seed, veils: settings.veils, odds: o, playerText });
     }
     const rec = res.record;
-    const after = cloneState(before);
-    for (const e of rec.events)
-      applyEvent(after, e, r);
+    const after = opts.resolved?.after ?? cloneState(before);
+    if (!opts.resolved)
+      for (const e of rec.events)
+        applyEvent(after, e, r);
     const swipe = last.swipe_id ?? 0;
     const existing = warpMeta(last).swipes?.[String(swipe)];
     const merged = existing ? { ...existing, events: [...existing.events, ...rec.events] } : { v: 1, hints: [], events: rec.events, at: Date.now() };
-    await writeRecord(chatId, last.id, swipe, merged);
+    if (kind === "date")
+      await patchWarpMeta(chatId, last.id, async (w, current) => {
+        if (!operationCurrent(chatId, operation) || pathRevision(await getMessages(chatId)) !== pathRevision(msgs))
+          throw new Error("The date changed before its result could commit");
+        const slot = String(current.swipe_id ?? 0), prev = w.swipes?.[slot];
+        return { ...w, swipes: { ...w.swipes, [slot]: prev ? { ...prev, events: [...prev.events, ...rec.events] } : merged } };
+      });
     await pushState(chatId, userId);
     const sess = activeSession(r, after);
     if (kind === "date" && sess && settings.dateImages && !log.image && !log.imageBusy)
       dateImage(chatId, userId, r, after, sess.who, sess.venue ?? null, card, log);
     const lines = await writeLines({ kind, r, before, after, rec, player, said: opts.said, recent: log.history, card, seed }, settings, userId);
+    if (!operationCurrent(chatId, operation) || logs.get(chatId) !== log)
+      return;
     log.lines = lines;
     log.history = [...log.history, ...opts.said ? [{ speaker: player, text: opts.said.replace(/\*/g, "") }] : [], ...lines].slice(-40);
     log.seq += 1;
@@ -21517,8 +22791,10 @@ ${prof.setting}` : ""].filter(Boolean).join(`
       const bsess = activeSession(r, before);
       const venue = bsess?.venue ? r.dating.venues[bsess.venue]?.name ?? null : null;
       const run = before.dungeon;
-      const dungeon = opts.runEnded ?? (run ? { name: r.dungeons[run.id]?.name ?? "the dungeon", depth: run.depth, gold: run.gold } : null);
+      const dungeon = opts.runEnded ?? (run ? { name: r.dungeons[run.id]?.name ?? "the dungeon", depth: run.depth, gold: 0, outcome: "left" } : null);
       const line = await summaryLine({ kind, r, start, end: after, lines: log.history, player, settings, userId, who, venue, dungeon });
+      if (!operationCurrent(chatId, operation) || logs.get(chatId) !== log)
+        return;
       await host().chat.appendMessage(chatId, { role: "assistant", content: line });
       logs.delete(chatId);
     }
@@ -21527,8 +22803,8 @@ ${prof.setting}` : ""].filter(Boolean).join(`
     log.writing = false;
     toast("warning", "That didn't go through — try again.", userId);
   } finally {
-    busyChats.delete(chatId);
-    send({ type: "busy", chatId, busy: false }, userId);
+    if (!opts.operation && releaseOperation(chatId, operation))
+      send({ type: "busy", chatId, busy: false }, userId);
     await pushState(chatId, userId);
   }
 }
@@ -21595,6 +22871,9 @@ ${card.slice(0, 3000)}` : "", `Place: ${placeName}${placeDesc ? ` — ${placeDes
     return fallback;
   }
 }
+function dropScene(chatId) {
+  logs.delete(chatId);
+}
 var logs, IMAGE_STORE = "scene-images.json", inflight;
 var init_scene = __esm(() => {
   init_dice();
@@ -21605,6 +22884,7 @@ var init_scene = __esm(() => {
   init_deciders();
   init_helpers();
   init_ledger();
+  init_operations();
   init_settings();
   init_source();
   init_state_push();
@@ -21728,6 +23008,10 @@ actions:
     check: { chance: "20 + skulduggery / 2", label: Skulduggery }      # d100 roll-under percent
     # or check: { vs: 12, add: "floor(dex / 2)", partial: 3 }          # d20 + add vs 12
     # or check: { style: pbta, add: cool }                             # 2d6: 10+ hit, 7–9 mixed
+    # check: { …, game: mines }  — can be PLAYED as a minigame instead of rolled (or game: [mines, snake]; game: false = dice only).
+    #   games: aim (circles to a song), keys (4-lane piano tiles), mines, stack (falling blocks), snake, race (three-legged, with
+    #   whoever is here), pinball, blackjack, roulette, slots. The dice's odds set the score to beat; the stat behind the check,
+    #   perks and a partner's trust become aids. Played or rolled, the same tiers and outcomes apply.
     success: { flags: { door_open: true }, skulduggery: +1 }
     fail: { stress: +5, hint: "The pick snaps." }
     # tiers: crit_success, success, partial, fail, crit_fail; without a check use effects:
@@ -21742,6 +23026,13 @@ actions:
     # requires: shown LOCKED at its place with what's missing ("Needs Lockpicking 30 (you have 18), Brann with you · After closing");
     #   a stat name = at least that much; with: someone here; has: items; quest: id (taken) or { id: done }; folds into when:. show_locked: false hides it instead
     effects: { give: bearer_bonds }
+  blackjack_table:
+    label: Play blackjack
+    at: [casino]
+    gamble: { game: blackjack, stakes: [10, 50, 200], rounds: 5, win: { stress: -4 }, lose: { stress: +3 }, broke: { stress: +10, flags: { owes_the_house: true } } }
+    # a table that takes real money: blackjack | roulette | slots; stakes: buy-ins; rounds: hands/spins/pulls;
+    #   stat: what's staked (default the money stat); edge: house edge (default 2% / 2.7% / 8%); luck: a formula shaving the edge.
+    #   Played in the arcade, or dealt by the engine when minigames are off. No check — the cards decide.
   sneak:
     hidden: true                   # free-text only: the referee maps typed attempts to it
     desc: Staying unseen.
@@ -21783,6 +23074,8 @@ encounters:
     outcomes: { won: { hint: "They flee." }, escaped: { stress: +3 }, beaten: { money: "-min(money, 30)" } }
     labels: { won: "You see them off", escaped: "You got away", beaten: "Overpowered" }   # how each ending reads
     goal: "Break their nerve, or get away"        # optional; otherwise derived from end_when
+    # round_limit: 20   # finite budget, default 20, range 1–200; normal endings take precedence
+    # timeout_outcome: beaten   # default: momentum's lose outcome, otherwise lost; applies that outcome's effects
     danger: "Pain at 80 and you're overpowered"   # optional; otherwise derived
     # narrate: true = every round goes to the narrator as a full reply (old style). Default: rounds are told briefly
     #   in one encounter message that grows, then replaced by a summary — far fewer tokens, no repetitive loops.
@@ -21867,6 +23160,7 @@ perks:
   crowd_ghost: { name: Crowd Ghost, bonus: { stealth: 10 }, edge: { stealth: 15, when: "at('plaza')" }, tags: [stealth] }   # bonus: always counts in checks; edge: only while when holds
   silver_tongue: { name: Silver Tongue, rule: { reroll: { stats: [persuasion], per_day: 1 } } }   # rules: reroll / soften (a failure becomes partial) on these stats or tags; gains / losses: { scent: -30% } (rises or drops that much bigger/smaller)
   armor_breaker: { name: Armor Breaker, rule: { pierce: { amount: 3, tags: [melee] } } }   # pierce: your blows (from moves with these stats or tags; none = all) ignore that much armor
+  steady_hands: { name: Steady Hands, rule: { game: { window: 20, lives: 1, games: [aim, keys] } } }   # game: aids in minigames (games: which; none = all): window, size, slow, time, luck (percent) · lives, hint, peek, preview, hold, wrap, saver (counts)
   mage_blood: { name: Mage Blood, abilities: [firebolt], narrator: "Sparks dance on {{user}}'s fingertips when angry.", excludes: [iron_will] }   # teaches abilities; narrator: what the story should show; excludes: can't have both
   adrenaline: { name: Adrenaline Junkie, edge: { athletics: 20, when: "stress >= 60" }, drawback: { desc: "Stress builds faster", gains: { stress: +10% } }, weight: 1 }
 
@@ -22067,6 +23361,11 @@ Set a flag only if something reads it (an action's when, a trigger, a codex unlo
 Odds should usually sit between 25% and 85% at the start and improve with skill; show the player what helps (skills, gear bonuses, conditions as penalties).
 Partial outcomes and costs make failures interesting: a fail should change something, not just waste a turn.
 
+## minigames and gambling
+Give the checks that feel like a feat of hands or nerve a game: (aim for shooting and throwing, keys for music and performance, mines for locks, traps and investigation, stack for building and repairs, snake for chases and sneaking, race for anything done side by side with someone, pinball for brawls, blackjack for bluffs and deals, slots or roulette for pure luck). Leave quiet everyday checks on dice.
+A perk or two with rule: { game: … } makes them feel different (+1 life, a wider timing window, a peek at the dealer's card).
+If the setting has a casino, a card den, dice at the inn or a fruit machine in the bar, make it a gamble: table, with win:/lose:/broke: effects so a bad night has consequences — a debt flag a quest can pick up, stress, someone who saw.
+
 ## finishing
 You're done when every piece connects: run the audit and either fix each gap or say why it's deliberate. Simulate each encounter — no route should be pointless, none should be a guaranteed win, and the escape should cost something.
 `;
@@ -22093,18 +23392,24 @@ function simulateEncounter(r, id, opts = {}) {
   if (!enc)
     return null;
   const runs = opts.runs ?? 120, maxRounds = opts.maxRounds ?? 40;
-  const begin = () => {
+  if (opts.from?.encounter && opts.from.encounter.id !== id)
+    return null;
+  const begin = (seed) => {
     const s = cloneState(opts.from ?? initialState(r));
-    applyEvent(s, { t: "enc", id, foe: Object.fromEntries(enc.foe.stats.map((f) => [f.id, f.start])), ...enc.momentum ? { momentum: enc.momentum.start } : {}, src: "manual" }, r);
+    if (!s.encounter)
+      for (const event of encounterStartEvents(r, s, id, seed))
+        applyEvent(s, event, r);
     return s;
   };
   const policies = [];
   const moves = (s) => [
-    ...actionPool(r, s).order.filter((a) => !actionPool(r, s).defs[a].perPerson && isAvailable(r, s, actionPool(r, s).defs[a])),
-    ...usableItems(r, s).filter((u) => !u.locked).map((u) => u.id)
+    ...availableChoices(r, s).filter((choice) => !choice.a.hidden).map((choice) => choice.id),
+    ...usableItems(r, s).filter((u) => !u.locked).map((u) => u.id),
+    ...usableAbilities(r, s).filter((u) => !u.status.locked && !u.a.hidden).map((u) => u.id)
   ];
-  for (const a of enc.actionOrder)
-    policies.push({ name: `always ${enc.actions[a].label}`, pick: (s) => moves(s).includes(a) ? a : moves(s)[0] ?? null });
+  if (!opts.randomOnly)
+    for (const a of enc.actionOrder.filter((a) => !enc.actions[a].hidden))
+      policies.push({ name: `always ${enc.actions[a].label}`, pick: (s) => moves(s).includes(a) ? a : moves(s)[0] ?? null });
   policies.push({ name: "a random mix", pick: (s, rng) => {
     const m = moves(s);
     return m.length ? m[Math.floor(rng() * m.length)] : null;
@@ -22115,7 +23420,7 @@ function simulateEncounter(r, id, opts = {}) {
     const lengths = [];
     let rounds = 0, still = 0, unfinished = 0;
     for (let i = 0;i < runs; i++) {
-      let s = begin();
+      let s = begin(`sim:${id}:start:${i}`);
       let rng = mulberry(i + 1);
       let n = 0;
       while (s.encounter && n < maxRounds) {
@@ -22124,7 +23429,8 @@ function simulateEncounter(r, id, opts = {}) {
         const next = cloneState(s);
         for (const e of rec.events)
           applyEvent(next, e, r);
-        const moved = rec.events.some((e) => e.t === "foe" && (e.d ?? 0) !== 0 || e.t === "swing" || e.t === "enc" && e.id === null);
+        const progress = (x) => JSON.stringify([x.stats, x.flags, x.conditions, x.items, x.encounter && { ...x.encounter, round: 0 }]);
+        const moved = opts.randomOnly || progress(s) !== progress(next);
         if (!moved)
           still++;
         rounds++;
@@ -22139,7 +23445,7 @@ function simulateEncounter(r, id, opts = {}) {
         unfinished++;
       lengths.push(n);
     }
-    out.push({ policy: pol.name, runs, outcomes, medianRounds: quantile(lengths, 0.5), p90Rounds: quantile(lengths, 0.9), stalled: rounds ? still / rounds : 0, unfinished });
+    out.push({ policy: pol.name, runs, outcomes, medianRounds: quantile(lengths, 0.5), meanRounds: lengths.reduce((a, b) => a + b, 0) / Math.max(1, runs), p90Rounds: quantile(lengths, 0.9), stalled: rounds ? still / rounds : 0, unfinished });
   }
   const notes = [];
   for (const p of out) {
@@ -22591,40 +23897,16 @@ function reviewBalance(r) {
   return out;
 }
 function simulateEncounter2(r, from, id, runs) {
-  const enc = r.encounters[id];
-  if (!enc)
-    return null;
-  const outcomes = {};
-  let stuck = 0, rounds = 0;
-  const rng = seededRng(`sim:${id}`);
-  for (let i = 0;i < runs; i++) {
-    const s = cloneState(from);
-    applyEvent(s, { t: "enc", id, foe: Object.fromEntries(enc.foe.stats.map((x) => [x.id, x.start])), src: "start" }, r);
-    let ended = null;
-    for (let n = 0;n < 25 && s.encounter; n++) {
-      const choices = availableChoices(r, s);
-      const pick = choices.length ? choices[Math.floor(rng() * choices.length)].id : null;
-      const { record } = resolveTurnFull(r, s, pick ? { actionId: pick, via: "choice" } : null, { seed: `sim:${id}:${i}:${n}` });
-      for (const e of record.events) {
-        applyEvent(s, e, r);
-        if (e.t === "enc" && !e.id)
-          ended = e.outcome ?? "ended";
-      }
-      rounds++;
-    }
-    if (ended)
-      outcomes[ended] = (outcomes[ended] ?? 0) + 1;
-    else
-      stuck++;
-  }
-  return { runs, outcomes, stuck, rounds: rounds / runs };
+  const sim = simulateEncounter(r, id, { from, runs, maxRounds: 25, randomOnly: true });
+  const random = sim?.policies.find((p) => p.policy === "a random mix");
+  return random ? { runs: random.runs, outcomes: random.outcomes, stuck: random.unfinished, rounds: random.meanRounds ?? random.medianRounds } : null;
 }
 var CONCESSION;
 var init_balance = __esm(() => {
-  init_dice();
   init_expr();
   init_state();
   init_resolve();
+  init_simulate();
   init_encounter_view();
   init_freeform();
   CONCESSION = /paid|pay|robbed|bribe|surrender|gave_?in|submit|walked|walk_away|left|gave_up/i;
@@ -22850,7 +24132,21 @@ function restoreBuilderSession(raw, characterId) {
 var BUILDER_SESSION_VERSION = 1, object = (v) => !!v && typeof v === "object" && !Array.isArray(v), string = (v, fallback = "") => typeof v === "string" ? v : fallback, strings = (v) => Array.isArray(v) ? v.filter((x) => typeof x === "string") : [], answer = (v) => typeof v === "string" || typeof v === "number" && Number.isFinite(v) || Array.isArray(v) && v.every((x) => typeof x === "string"), answers = (v) => object(v) ? Object.fromEntries(Object.entries(v).filter((entry) => answer(entry[1]))) : {};
 
 // src/backend/builder.ts
+function sessionSignal(s) {
+  let controller = controllers.get(s);
+  if (!controller) {
+    controller = new AbortController;
+    controllers.set(s, controller);
+  }
+  return controller.signal;
+}
+function retire(s) {
+  retired.add(s);
+  controllers.get(s)?.abort(new Error("Builder draft closed"));
+}
 async function save(s, userId) {
+  if (retired.has(s))
+    return;
   s.schemaVersion = BUILDER_SESSION_VERSION;
   s.updatedAt = Date.now();
   sessions.set(key3(userId, s.characterId), s);
@@ -22860,8 +24156,10 @@ async function save(s, userId) {
     logError("builder save", e);
   }
 }
-function emit(s, userId) {
-  send({ type: "builder", session: s }, userId);
+function emit(s, userId, chatId) {
+  if (s && retired.has(s))
+    return;
+  send({ type: "builder", session: s, chatId: chatId ?? (s ? sessionChats.get(s) : null) }, userId);
 }
 async function progress(s, label, userId) {
   s.busy = label;
@@ -22876,8 +24174,10 @@ async function sessionFor(chatId, userId) {
   if (!characterId)
     return null;
   const hit = sessions.get(key3(userId, characterId));
-  if (hit)
+  if (hit) {
+    sessionChats.set(hit, chatId);
     return hit;
+  }
   let stored;
   try {
     stored = await host().userStorage.getJson(path(characterId), { fallback: null, userId });
@@ -22887,6 +24187,7 @@ async function sessionFor(chatId, userId) {
   if (stored == null)
     return null;
   const restored = restoreBuilderSession(stored, characterId);
+  sessionChats.set(restored, chatId);
   if (restored.parts.length)
     buildPreview(restored);
   await save(restored, userId);
@@ -22899,7 +24200,7 @@ async function llm(s, system, user, userId, maxTokens = 3000) {
     connection_id: s.connectionId || undefined,
     parameters: { temperature: s.creative ? 0.8 : 0.4, max_tokens: maxTokens },
     userId,
-    signal: AbortSignal.timeout(180000)
+    signal: AbortSignal.any([sessionSignal(s), AbortSignal.timeout(180000)])
   });
   return typeof res === "string" ? res : res?.content ?? "";
 }
@@ -22911,7 +24212,7 @@ async function llmTools(s, messages, tools, userId) {
     connection_id: s.connectionId || undefined,
     parameters: { temperature: s.creative ? 0.7 : 0.4, max_tokens: 8000 },
     userId,
-    signal: AbortSignal.timeout(240000)
+    signal: AbortSignal.any([sessionSignal(s), AbortSignal.timeout(240000)])
   });
   if (typeof res === "string")
     return { content: res, calls: [] };
@@ -23222,6 +24523,8 @@ async function builderOpen(chatId, mode, userId) {
     emit(existing, userId);
     return;
   }
+  if (existing)
+    retire(existing);
   const card = await cardText(characterId, userId);
   const s = {
     characterId,
@@ -23247,6 +24550,7 @@ async function builderOpen(chatId, mode, userId) {
     waived: {},
     depth: null
   };
+  sessionChats.set(s, chatId);
   if (mode === "refine" || mode === "deepen") {
     s.parts = await currentParts(characterId, userId);
     if (!s.parts.length)
@@ -23378,7 +24682,7 @@ Reply with JSON:
     };
     s.base = opts.base || suggested;
     const picked = Array.isArray(out.systems) ? out.systems.map(String).filter((x) => SYSTEMS.some((y) => y.id === x)) : ["needs", "relationships", "money", "skills", "story"];
-    const defaults = [...new Set([...picked, "quests"])];
+    const defaults = [...new Set([...picked, "quests", "minigames"])];
     s.rounds = [{ questions: [...coreQuestions(defaults), ...normQuestions(out.followUps, "f1_")], answers: {} }];
     s.step = "questions";
   } catch (e) {
@@ -23561,14 +24865,17 @@ async function builderClose(chatId, userId) {
   const characterId = await characterForChat(chatId, userId);
   if (!characterId)
     return;
+  const previous = sessions.get(key3(userId, characterId));
+  if (previous)
+    retire(previous);
   sessions.delete(key3(userId, characterId));
   try {
     await host().userStorage.delete(path(characterId), userId);
   } catch {}
-  emit(null, userId);
+  emit(null, userId, chatId);
 }
 async function builderCurrent(chatId, userId) {
-  emit(chatId ? await sessionFor(chatId, userId) : null, userId);
+  emit(chatId ? await sessionFor(chatId, userId) : null, userId, chatId);
 }
 function labelOf(comment) {
   return comment.replace(/^\s*(?:\[[^\]]*\]\s*)?warp[-_ ]?ruleset\s*[·:\-–—|]?\s*/i, "").trim().toLowerCase() || "core";
@@ -23577,10 +24884,11 @@ async function rulesetEntries(characterId, userId) {
   const c = await host().characters.get(characterId, userId);
   const entries = [];
   let rulesetBook = null;
-  for (const bookId of c?.world_book_ids ?? []) {
-    const book = await host().world_books.get(bookId, userId);
-    if (!book)
+  const attached = await attachedRulebooks(c ?? {}, userId);
+  for (const book of attached.books) {
+    if (attached.active && attached.active.id !== book.id)
       continue;
+    const bookId = book.id;
     const whole = isRulesetBookName(book.name);
     if (whole && !rulesetBook)
       rulesetBook = bookId;
@@ -23605,37 +24913,16 @@ async function builderInstall(chatId, userId) {
   const s = await sessionFor(chatId, userId);
   if (!s || !s.parts.length)
     throw new Error("Nothing to install.");
-  const { ruleset } = check(s.parts);
-  if (!ruleset)
-    throw new Error("The ruleset still has errors — fix or redo the sections marked in red first.");
+  const { ruleset, issues } = check(s.parts);
+  if (!ruleset || issues.some((i) => i.level === "error")) {
+    s.error = "Fix or redo the sections marked in red before installing.";
+    await progress(s, null, userId);
+    return;
+  }
   await progress(s, "Saving to the lorebook…", userId);
   try {
-    const { entries, rulesetBook, bookIds } = await rulesetEntries(s.characterId, userId);
-    let bookId = rulesetBook;
-    if (!bookId) {
-      const book = await host().world_books.create({ name: "warp-ruleset", description: `Warp game rules for ${s.characterName}. Warp reads these entries directly; they are never sent to the model.` }, userId);
-      bookId = book.id;
-      await host().characters.update(s.characterId, { world_book_ids: [...bookIds, book.id] }, userId);
-      knownRulesetBookIds.add(book.id);
-    }
-    const used = new Set;
-    let order = 10;
-    for (const p of s.parts) {
-      const hit = entries.find((e) => e.label === p.label && !used.has(e.id));
-      if (hit) {
-        used.add(hit.id);
-        await host().world_books.entries.update(hit.id, { content: p.yaml, disabled: true, order_value: order }, userId);
-      } else {
-        await host().world_books.entries.create(bookId, { comment: `warp-ruleset · ${p.label}`, content: p.yaml, key: [], disabled: true, constant: false, order_value: order }, userId);
-      }
-      order += 10;
-    }
-    for (const e of entries) {
-      if (used.has(e.id))
-        continue;
-      await host().world_books.entries.update(e.id, { content: `# Replaced by the Warp builder on ${new Date().toISOString().slice(0, 10)}.
-`, disabled: true }, userId);
-    }
+    const bookId = await publishRulebook(s.characterId, s.parts.map((p, i) => ({ label: p.label, content: p.yaml, order: (i + 1) * 10 })), userId);
+    knownRulesetBookIds.add(bookId);
     invalidateCharacter(s.characterId);
     s.step = "done";
   } catch (e) {
@@ -23651,6 +24938,9 @@ async function builderImport(chatId, text, userId) {
   if (!split.length)
     throw new Error("That doesn't look like a rulebook — it should be YAML with sections like stats:, actions:, encounters:.");
   const card = await cardText(characterId, userId);
+  const previous = sessions.get(key3(userId, characterId));
+  if (previous)
+    retire(previous);
   const s = {
     characterId,
     characterName: card.name,
@@ -23675,6 +24965,7 @@ async function builderImport(chatId, text, userId) {
     waived: {},
     depth: null
   };
+  sessionChats.set(s, chatId);
   buildPreview(s);
   const { ruleset } = check(s.parts);
   if (ruleset) {
@@ -23770,7 +25061,7 @@ ${yaml.dump({ item_uses: kept }, { lineWidth: 140 })}`;
   invalidateCharacter(loaded.characterId);
   return Object.keys(kept).map((id) => r.items[id]?.name ?? id);
 }
-var sessions, key3 = (userId, characterId) => `${userId ?? "_"}:${characterId}`, path = (characterId) => `builder/${characterId}.json`, SYSTEMS, SYSTEM_PROMPT, DRAFT_LABEL = "item uses";
+var sessions, sessionChats, retired, controllers, key3 = (userId, characterId) => `${userId ?? "_"}:${characterId}`, path = (characterId) => `builder/${characterId}.json`, SYSTEMS, SYSTEM_PROMPT, DRAFT_LABEL = "item uses";
 var init_builder = __esm(() => {
   init_js_yaml();
   init_builder_agent();
@@ -23788,7 +25079,11 @@ var init_builder = __esm(() => {
   init_templates();
   init_view();
   init_source();
+  init_rulebook_install();
   sessions = new Map;
+  sessionChats = new WeakMap;
+  retired = new WeakSet;
+  controllers = new WeakMap;
   SYSTEMS = [
     { id: "needs", label: "Needs & condition (fatigue, stress…)" },
     { id: "relationships", label: "Relationships" },
@@ -23798,6 +25093,7 @@ var init_builder = __esm(() => {
     { id: "schedules", label: "NPC schedules & places" },
     { id: "encounters", label: "Encounters / combat" },
     { id: "quests", label: "Quests (a notice board, favours people ask, bounties)" },
+    { id: "minigames", label: "Minigames & gambling (checks played as Aim, Keys, Mines, Stack, Snake, Pinball, a three-legged race or cards — game: on the check; a casino or card table with gamble:)" },
     { id: "dungeon", label: "Dungeon diving (roguelike floors, party battles)" },
     { id: "dating", label: "Dating (topics, hidden tastes, outings)" },
     { id: "crime", label: "Crime & consequences" },
@@ -23927,11 +25223,16 @@ function getActiveChat(userId) {
   return activeChat.get(key4(userId)) ?? null;
 }
 async function pushState(chatId, userId, force = false) {
+  const k = JSON.stringify([userId, chatId]);
+  const revision = (revisions.get(k) ?? 0) + 1;
+  revisions.set(k, revision);
+  const current = () => revisions.get(k) === revision;
   try {
     const loaded = await getRuleset(chatId, userId, force);
     const status = statusOf(loaded);
     if (!chatId || !loaded?.ruleset) {
-      send({ type: "state", chatId, status, hud: null, map: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false, dungeon: null, dungeonEntries: [], date: null, scene: null }, userId);
+      if (current())
+        send({ type: "state", chatId, revision, status, hud: null, map: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false, dungeon: null, dungeonEntries: [], date: null, scene: null }, userId);
       return;
     }
     const r = loaded.ruleset;
@@ -23941,7 +25242,7 @@ async function pushState(chatId, userId, force = false) {
     if (settings.enabled && settings.themeDating && r.dating.enabled)
       maybeThemeDating(chatId, loaded.characterId, userId);
     const msgs = await getMessages(chatId);
-    const { state, steps } = foldPath(r, msgs);
+    const { state, steps, conflict } = foldPath(r, msgs, MAX_RECORDS);
     lastStates.set(chatId, state);
     const redoable = (userMsgId) => {
       const i = msgs.findIndex((m) => m.id === userMsgId);
@@ -23964,13 +25265,15 @@ async function pushState(chatId, userId, force = false) {
     }
     const latest = msgs[msgs.length - 1] ?? null;
     const anchor = latest && !latest.is_user ? latest.id : null;
-    send(await withName({
+    const view = await withName({
       type: "state",
       chatId,
+      revision,
+      historyConflict: conflict,
       status,
       hud: settings.enabled ? buildHud(r, state) : null,
       map: settings.enabled ? buildMap(r, state) : null,
-      choices: settings.enabled ? markReady(buildChoices(r, state, { ...settings, live: liveChoicesOf(latest) }), readyChoices(chatId, momentKey(msgs, state))) : [],
+      choices: settings.enabled && !conflict ? markReady(buildChoices(r, state, { ...settings, live: liveChoicesOf(latest) }), readyChoices(chatId, momentKey(msgs, state, { r, settings }))) : [],
       records: settings.enabled ? records : [],
       suggestions: settings.enabled ? suggestions.filter((s) => s.canRedo) : [],
       latestMessageId: latest?.id ?? null,
@@ -23981,7 +25284,9 @@ async function pushState(chatId, userId, force = false) {
       date: settings.enabled ? buildDateView(r, state, settings.lines) : null,
       scene: settings.enabled ? sceneViewFor(chatId, r, state) : null,
       encounterLogs: settings.enabled ? encounterLogsOf(r, msgs) : []
-    }, chatId, userId), userId);
+    }, chatId, userId);
+    if (current())
+      send(view, userId);
   } catch (e) {
     logError("pushState", e);
   }
@@ -23989,7 +25294,7 @@ async function pushState(chatId, userId, force = false) {
 function encounterLogsOf(r, msgs) {
   const out = [];
   for (const m of msgs.slice(-30)) {
-    const log = warpMeta(m).encounter;
+    const log = encounterLogOf(m);
     if (!log)
       continue;
     out.push({
@@ -24064,7 +25369,7 @@ async function connectionsFor(userId) {
     return [];
   }
 }
-var lastStates, busyChats, activeChat, timers, key4 = (userId) => userId ?? "_", MAX_RECORDS = 60, drafted, themed;
+var lastStates, busyChats, activeChat, timers, revisions, key4 = (userId) => userId ?? "_", MAX_RECORDS = 60, drafted, themed;
 var init_state_push = __esm(() => {
   init_view();
   init_view2();
@@ -24078,11 +25383,13 @@ var init_state_push = __esm(() => {
   busyChats = new Set;
   activeChat = new Map;
   timers = new Map;
+  revisions = new Map;
   drafted = new Set;
   themed = new Set;
 });
 
 // src/backend.ts
+init_games();
 init_resolve();
 init_templates();
 init_ledger();
@@ -24093,6 +25400,7 @@ init_turn();
 init_intents();
 init_scene();
 init_encounter();
+init_operations();
 init_talk();
 init_types2();
 init_drafts();
@@ -24101,11 +25409,13 @@ init_deciders();
 
 // src/backend/dungeon.ts
 init_dice();
+init_state();
 init_run();
 init_ledger();
 init_source();
 init_state_push();
 init_scene();
+init_operations();
 function run2(r, s, op) {
   switch (op.op) {
     case "enter":
@@ -24133,38 +25443,71 @@ function run2(r, s, op) {
   }
 }
 async function runDungeonOp(msg, userId) {
-  const loaded = await getRuleset(msg.chatId, userId);
-  const r = loaded?.ruleset;
-  if (!r)
-    return;
-  if (busyChats.has(msg.chatId)) {
+  const operation = takeOperation(msg.chatId);
+  if (!operation) {
     toast("info", "Wait for the story to catch up first.", userId);
     return;
   }
-  const msgs = await getMessages(msg.chatId);
-  const last = msgs[msgs.length - 1];
-  if (!last) {
-    toast("warning", "Send a message first — the dungeon attaches to the latest message.", userId);
-    return;
-  }
-  const { state } = foldPath(r, msgs);
-  const res = run2(r, state, msg);
-  if (res.error) {
-    toast("warning", res.error, userId);
+  try {
+    const loaded = await getRuleset(msg.chatId, userId);
+    const r = loaded?.ruleset;
+    if (!r)
+      return;
+    const msgs = await getMessages(msg.chatId);
+    const last = msgs[msgs.length - 1];
+    if (!last) {
+      toast("warning", "Send a message first — the dungeon attaches to the latest message.", userId);
+      return;
+    }
+    let state, res;
+    await patchWarpMeta(msg.chatId, last.id, async (w, current) => {
+      if (!operationCurrent(msg.chatId, operation))
+        throw new Error("Dungeon operation superseded");
+      const now = await getMessages(msg.chatId);
+      if (now.at(-1)?.id !== last.id || current.swipe_id !== last.swipe_id)
+        throw new Error("Dungeon history changed");
+      const folded = foldPath(r, now, 0);
+      if (folded.conflict)
+        throw new Error("Review the changed history first");
+      state = folded.state;
+      res = run2(r, state, msg);
+      if (res.error || !res.events.length)
+        return w;
+      const slot = String(current.swipe_id ?? 0), existing = w.swipes?.[slot];
+      const rec = existing ? { ...existing, events: [...existing.events, ...res.events] } : { v: 1, hints: [], events: res.events, at: Date.now() };
+      return { ...w, swipes: { ...w.swipes, [slot]: rec } };
+    });
+    if (res.error) {
+      toast("warning", res.error, userId);
+      return;
+    }
     await pushState(msg.chatId, userId);
-    return;
+    const was = state.dungeon;
+    const after = foldEvents(r, [res.events], state);
+    const lost = res.events.some((e) => e.t === "dg_exit" && e.outcome === "lost");
+    const money = r.dungeons[was?.id ?? ""]?.currency ?? r.hud.money;
+    const endedRun = was && !res.events.some((e) => e.t === "dg_enter") && res.events.some((e) => e.t === "dg_exit") ? {
+      name: r.dungeons[was.id]?.name ?? "the dungeon",
+      depth: was.depth,
+      outcome: lost ? "lost" : "left",
+      gold: lost || !money ? 0 : Math.max(0, (after.stats[money] ?? 0) - (state.stats[money] ?? 0)),
+      ...lost ? { lostGold: was.gold } : {}
+    } : undefined;
+    if (res.narrate)
+      await playScene({
+        chatId: msg.chatId,
+        userId,
+        kind: "dungeon",
+        intent: null,
+        said: res.narrate.say,
+        operation,
+        resolved: { before: state, after, rec: { v: 1, hints: [], events: res.events, at: Date.now() } },
+        ...endedRun ? { runEnded: endedRun } : {}
+      });
+  } finally {
+    releaseOperation(msg.chatId, operation);
+    await pushState(msg.chatId, userId);
   }
-  if (res.events.length) {
-    const swipe = last.swipe_id ?? 0;
-    const existing = warpMeta(last).swipes?.[String(swipe)];
-    const rec = existing ? { ...existing, events: [...existing.events, ...res.events] } : { v: 1, hints: [], events: res.events, at: Date.now() };
-    await writeRecord(msg.chatId, last.id, swipe, rec);
-  }
-  await pushState(msg.chatId, userId);
-  const was = state.dungeon;
-  const endedRun = was && !res.events.some((e) => e.t === "dg_enter") && res.events.some((e) => e.t === "dg_exit") ? { name: r.dungeons[was.id]?.name ?? "the dungeon", depth: was.depth, gold: was.gold } : undefined;
-  if (res.narrate)
-    await playScene({ chatId: msg.chatId, userId, kind: "dungeon", intent: null, said: res.narrate.say, ...endedRun ? { runEnded: endedRun } : {} });
 }
 
 // src/backend.ts
@@ -24188,9 +25531,7 @@ spindle.registerWorldInfoInterceptor(async (ctx) => {
         });
     }
     if (r && gates.length) {
-      let state = lastStates.get(ctx.chatId);
-      if (!state)
-        state = foldPath(r, await getMessages(ctx.chatId)).state;
+      const state = foldPath(r, generationHistory(ctx.chatId, await getMessages(ctx.chatId)), 0).state;
       const title = (s) => s.replace(/^\s*\[[^\]]*\]\s*/, "").trim().toLowerCase();
       for (const g of gates) {
         const names = new Set(g.lore.map(title));
@@ -24212,26 +25553,19 @@ spindle.registerWorldInfoInterceptor(async (ctx) => {
 }, 10);
 var chatIdOf = (p) => {
   const x = p;
-  return x?.chatId ?? x?.message?.chat_id ?? null;
+  return x?.chatId ?? x?.chat?.id ?? x?.message?.chat_id ?? null;
 };
 spindle.on("CHAT_SWITCHED", (p, userId) => {
   const chatId = p.chatId;
   setActiveChat(userId, chatId);
   pushState(chatId, userId);
 });
-spindle.on("GENERATION_STARTED", (p, userId) => {
-  onGenerationStarted(p, userId);
-});
-spindle.on("GENERATION_ENDED", (p, userId) => {
-  onGenerationEnded(p, userId);
-});
-spindle.on("GENERATION_STOPPED", (p, userId) => {
-  const chatId = chatIdOf(p);
-  if (chatId)
-    send({ type: "busy", chatId, busy: false }, userId);
-  schedulePush(chatId, userId);
-});
+spindle.on("GENERATION_STARTED", (p, userId) => onGenerationStarted(p, userId));
+spindle.on("GENERATION_ENDED", (p, userId) => onGenerationEnded(p, userId));
+spindle.on("GENERATION_STOPPED", (p, userId) => onGenerationStopped(p, userId));
 spindle.on("MESSAGE_SWIPED", (p, userId) => {
+  dropPrewritten(p.chatId);
+  dropScene(p.chatId);
   if (p.action === "deleted") {
     shiftAfterSwipeDelete(p.chatId, p.message.id, p.swipeId).catch((e) => logError("swipe delete", e)).finally(() => schedulePush(p.chatId, userId));
     return;
@@ -24239,7 +25573,17 @@ spindle.on("MESSAGE_SWIPED", (p, userId) => {
   schedulePush(p.chatId, userId);
 });
 for (const ev of ["MESSAGE_SENT", "MESSAGE_DELETED", "MESSAGE_EDITED", "SWIPE_EDITED", "CHAT_CHANGED"]) {
-  spindle.on(ev, (p, userId) => schedulePush(chatIdOf(p), userId, 250));
+  spindle.on(ev, (p, userId) => {
+    const chatId = chatIdOf(p);
+    if (chatId)
+      invalidateChat(chatId);
+    if (chatId) {
+      dropPrewritten(chatId);
+      if (ev !== "MESSAGE_SENT")
+        dropScene(chatId);
+    }
+    schedulePush(chatId, userId, 250);
+  });
 }
 spindle.on("CHARACTER_EDITED", (p, userId) => {
   const id = p?.character?.id ?? p?.characterId;
@@ -24269,18 +25613,26 @@ async function applyManual(chatId, userId, make) {
     toast("warning", "Send a message first — changes attach to the latest message.", userId);
     return false;
   }
-  const { state } = foldPath(r, msgs);
-  const events = make(r, state);
-  if (typeof events === "string") {
-    toast("warning", events, userId);
-    return false;
-  }
-  const swipe = last.swipe_id ?? 0;
-  const existing = warpMeta(last).swipes?.[String(swipe)];
-  const rec = existing ? { ...existing, events: [...existing.events, ...events] } : { v: 1, hints: [], events, at: Date.now() };
-  await writeRecord(chatId, last.id, swipe, rec);
+  let applied = false;
+  await patchWarpMeta(chatId, last.id, async (w, current) => {
+    const now = await getMessages(chatId);
+    if (now.at(-1)?.id !== last.id || current.swipe_id !== last.swipe_id)
+      return w;
+    const folded = foldPath(r, now, 0);
+    if (folded.conflict)
+      return w;
+    const events = make(r, folded.state);
+    if (typeof events === "string") {
+      toast("warning", events, userId);
+      return w;
+    }
+    const slot = String(current.swipe_id ?? 0), existing = w.swipes?.[slot];
+    const rec = existing ? { ...existing, events: [...existing.events, ...events] } : { v: 1, hints: [], events, at: Date.now() };
+    applied = true;
+    return { ...w, swipes: { ...w.swipes, [slot]: rec } };
+  });
   await pushState(chatId, userId);
-  return true;
+  return applied;
 }
 async function sendSettings(userId) {
   const settings = await getSettings(userId);
@@ -24308,7 +25660,28 @@ async function imageConnectionsFor(userId) {
 spindle.onFrontendMessage(async (raw, userId) => {
   const msg = raw;
   try {
+    if ("chatId" in msg && msg.chatId && !["hello", "refresh", "reload", "reconcile_history", "undo"].includes(msg.type) && !msg.type.startsWith("builder") && msg.type !== "export_rulebook" && msg.type !== "install_template") {
+      const r = (await getRuleset(msg.chatId, userId))?.ruleset;
+      if (r && foldPath(r, await getMessages(msg.chatId), 0).conflict) {
+        toast("warning", "Earlier history or rules changed. Review the recorded outcomes in the Warp sheet before continuing.", userId);
+        await pushState(msg.chatId, userId);
+        return;
+      }
+    }
     switch (msg.type) {
+      case "reconcile_history": {
+        if (busyChats.has(msg.chatId)) {
+          toast("info", "Wait for the current turn to finish first.", userId);
+          break;
+        }
+        const r = (await getRuleset(msg.chatId, userId))?.ruleset;
+        if (r)
+          await reconcilePath(msg.chatId, r, msg.keep);
+        dropScene(msg.chatId);
+        dropPrewritten(msg.chatId);
+        await pushState(msg.chatId, userId);
+        break;
+      }
       case "hello": {
         setActiveChat(userId, msg.chatId);
         await sendSettings(userId);
@@ -24335,7 +25708,7 @@ spindle.onFrontendMessage(async (raw, userId) => {
         const loaded = await getRuleset(msg.chatId, userId);
         const r = loaded?.ruleset;
         if (r) {
-          const { state } = foldPath(r, await getMessages(msg.chatId));
+          const { state } = foldPath(r, await getMessages(msg.chatId), 0);
           if (activeSession(r, state)) {
             await playScene({ chatId: msg.chatId, userId, kind: "date", intent: { actionId: `${DATE_PREFIX}say`, via: "adjudicator" }, said: text, typed: text });
             break;
@@ -24357,7 +25730,7 @@ spindle.onFrontendMessage(async (raw, userId) => {
           return;
         const settings = await getSettings(userId);
         const msgs = await getMessages(msg.chatId);
-        const { state } = foldPath(r, msgs);
+        const { state } = foldPath(r, msgs, 0);
         const ci = intentFor(r, state, settings, msgs, msg.actionId, msg.params);
         if ("error" in ci) {
           if (ci.error)
@@ -24366,6 +25739,9 @@ spindle.onFrontendMessage(async (raw, userId) => {
           return;
         }
         const { say, intent } = ci;
+        const played = msg.game ? cleanResult(msg.game, []) : null;
+        if (played)
+          intent.game = played;
         if (isQuiet(r, state) && await playRound({ chatId: msg.chatId, userId, intent }))
           break;
         if (msg.actionId.startsWith(DATE_PREFIX)) {
@@ -24377,16 +25753,18 @@ spindle.onFrontendMessage(async (raw, userId) => {
           await playScene({ chatId: msg.chatId, userId, kind: "date", intent, said: say });
           break;
         }
-        const ready = takePrewritten(msg.chatId, momentKey(msgs, state), msg.actionId);
+        const ready = played ? null : takePrewritten(msg.chatId, momentKey(msgs, state, { r, settings }), msg.actionId);
         if (ready) {
-          await spindle.chat.appendMessage(msg.chatId, { role: "user", content: say, metadata: { warp: { intent, judged: true } } });
-          const reply = await spindle.chat.appendMessage(msg.chatId, { role: "assistant", content: ready.text });
-          await writeRecord(msg.chatId, reply.id, 0, ready.rec);
-          await pushState(msg.chatId, userId);
-          const fresh = (await getMessages(msg.chatId)).find((m) => m.id === reply.id);
-          if (fresh) {
-            busyChats.add(msg.chatId);
-            try {
+          const operation = takeOperation(msg.chatId);
+          if (!operation)
+            return;
+          try {
+            await spindle.chat.appendMessage(msg.chatId, { role: "user", content: say, metadata: { warp: { intent, judged: true } } });
+            const reply = await spindle.chat.appendMessage(msg.chatId, { role: "assistant", content: ready.text });
+            await writeRecord(msg.chatId, reply.id, 0, ready.rec);
+            await pushState(msg.chatId, userId);
+            const fresh = (await getMessages(msg.chatId)).find((m) => m.id === reply.id);
+            if (fresh) {
               await afterReply({
                 chatId: msg.chatId,
                 userId,
@@ -24397,13 +25775,14 @@ spindle.onFrontendMessage(async (raw, userId) => {
                 at: Date.now(),
                 outcome: ready.outcome,
                 player: await playerName(msg.chatId, userId),
-                prompt: ready.prompt
+                prompt: ready.prompt,
+                isCurrent: () => operationCurrent(msg.chatId, operation)
               }, fresh, ready.text, userId);
-            } finally {
-              busyChats.delete(msg.chatId);
-              send({ type: "busy", chatId: msg.chatId, busy: false }, userId);
-              schedulePush(msg.chatId, userId, 0);
             }
+          } finally {
+            if (releaseOperation(msg.chatId, operation))
+              send({ type: "busy", chatId: msg.chatId, busy: false }, userId);
+            schedulePush(msg.chatId, userId, 0);
           }
           break;
         }
@@ -24423,6 +25802,7 @@ spindle.onFrontendMessage(async (raw, userId) => {
           const next = { ...rec, events: rec.events.filter((_, i) => !drop.has(i)) };
           return { ...w, swipes: { ...w.swipes, [String(msg.swipe)]: next } };
         });
+        dropScene(msg.chatId);
         await pushState(msg.chatId, userId);
         break;
       }
@@ -24449,6 +25829,8 @@ spindle.onFrontendMessage(async (raw, userId) => {
       case "run": {
         const op = msg.op === "save" || msg.op === "load" ? { op: msg.op, slot: msg.slot ?? "" } : { op: msg.op };
         const ok = await applyManual(msg.chatId, userId, (r, state) => runOp(r, state, op));
+        if (ok && msg.op !== "save")
+          dropScene(msg.chatId);
         if (ok)
           toast("success", msg.op === "save" ? "Saved." : msg.op === "load" ? "Rewound. The next reply picks up from there." : msg.op === "restart" ? "A new playthrough begins." : "The story goes on.", userId);
         break;
@@ -24566,6 +25948,19 @@ spindle.onFrontendMessage(async (raw, userId) => {
         }
         const user = msgs[i];
         const reply = msgs[i + 1];
+        if (!reply && msg.actionId) {
+          const r = (await getRuleset(msg.chatId, userId))?.ruleset;
+          if (r && isQuiet(r, foldPath(r, msgs, 0).state)) {
+            const intent = { actionId: msg.actionId, params: msg.params, via: "confirmed" };
+            await patchWarpMeta(msg.chatId, user.id, (w) => {
+              const next = { ...w, judged: true, intent };
+              delete next.suggest;
+              return next;
+            });
+            await playRound({ chatId: msg.chatId, userId, intent, typed: user.content });
+            break;
+          }
+        }
         const meta = { ...user.metadata ?? {} };
         const w = { ...warpMeta(user) };
         delete w.suggest;

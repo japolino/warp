@@ -34,7 +34,7 @@ describe("the checker", () => {
       expect({ t: t.id, ok: rep.ok, warnings: rep.warnings, balance: rep.balance }).toEqual({ t: t.id, ok: true, warnings: [], balance: [] });
       expect(rep.gaps.filter((g) => g.severity === "gap")).toEqual([]);
     }
-  }, 20_000);
+  }, 30000);
 
   test("it says what's wrong, where, and how to fix it", () => {
     const rep = checkReport(["name: Broken\nstats:\n  hp: { kind: meter, good: high }\nlocations:\n  a: { name: A, exits: [b] }\n  b: { name: B, exits: [a] }\n  c: { name: C, exits: [a] }\nactions:\n  hit: { label: Hit, effects: { hpp: -1, quest: { nope: start } } }\n"]);

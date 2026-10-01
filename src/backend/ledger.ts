@@ -208,7 +208,7 @@ export async function shiftAfterSwipeDelete(chatId: string, messageId: string, d
       Object.entries(slots ?? {}).filter(([k]) => Number(k) !== deleted)
         .map(([k, v]) => [String(Number(k) > deleted ? Number(k) - 1 : Number(k)), v]),
     );
-    const encounters = w.encounters ?? (w.encounter ? { "0": w.encounter } : undefined);
+    const encounters = w.encounters || w.encounter ? encounterSlots(w) : undefined;
     return { ...w, encounter: undefined, swipes: shift(w.swipes), ...(w.live ? { live: shift(w.live) } : {}), ...(encounters ? { encounters: shift(encounters) } : {}) };
   });
 }

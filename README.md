@@ -42,6 +42,20 @@ A date and a dungeon run each play full screen as a little game of their own, of
 - **Typing and leaving:** you can type your own line in the box. **Chat ⤓** or Esc drops back to the chat, and the ⚔ / 💬 button on the status panel returns to the stage.
 - **Needs:** date pictures need Warp's image permission and an image connection (Settings → Dates & dungeons).
 
+## Minigames and gambling
+
+A check can be **played instead of rolled**. When a choice has a game (its icon shows on the button), clicking it opens the arcade, a full-screen overlay like the stage:
+
+- **The games:** Aim (osu-style circles and sliders to a song), Keys (four-lane piano tiles where every hit plays the melody), Mines, Stack (falling blocks, to Korobeiniki), Snake, a three-legged race (tied to whoever is with you), Pinball, Blackjack, Roulette and Slots.
+- **The dice's odds still decide how hard it is.** They set the score to beat and tune the game: speed, timing windows, mine density, the dealer's rules. An easy check passes on a sloppy run; a long shot needs nearly everything.
+- **Stats and perks become aids:** wider timing, bigger targets, slower pace, more time, extra lives, hints, a peek at the dealer's hidden card, a held reel. A perk that would reroll a failure gives you another go instead, and in the race, your partner's trust steadies their stride.
+- **Same outcomes:** the score lands on the same tiers a roll would (critical, success, partial, fail, disaster). The story hears how it went in its own terms ("a shaky start, cleared it with seconds left"), never the score.
+- **Songs:** eleven built-in pieces old enough to be free to use, from Twinkle Twinkle to Flight of the Bumblebee, in our own arrangements. Harder songs lower the bar. You can also import your own osu! beatmaps (`.osz`): standard maps play as Aim and mania maps as Keys. They're stored in your browser only.
+- **Gambling:** a `gamble:` table stakes real in-game money at blackjack, roulette or slots. Pick a buy-in, play, and cash out whenever you like. A bad night can set off the table's `broke:` effects.
+- **Settings → Minigames:**
+  - Show the briefing (Play or Roll the dice), go straight into the game, or turn minigames off.
+  - Choose whether only the checks the rulebook names get a game, or every check.
+
 ## Typing freely
 
 Most roleplay is typed, so the core systems follow the story rather than waiting for a button:
@@ -193,8 +207,9 @@ The Ruleset tab lists problems in plain language, with "did you mean" suggestion
 bun install
 bun run verify   # tests + typecheck
 bun run build    # dist/backend.js, dist/frontend.js
+bun run arcade   # the minigame bench: every game, any odds and aids, at http://localhost:5177
 ```
 
 ## Credits
 
-Dungeon art: *Dungeon Crawl 32x32 tiles*, CC0 (public domain). See [CREDITS.md](CREDITS.md).
+Dungeon art: *Dungeon Crawl 32x32 tiles*, CC0 (public domain). The minigames' songs are public-domain compositions in Warp's own arrangements. See [CREDITS.md](CREDITS.md).

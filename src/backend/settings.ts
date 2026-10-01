@@ -26,6 +26,8 @@ export function normalizeSettings(value: unknown): Settings {
   s.jevFormat = s.jevFormat === "openai" ? "openai" : "typesafe";
   s.fx = s.fx === "off" || s.fx === "reduced" ? s.fx : "full";
   s.sfx = s.sfx === "off" || s.sfx === "all" ? s.sfx : "games";
+  s.minigames = s.minigames === "off" || s.minigames === "always" ? s.minigames : "ask";
+  s.minigameScope = s.minigameScope === "all" ? "all" : "rulebook";
   s.jevUrl = /^https?:\/\/\S+$/i.test(s.jevUrl) ? s.jevUrl : DEFAULT_SETTINGS.jevUrl;
   return s;
 }

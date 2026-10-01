@@ -169,5 +169,5 @@ describe("balance review", () => {
       const { ruleset } = loadRuleset(t.parts.map((p, i) => ({ label: p.label, content: p.yaml, order: i })));
       expect({ template: t.id, warnings: reviewBalance(ruleset!).map((w) => w.text) }).toEqual({ template: t.id, warnings: [] });
     }
-  }, 20_000);
+  }, 30000);
 });

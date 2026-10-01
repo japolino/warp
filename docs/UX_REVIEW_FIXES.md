@@ -8,6 +8,7 @@ This change addresses the 22 finding groups in the October 1 core review. All re
 - Warp message writers share one queue and merge against fresh metadata. Draft alternatives inherit the latest recorded mechanics, including adjustments made while they were being written.
 - Publication stages a new, unattached book, validates its read-back, then attaches the complete snapshot. Earlier books remain intact as backups. The latest installed snapshot is authoritative; legacy books still merge until a snapshot is installed.
 - Checks use the state before action costs. Displayed odds, gear and perk eligibility use that same context. The action still pays its costs. Daily charges belong to the day the attempt began.
+- The branch includes main's minigames. Their score bars use base dice odds because reroll perks already supply extra lives; choice percentages still include the actual dice reroll probability.
 - Encounters default to a visible 20-round budget. Authors can set `round_limit` from 1 to 200 and `timeout_outcome`. Normal endings take precedence on the final round. The default timeout is the momentum loss outcome or `lost`; any effects authored for that outcome apply normally.
 - Quiet encounter text below the automatic confidence threshold offers a confirmation. It spends no round. Confirming uses the quiet round handler, without invoking the narrator or its preset.
 - A successful check is one round's result. Encounter victory, escape, concession and loss come from the encounter's terminal outcome.
@@ -60,6 +61,8 @@ The names below are searchable test names or behaviors in the listed files. Thes
 - The interrogation template's successful moves now make stronger progress. The corrected shared simulation exposed a 9% favorable result rate under random play before that adjustment. Template balance checks still require all shipped templates to pass.
 
 ## Offline commands
+
+Final verification on October 1, after integrating main's minigame commit `db5e220`: 379 tests passed across 53 files, with 79,004 assertions. Type checking and the production build passed. Compiled backend, frontend and rulebook CLI bundles were rebuilt from the merged source.
 
 ```powershell
 bun run verify

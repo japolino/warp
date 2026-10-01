@@ -1,3 +1,4 @@
+import { cleanResult } from "./engine/games.js";
 import type { SpindleAPI } from "lumiverse-spindle-types";
 import { buyPerk, changeClothes, forgetPerson, manualSet, manualSetRel, runOp, type TurnRecord } from "./engine/resolve.js";
 import type { Ruleset } from "./engine/ruleset.js";
@@ -239,6 +240,9 @@ spindle.onFrontendMessage(async (raw, userId) => {
           return;
         }
         const { say, intent } = ci;
+        // Played as a minigame: the score (or the table's takings) rides on the intent, so swipes and replays keep it.
+        const played = msg.game ? cleanResult(msg.game, []) : null;
+        if (played) intent.game = played;
         // A quiet encounter: the round is resolved and told briefly in the encounter's own message.
         if (isQuiet(r, state) && await playRound({ chatId: msg.chatId, userId, intent })) break;
         // Dates play on the stage, off the chat.
@@ -248,7 +252,7 @@ spindle.onFrontendMessage(async (raw, userId) => {
           break;
         }
         // Already written while the player read: post it at once, then catch up on the bookkeeping.
-        const ready = takePrewritten(msg.chatId, momentKey(msgs, state, { r, settings }), msg.actionId);
+        const ready = played ? null : takePrewritten(msg.chatId, momentKey(msgs, state, { r, settings }), msg.actionId);
         if (ready) {
           const operation = takeOperation(msg.chatId);
           if (!operation) return;

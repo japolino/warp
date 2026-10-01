@@ -313,7 +313,7 @@ conditions:
     at: campus
     say: "*I swim laps in the university pool.*"
     time: 45
-    check: { chance: 55 + swimming / 2 - fatigue / 3, label: Swimming }
+    check: { chance: 55 + swimming / 2 - fatigue / 3, label: Swimming, game: keys }
     success: { athletics: +0.4, fatigue: +12, stress: -4, hint: "Smooth, steady laps." }
     fail: { fatigue: +16, stress: +1, hint: "{{user}} swallows half the pool and climbs out spluttering." }
 
@@ -323,7 +323,7 @@ conditions:
     at: park
     say: "*I go for a jog around the park.*"
     time: 40
-    check: { chance: 60 + athletics / 2 - fatigue * 2 / 3, label: Athletics }
+    check: { chance: 60 + athletics / 2 - fatigue * 2 / 3, label: Athletics, game: snake }
     success: { athletics: +1, fatigue: +10, stress: -4 }
     fail: { athletics: +0.4, fatigue: +17, pain: +10, hint: "{{user}} pushes too hard and ends up aching and winded." }
 
@@ -334,7 +334,7 @@ conditions:
     when: between(hour, 7, 18)
     say: "*I put on an apron and work a shift at the café.*"
     time: 240
-    check: { chance: 55 + tending / 1.5, label: Tending }
+    check: { chance: 55 + tending / 1.5, label: Tending, game: stack }
     success: { money: 45 + tending / 2, tending: +1.2, fatigue: +20, flags: { worked: true }, hint: "A smooth shift — good tips." }
     fail: { money: 30, tending: +0.6, fatigue: +22, stress: +6, flags: { worked: true }, hint: "A rough shift: rude customers and a smashed tray." }
   buy_raincoat:
@@ -370,6 +370,18 @@ conditions:
     time: 10
     effects: { money: -3, give: coffee }
 
+  three_legged:
+    label: Run the three-legged race with {target}
+    group: Park
+    at: park
+    per_person: true
+    when: "(weekday == 'Sat' or weekday == 'Sun') and between(hour, 10, 17)"
+    say: "*I talk {target} into the three-legged race at the weekend fun run.*"
+    time: 45
+    check: { chance: 35 + athletics / 3 + target.trust / 3, label: Athletics, game: race }
+    success: { stress: -6, fatigue: +8, rel: { target: { trust: +4, love: +2 } }, hint: "{{user}} and {target} cross the line in a tangle of laughter." }
+    fail: { fatigue: +10, pain: +3, rel: { target: { trust: +1 } }, hint: "They go down in a heap — grass stains, and laughing anyway." }
+
   # Quest work: only offered while the job is taken.
   hand_out_flyers:
     label: Hand out club flyers
@@ -388,7 +400,7 @@ conditions:
     requires: { quest: lost_ring }
     say: "*I comb the grass by the duck pond, looking for a glint of gold.*"
     time: 45
-    check: { chance: "30 + (between(hour, 8, 18) ? 15 : 0) - fatigue / 4", label: Luck }
+    check: { chance: "30 + (between(hour, 8, 18) ? 15 : 0) - fatigue / 4", label: Luck, game: mines }
     success: { progress: { lost_ring: 1 }, hint: "Something glints in the grass — the ring." }
     fail: { fatigue: +6, hint: "Bottle caps and a lot of mud." }
 
@@ -399,7 +411,7 @@ conditions:
     say: "*I pick out a distracted mark and go for their wallet.*"
     tags: [crime]
     time: 10
-    check: { chance: 15 + skulduggery / 1.2 - allure / 8, label: Skulduggery }
+    check: { chance: 15 + skulduggery / 1.2 - allure / 8, label: Skulduggery, game: mines }
     crit_success: { money: roll('4d10') + 20, skulduggery: +1.5, hint: "A fat wallet, and nobody noticed a thing." }
     success: { money: roll('2d10') + 5, skulduggery: +1, hint: "Clean lift. Nobody noticed." }
     fail: { crime: +6, stress: +8, skulduggery: +0.3, hint: "The mark catches {{user}}'s wrist and starts shouting." }
@@ -412,9 +424,24 @@ conditions:
     when: hour >= 20 or hour < 4
     say: "*I hit the dance floor.*"
     time: 60
-    check: { chance: 40 + dancing / 1.2, label: Dancing }
+    check: { chance: 40 + dancing / 1.2, label: Dancing, game: keys }
     success: { dancing: +1.2, stress: -6, allure: +3, fatigue: +10, hint: "{{user}} moves well and draws eyes." }
     fail: { dancing: +0.5, stress: +2, fatigue: +10, hint: "Awkward, off the beat, and a little embarrassing." }
+  back_room_cards:
+    label: Cards in the back room
+    group: Nightlife
+    at: the_strip
+    when: hour >= 21 or hour < 3
+    say: "*I pull up a chair at the card game in the back of the bar.*"
+    time: 60
+    gamble: { game: blackjack, stakes: [10, 40, 100], rounds: 5, win: { stress: -5 }, lose: { stress: +4 }, broke: { stress: +12, control: -5 } }
+  fruit_machine:
+    label: Play the fruit machine
+    group: Nightlife
+    at: the_strip
+    say: "*I feed coins into the fruit machine by the door.*"
+    time: 20
+    gamble: { game: slots, stakes: [2, 5, 10], rounds: 6, lose: { stress: +2 } }
   drink:
     label: Have a drink (£6)
     group: Nightlife
@@ -642,7 +669,7 @@ encounters:
     actions:
       fight_back:
         label: Fight back
-        check: { chance: 30 + athletics / 2 - fatigue / 3 - pain / 3, label: Athletics }
+        check: { chance: 30 + athletics / 2 - fatigue / 3 - pain / 3, label: Athletics, game: pinball }
         success: { foe: { nerve: -6 }, hint: "{{user}} lands a solid hit." }
         fail: { pain: +10, hint: "{{user}}'s swing misses and they take a blow." }
       shout:
@@ -655,7 +682,7 @@ encounters:
         effects: { money: "-min(money, 20)", end: robbed }
       run:
         label: Run
-        check: { chance: 35 + athletics / 2 - fatigue / 3 - pain / 2, label: Athletics }
+        check: { chance: 35 + athletics / 2 - fatigue / 3 - pain / 2, label: Athletics, game: snake }
         success: { fatigue: +5, end: escaped }
         fail: { pain: +5, hint: "{{user}} is caught before getting far." }
       jump_in:
