@@ -2,6 +2,8 @@
 
 A game engine under your roleplay. Warp owns stats, dice, time, inventory and relationships; the model only narrates outcomes the engine has already decided.
 
+For core reliability changes and reproducible evaluation without production services, see [the offline harness guide](docs/core-harness.md).
+
 - **Choices** appear under the latest reply (hotkeys 1–9, odds on each button). You can also just type — a quick referee call maps risky attempts to an action (or, when nothing listed fits, rolls it on your closest ability), and the dice decide.
 - **Status panel** floats over the chat (drag it to any screen edge to attach it as a sidebar or strip), plus a **Warp** drawer tab: Sheet · Map · Journal · Ruleset · Settings.
 - **Dice & change chips** on every reply. Changes read from the story are dashed and can be undone with ×.

@@ -259,11 +259,6 @@ export function initialState(r: Ruleset): GameState {
     lastLocation: null,
     uses: {},
   };
-  // Obligations: the first payment is due `first` days in; its amount is read now.
-  for (const o of Object.values(r.obligations)) {
-    const owed = typeof o.amount === "number" ? o.amount : evalNumber(o.amount, makeEnv(r, s), 0);
-    s.dues[o.id] = { due: r.clock.start + o.first * 1440, owed: Math.max(0, owed), missed: 0 };
-  }
   for (const id of r.statOrder) s.stats[id] = r.stats[id].start;
   // Stages with no condition at the top of a secret's ladder are known from the start.
   for (const sec of Object.values(r.secrets)) {
@@ -284,6 +279,12 @@ export function initialState(r: Ruleset): GameState {
     const slot = r.items[id]?.slot;
     if (slot) s.worn[slot] = id;
   }
+  reconcileStats(r, s);
+  // Formula amounts need the initialized stats, flags and people.
+  for (const o of Object.values(r.obligations)) {
+    const owed = typeof o.amount === "number" ? o.amount : evalNumber(o.amount, makeEnv(r, s), 0);
+    s.dues[o.id] = { due: r.clock.start + o.first * 1440, owed: Math.max(0, owed), missed: 0 };
+  }
   return s;
 }
 
@@ -303,7 +304,27 @@ function clamp(v: number, lo: number, hi: number) {
   return Math.min(hi, Math.max(lo, v));
 }
 
+/** Keep dynamic caps valid when any input to their formulas changes. */
+export function reconcileStats(r: Ruleset, s: GameState): void {
+  for (let pass = 0; pass <= r.statOrder.length; pass++) {
+    let changed = false;
+    for (const id of r.statOrder) {
+      const def = r.stats[id];
+      const old = s.stats[id] ?? def.start;
+      const next = clamp(Number.isFinite(old) ? old : def.start, def.min, statMax(r, def, s));
+      if (next !== old) { s.stats[id] = next; changed = true; }
+    }
+    if (!changed) return;
+  }
+}
+
 export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
+  for (const value of Object.values(e)) if (typeof value === "number" && !Number.isFinite(value)) throw new Error(`Non-finite number in ${e.t} event`);
+  applyEventInner(s, e, r);
+  reconcileStats(r, s);
+}
+
+function applyEventInner(s: GameState, e: WarpEvent, r: Ruleset): void {
   switch (e.t) {
     case "stat": {
       const def = r.stats[e.id];

@@ -188,7 +188,7 @@ test("full loop: install → choose → roll → narrate → bookkeeping → swi
   expect((messages[4].extra.spindle_metadata as any).warp.swipes["0"]).toEqual(kept);
 
   // Ruleset entries never reach the prompt.
-  const wi = await wiInterceptor({ entries: book.entries.map((e) => ({ ...e })).concat([{ id: "lore1", world_book_id: "other", comment: "Town lore" }]) });
+  const wi = await wiInterceptor({ chatId: "c1", entries: book.entries.map((e) => ({ ...e })).concat([{ id: "lore1", world_book_id: "other", comment: "Town lore" }]) });
   expect(wi.disabled.length).toBe(book.entries.length);
   expect(wi.disabled).not.toContain("lore1");
 
@@ -219,6 +219,7 @@ test("full loop: install → choose → roll → narrate → bookkeeping → swi
   const dry = await interceptor([{ role: "user", content: "I try to climb the fence." }], { chatId: "c1", generationId: "gdry", generationType: "normal", isDryRun: true, interceptorDeadlineAt: Date.now() + 30000 });
   expect(quietReplies.length).toBe(before);
   expect(dry.messages[0].content).toContain("<warp>");
+  await emit("GENERATION_STOPPED", { generationId: "redo-aborted", chatId: "c1" });
 });
 
 test("real host shape: no generationId in the interceptor context, reply pre-staged before assembly", async () => {

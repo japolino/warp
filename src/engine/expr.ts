@@ -273,7 +273,8 @@ export function evaluate(src: string | number | boolean, env: ExprEnv, opts: Eva
 
 export function evalNumber(src: string | number | boolean | undefined, env: ExprEnv, fallback = 0, opts: EvalOptions = {}): number {
   if (src === undefined) return fallback;
-  return num(evaluate(src, env, opts));
+  const value = num(evaluate(src, env, opts));
+  return Number.isFinite(value) ? value : fallback;
 }
 
 export function evalBool(src: string | number | boolean | undefined, env: ExprEnv, fallback = true, opts: EvalOptions = {}): boolean {
@@ -296,4 +297,20 @@ export function identifiers(src: string | number | boolean | undefined): string[
   };
   try { walk(compile(src)); } catch { /* unreadable formulas name nothing */ }
   return [...out];
+}
+
+/** Inspect all branches without executing expressions or rolling dice. */
+export function references(src: string): { paths: string[][]; calls: string[] } {
+  const paths: string[][] = [], calls = new Set<string>();
+  const walk = (n: Node) => {
+    switch (n.k) {
+      case "id": paths.push(n.path); break;
+      case "call": calls.add(n.name); n.args.forEach(walk); break;
+      case "un": walk(n.a); break;
+      case "bin": walk(n.a); walk(n.b); break;
+      case "tern": walk(n.c); walk(n.a); walk(n.b); break;
+    }
+  };
+  walk(compile(src));
+  return { paths, calls: [...calls] };
 }

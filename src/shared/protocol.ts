@@ -506,7 +506,7 @@ export type BackendToFrontend =
   | { type: "command"; command: "open" | "install" | "dungeon" }
   | { type: "builder"; session: BuilderSession | null };
 
-export type FrontendToBackend =
+type FrontendCommand =
   | { type: "hello"; chatId: string | null }
   | { type: "refresh"; chatId: string | null }
   | { type: "act"; chatId: string; actionId: string; params?: Record<string, string> }
@@ -517,6 +517,7 @@ export type FrontendToBackend =
   | { type: "settings"; patch: Partial<Settings> }
   | { type: "install_template"; chatId: string | null; templateId: string; trackCharacter?: boolean }
   | { type: "reload"; chatId: string | null }
+  | { type: "adopt_rules"; chatId: string }
   /** Replace the reply to `userMessageId` and resend it with this intent (null = "not an action"). */
   | { type: "redo"; chatId: string; userMessageId: string; actionId: string | null; params?: Record<string, string> }
   | { type: "dismiss_suggestion"; chatId: string; messageId: string }
@@ -538,3 +539,5 @@ export type FrontendToBackend =
   | { type: "run"; chatId: string; op: "save" | "load" | "restart" | "continue"; slot?: string }
   | { type: "set_jev_key"; key: string }
   | { type: "test_decider" };
+
+export type FrontendToBackend = FrontendCommand & { commandId?: string };

@@ -7,7 +7,7 @@
 
 import type { Decider } from "../engine/decide.js";
 import { evalBool } from "../engine/expr.js";
-import type { LiveChoice } from "../engine/resolve.js";
+import { validateIntent, type LiveChoice } from "../engine/resolve.js";
 import type { ActionDef, Ruleset } from "../engine/ruleset.js";
 import { makeEnv, type GameState } from "../engine/state.js";
 import { stateDigest } from "../engine/view.js";
@@ -60,6 +60,7 @@ export function cleanChoices(r: Ruleset, s: GameState, tags: ActionDef[], raw: u
     const a = r.liveChoices.tags[tag];
     const target = personId(s, o.target);
     if (a.perPerson && !target) continue;
+    if (validateIntent(r, s, { actionId: `live:${tag}${target ? `@${target}` : ""}`, via: "choice" })) continue;
     seen.add(label.toLowerCase());
     out.push({ label, tag, ...(a.perPerson && target ? { target } : {}) });
     if (out.length >= count) break;

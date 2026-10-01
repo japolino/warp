@@ -14,7 +14,9 @@ import { odds } from "./decisions.js";
 import { getDecider } from "./deciders.js";
 import { ask } from "./helpers.js";
 import { host, logError, send, toast } from "./host.js";
-import { foldPath, getMessages, warpMeta, writeRecord } from "./ledger.js";
+import { appendOperation, foldPath, getMessages, requireCurrentPath, warpMeta, writeRecord } from "./ledger.js";
+import { resolveWithDecisions } from "./decision-loop.js";
+import { currentCommand } from "./serial.js";
 import { getSettings } from "./settings.js";
 import { characterBrief, characterForChat, getRuleset, personProfile } from "./source.js";
 import { busyChats, pushState } from "./state-push.js";
@@ -73,7 +75,7 @@ export async function playScene(opts: {
 }): Promise<void> {
   const { chatId, userId, kind } = opts;
   const loaded = await getRuleset(chatId, userId);
-  const r = loaded?.ruleset;
+  let r = loaded?.ruleset;
   if (!r) return;
   const settings = await getSettings(userId);
   const msgs = await getMessages(chatId);
@@ -86,12 +88,14 @@ export async function playScene(opts: {
   send({ type: "busy", chatId, busy: true, label: kind === "date" ? "…" : "The dungeon stirs…" }, userId);
   try {
     // The state before this move (the dungeon's own step is already recorded).
-    const { state: before } = foldPath(r, msgs);
+    const fold = foldPath(r, msgs);
+    requireCurrentPath(fold);
+    const before = fold.state;
+    r = fold.ruleset;
     if (!log.start) log.start = cloneState(before);
     const player = await playerNameOf(chatId, userId);
     const seed = randomSeed();
     const playerText = opts.typed ?? opts.said ?? "";
-    let res = resolveTurnFull(r, before, opts.intent, { seed, veils: settings.veils, playerText });
     const decider = await getDecider(settings, userId);
     // Who they are: on a date, a profile of that person (card, lorebook, the story so far) — scenario cards included.
     const partner = activeSession(r, before) ?? null;
@@ -105,20 +109,23 @@ export async function playScene(opts: {
       }
     }
     if (!card) card = await characterBrief(chatId, userId).catch(() => "");
-    if (res.needs.length && decider.id !== "rules") {
-      const recent = log.history.slice(-4).map((l) => `${l.speaker ?? ""}${l.speaker ? ": " : ""}${l.text}`).join("\n");
-      const o = await odds({ decider, r, s: before, specs: res.needs, playerText, sceneText: recent, player, timeoutMs: 15000, card });
-      if (Object.keys(o).length) res = resolveTurnFull(r, before, opts.intent, { seed, veils: settings.veils, odds: o, playerText });
-    }
+    const recent = log.history.slice(-4).map((l) => `${l.speaker ?? ""}${l.speaker ? ": " : ""}${l.text}`).join("\n");
+    const gameRules = r;
+    const res = await resolveWithDecisions({
+      resolve: (o) => resolveTurnFull(gameRules, before, opts.intent, { seed, veils: settings.veils, odds: o, playerText }),
+      ask: decider.id === "rules" ? undefined : (specs, remaining, signal) => odds({ decider, r: gameRules, s: before, specs, playerText, sceneText: recent, player, timeoutMs: remaining, card, signal }),
+      deadlineAt: Date.now() + 15000,
+    });
     const rec = res.record;
+    rec.commandId = currentCommand(chatId);
     const after = cloneState(before);
     for (const e of rec.events) applyEvent(after, e, r);
 
     // Recorded quietly on the latest message, like any sheet change.
     const swipe = last.swipe_id ?? 0;
     const existing = warpMeta(last).swipes?.[String(swipe)];
-    const merged: TurnRecord = existing ? { ...existing, events: [...existing.events, ...rec.events] } : { v: 1, hints: [], events: rec.events, at: Date.now() };
-    await writeRecord(chatId, last.id, swipe, merged);
+    const merged = appendOperation(existing, rec);
+    await writeRecord(chatId, last.id, swipe, merged, r);
     await pushState(chatId, userId);
 
     // Dates get their picture while the first lines are written.

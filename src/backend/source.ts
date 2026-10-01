@@ -2,12 +2,14 @@
 // installing templates.
 
 import type { WorldBookEntryDTO } from "lumiverse-spindle-types";
-import { isRulesetBookName, isRulesetEntryTitle, loadRuleset, type RulesetPart } from "../engine/loader.js";
-import { lintRuleset } from "../engine/lint.js";
+import { isRulesetBookName, isRulesetEntryTitle, compileRuleset, type RulesetPart } from "../engine/loader.js";
 import type { Issue, Ruleset } from "../engine/ruleset.js";
 import { getTemplate, looksLikeScenario, withCharacter } from "../engine/templates/index.js";
 import type { RulesetStatus } from "../shared/protocol.js";
 import { host, logError } from "./host.js";
+import { fingerprint } from "../engine/fingerprint.js";
+import { loreAccess } from "../engine/knowledge.js";
+import { foldPath, getMessages } from "./ledger.js";
 
 export interface Loaded {
   characterId: string | null;
@@ -40,10 +42,11 @@ async function listAllEntries(bookId: string, userId?: string): Promise<WorldBoo
 }
 
 export async function characterForChat(chatId: string, userId?: string): Promise<string | null> {
-  if (chatCharacter.has(chatId)) return chatCharacter.get(chatId)!;
+  const key = `${userId ?? "_"}:${chatId}`;
+  if (chatCharacter.has(key)) return chatCharacter.get(key)!;
   const chat = await host().chats.get(chatId, userId);
   const id = chat?.character_id || null;
-  chatCharacter.set(chatId, id);
+  chatCharacter.set(key, id);
   return id;
 }
 
@@ -75,9 +78,9 @@ async function loadForCharacter(characterId: string, userId?: string): Promise<L
     if (found) base.bookIds.push(bookId);
   }
   if (!parts.length) return base;
-  const { ruleset, issues } = loadRuleset(parts);
+  const { ruleset, issues } = compileRuleset(parts);
   base.ruleset = ruleset;
-  base.issues = ruleset ? [...issues, ...lintRuleset(ruleset)] : issues;
+  base.issues = issues;
   base.source = books.join(", ");
   return base;
 }
@@ -92,15 +95,16 @@ export async function getRuleset(chatId: string | null, userId?: string, force =
     return null;
   }
   if (!characterId) return null;
-  const hit = byCharacter.get(characterId);
+  const key = `${userId ?? "_"}:${characterId}`;
+  const hit = byCharacter.get(key);
   if (hit && !force && Date.now() - hit.at < TTL_MS) return hit;
   try {
     const loaded = await loadForCharacter(characterId, userId);
-    byCharacter.set(characterId, loaded);
+    byCharacter.set(key, loaded);
     return loaded;
   } catch (e) {
     logError("loadForCharacter", e);
-    return hit ?? null;
+    return hit ? { ...hit, ruleset: null, issues: [...hit.issues, { level: "error", where: "ruleset", message: "Could not reload the ruleset." }] } : null;
   }
 }
 
@@ -110,7 +114,8 @@ const briefs = new Map<string, { text: string; at: number }>();
 export async function characterBrief(chatId: string, userId?: string): Promise<string> {
   const id = await characterForChat(chatId, userId).catch(() => null);
   if (!id) return "";
-  const hit = briefs.get(id);
+  const key = `${userId ?? "_"}:${id}`;
+  const hit = briefs.get(key);
   if (hit && Date.now() - hit.at < 60_000) return hit.text;
   const c = await host().characters.get(id, userId).catch(() => null);
   const text = c ? [
@@ -119,13 +124,17 @@ export async function characterBrief(chatId: string, userId?: string): Promise<s
     c.personality && `Personality: ${c.personality}`,
     c.scenario && `Scenario: ${c.scenario}`,
   ].filter(Boolean).join("\n").slice(0, 4000) : "";
-  briefs.set(id, { text, at: Date.now() });
+  briefs.set(key, { text, at: Date.now() });
   return text;
 }
 
 export function invalidateCharacter(characterId?: string | null) {
-  if (characterId) { byCharacter.delete(characterId); briefs.delete(characterId); }
+  if (characterId) {
+    for (const key of byCharacter.keys()) if (key.endsWith(`:${characterId}`)) byCharacter.delete(key);
+    for (const key of briefs.keys()) if (key.endsWith(`:${characterId}`)) briefs.delete(key);
+  }
   else { byCharacter.clear(); briefs.clear(); }
+  chatCharacter.clear(); profiles.clear();
 }
 
 export function statusOf(l: Loaded | null): RulesetStatus {
@@ -227,7 +236,10 @@ export function aboutThem(text: string | undefined | null, re: RegExp, budget: n
  * entries keyed to their name, and how the recent story has shown them.
  */
 export async function personProfile(chatId: string, name: string, userId?: string, note?: string): Promise<PersonProfile> {
-  const key = `${chatId}:${name.toLowerCase()}`;
+  const loaded = await getRuleset(chatId, userId);
+  const msgs = await getMessages(chatId).catch(() => []);
+  const fold = loaded?.ruleset ? foldPath(loaded.ruleset, msgs) : null;
+  const key = `${userId ?? "_"}:${chatId}:${name.toLowerCase()}:${fingerprint([fold?.revision, fold?.state, msgs.map((m) => [m.id, m.swipe_id, m.content]), note])}`;
   const hit = profiles.get(key);
   if (hit && Date.now() - hit.at < PROFILE_TTL) return hit.p;
   const re = nameRe(name);
@@ -254,6 +266,9 @@ export async function personProfile(chatId: string, name: string, userId?: strin
       for (const e of entries) {
         if (lore.length >= 3) break;
         if (isRulesetEntryTitle(e.comment)) continue;
+        if (!loaded || (loaded.source && !fold)) continue;
+        const access = fold ? loreAccess(fold.ruleset, fold.state, e.comment ?? "") : { gated: false, open: true };
+        if (!access.open || (e.disabled && !access.gated)) continue;
         const keys = [...(e.key ?? []), e.comment ?? ""].join(" ");
         if (re.test(keys)) lore.push(e.content.length > 900 ? `${e.content.slice(0, 900)}…` : e.content);
       }
@@ -262,8 +277,6 @@ export async function personProfile(chatId: string, name: string, userId?: strin
   }
   // How the story has shown them lately.
   try {
-    const { getMessages } = await import("./ledger.js");
-    const msgs = await getMessages(chatId);
     const seen: string[] = [];
     let n = 0;
     for (const m of [...msgs].reverse().slice(0, 40)) {
@@ -277,6 +290,7 @@ export async function personProfile(chatId: string, name: string, userId?: strin
     if (seen.length) parts.push(`How the story has shown them:\n${seen.join("\n")}`);
   } catch { /* no history */ }
   const p: PersonProfile = { text: parts.filter(Boolean).join("\n\n").slice(0, 4500), scenario, setting };
+  if (profiles.size >= 128) profiles.delete(profiles.keys().next().value!);
   profiles.set(key, { at: Date.now(), p });
   return p;
 }

@@ -7,6 +7,8 @@
     "test": "bun test",
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "verify": "bun run test && bun run typecheck",
+    "harness": "bun scripts/harness.ts",
+    "calibrate": "bun scripts/calibrate.ts",
     "build": "tsc --project tsconfig.build.json --noEmit && bun build ./src/backend.ts ./src/frontend.ts --outdir ./dist --target browser --format esm"
   },
   "dependencies": {

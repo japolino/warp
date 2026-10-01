@@ -11,6 +11,7 @@ import { presentPeople } from "../engine/world.js";
 import { stateDigest } from "../engine/view.js";
 import type { Settings } from "../shared/protocol.js";
 import { host, logError } from "./host.js";
+import { withDeadline } from "./deadline.js";
 
 export function firstJson(text: string): Record<string, unknown> | null {
   const cleaned = text.replace(/```(?:json)?/gi, "");
@@ -39,6 +40,7 @@ export async function ask(
   system: string, user: string, settings: Settings, userId: string | undefined, timeoutMs: number,
   opts: { temperature?: number; maxTokens?: number } = {},
 ): Promise<string> {
+  return withDeadline({ timeoutMs }, timeoutMs, async (signal) => {
   const res = (await host().generate.quiet({
     type: "quiet",
     messages: [
@@ -49,9 +51,10 @@ export async function ask(
     reasoning: { source: "off" },
     parameters: { temperature: opts.temperature ?? 0.1, max_tokens: opts.maxTokens ?? 500 },
     userId,
-    signal: AbortSignal.timeout(Math.max(3000, timeoutMs)),
+    signal,
   })) as GenerationResponseDTO | string;
   return typeof res === "string" ? res : res?.content ?? "";
+  });
 }
 
 function clip(s: string, n: number) {
@@ -79,9 +82,9 @@ export async function extract(
 
   const want = (k: ExtractPart) => !only || only.has(k);
   const allowed: string[] = [];
-  if (want("minutes") && r.clock.enabled) allowed.push(`- "minutes": how much in-story time the reply covers (0–${r.clock.narratorMax}).`);
-  if (want("stats") && stats.length) allowed.push(`- "stats": changes (deltas) to: ${stats.map((d) => `${d.id} (±${formatNumber(d.narrator)})`).join(", ")}`);
-  if (want("rel") && rels.length) allowed.push(`- "rel": per person name, deltas to: ${rels.map((d) => `${d.id} (±${formatNumber(d.narrator)})`).join(", ")}`);
+  if (want("minutes") && r.clock.enabled) allowed.push(`- "minutes": TOTAL in-story time the reply covers, including time already applied by the rules. Additional time is capped at ${r.clock.narratorMax}.`);
+  if (want("stats") && stats.length) allowed.push(`- "stats": TOTAL deltas to: ${stats.map((d) => `${d.id} (additional changes capped at ±${formatNumber(d.narrator)})`).join(", ")}`);
+  if (want("rel") && rels.length) allowed.push(`- "rel": per person name, TOTAL deltas to: ${rels.map((d) => `${d.id} (additional changes capped at ±${formatNumber(d.narrator)})`).join(", ")}`);
   // Starting feelings are absolute values on each stat's scale, read once when someone first appears.
   const feelScale = rels.map((d) => `${d.id} ${d.min}–${d.max}${d.bands.length ? ` (${d.bands.map((b) => `${b.at}=${b.text}`).join(", ")})` : ""}`).join("; ");
   const tracked = Object.values(s.people).map((p) => p.name);
@@ -127,7 +130,7 @@ export async function extract(
   const system = [
     "You are the bookkeeper for a text roleplay game. You never write story.",
     "Read the narrator's latest reply and record only what CLEARLY happened in it.",
-    "Small, sensible deltas for changes. Omit anything unchanged. Do not re-apply dice outcomes that were already applied.",
+    'Use "basis": "total". Stats, relationship and inventory deltas describe TOTAL changes in this exchange, including the decided outcome. The engine subtracts what it already applied. Omit unchanged fields.',
     "Exception: \"feelings\" (and people.feelings) are where someone stands overall right now — read them from how they act, even if that means strong values.",
     "You may report:",
     ...allowed,
@@ -142,13 +145,14 @@ export async function extract(
     "",
     "Narrator's reply:",
     clip(reply, 4000),
-    ...(applied ? ["", "Already applied by the rules this turn (don't report these again):", applied] : []),
+    ...(applied ? ["", "Already applied by the rules this turn (include these in TOTAL numeric deltas and minutes; the engine subtracts them):", applied] : []),
   ].join("\n");
 
   try {
     const out = firstJson(await ask(system, user, settings, userId, 30000));
     if (!out) return null;
     const p = out as Proposal & { present?: unknown; trained?: unknown; encounter_end?: unknown };
+    p.basis = "total";
     if (Array.isArray(p.present)) {
       // The full list of who's there: whoever was here and isn't on it has left.
       const listed = p.present.map(String).filter(Boolean);

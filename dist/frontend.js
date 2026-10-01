@@ -2180,7 +2180,7 @@ function setup(ctx) {
   let dgPick = null;
   const dgMates = new Set;
   const openSections = new Map;
-  const send = (m) => ctx.sendToBackend(m);
+  const send = (m) => ctx.sendToBackend({ ...m, commandId: m.commandId ?? crypto.randomUUID() });
   const chatId = () => {
     try {
       return ctx.getActiveChat().chatId ?? null;

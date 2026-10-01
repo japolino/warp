@@ -288,7 +288,8 @@ function evaluate(src, env, opts = {}) {
 function evalNumber(src, env, fallback = 0, opts = {}) {
   if (src === undefined)
     return fallback;
-  return num(evaluate(src, env, opts));
+  const value = num(evaluate(src, env, opts));
+  return Number.isFinite(value) ? value : fallback;
 }
 function evalBool(src, env, fallback = true, opts = {}) {
   if (src === undefined)
@@ -325,6 +326,34 @@ function identifiers(src) {
     walk(compile(src));
   } catch {}
   return [...out];
+}
+function references(src) {
+  const paths = [], calls = new Set;
+  const walk = (n) => {
+    switch (n.k) {
+      case "id":
+        paths.push(n.path);
+        break;
+      case "call":
+        calls.add(n.name);
+        n.args.forEach(walk);
+        break;
+      case "un":
+        walk(n.a);
+        break;
+      case "bin":
+        walk(n.a);
+        walk(n.b);
+        break;
+      case "tern":
+        walk(n.c);
+        walk(n.a);
+        walk(n.b);
+        break;
+    }
+  };
+  walk(compile(src));
+  return { paths, calls: [...calls] };
 }
 var ExprError, OPS, BP, cache, MATH;
 var init_expr = __esm(() => {
@@ -427,6 +456,8 @@ function parseDice(src) {
     throw new DiceError(`"${src}" isn't valid dice notation (try d20, 2d6, d100, 4d6kh3)`);
   if (!groups.length)
     throw new DiceError(`"${src}" has no dice in it`);
+  if (!Number.isFinite(flat))
+    throw new DiceError("Dice modifier must be finite");
   return { groups, flat, primarySides: Math.max(...groups.map((g) => g.sides)) };
 }
 function rollDice(notation, rng) {
@@ -463,11 +494,42 @@ function rollDice(notation, rng) {
   });
   return { notation, dice, total, natural, primarySides: parsed.primarySides };
 }
-var DiceError, TERM;
+function diceDistribution(notation) {
+  if (distributions.has(notation))
+    return distributions.get(notation);
+  const parsed = parseDice(notation);
+  const sides = parsed.groups.flatMap((g) => Array(g.count).fill(g.sides));
+  const count = sides.reduce((n, s) => n * s, 1);
+  let result = null;
+  if (!parsed.groups.some((g) => g.explode) && count <= 1e4) {
+    const totals = new Map;
+    for (let n = 0;n < count; n++) {
+      let remaining = n, i = 0;
+      const roll = rollDice(notation, () => {
+        const s = sides[i++], face = remaining % s;
+        remaining = Math.floor(remaining / s);
+        return (face + 0.5) / s;
+      });
+      const key = `${roll.total}:${roll.natural}`;
+      const found = totals.get(key);
+      if (found)
+        found.p += 1 / count;
+      else
+        totals.set(key, { total: roll.total, natural: roll.natural, primarySides: roll.primarySides, p: 1 / count });
+    }
+    result = Object.freeze([...totals.values()].map((o) => Object.freeze(o)));
+  }
+  if (distributions.size >= 128)
+    distributions.delete(distributions.keys().next().value);
+  distributions.set(notation, result);
+  return result;
+}
+var DiceError, TERM, distributions;
 var init_dice = __esm(() => {
   DiceError = class DiceError extends Error {
   };
   TERM = /([+-]?)\s*(?:(\d*)d(\d+|%)(?:(kh|kl)(\d+))?(!)?|(\d+))/gy;
+  distributions = new Map;
 });
 
 // src/engine/dungeon/content.ts
@@ -1250,7 +1312,7 @@ function titleCase(id) {
   return id.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 function slug(s) {
-  return String(s).trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "x";
+  return String(s).normalize("NFKC").trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "_").replace(/^_+|_+$/g, "") || "x";
 }
 function parseClockStart(v, weekdays) {
   if (typeof v === "number" && Number.isFinite(v))
@@ -1298,8 +1360,12 @@ class Ctx3 {
   expr(v, where) {
     if (v === undefined || v === null)
       return;
-    if (typeof v === "number")
-      return v;
+    if (typeof v === "number") {
+      if (Number.isFinite(v))
+        return v;
+      this.err(where, "Formulas must contain finite numbers");
+      return;
+    }
     if (typeof v === "boolean")
       return v ? 1 : 0;
     const s = String(v);
@@ -1415,7 +1481,7 @@ function normStat(id, raw, where, c, forRel = false) {
     min,
     max,
     maxExpr,
-    start: Math.min(max, Math.max(min, start)),
+    start: maxExpr ? Math.max(min, start) : Math.min(max, Math.max(min, start)),
     good,
     perHour: c.num(r.per_hour ?? r.perHour, `${where} › per_hour`, 0),
     show: k === "hidden" ? "hidden" : show,
@@ -2994,7 +3060,99 @@ var init_ruleset = __esm(() => {
   SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
 });
 
+// src/engine/proposal.ts
+function objectOf(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+function map(value, read) {
+  const out = {};
+  for (const [key, v] of Object.entries(objectOf(value)).slice(0, 64)) {
+    if (!safeKey(key))
+      continue;
+    const decoded = read(v);
+    if (decoded !== undefined)
+      out[key] = decoded;
+  }
+  return out;
+}
+function decodeProposal(value) {
+  const raw = objectOf(value), p = {};
+  if (raw.basis === "total" || raw.basis === "additional")
+    p.basis = raw.basis;
+  if (finite(raw.minutes))
+    p.minutes = Math.max(0, raw.minutes);
+  p.stats = numbers(raw.stats);
+  p.items = numbers(raw.items);
+  p.used = numbers(raw.used);
+  p.rel = map(raw.rel, numbers);
+  p.feelings = map(raw.feelings, numbers);
+  p.scene = map(raw.scene, (v) => typeof v === "boolean" ? v : undefined);
+  p.flags = map(raw.flags, (v) => v === null || typeof v === "boolean" || finite(v) ? v : typeof v === "string" ? v.slice(0, 300) : undefined);
+  p.body = map(raw.body, (v) => map(v, (t) => t === null ? null : typeof t === "string" ? t.slice(0, 60) : undefined));
+  p.move = text(raw.move);
+  p.encounter = text(raw.encounter);
+  p.encounterEnd = text(raw.encounterEnd);
+  p.foe = text(raw.foe);
+  p.wear = strings(raw.wear);
+  p.undress = strings(raw.undress);
+  p.train = strings(raw.train);
+  const conditions = objectOf(raw.conditions);
+  p.conditions = { add: strings(conditions.add), remove: strings(conditions.remove) };
+  p.people = Array.isArray(raw.people) ? raw.people.slice(0, 32).flatMap((v) => {
+    const person = objectOf(v), name = text(person.name), id = text(person.id);
+    return name && safeKey(name) && (!id || safeKey(id)) ? [{ name, ...id ? { id } : {}, feelings: numbers(person.feelings) }] : [];
+  }) : [];
+  return p;
+}
+var safeKey = (key) => key.length <= 300 && !["__proto__", "constructor", "prototype"].includes(key), text = (value) => typeof value === "string" && value.trim() ? value.trim().slice(0, 300) : undefined, finite = (value) => typeof value === "number" && Number.isFinite(value), numbers = (value) => map(value, (v) => finite(v) ? v : undefined), strings = (value) => Array.isArray(value) ? value.slice(0, 32).flatMap((v) => {
+  const s = text(v);
+  return s && safeKey(s) ? [s] : [];
+}) : [];
+
 // src/engine/decide.ts
+function decodeAnswers(value, questions) {
+  const raw = objectOf(value), out = {};
+  const probability = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1;
+  for (const [id, q] of Object.entries(questions)) {
+    if (!safeKey(id))
+      continue;
+    const a = objectOf(raw[id]);
+    if (a.type !== undefined && a.type !== q.type)
+      continue;
+    if (q.type === "noul") {
+      const p = a.noul ?? a.p ?? a.probability;
+      if (probability(p))
+        out[id] = { type: "noul", noul: p };
+      continue;
+    }
+    const keys = q.type === "choice" ? Object.keys(q.criteria) : q.criteria.map((_, i) => String(i));
+    if (!keys.length)
+      continue;
+    const pick = q.type === "choice" ? a.choice : a.score ?? a.level;
+    if (q.type === "choice" ? typeof pick !== "string" || !keys.includes(pick) : typeof pick !== "number" || !Number.isFinite(pick) || pick < 0 || pick > keys.length - 1)
+      continue;
+    const confidence = a.confidence;
+    if (confidence !== undefined && !probability(confidence))
+      continue;
+    let p;
+    if (a.probabilities !== undefined && !(q.type === "score" && Object.keys(objectOf(a.probabilities)).length === 0)) {
+      const map = objectOf(a.probabilities);
+      if (!Object.keys(map).length || Object.entries(map).some(([k, v]) => !keys.includes(k) || !probability(v)) || !Object.values(map).some((v) => v > 0))
+        continue;
+      p = normalize(map, keys);
+    } else {
+      if (typeof confidence !== "number")
+        continue;
+      const selected = String(q.type === "score" ? Math.round(pick) : pick);
+      p = Object.fromEntries(keys.map((k) => [k, keys.length === 1 ? 1 : k === selected ? confidence : (1 - confidence) / (keys.length - 1)]));
+    }
+    if (q.type === "choice")
+      out[id] = { type: "choice", choice: pick, confidence: confidence ?? p[pick], probabilities: p };
+    else
+      out[id] = { type: "score", score: pick, confidence: confidence ?? Math.max(...Object.values(p)), probabilities: p };
+  }
+  return out;
+}
 function normalize(p, keys) {
   const out = {};
   let sum = 0;
@@ -3024,6 +3182,7 @@ function sample(p, rng) {
 function noulConfidence(p) {
   return Math.abs(2 * p - 1);
 }
+var init_decide = () => {};
 
 // src/engine/date/stage.ts
 function relPct(r, s, who, stat) {
@@ -3243,10 +3402,6 @@ function initialState(r) {
     lastLocation: null,
     uses: {}
   };
-  for (const o of Object.values(r.obligations)) {
-    const owed = typeof o.amount === "number" ? o.amount : evalNumber(o.amount, makeEnv(r, s), 0);
-    s.dues[o.id] = { due: r.clock.start + o.first * 1440, owed: Math.max(0, owed), missed: 0 };
-  }
   for (const id of r.statOrder)
     s.stats[id] = r.stats[id].start;
   for (const sec of Object.values(r.secrets)) {
@@ -3272,6 +3427,11 @@ function initialState(r) {
     if (slot)
       s.worn[slot] = id;
   }
+  reconcileStats(r, s);
+  for (const o of Object.values(r.obligations)) {
+    const owed = typeof o.amount === "number" ? o.amount : evalNumber(o.amount, makeEnv(r, s), 0);
+    s.dues[o.id] = { due: r.clock.start + o.first * 1440, owed: Math.max(0, owed), missed: 0 };
+  }
   return s;
 }
 function foeName(r, s) {
@@ -3288,7 +3448,30 @@ function statMax(r, def, s) {
 function clamp(v, lo, hi) {
   return Math.min(hi, Math.max(lo, v));
 }
+function reconcileStats(r, s) {
+  for (let pass = 0;pass <= r.statOrder.length; pass++) {
+    let changed = false;
+    for (const id of r.statOrder) {
+      const def = r.stats[id];
+      const old = s.stats[id] ?? def.start;
+      const next = clamp(Number.isFinite(old) ? old : def.start, def.min, statMax(r, def, s));
+      if (next !== old) {
+        s.stats[id] = next;
+        changed = true;
+      }
+    }
+    if (!changed)
+      return;
+  }
+}
 function applyEvent(s, e, r) {
+  for (const value of Object.values(e))
+    if (typeof value === "number" && !Number.isFinite(value))
+      throw new Error(`Non-finite number in ${e.t} event`);
+  applyEventInner(s, e, r);
+  reconcileStats(r, s);
+}
+function applyEventInner(s, e, r) {
   switch (e.t) {
     case "stat": {
       const def = r.stats[e.id];
@@ -5263,10 +5446,10 @@ function actionPool(r, s) {
     return { defs: enc.actions, order: enc.actionOrder, tags: enc.tags };
   return { defs: r.actions, order: r.actionOrder, tags: [] };
 }
-function isAvailable(r, s, a, target) {
+function isAvailable(r, s, a, target, params) {
   if (!s.encounter && a.at.length && !a.at.includes(s.location ?? ""))
     return false;
-  if (a.when && !evalBool(a.when, makeEnv(r, s, paramValues(a, undefined, target)), true))
+  if (a.when && !evalBool(a.when, makeEnv(r, s, paramValues(a, params, target)), false))
     return false;
   return true;
 }
@@ -5303,6 +5486,38 @@ function findAction(r, s, actionId) {
   }
   const a = base.startsWith(LIVE_PREFIX) ? r.liveChoices.tags[base.slice(LIVE_PREFIX.length)] : actionPool(r, s).defs[base];
   return a ? { a, ...target ? { target } : {} } : null;
+}
+function validateIntent(r, s, intent, lines = []) {
+  if (typeof intent.actionId !== "string" || intent.actionId.length > 300)
+    return "Invalid action.";
+  const id = intent.actionId;
+  if (s.ended?.told && id !== RUN_EPILOGUE)
+    return "This playthrough has ended.";
+  if (id.startsWith(TRAVEL_PREFIX))
+    return travelTargets(r, s).includes(id.slice(TRAVEL_PREFIX.length)) ? null : "That destination is not reachable now.";
+  if (id === EXPLORE)
+    return canExplore(r, s) ? null : "Exploration is not available now.";
+  if (id === "dungeon" && s.dungeon)
+    return null;
+  if (id.startsWith(DATE_PREFIX) || id.startsWith(PAY_PREFIX) || id.startsWith(JOB_PREFIX) || id === RUN_EPILOGUE)
+    return null;
+  const found = findAction(r, s, id);
+  if (!found)
+    return "Unknown action.";
+  const { a, target } = found;
+  if (a.perPerson && (!target || !presentPeople(r, s, makeEnv(r, s)).includes(target)))
+    return "That person is not present now.";
+  if (!a.perPerson && target && !presentPeople(r, s, makeEnv(r, s)).includes(target))
+    return "That person is not present now.";
+  const blocked = new Set(lines.map((l) => l.toLowerCase()));
+  if ([...a.tags, ...actionPool(r, s).tags].some((t) => blocked.has(t)))
+    return "This action is blocked by your lines.";
+  for (const [key, value] of Object.entries(intent.params ?? {})) {
+    const param = a.params.find((p) => p.id === key);
+    if (!param || !Object.hasOwn(param.options, value))
+      return "Invalid action parameter.";
+  }
+  return isAvailable(r, s, a, target, intent.params) ? null : "This action is not available now.";
 }
 function tierFor(check, roll, add, target) {
   const total = roll.total + add;
@@ -5357,21 +5572,39 @@ function odds(r, s, a, params, who) {
   const check = a.check;
   if (!check)
     return null;
-  const { add, target } = checkNumbers(r, s, a, params, who);
-  if (check.style === "chance" && check.dice === "d100" && target !== null) {
-    return { success: target / 100, partial: 0 };
+  const randomCost = /\broll\s*\(/.test(JSON.stringify(a.cost)) || a.cost.decide.length > 0;
+  const paid = new Working(r, cloneState(s), seededRng(`odds:${a.id}:cost`));
+  effectToEvents(paid, a.cost, "cost", paramValues(a, params, who));
+  const { add, target } = checkNumbers(r, paid.s, a, params, who);
+  const exact = randomCost ? null : diceDistribution(check.dice);
+  if (exact) {
+    let success = 0, partial = 0;
+    for (const roll of exact) {
+      const tier = tierFor(check, roll, add, target);
+      if (tier === "success" || tier === "crit_success")
+        success += roll.p;
+      else if (tier === "partial")
+        partial += roll.p;
+    }
+    return { success: Math.min(1, success), partial: Math.min(1, partial) };
   }
   const rng = seededRng(`odds:${a.id}`);
   const N = 2000;
   let ok = 0, part = 0;
   for (let i = 0;i < N; i++) {
-    const t = tierFor(check, rollDice(check.dice, rng), add, target);
+    let numbers = { add, target };
+    if (randomCost) {
+      const sample = new Working(r, cloneState(s), rng);
+      effectToEvents(sample, a.cost, "cost", paramValues(a, params, who));
+      numbers = checkNumbers(r, sample.s, a, params, who);
+    }
+    const t = tierFor(check, rollDice(check.dice, rng), numbers.add, numbers.target);
     if (t === "success" || t === "crit_success")
       ok++;
     else if (t === "partial")
       part++;
   }
-  return { success: ok / N, partial: part / N };
+  return { success: ok / N, partial: part / N, approximate: true };
 }
 function flagValue(v, env) {
   if (typeof v !== "string")
@@ -6050,7 +6283,8 @@ function advanceTime(w, minutes, src) {
 }
 function runTriggers(w, includeRepeat) {
   const fired = new Set;
-  for (let pass = 0;pass < 5; pass++) {
+  const budget = Math.min(128, Math.max(5, w.r.triggers.length * 2 + 1));
+  for (let pass = 0;pass < budget; pass++) {
     let changed = false;
     for (const t of w.r.triggers) {
       if (t.whenScene && !(t.id in w.scene))
@@ -6060,7 +6294,8 @@ function runTriggers(w, includeRepeat) {
       const why = `Rule "${t.id.replace(/_/g, " ")}"${t.when ? ` (${t.when})` : ""}${t.whenScene ? ` — judged: ${t.whenScene}` : ""}`;
       if (now && !prev) {
         w.push({ t: "trig", id: t.id, v: true, src: "trigger" });
-        because(w, why, () => effectToEvents(w, t.effects, "trigger", {}));
+        if (!fired.has(t.id))
+          because(w, why, () => effectToEvents(w, t.effects, "trigger", {}));
         fired.add(t.id);
         changed = true;
       } else if (now && t.repeat && includeRepeat && !fired.has(t.id)) {
@@ -6074,6 +6309,8 @@ function runTriggers(w, includeRepeat) {
     }
     if (!changed)
       break;
+    if (pass === budget - 1)
+      w.hints.push("Rules did not settle within the trigger budget. Check for cyclic trigger conditions.");
   }
   for (const c of Object.values(w.r.codex)) {
     if (c.unlock && !w.s.codex[c.id] && evalBool(c.unlock, w.env(), false))
@@ -6112,9 +6349,16 @@ function mindOverride(r, s, a, target, seed) {
 function resolveInner(r, before, intent, opts, needs) {
   if (before.ended?.told && intent?.actionId !== RUN_EPILOGUE)
     intent = null;
+  if (intent) {
+    const error = validateIntent(r, before, intent);
+    if (error)
+      return { v: 1, hints: [error], events: [], rejected: [error], at: Date.now() };
+  }
+  if (before.ended?.told && intent?.actionId !== RUN_EPILOGUE)
+    intent = null;
   const w = new Working(r, cloneState(before), seededRng(`${opts.seed}:fx`), opts.seed, opts.odds ?? {}, opts.scene ?? {});
   w.defer = false;
-  const rec = { v: 1, hints: [], events: [], at: Date.now() };
+  const rec = { v: 1, hints: [], events: [], at: Date.now(), inputs: { seed: opts.seed, scene: { ...opts.scene }, odds: structuredClone(opts.odds ?? {}), encounter: opts.encounter } };
   if (!w.s.seed)
     w.push({ t: "seed", v: opts.seed, src: "start" });
   if (before.notices.length) {
@@ -6314,21 +6558,35 @@ function clampAbs(v, lim) {
   return Math.max(-lim, Math.min(lim, v));
 }
 function findPerson(r, s, key) {
-  const k = String(key).trim().toLowerCase();
+  const k = String(key).normalize("NFKC").trim().toLowerCase();
   if (!k)
     return null;
-  const sl = slug(k);
   for (const [id, p] of Object.entries(s.people))
-    if (id === k || id === sl || p.name.toLowerCase() === k)
+    if (id.toLowerCase() === k || p.name.normalize("NFKC").toLowerCase() === k)
       return id;
   for (const p of Object.values(r.people))
-    if (p.id === k || p.id === sl || p.name.toLowerCase() === k)
+    if (p.id.toLowerCase() === k || p.name.normalize("NFKC").toLowerCase() === k)
       return p.id;
   const first = (n) => n.toLowerCase().split(/\s+/)[0];
-  const hits = Object.entries(s.people).filter(([, p]) => first(p.name) === first(k));
+  const hits = Object.entries(s.people).filter(([, p]) => first(p.name) === first(k) && (!/\s/.test(k) || !/\s/.test(p.name.trim())));
   return hits.length === 1 ? hits[0][0] : null;
 }
 function applyProposal(r, before, p, ctx) {
+  p = decodeProposal(p);
+  const applied = ctx?.applied ?? [];
+  const touched = (type, key) => applied.some((e) => e.t === type && ("id" in e ? e.id === key : ("key" in e) ? e.key === key : true));
+  const reject = (reason) => {
+    ctx?.rejected?.push(reason);
+  };
+  const residual = (kind, id, value, who) => {
+    if (p.basis !== "total")
+      return value;
+    if (ctx?.origin) {
+      const delta = kind === "stat" ? before.stats[id] - (ctx.origin.stats[id] ?? 0) : kind === "item" ? (before.items[id] ?? 0) - (ctx.origin.items[id] ?? 0) : (before.rel[who]?.[id] ?? r.relStats[id]?.start ?? 0) - (ctx.origin.rel[who]?.[id] ?? r.relStats[id]?.start ?? 0);
+      return value - delta;
+    }
+    return value - applied.reduce((n, e) => n + (e.t === kind && "id" in e && e.id === id && "d" in e ? e.d ?? 0 : e.t === "rel" && kind === "rel" && e.who === who && e.stat === id ? e.d ?? 0 : 0), 0);
+  };
   const w = new Working(r, cloneState(before), seededRng(`narrator:${before.turn}`));
   w.cause = "Read from the story";
   const src = "narrator";
@@ -6345,7 +6603,10 @@ function applyProposal(r, before, p, ctx) {
     }
     if (!r.peopleOpen)
       continue;
-    const id = slug(person.id || person.name);
+    const base = slug(person.id || person.name);
+    let id = base, suffix = 2;
+    while (w.s.people[id] || r.people[id])
+      id = `${base}_${suffix++}`;
     if (!w.s.people[id])
       w.push({ t: "person", id, name: person.name, src });
     calibrate(w, id, person.feelings ?? {}, src);
@@ -6362,7 +6623,7 @@ function applyProposal(r, before, p, ctx) {
       continue;
     if (!gateOpen(def.gate, w, ctx))
       continue;
-    const v = clampAbs(d, def.narrator);
+    const v = clampAbs(residual("stat", id, d), def.narrator);
     if (v !== 0)
       w.push({ t: "stat", id, d: v, src });
   }
@@ -6371,7 +6632,10 @@ function applyProposal(r, before, p, ctx) {
     if (!id) {
       if (!r.peopleOpen)
         continue;
-      id = slug(who);
+      const base = slug(who);
+      id = base;
+      for (let suffix = 2;w.s.people[id] || r.people[id]; suffix++)
+        id = `${base}_${suffix}`;
       w.push({ t: "person", id, name: who, src });
     }
     for (const [stat, d] of Object.entries(m ?? {})) {
@@ -6380,7 +6644,7 @@ function applyProposal(r, before, p, ctx) {
         continue;
       if (!gateOpen(def.gate, w, ctx))
         continue;
-      const v = clampAbs(d, def.narrator);
+      const v = clampAbs(residual("rel", stat, d, id), def.narrator);
       if (v !== 0)
         w.push({ t: "rel", who: id, stat, d: v, src });
     }
@@ -6391,10 +6655,17 @@ function applyProposal(r, before, p, ctx) {
     const k = key.toLowerCase();
     const declared = Object.values(r.items).find((i) => i.id === k || i.name.toLowerCase() === k);
     const held = Object.keys(w.s.items).find((id) => id === k || (w.s.itemNames[id] ?? "").toLowerCase() === k);
-    const id = declared?.id ?? held ?? slug(key);
+    let id = declared?.id ?? held ?? slug(key);
+    if (!declared && !held) {
+      const base = id;
+      for (let suffix = 2;w.s.items[id] || r.items[id]; suffix++)
+        id = `${base}_${suffix}`;
+    }
     if (!declared && !r.itemsOpen)
       continue;
-    const n = Math.round(clampAbs(d, 10));
+    const n = Math.round(clampAbs(residual("item", id, d), 10));
+    if (n === 0)
+      continue;
     if (n < 0 && !(w.s.items[id] > 0))
       continue;
     w.push({ t: "item", id, d: n, ...declared ? {} : { name: key }, src });
@@ -6408,6 +6679,12 @@ function applyProposal(r, before, p, ctx) {
       w.push({ t: "use", id, n: Math.min(10, Math.round(n)), src });
   }
   if (p.move) {
+    if (applied.some((e) => e.t === "move")) {
+      reject("Narrator movement conflicts with the decided destination.");
+      delete p.move;
+    }
+  }
+  if (p.move) {
     const k = p.move.toLowerCase();
     const loc = Object.values(r.locations).find((l) => l.id === k || l.name.toLowerCase() === k);
     if (loc && loc.id !== w.s.location)
@@ -6416,16 +6693,29 @@ function applyProposal(r, before, p, ctx) {
       w.push({ t: "move", to: slug(p.move), name: p.move, src });
   }
   for (const id of p.conditions?.add ?? []) {
+    if (touched("cond", id)) {
+      reject(`Condition ${id} was already decided.`);
+      continue;
+    }
     const def = r.conditions[id];
     if (def?.narrator && !w.s.conditions[id] && gateOpen(def.gate, w, ctx))
       w.push({ t: "cond", id, on: true, until: null, src });
   }
   for (const id of p.conditions?.remove ?? []) {
+    if (touched("cond", id)) {
+      reject(`Condition ${id} was already decided.`);
+      continue;
+    }
     const def = r.conditions[id];
     if (def?.narrator && w.s.conditions[id] && gateOpen(def.gate, w, ctx))
       w.push({ t: "cond", id, on: false, src });
   }
   for (const [key, v] of Object.entries(p.flags ?? {})) {
+    if (touched("flag", key)) {
+      if (v !== before.flags[key])
+        reject(`Flag ${key} conflicts with the decided outcome.`);
+      continue;
+    }
     if (r.flags[key]?.narrator && gateOpen(r.flags[key].gate, w, ctx))
       w.push({ t: "flag", key, v, src });
   }
@@ -6460,7 +6750,8 @@ function applyProposal(r, before, p, ctx) {
     }
   }
   if (typeof p.minutes === "number" && Number.isFinite(p.minutes) && p.minutes > 0) {
-    advanceTime(w, Math.round(Math.min(p.minutes, r.clock.narratorMax)), src);
+    const spent = applied.reduce((n, e) => n + (e.t === "time" ? e.min : 0), 0);
+    advanceTime(w, Math.round(Math.min(Math.max(0, p.minutes - spent), r.clock.narratorMax)), src);
   }
   for (const [who, here] of Object.entries(p.scene ?? {})) {
     const id = findPerson(r, w.s, who);
@@ -6491,6 +6782,10 @@ function applyProposal(r, before, p, ctx) {
     for (const key of (Array.isArray(p.train) ? p.train : []).slice(0, 2)) {
       const k = String(key).toLowerCase();
       const id = r.statOrder.find((s) => s === k || r.stats[s].label.toLowerCase() === k);
+      if (id && applied.some((e) => e.t === "practice" && e.id === id)) {
+        reject(`Practice in ${id} was already accounted for.`);
+        continue;
+      }
       if (id && (r.stats[id].kind === "skill" || r.stats[id].kind === "attribute"))
         gains[id] = (gains[id] ?? 0) + trainingGain(r, w.s, id, p.minutes);
     }
@@ -6650,6 +6945,7 @@ var init_resolve = __esm(() => {
   init_expr();
   init_dice();
   init_ruleset();
+  init_decide();
   init_ruleset();
   init_state();
   init_freeform();
@@ -8461,79 +8757,392 @@ function logError(where, err) {
   } catch {}
 }
 
-// src/backend/ledger.ts
-function liveChoicesOf(m) {
-  if (!m || m.is_user)
-    return [];
-  return warpMeta(m).live?.[String(m.swipe_id ?? 0)] ?? [];
+// src/engine/fingerprint.ts
+function canonical(value) {
+  if (Array.isArray(value))
+    return `[${value.map(canonical).join(",")}]`;
+  if (value && typeof value === "object")
+    return `{${Object.keys(value).filter((k) => value[k] !== undefined).sort().map((k) => `${JSON.stringify(k)}:${canonical(value[k])}`).join(",")}}`;
+  return JSON.stringify(value) ?? "null";
 }
-function warpMeta(m) {
-  const w = m.metadata?.warp;
-  return w && typeof w === "object" ? w : {};
-}
-function activeRecord(m) {
-  return warpMeta(m).swipes?.[String(m.swipe_id ?? 0)] ?? null;
-}
-async function getMessages(chatId) {
-  const msgs = await host().chat.getMessages(chatId);
-  return [...msgs].sort((a, b) => a.index_in_chat - b.index_in_chat);
-}
-function foldPath(r, msgs) {
-  let s = initialState(r);
-  const steps = [];
-  for (const m of msgs) {
-    const rec = activeRecord(m);
-    if (!rec?.events?.length)
-      continue;
-    const before = s;
-    const after = cloneState(s);
-    for (const e of rec.events)
-      applyEvent(after, e, r);
-    steps.push({ message: m, record: rec, before, after });
-    s = after;
+function fingerprint(value) {
+  const text = canonical(value);
+  let a = 2166136261, b = 3335557771;
+  for (let i = 0;i < text.length; i++) {
+    a = Math.imul(a ^ text.charCodeAt(i), 16777619);
+    b = Math.imul(b ^ text.charCodeAt(i), 2246822519);
   }
-  return { state: s, steps };
+  return `${(a >>> 0).toString(16).padStart(8, "0")}${(b >>> 0).toString(16).padStart(8, "0")}`;
 }
-async function patchWarpMeta(chatId, messageId, fn) {
-  const msgs = await getMessages(chatId);
-  const m = msgs.find((x) => x.id === messageId);
-  if (!m)
-    throw new Error("Message not found");
-  const meta = { ...m.metadata ?? {} };
-  meta.warp = fn({ ...warpMeta(m) });
-  await host().chat.updateMessage(chatId, messageId, { metadata: meta, skipChunkRebuild: true });
+
+// src/engine/event-codec.ts
+function validJson(value, depth = 0, budget = { n: 200000 }) {
+  if (--budget.n < 0 || depth > 30)
+    return false;
+  if (value === null || value === undefined || typeof value === "boolean")
+    return true;
+  if (typeof value === "number")
+    return Number.isFinite(value);
+  if (typeof value === "string")
+    return value.length <= 1e5;
+  if (Array.isArray(value))
+    return value.every((v) => validJson(v, depth + 1, budget));
+  if (typeof value !== "object")
+    return false;
+  return Object.entries(value).every(([k, v]) => safeKey(k) && validJson(v, depth + 1, budget));
 }
-async function patchMeta(chatId, messageId, key, value) {
-  const msgs = await getMessages(chatId);
-  const m = msgs.find((x) => x.id === messageId);
-  if (!m)
-    return;
-  const meta = { ...m.metadata ?? {} };
-  if (JSON.stringify(meta[key]) === JSON.stringify(value))
-    return;
-  if (value === undefined)
-    delete meta[key];
-  else
-    meta[key] = value;
-  await host().chat.updateMessage(chatId, messageId, { metadata: meta, skipChunkRebuild: true });
+function matches(v, type) {
+  if (type.endsWith("?") && v === null)
+    return true;
+  switch (type[0]) {
+    case "s":
+      return typeof v === "string";
+    case "n":
+      return typeof v === "number" && Number.isFinite(v);
+    case "b":
+      return typeof v === "boolean";
+    case "a":
+      return Array.isArray(v);
+    case "o":
+      return v !== null && typeof v === "object" && !Array.isArray(v);
+    case "v":
+      return v === null || ["string", "boolean", "number"].includes(typeof v);
+    default:
+      return false;
+  }
 }
-async function writeRecord(chatId, messageId, swipe, rec) {
-  await patchWarpMeta(chatId, messageId, (w) => ({ ...w, swipes: { ...w.swipes ?? {}, [String(swipe)]: rec } }));
-}
-async function shiftAfterSwipeDelete(chatId, messageId, deleted) {
-  await patchWarpMeta(chatId, messageId, (w) => {
-    const next = {};
-    for (const [k, v] of Object.entries(w.swipes ?? {})) {
-      const i = Number(k);
-      if (i === deleted)
-        continue;
-      next[String(i > deleted ? i - 1 : i)] = v;
-    }
-    return { ...w, swipes: next };
+function shape(value, spec) {
+  const o = objectOf(value);
+  return spec.split(" ").filter(Boolean).every((field) => {
+    const [k, t] = field.split(":");
+    return matches(o[k], t);
   });
 }
+function validEvent(value) {
+  const e = objectOf(value);
+  if (typeof e.t !== "string" || !Object.hasOwn(fields, e.t) || typeof e.src !== "string" || !sources.has(e.src) || !validJson(e) || !shape(e, fields[e.t]))
+    return false;
+  for (const key of ["d", "set", "until", "due", "owed", "missed", "momentum"])
+    if (e[key] !== undefined && e[key] !== null && !matches(e[key], "n"))
+      return false;
+  for (const key of ["id", "who", "stat", "key", "part", "trait", "slot", "item", "a", "b", "to"])
+    if (typeof e[key] === "string" && !safeKey(e[key]))
+      return false;
+  if (["stat", "rel", "foe", "gauge"].includes(e.t) && e.d === undefined && e.set === undefined)
+    return false;
+  if (e.t === "dt_start" && !shape(e.session, "who:s kind:s beat:n beats:n fatigue:n mood:n combo:n enjoy:n used:o offer:a closing:b started:n"))
+    return false;
+  if (e.t === "dg_enter" && !shape(e.run, "id:s seed:s depth:n pos:a seen:a cleared:a party:a xp:n gold:n bag:o loot:o log:a"))
+    return false;
+  if (e.t === "dg_battle" && e.battle !== null && !shape(e.battle, "kind:s at:s round:n fighters:a queue:a log:a active:s? over:s?"))
+    return false;
+  if (e.t === "birth" && !shape(e.kin, "name:s sex:s born:n parents:a body:o joined:b"))
+    return false;
+  return true;
+}
+var fields, sources;
+var init_event_codec = __esm(() => {
+  fields = {
+    stat: "id:s",
+    flag: "key:s v:v",
+    item: "id:s d:n",
+    rel: "who:s stat:s",
+    person: "id:s name:s",
+    move: "to:s",
+    time: "min:n",
+    cond: "id:s on:b",
+    trig: "id:s v:b",
+    turn: "",
+    seed: "v:s",
+    wear: "slot:s item:s?",
+    dmg: "item:s d:n",
+    enc: "id:s?",
+    swing: "d:n",
+    foe: "stat:s",
+    round: "",
+    codex: "id:s",
+    feat: "id:s",
+    perk: "id:s",
+    calib: "who:s",
+    forget: "who:s",
+    secret: "id:s stage:n",
+    clock: "id:s d:n",
+    stage: "id:s n:n",
+    gauge: "",
+    rest: "days:n",
+    omen: "id:s?",
+    happen: "id:s",
+    notice: "text:s",
+    noticed: "",
+    dg_enter: "run:o",
+    dg_step: "x:n y:n",
+    dg_clear: "key:s",
+    dg_down: "pos:a",
+    dg_party: "party:a",
+    dg_xp: "d:n",
+    dg_gold: "d:n",
+    dg_bag: "item:s d:n",
+    dg_loot: "item:s d:n",
+    dg_battle: "battle:o?",
+    dg_pending: "pending:o?",
+    dg_log: "text:s",
+    dg_told: "",
+    dg_exit: "",
+    dt_start: "session:o",
+    dt_patch: "patch:o",
+    dt_end: "",
+    dt_pref: "who:s key:s v:n",
+    dt_seen: "who:s topic:s reaction:s",
+    dt_partner: "who:s on:b",
+    dt_dated: "who:s enjoy:n",
+    body: "part:s trait:s v:s?",
+    tf: "id:s stage:n",
+    bond: "a:s b:s d:n",
+    news: "text:s",
+    conceive: "carrier:s with:s",
+    preg_stage: "n:n",
+    birth: "id:s kin:o",
+    kin_join: "id:s",
+    due: "id:s",
+    job: "job:o?",
+    seen: "who:s what:s where:s",
+    explored: "loc:s found:b",
+    discovered: "id:s",
+    practice: "id:s d:n",
+    scene: "who:s here:b",
+    use: "id:s n:n",
+    save: "slot:s label:s",
+    load: "slot:s",
+    restart: "",
+    end: "id:s told:b",
+    end_told: "",
+    unend: ""
+  };
+  sources = new Set("cost check action drift trigger narrator manual start world".split(" "));
+});
+
+// src/backend/serial.ts
+function serialQueue() {
+  const tails = new Map;
+  return async function serial(key, work) {
+    const previous = tails.get(key) ?? Promise.resolve();
+    const next = previous.catch(() => {}).then(work);
+    tails.set(key, next);
+    try {
+      return await next;
+    } finally {
+      if (tails.get(key) === next)
+        tails.delete(key);
+    }
+  };
+}
+async function runCommand(key, id, work) {
+  return chatCommand(key, async () => {
+    const receipt = id ? `${key}:${id}` : null;
+    if (receipt && receipts.has(receipt))
+      return;
+    if (id)
+      commands.set(key, id);
+    try {
+      const result = await work();
+      if (receipt) {
+        if (receipts.size >= 4096)
+          receipts.delete(receipts.keys().next().value);
+        receipts.set(receipt, Date.now());
+      }
+      return result;
+    } finally {
+      commands.delete(key);
+    }
+  });
+}
+var chatCommand, messageMetadata, receipts, commands, currentCommand = (key) => commands.get(key);
+var init_serial = __esm(() => {
+  chatCommand = serialQueue();
+  messageMetadata = serialQueue();
+  receipts = new Map;
+  commands = new Map;
+});
+
+// src/backend/ledger.ts
+function warpMeta(m) {
+  return objectOf(objectOf(m.metadata).warp);
+}
+function liveChoicesOf(m) {
+  const choices = m && !m.is_user ? warpMeta(m).live?.[String(m.swipe_id ?? 0)] : null;
+  return Array.isArray(choices) ? choices.filter((c) => c && typeof c.label === "string" && typeof c.tag === "string" && (c.target === undefined || typeof c.target === "string")).slice(0, 32) : [];
+}
+function validRecord(value) {
+  const rec = objectOf(value);
+  return rec.v === 1 && typeof rec.at === "number" && Number.isFinite(rec.at) && Array.isArray(rec.events) && rec.events.length <= 20000 && rec.events.every(validEvent) && Array.isArray(rec.hints) && rec.hints.every((h) => typeof h === "string") && validJson(rec);
+}
+function activeRecord(m) {
+  const rec = objectOf(warpMeta(m).swipes)[String(m.swipe_id ?? 0)];
+  return validRecord(rec) ? rec : null;
+}
+async function getMessages(chatId) {
+  return [...await host().chat.getMessages(chatId)].sort((a, b) => a.index_in_chat - b.index_in_chat);
+}
+function newPlaythrough(r) {
+  const ruleset = structuredClone(r), initial = initialState(r);
+  return { v: 1, revision: fingerprint({ ruleset, initial }), ruleset, initial };
+}
+function validPlaythrough(p) {
+  return !!p && p.v === 1 && validJson(p) && Array.isArray(p.ruleset?.statOrder) && !!p.initial?.stats && fingerprint({ ruleset: p.ruleset, initial: p.initial }) === p.revision;
+}
+function copyResult(x) {
+  return { ...x, state: cloneState(x.state), ruleset: structuredClone(x.ruleset), stale: [...x.stale], steps: x.steps.map((st) => ({ ...st, record: structuredClone(st.record), before: cloneState(st.before), after: cloneState(st.after) })) };
+}
+function foldPath(current, msgs) {
+  const initial = newPlaythrough(current);
+  const key = `${msgs[0]?.chat_id ?? "preview"}:${initial.revision}`;
+  const signatures = msgs.map((m) => fingerprint([messageContext(m), warpMeta(m)]));
+  const cached = folds.get(key);
+  const reusable = cached && !cached.result.stale.length && cached.signatures.length <= signatures.length && cached.signatures.every((s, i) => s === signatures[i]);
+  if (reusable && signatures.length === cached.signatures.length) {
+    const result = copyResult(cached.result);
+    result.steps = result.steps.map((st) => ({ ...st, message: msgs.find((m) => m.id === st.message.id) }));
+    return result;
+  }
+  let r = reusable ? structuredClone(cached.result.ruleset) : structuredClone(current);
+  let s = reusable ? cloneState(cached.result.state) : initial.initial;
+  let revision = reusable ? cached.result.revision : initial.revision;
+  let prefix = reusable ? cached.prefix : "start";
+  const steps = reusable ? cached.result.steps.map((st) => ({ ...st, message: msgs.find((m) => m.id === st.message.id), before: cloneState(st.before), after: cloneState(st.after) })) : [];
+  const stale = [];
+  const start = reusable ? cached.signatures.length : 0;
+  const retainFrom = Math.max(start, msgs.length - MAX_STEPS);
+  for (let i = start;i < msgs.length; i++) {
+    const m = msgs[i], meta = warpMeta(m);
+    const raw = objectOf(meta.swipes)[String(m.swipe_id ?? 0)];
+    const rec = activeRecord(m);
+    const advance = () => {
+      prefix = fingerprint([prefix, messageContext(m), rec ?? raw ?? null]);
+    };
+    if (meta.playthrough) {
+      if (!validPlaythrough(meta.playthrough)) {
+        stale.push(m.id);
+        advance();
+        continue;
+      }
+      r = structuredClone(meta.playthrough.ruleset);
+      s = cloneState(meta.playthrough.initial);
+      revision = meta.playthrough.revision;
+      stale.length = 0;
+    }
+    if (stale.length) {
+      advance();
+      continue;
+    }
+    if (raw !== undefined && !rec) {
+      stale.push(m.id);
+      advance();
+      continue;
+    }
+    if (rec) {
+      if (rec.rulesRevision && rec.rulesRevision !== revision || rec.parent && rec.parent !== headOf(revision, s, prefix)) {
+        stale.push(m.id);
+        advance();
+        continue;
+      }
+      const before = i >= retainFrom ? cloneState(s) : null;
+      if (rec.locations)
+        r.locations = { ...r.locations, ...structuredClone(rec.locations) };
+      const after = before ? cloneState(s) : s;
+      try {
+        for (const e of rec.events)
+          applyEvent(after, e, r);
+      } catch {
+        const restored = foldPath(current, msgs.slice(0, i));
+        s = restored.state;
+        r = restored.ruleset;
+        stale.push(m.id);
+        advance();
+        continue;
+      }
+      s = after;
+      if (before)
+        steps.push({ message: m, record: rec, before, after: cloneState(s) });
+    }
+    advance();
+  }
+  const result = { state: s, steps: steps.slice(-MAX_STEPS), ruleset: r, revision, head: headOf(revision, s, prefix), stale };
+  if (folds.size >= 24)
+    folds.delete(folds.keys().next().value);
+  folds.set(key, { signatures, result, prefix });
+  return copyResult(result);
+}
+function requireCurrentPath(fold) {
+  if (fold.stale.length)
+    throw new Error(`The game path changed at message ${fold.stale[0]}. Regenerate from there or delete the incompatible replies before taking another action.`);
+}
+async function patchWarpMeta(chatId, messageId, fn) {
+  await messageMetadata(`${chatId}:${messageId}`, async () => {
+    const m = (await getMessages(chatId)).find((x) => x.id === messageId);
+    if (!m)
+      throw new Error("Message not found");
+    await host().chat.updateMessage(chatId, messageId, { metadata: { ...m.metadata, warp: fn({ ...warpMeta(m) }) }, skipChunkRebuild: true });
+  });
+}
+async function patchMeta(chatId, messageId, key, value) {
+  await messageMetadata(`${chatId}:${messageId}`, async () => {
+    const m = (await getMessages(chatId)).find((x) => x.id === messageId);
+    if (!m)
+      return;
+    const meta = { ...m.metadata };
+    if (JSON.stringify(meta[key]) === JSON.stringify(value))
+      return;
+    if (value === undefined)
+      delete meta[key];
+    else
+      meta[key] = value;
+    await host().chat.updateMessage(chatId, messageId, { metadata: meta, skipChunkRebuild: true });
+  });
+}
+async function writeRecord(chatId, messageId, swipe, rec, r) {
+  if (!validRecord(rec))
+    throw new Error("Invalid turn record");
+  if (r) {
+    let msgs = await getMessages(chatId);
+    const root = msgs[0];
+    if (root && !warpMeta(root).playthrough)
+      await patchWarpMeta(chatId, root.id, (w) => ({ ...w, playthrough: w.playthrough ?? newPlaythrough(r) }));
+    msgs = await getMessages(chatId);
+    const target = msgs.find((m) => m.id === messageId);
+    if (!target)
+      throw new Error("Message not found");
+    const fold = foldPath(r, msgs.filter((m) => m.index_in_chat < target.index_in_chat));
+    requireCurrentPath(fold);
+    rec = { ...rec, parent: rec.parent ?? fold.head, rulesRevision: rec.rulesRevision ?? fold.revision };
+  }
+  await patchWarpMeta(chatId, messageId, (w) => ({ ...w, swipes: { ...w.swipes, [String(swipe)]: rec } }));
+}
+async function pinRuleset(chatId, r) {
+  const root = (await getMessages(chatId))[0];
+  if (root && !warpMeta(root).playthrough)
+    await patchWarpMeta(chatId, root.id, (w) => ({ ...w, playthrough: w.playthrough ?? newPlaythrough(r) }));
+}
+async function shiftAfterSwipeDelete(chatId, messageId, deleted) {
+  const shift = (map) => Object.fromEntries(Object.entries(map ?? {}).flatMap(([k, v]) => {
+    const i = Number(k);
+    return i === deleted ? [] : [[String(i > deleted ? i - 1 : i), v]];
+  }));
+  await patchWarpMeta(chatId, messageId, (w) => ({ ...w, swipes: shift(w.swipes), live: shift(w.live) }));
+}
+async function startPlaythrough(chatId, r) {
+  await host().chat.appendMessage(chatId, { role: "assistant", content: "A new playthrough begins with the updated game rules.", metadata: { warp: { playthrough: newPlaythrough(r) } } });
+}
+function appendOperation(existing, operation) {
+  if (!existing)
+    return operation;
+  return { ...existing, events: [...existing.events, ...operation.events], hints: [...existing.hints, ...operation.hints], operations: [...existing.operations ?? [], operation] };
+}
+var folds, MAX_STEPS = 60, messageContext = (m) => [m.id, m.is_user, m.swipe_id ?? 0, m.content], headOf = (revision, state, prefix) => fingerprint({ revision, state, prefix });
 var init_ledger = __esm(() => {
   init_state();
+  init_event_codec();
+  init_serial();
+  folds = new Map;
 });
 
 // src/shared/protocol.ts
@@ -8943,16 +9552,16 @@ function requireSeq() {
 }
 function requireMap() {
   if (hasRequiredMap)
-    return map;
+    return map2;
   hasRequiredMap = 1;
   const Type2 = requireType();
-  map = new Type2("tag:yaml.org,2002:map", {
+  map2 = new Type2("tag:yaml.org,2002:map", {
     kind: "mapping",
     construct: function(data) {
       return data !== null ? data : {};
     }
   });
-  return map;
+  return map2;
 }
 function requireFailsafe() {
   if (hasRequiredFailsafe)
@@ -11659,7 +12268,7 @@ function requireJsYaml() {
   jsYaml.safeDump = renamed("safeDump", "dump");
   return jsYaml;
 }
-var jsYaml, loader, common, hasRequiredCommon, exception, hasRequiredException, snippet, hasRequiredSnippet, type, hasRequiredType, schema, hasRequiredSchema, str, hasRequiredStr, seq, hasRequiredSeq, map, hasRequiredMap, failsafe, hasRequiredFailsafe, _null, hasRequired_null, bool, hasRequiredBool, int, hasRequiredInt, float, hasRequiredFloat, json, hasRequiredJson, core, hasRequiredCore, timestamp, hasRequiredTimestamp, merge, hasRequiredMerge, binary, hasRequiredBinary, omap, hasRequiredOmap, pairs, hasRequiredPairs, set, hasRequiredSet, _default, hasRequired_default, hasRequiredLoader, dumper, hasRequiredDumper, hasRequiredJsYaml, jsYamlExports, yaml, Type, Schema, FAILSAFE_SCHEMA, JSON_SCHEMA, CORE_SCHEMA, DEFAULT_SCHEMA, load, loadAll, dump, YAMLException, types, safeLoad, safeLoadAll, safeDump;
+var jsYaml, loader, common, hasRequiredCommon, exception, hasRequiredException, snippet, hasRequiredSnippet, type, hasRequiredType, schema, hasRequiredSchema, str, hasRequiredStr, seq, hasRequiredSeq, map2, hasRequiredMap, failsafe, hasRequiredFailsafe, _null, hasRequired_null, bool, hasRequiredBool, int, hasRequiredInt, float, hasRequiredFloat, json, hasRequiredJson, core, hasRequiredCore, timestamp, hasRequiredTimestamp, merge, hasRequiredMerge, binary, hasRequiredBinary, omap, hasRequiredOmap, pairs, hasRequiredPairs, set, hasRequiredSet, _default, hasRequired_default, hasRequiredLoader, dumper, hasRequiredDumper, hasRequiredJsYaml, jsYamlExports, yaml, Type, Schema, FAILSAFE_SCHEMA, JSON_SCHEMA, CORE_SCHEMA, DEFAULT_SCHEMA, load, loadAll, dump, YAMLException, types, safeLoad, safeLoadAll, safeDump;
 var init_js_yaml = __esm(() => {
   jsYaml = {};
   loader = {};
@@ -11683,64 +12292,6 @@ var init_js_yaml = __esm(() => {
     safeLoadAll,
     safeDump
   } = yaml);
-});
-
-// src/engine/loader.ts
-function isRulesetEntryTitle(comment) {
-  return !!comment && ENTRY_RE.test(comment);
-}
-function isRulesetBookName(name) {
-  return !!name && BOOK_RE.test(name);
-}
-function stripFences(s) {
-  const m = /^\s*```[a-z]*\s*\n([\s\S]*?)\n?```\s*$/i.exec(s);
-  return m ? m[1] : s;
-}
-function deepMerge(a, b) {
-  if (Array.isArray(a) && Array.isArray(b))
-    return [...a, ...b];
-  if (isObj2(a) && isObj2(b)) {
-    const out = { ...a };
-    for (const [k, v] of Object.entries(b))
-      out[k] = k in out ? deepMerge(out[k], v) : v;
-    return out;
-  }
-  return b === undefined ? a : b;
-}
-function loadRuleset(parts) {
-  const issues = [];
-  let merged = {};
-  const sorted = [...parts].sort((x, y) => x.order - y.order || x.label.localeCompare(y.label));
-  for (const p of sorted) {
-    const text = stripFences(p.content ?? "");
-    if (!text.trim())
-      continue;
-    try {
-      const doc = yaml.load(text, { schema: yaml.CORE_SCHEMA });
-      if (doc === null || doc === undefined)
-        continue;
-      if (!isObj2(doc)) {
-        issues.push({ level: "error", where: p.label, message: "should be YAML key/value pairs (like `stats:`), not a list or plain text" });
-        continue;
-      }
-      merged = deepMerge(merged, doc);
-    } catch (e) {
-      const err = e;
-      const where = err.mark ? `${p.label}, line ${err.mark.line + 1}` : p.label;
-      issues.push({ level: "error", where, message: `YAML couldn't be read: ${err.reason ?? err.message ?? "syntax error"}. This entry was skipped.` });
-    }
-  }
-  if (!parts.length)
-    return { ruleset: null, issues };
-  const { ruleset, issues: more } = normalizeRuleset(merged);
-  return { ruleset, issues: [...issues, ...more] };
-}
-var ENTRY_RE, BOOK_RE, isObj2 = (v) => !!v && typeof v === "object" && !Array.isArray(v);
-var init_loader = __esm(() => {
-  init_js_yaml();
-  init_ruleset();
-  ENTRY_RE = /^\s*(?:\[[^\]]*\]\s*)?warp[-_ ]?ruleset\b/i;
-  BOOK_RE = /^\s*warp[-_ ]?ruleset\b/i;
 });
 
 // src/engine/lint.ts
@@ -11772,14 +12323,42 @@ function lintRuleset(r) {
   const issues = [];
   const s = initialState(r);
   const names = [...r.statOrder, ...Object.keys(r.flags), ...BUILTIN_NAMES];
+  const visited = new Set, visiting = new Set;
+  const visitCap = (id, path) => {
+    if (visiting.has(id)) {
+      issues.push({ level: "error", where: `Stats › ${id} › max`, message: `Dynamic stat caps have a dependency cycle: ${[...path, id].join(" → ")}.` });
+      return;
+    }
+    if (visited.has(id))
+      return;
+    visiting.add(id);
+    const expression = r.stats[id]?.maxExpr;
+    if (expression) {
+      try {
+        for (const p of references(expression).paths) {
+          const target = p[0] === "stats" ? p[1] : p[0];
+          if (r.stats[target]?.maxExpr)
+            visitCap(target, [...path, id]);
+        }
+      } catch {}
+    }
+    visiting.delete(id);
+    visited.add(id);
+  };
+  r.statOrder.forEach((id) => visitCap(id, []));
   const check = (src, where, extra = {}, dungeon = false) => {
     if (src === undefined || typeof src === "number")
       return;
     const base = makeEnv(r, s, extra);
-    const env = { lookup: base.lookup, call: (n, a) => n === "roll" ? 1 : dungeon && (n === "bag" || n === "rel_bond") ? 0 : base.call?.(n, a) };
     const unknown = new Set;
     try {
-      evaluate(src, env, { unknown });
+      const refs = references(src);
+      for (const path of refs.paths)
+        if (base.lookup(path) === undefined)
+          unknown.add(path.join("."));
+      for (const name of refs.calls)
+        if (!FUNCTIONS.includes(name) && !(dungeon && ["bag", "rel_bond"].includes(name)))
+          unknown.add(`${name}()`);
     } catch {
       return;
     }
@@ -12174,6 +12753,99 @@ var init_lint = __esm(() => {
   ];
 });
 
+// src/engine/loader.ts
+function isRulesetEntryTitle(comment) {
+  return !!comment && ENTRY_RE.test(comment);
+}
+function isRulesetBookName(name) {
+  return !!name && BOOK_RE.test(name);
+}
+function stripFences(s) {
+  const m = /^\s*```[a-z]*\s*\n([\s\S]*?)\n?```\s*$/i.exec(s);
+  return m ? m[1] : s;
+}
+function deepMerge(a, b) {
+  if (Array.isArray(a) && Array.isArray(b))
+    return [...a, ...b];
+  if (isObj2(a) && isObj2(b)) {
+    const out = { ...a };
+    for (const [k, v] of Object.entries(b))
+      if (safeKey(k))
+        out[k] = Object.hasOwn(out, k) ? deepMerge(out[k], v) : v;
+    return out;
+  }
+  return b === undefined ? a : b;
+}
+function loadRuleset(parts) {
+  const issues = [];
+  let merged = {};
+  const sorted = [...parts].sort((x, y) => x.order - y.order || x.label.localeCompare(y.label));
+  for (const p of sorted) {
+    const text = stripFences(p.content ?? "");
+    if (!text.trim())
+      continue;
+    try {
+      let validate = function(value, path) {
+        if (typeof value === "number" && !Number.isFinite(value))
+          issues.push({ level: "error", where: path, message: "Numbers must be finite." });
+        if (value && typeof value === "object")
+          for (const [key, v] of Object.entries(value)) {
+            if (!safeKey(key))
+              issues.push({ level: "error", where: `${path}.${key}`, message: "Reserved key is not allowed." });
+            else
+              validate(v, `${path}.${key}`);
+          }
+      };
+      const doc = yaml.load(text, { schema: yaml.CORE_SCHEMA });
+      if (doc === null || doc === undefined)
+        continue;
+      if (!isObj2(doc)) {
+        issues.push({ level: "error", where: p.label, message: "should be YAML key/value pairs (like `stats:`), not a list or plain text" });
+        continue;
+      }
+      validate(doc, p.label);
+      merged = deepMerge(merged, doc);
+    } catch (e) {
+      const err = e;
+      const where = err.mark ? `${p.label}, line ${err.mark.line + 1}` : p.label;
+      issues.push({ level: "error", where, message: `YAML couldn't be read: ${err.reason ?? err.message ?? "syntax error"}. This entry was skipped.` });
+    }
+  }
+  if (!parts.length)
+    return { ruleset: null, issues };
+  const { ruleset, issues: more } = normalizeRuleset(merged);
+  return { ruleset, issues: [...issues, ...more] };
+}
+function compileRuleset(parts) {
+  const result = loadRuleset(parts);
+  if (result.ruleset)
+    result.issues.push(...lintRuleset(result.ruleset));
+  return result.issues.some((i) => i.level === "error") ? { ...result, ruleset: null } : result;
+}
+var ENTRY_RE, BOOK_RE, isObj2 = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+var init_loader = __esm(() => {
+  init_js_yaml();
+  init_ruleset();
+  init_lint();
+  ENTRY_RE = /^\s*(?:\[[^\]]*\]\s*)?warp[-_ ]?ruleset\b/i;
+  BOOK_RE = /^\s*warp[-_ ]?ruleset\b/i;
+});
+
+// src/engine/knowledge.ts
+function loreAccess(r, s, title) {
+  const key = loreTitle(title), gates = [];
+  for (const c of Object.values(r.codex))
+    if (c.lore.some((l) => loreTitle(l) === key))
+      gates.push(!!s.codex[c.id]);
+  for (const secret of Object.values(r.secrets))
+    secret.stages.forEach((stage, i) => {
+      if (stage.lore.some((l) => loreTitle(l) === key))
+        gates.push((s.secrets[secret.id] ?? -1) >= i);
+    });
+  return { gated: gates.length > 0, open: gates.every(Boolean) };
+}
+var loreTitle = (title) => title.replace(/^\s*\[[^\]]*\]\s*/, "").trim().toLowerCase();
+
 // src/backend/source.ts
 async function listAllEntries(bookId, userId) {
   const out = [];
@@ -12186,11 +12858,12 @@ async function listAllEntries(bookId, userId) {
   return out;
 }
 async function characterForChat(chatId, userId) {
-  if (chatCharacter.has(chatId))
-    return chatCharacter.get(chatId);
+  const key = `${userId ?? "_"}:${chatId}`;
+  if (chatCharacter.has(key))
+    return chatCharacter.get(key);
   const chat = await host().chats.get(chatId, userId);
   const id = chat?.character_id || null;
-  chatCharacter.set(chatId, id);
+  chatCharacter.set(key, id);
   return id;
 }
 async function loadForCharacter(characterId, userId) {
@@ -12234,9 +12907,9 @@ async function loadForCharacter(characterId, userId) {
   }
   if (!parts.length)
     return base;
-  const { ruleset, issues } = loadRuleset(parts);
+  const { ruleset, issues } = compileRuleset(parts);
   base.ruleset = ruleset;
-  base.issues = ruleset ? [...issues, ...lintRuleset(ruleset)] : issues;
+  base.issues = issues;
   base.source = books.join(", ");
   return base;
 }
@@ -12252,23 +12925,25 @@ async function getRuleset(chatId, userId, force = false) {
   }
   if (!characterId)
     return null;
-  const hit = byCharacter.get(characterId);
+  const key = `${userId ?? "_"}:${characterId}`;
+  const hit = byCharacter.get(key);
   if (hit && !force && Date.now() - hit.at < TTL_MS)
     return hit;
   try {
     const loaded = await loadForCharacter(characterId, userId);
-    byCharacter.set(characterId, loaded);
+    byCharacter.set(key, loaded);
     return loaded;
   } catch (e) {
     logError("loadForCharacter", e);
-    return hit ?? null;
+    return hit ? { ...hit, ruleset: null, issues: [...hit.issues, { level: "error", where: "ruleset", message: "Could not reload the ruleset." }] } : null;
   }
 }
 async function characterBrief(chatId, userId) {
   const id = await characterForChat(chatId, userId).catch(() => null);
   if (!id)
     return "";
-  const hit = briefs.get(id);
+  const key = `${userId ?? "_"}:${id}`;
+  const hit = briefs.get(key);
   if (hit && Date.now() - hit.at < 60000)
     return hit.text;
   const c = await host().characters.get(id, userId).catch(() => null);
@@ -12279,17 +12954,23 @@ async function characterBrief(chatId, userId) {
     c.scenario && `Scenario: ${c.scenario}`
   ].filter(Boolean).join(`
 `).slice(0, 4000) : "";
-  briefs.set(id, { text, at: Date.now() });
+  briefs.set(key, { text, at: Date.now() });
   return text;
 }
 function invalidateCharacter(characterId) {
   if (characterId) {
-    byCharacter.delete(characterId);
-    briefs.delete(characterId);
+    for (const key of byCharacter.keys())
+      if (key.endsWith(`:${characterId}`))
+        byCharacter.delete(key);
+    for (const key of briefs.keys())
+      if (key.endsWith(`:${characterId}`))
+        briefs.delete(key);
   } else {
     byCharacter.clear();
     briefs.clear();
   }
+  chatCharacter.clear();
+  profiles.clear();
 }
 function statusOf(l) {
   if (!l || !l.source) {
@@ -12368,7 +13049,10 @@ function aboutThem(text, re, budget) {
 `);
 }
 async function personProfile(chatId, name, userId, note) {
-  const key = `${chatId}:${name.toLowerCase()}`;
+  const loaded = await getRuleset(chatId, userId);
+  const msgs = await getMessages(chatId).catch(() => []);
+  const fold = loaded?.ruleset ? foldPath(loaded.ruleset, msgs) : null;
+  const key = `${userId ?? "_"}:${chatId}:${name.toLowerCase()}:${fingerprint([fold?.revision, fold?.state, msgs.map((m) => [m.id, m.swipe_id, m.content]), note])}`;
   const hit = profiles.get(key);
   if (hit && Date.now() - hit.at < PROFILE_TTL)
     return hit.p;
@@ -12403,6 +13087,11 @@ ${fromCard}`);
           break;
         if (isRulesetEntryTitle(e.comment))
           continue;
+        if (!loaded || loaded.source && !fold)
+          continue;
+        const access = fold ? loreAccess(fold.ruleset, fold.state, e.comment ?? "") : { gated: false, open: true };
+        if (!access.open || e.disabled && !access.gated)
+          continue;
         const keys = [...e.key ?? [], e.comment ?? ""].join(" ");
         if (re.test(keys))
           lore.push(e.content.length > 900 ? `${e.content.slice(0, 900)}…` : e.content);
@@ -12415,8 +13104,6 @@ ${lore.join(`
 `)}`);
   }
   try {
-    await Promise.resolve().then(() => init_ledger());
-    const msgs = await getMessages(chatId);
     const seen = [];
     let n = 0;
     for (const m of [...msgs].reverse().slice(0, 40)) {
@@ -12438,6 +13125,8 @@ ${seen.join(`
   const p = { text: parts.filter(Boolean).join(`
 
 `).slice(0, 4500), scenario, setting };
+  if (profiles.size >= 128)
+    profiles.delete(profiles.keys().next().value);
   profiles.set(key, { at: Date.now(), p });
   return p;
 }
@@ -12448,8 +13137,8 @@ var TTL_MS = 8000, byCharacter, chatCharacter, knownRulesetEntryIds, knownRulese
 };
 var init_source = __esm(() => {
   init_loader();
-  init_lint();
   init_templates();
+  init_ledger();
   byCharacter = new Map;
   chatCharacter = new Map;
   knownRulesetEntryIds = new Set;
@@ -14201,7 +14890,8 @@ function narratorKnowledge(r, s) {
       const sec = r.secrets[id];
       if (!sec)
         continue;
-      lines.push(`Only ${personName(r, s, c.id)} knows this (no one else can mention it; ${personName(r, s, c.id)} reveals it only if the scene truly earns it): ${sec.about} — ${sec.stages.map((st) => st.text).join(" ")}`);
+      const opened = sec.stages.slice(0, (s.secrets[id] ?? -1) + 1).map((st) => st.text).join(" ");
+      lines.push(`Only ${personName(r, s, c.id)} knows this (no one else can mention it; reveal only when the rules unlock it): ${opened ? `${sec.about} — ${opened}` : "They are keeping a secret. Do not invent or reveal its contents."}`);
     }
   }
   for (const sec of Object.values(r.secrets)) {
@@ -14523,6 +15213,49 @@ var init_view3 = __esm(() => {
   init_types2();
 });
 
+// src/backend/deadline.ts
+async function withDeadline(opts, fallbackMs, work) {
+  const deadline = Math.min(opts.deadlineAt ?? Infinity, Date.now() + (opts.timeoutMs ?? fallbackMs));
+  const controller = new AbortController;
+  const abort = () => controller.abort(opts.signal?.reason ?? new Error("Operation cancelled"));
+  if (opts.signal?.aborted)
+    abort();
+  else
+    opts.signal?.addEventListener("abort", abort, { once: true });
+  const remaining = () => Math.max(0, deadline - Date.now());
+  const timer = setTimeout(() => controller.abort(new Error("Decision deadline exceeded")), remaining());
+  let onAbort = () => {};
+  try {
+    if (remaining() <= 0)
+      controller.abort(new Error("Decision deadline exceeded"));
+    controller.signal.throwIfAborted();
+    const cancelled = new Promise((_, reject) => {
+      onAbort = () => reject(controller.signal.reason);
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+    });
+    return await Promise.race([work(controller.signal, remaining), cancelled]);
+  } finally {
+    clearTimeout(timer);
+    opts.signal?.removeEventListener("abort", abort);
+    controller.signal.removeEventListener("abort", onAbort);
+  }
+}
+async function backoff(ms, signal) {
+  signal.throwIfAborted();
+  await new Promise((resolve, reject) => {
+    const abort = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", abort, { once: true });
+  });
+}
+
 // src/backend/decisions.ts
 function newNames(text, known) {
   const knownWords = new Set(known.flatMap((n) => n.toLowerCase().split(/[^\p{L}\p{N}']+/u)).filter(Boolean));
@@ -14561,11 +15294,11 @@ function clip(s, n) {
 function fill(text, player) {
   return text.replace(/\{\{user\}\}/gi, player);
 }
-async function safeAsk(d, state, q, timeoutMs, what) {
+async function safeAsk(d, state, q, timeoutMs, what, signal) {
   if (!Object.keys(q).length)
     return {};
   try {
-    return await d.ask(state, q, { timeoutMs });
+    return await withDeadline({ timeoutMs, signal }, timeoutMs, async (signal, remaining) => decodeAnswers(await d.ask(state, q, { signal, timeoutMs: remaining() }), q));
   } catch (e) {
     logError(`${what} (${d.id})`, e);
     return {};
@@ -14709,7 +15442,7 @@ async function odds2(opts) {
     player_message: clip(opts.playerText, 1200),
     ...opts.card ? { character_card: opts.card } : {}
   };
-  const ans = await safeAsk(opts.decider, state, q, opts.timeoutMs, "decide odds");
+  const ans = await safeAsk(opts.decider, state, q, opts.timeoutMs, "decide odds", opts.signal);
   const out = {};
   for (const d of opts.specs) {
     const a = ans[`decide:${d.id}`];
@@ -14749,7 +15482,7 @@ async function bookkeeping(opts) {
   const { r, s, player } = opts;
   const q = {};
   if (r.clock.enabled)
-    q.time = { type: "score", instructions: "How much in-story time passes during the narrator's reply?", criteria: TIME_LEVELS };
+    q.time = { type: "score", instructions: "How much TOTAL in-story time passes during the narrator's reply, including time already applied by the rules?", criteria: TIME_LEVELS };
   for (const id of r.statOrder) {
     const d = r.stats[id];
     if (d.narrator <= 0)
@@ -14969,6 +15702,7 @@ async function contradiction(opts) {
 }
 var NONE = "none", ATTEMPT = "attempt", ENCOUNTER_SURE = 0.6, ENCOUNTER_OVER = 0.7, COMMON_CAPS, DIFFICULTY, STEP_FACTOR, TIME_LEVELS, TIME_MINUTES;
 var init_decisions = __esm(() => {
+  init_decide();
   init_resolve();
   init_ruleset();
   init_state();
@@ -15063,20 +15797,23 @@ var init_decisions = __esm(() => {
 });
 
 // src/backend/deciders.ts
-async function post(url, headers, body, timeoutMs) {
-  const timeout = new Promise((_, rej) => setTimeout(() => rej(new DeciderError("Decision model timed out")), timeoutMs));
+async function post(url, headers, body, signal) {
+  signal.throwIfAborted();
   const call = (async () => {
     try {
       const r = await host().cors(url, { method: "POST", headers, body });
       return { status: r.status, body: r.body };
     } catch (e) {
+      signal.throwIfAborted();
       if (typeof fetch !== "function")
         throw e;
-      const r = await fetch(url, { method: "POST", headers, body });
+      const r = await fetch(url, { method: "POST", headers, body, signal });
       return { status: r.status, body: await r.text() };
     }
   })();
-  return Promise.race([call, timeout]);
+  const result = await call;
+  signal.throwIfAborted();
+  return result;
 }
 
 class JevDecider {
@@ -15093,21 +15830,26 @@ class JevDecider {
       return {};
     const body = JSON.stringify({ model: this.model || "jev-latest", state, questions });
     const headers = { Authorization: `Bearer ${this.key}`, "Content-Type": "application/json" };
-    let delay = 400;
-    for (let attempt = 0;; attempt++) {
-      const res = await post(JEV_URL, headers, body, opts.timeoutMs ?? 8000);
-      if (res.status === 200) {
-        const parsed = JSON.parse(res.body);
-        return parsed.answers ?? {};
+    return withDeadline(opts, 8000, async (signal, remaining) => {
+      let delay = 400;
+      for (let attempt = 0;; attempt++) {
+        signal.throwIfAborted();
+        const res = await post(JEV_URL, headers, body, signal);
+        if (res.status === 200) {
+          const parsed = JSON.parse(res.body);
+          return decodeAnswers(parsed.answers, questions);
+        }
+        if ((res.status === 429 || res.status === 529) && attempt < 2) {
+          if (delay >= remaining())
+            throw new DeciderError("Decision deadline exceeded during retry");
+          await backoff(delay, signal);
+          delay *= 3;
+          continue;
+        }
+        const hint = res.status === 401 ? "the Jev API key was rejected" : res.status === 422 ? "Jev rejected the request" : `Jev returned ${res.status}`;
+        throw new DeciderError(`${hint}${res.body ? `: ${res.body.slice(0, 200)}` : ""}`);
       }
-      if ((res.status === 429 || res.status === 529) && attempt < 2) {
-        await new Promise((r) => setTimeout(r, delay));
-        delay *= 3;
-        continue;
-      }
-      const hint = res.status === 401 ? "the Jev API key was rejected" : res.status === 422 ? "Jev rejected the request" : `Jev returned ${res.status}`;
-      throw new DeciderError(`${hint}${res.body ? `: ${res.body.slice(0, 200)}` : ""}`);
-    }
+    });
   }
 }
 function firstJson(text) {
@@ -15151,10 +15893,10 @@ ${q.criteria.map((c, i) => `    ${i}: ${c}`).join(`
     const system = [
       "You answer typed questions about a roleplay game's current situation. You never write story.",
       "Answer every question. Reply with JSON only, one key per question id:",
-      '  choice → {"choice": "<option key>", "confidence": 0.0–1.0}',
-      '  score  → {"level": <integer>, "confidence": 0.0–1.0}',
+      '  choice → {"choice": "<option key>", "probabilities": {"<every option key>": 0.0–1.0}}',
+      '  score  → {"level": <number in range>, "probabilities": {"<every level index>": 0.0–1.0}}',
       '  yes/no → {"p": <probability it is true, 0.0–1.0>}',
-      "Be honest about confidence: 0.5 means a coin flip."
+      "Each probability distribution must sum to 1. Express uncertainty across plausible alternatives."
     ].join(`
 `);
     const user = `State:
@@ -15164,42 +15906,19 @@ Questions:
 ${lines.join(`
 
 `)}`;
-    const res = await host().generate.quiet({
-      type: "quiet",
-      messages: [{ role: "system", content: system }, { role: "user", content: user }],
-      connection_id: this.settings.helperConnectionId || undefined,
-      reasoning: { source: "off" },
-      parameters: { temperature: 0, max_tokens: 60 + ids.length * 30 },
-      userId: this.userId,
-      signal: opts.signal ?? AbortSignal.timeout(Math.max(3000, opts.timeoutMs ?? 20000))
+    return withDeadline(opts, 20000, async (signal) => {
+      const res = await host().generate.quiet({
+        type: "quiet",
+        messages: [{ role: "system", content: system }, { role: "user", content: user }],
+        connection_id: this.settings.helperConnectionId || undefined,
+        reasoning: { source: "off" },
+        parameters: { temperature: 0, max_tokens: 100 + ids.reduce((n, id) => n + (questions[id].type === "choice" ? Object.keys(questions[id].criteria).length : 6) * 20, 0) },
+        userId: this.userId,
+        signal
+      });
+      const raw = firstJson(typeof res === "string" ? res : res?.content ?? "") ?? {};
+      return decodeAnswers(raw, questions);
     });
-    const raw = firstJson(typeof res === "string" ? res : res?.content ?? "") ?? {};
-    const out = {};
-    for (const id of ids) {
-      const q = questions[id];
-      const a = raw[id] ?? {};
-      const conf = clamp01(Number(a.confidence ?? 0.6));
-      if (q.type === "choice") {
-        const keys = Object.keys(q.criteria);
-        const pick = typeof a.choice === "string" && keys.includes(a.choice) ? a.choice : null;
-        if (!pick)
-          continue;
-        const rest = keys.length > 1 ? (1 - conf) / (keys.length - 1) : 0;
-        out[id] = { type: "choice", choice: pick, confidence: conf, probabilities: Object.fromEntries(keys.map((k) => [k, k === pick ? conf : rest])) };
-      } else if (q.type === "score") {
-        const n = q.criteria.length;
-        const level = Math.max(0, Math.min(n - 1, Math.round(Number(a.level))));
-        if (!Number.isFinite(level))
-          continue;
-        const rest = n > 1 ? (1 - conf) / (n - 1) : 0;
-        out[id] = { type: "score", score: level, confidence: conf, probabilities: Object.fromEntries(q.criteria.map((_, i) => [String(i), i === level ? conf : rest])) };
-      } else {
-        const p = Number(a.p ?? a.probability ?? a.noul);
-        if (Number.isFinite(p))
-          out[id] = { type: "noul", noul: clamp01(p) };
-      }
-    }
-    return out;
   }
 }
 
@@ -15235,9 +15954,6 @@ class RulesDecider {
     return out;
   }
 }
-function clamp01(n) {
-  return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0.5;
-}
 async function getDecider(settings, userId) {
   if (settings.decider === "rules")
     return new RulesDecider;
@@ -15253,6 +15969,7 @@ async function getDecider(settings, userId) {
 }
 var JEV_KEY = "jev_api_key", JEV_URL = "https://api.typesafe.ai/v1/systemone", DeciderError, STOP, words = (s) => new Set(s.toLowerCase().split(/[^a-z0-9']+/).filter((w) => w.length > 2 && !STOP.has(w)));
 var init_deciders = __esm(() => {
+  init_decide();
   DeciderError = class DeciderError extends Error {
   };
   STOP = new Set("a an the to of and or in on at for with my i me you your it is be do try tries trying".split(" "));
@@ -15290,19 +16007,21 @@ function firstJson2(text) {
   return null;
 }
 async function ask(system, user, settings, userId, timeoutMs, opts = {}) {
-  const res = await host().generate.quiet({
-    type: "quiet",
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: user }
-    ],
-    connection_id: settings.helperConnectionId || undefined,
-    reasoning: { source: "off" },
-    parameters: { temperature: opts.temperature ?? 0.1, max_tokens: opts.maxTokens ?? 500 },
-    userId,
-    signal: AbortSignal.timeout(Math.max(3000, timeoutMs))
+  return withDeadline({ timeoutMs }, timeoutMs, async (signal) => {
+    const res = await host().generate.quiet({
+      type: "quiet",
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user }
+      ],
+      connection_id: settings.helperConnectionId || undefined,
+      reasoning: { source: "off" },
+      parameters: { temperature: opts.temperature ?? 0.1, max_tokens: opts.maxTokens ?? 500 },
+      userId,
+      signal
+    });
+    return typeof res === "string" ? res : res?.content ?? "";
   });
-  return typeof res === "string" ? res : res?.content ?? "";
 }
 function clip2(s, n) {
   return s.length > n ? `…${s.slice(-n)}` : s;
@@ -15316,11 +16035,11 @@ async function extract(r, s, playerText, reply, settings, userId, only, applied)
   const want = (k) => !only || only.has(k);
   const allowed = [];
   if (want("minutes") && r.clock.enabled)
-    allowed.push(`- "minutes": how much in-story time the reply covers (0–${r.clock.narratorMax}).`);
+    allowed.push(`- "minutes": TOTAL in-story time the reply covers, including time already applied by the rules. Additional time is capped at ${r.clock.narratorMax}.`);
   if (want("stats") && stats.length)
-    allowed.push(`- "stats": changes (deltas) to: ${stats.map((d) => `${d.id} (±${formatNumber(d.narrator)})`).join(", ")}`);
+    allowed.push(`- "stats": TOTAL deltas to: ${stats.map((d) => `${d.id} (additional changes capped at ±${formatNumber(d.narrator)})`).join(", ")}`);
   if (want("rel") && rels.length)
-    allowed.push(`- "rel": per person name, deltas to: ${rels.map((d) => `${d.id} (±${formatNumber(d.narrator)})`).join(", ")}`);
+    allowed.push(`- "rel": per person name, TOTAL deltas to: ${rels.map((d) => `${d.id} (additional changes capped at ±${formatNumber(d.narrator)})`).join(", ")}`);
   const feelScale = rels.map((d) => `${d.id} ${d.min}–${d.max}${d.bands.length ? ` (${d.bands.map((b) => `${b.at}=${b.text}`).join(", ")})` : ""}`).join("; ");
   const tracked = Object.values(s.people).map((p) => p.name);
   if (want("people") && r.peopleOpen) {
@@ -15373,7 +16092,7 @@ async function extract(r, s, playerText, reply, settings, userId, only, applied)
   const system = [
     "You are the bookkeeper for a text roleplay game. You never write story.",
     "Read the narrator's latest reply and record only what CLEARLY happened in it.",
-    "Small, sensible deltas for changes. Omit anything unchanged. Do not re-apply dice outcomes that were already applied.",
+    'Use "basis": "total". Stats, relationship and inventory deltas describe TOTAL changes in this exchange, including the decided outcome. The engine subtracts what it already applied. Omit unchanged fields.',
     'Exception: "feelings" (and people.feelings) are where someone stands overall right now — read them from how they act, even if that means strong values.',
     "You may report:",
     ...allowed,
@@ -15389,7 +16108,7 @@ async function extract(r, s, playerText, reply, settings, userId, only, applied)
     "",
     "Narrator's reply:",
     clip2(reply, 4000),
-    ...applied ? ["", "Already applied by the rules this turn (don't report these again):", applied] : []
+    ...applied ? ["", "Already applied by the rules this turn (include these in TOTAL numeric deltas and minutes; the engine subtracts them):", applied] : []
   ].join(`
 `);
   try {
@@ -15397,6 +16116,7 @@ async function extract(r, s, playerText, reply, settings, userId, only, applied)
     if (!out)
       return null;
     const p = out;
+    p.basis = "total";
     if (Array.isArray(p.present)) {
       const listed = p.present.map(String).filter(Boolean);
       const scene = Object.fromEntries(listed.map((n) => [n, true]));
@@ -15428,6 +16148,47 @@ var init_helpers = __esm(() => {
   init_state();
   init_world();
   init_view();
+});
+
+// src/backend/decision-loop.ts
+async function resolveWithDecisions(opts) {
+  const accepted = structuredClone(opts.accepted ?? {}), attempted = new Set(Object.keys(accepted));
+  let res = opts.resolve(accepted), reason = opts.ask ? "No usable provider answer" : "Rules-only provider";
+  for (let round = 0;opts.ask && round < 8; round++) {
+    const specs = res.needs.filter((n) => !attempted.has(n.id)).slice(0, 64);
+    if (!specs.length)
+      break;
+    const remaining = opts.deadlineAt - Date.now();
+    if (remaining <= 0 || opts.signal?.aborted) {
+      reason = opts.signal?.aborted ? "Cancelled" : "Decision deadline exceeded";
+      break;
+    }
+    specs.forEach((n) => attempted.add(n.id));
+    let answers = {};
+    try {
+      answers = await withDeadline({ deadlineAt: opts.deadlineAt, signal: opts.signal }, remaining, (signal, left) => opts.ask(specs, left(), signal));
+    } catch {}
+    if (opts.signal?.aborted || Date.now() > opts.deadlineAt) {
+      reason = "Decision deadline exceeded or cancelled";
+      break;
+    }
+    for (const spec of specs) {
+      const p = answers[spec.id], keys = spec.options.map((o) => o.id);
+      if (!p || Object.entries(p).some(([k, v]) => !keys.includes(k) || !Number.isFinite(v) || v < 0 || v > 1) || !Object.values(p).some((v) => v > 0))
+        continue;
+      accepted[spec.id] = normalize(p, keys);
+    }
+    res = opts.resolve(accepted);
+    if (round === 7)
+      reason = "Decision round limit reached";
+  }
+  for (const decision of res.record.decisions ?? [])
+    if (decision.source === "weights")
+      decision.fallback = reason;
+  return res;
+}
+var init_decision_loop = __esm(() => {
+  init_decide();
 });
 
 // src/backend/inject.ts
@@ -15716,9 +16477,11 @@ var init_intents = __esm(() => {
 function textOf(res) {
   return typeof res === "string" ? res : res?.content ?? "";
 }
-async function writeReply(messages, userId, timeoutMs = 120000) {
-  const res = await host().generate.quiet({ type: "quiet", messages, userId, signal: AbortSignal.timeout(timeoutMs) });
-  return textOf(res).trim();
+async function writeReply(messages, userId, timeoutMs = 120000, signal) {
+  return withDeadline({ timeoutMs, signal }, timeoutMs, async (signal) => {
+    const res = await host().generate.quiet({ type: "quiet", messages, userId, signal });
+    return textOf(res).trim();
+  });
 }
 async function writeDrafts(prompt, n, userId) {
   const out = await Promise.allSettled(Array.from({ length: n }, () => writeReply(prompt, userId)));
@@ -15743,13 +16506,8 @@ async function judgeDrafts(decider, drafts, outcome, state) {
     return 0;
   }
 }
-function momentKey(msgs, state) {
-  const last = msgs[msgs.length - 1];
-  const s = JSON.stringify(state);
-  let h = 2166136261;
-  for (let i = 0;i < s.length; i++)
-    h = Math.imul(h ^ s.charCodeAt(i), 16777619);
-  return `${last?.id ?? ""}:${last?.swipe_id ?? 0}:${(h >>> 0).toString(36)}`;
+function momentKey(msgs, state, r, settings) {
+  return fingerprint({ messages: msgs.map((m) => [m.id, m.swipe_id ?? 0, m.content, m.is_user]), state, rules: r, settings });
 }
 function readyChoices(chatId, key) {
   const c = cache3.get(chatId);
@@ -15761,33 +16519,44 @@ function takePrewritten(chatId, key, actionId) {
     return null;
   const hit = c.replies.get(actionId) ?? null;
   if (hit)
-    cache3.delete(chatId);
+    dropPrewritten(chatId);
   return hit;
 }
 function dropPrewritten(chatId) {
+  if (chatId === undefined) {
+    for (const id of [...cache3.keys()])
+      dropPrewritten(id);
+    return;
+  }
+  cache3.get(chatId)?.controller.abort(new Error("Prewritten context changed"));
   cache3.delete(chatId);
 }
 async function prewrite(opts) {
-  const { chatId, userId, r, settings, decider } = opts;
+  const { chatId, userId, settings, decider } = opts;
   if (settings.prewrite <= 0)
     return;
   const msgs = await getMessages(chatId);
-  const { state } = foldPath(r, msgs);
-  const key = momentKey(msgs, state);
+  const fold = foldPath(opts.r, msgs);
+  requireCurrentPath(fold);
+  const { state, ruleset: r } = fold;
+  const key = momentKey(msgs, state, r, settings);
   const choices = buildChoices(r, state, { ...settings, live: liveChoicesOf(msgs[msgs.length - 1]) }).filter((c) => writable(c.id) && !c.params.length).slice(0, settings.prewrite);
   const replies = new Map;
-  cache3.set(chatId, { key, replies });
-  await Promise.allSettled(choices.map(async (c) => {
+  dropPrewritten(chatId);
+  const controller = new AbortController, signal = controller.signal;
+  cache3.set(chatId, { key, replies, controller });
+  await Promise.allSettled(choices.map((c) => background(`slot:${ticket++ % 2}`, async () => {
+    signal.throwIfAborted();
     const ci = intentFor(r, state, settings, msgs, c.id);
     if ("error" in ci)
       return;
-    const seed = randomSeed();
-    let res = resolveTurnFull(r, state, ci.intent, { seed, veils: settings.veils, playerText: ci.say });
-    if (res.needs.length && decider.id !== "rules") {
-      const o = await odds2({ decider, r, s: state, specs: res.needs, playerText: ci.say, sceneText: opts.reply, player: opts.player, timeoutMs: 20000 });
-      if (Object.keys(o).length)
-        res = resolveTurnFull(r, state, ci.intent, { seed, veils: settings.veils, odds: o, playerText: ci.say });
-    }
+    const seed = settings.swipesReroll ? randomSeed() : fingerprint([fold.head, ci.intent, ci.say]);
+    const res = await resolveWithDecisions({
+      resolve: (o) => resolveTurnFull(r, state, ci.intent, { seed, veils: settings.veils, playerText: ci.say, odds: o }),
+      ask: decider.id === "rules" ? undefined : (specs, remaining, boundedSignal) => odds2({ decider, r, s: state, specs, playerText: ci.say, sceneText: opts.reply, player: opts.player, timeoutMs: remaining, signal: boundedSignal }),
+      deadlineAt: Date.now() + 20000,
+      signal
+    });
     const rec = res.record;
     if (rec.discover)
       return;
@@ -15795,14 +16564,14 @@ async function prewrite(opts) {
     for (const e of rec.events)
       applyEvent(after, e, r);
     const prompt = nextPrompt(opts.prompt, opts.reply, ci.say, buildInjection(r, rec, state, after, opts.player));
-    const text = await writeReply(prompt, userId);
+    const text = await writeReply(prompt, userId, 120000, signal);
     if (!text || cache3.get(chatId)?.replies !== replies)
       return;
     replies.set(c.id, { say: ci.say, intent: ci.intent, rec, text, prompt, outcome: outcomePacket(r, rec, state, after, opts.player), after });
     opts.onReady();
-  }));
+  })));
 }
-var clip3 = (s, n) => s.length > n ? `${s.slice(0, n)}…` : s, cache3, writable = (id) => !id.startsWith("dungeon:") && id !== "date:open" && !(id.startsWith("run:") && id !== "run:epilogue");
+var clip3 = (s, n) => s.length > n ? `${s.slice(0, n)}…` : s, cache3, background, ticket = 0, writable = (id) => !id.startsWith("dungeon:") && id !== "date:open" && !(id.startsWith("run:") && id !== "run:epilogue");
 var init_drafts = __esm(() => {
   init_dice();
   init_resolve();
@@ -15812,7 +16581,10 @@ var init_drafts = __esm(() => {
   init_inject();
   init_intents();
   init_ledger();
+  init_decision_loop();
+  init_serial();
   cache3 = new Map;
+  background = serialQueue();
 });
 
 // src/backend/live.ts
@@ -15859,6 +16631,8 @@ function cleanChoices(r, s, tags, raw, count) {
     const a = r.liveChoices.tags[tag];
     const target = personId(s, o.target);
     if (a.perPerson && !target)
+      continue;
+    if (validateIntent(r, s, { actionId: `live:${tag}${target ? `@${target}` : ""}`, via: "choice" }))
       continue;
     seen.add(label.toLowerCase());
     out.push({ label, tag, ...a.perPerson && target ? { target } : {} });
@@ -15926,6 +16700,7 @@ async function writeLiveChoices(opts) {
 }
 var init_live = __esm(() => {
   init_expr();
+  init_resolve();
   init_state();
   init_view();
   init_helpers();
@@ -15976,6 +16751,13 @@ async function discoverPlace(loaded, r, before, rec, chatId, settings, userId) {
     rec.hints.push("{{user}} explores but finds nothing new this time.");
     return;
   }
+  const from = rec.discover.from;
+  const origin = r.locations[from];
+  rec.locations = {
+    ...origin ? { [from]: { ...origin, exits: [...new Set([...origin.exits, p.id])] } } : {},
+    [p.id]: { id: p.id, name: p.name, desc: p.desc, indoors: p.indoors, exits: [from], travel: r.discovery.time }
+  };
+  r.locations = { ...r.locations, ...rec.locations };
   const book = loaded.bookIds[0];
   if (book) {
     try {
@@ -16003,6 +16785,18 @@ var init_discover = __esm(() => {
 });
 
 // src/backend/turn.ts
+function cancelGeneration(chatId, generationId) {
+  const token = `${chatId}:${generationId}`;
+  if (cancelled.size >= 4096)
+    cancelled.delete(cancelled.values().next().value);
+  cancelled.add(token);
+  rememberFinished(token);
+}
+function rememberFinished(token) {
+  if (finished.size >= 4096)
+    finished.delete(finished.values().next().value);
+  finished.add(token);
+}
 function ctxInfo(ctx) {
   const raw = ctx;
   const s = started.get(ctx.chatId);
@@ -16053,14 +16847,17 @@ async function interceptor(messages, ctx) {
     if (!settings.enabled)
       return messages;
     const loaded = await getRuleset(ctx.chatId, ctx.userId);
-    const r = loaded?.ruleset;
+    let r = loaded?.ruleset;
     if (!r)
       return messages;
     const info = ctxInfo(ctx);
     const msgs = await getMessages(ctx.chatId);
     const target = targetOf(ctx, info.targetMessageId, msgs);
     const history = target ? msgs.filter((m) => m.index_in_chat < target.index_in_chat) : msgs;
-    const { state: before } = foldPath(r, history);
+    const fold = foldPath(r, history);
+    requireCurrentPath(fold);
+    const before = fold.state;
+    r = fold.ruleset;
     const player = await playerName(ctx.chatId, ctx.userId);
     let rec = null;
     let after = before;
@@ -16071,10 +16868,25 @@ async function interceptor(messages, ctx) {
         for (const e of rec.events)
           applyEvent(after, e, r);
       }
+      if (!info.isDryRun && (!info.generationId || !finished.has(`${ctx.chatId}:${info.generationId}`)))
+        pending.set(info.generationId ?? ctx.chatId, {
+          chatId: ctx.chatId,
+          userId: ctx.userId,
+          rec: rec ?? { v: 1, hints: [], events: [], at: Date.now() },
+          after,
+          origin: after,
+          ruleset: r,
+          at: Date.now(),
+          playerText: "",
+          player,
+          outcome: rec ? outcomePacket(r, rec, before, after, player) : null,
+          replyBefore: target.content
+        });
     } else {
       const lastUser = history[history.length - 1]?.is_user ? history[history.length - 1] : null;
       const meta = lastUser ? warpMeta(lastUser) : {};
       let intent = meta.intent ?? null;
+      const frozen = !settings.swipesReroll && meta.accepted?.parent === fold.head && meta.accepted.actionId === (intent?.actionId ?? null) ? meta.accepted.inputs : null;
       let verdict;
       let scene = {};
       let encounter;
@@ -16082,7 +16894,7 @@ async function interceptor(messages, ctx) {
       const sceneText = [...history].reverse().find((m) => !m.is_user)?.content ?? "";
       const budget = () => Math.min(20000, (typeof ctx.interceptorDeadlineAt === "number" ? ctx.interceptorDeadlineAt : Date.now() + 20000) - Date.now() - 2000);
       const decider = info.isDryRun ? null : await getDecider(settings, ctx.userId);
-      if (decider) {
+      if (decider && !frozen) {
         const readText = !intent && !meta.judged && lastUser && settings.freeTextChecks ? lastUser.content : null;
         const reading = await readTurn({ decider, r, s: before, settings, playerText: readText, sceneText, player, timeoutMs: budget() });
         scene = reading.scene;
@@ -16093,29 +16905,42 @@ async function interceptor(messages, ctx) {
           verdict = { messageId: lastUser.id, intent, suggestion: reading.suggestion };
         }
       }
-      const seed = settings.swipesReroll ? randomSeed() : `${lastUser?.id ?? "start"}:${intent?.actionId ?? "none"}`;
-      const playerText = lastUser?.content ?? "";
-      let res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene, playerText, encounter });
-      if (decider && res.needs.length) {
-        const card = res.needs.some((n) => n.id.startsWith("date:pref:") || n.id.startsWith("date:adult:")) ? await characterBrief(ctx.chatId, ctx.userId) : undefined;
-        const o = await odds2({ decider, r, s: before, specs: res.needs, playerText: lastUser?.content ?? "", sceneText, player, timeoutMs: budget(), card });
-        if (Object.keys(o).length)
-          res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene, odds: o, playerText, encounter });
+      if (frozen) {
+        scene = frozen.scene;
+        encounter = frozen.encounter;
       }
+      const seed = frozen?.seed ?? (settings.swipesReroll ? randomSeed() : `${lastUser?.id ?? "start"}:${intent?.actionId ?? "none"}`);
+      const playerText = lastUser?.content ?? "";
+      const gameRules = r;
+      const res = await resolveWithDecisions({
+        resolve: (o) => resolveTurnFull(gameRules, before, intent, { seed, veils: settings.veils, scene, playerText, encounter, odds: o }),
+        accepted: frozen?.odds,
+        ask: frozen || !decider || decider.id === "rules" ? undefined : async (specs, remaining, signal) => {
+          const card = specs.some((n) => n.id.startsWith("date:pref:") || n.id.startsWith("date:adult:")) ? await characterBrief(ctx.chatId, ctx.userId) : undefined;
+          return odds2({ decider, r: gameRules, s: before, specs, playerText, sceneText, player, timeoutMs: Math.min(remaining, budget()), card, signal });
+        },
+        deadlineAt: Date.now() + Math.max(0, budget())
+      });
       rec = res.record;
+      rec.commandId = meta.commandId;
+      rec.parent = fold.head;
+      rec.rulesRevision = fold.revision;
       if (confidence !== undefined && rec.action)
         rec.confidence = confidence;
-      if (rec.discover && !info.isDryRun && loaded)
+      if (rec.discover && !info.isDryRun && loaded) {
+        await pinRuleset(ctx.chatId, r);
         await discoverPlace(loaded, r, before, rec, ctx.chatId, settings, ctx.userId);
+      }
       after = cloneState(before);
       for (const e of rec.events)
         applyEvent(after, e, r);
-      if (!info.isDryRun) {
+      if (!info.isDryRun && (!info.generationId || !finished.has(`${ctx.chatId}:${info.generationId}`)) && (!started.has(ctx.chatId) || started.get(ctx.chatId)?.generationId === info.generationId)) {
         pending.set(info.generationId ?? ctx.chatId, {
           chatId: ctx.chatId,
           userId: ctx.userId,
           rec,
           after,
+          origin: before,
           playerText: lastUser?.content ?? "",
           ruleset: r,
           at: Date.now(),
@@ -16134,8 +16959,17 @@ async function interceptor(messages, ctx) {
     const text = buildInjection(r, rec, before, after, player);
     const { messages: out, index } = injectInto(messages, text);
     const waiting = pending.get(info.generationId ?? ctx.chatId);
-    if (waiting && !info.isDryRun)
+    if (waiting && !info.isDryRun) {
       waiting.prompt = out;
+      waiting.generationId = info.generationId ?? undefined;
+      waiting.targetMessageId = target?.id ?? undefined;
+      waiting.targetSwipe = target?.swipe_id ?? 0;
+      if (target && info.generationId) {
+        await pinRuleset(ctx.chatId, r);
+        const prepared = { generationId: info.generationId, record: waiting.rec, playerText: waiting.playerText, player, outcome: waiting.outcome, at: waiting.at, replyBefore: waiting.replyBefore, verdict: waiting.verdict };
+        await patchWarpMeta(ctx.chatId, target.id, (w) => ({ ...w, prepared: { ...w.prepared, [String(waiting.targetSwipe)]: prepared } }));
+      }
+    }
     return { messages: out, breakdown: [{ messageIndex: index, name: "Warp game state" }] };
   } catch (e) {
     logError("interceptor", e);
@@ -16153,8 +16987,16 @@ async function proposeChanges(decider, r, p, reply, settings, userId) {
     const named = await extract(r, p.after, p.playerText, reply, settings, userId, needsWriting, applied);
     if (named?.people)
       proposal.people = named.people;
-    if (named?.items)
-      proposal.items = { ...proposal.items ?? {}, ...named.items };
+    if (named?.items) {
+      const items = {};
+      for (const [key, value] of Object.entries(named.items)) {
+        const id = [...new Set([...Object.keys(r.items), ...Object.keys(p.after.items), ...Object.keys(p.origin?.items ?? {})])].find((id) => id === key.toLowerCase() || itemName(r, p.after, id).toLowerCase() === key.toLowerCase());
+        const already = id && p.origin ? (p.after.items[id] ?? 0) - (p.origin.items[id] ?? 0) : 0;
+        if (typeof value === "number" && Number.isFinite(value))
+          items[key] = value - already;
+      }
+      proposal.items = { ...proposal.items, ...items };
+    }
     if (named?.move && !proposal.move)
       proposal.move = named.move;
     if (named?.body)
@@ -16173,9 +17015,11 @@ async function afterReply(p, msg, content, userId) {
   let swipe = msg.swipe_id ?? 0;
   const decider = await getDecider(settings, userId);
   dropPrewritten(chatId);
-  if (settings.drafts > 1 && p.prompt && decider.id !== "rules") {
+  if (settings.drafts > 1 && p.prompt && decider.id !== "rules" && p.replyBefore === undefined && !p.stopped) {
     host().sendToFrontend({ type: "busy", chatId, busy: true, label: `Writing ${settings.drafts - 1} more draft${settings.drafts > 2 ? "s" : ""}…` }, userId);
     const extra = await writeDrafts(p.prompt, settings.drafts - 1, userId);
+    if (!stillCurrent(p))
+      return;
     if (extra.length) {
       const all = [content, ...extra];
       const pick = await judgeDrafts(decider, all, p.outcome ? fillNames(p.outcome, p.player) : null, fillNames(stateDigest(r, p.after), p.player));
@@ -16184,7 +17028,7 @@ async function afterReply(p, msg, content, userId) {
       const dates = [...msg.swipe_dates ?? [], ...extra.map(() => Math.floor(Date.now() / 1000))];
       await host().chat.updateMessage(chatId, msg.id, { swipes, swipe_dates: dates, ...pick > 0 ? { swipe_id: base + pick - 1 } : {} });
       for (let i = 0;i < extra.length; i++)
-        await writeRecord(chatId, msg.id, base + i, p.rec);
+        await writeRecord(chatId, msg.id, base + i, p.rec, r);
       if (pick > 0) {
         swipe = base + pick - 1;
         content = all[pick];
@@ -16195,22 +17039,27 @@ async function afterReply(p, msg, content, userId) {
   if (settings.narratorUpdates || settings.consistencyCheck || wantLive) {
     host().sendToFrontend({ type: "busy", chatId, busy: true, label: "Updating state…" }, userId);
     const [proposal, contra, live] = await Promise.all([
-      settings.narratorUpdates ? proposeChanges(decider, r, p, content, settings, userId) : Promise.resolve(null),
+      settings.narratorUpdates ? proposeChanges(decider, r, p, p.replyBefore !== undefined ? content.slice(p.replyBefore.length) : content, settings, userId) : Promise.resolve(null),
       settings.consistencyCheck && decider.id !== "rules" ? contradiction({ decider, r, s: p.after, reply: content, outcome: p.outcome }) : Promise.resolve(null),
       wantLive ? writeLiveChoices({ r, s: p.after, reply: content, player: p.player, settings, userId, decider }) : Promise.resolve([])
     ]);
+    if (!stillCurrent(p))
+      return;
     const rec = { ...p.rec };
     if (proposal) {
       const action = p.rec.action ? { id: p.rec.action.id, tags: actionTags(r, p.rec.action.id) } : undefined;
+      const rejected = [];
       const events = applyProposal(r, p.after, proposal, { text: `${p.playerText}
-${content}`, action });
+${content}`, action, applied: p.replyBefore === undefined ? p.rec.events : [], origin: p.origin, rejected });
+      if (rejected.length)
+        rec.rejected = [...rec.rejected ?? [], ...rejected];
       if (events.length)
         rec.events = [...rec.events, ...events];
     }
     if (contra !== null)
       rec.contradiction = contra;
-    if (rec.events !== p.rec.events || contra !== null)
-      await writeRecord(chatId, msg.id, swipe, rec);
+    if (rec.events !== p.rec.events || rec.rejected || contra !== null)
+      await writeRecord(chatId, msg.id, swipe, rec, r);
     if (live.length) {
       await patchWarpMeta(chatId, msg.id, (w) => ({ ...w, live: { ...w.live ?? {}, [String(swipe)]: live } }));
     }
@@ -16223,51 +17072,159 @@ ${content}`, action });
 }
 async function onGenerationStarted(payload, userId) {
   const { chatId } = payload;
+  dropPrewritten(chatId);
+  const old = started.get(chatId);
+  if (old && old.generationId !== payload.generationId) {
+    cancelGeneration(chatId, old.generationId);
+    pending.delete(old.generationId);
+  }
+  for (const [id, p] of pending)
+    if (p.chatId === chatId && p.generationId !== payload.generationId) {
+      if (p.generationId)
+        cancelGeneration(chatId, p.generationId);
+      pending.delete(id);
+    }
+  pending.delete(chatId);
+  const timer = expiry.get(chatId);
+  if (timer)
+    clearTimeout(timer);
   started.set(chatId, { generationId: payload.generationId, targetMessageId: payload.targetMessageId, generationType: payload.generationType, at: Date.now() });
   busyChats.add(chatId);
   host().sendToFrontend({ type: "busy", chatId, busy: true }, userId);
+  const timeout = setTimeout(() => {
+    if (started.get(chatId)?.generationId !== payload.generationId)
+      return;
+    cancelGeneration(chatId, payload.generationId);
+    started.delete(chatId);
+    pending.delete(payload.generationId);
+    pending.delete(chatId);
+    expiry.delete(chatId);
+    busyChats.delete(chatId);
+    host().sendToFrontend({ type: "busy", chatId, busy: false }, userId);
+    schedulePush(chatId, userId, 0);
+  }, 15 * 60000);
+  timeout.unref?.();
+  expiry.set(chatId, timeout);
 }
 async function onGenerationEnded(payload, userId) {
-  busyChats.delete(payload.chatId);
-  if (started.get(payload.chatId)?.generationId === payload.generationId)
-    started.delete(payload.chatId);
-  const key = pending.has(payload.generationId) ? payload.generationId : payload.chatId;
-  const p = pending.get(key);
-  pending.delete(key);
-  for (const [id, x] of pending)
-    if (Date.now() - x.at > 10 * 60000)
-      pending.delete(id);
-  if (!p || payload.error || !payload.messageId) {
-    await pushState(payload.chatId, userId);
-    return;
-  }
-  try {
-    const msgs = await getMessages(payload.chatId);
-    const msg = msgs.find((m) => m.id === payload.messageId);
-    if (!msg)
-      return;
-    const swipe = msg.swipe_id ?? 0;
-    await writeRecord(payload.chatId, msg.id, swipe, p.rec);
-    if (p.verdict) {
-      const { messageId, intent, suggestion } = p.verdict;
-      await patchWarpMeta(payload.chatId, messageId, (w) => ({
-        ...w,
-        judged: true,
-        ...intent ? { intent } : {},
-        ...suggestion ? { suggest: suggestion } : {}
-      })).catch((e) => logError("save verdict", e));
-    }
-    await pushState(payload.chatId, userId);
-    if (payload.content)
-      await afterReply(p, msg, payload.content, userId);
-  } catch (e) {
-    logError("generation ended", e);
-  } finally {
-    host().sendToFrontend({ type: "busy", chatId: payload.chatId, busy: false }, userId);
-    schedulePush(payload.chatId, userId, 0);
-  }
+  return finishGeneration(payload, userId, false);
 }
-var pending, playerNames, started;
+async function onGenerationStopped(payload, userId) {
+  return finishGeneration(payload, userId, true);
+}
+async function finishGeneration(payload, userId, stopped) {
+  const token = `${payload.chatId}:${payload.generationId}`;
+  return chatCommand(payload.chatId, async () => {
+    const current = started.get(payload.chatId);
+    if (finished.has(token) || current && current.generationId !== payload.generationId)
+      return;
+    let p = pending.get(payload.generationId) ?? pending.get(payload.chatId);
+    if (p?.generationId && p.generationId !== payload.generationId)
+      return;
+    pending.delete(payload.generationId);
+    pending.delete(payload.chatId);
+    rememberFinished(token);
+    busyChats.add(payload.chatId);
+    let clearPrepared;
+    try {
+      const msgs = await getMessages(payload.chatId);
+      let target = msgs.find((m) => m.id === (p?.targetMessageId ?? payload.messageId ?? current?.targetMessageId));
+      if (!p) {
+        for (const m of msgs) {
+          const found = Object.entries(warpMeta(m).prepared ?? {}).find(([, x]) => x.generationId === payload.generationId && Date.now() - x.at < 15 * 60000 && validRecord(x.record));
+          if (!found)
+            continue;
+          const [slot, prepared] = found;
+          const loaded = await getRuleset(payload.chatId, userId);
+          if (!loaded?.ruleset)
+            break;
+          const fold = foldPath(loaded.ruleset, msgs.filter((x) => x.index_in_chat < m.index_in_chat));
+          requireCurrentPath(fold);
+          const after = cloneState(fold.state);
+          for (const e of prepared.record.events)
+            applyEvent(after, e, fold.ruleset);
+          p = {
+            chatId: payload.chatId,
+            userId,
+            generationId: payload.generationId,
+            targetMessageId: m.id,
+            targetSwipe: Number(slot),
+            rec: prepared.record,
+            after,
+            origin: prepared.replyBefore === undefined ? fold.state : after,
+            ruleset: fold.ruleset,
+            playerText: prepared.playerText,
+            player: prepared.player,
+            outcome: prepared.outcome,
+            at: prepared.at,
+            replyBefore: prepared.replyBefore,
+            verdict: prepared.verdict
+          };
+          target = m;
+          break;
+        }
+      }
+      if (!p || !target)
+        return;
+      if (p.targetMessageId && payload.messageId && p.targetMessageId !== payload.messageId)
+        throw new Error("Generation ended on a different message than it started.");
+      const swipe = p.targetSwipe ?? target.swipe_id ?? 0;
+      const content = target.swipe_id === swipe ? payload.content ?? target.content : target.swipes?.[swipe] ?? "";
+      clearPrepared = () => patchWarpMeta(payload.chatId, target.id, (w) => {
+        const prepared = { ...w.prepared };
+        if (prepared[String(swipe)]?.generationId === payload.generationId)
+          delete prepared[String(swipe)];
+        return { ...w, prepared };
+      });
+      if (payload.error) {
+        toast("warning", `Warp: the reply failed; its prepared outcome was discarded. ${payload.error}`, userId);
+        return;
+      }
+      if (!content.trim() || p.replyBefore !== undefined && !content.startsWith(p.replyBefore)) {
+        await clearPrepared();
+        return;
+      }
+      const fold = foldPath(p.ruleset, msgs.filter((m) => m.index_in_chat < target.index_in_chat));
+      requireCurrentPath(fold);
+      if (p.rec.parent && p.rec.parent !== fold.head)
+        throw new Error("The story changed while this reply was being generated. Regenerate the reply to resolve it on the current path.");
+      if (!stillCurrent(p))
+        return;
+      p.stopped = stopped;
+      await writeRecord(payload.chatId, target.id, swipe, p.rec, p.ruleset);
+      await clearPrepared();
+      const user = [...msgs].reverse().find((m) => m.is_user && m.index_in_chat < target.index_in_chat);
+      if (p.verdict || user && p.replyBefore === undefined) {
+        const verdict = p.verdict;
+        await patchWarpMeta(payload.chatId, verdict?.messageId ?? user.id, (w) => ({
+          ...w,
+          judged: true,
+          ...verdict?.intent ? { intent: verdict.intent } : {},
+          ...verdict?.suggestion ? { suggest: verdict.suggestion } : {},
+          ...p.rec.inputs ? { accepted: { parent: p.rec.parent ?? fold.head, actionId: p.rec.action?.id ?? null, inputs: p.rec.inputs } } : {}
+        })).catch((e) => logError("save verdict", e));
+      }
+      await afterReply(p, { ...target, swipe_id: swipe, content }, content, userId);
+    } catch (e) {
+      logError(stopped ? "generation stopped" : "generation ended", e);
+      toast("warning", `Warp: ${e instanceof Error ? e.message : String(e)}`, userId);
+    } finally {
+      if (clearPrepared)
+        await clearPrepared().catch((e) => logError("discard preparation", e));
+      if (!started.has(payload.chatId) || started.get(payload.chatId)?.generationId === payload.generationId) {
+        const timer = expiry.get(payload.chatId);
+        if (timer)
+          clearTimeout(timer);
+        expiry.delete(payload.chatId);
+        started.delete(payload.chatId);
+        busyChats.delete(payload.chatId);
+        host().sendToFrontend({ type: "busy", chatId: payload.chatId, busy: false }, userId);
+        await pushState(payload.chatId, userId);
+      }
+    }
+  });
+}
+var pending, playerNames, started, expiry, finished, cancelled, stillCurrent = (p) => !p.generationId || !cancelled.has(`${p.chatId}:${p.generationId}`) && (!started.has(p.chatId) || started.get(p.chatId)?.generationId === p.generationId);
 var init_turn = __esm(() => {
   init_dice();
   init_resolve();
@@ -16284,9 +17241,14 @@ var init_turn = __esm(() => {
   init_settings();
   init_source();
   init_state_push();
+  init_decision_loop();
+  init_serial();
   pending = new Map;
   playerNames = new Map;
   started = new Map;
+  expiry = new Map;
+  finished = new Set;
+  cancelled = new Set;
 });
 
 // src/backend/scene.ts
@@ -16314,7 +17276,7 @@ async function playerNameOf(chatId, userId) {
 async function playScene(opts) {
   const { chatId, userId, kind } = opts;
   const loaded = await getRuleset(chatId, userId);
-  const r = loaded?.ruleset;
+  let r = loaded?.ruleset;
   if (!r)
     return;
   const settings = await getSettings(userId);
@@ -16330,13 +17292,15 @@ async function playScene(opts) {
   log.said = opts.said;
   send({ type: "busy", chatId, busy: true, label: kind === "date" ? "…" : "The dungeon stirs…" }, userId);
   try {
-    const { state: before } = foldPath(r, msgs);
+    const fold = foldPath(r, msgs);
+    requireCurrentPath(fold);
+    const before = fold.state;
+    r = fold.ruleset;
     if (!log.start)
       log.start = cloneState(before);
     const player = await playerNameOf(chatId, userId);
     const seed = randomSeed();
     const playerText = opts.typed ?? opts.said ?? "";
-    let res = resolveTurnFull(r, before, opts.intent, { seed, veils: settings.veils, playerText });
     const decider = await getDecider(settings, userId);
     const partner = activeSession(r, before) ?? null;
     let card = "";
@@ -16355,21 +17319,23 @@ ${prof.setting}` : ""].filter(Boolean).join(`
     }
     if (!card)
       card = await characterBrief(chatId, userId).catch(() => "");
-    if (res.needs.length && decider.id !== "rules") {
-      const recent = log.history.slice(-4).map((l) => `${l.speaker ?? ""}${l.speaker ? ": " : ""}${l.text}`).join(`
+    const recent = log.history.slice(-4).map((l) => `${l.speaker ?? ""}${l.speaker ? ": " : ""}${l.text}`).join(`
 `);
-      const o = await odds2({ decider, r, s: before, specs: res.needs, playerText, sceneText: recent, player, timeoutMs: 15000, card });
-      if (Object.keys(o).length)
-        res = resolveTurnFull(r, before, opts.intent, { seed, veils: settings.veils, odds: o, playerText });
-    }
+    const gameRules = r;
+    const res = await resolveWithDecisions({
+      resolve: (o) => resolveTurnFull(gameRules, before, opts.intent, { seed, veils: settings.veils, odds: o, playerText }),
+      ask: decider.id === "rules" ? undefined : (specs, remaining, signal) => odds2({ decider, r: gameRules, s: before, specs, playerText, sceneText: recent, player, timeoutMs: remaining, card, signal }),
+      deadlineAt: Date.now() + 15000
+    });
     const rec = res.record;
+    rec.commandId = currentCommand(chatId);
     const after = cloneState(before);
     for (const e of rec.events)
       applyEvent(after, e, r);
     const swipe = last.swipe_id ?? 0;
     const existing = warpMeta(last).swipes?.[String(swipe)];
-    const merged = existing ? { ...existing, events: [...existing.events, ...rec.events] } : { v: 1, hints: [], events: rec.events, at: Date.now() };
-    await writeRecord(chatId, last.id, swipe, merged);
+    const merged = appendOperation(existing, rec);
+    await writeRecord(chatId, last.id, swipe, merged, r);
     await pushState(chatId, userId);
     const sess = activeSession(r, after);
     if (kind === "date" && sess && settings.dateImages && !log.image && !log.imageBusy)
@@ -16474,6 +17440,8 @@ var init_scene = __esm(() => {
   init_deciders();
   init_helpers();
   init_ledger();
+  init_decision_loop();
+  init_serial();
   init_settings();
   init_source();
   init_state_push();
@@ -16497,10 +17465,11 @@ async function pushState(chatId, userId, force = false) {
       send({ type: "state", chatId, status, hud: null, map: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false, dungeon: null, dungeonEntries: [], date: null, scene: null }, userId);
       return;
     }
-    const r = loaded.ruleset;
     const settings = await getSettings(userId);
     const msgs = await getMessages(chatId);
-    const { state, steps } = foldPath(r, msgs);
+    const { state, steps, ruleset: r, stale } = foldPath(loaded.ruleset, msgs);
+    if (stale.length)
+      status.issues = [...status.issues, { level: "error", where: `message ${stale[0]}`, message: "This reply belongs to an older game path. Regenerate from it or delete the incompatible replies to continue." }];
     lastStates.set(chatId, state);
     const redoable = (userMsgId) => {
       const i = msgs.findIndex((m) => m.id === userMsgId);
@@ -16529,7 +17498,7 @@ async function pushState(chatId, userId, force = false) {
       status,
       hud: settings.enabled ? buildHud(r, state) : null,
       map: settings.enabled ? buildMap(r, state) : null,
-      choices: settings.enabled ? markReady(buildChoices(r, state, { ...settings, live: liveChoicesOf(latest) }), readyChoices(chatId, momentKey(msgs, state))) : [],
+      choices: settings.enabled && !stale.length ? markReady(buildChoices(r, state, { ...settings, live: liveChoicesOf(latest) }), readyChoices(chatId, momentKey(msgs, state, r, settings))) : [],
       records: settings.enabled ? records : [],
       suggestions: settings.enabled ? suggestions.filter((s) => s.canRedo) : [],
       latestMessageId: latest?.id ?? null,
@@ -16607,7 +17576,6 @@ init_scene();
 init_talk();
 init_types2();
 init_drafts();
-init_loader();
 init_deciders();
 
 // src/backend/dungeon.ts
@@ -16617,6 +17585,7 @@ init_ledger();
 init_source();
 init_state_push();
 init_scene();
+init_serial();
 function run2(r, s, op) {
   switch (op.op) {
     case "enter":
@@ -16645,8 +17614,7 @@ function run2(r, s, op) {
 }
 async function runDungeonOp(msg, userId) {
   const loaded = await getRuleset(msg.chatId, userId);
-  const r = loaded?.ruleset;
-  if (!r)
+  if (!loaded?.ruleset)
     return;
   if (busyChats.has(msg.chatId)) {
     toast("info", "Wait for the story to catch up first.", userId);
@@ -16658,7 +17626,9 @@ async function runDungeonOp(msg, userId) {
     toast("warning", "Send a message first — the dungeon attaches to the latest message.", userId);
     return;
   }
-  const { state } = foldPath(r, msgs);
+  const fold = foldPath(loaded.ruleset, msgs);
+  requireCurrentPath(fold);
+  const { state, ruleset: r } = fold;
   const res = run2(r, state, msg);
   if (res.error) {
     toast("warning", res.error, userId);
@@ -16668,8 +17638,8 @@ async function runDungeonOp(msg, userId) {
   if (res.events.length) {
     const swipe = last.swipe_id ?? 0;
     const existing = warpMeta(last).swipes?.[String(swipe)];
-    const rec = existing ? { ...existing, events: [...existing.events, ...res.events] } : { v: 1, hints: [], events: res.events, at: Date.now() };
-    await writeRecord(msg.chatId, last.id, swipe, rec);
+    const rec = appendOperation(existing, { v: 1, hints: [], events: res.events, action: { id: `dungeon:${msg.op}`, label: `Dungeon: ${msg.op}`, via: "command" }, commandId: currentCommand(msg.chatId), at: Date.now() });
+    await writeRecord(msg.chatId, last.id, swipe, rec, r);
   }
   await pushState(msg.chatId, userId);
   const was = state.dungeon;
@@ -17810,48 +18780,42 @@ async function builderInstall(chatId, userId) {
   await progress(s, null, userId);
 }
 
-// src/backend.ts
-spindle.registerInterceptor(interceptor, 60);
-spindle.registerWorldInfoInterceptor(async (ctx) => {
-  const disabled = ctx.entries.filter((e) => knownRulesetEntryIds.has(e.id) || knownRulesetBookIds.has(e.world_book_id) || isRulesetEntryTitle(e.comment)).map((e) => e.id);
-  const forced = [];
+// src/backend/knowledge.ts
+init_loader();
+init_ledger();
+init_source();
+async function worldInfoPolicy(ctx) {
+  const disabled = new Set, forced = new Set;
   try {
     const loaded = await getRuleset(ctx.chatId, ctx.userId);
-    const r = loaded?.ruleset;
-    const gates = [];
-    if (r) {
-      for (const c of Object.values(r.codex))
-        if (c.lore.length)
-          gates.push({ lore: c.lore, open: (s) => !!s.codex[c.id] });
-      for (const sec of Object.values(r.secrets))
-        sec.stages.forEach((st, i) => {
-          if (st.lore.length)
-            gates.push({ lore: st.lore, open: (s) => (s.secrets[sec.id] ?? -1) >= i });
-        });
-    }
-    if (r && gates.length) {
-      let state = lastStates.get(ctx.chatId);
-      if (!state)
-        state = foldPath(r, await getMessages(ctx.chatId)).state;
-      const title = (s) => s.replace(/^\s*\[[^\]]*\]\s*/, "").trim().toLowerCase();
-      for (const g of gates) {
-        const names = new Set(g.lore.map(title));
-        const open = g.open(state);
-        for (const e of ctx.entries) {
-          if (!names.has(title(e.comment ?? "")))
-            continue;
-          if (open)
-            forced.push(e.id);
-          else
-            disabled.push(e.id);
-        }
+    const fold = loaded?.ruleset ? foldPath(loaded.ruleset, await getMessages(ctx.chatId)) : null;
+    for (const e of ctx.entries) {
+      if (knownRulesetEntryIds.has(e.id) || knownRulesetBookIds.has(e.world_book_id) || isRulesetEntryTitle(e.comment)) {
+        disabled.add(e.id);
+        continue;
       }
+      if (!loaded || loaded.source && !fold) {
+        disabled.add(e.id);
+        continue;
+      }
+      const access = fold ? loreAccess(fold.ruleset, fold.state, e.comment ?? "") : { gated: false, open: true };
+      if (!access.open)
+        disabled.add(e.id);
+      else if (access.gated)
+        forced.add(e.id);
     }
   } catch (e) {
-    logError("codex lore gate", e);
+    logError("lore gate", e);
+    ctx.entries.forEach((entry) => disabled.add(entry.id));
   }
-  return disabled.length || forced.length ? { ...disabled.length ? { disabled } : {}, ...forced.length ? { forced } : {} } : undefined;
-}, 10);
+  return disabled.size || forced.size ? { ...disabled.size ? { disabled: [...disabled] } : {}, ...forced.size ? { forced: [...forced].filter((id) => !disabled.has(id)) } : {} } : undefined;
+}
+
+// src/backend.ts
+init_serial();
+init_drafts();
+spindle.registerInterceptor(interceptor, 60);
+spindle.registerWorldInfoInterceptor(worldInfoPolicy, 10);
 var chatIdOf = (p) => {
   const x = p;
   return x?.chatId ?? x?.message?.chat_id ?? null;
@@ -17861,19 +18825,11 @@ spindle.on("CHAT_SWITCHED", (p, userId) => {
   setActiveChat(userId, chatId);
   pushState(chatId, userId);
 });
-spindle.on("GENERATION_STARTED", (p, userId) => {
-  onGenerationStarted(p, userId);
-});
-spindle.on("GENERATION_ENDED", (p, userId) => {
-  onGenerationEnded(p, userId);
-});
-spindle.on("GENERATION_STOPPED", (p, userId) => {
-  const chatId = chatIdOf(p);
-  if (chatId)
-    send({ type: "busy", chatId, busy: false }, userId);
-  schedulePush(chatId, userId);
-});
+spindle.on("GENERATION_STARTED", (p, userId) => onGenerationStarted(p, userId));
+spindle.on("GENERATION_ENDED", (p, userId) => onGenerationEnded(p, userId));
+spindle.on("GENERATION_STOPPED", (p, userId) => onGenerationStopped(p, userId));
 spindle.on("MESSAGE_SWIPED", (p, userId) => {
+  dropPrewritten(p.chatId);
   if (p.action === "deleted") {
     shiftAfterSwipeDelete(p.chatId, p.message.id, p.swipeId).catch((e) => logError("swipe delete", e)).finally(() => schedulePush(p.chatId, userId));
     return;
@@ -17881,19 +18837,30 @@ spindle.on("MESSAGE_SWIPED", (p, userId) => {
   schedulePush(p.chatId, userId);
 });
 for (const ev of ["MESSAGE_SENT", "MESSAGE_DELETED", "MESSAGE_EDITED", "SWIPE_EDITED", "CHAT_CHANGED"]) {
-  spindle.on(ev, (p, userId) => schedulePush(chatIdOf(p), userId, 250));
+  spindle.on(ev, (p, userId) => {
+    const chatId = chatIdOf(p);
+    if (chatId)
+      dropPrewritten(chatId);
+    schedulePush(chatId, userId, 250);
+  });
 }
 spindle.on("CHARACTER_EDITED", (p, userId) => {
   const id = p?.character?.id ?? p?.characterId;
   invalidateCharacter(id ?? null);
+  dropPrewritten();
 });
 spindle.commands.register([
   { id: "open", label: "Warp: Open character sheet", description: "Stats, skills, people, inventory and settings", keywords: ["stats", "sheet", "hud", "game"], scope: "chat" },
   { id: "install", label: "Warp: Add a ruleset to this character", description: "Pick a starter game (Universal, life-sim, sci-fi RPG)", keywords: ["ruleset", "template", "game", "setup"], scope: "chat" },
   { id: "dungeon", label: "Warp: Open the dungeon", description: "Explore, fight and loot — or pick a dungeon to enter", keywords: ["dungeon", "explore", "battle", "roguelike"], scope: "chat" },
-  { id: "reload", label: "Warp: Reload ruleset", description: "Re-read the character's warp-ruleset lorebook", keywords: ["refresh", "ruleset"], scope: "chat" }
+  { id: "reload", label: "Warp: Reload ruleset", description: "Re-read the character's warp-ruleset lorebook", keywords: ["refresh", "ruleset"], scope: "chat" },
+  { id: "adopt_rules", label: "Warp: Start a playthrough with edited rules", description: "Keep this history and start a new game using the character's current rules", keywords: ["migrate", "ruleset", "restart"], scope: "chat" }
 ]);
 spindle.commands.onInvoked((id, context) => {
+  if (id === "adopt_rules" && context.chatId) {
+    handleFrontend({ type: "adopt_rules", chatId: context.chatId }).catch((e) => logError("adopt rules", e));
+    return;
+  }
   if (id === "reload") {
     pushState(context.chatId ?? null, undefined, true).then(() => toast("info", "Ruleset reloaded"));
     return;
@@ -17902,8 +18869,7 @@ spindle.commands.onInvoked((id, context) => {
 });
 async function applyManual(chatId, userId, make) {
   const loaded = await getRuleset(chatId, userId);
-  const r = loaded?.ruleset;
-  if (!r)
+  if (!loaded?.ruleset)
     return false;
   const msgs = await getMessages(chatId);
   const last = msgs[msgs.length - 1];
@@ -17911,7 +18877,9 @@ async function applyManual(chatId, userId, make) {
     toast("warning", "Send a message first — changes attach to the latest message.", userId);
     return false;
   }
-  const { state } = foldPath(r, msgs);
+  const fold = foldPath(loaded.ruleset, msgs);
+  requireCurrentPath(fold);
+  const { state, ruleset: r } = fold;
   const events = make(r, state);
   if (typeof events === "string") {
     toast("warning", events, userId);
@@ -17919,8 +18887,8 @@ async function applyManual(chatId, userId, make) {
   }
   const swipe = last.swipe_id ?? 0;
   const existing = warpMeta(last).swipes?.[String(swipe)];
-  const rec = existing ? { ...existing, events: [...existing.events, ...events] } : { v: 1, hints: [], events, at: Date.now() };
-  await writeRecord(chatId, last.id, swipe, rec);
+  const rec = appendOperation(existing, { v: 1, hints: [], events, at: Date.now(), commandId: currentCommand(chatId) });
+  await writeRecord(chatId, last.id, swipe, rec, r);
   await pushState(chatId, userId);
   return true;
 }
@@ -17947,258 +18915,319 @@ async function imageConnectionsFor(userId) {
     return [];
   }
 }
-spindle.onFrontendMessage(async (raw, userId) => {
+var readCommands = new Set(["hello", "refresh", "reload", "builder_open", "test_decider"]);
+async function handleFrontend(raw, userId) {
   const msg = raw;
-  try {
-    switch (msg.type) {
-      case "hello": {
-        setActiveChat(userId, msg.chatId);
-        await sendSettings(userId);
-        await pushState(msg.chatId, userId);
-        await builderCurrent(msg.chatId, userId);
-        break;
+  if (!msg || typeof msg.type !== "string")
+    return;
+  const chatId = "chatId" in msg && typeof msg.chatId === "string" ? msg.chatId : null;
+  const id = typeof msg.commandId === "string" && msg.commandId.length <= 128 ? msg.commandId : undefined;
+  const work = async () => {
+    if (chatId && !readCommands.has(msg.type)) {
+      if (busyChats.has(chatId)) {
+        toast("info", "Wait for the story to catch up first.", userId);
+        return;
       }
-      case "refresh":
-        setActiveChat(userId, msg.chatId);
-        await pushState(msg.chatId, userId);
-        await builderCurrent(msg.chatId, userId);
-        break;
-      case "reload":
-        await pushState(msg.chatId, userId, true);
-        break;
-      case "say": {
-        const text = String(msg.text ?? "").trim().slice(0, 4000);
-        if (!text)
-          return;
-        if (busyChats.has(msg.chatId)) {
-          toast("info", "Wait for the story to catch up first.", userId);
-          return;
-        }
-        const loaded = await getRuleset(msg.chatId, userId);
-        const r = loaded?.ruleset;
-        if (r) {
-          const { state } = foldPath(r, await getMessages(msg.chatId));
-          if (activeSession(r, state)) {
-            await playScene({ chatId: msg.chatId, userId, kind: "date", intent: { actionId: `${DATE_PREFIX}say`, via: "adjudicator" }, said: text, typed: text });
-            break;
-          }
-          if (state.dungeon) {
-            await playScene({ chatId: msg.chatId, userId, kind: "dungeon", intent: null, said: text, typed: text });
-            break;
-          }
-        }
-        await spindle.chat.appendMessage(msg.chatId, { role: "user", content: text }, { triggerGeneration: true });
-        break;
-      }
-      case "act": {
-        const loaded = await getRuleset(msg.chatId, userId);
-        const r = loaded?.ruleset;
-        if (!r)
-          return;
-        const settings = await getSettings(userId);
-        const msgs = await getMessages(msg.chatId);
-        const { state } = foldPath(r, msgs);
-        const ci = intentFor(r, state, settings, msgs, msg.actionId, msg.params);
-        if ("error" in ci) {
-          if (ci.error)
-            toast("warning", ci.error, userId);
+      const msgs = id ? await getMessages(chatId) : [];
+      if (id && msgs.some((m) => {
+        const w = warpMeta(m);
+        return w.commandId === id || Object.values(w.swipes ?? {}).some((r) => r.commandId === id || r.operations?.some((op) => op.commandId === id));
+      }))
+        return;
+      if (msg.type !== "act")
+        dropPrewritten(chatId);
+    }
+    try {
+      switch (msg.type) {
+        case "hello": {
+          setActiveChat(userId, msg.chatId);
+          await sendSettings(userId);
           await pushState(msg.chatId, userId);
-          return;
+          await builderCurrent(msg.chatId, userId);
+          break;
         }
-        const { say, intent } = ci;
-        if (msg.actionId.startsWith(DATE_PREFIX)) {
+        case "refresh":
+          setActiveChat(userId, msg.chatId);
+          await pushState(msg.chatId, userId);
+          await builderCurrent(msg.chatId, userId);
+          break;
+        case "reload":
+          if (msg.chatId)
+            dropPrewritten(msg.chatId);
+          await pushState(msg.chatId, userId, true);
+          break;
+        case "adopt_rules": {
+          const loaded = await getRuleset(msg.chatId, userId, true);
+          if (!loaded?.ruleset)
+            throw new Error("Fix the current ruleset before starting a new playthrough.");
+          await startPlaythrough(msg.chatId, loaded.ruleset);
+          await pushState(msg.chatId, userId);
+          break;
+        }
+        case "say": {
+          const text = String(msg.text ?? "").trim().slice(0, 4000);
+          if (!text)
+            return;
           if (busyChats.has(msg.chatId)) {
-            toast("info", "Wait a moment — they're still answering.", userId);
+            toast("info", "Wait for the story to catch up first.", userId);
+            return;
+          }
+          const loaded = await getRuleset(msg.chatId, userId);
+          if (loaded?.ruleset) {
+            const fold = foldPath(loaded.ruleset, await getMessages(msg.chatId));
+            requireCurrentPath(fold);
+            const { state, ruleset: r } = fold;
+            if (activeSession(r, state)) {
+              await playScene({ chatId: msg.chatId, userId, kind: "date", intent: { actionId: `${DATE_PREFIX}say`, via: "adjudicator" }, said: text, typed: text });
+              break;
+            }
+            if (state.dungeon) {
+              await playScene({ chatId: msg.chatId, userId, kind: "dungeon", intent: null, said: text, typed: text });
+              break;
+            }
+          }
+          busyChats.add(msg.chatId);
+          try {
+            await spindle.chat.appendMessage(msg.chatId, { role: "user", content: text, metadata: { warp: { commandId: id } } }, { triggerGeneration: true });
+          } catch (e) {
+            busyChats.delete(msg.chatId);
+            throw e;
+          }
+          break;
+        }
+        case "act": {
+          const loaded = await getRuleset(msg.chatId, userId);
+          if (!loaded?.ruleset)
+            return;
+          const settings = await getSettings(userId);
+          const msgs = await getMessages(msg.chatId);
+          const fold = foldPath(loaded.ruleset, msgs);
+          requireCurrentPath(fold);
+          const { state, ruleset: r } = fold;
+          const ci = intentFor(r, state, settings, msgs, msg.actionId, msg.params);
+          if ("error" in ci) {
+            if (ci.error)
+              toast("warning", ci.error, userId);
             await pushState(msg.chatId, userId);
             return;
           }
-          await playScene({ chatId: msg.chatId, userId, kind: "date", intent, said: say });
-          break;
-        }
-        const ready = takePrewritten(msg.chatId, momentKey(msgs, state), msg.actionId);
-        if (ready) {
-          await spindle.chat.appendMessage(msg.chatId, { role: "user", content: say, metadata: { warp: { intent, judged: true } } });
-          const reply = await spindle.chat.appendMessage(msg.chatId, { role: "assistant", content: ready.text });
-          await writeRecord(msg.chatId, reply.id, 0, ready.rec);
-          await pushState(msg.chatId, userId);
-          const fresh = (await getMessages(msg.chatId)).find((m) => m.id === reply.id);
-          if (fresh) {
-            busyChats.add(msg.chatId);
-            try {
-              await afterReply({
-                chatId: msg.chatId,
-                userId,
-                rec: ready.rec,
-                after: ready.after,
-                playerText: say,
-                ruleset: r,
-                at: Date.now(),
-                outcome: ready.outcome,
-                player: await playerName(msg.chatId, userId),
-                prompt: ready.prompt
-              }, fresh, ready.text, userId);
-            } finally {
-              busyChats.delete(msg.chatId);
-              send({ type: "busy", chatId: msg.chatId, busy: false }, userId);
-              schedulePush(msg.chatId, userId, 0);
+          const { say, intent } = ci;
+          if (msg.actionId.startsWith(DATE_PREFIX)) {
+            if (busyChats.has(msg.chatId)) {
+              toast("info", "Wait a moment — they're still answering.", userId);
+              await pushState(msg.chatId, userId);
+              return;
             }
+            await playScene({ chatId: msg.chatId, userId, kind: "date", intent, said: say });
+            break;
+          }
+          const ready = takePrewritten(msg.chatId, momentKey(msgs, state, r, settings), msg.actionId);
+          if (ready) {
+            const user = await spindle.chat.appendMessage(msg.chatId, { role: "user", content: say, metadata: { warp: { intent, judged: true, commandId: id } } });
+            const reply = await spindle.chat.appendMessage(msg.chatId, { role: "assistant", content: ready.text });
+            await writeRecord(msg.chatId, reply.id, 0, ready.rec, r);
+            await pushState(msg.chatId, userId);
+            const fresh = (await getMessages(msg.chatId)).find((m) => m.id === reply.id);
+            const committed = fresh && warpMeta(fresh).swipes?.["0"];
+            if (committed?.inputs && committed.parent)
+              await patchWarpMeta(msg.chatId, user.id, (w) => ({ ...w, accepted: { parent: committed.parent, actionId: committed.action?.id ?? null, inputs: committed.inputs } }));
+            if (fresh) {
+              busyChats.add(msg.chatId);
+              try {
+                await afterReply({
+                  chatId: msg.chatId,
+                  userId,
+                  rec: ready.rec,
+                  after: ready.after,
+                  origin: state,
+                  playerText: say,
+                  ruleset: r,
+                  at: Date.now(),
+                  outcome: ready.outcome,
+                  player: await playerName(msg.chatId, userId),
+                  prompt: ready.prompt
+                }, fresh, ready.text, userId);
+              } finally {
+                busyChats.delete(msg.chatId);
+                send({ type: "busy", chatId: msg.chatId, busy: false }, userId);
+                schedulePush(msg.chatId, userId, 0);
+              }
+            }
+            break;
+          }
+          dropPrewritten(msg.chatId);
+          busyChats.add(msg.chatId);
+          try {
+            await spindle.chat.appendMessage(msg.chatId, {
+              role: "user",
+              content: say,
+              metadata: { warp: { intent, commandId: id } }
+            }, { triggerGeneration: true });
+          } catch (e) {
+            busyChats.delete(msg.chatId);
+            throw e;
           }
           break;
         }
-        await spindle.chat.appendMessage(msg.chatId, {
-          role: "user",
-          content: say,
-          metadata: { warp: { intent } }
-        }, { triggerGeneration: true });
-        break;
-      }
-      case "undo": {
-        await patchWarpMeta(msg.chatId, msg.messageId, (w) => {
-          const rec = w.swipes?.[String(msg.swipe)];
-          if (!rec)
-            return w;
-          const drop = new Set(msg.events.filter((i) => rec.events[i]?.src === "narrator" || rec.events[i]?.src === "manual"));
-          const next = { ...rec, events: rec.events.filter((_, i) => !drop.has(i)) };
-          return { ...w, swipes: { ...w.swipes, [String(msg.swipe)]: next } };
-        });
-        await pushState(msg.chatId, userId);
-        break;
-      }
-      case "adjust": {
-        await applyManual(msg.chatId, userId, (r, state) => r.stats[msg.stat] ? manualSet(r, state, msg.stat, msg.value) : "Unknown stat.");
-        break;
-      }
-      case "wear": {
-        await applyManual(msg.chatId, userId, (r, state) => changeClothes(r, state, msg.slot, msg.item));
-        break;
-      }
-      case "adjust_rel": {
-        await applyManual(msg.chatId, userId, (r, state) => manualSetRel(r, state, msg.who, msg.stat, msg.value));
-        break;
-      }
-      case "forget": {
-        await applyManual(msg.chatId, userId, (r, state) => forgetPerson(r, state, msg.who));
-        break;
-      }
-      case "dungeon": {
-        await runDungeonOp(msg, userId);
-        break;
-      }
-      case "run": {
-        const op = msg.op === "save" || msg.op === "load" ? { op: msg.op, slot: msg.slot ?? "" } : { op: msg.op };
-        const ok = await applyManual(msg.chatId, userId, (r, state) => runOp(r, state, op));
-        if (ok)
-          toast("success", msg.op === "save" ? "Saved." : msg.op === "load" ? "Rewound. The next reply picks up from there." : msg.op === "restart" ? "A new playthrough begins." : "The story goes on.", userId);
-        break;
-      }
-      case "buy_perk": {
-        const ok = await applyManual(msg.chatId, userId, (r, state) => buyPerk(r, state, msg.perk));
-        if (ok)
-          toast("success", "Perk taken.", userId);
-        break;
-      }
-      case "settings": {
-        await patchSettings(msg.patch, userId);
-        await sendSettings(userId);
-        schedulePush(getActiveChat(userId), userId, 0);
-        break;
-      }
-      case "set_jev_key": {
-        const key = msg.key.trim();
-        if (key)
-          await spindle.enclave.put(JEV_KEY, key, userId);
-        else
-          await spindle.enclave.delete(JEV_KEY, userId);
-        await sendSettings(userId);
-        toast(key ? "success" : "info", key ? "Jev key saved (encrypted)." : "Jev key removed.", userId);
-        break;
-      }
-      case "test_decider": {
-        const settings = await getSettings(userId);
-        const decider = await getDecider(settings, userId);
-        const t0 = Date.now();
-        const ans = await decider.ask({ player_message: "I try to climb over the wall before the guard turns around." }, { action: { type: "choice", instructions: "What is the player attempting?", criteria: { climb: "Climbing", talk: "Talking", none: "Nothing" } } });
-        const a = ans.action;
-        const ms = Date.now() - t0;
-        if (a?.type === "choice")
-          toast("success", `${decider.id.toUpperCase()} answered "${a.choice}" at ${Math.round(a.confidence * 100)}% confidence in ${ms} ms.`, userId);
-        else
-          toast("warning", `${decider.id.toUpperCase()} replied in ${ms} ms but gave no usable answer.`, userId);
-        break;
-      }
-      case "builder_open":
-        await builderOpen(msg.chatId, msg.mode, userId);
-        break;
-      case "builder_start":
-        await builderStart(msg.chatId, { connectionId: msg.connectionId, creative: msg.creative, base: msg.base }, userId);
-        break;
-      case "builder_answer":
-        await builderAnswer(msg.chatId, msg.answers, msg.additions, msg.more, userId);
-        break;
-      case "builder_redo":
-        await builderRedo(msg.chatId, msg.part, msg.note, userId);
-        break;
-      case "builder_fix":
-        await builderFix(msg.chatId, msg.warning, userId);
-        break;
-      case "builder_refine":
-        await builderRefine(msg.chatId, msg.request, userId);
-        break;
-      case "builder_back":
-        await builderBack(msg.chatId, userId);
-        break;
-      case "builder_close":
-        await builderClose(msg.chatId, userId);
-        break;
-      case "builder_install": {
-        await builderInstall(msg.chatId, userId);
-        await pushState(msg.chatId, userId, true);
-        toast("success", "Ruleset saved to the character's warp-ruleset lorebook.", userId);
-        break;
-      }
-      case "dismiss_suggestion": {
-        await patchWarpMeta(msg.chatId, msg.messageId, (w) => {
-          const next = { ...w };
-          delete next.suggest;
-          return next;
-        });
-        await pushState(msg.chatId, userId);
-        break;
-      }
-      case "redo": {
-        const msgs = await getMessages(msg.chatId);
-        const i = msgs.findIndex((m) => m.id === msg.userMessageId);
-        if (i < 0 || !msgs[i].is_user || msgs.length - 1 - i > 1) {
-          toast("warning", "Only the latest turn can be redone.", userId);
-          return;
+        case "undo": {
+          await patchWarpMeta(msg.chatId, msg.messageId, (w) => {
+            const rec = w.swipes?.[String(msg.swipe)];
+            if (!rec)
+              return w;
+            const drop = new Set(msg.events.filter((i) => rec.events[i]?.src === "narrator" || rec.events[i]?.src === "manual"));
+            const next = { ...rec, events: rec.events.filter((_, i) => !drop.has(i)) };
+            return { ...w, swipes: { ...w.swipes, [String(msg.swipe)]: next } };
+          });
+          await pushState(msg.chatId, userId);
+          break;
         }
-        const user = msgs[i];
-        const reply = msgs[i + 1];
-        const meta = { ...user.metadata ?? {} };
-        const w = { ...warpMeta(user) };
-        delete w.suggest;
-        delete w.intent;
-        w.judged = true;
-        if (msg.actionId)
-          w.intent = { actionId: msg.actionId, params: msg.params, via: "confirmed" };
-        meta.warp = w;
-        if (reply)
-          await spindle.chat.deleteMessage(msg.chatId, reply.id);
-        await spindle.chat.deleteMessage(msg.chatId, user.id);
-        await spindle.chat.appendMessage(msg.chatId, { role: "user", content: user.content, metadata: meta }, { triggerGeneration: true });
-        break;
+        case "adjust": {
+          await applyManual(msg.chatId, userId, (r, state) => r.stats[msg.stat] ? manualSet(r, state, msg.stat, msg.value) : "Unknown stat.");
+          break;
+        }
+        case "wear": {
+          await applyManual(msg.chatId, userId, (r, state) => changeClothes(r, state, msg.slot, msg.item));
+          break;
+        }
+        case "adjust_rel": {
+          await applyManual(msg.chatId, userId, (r, state) => manualSetRel(r, state, msg.who, msg.stat, msg.value));
+          break;
+        }
+        case "forget": {
+          await applyManual(msg.chatId, userId, (r, state) => forgetPerson(r, state, msg.who));
+          break;
+        }
+        case "dungeon": {
+          await runDungeonOp(msg, userId);
+          break;
+        }
+        case "run": {
+          const op = msg.op === "save" || msg.op === "load" ? { op: msg.op, slot: msg.slot ?? "" } : { op: msg.op };
+          const ok = await applyManual(msg.chatId, userId, (r, state) => runOp(r, state, op));
+          if (ok)
+            toast("success", msg.op === "save" ? "Saved." : msg.op === "load" ? "Rewound. The next reply picks up from there." : msg.op === "restart" ? "A new playthrough begins." : "The story goes on.", userId);
+          break;
+        }
+        case "buy_perk": {
+          const ok = await applyManual(msg.chatId, userId, (r, state) => buyPerk(r, state, msg.perk));
+          if (ok)
+            toast("success", "Perk taken.", userId);
+          break;
+        }
+        case "settings": {
+          dropPrewritten();
+          await patchSettings(msg.patch, userId);
+          await sendSettings(userId);
+          schedulePush(getActiveChat(userId), userId, 0);
+          break;
+        }
+        case "set_jev_key": {
+          const key = msg.key.trim();
+          if (key)
+            await spindle.enclave.put(JEV_KEY, key, userId);
+          else
+            await spindle.enclave.delete(JEV_KEY, userId);
+          await sendSettings(userId);
+          toast(key ? "success" : "info", key ? "Jev key saved (encrypted)." : "Jev key removed.", userId);
+          break;
+        }
+        case "test_decider": {
+          const settings = await getSettings(userId);
+          const decider = await getDecider(settings, userId);
+          const t0 = Date.now();
+          const ans = await decider.ask({ player_message: "I try to climb over the wall before the guard turns around." }, { action: { type: "choice", instructions: "What is the player attempting?", criteria: { climb: "Climbing", talk: "Talking", none: "Nothing" } } });
+          const a = ans.action;
+          const ms = Date.now() - t0;
+          if (a?.type === "choice")
+            toast("success", `${decider.id.toUpperCase()} answered "${a.choice}" at ${Math.round(a.confidence * 100)}% confidence in ${ms} ms.`, userId);
+          else
+            toast("warning", `${decider.id.toUpperCase()} replied in ${ms} ms but gave no usable answer.`, userId);
+          break;
+        }
+        case "builder_open":
+          await builderOpen(msg.chatId, msg.mode, userId);
+          break;
+        case "builder_start":
+          await builderStart(msg.chatId, { connectionId: msg.connectionId, creative: msg.creative, base: msg.base }, userId);
+          break;
+        case "builder_answer":
+          await builderAnswer(msg.chatId, msg.answers, msg.additions, msg.more, userId);
+          break;
+        case "builder_redo":
+          await builderRedo(msg.chatId, msg.part, msg.note, userId);
+          break;
+        case "builder_fix":
+          await builderFix(msg.chatId, msg.warning, userId);
+          break;
+        case "builder_refine":
+          await builderRefine(msg.chatId, msg.request, userId);
+          break;
+        case "builder_back":
+          await builderBack(msg.chatId, userId);
+          break;
+        case "builder_close":
+          await builderClose(msg.chatId, userId);
+          break;
+        case "builder_install": {
+          await builderInstall(msg.chatId, userId);
+          await pushState(msg.chatId, userId, true);
+          toast("success", "Ruleset saved to the character's warp-ruleset lorebook.", userId);
+          break;
+        }
+        case "dismiss_suggestion": {
+          await patchWarpMeta(msg.chatId, msg.messageId, (w) => {
+            const next = { ...w };
+            delete next.suggest;
+            return next;
+          });
+          await pushState(msg.chatId, userId);
+          break;
+        }
+        case "redo": {
+          const msgs = await getMessages(msg.chatId);
+          const i = msgs.findIndex((m) => m.id === msg.userMessageId);
+          if (i < 0 || !msgs[i].is_user || msgs.length - 1 - i > 1) {
+            toast("warning", "Only the latest turn can be redone.", userId);
+            return;
+          }
+          const user = msgs[i];
+          const reply = msgs[i + 1];
+          const meta = { ...user.metadata ?? {} };
+          const w = { ...warpMeta(user) };
+          delete w.suggest;
+          delete w.intent;
+          delete w.accepted;
+          w.judged = true;
+          if (msg.actionId)
+            w.intent = { actionId: msg.actionId, params: msg.params, via: "confirmed" };
+          w.commandId = id;
+          meta.warp = w;
+          if (reply)
+            await spindle.chat.deleteMessage(msg.chatId, reply.id);
+          await spindle.chat.deleteMessage(msg.chatId, user.id);
+          busyChats.add(msg.chatId);
+          try {
+            await spindle.chat.appendMessage(msg.chatId, { role: "user", content: user.content, metadata: meta }, { triggerGeneration: true });
+          } catch (e) {
+            busyChats.delete(msg.chatId);
+            throw e;
+          }
+          break;
+        }
+        case "install_template": {
+          if (!msg.chatId)
+            return;
+          const name = await installTemplate(msg.chatId, msg.templateId, userId, msg.trackCharacter);
+          toast("success", `Added the ${name} ruleset. It lives in the "warp-ruleset" lorebook — edit it there any time.`, userId);
+          await pushState(msg.chatId, userId, true);
+          break;
+        }
       }
-      case "install_template": {
-        if (!msg.chatId)
-          return;
-        const name = await installTemplate(msg.chatId, msg.templateId, userId, msg.trackCharacter);
-        toast("success", `Added the ${name} ruleset. It lives in the "warp-ruleset" lorebook — edit it there any time.`, userId);
-        await pushState(msg.chatId, userId, true);
-        break;
-      }
+    } catch (e) {
+      logError(`frontend ${msg.type}`, e);
+      toast("error", `Warp: ${e instanceof Error ? e.message : String(e)}`, userId);
     }
-  } catch (e) {
-    logError(`frontend ${msg.type}`, e);
-    toast("error", `Warp: ${e instanceof Error ? e.message : String(e)}`, userId);
-  }
-});
+  };
+  return readCommands.has(msg.type) ? work() : runCommand(chatId ?? `user:${userId ?? "_"}`, id, work);
+}
+spindle.onFrontendMessage(handleFrontend);

@@ -2,8 +2,8 @@
 
 import type { ExprEnv, Value } from "./expr.js";
 import { evalBool, evalNumber, evaluate } from "./expr.js";
-import { rollDice, seededRng, type Rng } from "./dice.js";
-import type { ActionDef, CheckDef, DecideSpec, Effect, NarratorGate, RandomEventDef, Ruleset, SeenReaction, Tier } from "./ruleset.js";
+import { diceDistribution, rollDice, seededRng, type DiceRoll, type Rng } from "./dice.js";
+import type { ActionDef, CheckDef, DecideSpec, Effect, LocationDef, NarratorGate, RandomEventDef, Ruleset, SeenReaction, Tier } from "./ruleset.js";
 import { SEEN_REACTIONS } from "./ruleset.js";
 import { normalize, sample } from "./decide.js";
 import { emptyEffect, slug } from "./ruleset.js";
@@ -14,6 +14,7 @@ import { exposedSlots, isIndoors, presentPeople, revealOf, SCENE_HOLDS, sceneWor
 import { DATE_PREFIX } from "./date/types.js";
 import { activeSession, ADULT_KEY, resolveDate } from "./date/talk.js";
 import { JOB_PREFIX, obligationLife, PAY_PREFIX, resolveWork } from "./work.js";
+import { decodeProposal } from "./proposal.js";
 
 export interface CheckResult {
   label: string;
@@ -30,6 +31,17 @@ export interface CheckResult {
 
 export interface TurnRecord {
   v: 1;
+  commandId?: string;
+  /** State and definitions this outcome was resolved against. */
+  parent?: string;
+  rulesRevision?: string;
+  /** Accepted inputs are saved so replay never consults a provider. */
+  inputs?: { seed: string; scene: Record<string, boolean>; odds: Record<string, Record<string, number>>; encounter?: { id: string; foe?: string } };
+  /** Additional operations attached to this message, with their own checks and decisions. */
+  operations?: TurnRecord[];
+  rejected?: string[];
+  /** Places invented by exploration belong to the exact branch that found them. */
+  locations?: Record<string, LocationDef>;
   action?: { id: string; label: string; params?: Record<string, string>; via: Intent["via"] };
   check?: CheckResult;
   /** Directions for the narrator, in order. */
@@ -59,6 +71,7 @@ export interface DecisionResult {
   p: Record<string, number>;
   /** Where the odds came from. */
   source: "model" | "weights";
+  fallback?: string;
   /** Option descriptions, for rolls that aren't `decide:` blocks in the ruleset. */
   descs?: Record<string, string>;
 }
@@ -168,9 +181,9 @@ export function actionPool(r: Ruleset, s: GameState): { defs: Record<string, Act
   return { defs: r.actions, order: r.actionOrder, tags: [] };
 }
 
-export function isAvailable(r: Ruleset, s: GameState, a: ActionDef, target?: string): boolean {
+export function isAvailable(r: Ruleset, s: GameState, a: ActionDef, target?: string, params?: Record<string, string>): boolean {
   if (!s.encounter && a.at.length && !a.at.includes(s.location ?? "")) return false;
-  if (a.when && !evalBool(a.when, makeEnv(r, s, paramValues(a, undefined, target)), true)) return false;
+  if (a.when && !evalBool(a.when, makeEnv(r, s, paramValues(a, params, target)), false)) return false;
   return true;
 }
 
@@ -215,7 +228,31 @@ export function findAction(r: Ruleset, s: GameState, actionId: string): { a: Act
   return a ? { a, ...(target ? { target } : {}) } : null;
 }
 
-function tierFor(check: CheckDef, roll: ReturnType<typeof rollDice>, add: number, target: number | null): Tier {
+/** Validate at execution time: choices stored in old messages can become unavailable. */
+export function validateIntent(r: Ruleset, s: GameState, intent: Intent, lines: string[] = []): string | null {
+  if (typeof intent.actionId !== "string" || intent.actionId.length > 300) return "Invalid action.";
+  const id = intent.actionId;
+  if (s.ended?.told && id !== RUN_EPILOGUE) return "This playthrough has ended.";
+  if (id.startsWith(TRAVEL_PREFIX)) return travelTargets(r, s).includes(id.slice(TRAVEL_PREFIX.length)) ? null : "That destination is not reachable now.";
+  if (id === EXPLORE) return canExplore(r, s) ? null : "Exploration is not available now.";
+  if (id === "dungeon" && s.dungeon) return null;
+  // These subsystems validate their own session, balances and concrete choices.
+  if (id.startsWith(DATE_PREFIX) || id.startsWith(PAY_PREFIX) || id.startsWith(JOB_PREFIX) || id === RUN_EPILOGUE) return null;
+  const found = findAction(r, s, id);
+  if (!found) return "Unknown action.";
+  const { a, target } = found;
+  if (a.perPerson && (!target || !presentPeople(r, s, makeEnv(r, s)).includes(target))) return "That person is not present now.";
+  if (!a.perPerson && target && !presentPeople(r, s, makeEnv(r, s)).includes(target)) return "That person is not present now.";
+  const blocked = new Set(lines.map((l) => l.toLowerCase()));
+  if ([...a.tags, ...actionPool(r, s).tags].some((t) => blocked.has(t))) return "This action is blocked by your lines.";
+  for (const [key, value] of Object.entries(intent.params ?? {})) {
+    const param = a.params.find((p) => p.id === key);
+    if (!param || !Object.hasOwn(param.options, value)) return "Invalid action parameter.";
+  }
+  return isAvailable(r, s, a, target, intent.params) ? null : "This action is not available now.";
+}
+
+function tierFor(check: CheckDef, roll: Pick<DiceRoll, "total" | "natural" | "primarySides">, add: number, target: number | null): Tier {
   const total = roll.total + add;
   const sides = roll.primarySides;
   const single = roll.natural !== null;
@@ -256,25 +293,41 @@ function checkNumbers(r: Ruleset, s: GameState, a: ActionDef, params?: Record<st
   return { add, target };
 }
 
-export interface Odds { success: number; partial: number }
+export interface Odds { success: number; partial: number; approximate?: boolean }
 
 /** Probability of success-or-better (and of partial) for the UI. Deterministic. */
 export function odds(r: Ruleset, s: GameState, a: ActionDef, params?: Record<string, string>, who?: string): Odds | null {
   const check = a.check;
   if (!check) return null;
-  const { add, target } = checkNumbers(r, s, a, params, who);
-  if (check.style === "chance" && check.dice === "d100" && target !== null) {
-    return { success: target / 100, partial: 0 };
+  const randomCost = /\broll\s*\(/.test(JSON.stringify(a.cost)) || a.cost.decide.length > 0;
+  const paid = new Working(r, cloneState(s), seededRng(`odds:${a.id}:cost`));
+  effectToEvents(paid, a.cost, "cost", paramValues(a, params, who));
+  const { add, target } = checkNumbers(r, paid.s, a, params, who);
+  const exact = randomCost ? null : diceDistribution(check.dice);
+  if (exact) {
+    let success = 0, partial = 0;
+    for (const roll of exact) {
+      const tier = tierFor(check, roll, add, target);
+      if (tier === "success" || tier === "crit_success") success += roll.p;
+      else if (tier === "partial") partial += roll.p;
+    }
+    return { success: Math.min(1, success), partial: Math.min(1, partial) };
   }
   const rng = seededRng(`odds:${a.id}`);
   const N = 2000;
   let ok = 0, part = 0;
   for (let i = 0; i < N; i++) {
-    const t = tierFor(check, rollDice(check.dice, rng), add, target);
+    let numbers = { add, target };
+    if (randomCost) {
+      const sample = new Working(r, cloneState(s), rng);
+      effectToEvents(sample, a.cost, "cost", paramValues(a, params, who));
+      numbers = checkNumbers(r, sample.s, a, params, who);
+    }
+    const t = tierFor(check, rollDice(check.dice, rng), numbers.add, numbers.target);
     if (t === "success" || t === "crit_success") ok++;
     else if (t === "partial") part++;
   }
-  return { success: ok / N, partial: part / N };
+  return { success: ok / N, partial: part / N, approximate: true };
 }
 
 // ───────────────────────── effects ─────────────────────────
@@ -912,7 +965,8 @@ function advanceTime(w: Working, minutes: number, src: EventSource) {
 
 function runTriggers(w: Working, includeRepeat: boolean) {
   const fired = new Set<string>();
-  for (let pass = 0; pass < 5; pass++) {
+  const budget = Math.min(128, Math.max(5, w.r.triggers.length * 2 + 1));
+  for (let pass = 0; pass < budget; pass++) {
     let changed = false;
     for (const t of w.r.triggers) {
       // Scene triggers only move when the decision model judged them this phase.
@@ -922,7 +976,7 @@ function runTriggers(w: Working, includeRepeat: boolean) {
       const why = `Rule "${t.id.replace(/_/g, " ")}"${t.when ? ` (${t.when})` : ""}${t.whenScene ? ` — judged: ${t.whenScene}` : ""}`;
       if (now && !prev) {
         w.push({ t: "trig", id: t.id, v: true, src: "trigger" });
-        because(w, why, () => effectToEvents(w, t.effects, "trigger", {}));
+        if (!fired.has(t.id)) because(w, why, () => effectToEvents(w, t.effects, "trigger", {}));
         fired.add(t.id);
         changed = true;
       } else if (now && t.repeat && includeRepeat && !fired.has(t.id)) {
@@ -935,6 +989,7 @@ function runTriggers(w: Working, includeRepeat: boolean) {
       }
     }
     if (!changed) break;
+    if (pass === budget - 1) w.hints.push("Rules did not settle within the trigger budget. Check for cyclic trigger conditions.");
   }
   // Codex entries and feats unlock themselves when their formula first holds.
   for (const c of Object.values(w.r.codex)) {
@@ -1013,11 +1068,16 @@ function mindOverride(r: Ruleset, s: GameState, a: ActionDef, target: string | u
 }
 
 function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts: ResolveOptions, needs: DecideSpec[]): TurnRecord {
+  if (before.ended?.told && intent?.actionId !== RUN_EPILOGUE) intent = null;
+  if (intent) {
+    const error = validateIntent(r, before, intent);
+    if (error) return { v: 1, hints: [error], events: [], rejected: [error], at: Date.now() };
+  }
   // After an ending has been written, nothing more resolves until the player loads, starts over or keeps playing.
   if (before.ended?.told && intent?.actionId !== RUN_EPILOGUE) intent = null;
   const w = new Working(r, cloneState(before), seededRng(`${opts.seed}:fx`), opts.seed, opts.odds ?? {}, opts.scene ?? {});
   w.defer = false;
-  const rec: TurnRecord = { v: 1, hints: [], events: [], at: Date.now() };
+  const rec: TurnRecord = { v: 1, hints: [], events: [], at: Date.now(), inputs: { seed: opts.seed, scene: { ...opts.scene }, odds: structuredClone(opts.odds ?? {}), encounter: opts.encounter } };
   // First turn of a chat fixes its world seed (weather etc.).
   if (!w.s.seed) w.push({ t: "seed", v: opts.seed, src: "start" });
   // World happenings that surfaced after the last reply are this turn's news.
@@ -1198,6 +1258,8 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
 // ───────────────────────── narrator proposals ─────────────────────────
 
 export interface Proposal {
+  /** Total changes are reconciled against mechanics; additional changes are already residual. */
+  basis?: "total" | "additional";
   minutes?: number;
   stats?: Record<string, number>;
   rel?: Record<string, Record<string, number>>;
@@ -1229,7 +1291,14 @@ export interface Proposal {
 }
 
 /** What the story's changes are checked against: the exchange's text and the action that was taken. */
-export interface GateContext { text: string; action?: { id: string; tags: string[] } }
+export interface GateContext {
+  text: string;
+  action?: { id: string; tags: string[] };
+  /** Mechanical facts have authority for this exchange. Minutes describe total elapsed time. */
+  applied?: WarpEvent[];
+  origin?: GameState;
+  rejected?: string[];
+}
 
 /** Tags of an action by id, wherever it's declared (ruleset, live-choice tags, encounters). */
 export function actionTags(r: Ruleset, actionId: string): string[] {
@@ -1260,19 +1329,32 @@ function clampAbs(v: number, lim: number) {
 }
 
 function findPerson(r: Ruleset, s: GameState, key: string): string | null {
-  const k = String(key).trim().toLowerCase();
+  const k = String(key).normalize("NFKC").trim().toLowerCase();
   if (!k) return null;
-  const sl = slug(k);
-  for (const [id, p] of Object.entries(s.people)) if (id === k || id === sl || p.name.toLowerCase() === k) return id;
-  for (const p of Object.values(r.people)) if (p.id === k || p.id === sl || p.name.toLowerCase() === k) return p.id;
+  for (const [id, p] of Object.entries(s.people)) if (id.toLowerCase() === k || p.name.normalize("NFKC").toLowerCase() === k) return id;
+  for (const p of Object.values(r.people)) if (p.id.toLowerCase() === k || p.name.normalize("NFKC").toLowerCase() === k) return p.id;
   // "Miu" for "Miu Tanaka" (or the other way round) — only when just one tracked person fits.
   const first = (n: string) => n.toLowerCase().split(/\s+/)[0];
-  const hits = Object.entries(s.people).filter(([, p]) => first(p.name) === first(k));
+  const hits = Object.entries(s.people).filter(([, p]) => first(p.name) === first(k) && (!/\s/.test(k) || !/\s/.test(p.name.trim())));
   return hits.length === 1 ? hits[0][0] : null;
 }
 
 /** Turn a model's suggested changes into events, enforcing every limit the ruleset sets. */
 export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: GateContext): WarpEvent[] {
+  p = decodeProposal(p);
+  const applied = ctx?.applied ?? [];
+  const touched = (type: WarpEvent["t"], key: string) => applied.some((e) => e.t === type && ("id" in e ? e.id === key : "key" in e ? e.key === key : true));
+  const reject = (reason: string) => { ctx?.rejected?.push(reason); };
+  const residual = (kind: "stat" | "item" | "rel", id: string, value: number, who?: string) => {
+    if (p.basis !== "total") return value;
+    if (ctx?.origin) {
+      const delta = kind === "stat" ? before.stats[id] - (ctx.origin.stats[id] ?? 0)
+        : kind === "item" ? (before.items[id] ?? 0) - (ctx.origin.items[id] ?? 0)
+        : (before.rel[who!]?.[id] ?? r.relStats[id]?.start ?? 0) - (ctx.origin.rel[who!]?.[id] ?? r.relStats[id]?.start ?? 0);
+      return value - delta;
+    }
+    return value - applied.reduce((n, e) => n + (e.t === kind && "id" in e && e.id === id && "d" in e ? e.d ?? 0 : e.t === "rel" && kind === "rel" && e.who === who && e.stat === id ? e.d ?? 0 : 0), 0);
+  };
   const w = new Working(r, cloneState(before), seededRng(`narrator:${before.turn}`));
   w.cause = "Read from the story";
   const src: EventSource = "narrator";
@@ -1289,7 +1371,9 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
       continue;
     }
     if (!r.peopleOpen) continue;
-    const id = slug(person.id || person.name);
+    const base = slug(person.id || person.name);
+    let id = base, suffix = 2;
+    while (w.s.people[id] || r.people[id]) id = `${base}_${suffix++}`;
     if (!w.s.people[id]) w.push({ t: "person", id, name: person.name, src });
     calibrate(w, id, person.feelings ?? {}, src);
     scene[id] = true;
@@ -1303,7 +1387,7 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
     const def = r.stats[id];
     if (!def || def.narrator <= 0 || typeof d !== "number" || !Number.isFinite(d)) continue;
     if (!gateOpen(def.gate, w, ctx)) continue;
-    const v = clampAbs(d, def.narrator);
+    const v = clampAbs(residual("stat", id, d), def.narrator);
     if (v !== 0) w.push({ t: "stat", id, d: v, src });
   }
 
@@ -1311,14 +1395,15 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
     let id = findPerson(r, w.s, who);
     if (!id) {
       if (!r.peopleOpen) continue;
-      id = slug(who);
+      const base = slug(who); id = base;
+      for (let suffix = 2; w.s.people[id] || r.people[id]; suffix++) id = `${base}_${suffix}`;
       w.push({ t: "person", id, name: who, src });
     }
     for (const [stat, d] of Object.entries(m ?? {})) {
       const def = r.relStats[stat];
       if (!def || def.narrator <= 0 || typeof d !== "number" || !Number.isFinite(d)) continue;
       if (!gateOpen(def.gate, w, ctx)) continue;
-      const v = clampAbs(d, def.narrator);
+      const v = clampAbs(residual("rel", stat, d, id), def.narrator);
       if (v !== 0) w.push({ t: "rel", who: id, stat, d: v, src });
     }
   }
@@ -1328,9 +1413,11 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
     const k = key.toLowerCase();
     const declared = Object.values(r.items).find((i) => i.id === k || i.name.toLowerCase() === k);
     const held = Object.keys(w.s.items).find((id) => id === k || (w.s.itemNames[id] ?? "").toLowerCase() === k);
-    const id = declared?.id ?? held ?? slug(key);
+    let id = declared?.id ?? held ?? slug(key);
+    if (!declared && !held) { const base = id; for (let suffix = 2; w.s.items[id] || r.items[id]; suffix++) id = `${base}_${suffix}`; }
     if (!declared && !r.itemsOpen) continue;
-    const n = Math.round(clampAbs(d, 10));
+    const n = Math.round(clampAbs(residual("item", id, d), 10));
+    if (n === 0) continue;
     if (n < 0 && !(w.s.items[id] > 0)) continue;
     w.push({ t: "item", id, d: n, ...(declared ? {} : { name: key }), src });
   }
@@ -1343,6 +1430,9 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
   }
 
   if (p.move) {
+    if (applied.some((e) => e.t === "move")) { reject("Narrator movement conflicts with the decided destination."); delete p.move; }
+  }
+  if (p.move) {
     const k = p.move.toLowerCase();
     const loc = Object.values(r.locations).find((l) => l.id === k || l.name.toLowerCase() === k);
     if (loc && loc.id !== w.s.location) w.push({ t: "move", to: loc.id, src });
@@ -1350,15 +1440,18 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
   }
 
   for (const id of p.conditions?.add ?? []) {
+    if (touched("cond", id)) { reject(`Condition ${id} was already decided.`); continue; }
     const def = r.conditions[id];
     if (def?.narrator && !w.s.conditions[id] && gateOpen(def.gate, w, ctx)) w.push({ t: "cond", id, on: true, until: null, src });
   }
   for (const id of p.conditions?.remove ?? []) {
+    if (touched("cond", id)) { reject(`Condition ${id} was already decided.`); continue; }
     const def = r.conditions[id];
     if (def?.narrator && w.s.conditions[id] && gateOpen(def.gate, w, ctx)) w.push({ t: "cond", id, on: false, src });
   }
 
   for (const [key, v] of Object.entries(p.flags ?? {})) {
+    if (touched("flag", key)) { if (v !== before.flags[key]) reject(`Flag ${key} conflicts with the decided outcome.`); continue; }
     if (r.flags[key]?.narrator && gateOpen(r.flags[key].gate, w, ctx)) w.push({ t: "flag", key, v, src });
   }
 
@@ -1388,7 +1481,8 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
   }
 
   if (typeof p.minutes === "number" && Number.isFinite(p.minutes) && p.minutes > 0) {
-    advanceTime(w, Math.round(Math.min(p.minutes, r.clock.narratorMax)), src);
+    const spent = applied.reduce((n, e) => n + (e.t === "time" ? e.min : 0), 0);
+    advanceTime(w, Math.round(Math.min(Math.max(0, p.minutes - spent), r.clock.narratorMax)), src);
   }
 
   // Who's in the scene at the end of the reply — after any move and the time it took, so it's judged here and now.
@@ -1421,6 +1515,7 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
     for (const key of (Array.isArray(p.train) ? p.train : []).slice(0, 2)) {
       const k = String(key).toLowerCase();
       const id = r.statOrder.find((s) => s === k || r.stats[s].label.toLowerCase() === k);
+      if (id && applied.some((e) => e.t === "practice" && e.id === id)) { reject(`Practice in ${id} was already accounted for.`); continue; }
       if (id && (r.stats[id].kind === "skill" || r.stats[id].kind === "attribute")) gains[id] = (gains[id] ?? 0) + trainingGain(r, w.s, id, p.minutes);
     }
     if (Object.keys(gains).length) practise(builderOf(w), gains, "Practice the story described");

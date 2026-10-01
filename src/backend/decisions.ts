@@ -6,7 +6,7 @@
 //   consistency  — does the reply contradict the game state?
 
 import type { Answer, Answers, Decider, Questions } from "../engine/decide.js";
-import { normalize, noulConfidence } from "../engine/decide.js";
+import { decodeAnswers, normalize, noulConfidence } from "../engine/decide.js";
 import { availableChoices, TRAVEL_PREFIX, travelTargets, type Intent, type Proposal } from "../engine/resolve.js";
 import { DIFFICULTIES, type DecideSpec, type Ruleset, type StatDef } from "../engine/ruleset.js";
 import { itemName, makeEnv, personName, type GameState } from "../engine/state.js";
@@ -16,6 +16,7 @@ import { stateDigest } from "../engine/view.js";
 import { activeSession } from "../engine/date/talk.js";
 import type { Settings } from "../shared/protocol.js";
 import { logError } from "./host.js";
+import { withDeadline } from "./deadline.js";
 
 const NONE = "none";
 const ATTEMPT = "attempt";
@@ -72,10 +73,10 @@ function fill(text: string, player: string) {
   return text.replace(/\{\{user\}\}/gi, player);
 }
 
-async function safeAsk(d: Decider, state: unknown, q: Questions, timeoutMs: number, what: string): Promise<Answers> {
+async function safeAsk(d: Decider, state: unknown, q: Questions, timeoutMs: number, what: string, signal?: AbortSignal): Promise<Answers> {
   if (!Object.keys(q).length) return {};
   try {
-    return await (d.ask as (s: unknown, q: Questions, o: { timeoutMs: number }) => Promise<Answers>)(state, q, { timeoutMs });
+    return await withDeadline({ timeoutMs, signal }, timeoutMs, async (signal, remaining) => decodeAnswers(await d.ask(state, q, { signal, timeoutMs: remaining() }), q));
   } catch (e) {
     logError(`${what} (${d.id})`, e);
     return {};
@@ -235,6 +236,7 @@ export async function odds(opts: {
   playerText: string; sceneText: string; player: string; timeoutMs: number;
   /** Who the people are (the card), for questions about tastes and ages. */
   card?: string;
+  signal?: AbortSignal;
 }): Promise<Record<string, Record<string, number>>> {
   const q: Questions = {};
   for (const d of opts.specs) {
@@ -250,7 +252,7 @@ export async function odds(opts: {
     player_message: clip(opts.playerText, 1200),
     ...(opts.card ? { character_card: opts.card } : {}),
   };
-  const ans = await safeAsk(opts.decider, state, q, opts.timeoutMs, "decide odds");
+  const ans = await safeAsk(opts.decider, state, q, opts.timeoutMs, "decide odds", opts.signal);
   const out: Record<string, Record<string, number>> = {};
   for (const d of opts.specs) {
     const a = ans[`decide:${d.id}`];
@@ -319,7 +321,7 @@ export async function bookkeeping(opts: {
 }): Promise<Bookkeeping> {
   const { r, s, player } = opts;
   const q: Questions = {};
-  if (r.clock.enabled) q.time = { type: "score", instructions: "How much in-story time passes during the narrator's reply?", criteria: TIME_LEVELS };
+  if (r.clock.enabled) q.time = { type: "score", instructions: "How much TOTAL in-story time passes during the narrator's reply, including time already applied by the rules?", criteria: TIME_LEVELS };
 
   for (const id of r.statOrder) {
     const d = r.stats[id];

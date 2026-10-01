@@ -38,10 +38,10 @@ export async function pushState(chatId: string | null, userId?: string, force = 
       send({ type: "state", chatId, status, hud: null, map: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false, dungeon: null, dungeonEntries: [], date: null, scene: null }, userId);
       return;
     }
-    const r = loaded.ruleset;
     const settings = await getSettings(userId);
     const msgs = await getMessages(chatId);
-    const { state, steps } = foldPath(r, msgs);
+    const { state, steps, ruleset: r, stale } = foldPath(loaded.ruleset, msgs);
+    if (stale.length) status.issues = [...status.issues, { level: "error", where: `message ${stale[0]}`, message: "This reply belongs to an older game path. Regenerate from it or delete the incompatible replies to continue." }];
     lastStates.set(chatId, state);
 
     // A turn can be redone only while it's the latest exchange: the player's message and at most one reply after it.
@@ -75,7 +75,7 @@ export async function pushState(chatId: string | null, userId?: string, force = 
       status,
       hud: settings.enabled ? buildHud(r, state) : null,
       map: settings.enabled ? buildMap(r, state) : null,
-      choices: settings.enabled ? markReady(buildChoices(r, state, { ...settings, live: liveChoicesOf(latest) }), readyChoices(chatId, momentKey(msgs, state))) : [],
+      choices: settings.enabled && !stale.length ? markReady(buildChoices(r, state, { ...settings, live: liveChoicesOf(latest) }), readyChoices(chatId, momentKey(msgs, state, r, settings))) : [],
       records: settings.enabled ? records : [],
       suggestions: settings.enabled ? suggestions.filter((s) => s.canRedo) : [],
       latestMessageId: latest?.id ?? null,

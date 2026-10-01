@@ -3,9 +3,10 @@
 // rules provider never calls anything (and is deliberately unsure of itself).
 
 import type { GenerationResponseDTO } from "lumiverse-spindle-types";
-import { normalize, type Answer, type Answers, type Decider, type DecideOptions, type Questions } from "../engine/decide.js";
+import { decodeAnswers, normalize, type Answer, type Answers, type Decider, type DecideOptions, type Questions } from "../engine/decide.js";
 import type { Settings } from "../shared/protocol.js";
 import { host } from "./host.js";
+import { backoff, withDeadline } from "./deadline.js";
 
 export const JEV_KEY = "jev_api_key";
 const JEV_URL = "https://api.typesafe.ai/v1/systemone";
@@ -16,20 +17,23 @@ export class DeciderError extends Error {}
 
 interface HttpResult { status: number; body: string }
 
-async function post(url: string, headers: Record<string, string>, body: string, timeoutMs: number): Promise<HttpResult> {
-  const timeout = new Promise<never>((_, rej) => setTimeout(() => rej(new DeciderError("Decision model timed out")), timeoutMs));
+async function post(url: string, headers: Record<string, string>, body: string, signal: AbortSignal): Promise<HttpResult> {
+  signal.throwIfAborted();
   // Prefer the host proxy (sanctioned network path for extensions); fall back to fetch where allowed.
   const call = (async (): Promise<HttpResult> => {
     try {
       const r = (await host().cors(url, { method: "POST", headers, body })) as { status: number; body: string };
       return { status: r.status, body: r.body };
     } catch (e) {
+      signal.throwIfAborted();
       if (typeof fetch !== "function") throw e;
-      const r = await fetch(url, { method: "POST", headers, body });
+      const r = await fetch(url, { method: "POST", headers, body, signal });
       return { status: r.status, body: await r.text() };
     }
   })();
-  return Promise.race([call, timeout]);
+  const result = await call;
+  signal.throwIfAborted();
+  return result;
 }
 
 export class JevDecider implements Decider {
@@ -37,25 +41,29 @@ export class JevDecider implements Decider {
   readonly canWrite = false;
   constructor(private key: string, private model: string) {}
 
-  async ask(state: unknown, questions: Questions, opts: DecideOptions & { timeoutMs?: number } = {}): Promise<Answers> {
+  async ask(state: unknown, questions: Questions, opts: DecideOptions = {}): Promise<Answers> {
     if (!Object.keys(questions).length) return {};
     const body = JSON.stringify({ model: this.model || "jev-latest", state, questions });
     const headers = { Authorization: `Bearer ${this.key}`, "Content-Type": "application/json" };
+    return withDeadline(opts, 8000, async (signal, remaining) => {
     let delay = 400;
     for (let attempt = 0; ; attempt++) {
-      const res = await post(JEV_URL, headers, body, opts.timeoutMs ?? 8000);
+      signal.throwIfAborted();
+      const res = await post(JEV_URL, headers, body, signal);
       if (res.status === 200) {
-        const parsed = JSON.parse(res.body) as { answers?: Answers };
-        return parsed.answers ?? {};
+        const parsed = JSON.parse(res.body) as { answers?: unknown };
+        return decodeAnswers(parsed.answers, questions);
       }
       if ((res.status === 429 || res.status === 529) && attempt < 2) {
-        await new Promise((r) => setTimeout(r, delay));
+        if (delay >= remaining()) throw new DeciderError("Decision deadline exceeded during retry");
+        await backoff(delay, signal);
         delay *= 3;
         continue;
       }
       const hint = res.status === 401 ? "the Jev API key was rejected" : res.status === 422 ? "Jev rejected the request" : `Jev returned ${res.status}`;
       throw new DeciderError(`${hint}${res.body ? `: ${res.body.slice(0, 200)}` : ""}`);
     }
+    });
   }
 }
 
@@ -74,7 +82,7 @@ export class LlmDecider implements Decider {
   readonly canWrite = true;
   constructor(private settings: Settings, private userId?: string) {}
 
-  async ask(state: unknown, questions: Questions, opts: DecideOptions & { timeoutMs?: number } = {}): Promise<Answers> {
+  async ask(state: unknown, questions: Questions, opts: DecideOptions = {}): Promise<Answers> {
     const ids = Object.keys(questions);
     if (!ids.length) return {};
     const lines = ids.map((id) => {
@@ -86,45 +94,25 @@ export class LlmDecider implements Decider {
     const system = [
       "You answer typed questions about a roleplay game's current situation. You never write story.",
       "Answer every question. Reply with JSON only, one key per question id:",
-      '  choice → {"choice": "<option key>", "confidence": 0.0–1.0}',
-      '  score  → {"level": <integer>, "confidence": 0.0–1.0}',
+      '  choice → {"choice": "<option key>", "probabilities": {"<every option key>": 0.0–1.0}}',
+      '  score  → {"level": <number in range>, "probabilities": {"<every level index>": 0.0–1.0}}',
       '  yes/no → {"p": <probability it is true, 0.0–1.0>}',
-      "Be honest about confidence: 0.5 means a coin flip.",
+      "Each probability distribution must sum to 1. Express uncertainty across plausible alternatives.",
     ].join("\n");
     const user = `State:\n${typeof state === "string" ? state : JSON.stringify(state, null, 1)}\n\nQuestions:\n${lines.join("\n\n")}`;
+    return withDeadline(opts, 20000, async (signal) => {
     const res = (await host().generate.quiet({
       type: "quiet",
       messages: [{ role: "system", content: system }, { role: "user", content: user }],
       connection_id: this.settings.helperConnectionId || undefined,
       reasoning: { source: "off" },
-      parameters: { temperature: 0, max_tokens: 60 + ids.length * 30 },
+      parameters: { temperature: 0, max_tokens: 100 + ids.reduce((n, id) => n + (questions[id].type === "choice" ? Object.keys((questions[id] as { criteria: object }).criteria).length : 6) * 20, 0) },
       userId: this.userId,
-      signal: opts.signal ?? AbortSignal.timeout(Math.max(3000, opts.timeoutMs ?? 20000)),
+      signal,
     })) as GenerationResponseDTO | string;
     const raw = firstJson(typeof res === "string" ? res : res?.content ?? "") ?? {};
-    const out: Answers = {};
-    for (const id of ids) {
-      const q = questions[id];
-      const a = (raw[id] ?? {}) as Record<string, unknown>;
-      const conf = clamp01(Number(a.confidence ?? 0.6));
-      if (q.type === "choice") {
-        const keys = Object.keys(q.criteria);
-        const pick = typeof a.choice === "string" && keys.includes(a.choice) ? a.choice : null;
-        if (!pick) continue;
-        const rest = keys.length > 1 ? (1 - conf) / (keys.length - 1) : 0;
-        out[id] = { type: "choice", choice: pick, confidence: conf, probabilities: Object.fromEntries(keys.map((k) => [k, k === pick ? conf : rest])) };
-      } else if (q.type === "score") {
-        const n = q.criteria.length;
-        const level = Math.max(0, Math.min(n - 1, Math.round(Number(a.level))));
-        if (!Number.isFinite(level)) continue;
-        const rest = n > 1 ? (1 - conf) / (n - 1) : 0;
-        out[id] = { type: "score", score: level, confidence: conf, probabilities: Object.fromEntries(q.criteria.map((_, i) => [String(i), i === level ? conf : rest])) };
-      } else {
-        const p = Number(a.p ?? a.probability ?? a.noul);
-        if (Number.isFinite(p)) out[id] = { type: "noul", noul: clamp01(p) };
-      }
-    }
-    return out;
+    return decodeAnswers(raw, questions);
+    });
   }
 }
 

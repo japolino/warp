@@ -1,7 +1,7 @@
 // Author-facing checks that need the whole ruleset: unknown names in formulas,
 // with "did you mean" suggestions, and effects that point at things that don't exist.
 
-import { evaluate, type ExprEnv, type Value } from "./expr.js";
+import { references, type Value } from "./expr.js";
 import type { ActionDef, Effect, Issue, Ruleset } from "./ruleset.js";
 import { BUILTIN_NAMES, initialState, makeEnv } from "./state.js";
 import { SKILLS } from "./dungeon/content.js";
@@ -40,14 +40,29 @@ export function lintRuleset(r: Ruleset): Issue[] {
   const issues: Issue[] = [];
   const s = initialState(r);
   const names = [...r.statOrder, ...Object.keys(r.flags), ...BUILTIN_NAMES];
+  const visited = new Set<string>(), visiting = new Set<string>();
+  const visitCap = (id: string, path: string[]) => {
+    if (visiting.has(id)) { issues.push({ level: "error", where: `Stats › ${id} › max`, message: `Dynamic stat caps have a dependency cycle: ${[...path, id].join(" → ")}.` }); return; }
+    if (visited.has(id)) return;
+    visiting.add(id);
+    const expression = r.stats[id]?.maxExpr;
+    if (expression) {
+      try { for (const p of references(expression).paths) { const target = p[0] === "stats" ? p[1] : p[0]; if (r.stats[target]?.maxExpr) visitCap(target, [...path, id]); } } catch { /* Syntax is diagnosed by normalization. */ }
+    }
+    visiting.delete(id); visited.add(id);
+  };
+  r.statOrder.forEach((id) => visitCap(id, []));
 
   const check = (src: string | number | undefined, where: string, extra: Record<string, Value> = {}, dungeon = false) => {
     if (src === undefined || typeof src === "number") return;
     const base = makeEnv(r, s, extra);
     // Dungeon formulas also know depth, bag('potion') and rel_bond(person).
-    const env: ExprEnv = { lookup: base.lookup, call: (n, a) => (n === "roll" ? 1 : dungeon && (n === "bag" || n === "rel_bond") ? 0 : base.call?.(n, a)) };
     const unknown = new Set<string>();
-    try { evaluate(src, env, { unknown }); } catch { return; }
+    try {
+      const refs = references(src);
+      for (const path of refs.paths) if (base.lookup(path) === undefined) unknown.add(path.join("."));
+      for (const name of refs.calls) if (!FUNCTIONS.includes(name) && !(dungeon && ["bag", "rel_bond"].includes(name))) unknown.add(`${name}()`);
+    } catch { return; }
     for (const u of unknown) {
       const isCall = u.endsWith("()");
       const msg = isCall

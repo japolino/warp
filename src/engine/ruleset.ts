@@ -605,7 +605,7 @@ export function titleCase(id: string): string {
 }
 
 export function slug(s: string): string {
-  return String(s).trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "x";
+  return String(s).normalize("NFKC").trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "_").replace(/^_+|_+$/g, "") || "x";
 }
 
 const DEFAULT_WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -646,7 +646,11 @@ export class Ctx {
 
   expr(v: unknown, where: string): string | number | undefined {
     if (v === undefined || v === null) return undefined;
-    if (typeof v === "number") return v;
+    if (typeof v === "number") {
+      if (Number.isFinite(v)) return v;
+      this.err(where, "Formulas must contain finite numbers");
+      return undefined;
+    }
     if (typeof v === "boolean") return v ? 1 : 0;
     const s = String(v);
     try { compile(s); return s; } catch (e) {
@@ -737,7 +741,7 @@ function normStat(id: string, raw: unknown, where: string, c: Ctx, forRel = fals
     label: typeof r.label === "string" ? r.label : titleCase(id),
     kind: k,
     min, max, maxExpr,
-    start: Math.min(max, Math.max(min, start)),
+    start: maxExpr ? Math.max(min, start) : Math.min(max, Math.max(min, start)),
     good,
     perHour: c.num(r.per_hour ?? r.perHour, `${where} › per_hour`, 0),
     show: k === "hidden" ? "hidden" : show,

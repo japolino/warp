@@ -9,6 +9,8 @@
 
 import yaml from "js-yaml";
 import { normalizeRuleset, type Issue, type Ruleset } from "./ruleset.js";
+import { safeKey } from "./proposal.js";
+import { lintRuleset } from "./lint.js";
 
 const ENTRY_RE = /^\s*(?:\[[^\]]*\]\s*)?warp[-_ ]?ruleset\b/i;
 const BOOK_RE = /^\s*warp[-_ ]?ruleset\b/i;
@@ -40,7 +42,7 @@ export function deepMerge(a: unknown, b: unknown): unknown {
   if (Array.isArray(a) && Array.isArray(b)) return [...a, ...b];
   if (isObj(a) && isObj(b)) {
     const out: Raw = { ...a };
-    for (const [k, v] of Object.entries(b)) out[k] = k in out ? deepMerge(out[k], v) : v;
+    for (const [k, v] of Object.entries(b)) if (safeKey(k)) out[k] = Object.hasOwn(out, k) ? deepMerge(out[k], v) : v;
     return out;
   }
   return b === undefined ? a : b;
@@ -65,6 +67,14 @@ export function loadRuleset(parts: RulesetPart[]): LoadResult {
         issues.push({ level: "error", where: p.label, message: "should be YAML key/value pairs (like `stats:`), not a list or plain text" });
         continue;
       }
+      function validate(value: unknown, path: string): void {
+        if (typeof value === "number" && !Number.isFinite(value)) issues.push({ level: "error", where: path, message: "Numbers must be finite." });
+        if (value && typeof value === "object") for (const [key, v] of Object.entries(value)) {
+          if (!safeKey(key)) issues.push({ level: "error", where: `${path}.${key}`, message: "Reserved key is not allowed." });
+          else validate(v, `${path}.${key}`);
+        }
+      }
+      validate(doc, p.label);
       merged = deepMerge(merged, doc);
     } catch (e) {
       const err = e as { mark?: { line: number; column: number }; reason?: string; message?: string };
@@ -75,4 +85,11 @@ export function loadRuleset(parts: RulesetPart[]): LoadResult {
   if (!parts.length) return { ruleset: null, issues };
   const { ruleset, issues: more } = normalizeRuleset(merged);
   return { ruleset, issues: [...issues, ...more] };
+}
+
+/** Gameplay refuses partial rulesets; the editor can still use loadRuleset for diagnostics. */
+export function compileRuleset(parts: RulesetPart[]): LoadResult {
+  const result = loadRuleset(parts);
+  if (result.ruleset) result.issues.push(...lintRuleset(result.ruleset));
+  return result.issues.some((i) => i.level === "error") ? { ...result, ruleset: null } : result;
 }

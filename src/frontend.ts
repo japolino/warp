@@ -49,7 +49,7 @@ export function setup(ctx: SpindleFrontendContext) {
   const dgMates = new Set<string>();
   const openSections = new Map<string, boolean>();
 
-  const send = (m: FrontendToBackend) => ctx.sendToBackend(m);
+  const send = (m: FrontendToBackend) => ctx.sendToBackend({ ...m, commandId: m.commandId ?? crypto.randomUUID() });
   const chatId = () => { try { return ctx.getActiveChat().chatId ?? null; } catch { return null; } };
 
   // ───────── surfaces: drawer tab (always) + left dock panel (when allowed) ─────────

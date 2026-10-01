@@ -777,7 +777,8 @@ export function narratorKnowledge(r: Ruleset, s: GameState): string | null {
     for (const id of c.knows) {
       const sec = r.secrets[id];
       if (!sec) continue;
-      lines.push(`Only ${personName(r, s, c.id)} knows this (no one else can mention it; ${personName(r, s, c.id)} reveals it only if the scene truly earns it): ${sec.about} — ${sec.stages.map((st) => st.text).join(" ")}`);
+      const opened = sec.stages.slice(0, (s.secrets[id] ?? -1) + 1).map((st) => st.text).join(" ");
+      lines.push(`Only ${personName(r, s, c.id)} knows this (no one else can mention it; reveal only when the rules unlock it): ${opened ? `${sec.about} — ${opened}` : "They are keeping a secret. Do not invent or reveal its contents."}`);
     }
   }
   for (const sec of Object.values(r.secrets)) {

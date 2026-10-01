@@ -3,7 +3,6 @@
 
 import type { SpindleAPI } from "lumiverse-spindle-types";
 import { randomSeed } from "../engine/dice.js";
-import type { TurnRecord } from "../engine/resolve.js";
 import type { GameState, WarpEvent } from "../engine/state.js";
 import type { Ruleset } from "../engine/ruleset.js";
 import {
@@ -11,10 +10,11 @@ import {
 } from "../engine/dungeon/run.js";
 import type { DungeonOp } from "../shared/protocol.js";
 import { toast } from "./host.js";
-import { foldPath, getMessages, warpMeta, writeRecord } from "./ledger.js";
+import { appendOperation, foldPath, getMessages, requireCurrentPath, warpMeta, writeRecord } from "./ledger.js";
 import { getRuleset } from "./source.js";
 import { busyChats, pushState } from "./state-push.js";
 import { playScene } from "./scene.js";
+import { currentCommand } from "./serial.js";
 
 declare const spindle: SpindleAPI;
 
@@ -37,20 +37,21 @@ function run(r: Ruleset, s: GameState, op: DungeonOp): DungeonResult {
 
 export async function runDungeonOp(msg: { chatId: string } & DungeonOp, userId?: string): Promise<void> {
   const loaded = await getRuleset(msg.chatId, userId);
-  const r = loaded?.ruleset;
-  if (!r) return;
+  if (!loaded?.ruleset) return;
   if (busyChats.has(msg.chatId)) { toast("info", "Wait for the story to catch up first.", userId); return; }
   const msgs = await getMessages(msg.chatId);
   const last = msgs[msgs.length - 1];
   if (!last) { toast("warning", "Send a message first — the dungeon attaches to the latest message.", userId); return; }
-  const { state } = foldPath(r, msgs);
+  const fold = foldPath(loaded.ruleset, msgs);
+  requireCurrentPath(fold);
+  const { state, ruleset: r } = fold;
   const res = run(r, state, msg);
   if (res.error) { toast("warning", res.error, userId); await pushState(msg.chatId, userId); return; }
   if (res.events.length) {
     const swipe = last.swipe_id ?? 0;
     const existing = warpMeta(last).swipes?.[String(swipe)];
-    const rec: TurnRecord = existing ? { ...existing, events: [...existing.events, ...res.events] } : { v: 1, hints: [], events: res.events, at: Date.now() };
-    await writeRecord(msg.chatId, last.id, swipe, rec);
+    const rec = appendOperation(existing, { v: 1, hints: [], events: res.events, action: { id: `dungeon:${msg.op}`, label: `Dungeon: ${msg.op}`, via: "command" }, commandId: currentCommand(msg.chatId), at: Date.now() });
+    await writeRecord(msg.chatId, last.id, swipe, rec, r);
   }
   await pushState(msg.chatId, userId);
   // Story moments play on the stage as a short snippet, off the chat.

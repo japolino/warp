@@ -5,6 +5,7 @@
 // an actual pick it samples from them with its own seeded RNG.
 
 import type { Rng } from "./dice.js";
+import { objectOf, safeKey } from "./proposal.js";
 
 export type Question =
   | { type: "choice"; instructions: string; criteria: Record<string, string> }
@@ -21,6 +22,44 @@ export type Answers = Record<string, Answer>;
 
 export interface DecideOptions {
   signal?: AbortSignal;
+  timeoutMs?: number;
+  deadlineAt?: number;
+}
+
+/** Decode both typed provider answers and the compact LLM format against the actual questions. */
+export function decodeAnswers(value: unknown, questions: Questions): Answers {
+  const raw = objectOf(value), out: Answers = {};
+  const probability = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1;
+  for (const [id, q] of Object.entries(questions)) {
+    if (!safeKey(id)) continue;
+    const a = objectOf(raw[id]);
+    if (a.type !== undefined && a.type !== q.type) continue;
+    if (q.type === "noul") {
+      const p = a.noul ?? a.p ?? a.probability;
+      if (probability(p)) out[id] = { type: "noul", noul: p };
+      continue;
+    }
+    const keys = q.type === "choice" ? Object.keys(q.criteria) : q.criteria.map((_, i) => String(i));
+    if (!keys.length) continue;
+    const pick = q.type === "choice" ? a.choice : a.score ?? a.level;
+    if (q.type === "choice" ? typeof pick !== "string" || !keys.includes(pick) : typeof pick !== "number" || !Number.isFinite(pick) || pick < 0 || pick > keys.length - 1) continue;
+    const confidence = a.confidence;
+    if (confidence !== undefined && !probability(confidence)) continue;
+    let p: Record<string, number>;
+    if (a.probabilities !== undefined && !(q.type === "score" && Object.keys(objectOf(a.probabilities)).length === 0)) {
+      const map = objectOf(a.probabilities);
+      if (!Object.keys(map).length || Object.entries(map).some(([k, v]) => !keys.includes(k) || !probability(v)) || !Object.values(map).some((v) => (v as number) > 0)) continue;
+      p = normalize(map as Record<string, number>, keys);
+    } else {
+      // Compatibility with previously saved compact replies. New prompts request full distributions.
+      if (typeof confidence !== "number") continue;
+      const selected = String(q.type === "score" ? Math.round(pick as number) : pick);
+      p = Object.fromEntries(keys.map((k) => [k, keys.length === 1 ? 1 : k === selected ? confidence : (1 - confidence) / (keys.length - 1)]));
+    }
+    if (q.type === "choice") out[id] = { type: "choice", choice: pick as string, confidence: confidence as number ?? p[pick as string], probabilities: p };
+    else out[id] = { type: "score", score: pick as number, confidence: confidence as number ?? Math.max(...Object.values(p)), probabilities: p };
+  }
+  return out;
 }
 
 export interface Decider {

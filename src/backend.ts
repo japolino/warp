@@ -5,20 +5,22 @@ import type { GameState, WarpEvent } from "./engine/state.js";
 import { TEMPLATES } from "./engine/templates/index.js";
 import type { FrontendToBackend } from "./shared/protocol.js";
 import { logError, send, toast } from "./backend/host.js";
-import { foldPath, getMessages, patchWarpMeta, shiftAfterSwipeDelete, warpMeta, writeRecord } from "./backend/ledger.js";
+import { appendOperation, foldPath, getMessages, patchWarpMeta, requireCurrentPath, shiftAfterSwipeDelete, startPlaythrough, warpMeta, writeRecord } from "./backend/ledger.js";
 import { getSettings, patchSettings } from "./backend/settings.js";
-import { getRuleset, installTemplate, invalidateCharacter, knownRulesetBookIds, knownRulesetEntryIds } from "./backend/source.js";
-import { busyChats, connectionsFor, getActiveChat, lastStates, pushState, schedulePush, setActiveChat } from "./backend/state-push.js";
-import { afterReply, interceptor, onGenerationEnded, onGenerationStarted, playerName } from "./backend/turn.js";
+import { getRuleset, installTemplate, invalidateCharacter } from "./backend/source.js";
+import { busyChats, connectionsFor, getActiveChat, pushState, schedulePush, setActiveChat } from "./backend/state-push.js";
+import { afterReply, interceptor, onGenerationEnded, onGenerationStarted, onGenerationStopped, playerName } from "./backend/turn.js";
 import { intentFor } from "./backend/intents.js";
 import { playScene } from "./backend/scene.js";
 import { activeSession } from "./engine/date/talk.js";
 import { DATE_PREFIX } from "./engine/date/types.js";
 import { momentKey, takePrewritten } from "./backend/drafts.js";
-import { isRulesetEntryTitle } from "./engine/loader.js";
 import { getDecider, JEV_KEY } from "./backend/deciders.js";
 import { runDungeonOp } from "./backend/dungeon.js";
 import { builderAnswer, builderBack, builderClose, builderCurrent, builderFix, builderInstall, builderOpen, builderRedo, builderRefine, builderStart } from "./backend/builder.js";
+import { worldInfoPolicy } from "./backend/knowledge.js";
+import { currentCommand, runCommand } from "./backend/serial.js";
+import { dropPrewritten } from "./backend/drafts.js";
 
 declare const spindle: SpindleAPI;
 
@@ -26,43 +28,7 @@ declare const spindle: SpindleAPI;
 spindle.registerInterceptor(interceptor, 60);
 
 // Ruleset YAML must never reach the model, even if an author forgets to disable an entry.
-spindle.registerWorldInfoInterceptor(async (ctx) => {
-  const disabled = ctx.entries
-    .filter((e) => knownRulesetEntryIds.has(e.id) || knownRulesetBookIds.has(e.world_book_id) || isRulesetEntryTitle(e.comment))
-    .map((e) => e.id);
-
-  // Gated lore: entries named in a codex entry's `lore:` (or a secret stage's) stay off until it's
-  // unlocked, then they're forced on — so a secret's long text can live in the lorebook and still never leak early.
-  const forced: string[] = [];
-  try {
-    const loaded = await getRuleset(ctx.chatId, ctx.userId);
-    const r = loaded?.ruleset;
-    const gates: { lore: string[]; open: (s: GameState) => boolean }[] = [];
-    if (r) {
-      for (const c of Object.values(r.codex)) if (c.lore.length) gates.push({ lore: c.lore, open: (s) => !!s.codex[c.id] });
-      for (const sec of Object.values(r.secrets)) sec.stages.forEach((st, i) => {
-        if (st.lore.length) gates.push({ lore: st.lore, open: (s) => (s.secrets[sec.id] ?? -1) >= i });
-      });
-    }
-    if (r && gates.length) {
-      let state = lastStates.get(ctx.chatId);
-      if (!state) state = foldPath(r, await getMessages(ctx.chatId)).state;
-      const title = (s: string) => s.replace(/^\s*\[[^\]]*\]\s*/, "").trim().toLowerCase();
-      for (const g of gates) {
-        const names = new Set(g.lore.map(title));
-        const open = g.open(state);
-        for (const e of ctx.entries) {
-          if (!names.has(title(e.comment ?? ""))) continue;
-          if (open) forced.push(e.id);
-          else disabled.push(e.id);
-        }
-      }
-    }
-  } catch (e) {
-    logError("codex lore gate", e);
-  }
-  return disabled.length || forced.length ? { ...(disabled.length ? { disabled } : {}), ...(forced.length ? { forced } : {}) } : undefined;
-}, 10);
+spindle.registerWorldInfoInterceptor(worldInfoPolicy, 10);
 
 // ── Lifecycle events ─────────────────────────────────────────────
 const chatIdOf = (p: unknown): string | null => {
@@ -75,14 +41,11 @@ spindle.on("CHAT_SWITCHED", (p, userId) => {
   setActiveChat(userId, chatId);
   void pushState(chatId, userId);
 });
-spindle.on("GENERATION_STARTED", (p, userId) => { void onGenerationStarted(p, userId); });
-spindle.on("GENERATION_ENDED", (p, userId) => { void onGenerationEnded(p, userId); });
-spindle.on("GENERATION_STOPPED", (p, userId) => {
-  const chatId = chatIdOf(p);
-  if (chatId) send({ type: "busy", chatId, busy: false }, userId);
-  schedulePush(chatId, userId);
-});
+spindle.on("GENERATION_STARTED", (p, userId) => onGenerationStarted(p, userId));
+spindle.on("GENERATION_ENDED", (p, userId) => onGenerationEnded(p, userId));
+spindle.on("GENERATION_STOPPED", (p, userId) => onGenerationStopped(p, userId));
 spindle.on("MESSAGE_SWIPED", (p, userId) => {
+  dropPrewritten(p.chatId);
   if (p.action === "deleted") {
     void shiftAfterSwipeDelete(p.chatId, p.message.id, p.swipeId).catch((e) => logError("swipe delete", e)).finally(() => schedulePush(p.chatId, userId));
     return;
@@ -90,11 +53,15 @@ spindle.on("MESSAGE_SWIPED", (p, userId) => {
   schedulePush(p.chatId, userId);
 });
 for (const ev of ["MESSAGE_SENT", "MESSAGE_DELETED", "MESSAGE_EDITED", "SWIPE_EDITED", "CHAT_CHANGED"]) {
-  spindle.on(ev, (p, userId) => schedulePush(chatIdOf(p), userId, 250));
+  spindle.on(ev, (p, userId) => {
+    const chatId = chatIdOf(p); if (chatId) dropPrewritten(chatId);
+    schedulePush(chatId, userId, 250);
+  });
 }
 spindle.on("CHARACTER_EDITED", (p, userId) => {
   const id = (p as { character?: { id?: string }; characterId?: string })?.character?.id ?? (p as { characterId?: string })?.characterId;
   invalidateCharacter(id ?? null);
+  dropPrewritten();
   void userId;
 });
 
@@ -104,8 +71,13 @@ spindle.commands.register([
   { id: "install", label: "Warp: Add a ruleset to this character", description: "Pick a starter game (Universal, life-sim, sci-fi RPG)", keywords: ["ruleset", "template", "game", "setup"], scope: "chat" },
   { id: "dungeon", label: "Warp: Open the dungeon", description: "Explore, fight and loot — or pick a dungeon to enter", keywords: ["dungeon", "explore", "battle", "roguelike"], scope: "chat" },
   { id: "reload", label: "Warp: Reload ruleset", description: "Re-read the character's warp-ruleset lorebook", keywords: ["refresh", "ruleset"], scope: "chat" },
+  { id: "adopt_rules", label: "Warp: Start a playthrough with edited rules", description: "Keep this history and start a new game using the character's current rules", keywords: ["migrate", "ruleset", "restart"], scope: "chat" },
 ]);
 spindle.commands.onInvoked((id, context) => {
+  if (id === "adopt_rules" && context.chatId) {
+    void handleFrontend({ type: "adopt_rules", chatId: context.chatId }).catch((e) => logError("adopt rules", e));
+    return;
+  }
   if (id === "reload") {
     void pushState(context.chatId ?? null, undefined, true).then(() => toast("info", "Ruleset reloaded"));
     return;
@@ -124,20 +96,19 @@ async function applyManual(
   make: (r: Ruleset, state: GameState) => WarpEvent[] | string,
 ): Promise<boolean> {
   const loaded = await getRuleset(chatId, userId);
-  const r = loaded?.ruleset;
-  if (!r) return false;
+  if (!loaded?.ruleset) return false;
   const msgs = await getMessages(chatId);
   const last = msgs[msgs.length - 1];
   if (!last) { toast("warning", "Send a message first — changes attach to the latest message.", userId); return false; }
-  const { state } = foldPath(r, msgs);
+  const fold = foldPath(loaded.ruleset, msgs);
+  requireCurrentPath(fold);
+  const { state, ruleset: r } = fold;
   const events = make(r, state);
   if (typeof events === "string") { toast("warning", events, userId); return false; }
   const swipe = last.swipe_id ?? 0;
   const existing = warpMeta(last).swipes?.[String(swipe)];
-  const rec: TurnRecord = existing
-    ? { ...existing, events: [...existing.events, ...events] }
-    : { v: 1, hints: [], events, at: Date.now() };
-  await writeRecord(chatId, last.id, swipe, rec);
+  const rec = appendOperation(existing, { v: 1, hints: [], events, at: Date.now(), commandId: currentCommand(chatId) });
+  await writeRecord(chatId, last.id, swipe, rec, r);
   await pushState(chatId, userId);
   return true;
 }
@@ -163,8 +134,22 @@ async function imageConnectionsFor(userId?: string): Promise<{ id: string; name:
   }
 }
 
-spindle.onFrontendMessage(async (raw, userId) => {
+const readCommands = new Set(["hello", "refresh", "reload", "builder_open", "test_decider"]);
+async function handleFrontend(raw: unknown, userId?: string) {
   const msg = raw as FrontendToBackend;
+  if (!msg || typeof msg.type !== "string") return;
+  const chatId = "chatId" in msg && typeof msg.chatId === "string" ? msg.chatId : null;
+  const id = typeof msg.commandId === "string" && msg.commandId.length <= 128 ? msg.commandId : undefined;
+  const work = async () => {
+    if (chatId && !readCommands.has(msg.type)) {
+      if (busyChats.has(chatId)) { toast("info", "Wait for the story to catch up first.", userId); return; }
+      const msgs = id ? await getMessages(chatId) : [];
+      if (id && msgs.some((m) => {
+        const w = warpMeta(m);
+        return w.commandId === id || Object.values(w.swipes ?? {}).some((r) => r.commandId === id || r.operations?.some((op) => op.commandId === id));
+      })) return;
+      if (msg.type !== "act") dropPrewritten(chatId);
+    }
   try {
     switch (msg.type) {
       case "hello": {
@@ -180,8 +165,16 @@ spindle.onFrontendMessage(async (raw, userId) => {
         await builderCurrent(msg.chatId, userId);
         break;
       case "reload":
+        if (msg.chatId) dropPrewritten(msg.chatId);
         await pushState(msg.chatId, userId, true);
         break;
+      case "adopt_rules": {
+        const loaded = await getRuleset(msg.chatId, userId, true);
+        if (!loaded?.ruleset) throw new Error("Fix the current ruleset before starting a new playthrough.");
+        await startPlaythrough(msg.chatId, loaded.ruleset);
+        await pushState(msg.chatId, userId);
+        break;
+      }
 
       case "say": {
         const text = String(msg.text ?? "").trim().slice(0, 4000);
@@ -189,23 +182,27 @@ spindle.onFrontendMessage(async (raw, userId) => {
         if (busyChats.has(msg.chatId)) { toast("info", "Wait for the story to catch up first.", userId); return; }
         // On a date or in the dungeon, a typed line plays on the stage; otherwise it's a chat message.
         const loaded = await getRuleset(msg.chatId, userId);
-        const r = loaded?.ruleset;
-        if (r) {
-          const { state } = foldPath(r, await getMessages(msg.chatId));
+        if (loaded?.ruleset) {
+          const fold = foldPath(loaded.ruleset, await getMessages(msg.chatId));
+          requireCurrentPath(fold);
+          const { state, ruleset: r } = fold;
           if (activeSession(r, state)) { await playScene({ chatId: msg.chatId, userId, kind: "date", intent: { actionId: `${DATE_PREFIX}say`, via: "adjudicator" }, said: text, typed: text }); break; }
           if (state.dungeon) { await playScene({ chatId: msg.chatId, userId, kind: "dungeon", intent: null, said: text, typed: text }); break; }
         }
-        await spindle.chat.appendMessage(msg.chatId, { role: "user", content: text }, { triggerGeneration: true });
+        busyChats.add(msg.chatId);
+        try { await spindle.chat.appendMessage(msg.chatId, { role: "user", content: text, metadata: { warp: { commandId: id } } }, { triggerGeneration: true }); }
+        catch (e) { busyChats.delete(msg.chatId); throw e; }
         break;
       }
 
       case "act": {
         const loaded = await getRuleset(msg.chatId, userId);
-        const r = loaded?.ruleset;
-        if (!r) return;
+        if (!loaded?.ruleset) return;
         const settings = await getSettings(userId);
         const msgs = await getMessages(msg.chatId);
-        const { state } = foldPath(r, msgs);
+        const fold = foldPath(loaded.ruleset, msgs);
+        requireCurrentPath(fold);
+        const { state, ruleset: r } = fold;
         const ci = intentFor(r, state, settings, msgs, msg.actionId, msg.params);
         if ("error" in ci) {
           if (ci.error) toast("warning", ci.error, userId);
@@ -220,18 +217,20 @@ spindle.onFrontendMessage(async (raw, userId) => {
           break;
         }
         // Already written while the player read: post it at once, then catch up on the bookkeeping.
-        const ready = takePrewritten(msg.chatId, momentKey(msgs, state), msg.actionId);
+        const ready = takePrewritten(msg.chatId, momentKey(msgs, state, r, settings), msg.actionId);
         if (ready) {
-          await spindle.chat.appendMessage(msg.chatId, { role: "user", content: say, metadata: { warp: { intent, judged: true } } });
+          const user = await spindle.chat.appendMessage(msg.chatId, { role: "user", content: say, metadata: { warp: { intent, judged: true, commandId: id } } });
           const reply = await spindle.chat.appendMessage(msg.chatId, { role: "assistant", content: ready.text });
-          await writeRecord(msg.chatId, reply.id, 0, ready.rec);
+          await writeRecord(msg.chatId, reply.id, 0, ready.rec, r);
           await pushState(msg.chatId, userId);
           const fresh = (await getMessages(msg.chatId)).find((m) => m.id === reply.id);
+          const committed = fresh && warpMeta(fresh).swipes?.["0"];
+          if (committed?.inputs && committed.parent) await patchWarpMeta(msg.chatId, user.id, (w) => ({ ...w, accepted: { parent: committed.parent!, actionId: committed.action?.id ?? null, inputs: committed.inputs! } }));
           if (fresh) {
             busyChats.add(msg.chatId);
             try {
               await afterReply({
-                chatId: msg.chatId, userId, rec: ready.rec, after: ready.after, playerText: say, ruleset: r, at: Date.now(),
+                chatId: msg.chatId, userId, rec: ready.rec, after: ready.after, origin: state, playerText: say, ruleset: r, at: Date.now(),
                 outcome: ready.outcome, player: await playerName(msg.chatId, userId), prompt: ready.prompt,
               }, fresh, ready.text, userId);
             } finally {
@@ -242,11 +241,14 @@ spindle.onFrontendMessage(async (raw, userId) => {
           }
           break;
         }
-        await spindle.chat.appendMessage(msg.chatId, {
+        dropPrewritten(msg.chatId);
+        busyChats.add(msg.chatId);
+        try { await spindle.chat.appendMessage(msg.chatId, {
           role: "user",
           content: say,
-          metadata: { warp: { intent } },
-        }, { triggerGeneration: true });
+          metadata: { warp: { intent, commandId: id } },
+        }, { triggerGeneration: true }); }
+        catch (e) { busyChats.delete(msg.chatId); throw e; }
         break;
       }
 
@@ -301,6 +303,7 @@ spindle.onFrontendMessage(async (raw, userId) => {
       }
 
       case "settings": {
+        dropPrewritten();
         await patchSettings(msg.patch, userId);
         await sendSettings(userId);
         schedulePush(getActiveChat(userId), userId, 0);
@@ -369,12 +372,16 @@ spindle.onFrontendMessage(async (raw, userId) => {
         const w = { ...warpMeta(user) };
         delete w.suggest;
         delete w.intent;
+        delete w.accepted;
         w.judged = true;
         if (msg.actionId) w.intent = { actionId: msg.actionId, params: msg.params, via: "confirmed" };
+        w.commandId = id;
         meta.warp = w;
         if (reply) await spindle.chat.deleteMessage(msg.chatId, reply.id);
         await spindle.chat.deleteMessage(msg.chatId, user.id);
-        await spindle.chat.appendMessage(msg.chatId, { role: "user", content: user.content, metadata: meta }, { triggerGeneration: true });
+        busyChats.add(msg.chatId);
+        try { await spindle.chat.appendMessage(msg.chatId, { role: "user", content: user.content, metadata: meta }, { triggerGeneration: true }); }
+        catch (e) { busyChats.delete(msg.chatId); throw e; }
         break;
       }
 
@@ -390,4 +397,7 @@ spindle.onFrontendMessage(async (raw, userId) => {
     logError(`frontend ${msg.type}`, e);
     toast("error", `Warp: ${e instanceof Error ? e.message : String(e)}`, userId);
   }
-});
+  };
+  return readCommands.has(msg.type) ? work() : runCommand(chatId ?? `user:${userId ?? "_"}`, id, work);
+}
+spindle.onFrontendMessage(handleFrontend);

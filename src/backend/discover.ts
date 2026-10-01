@@ -55,6 +55,13 @@ export async function discoverPlace(loaded: Loaded, r: Ruleset, before: GameStat
     rec.hints.push("{{user}} explores but finds nothing new this time.");
     return;
   }
+  const from = rec.discover.from;
+  const origin = r.locations[from];
+  rec.locations = {
+    ...(origin ? { [from]: { ...origin, exits: [...new Set([...origin.exits, p.id])] } } : {}),
+    [p.id]: { id: p.id, name: p.name, desc: p.desc, indoors: p.indoors, exits: [from], travel: r.discovery.time },
+  };
+  r.locations = { ...r.locations, ...rec.locations };
   const book = loaded.bookIds[0];
   if (book) {
     try {

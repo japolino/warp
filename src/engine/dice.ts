@@ -86,6 +86,7 @@ export function parseDice(src: string): ParsedDice {
   }
   if (consumed !== s.length) throw new DiceError(`"${src}" isn't valid dice notation (try d20, 2d6, d100, 4d6kh3)`);
   if (!groups.length) throw new DiceError(`"${src}" has no dice in it`);
+  if (!Number.isFinite(flat)) throw new DiceError("Dice modifier must be finite");
   return { groups, flat, primarySides: Math.max(...groups.map((g) => g.sides)) };
 }
 
@@ -131,4 +132,35 @@ export function rollDice(notation: string, rng: Rng): DiceRoll {
     if (gi === 0 && keptFaces.length === 1) natural = keptFaces[0];
   });
   return { notation, dice, total, natural, primarySides: parsed.primarySides };
+}
+
+export type DiceOutcome = Pick<DiceRoll, "total" | "natural" | "primarySides"> & { p: number };
+const distributions = new Map<string, readonly DiceOutcome[] | null>();
+
+/** Exact finite distributions for common dice, including kept dice and modifiers. */
+export function diceDistribution(notation: string): readonly DiceOutcome[] | null {
+  if (distributions.has(notation)) return distributions.get(notation)!;
+  const parsed = parseDice(notation);
+  const sides = parsed.groups.flatMap((g) => Array(g.count).fill(g.sides) as number[]);
+  const count = sides.reduce((n, s) => n * s, 1);
+  let result: readonly DiceOutcome[] | null = null;
+  if (!parsed.groups.some((g) => g.explode) && count <= 10_000) {
+    const totals = new Map<string, DiceOutcome>();
+    for (let n = 0; n < count; n++) {
+      let remaining = n, i = 0;
+      const roll = rollDice(notation, () => {
+        const s = sides[i++], face = remaining % s;
+        remaining = Math.floor(remaining / s);
+        return (face + 0.5) / s;
+      });
+      const key = `${roll.total}:${roll.natural}`;
+      const found = totals.get(key);
+      if (found) found.p += 1 / count;
+      else totals.set(key, { total: roll.total, natural: roll.natural, primarySides: roll.primarySides, p: 1 / count });
+    }
+    result = Object.freeze([...totals.values()].map((o) => Object.freeze(o)));
+  }
+  if (distributions.size >= 128) distributions.delete(distributions.keys().next().value!);
+  distributions.set(notation, result);
+  return result;
 }
