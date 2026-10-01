@@ -4,6 +4,7 @@
 // fills defaults, and collects friendly issues instead of throwing. A broken
 // section is skipped with a warning so the rest of the ruleset keeps working.
 
+import { AID_KINDS, GAMBLE_GAMES, GAME_IDS, gameAlias, type AidKind, type GambleGame, type GameId } from "./game-ids.js";
 import { compile, ExprError } from "./expr.js";
 import { parseDice, DiceError } from "./dice.js";
 import { normDungeons } from "./dungeon/defs.js";
@@ -139,6 +140,27 @@ export interface CheckDef {
   partialMargin: number;
   label?: string;
   crits: boolean;
+  /** Minigames this check can be played as instead of rolled (the first is offered); false = always dice. */
+  game?: GameId[] | false;
+}
+
+/** A table that takes real money: `gamble: { game: blackjack, stakes: [10, 50, 200] }`. */
+export interface GambleDef {
+  game: GambleGame;
+  /** Buy-ins to choose from. */
+  stakes: number[];
+  /** Hands, spins or pulls per sitting. */
+  rounds: number;
+  /** The stat staked (default: the HUD's money). */
+  stat?: string;
+  /** House edge (0.05 = 5%); default per game. */
+  edge?: number;
+  /** A formula in points of edge shaved off for {{user}} (`luck / 10`). */
+  luck?: string | number;
+  /** Applied after a winning, losing or ruinous sitting. */
+  win: Effect;
+  lose: Effect;
+  broke: Effect;
 }
 
 export interface ParamDef {
@@ -172,6 +194,8 @@ export interface ActionDef {
   perPerson: boolean;
   /** Readable requirements (already folded into `when`): each says what's missing on the locked choice. */
   requires: Requirement[];
+  /** A gambling table: the stake and the game decide the money, not a check. */
+  gamble?: GambleDef;
   /** Show it locked, with what's missing, when the requirements aren't met (default when it has `requires:`). */
   showLocked: boolean;
 }
@@ -385,7 +409,9 @@ export type PerkRule =
   /** gains / losses: rises (or drops) in a stat are this much bigger or smaller (−0.3 = 30% smaller). */
   | { kind: "gains" | "losses"; stat: string; pct: number }
   /** pierce: blows from these moves (stats or tags; none = every move) ignore this much of the opponent's armor. */
-  | { kind: "pierce"; amount: number; stats: string[]; tags: string[] };
+  | { kind: "pierce"; amount: number; stats: string[]; tags: string[] }
+  /** game: aids in minigames (these games; none = every game), e.g. +1 life, +20% timing window. */
+  | { kind: "game"; games: GameId[]; aids: Partial<Record<AidKind, number>> };
 
 export interface PerkDef {
   id: string; name: string; desc: string; cost: number; requires?: string;
@@ -1247,6 +1273,40 @@ function normCheck(raw: unknown, where: string, c: Ctx): CheckDef | undefined {
     partialMargin: c.num(raw.partial ?? raw.partial_margin, `${where} › partial`, 0),
     label: typeof raw.label === "string" ? raw.label : typeof raw.skill === "string" ? raw.skill : undefined,
     crits: raw.crits !== false,
+    ...(raw.game !== undefined || raw.games !== undefined || raw.minigame !== undefined ? { game: normGames(raw.game ?? raw.games ?? raw.minigame, `${where} › game`, c) } : {}),
+  };
+}
+
+/** `game: aim`, `game: [mines, snake]`, `game: false` (dice only). */
+function normGames(raw: unknown, where: string, c: Ctx): GameId[] | false {
+  if (raw === false || raw === "none" || raw === "dice") return false;
+  const out: GameId[] = [];
+  for (const x of Array.isArray(raw) ? raw : [raw]) {
+    const g = gameAlias(String(x));
+    if (g) { if (!out.includes(g)) out.push(g); } else c.warn(where, `"${String(x)}" isn't a minigame — use ${GAME_IDS.join(", ")}`);
+  }
+  return out.length ? out : false;
+}
+
+function normGamble(raw: unknown, where: string, c: Ctx, known: { stats: Set<string> }): GambleDef | undefined {
+  const r: Raw = isObj(raw) ? raw : { game: raw };
+  const g = gameAlias(String(r.game ?? ""));
+  if (!g || !(GAMBLE_GAMES as string[]).includes(g)) { c.warn(where, `\`game:\` should be ${GAMBLE_GAMES.join(", ")}`); return undefined; }
+  const stakes = (Array.isArray(r.stakes ?? r.stake) ? (r.stakes ?? r.stake) as unknown[] : [r.stakes ?? r.stake ?? 10])
+    .map((x) => Math.round(c.num(x, `${where} › stakes`, 0))).filter((x) => x > 0).sort((a, b) => a - b);
+  const stat = typeof r.stat === "string" ? r.stat : typeof r.with === "string" ? r.with : undefined;
+  if (stat && !known.stats.has(stat)) c.warn(`${where} › stat`, `"${stat}" isn't a declared stat`);
+  const edge = r.edge !== undefined ? pct(r.edge, `${where} › edge`, c) : null;
+  return {
+    game: g as GambleGame,
+    stakes: stakes.length ? [...new Set(stakes)] : [10],
+    rounds: Math.max(1, Math.min(12, Math.round(c.num(r.rounds ?? r.hands ?? r.spins, `${where} › rounds`, g === "slots" ? 6 : 5)))),
+    ...(stat ? { stat } : {}),
+    ...(edge !== null ? { edge } : {}),
+    ...(r.luck !== undefined ? { luck: c.expr(r.luck, `${where} › luck`) } : {}),
+    win: normEffect(r.win ?? r.won, `${where} › win`, c, known),
+    lose: normEffect(r.lose ?? r.lost, `${where} › lose`, c, known),
+    broke: normEffect(r.broke ?? r.bust, `${where} › broke`, c, known),
   };
 }
 
@@ -1287,6 +1347,10 @@ function normAction(id: string, raw: unknown, where: string, c: Ctx, known: { st
   }
   const check = raw.check !== undefined ? normCheck(raw.check, `${where} › check`, c) : undefined;
   if (!check && Object.keys(outcomes).length) c.warn(where, "has outcomes but no check — put always-on changes under `effects:`");
+  // A gambling table: pick the stake like any other option when it's rolled instead of played.
+  const gamble = raw.gamble !== undefined ? normGamble(raw.gamble, `${where} › gamble`, c, known) : undefined;
+  if (gamble && check) c.warn(where, "a gambling table doesn't take a check — the cards (or the wheel) decide");
+  if (gamble && !params.some((p) => p.id === "stake")) params.unshift({ id: "stake", label: "Stake", options: Object.fromEntries(gamble.stakes.map((x) => [String(x), x])), default: String(gamble.stakes[0]) });
   const at = raw.at === undefined ? [] : Array.isArray(raw.at) ? raw.at.map(String) : [String(raw.at)];
   const own = raw.when !== undefined ? c.expr(raw.when, `${where} › when`) : undefined;
   // Requirements fold into `when`, and stay readable so a locked choice can say what's missing.
@@ -1314,6 +1378,7 @@ function normAction(id: string, raw: unknown, where: string, c: Ctx, known: { st
     perPerson: raw.per_person === true || raw.with === "person" || raw.with === "people",
     requires,
     showLocked: raw.show_locked === true || (raw.show_locked !== false && requires.length > 0),
+    ...(gamble ? { gamble } : {}),
   };
 }
 
@@ -1474,7 +1539,7 @@ function normWardrobe(raw: unknown, items: Record<string, ItemDef>, c: Ctx): War
 }
 
 /** Keys of an item's `use:` that describe the action itself; everything else is its effect. */
-const USE_KEYS = new Set(["label", "say", "desc", "description", "when", "time", "tags", "check", "params", "why_not", "locked", "group", "cost", "effects", "effect", "outcomes", "per_person", "hidden", "at", "order", "success", "fail", "partial", "crit_success", "crit_fail", "critical_success", "critical_fail", "failure", "requires", "needs", "show_locked"]);
+const USE_KEYS = new Set(["label", "say", "desc", "description", "when", "time", "tags", "check", "params", "why_not", "locked", "group", "cost", "effects", "effect", "outcomes", "per_person", "hidden", "at", "order", "success", "fail", "partial", "crit_success", "crit_fail", "critical_success", "critical_fail", "failure", "requires", "needs", "show_locked", "gamble"]);
 
 /** An item's `use:` (an action, or plain effects) and `bonus:` (gear that helps checks). */
 function applyItemUse(it: ItemDef, r: Raw, w: string, c: Ctx, known: { stats: Set<string> }, drafted: boolean) {
@@ -1581,7 +1646,20 @@ function normPerkRules(v: unknown, where: string, c: Ctx, known: { stats: Set<st
       const r: Raw = isObj(x) ? x : { amount: x };
       const amount = r.amount === true || r.amount === "all" ? 999 : c.num(r.amount ?? r.by, `${w} › amount`, 999);
       out.push({ kind: "pierce", amount, stats: list(r.stats ?? r.stat), tags: list(r.tags).map((t) => t.toLowerCase()) });
-    } else c.warn(w, "isn't a perk rule (reroll, soften, gains, losses, pierce)");
+    } else if (k === "game" || k === "games" || k === "minigames") {
+      // game: { lives: 1, window: 20, games: [aim] } — aids in minigames.
+      const r: Raw = isObj(x) ? x : {};
+      const games = list(r.games ?? r.game ?? r.only).map((g) => gameAlias(g) ?? (c.warn(`${w} › games`, `"${g}" isn't a minigame`), null)).filter((g): g is GameId => !!g);
+      const aids: Partial<Record<AidKind, number>> = {};
+      for (const [ak, n] of Object.entries(r)) {
+        if (["games", "game", "only"].includes(ak)) continue;
+        if (!(AID_KINDS as string[]).includes(ak)) { c.warn(`${w} › ${ak}`, `isn't a minigame aid (${AID_KINDS.join(", ")})`); continue; }
+        const v = typeof n === "string" && n.trim().endsWith("%") ? parseFloat(n) : c.num(n === true ? 1 : n, `${w} › ${ak}`, 0);
+        if (v) aids[ak as AidKind] = v;
+      }
+      if (Object.keys(aids).length) out.push({ kind: "game", games, aids });
+      else c.warn(w, "names no aid — e.g. `game: { lives: 1, window: 20 }`");
+    } else c.warn(w, "isn't a perk rule (reroll, soften, gains, losses, pierce, game)");
   }
   return out;
 }

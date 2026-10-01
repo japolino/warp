@@ -10,6 +10,116 @@ var __esm = (fn, res, err) => () => {
   return res;
 };
 
+// src/engine/dice.ts
+function hashSeed(str) {
+  let h = 1779033703 ^ str.length;
+  for (let i = 0;i < str.length; i++) {
+    h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
+    h = h << 13 | h >>> 19;
+  }
+  h = Math.imul(h ^ h >>> 16, 2246822507);
+  h = Math.imul(h ^ h >>> 13, 3266489909);
+  return (h ^= h >>> 16) >>> 0;
+}
+function seededRng(seed) {
+  let a = hashSeed(seed);
+  return () => {
+    a = a + 1831565813 >>> 0;
+    let t = a;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function randomSeed() {
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+function parseDice(src) {
+  const s = src.replace(/\s+/g, "").toLowerCase();
+  if (!s)
+    throw new DiceError("Dice notation is empty");
+  const groups = [];
+  let flat = 0;
+  TERM.lastIndex = 0;
+  let consumed = 0;
+  let m;
+  while (consumed < s.length && (m = TERM.exec(s))) {
+    if (m[0] === "")
+      break;
+    if (consumed > 0 && !m[1])
+      break;
+    const sign = m[1] === "-" ? -1 : 1;
+    if (m[7] !== undefined) {
+      flat += sign * Number(m[7]);
+    } else {
+      const count = m[2] ? Number(m[2]) : 1;
+      const sides = m[3] === "%" ? 100 : Number(m[3]);
+      if (count < 1 || count > 100)
+        throw new DiceError(`"${src}": dice count must be 1–100`);
+      if (sides < 2 || sides > 1000)
+        throw new DiceError(`"${src}": dice need 2–1000 sides`);
+      const g = { count, sides, sign };
+      if (m[4]) {
+        const n = Number(m[5]);
+        if (n < 1 || n > count)
+          throw new DiceError(`"${src}": can't keep ${n} of ${count} dice`);
+        g.keep = { mode: m[4], n };
+      }
+      if (m[6])
+        g.explode = true;
+      groups.push(g);
+    }
+    consumed = TERM.lastIndex;
+  }
+  if (consumed !== s.length)
+    throw new DiceError(`"${src}" isn't valid dice notation (try d20, 2d6, d100, 4d6kh3)`);
+  if (!groups.length)
+    throw new DiceError(`"${src}" has no dice in it`);
+  return { groups, flat, primarySides: Math.max(...groups.map((g) => g.sides)) };
+}
+function rollDice(notation, rng) {
+  const parsed = parseDice(notation);
+  const dice = [];
+  let total = parsed.flat;
+  let natural = null;
+  parsed.groups.forEach((g, gi) => {
+    const faces = [];
+    for (let i = 0;i < g.count; i++) {
+      let face = 1 + Math.floor(rng() * g.sides);
+      faces.push(face);
+      let chain = 0;
+      while (g.explode && face === g.sides && chain++ < 20) {
+        face = 1 + Math.floor(rng() * g.sides);
+        faces.push(face);
+      }
+    }
+    const order = faces.map((v, i) => ({ v, i }));
+    let keptIdx = new Set(order.map((o) => o.i));
+    if (g.keep) {
+      order.sort((x, y) => g.keep.mode === "kh" ? y.v - x.v : x.v - y.v);
+      keptIdx = new Set(order.slice(0, g.keep.n).map((o) => o.i));
+    }
+    faces.forEach((v, i) => {
+      const kept = keptIdx.has(i);
+      dice.push({ sides: g.sides, value: v, kept });
+      if (kept)
+        total += g.sign * v;
+    });
+    const keptFaces = faces.filter((_, i) => keptIdx.has(i));
+    if (gi === 0 && keptFaces.length === 1)
+      natural = keptFaces[0];
+  });
+  return { notation, dice, total, natural, primarySides: parsed.primarySides };
+}
+var DiceError, TERM;
+var init_dice = __esm(() => {
+  DiceError = class DiceError extends Error {
+  };
+  TERM = /([+-]?)\s*(?:(\d*)d(\d+|%)(?:(kh|kl)(\d+))?(!)?|(\d+))/gy;
+});
+
 // src/engine/expr.ts
 function tokenize(src) {
   const out = [];
@@ -360,114 +470,125 @@ var init_expr = __esm(() => {
   };
 });
 
-// src/engine/dice.ts
-function hashSeed(str) {
-  let h = 1779033703 ^ str.length;
-  for (let i = 0;i < str.length; i++) {
-    h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
-    h = h << 13 | h >>> 19;
-  }
-  h = Math.imul(h ^ h >>> 16, 2246822507);
-  h = Math.imul(h ^ h >>> 13, 3266489909);
-  return (h ^= h >>> 16) >>> 0;
+// src/engine/game-ids.ts
+function isGameId(x) {
+  return typeof x === "string" && GAME_IDS.includes(x);
 }
-function seededRng(seed) {
-  let a = hashSeed(seed);
-  return () => {
-    a = a + 1831565813 >>> 0;
-    let t = a;
-    t = Math.imul(t ^ t >>> 15, t | 1);
-    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+function gameAlias(x) {
+  const k = x.toLowerCase().replace(/[^a-z]/g, "");
+  const map = {
+    aim: "aim",
+    osu: "aim",
+    circles: "aim",
+    aimtrainer: "aim",
+    shooting: "aim",
+    tiles: "tiles",
+    keys: "tiles",
+    pianotiles: "tiles",
+    piano: "tiles",
+    rhythm: "tiles",
+    mines: "mines",
+    minesweeper: "mines",
+    sweeper: "mines",
+    stack: "stack",
+    tetris: "stack",
+    blocks: "stack",
+    snake: "snake",
+    race: "race",
+    threeleggedrace: "race",
+    threelegged: "race",
+    threelegrun: "race",
+    threelegrace: "race",
+    pinball: "pinball",
+    flipper: "pinball",
+    blackjack: "blackjack",
+    cards: "blackjack",
+    twentyone: "blackjack",
+    roulette: "roulette",
+    wheel: "roulette",
+    slots: "slots",
+    slot: "slots",
+    slotmachine: "slots",
+    fruitmachine: "slots"
   };
+  return map[k] ?? null;
 }
-function randomSeed() {
-  const bytes = new Uint8Array(8);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+function gameBar(chance, opts = {}) {
+  const p = Math.max(0.01, Math.min(0.99, chance));
+  const success = round2(0.3 + 0.62 * (1 - p));
+  const band = 0.1 + Math.min(0.12, (opts.partial ?? 0) * 0.6);
+  const partial = round2(Math.max(0.05, success - band));
+  const crit = round2(Math.min(0.99, success + (1 - success) * 0.62));
+  const critFail = opts.crits === false ? null : round2(Math.max(0, partial * 0.3));
+  return { critFail, partial, success, crit };
 }
-function parseDice(src) {
-  const s = src.replace(/\s+/g, "").toLowerCase();
-  if (!s)
-    throw new DiceError("Dice notation is empty");
-  const groups = [];
-  let flat = 0;
-  TERM.lastIndex = 0;
-  let consumed = 0;
-  let m;
-  while (consumed < s.length && (m = TERM.exec(s))) {
-    if (m[0] === "")
-      break;
-    if (consumed > 0 && !m[1])
-      break;
-    const sign = m[1] === "-" ? -1 : 1;
-    if (m[7] !== undefined) {
-      flat += sign * Number(m[7]);
-    } else {
-      const count = m[2] ? Number(m[2]) : 1;
-      const sides = m[3] === "%" ? 100 : Number(m[3]);
-      if (count < 1 || count > 100)
-        throw new DiceError(`"${src}": dice count must be 1–100`);
-      if (sides < 2 || sides > 1000)
-        throw new DiceError(`"${src}": dice need 2–1000 sides`);
-      const g = { count, sides, sign };
-      if (m[4]) {
-        const n = Number(m[5]);
-        if (n < 1 || n > count)
-          throw new DiceError(`"${src}": can't keep ${n} of ${count} dice`);
-        g.keep = { mode: m[4], n };
-      }
-      if (m[6])
-        g.explode = true;
-      groups.push(g);
-    }
-    consumed = TERM.lastIndex;
+function shiftBar(bar, by) {
+  const f = (x) => round2(Math.max(0.05, Math.min(0.99, x + by)));
+  return { critFail: bar.critFail === null ? null : f(bar.critFail), partial: f(bar.partial), success: f(bar.success), crit: f(bar.crit) };
+}
+function tierFromScore(bar, score) {
+  const s = Math.max(0, Math.min(1, score));
+  if (s >= bar.crit)
+    return "crit_success";
+  if (s >= bar.success)
+    return "success";
+  if (s >= bar.partial)
+    return "partial";
+  if (bar.critFail !== null && s < bar.critFail)
+    return "crit_fail";
+  return "fail";
+}
+function aidTotal(aids, kind) {
+  const n = aids.filter((a) => a.kind === kind).reduce((t, a) => t + a.amount, 0);
+  const cap = { window: 80, size: 60, slow: 35, lives: 3, hint: 3, peek: 1, preview: 4, hold: 1, wrap: 1, time: 60, saver: 2, luck: 40 };
+  return Math.max(0, Math.min(cap[kind], n));
+}
+function aidWords(kind, n) {
+  const s = (one, many) => `+${n} ${n === 1 ? one : many}`;
+  switch (kind) {
+    case "window":
+      return `+${n}% timing window`;
+    case "size":
+      return `+${n}% bigger targets`;
+    case "slow":
+      return `${n}% slower`;
+    case "time":
+      return `+${n}% time`;
+    case "luck":
+      return `+${n}% luck`;
+    case "lives":
+      return s("life", "lives");
+    case "hint":
+      return s("hint", "hints");
+    case "peek":
+      return "sees the dealer's hidden card";
+    case "preview":
+      return s("piece preview", "piece previews");
+    case "hold":
+      return "can hold";
+    case "wrap":
+      return "walls wrap around";
+    case "saver":
+      return s("ball saver", "ball savers");
   }
-  if (consumed !== s.length)
-    throw new DiceError(`"${src}" isn't valid dice notation (try d20, 2d6, d100, 4d6kh3)`);
-  if (!groups.length)
-    throw new DiceError(`"${src}" has no dice in it`);
-  return { groups, flat, primarySides: Math.max(...groups.map((g) => g.sides)) };
 }
-function rollDice(notation, rng) {
-  const parsed = parseDice(notation);
-  const dice = [];
-  let total = parsed.flat;
-  let natural = null;
-  parsed.groups.forEach((g, gi) => {
-    const faces = [];
-    for (let i = 0;i < g.count; i++) {
-      let face = 1 + Math.floor(rng() * g.sides);
-      faces.push(face);
-      let chain = 0;
-      while (g.explode && face === g.sides && chain++ < 20) {
-        face = 1 + Math.floor(rng() * g.sides);
-        faces.push(face);
-      }
-    }
-    const order = faces.map((v, i) => ({ v, i }));
-    let keptIdx = new Set(order.map((o) => o.i));
-    if (g.keep) {
-      order.sort((x, y) => g.keep.mode === "kh" ? y.v - x.v : x.v - y.v);
-      keptIdx = new Set(order.slice(0, g.keep.n).map((o) => o.i));
-    }
-    faces.forEach((v, i) => {
-      const kept = keptIdx.has(i);
-      dice.push({ sides: g.sides, value: v, kept });
-      if (kept)
-        total += g.sign * v;
-    });
-    const keptFaces = faces.filter((_, i) => keptIdx.has(i));
-    if (gi === 0 && keptFaces.length === 1)
-      natural = keptFaces[0];
-  });
-  return { notation, dice, total, natural, primarySides: parsed.primarySides };
-}
-var DiceError, TERM;
-var init_dice = __esm(() => {
-  DiceError = class DiceError extends Error {
+var GAME_IDS, GAMBLE_GAMES, AID_KINDS, GAMES, round2 = (x) => Math.round(x * 100) / 100;
+var init_game_ids = __esm(() => {
+  GAME_IDS = ["aim", "tiles", "mines", "stack", "snake", "race", "pinball", "blackjack", "roulette", "slots"];
+  GAMBLE_GAMES = ["blackjack", "roulette", "slots"];
+  AID_KINDS = ["window", "size", "slow", "lives", "hint", "peek", "preview", "hold", "wrap", "time", "saver", "luck"];
+  GAMES = {
+    aim: { name: "Aim", icon: "◎", pitch: "Hit the circles on the beat, follow the sliders, keep the combo alive.", kind: "rhythm", aids: ["window", "size", "slow", "lives"] },
+    tiles: { name: "Keys", icon: "▮", pitch: "Four lanes, one song: every note you hit plays the melody.", kind: "rhythm", aids: ["window", "slow", "lives"] },
+    mines: { name: "Mines", icon: "✹", pitch: "Clear the board before the clock runs out. One wrong square and it's over.", kind: "skill", aids: ["hint", "lives", "time"] },
+    stack: { name: "Stack", icon: "▦", pitch: "Fit the falling blocks together and clear lines before the stack tops out.", kind: "skill", aids: ["slow", "preview", "hold", "time"] },
+    snake: { name: "Snake", icon: "∿", pitch: "Eat, grow, don't bite yourself. Get enough before time's up.", kind: "skill", aids: ["slow", "wrap", "lives", "time"] },
+    race: { name: "Three-legged race", icon: "⟫", pitch: "Tied at the ankle: step when your partner steps, and beat the other pair to the line.", kind: "skill", aids: ["window", "lives"] },
+    pinball: { name: "Pinball", icon: "◐", pitch: "Flippers, bumpers, three balls. Rack up the score before the last one drains.", kind: "skill", aids: ["saver", "lives", "size"] },
+    blackjack: { name: "Blackjack", icon: "♠", pitch: "A few hands against the dealer. Get closer to 21 than they do without going over.", kind: "luck", aids: ["peek", "hint", "lives"] },
+    roulette: { name: "Roulette", icon: "◉", pitch: "Place your chips and spin. Safe bets pay little, single numbers pay big.", kind: "luck", aids: ["luck", "lives"] },
+    slots: { name: "Slots", icon: "7", pitch: "Stop each reel yourself — line them up on the payline.", kind: "luck", aids: ["slow", "hold", "lives"] }
   };
-  TERM = /([+-]?)\s*(?:(\d*)d(\d+|%)(?:(kh|kl)(\d+))?(!)?|(\d+))/gy;
 });
 
 // src/engine/dungeon/content.ts
@@ -1935,7 +2056,46 @@ function normCheck(raw, where, c) {
     add,
     partialMargin: c.num(raw.partial ?? raw.partial_margin, `${where} › partial`, 0),
     label: typeof raw.label === "string" ? raw.label : typeof raw.skill === "string" ? raw.skill : undefined,
-    crits: raw.crits !== false
+    crits: raw.crits !== false,
+    ...raw.game !== undefined || raw.games !== undefined || raw.minigame !== undefined ? { game: normGames(raw.game ?? raw.games ?? raw.minigame, `${where} › game`, c) } : {}
+  };
+}
+function normGames(raw, where, c) {
+  if (raw === false || raw === "none" || raw === "dice")
+    return false;
+  const out = [];
+  for (const x of Array.isArray(raw) ? raw : [raw]) {
+    const g = gameAlias(String(x));
+    if (g) {
+      if (!out.includes(g))
+        out.push(g);
+    } else
+      c.warn(where, `"${String(x)}" isn't a minigame — use ${GAME_IDS.join(", ")}`);
+  }
+  return out.length ? out : false;
+}
+function normGamble(raw, where, c, known) {
+  const r = isObj(raw) ? raw : { game: raw };
+  const g = gameAlias(String(r.game ?? ""));
+  if (!g || !GAMBLE_GAMES.includes(g)) {
+    c.warn(where, `\`game:\` should be ${GAMBLE_GAMES.join(", ")}`);
+    return;
+  }
+  const stakes = (Array.isArray(r.stakes ?? r.stake) ? r.stakes ?? r.stake : [r.stakes ?? r.stake ?? 10]).map((x) => Math.round(c.num(x, `${where} › stakes`, 0))).filter((x) => x > 0).sort((a, b) => a - b);
+  const stat = typeof r.stat === "string" ? r.stat : typeof r.with === "string" ? r.with : undefined;
+  if (stat && !known.stats.has(stat))
+    c.warn(`${where} › stat`, `"${stat}" isn't a declared stat`);
+  const edge = r.edge !== undefined ? pct(r.edge, `${where} › edge`, c) : null;
+  return {
+    game: g,
+    stakes: stakes.length ? [...new Set(stakes)] : [10],
+    rounds: Math.max(1, Math.min(12, Math.round(c.num(r.rounds ?? r.hands ?? r.spins, `${where} › rounds`, g === "slots" ? 6 : 5)))),
+    ...stat ? { stat } : {},
+    ...edge !== null ? { edge } : {},
+    ...r.luck !== undefined ? { luck: c.expr(r.luck, `${where} › luck`) } : {},
+    win: normEffect(r.win ?? r.won, `${where} › win`, c, known),
+    lose: normEffect(r.lose ?? r.lost, `${where} › lose`, c, known),
+    broke: normEffect(r.broke ?? r.bust, `${where} › broke`, c, known)
   };
 }
 function normAction(id, raw, where, c, known, order) {
@@ -1982,6 +2142,11 @@ function normAction(id, raw, where, c, known, order) {
   const check = raw.check !== undefined ? normCheck(raw.check, `${where} › check`, c) : undefined;
   if (!check && Object.keys(outcomes).length)
     c.warn(where, "has outcomes but no check — put always-on changes under `effects:`");
+  const gamble = raw.gamble !== undefined ? normGamble(raw.gamble, `${where} › gamble`, c, known) : undefined;
+  if (gamble && check)
+    c.warn(where, "a gambling table doesn't take a check — the cards (or the wheel) decide");
+  if (gamble && !params.some((p) => p.id === "stake"))
+    params.unshift({ id: "stake", label: "Stake", options: Object.fromEntries(gamble.stakes.map((x) => [String(x), x])), default: String(gamble.stakes[0]) });
   const at = raw.at === undefined ? [] : Array.isArray(raw.at) ? raw.at.map(String) : [String(raw.at)];
   const own = raw.when !== undefined ? c.expr(raw.when, `${where} › when`) : undefined;
   const requires = normRequires(raw.requires ?? raw.needs, `${where} › requires`, c, known);
@@ -2007,7 +2172,8 @@ function normAction(id, raw, where, c, known, order) {
     order: typeof raw.order === "number" ? raw.order : order,
     perPerson: raw.per_person === true || raw.with === "person" || raw.with === "people",
     requires,
-    showLocked: raw.show_locked === true || raw.show_locked !== false && requires.length > 0
+    showLocked: raw.show_locked === true || raw.show_locked !== false && requires.length > 0,
+    ...gamble ? { gamble } : {}
   };
 }
 function normRequires(raw, where, c, known) {
@@ -2315,8 +2481,27 @@ function normPerkRules(v, where, c, known) {
       const r = isObj(x) ? x : { amount: x };
       const amount = r.amount === true || r.amount === "all" ? 999 : c.num(r.amount ?? r.by, `${w} › amount`, 999);
       out.push({ kind: "pierce", amount, stats: list(r.stats ?? r.stat), tags: list(r.tags).map((t) => t.toLowerCase()) });
+    } else if (k === "game" || k === "games" || k === "minigames") {
+      const r = isObj(x) ? x : {};
+      const games = list(r.games ?? r.game ?? r.only).map((g) => gameAlias(g) ?? (c.warn(`${w} › games`, `"${g}" isn't a minigame`), null)).filter((g) => !!g);
+      const aids = {};
+      for (const [ak, n] of Object.entries(r)) {
+        if (["games", "game", "only"].includes(ak))
+          continue;
+        if (!AID_KINDS.includes(ak)) {
+          c.warn(`${w} › ${ak}`, `isn't a minigame aid (${AID_KINDS.join(", ")})`);
+          continue;
+        }
+        const v = typeof n === "string" && n.trim().endsWith("%") ? parseFloat(n) : c.num(n === true ? 1 : n, `${w} › ${ak}`, 0);
+        if (v)
+          aids[ak] = v;
+      }
+      if (Object.keys(aids).length)
+        out.push({ kind: "game", games, aids });
+      else
+        c.warn(w, "names no aid — e.g. `game: { lives: 1, window: 20 }`");
     } else
-      c.warn(w, "isn't a perk rule (reroll, soften, gains, losses, pierce)");
+      c.warn(w, "isn't a perk rule (reroll, soften, gains, losses, pierce, game)");
   }
   return out;
 }
@@ -3563,6 +3748,7 @@ function normalizeRuleset(raw) {
 }
 var SEEN_REACTIONS, DIFFICULTIES, isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v), DEFAULT_WEEKDAYS, KIND_ALIASES, INFLICT_KEYS, QUEST_OPS, list = (v) => Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : [], TIER_KEYS, MONTHS, DEFAULT_WEATHER, DEFAULT_SLOTS, USE_KEYS, PERK_META, DEFAULT_KNOWN = "\x00default", ABILITY_META, QUEST_META, KEEP_FLAGS, KEEP_LISTS, CHILD_NAMES, SEXUAL_TAGS;
 var init_ruleset = __esm(() => {
+  init_game_ids();
   init_expr();
   init_dice();
   init_defs();
@@ -3631,7 +3817,7 @@ var init_ruleset = __esm(() => {
     { id: "snow", label: "Snow", icon: "❄️", weight: 2, temp: -6, seasons: ["winter"], tags: ["wet", "cold"] }
   ];
   DEFAULT_SLOTS = ["head", "outer", "top", "bottom", "under_top", "under_bottom", "legs", "feet"];
-  USE_KEYS = new Set(["label", "say", "desc", "description", "when", "time", "tags", "check", "params", "why_not", "locked", "group", "cost", "effects", "effect", "outcomes", "per_person", "hidden", "at", "order", "success", "fail", "partial", "crit_success", "crit_fail", "critical_success", "critical_fail", "failure", "requires", "needs", "show_locked"]);
+  USE_KEYS = new Set(["label", "say", "desc", "description", "when", "time", "tags", "check", "params", "why_not", "locked", "group", "cost", "effects", "effect", "outcomes", "per_person", "hidden", "at", "order", "success", "fail", "partial", "crit_success", "crit_fail", "critical_success", "critical_fail", "failure", "requires", "needs", "show_locked", "gamble"]);
   PERK_META = new Set(["points", "pick", "offer", "list"]);
   ABILITY_META = new Set(["name", "known", "per_day", "per_encounter", "where"]);
   QUEST_META = new Set(["from_story", "story", "story_max", "max_story"]);
@@ -3640,37 +3826,6 @@ var init_ruleset = __esm(() => {
   CHILD_NAMES = ["Ada", "Ben", "Cleo", "Dan", "Elin", "Finn", "Greta", "Hugo", "Iris", "Jonah", "Kira", "Leo", "Maya", "Nico", "Orla", "Pip", "Rosa", "Sam", "Tess", "Theo", "Uma", "Vic", "Wren", "Zoe"];
   SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
 });
-
-// src/engine/decide.ts
-function normalize(p, keys) {
-  const out = {};
-  let sum = 0;
-  for (const k of keys) {
-    const v = Number(p[k]);
-    out[k] = Number.isFinite(v) && v > 0 ? v : 0;
-    sum += out[k];
-  }
-  if (sum <= 0)
-    for (const k of keys)
-      out[k] = 1 / keys.length;
-  else
-    for (const k of keys)
-      out[k] /= sum;
-  return out;
-}
-function sample(p, rng) {
-  const keys = Object.keys(p);
-  let x = rng();
-  for (const k of keys) {
-    x -= p[k];
-    if (x <= 0)
-      return k;
-  }
-  return keys[keys.length - 1];
-}
-function noulConfidence(p) {
-  return Math.abs(2 * p - 1);
-}
 
 // src/engine/date/stage.ts
 function relPct(r, s, who, stat) {
@@ -4805,6 +4960,436 @@ var init_state = __esm(() => {
   ];
 });
 
+// src/engine/freeform.ts
+function improvStats(r) {
+  return r.improvise.stats.filter((id) => r.stats[id]);
+}
+function isDifficulty(v) {
+  return typeof v === "string" && DIFFICULTIES.includes(v);
+}
+function position(r, s, stat) {
+  const def = r.stats[stat];
+  const max = statMax(r, def, s);
+  const v = s.stats[stat] ?? def.start;
+  return max > def.min ? Math.max(0, Math.min(1, (v - def.min) / (max - def.min))) : 0;
+}
+function improvBonus(r, s, stat) {
+  return r.stats[stat] ? Math.round(position(r, s, stat) * r.improvise.bonus) : 0;
+}
+function improvAction(r, s, actionId) {
+  if (!r.improvise.enabled || !actionId.startsWith(IMPROV))
+    return null;
+  const stat = actionId.slice(IMPROV.length);
+  if (stat && !r.stats[stat])
+    return null;
+  const label = stat ? r.stats[stat].label : "Luck";
+  return {
+    id: actionId,
+    label: `Attempt (${label})`,
+    at: [],
+    hidden: true,
+    ...r.improvise.time !== undefined ? { time: r.improvise.time } : {},
+    cost: emptyEffect(),
+    check: { style: "vs", dice: "d20", target: "difficulty", add: stat ? improvBonus(r, s, stat) : 0, partialMargin: r.improvise.partial, label, crits: true },
+    outcomes: r.improvise.outcomes,
+    effects: emptyEffect(),
+    params: [{ id: "difficulty", label: "Difficulty", options: Object.fromEntries(DIFFICULTIES.map((d) => [d, r.improvise.dc[d]])), default: "fair" }],
+    tags: ["improvised"],
+    order: 0,
+    perPerson: false,
+    requires: [],
+    showLocked: false
+  };
+}
+function checkStats(r, a) {
+  if (a.id.startsWith(IMPROV)) {
+    const st = a.id.slice(IMPROV.length);
+    return st && r.stats[st] ? [st] : [];
+  }
+  if (!a.check)
+    return [];
+  const names = new Set([...identifiers(a.check.add), ...identifiers(a.check.target)]);
+  return r.statOrder.filter((id) => names.has(id) && (r.stats[id].kind === "skill" || r.stats[id].kind === "attribute"));
+}
+function practiceGain(r, s, stat, hardness, learn) {
+  const def = r.stats[stat];
+  if (!def || !r.growth.enabled || def.growth <= 0)
+    return 0;
+  const max = statMax(r, def, s);
+  if ((s.stats[stat] ?? def.start) >= max)
+    return 0;
+  const kind = def.kind === "attribute" ? r.growth.attributes : 1;
+  return (max - def.min) * 0.02 * r.growth.rate * def.growth * kind * hardness * learn * (1 - 0.6 * position(r, s, stat));
+}
+function hardnessFrom(success, difficulty) {
+  if (isDifficulty(difficulty))
+    return HARDNESS[difficulty];
+  return success === null ? 1 : 0.5 + 1.5 * (1 - Math.max(0, Math.min(1, success)));
+}
+function checkGains(r, s, stats, hardness, tier) {
+  const out = {};
+  for (const id of stats) {
+    const g = practiceGain(r, s, id, hardness, LEARN[tier]);
+    if (g > 0)
+      out[id] = g;
+  }
+  return out;
+}
+function trainingGain(r, s, stat, minutes) {
+  if (!r.growth.train)
+    return 0;
+  const hours = Math.max(0.5, Math.min(4, (minutes ?? 60) / 60));
+  return practiceGain(r, s, stat, 1, 1.5 * hours);
+}
+function practise(t, gains, why) {
+  for (const [id, g] of Object.entries(gains)) {
+    const def = t.r.stats[id];
+    if (!def || !(g > 0))
+      continue;
+    const pool = (t.s.practice[id] ?? 0) + g;
+    const room = Math.max(0, statMax(t.r, def, t.s) - (t.s.stats[id] ?? def.start));
+    const up = Math.min(Math.floor(pool), Math.floor(room));
+    const left = room - up < 1 ? 0 : pool - up;
+    const d = left - (t.s.practice[id] ?? 0);
+    if (Math.abs(d) > 0.000000001)
+      t.push({ t: "practice", id, d, src: "check", why });
+    if (up > 0)
+      t.push({ t: "stat", id, d: up, src: "check", why: `${why} — ${def.label} improved with practice` });
+  }
+}
+function practiceProgress(r, s, stat) {
+  const def = r.stats[stat];
+  if (!def || !r.growth.enabled || def.growth <= 0)
+    return null;
+  if ((s.stats[stat] ?? def.start) >= statMax(r, def, s))
+    return null;
+  return Math.max(0, Math.min(0.999, s.practice[stat] ?? 0));
+}
+var IMPROV = "try:", DIFFICULTY_WORD, HARDNESS, LEARN, IMPROV_DIRECTION;
+var init_freeform = __esm(() => {
+  init_expr();
+  init_ruleset();
+  init_state();
+  DIFFICULTY_WORD = { easy: "easy", fair: "a fair challenge", hard: "hard", extreme: "extreme" };
+  HARDNESS = { easy: 0.5, fair: 1, hard: 1.5, extreme: 2 };
+  LEARN = { crit_success: 1.2, success: 1, partial: 1, fail: 0.7, crit_fail: 0.5 };
+  IMPROV_DIRECTION = {
+    crit_success: "It goes better than {{user}} could have hoped — a clean success with something extra.",
+    success: "It works.",
+    partial: "It works, but not cleanly — add a cost, a complication or a price.",
+    fail: "It doesn't work. Show the failure and a consequence that makes things harder.",
+    crit_fail: "It goes badly wrong — a failure that costs {{user}} something real."
+  };
+});
+
+// src/engine/games.ts
+function gameFor(words, salt) {
+  const w = words.toLowerCase();
+  for (const [re, g] of HINTS)
+    if (re.test(w))
+      return g;
+  let h = 0;
+  for (const c of salt)
+    h = h * 31 + c.charCodeAt(0) >>> 0;
+  return SKILL_POOL[h % SKILL_POOL.length];
+}
+function gameOffer(r, s, a, chance, opts) {
+  const check = a.check;
+  if (!check || check.game === false)
+    return null;
+  const named = Array.isArray(check.game) ? check.game : [];
+  if (!named.length && opts.scope !== "all")
+    return null;
+  const stats = checkStats(r, a);
+  const words = [check.label ?? "", ...stats, ...stats.map((x) => r.stats[x]?.label ?? ""), ...a.tags].join(" ");
+  const game = named[0] ?? gameFor(words, a.id);
+  const p = Math.max(0, Math.min(1, chance));
+  const level = round22(1 - p);
+  const aids = aidsFor(r, s, a, game, stats);
+  const partner = game === "race" ? partnerFor(r, s, opts.target) : undefined;
+  if (partner && partner.sync > 0.05)
+    aids.push({ kind: "window", amount: Math.round(partner.sync * 35), from: `In step with ${partner.name}` });
+  return {
+    game,
+    options: named.length ? named : [game],
+    action: opts.label ?? a.label,
+    label: check.label ?? (stats[0] ? r.stats[stats[0]]?.label ?? stats[0] : "Luck"),
+    chance: round22(p),
+    level,
+    bar: gameBar(p, { partial: opts.partial, crits: check.crits }),
+    aids: mergeAids(aids),
+    ...partner ? { partner } : {},
+    seed: opts.seed ?? `${a.id}:${s.minutes}`
+  };
+}
+function aidsFor(r, s, a, game, stats) {
+  const out = [];
+  const info = GAMES[game];
+  const main = stats[0];
+  if (main && r.stats[main]) {
+    const def = r.stats[main];
+    const max = statMax(r, def, s);
+    const v = s.stats[main] ?? def.start;
+    const frac = max > def.min ? Math.max(0, Math.min(1, (v - def.min) / (max - def.min))) : 0;
+    const from = `${def.label} ${Math.round(v)}`;
+    if (frac >= 0.1) {
+      const pct = Math.round(frac * 40);
+      const kind = info.aids.find((k) => ["window", "size", "slow", "time", "luck"].includes(k));
+      if (kind)
+        out.push({ kind, amount: pct, from });
+    }
+    if (frac >= 0.6) {
+      const extra = info.aids.find((k) => ["hint", "peek", "preview", "hold", "saver", "wrap"].includes(k));
+      if (extra)
+        out.push({ kind: extra, amount: 1, from });
+    }
+  }
+  const used = new Set(stats);
+  for (const id of Object.keys(s.perks)) {
+    const p = r.perks[id];
+    for (const rule of p?.rules ?? []) {
+      if (rule.kind === "game") {
+        if (rule.games.length && !rule.games.includes(game))
+          continue;
+        for (const [k, n] of Object.entries(rule.aids))
+          if (n)
+            out.push({ kind: k, amount: n, from: `★ ${p.name}` });
+      } else if (a && (rule.kind === "reroll" || rule.kind === "soften")) {
+        const fits = !rule.stats.length && !rule.tags.length || rule.stats.some((x) => used.has(x)) || rule.tags.some((t) => a.tags.includes(t));
+        if (!fits)
+          continue;
+        if (rule.perDay && usesOf(s, `perk:${id}:${rule.kind}`).today >= rule.perDay)
+          continue;
+        if (rule.kind === "reroll")
+          out.push({ kind: "lives", amount: 1, from: `★ ${p.name}` });
+      }
+    }
+  }
+  return out.filter((x) => info.aids.includes(x.kind));
+}
+function mergeAids(list) {
+  const out = [];
+  for (const a of list) {
+    const same = out.find((x) => x.kind === a.kind && x.from === a.from);
+    if (same)
+      same.amount += a.amount;
+    else
+      out.push({ ...a });
+  }
+  return out;
+}
+function partnerFor(r, s, target) {
+  const here = presentPeople(r, s, makeEnv(r, s));
+  const pick = target && s.people[target] ? target : here.sort((x, y) => closeness(r, s, y) - closeness(r, s, x))[0];
+  if (!pick)
+    return { name: "a stranger", sync: 0 };
+  return { name: s.people[pick]?.name ?? r.people[pick]?.name ?? pick, sync: round22(closeness(r, s, pick)) };
+}
+function closeness(r, s, id) {
+  const rel = s.rel[id] ?? {};
+  const xs = [];
+  for (const k of r.relStatOrder) {
+    const def = r.relStats[k];
+    if (!def || def.good === "low")
+      continue;
+    const v = rel[k] ?? def.start;
+    if (def.max > def.min)
+      xs.push(Math.max(0, Math.min(1, (v - def.min) / (def.max - def.min))));
+  }
+  return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
+}
+function cleanResult(raw, allowed) {
+  if (!raw || typeof raw !== "object")
+    return null;
+  const g = raw;
+  if (!isGameId(g.game) || allowed.length && !allowed.includes(g.game))
+    return null;
+  const words = (x, n) => (Array.isArray(x) ? x : []).filter((w) => typeof w === "string").map((w) => w.slice(0, 120)).slice(0, n);
+  const num = (x) => typeof x === "number" && Number.isFinite(x) ? x : undefined;
+  const score = num(g.score);
+  return {
+    game: g.game,
+    ...score !== undefined ? { score: Math.max(0, Math.min(1, score)) } : {},
+    ...num(g.net) !== undefined ? { net: Math.round(num(g.net)) } : {},
+    ...num(g.stake) !== undefined ? { stake: Math.max(0, Math.round(num(g.stake))) } : {},
+    beats: words(g.beats, 6),
+    ...typeof g.detail === "string" ? { detail: g.detail.slice(0, 200) } : {},
+    ...num(g.livesUsed) ? { livesUsed: Math.max(0, Math.min(5, Math.round(num(g.livesUsed)))) } : {},
+    ...typeof g.perk === "string" ? { perk: g.perk.slice(0, 60) } : {},
+    ...typeof g.song === "string" ? { song: g.song.slice(0, 80) } : {},
+    ...g.quit === true ? { quit: true } : {},
+    ...num(g.ease) ? { ease: Math.max(-0.12, Math.min(0.08, num(g.ease))) } : {}
+  };
+}
+function gameHint(label, res, tier, bar) {
+  const score = res.score ?? 0;
+  const margin = tier === "fail" || tier === "crit_fail" ? bar.partial - score : score - (tier === "partial" ? bar.partial : bar.success);
+  const how = res.beats.length ? ` How it went: ${res.beats.join("; ")}.` : "";
+  const detail = res.detail ? ` (${res.detail})` : "";
+  const gave = res.quit ? " {{user}} gave up partway." : "";
+  return `${label}: decided by {{user}}'s own hands rather than dice.${how}${detail}${gave} ${MARGIN[tier](Math.abs(margin))} Narrate it as part of the story, in the scene's own terms — not as a game or a score.`;
+}
+function gameSummary(res, bar) {
+  const g = GAMES[res.game];
+  return `${g.icon} ${g.name} ${Math.round((res.score ?? 0) * 100)}% · needed ${Math.round(bar.success * 100)}%${res.song ? ` · ♪ ${res.song}` : ""}`;
+}
+function gambleOffer(r, s, a, seed) {
+  const g = a.gamble;
+  if (!g)
+    return null;
+  const stat = g.stat ?? r.hud.money;
+  if (!stat || !r.stats[stat])
+    return null;
+  const have = Math.floor(s.stats[stat] ?? r.stats[stat].start);
+  const env = makeEnv(r, s);
+  const luck = g.luck !== undefined ? evalNumber(g.luck, env, 0) / 100 : 0;
+  const aids = aidsFor(r, s, a, g.game, []);
+  const edge = Math.max(-0.2, Math.min(0.4, (g.edge ?? BASE_EDGE[g.game]) - luck - aidTotal(aids, "luck") / 400));
+  return {
+    game: g.game,
+    action: a.label,
+    stakes: g.stakes.filter((x) => x <= have),
+    rounds: g.rounds,
+    money: { stat, have, currency: r.hud.currency },
+    edge: round22(edge * 1000) / 1000,
+    aids: mergeAids(aids),
+    seed: seed ?? `${a.id}:${s.minutes}`
+  };
+}
+function clampNet(game, stake, net, rounds) {
+  const most = Math.round(stake * PAYOUT_CAP[game] * Math.max(1, rounds));
+  return Math.max(-stake, Math.min(most, Math.round(net)));
+}
+function simulateGamble(game, stake, rounds, edge, rng) {
+  let chips = stake;
+  const bet = Math.max(1, Math.round(stake / Math.max(1, Math.min(rounds, 5))));
+  let wins = 0, losses = 0, big = 0;
+  for (let i = 0;i < rounds && chips >= 1; i++) {
+    const b = Math.min(bet, chips);
+    const x = rng();
+    if (game === "blackjack") {
+      const winP = 0.44 - edge / 2, pushP = 0.09;
+      if (x < 0.045) {
+        chips += Math.round(b * 1.5);
+        wins++;
+        big++;
+      } else if (x < 0.045 + winP) {
+        chips += b;
+        wins++;
+      } else if (x < 0.045 + winP + pushP) {} else {
+        chips -= b;
+        losses++;
+      }
+    } else if (game === "roulette") {
+      if (rng() < 0.15) {
+        if (x < (1 - edge) / 37) {
+          chips += b * 35;
+          wins++;
+          big++;
+        } else {
+          chips -= b;
+          losses++;
+        }
+      } else if (x < 18 / 37 * (1 - edge) / (1 - 0.027)) {
+        chips += b;
+        wins++;
+      } else {
+        chips -= b;
+        losses++;
+      }
+    } else {
+      const small = Math.max(0, (0.6 - edge) / 1.5);
+      if (x < 0.004) {
+        chips += b * 39;
+        wins++;
+        big++;
+      } else if (x < 0.064) {
+        chips += b * 3;
+        wins++;
+      } else if (x < 0.064 + small) {
+        chips += Math.round(b * 0.5);
+        wins++;
+      } else {
+        chips -= b;
+        losses++;
+      }
+    }
+  }
+  const net = clampNet(game, stake, chips - stake, rounds);
+  const beats = [wins > losses ? "the table ran warm" : losses > wins ? "the table ran cold" : "it went back and forth"];
+  if (big)
+    beats.push("one big win");
+  return { net, beats, detail: `${wins} won, ${losses} lost` };
+}
+function gambleHint(name, res, currency) {
+  const amount = `${currency}${Math.abs(res.net)}`;
+  const outcome = res.net > 0 ? `walks away ${amount} up` : res.net < 0 ? res.net <= -res.stake ? `loses the whole ${currency}${res.stake} stake` : `walks away ${amount} down` : "breaks even";
+  const how = res.beats.length ? ` ${res.beats.join("; ")}.` : "";
+  return `{{user}} plays ${name} (stake ${currency}${res.stake}) and ${outcome}.${how}${res.detail ? ` (${res.detail})` : ""} Show the table, the people around it and how {{user}} takes it — not a round-by-round account.`;
+}
+var round22 = (x) => Math.round(x * 100) / 100, HINTS, SKILL_POOL, MARGIN, PAYOUT_CAP, BASE_EDGE, gambleRng = (seed) => seededRng(`gamble:${seed}`);
+var init_games = __esm(() => {
+  init_dice();
+  init_expr();
+  init_freeform();
+  init_game_ids();
+  init_state();
+  init_world();
+  init_game_ids();
+  init_game_ids();
+  HINTS = [
+    [/aim|shoot|marks|gun|archer|bow|throw|sniper|firearm|ranged/, "aim"],
+    [/music|perform|sing|piano|danc|rhythm|instrument|art\b|song/, "tiles"],
+    [/lock|stealth|sneak|hack|secur|investig|search|percep|disarm|tech|electro|trap|clue|observ|deduc/, "mines"],
+    [/craft|repair|engineer|build|mechan|pack|smith|cook|tinker|construct/, "stack"],
+    [/athlet|run|chase|agil|reflex|dodge|escape|swim|climb|acrobat|parkour/, "snake"],
+    [/charm|persua|bluff|decei|negoti|haggl|seduc|allure|social|wits|lie|intimid|barter|card/, "blackjack"],
+    [/luck|fortune|gambl|fate|chance|pray/, "slots"],
+    [/strength|physique|fight|brawl|combat|melee|might|wrestl|endur/, "pinball"]
+  ];
+  SKILL_POOL = ["aim", "tiles", "mines", "snake", "stack", "pinball"];
+  MARGIN = {
+    crit_success: () => "It goes better than anyone could have asked.",
+    success: (m) => m < 0.04 ? "It works — by a hair." : m < 0.12 ? "It works, cleanly enough." : "It works, and it isn't close.",
+    partial: () => "It half-works: there's a cost or a complication.",
+    fail: (m) => m < 0.05 ? "It fails — agonisingly close." : "It fails.",
+    crit_fail: () => "It goes badly wrong."
+  };
+  PAYOUT_CAP = { blackjack: 2.5, roulette: 35, slots: 50 };
+  BASE_EDGE = { blackjack: 0.02, roulette: 0.027, slots: 0.08 };
+});
+
+// src/engine/decide.ts
+function normalize(p, keys) {
+  const out = {};
+  let sum = 0;
+  for (const k of keys) {
+    const v = Number(p[k]);
+    out[k] = Number.isFinite(v) && v > 0 ? v : 0;
+    sum += out[k];
+  }
+  if (sum <= 0)
+    for (const k of keys)
+      out[k] = 1 / keys.length;
+  else
+    for (const k of keys)
+      out[k] /= sum;
+  return out;
+}
+function sample(p, rng) {
+  const keys = Object.keys(p);
+  let x = rng();
+  for (const k of keys) {
+    x -= p[k];
+    if (x <= 0)
+      return k;
+  }
+  return keys[keys.length - 1];
+}
+function noulConfidence(p) {
+  return Math.abs(2 * p - 1);
+}
+
 // src/engine/encounter-view.ts
 function thresholds(enc) {
   const out = [];
@@ -4994,128 +5579,6 @@ var init_encounter_view = __esm(() => {
   init_expr();
   FAILURE = /^(lost|lose|loss|beaten|defeat(ed)?|overwhelmed|caught|captured|ko|knocked_out|downed|fallen|slain|killed|dead|died|wiped(_out)?|fled_in_panic|broken|failed?)$/i;
   TIER_WORD = { crit_success: "great success", success: "success", partial: "partial", fail: "failed", crit_fail: "badly failed" };
-});
-
-// src/engine/freeform.ts
-function improvStats(r) {
-  return r.improvise.stats.filter((id) => r.stats[id]);
-}
-function isDifficulty(v) {
-  return typeof v === "string" && DIFFICULTIES.includes(v);
-}
-function position(r, s, stat) {
-  const def = r.stats[stat];
-  const max = statMax(r, def, s);
-  const v = s.stats[stat] ?? def.start;
-  return max > def.min ? Math.max(0, Math.min(1, (v - def.min) / (max - def.min))) : 0;
-}
-function improvBonus(r, s, stat) {
-  return r.stats[stat] ? Math.round(position(r, s, stat) * r.improvise.bonus) : 0;
-}
-function improvAction(r, s, actionId) {
-  if (!r.improvise.enabled || !actionId.startsWith(IMPROV))
-    return null;
-  const stat = actionId.slice(IMPROV.length);
-  if (stat && !r.stats[stat])
-    return null;
-  const label = stat ? r.stats[stat].label : "Luck";
-  return {
-    id: actionId,
-    label: `Attempt (${label})`,
-    at: [],
-    hidden: true,
-    ...r.improvise.time !== undefined ? { time: r.improvise.time } : {},
-    cost: emptyEffect(),
-    check: { style: "vs", dice: "d20", target: "difficulty", add: stat ? improvBonus(r, s, stat) : 0, partialMargin: r.improvise.partial, label, crits: true },
-    outcomes: r.improvise.outcomes,
-    effects: emptyEffect(),
-    params: [{ id: "difficulty", label: "Difficulty", options: Object.fromEntries(DIFFICULTIES.map((d) => [d, r.improvise.dc[d]])), default: "fair" }],
-    tags: ["improvised"],
-    order: 0,
-    perPerson: false,
-    requires: [],
-    showLocked: false
-  };
-}
-function checkStats(r, a) {
-  if (a.id.startsWith(IMPROV)) {
-    const st = a.id.slice(IMPROV.length);
-    return st && r.stats[st] ? [st] : [];
-  }
-  if (!a.check)
-    return [];
-  const names = new Set([...identifiers(a.check.add), ...identifiers(a.check.target)]);
-  return r.statOrder.filter((id) => names.has(id) && (r.stats[id].kind === "skill" || r.stats[id].kind === "attribute"));
-}
-function practiceGain(r, s, stat, hardness, learn) {
-  const def = r.stats[stat];
-  if (!def || !r.growth.enabled || def.growth <= 0)
-    return 0;
-  const max = statMax(r, def, s);
-  if ((s.stats[stat] ?? def.start) >= max)
-    return 0;
-  const kind = def.kind === "attribute" ? r.growth.attributes : 1;
-  return (max - def.min) * 0.02 * r.growth.rate * def.growth * kind * hardness * learn * (1 - 0.6 * position(r, s, stat));
-}
-function hardnessFrom(success, difficulty) {
-  if (isDifficulty(difficulty))
-    return HARDNESS[difficulty];
-  return success === null ? 1 : 0.5 + 1.5 * (1 - Math.max(0, Math.min(1, success)));
-}
-function checkGains(r, s, stats, hardness, tier) {
-  const out = {};
-  for (const id of stats) {
-    const g = practiceGain(r, s, id, hardness, LEARN[tier]);
-    if (g > 0)
-      out[id] = g;
-  }
-  return out;
-}
-function trainingGain(r, s, stat, minutes) {
-  if (!r.growth.train)
-    return 0;
-  const hours = Math.max(0.5, Math.min(4, (minutes ?? 60) / 60));
-  return practiceGain(r, s, stat, 1, 1.5 * hours);
-}
-function practise(t, gains, why) {
-  for (const [id, g] of Object.entries(gains)) {
-    const def = t.r.stats[id];
-    if (!def || !(g > 0))
-      continue;
-    const pool = (t.s.practice[id] ?? 0) + g;
-    const room = Math.max(0, statMax(t.r, def, t.s) - (t.s.stats[id] ?? def.start));
-    const up = Math.min(Math.floor(pool), Math.floor(room));
-    const left = room - up < 1 ? 0 : pool - up;
-    const d = left - (t.s.practice[id] ?? 0);
-    if (Math.abs(d) > 0.000000001)
-      t.push({ t: "practice", id, d, src: "check", why });
-    if (up > 0)
-      t.push({ t: "stat", id, d: up, src: "check", why: `${why} — ${def.label} improved with practice` });
-  }
-}
-function practiceProgress(r, s, stat) {
-  const def = r.stats[stat];
-  if (!def || !r.growth.enabled || def.growth <= 0)
-    return null;
-  if ((s.stats[stat] ?? def.start) >= statMax(r, def, s))
-    return null;
-  return Math.max(0, Math.min(0.999, s.practice[stat] ?? 0));
-}
-var IMPROV = "try:", DIFFICULTY_WORD, HARDNESS, LEARN, IMPROV_DIRECTION;
-var init_freeform = __esm(() => {
-  init_expr();
-  init_ruleset();
-  init_state();
-  DIFFICULTY_WORD = { easy: "easy", fair: "a fair challenge", hard: "hard", extreme: "extreme" };
-  HARDNESS = { easy: 0.5, fair: 1, hard: 1.5, extreme: 2 };
-  LEARN = { crit_success: 1.2, success: 1, partial: 1, fail: 0.7, crit_fail: 0.5 };
-  IMPROV_DIRECTION = {
-    crit_success: "It goes better than {{user}} could have hoped — a clean success with something extra.",
-    success: "It works.",
-    partial: "It works, but not cleanly — add a cost, a complication or a price.",
-    fail: "It doesn't work. Show the failure and a consequence that makes things harder.",
-    crit_fail: "It goes badly wrong — a failure that costs {{user}} something real."
-  };
 });
 
 // src/engine/chronicle.ts
@@ -6858,6 +7321,34 @@ function amountOf2(w, v, extra, max) {
   const x = p !== null ? p * max : evalNumber(v, w.env(extra), 0);
   return Math.abs(x) >= 1 && p !== null ? Math.round(x) : x;
 }
+function gambleTurn(w, a, intent, rec, label, seed) {
+  const g = a.gamble;
+  const r = w.r;
+  const offer = gambleOffer(r, w.s, a, seed);
+  if (!offer) {
+    w.hints.push(`{{user}} can't play — there's nothing to stake.`);
+    return;
+  }
+  const asked = Number(intent.game?.stake ?? intent.params?.stake ?? g.stakes[0]);
+  const stake = Math.max(0, Math.min(offer.money.have, Number.isFinite(asked) && asked > 0 ? Math.round(asked) : g.stakes[0]));
+  if (stake <= 0) {
+    w.hints.push(`{{user}} doesn't have the ${offer.money.currency}${g.stakes[0]} to sit down.`);
+    return;
+  }
+  const played = intent.game && intent.game.game === g.game && intent.game.net !== undefined ? intent.game : null;
+  const res = played ? { net: clampNet(g.game, stake, played.net, g.rounds), beats: played.beats, detail: played.detail } : simulateGamble(g.game, stake, g.rounds, offer.edge, gambleRng(seed));
+  rec.gamble = { game: g.game, stake, net: res.net, played: !!played };
+  const name = GAMES[g.game].name.toLowerCase();
+  because(w, `"${label}": ${res.net >= 0 ? "won" : "lost"} ${offer.money.currency}${Math.abs(res.net)} at ${name}`, () => {
+    if (res.net)
+      w.push({ t: "stat", id: offer.money.stat, d: res.net, src: "action" });
+    const after = res.net <= -stake && (w.s.stats[offer.money.stat] ?? 0) < (g.stakes[0] ?? 1) ? g.broke : res.net > 0 ? g.win : res.net < 0 ? g.lose : null;
+    if (after)
+      effectToEvents(w, after, "action", {});
+  });
+  w.hints.push(gambleHint(name, { net: res.net, stake, beats: res.beats, detail: res.detail }, offer.money.currency));
+  questHooks(builderOf(w), { kind: "action", id: a.id, result: res.net > 0 ? "success" : res.net < 0 ? "fail" : "partial", good: res.net > 0 });
+}
 function perkRuleFor(r, s, a, kind) {
   const used = new Set(checkStats(r, a));
   for (const id of Object.keys(s.perks)) {
@@ -8056,13 +8547,26 @@ function resolveInner(r, before, intent, opts, needs) {
       const fail = a.outcomes.fail ?? a.outcomes.crit_fail;
       if (fail)
         because(w, `"${meant}" — ${mind.cause} stopped it`, () => effectToEvents(w, fail, "check", extra));
+    } else if (a.gamble) {
+      gambleTurn(w, a, intent, rec, label, opts.seed);
     } else if (a.check) {
       const rng = seededRng(opts.seed);
       const { add, target } = checkNumbers(r, w.s, a, intent.params, who);
       let roll = rollDice(a.check.dice, rng);
       let tier = tierFor(a.check, roll, add, target);
+      const played = intent.game && intent.game.score !== undefined && a.check.game !== false ? intent.game : null;
+      let game;
+      if (played) {
+        const o = odds(r, before, a, intent.params, who);
+        const bar = shiftBar(gameBar(o?.success ?? 0.5, { partial: o?.partial, crits: a.check.crits }), Math.max(-0.12, Math.min(0.08, played.ease ?? 0)));
+        tier = tierFromScore(bar, played.score);
+        game = { id: played.game, score: played.score, bar, summary: gameSummary(played, bar), beats: played.beats };
+        const re = played.perk && played.livesUsed ? perkRuleFor(r, w.s, a, "reroll") : null;
+        if (re && re.name === played.perk)
+          because(w, `★ ${re.name}`, () => w.push({ t: "charge", key: `perk:${re.perk}:reroll`, day: dayOf(w.s), src: "action" }));
+      }
       let perkNote;
-      if (tier === "fail" || tier === "crit_fail") {
+      if (!played && (tier === "fail" || tier === "crit_fail")) {
         const re = perkRuleFor(r, w.s, a, "reroll");
         if (re) {
           because(w, `★ ${re.name}`, () => w.push({ t: "charge", key: `perk:${re.perk}:reroll`, day: dayOf(w.s), src: "action" }));
@@ -8096,10 +8600,15 @@ function resolveInner(r, before, intent, opts, needs) {
         rec.check.gear = gear;
       if (perkNote)
         rec.check.perk = perkNote;
+      if (game) {
+        rec.check.game = game;
+        w.hints.push(gameHint(rec.check.label, played, tier, game.bar));
+      }
       questHooks(builderOf(w), { kind: "action", id: a.id, result: tier, good: tier === "success" || tier === "crit_success" });
       const key = TIER_FALLBACK[tier].find((t) => a.outcomes[t]);
+      const how = game ? `played ${GAMES[game.id].name}, ${Math.round(game.score * 100)}% vs ${Math.round(game.bar.success * 100)}%` : `rolled ${rec.check.total}${target !== null ? ` vs ${target}` : ""}`;
       if (key)
-        because(w, `"${label}": ${rec.check.label} rolled ${rec.check.total}${target !== null ? ` vs ${target}` : ""} → ${TIER_LABEL[tier]}`, () => effectToEvents(w, a.outcomes[key], "check", extra));
+        because(w, `"${label}": ${rec.check.label} ${how} → ${TIER_LABEL[tier]}`, () => effectToEvents(w, a.outcomes[key], "check", extra));
       if (improvised) {
         w.hints.push(`{{user}} attempts what they wrote (${a.check.label}, ${DIFFICULTY_WORD[difficulty]}). ${IMPROV_DIRECTION[tier]} Keep {{user}}'s own words and choices; the dice decide only how it turns out.`);
       } else if (tier === "partial" && key === "success")
@@ -8503,7 +9012,7 @@ function perkStats(r, id) {
   return [...new Set([
     ...Object.keys(p.bonus),
     ...p.edges.flatMap((e) => Object.keys(e.stats)),
-    ...p.rules.flatMap((x) => ("stat" in x) ? [x.stat] : x.stats),
+    ...p.rules.flatMap((x) => ("stat" in x) ? [x.stat] : ("stats" in x) ? x.stats : []),
     ...p.abilities.flatMap((a) => r.abilities[a] ? checkStats(r, r.abilities[a].action) : [])
   ])];
 }
@@ -8598,6 +9107,7 @@ function forgetPerson(r, before, who) {
 }
 var EXPLORE = "explore:", TRAVEL_PREFIX = "go:", TARGET_SEP = "@", LIVE_PREFIX = "live:", ITEM_PREFIX = "item:", ABILITY_PREFIX = "ability:", NEXT_EVENT = "world:next_event", SEEN_DESC, RUN_EPILOGUE = "run:epilogue", ENCOUNTER_REST = 60, TIER_FALLBACK, TIER_LABEL;
 var init_resolve = __esm(() => {
+  init_games();
   init_expr();
   init_dice();
   init_ruleset();
@@ -9183,7 +9693,7 @@ conditions:
     at: campus
     say: "*I swim laps in the university pool.*"
     time: 45
-    check: { chance: 55 + swimming / 2 - fatigue / 3, label: Swimming }
+    check: { chance: 55 + swimming / 2 - fatigue / 3, label: Swimming, game: keys }
     success: { athletics: +0.4, fatigue: +12, stress: -4, hint: "Smooth, steady laps." }
     fail: { fatigue: +16, stress: +1, hint: "{{user}} swallows half the pool and climbs out spluttering." }
 
@@ -9193,7 +9703,7 @@ conditions:
     at: park
     say: "*I go for a jog around the park.*"
     time: 40
-    check: { chance: 60 + athletics / 2 - fatigue * 2 / 3, label: Athletics }
+    check: { chance: 60 + athletics / 2 - fatigue * 2 / 3, label: Athletics, game: snake }
     success: { athletics: +1, fatigue: +10, stress: -4 }
     fail: { athletics: +0.4, fatigue: +17, pain: +10, hint: "{{user}} pushes too hard and ends up aching and winded." }
 
@@ -9204,7 +9714,7 @@ conditions:
     when: between(hour, 7, 18)
     say: "*I put on an apron and work a shift at the café.*"
     time: 240
-    check: { chance: 55 + tending / 1.5, label: Tending }
+    check: { chance: 55 + tending / 1.5, label: Tending, game: stack }
     success: { money: 45 + tending / 2, tending: +1.2, fatigue: +20, flags: { worked: true }, hint: "A smooth shift — good tips." }
     fail: { money: 30, tending: +0.6, fatigue: +22, stress: +6, flags: { worked: true }, hint: "A rough shift: rude customers and a smashed tray." }
   buy_raincoat:
@@ -9240,6 +9750,18 @@ conditions:
     time: 10
     effects: { money: -3, give: coffee }
 
+  three_legged:
+    label: Run the three-legged race with {target}
+    group: Park
+    at: park
+    per_person: true
+    when: "(weekday == 'Sat' or weekday == 'Sun') and between(hour, 10, 17)"
+    say: "*I talk {target} into the three-legged race at the weekend fun run.*"
+    time: 45
+    check: { chance: 35 + athletics / 3 + target.trust / 3, label: Athletics, game: race }
+    success: { stress: -6, fatigue: +8, rel: { target: { trust: +4, love: +2 } }, hint: "{{user}} and {target} cross the line in a tangle of laughter." }
+    fail: { fatigue: +10, pain: +3, rel: { target: { trust: +1 } }, hint: "They go down in a heap — grass stains, and laughing anyway." }
+
   # Quest work: only offered while the job is taken.
   hand_out_flyers:
     label: Hand out club flyers
@@ -9258,7 +9780,7 @@ conditions:
     requires: { quest: lost_ring }
     say: "*I comb the grass by the duck pond, looking for a glint of gold.*"
     time: 45
-    check: { chance: "30 + (between(hour, 8, 18) ? 15 : 0) - fatigue / 4", label: Luck }
+    check: { chance: "30 + (between(hour, 8, 18) ? 15 : 0) - fatigue / 4", label: Luck, game: mines }
     success: { progress: { lost_ring: 1 }, hint: "Something glints in the grass — the ring." }
     fail: { fatigue: +6, hint: "Bottle caps and a lot of mud." }
 
@@ -9269,7 +9791,7 @@ conditions:
     say: "*I pick out a distracted mark and go for their wallet.*"
     tags: [crime]
     time: 10
-    check: { chance: 15 + skulduggery / 1.2 - allure / 8, label: Skulduggery }
+    check: { chance: 15 + skulduggery / 1.2 - allure / 8, label: Skulduggery, game: mines }
     crit_success: { money: roll('4d10') + 20, skulduggery: +1.5, hint: "A fat wallet, and nobody noticed a thing." }
     success: { money: roll('2d10') + 5, skulduggery: +1, hint: "Clean lift. Nobody noticed." }
     fail: { crime: +6, stress: +8, skulduggery: +0.3, hint: "The mark catches {{user}}'s wrist and starts shouting." }
@@ -9282,9 +9804,24 @@ conditions:
     when: hour >= 20 or hour < 4
     say: "*I hit the dance floor.*"
     time: 60
-    check: { chance: 40 + dancing / 1.2, label: Dancing }
+    check: { chance: 40 + dancing / 1.2, label: Dancing, game: keys }
     success: { dancing: +1.2, stress: -6, allure: +3, fatigue: +10, hint: "{{user}} moves well and draws eyes." }
     fail: { dancing: +0.5, stress: +2, fatigue: +10, hint: "Awkward, off the beat, and a little embarrassing." }
+  back_room_cards:
+    label: Cards in the back room
+    group: Nightlife
+    at: the_strip
+    when: hour >= 21 or hour < 3
+    say: "*I pull up a chair at the card game in the back of the bar.*"
+    time: 60
+    gamble: { game: blackjack, stakes: [10, 40, 100], rounds: 5, win: { stress: -5 }, lose: { stress: +4 }, broke: { stress: +12, control: -5 } }
+  fruit_machine:
+    label: Play the fruit machine
+    group: Nightlife
+    at: the_strip
+    say: "*I feed coins into the fruit machine by the door.*"
+    time: 20
+    gamble: { game: slots, stakes: [2, 5, 10], rounds: 6, lose: { stress: +2 } }
   drink:
     label: Have a drink (£6)
     group: Nightlife
@@ -9512,7 +10049,7 @@ encounters:
     actions:
       fight_back:
         label: Fight back
-        check: { chance: 30 + athletics / 2 - fatigue / 3 - pain / 3, label: Athletics }
+        check: { chance: 30 + athletics / 2 - fatigue / 3 - pain / 3, label: Athletics, game: pinball }
         success: { foe: { nerve: -6 }, hint: "{{user}} lands a solid hit." }
         fail: { pain: +10, hint: "{{user}}'s swing misses and they take a blow." }
       shout:
@@ -9525,7 +10062,7 @@ encounters:
         effects: { money: "-min(money, 20)", end: robbed }
       run:
         label: Run
-        check: { chance: 35 + athletics / 2 - fatigue / 3 - pain / 2, label: Athletics }
+        check: { chance: 35 + athletics / 2 - fatigue / 3 - pain / 2, label: Athletics, game: snake }
         success: { fatigue: +5, end: escaped }
         fail: { pain: +5, hint: "{{user}} is caught before getting far." }
       jump_in:
@@ -10109,7 +10646,7 @@ conditions:
     say: "*I sort through the cargo bay for anything worth selling.*"
     time: 60
     cost: { energy: -10 }
-    check: { vs: 11, add: floor(intelligence / 3) + floor(physique / 3), label: Tech }
+    check: { vs: 11, add: floor(intelligence / 3) + floor(physique / 3), label: Tech, game: stack }
     success: { credits: roll('2d20') }
     fail: { energy: -5 }
   rest_quarters:
@@ -10124,7 +10661,7 @@ conditions:
     group: Explore
     say: "*I sweep the area with my codex scanner.*"
     time: 5
-    check: { vs: 12, add: floor(intelligence / 2), label: Intelligence }
+    check: { vs: 12, add: floor(intelligence / 2), label: Intelligence, game: mines }
     success: { hint: "The scan reveals something valuable: a hidden route, loot, or a threat before it strikes." }
     fail: { hint: "Interference. Nothing useful." }
   explore:
@@ -10133,7 +10670,7 @@ conditions:
     at: [jungle_edge, jungle_deep]
     say: "*I push deeper into the jungle.*"
     time: 45
-    check: { vs: 11, add: floor(reflexes / 3), label: Reflexes }
+    check: { vs: 11, add: floor(reflexes / 3), label: Reflexes, game: snake }
     success: { xp: +15, credits: roll('3d20'), hint: "A discovery: salvage or something worth selling." }
     fail: { start_encounter: ambush }
   use_booster:
@@ -10178,6 +10715,27 @@ conditions:
     when: credits >= 150
     say: "*I buy a shield booster.*"
     effects: { credits: -150, give: shield_booster }
+  void_blackjack:
+    label: Void blackjack at the back tables
+    group: Social
+    at: bar
+    say: "*I buy in at the blackjack table under the neon.*"
+    time: 60
+    gamble: { game: blackjack, stakes: [50, 200, 500], rounds: 5, win: { xp: +5 }, broke: { energy: -20 } }
+  zero_g_roulette:
+    label: Zero-G roulette
+    group: Social
+    at: bar
+    say: "*I put chips down at the roulette wheel spinning in its zero-g bubble.*"
+    time: 30
+    gamble: { game: roulette, stakes: [50, 200, 500], rounds: 4, win: { xp: +5 }, broke: { energy: -20 } }
+  neon_slots:
+    label: Feed the neon slots
+    group: Social
+    at: bar
+    say: "*I feed credits into a slot machine that sings my name.*"
+    time: 20
+    gamble: { game: slots, stakes: [10, 25, 50], rounds: 6 }
   drink:
     label: Have a drink (₡20)
     group: Social
@@ -10245,14 +10803,14 @@ encounters:
       shoot:
         label: Shoot
         cost: { energy: -5 }
-        check: { vs: 12, add: floor(aim / 2), label: Aim }
+        check: { vs: 12, add: floor(aim / 2), label: Aim, game: aim }
         crit_success: { foe: { shields: -14, hp: "foe.shields <= 0 ? -12 : 0" }, hint: "A perfect shot." }
         success: { foe: { shields: -8, hp: "foe.shields <= 0 ? -7 : 0" }, hint: "The shot lands." }
         fail: { hint: "Missed." }
       burst:
         label: Burst fire
         cost: { energy: -8 }
-        check: { vs: 11, add: floor(aim / 2), label: Aim }
+        check: { vs: 11, add: floor(aim / 2), label: Aim, game: aim }
         success: { foe: { shields: -4 }, hits: 3, hint: "Three rounds rake their shields." }
         fail: { hint: "The burst goes wide." }
       melee:
@@ -10272,7 +10830,7 @@ encounters:
         effects: { take: medkit, hp: +25 }
       flee:
         label: Flee
-        check: { vs: 13, add: floor(reflexes / 2), label: Reflexes }
+        check: { vs: 13, add: floor(reflexes / 2), label: Reflexes, game: snake }
         success: { energy: -10, end: fled }
         fail: { hint: "Cut off — the fight goes on." }
     foe_moves:
@@ -10391,7 +10949,7 @@ abilities:
     where: encounter
     known: false
     cost: { energy: -12 }
-    check: { vs: 11, add: floor(aim / 2), label: Aim }
+    check: { vs: 11, add: floor(aim / 2), label: Aim, game: aim }
     success: { harm: 4, inflict: { burning: 3 } }
     fail: { hint: "The gel sputters onto the deck." }
     per_encounter: 1
@@ -10409,6 +10967,11 @@ abilities:
 perks:
   points: perk_points
   pick: 3
+  high_roller:
+    name: High Roller
+    desc: The house edge doesn't apply to you. Mostly.
+    rule: { game: { luck: 15, lives: 1, games: [blackjack, roulette, slots] } }
+    narrator: "{{user}} has the easy grin of someone the dice like."
   sharpshooter:
     name: Sharpshooter
     desc: Every shot counts — more so with a lock.
@@ -10869,6 +11432,32 @@ conditions:
     say: "*I pay for a room and sleep.*"
     time: 480
     effects: { gold: -5, hp: +40, stamina: +100, mana: +30, remove_condition: [exhausted] }
+  caravan_cards:
+    label: Cards with the caravan guards
+    group: Social
+    at: inn
+    when: hour >= 18 or hour < 2
+    say: "*I sit in on the guards' card game by the fire.*"
+    time: 60
+    gamble: { game: blackjack, stakes: [2, 5, 15], rounds: 5, win: { xp: +3 }, broke: { flags: { owes_the_guards: true } } }
+  pay_guards:
+    label: Settle up with the caravan guards (10g)
+    group: Social
+    at: inn
+    when: "flag('owes_the_guards') and gold >= 10"
+    say: "*I count ten gold onto the guards' table and we're square.*"
+    effects: { gold: -10, flags: { owes_the_guards: false }, hint: "The guards stop watching {{user}} quite so closely." }
+  fair_race:
+    label: Three-legged race at the fair with {target}
+    group: Social
+    at: village_square
+    per_person: true
+    when: "weekday == 'Sat' and between(hour, 10, 16)"
+    say: "*I tie my ankle to {target}'s for the fair's three-legged race.*"
+    time: 30
+    check: { chance: "30 + agility * 4 + target.trust / 4", label: Agility, game: race }
+    success: { gold: +5, xp: +5, rel: { target: { trust: +5 } }, hint: "{{user}} and {target} win the fair's ribbon and a purse of coppers." }
+    fail: { stamina: -10, rel: { target: { trust: +1 } }, hint: "A tangle of legs in the mud, and the whole square laughing." }
   rumours:
     label: Listen for rumours
     group: Social
@@ -10968,7 +11557,7 @@ conditions:
     say: "*I ask around for work — hauling, mending, minding stalls.*"
     time: 120
     cost: { stamina: -15 }
-    check: { chance: "45 + might * 3", label: Might }
+    check: { chance: "45 + might * 3", label: Might, game: stack }
     success: { gold: +8, xp: +5 }
     fail: { gold: +3 }
   notice_board:
@@ -10987,7 +11576,7 @@ conditions:
     say: "*I search the roadside for herbs and game.*"
     time: 45
     cost: { stamina: -10 }
-    check: { chance: "35 + survival / 2 + wits * 2", label: Survival }
+    check: { chance: "35 + survival / 2 + wits * 2", label: Survival, game: mines }
     success: { give: rations, xp: +5 }
     fail: { start_encounter: wolves }
   hunt_wolves:
@@ -11051,7 +11640,7 @@ encounters:
         label: Loose an arrow
         when: has('longbow')
         cost: { stamina: -4 }
-        check: { chance: "30 + archery / 2 + agility * 3", label: Archery }
+        check: { chance: "30 + archery / 2 + agility * 3", label: Archery, game: aim }
         success: { foe: { hp: "-(5 + agility * 2)" } }
         fail: { hint: "The arrow thuds into a tree." }
       brandish:
@@ -11063,7 +11652,7 @@ encounters:
       climb:
         label: Climb a tree
         cost: { stamina: -12 }
-        check: { chance: "10 + survival / 2 + agility * 2", label: Survival }
+        check: { chance: "10 + survival / 2 + agility * 2", label: Survival, game: snake }
         success: { end: escaped }
         fail: { hp: -6, hint: "A wolf catches {{user}}'s boot and drags them back down." }
     foe_moves:
@@ -11125,7 +11714,7 @@ encounters:
       sneak:
         label: Slip past in the reeds
         cost: { stamina: -6 }
-        check: { chance: "25 + stealth / 2 + agility * 3", label: Stealth }
+        check: { chance: "25 + stealth / 2 + agility * 3", label: Stealth, game: snake }
         success: { end: slipped_by }
         fail: { foe: { resolve: +3 }, hint: "A sentry spots {{user}} in the reeds." }
     foe_moves:
@@ -11174,7 +11763,7 @@ encounters:
       flee:
         label: Run for the treeline
         cost: { stamina: -15 }
-        check: { chance: "35 + agility * 4", label: Agility }
+        check: { chance: "35 + agility * 4", label: Agility, game: snake }
         success: { end: fled }
         fail: { hp: -6 }
     foe_moves:
@@ -11283,7 +11872,7 @@ abilities:
     where: encounter
     known: "arcana >= 30"
     cost: { mana: -6 }
-    check: { chance: "35 + arcana / 2 + wits * 3", label: Arcana }
+    check: { chance: "35 + arcana / 2 + wits * 3", label: Arcana, game: keys }
     success: { harm: "8 + arcana / 5" }
     fail: { hint: "The fire gutters out in {{user}}'s hand." }
   mend:
@@ -11332,7 +11921,7 @@ abilities:
     where: encounter
     requires: { has: holy_symbol }
     cost: { mana: -10 }
-    check: { chance: "30 + spirit * 5 + lore / 4", label: Spirit }
+    check: { chance: "30 + spirit * 5 + lore / 4", label: Spirit, game: aim }
     success: { harm: "25%", pierce: all }
     fail: { hint: "The light flickers and dies." }
     per_encounter: 1
@@ -11357,6 +11946,12 @@ abilities:
 perks:
   points: perk_points
   pick: 3
+  keen_eye:
+    name: Keen Eye
+    desc: Slow breath, steady arm — the arrow goes where it's looked at.
+    tags: [archery]
+    bonus: { archery: 5 }
+    rule: { game: { window: 25, size: 15, games: [aim] } }
   blade_dancer:
     name: Blade Dancer
     desc: Fights like a duelist while there's breath in them — and learns the Flurry.
@@ -11719,6 +12314,14 @@ conditions:
     check: { chance: "25 + deduction / 2 + clues * 3", label: Deduction }
     success: { clues: +1, hint: "Two loose threads tie together." }
     fail: { nerve: -5, hint: "The pieces won't fit tonight." }
+  card_game:
+    label: The card game upstairs
+    group: Social
+    at: jazz_club
+    when: hour >= 21 or hour < 3
+    say: "*I climb the back stairs to the card game nobody admits is there.*"
+    time: 90
+    gamble: { game: blackjack, stakes: [5, 20, 50], rounds: 5, win: { nerve: +5 }, lose: { nerve: -3 }, broke: { nerve: -8, heat: +1 } }
   buy_bottle:
     label: Buy a bottle of rye ($12)
     group: Shopping
@@ -11748,7 +12351,7 @@ conditions:
     at: precinct
     say: "*I wait for the desk sergeant to look away and slip into records.*"
     time: 30
-    check: { chance: "25 + stealth / 2", label: Stealth }
+    check: { chance: "25 + stealth / 2", label: Stealth, game: mines }
     success: { clues: +2, hint: "The autopsy says the councilman was dead before the fall." }
     fail: { heat: +15, hint: "Okafor catches {{user}} in records and isn't amused." }
   search_office:
@@ -11758,7 +12361,7 @@ conditions:
     when: not has('ledger')
     say: "*I let myself into the dead man's office.*"
     time: 45
-    check: { chance: "30 + stealth / 2 + deduction / 4", label: Stealth }
+    check: { chance: "30 + stealth / 2 + deduction / 4", label: Stealth, game: mines }
     success: { give: ledger, clues: +2, hint: "A ledger taped under the drawer: payments to a shell company on the docks." }
     fail: { heat: +10, start_encounter: tail }
   stake_out:
@@ -11872,7 +12475,7 @@ encounters:
     actions:
       lose:
         label: Duck through the crowd
-        check: { chance: "30 + stealth / 2 + streetwise / 4", label: Stealth }
+        check: { chance: "30 + stealth / 2 + streetwise / 4", label: Stealth, game: snake }
         success: { foe: { distance: +5 } }
         fail: { foe: { distance: -2 } }
       corner:
@@ -11883,13 +12486,13 @@ encounters:
       draw:
         label: Draw the revolver
         when: has('revolver')
-        check: { chance: "30 + shooting / 2", label: Shooting }
+        check: { chance: "30 + shooting / 2", label: Shooting, game: aim }
         success: { foe: { cornered: +6 }, heat: +5 }
         fail: { heat: +8, nerve: -6 }
       streetcar:
         label: Jump on a passing streetcar
         cost: { nerve: -5 }
-        check: { chance: "15 + stealth / 3", label: Stealth }
+        check: { chance: "15 + stealth / 3", label: Stealth, game: snake }
         success: { end: escaped }
         fail: { grit: -4, hint: "The streetcar pulls away without {{user}}." }
     foe_moves:
@@ -11934,7 +12537,7 @@ encounters:
         fail: { grit: -10 }
       run:
         label: Run for it
-        check: { chance: "35 + stealth / 2", label: Stealth }
+        check: { chance: "35 + stealth / 2", label: Stealth, game: snake }
         success: { end: got_away }
         fail: { grit: -5 }
     foe_moves:
@@ -11982,6 +12585,12 @@ encounters:
 perks:
   points: perk_points
   pick: 3
+  poker_face:
+    name: Poker Face
+    desc: You read a dealer the way you read a suspect.
+    tags: [charm]
+    bonus: { charm: 5 }
+    rule: { game: { hint: 3, peek: 1, games: [blackjack] } }
   bloodhound:
     name: Bloodhound
     desc: Once a day, a dead end turns out not to be.
@@ -12305,6 +12914,8 @@ var init_protocol = __esm(() => {
     fx: "full",
     sfx: "games",
     sfxVolume: 0.4,
+    minigames: "ask",
+    minigameScope: "rulebook",
     dateImages: true,
     imageConnectionId: ""
   };
@@ -12339,6 +12950,8 @@ async function patchSettings(patch, userId) {
   next.dateImages = next.dateImages !== false && next.dateImages !== "false";
   next.jevFormat = next.jevFormat === "openai" ? "openai" : "typesafe";
   next.jevUrl = /^https?:\/\/\S+$/i.test(String(next.jevUrl ?? "").trim()) ? String(next.jevUrl).trim() : DEFAULT_SETTINGS.jevUrl;
+  next.minigames = next.minigames === "off" || next.minigames === "always" ? next.minigames : "ask";
+  next.minigameScope = next.minigameScope === "all" ? "all" : "rulebook";
   next.storyQuests = next.storyQuests !== false && next.storyQuests !== "false";
   cache2.set(key(userId), next);
   await host().userStorage.setJson("settings.json", next, { indent: 2, userId });
@@ -15682,6 +16295,14 @@ function lintRuleset(r) {
     for (const [tier, e] of Object.entries(a.outcomes))
       if (e)
         checkEffect(e, `${w} › ${tier}`, extra);
+    if (a.gamble) {
+      const g = a.gamble;
+      if (!(g.stat ?? r.hud.money))
+        issues.push({ level: "warning", where: `${w} › gamble`, message: "there's no money to stake — add a stat with `kind: money`, or `stat:` on the table" });
+      check(g.luck, `${w} › gamble › luck`, extra);
+      for (const [k, e] of [["win", g.win], ["lose", g.lose], ["broke", g.broke]])
+        checkEffect(e, `${w} › gamble › ${k}`, extra);
+    }
   };
   for (const a of Object.values(r.actions))
     checkAction(a, `Actions › ${a.id}`);
@@ -18023,6 +18644,38 @@ function keepWords(r, k) {
   return parts.length ? parts.join(", ") : "nothing";
 }
 function buildChoices(r, s, opts) {
+  const out = choiceList(r, s, opts);
+  if (opts.minigames && opts.minigames !== "off")
+    for (const c of out)
+      withGame(r, s, c, opts.minigameScope ?? "rulebook", opts.live ?? []);
+  return out;
+}
+function withGame(r, s, c, scope, live) {
+  if (c.locked)
+    return;
+  let found = null;
+  if (c.id.startsWith(LIVE_PREFIX)) {
+    const l = live[Number(c.id.slice(LIVE_PREFIX.length))];
+    const a = l ? r.liveChoices.tags[l.tag] : undefined;
+    found = a ? { a, ...l.target ? { target: l.target } : {} } : null;
+  } else
+    found = findAction(r, s, c.id);
+  if (!found)
+    return;
+  const seed = `${c.id}:${s.minutes}`;
+  if (found.a.gamble) {
+    const g = gambleOffer(r, s, found.a, seed);
+    if (g)
+      c.gamble = { ...g, action: c.label };
+    return;
+  }
+  if (c.odds === null)
+    return;
+  const g = gameOffer(r, s, found.a, c.odds, { scope, partial: c.partialOdds ?? 0, target: found.target, label: c.label, seed });
+  if (g)
+    c.game = g;
+}
+function choiceList(r, s, opts) {
   const veils = new Set(opts.veils.map((v) => v.toLowerCase()));
   const lines = new Set(opts.lines.map((v) => v.toLowerCase()));
   const live = [];
@@ -18198,6 +18851,8 @@ function perkViews(r, s) {
     for (const rule of p.rules) {
       if (rule.kind === "pierce")
         notes.push(`Ignores ${rule.amount >= 999 ? "all" : rule.amount} armor${rule.stats.length || rule.tags.length ? ` (${[...rule.stats.map((x) => r.stats[x]?.label ?? x), ...rule.tags].join(", ")})` : ""}`);
+      else if (rule.kind === "game")
+        notes.push(`Minigames${rule.games.length ? ` (${rule.games.map((g) => GAMES[g].name).join(", ")})` : ""}: ${Object.entries(rule.aids).map(([k, n]) => aidWords(k, n)).join(", ")}`);
       else if ("stat" in rule)
         notes.push(`${r.stats[rule.stat]?.label ?? rule.stat} ${rule.kind === "gains" ? "rises" : "drops"} ${Math.round(Math.abs(rule.pct) * 100)}% ${rule.pct > 0 ? "faster" : "slower"}`);
       else {
@@ -18492,7 +19147,13 @@ function buildRecordView(r, messageId, swipe, rec, before, after) {
       style: rec.check.style,
       tier: rec.check.tier,
       tierLabel: TIER_LABEL[rec.check.tier],
-      summary: `${checkSummary(rec.check)}${rec.check.perk ? ` · ↻ ${rec.check.perk}` : ""}`
+      summary: rec.check.game ? rec.check.game.summary : `${checkSummary(rec.check)}${rec.check.perk ? ` · ↻ ${rec.check.perk}` : ""}`,
+      game: rec.check.game ? { id: rec.check.game.id, summary: rec.check.game.summary, score: rec.check.game.score, needed: rec.check.game.bar.success } : null
+    } : null,
+    gamble: rec.gamble ? {
+      game: rec.gamble.game,
+      net: rec.gamble.net,
+      text: `${GAMES[rec.gamble.game].icon} ${GAMES[rec.gamble.game].name} · stake ${r.hud.currency}${rec.gamble.stake} · ${rec.gamble.net > 0 ? "+" : rec.gamble.net < 0 ? "−" : "±"}${r.hud.currency}${Math.abs(rec.gamble.net)}${rec.gamble.played ? "" : " (dealt without you)"}`
     } : null,
     changes: summarizeEvents(r, before, after, rec.events),
     hints: rec.hints,
@@ -18783,6 +19444,7 @@ function outcomePacket(r, rec, before, after, playerName) {
 `);
 }
 var init_view = __esm(() => {
+  init_games();
   init_ruleset();
   init_state();
   init_freeform();
@@ -21692,6 +22354,10 @@ actions:
     check: { chance: "20 + skulduggery / 2", label: Skulduggery }      # d100 roll-under percent
     # or check: { vs: 12, add: "floor(dex / 2)", partial: 3 }          # d20 + add vs 12
     # or check: { style: pbta, add: cool }                             # 2d6: 10+ hit, 7–9 mixed
+    # check: { …, game: mines }  — can be PLAYED as a minigame instead of rolled (or game: [mines, snake]; game: false = dice only).
+    #   games: aim (circles to a song), keys (4-lane piano tiles), mines, stack (falling blocks), snake, race (three-legged, with
+    #   whoever is here), pinball, blackjack, roulette, slots. The dice's odds set the score to beat; the stat behind the check,
+    #   perks and a partner's trust become aids. Played or rolled, the same tiers and outcomes apply.
     success: { flags: { door_open: true }, skulduggery: +1 }
     fail: { stress: +5, hint: "The pick snaps." }
     # tiers: crit_success, success, partial, fail, crit_fail; without a check use effects:
@@ -21706,6 +22372,13 @@ actions:
     # requires: shown LOCKED at its place with what's missing ("Needs Lockpicking 30 (you have 18), Brann with you · After closing");
     #   a stat name = at least that much; with: someone here; has: items; quest: id (taken) or { id: done }; folds into when:. show_locked: false hides it instead
     effects: { give: bearer_bonds }
+  blackjack_table:
+    label: Play blackjack
+    at: [casino]
+    gamble: { game: blackjack, stakes: [10, 50, 200], rounds: 5, win: { stress: -4 }, lose: { stress: +3 }, broke: { stress: +10, flags: { owes_the_house: true } } }
+    # a table that takes real money: blackjack | roulette | slots; stakes: buy-ins; rounds: hands/spins/pulls;
+    #   stat: what's staked (default the money stat); edge: house edge (default 2% / 2.7% / 8%); luck: a formula shaving the edge.
+    #   Played in the arcade, or dealt by the engine when minigames are off. No check — the cards decide.
   sneak:
     hidden: true                   # free-text only: the referee maps typed attempts to it
     desc: Staying unseen.
@@ -21831,6 +22504,7 @@ perks:
   crowd_ghost: { name: Crowd Ghost, bonus: { stealth: 10 }, edge: { stealth: 15, when: "at('plaza')" }, tags: [stealth] }   # bonus: always counts in checks; edge: only while when holds
   silver_tongue: { name: Silver Tongue, rule: { reroll: { stats: [persuasion], per_day: 1 } } }   # rules: reroll / soften (a failure becomes partial) on these stats or tags; gains / losses: { scent: -30% } (rises or drops that much bigger/smaller)
   armor_breaker: { name: Armor Breaker, rule: { pierce: { amount: 3, tags: [melee] } } }   # pierce: your blows (from moves with these stats or tags; none = all) ignore that much armor
+  steady_hands: { name: Steady Hands, rule: { game: { window: 20, lives: 1, games: [aim, keys] } } }   # game: aids in minigames (games: which; none = all): window, size, slow, time, luck (percent) · lives, hint, peek, preview, hold, wrap, saver (counts)
   mage_blood: { name: Mage Blood, abilities: [firebolt], narrator: "Sparks dance on {{user}}'s fingertips when angry.", excludes: [iron_will] }   # teaches abilities; narrator: what the story should show; excludes: can't have both
   adrenaline: { name: Adrenaline Junkie, edge: { athletics: 20, when: "stress >= 60" }, drawback: { desc: "Stress builds faster", gains: { stress: +10% } }, weight: 1 }
 
@@ -22030,6 +22704,11 @@ Set a flag only if something reads it (an action's when, a trigger, a codex unlo
 ## checks
 Odds should usually sit between 25% and 85% at the start and improve with skill; show the player what helps (skills, gear bonuses, conditions as penalties).
 Partial outcomes and costs make failures interesting: a fail should change something, not just waste a turn.
+
+## minigames and gambling
+Give the checks that feel like a feat of hands or nerve a game: (aim for shooting and throwing, keys for music and performance, mines for locks, traps and investigation, stack for building and repairs, snake for chases and sneaking, race for anything done side by side with someone, pinball for brawls, blackjack for bluffs and deals, slots or roulette for pure luck). Leave quiet everyday checks on dice.
+A perk or two with rule: { game: … } makes them feel different (+1 life, a wider timing window, a peek at the dealer's card).
+If the setting has a casino, a card den, dice at the inn or a fruit machine in the bar, make it a gamble: table, with win:/lose:/broke: effects so a bad night has consequences — a debt flag a quest can pick up, stress, someone who saw.
 
 ## finishing
 You're done when every piece connects: run the audit and either fix each gap or say why it's deliberate. Simulate each encounter — no route should be pointless, none should be a guaranteed win, and the escape should cost something.
@@ -23273,7 +23952,7 @@ Reply with JSON:
     };
     s.base = opts.base || suggested;
     const picked = Array.isArray(out.systems) ? out.systems.map(String).filter((x) => SYSTEMS.some((y) => y.id === x)) : ["needs", "relationships", "money", "skills", "story"];
-    const defaults = [...new Set([...picked, "quests"])];
+    const defaults = [...new Set([...picked, "quests", "minigames"])];
     s.rounds = [{ questions: [...coreQuestions(defaults), ...normQuestions(out.followUps, "f1_")], answers: {} }];
     s.step = "questions";
   } catch (e) {
@@ -23693,6 +24372,7 @@ var init_builder = __esm(() => {
     { id: "schedules", label: "NPC schedules & places" },
     { id: "encounters", label: "Encounters / combat" },
     { id: "quests", label: "Quests (a notice board, favours people ask, bounties)" },
+    { id: "minigames", label: "Minigames & gambling (checks played as Aim, Keys, Mines, Stack, Snake, Pinball, a three-legged race or cards — game: on the check; a casino or card table with gamble:)" },
     { id: "dungeon", label: "Dungeon diving (roguelike floors, party battles)" },
     { id: "dating", label: "Dating (topics, hidden tastes, outings)" },
     { id: "crime", label: "Crime & consequences" },
@@ -23978,6 +24658,7 @@ var init_state_push = __esm(() => {
 });
 
 // src/backend.ts
+init_games();
 init_resolve();
 init_templates();
 init_ledger();
@@ -24261,6 +24942,9 @@ spindle.onFrontendMessage(async (raw, userId) => {
           return;
         }
         const { say, intent } = ci;
+        const played = msg.game ? cleanResult(msg.game, []) : null;
+        if (played)
+          intent.game = played;
         if (isQuiet(r, state) && await playRound({ chatId: msg.chatId, userId, intent }))
           break;
         if (msg.actionId.startsWith(DATE_PREFIX)) {
@@ -24272,7 +24956,7 @@ spindle.onFrontendMessage(async (raw, userId) => {
           await playScene({ chatId: msg.chatId, userId, kind: "date", intent, said: say });
           break;
         }
-        const ready = takePrewritten(msg.chatId, momentKey(msgs, state), msg.actionId);
+        const ready = played ? null : takePrewritten(msg.chatId, momentKey(msgs, state), msg.actionId);
         if (ready) {
           await spindle.chat.appendMessage(msg.chatId, { role: "user", content: say, metadata: { warp: { intent, judged: true } } });
           const reply = await spindle.chat.appendMessage(msg.chatId, { role: "assistant", content: ready.text });

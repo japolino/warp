@@ -1,5 +1,6 @@
 // View models for the UI and the text the narrator sees.
 
+import { aidWords, gambleOffer, gameOffer, GAMES, type AidKind, type GamesScope } from "./games.js";
 import type { ActionDef, KeepSpec, Ruleset, StatDef } from "./ruleset.js";
 import { TIERS } from "./ruleset.js";
 import {
@@ -8,7 +9,7 @@ import {
 } from "./state.js";
 import { practiceProgress } from "./freeform.js";
 import { encounterGuide, itemRelevance } from "./encounter-view.js";
-import { ABILITY_PREFIX, abilityStatus, actionPool, availableChoices, canExplore, dangerStats, EXPLORE, foeArmor, isAvailable, knowsAbility, LIVE_PREFIX, lockReason, mainMeter, odds, perkOffers, playerArmor, usableAbilities, usableItems, perkBlocker, RUN_EPILOGUE, TIER_LABEL, TRAVEL_PREFIX, travelTargets, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
+import { ABILITY_PREFIX, abilityStatus, actionPool, availableChoices, canExplore, dangerStats, EXPLORE, findAction, foeArmor, isAvailable, knowsAbility, LIVE_PREFIX, lockReason, mainMeter, odds, perkOffers, playerArmor, usableAbilities, usableItems, perkBlocker, RUN_EPILOGUE, TIER_LABEL, TRAVEL_PREFIX, travelTargets, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
 import { dueWords, effectWords, goalDone, questDef, questDigest, questOffers, questsToReport, QUEST_PREFIX } from "./quests.js";
 import {
   dateAt, exposedSlots, isIndoors, ordinal, personLocation, presentPeople, seasonAt, temperatureAt, warmthNeeded, warmthOf, weatherAt,
@@ -403,7 +404,34 @@ export function keepWords(r: Ruleset, k: KeepSpec): string {
   return parts.length ? parts.join(", ") : "nothing";
 }
 
-export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; veils: string[]; live?: LiveChoice[] }): ChoiceView[] {
+export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; veils: string[]; live?: LiveChoice[]; minigames?: "off" | "ask" | "always"; minigameScope?: GamesScope }): ChoiceView[] {
+  const out = choiceList(r, s, opts);
+  if (opts.minigames && opts.minigames !== "off") for (const c of out) withGame(r, s, c, opts.minigameScope ?? "rulebook", opts.live ?? []);
+  return out;
+}
+
+/** Checks that can be played instead of rolled get their game; gambling tables get theirs. */
+function withGame(r: Ruleset, s: GameState, c: ChoiceView, scope: GamesScope, live: LiveChoice[]) {
+  if (c.locked) return;
+  let found: { a: ActionDef; target?: string } | null = null;
+  if (c.id.startsWith(LIVE_PREFIX)) {
+    const l = live[Number(c.id.slice(LIVE_PREFIX.length))];
+    const a = l ? r.liveChoices.tags[l.tag] : undefined;
+    found = a ? { a, ...(l.target ? { target: l.target } : {}) } : null;
+  } else found = findAction(r, s, c.id);
+  if (!found) return;
+  const seed = `${c.id}:${s.minutes}`;
+  if (found.a.gamble) {
+    const g = gambleOffer(r, s, found.a, seed);
+    if (g) c.gamble = { ...g, action: c.label };
+    return;
+  }
+  if (c.odds === null) return;
+  const g = gameOffer(r, s, found.a, c.odds, { scope, partial: c.partialOdds ?? 0, target: found.target, label: c.label, seed });
+  if (g) c.game = g;
+}
+
+function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: string[]; live?: LiveChoice[] }): ChoiceView[] {
   const veils = new Set(opts.veils.map((v) => v.toLowerCase()));
   const lines = new Set(opts.lines.map((v) => v.toLowerCase()));
   // Choices written for this moment come first; their tag decides the check and the odds.
@@ -570,6 +598,7 @@ function perkViews(r: Ruleset, s: GameState): HudView["perks"] {
       for (const e of p.edges) notes.push(`${plus(e.stats)}${e.when ? " (sometimes)" : ""}`);
       for (const rule of p.rules) {
         if (rule.kind === "pierce") notes.push(`Ignores ${rule.amount >= 999 ? "all" : rule.amount} armor${rule.stats.length || rule.tags.length ? ` (${[...rule.stats.map((x) => r.stats[x]?.label ?? x), ...rule.tags].join(", ")})` : ""}`);
+        else if (rule.kind === "game") notes.push(`Minigames${rule.games.length ? ` (${rule.games.map((g) => GAMES[g].name).join(", ")})` : ""}: ${Object.entries(rule.aids).map(([k, n]) => aidWords(k as AidKind, n!)).join(", ")}`);
         else if ("stat" in rule) notes.push(`${r.stats[rule.stat]?.label ?? rule.stat} ${rule.kind === "gains" ? "rises" : "drops"} ${Math.round(Math.abs(rule.pct) * 100)}% ${rule.pct > 0 ? "faster" : "slower"}`);
         else {
           const left = rule.perDay ? rule.perDay - usesOf(s, `perk:${p.id}:${rule.kind}`).today : null;
@@ -845,7 +874,13 @@ export function buildRecordView(r: Ruleset, messageId: string, swipe: number, re
       style: rec.check.style,
       tier: rec.check.tier,
       tierLabel: TIER_LABEL[rec.check.tier],
-      summary: `${checkSummary(rec.check)}${rec.check.perk ? ` · ↻ ${rec.check.perk}` : ""}`,
+      summary: rec.check.game ? rec.check.game.summary : `${checkSummary(rec.check)}${rec.check.perk ? ` · ↻ ${rec.check.perk}` : ""}`,
+      game: rec.check.game ? { id: rec.check.game.id, summary: rec.check.game.summary, score: rec.check.game.score, needed: rec.check.game.bar.success } : null,
+    } : null,
+    gamble: rec.gamble ? {
+      game: rec.gamble.game,
+      net: rec.gamble.net,
+      text: `${GAMES[rec.gamble.game].icon} ${GAMES[rec.gamble.game].name} · stake ${r.hud.currency}${rec.gamble.stake} · ${rec.gamble.net > 0 ? "+" : rec.gamble.net < 0 ? "−" : "±"}${r.hud.currency}${Math.abs(rec.gamble.net)}${rec.gamble.played ? "" : " (dealt without you)"}`,
     } : null,
     changes: summarizeEvents(r, before, after, rec.events),
     hints: rec.hints,

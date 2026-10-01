@@ -1,6 +1,9 @@
 // Messages and view models shared by backend and frontend.
 
 import type { Tier } from "../engine/ruleset.js";
+import type { GambleOffer, GameOffer, GameResult } from "../engine/game-ids.js";
+
+export type { GambleOffer, GameOffer, GameResult };
 
 export type Tone = "good" | "warn" | "bad" | "neutral";
 
@@ -214,6 +217,10 @@ export interface ChoiceView {
   locked?: string;
   /** Why it's suggested now (items: "Clears Scented"). */
   why?: string;
+  /** It can be played as a minigame instead of rolled. */
+  game?: GameOffer;
+  /** A gambling table: the overlay deals the cards. */
+  gamble?: GambleOffer;
 }
 
 export interface FighterView {
@@ -383,7 +390,11 @@ export interface RecordView {
     tier: Tier;
     tierLabel: string;
     summary: string;
+    /** Played instead of rolled: "◎ Aim 87% · needed 60%". */
+    game: { id: string; summary: string; score: number; needed: number } | null;
   } | null;
+  /** A gambling sitting: "♠ Blackjack · stake £50 · +£35". */
+  gamble: { game: string; text: string; net: number } | null;
   changes: ChangeView[];
   hints: string[];
   veiled: boolean;
@@ -473,6 +484,10 @@ export interface Settings {
   sfx: "all" | "games" | "off";
   /** 0–1. */
   sfxVolume: number;
+  /** Minigames instead of dice: off, offered on the briefing (Play or Roll), or straight into the game. */
+  minigames: "off" | "ask" | "always";
+  /** Which checks: only the ones the rulebook names a game for, or every check (a fitting game is picked). */
+  minigameScope: "rulebook" | "all";
   /** Generate a picture for each date (the place, with them in the middle). */
   dateImages: boolean;
   /** Image connection for date pictures; empty = the user's default. */
@@ -506,6 +521,8 @@ export const DEFAULT_SETTINGS: Settings = {
   fx: "full",
   sfx: "games",
   sfxVolume: 0.4,
+  minigames: "ask",
+  minigameScope: "rulebook",
   dateImages: true,
   imageConnectionId: "",
 };
@@ -642,7 +659,7 @@ export type BackendToFrontend =
 export type FrontendToBackend =
   | { type: "hello"; chatId: string | null }
   | { type: "refresh"; chatId: string | null }
-  | { type: "act"; chatId: string; actionId: string; params?: Record<string, string> }
+  | { type: "act"; chatId: string; actionId: string; params?: Record<string, string>; game?: GameResult }
   /** A line typed on the stage: said on the date or in the dungeon (off the chat), or posted to the chat otherwise. */
   | { type: "say"; chatId: string; text: string }
   | { type: "undo"; chatId: string; messageId: string; swipe: number; events: number[] }

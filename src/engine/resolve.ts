@@ -1,5 +1,6 @@
 // Turn resolution: the only place outcomes are decided.
 
+import { clampNet, gambleHint, gambleOffer, gameBar, gameHint, GAMES, gameSummary, gambleRng, shiftBar, simulateGamble, tierFromScore, type GambleGame, type GameBar, type GameId, type GameResult } from "./games.js";
 import type { ExprEnv, Value } from "./expr.js";
 import { evalBool, evalNumber, evaluate, identifiers } from "./expr.js";
 import { rollDice, seededRng, type Rng } from "./dice.js";
@@ -32,6 +33,8 @@ export interface CheckResult {
   gear?: string[];
   /** A perk stepped in after a failure ("Silver Tongue rerolled a failure"). */
   perk?: string;
+  /** Played as a minigame instead of rolled: the score against the bar. */
+  game?: { id: GameId; score: number; bar: GameBar; summary: string; beats: string[] };
 }
 
 export interface TurnRecord {
@@ -51,6 +54,8 @@ export interface TurnRecord {
   contradiction?: number;
   /** Exploring found somewhere new: the backend writes the place and moves the player there. */
   discover?: { from: string };
+  /** A sitting at a gambling table: the stake and what came of it. */
+  gamble?: { game: GambleGame; stake: number; net: number; played: boolean };
   /** The player character's mind overruled the player this turn. */
   mind?: { id: string; cause: string; kind: "fail" | "alter" | "redirect"; meant: string; chance: number };
   at: number;
@@ -76,6 +81,8 @@ export interface Intent {
   via: "choice" | "adjudicator" | "command" | "confirmed";
   /** The label the player saw, for choices written on the spot (live choices). */
   label?: string;
+  /** Played out as a minigame: the score (a check) or the money (a gambling table). */
+  game?: GameResult;
 }
 
 /** A choice written for the moment: the label is the writer's, the tag decides what happens. */
@@ -446,6 +453,34 @@ function amountOf(w: Working, v: string | number, extra: Record<string, Value>, 
   const p = percentOf(v);
   const x = p !== null ? p * max : evalNumber(v, w.env(extra), 0);
   return Math.abs(x) >= 1 && p !== null ? Math.round(x) : x;
+}
+
+/**
+ * A sitting at a gambling table. Played in the overlay, the net it reports stands
+ * (clamped to what the table could pay or take); otherwise the sitting is simulated
+ * at the table's odds. The money moves, then `win:`/`lose:`/`broke:` effects.
+ */
+function gambleTurn(w: Working, a: ActionDef, intent: Intent, rec: TurnRecord, label: string, seed: string) {
+  const g = a.gamble!;
+  const r = w.r;
+  const offer = gambleOffer(r, w.s, a, seed);
+  if (!offer) { w.hints.push(`{{user}} can't play — there's nothing to stake.`); return; }
+  const asked = Number(intent.game?.stake ?? intent.params?.stake ?? g.stakes[0]);
+  const stake = Math.max(0, Math.min(offer.money.have, Number.isFinite(asked) && asked > 0 ? Math.round(asked) : g.stakes[0]));
+  if (stake <= 0) { w.hints.push(`{{user}} doesn't have the ${offer.money.currency}${g.stakes[0]} to sit down.`); return; }
+  const played = intent.game && intent.game.game === g.game && intent.game.net !== undefined ? intent.game : null;
+  const res = played
+    ? { net: clampNet(g.game, stake, played.net!, g.rounds), beats: played.beats, detail: played.detail }
+    : simulateGamble(g.game, stake, g.rounds, offer.edge, gambleRng(seed));
+  rec.gamble = { game: g.game, stake, net: res.net, played: !!played };
+  const name = GAMES[g.game].name.toLowerCase();
+  because(w, `"${label}": ${res.net >= 0 ? "won" : "lost"} ${offer.money.currency}${Math.abs(res.net)} at ${name}`, () => {
+    if (res.net) w.push({ t: "stat", id: offer.money.stat, d: res.net, src: "action" });
+    const after = res.net <= -stake && (w.s.stats[offer.money.stat] ?? 0) < (g.stakes[0] ?? 1) ? g.broke : res.net > 0 ? g.win : res.net < 0 ? g.lose : null;
+    if (after) effectToEvents(w, after, "action", {});
+  });
+  w.hints.push(gambleHint(name, { net: res.net, stake, beats: res.beats, detail: res.detail }, offer.money.currency));
+  questHooks(builderOf(w), { kind: "action", id: a.id, result: res.net > 0 ? "success" : res.net < 0 ? "fail" : "partial", good: res.net > 0 });
 }
 
 /** A perk that steps in when this check fails: a reroll or a softened result, if it has uses left today. */
@@ -1617,14 +1652,28 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
     if (mind?.kind === "fail") {
       const fail = a.outcomes.fail ?? a.outcomes.crit_fail;
       if (fail) because(w, `"${meant}" — ${mind.cause} stopped it`, () => effectToEvents(w, fail, "check", extra));
+    } else if (a.gamble) {
+      gambleTurn(w, a, intent!, rec, label, opts.seed);
     } else if (a.check) {
       const rng: Rng = seededRng(opts.seed);
       const { add, target } = checkNumbers(r, w.s, a, intent!.params, who);
       let roll = rollDice(a.check.dice, rng);
       let tier = tierFor(a.check, roll, add, target);
+      // Played as a minigame: the score decides, against a bar set by the same odds the dice would have used.
+      const played = intent!.game && intent!.game.score !== undefined && a.check.game !== false ? intent!.game : null;
+      let game: CheckResult["game"];
+      if (played) {
+        const o = odds(r, before, a, intent!.params, who);
+        const bar = shiftBar(gameBar(o?.success ?? 0.5, { partial: o?.partial, crits: a.check.crits }), Math.max(-0.12, Math.min(0.08, played.ease ?? 0)));
+        tier = tierFromScore(bar, played.score!);
+        game = { id: played.game, score: played.score!, bar, summary: gameSummary(played, bar), beats: played.beats };
+        // Another go from a perk was already spent in the game: it counts as today's reroll.
+        const re = played.perk && played.livesUsed ? perkRuleFor(r, w.s, a, "reroll") : null;
+        if (re && re.name === played.perk) because(w, `★ ${re.name}`, () => w.push({ t: "charge", key: `perk:${re.perk}:reroll`, day: dayOf(w.s), src: "action" }));
+      }
       // A perk may step in after a failure: roll again, or let it partly work.
       let perkNote: string | undefined;
-      if (tier === "fail" || tier === "crit_fail") {
+      if (!played && (tier === "fail" || tier === "crit_fail")) {
         const re = perkRuleFor(r, w.s, a, "reroll");
         if (re) {
           because(w, `★ ${re.name}`, () => w.push({ t: "charge", key: `perk:${re.perk}:reroll`, day: dayOf(w.s), src: "action" }));
@@ -1656,9 +1705,14 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
       const gear = gearFor(r, w.s, a).notes;
       if (gear.length) rec.check.gear = gear;
       if (perkNote) rec.check.perk = perkNote;
+      if (game) {
+        rec.check.game = game;
+        w.hints.push(gameHint(rec.check.label, played!, tier, game.bar));
+      }
       questHooks(builderOf(w), { kind: "action", id: a.id, result: tier, good: tier === "success" || tier === "crit_success" });
       const key = TIER_FALLBACK[tier].find((t) => a.outcomes[t]);
-      if (key) because(w, `"${label}": ${rec.check.label} rolled ${rec.check.total}${target !== null ? ` vs ${target}` : ""} → ${TIER_LABEL[tier]}`, () => effectToEvents(w, a.outcomes[key]!, "check", extra));
+      const how = game ? `played ${GAMES[game.id].name}, ${Math.round(game.score * 100)}% vs ${Math.round(game.bar.success * 100)}%` : `rolled ${rec.check.total}${target !== null ? ` vs ${target}` : ""}`;
+      if (key) because(w, `"${label}": ${rec.check.label} ${how} → ${TIER_LABEL[tier]}`, () => effectToEvents(w, a.outcomes[key]!, "check", extra));
       if (improvised) {
         // Typed freely: keep what the player wrote they do; the dice only decide how it turns out.
         w.hints.push(`{{user}} attempts what they wrote (${a.check.label}, ${DIFFICULTY_WORD[difficulty as keyof typeof DIFFICULTY_WORD]}). ${IMPROV_DIRECTION[tier]} Keep {{user}}'s own words and choices; the dice decide only how it turns out.`);
@@ -2100,7 +2154,7 @@ function perkStats(r: Ruleset, id: string): string[] {
   if (!p) return [];
   return [...new Set([
     ...Object.keys(p.bonus), ...p.edges.flatMap((e) => Object.keys(e.stats)),
-    ...p.rules.flatMap((x) => ("stat" in x ? [x.stat] : x.stats)),
+    ...p.rules.flatMap((x) => ("stat" in x ? [x.stat] : "stats" in x ? x.stats : [])),
     ...p.abilities.flatMap((a) => (r.abilities[a] ? checkStats(r, r.abilities[a].action) : [])),
   ])];
 }

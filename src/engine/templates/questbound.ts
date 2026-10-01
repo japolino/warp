@@ -211,6 +211,32 @@ conditions:
     say: "*I pay for a room and sleep.*"
     time: 480
     effects: { gold: -5, hp: +40, stamina: +100, mana: +30, remove_condition: [exhausted] }
+  caravan_cards:
+    label: Cards with the caravan guards
+    group: Social
+    at: inn
+    when: hour >= 18 or hour < 2
+    say: "*I sit in on the guards' card game by the fire.*"
+    time: 60
+    gamble: { game: blackjack, stakes: [2, 5, 15], rounds: 5, win: { xp: +3 }, broke: { flags: { owes_the_guards: true } } }
+  pay_guards:
+    label: Settle up with the caravan guards (10g)
+    group: Social
+    at: inn
+    when: "flag('owes_the_guards') and gold >= 10"
+    say: "*I count ten gold onto the guards' table and we're square.*"
+    effects: { gold: -10, flags: { owes_the_guards: false }, hint: "The guards stop watching {{user}} quite so closely." }
+  fair_race:
+    label: Three-legged race at the fair with {target}
+    group: Social
+    at: village_square
+    per_person: true
+    when: "weekday == 'Sat' and between(hour, 10, 16)"
+    say: "*I tie my ankle to {target}'s for the fair's three-legged race.*"
+    time: 30
+    check: { chance: "30 + agility * 4 + target.trust / 4", label: Agility, game: race }
+    success: { gold: +5, xp: +5, rel: { target: { trust: +5 } }, hint: "{{user}} and {target} win the fair's ribbon and a purse of coppers." }
+    fail: { stamina: -10, rel: { target: { trust: +1 } }, hint: "A tangle of legs in the mud, and the whole square laughing." }
   rumours:
     label: Listen for rumours
     group: Social
@@ -310,7 +336,7 @@ conditions:
     say: "*I ask around for work — hauling, mending, minding stalls.*"
     time: 120
     cost: { stamina: -15 }
-    check: { chance: "45 + might * 3", label: Might }
+    check: { chance: "45 + might * 3", label: Might, game: stack }
     success: { gold: +8, xp: +5 }
     fail: { gold: +3 }
   notice_board:
@@ -329,7 +355,7 @@ conditions:
     say: "*I search the roadside for herbs and game.*"
     time: 45
     cost: { stamina: -10 }
-    check: { chance: "35 + survival / 2 + wits * 2", label: Survival }
+    check: { chance: "35 + survival / 2 + wits * 2", label: Survival, game: mines }
     success: { give: rations, xp: +5 }
     fail: { start_encounter: wolves }
   hunt_wolves:
@@ -393,7 +419,7 @@ encounters:
         label: Loose an arrow
         when: has('longbow')
         cost: { stamina: -4 }
-        check: { chance: "30 + archery / 2 + agility * 3", label: Archery }
+        check: { chance: "30 + archery / 2 + agility * 3", label: Archery, game: aim }
         success: { foe: { hp: "-(5 + agility * 2)" } }
         fail: { hint: "The arrow thuds into a tree." }
       brandish:
@@ -405,7 +431,7 @@ encounters:
       climb:
         label: Climb a tree
         cost: { stamina: -12 }
-        check: { chance: "10 + survival / 2 + agility * 2", label: Survival }
+        check: { chance: "10 + survival / 2 + agility * 2", label: Survival, game: snake }
         success: { end: escaped }
         fail: { hp: -6, hint: "A wolf catches {{user}}'s boot and drags them back down." }
     foe_moves:
@@ -467,7 +493,7 @@ encounters:
       sneak:
         label: Slip past in the reeds
         cost: { stamina: -6 }
-        check: { chance: "25 + stealth / 2 + agility * 3", label: Stealth }
+        check: { chance: "25 + stealth / 2 + agility * 3", label: Stealth, game: snake }
         success: { end: slipped_by }
         fail: { foe: { resolve: +3 }, hint: "A sentry spots {{user}} in the reeds." }
     foe_moves:
@@ -516,7 +542,7 @@ encounters:
       flee:
         label: Run for the treeline
         cost: { stamina: -15 }
-        check: { chance: "35 + agility * 4", label: Agility }
+        check: { chance: "35 + agility * 4", label: Agility, game: snake }
         success: { end: fled }
         fail: { hp: -6 }
     foe_moves:
@@ -625,7 +651,7 @@ abilities:
     where: encounter
     known: "arcana >= 30"
     cost: { mana: -6 }
-    check: { chance: "35 + arcana / 2 + wits * 3", label: Arcana }
+    check: { chance: "35 + arcana / 2 + wits * 3", label: Arcana, game: keys }
     success: { harm: "8 + arcana / 5" }
     fail: { hint: "The fire gutters out in {{user}}'s hand." }
   mend:
@@ -674,7 +700,7 @@ abilities:
     where: encounter
     requires: { has: holy_symbol }
     cost: { mana: -10 }
-    check: { chance: "30 + spirit * 5 + lore / 4", label: Spirit }
+    check: { chance: "30 + spirit * 5 + lore / 4", label: Spirit, game: aim }
     success: { harm: "25%", pierce: all }
     fail: { hint: "The light flickers and dies." }
     per_encounter: 1
@@ -699,6 +725,12 @@ abilities:
 perks:
   points: perk_points
   pick: 3
+  keen_eye:
+    name: Keen Eye
+    desc: Slow breath, steady arm — the arrow goes where it's looked at.
+    tags: [archery]
+    bonus: { archery: 5 }
+    rule: { game: { window: 25, size: 15, games: [aim] } }
   blade_dancer:
     name: Blade Dancer
     desc: Fights like a duelist while there's breath in them — and learns the Flurry.

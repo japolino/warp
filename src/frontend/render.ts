@@ -1,5 +1,6 @@
 // Pure view → HTML renderers. Every interpolated string goes through `esc`.
 
+import { GAMES } from "../engine/game-ids.js";
 import type {
   ChoiceView, EncounterLogView, HudView, MapView, RoundCardView, RecordView, RulesetStatus, Settings, SuggestionView, TemplateInfo,
 } from "../shared/protocol.js";
@@ -364,7 +365,7 @@ export function renderChoices(choices: ChoiceView[], opts: { showOdds: boolean; 
           : "";
         const tip = [c.desc, c.why ? `Why now: ${c.why}` : null, c.checkLabel ? `Check: ${c.checkLabel} — the chance of this check, not of winning` : null, c.veiled ? "Veiled: happens off-screen" : null].filter(Boolean).join("\n");
         if (c.locked) return `<button class="warp-choice warp-choice-locked" disabled title="${esc(`${c.desc ?? c.label}\nLocked: ${c.locked}`)}"><span class="warp-choice-label">${esc(c.label)}<span class="warp-choice-why">🔒 ${esc(c.locked)}</span></span></button>`;
-        return `<button class="warp-choice${c.id.startsWith("item:") ? " warp-choice-item" : ""}" data-act="${esc(c.id)}" title="${esc(tip)}${c.ready ? "\nReady — this reply is already written" : ""}">${key}<span class="warp-choice-label">${esc(c.label)}${c.why ? `<span class="warp-choice-why">${esc(c.why)}</span>` : ""}</span>${c.ready ? `<span class="warp-choice-ready" aria-label="instant">⚡</span>` : ""}${c.veiled ? `<span class="warp-choice-veil" aria-label="veiled">◐</span>` : ""}${odds}</button>`;
+        return `<button class="warp-choice${c.id.startsWith("item:") ? " warp-choice-item" : ""}" data-act="${esc(c.id)}" title="${esc(tip)}${c.ready ? "\nReady — this reply is already written" : ""}">${key}<span class="warp-choice-label">${esc(c.label)}${c.why ? `<span class="warp-choice-why">${esc(c.why)}</span>` : ""}</span>${c.ready ? `<span class="warp-choice-ready" aria-label="instant">⚡</span>` : ""}${c.veiled ? `<span class="warp-choice-veil" aria-label="veiled">◐</span>` : ""}${c.game || c.gamble ? `<span class="warp-choice-game" title="${esc(c.gamble ? `A table: ${GAMES[c.gamble.game].name} for real money` : `Can be played as ${GAMES[c.game!.game].name} instead of rolled`)}">${GAMES[(c.game ?? c.gamble)!.game].icon}</span>` : ""}${odds}</button>`;
       }).join("")}</div>
     </div>`).join("");
   const status = opts.busy ? `<div class="warp-status-line"><span class="warp-spinner"></span>${esc(opts.busyLabel ?? "The story continues…")}</div>` : "";
@@ -462,13 +463,19 @@ export function renderChips(rec: RecordView, opts: { showDice: boolean }): strin
   const notAction = rec.redoFrom
     ? `<button class="warp-btn warp-btn-ghost" data-redo="${esc(rec.redoFrom)}" data-redo-action="" title="Redo this turn without a roll">Not an action?</button>`
     : "";
-  if (rec.check && opts.showDice) {
+  if (rec.check?.game && opts.showDice) {
+    // Played instead of rolled: the score against the bar.
+    const c = rec.check;
+    out.push(`<span class="warp-chip warp-tone-${TIER_TONE[c.tier]}" title="${esc(`Played instead of rolled: ${c.game!.summary}`)}">${esc(c.game!.summary.split(" ")[0])} ${esc(c.label)} · ${esc(c.tierLabel)} <span class="warp-dim">${Math.round(c.game!.score * 100)}% / ${Math.round(c.game!.needed * 100)}%</span></span>`);
+    if (read || notAction) out.push(`<span class="warp-chip">${read}${notAction}</span>`);
+  } else if (rec.check && opts.showDice) {
     const c = rec.check;
     out.push(`<button class="warp-chip warp-dice warp-tone-${TIER_TONE[c.tier]}" data-dice title="Show the roll">🎲 ${esc(c.label)} · ${esc(c.tierLabel)}</button>`);
     out.push(`<div class="warp-dice-detail">${c.faces.map((f) => `<span class="warp-die" title="d${f.sides}"${f.kept ? "" : " data-dropped"}>${f.value}</span>`).join("")}<span>${esc(c.summary)}</span>${read}${notAction}</div>`);
   } else if (rec.action && opts.showDice) {
     out.push(`<span class="warp-chip">▸ ${esc(rec.action)}</span>${notAction ? `<span class="warp-chip">${notAction}</span>` : ""}`);
   }
+  if (rec.gamble) out.push(`<span class="warp-chip warp-tone-${rec.gamble.net > 0 ? "good" : rec.gamble.net < 0 ? "bad" : "neutral"}">${esc(rec.gamble.text)}</span>`);
   for (const d of rec.decisions) {
     const odds = d.odds.map((o) => `${o.desc} ${Math.round(o.p * 100)}%`).join(" · ");
     out.push(`<span class="warp-chip warp-decision" title="${esc(`${d.ask}\n${odds}\n${d.source === "model" ? "Odds from the decision model; the engine rolled." : "Odds from the ruleset's weights; the engine rolled."}`)}">🎭 ${esc(d.picked)} <span class="warp-dim">${Math.round(d.p * 100)}%</span></span>`);
@@ -662,6 +669,23 @@ export function renderSettings(s: Settings, status: RulesetStatus | null, connec
         ${imageConnections.map((c) => `<option value="${esc(c.id)}"${c.id === s.imageConnectionId ? " selected" : ""}>${esc(c.name)}</option>`).join("")}
       </select>
       ${imageConnections.length ? "" : `<small class="warp-dim">No image connections found — add one in Lumiverse, or allow Warp's image permission.</small>`}
+    </label>
+  </div>
+  <div class="warp-card">
+    <h3>Minigames</h3>
+    <p class="warp-dim">Play a check instead of rolling it: Aim, Keys, Mines, Stack, Snake, a three-legged race, Pinball, Blackjack, Roulette or Slots. The dice's odds set the score to beat; your stats and perks make the game easier. Casino tables bet real in-game money.</p>
+    <label class="warp-slider">When a check can be played
+      <select class="warp-select" data-setting="minigames">
+        <option value="ask"${s.minigames === "ask" ? " selected" : ""}>Show the briefing — play it or roll the dice</option>
+        <option value="always"${s.minigames === "always" ? " selected" : ""}>Straight into the game</option>
+        <option value="off"${s.minigames === "off" ? " selected" : ""}>Off — always dice</option>
+      </select>
+    </label>
+    <label class="warp-slider">Which checks
+      <select class="warp-select" data-setting="minigameScope">
+        <option value="rulebook"${s.minigameScope === "rulebook" ? " selected" : ""}>Only the ones the rulebook gives a game</option>
+        <option value="all"${s.minigameScope === "all" ? " selected" : ""}>Every check (a game that fits the skill is picked)</option>
+      </select>
     </label>
   </div>
   <div class="warp-card">

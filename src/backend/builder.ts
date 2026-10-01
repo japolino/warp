@@ -166,6 +166,7 @@ const SYSTEMS: { id: string; label: string }[] = [
   { id: "schedules", label: "NPC schedules & places" },
   { id: "encounters", label: "Encounters / combat" },
   { id: "quests", label: "Quests (a notice board, favours people ask, bounties)" },
+  { id: "minigames", label: "Minigames & gambling (checks played as Aim, Keys, Mines, Stack, Snake, Pinball, a three-legged race or cards — game: on the check; a casino or card table with gamble:)" },
   { id: "dungeon", label: "Dungeon diving (roguelike floors, party battles)" },
   { id: "dating", label: "Dating (topics, hidden tastes, outings)" },
   { id: "crime", label: "Crime & consequences" },
@@ -480,9 +481,9 @@ export async function builderStart(chatId: string, opts: { connectionId: string;
       cast: Array.isArray(out.cast) ? out.cast.slice(0, 12).map((c) => ({ name: String((c as Record<string, unknown>)?.name ?? ""), relation: String((c as Record<string, unknown>)?.relation ?? "") })).filter((c) => c.name) : [],
     };
     s.base = opts.base || suggested;
-    // Quests give almost any game goals with stakes, so they're on unless the player turns them off.
+    // Quests give almost any game goals with stakes, and minigames make its big checks playable: on unless turned off.
     const picked = Array.isArray(out.systems) ? out.systems.map(String).filter((x) => SYSTEMS.some((y) => y.id === x)) : ["needs", "relationships", "money", "skills", "story"];
-    const defaults = [...new Set([...picked, "quests"])];
+    const defaults = [...new Set([...picked, "quests", "minigames"])];
     s.rounds = [{ questions: [...coreQuestions(defaults), ...normQuestions(out.followUps, "f1_")], answers: {} }];
     s.step = "questions";
   } catch (e) {

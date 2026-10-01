@@ -33,6 +33,8 @@ export async function patchSettings(patch: Partial<Settings>, userId?: string): 
   next.jevFormat = next.jevFormat === "openai" ? "openai" : "typesafe";
   // Only web addresses: the classifier gets the roleplay text, so nothing that isn't plainly a URL.
   next.jevUrl = /^https?:\/\/\S+$/i.test(String(next.jevUrl ?? "").trim()) ? String(next.jevUrl).trim() : DEFAULT_SETTINGS.jevUrl;
+  next.minigames = next.minigames === "off" || next.minigames === "always" ? next.minigames : "ask";
+  next.minigameScope = next.minigameScope === "all" ? "all" : "rulebook";
   next.storyQuests = next.storyQuests !== false && (next.storyQuests as unknown) !== "false";
   cache.set(key(userId), next);
   await host().userStorage.setJson("settings.json", next, { indent: 2, userId });
