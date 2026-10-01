@@ -400,6 +400,22 @@ export function renderSuggestion(s: SuggestionView): string {
 
 // ───────────────────────── ruleset status & setup ─────────────────────────
 
+/** The depth audit, for the Ruleset tab: what doesn't connect yet, and what a fix looks like. */
+export function renderDepthCard(s: RulesetStatus): string {
+  const d = s.depth;
+  if (!d || s.state !== "ok") return "";
+  const gaps = d.gaps.filter((g) => g.severity === "gap"), thin = d.gaps.filter((g) => g.severity === "thin");
+  const row = (g: NonNullable<RulesetStatus["depth"]>["gaps"][number]) => `<details class="warp-depth-row warp-depth-${g.severity}"><summary>${esc(g.text)}</summary><p class="warp-dim">${esc(g.fix)}</p></details>`;
+  return `<div class="warp-card warp-depth">
+    <h3>Depth <span class="warp-dim">${d.score} / 100</span></h3>
+    <p class="warp-dim">What in these rules doesn't connect to anything yet — items that do nothing, stats nothing reads, encounters with one way through.${d.gaps.length ? "" : " Nothing: every piece is wired in."}</p>
+    ${d.drafted.length ? `<p class="warp-depth-drafted">✎ Warp drafted what these items do, from their descriptions: <b>${esc(d.drafted.join(", "))}</b>. They're in the <i>warp-ruleset · item uses</i> entry — edit or delete it freely.</p>` : ""}
+    ${gaps.length ? `<div class="warp-choice-group-label">Unfinished · ${gaps.length}</div>${gaps.map(row).join("")}` : ""}
+    ${thin.length ? `<div class="warp-choice-group-label">Could do more · ${thin.length}</div>${thin.slice(0, 12).map(row).join("")}${thin.length > 12 ? `<p class="warp-dim">…and ${thin.length - 12} more.</p>` : ""}` : ""}
+    ${d.gaps.length ? `<div class="warp-row"><button class="warp-btn warp-btn-primary" data-b="open-deepen">Deepen this ruleset with the builder</button>${gaps.some((g) => g.id.startsWith("item-dead:")) ? `<button class="warp-btn" data-draft-items>Draft item uses</button>` : ""}</div>` : ""}
+  </div>`;
+}
+
 export function renderRulesetCard(s: RulesetStatus, hasChat: boolean): string {
   if (!hasChat) {
     return `<div class="warp-card"><h3>Open a chat</h3><p>Warp runs inside a chat whose character has a <b>warp-ruleset</b> lorebook.</p></div>`;
@@ -506,14 +522,15 @@ export function renderSettings(s: Settings, status: RulesetStatus | null, connec
     </select>
   </div>
   <div class="warp-card">
-    <h3>Dates & dungeons</h3>
-    <p>They play full screen as short snippets, off the chat; one line goes into the chat when they end.</p>
+    <h3>Dates, dungeons & encounters</h3>
+    <p>Dates and dungeons play full screen as short snippets, off the chat. Encounters are told round by round in one message that grows, then summed up. One line goes into the story when each ends.</p>
     <label class="warp-slider">Lines written by
       <select class="warp-select" data-setting="sceneLines">
         <option value="model"${s.sceneLines === "model" ? " selected" : ""}>The helper model (scripted if it's slow)</option>
         <option value="scripted"${s.sceneLines === "scripted" ? " selected" : ""}>Scripted lines only — instant, free</option>
       </select>
     </label>
+    ${toggle("draftItemUses", "Give useless items a purpose", "Items the rules never use get one drafted from their description (a use or a gear bonus), saved as an editable \"item uses\" lorebook entry.", s.draftItemUses)}
     ${toggle("dateImages", "A picture for each date", "The place, with them in the middle — made once per person and place, then reused.", s.dateImages)}
     <label class="warp-slider">Image connection
       <select class="warp-select" data-setting="imageConnectionId">

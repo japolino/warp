@@ -32,6 +32,7 @@ var init_protocol = __esm(() => {
     drafts: 1,
     prewrite: 0,
     sceneLines: "model",
+    draftItemUses: true,
     dateImages: true,
     imageConnectionId: ""
   };
@@ -316,6 +317,20 @@ var STYLES = `
 .warp-overlay[data-edge=top] .warp-section,
 .warp-overlay[data-edge=bottom] .warp-section { grid-column: 1 / -1; }.warp-overlay-collapsed .warp-overlay-head { cursor: pointer; }
 .warp-overlay-collapsed .warp-overlay-body { display: none; }
+
+/* ───────── the designer ───────── */
+.warp-designer-log { margin-top: 8px; font-size: 12px; }
+.warp-designer-log > summary { cursor: pointer; color: var(--warp-dim); }
+.warp-designer-log ol { margin: 6px 0 0; padding-left: 20px; max-height: 220px; overflow: auto; display: flex; flex-direction: column; gap: 2px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+.warp-plan-text { white-space: pre-wrap; font: inherit; font-size: 12.5px; line-height: 1.5; margin: 8px 0 0; }
+.warp-depth-line { font-variant-numeric: tabular-nums; }
+
+/* ───────── depth audit ───────── */
+.warp-depth-row > summary { cursor: pointer; padding: 3px 0; }
+.warp-depth-row > p { margin: 2px 0 6px 14px; font-size: 12px; }
+.warp-depth-gap > summary::marker { color: var(--warp-bad); }
+.warp-depth-thin > summary::marker { color: var(--warp-warn); }
+.warp-depth-drafted { font-size: 12px; border-left: 3px solid var(--warp-accent); padding-left: 8px; }
 
 /* ───────── encounters: goal, danger, rounds ───────── */
 .warp-enc-guide { border: 1px solid color-mix(in srgb, var(--warp-bad) 55%, var(--warp-border)); border-radius: var(--warp-radius); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; background: color-mix(in srgb, var(--warp-bad) 6%, transparent); }
@@ -862,6 +877,21 @@ function renderSuggestion(s) {
     <button class="warp-btn warp-btn-primary warp-mini" data-redo="${esc(s.messageId)}" data-redo-action="${esc(s.actionId)}" data-redo-params="${esc(JSON.stringify(s.params ?? {}))}">Roll it</button>
     <button class="warp-chip-undo" data-dismiss-suggest="${esc(s.messageId)}" title="Dismiss" aria-label="Dismiss">×</button></span>`;
 }
+function renderDepthCard(s) {
+  const d = s.depth;
+  if (!d || s.state !== "ok")
+    return "";
+  const gaps = d.gaps.filter((g) => g.severity === "gap"), thin = d.gaps.filter((g) => g.severity === "thin");
+  const row = (g) => `<details class="warp-depth-row warp-depth-${g.severity}"><summary>${esc(g.text)}</summary><p class="warp-dim">${esc(g.fix)}</p></details>`;
+  return `<div class="warp-card warp-depth">
+    <h3>Depth <span class="warp-dim">${d.score} / 100</span></h3>
+    <p class="warp-dim">What in these rules doesn't connect to anything yet — items that do nothing, stats nothing reads, encounters with one way through.${d.gaps.length ? "" : " Nothing: every piece is wired in."}</p>
+    ${d.drafted.length ? `<p class="warp-depth-drafted">✎ Warp drafted what these items do, from their descriptions: <b>${esc(d.drafted.join(", "))}</b>. They're in the <i>warp-ruleset · item uses</i> entry — edit or delete it freely.</p>` : ""}
+    ${gaps.length ? `<div class="warp-choice-group-label">Unfinished · ${gaps.length}</div>${gaps.map(row).join("")}` : ""}
+    ${thin.length ? `<div class="warp-choice-group-label">Could do more · ${thin.length}</div>${thin.slice(0, 12).map(row).join("")}${thin.length > 12 ? `<p class="warp-dim">…and ${thin.length - 12} more.</p>` : ""}` : ""}
+    ${d.gaps.length ? `<div class="warp-row"><button class="warp-btn warp-btn-primary" data-b="open-deepen">Deepen this ruleset with the builder</button>${gaps.some((g) => g.id.startsWith("item-dead:")) ? `<button class="warp-btn" data-draft-items>Draft item uses</button>` : ""}</div>` : ""}
+  </div>`;
+}
 function renderRulesetCard(s, hasChat) {
   if (!hasChat) {
     return `<div class="warp-card"><h3>Open a chat</h3><p>Warp runs inside a chat whose character has a <b>warp-ruleset</b> lorebook.</p></div>`;
@@ -958,14 +988,15 @@ function renderSettings(s, status, connections, jevKeySet = false, imageConnecti
     </select>
   </div>
   <div class="warp-card">
-    <h3>Dates & dungeons</h3>
-    <p>They play full screen as short snippets, off the chat; one line goes into the chat when they end.</p>
+    <h3>Dates, dungeons & encounters</h3>
+    <p>Dates and dungeons play full screen as short snippets, off the chat. Encounters are told round by round in one message that grows, then summed up. One line goes into the story when each ends.</p>
     <label class="warp-slider">Lines written by
       <select class="warp-select" data-setting="sceneLines">
         <option value="model"${s.sceneLines === "model" ? " selected" : ""}>The helper model (scripted if it's slow)</option>
         <option value="scripted"${s.sceneLines === "scripted" ? " selected" : ""}>Scripted lines only — instant, free</option>
       </select>
     </label>
+    ${toggle("draftItemUses", "Give useless items a purpose", 'Items the rules never use get one drafted from their description (a use or a gear bonus), saved as an editable "item uses" lorebook entry.', s.draftItemUses)}
     ${toggle("dateImages", "A picture for each date", "The place, with them in the middle — made once per person and place, then reused.", s.dateImages)}
     <label class="warp-slider">Image connection
       <select class="warp-select" data-setting="imageConnectionId">
@@ -985,7 +1016,7 @@ function renderSettings(s, status, connections, jevKeySet = false, imageConnecti
 
 // src/frontend/builder-ui.ts
 function emptyDraft() {
-  return { answers: {}, additions: [], notes: {}, refine: "", base: "", creative: false, connectionId: "" };
+  return { answers: {}, additions: [], notes: {}, refine: "", base: "", creative: false, connectionId: "", effort: "thorough" };
 }
 var KINDS = ["skill", "meter", "item", "place", "person", "action", "rule", "other"];
 var REFINE_CHIPS = [
@@ -1004,13 +1035,13 @@ function renderBuilderCta(hasRuleset, hasChat) {
     <p>Warp reads the card, asks you a few questions, and drafts a ruleset that fits — checked, balance-reviewed and previewed before anything is saved.</p>
     <div class="warp-row">
       <button class="warp-btn warp-btn-primary" data-b="open-build">${hasRuleset ? "Rebuild with AI" : "Build with AI"}</button>
-      ${hasRuleset ? `<button class="warp-btn" data-b="open-refine">Refine with AI</button>` : ""}
+      ${hasRuleset ? `<button class="warp-btn" data-b="open-refine">Refine with AI</button><button class="warp-btn" data-b="open-deepen" title="The designer audits these rules and wires in what doesn't connect yet — you review before anything is saved">Deepen with AI</button>` : ""}
     </div>
   </div>`;
 }
 function steps(s) {
-  const list = s.mode === "refine" ? ["Describe", "Review", "Install"] : ["Read", "Ask", "Review", "Install"];
-  const at = s.mode === "refine" ? s.step === "done" ? 2 : 1 : s.step === "start" ? 0 : s.step === "questions" ? 1 : s.step === "review" ? 2 : 3;
+  const list = s.mode === "refine" ? ["Describe", "Review", "Install"] : s.mode === "deepen" ? ["Audit", "Review", "Install"] : ["Read", "Ask", "Plan & build", "Review", "Install"];
+  const at = s.mode !== "build" ? s.step === "done" ? 2 : 1 : s.step === "start" ? 0 : s.step === "questions" ? s.busy ? 2 : 1 : s.step === "review" ? 3 : 4;
   return `<ol class="warp-steps">${list.map((l, i) => `<li class="${i < at ? "done" : i === at ? "now" : ""}">${esc(l)}</li>`).join("")}</ol>`;
 }
 function question(q, a) {
@@ -1048,10 +1079,12 @@ function renderBuilder(s, d, templates, connections, hasRuleset) {
   const busy = !!s.busy;
   const dis = busy ? " disabled" : "";
   const head = `<div class="warp-builder-head">
-      <div><div class="warp-eyebrow"><span>✨ ${s.mode === "refine" ? "Refine" : "Build"} with AI</span></div><b>${esc(s.characterName)}</b></div>
+      <div><div class="warp-eyebrow"><span>✨ ${s.mode === "refine" ? "Refine" : s.mode === "deepen" ? "Deepen" : "Build"} with AI</span></div><b>${esc(s.characterName)}</b></div>
       <button class="warp-btn warp-btn-ghost" data-b="close" title="Close the builder (discards the draft)" aria-label="Close">×</button>
     </div>${steps(s)}`;
-  const status = busy ? `<div class="warp-card warp-busy-card"><div class="warp-status-line"><span class="warp-spinner"></span>${esc(s.busy)}</div><p>This can take a minute — you can keep chatting; the drawer will update when it's done.</p></div>` : s.error ? `<div class="warp-card warp-error-card"><p class="warp-tone-bad">${esc(s.error)}</p></div>` : "";
+  const log = s.log?.length ? `<details class="warp-designer-log"${busy ? " open" : ""}><summary>What the designer did · ${s.log.length}</summary><ol>${s.log.slice(-40).map((l) => `<li>${esc(l)}</li>`).join("")}</ol></details>` : "";
+  const status = busy ? `<div class="warp-card warp-busy-card"><div class="warp-status-line"><span class="warp-spinner"></span>${esc(s.busy)}</div><p>This can take a few minutes with a thorough pass — you can keep chatting; the drawer updates as it works.</p>${log}</div>` : s.error ? `<div class="warp-card warp-error-card"><p class="warp-tone-bad">${esc(s.error)}</p></div>` : "";
+  const plan = s.plan ? `<details class="warp-card warp-plan"><summary><b>The design plan</b> <span class="warp-dim">— written before any rules, and held to</span></summary><pre class="warp-plan-text">${esc(s.plan)}</pre></details>` : "";
   let body = "";
   if (s.step === "start") {
     body = `<div class="warp-card">
@@ -1066,12 +1099,16 @@ function renderBuilder(s, d, templates, connections, hasRuleset) {
         <button class="warp-seg-btn" data-bset="creative" data-v="0" aria-pressed="${!d.creative}">Stay close to the template</button>
         <button class="warp-seg-btn" data-bset="creative" data-v="1" aria-pressed="${d.creative}">Get creative</button>
       </div>
+      <div class="warp-seg" role="radiogroup" aria-label="Effort">
+        <button class="warp-seg-btn" data-bset="effort" data-v="thorough" aria-pressed="${d.effort === "thorough"}" title="Plans the game, then works with tools — checker, depth audit, encounter simulations — until every piece connects">Thorough</button>
+        <button class="warp-seg-btn" data-bset="effort" data-v="quick" aria-pressed="${d.effort === "quick"}" title="Plans, drafts, repairs and takes one short pass at the audit">Quick</button>
+      </div>
       <label class="warp-field"><span>Model</span>
         <select class="warp-select" data-bset="connectionId">
           <option value="">Same as the chat</option>
           ${connections.map((c) => `<option value="${esc(c.id)}"${d.connectionId === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("")}
         </select></label>
-      <p>A strong model gives better rulesets. Nothing is saved until you install it at the end.</p>
+      <p>A strong model gives better rulesets — Thorough lets it plan the game, then test and fix its own work (simulating encounters, closing every gap the depth audit finds) instead of stopping once the rules parse. Nothing is saved until you install it at the end.</p>
       <div class="warp-row"><button class="warp-btn warp-btn-primary" data-b="start"${dis}>Read the card →</button></div>
     </div>`;
   } else if (s.step === "questions") {
@@ -1097,8 +1134,10 @@ function renderBuilder(s, d, templates, connections, hasRuleset) {
   } else if (s.step === "review") {
     const p = s.preview;
     const errors = s.parts.filter((x) => x.status === "error").length;
+    const depth = s.depth ? `<p class="warp-depth-line">Depth <b>${s.depth.before}</b> → <b class="warp-tone-${s.depth.after >= s.depth.before ? "good" : "warn"}">${s.depth.after}</b> / 100${s.depth.open ? ` · <span class="warp-tone-warn">${s.depth.open} gap${s.depth.open === 1 ? "" : "s"} still open</span> <button class="warp-btn warp-mini" data-b="deepen"${dis}>Keep deepening</button>` : ` · <span class="warp-tone-good">every piece connects</span>`}${Object.keys(s.waived ?? {}).length ? ` · left as is on purpose: ${esc(Object.entries(s.waived ?? {}).map(([id, why]) => `${id} (${why})`).join("; "))}` : ""}</p>` : "";
     const summary = `<div class="warp-card">
-        <h3>${s.mode === "refine" && s.changeSummary ? "What changed" : "The draft"}</h3>
+        <h3>${s.mode !== "build" && s.changeSummary ? "What changed" : "The draft"}</h3>
+        ${depth}
         ${s.changeSummary ? `<p>${esc(s.changeSummary)}</p>` : ""}
         <p>${esc(p?.summary ?? "The draft doesn't run yet — see the sections marked in red.")}</p>
         ${p?.warnings.length ? `<div class="warp-issues">${p.warnings.map((w) => `<div class="warp-warning-row"><span class="warp-tone-warn">!</span><span>${esc(w.text)}</span><button class="warp-btn warp-mini" data-b="fix" data-w="${esc(w.id)}"${dis}>Fix</button></div>`).join("")}</div>` : p ? `<p class="warp-tone-good">No balance problems found.</p>` : ""}
@@ -1126,10 +1165,11 @@ function renderBuilder(s, d, templates, connections, hasRuleset) {
         <textarea class="warp-input" rows="2" data-brefine placeholder="e.g. Add a cooking skill Aina is bad at, and a kitchen at home">${esc(d.refine)}</textarea>
         <div class="warp-row"><button class="warp-btn" data-b="refine"${dis}>Apply change</button></div>
       </div>`;
-    body = `${summary}${preview}${parts}${refine}
+    body = `${summary}${plan}${log}${preview}${parts}${refine}
       <div class="warp-row warp-builder-foot">
         ${s.mode === "build" ? `<button class="warp-btn warp-btn-ghost" data-b="back"${dis}>← Back to questions</button>` : ""}
-        <button class="warp-btn warp-btn-primary" data-b="install" data-replacing="${hasRuleset ? 1 : 0}"${errors || busy ? " disabled" : ""} title="${errors ? "Fix or redo the sections marked in red first" : ""}">${s.mode === "refine" ? "Save changes" : "Install to lorebook"}</button>
+        ${!s.depth ? `<button class="warp-btn" data-b="deepen"${dis} title="Audit these rules and wire in what doesn't connect yet">Deepen</button>` : ""}
+        <button class="warp-btn warp-btn-primary" data-b="install" data-replacing="${hasRuleset ? 1 : 0}"${errors || busy ? " disabled" : ""} title="${errors ? "Fix or redo the sections marked in red first" : ""}">${s.mode !== "build" ? "Save changes" : "Install to lorebook"}</button>
       </div>`;
   } else {
     body = `<div class="warp-card">
@@ -3288,7 +3328,7 @@ function setup(ctx) {
     } else if (drawerView === "rules" && builder) {
       body = renderBuilder(builder, bDraft, templates, connections, status.state !== "none");
     } else if (drawerView === "rules") {
-      body = renderBuilderCta(status.state !== "none", hasChat) + renderRulesetCard(status, hasChat) + `<div class="warp-card"><h3>Writing rules</h3><p>Rules live in entries titled <b>warp-ruleset · …</b> (or any lorebook named <b>warp-ruleset</b>). Each entry is YAML; entries merge together. Warp keeps them out of the prompt automatically.</p></div>`;
+      body = renderBuilderCta(status.state !== "none", hasChat) + renderRulesetCard(status, hasChat) + renderDepthCard(status) + `<div class="warp-card"><h3>Writing rules</h3><p>Rules live in entries titled <b>warp-ruleset · …</b> (or any lorebook named <b>warp-ruleset</b>). Each entry is YAML; entries merge together. Warp keeps them out of the prompt automatically.</p></div>`;
     } else {
       body = renderSettings(settings, state?.status ?? null, connections, jevKeySet, imageConnections);
     }
@@ -3695,6 +3735,12 @@ function setup(ctx) {
       renderDrawer();
       return true;
     }
+    const eff = t.closest('[data-bset="effort"]');
+    if (eff) {
+      bDraft.effort = eff.dataset.v === "quick" ? "quick" : "thorough";
+      renderDrawer();
+      return true;
+    }
     const b = t.closest("[data-b]");
     if (!b)
       return false;
@@ -3710,8 +3756,16 @@ function setup(ctx) {
         drawerView = "rules";
         send({ type: "builder_open", chatId: cid, mode: "refine" });
         break;
+      case "open-deepen":
+        drawerView = "rules";
+        tab.activate();
+        send({ type: "builder_open", chatId: cid, mode: "deepen" });
+        break;
+      case "deepen":
+        send({ type: "builder_deepen", chatId: cid, connectionId: bDraft.connectionId, effort: bDraft.effort });
+        break;
       case "start":
-        send({ type: "builder_start", chatId: cid, connectionId: bDraft.connectionId, creative: bDraft.creative, base: bDraft.base || undefined });
+        send({ type: "builder_start", chatId: cid, connectionId: bDraft.connectionId, creative: bDraft.creative, base: bDraft.base || undefined, effort: bDraft.effort });
         break;
       case "more":
       case "build":
@@ -3860,6 +3914,12 @@ function setup(ctx) {
     }
     if (t.closest("[data-install]")) {
       confirmReplace();
+      return;
+    }
+    if (t.closest("[data-draft-items]")) {
+      const cid = chatId();
+      if (cid)
+        send({ type: "draft_item_uses", chatId: cid });
       return;
     }
     if (t.closest("[data-reload]")) {
@@ -4349,7 +4409,7 @@ function setup(ctx) {
         const prev = builder;
         builder = m.session;
         if (!builder || !prev || prev.characterId !== builder.characterId || prev.mode !== builder.mode || prev.step !== builder.step && builder.step === "start") {
-          const keep = { creative: bDraft.creative, connectionId: bDraft.connectionId };
+          const keep = { creative: bDraft.creative, connectionId: bDraft.connectionId, effort: bDraft.effort };
           bDraft = { ...emptyDraft(), ...keep, ...builder ? { additions: builder.additions.map((a) => ({ ...a })) } : {} };
         }
         if (builder && prev?.step !== builder.step)

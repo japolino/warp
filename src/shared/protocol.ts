@@ -373,6 +373,8 @@ export interface RulesetStatus {
   cardKind: "character" | "scenario";
   /** Content tags used by this ruleset's actions, for the Lines & Veils picker. */
   tags: string[];
+  /** The depth audit: what in the ruleset doesn't connect to anything yet. */
+  depth?: { score: number; gaps: { id: string; severity: "gap" | "thin"; part: string; text: string; fix: string }[]; drafted: string[] };
 }
 
 export interface Settings {
@@ -407,6 +409,8 @@ export interface Settings {
   prewrite: number;
   /** Who writes the stage's snippets (dates, dungeon moments): the helper model, or scripted lines. */
   sceneLines: "model" | "scripted";
+  /** Items that do nothing get a use drafted from their description (saved as an editable lorebook entry). */
+  draftItemUses: boolean;
   /** Generate a picture for each date (the place, with them in the middle). */
   dateImages: boolean;
   /** Image connection for date pictures; empty = the user's default. */
@@ -432,6 +436,7 @@ export const DEFAULT_SETTINGS: Settings = {
   drafts: 1,
   prewrite: 0,
   sceneLines: "model",
+  draftItemUses: true,
   dateImages: true,
   imageConnectionId: "",
 };
@@ -470,8 +475,19 @@ export interface BuilderPart {
 export interface BuilderSession {
   characterId: string;
   characterName: string;
-  mode: "build" | "refine";
+  /** build = from the card; refine = change by request; deepen = close the depth audit's gaps in the installed rules. */
+  mode: "build" | "refine" | "deepen";
   step: "start" | "questions" | "review" | "done";
+  /** quick: plan, draft, repair, one pass on the audit. thorough: the designer works with tools until the audit is clean. */
+  effort?: "quick" | "thorough";
+  /** The design plan written before any YAML: the loop, the pressures, how the systems connect. */
+  plan?: string | null;
+  /** What the designer did, step by step (shown live). */
+  log?: string[];
+  /** Audit gaps left as they are on purpose, with the reason. */
+  waived?: Record<string, string>;
+  /** Depth before and after this session's work. */
+  depth?: { before: number; after: number; open: number } | null;
   connectionId: string;
   creative: boolean;
   base: string;
@@ -569,8 +585,12 @@ export type FrontendToBackend =
   | { type: "buy_perk"; chatId: string; perk: string }
   | { type: "adjust_rel"; chatId: string; who: string; stat: string; value: number }
   | { type: "forget"; chatId: string; who: string }
-  | { type: "builder_open"; chatId: string; mode: "build" | "refine" }
-  | { type: "builder_start"; chatId: string; connectionId: string; creative: boolean; base?: string }
+  | { type: "builder_open"; chatId: string; mode: "build" | "refine" | "deepen" }
+  | { type: "builder_start"; chatId: string; connectionId: string; creative: boolean; base?: string; effort?: "quick" | "thorough" }
+  /** Run the designer over the current draft (or the installed rules) until the audit is clean. */
+  | { type: "builder_deepen"; chatId: string; connectionId?: string; effort?: "quick" | "thorough" }
+  /** Draft uses for items that do nothing, from their descriptions, into a "warp-ruleset · item uses" entry. */
+  | { type: "draft_item_uses"; chatId: string }
   | { type: "builder_answer"; chatId: string; answers: Record<string, BuilderAnswer>; additions: BuilderAddition[]; more: boolean }
   | { type: "builder_redo"; chatId: string; part: string; note?: string }
   | { type: "builder_fix"; chatId: string; warning: string }

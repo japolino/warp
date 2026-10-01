@@ -4,7 +4,7 @@ import { buildChoices, buildHud, buildMap, buildRecordView } from "../engine/vie
 import { buildDungeonEntries, buildDungeonView } from "../engine/dungeon/view.js";
 import { buildDateView } from "../engine/date/view.js";
 import { sceneViewFor } from "./scene.js";
-import type { ChoiceView, EncounterLogView, RecordView, SuggestionView } from "../shared/protocol.js";
+import type { ChoiceView, EncounterLogView, RecordView, RulesetStatus, SuggestionView } from "../shared/protocol.js";
 import type { Ruleset } from "../engine/ruleset.js";
 import { momentKey, readyChoices } from "./drafts.js";
 import { getMessages, foldPath, liveChoicesOf, warpMeta, type Msg } from "./ledger.js";
@@ -41,6 +41,7 @@ export async function pushState(chatId: string | null, userId?: string, force = 
     }
     const r = loaded.ruleset;
     const settings = await getSettings(userId);
+    if (settings.enabled && settings.draftItemUses) maybeDraftItems(chatId, loaded.characterId, r, status.depth, userId);
     const msgs = await getMessages(chatId);
     const { state, steps } = foldPath(r, msgs);
     lastStates.set(chatId, state);
@@ -105,6 +106,22 @@ function encounterLogsOf(r: Ruleset, msgs: Msg[]): EncounterLogView[] {
     });
   }
   return out;
+}
+
+/** Rulesets whose dead items were already sent for drafting (by character and which items). */
+const drafted = new Set<string>();
+
+/** Items that do nothing get a use drafted once, in the background; the next push shows it. */
+function maybeDraftItems(chatId: string, characterId: string | null, r: Ruleset, depth: RulesetStatus["depth"], userId?: string) {
+  const dead = (depth?.gaps ?? []).filter((g) => g.id.startsWith("item-dead:")).map((g) => g.id).sort();
+  if (!characterId || !dead.length) return;
+  const key = `${characterId}:${dead.join(",")}`;
+  if (drafted.has(key)) return;
+  drafted.add(key);
+  void import("./builder.js").then(({ draftItemUses }) => draftItemUses(chatId, userId))
+    .then((names) => { if (names.length) { send({ type: "toast", level: "info", message: `Drafted what ${names.join(", ")} do — check the Ruleset tab.` }, userId); void pushState(chatId, userId, true); } })
+    .catch((e) => logError("draft item uses", e));
+  void r;
 }
 
 function markReady(choices: ChoiceView[], ready: Set<string>): ChoiceView[] {

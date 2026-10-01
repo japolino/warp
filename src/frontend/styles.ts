@@ -277,6 +277,20 @@ export const STYLES = `
 .warp-overlay[data-edge=bottom] .warp-section { grid-column: 1 / -1; }.warp-overlay-collapsed .warp-overlay-head { cursor: pointer; }
 .warp-overlay-collapsed .warp-overlay-body { display: none; }
 
+/* ───────── the designer ───────── */
+.warp-designer-log { margin-top: 8px; font-size: 12px; }
+.warp-designer-log > summary { cursor: pointer; color: var(--warp-dim); }
+.warp-designer-log ol { margin: 6px 0 0; padding-left: 20px; max-height: 220px; overflow: auto; display: flex; flex-direction: column; gap: 2px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+.warp-plan-text { white-space: pre-wrap; font: inherit; font-size: 12.5px; line-height: 1.5; margin: 8px 0 0; }
+.warp-depth-line { font-variant-numeric: tabular-nums; }
+
+/* ───────── depth audit ───────── */
+.warp-depth-row > summary { cursor: pointer; padding: 3px 0; }
+.warp-depth-row > p { margin: 2px 0 6px 14px; font-size: 12px; }
+.warp-depth-gap > summary::marker { color: var(--warp-bad); }
+.warp-depth-thin > summary::marker { color: var(--warp-warn); }
+.warp-depth-drafted { font-size: 12px; border-left: 3px solid var(--warp-accent); padding-left: 8px; }
+
 /* ───────── encounters: goal, danger, rounds ───────── */
 .warp-enc-guide { border: 1px solid color-mix(in srgb, var(--warp-bad) 55%, var(--warp-border)); border-radius: var(--warp-radius); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; background: color-mix(in srgb, var(--warp-bad) 6%, transparent); }
 .warp-enc-head { display: flex; justify-content: space-between; gap: 8px; font-weight: 700; }

@@ -6,6 +6,7 @@ import { isRulesetBookName, isRulesetEntryTitle, loadRuleset, type RulesetPart }
 import { lintRuleset } from "../engine/lint.js";
 import type { Issue, Ruleset } from "../engine/ruleset.js";
 import { getTemplate, looksLikeScenario, withCharacter } from "../engine/templates/index.js";
+import { auditRuleset } from "../engine/audit.js";
 import type { RulesetStatus } from "../shared/protocol.js";
 import { host, logError } from "./host.js";
 
@@ -143,7 +144,19 @@ export function statusOf(l: Loaded | null): RulesetStatus {
     characterName: l.characterName,
     cardKind: l.cardKind,
     tags: [...tags].sort(),
+    ...(l.ruleset ? { depth: depthOf(l.ruleset) } : {}),
   };
+}
+
+const depths = new WeakMap<Ruleset, NonNullable<RulesetStatus["depth"]>>();
+/** The audit, worked out once per loaded ruleset. */
+function depthOf(r: Ruleset): NonNullable<RulesetStatus["depth"]> {
+  const hit = depths.get(r);
+  if (hit) return hit;
+  const a = auditRuleset(r);
+  const d = { score: a.depth, gaps: a.gaps, drafted: Object.values(r.items).filter((i) => i.drafted).map((i) => i.name) };
+  depths.set(r, d);
+  return d;
 }
 
 /** Create a "warp-ruleset" lorebook from a template and attach it to the chat's character. */

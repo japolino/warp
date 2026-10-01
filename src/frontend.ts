@@ -11,7 +11,7 @@ import { connectCue } from "./frontend/cue-bridge.js";
 import { renderDate } from "./frontend/date-ui.js";
 import { formatStory, renderStage, stageModeOf, type StageMode } from "./frontend/stage.js";
 import { STAGE_STYLES } from "./frontend/stage-styles.js";
-import { esc, hudParts, renderChips, renderEncounterLog, renderChoices, renderHud, renderJournal, renderPart, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
+import { esc, hudParts, renderChips, renderDepthCard, renderEncounterLog, renderChoices, renderHud, renderJournal, renderPart, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
 import { createPanels } from "./frontend/panel-windows.js";
 import { restoreMaps, wireMaps } from "./frontend/map-view.js";
 
@@ -397,7 +397,7 @@ export function setup(ctx: SpindleFrontendContext) {
     } else if (drawerView === "rules" && builder) {
       body = renderBuilder(builder, bDraft, templates, connections, status.state !== "none");
     } else if (drawerView === "rules") {
-      body = renderBuilderCta(status.state !== "none", hasChat) + renderRulesetCard(status, hasChat) + `<div class="warp-card"><h3>Writing rules</h3><p>Rules live in entries titled <b>warp-ruleset · …</b> (or any lorebook named <b>warp-ruleset</b>). Each entry is YAML; entries merge together. Warp keeps them out of the prompt automatically.</p></div>`;
+      body = renderBuilderCta(status.state !== "none", hasChat) + renderRulesetCard(status, hasChat) + renderDepthCard(status) + `<div class="warp-card"><h3>Writing rules</h3><p>Rules live in entries titled <b>warp-ruleset · …</b> (or any lorebook named <b>warp-ruleset</b>). Each entry is YAML; entries merge together. Warp keeps them out of the prompt automatically.</p></div>`;
     } else {
       body = renderSettings(settings, state?.status ?? null, connections, jevKeySet, imageConnections);
     }
@@ -737,6 +737,8 @@ export function setup(ctx: SpindleFrontendContext) {
     }
     const seg = t.closest<HTMLElement>('[data-bset="creative"]');
     if (seg) { bDraft.creative = seg.dataset.v === "1"; renderDrawer(); return true; }
+    const eff = t.closest<HTMLElement>('[data-bset="effort"]');
+    if (eff) { bDraft.effort = eff.dataset.v === "quick" ? "quick" : "thorough"; renderDrawer(); return true; }
     const b = t.closest<HTMLElement>("[data-b]");
     if (!b) return false;
     const cid = chatId();
@@ -744,7 +746,9 @@ export function setup(ctx: SpindleFrontendContext) {
     switch (b.dataset.b) {
       case "open-build": drawerView = "rules"; send({ type: "builder_open", chatId: cid, mode: "build" }); break;
       case "open-refine": drawerView = "rules"; send({ type: "builder_open", chatId: cid, mode: "refine" }); break;
-      case "start": send({ type: "builder_start", chatId: cid, connectionId: bDraft.connectionId, creative: bDraft.creative, base: bDraft.base || undefined }); break;
+      case "open-deepen": drawerView = "rules"; tab.activate(); send({ type: "builder_open", chatId: cid, mode: "deepen" }); break;
+      case "deepen": send({ type: "builder_deepen", chatId: cid, connectionId: bDraft.connectionId, effort: bDraft.effort }); break;
+      case "start": send({ type: "builder_start", chatId: cid, connectionId: bDraft.connectionId, creative: bDraft.creative, base: bDraft.base || undefined, effort: bDraft.effort }); break;
       case "more": case "build":
         send({ type: "builder_answer", chatId: cid, answers: builderAnswers(), additions: bDraft.additions, more: b.dataset.b === "more" });
         break;
@@ -830,6 +834,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const perk = t.closest<HTMLElement>("[data-buy-perk]");
     if (perk) { const cid = chatId(); if (cid) send({ type: "buy_perk", chatId: cid, perk: perk.dataset.buyPerk! }); return; }
     if (t.closest("[data-install]")) { void confirmReplace(); return; }
+    if (t.closest("[data-draft-items]")) { const cid = chatId(); if (cid) send({ type: "draft_item_uses", chatId: cid }); return; }
     if (t.closest("[data-reload]")) { send({ type: "reload", chatId: chatId() }); return; }
     const save = t.closest<HTMLElement>("[data-save]");
     if (save) {
@@ -1187,7 +1192,7 @@ export function setup(ctx: SpindleFrontendContext) {
         builder = m.session;
         // A different session (or none): start the drafts fresh.
         if (!builder || !prev || prev.characterId !== builder.characterId || prev.mode !== builder.mode || (prev.step !== builder.step && builder.step === "start")) {
-          const keep = { creative: bDraft.creative, connectionId: bDraft.connectionId };
+          const keep = { creative: bDraft.creative, connectionId: bDraft.connectionId, effort: bDraft.effort };
           bDraft = { ...emptyDraft(), ...keep, ...(builder ? { additions: builder.additions.map((a) => ({ ...a })) } : {}) };
         }
         if (builder && prev?.step !== builder.step) bDraft.notes = {};

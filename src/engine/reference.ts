@@ -74,6 +74,8 @@ lineage:          # pregnancy and children; only ever between two people known t
   children: { speed: 1, join_at: 18, inherit: [hair, eyes] }   # speed = how much faster than the calendar they age; they stay off-stage family until join_at (never below 18) and are never part of romance
 EFFECT: conceive: { with: target, chance: 20, carrier: player }   # carrier: player | partner. FUNCTIONS: children(), age(person); names: pregnant, pregnancy_weeks.
 
+name: Harbour Town                 # the game's name (shown on the HUD); description: one line about it
+description: A fishing town where the tide brings secrets.
 clock: { start: "Mon 07:00", date: "Sep 4", minutes_per_action: 15, narrator_max: 240 }
 start: { location: home, items: { phone: 1 } }
 hud: { currency: "$", bars: [health, stress] }
@@ -83,6 +85,7 @@ player: { age: 20 }
 weather: { temps: { spring: 12, summer: 22, autumn: 11, winter: 3 } }     # enables weather + temperature
 locations:
   home: { name: Home, desc: "...", indoors: true, exits: [street], travel: 10 }   # exits become travel buttons
+locations_open: true             # the story may name places the ruleset doesn't list (on by default when there are none)
 items:
   phone: Phone
   raincoat: { name: Raincoat, slot: outer, warmth: 5, reveal: 0, traits: [rainproof] }   # clothing = item with a slot
@@ -293,4 +296,63 @@ deepest(dungeon) (deepest floor reached), in_dungeon, dungeon_depth,
 stage(person) (relationship rung, −1 hostile), partner(person), dates(person), in_date, on_outing,
 min, max, clamp, floor, ceil, round, abs.
 Operators: + - * / % < <= > >= == != and or not, a ? b : c. Strings in single quotes.
+`;
+
+/**
+ * How to use the format well — what each piece is FOR, what good looks like, and
+ * the usual mistakes. The syntax above says what's possible; this says what's worth doing.
+ */
+export const DESIGN_GUIDE = `WARP DESIGN GUIDE — what makes a ruleset worth playing.
+A ruleset is a game the player feels through the story. Every piece should either create a decision, apply pressure, or reward play.
+Anything declared but connected to nothing is a broken promise: the player sees it and can't use it.
+
+## the core loop
+Name it before writing YAML: what the player does most days, what pushes back, what they're working toward.
+Pressures (needs, money, threats, rivals) should pull against each other so choices cost something.
+
+## stats
+Every stat needs a SOURCE (what raises it), a SINK (what lowers it), and a CONSEQUENCE (a check, trigger, ending or encounter that reads it).
+A meter nothing reads is decoration. Use per_hour drift for needs; narrator: lets the story nudge it within limits.
+Skills grow when checks read them — so every skill should appear in at least two checks, in different places.
+Mistake: ten meters that only the narrator touches. Fewer stats, each wired into play, beat many idle ones.
+
+## items
+Every item should DO something: a use: (an action with effects), a bonus: (gear that helps the checks that read a stat), a gift tag, or an action/encounter move that needs it (when: "has('x')").
+Read the item's description and make it true mechanically: "neutralizes scent, lowering visibility" → use: { visibility: -25, remove_condition: [scented] }.
+Consumables get uses: (charges); tools get keep: true. Give the player a way to GET each item that matters (start.items, shops via an action that costs money and gives it, loot, rewards).
+Mistake: flavour items in the starting inventory that no option ever offers — the player will look for the button.
+
+## encounters
+An encounter is a small puzzle with a visible goal. Give it:
+- a goal the player can read: end_when on a foe stat ("foe.resolve <= 0") the moves wear down, or goal: in words;
+- two or three ROUTES with different stats and trade-offs (talk / trick / force), plus an ESCAPE (a move with end: escaped, at a cost);
+- a danger: a player stat end_when that can actually be reached ("stress >= 80"), and foe_moves that push toward it, so waiting costs;
+- items that matter in it (a use: that changes what its checks read, a bonus: on those checks, a move that needs an item);
+- labels: for how each ending reads, and outcomes: with consequences (what it cost, what was won).
+Rounds are told briefly by default; narrate: true only for set-pieces that deserve full prose every round.
+Mistake: three moves that all lower the same stat by the same amount; a defeat threshold above the stat's max; no way out.
+
+## conditions
+A condition should change play: penalise a check (- 10 when cond('x')), open or close actions, feed an encounter, drive a trigger.
+Each needs a cause (add_condition somewhere) and a cure (an item, rest, time, a place) or a duration.
+
+## places
+Every place needs a reason to go there: actions at: it, people scheduled there, a job, a shop, a dungeon entrance, a venue.
+Connect them with exits so the map is walkable from the start.
+
+## people
+Give each tracked person a schedule (where they are by hour and day) so the player can find them, starting feelings that match the card, and — for companions — a goal and a daily choice so they live on their own.
+
+## money
+Money needs income (jobs, paid actions, loot) AND spending (shops, rent, bribes, fares). If either is missing it's just a number.
+
+## flags and story machinery
+Set a flag only if something reads it (an action's when, a trigger, a codex unlock, a secret's stage). Fronts, secrets and random events make the world move without the player — use them to put pressure on the core loop.
+
+## checks
+Odds should usually sit between 25% and 85% at the start and improve with skill; show the player what helps (skills, gear bonuses, conditions as penalties).
+Partial outcomes and costs make failures interesting: a fail should change something, not just waste a turn.
+
+## finishing
+You're done when every piece connects: run the audit and either fix each gap or say why it's deliberate. Simulate each encounter — no route should be pointless, none should be a guaranteed win, and the escape should cost something.
 `;

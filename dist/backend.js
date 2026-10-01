@@ -6208,6 +6208,9 @@ function resolveTurnFull(r, before, intent, opts) {
   const record = resolveInner(r, before, intent, opts, needs);
   return { record, needs };
 }
+function resolveTurn(r, before, intent, opts) {
+  return resolveInner(r, before, intent, opts, []);
+}
 function mindOverride(r, s, a, target, seed) {
   for (const o of r.mind.overrides) {
     const applies = o.on.length ? o.on.some((x) => x === a.id || a.tags.includes(x)) : !!a.check;
@@ -8682,6 +8685,7 @@ var init_protocol = __esm(() => {
     drafts: 1,
     prewrite: 0,
     sceneLines: "model",
+    draftItemUses: true,
     dateImages: true,
     imageConnectionId: ""
   };
@@ -8708,6 +8712,7 @@ async function patchSettings(patch, userId) {
   next.drafts = Math.max(1, Math.min(4, Math.round(Number(next.drafts) || 1)));
   next.prewrite = Math.max(0, Math.min(4, Math.round(Number(next.prewrite) || 0)));
   next.sceneLines = next.sceneLines === "scripted" ? "scripted" : "model";
+  next.draftItemUses = next.draftItemUses !== false;
   next.dateImages = next.dateImages !== false && next.dateImages !== "false";
   cache2.set(key(userId), next);
   await host().userStorage.setJson("settings.json", next, { indent: 2, userId });
@@ -12298,291 +12303,6 @@ var init_lint = __esm(() => {
   ];
 });
 
-// src/backend/source.ts
-async function listAllEntries(bookId, userId) {
-  const out = [];
-  for (let offset = 0;offset < 5000; offset += 200) {
-    const page = await host().world_books.entries.list(bookId, { limit: 200, offset, userId });
-    out.push(...page.data);
-    if (out.length >= page.total || page.data.length === 0)
-      break;
-  }
-  return out;
-}
-async function characterForChat(chatId, userId) {
-  if (chatCharacter.has(chatId))
-    return chatCharacter.get(chatId);
-  const chat = await host().chats.get(chatId, userId);
-  const id = chat?.character_id || null;
-  chatCharacter.set(chatId, id);
-  return id;
-}
-async function loadForCharacter(characterId, userId) {
-  const character = await host().characters.get(characterId, userId);
-  const base = {
-    characterId,
-    characterName: character?.name ?? null,
-    cardKind: character && looksLikeScenario(character) ? "scenario" : "character",
-    ruleset: null,
-    issues: [],
-    source: null,
-    entryIds: [],
-    bookIds: [],
-    at: Date.now()
-  };
-  if (!character)
-    return base;
-  const parts = [];
-  const books = [];
-  for (const bookId of character.world_book_ids ?? []) {
-    const book = await host().world_books.get(bookId, userId);
-    if (!book)
-      continue;
-    const wholeBook = isRulesetBookName(book.name);
-    const entries = await listAllEntries(bookId, userId);
-    let found = 0;
-    for (const e of entries) {
-      if (!wholeBook && !isRulesetEntryTitle(e.comment))
-        continue;
-      parts.push({ label: e.comment?.trim() || `${book.name} entry`, content: e.content, order: e.order_value ?? 100 });
-      base.entryIds.push(e.id);
-      knownRulesetEntryIds.add(e.id);
-      found++;
-    }
-    if (wholeBook)
-      knownRulesetBookIds.add(bookId);
-    if (found)
-      books.push(`${book.name} (${found} ${found === 1 ? "entry" : "entries"})`);
-    if (found)
-      base.bookIds.push(bookId);
-  }
-  if (!parts.length)
-    return base;
-  const { ruleset, issues } = loadRuleset(parts);
-  base.ruleset = ruleset;
-  base.issues = ruleset ? [...issues, ...lintRuleset(ruleset)] : issues;
-  base.source = books.join(", ");
-  return base;
-}
-async function getRuleset(chatId, userId, force = false) {
-  if (!chatId)
-    return null;
-  let characterId;
-  try {
-    characterId = await characterForChat(chatId, userId);
-  } catch (e) {
-    logError("characterForChat", e);
-    return null;
-  }
-  if (!characterId)
-    return null;
-  const hit = byCharacter.get(characterId);
-  if (hit && !force && Date.now() - hit.at < TTL_MS)
-    return hit;
-  try {
-    const loaded = await loadForCharacter(characterId, userId);
-    byCharacter.set(characterId, loaded);
-    return loaded;
-  } catch (e) {
-    logError("loadForCharacter", e);
-    return hit ?? null;
-  }
-}
-async function characterBrief(chatId, userId) {
-  const id = await characterForChat(chatId, userId).catch(() => null);
-  if (!id)
-    return "";
-  const hit = briefs.get(id);
-  if (hit && Date.now() - hit.at < 60000)
-    return hit.text;
-  const c = await host().characters.get(id, userId).catch(() => null);
-  const text = c ? [
-    `Name: ${c.name}`,
-    c.description && `Description: ${c.description}`,
-    c.personality && `Personality: ${c.personality}`,
-    c.scenario && `Scenario: ${c.scenario}`
-  ].filter(Boolean).join(`
-`).slice(0, 4000) : "";
-  briefs.set(id, { text, at: Date.now() });
-  return text;
-}
-function invalidateCharacter(characterId) {
-  if (characterId) {
-    byCharacter.delete(characterId);
-    briefs.delete(characterId);
-  } else {
-    byCharacter.clear();
-    briefs.clear();
-  }
-}
-function statusOf(l) {
-  if (!l || !l.source) {
-    return { state: "none", name: null, source: null, issues: l?.issues ?? [], characterName: l?.characterName ?? null, cardKind: l?.cardKind ?? "character", tags: [] };
-  }
-  const tags = new Set;
-  for (const a of Object.values(l.ruleset?.actions ?? {}))
-    for (const t of a.tags)
-      tags.add(t);
-  for (const a of Object.values(l.ruleset?.liveChoices.tags ?? {}))
-    for (const t of a.tags)
-      tags.add(t);
-  return {
-    state: l.ruleset ? "ok" : "broken",
-    name: l.ruleset?.name ?? null,
-    source: l.source,
-    issues: l.issues,
-    characterName: l.characterName,
-    cardKind: l.cardKind,
-    tags: [...tags].sort()
-  };
-}
-async function installTemplate(chatId, templateId, userId, trackCharacter) {
-  const t = getTemplate(templateId);
-  if (!t)
-    throw new Error("Unknown template");
-  const characterId = await characterForChat(chatId, userId);
-  if (!characterId)
-    throw new Error("This chat has no character to attach a ruleset to");
-  const character = await host().characters.get(characterId, userId);
-  if (!character)
-    throw new Error("Character not found");
-  const book = await host().world_books.create({
-    name: "warp-ruleset",
-    description: `Warp game rules for ${character.name} (${t.name}). Warp reads these entries directly; they are never sent to the model.`,
-    metadata: { warp: { template: t.id } }
-  }, userId);
-  let order = 10;
-  for (const part of t.parts) {
-    let content = part.yaml;
-    const track = trackCharacter ?? !looksLikeScenario(character);
-    if (part.label === "people" && character.name && track)
-      content = withCharacter(content, character.name);
-    await host().world_books.entries.create(book.id, {
-      comment: `warp-ruleset · ${part.label}`,
-      content,
-      key: [],
-      disabled: true,
-      constant: false,
-      order_value: order
-    }, userId);
-    order += 10;
-  }
-  const ids = [...character.world_book_ids ?? [], book.id];
-  await host().characters.update(characterId, { world_book_ids: ids }, userId);
-  invalidateCharacter(characterId);
-  knownRulesetBookIds.add(book.id);
-  return t.name;
-}
-function aboutThem(text, re, budget) {
-  if (!text)
-    return "";
-  const out = [];
-  let n = 0;
-  for (const para of text.split(/\n\s*\n|\n(?=[-*•]|\w+:)/)) {
-    const p = para.trim();
-    if (!p || !re.test(p))
-      continue;
-    const piece = p.length > 700 ? `${p.slice(0, 700)}…` : p;
-    if (n + piece.length > budget)
-      break;
-    out.push(piece);
-    n += piece.length;
-  }
-  return out.join(`
-`);
-}
-async function personProfile(chatId, name, userId, note) {
-  const key = `${chatId}:${name.toLowerCase()}`;
-  const hit = profiles.get(key);
-  if (hit && Date.now() - hit.at < PROFILE_TTL)
-    return hit.p;
-  const re = nameRe(name);
-  const id = await characterForChat(chatId, userId).catch(() => null);
-  const c = id ? await host().characters.get(id, userId).catch(() => null) : null;
-  const scenario = !!c && looksLikeScenario(c);
-  const parts = [];
-  if (note)
-    parts.push(note);
-  let setting = "";
-  if (c && !scenario && re.test(c.name)) {
-    parts.push(await characterBrief(chatId, userId));
-  } else if (c) {
-    const fromCard = [c.description, c.personality, c.scenario].map((t) => aboutThem(t, re, 1200)).filter(Boolean).join(`
-`);
-    if (fromCard)
-      parts.push(`From the card:
-${fromCard}`);
-    setting = [c.scenario, c.description].filter(Boolean).join(`
-`).slice(0, 600);
-    const lore = [];
-    for (const bookId of c.world_book_ids ?? []) {
-      if (lore.length >= 3)
-        break;
-      const book = await host().world_books.get(bookId, userId).catch(() => null);
-      if (!book || isRulesetBookName(book.name))
-        continue;
-      const entries = await listAllEntries(bookId, userId).catch(() => []);
-      for (const e of entries) {
-        if (lore.length >= 3)
-          break;
-        if (isRulesetEntryTitle(e.comment))
-          continue;
-        const keys = [...e.key ?? [], e.comment ?? ""].join(" ");
-        if (re.test(keys))
-          lore.push(e.content.length > 900 ? `${e.content.slice(0, 900)}…` : e.content);
-      }
-    }
-    if (lore.length)
-      parts.push(`From the lorebook:
-${lore.join(`
----
-`)}`);
-  }
-  try {
-    await Promise.resolve().then(() => init_ledger());
-    const msgs = await getMessages(chatId);
-    const seen = [];
-    let n = 0;
-    for (const m of [...msgs].reverse().slice(0, 40)) {
-      if (m.is_user || !re.test(m.content))
-        continue;
-      const bit = aboutThem(m.content, re, 500);
-      if (!bit || n + bit.length > 1400)
-        continue;
-      seen.unshift(bit);
-      n += bit.length;
-      if (seen.length >= 4)
-        break;
-    }
-    if (seen.length)
-      parts.push(`How the story has shown them:
-${seen.join(`
-`)}`);
-  } catch {}
-  const p = { text: parts.filter(Boolean).join(`
-
-`).slice(0, 4500), scenario, setting };
-  profiles.set(key, { at: Date.now(), p });
-  return p;
-}
-var TTL_MS = 8000, byCharacter, chatCharacter, knownRulesetEntryIds, knownRulesetBookIds, briefs, profiles, PROFILE_TTL, nameRe = (name) => {
-  const first = name.trim().split(/\s+/)[0] ?? name;
-  const safe = first.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(^|[^\\p{L}])${safe}(?=[^\\p{L}]|$)`, "iu");
-};
-var init_source = __esm(() => {
-  init_loader();
-  init_lint();
-  init_templates();
-  byCharacter = new Map;
-  chatCharacter = new Map;
-  knownRulesetEntryIds = new Set;
-  knownRulesetBookIds = new Set;
-  briefs = new Map;
-  profiles = new Map;
-  PROFILE_TTL = 10 * 60000;
-});
-
 // src/engine/encounter-view.ts
 function thresholds(enc) {
   const out = [];
@@ -12772,6 +12492,554 @@ var init_encounter_view = __esm(() => {
   init_expr();
   FAILURE = /^(lost|lose|loss|beaten|defeat(ed)?|overwhelmed|caught|captured|ko|knocked_out|dead|died|fled_in_panic|broken|failed?)$/i;
   TIER_WORD = { crit_success: "great success", success: "success", partial: "partial", fail: "failed", crit_fail: "badly failed" };
+});
+
+// src/engine/audit.ts
+function isEffect(o) {
+  return !!o && typeof o === "object" && "stats" in o && "removeConditions" in o && "addConditions" in o;
+}
+function readFormula(v, seen) {
+  try {
+    compile(v);
+  } catch {
+    return;
+  }
+  for (const id of identifiers(v))
+    seen.reads.add(id);
+  for (const m of v.matchAll(/\b(has|count|cond|flag|at|present|where|wearing|met|rel|worn|secret|front|codex|feat|perk|deepest|stage|partner|dates|transformed|saved|happened|owed|missed|days_until|arc|bond|seen_by)\(\s*'([^']+)'/g))
+    seen.calls.add(`${m[1]}:${m[2]}`);
+}
+function walk(o, seen, money, key = "") {
+  if (typeof o === "string") {
+    if (FORMULA_KEYS.has(key))
+      readFormula(o, seen);
+    return;
+  }
+  if (!o || typeof o !== "object")
+    return;
+  if (Array.isArray(o)) {
+    for (const x of o)
+      if (x && typeof x === "object")
+        walk(x, seen, money);
+    return;
+  }
+  if (isEffect(o)) {
+    for (const v of [...Object.values(o.stats), ...Object.values(o.set), ...Object.values(o.foe), ...Object.values(o.damage), ...Object.values(o.front), ...Object.values(o.transform), ...Object.values(o.arc)])
+      if (typeof v === "string")
+        readFormula(v, seen);
+    for (const [k, v] of [...Object.entries(o.stats), ...Object.entries(o.set)]) {
+      seen.changed.add(k);
+      if (k === money) {
+        const n = typeof v === "number" ? v : /^\s*-/.test(String(v)) ? -1 : 1;
+        if (n > 0)
+          seen.moneyUp = true;
+        else if (n < 0)
+          seen.moneyDown = true;
+      }
+    }
+    for (const [k, v] of Object.entries(o.items))
+      (v > 0 ? seen.itemsGiven : seen.itemsTaken).add(k);
+    for (const k of Object.keys(o.addConditions))
+      seen.condAdded.add(k);
+    for (const k of o.removeConditions)
+      seen.condRemoved.add(k);
+    for (const k of Object.keys(o.flags))
+      seen.flagsSet.add(k);
+    if (o.startEncounter)
+      seen.encStarted.add(o.startEncounter);
+    if (o.move)
+      seen.moves.add(o.move);
+    for (const u of o.unlock)
+      seen.unlocked.add(u);
+  }
+  for (const [k, v] of Object.entries(o))
+    walk(v, seen, money, k);
+}
+function auditRuleset(r) {
+  const money = r.statOrder.find((id) => r.stats[id].kind === "money");
+  const seen = {
+    changed: new Set,
+    reads: new Set,
+    calls: new Set,
+    itemsGiven: new Set,
+    itemsTaken: new Set,
+    condAdded: new Set,
+    condRemoved: new Set,
+    flagsSet: new Set,
+    encStarted: new Set,
+    moves: new Set,
+    unlocked: new Set,
+    moneyUp: false,
+    moneyDown: false
+  };
+  walk(r, seen, money);
+  for (const id of Object.keys(r.startItems))
+    seen.itemsGiven.add(id);
+  for (const d of Object.values(r.dungeons))
+    for (const l of d.loot ?? [])
+      seen.itemsGiven.add(l.item);
+  for (const o of Object.values(r.obligations)) {
+    seen.moneyDown = true;
+  }
+  for (const j of Object.values(r.jobs)) {
+    seen.moneyUp = true;
+  }
+  const gaps = [];
+  const links = [];
+  const gap = (g) => gaps.push(g);
+  const readsStat = (id) => seen.reads.has(id) || r.hud.bars.includes(id) && false;
+  for (const it of Object.values(r.items)) {
+    const referenced = seen.calls.has(`has:${it.id}`) || seen.calls.has(`count:${it.id}`) || seen.calls.has(`wearing:${it.id}`) || seen.itemsTaken.has(it.id);
+    const gift = it.tags.includes("gift") && r.dating.enabled;
+    const bonus = Object.keys(it.bonus).length > 0;
+    if (it.use)
+      links.push(`${it.name}: ${it.use.label}`);
+    if (bonus)
+      links.push(`${it.name} helps ${Object.keys(it.bonus).map((s) => r.stats[s]?.label ?? s).join(", ")} checks`);
+    if (!it.use && !bonus && !referenced && !gift && !it.slot) {
+      gap({ id: `item-dead:${it.id}`, severity: "gap", part: "world", text: `${it.name} does nothing: no use, no bonus, and nothing needs it.`, fix: `Give it a use: (what using it does, in this game's stats and conditions${it.desc ? ` — its description says: "${it.desc}"` : ""}), a bonus: to the checks it would help, or an action/encounter move that needs it.` });
+    } else if (it.slot && !bonus && !it.traits.length && it.warmth === 0 && it.reveal === 0 && !referenced) {
+      gap({ id: `item-flat:${it.id}`, severity: "thin", part: "world", text: `${it.name} is clothing with no effect (no warmth, traits or bonus).`, fix: "Give it warmth, a trait something checks, or a bonus: (sturdy boots → athletics)." });
+    }
+    if ((referenced || it.use) && !seen.itemsGiven.has(it.id) && !it.slot) {
+      gap({ id: `item-unobtainable:${it.id}`, severity: "gap", part: "world", text: `${it.name} matters, but nothing gives it to the player.`, fix: "Add it to start.items, a shop or job reward (give:), dungeon loot, or an action that finds it." });
+    }
+  }
+  for (const id of r.statOrder) {
+    const def = r.stats[id];
+    if (def.kind === "hidden")
+      continue;
+    const grows = (def.kind === "skill" || def.kind === "attribute") && r.growth.enabled && def.growth > 0;
+    const changes = seen.changed.has(id) || def.perHour !== 0 || def.narrator > 0 || grows;
+    const read = readsStat(id);
+    if (!changes)
+      gap({ id: `stat-static:${id}`, severity: "gap", part: "stats", text: `${def.label} never changes: no action, event or drift moves it.`, fix: `Have actions, foe moves, triggers or time move ${def.label}${def.kind === "meter" ? " (per_hour drift, costs, consequences)" : ""}.` });
+    if ((def.kind === "skill" || def.kind === "attribute") && !read) {
+      gap({ id: `skill-unused:${id}`, severity: "gap", part: "actions", text: `${def.label} is a ${def.kind} no check uses.`, fix: `Make some action or encounter checks read ${id} (e.g. chance: "30 + ${id} / 2"), so it matters and grows.` });
+    } else if (def.kind === "meter" && !read && id !== money) {
+      gap({ id: `stat-unread:${id}`, severity: "thin", part: "rules", text: `${def.label} is shown but has no consequence.`, fix: `Let something read it: a trigger at a threshold, a check penalty ("- ${id} / 4"), an ending, an encounter's end_when, or an action's when.` });
+    }
+  }
+  if (money && r.stats[money].narrator > 0) {
+    seen.moneyUp = true;
+    seen.moneyDown = true;
+  }
+  if (money) {
+    if (!seen.moneyUp)
+      gap({ id: "money-no-income", severity: "gap", part: "actions", text: `There's ${r.stats[money].label} but no way to earn it.`, fix: "Add jobs, paid actions, rewards or loot that raise it." });
+    if (!seen.moneyDown)
+      gap({ id: "money-no-spending", severity: "gap", part: "actions", text: `${r.stats[money].label} piles up with nothing to spend it on.`, fix: "Add costs: shops (give an item for money), rent/bills (obligations), bribes, travel fares." });
+  }
+  for (const c of Object.values(r.conditions)) {
+    const added = seen.condAdded.has(c.id) || c.narrator;
+    const read = seen.calls.has(`cond:${c.id}`);
+    if (!added)
+      gap({ id: `cond-never:${c.id}`, severity: "gap", part: "rules", text: `Nothing ever causes ${c.label}.`, fix: `Add it from an action, a foe move, a trigger or an event (add_condition: [${c.id}]).` });
+    else {
+      const cured = seen.condRemoved.has(c.id);
+      if (!cured)
+        gap({ id: `cond-uncured:${c.id}`, severity: "thin", part: "world", text: `Nothing cures ${c.label} (unless it has a duration).`, fix: `Add something that removes it — an item's use:, resting somewhere, a trigger (remove_condition: [${c.id}]), or give it a duration.` });
+      else
+        for (const it of Object.values(r.items))
+          if (it.use && [it.use.effects, ...Object.values(it.use.outcomes)].some((e) => e?.removeConditions.includes(c.id)))
+            links.push(`${it.name} clears ${c.label}`);
+    }
+    if (added && !read)
+      gap({ id: `cond-unread:${c.id}`, severity: "thin", part: "rules", text: `${c.label} only colours the narration: no check, trigger or encounter reacts to it.`, fix: `Let checks, triggers or encounters read cond('${c.id}') — a penalty, a danger, a door it opens.` });
+  }
+  for (const f of Object.values(r.flags)) {
+    const set = seen.flagsSet.has(f.id) || f.narrator;
+    const read = seen.calls.has(`flag:${f.id}`) || seen.reads.has(f.id);
+    if (set && !read)
+      gap({ id: `flag-unread:${f.id}`, severity: "thin", part: "rules", text: `The flag ${f.id} is set but nothing checks it.`, fix: `Use flag('${f.id}') in an action's when, a trigger or a codex unlock.` });
+    if (!set && read && !f.start)
+      gap({ id: `flag-unset:${f.id}`, severity: "gap", part: "rules", text: `The flag ${f.id} is checked but nothing ever sets it.`, fix: `Set it from an action or trigger (flags: { ${f.id}: true }).` });
+  }
+  for (const p of Object.values(r.people)) {
+    if (!p.schedule.length)
+      gap({ id: `person-nowhere:${p.id}`, severity: "thin", part: "people", text: `${p.name} has no schedule, so they're only ever where the story says.`, fix: `Give ${p.name} a schedule (where they are by time and day) so the player can find them.` });
+  }
+  const startLoc = r.startLocation;
+  const reachable = new Set(startLoc ? [startLoc] : []);
+  for (let grew = true;grew; ) {
+    grew = false;
+    for (const l of Object.values(r.locations))
+      if (reachable.has(l.id)) {
+        for (const x of l.exits)
+          if (!reachable.has(x) && r.locations[x]) {
+            reachable.add(x);
+            grew = true;
+          }
+      }
+    for (const m of seen.moves)
+      if (!reachable.has(m) && r.locations[m]) {
+        reachable.add(m);
+        grew = true;
+      }
+  }
+  for (const l of Object.values(r.locations)) {
+    if (startLoc && !reachable.has(l.id))
+      gap({ id: `place-unreachable:${l.id}`, severity: "gap", part: "world", text: `${l.name} can't be reached from the start.`, fix: `Connect it with exits: (or a move: effect) from a place the player can get to.` });
+    const things = Object.values(r.actions).some((a) => a.at.includes(l.id)) || Object.values(r.people).some((p) => p.schedule.some((s) => s.at === l.id)) || seen.calls.has(`at:${l.id}`) || Object.values(r.dungeons).some((d) => d.at.includes(l.id)) || Object.values(r.jobs).some((j) => j.at.includes(l.id)) || Object.values(r.dating.venues).some((v) => v.at === l.id);
+    if (!things)
+      gap({ id: `place-empty:${l.id}`, severity: "thin", part: "actions", text: `There's nothing to do at ${l.name} and nobody there.`, fix: `Add an action at: [${l.id}], schedule someone there, or put a job, shop or dungeon entrance there.` });
+  }
+  for (const e of Object.values(r.encounters)) {
+    const th = thresholds(e);
+    const winRoutes = new Set;
+    for (const t of th)
+      if (t.foe && !isLoss(e, t.outcome))
+        winRoutes.add(`${t.outcome}:${t.stat}`);
+    if (e.momentum)
+      winRoutes.add("momentum");
+    let escape = false;
+    for (const a of Object.values(e.actions))
+      for (const fx of [a.effects, ...Object.values(a.outcomes)]) {
+        if (fx?.end && !isLoss(e, fx.end)) {
+          winRoutes.add(`end:${fx.end}`);
+          if (!th.some((t) => t.outcome === fx.end))
+            escape = true;
+        }
+      }
+    const progressMoves = Object.values(e.actions).filter((a) => [a.effects, ...Object.values(a.outcomes)].some((fx) => fx && (Object.keys(fx.foe).length || fx.end || fx.momentum !== undefined)));
+    if (!e.goal && !winRoutes.size)
+      gap({ id: `enc-no-goal:${e.id}`, severity: "gap", part: "encounters", text: `${e.name}: the player can't tell how to win it — no simple end_when on the foe, no move that ends it.`, fix: `Add end_when like "foe.nerve <= 0" with moves that lower it, or moves with end: <outcome>; or write goal: in words.` });
+    if (!escape && !e.momentum)
+      gap({ id: `enc-no-escape:${e.id}`, severity: "thin", part: "encounters", text: `${e.name} has no way out but winning or losing.`, fix: "Add an escape route: a move whose success ends it (end: escaped) at a cost — running, hiding, bargaining." });
+    if (progressMoves.length < 2)
+      gap({ id: `enc-one-route:${e.id}`, severity: "thin", part: "encounters", text: `${e.name} has ${progressMoves.length ? "only one move" : "no move"} that makes progress.`, fix: "Give it two or three routes with different stats and trade-offs (talk, trick, force, flee), so choices mean something." });
+    for (const t of th.filter((x) => !x.foe)) {
+      const def = r.stats[t.stat];
+      if (def && t.op.startsWith(">") && def.max < t.value)
+        gap({ id: `enc-unreachable:${e.id}:${t.stat}`, severity: "gap", part: "encounters", text: `${e.name} ends at ${def.label} ${t.op} ${t.value}, but ${def.label} can't go above ${def.max}.`, fix: "Lower the threshold or raise the stat's max." });
+    }
+    const reads = new Set;
+    for (const a of Object.values(e.actions)) {
+      if (a.check)
+        for (const x of [...identifiers(String(a.check.add ?? "")), ...identifiers(String(a.check.target ?? ""))])
+          reads.add(x);
+      if (a.when && /has\(/.test(a.when))
+        reads.add("__item");
+    }
+    const itemsMatter = reads.has("__item") || Object.values(r.items).some((it) => it.use && [it.use.effects, ...Object.values(it.use.outcomes)].some((fx) => fx && (Object.keys(fx.foe).length || Object.keys(fx.stats).some((s) => reads.has(s)) || fx.removeConditions.length)) || Object.keys(it.bonus).some((s) => reads.has(s)));
+    if (!itemsMatter && Object.keys(r.items).length)
+      gap({ id: `enc-no-items:${e.id}`, severity: "thin", part: "encounters", text: `No item matters in ${e.name}.`, fix: "Let an item help: a use: that changes what its checks read (or the foe), a bonus: to those checks, or a move that needs an item." });
+    if (!e.fromStory && !seen.encStarted.has(e.id))
+      gap({ id: `enc-never:${e.id}`, severity: "gap", part: "encounters", text: `Nothing starts ${e.name} (from_story is off and no action starts it).`, fix: `Start it from an action, trigger or random event (start_encounter: ${e.id}), or allow the story to start it.` });
+    if (!e.foeMoves)
+      gap({ id: `enc-passive:${e.id}`, severity: "thin", part: "encounters", text: `${e.name}'s other side never acts.`, fix: "Add foe_moves with weights and effects, so standing still has a cost." });
+  }
+  for (const c of Object.values(r.codex)) {
+    if (!c.unlock && !seen.unlocked.has(c.id))
+      gap({ id: `codex-locked:${c.id}`, severity: "thin", part: "journal", text: `Codex entry "${c.title}" can never be found.`, fix: "Give it an unlock: formula, or unlock it from an action or event." });
+  }
+  const declared = Object.keys(r.items).length + r.statOrder.length + Object.keys(r.conditions).length + Object.keys(r.flags).length + Object.keys(r.locations).length + Object.keys(r.encounters).length * 3 + 1;
+  const weight = gaps.reduce((n, g) => n + (g.severity === "gap" ? 1 : 0.4), 0);
+  const depth = Math.max(0, Math.min(100, Math.round(100 * (1 - weight / declared))));
+  return { gaps, links, depth };
+}
+var FORMULA_KEYS;
+var init_audit = __esm(() => {
+  init_expr();
+  init_encounter_view();
+  FORMULA_KEYS = new Set(["when", "add", "target", "unlock", "requires", "amount", "maxExpr", "chance", "pay", "tip", "perDay", "perTurn", "per_day", "per_turn", "momentum", "gauge", "atk", "def", "mat", "mdf", "agi", "hp", "mp"]);
+});
+
+// src/backend/source.ts
+async function listAllEntries(bookId, userId) {
+  const out = [];
+  for (let offset = 0;offset < 5000; offset += 200) {
+    const page = await host().world_books.entries.list(bookId, { limit: 200, offset, userId });
+    out.push(...page.data);
+    if (out.length >= page.total || page.data.length === 0)
+      break;
+  }
+  return out;
+}
+async function characterForChat(chatId, userId) {
+  if (chatCharacter.has(chatId))
+    return chatCharacter.get(chatId);
+  const chat = await host().chats.get(chatId, userId);
+  const id = chat?.character_id || null;
+  chatCharacter.set(chatId, id);
+  return id;
+}
+async function loadForCharacter(characterId, userId) {
+  const character = await host().characters.get(characterId, userId);
+  const base = {
+    characterId,
+    characterName: character?.name ?? null,
+    cardKind: character && looksLikeScenario(character) ? "scenario" : "character",
+    ruleset: null,
+    issues: [],
+    source: null,
+    entryIds: [],
+    bookIds: [],
+    at: Date.now()
+  };
+  if (!character)
+    return base;
+  const parts = [];
+  const books = [];
+  for (const bookId of character.world_book_ids ?? []) {
+    const book = await host().world_books.get(bookId, userId);
+    if (!book)
+      continue;
+    const wholeBook = isRulesetBookName(book.name);
+    const entries = await listAllEntries(bookId, userId);
+    let found = 0;
+    for (const e of entries) {
+      if (!wholeBook && !isRulesetEntryTitle(e.comment))
+        continue;
+      parts.push({ label: e.comment?.trim() || `${book.name} entry`, content: e.content, order: e.order_value ?? 100 });
+      base.entryIds.push(e.id);
+      knownRulesetEntryIds.add(e.id);
+      found++;
+    }
+    if (wholeBook)
+      knownRulesetBookIds.add(bookId);
+    if (found)
+      books.push(`${book.name} (${found} ${found === 1 ? "entry" : "entries"})`);
+    if (found)
+      base.bookIds.push(bookId);
+  }
+  if (!parts.length)
+    return base;
+  const { ruleset, issues } = loadRuleset(parts);
+  base.ruleset = ruleset;
+  base.issues = ruleset ? [...issues, ...lintRuleset(ruleset)] : issues;
+  base.source = books.join(", ");
+  return base;
+}
+async function getRuleset(chatId, userId, force = false) {
+  if (!chatId)
+    return null;
+  let characterId;
+  try {
+    characterId = await characterForChat(chatId, userId);
+  } catch (e) {
+    logError("characterForChat", e);
+    return null;
+  }
+  if (!characterId)
+    return null;
+  const hit = byCharacter.get(characterId);
+  if (hit && !force && Date.now() - hit.at < TTL_MS)
+    return hit;
+  try {
+    const loaded = await loadForCharacter(characterId, userId);
+    byCharacter.set(characterId, loaded);
+    return loaded;
+  } catch (e) {
+    logError("loadForCharacter", e);
+    return hit ?? null;
+  }
+}
+async function characterBrief(chatId, userId) {
+  const id = await characterForChat(chatId, userId).catch(() => null);
+  if (!id)
+    return "";
+  const hit = briefs.get(id);
+  if (hit && Date.now() - hit.at < 60000)
+    return hit.text;
+  const c = await host().characters.get(id, userId).catch(() => null);
+  const text = c ? [
+    `Name: ${c.name}`,
+    c.description && `Description: ${c.description}`,
+    c.personality && `Personality: ${c.personality}`,
+    c.scenario && `Scenario: ${c.scenario}`
+  ].filter(Boolean).join(`
+`).slice(0, 4000) : "";
+  briefs.set(id, { text, at: Date.now() });
+  return text;
+}
+function invalidateCharacter(characterId) {
+  if (characterId) {
+    byCharacter.delete(characterId);
+    briefs.delete(characterId);
+  } else {
+    byCharacter.clear();
+    briefs.clear();
+  }
+}
+function statusOf(l) {
+  if (!l || !l.source) {
+    return { state: "none", name: null, source: null, issues: l?.issues ?? [], characterName: l?.characterName ?? null, cardKind: l?.cardKind ?? "character", tags: [] };
+  }
+  const tags = new Set;
+  for (const a of Object.values(l.ruleset?.actions ?? {}))
+    for (const t of a.tags)
+      tags.add(t);
+  for (const a of Object.values(l.ruleset?.liveChoices.tags ?? {}))
+    for (const t of a.tags)
+      tags.add(t);
+  return {
+    state: l.ruleset ? "ok" : "broken",
+    name: l.ruleset?.name ?? null,
+    source: l.source,
+    issues: l.issues,
+    characterName: l.characterName,
+    cardKind: l.cardKind,
+    tags: [...tags].sort(),
+    ...l.ruleset ? { depth: depthOf(l.ruleset) } : {}
+  };
+}
+function depthOf(r) {
+  const hit = depths.get(r);
+  if (hit)
+    return hit;
+  const a = auditRuleset(r);
+  const d = { score: a.depth, gaps: a.gaps, drafted: Object.values(r.items).filter((i) => i.drafted).map((i) => i.name) };
+  depths.set(r, d);
+  return d;
+}
+async function installTemplate(chatId, templateId, userId, trackCharacter) {
+  const t = getTemplate(templateId);
+  if (!t)
+    throw new Error("Unknown template");
+  const characterId = await characterForChat(chatId, userId);
+  if (!characterId)
+    throw new Error("This chat has no character to attach a ruleset to");
+  const character = await host().characters.get(characterId, userId);
+  if (!character)
+    throw new Error("Character not found");
+  const book = await host().world_books.create({
+    name: "warp-ruleset",
+    description: `Warp game rules for ${character.name} (${t.name}). Warp reads these entries directly; they are never sent to the model.`,
+    metadata: { warp: { template: t.id } }
+  }, userId);
+  let order = 10;
+  for (const part of t.parts) {
+    let content = part.yaml;
+    const track = trackCharacter ?? !looksLikeScenario(character);
+    if (part.label === "people" && character.name && track)
+      content = withCharacter(content, character.name);
+    await host().world_books.entries.create(book.id, {
+      comment: `warp-ruleset · ${part.label}`,
+      content,
+      key: [],
+      disabled: true,
+      constant: false,
+      order_value: order
+    }, userId);
+    order += 10;
+  }
+  const ids = [...character.world_book_ids ?? [], book.id];
+  await host().characters.update(characterId, { world_book_ids: ids }, userId);
+  invalidateCharacter(characterId);
+  knownRulesetBookIds.add(book.id);
+  return t.name;
+}
+function aboutThem(text, re, budget) {
+  if (!text)
+    return "";
+  const out = [];
+  let n = 0;
+  for (const para of text.split(/\n\s*\n|\n(?=[-*•]|\w+:)/)) {
+    const p = para.trim();
+    if (!p || !re.test(p))
+      continue;
+    const piece = p.length > 700 ? `${p.slice(0, 700)}…` : p;
+    if (n + piece.length > budget)
+      break;
+    out.push(piece);
+    n += piece.length;
+  }
+  return out.join(`
+`);
+}
+async function personProfile(chatId, name, userId, note) {
+  const key = `${chatId}:${name.toLowerCase()}`;
+  const hit = profiles.get(key);
+  if (hit && Date.now() - hit.at < PROFILE_TTL)
+    return hit.p;
+  const re = nameRe(name);
+  const id = await characterForChat(chatId, userId).catch(() => null);
+  const c = id ? await host().characters.get(id, userId).catch(() => null) : null;
+  const scenario = !!c && looksLikeScenario(c);
+  const parts = [];
+  if (note)
+    parts.push(note);
+  let setting = "";
+  if (c && !scenario && re.test(c.name)) {
+    parts.push(await characterBrief(chatId, userId));
+  } else if (c) {
+    const fromCard = [c.description, c.personality, c.scenario].map((t) => aboutThem(t, re, 1200)).filter(Boolean).join(`
+`);
+    if (fromCard)
+      parts.push(`From the card:
+${fromCard}`);
+    setting = [c.scenario, c.description].filter(Boolean).join(`
+`).slice(0, 600);
+    const lore = [];
+    for (const bookId of c.world_book_ids ?? []) {
+      if (lore.length >= 3)
+        break;
+      const book = await host().world_books.get(bookId, userId).catch(() => null);
+      if (!book || isRulesetBookName(book.name))
+        continue;
+      const entries = await listAllEntries(bookId, userId).catch(() => []);
+      for (const e of entries) {
+        if (lore.length >= 3)
+          break;
+        if (isRulesetEntryTitle(e.comment))
+          continue;
+        const keys = [...e.key ?? [], e.comment ?? ""].join(" ");
+        if (re.test(keys))
+          lore.push(e.content.length > 900 ? `${e.content.slice(0, 900)}…` : e.content);
+      }
+    }
+    if (lore.length)
+      parts.push(`From the lorebook:
+${lore.join(`
+---
+`)}`);
+  }
+  try {
+    await Promise.resolve().then(() => init_ledger());
+    const msgs = await getMessages(chatId);
+    const seen = [];
+    let n = 0;
+    for (const m of [...msgs].reverse().slice(0, 40)) {
+      if (m.is_user || !re.test(m.content))
+        continue;
+      const bit = aboutThem(m.content, re, 500);
+      if (!bit || n + bit.length > 1400)
+        continue;
+      seen.unshift(bit);
+      n += bit.length;
+      if (seen.length >= 4)
+        break;
+    }
+    if (seen.length)
+      parts.push(`How the story has shown them:
+${seen.join(`
+`)}`);
+  } catch {}
+  const p = { text: parts.filter(Boolean).join(`
+
+`).slice(0, 4500), scenario, setting };
+  profiles.set(key, { at: Date.now(), p });
+  return p;
+}
+var TTL_MS = 8000, byCharacter, chatCharacter, knownRulesetEntryIds, knownRulesetBookIds, briefs, depths, profiles, PROFILE_TTL, nameRe = (name) => {
+  const first = name.trim().split(/\s+/)[0] ?? name;
+  const safe = first.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^\\p{L}])${safe}(?=[^\\p{L}]|$)`, "iu");
+};
+var init_source = __esm(() => {
+  init_loader();
+  init_lint();
+  init_templates();
+  init_audit();
+  byCharacter = new Map;
+  chatCharacter = new Map;
+  knownRulesetEntryIds = new Set;
+  knownRulesetBookIds = new Set;
+  briefs = new Map;
+  depths = new WeakMap;
+  profiles = new Map;
+  PROFILE_TTL = 10 * 60000;
 });
 
 // src/engine/dungeon/battle.ts
@@ -17292,394 +17560,7 @@ var init_scene = __esm(() => {
   inflight = new Set;
 });
 
-// src/backend/state-push.ts
-function setActiveChat(userId, chatId) {
-  activeChat.set(key3(userId), chatId);
-}
-function getActiveChat(userId) {
-  return activeChat.get(key3(userId)) ?? null;
-}
-async function pushState(chatId, userId, force = false) {
-  try {
-    const loaded = await getRuleset(chatId, userId, force);
-    const status = statusOf(loaded);
-    if (!chatId || !loaded?.ruleset) {
-      send({ type: "state", chatId, status, hud: null, map: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false, dungeon: null, dungeonEntries: [], date: null, scene: null }, userId);
-      return;
-    }
-    const r = loaded.ruleset;
-    const settings = await getSettings(userId);
-    const msgs = await getMessages(chatId);
-    const { state, steps } = foldPath(r, msgs);
-    lastStates.set(chatId, state);
-    const redoable = (userMsgId) => {
-      const i = msgs.findIndex((m) => m.id === userMsgId);
-      return i >= 0 && msgs[i].is_user && msgs.length - 1 - i <= 1;
-    };
-    const indexOf = new Map(msgs.map((m, i) => [m.id, i]));
-    const records = steps.slice(-MAX_RECORDS).map((st) => {
-      const v = buildRecordView(r, st.message.id, st.message.swipe_id ?? 0, st.record, st.before, st.after);
-      const prev = msgs[(indexOf.get(st.message.id) ?? 0) - 1];
-      if (st.record.action?.via === "adjudicator" && prev?.is_user && redoable(prev.id))
-        v.redoFrom = prev.id;
-      return v;
-    }).filter((v) => v.check || v.changes.length || v.action || v.decisions.length || (v.contradiction ?? 0) >= 0.6);
-    const suggestions = [];
-    for (const m of msgs.slice(-6)) {
-      const w = warpMeta(m);
-      if (!m.is_user || !w.suggest || w.intent)
-        continue;
-      suggestions.push({ messageId: m.id, actionId: w.suggest.actionId, params: w.suggest.params, label: w.suggest.label, confidence: w.suggest.confidence, canRedo: redoable(m.id) });
-    }
-    const latest = msgs[msgs.length - 1] ?? null;
-    const anchor = latest && !latest.is_user ? latest.id : null;
-    send({
-      type: "state",
-      chatId,
-      status,
-      hud: settings.enabled ? buildHud(r, state) : null,
-      map: settings.enabled ? buildMap(r, state) : null,
-      choices: settings.enabled ? markReady(buildChoices(r, state, { ...settings, live: liveChoicesOf(latest) }), readyChoices(chatId, momentKey(msgs, state))) : [],
-      records: settings.enabled ? records : [],
-      suggestions: settings.enabled ? suggestions.filter((s) => s.canRedo) : [],
-      latestMessageId: latest?.id ?? null,
-      choicesAnchor: anchor,
-      busy: busyChats.has(chatId),
-      dungeon: settings.enabled ? await withName(buildDungeonView(r, state), chatId, userId) : null,
-      dungeonEntries: settings.enabled ? buildDungeonEntries(r, state) : [],
-      date: settings.enabled ? buildDateView(r, state, settings.lines) : null,
-      scene: settings.enabled ? sceneViewFor(chatId, r, state) : null,
-      encounterLogs: settings.enabled ? encounterLogsOf(r, msgs) : []
-    }, userId);
-  } catch (e) {
-    logError("pushState", e);
-  }
-}
-function encounterLogsOf(r, msgs) {
-  const out = [];
-  for (const m of msgs.slice(-30)) {
-    const log = warpMeta(m).encounter;
-    if (!log)
-      continue;
-    out.push({
-      messageId: m.id,
-      name: r.encounters[log.enc]?.name ?? "Encounter",
-      foe: log.foe,
-      status: log.status,
-      rounds: log.rounds.map((x) => x.card),
-      from: log.from ?? 0,
-      ended: log.ended ?? null
-    });
-  }
-  return out;
-}
-function markReady(choices, ready) {
-  return ready.size ? choices.map((c) => ready.has(c.id) ? { ...c, ready: true } : c) : choices;
-}
-async function withName(v, chatId, userId) {
-  if (!v)
-    return v;
-  await Promise.resolve().then(() => init_turn());
-  const name = await playerName(chatId, userId).catch(() => "You");
-  const safe = JSON.stringify(name).slice(1, -1);
-  return JSON.parse(JSON.stringify(v).replace(/\{\{user\}\}/g, () => safe));
-}
-function schedulePush(chatId, userId, delay = 150) {
-  if (!chatId)
-    return;
-  const active = getActiveChat(userId);
-  if (active && active !== chatId)
-    return;
-  const k = `${key3(userId)}:${chatId}`;
-  const t = timers.get(k);
-  if (t)
-    clearTimeout(t);
-  timers.set(k, setTimeout(() => {
-    timers.delete(k);
-    pushState(chatId, userId);
-  }, delay));
-}
-async function connectionsFor(userId) {
-  try {
-    const list = await host().connections.list(userId);
-    return list.map((c) => ({ id: c.id, name: `${c.name} — ${c.model}` }));
-  } catch {
-    return [];
-  }
-}
-var lastStates, busyChats, activeChat, timers, key3 = (userId) => userId ?? "_", MAX_RECORDS = 60;
-var init_state_push = __esm(() => {
-  init_view();
-  init_view2();
-  init_view3();
-  init_scene();
-  init_drafts();
-  init_ledger();
-  init_settings();
-  init_source();
-  lastStates = new Map;
-  busyChats = new Set;
-  activeChat = new Map;
-  timers = new Map;
-});
-
-// src/backend.ts
-init_resolve();
-init_templates();
-init_ledger();
-init_settings();
-init_source();
-init_state_push();
-init_turn();
-init_intents();
-init_scene();
-init_encounter();
-init_talk();
-init_types2();
-init_drafts();
-init_loader();
-init_deciders();
-
-// src/backend/dungeon.ts
-init_dice();
-init_run();
-init_ledger();
-init_source();
-init_state_push();
-init_scene();
-function run2(r, s, op) {
-  switch (op.op) {
-    case "enter":
-      return enterDungeon(r, s, op.id, op.companions, randomSeed());
-    case "move":
-      return moveTo(r, s, op.x, op.y);
-    case "choose":
-      return chooseEvent(r, s, op.choice);
-    case "battle":
-      if (op.auto)
-        return battleCommand(r, s, { auto: op.auto });
-      if (op.escape)
-        return battleCommand(r, s, { escape: true });
-      if (op.item)
-        return battleCommand(r, s, { item: op.item, target: op.target });
-      return battleCommand(r, s, { skill: op.skill ?? "attack", target: op.target });
-    case "descend":
-      return descend(r, s);
-    case "leave":
-      return leaveDungeon(r, s);
-    case "use":
-      return useItem(r, s, op.item, op.target);
-    case "buy":
-      return shopBuy(r, s, op.item);
-  }
-}
-async function runDungeonOp(msg, userId) {
-  const loaded = await getRuleset(msg.chatId, userId);
-  const r = loaded?.ruleset;
-  if (!r)
-    return;
-  if (busyChats.has(msg.chatId)) {
-    toast("info", "Wait for the story to catch up first.", userId);
-    return;
-  }
-  const msgs = await getMessages(msg.chatId);
-  const last = msgs[msgs.length - 1];
-  if (!last) {
-    toast("warning", "Send a message first — the dungeon attaches to the latest message.", userId);
-    return;
-  }
-  const { state } = foldPath(r, msgs);
-  const res = run2(r, state, msg);
-  if (res.error) {
-    toast("warning", res.error, userId);
-    await pushState(msg.chatId, userId);
-    return;
-  }
-  if (res.events.length) {
-    const swipe = last.swipe_id ?? 0;
-    const existing = warpMeta(last).swipes?.[String(swipe)];
-    const rec = existing ? { ...existing, events: [...existing.events, ...res.events] } : { v: 1, hints: [], events: res.events, at: Date.now() };
-    await writeRecord(msg.chatId, last.id, swipe, rec);
-  }
-  await pushState(msg.chatId, userId);
-  const was = state.dungeon;
-  const endedRun = was && !res.events.some((e) => e.t === "dg_enter") && res.events.some((e) => e.t === "dg_exit") ? { name: r.dungeons[was.id]?.name ?? "the dungeon", depth: was.depth, gold: was.gold } : undefined;
-  if (res.narrate)
-    await playScene({ chatId: msg.chatId, userId, kind: "dungeon", intent: null, said: res.narrate.say, ...endedRun ? { runEnded: endedRun } : {} });
-}
-
-// src/engine/balance.ts
-init_dice();
-init_expr();
-init_state();
-init_resolve();
-function effectsOf(r) {
-  const out = [];
-  const add = (e) => {
-    if (!e)
-      return;
-    out.push(e);
-    for (const d of e.decide)
-      for (const o of d.options)
-        add(o.effect);
-  };
-  const addAction = (a) => {
-    add(a.cost);
-    add(a.effects);
-    for (const e of Object.values(a.outcomes))
-      add(e);
-  };
-  Object.values(r.actions).forEach(addAction);
-  for (const t of r.triggers)
-    add(t.effects);
-  for (const enc of Object.values(r.encounters)) {
-    Object.values(enc.actions).forEach(addAction);
-    for (const o of enc.foeMoves?.options ?? [])
-      add(o.effect);
-    Object.values(enc.outcomes).forEach(add);
-    add(enc.start);
-  }
-  for (const f of Object.values(r.feats))
-    add(f.reward);
-  for (const p of Object.values(r.perks))
-    add(p.effects);
-  for (const f of Object.values(r.fronts))
-    for (const st of f.stages)
-      add(st.effects);
-  for (const e of Object.values(r.randomEvents.events))
-    add(e.effects);
-  Object.values(r.liveChoices.tags).forEach(addAction);
-  return out;
-}
-function reviewBalance(r) {
-  const out = [];
-  const start = initialState(r);
-  for (const a of Object.values(r.actions)) {
-    if (!a.check || a.perPerson)
-      continue;
-    const s = cloneState(start);
-    if (a.at.length)
-      s.location = a.at[0];
-    const o = odds(r, s, a);
-    if (!o)
-      continue;
-    const p = o.success + o.partial / 2;
-    if (p < 0.12)
-      out.push({ id: `odds:${a.id}`, part: "actions", text: `“${a.label}” succeeds only ${Math.round(p * 100)}% of the time at the start.`, fix: `Make the "${a.id}" action's check noticeably easier at the start (aim for 30–50% success), keeping it harder than it will be later.` });
-    else if (p > 0.95)
-      out.push({ id: `odds:${a.id}`, part: "actions", text: `“${a.label}” succeeds ${Math.round(p * 100)}% of the time — the roll barely matters.`, fix: `Make the "${a.id}" action's check less of a sure thing (aim for 60–80% success at the start).` });
-  }
-  for (const id of r.statOrder) {
-    const d = r.stats[id];
-    if (!d.perHour)
-      continue;
-    const toEdge = d.perHour > 0 ? d.max - d.start : d.start - d.min;
-    const hours = toEdge / Math.abs(d.perHour);
-    const bad = d.perHour > 0 && d.good === "low" || d.perHour < 0 && d.good === "high";
-    if (bad && hours < 8) {
-      out.push({ id: `drift:${id}`, part: "stats", text: `${d.label} reaches its worst in about ${Math.max(1, Math.round(hours))}h of game time on its own.`, fix: `Slow down the per_hour drift of the "${id}" stat so it takes at least a day of game time to reach its worst.` });
-    }
-  }
-  const env = makeEnv(r, start);
-  const meaningful = (e) => Object.keys(e.stats).length + Object.keys(e.set).length + Object.keys(e.addConditions).length + Object.keys(e.items).length + Object.keys(e.rel).length + e.decide.length + e.wear.length + e.undress.length > 0 || !!e.move || !!e.startEncounter || !!e.hint;
-  for (const t of r.triggers) {
-    if (t.when && !t.whenScene && meaningful(t.effects) && evalBool(t.when, env, false) && !t.repeat) {
-      out.push({ id: `trig:${t.id}`, part: "rules", text: `Rule “${t.id}” fires immediately on turn one.`, fix: `Adjust the "${t.id}" trigger (or the starting values it checks) so it doesn't fire at the very start.` });
-    }
-  }
-  for (const f of Object.values(r.fronts)) {
-    const last = f.stages[f.stages.length - 1];
-    const rate = evalNumber(f.rate, env, 0);
-    if (!last || rate <= 0)
-      continue;
-    const days = (last.at - f.start) / rate;
-    if (days < 2) {
-      out.push({ id: `front:${f.id}`, part: "story", text: `“${f.label}” runs through all its stages in about ${Math.max(1, Math.round(days * 24))}h of game time.`, fix: `Slow the "${f.id}" front down (lower per_day or space its stages out) so it takes at least a week or two of game time to play out.` });
-    }
-  }
-  if (r.randomEvents.enabled) {
-    const perDay = evalNumber(r.randomEvents.perDay, env, 0);
-    if (perDay > 0 && 100 / perDay < 0.75) {
-      out.push({ id: "events:pace", part: "story", text: `A random event roughly every ${Math.max(1, Math.round(100 / perDay * 24))}h of game time — that's a lot.`, fix: "Lower random_events per_day so events come every few days of game time rather than several times a day." });
-    }
-  }
-  const touched = new Set;
-  for (const e of effectsOf(r)) {
-    Object.keys(e.stats).forEach((k) => touched.add(k));
-    Object.keys(e.set).forEach((k) => touched.add(k));
-  }
-  for (const id of r.statOrder) {
-    const d = r.stats[id];
-    if (d.kind === "money" && d.narrator > 0)
-      continue;
-    if (!touched.has(id) && !d.perHour && d.narrator <= 0) {
-      out.push({ id: `dead:${id}`, part: "stats", text: `${d.label} never changes — no action, rule or story update touches it.`, fix: `Give the "${id}" stat a way to change: at least one action or rule that raises or lowers it, or allow the narrator to adjust it.` });
-    }
-  }
-  for (const enc of Object.values(r.encounters)) {
-    const sim = simulateEncounter(r, start, enc.id, 120);
-    if (!sim)
-      continue;
-    const goodEnds = Object.keys(enc.outcomes).filter((o) => /won|win|victory|escaped|fled|seduced/i.test(o));
-    const wins = goodEnds.reduce((n, o) => n + (sim.outcomes[o] ?? 0), 0) / sim.runs;
-    if (sim.stuck / sim.runs > 0.2) {
-      out.push({ id: `enc-stuck:${enc.id}`, part: "encounters", text: `“${enc.name}” often doesn't end within 25 rounds.`, fix: `Make the "${enc.id}" encounter reliably end within about 4–10 rounds (stronger effects on foe stats or tighter end_when conditions).` });
-    } else if (goodEnds.length && wins < 0.2) {
-      out.push({ id: `enc-hard:${enc.id}`, part: "encounters", text: `“${enc.name}” is won or escaped only ${Math.round(wins * 100)}% of the time with random play.`, fix: `Make the "${enc.id}" encounter fairer for the player (aim for roughly half of random playthroughs ending well).` });
-    } else if (goodEnds.length && wins > 0.95) {
-      out.push({ id: `enc-easy:${enc.id}`, part: "encounters", text: `“${enc.name}” almost always goes the player's way — there's little risk.`, fix: `Make the "${enc.id}" encounter more dangerous (foe moves hit harder or the player's options are riskier).` });
-    }
-  }
-  return out;
-}
-function simulateEncounter(r, from, id, runs) {
-  const enc = r.encounters[id];
-  if (!enc)
-    return null;
-  const outcomes = {};
-  let stuck = 0, rounds = 0;
-  const rng = seededRng(`sim:${id}`);
-  for (let i = 0;i < runs; i++) {
-    const s = cloneState(from);
-    applyEvent(s, { t: "enc", id, foe: Object.fromEntries(enc.foe.stats.map((x) => [x.id, x.start])), src: "start" }, r);
-    let ended = null;
-    for (let n = 0;n < 25 && s.encounter; n++) {
-      const choices = availableChoices(r, s);
-      const pick = choices.length ? choices[Math.floor(rng() * choices.length)].id : null;
-      const { record } = resolveTurnFull(r, s, pick ? { actionId: pick, via: "choice" } : null, { seed: `sim:${id}:${i}:${n}` });
-      for (const e of record.events) {
-        applyEvent(s, e, r);
-        if (e.t === "enc" && !e.id)
-          ended = e.outcome ?? "ended";
-      }
-      rounds++;
-    }
-    if (ended)
-      outcomes[ended] = (outcomes[ended] ?? 0) + 1;
-    else
-      stuck++;
-  }
-  return { runs, outcomes, stuck, rounds: rounds / runs };
-}
-
-// src/backend/builder.ts
-init_loader();
-init_lint();
-
 // src/engine/reference.ts
-var PART_LABELS = ["core", "stats", "people", "world", "actions", "encounters", "journal", "rules", "story", "dating"];
-var PART_CONTENTS = {
-  core: "name, description, player, clock, start, hud, narration",
-  stats: "stats, growth",
-  people: "relationships (stats + people with schedules), companions, lineage",
-  world: "weather, locations, items (incl. clothing, uses and gear bonuses), item_uses, wardrobe, body, conditions, flags, start.items",
-  actions: "actions, improvise, obligations, jobs",
-  encounters: "encounters, dungeons",
-  journal: "codex, feats, perks, checkpoints, endings",
-  rules: "triggers, mind",
-  story: "secrets, fronts, random_events, live_choices",
-  dating: "dating (tastes, topics, venues), plus gift items and actions to get them"
-};
 function partForIssue(where) {
   const w = where.replace(/^warp-ruleset\s*·\s*/i, "");
   const head = w.split(/[›,]/)[0].trim().toLowerCase();
@@ -17705,7 +17586,7 @@ function partForIssue(where) {
     return "dating";
   return "core";
 }
-var REFERENCE = `WARP RULESET FORMAT (YAML). Numbers may be formulas in quotes. Meters are 0–100 unless there's a reason.
+var PART_LABELS, PART_CONTENTS, REFERENCE = `WARP RULESET FORMAT (YAML). Numbers may be formulas in quotes. Meters are 0–100 unless there's a reason.
 
 stats:            # kinds: meter (bar) | attribute | skill | money | hidden
   stress: { kind: meter, good: low, start: 0, per_hour: -0.5, narrator: 10, bands: { 0: You are calm., 30: You are stressed., 70: You are distressed. } }
@@ -17744,6 +17625,8 @@ lineage:          # pregnancy and children; only ever between two people known t
   children: { speed: 1, join_at: 18, inherit: [hair, eyes] }   # speed = how much faster than the calendar they age; they stay off-stage family until join_at (never below 18) and are never part of romance
 EFFECT: conceive: { with: target, chance: 20, carrier: player }   # carrier: player | partner. FUNCTIONS: children(), age(person); names: pregnant, pregnancy_weeks.
 
+name: Harbour Town                 # the game's name (shown on the HUD); description: one line about it
+description: A fishing town where the tide brings secrets.
 clock: { start: "Mon 07:00", date: "Sep 4", minutes_per_action: 15, narrator_max: 240 }
 start: { location: home, items: { phone: 1 } }
 hud: { currency: "$", bars: [health, stress] }
@@ -17753,6 +17636,7 @@ player: { age: 20 }
 weather: { temps: { spring: 12, summer: 22, autumn: 11, winter: 3 } }     # enables weather + temperature
 locations:
   home: { name: Home, desc: "...", indoors: true, exits: [street], travel: 10 }   # exits become travel buttons
+locations_open: true             # the story may name places the ruleset doesn't list (on by default when there are none)
 items:
   phone: Phone
   raincoat: { name: Raincoat, slot: outer, warmth: 5, reveal: 0, traits: [rainproof] }   # clothing = item with a slot
@@ -17963,19 +17847,594 @@ deepest(dungeon) (deepest floor reached), in_dungeon, dungeon_depth,
 stage(person) (relationship rung, −1 hostile), partner(person), dates(person), in_date, on_outing,
 min, max, clamp, floor, ceil, round, abs.
 Operators: + - * / % < <= > >= == != and or not, a ? b : c. Strings in single quotes.
+`, DESIGN_GUIDE = `WARP DESIGN GUIDE — what makes a ruleset worth playing.
+A ruleset is a game the player feels through the story. Every piece should either create a decision, apply pressure, or reward play.
+Anything declared but connected to nothing is a broken promise: the player sees it and can't use it.
+
+## the core loop
+Name it before writing YAML: what the player does most days, what pushes back, what they're working toward.
+Pressures (needs, money, threats, rivals) should pull against each other so choices cost something.
+
+## stats
+Every stat needs a SOURCE (what raises it), a SINK (what lowers it), and a CONSEQUENCE (a check, trigger, ending or encounter that reads it).
+A meter nothing reads is decoration. Use per_hour drift for needs; narrator: lets the story nudge it within limits.
+Skills grow when checks read them — so every skill should appear in at least two checks, in different places.
+Mistake: ten meters that only the narrator touches. Fewer stats, each wired into play, beat many idle ones.
+
+## items
+Every item should DO something: a use: (an action with effects), a bonus: (gear that helps the checks that read a stat), a gift tag, or an action/encounter move that needs it (when: "has('x')").
+Read the item's description and make it true mechanically: "neutralizes scent, lowering visibility" → use: { visibility: -25, remove_condition: [scented] }.
+Consumables get uses: (charges); tools get keep: true. Give the player a way to GET each item that matters (start.items, shops via an action that costs money and gives it, loot, rewards).
+Mistake: flavour items in the starting inventory that no option ever offers — the player will look for the button.
+
+## encounters
+An encounter is a small puzzle with a visible goal. Give it:
+- a goal the player can read: end_when on a foe stat ("foe.resolve <= 0") the moves wear down, or goal: in words;
+- two or three ROUTES with different stats and trade-offs (talk / trick / force), plus an ESCAPE (a move with end: escaped, at a cost);
+- a danger: a player stat end_when that can actually be reached ("stress >= 80"), and foe_moves that push toward it, so waiting costs;
+- items that matter in it (a use: that changes what its checks read, a bonus: on those checks, a move that needs an item);
+- labels: for how each ending reads, and outcomes: with consequences (what it cost, what was won).
+Rounds are told briefly by default; narrate: true only for set-pieces that deserve full prose every round.
+Mistake: three moves that all lower the same stat by the same amount; a defeat threshold above the stat's max; no way out.
+
+## conditions
+A condition should change play: penalise a check (- 10 when cond('x')), open or close actions, feed an encounter, drive a trigger.
+Each needs a cause (add_condition somewhere) and a cure (an item, rest, time, a place) or a duration.
+
+## places
+Every place needs a reason to go there: actions at: it, people scheduled there, a job, a shop, a dungeon entrance, a venue.
+Connect them with exits so the map is walkable from the start.
+
+## people
+Give each tracked person a schedule (where they are by hour and day) so the player can find them, starting feelings that match the card, and — for companions — a goal and a daily choice so they live on their own.
+
+## money
+Money needs income (jobs, paid actions, loot) AND spending (shops, rent, bribes, fares). If either is missing it's just a number.
+
+## flags and story machinery
+Set a flag only if something reads it (an action's when, a trigger, a codex unlock, a secret's stage). Fronts, secrets and random events make the world move without the player — use them to put pressure on the core loop.
+
+## checks
+Odds should usually sit between 25% and 85% at the start and improve with skill; show the player what helps (skills, gear bonuses, conditions as penalties).
+Partial outcomes and costs make failures interesting: a fail should change something, not just waste a turn.
+
+## finishing
+You're done when every piece connects: run the audit and either fix each gap or say why it's deliberate. Simulate each encounter — no route should be pointless, none should be a guaranteed win, and the escape should cost something.
 `;
+var init_reference = __esm(() => {
+  PART_LABELS = ["core", "stats", "people", "world", "actions", "encounters", "journal", "rules", "story", "dating"];
+  PART_CONTENTS = {
+    core: "name, description, player, clock, start, hud, narration",
+    stats: "stats, growth",
+    people: "relationships (stats + people with schedules), companions, lineage",
+    world: "weather, locations, items (incl. clothing, uses and gear bonuses), item_uses, wardrobe, body, conditions, flags, start.items",
+    actions: "actions, improvise, obligations, jobs",
+    encounters: "encounters, dungeons",
+    journal: "codex, feats, perks, checkpoints, endings",
+    rules: "triggers, mind",
+    story: "secrets, fronts, random_events, live_choices",
+    dating: "dating (tastes, topics, venues), plus gift items and actions to get them"
+  };
+});
+
+// src/engine/simulate.ts
+function simulateEncounter(r, id, opts = {}) {
+  const enc = r.encounters[id];
+  if (!enc)
+    return null;
+  const runs = opts.runs ?? 120, maxRounds = opts.maxRounds ?? 40;
+  const begin = () => {
+    const s = cloneState(opts.from ?? initialState(r));
+    applyEvent(s, { t: "enc", id, foe: Object.fromEntries(enc.foe.stats.map((f) => [f.id, f.start])), ...enc.momentum ? { momentum: enc.momentum.start } : {}, src: "manual" }, r);
+    return s;
+  };
+  const policies = [];
+  const moves = (s) => [
+    ...actionPool(r, s).order.filter((a) => !actionPool(r, s).defs[a].perPerson && isAvailable(r, s, actionPool(r, s).defs[a])),
+    ...usableItems(r, s).filter((u) => !u.locked).map((u) => u.id)
+  ];
+  for (const a of enc.actionOrder)
+    policies.push({ name: `always ${enc.actions[a].label}`, pick: (s) => moves(s).includes(a) ? a : moves(s)[0] ?? null });
+  policies.push({ name: "a random mix", pick: (s, rng) => {
+    const m = moves(s);
+    return m.length ? m[Math.floor(rng() * m.length)] : null;
+  } });
+  const out = [];
+  for (const pol of policies) {
+    const outcomes = {};
+    const lengths = [];
+    let rounds = 0, still = 0, unfinished = 0;
+    for (let i = 0;i < runs; i++) {
+      let s = begin();
+      let rng = mulberry(i + 1);
+      let n = 0;
+      while (s.encounter && n < maxRounds) {
+        const pick = pol.pick(s, rng);
+        const rec = resolveTurn(r, s, pick ? { actionId: pick, via: "choice" } : null, { seed: `sim:${pol.name}:${i}:${n}` });
+        const next = cloneState(s);
+        for (const e of rec.events)
+          applyEvent(next, e, r);
+        const moved = rec.events.some((e) => e.t === "foe" && (e.d ?? 0) !== 0 || e.t === "swing" || e.t === "enc" && e.id === null);
+        if (!moved)
+          still++;
+        rounds++;
+        n++;
+        const end = rec.events.find((e) => e.t === "enc" && e.id === null);
+        if (end)
+          outcomes[end.outcome ?? "ended"] = (outcomes[end.outcome ?? "ended"] ?? 0) + 1;
+        s = next;
+        rng = mulberry(i * 7919 + n);
+      }
+      if (s.encounter)
+        unfinished++;
+      lengths.push(n);
+    }
+    out.push({ policy: pol.name, runs, outcomes, medianRounds: quantile(lengths, 0.5), p90Rounds: quantile(lengths, 0.9), stalled: rounds ? still / rounds : 0, unfinished });
+  }
+  const notes = [];
+  for (const p of out) {
+    const total = Object.values(p.outcomes).reduce((a, b) => a + b, 0) || 1;
+    const best = Object.entries(p.outcomes).sort((a, b) => b[1] - a[1])[0];
+    if (p.unfinished > p.runs * 0.1)
+      notes.push(`"${p.policy}" often never ends (${p.unfinished}/${p.runs} runs hit ${maxRounds} rounds) — give it a way to finish.`);
+    if (best && best[1] / total > 0.97 && p.policy !== "a random mix")
+      notes.push(`"${p.policy}" almost always ends "${best[0]}" — a guaranteed result isn't a choice.`);
+    if (p.stalled > 0.6)
+      notes.push(`"${p.policy}" changes nothing in ${Math.round(p.stalled * 100)}% of rounds — failures should still move something.`);
+    if (p.p90Rounds > 12)
+      notes.push(`"${p.policy}" drags on (1 in 10 runs take ${p.p90Rounds}+ rounds).`);
+  }
+  return { id, name: enc.name, policies: out, notes };
+}
+function mulberry(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = a + 1831565813 >>> 0;
+    let t = a;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function describeSim(sim) {
+  const lines = sim.policies.map((p) => {
+    const total = Object.values(p.outcomes).reduce((a, b) => a + b, 0);
+    const outs = Object.entries(p.outcomes).sort((a, b) => b[1] - a[1]).map(([o, n]) => `${o} ${Math.round(n / p.runs * 100)}%`).join(", ") || "never ends";
+    return `- ${p.policy}: ${outs}${p.unfinished ? `, unfinished ${Math.round(p.unfinished / p.runs * 100)}%` : ""} · median ${p.medianRounds} rounds (p90 ${p.p90Rounds}) · ${Math.round(p.stalled * 100)}% of rounds change nothing${total ? "" : ""}`;
+  });
+  return [`${sim.name} — ${sim.policies[0]?.runs ?? 0} runs per strategy:`, ...lines, ...sim.notes.length ? ["Notes:", ...sim.notes.map((n) => `- ${n}`)] : []].join(`
+`);
+}
+var quantile = (xs, q) => {
+  if (!xs.length)
+    return 0;
+  const s = [...xs].sort((a, b) => a - b);
+  return s[Math.min(s.length - 1, Math.floor(q * s.length))];
+};
+var init_simulate = __esm(() => {
+  init_resolve();
+  init_state();
+});
+
+// src/backend/builder-agent.ts
+function evaluate2(parts) {
+  const { ruleset, issues } = loadRuleset(parts.filter((p) => p.yaml.trim()).map((p, i) => ({ label: `warp-ruleset · ${p.label}`, content: p.yaml, order: i })));
+  if (!ruleset)
+    return { ruleset, issues, gaps: [], depth: 0 };
+  const a = auditRuleset(ruleset);
+  return { ruleset, issues, gaps: a.gaps, depth: a.depth };
+}
+function openGaps(s, gaps, strict) {
+  const waived = s.waived ?? {};
+  return gaps.filter((g) => !waived[g.id] && (strict || g.severity === "gap"));
+}
+function referenceFor(topic) {
+  const t = topic.toLowerCase().replace(/s$/, "");
+  const guide = DESIGN_GUIDE.split(/\n(?=## )/).filter((b) => b.toLowerCase().includes(t)).join(`
+`);
+  const blocks = REFERENCE.split(/\n(?=[a-z_]+:\s)/).filter((b) => b.toLowerCase().includes(t)).slice(0, 6).join(`
+`);
+  return [guide && `Design guidance:
+${guide}`, blocks && `Format:
+${blocks}`].filter(Boolean).join(`
+
+`).slice(0, 7000) || `Nothing specific on "${topic}". Topics: items, encounters, stats, people, places, money, conditions, dating, dungeons, story, checks.`;
+}
+function issuesText(issues, label) {
+  const mine = label ? issues.filter((i) => i.level === "error" || i.where.toLowerCase().includes(label)) : issues;
+  const errors = mine.filter((i) => i.level === "error"), warns = mine.filter((i) => i.level !== "error");
+  if (!errors.length && !warns.length)
+    return "No problems.";
+  return [...errors.map((i) => `ERROR ${i.where}: ${i.message}`), ...warns.slice(0, 15).map((i) => `warning ${i.where}: ${i.message}`)].join(`
+`);
+}
+function previewText(r, location, hour) {
+  const s = initialState(r);
+  if (location && r.locations[location])
+    s.location = location;
+  if (typeof hour === "number" && hour >= 0 && hour < 24)
+    s.minutes = Math.floor(s.minutes / 1440) * 1440 + Math.round(hour * 60);
+  const h = buildHud(r, s);
+  const choices = buildChoices(r, s, { lines: [], veils: [] });
+  return [
+    `At ${h.location?.name ?? "?"}${h.clock ? `, ${h.clock.day} ${h.clock.time}` : ""}.`,
+    `Bars: ${h.bars.map((b) => `${b.label} ${b.display}`).join(", ") || "none"}`,
+    h.conditions.length ? `Conditions: ${h.conditions.map((c) => c.label).join(", ")}` : "",
+    `Inventory: ${h.items.map((i) => `${i.name}${i.use ? ` [use: ${i.use.label}${i.use.locked ? ` — locked: ${i.use.locked}` : ""}]` : ""}${i.bonus ? ` [${i.bonus}]` : ""}`).join(", ") || "empty"}`,
+    `Choices: ${choices.map((c) => `${c.label}${c.odds !== null ? ` (${Math.round(c.odds * 100)}%)` : ""}${c.locked ? ` [locked: ${c.locked}]` : ""}`).join(" | ") || "none"}`
+  ].filter(Boolean).join(`
+`);
+}
+function runTool(s, name, args, strict) {
+  const label = String(args.label ?? "");
+  switch (name) {
+    case "read_section": {
+      const p = s.parts.find((x) => x.label === label);
+      return { text: p ? `### ${label}
+${p.yaml}` : `There's no "${label}" section yet. It may hold: ${PART_CONTENTS[label] ?? "?"}` };
+    }
+    case "write_section": {
+      if (!PART_LABELS.includes(label))
+        return { text: `Unknown section "${label}". Sections: ${PART_LABELS.join(", ")}` };
+      const yaml = String(args.yaml ?? "").replace(/^```(?:ya?ml)?\s*\n?|```\s*$/g, "").trim();
+      if (!yaml)
+        return { text: "Empty YAML — nothing written." };
+      const before = evaluate2(s.parts);
+      const p = s.parts.find((x) => x.label === label);
+      if (p) {
+        p.yaml = `${yaml}
+`;
+        p.changed = true;
+      } else
+        s.parts.push({ label, yaml: `${yaml}
+`, status: "ok", issues: [], changed: true });
+      const after = evaluate2(s.parts);
+      if (!after.ruleset)
+        return { text: `Written, but the ruleset no longer loads:
+${issuesText(after.issues)}` };
+      const was = new Set(before.gaps.map((g) => g.id)), now = new Set(after.gaps.map((g) => g.id));
+      const fixed = before.gaps.filter((g) => !now.has(g.id)).map((g) => g.id), added = after.gaps.filter((g) => !was.has(g.id));
+      return { text: [`Wrote "${label}".`, `Checker: ${issuesText(after.issues, label)}`, `Audit: depth ${before.depth} → ${after.depth}.${fixed.length ? ` Fixed: ${fixed.join(", ")}.` : ""}${added.length ? `
+New gaps:
+${added.map(gapLine).join(`
+`)}` : ""}`].join(`
+`) };
+    }
+    case "check": {
+      const e = evaluate2(s.parts);
+      return { text: e.ruleset ? issuesText(e.issues) : `The ruleset doesn't load:
+${issuesText(e.issues)}` };
+    }
+    case "audit": {
+      const e = evaluate2(s.parts);
+      if (!e.ruleset)
+        return { text: "Fix the checker errors first; the ruleset doesn't load." };
+      const open = openGaps(s, e.gaps, true);
+      const links = auditRuleset(e.ruleset).links;
+      return { text: [`Depth ${e.depth}/100. Open: ${open.filter((g) => g.severity === "gap").length} gaps, ${open.filter((g) => g.severity === "thin").length} thin spots${Object.keys(s.waived ?? {}).length ? `; waived: ${Object.keys(s.waived ?? {}).join(", ")}` : ""}.`, ...open.slice(0, 40).map(gapLine), links.length ? `Already connected: ${links.slice(0, 20).join("; ")}` : ""].filter(Boolean).join(`
+`) };
+    }
+    case "read_reference":
+      return { text: referenceFor(String(args.topic ?? "")) };
+    case "preview": {
+      const e = evaluate2(s.parts);
+      return { text: e.ruleset ? previewText(e.ruleset, typeof args.location === "string" ? args.location : undefined, typeof args.hour === "number" ? args.hour : undefined) : "The ruleset doesn't load yet." };
+    }
+    case "simulate_encounter": {
+      const e = evaluate2(s.parts);
+      if (!e.ruleset)
+        return { text: "The ruleset doesn't load yet." };
+      const sim = simulateEncounter(e.ruleset, String(args.id ?? ""), { runs: 100 });
+      return { text: sim ? describeSim(sim) : `No encounter "${String(args.id)}". Encounters: ${Object.keys(e.ruleset.encounters).join(", ") || "none"}` };
+    }
+    case "waive": {
+      const id = String(args.id ?? ""), reason = String(args.reason ?? "").trim();
+      if (!id || reason.length < 8)
+        return { text: "A waiver needs the gap's id and a real reason." };
+      s.waived = { ...s.waived ?? {}, [id]: reason.slice(0, 200) };
+      return { text: `Waived ${id}: ${reason}` };
+    }
+    case "finish": {
+      const e = evaluate2(s.parts);
+      const errors = e.issues.filter((i) => i.level === "error");
+      const open = e.ruleset ? openGaps(s, e.gaps, strict) : [];
+      if (!e.ruleset || errors.length)
+        return { text: `Not finished — the checker still reports errors:
+${issuesText(e.issues)}` };
+      if (open.length)
+        return { text: `Not finished — ${open.length} audit gap${open.length === 1 ? "" : "s"} still open. Fix each, or waive it with a reason if it's deliberate:
+${open.slice(0, 25).map(gapLine).join(`
+`)}` };
+      return { text: "Finished.", finished: String(args.summary ?? "").slice(0, 800) || "Done." };
+    }
+    default:
+      return { text: `Unknown tool "${name}". Tools: ${TOOLS.map((t) => t.name).join(", ")}` };
+  }
+}
+function textCalls(content) {
+  const t = content.replace(/```(?:json)?/gi, "");
+  const out = [];
+  const tryParse = (j) => {
+    try {
+      const v = JSON.parse(j);
+      for (const x of Array.isArray(v) ? v : [v]) {
+        const o = x;
+        const name = typeof o?.tool === "string" ? o.tool : typeof o?.name === "string" ? o.name : null;
+        if (name)
+          out.push({ name, args: o.args ?? o.arguments ?? {} });
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const a = t.indexOf("["), b = t.lastIndexOf("]");
+  if (a >= 0 && b > a && /"tool"|"name"/.test(t.slice(a, b)) && tryParse(t.slice(a, b + 1)))
+    return out;
+  const c = t.indexOf("{"), d = t.lastIndexOf("}");
+  if (c >= 0 && d > c)
+    tryParse(t.slice(c, d + 1));
+  return out;
+}
+async function runAgent(s, opts) {
+  const start = evaluate2(s.parts);
+  const first = [
+    opts.brief,
+    `Your task: ${opts.task}`,
+    `Sections now: ${s.parts.map((p) => `${p.label} (${p.yaml.length} chars)`).join(", ") || "none"}. Sections you can write: ${PART_LABELS.join(", ")}.`,
+    start.ruleset ? `Checker: ${issuesText(start.issues)}` : `The ruleset doesn't load yet:
+${issuesText(start.issues)}`,
+    start.ruleset ? `Audit — depth ${start.depth}/100:
+${openGaps(s, start.gaps, true).slice(0, 40).map(gapLine).join(`
+`) || "no gaps"}` : "",
+    `Done means: no checker errors, and every audit gap fixed or waived${opts.strict ? " (thin spots too)" : ""}. Then call finish.`
+  ].filter(Boolean).join(`
+
+`);
+  const head = [{ role: "system", content: AGENT_SYSTEM }, { role: "user", content: first }];
+  let tail = [];
+  let idle = 0;
+  for (let step = 1;step <= opts.maxSteps; step++) {
+    const res = await opts.hooks.llm([...head, ...tail], TOOLS);
+    const calls = res.calls.length ? res.calls : textCalls(res.content);
+    if (!calls.length) {
+      if (++idle >= 3)
+        break;
+      tail.push({ role: "assistant", content: res.content.slice(0, 2000) || "(no reply)" }, { role: "user", content: 'Use a tool (natively, or reply with JSON {"tool": …, "args": …}). If everything is done, call finish.' });
+      continue;
+    }
+    idle = 0;
+    const results = [];
+    for (const c of calls.slice(0, 6)) {
+      await opts.hooks.progress(PROGRESS[c.name]?.(c.args) ?? `${c.name}…`, describeCall(c.name, c.args));
+      const out = runTool(s, c.name, c.args ?? {}, opts.strict);
+      results.push(`[${describeCall(c.name, c.args)}]
+${out.text}`);
+      if (out.finished)
+        return { finished: true, summary: out.finished, steps: step };
+    }
+    tail.push({ role: "assistant", content: `${res.content ? `${res.content.slice(0, 1500)}
+` : ""}Called: ${calls.slice(0, 6).map((c) => describeCall(c.name, c.args)).join("; ")}` }, { role: "user", content: `Results:
+${results.join(`
+
+`).slice(0, 12000)}
+
+(Step ${step} of ${opts.maxSteps}.)` });
+    if (tail.length > 16)
+      tail = tail.slice(-16);
+  }
+  return { finished: false, summary: "", steps: opts.maxSteps };
+}
+var TOOLS, AGENT_SYSTEM, gapLine = (g) => `- [${g.severity}] ${g.id}: ${g.text} → ${g.fix}`, describeCall = (name, args) => {
+  if (name === "write_section")
+    return `write_section(${String(args.label)}, ${String(args.yaml ?? "").length} chars)`;
+  if (name === "waive")
+    return `waive(${String(args.id)})`;
+  return `${name}(${Object.entries(args).map(([k, v]) => `${k}: ${JSON.stringify(v)}`.slice(0, 60)).join(", ")})`;
+}, PROGRESS;
+var init_builder_agent = __esm(() => {
+  init_audit();
+  init_loader();
+  init_reference();
+  init_simulate();
+  init_state();
+  init_view();
+  TOOLS = [
+    { name: "read_section", description: "Read one ruleset section's YAML.", parameters: { type: "object", properties: { label: { type: "string", enum: [...PART_LABELS] } }, required: ["label"] } },
+    { name: "write_section", description: "Replace one section with new YAML (the whole section). Returns checker problems in it and how the audit changed.", parameters: { type: "object", properties: { label: { type: "string", enum: [...PART_LABELS] }, yaml: { type: "string" } }, required: ["label", "yaml"] } },
+    { name: "check", description: "Run the format checker over the whole ruleset: errors and warnings.", parameters: { type: "object", properties: {} } },
+    { name: "audit", description: "Run the depth audit: what doesn't connect to anything yet (items that do nothing, stats nothing reads, encounters with one route…), with a fix for each.", parameters: { type: "object", properties: {} } },
+    { name: "read_reference", description: "Read the format reference and design guidance for one topic (e.g. items, encounters, stats, people, places, money, dating, dungeons, story).", parameters: { type: "object", properties: { topic: { type: "string" } }, required: ["topic"] } },
+    { name: "preview", description: "What the player sees at the start (or at a place and hour): HUD bars, conditions and the choices offered.", parameters: { type: "object", properties: { location: { type: "string" }, hour: { type: "number" } } } },
+    { name: "simulate_encounter", description: "Playtest an encounter by the rules: many seeds per strategy (always one move, random mix) → outcomes, length, rounds that change nothing, and notes.", parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
+    { name: "waive", description: "Leave an audit gap as it is, on purpose, with the reason (e.g. the phone is flavour). Use sparingly — a waived gap is a promise the player won't miss it.", parameters: { type: "object", properties: { id: { type: "string" }, reason: { type: "string" } }, required: ["id", "reason"] } },
+    { name: "finish", description: "Done. Refused while there are checker errors or audit gaps not fixed or waived.", parameters: { type: "object", properties: { summary: { type: "string", description: "What you built or changed, for the player, in 2–4 sentences." } }, required: ["summary"] } }
+  ];
+  AGENT_SYSTEM = `You are the lead designer of a Warp ruleset: the YAML game engine that runs under a roleplay chat.
+Your job is not to produce valid YAML quickly — it's to make a game worth playing, using what the engine can do.
+Work with the tools: read sections, write whole sections, run check, run audit, simulate encounters, preview the start.
+Every audit gap is something the player will notice; fix it, or waive it only when it is truly deliberate (with the reason).
+Prefer connecting what exists over adding more: an item that changes what an encounter's checks read beats a new item nobody needs.
+Keep the card's tone, names and setting. Refer to the player as {{user}}. Adults only in anything romantic or sexual.
+Call tools one or a few at a time. If you can't call tools natively, reply with JSON only: {"tool": "<name>", "args": {...}} (or a list of them).
+When nothing is left, call finish with a short summary.
+
+${DESIGN_GUIDE}
+
+${REFERENCE}`;
+  PROGRESS = {
+    read_section: (a) => `Reading ${String(a.label)}…`,
+    write_section: (a) => `Rewriting ${String(a.label)}…`,
+    check: () => "Checking the rules…",
+    audit: () => "Auditing what connects…",
+    read_reference: (a) => `Reading up on ${String(a.topic)}…`,
+    preview: () => "Previewing the start…",
+    simulate_encounter: (a) => `Simulating ${String(a.id)}…`,
+    waive: (a) => `Leaving ${String(a.id)} as is…`,
+    finish: () => "Wrapping up…"
+  };
+});
+
+// src/engine/balance.ts
+function effectsOf(r) {
+  const out = [];
+  const add = (e) => {
+    if (!e)
+      return;
+    out.push(e);
+    for (const d of e.decide)
+      for (const o of d.options)
+        add(o.effect);
+  };
+  const addAction = (a) => {
+    add(a.cost);
+    add(a.effects);
+    for (const e of Object.values(a.outcomes))
+      add(e);
+  };
+  Object.values(r.actions).forEach(addAction);
+  for (const t of r.triggers)
+    add(t.effects);
+  for (const enc of Object.values(r.encounters)) {
+    Object.values(enc.actions).forEach(addAction);
+    for (const o of enc.foeMoves?.options ?? [])
+      add(o.effect);
+    Object.values(enc.outcomes).forEach(add);
+    add(enc.start);
+  }
+  for (const f of Object.values(r.feats))
+    add(f.reward);
+  for (const p of Object.values(r.perks))
+    add(p.effects);
+  for (const f of Object.values(r.fronts))
+    for (const st of f.stages)
+      add(st.effects);
+  for (const e of Object.values(r.randomEvents.events))
+    add(e.effects);
+  Object.values(r.liveChoices.tags).forEach(addAction);
+  return out;
+}
+function reviewBalance(r) {
+  const out = [];
+  const start = initialState(r);
+  for (const a of Object.values(r.actions)) {
+    if (!a.check || a.perPerson)
+      continue;
+    const s = cloneState(start);
+    if (a.at.length)
+      s.location = a.at[0];
+    const o = odds(r, s, a);
+    if (!o)
+      continue;
+    const p = o.success + o.partial / 2;
+    if (p < 0.12)
+      out.push({ id: `odds:${a.id}`, part: "actions", text: `“${a.label}” succeeds only ${Math.round(p * 100)}% of the time at the start.`, fix: `Make the "${a.id}" action's check noticeably easier at the start (aim for 30–50% success), keeping it harder than it will be later.` });
+    else if (p > 0.95)
+      out.push({ id: `odds:${a.id}`, part: "actions", text: `“${a.label}” succeeds ${Math.round(p * 100)}% of the time — the roll barely matters.`, fix: `Make the "${a.id}" action's check less of a sure thing (aim for 60–80% success at the start).` });
+  }
+  for (const id of r.statOrder) {
+    const d = r.stats[id];
+    if (!d.perHour)
+      continue;
+    const toEdge = d.perHour > 0 ? d.max - d.start : d.start - d.min;
+    const hours = toEdge / Math.abs(d.perHour);
+    const bad = d.perHour > 0 && d.good === "low" || d.perHour < 0 && d.good === "high";
+    if (bad && hours < 8) {
+      out.push({ id: `drift:${id}`, part: "stats", text: `${d.label} reaches its worst in about ${Math.max(1, Math.round(hours))}h of game time on its own.`, fix: `Slow down the per_hour drift of the "${id}" stat so it takes at least a day of game time to reach its worst.` });
+    }
+  }
+  const env = makeEnv(r, start);
+  const meaningful = (e) => Object.keys(e.stats).length + Object.keys(e.set).length + Object.keys(e.addConditions).length + Object.keys(e.items).length + Object.keys(e.rel).length + e.decide.length + e.wear.length + e.undress.length > 0 || !!e.move || !!e.startEncounter || !!e.hint;
+  for (const t of r.triggers) {
+    if (t.when && !t.whenScene && meaningful(t.effects) && evalBool(t.when, env, false) && !t.repeat) {
+      out.push({ id: `trig:${t.id}`, part: "rules", text: `Rule “${t.id}” fires immediately on turn one.`, fix: `Adjust the "${t.id}" trigger (or the starting values it checks) so it doesn't fire at the very start.` });
+    }
+  }
+  for (const f of Object.values(r.fronts)) {
+    const last = f.stages[f.stages.length - 1];
+    const rate = evalNumber(f.rate, env, 0);
+    if (!last || rate <= 0)
+      continue;
+    const days = (last.at - f.start) / rate;
+    if (days < 2) {
+      out.push({ id: `front:${f.id}`, part: "story", text: `“${f.label}” runs through all its stages in about ${Math.max(1, Math.round(days * 24))}h of game time.`, fix: `Slow the "${f.id}" front down (lower per_day or space its stages out) so it takes at least a week or two of game time to play out.` });
+    }
+  }
+  if (r.randomEvents.enabled) {
+    const perDay = evalNumber(r.randomEvents.perDay, env, 0);
+    if (perDay > 0 && 100 / perDay < 0.75) {
+      out.push({ id: "events:pace", part: "story", text: `A random event roughly every ${Math.max(1, Math.round(100 / perDay * 24))}h of game time — that's a lot.`, fix: "Lower random_events per_day so events come every few days of game time rather than several times a day." });
+    }
+  }
+  const touched = new Set;
+  for (const e of effectsOf(r)) {
+    Object.keys(e.stats).forEach((k) => touched.add(k));
+    Object.keys(e.set).forEach((k) => touched.add(k));
+  }
+  for (const id of r.statOrder) {
+    const d = r.stats[id];
+    if (d.kind === "money" && d.narrator > 0)
+      continue;
+    if (!touched.has(id) && !d.perHour && d.narrator <= 0) {
+      out.push({ id: `dead:${id}`, part: "stats", text: `${d.label} never changes — no action, rule or story update touches it.`, fix: `Give the "${id}" stat a way to change: at least one action or rule that raises or lowers it, or allow the narrator to adjust it.` });
+    }
+  }
+  for (const enc of Object.values(r.encounters)) {
+    const sim = simulateEncounter2(r, start, enc.id, 120);
+    if (!sim)
+      continue;
+    const goodEnds = Object.keys(enc.outcomes).filter((o) => /won|win|victory|escaped|fled|seduced/i.test(o));
+    const wins = goodEnds.reduce((n, o) => n + (sim.outcomes[o] ?? 0), 0) / sim.runs;
+    if (sim.stuck / sim.runs > 0.2) {
+      out.push({ id: `enc-stuck:${enc.id}`, part: "encounters", text: `“${enc.name}” often doesn't end within 25 rounds.`, fix: `Make the "${enc.id}" encounter reliably end within about 4–10 rounds (stronger effects on foe stats or tighter end_when conditions).` });
+    } else if (goodEnds.length && wins < 0.2) {
+      out.push({ id: `enc-hard:${enc.id}`, part: "encounters", text: `“${enc.name}” is won or escaped only ${Math.round(wins * 100)}% of the time with random play.`, fix: `Make the "${enc.id}" encounter fairer for the player (aim for roughly half of random playthroughs ending well).` });
+    } else if (goodEnds.length && wins > 0.95) {
+      out.push({ id: `enc-easy:${enc.id}`, part: "encounters", text: `“${enc.name}” almost always goes the player's way — there's little risk.`, fix: `Make the "${enc.id}" encounter more dangerous (foe moves hit harder or the player's options are riskier).` });
+    }
+  }
+  return out;
+}
+function simulateEncounter2(r, from, id, runs) {
+  const enc = r.encounters[id];
+  if (!enc)
+    return null;
+  const outcomes = {};
+  let stuck = 0, rounds = 0;
+  const rng = seededRng(`sim:${id}`);
+  for (let i = 0;i < runs; i++) {
+    const s = cloneState(from);
+    applyEvent(s, { t: "enc", id, foe: Object.fromEntries(enc.foe.stats.map((x) => [x.id, x.start])), src: "start" }, r);
+    let ended = null;
+    for (let n = 0;n < 25 && s.encounter; n++) {
+      const choices = availableChoices(r, s);
+      const pick = choices.length ? choices[Math.floor(rng() * choices.length)].id : null;
+      const { record } = resolveTurnFull(r, s, pick ? { actionId: pick, via: "choice" } : null, { seed: `sim:${id}:${i}:${n}` });
+      for (const e of record.events) {
+        applyEvent(s, e, r);
+        if (e.t === "enc" && !e.id)
+          ended = e.outcome ?? "ended";
+      }
+      rounds++;
+    }
+    if (ended)
+      outcomes[ended] = (outcomes[ended] ?? 0) + 1;
+    else
+      stuck++;
+  }
+  return { runs, outcomes, stuck, rounds: rounds / runs };
+}
+var init_balance = __esm(() => {
+  init_dice();
+  init_expr();
+  init_state();
+  init_resolve();
+});
 
 // src/backend/builder.ts
-init_state();
-init_templates();
-init_view();
-init_source();
-var sessions = new Map;
-var key4 = (userId, characterId) => `${userId ?? "_"}:${characterId}`;
-var path = (characterId) => `builder/${characterId}.json`;
 async function save(s, userId) {
   s.updatedAt = Date.now();
-  sessions.set(key4(userId, s.characterId), s);
+  sessions.set(key3(userId, s.characterId), s);
   try {
     await host().userStorage.setJson(path(s.characterId), s, { userId });
   } catch (e) {
@@ -17997,14 +18456,14 @@ async function sessionFor(chatId, userId) {
   const characterId = await characterForChat(chatId, userId);
   if (!characterId)
     return null;
-  const hit = sessions.get(key4(userId, characterId));
+  const hit = sessions.get(key3(userId, characterId));
   if (hit)
     return hit;
   try {
     const stored = await host().userStorage.getJson(path(characterId), { fallback: null, userId });
     if (stored) {
       stored.busy = null;
-      sessions.set(key4(userId, characterId), stored);
+      sessions.set(key3(userId, characterId), stored);
       return stored;
     }
   } catch {}
@@ -18020,6 +18479,26 @@ async function llm(s, system, user, userId, maxTokens = 3000) {
     signal: AbortSignal.timeout(180000)
   });
   return typeof res === "string" ? res : res?.content ?? "";
+}
+async function llmTools(s, messages, tools, userId) {
+  const res = await host().generate.quiet({
+    type: "quiet",
+    messages,
+    tools,
+    connection_id: s.connectionId || undefined,
+    parameters: { temperature: s.creative ? 0.7 : 0.4, max_tokens: 8000 },
+    userId,
+    signal: AbortSignal.timeout(240000)
+  });
+  if (typeof res === "string")
+    return { content: res, calls: [] };
+  return { content: res?.content ?? "", calls: (res?.tool_calls ?? []).map((c) => ({ name: c.name, args: c.args ?? {} })) };
+}
+async function logStep(s, label, line, userId) {
+  if (line)
+    s.log = [...s.log ?? [], line].slice(-60);
+  s.busy = label;
+  emit(s, userId);
 }
 function parseJson(text) {
   const t = text.replace(/```(?:json)?/gi, "");
@@ -18090,21 +18569,6 @@ ${lore.join(`
 
 `), hasRuleset };
 }
-var SYSTEMS = [
-  { id: "needs", label: "Needs & condition (fatigue, stress…)" },
-  { id: "relationships", label: "Relationships" },
-  { id: "money", label: "Money & work" },
-  { id: "skills", label: "Skills that grow" },
-  { id: "clothing", label: "Clothing, weather & temperature" },
-  { id: "schedules", label: "NPC schedules & places" },
-  { id: "encounters", label: "Encounters / combat" },
-  { id: "dungeon", label: "Dungeon diving (roguelike floors, party battles)" },
-  { id: "dating", label: "Dating (topics, hidden tastes, outings)" },
-  { id: "crime", label: "Crime & consequences" },
-  { id: "journal", label: "Codex & feats" },
-  { id: "perks", label: "Levels & perks" },
-  { id: "story", label: "Secrets, a living world & choices for the moment" }
-];
 function coreQuestions(defaultSystems) {
   return [
     {
@@ -18182,6 +18646,8 @@ ${qa.join(`
     adds.length ? `The player's own additions (build each in — the stat/item/place/etc., what changes it, and which actions check it):
 ${adds.join(`
 `)}` : "",
+    s.plan ? `The design plan (build to it; every connection it promises must exist in the rules):
+${s.plan}` : "",
     s.creative ? "Style: be inventive — add fitting systems, places and actions beyond the starting point where they serve the card." : "Style: stay close to the starting point — rename, retune, trim and extend it to fit the card, rather than inventing whole new systems."
   ].filter(Boolean).join(`
 
@@ -18223,12 +18689,6 @@ function contextOf(parts) {
   ].filter(Boolean).join(`
 `);
 }
-var SYSTEM_PROMPT = `You write sections of a Warp ruleset: YAML that a game engine runs underneath a roleplay chat.
-Output ONLY the YAML for the requested section — no prose, no explanations. Use only the formats below.
-Use snake_case ids. Keep numbers readable (meters 0–100). Quote any formula that contains a comma.
-Write in-world text (bands, hints, descriptions) in a voice that suits the card. Refer to the player as {{user}}.
-
-${REFERENCE}`;
 async function draftPart(s, label, base, context, userId, note, current) {
   const user = [
     brief(s),
@@ -18342,17 +18802,95 @@ async function builderOpen(chatId, mode, userId) {
     changeSummary: null,
     busy: null,
     error: null,
-    updatedAt: Date.now()
+    updatedAt: Date.now(),
+    effort: existing?.effort ?? "thorough",
+    plan: null,
+    log: [],
+    waived: {},
+    depth: null
   };
-  if (mode === "refine") {
+  if (mode === "refine" || mode === "deepen") {
     s.parts = await currentParts(characterId, userId);
     if (!s.parts.length)
-      throw new Error("This character has no ruleset to refine yet.");
+      throw new Error(`This character has no ruleset to ${mode} yet.`);
     s.step = "review";
     buildPreview(s);
   }
   await save(s, userId);
   emit(s, userId);
+}
+async function designPlan(s, systems, userId) {
+  const card = await cardText(s.characterId, userId);
+  const text = await llm(s, `You are the lead designer of a game ruleset for a roleplay character card. Before anything is built, write the design plan.
+
+${DESIGN_GUIDE}`, [
+    card.text,
+    brief(s),
+    `Systems wanted: ${systems.join(", ")}.`,
+    "Write the plan in plain text with these headings, short bullet points under each:",
+    "LOOP — what {{user}} does most days, what pushes back, what they work toward.",
+    "PRESSURES — the 3–6 stats/needs that matter, each with what raises it, what lowers it, and what happens at the extremes.",
+    "CONNECTIONS — how systems feed each other (e.g. scent → visibility → encounters; the spray clears it; buns are bribes).",
+    "ENCOUNTERS — each one: the goal, two or three routes with their stats, the escape and its cost, the danger, which items matter.",
+    "ITEMS — every item and what it does (use, gear bonus, gift, or what needs it), and how the player gets it.",
+    "PLACES & PEOPLE — why go to each place; where people are and when.",
+    "Under 450 words. No YAML."
+  ].join(`
+
+`), userId, 1600);
+  const t = text.trim();
+  return t.length > 80 ? t.slice(0, 5000) : null;
+}
+async function deepen(s, task, userId) {
+  const before = evaluate2(s.parts);
+  const thorough = s.effort === "thorough";
+  s.log = [...s.log ?? [], `— ${thorough ? "Thorough" : "Quick"} design pass —`];
+  const card = await cardText(s.characterId, userId).catch(() => ({ text: "", name: s.characterName, hasRuleset: false }));
+  try {
+    const res = await runAgent(s, {
+      brief: [card.text.slice(0, 5000), brief(s)].filter(Boolean).join(`
+
+`),
+      task,
+      maxSteps: thorough ? 40 : 14,
+      strict: thorough,
+      hooks: {
+        llm: (messages, tools) => llmTools(s, messages, tools, userId),
+        progress: (label, line) => logStep(s, label, line, userId)
+      }
+    });
+    if (res.finished) {
+      s.changeSummary = res.summary;
+      s.log = [...s.log ?? [], `Finished: ${res.summary}`];
+    } else
+      s.log = [...s.log ?? [], `Stopped after ${res.steps} steps with work left — "Keep deepening" carries on.`];
+  } catch (e) {
+    logError("builder agent", e);
+    s.log = [...s.log ?? [], `The designer stopped: ${e instanceof Error ? e.message : String(e)}`];
+  }
+  await repair(s, s.parts, userId, false);
+  const after = evaluate2(s.parts);
+  s.depth = { before: before.depth, after: after.depth, open: openGaps(s, after.gaps, false).length };
+}
+async function builderDeepen(chatId, opts, userId) {
+  const s = await sessionFor(chatId, userId);
+  if (!s || !s.parts.length)
+    throw new Error("Open the builder on a ruleset first.");
+  if (opts.connectionId !== undefined)
+    s.connectionId = opts.connectionId;
+  if (opts.effort)
+    s.effort = opts.effort;
+  await progress(s, "Auditing what connects…", userId);
+  try {
+    await deepen(s, s.mode === "deepen" ? "Deepen this installed ruleset without breaking what works: close every audit gap — items that do nothing get a use: or bonus: true to their description, stats and conditions get sources, sinks and consequences, encounters get readable goals, more than one route, an escape and items that matter (simulate them), places get reasons to visit. Keep names, tone and existing ids." : "Keep going: close the remaining audit gaps and tune the encounters by simulation.", userId);
+    for (const p of s.parts)
+      if (p.changed)
+        p.status = p.status ?? "ok";
+    buildPreview(s);
+  } catch (e) {
+    s.error = `Couldn't deepen: ${e instanceof Error ? e.message : String(e)}`;
+  }
+  await progress(s, null, userId);
 }
 async function builderStart(chatId, opts, userId) {
   const s = await sessionFor(chatId, userId);
@@ -18360,6 +18898,8 @@ async function builderStart(chatId, opts, userId) {
     throw new Error("No builder open.");
   s.connectionId = opts.connectionId;
   s.creative = opts.creative;
+  if (opts.effort)
+    s.effort = opts.effort;
   await progress(s, "Reading the card…", userId);
   try {
     const card = await cardText(s.characterId, userId);
@@ -18457,6 +18997,12 @@ async function draftAll(s, userId) {
   s.parts = labels.map((label) => ({ label, yaml: "", status: "ok", issues: [] }));
   const byLabel = (l) => s.parts.find((p) => p.label === l);
   try {
+    await progress(s, "Planning the game: the loop, the pressures, how it all connects…", userId);
+    s.plan = await designPlan(s, [...systems], userId).catch((e) => {
+      logError("builder plan", e);
+      return null;
+    });
+    emit(s, userId);
     const phaseA = ["core", "stats", "world"];
     await progress(s, "Drafting the foundations: core, stats, world…", userId);
     await Promise.all(phaseA.map(async (l) => {
@@ -18469,6 +19015,7 @@ async function draftAll(s, userId) {
       byLabel(l).yaml = await draftPart(s, l, baseOf(l), ctx, userId);
     }));
     await repair(s, s.parts, userId);
+    await deepen(s, "Finish this draft: fix every checker error and close the depth audit — make every item do what its description says, wire every stat and condition into play, give each encounter readable routes, an escape and items that matter, then simulate each encounter and tune it.", userId);
     buildPreview(s);
     s.step = "review";
   } catch (e) {
@@ -18531,15 +19078,15 @@ Change only what's needed. Reply with JSON: {"summary": "one or two sentences on
     const changed = out.parts && typeof out.parts === "object" ? out.parts : {};
     for (const p of s.parts)
       p.changed = false;
-    for (const [label, yaml] of Object.entries(changed)) {
-      if (typeof yaml !== "string" || !PART_LABELS.includes(label))
+    for (const [label, yaml2] of Object.entries(changed)) {
+      if (typeof yaml2 !== "string" || !PART_LABELS.includes(label))
         continue;
       const existing = s.parts.find((p) => p.label === label);
       if (existing) {
-        existing.yaml = extractYaml(yaml);
+        existing.yaml = extractYaml(yaml2);
         existing.changed = true;
       } else
-        s.parts.push({ label, yaml: extractYaml(yaml), status: "ok", issues: [], changed: true });
+        s.parts.push({ label, yaml: extractYaml(yaml2), status: "ok", issues: [], changed: true });
     }
     s.changeSummary = typeof out.summary === "string" ? out.summary : Object.keys(changed).length ? `Changed: ${Object.keys(changed).join(", ")}.` : "The model didn't change anything — try rephrasing.";
     await repair(s, s.parts, userId);
@@ -18569,7 +19116,7 @@ async function builderClose(chatId, userId) {
   const characterId = await characterForChat(chatId, userId);
   if (!characterId)
     return;
-  sessions.delete(key4(userId, characterId));
+  sessions.delete(key3(userId, characterId));
   try {
     await host().userStorage.delete(path(characterId), userId);
   } catch {}
@@ -18651,8 +19198,361 @@ async function builderInstall(chatId, userId) {
   }
   await progress(s, null, userId);
 }
+async function draftItemUses(chatId, userId) {
+  const loaded = await getRuleset(chatId, userId, true);
+  const r = loaded?.ruleset;
+  if (!r || !loaded?.characterId)
+    return [];
+  const dead = auditRuleset(r).gaps.filter((g) => g.id.startsWith("item-dead:")).map((g) => r.items[g.id.slice(10)]).filter(Boolean);
+  if (!dead.length)
+    return [];
+  const settings = await getSettings(userId);
+  const stats = r.statOrder.filter((id) => r.stats[id].kind !== "hidden").map((id) => `${id} (${r.stats[id].label}, ${r.stats[id].min}–${r.stats[id].max}, good: ${r.stats[id].good})`);
+  const reads = Object.values(r.encounters).map((e) => `${e.id}: checks read ${[...new Set(Object.values(e.actions).flatMap((a) => a.check ? [String(a.check.add ?? ""), String(a.check.target ?? "")] : []))].join("; ")}`);
+  const text = await ask(`You give items in a game ruleset something to DO, true to their descriptions, using only the game's own stats and conditions. Reply with YAML only: an item_uses: map.
+Format per item: <id>: { label: "<button text>", <stat>: <+/-n>, add_condition: [...], remove_condition: [...], hint: "<one line for the narrator>" } — or { bonus: { <stat>: <n> } } for gear that helps checks, or keep: true for tools that aren't used up. Keep changes modest (at most a quarter of a stat's range). No moving the player, no ending or starting encounters, no money.`, [
+    `Stats: ${stats.join(", ")}`,
+    `Conditions: ${Object.values(r.conditions).map((c) => `${c.id} (${c.label})`).join(", ") || "none"}`,
+    reads.length ? `Encounters (what their checks read):
+${reads.join(`
+`)}` : "",
+    `Items to give a purpose:
+${dead.map((it) => `- ${it.id}: ${it.name}${it.desc ? ` — ${it.desc}` : ""}`).join(`
+`)}`
+  ].filter(Boolean).join(`
+
+`), settings, userId, 45000, { temperature: 0.4, maxTokens: 1500 });
+  const yaml2 = extractYaml(text);
+  const parsed = loadRuleset([{ label: "warp-ruleset · probe", content: yaml2, order: 0 }]);
+  const raw = (parsed.ruleset ? yaml2 : "").trim();
+  if (!raw)
+    return [];
+  const doc = yaml.load(raw);
+  const uses = doc?.item_uses ?? doc ?? {};
+  const kept = {};
+  for (const it of dead) {
+    const u = uses[it.id];
+    if (!u || typeof u !== "object")
+      continue;
+    const clean = { drafted: true };
+    for (const [k, v] of Object.entries(u)) {
+      if (["move", "end", "start_encounter", "give", "take", "set", "flags", "rel", "decide", "time"].includes(k))
+        continue;
+      const def = r.stats[k];
+      if (def) {
+        if (def.kind === "money")
+          continue;
+        const cap = Math.max(1, Math.round((def.max - def.min) / 4));
+        const n = Number(v);
+        if (Number.isFinite(n) && n !== 0)
+          clean[k] = Math.max(-cap, Math.min(cap, Math.round(n)));
+        continue;
+      }
+      clean[k] = v;
+    }
+    if (Object.keys(clean).length > 1)
+      kept[it.id] = clean;
+  }
+  if (!Object.keys(kept).length)
+    return [];
+  const body = `# Drafted by Warp from the items' descriptions. Edit or delete freely — an item's own use: always wins.
+${yaml.dump({ item_uses: kept }, { lineWidth: 140 })}`;
+  const check = loadRuleset([...(await currentParts(loaded.characterId, userId)).map((p, i) => ({ label: `warp-ruleset · ${p.label}`, content: p.label === DRAFT_LABEL ? "" : p.yaml, order: i })), { label: `warp-ruleset · ${DRAFT_LABEL}`, content: body, order: 999 }]);
+  if (!check.ruleset || check.issues.some((i) => i.level === "error" && /item uses/i.test(i.where)))
+    return [];
+  const { entries, rulesetBook } = await rulesetEntries(loaded.characterId, userId);
+  const existing = entries.find((e) => e.label === DRAFT_LABEL);
+  if (existing)
+    await host().world_books.entries.update(existing.id, { content: body, disabled: true }, userId);
+  else {
+    const bookId = rulesetBook ?? loaded.bookIds[0];
+    if (!bookId)
+      return [];
+    await host().world_books.entries.create(bookId, { comment: `warp-ruleset · ${DRAFT_LABEL}`, content: body, key: [], disabled: true, constant: false, order_value: 990 }, userId);
+  }
+  invalidateCharacter(loaded.characterId);
+  return Object.keys(kept).map((id) => r.items[id]?.name ?? id);
+}
+var sessions, key3 = (userId, characterId) => `${userId ?? "_"}:${characterId}`, path = (characterId) => `builder/${characterId}.json`, SYSTEMS, SYSTEM_PROMPT, DRAFT_LABEL = "item uses";
+var init_builder = __esm(() => {
+  init_js_yaml();
+  init_builder_agent();
+  init_audit();
+  init_reference();
+  init_source();
+  init_settings();
+  init_helpers();
+  init_balance();
+  init_loader();
+  init_lint();
+  init_reference();
+  init_state();
+  init_templates();
+  init_view();
+  init_source();
+  sessions = new Map;
+  SYSTEMS = [
+    { id: "needs", label: "Needs & condition (fatigue, stress…)" },
+    { id: "relationships", label: "Relationships" },
+    { id: "money", label: "Money & work" },
+    { id: "skills", label: "Skills that grow" },
+    { id: "clothing", label: "Clothing, weather & temperature" },
+    { id: "schedules", label: "NPC schedules & places" },
+    { id: "encounters", label: "Encounters / combat" },
+    { id: "dungeon", label: "Dungeon diving (roguelike floors, party battles)" },
+    { id: "dating", label: "Dating (topics, hidden tastes, outings)" },
+    { id: "crime", label: "Crime & consequences" },
+    { id: "journal", label: "Codex & feats" },
+    { id: "perks", label: "Levels & perks" },
+    { id: "story", label: "Secrets, a living world & choices for the moment" }
+  ];
+  SYSTEM_PROMPT = `You are the lead designer writing one section of a Warp ruleset: YAML that a game engine runs underneath a roleplay chat.
+The goal is a game worth playing, not merely valid YAML: wire every stat, item, condition and encounter into play (see the design guide).
+Output ONLY the YAML for the requested section — no prose, no explanations. Use only the formats below.
+Use snake_case ids. Keep numbers readable (meters 0–100). Quote any formula that contains a comma.
+Write in-world text (bands, hints, descriptions) in a voice that suits the card. Refer to the player as {{user}}.
+
+${DESIGN_GUIDE}
+
+${REFERENCE}`;
+});
+
+// src/backend/state-push.ts
+function setActiveChat(userId, chatId) {
+  activeChat.set(key4(userId), chatId);
+}
+function getActiveChat(userId) {
+  return activeChat.get(key4(userId)) ?? null;
+}
+async function pushState(chatId, userId, force = false) {
+  try {
+    const loaded = await getRuleset(chatId, userId, force);
+    const status = statusOf(loaded);
+    if (!chatId || !loaded?.ruleset) {
+      send({ type: "state", chatId, status, hud: null, map: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false, dungeon: null, dungeonEntries: [], date: null, scene: null }, userId);
+      return;
+    }
+    const r = loaded.ruleset;
+    const settings = await getSettings(userId);
+    if (settings.enabled && settings.draftItemUses)
+      maybeDraftItems(chatId, loaded.characterId, r, status.depth, userId);
+    const msgs = await getMessages(chatId);
+    const { state, steps } = foldPath(r, msgs);
+    lastStates.set(chatId, state);
+    const redoable = (userMsgId) => {
+      const i = msgs.findIndex((m) => m.id === userMsgId);
+      return i >= 0 && msgs[i].is_user && msgs.length - 1 - i <= 1;
+    };
+    const indexOf = new Map(msgs.map((m, i) => [m.id, i]));
+    const records = steps.slice(-MAX_RECORDS).map((st) => {
+      const v = buildRecordView(r, st.message.id, st.message.swipe_id ?? 0, st.record, st.before, st.after);
+      const prev = msgs[(indexOf.get(st.message.id) ?? 0) - 1];
+      if (st.record.action?.via === "adjudicator" && prev?.is_user && redoable(prev.id))
+        v.redoFrom = prev.id;
+      return v;
+    }).filter((v) => v.check || v.changes.length || v.action || v.decisions.length || (v.contradiction ?? 0) >= 0.6);
+    const suggestions = [];
+    for (const m of msgs.slice(-6)) {
+      const w = warpMeta(m);
+      if (!m.is_user || !w.suggest || w.intent)
+        continue;
+      suggestions.push({ messageId: m.id, actionId: w.suggest.actionId, params: w.suggest.params, label: w.suggest.label, confidence: w.suggest.confidence, canRedo: redoable(m.id) });
+    }
+    const latest = msgs[msgs.length - 1] ?? null;
+    const anchor = latest && !latest.is_user ? latest.id : null;
+    send({
+      type: "state",
+      chatId,
+      status,
+      hud: settings.enabled ? buildHud(r, state) : null,
+      map: settings.enabled ? buildMap(r, state) : null,
+      choices: settings.enabled ? markReady(buildChoices(r, state, { ...settings, live: liveChoicesOf(latest) }), readyChoices(chatId, momentKey(msgs, state))) : [],
+      records: settings.enabled ? records : [],
+      suggestions: settings.enabled ? suggestions.filter((s) => s.canRedo) : [],
+      latestMessageId: latest?.id ?? null,
+      choicesAnchor: anchor,
+      busy: busyChats.has(chatId),
+      dungeon: settings.enabled ? await withName(buildDungeonView(r, state), chatId, userId) : null,
+      dungeonEntries: settings.enabled ? buildDungeonEntries(r, state) : [],
+      date: settings.enabled ? buildDateView(r, state, settings.lines) : null,
+      scene: settings.enabled ? sceneViewFor(chatId, r, state) : null,
+      encounterLogs: settings.enabled ? encounterLogsOf(r, msgs) : []
+    }, userId);
+  } catch (e) {
+    logError("pushState", e);
+  }
+}
+function encounterLogsOf(r, msgs) {
+  const out = [];
+  for (const m of msgs.slice(-30)) {
+    const log = warpMeta(m).encounter;
+    if (!log)
+      continue;
+    out.push({
+      messageId: m.id,
+      name: r.encounters[log.enc]?.name ?? "Encounter",
+      foe: log.foe,
+      status: log.status,
+      rounds: log.rounds.map((x) => x.card),
+      from: log.from ?? 0,
+      ended: log.ended ?? null
+    });
+  }
+  return out;
+}
+function maybeDraftItems(chatId, characterId, r, depth, userId) {
+  const dead = (depth?.gaps ?? []).filter((g) => g.id.startsWith("item-dead:")).map((g) => g.id).sort();
+  if (!characterId || !dead.length)
+    return;
+  const key = `${characterId}:${dead.join(",")}`;
+  if (drafted.has(key))
+    return;
+  drafted.add(key);
+  Promise.resolve().then(() => (init_builder(), {})).then(({}) => draftItemUses(chatId, userId)).then((names) => {
+    if (names.length) {
+      send({ type: "toast", level: "info", message: `Drafted what ${names.join(", ")} do — check the Ruleset tab.` }, userId);
+      pushState(chatId, userId, true);
+    }
+  }).catch((e) => logError("draft item uses", e));
+}
+function markReady(choices, ready) {
+  return ready.size ? choices.map((c) => ready.has(c.id) ? { ...c, ready: true } : c) : choices;
+}
+async function withName(v, chatId, userId) {
+  if (!v)
+    return v;
+  await Promise.resolve().then(() => init_turn());
+  const name = await playerName(chatId, userId).catch(() => "You");
+  const safe = JSON.stringify(name).slice(1, -1);
+  return JSON.parse(JSON.stringify(v).replace(/\{\{user\}\}/g, () => safe));
+}
+function schedulePush(chatId, userId, delay = 150) {
+  if (!chatId)
+    return;
+  const active = getActiveChat(userId);
+  if (active && active !== chatId)
+    return;
+  const k = `${key4(userId)}:${chatId}`;
+  const t = timers.get(k);
+  if (t)
+    clearTimeout(t);
+  timers.set(k, setTimeout(() => {
+    timers.delete(k);
+    pushState(chatId, userId);
+  }, delay));
+}
+async function connectionsFor(userId) {
+  try {
+    const list = await host().connections.list(userId);
+    return list.map((c) => ({ id: c.id, name: `${c.name} — ${c.model}` }));
+  } catch {
+    return [];
+  }
+}
+var lastStates, busyChats, activeChat, timers, key4 = (userId) => userId ?? "_", MAX_RECORDS = 60, drafted;
+var init_state_push = __esm(() => {
+  init_view();
+  init_view2();
+  init_view3();
+  init_scene();
+  init_drafts();
+  init_ledger();
+  init_settings();
+  init_source();
+  lastStates = new Map;
+  busyChats = new Set;
+  activeChat = new Map;
+  timers = new Map;
+  drafted = new Set;
+});
 
 // src/backend.ts
+init_resolve();
+init_templates();
+init_ledger();
+init_settings();
+init_source();
+init_state_push();
+init_turn();
+init_intents();
+init_scene();
+init_encounter();
+init_talk();
+init_types2();
+init_drafts();
+init_loader();
+init_deciders();
+
+// src/backend/dungeon.ts
+init_dice();
+init_run();
+init_ledger();
+init_source();
+init_state_push();
+init_scene();
+function run2(r, s, op) {
+  switch (op.op) {
+    case "enter":
+      return enterDungeon(r, s, op.id, op.companions, randomSeed());
+    case "move":
+      return moveTo(r, s, op.x, op.y);
+    case "choose":
+      return chooseEvent(r, s, op.choice);
+    case "battle":
+      if (op.auto)
+        return battleCommand(r, s, { auto: op.auto });
+      if (op.escape)
+        return battleCommand(r, s, { escape: true });
+      if (op.item)
+        return battleCommand(r, s, { item: op.item, target: op.target });
+      return battleCommand(r, s, { skill: op.skill ?? "attack", target: op.target });
+    case "descend":
+      return descend(r, s);
+    case "leave":
+      return leaveDungeon(r, s);
+    case "use":
+      return useItem(r, s, op.item, op.target);
+    case "buy":
+      return shopBuy(r, s, op.item);
+  }
+}
+async function runDungeonOp(msg, userId) {
+  const loaded = await getRuleset(msg.chatId, userId);
+  const r = loaded?.ruleset;
+  if (!r)
+    return;
+  if (busyChats.has(msg.chatId)) {
+    toast("info", "Wait for the story to catch up first.", userId);
+    return;
+  }
+  const msgs = await getMessages(msg.chatId);
+  const last = msgs[msgs.length - 1];
+  if (!last) {
+    toast("warning", "Send a message first — the dungeon attaches to the latest message.", userId);
+    return;
+  }
+  const { state } = foldPath(r, msgs);
+  const res = run2(r, state, msg);
+  if (res.error) {
+    toast("warning", res.error, userId);
+    await pushState(msg.chatId, userId);
+    return;
+  }
+  if (res.events.length) {
+    const swipe = last.swipe_id ?? 0;
+    const existing = warpMeta(last).swipes?.[String(swipe)];
+    const rec = existing ? { ...existing, events: [...existing.events, ...res.events] } : { v: 1, hints: [], events: res.events, at: Date.now() };
+    await writeRecord(msg.chatId, last.id, swipe, rec);
+  }
+  await pushState(msg.chatId, userId);
+  const was = state.dungeon;
+  const endedRun = was && !res.events.some((e) => e.t === "dg_enter") && res.events.some((e) => e.t === "dg_exit") ? { name: r.dungeons[was.id]?.name ?? "the dungeon", depth: was.depth, gold: was.gold } : undefined;
+  if (res.narrate)
+    await playScene({ chatId: msg.chatId, userId, kind: "dungeon", intent: null, said: res.narrate.say, ...endedRun ? { runEnded: endedRun } : {} });
+}
+
+// src/backend.ts
+init_builder();
 spindle.registerInterceptor(interceptor, 60);
 spindle.registerWorldInfoInterceptor(async (ctx) => {
   const disabled = ctx.entries.filter((e) => knownRulesetEntryIds.has(e.id) || knownRulesetBookIds.has(e.world_book_id) || isRulesetEntryTitle(e.comment)).map((e) => e.id);
@@ -18972,11 +19872,23 @@ spindle.onFrontendMessage(async (raw, userId) => {
           toast("warning", `${decider.id.toUpperCase()} replied in ${ms} ms but gave no usable answer.`, userId);
         break;
       }
-      case "builder_open":
+      case "builder_open": {
         await builderOpen(msg.chatId, msg.mode, userId);
+        if (msg.mode === "deepen")
+          await builderDeepen(msg.chatId, {}, userId);
         break;
+      }
+      case "builder_deepen":
+        await builderDeepen(msg.chatId, { connectionId: msg.connectionId, effort: msg.effort }, userId);
+        break;
+      case "draft_item_uses": {
+        const names = await draftItemUses(msg.chatId, userId);
+        toast(names.length ? "success" : "info", names.length ? `Drafted uses for ${names.join(", ")} — see the Ruleset tab.` : "No items needed a use, or the draft didn't check out.", userId);
+        await pushState(msg.chatId, userId, true);
+        break;
+      }
       case "builder_start":
-        await builderStart(msg.chatId, { connectionId: msg.connectionId, creative: msg.creative, base: msg.base }, userId);
+        await builderStart(msg.chatId, { connectionId: msg.connectionId, creative: msg.creative, base: msg.base, effort: msg.effort }, userId);
         break;
       case "builder_answer":
         await builderAnswer(msg.chatId, msg.answers, msg.additions, msg.more, userId);
