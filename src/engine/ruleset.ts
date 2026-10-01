@@ -95,6 +95,10 @@ export interface Effect {
   bond: Record<string, Record<string, string | number>>;
   /** A chance of pregnancy between two adults: `conceive: { with: target, chance: 20 }`. */
   conceive?: { with: string; carrier: string; chance: string | number };
+  /** Wear down the current encounter's main meter (HP, resolve, composure…) by this much — portable across encounters. */
+  harm?: string | number;
+  /** Teach abilities: `learn: [haste]`. */
+  learn: string[];
 }
 
 export interface DecideOption { id: string; desc: string; weight: number; effect: Effect }
@@ -184,7 +188,11 @@ export interface ItemDef {
   /** Its use or bonus was drafted by Warp from the description (shown so the author can check it). */
   drafted?: boolean;
 }
-export interface ConditionDef { id: string; label: string; tone: Tone; desc?: string; narrator: boolean; gate?: NarratorGate }
+export interface ConditionDef {
+  id: string; label: string; tone: Tone; desc?: string; narrator: boolean; gate?: NarratorGate;
+  /** While it lasts: counts as this much more (or less) of each stat in checks — a buff or a debuff. */
+  bonus: Record<string, number>;
+}
 export interface ScheduleEntry { when?: string; at: string }
 export interface PersonDef {
   id: string; name: string; age?: number; start: Record<string, number>; desc?: string;
@@ -258,7 +266,55 @@ export interface EncounterDef {
 
 export interface CodexEntry { id: string; title: string; text: string; category?: string; unlock?: string; lore: string[] }
 export interface FeatDef { id: string; name: string; desc: string; unlock: string; reward: Effect; hidden: boolean }
-export interface PerkDef { id: string; name: string; desc: string; cost: number; requires?: string; effects: Effect }
+/** A bonus that only applies while a formula holds: `edge: { stats: { stealth: 15 }, when: "at('plaza')" }`. */
+export interface Edge { stats: Record<string, number>; when?: string }
+
+/** What a perk does to the rules themselves. */
+export type PerkRule =
+  /** reroll: a failed check (on these stats or tags) is rolled again; soften: a failure becomes a partial. `perDay` 0 = always. */
+  | { kind: "reroll" | "soften"; stats: string[]; tags: string[]; perDay: number }
+  /** gains / losses: rises (or drops) in a stat are this much bigger or smaller (−0.3 = 30% smaller). */
+  | { kind: "gains" | "losses"; stat: string; pct: number };
+
+export interface PerkDef {
+  id: string; name: string; desc: string; cost: number; requires?: string;
+  /** Applied once, when the perk is taken. */
+  effects: Effect;
+  tags: string[];
+  /** Always on, like gear: counts as this much more of each stat in checks. */
+  bonus: Record<string, number>;
+  edges: Edge[];
+  rules: PerkRule[];
+  /** Abilities this perk teaches. */
+  abilities: string[];
+  /** What the narrator should know about someone who has it. */
+  narrator?: string;
+  /** Perks you can't also have (either way round). */
+  excludes: string[];
+  /** How often it turns up in an offer, relative to the others. */
+  weight: number;
+  /** The downside, in words (its mechanics are in bonus / gains / losses). */
+  drawback?: string;
+}
+
+/**
+ * Something the player can do that's theirs, not the place's: a spell, a
+ * technique, a trick. Offered in encounters and the story alike, limited by
+ * cost and uses, scaling with whatever stats its formulas read.
+ */
+export interface AbilityDef {
+  id: string;
+  name: string;
+  desc?: string;
+  /** The move itself (id "ability:<id>"). */
+  action: ActionDef;
+  /** Known from the start (true), only once taught (false: by a perk or `learn:`), or while a formula holds. */
+  known: boolean | string;
+  /** Uses per in-game day and per encounter (0 = no limit). */
+  perDay: number;
+  perEncounter: number;
+  where: "any" | "encounter" | "story";
+}
 
 /**
  * A secret is a ladder of stages. Only opened stages ever reach the narrator's
@@ -586,6 +642,9 @@ export interface Ruleset {
   perks: Record<string, PerkDef>;
   /** Stat holding perk points. */
   perkPoints?: string;
+  /** Offer this many perks to choose from when there's a point to spend (0: the whole list, like a shop). */
+  perkPick: number;
+  abilities: Record<string, AbilityDef>;
   secrets: Record<string, SecretDef>;
   fronts: Record<string, FrontDef>;
   randomEvents: RandomEventsDef;
@@ -779,7 +838,7 @@ function normStat(id: string, raw: unknown, where: string, c: Ctx, forRel = fals
 export function emptyEffect(): Effect {
   return {
     stats: {}, set: {}, flags: {}, items: {}, rel: {}, addConditions: {}, removeConditions: [], decide: [],
-    foe: {}, unlock: [], wear: [], undress: [], damage: {}, front: {}, reveal: [], body: {}, transform: {}, arc: {}, bond: {},
+    foe: {}, unlock: [], wear: [], undress: [], damage: {}, front: {}, reveal: [], body: {}, transform: {}, arc: {}, bond: {}, learn: [],
   };
 }
 
@@ -930,6 +989,14 @@ export function normEffect(raw: unknown, where: string, c: Ctx, known: { stats: 
         if (isObj(v)) for (const [id, n] of Object.entries(v)) { const x = c.expr(n, `${w} › ${id}`); if (x !== undefined) e.arc[id] = x; }
         else c.warn(w, "expected arc changes by companion, like `jo: +5`");
         break;
+      case "harm": {
+        const x = c.expr(v, w);
+        if (x !== undefined) e.harm = x;
+        break;
+      }
+      case "learn":
+        e.learn.push(...list(v));
+        break;
       case "bond": case "bonds":
         if (isObj(v)) for (const [a, m] of Object.entries(v)) {
           if (!isObj(m)) { c.warn(`${w} › ${a}`, "expected feelings toward others, like `dex: +3`"); continue; }
@@ -940,7 +1007,7 @@ export function normEffect(raw: unknown, where: string, c: Ctx, known: { stats: 
       default:
         // Flat shorthand: a known stat name maps to a delta.
         if (known.stats.has(k)) { const x = c.expr(v, w); if (x !== undefined) e.stats[k] = x; }
-        else c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, unlock, wear, undress, damage, front, reveal, gauge, momentum, body, transform, arc, bond, conceive)`);
+        else c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, unlock, wear, undress, damage, front, reveal, gauge, momentum, body, transform, arc, bond, conceive, harm, learn)`);
     }
   }
   return e;
@@ -1139,6 +1206,134 @@ function applyItemUse(it: ItemDef, r: Raw, w: string, c: Ctx, known: { stats: Se
     if (def) { def.tags = [...new Set([...def.tags, "item"])]; it.use = def; }
   }
   if (drafted && (it.use || Object.keys(it.bonus).length)) it.drafted = true;
+}
+
+/** `{ stealth: 15, evasion: -5 }` over declared stats. */
+function statNums(v: unknown, where: string, c: Ctx, known: { stats: Set<string> }): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!isObj(v)) return out;
+  for (const [stat, n] of Object.entries(v)) {
+    if (!known.stats.has(stat)) { c.warn(`${where} › ${stat}`, `"${stat}" isn't a declared stat`); continue; }
+    out[stat] = c.num(n, `${where} › ${stat}`, 0);
+  }
+  return out;
+}
+
+/** "-30%", -30 or -0.3 → −0.3. */
+function pct(v: unknown, where: string, c: Ctx): number | null {
+  const t = String(v).trim();
+  const n = Number(t.replace(/%$/, "").replace(/^\+/, ""));
+  if (!Number.isFinite(n)) { c.warn(where, "expected a percentage like -30%"); return null; }
+  return t.endsWith("%") || Math.abs(n) > 1 ? n / 100 : n;
+}
+
+const PERK_META = new Set(["points", "pick", "offer", "list"]);
+const DEFAULT_KNOWN = "\u0000default";
+
+function normEdges(v: unknown, where: string, c: Ctx, known: { stats: Set<string> }): Edge[] {
+  const out: Edge[] = [];
+  for (const [i, x] of (Array.isArray(v) ? v : v === undefined ? [] : [v]).entries()) {
+    const w = `${where}${Array.isArray(v) ? ` › ${i + 1}` : ""}`;
+    if (!isObj(x)) { c.warn(w, "expected `stats:` and `when:`"); continue; }
+    // `{ stats: { stealth: 15 }, when }` or the short form `{ stealth: 15, when }`.
+    const raw = isObj(x.stats) ? x.stats : Object.fromEntries(Object.entries(x).filter(([k]) => k !== "when"));
+    const when = x.when !== undefined ? c.expr(x.when, `${w} › when`) : undefined;
+    const stats = statNums(raw, `${w} › stats`, c, known);
+    if (Object.keys(stats).length) out.push({ stats, ...(when !== undefined ? { when: String(when) } : {}) });
+  }
+  return out;
+}
+
+function normPerkRules(v: unknown, where: string, c: Ctx, known: { stats: Set<string> }): PerkRule[] {
+  const out: PerkRule[] = [];
+  if (!isObj(v)) return out;
+  for (const [k, x] of Object.entries(v)) {
+    const w = `${where} › ${k}`;
+    if (k === "reroll" || k === "soften") {
+      const r: Raw = isObj(x) ? x : {};
+      const stats = list(r.stats ?? r.stat).filter((s) => known.stats.has(s) || (c.warn(`${w} › stats`, `"${s}" isn't a declared stat`), false));
+      out.push({ kind: k, stats, tags: list(r.tags), perDay: Math.max(0, Math.round(c.num(r.per_day ?? (x === true ? 0 : 1), `${w} › per_day`, 1))) });
+    } else if (k === "gains" || k === "losses") {
+      if (!isObj(x)) { c.warn(w, "expected stats with a percentage, like `scent: -30%`"); continue; }
+      for (const [stat, n] of Object.entries(x)) {
+        if (!known.stats.has(stat)) { c.warn(`${w} › ${stat}`, `"${stat}" isn't a declared stat`); continue; }
+        const p = pct(n, `${w} › ${stat}`, c);
+        if (p !== null && p !== 0) out.push({ kind: k, stat, pct: Math.max(-1, p) });
+      }
+    } else c.warn(w, "isn't a perk rule (reroll, soften, gains, losses)");
+  }
+  return out;
+}
+
+function normPerk(id: string, p: Raw, w: string, c: Ctx, known: { stats: Set<string> }, abilities: Record<string, AbilityDef>): PerkDef {
+  const req = p.requires !== undefined ? c.expr(p.requires, `${w} › requires`) : undefined;
+  const bonus = statNums(p.bonus, `${w} › bonus`, c, known);
+  const rules = normPerkRules(p.rule ?? p.rules, `${w} › rule`, c, known);
+  // A drawback is more of the same, pointing the other way; its words show on the perk.
+  let drawback: string | undefined;
+  if (typeof p.drawback === "string") drawback = p.drawback;
+  else if (isObj(p.drawback)) {
+    const d = p.drawback;
+    if (typeof d.desc === "string") drawback = d.desc;
+    for (const [stat, n] of Object.entries(statNums(d.bonus, `${w} › drawback › bonus`, c, known))) bonus[stat] = (bonus[stat] ?? 0) + n;
+    rules.push(...normPerkRules({ ...(d.gains ? { gains: d.gains } : {}), ...(d.losses ? { losses: d.losses } : {}) }, `${w} › drawback`, c, known));
+  }
+  const taught = list(p.abilities ?? p.grants ?? p.teaches);
+  for (const a of taught) if (!abilities[a]) c.warn(`${w} › abilities`, `"${a}" isn't a declared ability`);
+  return {
+    id,
+    name: typeof p.name === "string" ? p.name : titleCase(id),
+    desc: typeof p.desc === "string" ? p.desc : "",
+    cost: c.num(p.cost, `${w} › cost`, 1),
+    ...(req !== undefined ? { requires: String(req) } : {}),
+    effects: normEffect(p.effects, `${w} › effects`, c, known),
+    tags: list(p.tags).map((t) => t.toLowerCase()),
+    bonus,
+    edges: normEdges(p.edge ?? p.edges, `${w} › edge`, c, known),
+    rules,
+    abilities: taught.filter((a) => abilities[a]),
+    ...(typeof p.narrator === "string" ? { narrator: p.narrator } : {}),
+    excludes: list(p.excludes),
+    weight: Math.max(0, c.num(p.weight, `${w} › weight`, 1)),
+    ...(drawback ? { drawback } : {}),
+  };
+}
+
+const ABILITY_META = new Set(["name", "known", "per_day", "per_encounter", "where"]);
+
+function normAbilities(raw: unknown, c: Ctx, known: { stats: Set<string> }): Record<string, AbilityDef> {
+  const out: Record<string, AbilityDef> = {};
+  for (const [id, a] of Object.entries(isObj(raw) ? raw : {})) {
+    const w = `Abilities › ${id}`;
+    if (!isObj(a)) { c.warn(w, "expected an ability (label, cost, check or effects)"); continue; }
+    const action: Raw = {};
+    const rest: Raw = {};
+    for (const [k, v] of Object.entries(a)) {
+      if (ABILITY_META.has(k)) continue;
+      (USE_KEYS.has(k) || TIER_KEYS[k] ? action : rest)[k] = v;
+    }
+    // Effects written at the top: what it does (on a success, when it rolls).
+    if (Object.keys(rest).length) {
+      if (!action.check) action.effects = { ...(isObj(action.effects) ? action.effects : {}), ...rest };
+      else if (!action.success) action.success = rest;
+      else c.warn(w, `${Object.keys(rest).join(", ")}: put these under success: or fail: when the ability rolls`);
+    }
+    const name = typeof a.name === "string" ? a.name : typeof a.label === "string" ? a.label : titleCase(id);
+    if (!action.label) action.label = name;
+    const def = normAction(`ability:${id}`, action, w, c, known, 0);
+    if (!def) continue;
+    def.tags = [...new Set([...def.tags, "ability"])];
+    const k = a.known;
+    out[id] = {
+      id, name, action: def,
+      ...(typeof a.desc === "string" ? { desc: a.desc } : {}),
+      known: k === undefined ? DEFAULT_KNOWN : typeof k === "boolean" ? k : String(c.expr(k, `${w} › known`) ?? false),
+      perDay: Math.max(0, Math.round(c.num(a.per_day, `${w} › per_day`, 0))),
+      perEncounter: Math.max(0, Math.round(c.num(a.per_encounter, `${w} › per_encounter`, 0))),
+      where: a.where === "encounter" || a.where === "story" ? a.where : "any",
+    };
+  }
+  return out;
 }
 
 function normEncounter(id: string, raw: unknown, c: Ctx, known: { stats: Set<string> }): EncounterDef | null {
@@ -1755,6 +1950,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
       desc: typeof r.desc === "string" ? r.desc : undefined,
       narrator: r.narrator === true,
       ...(gate ? { gate } : {}),
+      bonus: statNums(r.bonus, `Conditions › ${id} › bonus`, c, known),
     };
   }
 
@@ -1872,24 +2068,23 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
       hidden: f.hidden === true,
     };
   }
+  // Abilities first: perks teach them.
+  const abilities = normAbilities(raw.abilities, c, known);
   const perksRaw: Raw = isObj(raw.perks) ? raw.perks : {};
-  const perkList: Raw = isObj(perksRaw.list) ? perksRaw.list : Object.fromEntries(Object.entries(perksRaw).filter(([k]) => k !== "points"));
+  const perkList: Raw = isObj(perksRaw.list) ? perksRaw.list : Object.fromEntries(Object.entries(perksRaw).filter(([k]) => !PERK_META.has(k)));
   const perks: Record<string, PerkDef> = {};
   for (const [id, p] of Object.entries(perkList)) {
     const w = `Perks › ${id}`;
     if (!isObj(p)) { c.warn(w, "expected a perk definition"); continue; }
-    const req = p.requires !== undefined ? c.expr(p.requires, `${w} › requires`) : undefined;
-    perks[id] = {
-      id,
-      name: typeof p.name === "string" ? p.name : titleCase(id),
-      desc: typeof p.desc === "string" ? p.desc : "",
-      cost: c.num(p.cost, `${w} › cost`, 1),
-      ...(req !== undefined ? { requires: String(req) } : {}),
-      effects: normEffect(p.effects, `${w} › effects`, c, known),
-    };
+    perks[id] = normPerk(id, p, w, c, known, abilities);
   }
+  for (const p of Object.values(perks)) for (const x of p.excludes) if (!perks[x]) c.warn(`Perks › ${p.id} › excludes`, `"${x}" isn't a declared perk`);
+  // An ability nothing teaches is known from the start, unless it says otherwise.
+  const taught = new Set(Object.values(perks).flatMap((p) => p.abilities));
+  for (const a of Object.values(abilities)) if (a.known === DEFAULT_KNOWN) a.known = !taught.has(a.id);
   const perkPoints = typeof perksRaw.points === "string" ? perksRaw.points : undefined;
   if (perkPoints && !stats[perkPoints]) c.warn("Perks › points", `"${perkPoints}" isn't a declared stat`);
+  const perkPick = Math.max(0, Math.round(c.num(perksRaw.pick ?? perksRaw.offer, "Perks › pick", 0)));
 
   // Story machinery: secrets, hidden world clocks, random events, choices written for the moment.
   const secrets = normSecrets(raw.secrets, c);
@@ -1944,6 +2139,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     narration: { notes: typeof narrRaw.notes === "string" ? narrRaw.notes : undefined, numbers: narrRaw.numbers === true },
     weather, wardrobe, encounters, codex, feats, perks,
     ...(perkPoints && stats[perkPoints] ? { perkPoints } : {}),
+    perkPick, abilities,
     secrets, fronts, randomEvents, liveChoices, dungeons, dating, mind, checkpoints, endings, legacy, body, companions, bonds, lineage, obligations, jobs, observers, discovery, improvise, growth,
   };
 
@@ -1965,6 +2161,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     ...Object.values(actions),
     ...Object.values(encounters).flatMap((e) => Object.values(e.actions).map((a) => ({ ...a, tags: [...a.tags, ...e.tags] }))),
     ...Object.values(liveChoices.tags),
+    ...Object.values(abilities).map((a) => a.action),
   ].filter((a) => a.tags.some((t) => SEXUAL_TAGS.has(t)));
   if (minors.length && sexualActions.length) {
     c.err("Ruleset", `declares characters under 18 (${minors.join(", ")}) alongside sexual actions — Warp won't run this ruleset`);

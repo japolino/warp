@@ -1,14 +1,14 @@
 // View models for the UI and the text the narrator sees.
 
-import type { KeepSpec, Ruleset, StatDef } from "./ruleset.js";
+import type { ActionDef, KeepSpec, Ruleset, StatDef } from "./ruleset.js";
 import { TIERS } from "./ruleset.js";
 import {
   bandFor, foeName, formatClock, formatNumber, gradeFor, initialState, itemName, kinAge, makeEnv, personName, statMax,
-  type GameState, type WarpEvent,
+  usesOf, type GameState, type WarpEvent,
 } from "./state.js";
 import { practiceProgress } from "./freeform.js";
 import { encounterGuide, itemRelevance } from "./encounter-view.js";
-import { actionPool, availableChoices, canExplore, EXPLORE, isAvailable, LIVE_PREFIX, lockReason, odds, usableItems, perkBlocker, RUN_EPILOGUE, TIER_LABEL, TRAVEL_PREFIX, travelTargets, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
+import { ABILITY_PREFIX, abilityStatus, actionPool, availableChoices, canExplore, EXPLORE, isAvailable, knowsAbility, LIVE_PREFIX, lockReason, odds, perkOffers, usableAbilities, usableItems, perkBlocker, RUN_EPILOGUE, TIER_LABEL, TRAVEL_PREFIX, travelTargets, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
 import {
   dateAt, exposedSlots, isIndoors, ordinal, personLocation, presentPeople, seasonAt, temperatureAt, warmthNeeded, warmthOf, weatherAt,
 } from "./world.js";
@@ -17,7 +17,7 @@ import { dungeonOf, dungeonsHere, levelOf, memberFighter } from "./dungeon/run.j
 import { activeSession, dateDigest, dateMoves, moodOf, type DateMove } from "./date/talk.js";
 import { REACTION_LABEL } from "./date/types.js";
 import { workDigest, workMoves } from "./work.js";
-import { evalBool } from "./expr.js";
+import { evalBool, evalNumber } from "./expr.js";
 
 function pct(v: number, min: number, max: number) {
   return max > min ? Math.max(0, Math.min(1, (v - min) / (max - min))) : 0;
@@ -191,8 +191,16 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
     codex: Object.values(r.codex).filter((c) => s.codex[c.id]).map((c) => ({ id: c.id, title: c.title, text: c.text, category: c.category ?? null })),
     codexTotal: Object.keys(r.codex).length,
     feats: Object.values(r.feats).filter((f) => !f.hidden || s.feats[f.id]).map((f) => ({ id: f.id, name: f.name, desc: f.desc, unlocked: !!s.feats[f.id] })),
-    perks: Object.values(r.perks).map((p) => ({ id: p.id, name: p.name, desc: p.desc, cost: p.cost, owned: !!s.perks[p.id], blocker: s.perks[p.id] ? null : perkBlocker(r, s, p.id) })),
+    perks: perkViews(r, s),
     perkPoints: r.perkPoints ? s.stats[r.perkPoints] ?? 0 : null,
+    perkPick: r.perkPick,
+    abilities: Object.values(r.abilities).filter((ab) => knowsAbility(r, s, ab.id)).map((ab) => {
+      const st = abilityStatus(r, s, ab.id);
+      return {
+        id: ab.id, name: ab.name, desc: ab.desc ?? ab.action.desc ?? null, cost: costText(r, s, ab.action), left: st.left,
+        locked: st.locked ?? (st.here ? null : ab.where === "encounter" ? "Only in an encounter" : "Not during an encounter"), choice: `${ABILITY_PREFIX}${ab.id}`,
+      };
+    }),
     news: s.news.slice().reverse().slice(0, 12).map((n) => ({ text: n.text, when: r.clock.enabled ? formatClock(r, n.at).day : null })),
     body: r.body.enabled ? Object.entries(s.body).map(([part, traits]) => ({
       part, label: part.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()), text: traitText(traits) || "—", covered: bodyCovered(r, s, part),
@@ -430,7 +438,66 @@ export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; 
       locked.push({ ...plain(id, a.label, encName ?? "Encounter", a.desc ?? null), locked: lockReason(r, s, a) });
     }
   }
-  return [...live, ...actions, ...itemChoices(r, s, lines), ...locked, ...talk, ...work, ...dungeons, ...travel, ...explore];
+  return [...live, ...actions, ...abilityChoices(r, s, lines), ...itemChoices(r, s, lines), ...locked, ...talk, ...work, ...dungeons, ...travel, ...explore];
+}
+
+/** "8 Mana, 5 Stamina": what using something costs, from its `cost:`. */
+function costText(r: Ruleset, s: GameState, a: ActionDef): string | null {
+  const env = makeEnv(r, s);
+  const parts = Object.entries(a.cost.stats).map(([stat, d]) => [stat, evalNumber(d, env, 0)] as const).filter(([, v]) => v < 0)
+    .map(([stat, v]) => `${formatNumber(-v)} ${r.stats[stat]?.label ?? stat}`);
+  return parts.length ? parts.join(", ") : null;
+}
+
+/** The player's own abilities, offered with the other moves: usable ones, and in an encounter the ones out of reach, with why. */
+function abilityChoices(r: Ruleset, s: GameState, lines: Set<string>): ChoiceView[] {
+  if (s.job || s.ended || s.dungeon) return [];
+  const out: ChoiceView[] = [];
+  for (const { id, a, status } of usableAbilities(r, s)) {
+    if (a.hidden || a.tags.some((t) => lines.has(t))) continue;
+    const cost = costText(r, s, a);
+    const left = status.left !== null ? `${status.left} left${r.abilities[id.slice(ABILITY_PREFIX.length)]?.perEncounter && s.encounter ? " this fight" : " today"}` : null;
+    const why = [cost, left].filter(Boolean).join(" · ") || undefined;
+    if (status.locked) {
+      if (s.encounter) out.push({ id, label: a.label, group: "Abilities", desc: a.desc ?? null, odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [], locked: status.locked });
+      continue;
+    }
+    const o = odds(r, s, a);
+    out.push({
+      id, label: a.label, group: "Abilities", desc: a.desc ?? null,
+      odds: o ? o.success : null, partialOdds: o && o.partial > 0 ? o.partial : null, checkLabel: a.check?.label ?? null,
+      veiled: false, params: [], ...(why ? { why } : {}),
+    });
+  }
+  // Usable first; in a story scene, only a few.
+  out.sort((x, y) => Number(!!x.locked) - Number(!!y.locked));
+  return out.slice(0, s.encounter ? 6 : 3);
+}
+
+/** Every perk as the HUD shows it: owned, on offer, or blocked — and what it does in short. */
+function perkViews(r: Ruleset, s: GameState): HudView["perks"] {
+  const offers = new Set(perkOffers(r, s));
+  return Object.values(r.perks)
+    // Picking from a few: show what's owned and what's on offer, not the whole deck.
+    .filter((p) => !r.perkPick || s.perks[p.id] || offers.has(p.id))
+    .map((p) => {
+      const notes: string[] = [];
+      const plus = (stats: Record<string, number>) => Object.entries(stats).map(([k, v]) => `${v > 0 ? "+" : ""}${v} ${r.stats[k]?.label ?? k}`).join(", ");
+      if (Object.keys(p.bonus).length) notes.push(plus(p.bonus));
+      for (const e of p.edges) notes.push(`${plus(e.stats)}${e.when ? " (sometimes)" : ""}`);
+      for (const rule of p.rules) {
+        if ("stat" in rule) notes.push(`${r.stats[rule.stat]?.label ?? rule.stat} ${rule.kind === "gains" ? "rises" : "drops"} ${Math.round(Math.abs(rule.pct) * 100)}% ${rule.pct > 0 ? "faster" : "slower"}`);
+        else {
+          const left = rule.perDay ? rule.perDay - usesOf(s, `perk:${p.id}:${rule.kind}`).today : null;
+          notes.push(`${rule.kind === "reroll" ? "Rerolls a failure" : "Softens a failure"}${rule.perDay ? ` ${rule.perDay}×/day${s.perks[p.id] ? ` (${Math.max(0, left!)} left)` : ""}` : ""}`);
+        }
+      }
+      for (const a of p.abilities) if (r.abilities[a]) notes.push(`Teaches ${r.abilities[a].name}`);
+      return {
+        id: p.id, name: p.name, desc: p.desc, cost: p.cost, owned: !!s.perks[p.id], blocker: s.perks[p.id] ? null : perkBlocker(r, s, p.id),
+        offered: offers.has(p.id), drawback: p.drawback ?? null, notes,
+      };
+    });
 }
 
 /** Held items worth using now: in an encounter, any that bear on it (up to 3); otherwise only clearly helpful ones (up to 2). */
@@ -568,6 +635,14 @@ export function summarizeEvents(r: Ruleset, before: GameState, after: GameState,
       case "perk":
         out.push({ text: `★ ${r.perks[e.id]?.name ?? e.id}`, tone: "good", src: e.src });
         break;
+      case "learn":
+        out.push({ text: `✦ Learned ${r.abilities[e.id]?.name ?? e.id}`, tone: "good", src: e.src });
+        break;
+      case "charge": {
+        if (e.key.startsWith(ABILITY_PREFIX)) out.push({ text: `✦ ${r.abilities[e.key.slice(ABILITY_PREFIX.length)]?.name ?? e.key}`, tone: "neutral", src: e.src });
+        else if (e.key.startsWith("perk:")) out.push({ text: `↻ ${r.perks[e.key.split(":")[1]]?.name ?? "Perk"}`, tone: "good", src: e.src });
+        break;
+      }
     }
   });
 
@@ -654,7 +729,7 @@ export function buildRecordView(r: Ruleset, messageId: string, swipe: number, re
       style: rec.check.style,
       tier: rec.check.tier,
       tierLabel: TIER_LABEL[rec.check.tier],
-      summary: checkSummary(rec.check),
+      summary: `${checkSummary(rec.check)}${rec.check.perk ? ` · ↻ ${rec.check.perk}` : ""}`,
     } : null,
     changes: summarizeEvents(r, before, after, rec.events),
     hints: rec.hints,
@@ -768,10 +843,15 @@ export function stateDigest(r: Ruleset, s: GameState): string {
   const ml = meters.map((d) => statLine(r, d, s, r.narration.numbers)).filter(Boolean);
   if (ml.length) lines.push(ml.join(" · "));
   const ol = other.map((d) => statLine(r, d, s, r.narration.numbers)).filter(Boolean);
-  if (ol.length) lines.push(`Abilities: ${ol.join(" · ")}`);
+  if (ol.length) lines.push(`Skills: ${ol.join(" · ")}`);
 
   const conds = Object.keys(s.conditions).map((id) => r.conditions[id]?.label ?? id);
   if (conds.length) lines.push(`Conditions: ${conds.join(", ")}`);
+  // What's true of {{user}} because of their perks, and what they can do: the story should show both.
+  const perks = Object.keys(s.perks).map((id) => r.perks[id]).filter((p) => p);
+  if (perks.length) lines.push(`Perks: ${perks.map((p) => (p.narrator ? `${p.name} — ${p.narrator}` : p.name)).join("; ")}`);
+  const known = Object.values(r.abilities).filter((ab) => knowsAbility(r, s, ab.id));
+  if (known.length) lines.push(`{{user}}'s own abilities (they work as the rules say; only the rules decide when one is used): ${known.map((ab) => `${ab.name}${ab.desc ? ` (${ab.desc})` : ""}`).join("; ")}`);
 
   const wornSet = new Set(Object.values(s.worn));
   const loose = Object.entries(s.items).filter(([id]) => !wornSet.has(id));

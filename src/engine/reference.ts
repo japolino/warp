@@ -12,7 +12,7 @@ export const PART_CONTENTS: Record<PartLabel, string> = {
   world: "weather, locations, items (incl. clothing, uses and gear bonuses), item_uses, wardrobe, body, conditions, flags, start.items",
   actions: "actions, improvise, obligations, jobs",
   encounters: "encounters, dungeons",
-  journal: "codex, feats, perks, checkpoints, endings",
+  journal: "codex, feats, perks, abilities, checkpoints, endings",
   rules: "triggers, mind",
   story: "secrets, fronts, random_events, live_choices",
   dating: "dating (tastes, topics, venues), plus gift items and actions to get them",
@@ -28,7 +28,7 @@ export function partForIssue(where: string): PartLabel {
   if (["locations", "items", "item uses", "wardrobe", "weather", "conditions", "flags", "body"].some((k) => head.startsWith(k))) return "world";
   if (["actions", "improvise", "obligations", "jobs"].some((k) => head.startsWith(k))) return "actions";
   if (head.startsWith("encounters") || head.startsWith("dungeons")) return "encounters";
-  if (["codex", "feats", "perks", "checkpoints", "endings"].some((k) => head.startsWith(k))) return "journal";
+  if (["codex", "feats", "perks", "abilities", "checkpoints", "endings"].some((k) => head.startsWith(k))) return "journal";
   if (head.startsWith("triggers") || head.startsWith("rules") || head.startsWith("mind")) return "rules";
   if (["secrets", "fronts", "random events", "live choices"].some((k) => head.startsWith(k))) return "story";
   if (head.startsWith("dating")) return "dating";
@@ -97,7 +97,7 @@ items:
   house_keys: { name: Keys, keep: true, use: { label: Lock the door behind you, stress: -5, when: "at('home')" } }   # keep: true = using it doesn't spend it
 item_uses: { phone: { label: Call a friend for a lift, check: { chance: 60 }, success: { move: home }, fail: { stress: +3 } } }   # uses/bonuses for items declared elsewhere (Warp writes drafted ones here)
 wardrobe: { slots: [outer, top, bottom, under_top, under_bottom, feet], cover: [top, bottom], start: [t_shirt, jeans] }
-conditions: { cold: { label: Cold, tone: bad } }
+conditions: { cold: { label: Cold, tone: bad }, hasted: { label: Hasted, tone: good, bonus: { evasion: 20 } } }   # bonus: a buff (or debuff, negative) counted in checks while it lasts
 flags: { met_boss: { start: false, narrator: true } }
 
 actions:
@@ -139,6 +139,8 @@ EFFECTS (any success/fail/effects/cost/do block):
   rel: { jo: { trust: +3 } }, move: location, time: 30, add_condition: [cold] or { cold: 120 }, remove_condition: [cold],
   hint: "direction for the narrator", wear: [raincoat], undress: [top], damage: { top: 20 },
   start_encounter: id, foe: { hp: -6 }, end: outcome_id, unlock: [codex_id],
+  harm: "6 + arcana / 5" (wears down the current encounter's main meter — HP, resolve, composure — so one ability works in any encounter),
+  learn: [ability_id] (teaches an ability),
   decide: { ask: "How does Jo react?", options: { yes: { desc: "Agrees", weight: 2, rel: { jo: { trust: +2 } } }, no: { desc: "Refuses", weight: 1 } } }
   Formulas with commas MUST be quoted: money: "-min(money, 20)".
 
@@ -214,7 +216,30 @@ jobs:             # a shift of customers, each wanting a style; your pick (or yo
 
 codex: { docks: { title: The Docks, category: Places, text: "...", unlock: "location == 'docks'", lore: [Lorebook entry title] } }
 feats: { night_owl: { name: Night owl, desc: "...", unlock: "hour >= 2 and hour < 5", reward: { stress: -5 } } }
-perks: { points: perk_points, sharp: { name: Sharpshooter, desc: "+2 Aim", cost: 1, requires: "level >= 2", effects: { aim: +2 } } }
+abilities:        # the player's OWN moves (spells, techniques, tricks): offered as choices in encounters and the story, typed or clicked
+  haste:
+    name: Haste
+    desc: Quicken body and mind
+    cost: { mana: -8 }               # can't be used without enough (the choice says "Needs 8 Mana")
+    add_condition: { hasted: 3 }     # minutes — an encounter round is one minute; the condition's bonus: does the rest
+    per_day: 2                       # and/or per_encounter: 1 (0 = unlimited)
+  firebolt:
+    name: Firebolt
+    where: encounter                 # encounter | story | any (default)
+    cost: { mana: -4 }
+    check: { chance: "40 + arcana" } # scales with the stats its formulas read
+    success: { harm: "6 + arcana / 5" }
+    fail: { hint: "The bolt fizzles." }
+    known: false                     # true (default unless a perk teaches it) | false (taught by a perk or learn:) | a formula ("arcana >= 40")
+
+perks:
+  points: perk_points               # the stat that pays for them; something must raise it (level-ups, feats, milestones)
+  pick: 3                           # offer 3 to choose from when there's a point (one that builds on how they've played, one new direction, one random); 0/omitted = buy from the whole list
+  sharp: { name: Sharpshooter, desc: "+2 Aim", cost: 1, requires: "level >= 2", effects: { aim: +2 } }   # effects: once, when taken
+  crowd_ghost: { name: Crowd Ghost, bonus: { stealth: 10 }, edge: { stealth: 15, when: "at('plaza')" }, tags: [stealth] }   # bonus: always counts in checks; edge: only while when holds
+  silver_tongue: { name: Silver Tongue, rule: { reroll: { stats: [persuasion], per_day: 1 } } }   # rules: reroll / soften (a failure becomes partial) on these stats or tags; gains / losses: { scent: -30% } (rises or drops that much bigger/smaller)
+  mage_blood: { name: Mage Blood, abilities: [firebolt], narrator: "Sparks dance on {{user}}'s fingertips when angry.", excludes: [iron_will] }   # teaches abilities; narrator: what the story should show; excludes: can't have both
+  adrenaline: { name: Adrenaline Junkie, edge: { athletics: 20, when: "stress >= 60" }, drawback: { desc: "Stress builds faster", gains: { stress: +10% } }, weight: 1 }
 
 checkpoints:      # save slots in the journal; loading rewinds the game (the chat keeps its messages)
   slots: 3
@@ -331,6 +356,11 @@ An encounter is a small puzzle with a visible goal. Give it:
 - labels: for how each ending reads, and outcomes: with consequences (what it cost, what was won).
 Rounds are told briefly by default; narrate: true only for set-pieces that deserve full prose every round.
 Mistake: three moves that all lower the same stat by the same amount; a defeat threshold above the stat's max; no way out.
+
+## abilities and perks
+Abilities are the player's own moves — spells, techniques, tricks — not the place's. Give each a cost (mana, stamina, money), a limit (per_day / per_encounter) and a reason to use it now rather than a plain move: a buff (add_condition with a bonus:), harm: in a fight, a heal, a way out. Make power scale with a stat (check: "40 + arcana", harm: "6 + arcana / 5") so growth shows.
+Perks change how the player plays, not just a number: an edge in a situation the card has (night, crowds, a weapon), a rule bent (reroll, soften), a stat that rises slower or faster, an ability taught, something true the narrator shows (narrator:). The best ones trade off (drawback:). Use pick: 3 so every point is a choice between directions, give perk_points a source, and use excludes: for exclusive paths.
+Mistake: perks that are only "+2 stat" — that's a level-up, not a choice.
 
 ## conditions
 A condition should change play: penalise a check (- 10 when cond('x')), open or close actions, feed an encounter, drive a trigger.

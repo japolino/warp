@@ -115,6 +115,17 @@ export function extractYaml(text: string): string {
 
 // ───────────────────────── the card ─────────────────────────
 
+/** The active persona's description, through the {{persona}} macro (no extra permission needed). */
+async function personaText(chatId: string, userId?: string): Promise<string | null> {
+  try {
+    const { text } = await host().macros.resolve("{{persona}}", { chatId, userId, commit: false });
+    const t = (text ?? "").trim();
+    return t && t !== "{{persona}}" ? (t.length > 2500 ? `${t.slice(0, 2500)}…` : t) : null;
+  } catch {
+    return null;
+  }
+}
+
 async function cardText(characterId: string, userId?: string): Promise<{ name: string; text: string; hasRuleset: boolean }> {
   const c = await host().characters.get(characterId, userId);
   if (!c) throw new Error("Character not found");
@@ -157,7 +168,8 @@ const SYSTEMS: { id: string; label: string }[] = [
   { id: "dating", label: "Dating (topics, hidden tastes, outings)" },
   { id: "crime", label: "Crime & consequences" },
   { id: "journal", label: "Codex & feats" },
-  { id: "perks", label: "Levels & perks" },
+  { id: "abilities", label: "Abilities & spells (your persona's own moves)" },
+  { id: "perks", label: "Levels & perks (pick one of a few)" },
   { id: "story", label: "Secrets, a living world & choices for the moment" },
 ];
 
@@ -210,6 +222,7 @@ function brief(s: BuilderSession): string {
     s.analysis ? `Card summary: ${s.analysis.summary}` : "",
     s.analysis?.statusBlock?.found ? `The card currently makes the model print a status block with: ${s.analysis.statusBlock.fields.join(", ")}. Cover these as proper stats; the narrator should no longer print status blocks.` : "",
     s.analysis?.cardType === "scenario" ? `This is a scenario/narrator card: "${s.characterName}" is the setting, NOT a person — never add it to people.` : "",
+    s.persona ? `The player's persona — who {{user}} is:\n${s.persona}\nTheir own powers, training, signature moves and quirks belong to them, not the setting: make each an ability (cost, limit, a stat it scales with, what it does in a fight and outside one) and let perks build on them.` : "",
     s.analysis?.cast?.length ? `Main cast — add each to relationships.people with a start: block that matches how they feel about {{user}} at the beginning (use the relationship stats' scales; strong feelings mean strong numbers):\n${s.analysis.cast.map((c) => `- ${c.name}: ${c.relation}`).join("\n")}` : "",
     qa.length ? `The player's answers:\n${qa.join("\n")}` : "",
     adds.length ? `The player's own additions (build each in — the stat/item/place/etc., what changes it, and which actions check it):\n${adds.join("\n")}` : "",
@@ -438,9 +451,10 @@ export async function builderStart(chatId: string, opts: { connectionId: string;
   await progress(s, "Reading the card…", userId);
   try {
     const card = await cardText(s.characterId, userId);
+    s.persona = await personaText(chatId, userId);
     const templates = TEMPLATES.map((t) => `- ${t.id}: ${t.blurb}`).join("\n");
     const system = `You help set up a game ruleset for a roleplay character card. Reply with JSON only.`;
-    const user = `${card.text}\n\nAvailable starting templates:\n${templates}\n- blank: nothing, build from scratch\n\nSystems the player can pick from: ${SYSTEMS.map((x) => x.id).join(", ")}.\n\nReply with JSON:
+    const user = `${card.text}${s.persona ? `\n\nThe player's persona (who {{user}} is):\n${s.persona}` : ""}\n\nAvailable starting templates:\n${templates}\n- blank: nothing, build from scratch\n\nSystems the player can pick from: ${SYSTEMS.map((x) => x.id).join(", ")}.\n\nReply with JSON:
 {"summary": "2–3 sentences: who this is, the setting, the likely kind of story",
  "suggestedTemplate": "<template id>",
  "reason": "one sentence: why that template fits",
@@ -499,7 +513,7 @@ async function draftAll(s: BuilderSession, userId?: string) {
   const systems = chosenSystems(s);
   const want = (label: PartLabel) => {
     if (label === "encounters") return systems.has("encounters") || systems.has("dungeon");
-    if (label === "journal") return systems.has("journal") || systems.has("perks");
+    if (label === "journal") return systems.has("journal") || systems.has("perks") || systems.has("abilities");
     if (label === "story") return systems.has("story");
     if (label === "dating") return systems.has("dating");
     return true;

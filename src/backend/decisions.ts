@@ -7,7 +7,7 @@
 
 import type { Answer, Answers, Decider, Questions } from "../engine/decide.js";
 import { normalize, noulConfidence } from "../engine/decide.js";
-import { usableItems, availableChoices, TRAVEL_PREFIX, travelTargets, type Intent, type Proposal } from "../engine/resolve.js";
+import { usableAbilities, usableItems, availableChoices, TRAVEL_PREFIX, travelTargets, type Intent, type Proposal } from "../engine/resolve.js";
 import { DIFFICULTIES, type DecideSpec, type Ruleset, type StatDef } from "../engine/ruleset.js";
 import { itemName, makeEnv, personName, type GameState } from "../engine/state.js";
 import { IMPROV, improvStats } from "../engine/freeform.js";
@@ -110,9 +110,13 @@ export async function readTurn(opts: {
   const q: Questions = {};
   // In a conversation or on a date, typed lines are the player's words in it (read when the turn resolves), not actions.
   const talking = !!activeSession(r, s) || !!s.job;
-  // Items in hand count as things the player can do ("I spray myself" uses the spray).
+  // Items in hand and the player's own abilities count as things they can do ("I spray myself", "I cast haste").
   const actions = playerText && !talking
-    ? [...availableChoices(r, s, settings.lines), ...usableItems(r, s).filter((u) => !u.locked).map((u) => ({ id: u.id, a: u.a, label: u.a.label }))]
+    ? [
+        ...availableChoices(r, s, settings.lines),
+        ...usableItems(r, s).filter((u) => !u.locked).map((u) => ({ id: u.id, a: u.a, label: u.a.label })),
+        ...usableAbilities(r, s).filter((u) => !u.status.locked).map((u) => ({ id: u.id, a: u.a, label: u.a.label })),
+      ]
     : [];
   const travel = playerText && !talking ? travelTargets(r, s) : [];
   // Anything risky the list doesn't cover is still an attempt: it rolls on the closest ability.

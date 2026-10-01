@@ -24,7 +24,12 @@ export interface EncounterState {
   momentum?: number;
   /** Who the opponent is this time (someone from the story), when not the encounter's own foe. */
   foeName?: string;
+  /** In-game minute it started: tells one encounter from the next (uses per encounter). */
+  at?: number;
 }
+
+/** Uses of something limited (an ability, a perk's reroll): today's count, and this encounter's. */
+export interface Charge { day: number; n: number; enc?: string; encN: number }
 
 export interface GameState {
   /** Per-chat world seed (weather etc.), set on the first turn. */
@@ -39,6 +44,10 @@ export interface GameState {
   codex: Record<string, true>;
   feats: Record<string, true>;
   perks: Record<string, true>;
+  /** Abilities taught by the story (`learn:`), beyond those known from the start or from perks. */
+  learned: Record<string, true>;
+  /** "ability:haste" / "perk:silver_tongue" → how much it has been used. */
+  charges: Record<string, Charge>;
   /** People whose starting feelings have been set (by the author, the story or by hand). */
   calibrated: Record<string, true>;
   /** Ruleset people the player removed from tracking. */
@@ -145,6 +154,8 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "codex"; id: string }
   | { t: "feat"; id: string }
   | { t: "perk"; id: string }
+  | { t: "learn"; id: string }
+  | { t: "charge"; key: string; day: number; enc?: string }
   | { t: "calib"; who: string }
   | { t: "forget"; who: string }
   | { t: "secret"; id: string; stage: number }
@@ -219,6 +230,8 @@ export function initialState(r: Ruleset): GameState {
     codex: {},
     feats: {},
     perks: {},
+    learned: {},
+    charges: {},
     calibrated: {},
     forgotten: {},
     stats: {},
@@ -353,7 +366,7 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
     }
     case "enc":
       if (!e.id && s.encounter) s.lastEncounter = { id: s.encounter.id, ...(s.encounter.foeName ? { foeName: s.encounter.foeName } : {}), outcome: e.outcome ?? "ended", at: s.minutes, loc: s.location };
-      s.encounter = e.id ? { id: e.id, round: 0, foe: { ...(e.foe ?? {}) }, ...(e.momentum !== undefined ? { momentum: e.momentum } : {}), ...(e.foeName ? { foeName: e.foeName } : {}) } : null;
+      s.encounter = e.id ? { id: e.id, round: 0, foe: { ...(e.foe ?? {}) }, ...(e.momentum !== undefined ? { momentum: e.momentum } : {}), ...(e.foeName ? { foeName: e.foeName } : {}), at: s.minutes } : null;
       break;
     case "swing":
       if (s.encounter && s.encounter.momentum !== undefined) s.encounter.momentum = clamp(s.encounter.momentum + e.d, -100, 100);
@@ -370,6 +383,15 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
     case "codex": s.codex[e.id] = true; break;
     case "feat": s.feats[e.id] = true; break;
     case "perk": s.perks[e.id] = true; break;
+    case "learn": (s.learned ??= {})[e.id] = true; break;
+    case "charge": {
+      const charges = (s.charges ??= {});
+      const c = charges[e.key];
+      const today = c && c.day === e.day ? c.n : 0;
+      const here = c && e.enc && c.enc === e.enc ? c.encN : 0;
+      charges[e.key] = { day: e.day, n: today + 1, ...(e.enc ? { enc: e.enc } : {}), encN: e.enc ? here + 1 : 0 };
+      break;
+    }
     case "calib": s.calibrated[e.who] = true; break;
     case "forget":
       if (s.scene[e.who]) { const sc = { ...s.scene }; delete sc[e.who]; s.scene = sc; }
@@ -620,6 +642,21 @@ function applyDungeon(s: GameState, d: DungeonRun, e: WarpEvent) {
       break;
     case "dg_told": d.untold = []; break;
   }
+}
+
+/** The in-game day number (uses per day reset with it). */
+export function dayOf(s: GameState): number { return Math.floor(s.minutes / 1440); }
+
+/** Tells this encounter from the next one with the same id. */
+export function encounterKey(s: GameState): string | undefined {
+  return s.encounter ? `${s.encounter.id}@${s.encounter.at ?? 0}` : undefined;
+}
+
+/** Uses so far today, and in this encounter. */
+export function usesOf(s: GameState, key: string): { today: number; here: number } {
+  const c = s.charges?.[key];
+  const enc = encounterKey(s);
+  return { today: c && c.day === dayOf(s) ? c.n : 0, here: c && enc && c.enc === enc ? c.encN : 0 };
 }
 
 export function cloneState(s: GameState): GameState {

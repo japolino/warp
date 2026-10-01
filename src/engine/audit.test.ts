@@ -5,6 +5,21 @@ import { auditRuleset } from "./audit.js";
 const ids = (raw: Record<string, unknown>) => auditRuleset(normalizeRuleset(raw).ruleset!).gaps.map((g) => g.id);
 
 describe("the depth audit", () => {
+  test("abilities that do nothing or cost nothing, perks with no points to buy them, flat perks, a shop instead of a pick", () => {
+    const found = ids({
+      stats: { mana: { kind: "meter", start: 10 }, perk_points: { kind: "attribute", start: 0 }, aim: { kind: "skill", start: 10 } },
+      abilities: { shrug: { name: "Shrug", hint: "{{user}} shrugs." }, zap: { name: "Zap", effects: { mana: +1 } }, bolt: { name: "Bolt", cost: { mana: -3 }, effects: { mana: +1 } } },
+      perks: { points: "perk_points", a: { effects: { aim: 2 } }, b: { bonus: { aim: 5 } }, c: { narrator: "x" }, d: { rule: { reroll: true } } },
+    });
+    expect(found).toContain("ability-dead:shrug");
+    expect(found).toContain("ability-free:zap");
+    expect(found).not.toContain("ability-free:bolt");
+    expect(found).toContain("perk-no-points");
+    expect(found).toContain("perk-flat:a");
+    expect(found).not.toContain("perk-flat:b");
+    expect(found).toContain("perk-shop");
+  });
+
   test("items that do nothing, can't be had, or matter are told apart", () => {
     const found = ids({
       start: { items: { spray: 1 } },

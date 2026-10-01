@@ -109,7 +109,7 @@ export function hudParts(h: HudView, opts: HudOpts): { head: string; parts: HudP
   const map = opts.map ? part("map", "Map", 0, renderMapView(opts.map), !opts.compact) : null;
   return {
     head: `${renderEncounter(h)}<div class="warp-hud-top">${top}</div>${renderWarmth(h)}<div class="warp-bars">${bars}</div>`,
-    parts: [renderOutfit(h, opts.compact), skills, dues, people, map, family, body, items, renderPerks(h, opts.compact)].filter((p): p is HudPart => !!p),
+    parts: [renderOutfit(h, opts.compact), skills, renderAbilities(h, opts.compact), dues, people, map, family, body, items, renderPerks(h, opts.compact)].filter((p): p is HudPart => !!p),
   };
 }
 
@@ -163,14 +163,38 @@ function renderOutfit(h: HudView, compact: boolean): HudPart | null {
   return part("outfit", "Outfit", worn, rows, !compact);
 }
 
+function perkCard(p: HudView["perks"][number], take: boolean): string {
+  return `<div class="warp-perk${p.owned ? " warp-perk-owned" : ""}${p.offered ? " warp-perk-offer" : ""}">
+      <div class="warp-perk-text"><b>${esc(p.name)}</b>${p.desc ? ` <span class="warp-dim">${esc(p.desc)}</span>` : ""}
+        ${p.notes.length ? `<div class="warp-perk-notes">${p.notes.map((n) => `<span>${esc(n)}</span>`).join("")}</div>` : ""}
+        ${p.drawback ? `<div class="warp-perk-drawback">⚠ ${esc(p.drawback)}</div>` : ""}
+      </div>
+      ${p.owned ? `<span class="warp-tone-good" aria-label="taken">✓</span>` : take && !p.blocker ? `<button class="warp-btn warp-mini${p.offered ? " warp-btn-primary" : ""}" data-buy-perk="${esc(p.id)}">${p.offered ? "Choose" : `Take · ${esc(p.cost)} pt`}</button>` : `<span class="warp-dim" title="${esc(p.blocker ?? "")}">${esc(p.cost)} pt</span>`}
+    </div>`;
+}
+
+/** Perks: picked from a few on offer (or bought from the list), then what you have and what each does. */
 function renderPerks(h: HudView, compact: boolean): HudPart | null {
   if (!h.perks.length) return null;
-  const rows = h.perks.map((p) => `<div class="warp-perk${p.owned ? " warp-perk-owned" : ""}">
-      <div><b>${esc(p.name)}</b> <span class="warp-dim">${esc(p.desc)}</span></div>
-      ${p.owned ? `<span class="warp-tone-good">✓</span>` : p.blocker ? `<span class="warp-dim" title="${esc(p.blocker)}">${esc(p.cost)} pt</span>` : `<button class="warp-btn warp-mini" data-buy-perk="${esc(p.id)}">Take · ${esc(p.cost)} pt</button>`}
-    </div>`).join("");
+  const offer = h.perks.filter((p) => p.offered && !p.owned);
+  const owned = h.perks.filter((p) => p.owned);
+  const rest = h.perks.filter((p) => !p.owned && !p.offered);
+  const pick = offer.length ? `<div class="warp-perk-pick"><div class="warp-perk-pick-head">✦ Pick ${h.perkPick > 1 ? "one" : "it"}</div>${offer.map((p) => perkCard(p, true)).join("")}</div>` : "";
+  const body = `${pick}${owned.map((p) => perkCard(p, false)).join("")}${h.perkPick ? "" : rest.map((p) => perkCard(p, true)).join("")}${!pick && !owned.length && h.perkPick ? `<div class="warp-empty">Earn a point to choose your first perk.</div>` : ""}`;
   const label = h.perkPoints !== null ? `Perks · ${h.perkPoints} point${h.perkPoints === 1 ? "" : "s"}` : "Perks";
-  return part("perks", label, 0, rows, !compact && (h.perkPoints ?? 0) > 0);
+  return part("perks", label, offer.length, body, !compact && ((h.perkPoints ?? 0) > 0 || offer.length > 0));
+}
+
+/** The player's own abilities: cost, uses left, and a button when it can be used now. */
+function renderAbilities(h: HudView, compact: boolean): HudPart | null {
+  if (!h.abilities.length) return null;
+  const rows = h.abilities.map((a) => `<div class="warp-item warp-item-usable warp-ability">
+      <span class="warp-item-name" title="${esc(a.desc ?? "")}">✦ ${esc(a.name)}${a.cost ? ` <span class="warp-dim">· ${esc(a.cost)}</span>` : ""}${a.left !== null ? ` <span class="warp-dim">· ${esc(a.left)} left</span>` : ""}</span>
+      <span class="warp-item-side">${a.locked
+        ? `<button class="warp-btn warp-mini" disabled title="${esc(a.locked)}">🔒 Use</button>`
+        : `<button class="warp-btn warp-mini" data-use="${esc(a.choice)}" title="${esc(a.desc ?? a.name)}">Use</button>`}</span>
+    </div>`).join("");
+  return part("abilities", "Abilities", h.abilities.filter((a) => !a.locked).length, rows, !compact);
 }
 
 // ───────────────────────── map ─────────────────────────

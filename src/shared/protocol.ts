@@ -94,8 +94,20 @@ export interface HudView {
   codex: { id: string; title: string; text: string; category: string | null }[];
   codexTotal: number;
   feats: { id: string; name: string; desc: string; unlocked: boolean }[];
-  perks: { id: string; name: string; desc: string; cost: number; owned: boolean; blocker: string | null }[];
+  perks: {
+    id: string; name: string; desc: string; cost: number; owned: boolean; blocker: string | null;
+    /** On offer right now (when perks are picked from a few rather than bought from the list). */
+    offered: boolean;
+    /** The downside, if it has one. */
+    drawback: string | null;
+    /** What it does, in short ("+15 Stealth on the promenade", "1 reroll left today"). */
+    notes: string[];
+  }[];
   perkPoints: number | null;
+  /** How many perks are offered at a time (0: the whole list, like a shop). */
+  perkPick: number;
+  /** The player's own abilities (spells, techniques): what they cost, uses left, and whether they can be used now. */
+  abilities: { id: string; name: string; desc: string | null; cost: string | null; left: number | null; locked: string | null; choice: string }[];
   /** What has surfaced in the world (newest first). */
   news: { text: string; when: string | null }[];
   /** Body parts and their traits, when the ruleset has a body. */
@@ -489,6 +501,8 @@ export interface BuilderSession {
   characterName: string;
   /** build = from the card; refine = change by request; deepen = close the depth audit's gaps in the installed rules. */
   mode: "build" | "refine" | "deepen";
+  /** The player's persona (who {{user}} is), so their own powers and training become abilities. */
+  persona?: string | null;
   step: "start" | "questions" | "review" | "done";
   /** quick: plan, draft, repair, one pass on the audit. thorough: the designer works with tools until the audit is clean. */
   effort?: "quick" | "thorough";

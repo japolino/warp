@@ -170,7 +170,13 @@ export const STYLES = `
 .warp-outfit-row { display: grid; grid-template-columns: 78px 1fr auto; gap: 6px; align-items: center; font-size: 12.5px; }
 .warp-mini-select { width: auto; max-width: 110px; padding: 2px 4px; font-size: 12px; }
 .warp-perk { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12.5px; }
-.warp-perk-owned { opacity: .75; }
+.warp-perk-owned { opacity: .8; }
+.warp-perk-text { min-width: 0; }
+.warp-perk-notes { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 11.5px; color: var(--warp-good); }
+.warp-perk-drawback { font-size: 11.5px; color: var(--warp-warn); }
+.warp-perk-pick { display: flex; flex-direction: column; gap: 6px; padding: 8px; margin-bottom: 6px; border-radius: var(--warp-radius); border: 1px solid color-mix(in srgb, var(--warp-accent) 55%, var(--warp-border)); background: color-mix(in srgb, var(--warp-accent) 7%, transparent); }
+.warp-perk-pick-head { font-weight: 700; font-size: 12px; color: var(--warp-accent); }
+.warp-perk-offer + .warp-perk-offer { border-top: 1px dashed var(--warp-border); padding-top: 6px; }
 .warp-person-here { border: 1px solid color-mix(in srgb, var(--warp-good) 55%, transparent); }
 .warp-rel { cursor: pointer; border-radius: 4px; }
 .warp-rel:hover { background: var(--warp-fill); }

@@ -121,6 +121,31 @@ export function auditRuleset(r: Ruleset): AuditReport {
     }
   }
 
+  // ── abilities and perks ──
+  const effectDoes = (e: Effect | undefined) => !!e && Object.entries(e).some(([k, v]) => k !== "hint" && v !== undefined && v !== null && (typeof v !== "object" || (Array.isArray(v) ? v.length > 0 : Object.keys(v).length > 0)));
+  for (const ab of Object.values(r.abilities)) {
+    const a = ab.action;
+    if (![a.effects, ...Object.values(a.outcomes)].some(effectDoes)) {
+      gap({ id: `ability-dead:${ab.id}`, severity: "gap", part: "journal", text: `${ab.name} is an ability that does nothing in the rules.`, fix: "Give it effects: a buff (add_condition with a bonus:), harm: in a fight, a heal, a way out — on success: when it rolls." });
+      continue;
+    }
+    links.push(`${ab.name}: an ability${ab.where === "encounter" ? " for encounters" : ""}`);
+    if (!Object.keys(a.cost.stats).length && !ab.perDay && !ab.perEncounter) {
+      gap({ id: `ability-free:${ab.id}`, severity: "thin", part: "journal", text: `${ab.name} costs nothing and has no limit, so it's the best move every time.`, fix: "Give it a cost (mana, stamina, money) or a limit (per_day / per_encounter)." });
+    }
+  }
+  const perks = Object.values(r.perks);
+  if (perks.length && r.perkPoints && !seen.changed.has(r.perkPoints) && r.stats[r.perkPoints]?.perHour === 0) {
+    gap({ id: "perk-no-points", severity: "gap", part: "journal", text: "Perks cost points, but nothing ever gives the player any.", fix: `Raise ${r.perkPoints} on level-ups (a trigger), feat rewards, won encounters or story milestones.` });
+  }
+  for (const p of perks) {
+    const shapes = Object.keys(p.bonus).length + p.edges.length + p.rules.length + p.abilities.length + (p.narrator ? 1 : 0);
+    if (!shapes) gap({ id: `perk-flat:${p.id}`, severity: "thin", part: "journal", text: `${p.name} only changes numbers once, when it's taken.`, fix: "Make it change how they play: an edge in a situation the card has, a rule bent (reroll/soften), a stat that rises slower, an ability it teaches, a narrator: line — ideally with a drawback." });
+  }
+  if (perks.length >= 4 && !r.perkPick) {
+    gap({ id: "perk-shop", severity: "thin", part: "journal", text: "Perks are bought from the whole list, so a point is never a real choice.", fix: "Add pick: 3 under perks: — each point then offers one that builds on how they've played, one new direction and one more." });
+  }
+
   // ── stats ──
   for (const id of r.statOrder) {
     const def = r.stats[id];
