@@ -179,6 +179,8 @@ encounters:
     outcomes: { won: { hint: "They flee." }, escaped: { stress: +3 }, beaten: { money: "-min(money, 30)" } }
     labels: { won: "You see them off", escaped: "You got away", beaten: "Overpowered" }   # how each ending reads
     goal: "Break their nerve, or get away"        # optional; otherwise derived from end_when
+    # round_limit: 20   # finite budget, default 20, range 1–200; normal endings take precedence
+    # timeout_outcome: beaten   # default: momentum's lose outcome, otherwise lost; applies that outcome's effects
     danger: "Pain at 80 and you're overpowered"   # optional; otherwise derived
     # narrate: true = every round goes to the narrator as a full reply (old style). Default: rounds are told briefly
     #   in one encounter message that grows, then replaced by a summary — far fewer tokens, no repetitive loops.

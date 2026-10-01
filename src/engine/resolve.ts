@@ -36,6 +36,8 @@ export interface CheckResult {
 
 export interface TurnRecord {
   v: 1;
+  /** Backend provenance of the rules and preceding active message path. */
+  path?: string;
   action?: { id: string; label: string; params?: Record<string, string>; via: Intent["via"] };
   check?: CheckResult;
   /** Directions for the narrator, in order. */
@@ -467,22 +469,28 @@ function perkRuleFor(r: Ruleset, s: GameState, a: ActionDef, kind: "reroll" | "s
 /** Look up an intent's action (and target) in whatever pool is live. */
 export function findAction(r: Ruleset, s: GameState, actionId: string): { a: ActionDef; target?: string } | null {
   const [base, target] = actionId.split(TARGET_SEP);
+  const allowed = (a: ActionDef) => isAvailable(r, s, a, target)
+    && (!a.perPerson || !!target)
+    && (!target || presentPeople(r, s, makeEnv(r, s)).includes(target));
   if (base.startsWith(ITEM_PREFIX)) {
-    const a = r.items[base.slice(ITEM_PREFIX.length)]?.use;
-    return a ? { a, ...(target ? { target } : {}) } : null;
+    const id = base.slice(ITEM_PREFIX.length);
+    const item = r.items[id];
+    const a = item?.use;
+    return a && (s.items[id] ?? 0) > 0 && !(item.uses > 0 && (s.uses[id] ?? item.uses) <= 0) && allowed(a)
+      ? { a, ...(target ? { target } : {}) } : null;
   }
   if (base.startsWith(ABILITY_PREFIX)) {
     const id = base.slice(ABILITY_PREFIX.length);
     const st = abilityStatus(r, s, id);
     const a = r.abilities[id]?.action;
-    return a && st.known && st.here && !st.locked ? { a, ...(target ? { target } : {}) } : null;
+    return a && st.known && st.here && !st.locked && allowed(a) ? { a, ...(target ? { target } : {}) } : null;
   }
   if (base.startsWith(IMPROV)) {
     const a = improvAction(r, s, base);
     return a ? { a } : null;
   }
   const a = base.startsWith(LIVE_PREFIX) ? r.liveChoices.tags[base.slice(LIVE_PREFIX.length)] : actionPool(r, s).defs[base];
-  return a ? { a, ...(target ? { target } : {}) } : null;
+  return a && allowed(a) ? { a, ...(target ? { target } : {}) } : null;
 }
 
 function tierFor(check: CheckDef, roll: ReturnType<typeof rollDice>, add: number, target: number | null): Tier {
@@ -537,13 +545,24 @@ export function odds(r: Ruleset, s: GameState, a: ActionDef, params?: Record<str
   if (!check) return null;
   const { add, target } = checkNumbers(r, s, a, params, who);
   if (check.style === "chance" && check.dice === "d100" && target !== null) {
-    return { success: target / 100, partial: 0 };
+    const success = Math.max(0, Math.min(100, target - add)) / 100;
+    // A reroll happens only after failure. Soften converts ordinary failures to
+    // partials, but only converts critical failures to ordinary failures.
+    const reroll = !!perkRuleFor(r, s, a, "reroll");
+    const soften = !!perkRuleFor(r, s, a, "soften");
+    const failed = 1 - success;
+    const critical = check.crits ? Math.min(failed, 0.05) : 0;
+    return { success: reroll ? success + failed * success : success,
+      partial: soften ? (reroll ? failed : 1) * (failed - critical) : 0 };
   }
   const rng = seededRng(`odds:${a.id}`);
+  const reroll = !!perkRuleFor(r, s, a, "reroll"), soften = !!perkRuleFor(r, s, a, "soften");
   const N = 2000;
   let ok = 0, part = 0;
   for (let i = 0; i < N; i++) {
-    const t = tierFor(check, rollDice(check.dice, rng), add, target);
+    let t = tierFor(check, rollDice(check.dice, rng), add, target);
+    if ((t === "fail" || t === "crit_fail") && reroll) t = tierFor(check, rollDice(check.dice, rng), add, target);
+    if ((t === "fail" || t === "crit_fail") && soften) t = t === "crit_fail" ? "fail" : "partial";
     if (t === "success" || t === "crit_success") ok++;
     else if (t === "partial") part++;
   }
@@ -1184,7 +1203,12 @@ function checkRun(w: Working, before: GameState) {
   const r = w.r;
   if (!r.checkpoints.enabled) return;
   if (!w.s.ended) for (const e of Object.values(r.endings)) {
-    if (!evalBool(e.when, w.env(), false)) continue;
+    const active = evalBool(e.when, w.env(), false);
+    if ((w.s.dismissedEndings ?? []).includes(e.id)) {
+      if (!active) w.push({ t: "end_rearm", id: e.id, src: "world" });
+      continue;
+    }
+    if (!active) continue;
     // Reached while resolving a turn, the reply about to be written tells it; otherwise the next one does.
     w.push({ t: "end", id: e.id, told: !w.defer, src: "trigger" });
     announce(w, endingDirection(r, w.s, e));
@@ -1273,6 +1297,13 @@ function startEncounter(w: Working, id: string, src: EventSource, opponent?: str
   because(w, `${enc.name} begins`, () => effectToEvents(w, enc.start, src, {}));
 }
 
+/** The same startup transition used by live actions, exposed for offline playtests. */
+export function encounterStartEvents(r: Ruleset, before: GameState, id: string, seed: string): WarpEvent[] {
+  const w = new Working(r, cloneState(before), seededRng(`${seed}:fx`), seed);
+  startEncounter(w, id, "start");
+  return w.events;
+}
+
 function encounterOutcome(w: Working): string | null {
   const s = w.s.encounter;
   if (!s) return null;
@@ -1284,6 +1315,10 @@ function encounterOutcome(w: Working): string | null {
     if (s.momentum <= -100) return enc.momentum.lose;
   }
   for (const e of enc?.endWhen ?? []) if (evalBool(e.when, w.env(), false)) return e.outcome;
+  if (enc && s.round >= enc.roundLimit) {
+    announce(w, `The ${enc.roundLimit}-round limit was reached without resolving the encounter: ${enc.timeoutOutcome.replace(/_/g, " ")}.`);
+    return enc.timeoutOutcome;
+  }
   return null;
 }
 
@@ -1385,7 +1420,8 @@ function advanceTime(w: Working, minutes: number, src: EventSource) {
 
 function runTriggers(w: Working, includeRepeat: boolean) {
   const fired = new Set<string>();
-  for (let pass = 0; pass < 5; pass++) {
+  const limit = Math.max(5, Math.min(256, w.r.triggers.length * 2 + 1));
+  for (let pass = 0; pass < limit; pass++) {
     let changed = false;
     for (const t of w.r.triggers) {
       // Scene triggers only move when the decision model judged them this phase.
@@ -1408,6 +1444,15 @@ function runTriggers(w: Working, includeRepeat: boolean) {
       }
     }
     if (!changed) break;
+    if (pass === limit - 1 && w.r.triggers.some((t) => {
+      if (t.whenScene && !(t.id in w.scene)) return false;
+      const now = (t.when === undefined || evalBool(t.when, w.env(), false)) && (!t.whenScene || w.scene[t.id] === true);
+      return now !== (w.s.triggers[t.id] ?? false);
+    })) {
+      const warning = "Rule processing reached its safety limit. Some rules still disagree with the state; check for a cycle in the ruleset.";
+      w.hints.push(warning);
+      w.push({ t: "news", text: warning, src: "trigger" });
+    }
   }
   // Codex entries and feats unlock themselves when their formula first holds.
   for (const c of Object.values(w.r.codex)) {
@@ -1492,6 +1537,13 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   const w = new Working(r, cloneState(before), seededRng(`${opts.seed}:fx`), opts.seed, opts.odds ?? {}, opts.scene ?? {});
   w.defer = false;
   const rec: TurnRecord = { v: 1, hints: [], events: [], at: Date.now() };
+  if (intent && !before.ended && !intent.actionId.startsWith(DATE_PREFIX) && !intent.actionId.startsWith(PAY_PREFIX)
+    && !intent.actionId.startsWith(JOB_PREFIX) && !intent.actionId.startsWith(QUEST_PREFIX) && intent.actionId !== RUN_EPILOGUE && !(before.dungeon && intent.actionId === "dungeon")) {
+    const valid = intent.actionId === EXPLORE ? canExplore(r, before)
+      : intent.actionId.startsWith(TRAVEL_PREFIX) ? travelTargets(r, before).includes(intent.actionId.slice(TRAVEL_PREFIX.length))
+      : !!findAction(r, before, intent.actionId);
+    if (!valid) return { ...rec, hints: ["The attempted action isn't available in the current state. It did not happen and spent no turn or resources."] };
+  }
   // First turn of a chat fixes its world seed (weather etc.).
   if (!w.s.seed) w.push({ t: "seed", v: opts.seed, src: "start" });
   // World happenings that surfaced after the last reply are this turn's news.
@@ -1520,7 +1572,7 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   let mind = found ? mindOverride(r, before, found.a, found.target, opts.seed) : null;
   const meant = found ? (found.target ? `${found.a.label} (${personName(r, before, found.target)})` : intent!.label ?? found.a.label) : "";
   if (found && mind?.kind === "redirect") {
-    const alt = findAction(r, before, mind.to!);
+    const alt = findAction(r, before, mind.to!.includes(TARGET_SEP) ? mind.to! : `${mind.to}${found.target ? `${TARGET_SEP}${found.target}` : ""}`);
     if (alt) found = { a: alt.a, ...(found.target && alt.a.perPerson ? { target: found.target } : {}) };
     else mind = null;
   }
@@ -1602,6 +1654,9 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
           ? `{{user}} meant to ${meant.toLowerCase()}, but ${why} What actually happens: ${label.toLowerCase()}.`
           : `{{user}} goes ahead, but ${mind.cause.toLowerCase()} colours it: ${why}`);
     }
+    // Check numbers and gear describe the committed attempt, before its costs.
+    // This is the same context the choice's displayed odds used.
+    const checkBefore = cloneState(w.s);
     because(w, `Cost of "${label}"`, () => effectToEvents(w, a.cost, "cost", extra));
     // Using an item spends a charge, or one of it — unless it's a tool that keeps.
     if (a.id.startsWith(ITEM_PREFIX)) {
@@ -1610,8 +1665,8 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
       if (it && !it.keep && (w.s.items[itemId] ?? 0) > 0) because(w, `Used ${it.name}`, () => w.push(it.uses > 0 ? { t: "use", id: itemId, n: 1, src: "action" } : { t: "item", id: itemId, d: -1, src: "action" }));
     }
     if (a.id.startsWith(ABILITY_PREFIX)) {
-      const enc = encounterKey(w.s);
-      because(w, `Used ${r.abilities[a.id.slice(ABILITY_PREFIX.length)]?.name ?? a.label}`, () => w.push({ t: "charge", key: a.id, day: dayOf(w.s), ...(enc ? { enc } : {}), src: "action" }));
+      const enc = encounterKey(checkBefore);
+      because(w, `Used ${r.abilities[a.id.slice(ABILITY_PREFIX.length)]?.name ?? a.label}`, () => w.push({ t: "charge", key: a.id, day: dayOf(checkBefore), ...(enc ? { enc } : {}), src: "action" }));
     }
 
     if (mind?.kind === "fail") {
@@ -1619,24 +1674,24 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
       if (fail) because(w, `"${meant}" — ${mind.cause} stopped it`, () => effectToEvents(w, fail, "check", extra));
     } else if (a.check) {
       const rng: Rng = seededRng(opts.seed);
-      const { add, target } = checkNumbers(r, w.s, a, intent!.params, who);
+      const { add, target } = checkNumbers(r, checkBefore, a, intent!.params, who);
       let roll = rollDice(a.check.dice, rng);
       let tier = tierFor(a.check, roll, add, target);
       // A perk may step in after a failure: roll again, or let it partly work.
       let perkNote: string | undefined;
       if (tier === "fail" || tier === "crit_fail") {
-        const re = perkRuleFor(r, w.s, a, "reroll");
+        const re = perkRuleFor(r, checkBefore, a, "reroll");
         if (re) {
-          because(w, `★ ${re.name}`, () => w.push({ t: "charge", key: `perk:${re.perk}:reroll`, day: dayOf(w.s), src: "action" }));
+          because(w, `★ ${re.name}`, () => w.push({ t: "charge", key: `perk:${re.perk}:reroll`, day: dayOf(checkBefore), src: "action" }));
           roll = rollDice(a.check.dice, seededRng(`${opts.seed}:reroll`));
           tier = tierFor(a.check, roll, add, target);
           perkNote = `${re.name} rerolled a failure`;
         }
       }
       if (tier === "fail" || tier === "crit_fail") {
-        const so = perkRuleFor(r, w.s, a, "soften");
+        const so = perkRuleFor(r, checkBefore, a, "soften");
         if (so) {
-          because(w, `★ ${so.name}`, () => w.push({ t: "charge", key: `perk:${so.perk}:soften`, day: dayOf(w.s), src: "action" }));
+          because(w, `★ ${so.name}`, () => w.push({ t: "charge", key: `perk:${so.perk}:soften`, day: dayOf(checkBefore), src: "action" }));
           tier = tier === "crit_fail" ? "fail" : "partial";
           perkNote = `${so.name}: ${tier === "partial" ? "the failure only half-failed" : "the disaster was only a failure"}`;
         }
@@ -1653,7 +1708,7 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
         tier,
         seed: opts.seed,
       };
-      const gear = gearFor(r, w.s, a).notes;
+      const gear = gearFor(r, checkBefore, a).notes;
       if (gear.length) rec.check.gear = gear;
       if (perkNote) rec.check.perk = perkNote;
       questHooks(builderOf(w), { kind: "action", id: a.id, result: tier, good: tier === "success" || tier === "crit_success" });
@@ -1876,12 +1931,16 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
     if (typeof n !== "number" || !Number.isFinite(n) || n <= 0) continue;
     const k = key.toLowerCase();
     const id = Object.keys(w.s.items).find((i) => i === k || itemName(r, w.s, i).toLowerCase() === k);
-    if (id && (r.items[id]?.uses ?? 0) > 0) w.push({ t: "use", id, n: Math.min(10, Math.round(n)), src });
-    // The story used an item that does something: its effect happens (once), unless this
-    // exchange already ran it from the button. Uses with a check need the dice, so they're left to a click.
+    const item = id ? r.items[id] : undefined;
+    const alreadyUsed = id && ctx?.action?.id.split(TARGET_SEP)[0] === `${ITEM_PREFIX}${id}` ? 1 : 0;
+    const available = id && item && !item.keep && item.uses > 0 ? (w.s.uses[id] ?? item.uses) + Math.max(0, (w.s.items[id] ?? 0) - 1) * item.uses : 10;
+    const count = Math.min(available, Math.max(0, Math.min(10, Math.round(n)) - alreadyUsed));
+    if (id && item && !item.keep && item.uses > 0 && count > 0) w.push({ t: "use", id, n: count, src });
+    // Each genuine additional use applies its non-check effect. Uses with a
+    // check need the dice, so their effects are left to a click.
     const use = id ? r.items[id]?.use : undefined;
-    if (id && use && !use.check && ctx?.action?.id !== `${ITEM_PREFIX}${id}`) {
-      because(w, `${itemName(r, w.s, id)} used in the story`, () => effectToEvents(w, use.effects, src, {}));
+    if (id && use && !use.check && count > 0) {
+      for (let useIndex = 0; useIndex < count; useIndex++) because(w, `${itemName(r, w.s, id)} used in the story`, () => effectToEvents(w, use.effects, src, {}));
     }
   }
 

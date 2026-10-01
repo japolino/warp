@@ -24,7 +24,7 @@ function creditorName(r: Ruleset, s: GameState, o: ObligationDef): string {
 export function obligationLife(t: TurnBuilder) {
   const { r } = t;
   for (const o of Object.values(r.obligations)) {
-    for (let guard = 0; guard < 6; guard++) {
+    for (let guard = 0; guard < 1024; guard++) {
       const d = t.s.dues[o.id];
       if (!d) break;
       if (d.owed <= 0) {
@@ -53,6 +53,12 @@ export function obligationLife(t: TurnBuilder) {
       } else {
         t.announce(`${o.label} is overdue: ${cur}${owed} owed, ${missed} missed.`);
       }
+    }
+    const remaining = t.s.dues[o.id];
+    if (remaining && remaining.owed > 0 && t.s.minutes >= remaining.due + o.grace * 1440) {
+      const warning = `${o.label}: the time jump exceeded 1024 billing periods. Further overdue periods remain pending; advance another turn to continue catch-up.`;
+      t.announce(warning);
+      t.push({ t: "news", text: warning, src: "world" });
     }
   }
 }

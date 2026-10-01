@@ -2,11 +2,11 @@
 // Pure engine: odds at the start, how fast meters run away, rules that fire
 // immediately, stats nothing touches, and simulated encounters.
 
-import { seededRng } from "./dice.js";
 import { evalBool, evalNumber } from "./expr.js";
 import type { ActionDef, Effect, Ruleset } from "./ruleset.js";
-import { applyEvent, cloneState, initialState, makeEnv, type GameState } from "./state.js";
-import { availableChoices, odds, resolveTurnFull } from "./resolve.js";
+import { cloneState, initialState, makeEnv, type GameState } from "./state.js";
+import { odds } from "./resolve.js";
+import { simulateEncounter as playtestEncounter } from "./simulate.js";
 import type { PartLabel } from "./reference.js";
 import { isLoss } from "./encounter-view.js";
 import { checkStats } from "./freeform.js";
@@ -150,27 +150,7 @@ export function reviewBalance(r: Ruleset): BalanceWarning[] {
 }
 
 export function simulateEncounter(r: Ruleset, from: GameState, id: string, runs: number): { runs: number; outcomes: Record<string, number>; stuck: number; rounds: number } | null {
-  const enc = r.encounters[id];
-  if (!enc) return null;
-  const outcomes: Record<string, number> = {};
-  let stuck = 0, rounds = 0;
-  const rng = seededRng(`sim:${id}`);
-  for (let i = 0; i < runs; i++) {
-    const s = cloneState(from);
-    applyEvent(s, { t: "enc", id, foe: Object.fromEntries(enc.foe.stats.map((x) => [x.id, x.start])), src: "start" }, r);
-    let ended: string | null = null;
-    for (let n = 0; n < 25 && s.encounter; n++) {
-      const choices = availableChoices(r, s);
-      const pick = choices.length ? choices[Math.floor(rng() * choices.length)].id : null;
-      const { record } = resolveTurnFull(r, s, pick ? { actionId: pick, via: "choice" } : null, { seed: `sim:${id}:${i}:${n}` });
-      for (const e of record.events) {
-        applyEvent(s, e, r);
-        if (e.t === "enc" && !e.id) ended = e.outcome ?? "ended";
-      }
-      rounds++;
-    }
-    if (ended) outcomes[ended] = (outcomes[ended] ?? 0) + 1;
-    else stuck++;
-  }
-  return { runs, outcomes, stuck, rounds: rounds / runs };
+  const sim = playtestEncounter(r, id, { from, runs, maxRounds: 25, randomOnly: true });
+  const random = sim?.policies.find((p) => p.policy === "a random mix");
+  return random ? { runs: random.runs, outcomes: random.outcomes, stuck: random.unfinished, rounds: random.meanRounds ?? random.medianRounds } : null;
 }

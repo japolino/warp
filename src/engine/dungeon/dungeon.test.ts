@@ -267,5 +267,5 @@ describe("balance", () => {
     expect(survived).toBeGreaterThan(0.8);
     expect(reached(5)).toBeGreaterThan(0.6);
     expect(reached(10)).toBeLessThan(0.5);
-  });
+  }, 20_000); // Eighty complete seeded dives can exceed the default timeout in the full suite.
 });

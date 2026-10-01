@@ -7,7 +7,7 @@ import { sceneViewFor } from "./scene.js";
 import type { ChoiceView, EncounterLogView, RecordView, RulesetStatus, SuggestionView } from "../shared/protocol.js";
 import type { Ruleset } from "../engine/ruleset.js";
 import { momentKey, readyChoices } from "./drafts.js";
-import { getMessages, foldPath, liveChoicesOf, warpMeta, type Msg } from "./ledger.js";
+import { getMessages, foldPath, liveChoicesOf, warpMeta, encounterLogOf, type Msg } from "./ledger.js";
 import { getSettings } from "./settings.js";
 import { getRuleset, statusOf } from "./source.js";
 import { host, logError, send } from "./host.js";
@@ -19,6 +19,7 @@ export const lastStates = new Map<string, import("../engine/state.js").GameState
 export const busyChats = new Set<string>();
 const activeChat = new Map<string, string | null>();
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
+const revisions = new Map<string, number>();
 const key = (userId?: string) => userId ?? "_";
 
 export function setActiveChat(userId: string | undefined, chatId: string | null) {
@@ -32,11 +33,15 @@ export function getActiveChat(userId: string | undefined): string | null {
 const MAX_RECORDS = 60;
 
 export async function pushState(chatId: string | null, userId?: string, force = false): Promise<void> {
+  const k = JSON.stringify([userId, chatId]);
+  const revision = (revisions.get(k) ?? 0) + 1;
+  revisions.set(k, revision);
+  const current = () => revisions.get(k) === revision;
   try {
     const loaded = await getRuleset(chatId, userId, force);
     const status = statusOf(loaded);
     if (!chatId || !loaded?.ruleset) {
-      send({ type: "state", chatId, status, hud: null, map: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false, dungeon: null, dungeonEntries: [], date: null, scene: null }, userId);
+      if (current()) send({ type: "state", chatId, revision, status, hud: null, map: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false, dungeon: null, dungeonEntries: [], date: null, scene: null }, userId);
       return;
     }
     const r = loaded.ruleset;
@@ -44,7 +49,7 @@ export async function pushState(chatId: string | null, userId?: string, force = 
     if (settings.enabled && settings.draftItemUses) maybeDraftItems(chatId, loaded.characterId, r, status.depth, userId);
     if (settings.enabled && settings.themeDating && r.dating.enabled) maybeThemeDating(chatId, loaded.characterId, userId);
     const msgs = await getMessages(chatId);
-    const { state, steps } = foldPath(r, msgs);
+    const { state, steps, conflict } = foldPath(r, msgs, MAX_RECORDS);
     lastStates.set(chatId, state);
 
     // A turn can be redone only while it's the latest exchange: the player's message and at most one reply after it.
@@ -73,13 +78,15 @@ export async function pushState(chatId: string | null, userId?: string, force = 
     const latest = msgs[msgs.length - 1] ?? null;
     const anchor = latest && !latest.is_user ? latest.id : null;
     // Rulesets name the player "{{user}}" (foe moves, hints, choices); show their persona's name.
-    send(await withName({
+    const view = await withName({
       type: "state" as const,
       chatId,
+      revision,
+      historyConflict: conflict,
       status,
       hud: settings.enabled ? buildHud(r, state) : null,
       map: settings.enabled ? buildMap(r, state) : null,
-      choices: settings.enabled ? markReady(buildChoices(r, state, { ...settings, live: liveChoicesOf(latest) }), readyChoices(chatId, momentKey(msgs, state))) : [],
+      choices: settings.enabled && !conflict ? markReady(buildChoices(r, state, { ...settings, live: liveChoicesOf(latest) }), readyChoices(chatId, momentKey(msgs, state, { r, settings }))) : [],
       records: settings.enabled ? records : [],
       suggestions: settings.enabled ? suggestions.filter((s) => s.canRedo) : [],
       latestMessageId: latest?.id ?? null,
@@ -90,7 +97,8 @@ export async function pushState(chatId: string | null, userId?: string, force = 
       date: settings.enabled ? buildDateView(r, state, settings.lines) : null,
       scene: settings.enabled ? sceneViewFor(chatId, r, state) : null,
       encounterLogs: settings.enabled ? encounterLogsOf(r, msgs) : [],
-    }, chatId, userId), userId);
+    }, chatId, userId);
+    if (current()) send(view, userId);
   } catch (e) {
     logError("pushState", e);
   }
@@ -100,7 +108,7 @@ export async function pushState(chatId: string | null, userId?: string, force = 
 function encounterLogsOf(r: Ruleset, msgs: Msg[]): EncounterLogView[] {
   const out: EncounterLogView[] = [];
   for (const m of msgs.slice(-30)) {
-    const log = warpMeta(m).encounter;
+    const log = encounterLogOf(m);
     if (!log) continue;
     out.push({
       messageId: m.id, name: r.encounters[log.enc]?.name ?? "Encounter", foe: log.foe, status: log.status,

@@ -5,17 +5,18 @@ import type { GameState, WarpEvent } from "./engine/state.js";
 import { TEMPLATES } from "./engine/templates/index.js";
 import type { FrontendToBackend } from "./shared/protocol.js";
 import { logError, send, toast } from "./backend/host.js";
-import { foldPath, getMessages, patchWarpMeta, shiftAfterSwipeDelete, warpMeta, writeRecord } from "./backend/ledger.js";
+import { foldPath, getMessages, patchWarpMeta, reconcilePath, shiftAfterSwipeDelete, warpMeta, writeRecord } from "./backend/ledger.js";
 import { getSettings, patchSettings } from "./backend/settings.js";
-import { getRuleset, installTemplate, invalidateCharacter, knownRulesetBookIds, knownRulesetEntryIds } from "./backend/source.js";
-import { busyChats, connectionsFor, getActiveChat, lastStates, pushState, schedulePush, setActiveChat } from "./backend/state-push.js";
-import { afterReply, interceptor, onGenerationEnded, onGenerationStarted, playerName } from "./backend/turn.js";
+import { getRuleset, installTemplate, invalidateCharacter, invalidateChat, knownRulesetBookIds, knownRulesetEntryIds } from "./backend/source.js";
+import { busyChats, connectionsFor, getActiveChat, pushState, schedulePush, setActiveChat } from "./backend/state-push.js";
+import { afterReply, generationHistory, interceptor, onGenerationEnded, onGenerationStarted, onGenerationStopped, playerName } from "./backend/turn.js";
 import { intentFor } from "./backend/intents.js";
-import { playScene } from "./backend/scene.js";
+import { dropScene, playScene } from "./backend/scene.js";
 import { isQuiet, playRound } from "./backend/encounter.js";
+import { operationCurrent, releaseOperation, takeOperation } from "./backend/operations.js";
 import { activeSession } from "./engine/date/talk.js";
 import { DATE_PREFIX } from "./engine/date/types.js";
-import { momentKey, takePrewritten } from "./backend/drafts.js";
+import { dropPrewritten, momentKey, takePrewritten } from "./backend/drafts.js";
 import { isRulesetEntryTitle } from "./engine/loader.js";
 import { getDecider, JEV_KEY } from "./backend/deciders.js";
 import { runDungeonOp } from "./backend/dungeon.js";
@@ -46,8 +47,7 @@ spindle.registerWorldInfoInterceptor(async (ctx) => {
       });
     }
     if (r && gates.length) {
-      let state = lastStates.get(ctx.chatId);
-      if (!state) state = foldPath(r, await getMessages(ctx.chatId)).state;
+      const state = foldPath(r, generationHistory(ctx.chatId, await getMessages(ctx.chatId)), 0).state;
       const title = (s: string) => s.replace(/^\s*\[[^\]]*\]\s*/, "").trim().toLowerCase();
       for (const g of gates) {
         const names = new Set(g.lore.map(title));
@@ -67,8 +67,8 @@ spindle.registerWorldInfoInterceptor(async (ctx) => {
 
 // ── Lifecycle events ─────────────────────────────────────────────
 const chatIdOf = (p: unknown): string | null => {
-  const x = p as { chatId?: string; message?: { chat_id?: string } } | null;
-  return x?.chatId ?? x?.message?.chat_id ?? null;
+  const x = p as { chatId?: string; chat?: { id?: string }; message?: { chat_id?: string } } | null;
+  return x?.chatId ?? x?.chat?.id ?? x?.message?.chat_id ?? null;
 };
 
 spindle.on("CHAT_SWITCHED", (p, userId) => {
@@ -76,14 +76,12 @@ spindle.on("CHAT_SWITCHED", (p, userId) => {
   setActiveChat(userId, chatId);
   void pushState(chatId, userId);
 });
-spindle.on("GENERATION_STARTED", (p, userId) => { void onGenerationStarted(p, userId); });
-spindle.on("GENERATION_ENDED", (p, userId) => { void onGenerationEnded(p, userId); });
-spindle.on("GENERATION_STOPPED", (p, userId) => {
-  const chatId = chatIdOf(p);
-  if (chatId) send({ type: "busy", chatId, busy: false }, userId);
-  schedulePush(chatId, userId);
-});
+spindle.on("GENERATION_STARTED", (p, userId) => onGenerationStarted(p, userId));
+spindle.on("GENERATION_ENDED", (p, userId) => onGenerationEnded(p, userId));
+spindle.on("GENERATION_STOPPED", (p, userId) => onGenerationStopped(p, userId));
 spindle.on("MESSAGE_SWIPED", (p, userId) => {
+  dropPrewritten(p.chatId);
+  dropScene(p.chatId);
   if (p.action === "deleted") {
     void shiftAfterSwipeDelete(p.chatId, p.message.id, p.swipeId).catch((e) => logError("swipe delete", e)).finally(() => schedulePush(p.chatId, userId));
     return;
@@ -91,7 +89,12 @@ spindle.on("MESSAGE_SWIPED", (p, userId) => {
   schedulePush(p.chatId, userId);
 });
 for (const ev of ["MESSAGE_SENT", "MESSAGE_DELETED", "MESSAGE_EDITED", "SWIPE_EDITED", "CHAT_CHANGED"]) {
-  spindle.on(ev, (p, userId) => schedulePush(chatIdOf(p), userId, 250));
+  spindle.on(ev, (p, userId) => {
+    const chatId = chatIdOf(p);
+    if (chatId) invalidateChat(chatId);
+    if (chatId) { dropPrewritten(chatId); if (ev !== "MESSAGE_SENT") dropScene(chatId); }
+    schedulePush(chatId, userId, 250);
+  });
 }
 spindle.on("CHARACTER_EDITED", (p, userId) => {
   const id = (p as { character?: { id?: string }; characterId?: string })?.character?.id ?? (p as { characterId?: string })?.characterId;
@@ -130,17 +133,21 @@ async function applyManual(
   const msgs = await getMessages(chatId);
   const last = msgs[msgs.length - 1];
   if (!last) { toast("warning", "Send a message first — changes attach to the latest message.", userId); return false; }
-  const { state } = foldPath(r, msgs);
-  const events = make(r, state);
-  if (typeof events === "string") { toast("warning", events, userId); return false; }
-  const swipe = last.swipe_id ?? 0;
-  const existing = warpMeta(last).swipes?.[String(swipe)];
-  const rec: TurnRecord = existing
-    ? { ...existing, events: [...existing.events, ...events] }
-    : { v: 1, hints: [], events, at: Date.now() };
-  await writeRecord(chatId, last.id, swipe, rec);
+  let applied = false;
+  await patchWarpMeta(chatId, last.id, async (w, current) => {
+    const now = await getMessages(chatId);
+    if (now.at(-1)?.id !== last.id || current.swipe_id !== last.swipe_id) return w;
+    const folded = foldPath(r, now, 0);
+    if (folded.conflict) return w;
+    const events = make(r, folded.state);
+    if (typeof events === "string") { toast("warning", events, userId); return w; }
+    const slot = String(current.swipe_id ?? 0), existing = w.swipes?.[slot];
+    const rec: TurnRecord = existing ? { ...existing, events: [...existing.events, ...events] } : { v: 1, hints: [], events, at: Date.now() };
+    applied = true;
+    return { ...w, swipes: { ...w.swipes, [slot]: rec } };
+  });
   await pushState(chatId, userId);
-  return true;
+  return applied;
 }
 
 async function sendSettings(userId?: string) {
@@ -167,7 +174,23 @@ async function imageConnectionsFor(userId?: string): Promise<{ id: string; name:
 spindle.onFrontendMessage(async (raw, userId) => {
   const msg = raw as FrontendToBackend;
   try {
+    if ("chatId" in msg && msg.chatId && !["hello", "refresh", "reload", "reconcile_history", "undo"].includes(msg.type) && !msg.type.startsWith("builder") && msg.type !== "export_rulebook" && msg.type !== "install_template") {
+      const r = (await getRuleset(msg.chatId, userId))?.ruleset;
+      if (r && foldPath(r, await getMessages(msg.chatId), 0).conflict) {
+        toast("warning", "Earlier history or rules changed. Review the recorded outcomes in the Warp sheet before continuing.", userId);
+        await pushState(msg.chatId, userId);
+        return;
+      }
+    }
     switch (msg.type) {
+      case "reconcile_history": {
+        if (busyChats.has(msg.chatId)) { toast("info", "Wait for the current turn to finish first.", userId); break; }
+        const r = (await getRuleset(msg.chatId, userId))?.ruleset;
+        if (r) await reconcilePath(msg.chatId, r, msg.keep);
+        dropScene(msg.chatId); dropPrewritten(msg.chatId);
+        await pushState(msg.chatId, userId);
+        break;
+      }
       case "hello": {
         setActiveChat(userId, msg.chatId);
         await sendSettings(userId);
@@ -192,7 +215,7 @@ spindle.onFrontendMessage(async (raw, userId) => {
         const loaded = await getRuleset(msg.chatId, userId);
         const r = loaded?.ruleset;
         if (r) {
-          const { state } = foldPath(r, await getMessages(msg.chatId));
+          const { state } = foldPath(r, await getMessages(msg.chatId), 0);
           if (activeSession(r, state)) { await playScene({ chatId: msg.chatId, userId, kind: "date", intent: { actionId: `${DATE_PREFIX}say`, via: "adjudicator" }, said: text, typed: text }); break; }
           if (state.dungeon) { await playScene({ chatId: msg.chatId, userId, kind: "dungeon", intent: null, said: text, typed: text }); break; }
           // In a quiet encounter, a typed move is a round told in the encounter's message.
@@ -208,7 +231,7 @@ spindle.onFrontendMessage(async (raw, userId) => {
         if (!r) return;
         const settings = await getSettings(userId);
         const msgs = await getMessages(msg.chatId);
-        const { state } = foldPath(r, msgs);
+        const { state } = foldPath(r, msgs, 0);
         const ci = intentFor(r, state, settings, msgs, msg.actionId, msg.params);
         if ("error" in ci) {
           if (ci.error) toast("warning", ci.error, userId);
@@ -225,25 +248,26 @@ spindle.onFrontendMessage(async (raw, userId) => {
           break;
         }
         // Already written while the player read: post it at once, then catch up on the bookkeeping.
-        const ready = takePrewritten(msg.chatId, momentKey(msgs, state), msg.actionId);
+        const ready = takePrewritten(msg.chatId, momentKey(msgs, state, { r, settings }), msg.actionId);
         if (ready) {
-          await spindle.chat.appendMessage(msg.chatId, { role: "user", content: say, metadata: { warp: { intent, judged: true } } });
-          const reply = await spindle.chat.appendMessage(msg.chatId, { role: "assistant", content: ready.text });
-          await writeRecord(msg.chatId, reply.id, 0, ready.rec);
-          await pushState(msg.chatId, userId);
-          const fresh = (await getMessages(msg.chatId)).find((m) => m.id === reply.id);
-          if (fresh) {
-            busyChats.add(msg.chatId);
-            try {
+          const operation = takeOperation(msg.chatId);
+          if (!operation) return;
+          try {
+            await spindle.chat.appendMessage(msg.chatId, { role: "user", content: say, metadata: { warp: { intent, judged: true } } });
+            const reply = await spindle.chat.appendMessage(msg.chatId, { role: "assistant", content: ready.text });
+            await writeRecord(msg.chatId, reply.id, 0, ready.rec);
+            await pushState(msg.chatId, userId);
+            const fresh = (await getMessages(msg.chatId)).find((m) => m.id === reply.id);
+            if (fresh) {
               await afterReply({
                 chatId: msg.chatId, userId, rec: ready.rec, after: ready.after, playerText: say, ruleset: r, at: Date.now(),
                 outcome: ready.outcome, player: await playerName(msg.chatId, userId), prompt: ready.prompt,
+                isCurrent: () => operationCurrent(msg.chatId, operation),
               }, fresh, ready.text, userId);
-            } finally {
-              busyChats.delete(msg.chatId);
-              send({ type: "busy", chatId: msg.chatId, busy: false }, userId);
-              schedulePush(msg.chatId, userId, 0);
             }
+          } finally {
+            if (releaseOperation(msg.chatId, operation)) send({ type: "busy", chatId: msg.chatId, busy: false }, userId);
+            schedulePush(msg.chatId, userId, 0);
           }
           break;
         }
@@ -263,6 +287,7 @@ spindle.onFrontendMessage(async (raw, userId) => {
           const next: TurnRecord = { ...rec, events: rec.events.filter((_, i) => !drop.has(i)) };
           return { ...w, swipes: { ...w.swipes, [String(msg.swipe)]: next } };
         });
+        dropScene(msg.chatId);
         await pushState(msg.chatId, userId);
         break;
       }
@@ -295,6 +320,7 @@ spindle.onFrontendMessage(async (raw, userId) => {
       case "run": {
         const op = msg.op === "save" || msg.op === "load" ? { op: msg.op, slot: msg.slot ?? "" } : { op: msg.op };
         const ok = await applyManual(msg.chatId, userId, (r, state) => runOp(r, state, op));
+        if (ok && msg.op !== "save") dropScene(msg.chatId);
         if (ok) toast("success", msg.op === "save" ? "Saved." : msg.op === "load" ? "Rewound. The next reply picks up from there." : msg.op === "restart" ? "A new playthrough begins." : "The story goes on.", userId);
         break;
       }
@@ -395,6 +421,19 @@ spindle.onFrontendMessage(async (raw, userId) => {
         }
         const user = msgs[i];
         const reply = msgs[i + 1];
+        if (!reply && msg.actionId) {
+          const r = (await getRuleset(msg.chatId, userId))?.ruleset;
+          if (r && isQuiet(r, foldPath(r, msgs, 0).state)) {
+            const intent = { actionId: msg.actionId, params: msg.params, via: "confirmed" as const };
+            await patchWarpMeta(msg.chatId, user.id, (w) => {
+              const next = { ...w, judged: true, intent };
+              delete next.suggest;
+              return next;
+            });
+            await playRound({ chatId: msg.chatId, userId, intent, typed: user.content });
+            break;
+          }
+        }
         const meta = { ...((user.metadata as Record<string, unknown>) ?? {}) };
         const w = { ...warpMeta(user) };
         delete w.suggest;

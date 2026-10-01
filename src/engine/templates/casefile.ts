@@ -287,17 +287,17 @@ encounters:
       press:
         label: Press the story
         check: { chance: "30 + deduction / 2 + clues * 3", label: Deduction }
-        success: { foe: { lie: +3, composure: -2 } }
+        success: { foe: { lie: +6, composure: -4 } }
         fail: { nerve: -4, hint: "The story holds — for now." }
       charm:
         label: Get them comfortable
         check: { chance: "30 + charm / 2", label: Charm }
-        success: { foe: { composure: -5 } }
+        success: { foe: { composure: -8 } }
         fail: { hint: "They don't warm up." }
       threaten:
         label: Lean on them
         check: { chance: "25 + intimidation / 2", label: Intimidation }
-        success: { foe: { composure: -7 }, heat: +3 }
+        success: { foe: { composure: -10 }, heat: +3 }
         fail: { heat: +5, nerve: -4, hint: "They call your bluff." }
       evidence:
         label: Lay the ledger on the table

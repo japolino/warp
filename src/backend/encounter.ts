@@ -11,13 +11,14 @@ import { findAction, odds as checkOdds, resolveTurnFull, type Intent, type TurnR
 import type { Ruleset } from "../engine/ruleset.js";
 import { applyEvent, cloneState, foeName, type GameState } from "../engine/state.js";
 import { odds, readTurn } from "./decisions.js";
-import { getDecider } from "./deciders.js";
+import { getTurnDecider } from "./deciders.js";
 import { encounterSummary, writeRound } from "./encounter-lines.js";
 import { host, logError, send, toast } from "./host.js";
-import { activeRecord, foldPath, getMessages, warpMeta, type EncounterLog, type Msg } from "./ledger.js";
+import { activeRecord, encounterLogOf, encounterSlots, foldPath, getMessages, patchWarpMeta, pathRevision, withRecordPath, warpMeta, type EncounterLog, type Msg } from "./ledger.js";
 import { getSettings } from "./settings.js";
 import { getRuleset, personProfile } from "./source.js";
 import { busyChats, pushState } from "./state-push.js";
+import { operationCurrent, releaseOperation, takeOperation } from "./operations.js";
 
 /** The current encounter plays quietly in a growing message (not narrated round by round). */
 export function isQuiet(r: Ruleset, s: GameState): boolean {
@@ -27,7 +28,7 @@ export function isQuiet(r: Ruleset, s: GameState): boolean {
 /** The message holding this encounter's log, if it's the latest message and still running. */
 function logMessage(msgs: Msg[], s: GameState): { m: Msg; log: EncounterLog } | null {
   const m = msgs[msgs.length - 1];
-  const log = m && !m.is_user ? warpMeta(m).encounter : undefined;
+  const log = m && !m.is_user ? encounterLogOf(m) : undefined;
   return m && log && log.status === "on" && log.enc === s.encounter?.id ? { m, log } : null;
 }
 
@@ -35,7 +36,7 @@ function logMessage(msgs: Msg[], s: GameState): { m: Msg; log: EncounterLog } | 
 function storyBefore(msgs: Msg[]): string {
   const out: string[] = [];
   for (const m of [...msgs].reverse()) {
-    if (m.is_user || warpMeta(m).encounter) continue;
+    if (m.is_user || encounterLogOf(m)) continue;
     out.unshift(m.content);
     if (out.join("\n").length > 1800 || out.length >= 2) break;
   }
@@ -57,22 +58,34 @@ export async function playRound(opts: { chatId: string; userId?: string; intent:
   const r = loaded?.ruleset;
   if (!r) return false;
   const msgs = await getMessages(chatId);
-  const { state: before } = foldPath(r, msgs);
+  const { state: before, conflict } = foldPath(r, msgs, 0);
+  if (conflict) { toast("warning", "Review the changed history in the Warp sheet first.", userId); return true; }
   if (!isQuiet(r, before)) return false;
   if (busyChats.has(chatId)) { toast("info", "One moment — the last round is still being written.", userId); return true; }
-  busyChats.add(chatId);
+  const operation = takeOperation(chatId);
+  if (!operation) return true;
   send({ type: "busy", chatId, busy: true, label: "The round plays out…" }, userId);
   try {
     const settings = await getSettings(userId);
-    const decider = await getDecider(settings, userId);
+    const decider = await getTurnDecider(settings, userId);
     const player = await playerNameOf(chatId, userId);
     const story = storyBefore(msgs);
     const typed = opts.typed?.trim() || null;
     let intent = opts.intent;
     // Typed in the encounter: read what it attempts (a move, an item, or an improvised try).
-    if (!intent && typed && decider.id !== "rules") {
+    if (!intent && typed) {
       const reading = await readTurn({ decider, r, s: before, settings, playerText: typed, sceneText: story, player, timeoutMs: 15000 });
-      const read = reading.intent ?? reading.suggestion;
+      if (!operationCurrent(chatId, operation)) return true;
+      if (!reading.intent) {
+        // Keep the player's words and reuse the normal inline confirmation UX.
+        // Ambiguous interpretation does not spend a round or let the foe act.
+        await host().chat.appendMessage(chatId, { role: "user", content: typed, metadata: {
+          warp: { judged: true, ...(reading.suggestion ? { suggest: reading.suggestion } : {}) },
+        } });
+        toast("info", reading.suggestion ? `Roll ${reading.suggestion.label}? Confirm it below your message.` : "Pick a move or rephrase; that line didn't spend a round.", userId);
+        return true;
+      }
+      const read = reading.intent;
       intent = read ? { actionId: read.actionId, via: "adjudicator", ...(read.params ? { params: read.params } : {}) } : null;
     }
     const found = intent ? findAction(r, before, intent.actionId) : null;
@@ -85,12 +98,17 @@ export async function playRound(opts: { chatId: string; userId?: string; intent:
       if (Object.keys(o).length) res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, odds: o, playerText });
     }
     const rec = res.record;
+    if (!operationCurrent(chatId, operation)) return true;
     if (!rec.events.length && !rec.action) { toast("warning", "That isn't possible right now.", userId); return true; }
     const after = cloneState(before);
     for (const e of rec.events) applyEvent(after, e, r);
     const held = logMessage(msgs, before);
     const told = await tellRound({ chatId, userId, r, before, after, rec, action: found?.a ?? null, chance, msgs, player, settings, typed, prev: held?.log ?? latestLog(msgs, before)?.log ?? null, same: !!held });
     const { log, content } = told;
+    if (!operationCurrent(chatId, operation) || pathRevision(await getMessages(chatId)) !== pathRevision(msgs)) {
+      toast("info", "The story changed while this round was being written. Pick your move again.", userId);
+      return true;
+    }
 
     // Every round's changes land on the one message, so it folds (and undoes) as a whole.
     const prev = held ? activeRecord(held.m) : null;
@@ -102,15 +120,18 @@ export async function playRound(opts: { chatId: string; userId?: string; intent:
       events: [...(prev?.events ?? []), ...rec.events],
       ...(prev?.decisions || rec.decisions ? { decisions: [...(prev?.decisions ?? []), ...(rec.decisions ?? [])] } : {}),
       at: Date.now(),
+      ...(prev?.path ? { path: prev.path } : {}),
     };
     if (log.status === "ended") await foldEarlier(chatId, msgs, log.enc, held?.m.id ?? null);
     if (held) {
-      const meta = { ...((held.m.metadata as Record<string, unknown>) ?? {}) };
-      const w = { ...warpMeta(held.m), encounter: log, swipes: { ...(warpMeta(held.m).swipes ?? {}), [String(held.m.swipe_id ?? 0)]: merged } };
-      meta.warp = w;
-      await host().chat.updateMessage(chatId, held.m.id, { content, metadata: meta });
+      await patchWarpMeta(chatId, held.m.id, (w, current) => {
+        if ((current.swipe_id ?? 0) !== (held.m.swipe_id ?? 0) || JSON.stringify(activeRecord(current)) !== JSON.stringify(prev)) throw new Error("Round history changed before commit");
+        const slot = String(current.swipe_id ?? 0);
+        return { ...w, encounter: undefined, encounters: { ...encounterSlots(w), [slot]: log }, swipes: { ...w.swipes, [slot]: merged } };
+      }, content);
     } else {
-      await host().chat.appendMessage(chatId, { role: "assistant", content, metadata: { warp: { encounter: log, swipes: { "0": merged } } } });
+      const current = await getMessages(chatId);
+      await host().chat.appendMessage(chatId, { role: "assistant", content, metadata: { warp: { encounters: { "0": log }, swipes: { "0": withRecordPath(merged, r, current) } } } });
     }
     return true;
   } catch (e) {
@@ -118,8 +139,7 @@ export async function playRound(opts: { chatId: string; userId?: string; intent:
     toast("warning", "That round didn't go through — try again.", userId);
     return true;
   } finally {
-    busyChats.delete(chatId);
-    send({ type: "busy", chatId, busy: false }, userId);
+    if (releaseOperation(chatId, operation)) send({ type: "busy", chatId, busy: false }, userId);
     await pushState(chatId, userId);
   }
 }
@@ -127,7 +147,7 @@ export async function playRound(opts: { chatId: string; userId?: string; intent:
 /** The newest running log of the current encounter anywhere in the chat (a typed turn may sit after it). */
 function latestLog(msgs: Msg[], s: GameState): { m: Msg; log: EncounterLog } | null {
   for (const m of [...msgs].reverse()) {
-    const log = !m.is_user ? warpMeta(m).encounter : undefined;
+    const log = !m.is_user ? encounterLogOf(m) : undefined;
     if (log?.status === "on" && log.enc === s.encounter?.id) return { m, log };
   }
   return null;
@@ -154,7 +174,7 @@ async function tellRound(o: {
   const log: EncounterLog = { enc: before.encounter!.id, foe, status: "on", from, rounds: [...(o.prev?.rounds ?? []), { text, card }] };
   let content = log.rounds.slice(from).map((x) => x.text).join("\n\n");
   if (card.ended) {
-    const logMsg = o.msgs.find((m) => warpMeta(m).encounter === o.prev) ?? null;
+    const logMsg = o.msgs.find((m) => encounterLogOf(m) === o.prev) ?? null;
     const start = startOf(r, o.msgs, firstLogOf(o.msgs, log.enc) ?? logMsg, before);
     const enc = r.encounters[log.enc];
     const ended = { label: outcomeLabel(enc, card.ended.outcome), loss: isLoss(enc, card.ended.outcome) };
@@ -171,7 +191,7 @@ async function tellRound(o: {
 function firstLogOf(msgs: Msg[], enc: string): Msg | null {
   let first: Msg | null = null;
   for (const m of [...msgs].reverse()) {
-    const log = !m.is_user ? warpMeta(m).encounter : undefined;
+    const log = !m.is_user ? encounterLogOf(m) : undefined;
     if (log?.enc === enc && log.status === "on") first = m;
     else if (first) break;
   }
@@ -181,11 +201,14 @@ function firstLogOf(msgs: Msg[], enc: string): Msg | null {
 /** When it ends, earlier pieces of the log (split by typed turns) shrink to a line; the last message holds the summary. */
 async function foldEarlier(chatId: string, msgs: Msg[], enc: string, except: string | null): Promise<void> {
   for (const m of msgs) {
-    const log = !m.is_user && m.id !== except ? warpMeta(m).encounter : undefined;
+    const log = !m.is_user && m.id !== except ? encounterLogOf(m) : undefined;
     if (!log || log.enc !== enc || log.status !== "on") continue;
-    const meta = { ...((m.metadata as Record<string, unknown>) ?? {}) };
-    meta.warp = { ...warpMeta(m), encounter: { ...log, status: "ended", summary: "" } };
-    await host().chat.updateMessage(chatId, m.id, { content: `*The struggle with ${log.foe} went on…*`, metadata: meta }).catch((e) => logError("fold encounter log", e));
+    await patchWarpMeta(chatId, m.id, (w, current) => {
+      if ((current.swipe_id ?? 0) !== (m.swipe_id ?? 0) || JSON.stringify(encounterLogOf(current)) !== JSON.stringify(log)) throw new Error("Encounter log changed before compaction");
+      return { ...w, encounter: undefined,
+        encounters: { ...encounterSlots(w), [String(current.swipe_id ?? 0)]: { ...log, status: "ended", summary: "" } },
+      };
+    }, `*The struggle with ${log.foe} went on…*`).catch((e) => logError("fold encounter log", e));
   }
 }
 
@@ -208,12 +231,12 @@ export async function quietReply(o: {
 function startOf(r: Ruleset, msgs: Msg[], logMsg: Msg | null, fallback: GameState): GameState {
   if (!logMsg) return fallback;
   const i = msgs.findIndex((m) => m.id === logMsg.id);
-  return i > 0 ? foldPath(r, msgs.slice(0, i)).state : fallback;
+  return i > 0 ? foldPath(r, msgs.slice(0, i), 0).state : fallback;
 }
 
 /** In the narrator's prompt, a running encounter's log shrinks to a line (an ended one already reads as its summary). */
 export function compactLog(m: Msg): string | null {
-  const log = warpMeta(m).encounter;
+  const log = encounterLogOf(m);
   if (!log || log.status !== "on") return null;
   const last = log.rounds[log.rounds.length - 1];
   return `[An encounter with ${log.foe} is under way — ${log.rounds.length} round${log.rounds.length === 1 ? "" : "s"} so far. Latest: ${last?.text.slice(0, 300) ?? ""}]`;

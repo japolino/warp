@@ -23,15 +23,18 @@ function textOf(res: unknown): string {
 }
 
 /** Generate with the chat's own connection from a finished prompt. */
-export async function writeReply(messages: LlmMessageDTO[], userId?: string, timeoutMs = 120_000): Promise<string> {
-  const res = await host().generate.quiet({ type: "quiet", messages, userId, signal: AbortSignal.timeout(timeoutMs) } as never);
+export async function writeReply(messages: LlmMessageDTO[], userId?: string, timeoutMs = 120_000, chatId?: string): Promise<string> {
+  const chat = chatId ? await host().chats.get(chatId, userId) : null;
+  const pinned = chat?.metadata?.connection_profile_id;
+  const connection_id = typeof pinned === "string" && pinned.trim() ? pinned.trim() : undefined;
+  const res = await host().generate.quiet({ type: "quiet", messages, connection_id, userId, signal: AbortSignal.timeout(timeoutMs) } as never);
   return textOf(res).trim();
 }
 
 // ───────────────────────── best of several drafts ─────────────────────────
 
-export async function writeDrafts(prompt: LlmMessageDTO[], n: number, userId?: string): Promise<string[]> {
-  const out = await Promise.allSettled(Array.from({ length: n }, () => writeReply(prompt, userId)));
+export async function writeDrafts(prompt: LlmMessageDTO[], n: number, userId?: string, chatId?: string): Promise<string[]> {
+  const out = await Promise.allSettled(Array.from({ length: n }, () => writeReply(prompt, userId, 120_000, chatId)));
   return out.flatMap((x) => (x.status === "fulfilled" && x.value ? [x.value] : []));
 }
 
@@ -68,9 +71,9 @@ export interface Prewritten { say: string; intent: Intent; rec: TurnRecord; text
 const cache = new Map<string, { key: string; replies: Map<string, Prewritten> }>();
 
 /** A fingerprint of the moment: the latest message, its swipe, and the folded state. */
-export function momentKey(msgs: { id: string; swipe_id?: number }[], state: GameState): string {
+export function momentKey(msgs: { id: string; swipe_id?: number; content?: string }[], state: GameState, context?: { r: Ruleset; settings: Settings }): string {
   const last = msgs[msgs.length - 1];
-  const s = JSON.stringify(state);
+  const s = JSON.stringify([state, msgs.map((m) => [m.id, m.swipe_id ?? 0, m.content]), context?.r, context?.settings]);
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
   return `${last?.id ?? ""}:${last?.swipe_id ?? 0}:${(h >>> 0).toString(36)}`;
@@ -102,12 +105,15 @@ export async function prewrite(opts: {
   prompt: LlmMessageDTO[]; reply: string; player: string; onReady: () => void;
 }): Promise<void> {
   const { chatId, userId, r, settings, decider } = opts;
-  if (settings.prewrite <= 0) return;
+  // An ironman roll is seeded with the committed user message ID, which does not
+  // exist while speculating. Do not prepare a different roll in that mode.
+  if (settings.prewrite <= 0 || !settings.swipesReroll) return;
   const msgs = await getMessages(chatId);
-  const { state } = foldPath(r, msgs);
+  const { state, conflict } = foldPath(r, msgs, 0);
+  if (conflict) return;
   // A quiet encounter writes its own short rounds — nothing to pre-write.
   if (state.encounter && !r.encounters[state.encounter.id]?.narrate) return;
-  const key = momentKey(msgs, state);
+  const key = momentKey(msgs, state, { r, settings });
   const choices = buildChoices(r, state, { ...settings, live: liveChoicesOf(msgs[msgs.length - 1]) })
     .filter((c) => writable(c.id) && !c.params.length).slice(0, settings.prewrite);
   const replies = new Map<string, Prewritten>();
@@ -127,7 +133,7 @@ export async function prewrite(opts: {
     const after = cloneState(state);
     for (const e of rec.events) applyEvent(after, e, r);
     const prompt = nextPrompt(opts.prompt, opts.reply, ci.say, buildInjection(r, rec, state, after, opts.player));
-    const text = await writeReply(prompt, userId);
+    const text = await writeReply(prompt, userId, 120_000, chatId);
     if (!text || cache.get(chatId)?.replies !== replies) return;
     replies.set(c.id, { say: ci.say, intent: ci.intent, rec, text, prompt, outcome: outcomePacket(r, rec, state, after, opts.player), after });
     opts.onReady();

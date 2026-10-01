@@ -19,6 +19,7 @@ import { fxEvents } from "./frontend/fx-events.js";
 import { playFx, typewrite } from "./frontend/fx.js";
 import { armAudio, play, setVolume } from "./frontend/sfx.js";
 import { restoreMaps, wireMaps } from "./frontend/map-view.js";
+import { acceptsResponse } from "./frontend/response-gate.js";
 
 type StateMsg = Extract<BackendToFrontend, { type: "state" }>;
 
@@ -364,7 +365,7 @@ export function setup(ctx: SpindleFrontendContext) {
       // The head always stays here; each section sits here unless it's been torn off into a panel.
       const { head, parts } = hudParts(state.hud, { editing: editingBar, compact: true, map: state.map });
       const mine = parts.filter((p) => panels.inMain(p.id));
-      dockRoot.innerHTML = head + mine.map((p) => renderPart(p, true)).join("");
+      dockRoot.innerHTML = historyNotice() + head + mine.map((p) => renderPart(p, true)).join("");
       panels.render(parts);
     } else if (state?.status.state === "broken") {
       dockRoot.innerHTML = renderRulesetCard(state.status, true);
@@ -378,6 +379,19 @@ export function setup(ctx: SpindleFrontendContext) {
     dockRoot.scrollTop = kept;
     flashChangedBars(dockRoot);
   }
+
+  function historyNotice(): string {
+    return state?.historyConflict ? `<div class="warp-card"><h3>History changed</h3><p>Earlier messages or rules changed. Later results are paused. Keep their recorded outcomes, or discard those results and replay from the changed turn. Your chat text stays in place.</p><button class="warp-btn" data-history="keep">Keep recorded outcomes</button> <button class="warp-btn" data-history="discard">Discard affected results</button></div>` : "";
+  }
+  const reconcileClick = (e: Event) => {
+    const button = (e.target as Element).closest<HTMLElement>("[data-history]");
+    const id = chatId();
+    if (button && id) send({ type: "reconcile_history", chatId: id, keep: button.dataset.history === "keep" });
+  };
+  dockRoot.addEventListener("click", reconcileClick);
+  drawerRoot.addEventListener("click", reconcileClick);
+  cleanups.push(() => dockRoot.removeEventListener("click", reconcileClick));
+  cleanups.push(() => drawerRoot.removeEventListener("click", reconcileClick));
 
   function renderDrawer() {
     rememberSections(drawerRoot);
@@ -412,7 +426,7 @@ export function setup(ctx: SpindleFrontendContext) {
     } else {
       body = renderSettings(settings, state?.status ?? null, connections, jevKeySet, imageConnections);
     }
-    drawerRoot.innerHTML = tabs + body;
+    drawerRoot.innerHTML = tabs + historyNotice() + body;
     restoreSections(drawerRoot);
     restoreMaps(drawerRoot);
     flashChangedBars(drawerRoot);
@@ -1289,10 +1303,9 @@ export function setup(ctx: SpindleFrontendContext) {
   // ───────── backend messages ─────────
   cleanups.push(ctx.onBackendMessage((raw) => {
     const m = raw as BackendToFrontend;
+    if (!acceptsResponse(m, chatId(), state)) return;
     switch (m.type) {
       case "state": {
-        const active = chatId();
-        if (m.chatId && active && m.chatId !== active) return;
         if (state?.chatId !== m.chatId) { editingBar = null; lastBars = new Map(); }
         const entered = !state?.dungeon && !!m.dungeon && state?.chatId === m.chatId;
         if (!m.dungeon?.battle) dgPick = dgPick?.kind === "use" ? dgPick : null;
@@ -1355,7 +1368,10 @@ export function setup(ctx: SpindleFrontendContext) {
   let lastChat = chatId();
   const poll = setInterval(() => {
     const now = chatId();
-    if (now !== lastChat) { lastChat = now; send({ type: "refresh", chatId: now }); }
+    if (now !== lastChat) {
+      lastChat = now; state = null; builder = null; busy = { chatId: "", on: false, label: "" };
+      renderAll(); send({ type: "refresh", chatId: now });
+    }
   }, 1000);
   cleanups.push(() => clearInterval(poll));
 

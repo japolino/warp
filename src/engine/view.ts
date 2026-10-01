@@ -449,7 +449,8 @@ export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; 
   const dungeons = dungeonsHere(r, s).map((d) => plain(`dungeon:enter:${d.id}`, `Enter ${d.name}`, "Dungeon", d.desc ?? null));
   if (!s.encounter) (opts.live ?? []).forEach((c, i) => {
     const a = r.liveChoices.tags[c.tag];
-    if (!a || a.tags.some((t) => lines.has(t))) return;
+    if (!a || a.tags.some((t) => lines.has(t)) || !isAvailable(r, s, a, c.target)
+      || (a.perPerson && !c.target) || (c.target && !presentPeople(r, s, makeEnv(r, s)).includes(c.target))) return;
     const o = odds(r, s, a, undefined, c.target);
     live.push({
       id: `${LIVE_PREFIX}${i}`,

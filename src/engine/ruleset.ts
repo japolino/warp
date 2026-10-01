@@ -350,6 +350,9 @@ export interface EncounterDef {
   foeMoves: DecideSpec | null;
   /** outcome id → formula; first that holds ends the encounter. */
   endWhen: { outcome: string; when: string }[];
+  /** Every encounter has a visible finite budget; normal wins take precedence. */
+  roundLimit: number;
+  timeoutOutcome: string;
   outcomes: Record<string, Effect>;
   start: Effect;
   /**
@@ -1716,6 +1719,8 @@ function normEncounter(id: string, raw: unknown, c: Ctx, known: { stats: Set<str
     tags: list(raw.tags).map((t) => t.toLowerCase()),
     foe: { name: typeof foeRaw.name === "string" ? foeRaw.name : "Opponent", stats, armor: foeArmor(foeRaw, stats, w, c) },
     actions, actionOrder, foeMoves, endWhen, outcomes,
+    roundLimit: Math.max(1, Math.min(200, Math.round(c.num(raw.round_limit ?? raw.max_rounds, `${w} › round_limit`, 20)))),
+    timeoutOutcome: typeof raw.timeout_outcome === "string" && raw.timeout_outcome.trim() ? raw.timeout_outcome.trim() : momentum?.lose ?? "lost",
     start: normEffect(startRaw, `${w} › start`, c, known),
     momentum,
     fromStory: raw.from_story !== false,

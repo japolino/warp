@@ -8,7 +8,7 @@ import type { GenerationResponseDTO } from "lumiverse-spindle-types";
 import { normalize, type Answer, type Answers, type Decider, type DecideOptions, type Questions } from "../engine/decide.js";
 import type { Settings } from "../shared/protocol.js";
 import { classifierIssue } from "../shared/classifier-config.js";
-import { host } from "./host.js";
+import { host, logError, toast } from "./host.js";
 
 export const JEV_KEY = "jev_api_key";
 export const JEV_URL = "https://api.typesafe.ai/v1/systemone";
@@ -19,36 +19,57 @@ export class DeciderError extends Error {}
 
 interface HttpResult { status: number; body: string }
 
-async function post(url: string, headers: Record<string, string>, body: string, timeoutMs: number): Promise<HttpResult> {
-  const timeout = new Promise<never>((_, rej) => setTimeout(() => rej(new DeciderError("Decision model timed out")), timeoutMs));
+async function post(url: string, headers: Record<string, string>, body: string, signal: AbortSignal): Promise<HttpResult> {
+  signal.throwIfAborted();
   // Prefer the host proxy (sanctioned network path for extensions); fall back to fetch where allowed.
   const call = (async (): Promise<HttpResult> => {
     try {
-      const r = (await host().cors(url, { method: "POST", headers, body })) as { status: number; body: string };
+      const r = (await host().cors(url, { method: "POST", headers, body, signal } as never)) as { status: number; body: string };
+      signal.throwIfAborted();
       return { status: r.status, body: r.body };
     } catch (e) {
+      signal.throwIfAborted();
       if (typeof fetch !== "function") throw e;
-      const r = await fetch(url, { method: "POST", headers, body });
+      const r = await fetch(url, { method: "POST", headers, body, signal });
       return { status: r.status, body: await r.text() };
     }
   })();
-  return Promise.race([call, timeout]);
+  return abortable(call, signal);
+}
+
+function abortable<T>(call: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason ?? new DeciderError("Decision model canceled"));
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+    call.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
 }
 
 /** POST with a couple of retries when the service is busy; anything else non-200 is an error that says what went wrong. */
-async function postJson(url: string, key: string, body: string, timeoutMs: number, who: string): Promise<string> {
+async function postJson(url: string, key: string, body: string, timeoutMs: number, who: string, supplied?: AbortSignal): Promise<string> {
   const headers: Record<string, string> = { "Content-Type": "application/json", ...(key ? { Authorization: `Bearer ${key}` } : {}) };
   let delay = 400;
-  for (let attempt = 0; ; attempt++) {
-    const res = await post(url, headers, body, timeoutMs);
-    if (res.status === 200) return res.body;
-    if ((res.status === 429 || res.status === 529 || res.status === 503) && attempt < 2) {
-      await new Promise((r) => setTimeout(r, delay));
-      delay *= 3;
-      continue;
+  const controller = new AbortController();
+  const onAbort = () => controller.abort(supplied?.reason);
+  supplied?.addEventListener("abort", onAbort, { once: true });
+  if (supplied?.aborted) onAbort();
+  const timer = setTimeout(() => controller.abort(new DeciderError("Decision model timed out")), Math.max(1, timeoutMs));
+  try {
+    for (let attempt = 0; ; attempt++) {
+      const res = await post(url, headers, body, controller.signal);
+      if (res.status === 200) return res.body;
+      if ((res.status === 429 || res.status === 529 || res.status === 503) && attempt < 2) {
+        await abortable(new Promise((r) => setTimeout(r, delay)), controller.signal);
+        delay *= 3;
+        continue;
+      }
+      const hint = res.status === 401 || res.status === 403 ? `the ${who} API key was rejected` : res.status === 404 ? `${who} wasn't found at ${url}` : res.status === 422 ? `${who} rejected the request` : `${who} returned ${res.status}`;
+      throw new DeciderError(`${hint}${res.body ? `: ${res.body.slice(0, 200)}` : ""}`);
     }
-    const hint = res.status === 401 || res.status === 403 ? `the ${who} API key was rejected` : res.status === 404 ? `${who} wasn't found at ${url}` : res.status === 422 ? `${who} rejected the request` : `${who} returned ${res.status}`;
-    throw new DeciderError(`${hint}${res.body ? `: ${res.body.slice(0, 200)}` : ""}`);
+  } finally {
+    clearTimeout(timer);
+    supplied?.removeEventListener("abort", onAbort);
   }
 }
 
@@ -64,7 +85,7 @@ export class JevDecider implements Decider {
     if (issue) throw new DeciderError(issue);
     const body = JSON.stringify({ model: this.model || "jev-latest", state, questions });
     const who = this.url === JEV_URL ? "Jev" : "The classifier";
-    const parsed = JSON.parse(await postJson(this.url || JEV_URL, this.key, body, opts.timeoutMs ?? 8000, who)) as { answers?: Answers };
+    const parsed = JSON.parse(await postJson(this.url || JEV_URL, this.key, body, opts.timeoutMs ?? 8000, who, opts.signal)) as { answers?: Answers };
     return parsed.answers ?? {};
   }
 }
@@ -83,7 +104,7 @@ export class ChatEndpointDecider implements Decider {
     const { system, user } = typedPrompt(state, questions);
     const url = /\/chat\/completions\/?$/.test(this.url) ? this.url : `${this.url.replace(/\/+$/, "")}/chat/completions`;
     const body = JSON.stringify({ model: this.model, messages: [{ role: "system", content: system }, { role: "user", content: user }], temperature: 0, max_tokens: 60 + ids.length * 30 });
-    const parsed = JSON.parse(await postJson(url, this.key, body, opts.timeoutMs ?? 15000, "The classifier")) as { choices?: { message?: { content?: string } }[] };
+    const parsed = JSON.parse(await postJson(url, this.key, body, opts.timeoutMs ?? 15000, "The classifier", opts.signal)) as { choices?: { message?: { content?: string } }[] };
     return typedAnswers(firstJson(parsed.choices?.[0]?.message?.content ?? "") ?? {}, questions);
   }
 }
@@ -162,7 +183,7 @@ export class LlmDecider implements Decider {
       reasoning: { source: "off" },
       parameters: { temperature: 0, max_tokens: 60 + ids.length * 30 },
       userId: this.userId,
-      signal: opts.signal ?? AbortSignal.timeout(Math.max(3000, opts.timeoutMs ?? 20000)),
+      signal: opts.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(Math.max(1, opts.timeoutMs ?? 20000))]) : AbortSignal.timeout(Math.max(1, opts.timeoutMs ?? 20000)),
     })) as GenerationResponseDTO | string;
     return typedAnswers(firstJson(typeof res === "string" ? res : res?.content ?? "") ?? {}, questions);
   }
@@ -225,3 +246,22 @@ export async function getDecider(settings: Settings, userId?: string): Promise<D
 }
 
 export type { Answer };
+
+const fallbackNotices = new Map<string, string>();
+/** Gameplay must still resolve an explicit action when classifier setup is invalid. */
+export async function getTurnDecider(settings: Settings, userId?: string): Promise<Decider> {
+  try {
+    const decider = await getDecider(settings, userId);
+    fallbackNotices.delete(userId ?? "_");
+    return decider;
+  } catch (error) {
+    logError("decision model setup", error);
+    const reason = error instanceof Error ? error.message : String(error);
+    const key = userId ?? "_";
+    if (fallbackNotices.get(key) !== reason) {
+      fallbackNotices.set(key, reason);
+      toast("warning", `Using rulebook outcomes because the decision model isn't configured: ${reason}`, userId);
+    }
+    return new RulesDecider();
+  }
+}

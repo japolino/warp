@@ -13,19 +13,28 @@ import { buildInjection, fillNames, injectInto } from "./inject.js";
 import { dropPrewritten, judgeDrafts, prewrite, writeDrafts } from "./drafts.js";
 import type { Settings } from "../shared/protocol.js";
 import { bookkeeping, contradiction, odds, readTurn } from "./decisions.js";
-import { getDecider } from "./deciders.js";
+import { getTurnDecider } from "./deciders.js";
 import { extract, type ExtractPart } from "./helpers.js";
-import { host, logError } from "./host.js";
-import { activeRecord, foldPath, getMessages, patchMeta, patchWarpMeta, warpMeta, writeRecord, type Msg, type Suggestion } from "./ledger.js";
+import { host, logError, toast } from "./host.js";
+import { activeRecord, appendDrafts, encounterLogOf, encounterSlots, foldPath, getMessages, patchMeta, patchWarpMeta, pathRevision, recordPath, warpMeta, writeRecord, type Msg, type Suggestion } from "./ledger.js";
 import { writeLiveChoices } from "./live.js";
 import { discoverPlace } from "./discover.js";
 import { getSettings } from "./settings.js";
 import { characterBrief, getRuleset } from "./source.js";
 import { busyChats, pushState, schedulePush } from "./state-push.js";
 import { compactLog, isQuiet, quietReply, type QuietRound } from "./encounter.js";
+import { hasOperation, supersedeOperation } from "./operations.js";
 
 export interface Pending {
   chatId: string;
+  generationId?: string;
+  historyRevision?: string;
+  targetMessageId?: string;
+  targetSwipe?: number;
+  targetRecordRevision?: string;
+  /** Continue extracts only the appended part; it never rerolls the original action. */
+  continueFrom?: string;
+  isCurrent?: () => boolean;
   userId?: string;
   rec: TurnRecord;
   after: GameState;
@@ -54,6 +63,30 @@ const playerNames = new Map<string, string>();
  */
 interface Started { generationId: string; targetMessageId?: string; generationType?: string; at: number }
 const started = new Map<string, Started>();
+const closed = new Map<string, number>();
+const completing = new Set<string>();
+const generationKey = (chatId: string, id: string) => JSON.stringify([chatId, id]);
+
+function closeGeneration(chatId: string, id: string) {
+  closed.set(generationKey(chatId, id), Date.now());
+  // Tombstones reject late callbacks without retaining every generation forever.
+  for (const [key, at] of closed) if (Date.now() - at > 30 * 60_000 || closed.size > 1000) closed.delete(key);
+}
+
+function generationIsCurrent(chatId: string, id: string | null): boolean {
+  if (id && closed.has(generationKey(chatId, id))) return false;
+  const current = started.get(chatId);
+  return !current || !id || current.generationId === id;
+}
+
+/** Prompt gates must follow the generation's active path, including an older target. */
+export function generationHistory(chatId: string, messages: Msg[]): Msg[] {
+  const generation = started.get(chatId);
+  const target = generation?.targetMessageId ? messages.find((m) => m.id === generation.targetMessageId) : undefined;
+  if (!target) return messages;
+  return messages.filter((m) => generation?.generationType === "continue"
+    ? m.index_in_chat <= target.index_in_chat : m.index_in_chat < target.index_in_chat);
+}
 
 /** The host's interceptor context differs from the typings in places; read it defensively. */
 function ctxInfo(ctx: InterceptorContextDTO) {
@@ -110,6 +143,8 @@ function targetOf(ctx: InterceptorContextDTO, targetId: string | null, msgs: Msg
 
 export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorContextDTO): Promise<LlmMessageDTO[] | InterceptorResultDTO> {
   if (ctx.generationType === "impersonate" || ctx.generationType === "quiet") return messages;
+  // Capture identity before awaiting: Stop can clear the host's started entry while we wait.
+  const info = ctxInfo(ctx);
   try {
     const settings = await getSettings(ctx.userId);
     if (!settings.enabled) return messages;
@@ -117,11 +152,14 @@ export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorCon
     const r = loaded?.ruleset;
     if (!r) return messages;
 
-    const info = ctxInfo(ctx);
     const msgs = await getMessages(ctx.chatId);
     const target = targetOf(ctx, info.targetMessageId, msgs);
     const history = target ? msgs.filter((m) => m.index_in_chat < target.index_in_chat) : msgs;
-    const { state: before } = foldPath(r, history);
+    const { state: before, conflict } = foldPath(r, history, 0);
+    if (conflict) {
+      toast("warning", "Earlier history or rules changed. Review the recorded outcomes in the Warp sheet before continuing mechanics.", ctx.userId);
+      return messages;
+    }
     const player = await playerName(ctx.chatId, ctx.userId);
 
     let rec: TurnRecord | null = null;
@@ -129,11 +167,19 @@ export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorCon
 
     if (ctx.generationType === "continue" && target) {
       // Continuing keeps the existing outcome; just remind the narrator of it.
-      rec = activeRecord(target);
+      rec = activeRecord(target) ?? { v: 1, hints: [], events: [], at: Date.now() };
       if (rec) {
         after = cloneState(before);
         for (const e of rec.events) applyEvent(after, e, r);
       }
+      if (!info.isDryRun && generationIsCurrent(ctx.chatId, info.generationId)) pending.set(info.generationId ?? ctx.chatId, {
+        chatId: ctx.chatId, userId: ctx.userId, rec, after, playerText: "", ruleset: r, at: Date.now(),
+        ...(info.generationId ? { generationId: info.generationId } : {}),
+        targetMessageId: target.id, targetSwipe: target.swipe_id ?? 0,
+        targetRecordRevision: JSON.stringify(activeRecord(target)), historyRevision: pathRevision(history),
+        isCurrent: () => generationIsCurrent(ctx.chatId, info.generationId), continueFrom: target.content,
+        outcome: outcomePacket(r, rec, before, after, player), player,
+      });
     } else {
       const lastUser = history[history.length - 1]?.is_user ? history[history.length - 1] : null;
       const meta = lastUser ? warpMeta(lastUser) : {};
@@ -144,7 +190,7 @@ export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorCon
       let confidence: number | undefined;
       const sceneText = [...history].reverse().find((m) => !m.is_user)?.content ?? "";
       const budget = () => Math.min(20000, (typeof ctx.interceptorDeadlineAt === "number" ? ctx.interceptorDeadlineAt : Date.now() + 20000) - Date.now() - 2000);
-      const decider = info.isDryRun ? null : await getDecider(settings, ctx.userId);
+      const decider = info.isDryRun ? null : await getTurnDecider(settings, ctx.userId);
 
       if (decider) {
         // One parallel batch: what the typed message attempts (if not already known) + plain-language triggers.
@@ -171,13 +217,23 @@ export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorCon
       }
       rec = res.record;
       if (confidence !== undefined && rec.action) rec.confidence = confidence;
+      if (!info.isDryRun && !generationIsCurrent(ctx.chatId, info.generationId)) return messages;
       // Exploring found somewhere new: invent it, save it to the ruleset, step into it.
       if (rec.discover && !info.isDryRun && loaded) await discoverPlace(loaded, r, before, rec, ctx.chatId, settings, ctx.userId);
       after = cloneState(before);
       for (const e of rec.events) applyEvent(after, e, r);
       if (!info.isDryRun) {
+        if (!generationIsCurrent(ctx.chatId, info.generationId)) return messages;
+        // Keep the revision that actually decided this turn. A later rule edit
+        // must be reconciled rather than making old effects appear newly valid.
+        const resolvedRules = rec.discover ? (await getRuleset(ctx.chatId, ctx.userId))?.ruleset ?? r : r;
+        rec.path = recordPath(resolvedRules, history);
         pending.set(info.generationId ?? ctx.chatId, {
           chatId: ctx.chatId, userId: ctx.userId, rec, after,
+          ...(info.generationId ? { generationId: info.generationId } : {}),
+          historyRevision: pathRevision(history),
+          ...(target ? { targetMessageId: target.id, targetSwipe: target.swipe_id ?? 0, targetRecordRevision: JSON.stringify(activeRecord(target)) } : {}),
+          isCurrent: () => generationIsCurrent(ctx.chatId, info.generationId),
           playerText: lastUser?.content ?? "", ruleset: r, at: Date.now(), verdict,
           outcome: outcomePacket(r, rec, before, after, player), player,
         });
@@ -193,7 +249,7 @@ export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorCon
 
     // A running encounter's log reaches the narrator as one line, not the blow-by-blow.
     const shrunk = messages.map((lm) => {
-      const m = history.find((h) => !h.is_user && h.content === textOf(lm.content) && warpMeta(h).encounter);
+      const m = history.find((h) => !h.is_user && h.content === textOf(lm.content) && encounterLogOf(h));
       const short = m ? compactLog(m) : null;
       return short ? { ...lm, content: short } : lm;
     });
@@ -249,31 +305,41 @@ export async function afterReply(p: Pending, msg: Msg, content: string, userId?:
   const settings = await getSettings(userId);
   const r = p.ruleset;
   let swipe = msg.swipe_id ?? 0;
-  const decider = await getDecider(settings, userId);
+  let expectedContent = msg.content;
+  const initialMessages = await getMessages(chatId);
+  const surroundings = pathRevision(initialMessages.filter((m) => m.id !== msg.id));
+  const currentMessages = async (): Promise<Msg[] | null> => {
+    if (p.isCurrent && !p.isCurrent()) return null;
+    const messages = await getMessages(chatId);
+    const target = messages.find((m) => m.id === msg.id);
+    if (!target || (target.swipe_id ?? 0) !== swipe || target.content !== expectedContent) return null;
+    if (pathRevision(messages.filter((m) => m.id !== msg.id)) !== surroundings) return null;
+    return messages;
+  };
+  if (!await currentMessages()) return;
+  const decider = await getTurnDecider(settings, userId);
   dropPrewritten(chatId);
 
   // Best of several drafts: the one already shown stays unless another is clearly better.
-  if (settings.drafts > 1 && p.prompt && decider.id !== "rules") {
+  if (p.continueFrom === undefined && settings.drafts > 1 && p.prompt && decider.id !== "rules") {
     host().sendToFrontend({ type: "busy", chatId, busy: true, label: `Writing ${settings.drafts - 1} more draft${settings.drafts > 2 ? "s" : ""}…` }, userId);
-    const extra = await writeDrafts(p.prompt, settings.drafts - 1, userId);
+    const extra = await writeDrafts(p.prompt, settings.drafts - 1, userId, chatId);
     if (extra.length) {
       const all = [content, ...extra];
       const pick = await judgeDrafts(decider, all, p.outcome ? fillNames(p.outcome, p.player) : null, fillNames(stateDigest(r, p.after), p.player));
-      const swipes = [...(msg.swipes?.length ? msg.swipes : [content]), ...extra];
-      const base = swipes.length - extra.length;
-      const dates = [...(msg.swipe_dates ?? []), ...extra.map(() => Math.floor(Date.now() / 1000))];
-      await host().chat.updateMessage(chatId, msg.id, { swipes, swipe_dates: dates, ...(pick > 0 ? { swipe_id: base + pick - 1 } : {}) });
-      // Every draft carries the same decided outcome, so swiping between them keeps the state.
-      for (let i = 0; i < extra.length; i++) await writeRecord(chatId, msg.id, base + i, p.rec);
-      if (pick > 0) { swipe = base + pick - 1; content = all[pick]; }
+      if (!await currentMessages()) return;
+      const added = await appendDrafts(chatId, msg.id, extra, pick, p.rec, async () => !!await currentMessages());
+      if (!added) return;
+      swipe = added.swipe; content = added.content; expectedContent = content;
     }
   }
 
   const wantLive = r.liveChoices.enabled;
+  const appended = p.continueFrom !== undefined && content.startsWith(p.continueFrom) ? content.slice(p.continueFrom.length) : content;
   if (settings.narratorUpdates || settings.consistencyCheck || wantLive) {
     host().sendToFrontend({ type: "busy", chatId, busy: true, label: "Updating state…" }, userId);
     const [proposal, contra, live] = await Promise.all([
-      settings.narratorUpdates ? proposeChanges(decider, r, p, content, settings, userId) : Promise.resolve(null),
+      settings.narratorUpdates && appended.trim() ? proposeChanges(decider, r, p, appended, settings, userId) : Promise.resolve(null),
       settings.consistencyCheck && decider.id !== "rules"
         ? contradiction({ decider, r, s: p.after, reply: content, outcome: p.outcome })
         : Promise.resolve(null),
@@ -281,21 +347,29 @@ export async function afterReply(p: Pending, msg: Msg, content: string, userId?:
         ? writeLiveChoices({ r, s: p.after, reply: content, player: p.player, settings, userId, decider })
         : Promise.resolve([]),
     ]);
-    const rec: TurnRecord = { ...p.rec };
-    if (proposal) {
-      const action = p.rec.action ? { id: p.rec.action.id, tags: actionTags(r, p.rec.action.id) } : undefined;
-      const events = applyProposal(r, p.after, proposal, { text: `${p.playerText}\n${content}`, action });
-      if (events.length) rec.events = [...rec.events, ...events];
-    }
-    if (contra !== null) rec.contradiction = contra;
-    if (rec.events !== p.rec.events || contra !== null) await writeRecord(chatId, msg.id, swipe, rec);
-    if (live.length) {
-      await patchWarpMeta(chatId, msg.id, (w) => ({ ...w, live: { ...(w.live ?? {}), [String(swipe)]: live } }));
-    }
+    // Extraction extends the current record, preserving edits made while it ran.
+    await patchWarpMeta(chatId, msg.id, async (w) => {
+      const messages = await currentMessages();
+      if (!messages) return w;
+      const existing = w.swipes?.[String(swipe)];
+      if (!existing || JSON.stringify(existing.action) !== JSON.stringify(p.rec.action)
+        || JSON.stringify(existing.check) !== JSON.stringify(p.rec.check)
+        || JSON.stringify(existing.events.slice(0, p.rec.events.length)) !== JSON.stringify(p.rec.events)) return w;
+      const target = messages.find((m) => m.id === msg.id)!;
+      const state = foldPath(r, messages.filter((m) => m.index_in_chat <= target.index_in_chat), 0).state;
+      const action = p.continueFrom === undefined && p.rec.action ? { id: p.rec.action.id, tags: actionTags(r, p.rec.action.id) } : undefined;
+      const events = proposal ? applyProposal(r, state, proposal, { text: `${p.playerText}\n${appended}`, action }) : [];
+      const changed = existing.events.length !== p.rec.events.length || events.length > 0;
+      const rec = { ...existing, events: [...existing.events, ...events],
+        ...(!changed && contra !== null ? { contradiction: contra } : {}) };
+      return { ...w, swipes: { ...w.swipes, [String(swipe)]: rec },
+        // Parallel choice generation described p.after, not the newer state.
+        ...(!changed && live.length ? { live: { ...w.live, [String(swipe)]: live } } : {}) };
+    });
   }
 
   // Pre-write the first few choices while the player reads.
-  if (settings.prewrite > 0 && p.prompt) {
+  if (p.continueFrom === undefined && settings.prewrite > 0 && p.prompt && await currentMessages()) {
     await pushState(chatId, userId);
     host().sendToFrontend({ type: "busy", chatId, busy: false }, userId);
     void prewrite({ chatId, userId, r, settings, decider, prompt: p.prompt, reply: content, player: p.player, onReady: () => schedulePush(chatId, userId, 100) })
@@ -304,32 +378,77 @@ export async function afterReply(p: Pending, msg: Msg, content: string, userId?:
 }
 
 export async function onGenerationStarted(payload: { generationId: string; chatId: string; targetMessageId?: string; generationType?: string }, userId?: string) {
+  if (payload.generationType === "quiet" || payload.generationType === "impersonate") return;
   const { chatId } = payload;
+  supersedeOperation(chatId);
+  const previous = started.get(chatId);
+  if (previous && previous.generationId !== payload.generationId) {
+    closeGeneration(chatId, previous.generationId);
+    pending.delete(previous.generationId);
+    pending.delete(chatId);
+  }
   started.set(chatId, { generationId: payload.generationId, targetMessageId: payload.targetMessageId, generationType: payload.generationType, at: Date.now() });
   busyChats.add(chatId);
   host().sendToFrontend({ type: "busy", chatId, busy: true }, userId);
 }
 
+/** Cancellation never books an incomplete reply, and late callbacks cannot reopen it. */
+export async function onGenerationStopped(payload: { chatId: string; generationId?: string }, userId?: string) {
+  const { chatId } = payload;
+  if (!chatId) return;
+  const current = started.get(chatId);
+  const id = payload.generationId ?? current?.generationId;
+  if (id) { closeGeneration(chatId, id); pending.delete(id); }
+  const fallback = pending.get(chatId);
+  if (fallback && (!id || !fallback.generationId || fallback.generationId === id)) pending.delete(chatId);
+  // An old Stop must not unlock a newer generation in the same chat.
+  if (current && id && current.generationId !== id) return;
+  // Host cancellation cannot release an encounter or scene's local ownership.
+  if (!current && hasOperation(chatId)) return;
+  started.delete(chatId);
+  busyChats.delete(chatId);
+  dropPrewritten(chatId);
+  host().sendToFrontend({ type: "busy", chatId, busy: false }, userId);
+  await pushState(chatId, userId);
+}
+
 export async function onGenerationEnded(payload: { generationId: string; chatId: string; messageId?: string; content?: string; error?: string; generationType?: string }, userId?: string) {
-  busyChats.delete(payload.chatId);
-  if (started.get(payload.chatId)?.generationId === payload.generationId) started.delete(payload.chatId);
+  if (payload.generationType === "quiet" || payload.generationType === "impersonate") return;
+  const token = generationKey(payload.chatId, payload.generationId);
+  if (!generationIsCurrent(payload.chatId, payload.generationId) || completing.has(token)) return;
   // Match by generation id; fall back to the chat when the host didn't give the interceptor an id.
   const key = pending.has(payload.generationId) ? payload.generationId : payload.chatId;
   const p = pending.get(key);
+  if (p?.generationId && p.generationId !== payload.generationId) return;
   pending.delete(key);
+  completing.add(token);
+  if (p && !payload.error) busyChats.add(payload.chatId);
   // Drop stale entries (generations that never reported back).
   for (const [id, x] of pending) if (Date.now() - x.at > 10 * 60_000) pending.delete(id);
 
-  if (!p || payload.error || !payload.messageId) {
-    await pushState(payload.chatId, userId);
-    return;
-  }
   try {
+    if (!p || payload.error || !payload.messageId) return;
+    const originalGuard = p.isCurrent;
+    p.isCurrent = () => generationIsCurrent(payload.chatId, payload.generationId) && (!originalGuard || originalGuard());
     const msgs = await getMessages(payload.chatId);
+    if (!p.isCurrent()) return;
     const msg = msgs.find((m) => m.id === payload.messageId);
     if (!msg) return;
     const swipe = msg.swipe_id ?? 0;
-    await writeRecord(payload.chatId, msg.id, swipe, p.rec);
+    if ((p.targetMessageId && p.targetMessageId !== msg.id) || (p.targetSwipe !== undefined && p.targetSwipe !== swipe)
+      || (p.historyRevision !== undefined && pathRevision(msgs.filter((m) => m.index_in_chat < msg.index_in_chat)) !== p.historyRevision)) {
+      toast("info", "The chat changed while this reply was being written. Its game changes were not applied.", userId);
+      return;
+    }
+    let attached = false;
+    await patchWarpMeta(payload.chatId, msg.id, async (w, current) => {
+      if (!p.isCurrent!() || (current.swipe_id ?? 0) !== swipe
+        || (p.targetRecordRevision !== undefined && JSON.stringify(activeRecord(current)) !== p.targetRecordRevision)) return w;
+      if (p.historyRevision !== undefined && pathRevision((await getMessages(payload.chatId)).filter((m) => m.index_in_chat < current.index_in_chat)) !== p.historyRevision) return w;
+      attached = true;
+      return { ...w, swipes: { ...w.swipes, [String(swipe)]: p.rec } };
+    });
+    if (!attached || !p.isCurrent()) return;
     if (p.verdict) {
       const { messageId, intent, suggestion } = p.verdict;
       await patchWarpMeta(payload.chatId, messageId, (w) => ({
@@ -339,7 +458,7 @@ export async function onGenerationEnded(payload: { generationId: string; chatId:
     await pushState(payload.chatId, userId);
     // Warp wrote this reply (a quiet encounter round): it becomes the encounter's log; nothing to read back from it.
     if (p.quiet && (payload.content ?? msg.content).trim() === p.quiet.content.trim()) {
-      await patchWarpMeta(payload.chatId, msg.id, (w) => ({ ...w, encounter: p.quiet!.log }));
+      await patchWarpMeta(payload.chatId, msg.id, (w, current) => ({ ...w, encounter: undefined, encounters: { ...encounterSlots(w), [String(current.swipe_id ?? 0)]: p.quiet!.log } }));
       if (p.quiet.log.status === "ended") await p.quiet.fold();
       await pushState(payload.chatId, userId);
       return;
@@ -348,7 +467,14 @@ export async function onGenerationEnded(payload: { generationId: string; chatId:
   } catch (e) {
     logError("generation ended", e);
   } finally {
-    host().sendToFrontend({ type: "busy", chatId: payload.chatId, busy: false }, userId);
-    schedulePush(payload.chatId, userId, 0);
+    completing.delete(token);
+    closeGeneration(payload.chatId, payload.generationId);
+    const current = started.get(payload.chatId);
+    if (!current || current.generationId === payload.generationId) {
+      started.delete(payload.chatId);
+      busyChats.delete(payload.chatId);
+      host().sendToFrontend({ type: "busy", chatId: payload.chatId, busy: false }, userId);
+      await pushState(payload.chatId, userId);
+    }
   }
 }

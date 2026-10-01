@@ -519,7 +519,7 @@ function defeat(t: TurnBuilder, d: DungeonDef, run: DungeonRun, by: string): Dun
   const lostGold = run.gold;
   const lostLoot = Object.keys(run.loot).length;
   tell(t, d, run, `The party is overwhelmed by ${by} on floor ${run.depth}. Everything found on this run is lost${lostGold ? ` (${lostGold} gold${lostLoot ? " and the treasures" : ""})` : ""}. {{user}} comes to later, back outside the dungeon, battered.`);
-  t.push({ t: "dg_exit", src: "action" });
+  t.push({ t: "dg_exit", outcome: "lost", src: "action" });
   t.apply(d.onDefeat, "action");
   t.time(120, "action");
   return { say: "*Everything goes dark…*" };
@@ -564,7 +564,7 @@ export function leaveDungeon(r: Ruleset, s: GameState): DungeonResult {
     if (run.gold && money && r.stats[money]) { t.push({ t: "stat", id: money, d: run.gold, src: "action" }); found.push(`${formatNumber(run.gold)} gold`); }
     for (const [item, n] of Object.entries(run.loot)) { t.push({ t: "item", id: item, d: n, src: "action" }); found.push(itemName(r, s, item)); }
     tell(t, d, run, `{{user}}'s party climbs back out of ${d.name} from floor ${run.depth}${found.length ? `, carrying ${found.join(", ")}` : ", empty-handed"}.`);
-    t.push({ t: "dg_exit", src: "action" });
+    t.push({ t: "dg_exit", outcome: "left", src: "action" });
     t.apply(d.onLeave, "action");
     t.time(Math.min(120, 10 * run.depth), "action");
   });

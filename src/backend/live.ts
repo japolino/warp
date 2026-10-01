@@ -7,7 +7,8 @@
 
 import type { Decider } from "../engine/decide.js";
 import { evalBool } from "../engine/expr.js";
-import type { LiveChoice } from "../engine/resolve.js";
+import { findAction, type LiveChoice } from "../engine/resolve.js";
+import { presentPeople } from "../engine/world.js";
 import type { ActionDef, Ruleset } from "../engine/ruleset.js";
 import { makeEnv, type GameState } from "../engine/state.js";
 import { stateDigest } from "../engine/view.js";
@@ -20,9 +21,11 @@ function clip(s: string, n: number) {
 }
 
 /** Tags the writer may use right now (content lines removed). */
-export function usableTags(r: Ruleset, settings: Pick<Settings, "lines">): ActionDef[] {
+export function usableTags(r: Ruleset, settings: Pick<Settings, "lines">, s?: GameState): ActionDef[] {
   const blocked = new Set(settings.lines.map((l) => l.toLowerCase()));
-  return Object.values(r.liveChoices.tags).filter((a) => !a.tags.some((t) => blocked.has(t)));
+  return Object.values(r.liveChoices.tags).filter((a) => !a.hidden && !a.tags.some((t) => blocked.has(t)) && (!s || (a.perPerson
+    ? presentPeople(r, s, makeEnv(r, s)).some((id) => !!findAction(r, s, `live:${a.id}@${id}`))
+    : !!findAction(r, s, `live:${a.id}`))));
 }
 
 /** Writers often decorate tags ("bold move", "Kind"): match exactly, then loosely. */
@@ -39,11 +42,10 @@ export function repairTag(tags: ActionDef[], raw: unknown): string | null {
 function personId(s: GameState, name: unknown): string | null {
   if (typeof name !== "string" || !name.trim()) return null;
   const n = name.trim().toLowerCase();
-  for (const [id, p] of Object.entries(s.people)) {
-    const full = p.name.toLowerCase();
-    if (full === n || id === n || full.split(" ")[0] === n.split(" ")[0]) return id;
-  }
-  return null;
+  const exact = Object.entries(s.people).filter(([id, p]) => id === n || p.name.toLowerCase() === n);
+  if (exact.length) return exact.length === 1 ? exact[0][0] : null;
+  const first = Object.entries(s.people).filter(([, p]) => p.name.toLowerCase().split(" ")[0] === n);
+  return first.length === 1 ? first[0][0] : null;
 }
 
 /** Validate what the writer returned against the tag list and the people in the story. */
@@ -60,6 +62,7 @@ export function cleanChoices(r: Ruleset, s: GameState, tags: ActionDef[], raw: u
     const a = r.liveChoices.tags[tag];
     const target = personId(s, o.target);
     if (a.perPerson && !target) continue;
+    if (!findAction(r, s, `live:${tag}${a.perPerson ? `@${target}` : ""}`)) continue;
     seen.add(label.toLowerCase());
     out.push({ label, tag, ...(a.perPerson && target ? { target } : {}) });
     if (out.length >= count) break;
@@ -95,13 +98,13 @@ export async function writeLiveChoices(opts: {
   const lc = r.liveChoices;
   if (!lc.enabled || s.encounter || s.dungeon) return [];
   if (lc.when && !evalBool(lc.when, makeEnv(r, s), true)) return [];
-  const tags = usableTags(r, settings);
+  const tags = usableTags(r, settings, s);
   if (!tags.length) return [];
 
   let wanted: string[] | null = null;
   try { wanted = await pickTags(opts.decider, r, s, tags, opts.reply, opts.player); } catch (e) { logError("live choice kinds", e); }
   const count = wanted?.length ?? lc.count;
-  const people = Object.values(s.people).map((p) => p.name);
+  const people = presentPeople(r, s, makeEnv(r, s)).map((id) => s.people[id].name);
   const tagLines = tags.map((a) => `- ${a.id}: ${a.desc ?? a.label}${a.perPerson ? ` (also give "target": the name of the person it's aimed at${people.length ? ` — one of ${people.join(", ")}` : ""})` : ""}`);
   const system = [
     "You write the clickable choices for a text roleplay game. You never write story.",

@@ -2,7 +2,7 @@
 // repeated moves don't repeat their words, and the end replaces the log with a summary.
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { foldPath, warpMeta, type Msg } from "./ledger.js";
+import { encounterLogOf, foldPath, warpMeta, type Msg } from "./ledger.js";
 import { loadRuleset } from "../engine/loader.js";
 import { playRound } from "./encounter.js";
 import { retell, scriptedRound, storyPov, writeRound } from "./encounter-lines.js";
@@ -71,13 +71,13 @@ describe("a quiet encounter", () => {
     expect(first).toContain("The Pack presses in close.");
     await playRound({ chatId: "c1", intent: { actionId: "talk", via: "choice" } });
     expect(msgs).toHaveLength(2); // the same message grew
-    const log = warpMeta(msgs[1]).encounter!;
+    const log = encounterLogOf(msgs[1])!;
     expect(log.rounds).toHaveLength(2);
     // The same move twice isn't told with the same words.
     expect(log.rounds[1].text).not.toBe(log.rounds[0].text);
     expect(log.rounds[1].card.ended).toBeNull();
     await playRound({ chatId: "c1", intent: { actionId: "talk", via: "choice" } });
-    const done = warpMeta(msgs[1]).encounter!;
+    const done = encounterLogOf(msgs[1])!;
     expect(done.status).toBe("ended");
     expect(done.ended).toEqual({ label: "You talked them down", loss: false });
     expect(msgs[1].content).toBe(done.summary!);

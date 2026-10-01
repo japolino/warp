@@ -236,6 +236,7 @@ describe("live choices", () => {
     const r = rules();
     let s = initialState(r);
     s = foldEvents(r, [[{ t: "person", id: "ward", name: "Ward", src: "start" } as WarpEvent]], s);
+    applyEvent(s, { t: "scene", who: "ward", here: true, src: "start" }, r);
     expect(findAction(r, s, "live:kind@ward")?.target).toBe("ward");
     const rec = resolveTurn(r, s, { actionId: "live:kind@ward", via: "choice", label: "Thank Ward warmly" }, { seed: "l" });
     expect(rec.action?.label).toBe("Thank Ward warmly");
@@ -247,6 +248,7 @@ describe("live choices", () => {
     const r = rules();
     const s = cloneState(initialState(r));
     applyEvent(s, { t: "person", id: "ward", name: "Ward", src: "start" }, r);
+    applyEvent(s, { t: "scene", who: "ward", here: true, src: "start" }, r);
     const tags = usableTags(r, { lines: [] });
     expect(repairTag(tags, "Bold move")).toBe("bold");
     expect(repairTag(tags, "sneaky")).toBeNull();

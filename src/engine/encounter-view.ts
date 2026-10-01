@@ -32,7 +32,7 @@ export function outcomeLabel(enc: EncounterDef | undefined, outcome: string): st
 
 /** Whether an ending is a loss (an author's momentum `lose`, or a name like "beaten"). */
 export function isLoss(enc: EncounterDef | undefined, outcome: string): boolean {
-  if (enc?.momentum) return outcome === enc.momentum.lose;
+  if (enc?.momentum && outcome === enc.momentum.lose) return true;
   return FAILURE.test(outcome);
 }
 
@@ -85,7 +85,9 @@ export function encounterGuide(r: Ruleset, s: GameState): EncounterGuide | null 
   }
   danger.sort((a, b) => Math.abs(a.at - a.value) - Math.abs(b.at - b.value));
   const loss = th.find((x) => !x.foe && isLoss(enc, x.outcome));
-  const dangerText = enc.danger ?? (danger.length ? `${danger.slice(0, 2).map((d) => `${d.label} at ${d.at}`).join(" or ")} and you're ${outcomeLabel(enc, loss!.outcome).toLowerCase()}` : null);
+  const authoredDanger = enc.danger ?? (danger.length ? `${danger.slice(0, 2).map((d) => `${d.label} at ${d.at}`).join(" or ")} and you're ${outcomeLabel(enc, loss!.outcome).toLowerCase()}` : null);
+  const budget = `${Math.max(0, enc.roundLimit - st.round)} rounds left; then ${outcomeLabel(enc, enc.timeoutOutcome).toLowerCase()}.`;
+  const dangerText = authoredDanger ? `${authoredDanger}. ${budget}` : budget;
   return { goal, progress, danger, dangerText };
 }
 

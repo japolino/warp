@@ -8,8 +8,9 @@ import { slug, type Ruleset } from "../engine/ruleset.js";
 import type { GameState } from "../engine/state.js";
 import type { Settings } from "../shared/protocol.js";
 import { ask, firstJson } from "./helpers.js";
-import { host, logError } from "./host.js";
-import { characterBrief, invalidateCharacter, type Loaded } from "./source.js";
+import { host, logError, toast } from "./host.js";
+import { acceptAdditiveRules } from "./ledger.js";
+import { characterBrief, getRuleset, invalidateCharacter, type Loaded } from "./source.js";
 
 export interface NewPlace { id: string; name: string; desc: string; indoors: boolean }
 
@@ -56,17 +57,21 @@ export async function discoverPlace(loaded: Loaded, r: Ruleset, before: GameStat
     return;
   }
   const book = loaded.bookIds[0];
-  if (book) {
-    try {
-      await host().world_books.entries.create(book, {
+  try {
+    if (!book) throw new Error("No rulebook is available for the new location");
+    await host().world_books.entries.create(book, {
         comment: `warp-ruleset · discovered · ${p.name}`,
         content: placeYaml(rec.discover.from, p),
         key: [], disabled: true, constant: false, order_value: 900,
       }, userId);
-      invalidateCharacter(loaded.characterId);
-    } catch (e) {
-      logError("save discovered place", e);
-    }
+    invalidateCharacter(loaded.characterId);
+    const next = (await getRuleset(chatId, userId, true))?.ruleset;
+    if (next) await acceptAdditiveRules(chatId, r, next);
+  } catch (e) {
+    logError("save discovered place", e);
+    rec.hints.push("{{user}} explores, but does not enter a new place this turn. The map could not be saved.");
+    toast("warning", "The new place couldn't be saved. You're still where you were; try exploring again.", userId);
+    return;
   }
   rec.events.push(
     { t: "move", to: p.id, name: p.name, src: "action", why: "Exploring found somewhere new" },

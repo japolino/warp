@@ -2,7 +2,7 @@
 // strategies, and what happens — who wins, how long it takes, how often a round
 // changes nothing. The builder uses it to tune encounters before anyone plays them.
 
-import { actionPool, isAvailable, resolveTurn, usableItems } from "./resolve.js";
+import { availableChoices, encounterStartEvents, resolveTurn, usableAbilities, usableItems } from "./resolve.js";
 import type { Ruleset } from "./ruleset.js";
 import { applyEvent, cloneState, initialState, type GameState } from "./state.js";
 
@@ -16,6 +16,7 @@ export interface PolicyResult {
   stalled: number;
   /** Runs that hit the round limit without ending. */
   unfinished: number;
+  meanRounds?: number;
 }
 
 export interface EncounterSim { id: string; name: string; policies: PolicyResult[]; notes: string[] }
@@ -27,21 +28,23 @@ const quantile = (xs: number[], q: number) => {
 };
 
 /** Play `id` from the ruleset's start (or `from`) under each strategy: always one move, or a random mix. */
-export function simulateEncounter(r: Ruleset, id: string, opts: { runs?: number; maxRounds?: number; from?: GameState } = {}): EncounterSim | null {
+export function simulateEncounter(r: Ruleset, id: string, opts: { runs?: number; maxRounds?: number; from?: GameState; randomOnly?: boolean } = {}): EncounterSim | null {
   const enc = r.encounters[id];
   if (!enc) return null;
   const runs = opts.runs ?? 120, maxRounds = opts.maxRounds ?? 40;
-  const begin = () => {
+  if (opts.from?.encounter && opts.from.encounter.id !== id) return null;
+  const begin = (seed: string) => {
     const s = cloneState(opts.from ?? initialState(r));
-    applyEvent(s, { t: "enc", id, foe: Object.fromEntries(enc.foe.stats.map((f) => [f.id, f.start])), ...(enc.momentum ? { momentum: enc.momentum.start } : {}), src: "manual" }, r);
+    if (!s.encounter) for (const event of encounterStartEvents(r, s, id, seed)) applyEvent(s, event, r);
     return s;
   };
   const policies: { name: string; pick: (s: GameState, rng: () => number) => string | null }[] = [];
   const moves = (s: GameState) => [
-    ...actionPool(r, s).order.filter((a) => !actionPool(r, s).defs[a].perPerson && isAvailable(r, s, actionPool(r, s).defs[a])),
+    ...availableChoices(r, s).filter((choice) => !choice.a.hidden).map((choice) => choice.id),
     ...usableItems(r, s).filter((u) => !u.locked).map((u) => u.id),
+    ...usableAbilities(r, s).filter((u) => !u.status.locked && !u.a.hidden).map((u) => u.id),
   ];
-  for (const a of enc.actionOrder) policies.push({ name: `always ${enc.actions[a].label}`, pick: (s) => (moves(s).includes(a) ? a : moves(s)[0] ?? null) });
+  if (!opts.randomOnly) for (const a of enc.actionOrder.filter((a) => !enc.actions[a].hidden)) policies.push({ name: `always ${enc.actions[a].label}`, pick: (s) => (moves(s).includes(a) ? a : moves(s)[0] ?? null) });
   policies.push({ name: "a random mix", pick: (s, rng) => { const m = moves(s); return m.length ? m[Math.floor(rng() * m.length)] : null; } });
 
   const out: PolicyResult[] = [];
@@ -50,7 +53,7 @@ export function simulateEncounter(r: Ruleset, id: string, opts: { runs?: number;
     const lengths: number[] = [];
     let rounds = 0, still = 0, unfinished = 0;
     for (let i = 0; i < runs; i++) {
-      let s = begin();
+      let s = begin(`sim:${id}:start:${i}`);
       let rng = mulberry(i + 1);
       let n = 0;
       while (s.encounter && n < maxRounds) {
@@ -58,7 +61,10 @@ export function simulateEncounter(r: Ruleset, id: string, opts: { runs?: number;
         const rec = resolveTurn(r, s, pick ? { actionId: pick, via: "choice" } : null, { seed: `sim:${pol.name}:${i}:${n}` });
         const next = cloneState(s);
         for (const e of rec.events) applyEvent(next, e, r);
-        const moved = rec.events.some((e) => (e.t === "foe" && (e.d ?? 0) !== 0) || e.t === "swing" || (e.t === "enc" && e.id === null));
+        // Flags, conditions and player meters can also satisfy an ending gate.
+        // Clock/turn counters alone do not count as progress.
+        const progress = (x: GameState) => JSON.stringify([x.stats, x.flags, x.conditions, x.items, x.encounter && { ...x.encounter, round: 0 }]);
+        const moved = opts.randomOnly || progress(s) !== progress(next);
         if (!moved) still++;
         rounds++; n++;
         const end = rec.events.find((e) => e.t === "enc" && e.id === null) as { outcome?: string } | undefined;
@@ -69,7 +75,7 @@ export function simulateEncounter(r: Ruleset, id: string, opts: { runs?: number;
       if (s.encounter) unfinished++;
       lengths.push(n);
     }
-    out.push({ policy: pol.name, runs, outcomes, medianRounds: quantile(lengths, 0.5), p90Rounds: quantile(lengths, 0.9), stalled: rounds ? still / rounds : 0, unfinished });
+    out.push({ policy: pol.name, runs, outcomes, medianRounds: quantile(lengths, 0.5), meanRounds: lengths.reduce((a, b) => a + b, 0) / Math.max(1, runs), p90Rounds: quantile(lengths, 0.9), stalled: rounds ? still / rounds : 0, unfinished });
   }
   const notes: string[] = [];
   for (const p of out) {

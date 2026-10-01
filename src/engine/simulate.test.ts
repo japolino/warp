@@ -25,10 +25,10 @@ describe("encounter simulation", () => {
     const hit = sim.policies[0];
     expect(Object.keys(hit.outcomes)).toContain("won");
     expect(hit.medianRounds).toBeGreaterThan(1);
-    // Waiting never makes progress: every run is lost to the foe's punches.
+    // Waiting advances danger toward a loss, even though it never damages the foe.
     const wait = sim.policies[1];
     expect(wait.outcomes).toEqual({ beaten: 60 });
-    expect(wait.stalled).toBeGreaterThan(0.9); // only the losing round itself "moves"
+    expect(wait.stalled).toBe(0);
     expect(sim.notes.some((n) => n.includes('"always Wait" almost always ends "beaten"'))).toBe(true);
     expect(describeSim(sim)).toContain("always Run:");
     // Deterministic: the same ruleset simulates the same way.

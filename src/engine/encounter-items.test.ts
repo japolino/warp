@@ -128,7 +128,8 @@ describe("encounters that explain themselves", () => {
     expect(g.goal).toBe("Bring their resolve to 0 — or bolt (escaped)");
     expect(g.progress).toEqual([{ label: "Resolve", value: 10, target: 0, max: 10 }]);
     expect(g.danger[0]).toMatchObject({ label: "Stress", value: 10, at: 80, close: false });
-    expect(g.dangerText).toBe("Stress at 80 and you're overwhelmed");
+    expect(g.dangerText).toContain("Stress at 80 and you're overwhelmed");
+    expect(g.dangerText).toContain("rounds left");
     expect(buildHud(r, begin(r)).encounter).toMatchObject({ quiet: true, goal: g.goal });
   });
 

@@ -614,6 +614,8 @@ export type BackendToFrontend =
   | {
       type: "state";
       chatId: string | null;
+      revision?: number;
+      historyConflict?: string | null;
       status: RulesetStatus;
       hud: HudView | null;
       map: MapView | null;
@@ -637,11 +639,12 @@ export type BackendToFrontend =
   | { type: "settings"; settings: Settings; templates: TemplateInfo[]; connections: { id: string; name: string }[]; imageConnections: { id: string; name: string }[]; jevKeySet: boolean }
   | { type: "toast"; level: "info" | "success" | "warning" | "error"; message: string }
   | { type: "command"; command: "open" | "install" | "dungeon" }
-  | { type: "builder"; session: BuilderSession | null }
+  | { type: "builder"; session: BuilderSession | null; chatId?: string | null }
   /** The installed rulebook as one file, for editing elsewhere. */
   | { type: "rulebook_export"; name: string; text: string };
 
 export type FrontendToBackend =
+  | { type: "reconcile_history"; chatId: string; keep: boolean }
   | { type: "hello"; chatId: string | null }
   | { type: "refresh"; chatId: string | null }
   | { type: "act"; chatId: string; actionId: string; params?: Record<string, string> }

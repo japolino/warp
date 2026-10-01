@@ -9,6 +9,7 @@ import { getTemplate, looksLikeScenario, withCharacter } from "../engine/templat
 import { auditRuleset } from "../engine/audit.js";
 import type { RulesetStatus } from "../shared/protocol.js";
 import { host, logError } from "./host.js";
+import { isInstalledRulebook, publishRulebook } from "./rulebook-install.js";
 
 export interface Loaded {
   characterId: string | null;
@@ -26,6 +27,7 @@ export interface Loaded {
 const TTL_MS = 8000;
 const byCharacter = new Map<string, Loaded>();
 const chatCharacter = new Map<string, string | null>();
+const loading = new Map<string, number>();
 /** Every entry/book id known to hold ruleset YAML — the WI interceptor keeps these out of prompts. */
 export const knownRulesetEntryIds = new Set<string>();
 export const knownRulesetBookIds = new Set<string>();
@@ -48,6 +50,14 @@ export async function characterForChat(chatId: string, userId?: string): Promise
   return id;
 }
 
+/** Legacy books merge; a published snapshot supersedes their rules without erasing them. */
+export async function attachedRulebooks(character: { world_book_ids?: string[] }, userId?: string) {
+  const books = (await Promise.all((character.world_book_ids ?? []).map((id) => host().world_books.get(id, userId))))
+    .filter((book): book is NonNullable<typeof book> => !!book);
+  const active = [...books].reverse().find((book) => isRulesetBookName(book.name) && isInstalledRulebook(book));
+  return { books, active };
+}
+
 async function loadForCharacter(characterId: string, userId?: string): Promise<Loaded> {
   const character = await host().characters.get(characterId, userId);
   const base: Loaded = {
@@ -58,17 +68,19 @@ async function loadForCharacter(characterId: string, userId?: string): Promise<L
   if (!character) return base;
   const parts: RulesetPart[] = [];
   const books: string[] = [];
-  for (const bookId of character.world_book_ids ?? []) {
-    const book = await host().world_books.get(bookId, userId);
-    if (!book) continue;
+  const attached = await attachedRulebooks(character, userId);
+  for (const book of attached.books) {
+    const bookId = book.id;
+    const included = !attached.active || attached.active.id === bookId;
     const wholeBook = isRulesetBookName(book.name);
     const entries = await listAllEntries(bookId, userId);
     let found = 0;
     for (const e of entries) {
       if (!wholeBook && !isRulesetEntryTitle(e.comment)) continue;
+      knownRulesetEntryIds.add(e.id);
+      if (!included) continue;
       parts.push({ label: e.comment?.trim() || `${book.name} entry`, content: e.content, order: e.order_value ?? 100 });
       base.entryIds.push(e.id);
-      knownRulesetEntryIds.add(e.id);
       found++;
     }
     if (wholeBook) knownRulesetBookIds.add(bookId);
@@ -77,8 +89,8 @@ async function loadForCharacter(characterId: string, userId?: string): Promise<L
   }
   if (!parts.length) return base;
   const { ruleset, issues } = loadRuleset(parts);
-  base.ruleset = ruleset;
   base.issues = ruleset ? [...issues, ...lintRuleset(ruleset)] : issues;
+  base.ruleset = base.issues.some((i) => i.level === "error") ? null : ruleset;
   base.source = books.join(", ");
   return base;
 }
@@ -95,10 +107,12 @@ export async function getRuleset(chatId: string | null, userId?: string, force =
   if (!characterId) return null;
   const hit = byCharacter.get(characterId);
   if (hit && !force && Date.now() - hit.at < TTL_MS) return hit;
+  const revision = (loading.get(characterId) ?? 0) + 1;
+  loading.set(characterId, revision);
   try {
     const loaded = await loadForCharacter(characterId, userId);
-    byCharacter.set(characterId, loaded);
-    return loaded;
+    if (loading.get(characterId) === revision) byCharacter.set(characterId, loaded);
+    return byCharacter.get(characterId) ?? loaded;
   } catch (e) {
     logError("loadForCharacter", e);
     return hit ?? null;
@@ -127,6 +141,14 @@ export async function characterBrief(chatId: string, userId?: string): Promise<s
 export function invalidateCharacter(characterId?: string | null) {
   if (characterId) { byCharacter.delete(characterId); briefs.delete(characterId); }
   else { byCharacter.clear(); briefs.clear(); }
+  if (characterId) loading.set(characterId, (loading.get(characterId) ?? 0) + 1);
+  else for (const id of loading.keys()) loading.set(id, (loading.get(id) ?? 0) + 1);
+  profiles.clear();
+}
+
+export function invalidateChat(chatId: string) {
+  chatCharacter.delete(chatId);
+  for (const k of profiles.keys()) if (k.startsWith(`${chatId}:`)) profiles.delete(k);
 }
 
 export function statusOf(l: Loaded | null): RulesetStatus {
@@ -168,33 +190,16 @@ export async function installTemplate(chatId: string, templateId: string, userId
   const character = await host().characters.get(characterId, userId);
   if (!character) throw new Error("Character not found");
 
-  const book = await host().world_books.create({
-    name: "warp-ruleset",
-    description: `Warp game rules for ${character.name} (${t.name}). Warp reads these entries directly; they are never sent to the model.`,
-    metadata: { warp: { template: t.id } },
-  }, userId);
-
-  let order = 10;
-  for (const part of t.parts) {
+  const parts = t.parts.map((part, i) => {
     let content = part.yaml;
     // Seed the card's own character as a tracked person so relationships work from turn one.
     const track = trackCharacter ?? !looksLikeScenario(character);
     if (part.label === "people" && character.name && track) content = withCharacter(content, character.name);
-    await host().world_books.entries.create(book.id, {
-      comment: `warp-ruleset · ${part.label}`,
-      content,
-      key: [],
-      disabled: true,
-      constant: false,
-      order_value: order,
-    }, userId);
-    order += 10;
-  }
-
-  const ids = [...(character.world_book_ids ?? []), book.id];
-  await host().characters.update(characterId, { world_book_ids: ids }, userId);
+    return { label: part.label, content, order: (i + 1) * 10 };
+  });
+  const bookId = await publishRulebook(characterId, parts, userId, { template: t.id });
   invalidateCharacter(characterId);
-  knownRulesetBookIds.add(book.id);
+  knownRulesetBookIds.add(bookId);
   return t.name;
 }
 
@@ -213,7 +218,7 @@ const profiles = new Map<string, { at: number; p: PersonProfile }>();
 const PROFILE_TTL = 10 * 60_000;
 
 export const nameRe = (name: string) => {
-  const first = name.trim().split(/\s+/)[0] ?? name;
+  const first = name.trim();
   const safe = first.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(^|[^\\p{L}])${safe}(?=[^\\p{L}]|$)`, "iu");
 };
@@ -240,7 +245,7 @@ export function aboutThem(text: string | undefined | null, re: RegExp, budget: n
  * entries keyed to their name, and how the recent story has shown them.
  */
 export async function personProfile(chatId: string, name: string, userId?: string, note?: string): Promise<PersonProfile> {
-  const key = `${chatId}:${name.toLowerCase()}`;
+  const key = `${chatId}:${userId ?? "_"}:${name.toLowerCase()}:${note ?? ""}`;
   const hit = profiles.get(key);
   if (hit && Date.now() - hit.at < PROFILE_TTL) return hit.p;
   const re = nameRe(name);

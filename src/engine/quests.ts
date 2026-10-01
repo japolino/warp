@@ -223,7 +223,10 @@ export function questLife(t: TurnBuilder) {
     const st = t.s.quests?.[id];
     if (!st) continue;
     if (st.st === "done" || st.st === "failed") {
-      if (q.repeat !== null && !q.auto && st.ended !== undefined && t.s.minutes - st.ended >= q.repeat * 1440) t.push({ t: "quest", id, st: null, src: "world" });
+      if (q.repeat !== null && st.ended !== undefined && t.s.minutes - st.ended >= q.repeat * 1440) {
+        t.push({ t: "quest", id, st: null, src: "world" });
+        if (q.auto && (!q.when || evalBool(q.when, t.env(), false))) startQuest(t, id, "trigger");
+      }
       continue;
     }
     if (st.st !== "active") continue;

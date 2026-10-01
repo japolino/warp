@@ -25,23 +25,35 @@ import { buildChoices, buildHud } from "../engine/view.js";
 import type { BuilderAddition, BuilderAnswer, BuilderPart, BuilderQuestion, BuilderSession } from "../shared/protocol.js";
 import { host, logError, send } from "./host.js";
 import { BUILDER_SESSION_VERSION, restoreBuilderSession } from "./builder-session.js";
-import { characterForChat, invalidateCharacter, knownRulesetBookIds } from "./source.js";
+import { attachedRulebooks, characterForChat, invalidateCharacter, knownRulesetBookIds } from "./source.js";
+import { publishRulebook } from "./rulebook-install.js";
 
 // ───────────────────────── sessions ─────────────────────────
 
 const sessions = new Map<string, BuilderSession>();
+const sessionChats = new WeakMap<BuilderSession, string>();
+const retired = new WeakSet<BuilderSession>();
+const controllers = new WeakMap<BuilderSession, AbortController>();
+function sessionSignal(s: BuilderSession): AbortSignal {
+  let controller = controllers.get(s);
+  if (!controller) { controller = new AbortController(); controllers.set(s, controller); }
+  return controller.signal;
+}
+function retire(s: BuilderSession) { retired.add(s); controllers.get(s)?.abort(new Error("Builder draft closed")); }
 const key = (userId: string | undefined, characterId: string) => `${userId ?? "_"}:${characterId}`;
 const path = (characterId: string) => `builder/${characterId}.json`;
 
 async function save(s: BuilderSession, userId?: string) {
+  if (retired.has(s)) return;
   s.schemaVersion = BUILDER_SESSION_VERSION;
   s.updatedAt = Date.now();
   sessions.set(key(userId, s.characterId), s);
   try { await host().userStorage.setJson(path(s.characterId), s, { userId }); } catch (e) { logError("builder save", e); }
 }
 
-function emit(s: BuilderSession | null, userId?: string) {
-  send({ type: "builder", session: s }, userId);
+function emit(s: BuilderSession | null, userId?: string, chatId?: string | null) {
+  if (s && retired.has(s)) return;
+  send({ type: "builder", session: s, chatId: chatId ?? (s ? sessionChats.get(s) : null) }, userId);
 }
 
 async function progress(s: BuilderSession, label: string | null, userId?: string) {
@@ -55,12 +67,13 @@ async function sessionFor(chatId: string, userId?: string): Promise<BuilderSessi
   const characterId = await characterForChat(chatId, userId);
   if (!characterId) return null;
   const hit = sessions.get(key(userId, characterId));
-  if (hit) return hit;
+  if (hit) { sessionChats.set(hit, chatId); return hit; }
   let stored: unknown;
   try { stored = await host().userStorage.getJson<unknown>(path(characterId), { fallback: null, userId }); }
   catch { return null; }
   if (stored == null) return null;
   const restored = restoreBuilderSession(stored, characterId);
+  sessionChats.set(restored, chatId);
   if (restored.parts.length) buildPreview(restored);
   await save(restored, userId);
   return restored;
@@ -75,7 +88,7 @@ async function llm(s: BuilderSession, system: string, user: string, userId: stri
     connection_id: s.connectionId || undefined,
     parameters: { temperature: s.creative ? 0.8 : 0.4, max_tokens: maxTokens },
     userId,
-    signal: AbortSignal.timeout(180_000),
+    signal: AbortSignal.any([sessionSignal(s), AbortSignal.timeout(180_000)]),
   })) as GenerationResponseDTO | string;
   return typeof res === "string" ? res : res?.content ?? "";
 }
@@ -89,7 +102,7 @@ async function llmTools(s: BuilderSession, messages: LlmMessageDTO[], tools: Too
     connection_id: s.connectionId || undefined,
     parameters: { temperature: s.creative ? 0.7 : 0.4, max_tokens: 8000 },
     userId,
-    signal: AbortSignal.timeout(240_000),
+    signal: AbortSignal.any([sessionSignal(s), AbortSignal.timeout(240_000)]),
   })) as GenerationResponseDTO | string;
   if (typeof res === "string") return { content: res, calls: [] };
   return { content: res?.content ?? "", calls: (res?.tool_calls ?? []).map((c) => ({ name: c.name, args: c.args ?? {} })) };
@@ -367,6 +380,7 @@ export async function builderOpen(chatId: string, mode: "build" | "refine" | "de
   if (!characterId) throw new Error("Open a chat with a character first.");
   const existing = await sessionFor(chatId, userId);
   if (existing && existing.mode === mode && existing.step !== "done") { emit(existing, userId); return; }
+  if (existing) retire(existing);
   const card = await cardText(characterId, userId);
   const s: BuilderSession = {
     characterId, characterName: card.name, mode, step: "start",
@@ -375,6 +389,7 @@ export async function builderOpen(chatId: string, mode: "build" | "refine" | "de
     request: null, changeSummary: null, busy: null, error: null, updatedAt: Date.now(),
     effort: existing?.effort ?? "thorough", plan: null, log: [], waived: {}, depth: null,
   };
+  sessionChats.set(s, chatId);
   if (mode === "refine" || mode === "deepen") {
     s.parts = await currentParts(characterId, userId);
     if (!s.parts.length) throw new Error(`This character has no ruleset to ${mode} yet.`);
@@ -633,13 +648,15 @@ export async function builderBack(chatId: string, userId?: string) {
 export async function builderClose(chatId: string, userId?: string) {
   const characterId = await characterForChat(chatId, userId);
   if (!characterId) return;
+  const previous = sessions.get(key(userId, characterId));
+  if (previous) retire(previous);
   sessions.delete(key(userId, characterId));
   try { await host().userStorage.delete(path(characterId), userId); } catch { /* fine */ }
-  emit(null, userId);
+  emit(null, userId, chatId);
 }
 
 export async function builderCurrent(chatId: string | null, userId?: string) {
-  emit(chatId ? await sessionFor(chatId, userId) : null, userId);
+  emit(chatId ? await sessionFor(chatId, userId) : null, userId, chatId);
 }
 
 // ───────────────────────── lorebook I/O ─────────────────────────
@@ -654,9 +671,10 @@ export async function rulesetEntries(characterId: string, userId?: string): Prom
   const c = await host().characters.get(characterId, userId);
   const entries: RulesetEntry[] = [];
   let rulesetBook: string | null = null;
-  for (const bookId of c?.world_book_ids ?? []) {
-    const book = await host().world_books.get(bookId, userId);
-    if (!book) continue;
+  const attached = await attachedRulebooks(c ?? {}, userId);
+  for (const book of attached.books) {
+    if (attached.active && attached.active.id !== book.id) continue;
+    const bookId = book.id;
     const whole = isRulesetBookName(book.name);
     if (whole && !rulesetBook) rulesetBook = bookId;
     for (let offset = 0; offset < 2000; offset += 200) {
@@ -678,35 +696,16 @@ export async function currentParts(characterId: string, userId?: string): Promis
 export async function builderInstall(chatId: string, userId?: string) {
   const s = await sessionFor(chatId, userId);
   if (!s || !s.parts.length) throw new Error("Nothing to install.");
-  const { ruleset } = check(s.parts);
-  if (!ruleset) throw new Error("The ruleset still has errors — fix or redo the sections marked in red first.");
+  const { ruleset, issues } = check(s.parts);
+  if (!ruleset || issues.some((i) => i.level === "error")) {
+    s.error = "Fix or redo the sections marked in red before installing.";
+    await progress(s, null, userId);
+    return;
+  }
   await progress(s, "Saving to the lorebook…", userId);
   try {
-    const { entries, rulesetBook, bookIds } = await rulesetEntries(s.characterId, userId);
-    let bookId = rulesetBook;
-    if (!bookId) {
-      const book = await host().world_books.create({ name: "warp-ruleset", description: `Warp game rules for ${s.characterName}. Warp reads these entries directly; they are never sent to the model.` }, userId);
-      bookId = book.id;
-      await host().characters.update(s.characterId, { world_book_ids: [...bookIds, book.id] }, userId);
-      knownRulesetBookIds.add(book.id);
-    }
-    const used = new Set<string>();
-    let order = 10;
-    for (const p of s.parts) {
-      const hit = entries.find((e) => e.label === p.label && !used.has(e.id));
-      if (hit) {
-        used.add(hit.id);
-        await host().world_books.entries.update(hit.id, { content: p.yaml, disabled: true, order_value: order }, userId);
-      } else {
-        await host().world_books.entries.create(bookId, { comment: `warp-ruleset · ${p.label}`, content: p.yaml, key: [], disabled: true, constant: false, order_value: order }, userId);
-      }
-      order += 10;
-    }
-    // Old sections the new ruleset doesn't have would still merge in — empty them (the confirm dialog said this replaces the ruleset).
-    for (const e of entries) {
-      if (used.has(e.id)) continue;
-      await host().world_books.entries.update(e.id, { content: `# Replaced by the Warp builder on ${new Date().toISOString().slice(0, 10)}.\n`, disabled: true }, userId);
-    }
+    const bookId = await publishRulebook(s.characterId, s.parts.map((p, i) => ({ label: p.label, content: p.yaml, order: (i + 1) * 10 })), userId);
+    knownRulesetBookIds.add(bookId);
     invalidateCharacter(s.characterId);
     s.step = "done";
   } catch (e) {
@@ -724,6 +723,8 @@ export async function builderImport(chatId: string, text: string, userId?: strin
   const split = splitRulebook(text);
   if (!split.length) throw new Error("That doesn't look like a rulebook — it should be YAML with sections like stats:, actions:, encounters:.");
   const card = await cardText(characterId, userId);
+  const previous = sessions.get(key(userId, characterId));
+  if (previous) retire(previous);
   const s: BuilderSession = {
     characterId, characterName: card.name, mode: "import", step: "review",
     connectionId: "", creative: false, base: "", analysis: null, rounds: [], additions: [],
@@ -731,6 +732,7 @@ export async function builderImport(chatId: string, text: string, userId?: strin
     request: null, changeSummary: null, busy: null, error: null, updatedAt: Date.now(),
     effort: "thorough", plan: null, log: [], waived: {}, depth: null,
   };
+  sessionChats.set(s, chatId);
   buildPreview(s);
   const { ruleset } = check(s.parts);
   if (ruleset) {

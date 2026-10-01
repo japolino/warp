@@ -4,6 +4,7 @@ import { judgeDrafts, momentKey } from "./drafts.js";
 import { nextPrompt } from "./inject.js";
 import { initialState } from "../engine/state.js";
 import { loadRuleset } from "../engine/loader.js";
+import { DEFAULT_SETTINGS } from "../shared/protocol.js";
 
 const fake = (probabilities: Record<string, number>): Decider => ({
   id: "jev", canWrite: false,
@@ -44,5 +45,10 @@ describe("pre-written replies", () => {
     expect(momentKey(msgs, s)).toBe(k);
     expect(momentKey([{ id: "m1", swipe_id: 1 }], s)).not.toBe(k);
     expect(momentKey(msgs, { ...s, stats: { a: 2 } })).not.toBe(k);
+    expect(momentKey([{ id: "m1", content: "A closed door" }], s))
+      .not.toBe(momentKey([{ id: "m1", content: "An open door" }], s));
+    const context = { r, settings: DEFAULT_SETTINGS };
+    expect(momentKey(msgs, s, context)).not.toBe(momentKey(msgs, s, { ...context, settings: { ...DEFAULT_SETTINGS, lines: ["violence"] } }));
+    expect(momentKey(msgs, s, context)).not.toBe(momentKey(msgs, s, { ...context, r: { ...r, name: "Edited rules" } }));
   });
 });

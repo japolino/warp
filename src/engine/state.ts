@@ -127,6 +127,8 @@ export interface GameState {
   job: { id: string; n: number; patron: number; earned: number; tips: number; log: { who: string; result: string }[] } | null;
   /** The story reached an ending (told = the narrator has written it). */
   ended: { id: string; at: number; told: boolean } | null;
+  /** Continued past this ending; rearm only after its predicate becomes false. */
+  dismissedEndings: string[];
   /** Progress toward the next point, per stat (in the stat's own units; a point is gained at 1). */
   practice: Record<string, number>;
   /** Who the story has in the scene: judged here or gone, at the place and time it was judged. */
@@ -206,7 +208,7 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "dg_pending"; pending: Pending | null }
   | { t: "dg_log"; text: string }
   | { t: "dg_told" }
-  | { t: "dg_exit" }
+  | { t: "dg_exit"; outcome?: "left" | "lost" }
   | { t: "dt_start"; session: DateSession }
   | { t: "dt_patch"; patch: Partial<DateSession> }
   | { t: "dt_end" }
@@ -236,6 +238,7 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "end"; id: string; told: boolean }
   | { t: "end_told" }
   | { t: "unend" }
+  | { t: "end_rearm"; id: string }
 );
 
 const DG_LOG_KEPT = 12;
@@ -288,6 +291,7 @@ export function initialState(r: Ruleset): GameState {
     runs: 1,
     loops: 0,
     ended: null,
+    dismissedEndings: [],
     body: structuredClone(r.body.parts),
     tf: {},
     bonds: structuredClone(r.bonds),
@@ -637,7 +641,11 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
     }
     case "end": if (!s.ended) s.ended = { id: e.id, at: s.minutes, told: e.told }; break;
     case "end_told": if (s.ended) s.ended = { ...s.ended, told: true }; break;
-    case "unend": s.ended = null; break;
+    case "unend":
+      if (s.ended) s.dismissedEndings = [...new Set([...(s.dismissedEndings ?? []), s.ended.id])];
+      s.ended = null;
+      break;
+    case "end_rearm": s.dismissedEndings = (s.dismissedEndings ?? []).filter((id) => id !== e.id); break;
     case "dt_dated": {
       const prev = s.dating.dates[e.who] ?? { count: 0, best: 0 };
       s.dating.dates = { ...s.dating.dates, [e.who]: { count: prev.count + 1, best: Math.max(prev.best, e.enjoy) } };

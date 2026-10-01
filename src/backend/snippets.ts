@@ -163,8 +163,16 @@ export async function writeLines(o: SnippetInput, settings: Settings, userId?: s
 
 // ───────────────────────── the line left in the chat ─────────────────────────
 
+export interface DungeonSummary {
+  name: string; depth: number;
+  /** Gold actually banked, after caps, not the amount carried before defeat. */
+  gold: number;
+  outcome: "left" | "lost";
+  lostGold?: number;
+}
+
 /** One narrator line for the chat when a date or run ends, so the story remembers it. */
-export async function summaryLine(o: { kind: "date" | "dungeon"; r: Ruleset; start: GameState; end: GameState; lines: SceneLine[]; player: string; settings: Settings; userId?: string; who: string | null; venue: string | null; dungeon: { name: string; depth: number; gold: number } | null }): Promise<string> {
+export async function summaryLine(o: { kind: "date" | "dungeon"; r: Ruleset; start: GameState; end: GameState; lines: SceneLine[]; player: string; settings: Settings; userId?: string; who: string | null; venue: string | null; dungeon: DungeonSummary | null }): Promise<string> {
   const { r } = o;
   let fallback: string;
   if (o.kind === "date" && o.who) {
@@ -173,7 +181,9 @@ export async function summaryLine(o: { kind: "date" | "dungeon"; r: Ruleset; sta
     const where = o.venue ? ` at ${o.venue}` : o.end.locationName ? ` at ${o.end.locationName}` : "";
     fallback = `*${o.player} spent some time with ${name}${where}.${from !== to ? ` Things between them moved from ${from.toLowerCase()} to ${to.toLowerCase()}.` : ""}*`;
   } else if (o.dungeon) {
-    fallback = `*${o.player} climbed back out of ${o.dungeon.name}, having reached floor ${o.dungeon.depth}${o.dungeon.gold ? `, carrying ${o.dungeon.gold} gold` : ""}.*`;
+    fallback = o.dungeon.outcome === "lost"
+      ? `*${o.player} was defeated on floor ${o.dungeon.depth} of ${o.dungeon.name} and returned outside, losing the run's haul${o.dungeon.lostGold ? ` of ${o.dungeon.lostGold} gold` : ""}.*`
+      : `*${o.player} climbed back out of ${o.dungeon.name}, having reached floor ${o.dungeon.depth}${o.dungeon.gold ? `, banking ${o.dungeon.gold} gold` : ""}.*`;
   } else fallback = `*Some time passes.*`;
   if (o.settings.sceneLines !== "model") return fallback;
   try {
