@@ -6533,6 +6533,10 @@ function applyProposal(r, before, p, ctx) {
     const id = Object.keys(w.s.items).find((i) => i === k || itemName(r, w.s, i).toLowerCase() === k);
     if (id && (r.items[id]?.uses ?? 0) > 0)
       w.push({ t: "use", id, n: Math.min(10, Math.round(n)), src });
+    const use = id ? r.items[id]?.use : undefined;
+    if (id && use && !use.check && ctx?.action?.id !== `${ITEM_PREFIX}${id}`) {
+      because(w, `${itemName(r, w.s, id)} used in the story`, () => effectToEvents(w, use.effects, src, {}));
+    }
   }
   if (p.move) {
     const k = p.move.toLowerCase();
@@ -15454,8 +15458,8 @@ async function bookkeeping(opts) {
     const per = def?.uses ?? 0;
     const criteria = {
       same: "Nothing happened to it — only mentioned, carried, held, or worn as before",
-      used: per > 0 ? `Used once (it has ${s.uses[id] ?? per} of ${per} uses left)` : "Used, but not used up — it's still there afterwards",
-      gone: `Used up, eaten, drunk, emptied, broken, given away, dropped, lost or taken — ${player} has one fewer${n > 1 ? ` (has ${n} now)` : ""}`
+      used: def?.use ? `${player} used it as meant (${def.use.label})${per > 0 ? ` — once; it has ${s.uses[id] ?? per} of ${per} uses left` : def.keep ? "" : " — and it's used up"}` : per > 0 ? `Used once (it has ${s.uses[id] ?? per} of ${per} uses left)` : "Used, but not used up — it's still there afterwards",
+      gone: def?.use ? `Not used — but broken, given away, dropped, lost or taken: ${player} has one fewer${n > 1 ? ` (has ${n} now)` : ""}` : `Used up, eaten, drunk, emptied, broken, given away, dropped, lost or taken — ${player} has one fewer${n > 1 ? ` (has ${n} now)` : ""}`
     };
     if (def?.slot && !wornIds.has(id))
       criteria.worn = `Put on — ${player} is wearing it by the end of the reply`;
@@ -15556,9 +15560,12 @@ async function bookkeeping(opts) {
     if (!key.startsWith("item:") || !confident(a) || a.choice === "same")
       continue;
     const id = key.slice(5);
-    if (a.choice === "used" && (r.items[id]?.uses ?? 0) > 0)
+    const def = r.items[id];
+    if (a.choice === "used" && ((def?.uses ?? 0) > 0 || def?.use)) {
       (p.used ??= {})[id] = 1;
-    else if (a.choice === "gone")
+      if (def?.use && !def.keep && !(def.uses > 0))
+        (p.items ??= {})[id] = -1;
+    } else if (a.choice === "gone")
       (p.items ??= {})[id] = -1;
     else if (a.choice === "worn")
       (p.wear ??= []).push(id);

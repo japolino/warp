@@ -1416,6 +1416,12 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
     const k = key.toLowerCase();
     const id = Object.keys(w.s.items).find((i) => i === k || itemName(r, w.s, i).toLowerCase() === k);
     if (id && (r.items[id]?.uses ?? 0) > 0) w.push({ t: "use", id, n: Math.min(10, Math.round(n)), src });
+    // The story used an item that does something: its effect happens (once), unless this
+    // exchange already ran it from the button. Uses with a check need the dice, so they're left to a click.
+    const use = id ? r.items[id]?.use : undefined;
+    if (id && use && !use.check && ctx?.action?.id !== `${ITEM_PREFIX}${id}`) {
+      because(w, `${itemName(r, w.s, id)} used in the story`, () => effectToEvents(w, use.effects, src, {}));
+    }
   }
 
   if (p.move) {

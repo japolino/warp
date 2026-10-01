@@ -175,3 +175,17 @@ describe("an ended encounter stays ended", () => {
     expect(res.record.events.some((e) => e.t === "enc" && e.id === "cornered")).toBe(false);
   });
 });
+
+describe("items the story uses", () => {
+  test("the story using an item applies its effect once; a clicked use isn't applied twice", () => {
+    const r = rules();
+    const s = initialState(r);
+    s.stats.visibility = 70;
+    const told = applyProposal(r, s, { used: { "Blocker Spray": 1 } });
+    const after = cloneState(s); told.forEach((e) => applyEvent(after, e, r));
+    expect(after.stats.visibility).toBe(45);
+    expect(after.uses.spray).toBe(2);
+    const clicked = applyProposal(r, s, { used: { spray: 1 } }, { text: "", action: { id: "item:spray", tags: [] } });
+    expect(clicked.some((e) => e.t === "stat")).toBe(false);
+  });
+});
