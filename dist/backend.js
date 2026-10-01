@@ -22697,6 +22697,17 @@ var init_turn = __esm(() => {
 });
 
 // src/backend/scene.ts
+function narrativeRevision(messages) {
+  return revision(messages.map((m) => [m.id, m.swipe_id ?? 0, m.content]));
+}
+async function invalidateSceneForEdit(chatId) {
+  const log = logs.get(chatId);
+  if (!log)
+    return;
+  const messages = await getMessages(chatId);
+  if (logs.get(chatId) === log && log.narrativeRevision !== narrativeRevision(messages))
+    dropScene(chatId);
+}
 function logFor(chatId, kind) {
   let l = logs.get(chatId);
   if (!l || l.kind !== kind) {
@@ -22755,6 +22766,7 @@ async function playScene(opts) {
     return;
   }
   const log = logFor(chatId, kind);
+  log.narrativeRevision = narrativeRevision(msgs);
   log.writing = true;
   log.said = opts.said;
   send({ type: "busy", chatId, busy: true, label: kind === "date" ? "…" : "The dungeon stirs…" }, userId);
@@ -22923,12 +22935,14 @@ async function retryDateImage(chatId, userId) {
   const r = (await getRuleset(chatId, userId))?.ruleset;
   if (!r || !(await getSettings(userId)).dateImages)
     return;
-  const folded = foldPath(r, await getMessages(chatId), 0);
+  const messages = await getMessages(chatId);
+  const folded = foldPath(r, messages, 0);
   if (folded.conflict || !activeSession(r, folded.state))
     return;
   const log = logFor(chatId, "date");
   if (log.imageBusy)
     return;
+  log.narrativeRevision = narrativeRevision(messages);
   requestDateImage(chatId, userId, r, folded.state, log, true);
   await pushState(chatId, userId);
 }
@@ -25636,13 +25650,20 @@ spindle.on("MESSAGE_SWIPED", (p, userId) => {
   schedulePush(p.chatId, userId);
 });
 for (const ev of ["MESSAGE_SENT", "MESSAGE_DELETED", "MESSAGE_EDITED", "SWIPE_EDITED", "CHAT_CHANGED"]) {
-  spindle.on(ev, (p, userId) => {
+  spindle.on(ev, async (p, userId) => {
     const chatId = chatIdOf(p);
     if (chatId)
       invalidateChat(chatId);
     if (chatId) {
       dropPrewritten(chatId);
-      if (ev !== "MESSAGE_SENT")
+      if (ev === "MESSAGE_EDITED" || ev === "SWIPE_EDITED") {
+        try {
+          await invalidateSceneForEdit(chatId);
+        } catch (e) {
+          dropScene(chatId);
+          logError("scene edit", e);
+        }
+      } else if (ev !== "MESSAGE_SENT")
         dropScene(chatId);
     }
     schedulePush(chatId, userId, 250);

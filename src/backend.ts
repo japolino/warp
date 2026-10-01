@@ -12,7 +12,7 @@ import { getRuleset, installTemplate, invalidateCharacter, invalidateChat, known
 import { busyChats, connectionsFor, getActiveChat, pushState, schedulePush, setActiveChat } from "./backend/state-push.js";
 import { afterReply, generationHistory, interceptor, onGenerationEnded, onGenerationStarted, onGenerationStopped, playerName } from "./backend/turn.js";
 import { intentFor } from "./backend/intents.js";
-import { dropScene, playScene, acceptDateImage, retryDateImage, setDateImageFit } from "./backend/scene.js";
+import { dropScene, invalidateSceneForEdit, playScene, acceptDateImage, retryDateImage, setDateImageFit } from "./backend/scene.js";
 import { isQuiet, playRound } from "./backend/encounter.js";
 import { operationCurrent, releaseOperation, takeOperation } from "./backend/operations.js";
 import { activeSession } from "./engine/date/talk.js";
@@ -90,10 +90,16 @@ spindle.on("MESSAGE_SWIPED", (p, userId) => {
   schedulePush(p.chatId, userId);
 });
 for (const ev of ["MESSAGE_SENT", "MESSAGE_DELETED", "MESSAGE_EDITED", "SWIPE_EDITED", "CHAT_CHANGED"]) {
-  spindle.on(ev, (p, userId) => {
+  spindle.on(ev, async (p, userId) => {
     const chatId = chatIdOf(p);
     if (chatId) invalidateChat(chatId);
-    if (chatId) { dropPrewritten(chatId); if (ev !== "MESSAGE_SENT") dropScene(chatId); }
+    if (chatId) {
+      dropPrewritten(chatId);
+      if (ev === "MESSAGE_EDITED" || ev === "SWIPE_EDITED") {
+        try { await invalidateSceneForEdit(chatId); }
+        catch (e) { dropScene(chatId); logError("scene edit", e); }
+      } else if (ev !== "MESSAGE_SENT") dropScene(chatId);
+    }
     schedulePush(chatId, userId, 250);
   });
 }

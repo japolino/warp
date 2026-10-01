@@ -10,11 +10,12 @@ import type { Ruleset } from "../engine/ruleset.js";
 import { applyEvent, cloneState, formatClock, personName, type GameState, type WarpEvent } from "../engine/state.js";
 import { activeSession, moodOf } from "../engine/date/talk.js";
 import type { SceneLine, SceneView } from "../shared/protocol.js";
+import { revision } from "../shared/revision.js";
 import { IMAGE_FITS, parseImageResult, type CueImageRequest, type ImageFit } from "../shared/cue-images.js";
 import { odds } from "./decisions.js";
 import { getTurnDecider } from "./deciders.js";
 import { host, logError, send, toast } from "./host.js";
-import { foldPath, getMessages, patchWarpMeta, pathRevision, warpMeta } from "./ledger.js";
+import { foldPath, getMessages, patchWarpMeta, pathRevision, warpMeta, type Msg } from "./ledger.js";
 import { operationCurrent, releaseOperation, takeOperation } from "./operations.js";
 import { getSettings } from "./settings.js";
 import { characterBrief, getRuleset, personProfile } from "./source.js";
@@ -38,11 +39,26 @@ interface Log {
   imageSubject?: string;
   imageUser?: string;
   imageTimer?: ReturnType<typeof setTimeout>;
+  /** Narrative path, excluding metadata saves made by Warp and companion extensions. */
+  narrativeRevision?: string;
   /** The state when the date or run began (for the closing line). */
   start: GameState | null;
 }
 
 const logs = new Map<string, Log>();
+
+function narrativeRevision(messages: Msg[]): string {
+  return revision(messages.map((m) => [m.id, m.swipe_id ?? 0, m.content]));
+}
+
+/** Lumiverse emits MESSAGE_EDITED even for metadata-only updates. */
+export async function invalidateSceneForEdit(chatId: string): Promise<void> {
+  const log = logs.get(chatId);
+  if (!log) return;
+  const messages = await getMessages(chatId);
+  // A new scene may have begun while the host read was in flight.
+  if (logs.get(chatId) === log && log.narrativeRevision !== narrativeRevision(messages)) dropScene(chatId);
+}
 
 function logFor(chatId: string, kind: "date" | "dungeon"): Log {
   let l = logs.get(chatId);
@@ -98,6 +114,7 @@ export async function playScene(opts: {
   if (!operation || !operationCurrent(chatId, operation)) { toast("info", "Wait for the current turn to finish first.", userId); return; }
   if (foldPath(r, msgs, 0).conflict) { if (!opts.operation) releaseOperation(chatId, operation); return; }
   const log = logFor(chatId, kind);
+  log.narrativeRevision = narrativeRevision(msgs);
   log.writing = true;
   log.said = opts.said;
   send({ type: "busy", chatId, busy: true, label: kind === "date" ? "…" : "The dungeon stirs…" }, userId);
@@ -241,10 +258,12 @@ export async function acceptDateImage(chatId: string, value: unknown, userId?: s
 export async function retryDateImage(chatId: string, userId?: string): Promise<void> {
   const r = (await getRuleset(chatId, userId))?.ruleset;
   if (!r || !(await getSettings(userId)).dateImages) return;
-  const folded = foldPath(r, await getMessages(chatId), 0);
+  const messages = await getMessages(chatId);
+  const folded = foldPath(r, messages, 0);
   if (folded.conflict || !activeSession(r, folded.state)) return;
   const log = logFor(chatId, "date");
   if (log.imageBusy) return;
+  log.narrativeRevision = narrativeRevision(messages);
   requestDateImage(chatId, userId, r, folded.state, log, true);
   await pushState(chatId, userId);
 }

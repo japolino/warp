@@ -25,7 +25,7 @@ const raw = { stats: { health: { start: 50, max: 100, narrator: 20 } }, actions:
 const record = (events: any[] = []) => ({ v: 1 as const, hints: [], events, at: 0 });
 function fixture(input: any = raw) {
   const id = `transaction-${++seq}`;
-  const f: any = { id, messages: [], sent: [], calls: 0, failWrite: false,
+  const f: any = { id, messages: [], sent: [], calls: 0, failWrite: false, emitEdits: true,
     settings: { ...DEFAULT_SETTINGS, decider: "llm", sceneLines: "scripted", draftItemUses: false, themeDating: false, dateImages: false },
     raw: input, extraEntries: [], r: loadRuleset([{ label: "warp-ruleset", content: JSON.stringify(input), order: 0 }]).ruleset!,
     quiet: async () => ({ content: "{}" }),
@@ -63,7 +63,9 @@ beforeAll(async () => {
       updateMessage: async (id: string, mid: string, patch: any) => {
         const f = get(id);
         if (f.failWrite) { f.failWrite = false; throw new Error("scripted storage failure"); }
-        Object.assign(f.messages.find((m: any) => m.id === mid), structuredClone(patch));
+        const message = f.messages.find((m: any) => m.id === mid);
+        Object.assign(message, structuredClone(patch));
+        if (f.emitEdits) await listeners.get("MESSAGE_EDITED")!({ chatId: id, message: structuredClone(message) }, id);
       },
       appendMessage: async (id: string, msg: any, opts: any) => { if (opts?.triggerGeneration) get(id).narratorCalls = (get(id).narratorCalls ?? 0) + 1; return get(id).add(msg.role, msg.content, msg.metadata); },
     },
@@ -483,6 +485,67 @@ test("the registered lore gate folds the selected generation path instead of the
   await onGenerationStarted({ chatId: f.id, generationId: `${generationId}-continue`, targetMessageId: m.id, generationType: "continue" }, f.id);
   expect((await worldInfo(ctx)).forced).toContain("spoiler");
   await onGenerationStopped({ chatId: f.id, generationId: `${generationId}-continue` }, f.id);
+});
+
+function dateFixture() {
+  const f = fixture({ start: { location: "home" }, locations: { home: { name: "Garden" } }, dating: true,
+    relationships: { people: { mira: { name: "Mira", age: 25, schedule: [{ at: "home" }] } } } });
+  f.settings.decider = "rules";
+  f.settings.dateImages = true;
+  f.add("assistant", "At the garden.");
+  return f;
+}
+
+for (const mode of ["scripted", "model"] as const) test(`host metadata edit events preserve ${mode} dating dialogue and its pending Cue picture`, async () => {
+  const f = dateFixture();
+  f.settings.sceneLines = mode;
+  f.quiet = async () => ({ content: JSON.stringify({ lines: [{ speaker: "Mira", text: `Helper reply ${f.calls}.` }] }) });
+  await frontendMessage({ type: "act", chatId: f.id, actionId: "date:talk@mira" }, f.id);
+  let state = foldPath(f.r, f.messages).state;
+  const first = sceneViewFor(f.id, f.r, state)!;
+  expect(first.lines.length).toBeGreaterThan(0);
+  expect(first.seq).toBe(1);
+  expect(first.imageRequest).toBeDefined();
+  await frontendMessage({ type: "act", chatId: f.id, actionId: "date:topic:music" }, f.id);
+  state = foldPath(f.r, f.messages).state;
+  const next = sceneViewFor(f.id, f.r, state)!;
+  expect(next.seq).toBe(2);
+  expect(next.lines.length).toBeGreaterThan(0);
+  if (mode === "model") expect(next.lines[0].text).toBe("Helper reply 2.");
+  expect(next.imageRequest?.requestId).toBe(first.imageRequest!.requestId);
+  // Cue or another extension may also update unrelated metadata while generating.
+  await patchMeta(f.id, f.messages[0].id, "vn_hints", { moods: { Mira: "happy" } });
+  expect(sceneViewFor(f.id, f.r, state)!.seq).toBe(2);
+  const request = next.imageRequest!;
+  await frontendMessage({ type: "cue_image_result", chatId: f.id, result: {
+    version: 1, provider: "warp", chatId: f.id, requestId: request.requestId,
+    status: "ready", imageUrl: "/api/v1/images/date", fit: "contain",
+  } }, f.id);
+  expect(sceneViewFor(f.id, f.r, state)).toMatchObject({ seq: 2, image: "/api/v1/images/date", writing: false });
+  expect(f.sent.filter((m: any) => m.type === "state").at(-1).scene.lines.length).toBeGreaterThan(0);
+  expect(f.calls).toBe(mode === "model" ? 2 : 0);
+  expect(f.narratorCalls ?? 0).toBe(0);
+  dropScene(f.id);
+});
+
+test("real narrative edits during a date discard late helper text and Cue results", async () => {
+  const f = dateFixture();
+  f.settings.sceneLines = "model";
+  await frontendMessage({ type: "act", chatId: f.id, actionId: "date:talk@mira" }, f.id);
+  const request = sceneViewFor(f.id, f.r, foldPath(f.r, f.messages).state)!.imageRequest!;
+  const gate = deferExtraction(f);
+  const move = frontendMessage({ type: "act", chatId: f.id, actionId: "date:topic:music" }, f.id);
+  await gate.waiting;
+  f.messages[0].content = "The scene was rewritten.";
+  await listeners.get("MESSAGE_EDITED")!({ chatId: f.id, message: f.messages[0] }, f.id);
+  gate.release(); await move;
+  await frontendMessage({ type: "cue_image_result", chatId: f.id, result: {
+    version: 1, provider: "warp", chatId: f.id, requestId: request.requestId,
+    status: "ready", imageUrl: "/api/v1/images/stale", fit: "cover",
+  } }, f.id);
+  const view = sceneViewFor(f.id, f.r, foldPath(f.r, f.messages).state)!;
+  expect(view).toMatchObject({ seq: 0, lines: [], image: null, writing: false });
+  expect(busyChats.has(f.id)).toBe(false);
 });
 
 test("date pictures request Cue by name only, apply fit, retry without a turn, and reject stale results", async () => {
