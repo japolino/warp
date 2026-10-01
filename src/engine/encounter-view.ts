@@ -6,7 +6,7 @@ import type { ActionDef, Effect, EncounterDef, Ruleset } from "./ruleset.js";
 import type { RoundCardView } from "../shared/protocol.js";
 import { titleCase } from "./ruleset.js";
 import type { TurnRecord } from "./resolve.js";
-import { foeName, itemName, type GameState } from "./state.js";
+import { foeName, itemName, statMax, type GameState } from "./state.js";
 import { identifiers } from "./expr.js";
 
 export interface Threshold { outcome: string; foe: boolean; stat: string; op: "<=" | ">=" | "<" | ">" | "=="; value: number }
@@ -184,7 +184,7 @@ export function itemRelevance(r: Ruleset, s: GameState, a: ActionDef): { score: 
     const def = r.stats[id];
     if (!def || !d) continue;
     const v = s.stats[id] ?? def.start;
-    const p = (v - def.min) / Math.max(1, def.max - def.min);
+    const p = (v - def.min) / Math.max(1, statMax(r, def, s) - def.min);
     const bad = def.good === "low" ? p >= 0.5 : def.good === "high" ? p <= 0.5 : false;
     const helps = def.good === "low" ? d < 0 : def.good === "high" ? d > 0 : false;
     if (bad && helps) add(1.5 + p, `${def.label} is ${def.good === "low" ? "high" : "low"}`);

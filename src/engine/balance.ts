@@ -54,8 +54,8 @@ function checkedActions(r: Ruleset): ActionDef[] {
   ].filter((a) => a.check);
 }
 
-/** Endings the player chose to buy their way out of (pay the toll, hand over the money): not a win. */
-const CONCESSION = /paid|pay|robbed|bribe|surrender|gave_?in|submit/i;
+/** Endings the player can always choose (pay the toll, hand over the money, walk away): not getting through. */
+const CONCESSION = /paid|pay|robbed|bribe|surrender|gave_?in|submit|walked|walk_away|left|gave_up/i;
 
 export function reviewBalance(r: Ruleset): BalanceWarning[] {
   const out: BalanceWarning[] = [];

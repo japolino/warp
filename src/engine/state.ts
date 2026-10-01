@@ -827,9 +827,12 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
 
 // ───────────────────────── presentation helpers ─────────────────────────
 
-export function bandFor(def: StatDef, value: number): Band | null {
+export function bandFor(def: StatDef, value: number, max?: number): Band | null {
   let hit: Band | null = null;
-  for (const b of def.bands) if (value >= b.at) hit = b;
+  // Percentage bands compare against the current maximum (HP that grows with level).
+  const top = max ?? def.max;
+  const v = def.pctBands ? (top > def.min ? ((value - def.min) / (top - def.min)) * 100 : 0) : value;
+  for (const b of def.bands) if (v >= b.at) hit = b;
   return hit ?? def.bands[0] ?? null;
 }
 

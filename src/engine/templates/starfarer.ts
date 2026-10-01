@@ -59,10 +59,10 @@ hud:
     per_hour: 4
     narrator: 20
     bands:
-      0: Down.
-      10: Critical.
-      40: Wounded.
-      75: Healthy.
+      0%: Down.
+      10%: Critical.
+      40%: Wounded.
+      75%: Healthy.
   lust:
     kind: meter
     good: low

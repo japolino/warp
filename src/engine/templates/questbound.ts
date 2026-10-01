@@ -51,10 +51,10 @@ narration:
     per_hour: 3
     narrator: 15
     bands:
-      0: Down.
-      10: Barely standing.
-      40: Wounded.
-      75: Hale.
+      0%: Down.
+      10%: Barely standing.
+      40%: Wounded.
+      75%: Hale.
   stamina:
     kind: meter
     start: 100
@@ -66,8 +66,8 @@ narration:
       70: Fresh.
   mana:
     kind: meter
-    max: 10 + wits * 2 + level * 3
-    start: 20
+    max: 12 + wits * 2 + level * 3
+    start: 21
     per_hour: 4
     narrator: 10
   gold:

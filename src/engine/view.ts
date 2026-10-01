@@ -40,7 +40,7 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
     const def = r.stats[id];
     const v = s.stats[id] ?? def.start;
     const max = statMax(r, def, s);
-    const band = bandFor(def, v);
+    const band = bandFor(def, v, max);
     const p = pct(v, def.min, max);
     return {
       id, label: def.label, value: v, min: def.min, max,
@@ -60,7 +60,7 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
       const def = r.stats[id];
       const v = s.stats[id] ?? def.start;
       const max = statMax(r, def, s);
-      const band = bandFor(def, v);
+      const band = bandFor(def, v, max);
       return {
         id, label: def.label,
         display: formatNumber(v),
@@ -665,8 +665,8 @@ export function summarizeEvents(r: Ruleset, before: GameState, after: GameState,
     if (!def || def.kind === "hidden") continue;
     const d = a.set ? (after.stats[id] ?? 0) - (before.stats[id] ?? 0) : a.d;
     if (Math.abs(d) < 0.05) continue;
-    const bBefore = bandFor(def, before.stats[id] ?? def.start);
-    const bAfter = bandFor(def, after.stats[id] ?? def.start);
+    const bBefore = bandFor(def, before.stats[id] ?? def.start, statMax(r, def, before));
+    const bAfter = bandFor(def, after.stats[id] ?? def.start, statMax(r, def, after));
     const good = def.good === "none" ? null : (d > 0) === (def.good === "high");
     out.push({
       text: def.kind === "money" ? `${d > 0 ? "+" : "−"}${r.hud.currency}${formatNumber(Math.abs(d))}` : `${def.label} ${signed(d)}`,
@@ -774,7 +774,7 @@ function statLine(r: Ruleset, def: StatDef, s: GameState, forceNumbers: boolean)
   if (def.show === "hidden") return null;
   const v = s.stats[def.id] ?? def.start;
   const max = statMax(r, def, s);
-  const band = bandFor(def, v);
+  const band = bandFor(def, v, max);
   const grade = gradeFor(def, v, max);
   const num = def.kind === "money" ? `${r.hud.currency}${formatNumber(v)}` : grade ? `${grade}` : `${formatNumber(v)}/${formatNumber(max)}`;
   const showNum = forceNumbers || def.show === "number" || def.show === "both" || !band;

@@ -45,6 +45,8 @@ export interface StatDef {
   /** How fast it improves with use (skills and attributes; 0 = never). */
   growth: number;
   bands: Band[];
+  /** Bands given in percent of the stat's (current) maximum: `75%: Hale` — for stats whose max grows. */
+  pctBands?: boolean;
   grades?: string[];
   color?: string;
   desc?: string;
@@ -767,8 +769,8 @@ function normBands(raw: unknown, good: StatDef["good"], where: string, c: Ctx): 
     });
   } else if (isObj(raw)) {
     for (const [k, v] of Object.entries(raw)) {
-      const at = Number(k);
-      if (!Number.isFinite(at)) { c.warn(where, `band key "${k}" should be a number (the value where this text starts)`); continue; }
+      const at = Number(k.replace(/%\s*$/, ""));
+      if (!Number.isFinite(at)) { c.warn(where, `band key "${k}" should be a number (the value where this text starts), or a percentage like 75%`); continue; }
       if (typeof v === "string") list.push({ at, text: v });
       else if (isObj(v) && typeof v.text === "string") list.push({ at, text: v.text, tone: v.tone });
       else c.warn(`${where} › ${k}`, "band should be a line of text");
@@ -825,6 +827,7 @@ function normStat(id: string, raw: unknown, where: string, c: Ctx, forRel = fals
     ...(gate ? { gate } : {}),
     growth: 0,
     bands: normBands(r.bands, good, `${where} › bands`, c),
+    ...(isObj(r.bands) && Object.keys(r.bands).some((k) => /%\s*$/.test(k)) ? { pctBands: true } : {}),
     color: typeof r.color === "string" ? r.color : undefined,
     desc: typeof r.desc === "string" ? r.desc : typeof r.description === "string" ? r.description : undefined,
   };
