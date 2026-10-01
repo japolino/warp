@@ -413,6 +413,12 @@ export interface Settings {
   draftItemUses: boolean;
   /** Dating's built-in topics and outings are rewritten once to fit the card's setting. */
   themeDating: boolean;
+  /** Visual flourishes: rolls stamped in the chat, hearts on dates, hits and tile flips in the dungeon. */
+  fx: "full" | "reduced" | "off";
+  /** Sound: everywhere, only in dates/dungeons/encounters, or none. */
+  sfx: "all" | "games" | "off";
+  /** 0–1. */
+  sfxVolume: number;
   /** Generate a picture for each date (the place, with them in the middle). */
   dateImages: boolean;
   /** Image connection for date pictures; empty = the user's default. */
@@ -440,6 +446,9 @@ export const DEFAULT_SETTINGS: Settings = {
   sceneLines: "model",
   draftItemUses: true,
   themeDating: true,
+  fx: "full",
+  sfx: "games",
+  sfxVolume: 0.4,
   dateImages: true,
   imageConnectionId: "",
 };

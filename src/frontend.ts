@@ -11,8 +11,12 @@ import { connectCue } from "./frontend/cue-bridge.js";
 import { renderDate } from "./frontend/date-ui.js";
 import { formatStory, renderStage, stageModeOf, type StageMode } from "./frontend/stage.js";
 import { STAGE_STYLES } from "./frontend/stage-styles.js";
+import { FX_STYLES } from "./frontend/fx-styles.js";
 import { esc, hudParts, renderChips, renderDepthCard, renderEncounterLog, renderChoices, renderHud, renderJournal, renderPart, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
 import { createPanels } from "./frontend/panel-windows.js";
+import { fxEvents } from "./frontend/fx-events.js";
+import { playFx, typewrite } from "./frontend/fx.js";
+import { armAudio, play, setVolume } from "./frontend/sfx.js";
 import { restoreMaps, wireMaps } from "./frontend/map-view.js";
 
 type StateMsg = Extract<BackendToFrontend, { type: "state" }>;
@@ -34,6 +38,8 @@ export function setup(ctx: SpindleFrontendContext) {
   const cleanups: (() => void)[] = [];
   cleanups.push(ctx.dom.addStyle(STYLES));
   cleanups.push(ctx.dom.addStyle(STAGE_STYLES));
+  cleanups.push(ctx.dom.addStyle(FX_STYLES));
+  cleanups.push(armAudio());
 
   let state: StateMsg | null = null;
   let settings: Settings = { ...DEFAULT_SETTINGS };
@@ -162,6 +168,8 @@ export function setup(ctx: SpindleFrontendContext) {
   let shownScene: StateMsg["scene"] = null;
   let sceneKey = "";
   let lineAt = 0;
+  let shownLine = "";
+  let skipLine: () => boolean = () => false;
   const stageVisible = () => !!stage?.isVisible();
 
   // Sections torn off the main window into panels of their own (see panel-windows.ts).
@@ -585,7 +593,14 @@ export function setup(ctx: SpindleFrontendContext) {
     storyEl.classList.toggle("narration", !!line && !line.speaker);
     const said = sc?.said?.replace(/\*/g, "").trim();
     saidEl.innerHTML = said && lineAt === 0 ? `<span>You</span>${esc(said.length > 280 ? `${said.slice(0, 280)}…` : said)}` : "";
-    textEl.innerHTML = line ? formatStory(line.text) : "";
+    const lineKey = `${sceneKey}:${lineAt}:${line?.text.length ?? 0}`;
+    if (lineKey !== shownLine) {
+      shownLine = lineKey;
+      skipLine();
+      textEl.innerHTML = line ? formatStory(line.text) : "";
+      // Visual-novel style: the line types itself out (a click shows it all).
+      skipLine = line && settings.fx === "full" ? typewrite(textEl) : () => false;
+    }
     const more = lineAt < lines.length - 1;
     storyEl.classList.toggle("more", more && !writing);
     statusEl.innerHTML = writing
@@ -594,6 +609,8 @@ export function setup(ctx: SpindleFrontendContext) {
     sayButton.disabled = writing;
   }
   function nextLine(): boolean {
+    // Still typing: the first click (or key) shows the whole line.
+    if (skipLine()) return true;
     const n = shownScene?.lines.length ?? 0;
     if (lineAt >= n - 1) return false;
     lineAt += 1;
@@ -985,6 +1002,13 @@ export function setup(ctx: SpindleFrontendContext) {
       if (cid && t.value) send({ type: "wear", chatId: cid, slot: t.dataset.wearSlot, item: t.value === "__off" ? null : t.value });
       return;
     }
+    if (t.dataset.settingVolume !== undefined) {
+      const v = Number(t.value) / 100;
+      setVolume(v);
+      play("heart");
+      send({ type: "settings", patch: { sfxVolume: v } });
+      return;
+    }
     const pctKey = t.dataset.settingPct as "autoConfidence" | "askConfidence" | undefined;
     if (pctKey) {
       let v = Number(t.value) / 100;
@@ -1175,11 +1199,14 @@ export function setup(ctx: SpindleFrontendContext) {
         if (state?.chatId !== m.chatId) { editingBar = null; lastBars = new Map(); }
         const entered = !state?.dungeon && !!m.dungeon && state?.chatId === m.chatId;
         if (!m.dungeon?.battle) dgPick = dgPick?.kind === "use" ? dgPick : null;
+        const fx = settings.enabled ? fxEvents(state, m) : [];
         state = m;
         if (entered) drawerView = "dungeon";
         if (m.chatId === busy.chatId && !m.busy && busy.label === "Rolling…") busy = { chatId: "", on: false, label: "" };
         if (m.busy && m.chatId) busy = { chatId: m.chatId, on: true, label: busy.label };
         renderAll();
+        // Flourishes once the new state is on screen (and the chips are in their messages).
+        if (fx.length) requestAnimationFrame(() => playFx(fx, { fx: settings.fx, sfx: settings.sfx, stage: stageEl, message: (id) => ctx.dom.findMessageElement(id) }));
         break;
       }
       case "busy":
@@ -1202,6 +1229,7 @@ export function setup(ctx: SpindleFrontendContext) {
       }
       case "settings":
         settings = m.settings;
+        setVolume(settings.sfxVolume);
         templates = m.templates;
         connections = m.connections;
         imageConnections = m.imageConnections ?? [];

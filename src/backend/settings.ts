@@ -26,6 +26,9 @@ export async function patchSettings(patch: Partial<Settings>, userId?: string): 
   next.sceneLines = next.sceneLines === "scripted" ? "scripted" : "model";
   next.draftItemUses = next.draftItemUses !== false;
   next.themeDating = next.themeDating !== false;
+  next.fx = next.fx === "reduced" || next.fx === "off" ? next.fx : "full";
+  next.sfx = next.sfx === "all" || next.sfx === "off" ? next.sfx : "games";
+  next.sfxVolume = Math.max(0, Math.min(1, Number.isFinite(Number(next.sfxVolume)) ? Number(next.sfxVolume) : 0.4));
   next.dateImages = next.dateImages !== false && (next.dateImages as unknown) !== "false";
   cache.set(key(userId), next);
   await host().userStorage.setJson("settings.json", next, { indent: 2, userId });

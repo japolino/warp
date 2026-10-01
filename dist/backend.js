@@ -8691,6 +8691,9 @@ var init_protocol = __esm(() => {
     sceneLines: "model",
     draftItemUses: true,
     themeDating: true,
+    fx: "full",
+    sfx: "games",
+    sfxVolume: 0.4,
     dateImages: true,
     imageConnectionId: ""
   };
@@ -8719,6 +8722,9 @@ async function patchSettings(patch, userId) {
   next.sceneLines = next.sceneLines === "scripted" ? "scripted" : "model";
   next.draftItemUses = next.draftItemUses !== false;
   next.themeDating = next.themeDating !== false;
+  next.fx = next.fx === "reduced" || next.fx === "off" ? next.fx : "full";
+  next.sfx = next.sfx === "all" || next.sfx === "off" ? next.sfx : "games";
+  next.sfxVolume = Math.max(0, Math.min(1, Number.isFinite(Number(next.sfxVolume)) ? Number(next.sfxVolume) : 0.4));
   next.dateImages = next.dateImages !== false && next.dateImages !== "false";
   cache2.set(key(userId), next);
   await host().userStorage.setJson("settings.json", next, { indent: 2, userId });

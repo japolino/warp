@@ -543,6 +543,25 @@ export function renderSettings(s: Settings, status: RulesetStatus | null, connec
     </label>
   </div>
   <div class="warp-card">
+    <h3>Effects & sound</h3>
+    <label class="warp-slider">Visual effects
+      <select class="warp-select" data-setting="fx">
+        <option value="full"${s.fx === "full" ? " selected" : ""}>Full — rolls stamped in the chat, hearts, hits, tile flips</option>
+        <option value="reduced"${s.fx === "reduced" ? " selected" : ""}>Reduced — colour and banners, no motion</option>
+        <option value="off"${s.fx === "off" ? " selected" : ""}>Off</option>
+      </select>
+    </label>
+    <label class="warp-slider">Sound
+      <select class="warp-select" data-setting="sfx">
+        <option value="games"${s.sfx === "games" ? " selected" : ""}>Dates, dungeons and encounters</option>
+        <option value="all"${s.sfx === "all" ? " selected" : ""}>Everywhere (dice in the chat too)</option>
+        <option value="off"${s.sfx === "off" ? " selected" : ""}>Off</option>
+      </select>
+    </label>
+    <label class="warp-slider">Volume <input type="range" min="0" max="100" step="5" value="${Math.round(s.sfxVolume * 100)}" data-setting-volume aria-label="Sound volume"> <span class="warp-dim">${Math.round(s.sfxVolume * 100)}%</span></label>
+    <p class="warp-dim">Sounds are made live in the browser and start after your first click. Your system's "reduce motion" setting is respected.</p>
+  </div>
+  <div class="warp-card">
     <h3>Content: lines & veils</h3>
     <p>Click a tag to cycle it: <b>on</b> → <span class="warp-tone-warn">veil</span> (still happens, narrated off-screen) → <span class="warp-tone-bad">line</span> (removed from the game).</p>
     <div class="warp-tags">${tagChips || `<span class="warp-empty">This ruleset doesn't tag any actions.</span>`}</div>

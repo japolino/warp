@@ -34,6 +34,9 @@ var init_protocol = __esm(() => {
     sceneLines: "model",
     draftItemUses: true,
     themeDating: true,
+    fx: "full",
+    sfx: "games",
+    sfxVolume: 0.4,
     dateImages: true,
     imageConnectionId: ""
   };
@@ -1010,6 +1013,25 @@ function renderSettings(s, status, connections, jevKeySet = false, imageConnecti
     </label>
   </div>
   <div class="warp-card">
+    <h3>Effects & sound</h3>
+    <label class="warp-slider">Visual effects
+      <select class="warp-select" data-setting="fx">
+        <option value="full"${s.fx === "full" ? " selected" : ""}>Full — rolls stamped in the chat, hearts, hits, tile flips</option>
+        <option value="reduced"${s.fx === "reduced" ? " selected" : ""}>Reduced — colour and banners, no motion</option>
+        <option value="off"${s.fx === "off" ? " selected" : ""}>Off</option>
+      </select>
+    </label>
+    <label class="warp-slider">Sound
+      <select class="warp-select" data-setting="sfx">
+        <option value="games"${s.sfx === "games" ? " selected" : ""}>Dates, dungeons and encounters</option>
+        <option value="all"${s.sfx === "all" ? " selected" : ""}>Everywhere (dice in the chat too)</option>
+        <option value="off"${s.sfx === "off" ? " selected" : ""}>Off</option>
+      </select>
+    </label>
+    <label class="warp-slider">Volume <input type="range" min="0" max="100" step="5" value="${Math.round(s.sfxVolume * 100)}" data-setting-volume aria-label="Sound volume"> <span class="warp-dim">${Math.round(s.sfxVolume * 100)}%</span></label>
+    <p class="warp-dim">Sounds are made live in the browser and start after your first click. Your system's "reduce motion" setting is respected.</p>
+  </div>
+  <div class="warp-card">
     <h3>Content: lines & veils</h3>
     <p>Click a tag to cycle it: <b>on</b> → <span class="warp-tone-warn">veil</span> (still happens, narrated off-screen) → <span class="warp-tone-bad">line</span> (removed from the game).</p>
     <div class="warp-tags">${tagChips || `<span class="warp-empty">This ruleset doesn't tag any actions.</span>`}</div>
@@ -1302,7 +1324,7 @@ function bar(cur, max, cls, label) {
 function memberCard(f, opts) {
   const cls = ["warp-dg-member", f.alive ? "" : "down", f.active ? "active" : "", opts.targetable && f.alive ? "targetable" : ""].filter(Boolean).join(" ");
   const tag = opts.targetable && f.alive ? "button" : "div";
-  return `<${tag} class="${cls}" ${opts.targetable && f.alive ? `data-dg-target="${esc2(f.id)}"` : ""}>
+  return `<${tag} class="${cls}" data-fid="${esc2(f.id)}" ${opts.targetable && f.alive ? `data-dg-target="${esc2(f.id)}"` : ""}>
     <div class="warp-dg-member-head">${sprite(f.sprite, "warp-dg-face")}<b>${esc2(you(f.name))}</b>${f.guard ? `<span class="warp-dim">\uD83D\uDEE1</span>` : ""}</div>
     ${bar(f.hp, f.mhp, "hp", "HP")}
     ${f.mmp > 0 ? bar(f.mp, f.mmp, "mp", "MP") : ""}
@@ -1358,7 +1380,7 @@ function board(v) {
     const bg = t.state === "hidden" ? wall : floor;
     const inner = t.state === "here" ? sprite(leader, "warp-dg-icon") : t.state === "seen" ? tileIcon(t.kind, t.cleared) : "";
     const cls = ["warp-dg-tile", t.state, t.reachable ? "reachable" : ""].filter(Boolean).join(" ");
-    return t.reachable ? `<button class="${cls}" data-dg-move="${t.x},${t.y}" title="${esc2(title)} — move here" style="background-image:url(${bg})">${inner}</button>` : `<div class="${cls}" title="${esc2(title)}" style="background-image:url(${bg})">${inner}</div>`;
+    return t.reachable ? `<button class="${cls}" data-tile="${t.x},${t.y}" data-dg-move="${t.x},${t.y}" title="${esc2(title)} — move here" style="background-image:url(${bg})">${inner}</button>` : `<div class="${cls}" data-tile="${t.x},${t.y}" title="${esc2(title)}" style="background-image:url(${bg})">${inner}</div>`;
   }).join("");
   return `<div class="warp-dg-board" style="grid-template-columns:repeat(${v.size},1fr)">${cells}</div>`;
 }
@@ -1756,7 +1778,7 @@ function purse(v) {
 function foeCard(f, targetable) {
   const cls = ["warp-stage-foe", f.alive ? "" : "down", f.boss ? "boss" : f.elite ? "elite" : "", targetable && f.alive ? "targetable" : ""].filter(Boolean).join(" ");
   const tag = targetable && f.alive ? "button" : "div";
-  return `<${tag} class="${cls}" ${targetable && f.alive ? `data-dg-target="${esc(f.id)}" title="Target ${esc(f.name)}"` : ""}>
+  return `<${tag} class="${cls}" data-fid="${esc(f.id)}" ${targetable && f.alive ? `data-dg-target="${esc(f.id)}" title="Target ${esc(f.name)}"` : ""}>
     <div class="warp-stage-foe-glow"></div>
     ${sprite(f.sprite, "warp-stage-foe-img")}
     <div class="warp-stage-foe-name">${esc(f.name)}</div>
@@ -2300,6 +2322,123 @@ var STAGE_STYLES = `
 }
 @media (prefers-reduced-motion: reduce) {
   .warp-stage, .warp-stage *, .warp-stage *::before, .warp-stage *::after { animation: none !important; transition: none !important; }
+}
+`;
+
+// src/frontend/fx-styles.ts
+var FX_STYLES = `
+/* ───────── rolls in the chat: always readable, stamped when they land ───────── */
+.warp-chips { position: relative; }
+.warp-chips .warp-dice { font-weight: 700; border-width: 1.5px; padding-inline: 10px; }
+.warp-chips .warp-dice.warp-tone-good { background: color-mix(in srgb, var(--warp-good) 16%, transparent); border-color: color-mix(in srgb, var(--warp-good) 70%, transparent); }
+.warp-chips .warp-dice.warp-tone-warn { background: color-mix(in srgb, var(--warp-warn) 16%, transparent); border-color: color-mix(in srgb, var(--warp-warn) 70%, transparent); }
+.warp-chips .warp-dice.warp-tone-bad { background: color-mix(in srgb, var(--warp-bad) 16%, transparent); border-color: color-mix(in srgb, var(--warp-bad) 70%, transparent); }
+
+.warp-fx-pop { animation: warp-fx-pop .9s cubic-bezier(.2,1.6,.4,1) both; }
+@keyframes warp-fx-pop { 0% { transform: scale(.6) rotate(-6deg); opacity: .3 } 55% { transform: scale(1.18) rotate(2deg); opacity: 1 } 100% { transform: none } }
+
+.warp-fx-tone-good, .warp-fx-tone-crit { animation: warp-fx-glow-good 1.5s ease-out; border-radius: 10px; }
+.warp-fx-tone-warn { animation: warp-fx-glow-warn 1.5s ease-out; border-radius: 10px; }
+.warp-fx-tone-bad, .warp-fx-tone-critbad { animation: warp-fx-glow-bad 1.5s ease-out; border-radius: 10px; }
+@keyframes warp-fx-glow-good { 0%, 30% { box-shadow: 0 0 0 2px #34b89a, 0 0 22px #34b89a88 } 100% { box-shadow: 0 0 0 0 transparent } }
+@keyframes warp-fx-glow-warn { 0%, 30% { box-shadow: 0 0 0 2px #d9a441, 0 0 22px #d9a44188 } 100% { box-shadow: 0 0 0 0 transparent } }
+@keyframes warp-fx-glow-bad { 0%, 30% { box-shadow: 0 0 0 2px #e05a7e, 0 0 22px #e05a7e88 } 100% { box-shadow: 0 0 0 0 transparent } }
+
+.warp-fx-stamp {
+  position: absolute; z-index: 5; left: 50%; top: -6px; transform: translate(-50%, -100%);
+  display: flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 999px; pointer-events: none;
+  font-size: 15px; letter-spacing: .02em; white-space: nowrap; color: #fff;
+  background: #2a2733; border: 2px solid currentColor; box-shadow: 0 10px 26px rgba(0,0,0,.45);
+  animation: warp-fx-stamp-still 2.6s ease both;
+}
+.warp-fx-stamp.moving { animation: warp-fx-stamp 2.6s cubic-bezier(.2,1.4,.4,1) both; }
+.warp-fx-stamp b { text-transform: uppercase; letter-spacing: .08em; }
+.warp-fx-stamp .warp-fx-label { font-size: 12px; opacity: .75; }
+.warp-fx-stamp.warp-fx-good { color: #5fe0bf; } .warp-fx-stamp.warp-fx-warn { color: #f0c062; }
+.warp-fx-stamp.warp-fx-bad { color: #f27c9c; } .warp-fx-stamp.warp-fx-crit { color: #ffe27a; background: linear-gradient(135deg, #3b2f10, #2a2733); }
+.warp-fx-stamp.warp-fx-critbad { color: #ff6b6b; background: linear-gradient(135deg, #3b1218, #2a2733); }
+.warp-fx-stamp .warp-fx-die { display: inline-block; font-size: 18px; }
+.warp-fx-stamp.moving .warp-fx-die { animation: warp-fx-tumble .45s cubic-bezier(.3,.7,.4,1) both; }
+@keyframes warp-fx-tumble { 0% { transform: translateY(-14px) rotate(-260deg) scale(.6) } 70% { transform: translateY(2px) rotate(10deg) scale(1.15) } 100% { transform: none } }
+@keyframes warp-fx-stamp { 0% { transform: translate(-50%, -60%) scale(2.2); opacity: 0 } 14% { transform: translate(-50%, -100%) scale(.92); opacity: 1 } 22% { transform: translate(-50%, -100%) scale(1.04) } 30%, 78% { transform: translate(-50%, -100%) scale(1); opacity: 1 } 100% { transform: translate(-50%, -150%) scale(.96); opacity: 0 } }
+@keyframes warp-fx-stamp-still { 0% { opacity: 0 } 10%, 80% { opacity: 1 } 100% { opacity: 0 } }
+
+/* ───────── particles (hearts, sparks, gold) ───────── */
+.warp-fx-particles { position: absolute; left: 50%; top: 45%; width: 0; height: 0; pointer-events: none; z-index: 30; }
+.warp-fx-particles > span {
+  position: absolute; left: 0; top: 0; font-size: calc(18px * var(--s, 1)); line-height: 1;
+  animation: warp-fx-float 1.7s cubic-bezier(.2,.7,.3,1) var(--d, 0s) both; text-shadow: 0 2px 8px rgba(0,0,0,.35);
+}
+@keyframes warp-fx-float { 0% { transform: translate(-50%, 0) scale(.4) rotate(0); opacity: 0 } 15% { opacity: 1 } 65% { opacity: 1 } 100% { transform: translate(calc(-50% + var(--x)), var(--y)) scale(1) rotate(var(--r)); opacity: 0 } }
+.warp-fx-crit > span { color: #ffe27a; } .warp-fx-critbad > span { color: #ff6b6b; } .warp-fx-gold > span { color: #ffd34d; }
+
+/* ───────── dates: warmth, frost, banners ───────── */
+.warp-fx-warm::after, .warp-fx-frost::after, .warp-fx-frost-hard::after { content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 25; }
+.warp-fx-warm::after { animation: warp-fx-warm 1.6s ease-out both; }
+.warp-fx-frost::after { animation: warp-fx-frost 1.8s ease-out both; }
+.warp-fx-frost-hard::after { animation: warp-fx-frost 1.8s ease-out both; box-shadow: inset 0 0 160px 40px #9fd3ffaa; }
+@keyframes warp-fx-warm { 0% { box-shadow: inset 0 0 0 0 transparent } 30% { box-shadow: inset 0 0 160px 30px #ff7eb680 } 100% { box-shadow: inset 0 0 0 0 transparent } }
+@keyframes warp-fx-frost { 0% { box-shadow: inset 0 0 0 0 transparent; backdrop-filter: none } 30% { box-shadow: inset 0 0 140px 30px #9fd3ff80 } 100% { box-shadow: inset 0 0 0 0 transparent } }
+
+.warp-fx-banner {
+  position: absolute; z-index: 40; left: 50%; top: 22%; transform: translateX(-50%); pointer-events: none;
+  display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 12px 34px; border-radius: 16px;
+  background: rgba(20, 16, 28, .82); border: 1px solid rgba(255,255,255,.18); color: #fff; text-align: center;
+  box-shadow: 0 18px 50px rgba(0,0,0,.5); animation: warp-fx-banner 2.8s cubic-bezier(.2,1.2,.4,1) both;
+}
+.warp-fx-banner span { font-size: 11px; letter-spacing: .2em; text-transform: uppercase; opacity: .7; }
+.warp-fx-banner b { font-size: 26px; }
+.warp-fx-banner.up { border-color: #ff9ac6aa; } .warp-fx-banner.up b { color: #ffc2dc; }
+.warp-fx-banner.down b { color: #a9c7ff; }
+@keyframes warp-fx-banner { 0% { opacity: 0; transform: translate(-50%, 18px) scale(.9) } 14%, 80% { opacity: 1; transform: translate(-50%, 0) scale(1) } 100% { opacity: 0; transform: translate(-50%, -14px) } }
+
+/* ───────── the dungeon: hits, numbers, flips, floors ───────── */
+[data-fid] { position: relative; }
+.warp-fx-shake { animation: warp-fx-shake .45s ease both; }
+.warp-fx-shake-hard { animation: warp-fx-shake-hard .55s ease both; }
+@keyframes warp-fx-shake { 0%, 100% { transform: none } 20% { transform: translateX(-6px) rotate(-1deg) } 40% { transform: translateX(5px) rotate(1deg) } 60% { transform: translateX(-3px) } 80% { transform: translateX(2px) } }
+@keyframes warp-fx-shake-hard { 0%, 100% { transform: none } 15% { transform: translate(-10px, 3px) rotate(-3deg) } 30% { transform: translate(9px, -3px) rotate(2deg) } 50% { transform: translate(-6px, 2px) } 70% { transform: translate(4px, -1px) } }
+.warp-fx-hurt > :not(.warp-fx-number) { animation: warp-fx-hurt .6s ease-out both; }
+@keyframes warp-fx-hurt { 0%, 25% { filter: brightness(2.2) saturate(0) sepia(1) hue-rotate(-50deg) } 100% { filter: none } }
+.warp-fx-heal { animation: warp-fx-heal-ring .9s ease-out both; }
+.warp-fx-heal > :not(.warp-fx-number) { animation: warp-fx-heal .9s ease-out both; }
+@keyframes warp-fx-heal-ring { 0%, 30% { box-shadow: 0 0 0 2px #5fe0bf, 0 0 22px #5fe0bf88 } 100% { box-shadow: none } }
+@keyframes warp-fx-heal { 0%, 30% { filter: brightness(1.4) drop-shadow(0 0 12px #5fe0bf) } 100% { filter: none } }
+.warp-fx-ko { animation: warp-fx-ko 1.1s ease-in both; }
+@keyframes warp-fx-ko { 0% { filter: none } 40% { filter: brightness(3) saturate(0) } 100% { filter: grayscale(1) brightness(.5); opacity: .55; transform: translateY(6px) scale(.96) } }
+
+.warp-fx-number {
+  position: absolute; top: 18%; z-index: 20; transform: translateX(-50%); pointer-events: none;
+  font: 800 22px/1 system-ui, sans-serif; color: #fff; -webkit-text-stroke: 1px rgba(0,0,0,.6); text-shadow: 0 3px 0 rgba(0,0,0,.45);
+  animation: warp-fx-number 1.3s cubic-bezier(.2,1.4,.4,1) both;
+}
+.warp-fx-number small { display: block; font-size: 11px; letter-spacing: .15em; color: #ffe27a; }
+.warp-fx-number.dmg { color: #fff6d6; } .warp-fx-number.hurt { color: #ff8a8a; } .warp-fx-number.heal { color: #7af0c8; } .warp-fx-number.gold { color: #ffd34d; font-size: 16px; }
+.warp-fx-number.crit { font-size: 32px; color: #ffe27a; }
+@keyframes warp-fx-number { 0% { opacity: 0; transform: translate(-50%, 10px) scale(.5) } 18% { opacity: 1; transform: translate(-50%, -14px) scale(1.25) } 32% { opacity: 1; transform: translate(-50%, -18px) scale(1) } 72% { opacity: 1; transform: translate(-50%, -34px) scale(1) } 100% { opacity: 0; transform: translate(-50%, -52px) } }
+
+.warp-fx-flash { animation: warp-fx-flash .4s ease-out both; }
+@keyframes warp-fx-flash { 0% { box-shadow: inset 0 0 0 999px rgba(255,255,255,.55) } 100% { box-shadow: inset 0 0 0 999px rgba(255,255,255,0) } }
+.warp-fx-boss { animation: warp-fx-boss .9s ease-out both; }
+@keyframes warp-fx-boss { 0%, 40% { box-shadow: inset 0 0 120px 30px rgba(220, 30, 60, .6) } 100% { box-shadow: inset 0 0 0 0 transparent } }
+
+.warp-fx-flip { animation: warp-fx-flip .55s cubic-bezier(.3,.7,.4,1) var(--fx-delay, 0ms) both; }
+@keyframes warp-fx-flip { 0% { transform: perspective(300px) rotateY(90deg) scale(.9); filter: brightness(1.8) } 100% { transform: none; filter: none } }
+.warp-fx-glint { animation: warp-fx-glint 1.2s ease-out both; }
+@keyframes warp-fx-glint { 0%, 35% { box-shadow: 0 0 0 2px #ffd34d, 0 0 26px #ffd34d99 } 100% { box-shadow: 0 0 0 0 transparent } }
+
+.warp-fx-floor {
+  position: absolute; inset: 0; z-index: 50; display: grid; place-content: center; text-align: center; pointer-events: none;
+  background: #000; color: #fff; animation: warp-fx-floor-still 2.2s ease both;
+}
+.warp-fx-floor.moving { animation: warp-fx-floor 2.2s ease both; }
+.warp-fx-floor span { font-size: 12px; letter-spacing: .4em; text-transform: uppercase; opacity: .7; }
+.warp-fx-floor b { font-size: 64px; font-weight: 800; }
+@keyframes warp-fx-floor { 0% { opacity: 0 } 18% { opacity: 1 } 70% { opacity: 1 } 100% { opacity: 0 } }
+@keyframes warp-fx-floor-still { 0% { opacity: 0 } 15%, 70% { opacity: .92 } 100% { opacity: 0 } }
+
+@media (prefers-reduced-motion: reduce) {
+  .warp-fx-pop, .warp-fx-shake, .warp-fx-shake-hard, .warp-fx-flip, .warp-fx-number, .warp-fx-particles > span { animation: none !important; }
 }
 `;
 
@@ -2942,6 +3081,511 @@ function createPanels(o) {
   };
 }
 
+// src/frontend/fx-events.ts
+var recKey = (r) => `${r.messageId}:${r.swipe}:${r.check?.total ?? ""}:${r.check?.tier ?? ""}`;
+function fxEvents(prev, next) {
+  if (!prev || prev.chatId !== next.chatId)
+    return [];
+  const out = [];
+  const seen = new Set(prev.records.map(recKey));
+  for (const r of next.records) {
+    if (!r.check || seen.has(recKey(r)))
+      continue;
+    out.push({ kind: "roll", messageId: r.messageId, tier: r.check.tier, crit: r.check.tier.startsWith("crit"), label: r.check.label });
+  }
+  const before = new Map((prev.encounterLogs ?? []).map((l) => [l.messageId, l]));
+  for (const l of next.encounterLogs ?? []) {
+    const p = before.get(l.messageId);
+    if (p && p.rounds.length === l.rounds.length && p.status === l.status)
+      continue;
+    const last = l.rounds[l.rounds.length - 1];
+    if (!last)
+      continue;
+    const t = last.check?.tier ?? null;
+    out.push({ kind: "round", messageId: l.messageId, tier: t === null ? null : /great/.test(t) ? "crit_success" : /badly/.test(t) ? "crit_fail" : /success/.test(t) ? "success" : t === "partial" ? "partial" : "fail", ended: l.ended ? l.ended.loss ? "loss" : "win" : null });
+  }
+  const ps = prev.date?.session ?? null, ns = next.date?.session ?? null;
+  if (!ps && ns)
+    out.push({ kind: "dateStart" });
+  if (ps && !ns)
+    out.push({ kind: "dateEnd" });
+  if (ns?.last && (ps?.who !== ns.who || ps?.last?.label !== ns.last.label || ps?.last?.reaction !== ns.last.reaction || ps?.fatigue !== ns.fatigue)) {
+    out.push({ kind: "reaction", reaction: ns.last.reaction });
+  }
+  if (ps && ns && ps.who === ns.who) {
+    const a = prev.date?.people.find((p) => p.id === ns.who), b = next.date?.people.find((p) => p.id === ns.who);
+    if (a && b && a.stage !== b.stage)
+      out.push({ kind: "stage", up: (b.love ?? 0) >= (a.love ?? 0), label: b.stage });
+  }
+  const pd = prev.dungeon, nd = next.dungeon;
+  if (pd && nd && pd.id === nd.id) {
+    if (nd.depth > pd.depth)
+      out.push({ kind: "floor", depth: nd.depth });
+    else {
+      const was = new Map(pd.tiles.map((t) => [`${t.x},${t.y}`, t]));
+      for (const t of nd.tiles) {
+        const o = was.get(`${t.x},${t.y}`);
+        if (o?.state === "hidden" && t.state !== "hidden")
+          out.push({ kind: "reveal", x: t.x, y: t.y, tile: t.kind });
+      }
+      const ph = pd.tiles.find((t) => t.state === "here"), nh = nd.tiles.find((t) => t.state === "here");
+      if (ph && nh && (ph.x !== nh.x || ph.y !== nh.y))
+        out.push({ kind: "step" });
+    }
+    if (nd.gold > pd.gold)
+      out.push({ kind: "gold", amount: nd.gold - pd.gold });
+    const bag = (v) => v.bag.reduce((n, i) => n + i.count, 0) + v.loot.reduce((n, i) => n + i.count, 0);
+    if (bag(nd) > bag(pd))
+      out.push({ kind: "loot" });
+    if (nd.level > pd.level)
+      out.push({ kind: "level", level: nd.level });
+    if (!pd.battle && nd.battle)
+      out.push({ kind: "battle", boss: nd.battle.kind === "boss" });
+    if (pd.battle && nd.battle && !pd.battle.over && nd.battle.over)
+      out.push({ kind: "battleOver", won: /won|victory|win/i.test(nd.battle.over) });
+    const fighters = (v) => [...v.battle?.fighters ?? [], ...v.party];
+    const old = new Map(fighters(pd).map((f) => [f.id, f]));
+    const crit = (nd.battle?.log ?? []).slice(-4).some((l) => /critical|crit\b/i.test(l)) && !(pd.battle?.log ?? []).slice(-4).some((l) => /critical|crit\b/i.test(l));
+    const done = new Set;
+    for (const f of fighters(nd)) {
+      const o = old.get(f.id);
+      if (!o || done.has(f.id))
+        continue;
+      done.add(f.id);
+      if (f.hp < o.hp)
+        out.push({ kind: "hit", id: f.id, side: f.side, amount: o.hp - f.hp, ko: o.alive && !f.alive, crit });
+      else if (f.hp > o.hp)
+        out.push({ kind: "heal", id: f.id, amount: f.hp - o.hp });
+    }
+  }
+  return out;
+}
+
+// src/frontend/sfx.ts
+var ctx = null;
+var master = null;
+var volume = 0.4;
+var unlocked = false;
+function setVolume(v) {
+  volume = Math.max(0, Math.min(1, v));
+  if (master)
+    master.gain.value = volume * 0.6;
+}
+function armAudio() {
+  const unlock = () => {
+    unlocked = true;
+    try {
+      audio()?.resume();
+    } catch {}
+  };
+  window.addEventListener("pointerdown", unlock, { once: true, capture: true });
+  window.addEventListener("keydown", unlock, { once: true, capture: true });
+  return () => {
+    window.removeEventListener("pointerdown", unlock, { capture: true });
+    window.removeEventListener("keydown", unlock, { capture: true });
+  };
+}
+function audio() {
+  if (ctx)
+    return ctx;
+  try {
+    const C = window.AudioContext ?? window.webkitAudioContext;
+    if (!C)
+      return null;
+    ctx = new C;
+    master = ctx.createGain();
+    master.gain.value = volume * 0.6;
+    master.connect(ctx.destination);
+  } catch {
+    ctx = null;
+  }
+  return ctx;
+}
+function tone(freq, at, dur, opts = {}) {
+  const a = audio();
+  if (!a || !master)
+    return;
+  const t = a.currentTime + at;
+  const o = a.createOscillator();
+  const g = a.createGain();
+  o.type = opts.type ?? "sine";
+  o.frequency.setValueAtTime(freq, t);
+  if (opts.slide)
+    o.frequency.exponentialRampToValueAtTime(Math.max(30, freq * opts.slide), t + dur);
+  const peak = opts.gain ?? 0.3;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(peak, t + (opts.attack ?? 0.008));
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g).connect(master);
+  o.start(t);
+  o.stop(t + dur + 0.02);
+}
+function noise(at, dur, opts = {}) {
+  const a = audio();
+  if (!a || !master)
+    return;
+  const t = a.currentTime + at;
+  const len = Math.max(1, Math.floor(a.sampleRate * dur));
+  const buf = a.createBuffer(1, len, a.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0;i < len; i++)
+    d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  const src = a.createBufferSource();
+  src.buffer = buf;
+  const f = a.createBiquadFilter();
+  f.type = opts.type ?? "bandpass";
+  f.frequency.value = opts.freq ?? 2000;
+  f.Q.value = opts.q ?? 1;
+  const g = a.createGain();
+  g.gain.value = opts.gain ?? 0.3;
+  src.connect(f).connect(g).connect(master);
+  src.start(t);
+}
+var chord = (notes, at, step, dur, type = "triangle", gain = 0.18) => notes.forEach((n, i) => tone(n, at + i * step, dur, { type, gain }));
+var SOUNDS = {
+  dice: () => {
+    for (let i = 0;i < 5; i++)
+      noise(i * 0.055 + Math.random() * 0.02, 0.04, { freq: 2600 + Math.random() * 1500, q: 6, gain: 0.35 - i * 0.05 });
+  },
+  success: () => chord([523, 659, 784], 0.32, 0.07, 0.35),
+  crit: () => {
+    chord([523, 659, 784, 1047], 0.32, 0.06, 0.5, "triangle", 0.2);
+    tone(2093, 0.6, 0.6, { gain: 0.08 });
+  },
+  partial: () => chord([523, 587], 0.32, 0.09, 0.3, "triangle", 0.15),
+  fail: () => {
+    tone(330, 0.32, 0.25, { type: "triangle", gain: 0.18, slide: 0.8 });
+    tone(262, 0.44, 0.35, { type: "triangle", gain: 0.16, slide: 0.75 });
+  },
+  critFail: () => {
+    tone(220, 0.32, 0.5, { type: "sawtooth", gain: 0.09, slide: 0.5 });
+    noise(0.32, 0.25, { freq: 300, gain: 0.25, type: "lowpass" });
+  },
+  heart: () => {
+    tone(880, 0, 0.18, { gain: 0.15 });
+    tone(1175, 0.09, 0.3, { gain: 0.14 });
+    tone(1568, 0.18, 0.45, { gain: 0.1 });
+  },
+  like: () => {
+    tone(784, 0, 0.18, { gain: 0.12 });
+    tone(988, 0.08, 0.25, { gain: 0.1 });
+  },
+  meh: () => tone(523, 0, 0.18, { type: "triangle", gain: 0.08 }),
+  chill: () => {
+    tone(392, 0, 0.3, { type: "triangle", gain: 0.12, slide: 0.85 });
+    noise(0, 0.35, { freq: 6000, q: 0.5, gain: 0.05, type: "highpass" });
+  },
+  stageUp: () => chord([523, 659, 784, 1047, 1319], 0, 0.08, 0.6, "sine", 0.14),
+  stageDown: () => chord([659, 523, 392], 0, 0.12, 0.45, "triangle", 0.12),
+  dateStart: () => {
+    tone(659, 0, 0.25, { gain: 0.1 });
+    tone(988, 0.12, 0.4, { gain: 0.09 });
+  },
+  hit: () => {
+    noise(0, 0.08, { freq: 900, q: 1.2, gain: 0.4 });
+    tone(140, 0, 0.12, { type: "square", gain: 0.1, slide: 0.5 });
+  },
+  critHit: () => {
+    noise(0, 0.12, { freq: 1400, q: 0.8, gain: 0.5 });
+    tone(110, 0, 0.25, { type: "square", gain: 0.14, slide: 0.4 });
+    tone(1760, 0.02, 0.2, { gain: 0.08 });
+  },
+  hurt: () => {
+    noise(0, 0.1, { freq: 500, q: 1, gain: 0.35 });
+    tone(200, 0, 0.18, { type: "sawtooth", gain: 0.07, slide: 0.6 });
+  },
+  ko: () => {
+    tone(330, 0, 0.5, { type: "square", gain: 0.08, slide: 0.25 });
+    noise(0.05, 0.3, { freq: 250, gain: 0.25, type: "lowpass" });
+  },
+  heal: () => chord([659, 880, 1175], 0, 0.06, 0.35, "sine", 0.1),
+  flip: () => noise(0, 0.07, { freq: 3200, q: 2, gain: 0.18 }),
+  step: () => noise(0, 0.05, { freq: 400, q: 1, gain: 0.2, type: "lowpass" }),
+  coin: () => {
+    tone(1319, 0, 0.08, { type: "square", gain: 0.06 });
+    tone(1760, 0.07, 0.25, { type: "square", gain: 0.06 });
+  },
+  loot: () => chord([784, 988, 1175, 1568], 0, 0.05, 0.3, "triangle", 0.12),
+  floor: () => {
+    noise(0, 0.6, { freq: 200, q: 0.7, gain: 0.2, type: "lowpass" });
+    chord([196, 247, 294], 0.1, 0.12, 0.6, "triangle", 0.1);
+  },
+  level: () => chord([523, 659, 784, 1047, 784, 1047], 0, 0.07, 0.35, "square", 0.06),
+  battle: () => {
+    tone(110, 0, 0.4, { type: "sawtooth", gain: 0.08 });
+    tone(165, 0.12, 0.4, { type: "sawtooth", gain: 0.07 });
+    noise(0, 0.3, { freq: 150, gain: 0.25, type: "lowpass" });
+  },
+  victory: () => chord([523, 659, 784, 1047], 0, 0.1, 0.5, "triangle", 0.15),
+  defeat: () => chord([392, 330, 262, 196], 0, 0.16, 0.6, "triangle", 0.12)
+};
+function play(s) {
+  if (!unlocked || volume <= 0)
+    return;
+  const a = audio();
+  if (!a)
+    return;
+  if (a.state === "suspended")
+    a.resume().catch(() => {});
+  try {
+    SOUNDS[s]();
+  } catch {}
+}
+
+// src/frontend/fx.ts
+var reducedMotion = () => {
+  try {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch {
+    return false;
+  }
+};
+function temp(parent, cls, html, ms, style) {
+  const el = document.createElement("div");
+  el.className = cls;
+  el.innerHTML = html;
+  if (style)
+    for (const [k, v] of Object.entries(style))
+      el.style.setProperty(k, v);
+  parent.appendChild(el);
+  setTimeout(() => el.remove(), ms);
+  return el;
+}
+function pulse(el, cls, ms = 900) {
+  if (!el)
+    return;
+  el.classList.remove(cls);
+  el.offsetWidth;
+  el.classList.add(cls);
+  setTimeout(() => el.classList.remove(cls), ms);
+}
+function particles(parent, glyphs, n, cls) {
+  const box = document.createElement("div");
+  box.className = `warp-fx-particles ${cls}`;
+  for (let i = 0;i < n; i++) {
+    const p = document.createElement("span");
+    p.textContent = glyphs[i % glyphs.length];
+    p.style.setProperty("--x", `${Math.round((Math.random() - 0.5) * 220)}px`);
+    p.style.setProperty("--y", `${Math.round(-60 - Math.random() * 140)}px`);
+    p.style.setProperty("--r", `${Math.round((Math.random() - 0.5) * 70)}deg`);
+    p.style.setProperty("--d", `${(Math.random() * 0.35).toFixed(2)}s`);
+    p.style.setProperty("--s", `${(0.8 + Math.random() * 0.8).toFixed(2)}`);
+    box.appendChild(p);
+  }
+  parent.appendChild(box);
+  setTimeout(() => box.remove(), 2200);
+}
+var TIER_WORD = { crit_success: "Critical!", success: "Success", partial: "Partial", fail: "Failed", crit_fail: "Disaster!" };
+var TIER_TONE2 = { crit_success: "crit", success: "good", partial: "warn", fail: "bad", crit_fail: "critbad" };
+var TIER_SOUND = { crit_success: "crit", success: "success", partial: "partial", fail: "fail", crit_fail: "critFail" };
+function playFx(events, o) {
+  if (!events.length)
+    return;
+  const visual = o.fx !== "off";
+  const motion = o.fx === "full" && !reducedMotion();
+  const sound = (s, game) => {
+    if (o.sfx === "all" || o.sfx === "games" && game)
+      play(s);
+  };
+  const stage = o.stage && o.stage.isConnected && o.stage.offsetParent !== null ? o.stage : null;
+  let flips = 0, hits = 0;
+  for (const e of events) {
+    switch (e.kind) {
+      case "roll": {
+        sound("dice", false);
+        sound(TIER_SOUND[e.tier] ?? "success", false);
+        const row = o.message(e.messageId)?.querySelector(".warp-chips") ?? null;
+        if (!visual || !row)
+          break;
+        const chip = row.querySelector(".warp-dice");
+        pulse(chip, `warp-fx-pop`, 1400);
+        pulse(row, `warp-fx-tone-${TIER_TONE2[e.tier] ?? "good"}`, 1600);
+        const stamp = temp(row, `warp-fx-stamp warp-fx-${TIER_TONE2[e.tier] ?? "good"}${motion ? " moving" : ""}`, `<span class="warp-fx-die">\uD83C\uDFB2</span><b>${TIER_WORD[e.tier] ?? e.tier}</b><span class="warp-fx-label">${e.label.replace(/[<>&]/g, "")}</span>`, 2600);
+        if (motion && e.crit)
+          particles(stamp, e.tier === "crit_success" ? ["✦", "★", "✧"] : ["✕", "·"], 14, `warp-fx-${TIER_TONE2[e.tier]}`);
+        break;
+      }
+      case "round": {
+        if (e.tier)
+          sound(TIER_SOUND[e.tier] ?? "success", true);
+        if (e.ended)
+          sound(e.ended === "win" ? "victory" : "defeat", true);
+        const msg = o.message(e.messageId);
+        if (!visual || !msg)
+          break;
+        const card = msg.querySelector(".warp-enc-log .warp-round:last-of-type, .warp-enc-log .warp-round-final");
+        pulse(card, `warp-fx-pop`, 1200);
+        if (e.ended) {
+          const host = msg.querySelector(".warp-enc-log") ?? msg;
+          temp(host, `warp-fx-stamp warp-fx-${e.ended === "win" ? "crit" : "critbad"}${motion ? " moving" : ""}`, `<b>${e.ended === "win" ? "Over — you came out on top" : "Over — it went badly"}</b>`, 2600);
+          if (motion && e.ended === "loss")
+            pulse(msg, "warp-fx-shake", 600);
+        }
+        break;
+      }
+      case "reaction": {
+        const s = e.reaction === "love" ? "heart" : e.reaction === "like" ? "like" : e.reaction === "neutral" ? "meh" : "chill";
+        sound(s, true);
+        if (!visual || !stage)
+          break;
+        const at = stage.querySelector(".warp-stage-portrait, .warp-stage-person, .warp-stage-scene") ?? stage;
+        if (e.reaction === "love" || e.reaction === "like") {
+          if (motion)
+            particles(at, e.reaction === "love" ? ["\uD83D\uDC97", "\uD83D\uDC95", "\uD83D\uDC96", "♥"] : ["♥", "✧"], e.reaction === "love" ? 12 : 5, "warp-fx-hearts");
+          pulse(stage, "warp-fx-warm", 1600);
+        } else if (e.reaction === "dislike" || e.reaction === "hate") {
+          pulse(stage, e.reaction === "hate" ? "warp-fx-frost-hard" : "warp-fx-frost", 1800);
+          if (motion && e.reaction === "hate")
+            pulse(stage.querySelector(".warp-stage-scene"), "warp-fx-shake", 600);
+        }
+        break;
+      }
+      case "stage": {
+        sound(e.up ? "stageUp" : "stageDown", true);
+        if (!visual || !stage)
+          break;
+        temp(stage, `warp-fx-banner ${e.up ? "up" : "down"}`, `<span>${e.up ? "Closer" : "Cooler"}</span><b>${e.label.replace(/[<>&]/g, "")}</b>`, 2800);
+        if (motion && e.up)
+          particles(stage, ["✦", "\uD83D\uDC97", "✧"], 18, "warp-fx-hearts");
+        break;
+      }
+      case "dateStart":
+        sound("dateStart", true);
+        break;
+      case "dateEnd":
+        break;
+      case "hit": {
+        if (hits++ < 2)
+          sound(e.ko ? "ko" : e.crit && e.side === "foe" ? "critHit" : e.side === "party" ? "hurt" : "hit", true);
+        if (!visual || !stage)
+          break;
+        const el = stage.querySelector(`[data-fid="${CSS.escape(e.id)}"]`);
+        if (!el)
+          break;
+        if (motion) {
+          pulse(el, e.crit ? "warp-fx-shake-hard" : "warp-fx-shake", 600);
+          temp(el, `warp-fx-number ${e.side === "party" ? "hurt" : "dmg"}${e.crit ? " crit" : ""}`, `${e.crit ? "<small>CRIT</small>" : ""}-${e.amount}`, 1300, { left: `${30 + Math.random() * 40}%` });
+          if (e.crit)
+            pulse(stage.querySelector(".warp-stage-arena"), "warp-fx-flash", 400);
+        }
+        pulse(el, "warp-fx-hurt", 700);
+        if (e.ko)
+          pulse(el, "warp-fx-ko", 1200);
+        break;
+      }
+      case "heal": {
+        sound("heal", true);
+        const el = stage?.querySelector(`[data-fid="${CSS.escape(e.id)}"]`);
+        if (!visual || !el)
+          break;
+        pulse(el, "warp-fx-heal", 900);
+        if (motion)
+          temp(el, "warp-fx-number heal", `+${e.amount}`, 1300, { left: "50%" });
+        break;
+      }
+      case "reveal": {
+        if (flips++ === 0)
+          sound("flip", true);
+        const el = stage?.querySelector(`[data-tile="${e.x},${e.y}"]`);
+        if (visual && motion && el) {
+          el.style.setProperty("--fx-delay", `${Math.min(flips, 6) * 60}ms`);
+          pulse(el, "warp-fx-flip", 900);
+        }
+        if (visual && el && (e.tile === "treasure" || e.tile === "boss"))
+          pulse(el, "warp-fx-glint", 1400);
+        break;
+      }
+      case "step":
+        sound("step", true);
+        break;
+      case "floor": {
+        sound("floor", true);
+        if (visual && stage)
+          temp(stage, `warp-fx-floor${motion ? " moving" : ""}`, `<span>Floor</span><b>${e.depth}</b>`, 2200);
+        break;
+      }
+      case "gold": {
+        sound("coin", true);
+        const el = stage?.querySelector(".warp-stage-gold");
+        if (visual && el) {
+          pulse(el, "warp-fx-glint", 1200);
+          if (motion)
+            temp(el, "warp-fx-number gold", `+${e.amount}`, 1300, { left: "50%" });
+        }
+        break;
+      }
+      case "loot": {
+        sound("loot", true);
+        const el = stage?.querySelector(".warp-stage-bag, .warp-stage-loot");
+        if (visual && el) {
+          pulse(el, "warp-fx-glint", 1400);
+          if (motion)
+            particles(el, ["✦", "✧", "·"], 10, "warp-fx-gold");
+        }
+        break;
+      }
+      case "level": {
+        sound("level", true);
+        if (visual && stage)
+          temp(stage, "warp-fx-banner up", `<span>Level up</span><b>Level ${e.level}</b>`, 2600);
+        break;
+      }
+      case "battle": {
+        sound("battle", true);
+        if (visual && stage) {
+          pulse(stage.querySelector(".warp-stage-arena"), e.boss ? "warp-fx-boss" : "warp-fx-flash", 900);
+        }
+        break;
+      }
+      case "battleOver": {
+        sound(e.won ? "victory" : "defeat", true);
+        if (visual && stage)
+          temp(stage, `warp-fx-banner ${e.won ? "up" : "down"}`, `<span>${e.won ? "Victory" : "Defeat"}</span><b>${e.won ? "The fight is won" : "You fall back"}</b>`, 2600);
+        break;
+      }
+    }
+  }
+}
+function typewrite(el, cps = 55) {
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  for (let t = walker.nextNode();t; t = walker.nextNode())
+    nodes.push({ n: t, full: t.data });
+  const total = nodes.reduce((a, x) => a + x.full.length, 0);
+  if (total < 12)
+    return () => false;
+  for (const x of nodes)
+    x.n.data = "";
+  let shown = 0, done = false, raf = 0, last = performance.now();
+  const paint = () => {
+    let left = shown;
+    for (const x of nodes) {
+      const k = Math.max(0, Math.min(x.full.length, left));
+      x.n.data = x.full.slice(0, k);
+      left -= x.full.length;
+    }
+  };
+  const tick = (now) => {
+    shown = Math.min(total, shown + Math.max(1, Math.round((now - last) / 1000 * cps)));
+    last = now;
+    paint();
+    if (shown < total)
+      raf = requestAnimationFrame(tick);
+    else
+      done = true;
+  };
+  raf = requestAnimationFrame(tick);
+  return () => {
+    if (done)
+      return false;
+    cancelAnimationFrame(raf);
+    shown = total;
+    paint();
+    done = true;
+    return true;
+  };
+}
+
 // src/frontend.ts
 var CLEANUP_KEY = "__warpCleanup";
 var ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><circle cx="8.5" cy="8.5" r="1.3" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/></svg>`;
@@ -2961,6 +3605,8 @@ function setup(ctx) {
   const cleanups = [];
   cleanups.push(ctx.dom.addStyle(STYLES));
   cleanups.push(ctx.dom.addStyle(STAGE_STYLES));
+  cleanups.push(ctx.dom.addStyle(FX_STYLES));
+  cleanups.push(armAudio());
   let state = null;
   let settings = { ...DEFAULT_SETTINGS };
   let templates = [];
@@ -3081,6 +3727,8 @@ function setup(ctx) {
   let shownScene = null;
   let sceneKey = "";
   let lineAt = 0;
+  let shownLine = "";
+  let skipLine = () => false;
   const stageVisible = () => !!stage?.isVisible();
   const panels = createPanels({
     ctx,
@@ -3548,13 +4196,21 @@ function setup(ctx) {
     storyEl.classList.toggle("narration", !!line && !line.speaker);
     const said = sc?.said?.replace(/\*/g, "").trim();
     saidEl.innerHTML = said && lineAt === 0 ? `<span>You</span>${esc(said.length > 280 ? `${said.slice(0, 280)}…` : said)}` : "";
-    textEl.innerHTML = line ? formatStory(line.text) : "";
+    const lineKey = `${sceneKey}:${lineAt}:${line?.text.length ?? 0}`;
+    if (lineKey !== shownLine) {
+      shownLine = lineKey;
+      skipLine();
+      textEl.innerHTML = line ? formatStory(line.text) : "";
+      skipLine = line && settings.fx === "full" ? typewrite(textEl) : () => false;
+    }
     const more = lineAt < lines.length - 1;
     storyEl.classList.toggle("more", more && !writing);
     statusEl.innerHTML = writing ? `<span class="warp-stage-dots" aria-hidden="true"><i></i><i></i><i></i></span>` : more ? `<span class="warp-stage-next">${lineAt + 1} / ${lines.length} · click to continue ▸</span>` : "";
     sayButton.disabled = writing;
   }
   function nextLine() {
+    if (skipLine())
+      return true;
     const n = shownScene?.lines.length ?? 0;
     if (lineAt >= n - 1)
       return false;
@@ -4169,6 +4825,13 @@ function setup(ctx) {
         send({ type: "wear", chatId: cid, slot: t.dataset.wearSlot, item: t.value === "__off" ? null : t.value });
       return;
     }
+    if (t.dataset.settingVolume !== undefined) {
+      const v = Number(t.value) / 100;
+      setVolume(v);
+      play("heart");
+      send({ type: "settings", patch: { sfxVolume: v } });
+      return;
+    }
     const pctKey = t.dataset.settingPct;
     if (pctKey) {
       let v = Number(t.value) / 100;
@@ -4398,6 +5061,7 @@ function setup(ctx) {
         const entered = !state?.dungeon && !!m.dungeon && state?.chatId === m.chatId;
         if (!m.dungeon?.battle)
           dgPick = dgPick?.kind === "use" ? dgPick : null;
+        const fx = settings.enabled ? fxEvents(state, m) : [];
         state = m;
         if (entered)
           drawerView = "dungeon";
@@ -4406,6 +5070,8 @@ function setup(ctx) {
         if (m.busy && m.chatId)
           busy = { chatId: m.chatId, on: true, label: busy.label };
         renderAll();
+        if (fx.length)
+          requestAnimationFrame(() => playFx(fx, { fx: settings.fx, sfx: settings.sfx, stage: stageEl, message: (id) => ctx.dom.findMessageElement(id) }));
         break;
       }
       case "busy":
@@ -4428,6 +5094,7 @@ function setup(ctx) {
       }
       case "settings":
         settings = m.settings;
+        setVolume(settings.sfxVolume);
         templates = m.templates;
         connections = m.connections;
         imageConnections = m.imageConnections ?? [];

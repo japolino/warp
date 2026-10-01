@@ -31,7 +31,7 @@ export function bar(cur: number, max: number, cls: string, label: string): strin
 export function memberCard(f: FighterView, opts: { targetable: boolean }): string {
   const cls = ["warp-dg-member", f.alive ? "" : "down", f.active ? "active" : "", opts.targetable && f.alive ? "targetable" : ""].filter(Boolean).join(" ");
   const tag = opts.targetable && f.alive ? "button" : "div";
-  return `<${tag} class="${cls}" ${opts.targetable && f.alive ? `data-dg-target="${esc(f.id)}"` : ""}>
+  return `<${tag} class="${cls}" data-fid="${esc(f.id)}" ${opts.targetable && f.alive ? `data-dg-target="${esc(f.id)}"` : ""}>
     <div class="warp-dg-member-head">${sprite(f.sprite, "warp-dg-face")}<b>${esc(you(f.name))}</b>${f.guard ? `<span class="warp-dim">🛡</span>` : ""}</div>
     ${bar(f.hp, f.mhp, "hp", "HP")}
     ${f.mmp > 0 ? bar(f.mp, f.mmp, "mp", "MP") : ""}
@@ -66,8 +66,8 @@ export function board(v: DungeonView): string {
     const inner = t.state === "here" ? sprite(leader, "warp-dg-icon") : t.state === "seen" ? tileIcon(t.kind, t.cleared) : "";
     const cls = ["warp-dg-tile", t.state, t.reachable ? "reachable" : ""].filter(Boolean).join(" ");
     return t.reachable
-      ? `<button class="${cls}" data-dg-move="${t.x},${t.y}" title="${esc(title)} — move here" style="background-image:url(${bg})">${inner}</button>`
-      : `<div class="${cls}" title="${esc(title)}" style="background-image:url(${bg})">${inner}</div>`;
+      ? `<button class="${cls}" data-tile="${t.x},${t.y}" data-dg-move="${t.x},${t.y}" title="${esc(title)} — move here" style="background-image:url(${bg})">${inner}</button>`
+      : `<div class="${cls}" data-tile="${t.x},${t.y}" title="${esc(title)}" style="background-image:url(${bg})">${inner}</div>`;
   }).join("");
   return `<div class="warp-dg-board" style="grid-template-columns:repeat(${v.size},1fr)">${cells}</div>`;
 }

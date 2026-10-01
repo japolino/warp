@@ -75,7 +75,7 @@ function purse(v: DungeonView): string {
 function foeCard(f: FighterView, targetable: boolean): string {
   const cls = ["warp-stage-foe", f.alive ? "" : "down", f.boss ? "boss" : f.elite ? "elite" : "", targetable && f.alive ? "targetable" : ""].filter(Boolean).join(" ");
   const tag = targetable && f.alive ? "button" : "div";
-  return `<${tag} class="${cls}" ${targetable && f.alive ? `data-dg-target="${esc(f.id)}" title="Target ${esc(f.name)}"` : ""}>
+  return `<${tag} class="${cls}" data-fid="${esc(f.id)}" ${targetable && f.alive ? `data-dg-target="${esc(f.id)}" title="Target ${esc(f.name)}"` : ""}>
     <div class="warp-stage-foe-glow"></div>
     ${sprite(f.sprite, "warp-stage-foe-img")}
     <div class="warp-stage-foe-name">${esc(f.name)}</div>
