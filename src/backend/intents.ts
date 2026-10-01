@@ -1,7 +1,7 @@
 // What a clicked choice means: the line posted as the player's message and the
 // intent the turn resolves. Shared by clicking and by pre-writing replies.
 
-import { availableChoices, canExplore, EXPLORE, LIVE_PREFIX, RUN_EPILOGUE, TARGET_SEP, TRAVEL_PREFIX, travelTargets, type Intent } from "../engine/resolve.js";
+import { availableChoices, canExplore, EXPLORE, ITEM_PREFIX, LIVE_PREFIX, usableItems, RUN_EPILOGUE, TARGET_SEP, TRAVEL_PREFIX, travelTargets, type Intent } from "../engine/resolve.js";
 import type { Ruleset } from "../engine/ruleset.js";
 import type { GameState } from "../engine/state.js";
 import { dateMoves } from "../engine/date/talk.js";
@@ -41,6 +41,13 @@ export function intentFor(r: Ruleset, state: GameState, settings: Settings, msgs
     const to = actionId.slice(TRAVEL_PREFIX.length);
     if (!travelTargets(r, state).includes(to)) return { error: "You can't get there from here." };
     return { say: `*I head to ${r.locations[to].name}.*`, intent: { actionId, params, via: "choice" } };
+  }
+  if (actionId.startsWith(ITEM_PREFIX)) {
+    const u = usableItems(r, state).find((x) => x.id === actionId);
+    if (!u) return { error: "You don't have that anymore." };
+    if (u.locked) return { error: u.locked };
+    const name = r.items[actionId.slice(ITEM_PREFIX.length)]?.name ?? "it";
+    return { say: u.a.say ?? `*I use the ${name}.*`, intent: { actionId, params, via: "choice", label: u.a.label } };
   }
   const c = availableChoices(r, state, settings.lines).find((x) => x.id === actionId);
   if (!c) return { error: "That choice isn't available anymore." };

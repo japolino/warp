@@ -4,9 +4,10 @@ import { buildChoices, buildHud, buildMap, buildRecordView } from "../engine/vie
 import { buildDungeonEntries, buildDungeonView } from "../engine/dungeon/view.js";
 import { buildDateView } from "../engine/date/view.js";
 import { sceneViewFor } from "./scene.js";
-import type { ChoiceView, RecordView, SuggestionView } from "../shared/protocol.js";
+import type { ChoiceView, EncounterLogView, RecordView, SuggestionView } from "../shared/protocol.js";
+import type { Ruleset } from "../engine/ruleset.js";
 import { momentKey, readyChoices } from "./drafts.js";
-import { getMessages, foldPath, liveChoicesOf, warpMeta } from "./ledger.js";
+import { getMessages, foldPath, liveChoicesOf, warpMeta, type Msg } from "./ledger.js";
 import { getSettings } from "./settings.js";
 import { getRuleset, statusOf } from "./source.js";
 import { host, logError, send } from "./host.js";
@@ -85,10 +86,25 @@ export async function pushState(chatId: string | null, userId?: string, force = 
       dungeonEntries: settings.enabled ? buildDungeonEntries(r, state) : [],
       date: settings.enabled ? buildDateView(r, state, settings.lines) : null,
       scene: settings.enabled ? sceneViewFor(chatId, r, state) : null,
+      encounterLogs: settings.enabled ? encounterLogsOf(r, msgs) : [],
     }, userId);
   } catch (e) {
     logError("pushState", e);
   }
+}
+
+/** Quiet encounter logs among the latest messages, for the round cards under them. */
+function encounterLogsOf(r: Ruleset, msgs: Msg[]): EncounterLogView[] {
+  const out: EncounterLogView[] = [];
+  for (const m of msgs.slice(-30)) {
+    const log = warpMeta(m).encounter;
+    if (!log) continue;
+    out.push({
+      messageId: m.id, name: r.encounters[log.enc]?.name ?? "Encounter", foe: log.foe, status: log.status,
+      rounds: log.rounds.map((x) => x.card), from: log.from ?? 0, ended: log.ended ?? null,
+    });
+  }
+  return out;
 }
 
 function markReady(choices: ChoiceView[], ready: Set<string>): ChoiceView[] {

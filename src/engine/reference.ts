@@ -9,7 +9,7 @@ export const PART_CONTENTS: Record<PartLabel, string> = {
   core: "name, description, player, clock, start, hud, narration",
   stats: "stats, growth",
   people: "relationships (stats + people with schedules), companions, lineage",
-  world: "weather, locations, items (incl. clothing), wardrobe, body, conditions, flags, start.items",
+  world: "weather, locations, items (incl. clothing, uses and gear bonuses), item_uses, wardrobe, body, conditions, flags, start.items",
   actions: "actions, improvise, obligations, jobs",
   encounters: "encounters, dungeons",
   journal: "codex, feats, perks, checkpoints, endings",
@@ -25,7 +25,7 @@ export function partForIssue(where: string): PartLabel {
   if ((PART_LABELS as readonly string[]).includes(head)) return head as PartLabel;
   if (head.startsWith("stats") || head.startsWith("growth")) return "stats";
   if (["relationships", "people", "companions", "lineage"].some((k) => head.startsWith(k))) return "people";
-  if (["locations", "items", "wardrobe", "weather", "conditions", "flags", "body"].some((k) => head.startsWith(k))) return "world";
+  if (["locations", "items", "item uses", "wardrobe", "weather", "conditions", "flags", "body"].some((k) => head.startsWith(k))) return "world";
   if (["actions", "improvise", "obligations", "jobs"].some((k) => head.startsWith(k))) return "actions";
   if (head.startsWith("encounters") || head.startsWith("dungeons")) return "encounters";
   if (["codex", "feats", "perks", "checkpoints", "endings"].some((k) => head.startsWith(k))) return "journal";
@@ -86,7 +86,13 @@ locations:
 items:
   phone: Phone
   raincoat: { name: Raincoat, slot: outer, warmth: 5, reveal: 0, traits: [rainproof] }   # clothing = item with a slot
-  pepper_spray: { name: Pepper Spray, uses: 5 }   # uses: each use the story shows spends one; the last spends the item (tags: [consumable] = 1 use)
+  pepper_spray:                    # an item that DOES something: use: is an action offered while it's held (in encounters too)
+    name: Pepper Spray
+    uses: 5                        # charges; each use spends one, the last spends the item (tags: [consumable] = 1 use)
+    use: { label: Spray it, foe: { nerve: -6 }, hint: "{{user}} empties a burst into their face." }   # effects (or check/success/fail like any action); when:, why_not: "…" optional
+  lucky_boots: { name: Lucky Boots, slot: feet, bonus: { athletics: 10 } }   # gear: added to every check that reads athletics while worn (carried, for non-clothing)
+  house_keys: { name: Keys, keep: true, use: { label: Lock the door behind you, stress: -5, when: "at('home')" } }   # keep: true = using it doesn't spend it
+item_uses: { phone: { label: Call a friend for a lift, check: { chance: 60 }, success: { move: home }, fail: { stress: +3 } } }   # uses/bonuses for items declared elsewhere (Warp writes drafted ones here)
 wardrobe: { slots: [outer, top, bottom, under_top, under_bottom, feet], cover: [top, bottom], start: [t_shirt, jeans] }
 conditions: { cold: { label: Cold, tone: bad } }
 flags: { met_boss: { start: false, narrator: true } }
@@ -140,8 +146,14 @@ encounters:
     foe: { name: Mugger, stats: { nerve: { start: 10, max: 10 } } }
     actions: { fight: { label: Fight back, check: { chance: "30 + athletics / 2" }, success: { foe: { nerve: -6 } }, fail: { pain: +10 } }, run: { label: Run, effects: { end: escaped } } }
     foe_moves: { grab: { desc: "Grabs you", weight: 2, pain: +8 }, threaten: { desc: "Threatens", weight: 1, stress: +6 } }
-    end_when: { won: "foe.nerve <= 0", beaten: "pain >= 80" }
+    end_when: { won: "foe.nerve <= 0", beaten: "pain >= 80" }   # simple comparisons let Warp show the goal and the danger to the player
     outcomes: { won: { hint: "They flee." }, escaped: { stress: +3 }, beaten: { money: "-min(money, 30)" } }
+    labels: { won: "You see them off", escaped: "You got away", beaten: "Overpowered" }   # how each ending reads
+    goal: "Break their nerve, or get away"        # optional; otherwise derived from end_when
+    danger: "Pain at 80 and you're overpowered"   # optional; otherwise derived
+    # narrate: true = every round goes to the narrator as a full reply (old style). Default: rounds are told briefly
+    #   in one encounter message that grows, then replaced by a summary — far fewer tokens, no repetitive loops.
+    # an action out of reach can say why: when: "has('bat')", why_not: "You'd need something to swing"
     # from_story: false = only actions/effects start it (by default the story can: a fight breaking out in the prose starts it, against whoever it's with)
     # momentum: { win: won, lose: beaten, swing: { crit_success: 40, success: 25, partial: 10, fail: -20, crit_fail: -35 } }
     #   a fight that swings (−100…+100): each check moves it, foe moves can too (effect momentum: -15), and only a full swing ends it;

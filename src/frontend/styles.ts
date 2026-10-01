@@ -277,6 +277,31 @@ export const STYLES = `
 .warp-overlay[data-edge=bottom] .warp-section { grid-column: 1 / -1; }.warp-overlay-collapsed .warp-overlay-head { cursor: pointer; }
 .warp-overlay-collapsed .warp-overlay-body { display: none; }
 
+/* ───────── encounters: goal, danger, rounds ───────── */
+.warp-enc-guide { border: 1px solid color-mix(in srgb, var(--warp-bad) 55%, var(--warp-border)); border-radius: var(--warp-radius); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; background: color-mix(in srgb, var(--warp-bad) 6%, transparent); }
+.warp-enc-head { display: flex; justify-content: space-between; gap: 8px; font-weight: 700; }
+.warp-enc-goal { font-size: 12.5px; }
+.warp-enc-meter { display: grid; grid-template-columns: minmax(70px, auto) 1fr auto; align-items: center; gap: 8px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.warp-enc-danger { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }
+.warp-enc-say { display: flex; gap: 6px; }
+.warp-enc-say .warp-input { flex: 1; min-width: 0; }
+.warp-choice-why { display: block; font-size: 11px; color: var(--warp-dim); margin-top: 1px; }
+.warp-choice-locked { opacity: .55; cursor: not-allowed; }
+.warp-choice-item { border-style: dashed; }
+.warp-enc-log { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; font-size: 12px; }
+.warp-round { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 5px 8px; border-radius: 8px; background: var(--warp-fill-subtle); border: 1px solid var(--warp-border); }
+.warp-round-n { font-variant-numeric: tabular-nums; color: var(--warp-dim); min-width: 1.2em; }
+.warp-round-what { flex: 1 1 220px; min-width: 0; }
+.warp-round-changes { display: flex; flex-wrap: wrap; gap: 4px 10px; font-variant-numeric: tabular-nums; }
+.warp-round-end { flex-basis: 100%; font-weight: 700; }
+.warp-round-on { flex-basis: 100%; font-size: 11px; }
+.warp-round-final { padding: 6px 8px; border-radius: 8px; border: 1px solid currentColor; background: var(--warp-fill-subtle); }
+.warp-rounds > summary { cursor: pointer; color: var(--warp-dim); font-size: 11px; }
+.warp-rounds[open] { display: flex; flex-direction: column; gap: 4px; }
+.warp-item-usable .warp-item-name { min-width: 0; }
+.warp-item-side { display: flex; align-items: center; gap: 6px; }
+.warp-item-bonus { display: block; font-size: 11px; color: var(--warp-good); }
+
 /* ───────── torn-off panels ───────── */
 .warp-section > summary > span { flex: 1; }
 .warp-section > summary[data-part] { position: relative; }

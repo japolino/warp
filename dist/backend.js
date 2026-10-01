@@ -1830,6 +1830,7 @@ function normAction(id, raw, where, c, known, order) {
     at,
     when: when === undefined ? undefined : String(when),
     hidden: raw.hidden === true,
+    ...typeof raw.why_not === "string" ? { whyNot: raw.why_not } : typeof raw.locked === "string" ? { whyNot: raw.locked } : {},
     time: raw.time !== undefined ? c.num(raw.time, `${where} › time`, 0) : undefined,
     cost: normEffect(raw.cost ?? raw.costs, `${where} › cost`, c, known),
     check,
@@ -1922,6 +1923,40 @@ function normWardrobe(raw, items, c) {
   }
   return def;
 }
+function applyItemUse(it, r, w, c, known, drafted) {
+  if (r.keep === true)
+    it.keep = true;
+  if (isObj(r.bonus)) {
+    for (const [stat, v] of Object.entries(r.bonus)) {
+      if (!known.stats.has(stat)) {
+        c.warn(`${w} › bonus › ${stat}`, `"${stat}" isn't a declared stat`);
+        continue;
+      }
+      it.bonus[stat] = c.num(v, `${w} › bonus › ${stat}`, 0);
+    }
+  }
+  const u = r.use;
+  if (u !== undefined && u !== false) {
+    const raw = isObj(u) ? u : typeof u === "string" ? { hint: u } : {};
+    const action = {};
+    const rest = {};
+    for (const [k, v] of Object.entries(raw))
+      (USE_KEYS.has(k) || TIER_KEYS[k] ? action : rest)[k] = v;
+    if (Object.keys(rest).length && !action.effects && !action.check)
+      action.effects = rest;
+    const has = `has('${it.id}')`;
+    action.when = action.when !== undefined ? `(${String(action.when)}) and ${has}` : has;
+    if (!action.label)
+      action.label = `Use the ${it.name}`;
+    const def = normAction(`item:${it.id}`, action, `${w} › use`, c, known, 0);
+    if (def) {
+      def.tags = [...new Set([...def.tags, "item"])];
+      it.use = def;
+    }
+  }
+  if (drafted && (it.use || Object.keys(it.bonus).length))
+    it.drafted = true;
+}
 function normEncounter(id, raw, c, known) {
   const w = `Encounters › ${id}`;
   if (!isObj(raw)) {
@@ -1999,7 +2034,11 @@ function normEncounter(id, raw, c, known) {
     outcomes,
     start: normEffect(startRaw, `${w} › start`, c, known),
     momentum,
-    fromStory: raw.from_story !== false
+    fromStory: raw.from_story !== false,
+    narrate: raw.narrate === true || raw.narrate === "rounds",
+    ...typeof raw.goal === "string" ? { goal: raw.goal } : {},
+    ...typeof raw.danger === "string" ? { danger: raw.danger } : {},
+    labels: Object.fromEntries(Object.entries(isObj(raw.labels) ? raw.labels : {}).filter(([, v]) => typeof v === "string"))
   };
 }
 function normSecrets(raw, c) {
@@ -2648,8 +2687,25 @@ function normalizeRuleset(raw) {
       integrity: Math.max(1, c.num(r.integrity, `${w} › integrity`, 100)),
       reveal: c.num(r.reveal, `${w} › reveal`, 0),
       traits: list(r.traits).map((t) => t.toLowerCase()),
-      uses: Math.max(0, Math.round(c.num(r.uses ?? r.charges, `${w} › uses`, list(r.tags).map((t) => t.toLowerCase()).includes("consumable") ? 1 : 0)))
+      uses: Math.max(0, Math.round(c.num(r.uses ?? r.charges, `${w} › uses`, list(r.tags).map((t) => t.toLowerCase()).includes("consumable") ? 1 : 0))),
+      keep: r.keep === true,
+      bonus: {}
     };
+    applyItemUse(items[id], r, w, c, known, false);
+  }
+  for (const [id, u] of Object.entries(isObj(raw.item_uses) ? raw.item_uses : {})) {
+    const it = items[id];
+    if (!it) {
+      c.warn(`Item uses › ${id}`, `"${id}" isn't a declared item`);
+      continue;
+    }
+    if (!isObj(u))
+      continue;
+    if (it.use || Object.keys(it.bonus).length)
+      continue;
+    const { bonus, keep, drafted, use, ...rest } = u;
+    const raw = { bonus, keep, use: use ?? (Object.keys(rest).length ? rest : undefined) };
+    applyItemUse(it, raw, `Item uses › ${id}`, c, known, drafted === true);
   }
   const locations = {};
   for (const [id, l] of Object.entries(isObj(raw.locations) ? raw.locations : {})) {
@@ -2942,7 +2998,7 @@ function normalizeRuleset(raw) {
   }
   return { ruleset, issues: c.issues };
 }
-var SEEN_REACTIONS, DIFFICULTIES, isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v), DEFAULT_WEEKDAYS, KIND_ALIASES, list = (v) => Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : [], TIER_KEYS, MONTHS, DEFAULT_WEATHER, DEFAULT_SLOTS, KEEP_FLAGS, KEEP_LISTS, CHILD_NAMES, SEXUAL_TAGS;
+var SEEN_REACTIONS, DIFFICULTIES, isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v), DEFAULT_WEEKDAYS, KIND_ALIASES, list = (v) => Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : [], TIER_KEYS, MONTHS, DEFAULT_WEATHER, DEFAULT_SLOTS, USE_KEYS, KEEP_FLAGS, KEEP_LISTS, CHILD_NAMES, SEXUAL_TAGS;
 var init_ruleset = __esm(() => {
   init_expr();
   init_dice();
@@ -2988,6 +3044,7 @@ var init_ruleset = __esm(() => {
     { id: "snow", label: "Snow", icon: "❄️", weight: 2, temp: -6, seasons: ["winter"], tags: ["wet", "cold"] }
   ];
   DEFAULT_SLOTS = ["head", "outer", "top", "bottom", "under_top", "under_bottom", "legs", "feet"];
+  USE_KEYS = new Set(["label", "say", "desc", "description", "when", "time", "tags", "check", "params", "why_not", "locked", "group", "cost", "effects", "effect", "outcomes", "per_person", "hidden", "at", "order", "success", "fail", "partial", "crit_success", "crit_fail", "critical_success", "critical_fail", "failure"]);
   KEEP_FLAGS = ["codex", "feats", "perks", "secrets", "people", "dating", "deepest"];
   KEEP_LISTS = ["stats", "flags", "items", "rel"];
   CHILD_NAMES = ["Ada", "Ben", "Cleo", "Dan", "Elin", "Finn", "Greta", "Hugo", "Iris", "Jonah", "Kira", "Leo", "Maya", "Nico", "Orla", "Pip", "Rosa", "Sam", "Tess", "Theo", "Uma", "Vic", "Wren", "Zoe"];
@@ -3355,6 +3412,8 @@ function applyEvent(s, e, r) {
       break;
     }
     case "enc":
+      if (!e.id && s.encounter)
+        s.lastEncounter = { id: s.encounter.id, ...s.encounter.foeName ? { foeName: s.encounter.foeName } : {}, outcome: e.outcome ?? "ended", at: s.minutes, loc: s.location };
       s.encounter = e.id ? { id: e.id, round: 0, foe: { ...e.foe ?? {} }, ...e.momentum !== undefined ? { momentum: e.momentum } : {}, ...e.foeName ? { foeName: e.foeName } : {} } : null;
       break;
     case "swing":
@@ -5295,8 +5354,52 @@ function availableChoices(r, s, lines = []) {
   }
   return out;
 }
+function usableItems(r, s) {
+  const out = [];
+  for (const [id, n] of Object.entries(s.items)) {
+    const a = r.items[id]?.use;
+    if (!a || n <= 0)
+      continue;
+    out.push({ id: `${ITEM_PREFIX}${id}`, a, locked: isAvailable(r, s, a) ? null : a.whyNot ?? lockReason(r, s, a) });
+  }
+  return out;
+}
+function lockReason(r, s, a) {
+  if (a.whyNot)
+    return a.whyNot;
+  const need = [...(a.when ?? "").matchAll(/has\(\s*'([^']+)'/g)].map((m) => m[1]).filter((id) => !(s.items[id] > 0));
+  if (need.length && /\bor\b/.test(a.when ?? ""))
+    return `Needs ${need.map((id) => itemName(r, s, id)).join(" or ")}`;
+  if (need.length)
+    return `Needs ${need.map((id) => itemName(r, s, id)).join(" and ")}`;
+  return "Not possible right now";
+}
+function gearFor(r, s, a) {
+  const stats = {};
+  const notes = [];
+  if (!a.check)
+    return { stats, notes };
+  const reads = new Set([...identifiers(a.check.add), ...identifiers(a.check.target)]);
+  const worn = new Set(Object.values(s.worn));
+  for (const [id, n] of Object.entries(s.items)) {
+    const it = r.items[id];
+    if (!it || n <= 0 || it.slot && !worn.has(id))
+      continue;
+    for (const [stat, b] of Object.entries(it.bonus)) {
+      if (!b || !reads.has(stat))
+        continue;
+      stats[stat] = (stats[stat] ?? 0) + b;
+      notes.push(`${it.name}: ${b > 0 ? "+" : ""}${b} ${r.stats[stat]?.label ?? stat}`);
+    }
+  }
+  return { stats, notes };
+}
 function findAction(r, s, actionId) {
   const [base, target] = actionId.split(TARGET_SEP);
+  if (base.startsWith(ITEM_PREFIX)) {
+    const a = r.items[base.slice(ITEM_PREFIX.length)]?.use;
+    return a ? { a, ...target ? { target } : {} } : null;
+  }
   if (base.startsWith(IMPROV)) {
     const a = improvAction(r, s, base);
     return a ? { a } : null;
@@ -5343,7 +5446,9 @@ function tierFor(check, roll, add, target) {
 }
 function checkNumbers(r, s, a, params, who) {
   const check = a.check;
-  const env = makeEnv(r, s, paramValues(a, params, who));
+  const gear = gearFor(r, s, a).stats;
+  const eff = Object.keys(gear).length ? { ...s, stats: Object.fromEntries(Object.entries(s.stats).map(([k, v]) => [k, v + (gear[k] ?? 0)])) } : s;
+  const env = makeEnv(r, eff, paramValues(a, params, who));
   const add = check.add !== undefined ? Math.round(evalNumber(check.add, env, 0)) : 0;
   let target = null;
   if (check.target !== undefined) {
@@ -5925,6 +6030,16 @@ function runOp(r, before, op) {
   runTriggers(w, false);
   return w.events;
 }
+function encounterJustEnded(s, id, fresh) {
+  const last = s.lastEncounter;
+  if (!last || last.id !== id)
+    return false;
+  if (s.minutes - last.at <= 15)
+    return true;
+  if (fresh)
+    return false;
+  return last.loc === s.location && s.minutes - last.at < ENCOUNTER_REST;
+}
 function startEncounter(w, id, src, opponent) {
   const enc = w.r.encounters[id];
   if (!enc)
@@ -6131,7 +6246,7 @@ function resolveInner(r, before, intent, opts, needs) {
   let encBase = before;
   if (opts.encounter && !before.encounter && !before.dungeon && !before.job && !before.ended) {
     const enc = r.encounters[opts.encounter.id];
-    if (enc?.fromStory) {
+    if (enc?.fromStory && !encounterJustEnded(before, enc.id, opts.encounter.fresh === true)) {
       because(w, `The scene: ${enc.name} breaks out`, () => startEncounter(w, enc.id, "trigger", opts.encounter.foe));
       encBase = cloneState(w.s);
     }
@@ -6205,6 +6320,12 @@ function resolveInner(r, before, intent, opts, needs) {
       w.hints.push(mind.kind === "fail" ? `{{user}} tries to ${meant.toLowerCase()}, but can't: ${why} It fails — no roll.` : mind.kind === "redirect" ? `{{user}} meant to ${meant.toLowerCase()}, but ${why} What actually happens: ${label.toLowerCase()}.` : `{{user}} goes ahead, but ${mind.cause.toLowerCase()} colours it: ${why}`);
     }
     because(w, `Cost of "${label}"`, () => effectToEvents(w, a.cost, "cost", extra));
+    if (a.id.startsWith(ITEM_PREFIX)) {
+      const itemId = a.id.slice(ITEM_PREFIX.length);
+      const it = r.items[itemId];
+      if (it && !it.keep && (w.s.items[itemId] ?? 0) > 0)
+        because(w, `Used ${it.name}`, () => w.push(it.uses > 0 ? { t: "use", id: itemId, n: 1, src: "action" } : { t: "item", id: itemId, d: -1, src: "action" }));
+    }
     if (mind?.kind === "fail") {
       const fail = a.outcomes.fail ?? a.outcomes.crit_fail;
       if (fail)
@@ -6226,6 +6347,9 @@ function resolveInner(r, before, intent, opts, needs) {
         tier,
         seed: opts.seed
       };
+      const gear = gearFor(r, w.s, a).notes;
+      if (gear.length)
+        rec.check.gear = gear;
       const key = TIER_FALLBACK[tier].find((t) => a.outcomes[t]);
       if (key)
         because(w, `"${label}": ${rec.check.label} rolled ${rec.check.total}${target !== null ? ` vs ${target}` : ""} → ${TIER_LABEL[tier]}`, () => effectToEvents(w, a.outcomes[key], "check", extra));
@@ -6480,7 +6604,7 @@ function applyProposal(r, before, p, ctx) {
   if (p.encounter && !w.s.encounter && !w.s.dungeon && !w.s.job) {
     const k = String(p.encounter).toLowerCase();
     const enc = r.encounters[k] ?? Object.values(r.encounters).find((x) => x.name.toLowerCase() === k);
-    if (enc?.fromStory)
+    if (enc && encounterJustEnded(w.s, enc.id, p.encounterFresh === true)) {} else if (enc?.fromStory)
       because(w, `${enc.name} broke out`, () => startEncounter(w, enc.id, src, typeof p.foe === "string" && p.foe.trim() ? p.foe.trim().slice(0, 60) : undefined));
   } else if (p.encounterEnd && w.s.encounter) {
     const name = r.encounters[w.s.encounter.id]?.name ?? "The encounter";
@@ -6645,7 +6769,7 @@ function forgetPerson(r, before, who) {
     return "Unknown person.";
   return [{ t: "forget", who, src: "manual" }];
 }
-var EXPLORE = "explore:", TRAVEL_PREFIX = "go:", TARGET_SEP = "@", LIVE_PREFIX = "live:", NEXT_EVENT = "world:next_event", SEEN_DESC, RUN_EPILOGUE = "run:epilogue", TIER_FALLBACK, TIER_LABEL;
+var EXPLORE = "explore:", TRAVEL_PREFIX = "go:", TARGET_SEP = "@", LIVE_PREFIX = "live:", ITEM_PREFIX = "item:", NEXT_EVENT = "world:next_event", SEEN_DESC, RUN_EPILOGUE = "run:epilogue", ENCOUNTER_REST = 60, TIER_FALLBACK, TIER_LABEL;
 var init_resolve = __esm(() => {
   init_expr();
   init_dice();
@@ -12459,6 +12583,197 @@ var init_source = __esm(() => {
   PROFILE_TTL = 10 * 60000;
 });
 
+// src/engine/encounter-view.ts
+function thresholds(enc) {
+  const out = [];
+  for (const e of enc.endWhen) {
+    for (const part of e.when.split(/\s+or\s+/i)) {
+      const m = /^\(?\s*(foe\.)?([a-z_]\w*)\s*(<=|>=|<|>|==)\s*(-?\d+(?:\.\d+)?)\s*\)?$/i.exec(part.trim());
+      if (m)
+        out.push({ outcome: e.outcome, foe: !!m[1], stat: m[2], op: m[3], value: Number(m[4]) });
+    }
+  }
+  return out;
+}
+function outcomeLabel(enc, outcome) {
+  return enc?.labels[outcome] ?? titleCase(outcome);
+}
+function isLoss(enc, outcome) {
+  if (enc?.momentum)
+    return outcome === enc.momentum.lose;
+  return FAILURE.test(outcome);
+}
+function endsIn(e) {
+  return e?.end ?? null;
+}
+function directEnds(enc) {
+  const out = [];
+  for (const id of enc.actionOrder) {
+    const a = enc.actions[id];
+    for (const e of [a.effects, a.outcomes.success, a.outcomes.crit_success, a.outcomes.partial]) {
+      const o = endsIn(e);
+      if (o && !out.some((x) => x.outcome === o && x.action === a.label))
+        out.push({ action: a.label, outcome: o });
+    }
+  }
+  return out;
+}
+function encounterGuide(r, s) {
+  const st = s.encounter;
+  const enc = st ? r.encounters[st.id] : undefined;
+  if (!st || !enc)
+    return null;
+  const th = thresholds(enc);
+  const progress = [];
+  const goals = [];
+  for (const t of th.filter((x) => x.foe && !isLoss(enc, x.outcome))) {
+    const fs = enc.foe.stats.find((f) => f.id === t.stat);
+    if (!fs)
+      continue;
+    progress.push({ label: fs.label, value: st.foe[fs.id] ?? fs.start, target: t.value, max: fs.max });
+    goals.push(`${t.op.startsWith("<") ? "bring" : "push"} their ${fs.label.toLowerCase()} to ${t.value}`);
+  }
+  if (enc.momentum)
+    goals.push("swing the fight all the way your way");
+  for (const d of directEnds(enc))
+    if (!isLoss(enc, d.outcome))
+      goals.push(`${d.action.toLowerCase()} (${d.outcome.replace(/_/g, " ")})`);
+  const goal = enc.goal ?? (goals.length ? cap(joinOr(goals)) : null);
+  const danger = [];
+  for (const t of th.filter((x) => !x.foe && isLoss(enc, x.outcome))) {
+    const def = r.stats[t.stat];
+    if (!def)
+      continue;
+    const value = s.stats[t.stat] ?? def.start;
+    const span = Math.max(1, def.max - def.min);
+    const gap = t.op.startsWith(">") ? t.value - value : value - t.value;
+    danger.push({ label: def.label, value, at: t.value, text: `${def.label} ${Math.round(value)} / ${t.value}`, close: gap / span <= 0.2 });
+  }
+  danger.sort((a, b) => Math.abs(a.at - a.value) - Math.abs(b.at - b.value));
+  const loss = th.find((x) => !x.foe && isLoss(enc, x.outcome));
+  const dangerText = enc.danger ?? (danger.length ? `${danger.slice(0, 2).map((d) => `${d.label} at ${d.at}`).join(" or ")} and you're ${outcomeLabel(enc, loss.outcome).toLowerCase()}` : null);
+  return { goal, progress, danger, dangerText };
+}
+function joinOr(xs) {
+  return xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} — or ${xs[xs.length - 1]}`;
+}
+function roundCard(r, rec, before, after, odds) {
+  const enc = before.encounter ? r.encounters[before.encounter.id] : undefined;
+  const changes = [];
+  if (enc && before.encounter) {
+    const fin = after.encounter?.id === before.encounter.id ? after.encounter : null;
+    for (const fs of enc.foe.stats) {
+      const from = before.encounter.foe[fs.id] ?? fs.start;
+      const touched = rec.events.some((e) => e.t === "foe" && e.stat === fs.id);
+      const to = fin ? fin.foe[fs.id] ?? fs.start : from + rec.events.reduce((n, e) => n + (e.t === "foe" && e.stat === fs.id ? e.set !== undefined ? e.set - from : e.d ?? 0 : 0), 0);
+      if (touched && to !== from)
+        changes.push({ label: `${foeName(r, before)}: ${fs.label}`, from, to: Math.max(0, to), of: fs.max, good: to < from === (fs.good !== "high") });
+    }
+    if (before.encounter.momentum !== undefined) {
+      const to = fin?.momentum ?? before.encounter.momentum + rec.events.reduce((n, e) => n + (e.t === "swing" ? e.d : 0), 0);
+      if (to !== before.encounter.momentum)
+        changes.push({ label: "Momentum", from: before.encounter.momentum, to, of: 100, good: to > before.encounter.momentum });
+    }
+  }
+  const watched = new Set(enc ? thresholds(enc).filter((t) => !t.foe).map((t) => t.stat) : []);
+  for (const id of r.statOrder) {
+    const from = before.stats[id], to = after.stats[id];
+    if (from === undefined || to === undefined || Math.abs(to - from) < 0.5)
+      continue;
+    if (!watched.has(id) && !rec.events.some((e) => e.t === "stat" && e.id === id && e.src !== "drift"))
+      continue;
+    const def = r.stats[id];
+    if (def.kind === "hidden")
+      continue;
+    const at = enc ? thresholds(enc).find((t) => !t.foe && t.stat === id && isLoss(enc, t.outcome))?.value ?? null : null;
+    changes.push({ label: def.label, from: Math.round(from), to: Math.round(to), of: at ?? (def.kind === "meter" ? def.max : null), good: def.good === "low" ? to < from : def.good === "high" ? to > from : true });
+  }
+  const endEv = rec.events.find((e) => e.t === "enc" && e.id === null);
+  const foeDec = enc?.foeMoves ? rec.decisions?.find((d) => d.id === enc.foeMoves.id) : undefined;
+  return {
+    move: rec.action?.label ?? "No clear move",
+    check: rec.check ? { label: rec.check.label, tier: TIER_WORD[rec.check.tier] ?? rec.check.tier, odds, gear: rec.check.gear ?? [] } : null,
+    foe: foeDec ? foeDec.pickedDesc : null,
+    changes,
+    ended: endEv ? { outcome: endEv.outcome ?? "ended", label: outcomeLabel(enc, endEv.outcome ?? "ended"), loss: isLoss(enc, endEv.outcome ?? "") } : null,
+    round: (before.encounter?.round ?? 0) + 1
+  };
+}
+function effectStats(a) {
+  const stats = new Map;
+  const adds = [], removes = [];
+  let foe = false, ends = false;
+  for (const e of [a.effects, ...Object.values(a.outcomes)]) {
+    if (!e)
+      continue;
+    for (const [k, v] of Object.entries(e.stats))
+      stats.set(k, (stats.get(k) ?? 0) + (typeof v === "number" ? v : 0));
+    adds.push(...Object.keys(e.addConditions));
+    removes.push(...e.removeConditions);
+    if (Object.keys(e.foe).length)
+      foe = true;
+    if (e.end)
+      ends = true;
+  }
+  return { stats, adds, removes, foe, ends };
+}
+function encounterReads(enc) {
+  const ids = new Set;
+  for (const a of Object.values(enc.actions)) {
+    if (a.check)
+      for (const x of [...identifiers(a.check.add), ...identifiers(a.check.target)])
+        ids.add(x);
+    if (a.when)
+      for (const x of identifiers(a.when))
+        ids.add(x);
+  }
+  for (const e of enc.endWhen)
+    for (const x of identifiers(e.when))
+      ids.add(x);
+  return ids;
+}
+function itemRelevance(r, s, a) {
+  const fx = effectStats(a);
+  let score = 0;
+  let best = null;
+  const add = (w, why) => {
+    score += w;
+    if (!best || w > best.w)
+      best = { w, why };
+  };
+  const enc = s.encounter ? r.encounters[s.encounter.id] : undefined;
+  const reads = enc ? encounterReads(enc) : new Set;
+  for (const [id, d] of fx.stats) {
+    const def = r.stats[id];
+    if (!def || !d)
+      continue;
+    const v = s.stats[id] ?? def.start;
+    const p = (v - def.min) / Math.max(1, def.max - def.min);
+    const bad = def.good === "low" ? p >= 0.5 : def.good === "high" ? p <= 0.5 : false;
+    const helps = def.good === "low" ? d < 0 : def.good === "high" ? d > 0 : false;
+    if (bad && helps)
+      add(1.5 + p, `${def.label} is ${def.good === "low" ? "high" : "low"}`);
+    if (enc && reads.has(id))
+      add(1.5, `Changes ${def.label}, which this encounter turns on`);
+  }
+  for (const c of fx.removes)
+    if (s.conditions[c])
+      add(3, `Clears ${r.conditions[c]?.label ?? c}`);
+  if (enc && fx.foe)
+    add(2, `Works on ${foeName(r, s)}`);
+  if (enc && fx.ends)
+    add(1, "Can end the encounter");
+  return { score, why: best?.why ?? null };
+}
+var FAILURE, cap = (t) => t.charAt(0).toUpperCase() + t.slice(1), TIER_WORD;
+var init_encounter_view = __esm(() => {
+  init_ruleset();
+  init_state();
+  init_expr();
+  FAILURE = /^(lost|lose|loss|beaten|defeat(ed)?|overwhelmed|caught|captured|ko|knocked_out|dead|died|fled_in_panic|broken|failed?)$/i;
+  TIER_WORD = { crit_success: "great success", success: "success", partial: "partial", fail: "failed", crit_fail: "badly failed" };
+});
+
 // src/engine/dungeon/battle.ts
 function say(b, line) {
   b.log = [...b.log, line].slice(-LOG_KEPT);
@@ -13509,9 +13824,21 @@ function buildHud(r, s) {
       worn: wornIds.has(id)
     };
   };
+  const usable_ = usableItems(r, s);
   const items = Object.entries(s.items).map(([id, count]) => {
-    const per = r.items[id]?.uses ?? 0;
-    return { id, name: itemName(r, s, id), count, worn: wornIds.has(id), uses: per > 1 ? `${s.uses[id] ?? per}/${per}` : null };
+    const def = r.items[id];
+    const per = def?.uses ?? 0;
+    const usable = usable_.find((u) => u.id === `item:${id}`);
+    const bonus = def ? Object.entries(def.bonus).filter(([, b]) => b).map(([st, b]) => `${b > 0 ? "+" : ""}${b} ${r.stats[st]?.label ?? st}`).join(", ") : "";
+    return {
+      id,
+      name: itemName(r, s, id),
+      count,
+      worn: wornIds.has(id),
+      uses: per > 1 ? `${s.uses[id] ?? per}/${per}` : null,
+      use: usable ? { id: usable.id, label: usable.a.label, locked: usable.locked, drafted: !!def?.drafted } : null,
+      bonus: bonus ? `${bonus}${def?.slot ? " while worn" : ""}` : null
+    };
   });
   const clothing = Object.keys(s.items).filter((id) => r.items[id]?.slot).map(clothingView);
   const outfit = r.wardrobe.enabled ? r.wardrobe.slots.map((sl) => ({ slot: sl.id, label: sl.label, item: s.worn[sl.id] ? clothingView(s.worn[sl.id]) : null })) : null;
@@ -13534,7 +13861,13 @@ function buildHud(r, s) {
   let encounter = null;
   if (s.encounter) {
     const enc = r.encounters[s.encounter.id];
+    const guide = encounterGuide(r, s);
     encounter = {
+      goal: guide?.goal ?? null,
+      progress: guide?.progress ?? [],
+      danger: guide?.danger ?? [],
+      dangerText: guide?.dangerText ?? null,
+      quiet: !enc?.narrate,
       name: enc?.name ?? s.encounter.id,
       foe: foeName(r, s),
       round: s.encounter.round,
@@ -13823,7 +14156,40 @@ function buildChoices(r, s, opts) {
       params: a.params.map((p) => ({ id: p.id, label: p.label, options: Object.keys(p.options), default: p.default }))
     };
   });
-  return [...live, ...actions, ...talk, ...work, ...dungeons, ...travel, ...explore];
+  const locked = [];
+  if (s.encounter) {
+    const pool = actionPool(r, s);
+    for (const id of pool.order) {
+      const a = pool.defs[id];
+      if (a.hidden || a.perPerson || isAvailable(r, s, a) || a.tags.some((t) => lines.has(t)))
+        continue;
+      if (!a.whyNot && !/has\(/.test(a.when ?? ""))
+        continue;
+      locked.push({ ...plain(id, a.label, encName ?? "Encounter", a.desc ?? null), locked: lockReason(r, s, a) });
+    }
+  }
+  return [...live, ...actions, ...itemChoices(r, s, lines), ...locked, ...talk, ...work, ...dungeons, ...travel, ...explore];
+}
+function itemChoices(r, s, lines) {
+  if (s.job || s.ended)
+    return [];
+  const veils = new Set;
+  const ranked = usableItems(r, s).filter((u) => !u.locked && !u.a.tags.some((t) => lines.has(t))).map((u) => ({ u, ...itemRelevance(r, s, u.a) })).filter((x) => x.score >= (s.encounter ? 1 : 2)).sort((a, b) => b.score - a.score).slice(0, s.encounter ? 3 : 2);
+  return ranked.map(({ u, why }) => {
+    const o = odds(r, s, u.a);
+    return {
+      id: u.id,
+      label: u.a.label,
+      group: "Items",
+      desc: u.a.desc ?? r.items[u.id.slice(5)]?.desc ?? null,
+      odds: o ? o.success : null,
+      partialOdds: o && o.partial > 0 ? o.partial : null,
+      checkLabel: u.a.check?.label ?? null,
+      veiled: u.a.tags.some((t) => veils.has(t)),
+      params: [],
+      ...why ? { why } : {}
+    };
+  });
 }
 function signed(n) {
   const f = formatNumber(n);
@@ -14287,6 +14653,7 @@ var init_view = __esm(() => {
   init_ruleset();
   init_state();
   init_freeform();
+  init_encounter_view();
   init_resolve();
   init_world();
   init_run();
@@ -14575,7 +14942,7 @@ async function readTurn(opts) {
   const { decider, r, s, settings, playerText, player } = opts;
   const q = {};
   const talking = !!activeSession(r, s) || !!s.job;
-  const actions = playerText && !talking ? availableChoices(r, s, settings.lines) : [];
+  const actions = playerText && !talking ? [...availableChoices(r, s, settings.lines), ...usableItems(r, s).filter((u) => !u.locked).map((u) => ({ id: u.id, a: u.a, label: u.a.label }))] : [];
   const travel = playerText && !talking ? travelTargets(r, s) : [];
   const improv = !!playerText && !talking && r.improvise.enabled && !s.dungeon;
   const approach = improv ? improvStats(r) : [];
@@ -14609,6 +14976,13 @@ async function readTurn(opts) {
       instructions: `Is one of these actually breaking out right now, in the latest exchange (not just threatened, feared or talked about)?`,
       criteria: { [NONE]: "No — nothing like this is starting right now", ...Object.fromEntries(storyEnc.map((x) => [`enc:${x.id}`, `${x.name}${x.desc ? ` — ${x.desc}` : ""}`])) }
     };
+    const last = s.lastEncounter;
+    if (last && s.minutes - last.at < 24 * 60) {
+      q.encounter_fresh = {
+        type: "noul",
+        instructions: `${r.encounters[last.id]?.name ?? "An encounter"} just ended (${last.outcome.replace(/_/g, " ")}). If something is breaking out now, is it a genuinely NEW incident — not the same one still being described, its aftermath, or a memory of it?`
+      };
+    }
     if (here.length) {
       q.opponent = {
         type: "choice",
@@ -14648,7 +15022,8 @@ async function readTurn(opts) {
     if (storyEnc.some((x) => x.id === id)) {
       const opp = ans.opponent;
       const who = opp?.type === "choice" && opp.choice.startsWith("p:") && opp.confidence >= 0.5 ? opp.choice.slice(2) : null;
-      out.encounter = { id, ...who && here.includes(who) ? { foe: personName(r, s, who) } : {} };
+      const fresh = ans.encounter_fresh;
+      out.encounter = { id, ...who && here.includes(who) ? { foe: personName(r, s, who) } : {}, ...fresh?.type === "noul" && fresh.noul >= 0.7 ? { fresh: true } : {} };
     }
   }
   const act = ans.action;
@@ -14834,6 +15209,13 @@ async function bookkeeping(opts) {
       instructions: `At the end of the reply, has one of these actually broken out (not just threatened)?`,
       criteria: { [NONE]: "No", ...Object.fromEntries(storyEnc.map((x) => [`enc:${x.id}`, `${x.name}${x.desc ? ` — ${x.desc}` : ""}`])) }
     };
+    const last = s.lastEncounter;
+    if (last && s.minutes - last.at < 24 * 60) {
+      q.encounter_fresh = {
+        type: "noul",
+        instructions: `${r.encounters[last.id]?.name ?? "An encounter"} just ended (${last.outcome.replace(/_/g, " ")}). If one broke out in this reply, is it a genuinely NEW incident — not the same one still being described, its aftermath, or a memory of it?`
+      };
+    }
     const people = [...new Set([...hereBefore, ...mentioned])];
     if (people.length)
       q.opponent = { type: "choice", instructions: `If a confrontation broke out, who is ${player} up against?`, criteria: { other: "Someone else, or no one in particular", ...Object.fromEntries(people.map((id) => [`p:${id}`, personName(r, s, id)])) } };
@@ -14918,6 +15300,9 @@ async function bookkeeping(opts) {
   const enc = ans.encounter;
   if (enc?.type === "choice" && enc.choice.startsWith("enc:") && (enc.probabilities[enc.choice] ?? enc.confidence) >= ENCOUNTER_SURE) {
     p.encounter = enc.choice.slice(4);
+    const fresh = ans.encounter_fresh;
+    if (fresh?.type === "noul" && fresh.noul >= 0.7)
+      p.encounterFresh = true;
     const opp = ans.opponent;
     if (opp?.type === "choice" && opp.choice.startsWith("p:") && opp.confidence >= 0.5)
       p.foe = personName(r, s, opp.choice.slice(2));
@@ -15698,6 +16083,15 @@ function intentFor(r, state, settings, msgs, actionId, params) {
       return { error: "You can't get there from here." };
     return { say: `*I head to ${r.locations[to].name}.*`, intent: { actionId, params, via: "choice" } };
   }
+  if (actionId.startsWith(ITEM_PREFIX)) {
+    const u = usableItems(r, state).find((x) => x.id === actionId);
+    if (!u)
+      return { error: "You don't have that anymore." };
+    if (u.locked)
+      return { error: u.locked };
+    const name = r.items[actionId.slice(ITEM_PREFIX.length)]?.name ?? "it";
+    return { say: u.a.say ?? `*I use the ${name}.*`, intent: { actionId, params, via: "choice", label: u.a.label } };
+  }
   const c = availableChoices(r, state, settings.lines).find((x) => x.id === actionId);
   if (!c)
     return { error: "That choice isn't available anymore." };
@@ -15773,6 +16167,8 @@ async function prewrite(opts) {
     return;
   const msgs = await getMessages(chatId);
   const { state } = foldPath(r, msgs);
+  if (state.encounter && !r.encounters[state.encounter.id]?.narrate)
+    return;
   const key = momentKey(msgs, state);
   const choices = buildChoices(r, state, { ...settings, live: liveChoicesOf(msgs[msgs.length - 1]) }).filter((c) => writable(c.id) && !c.params.length).slice(0, settings.prewrite);
   const replies = new Map;
@@ -15802,7 +16198,7 @@ async function prewrite(opts) {
     opts.onReady();
   }));
 }
-var clip3 = (s, n) => s.length > n ? `${s.slice(0, n)}…` : s, cache3, writable = (id) => !id.startsWith("dungeon:") && id !== "date:open" && !(id.startsWith("run:") && id !== "run:epilogue");
+var clip3 = (s, n) => s.length > n ? `${s.slice(0, n)}…` : s, cache3, writable = (id) => !id.startsWith("item:") && !id.startsWith("dungeon:") && id !== "date:open" && !(id.startsWith("run:") && id !== "run:epilogue");
 var init_drafts = __esm(() => {
   init_dice();
   init_resolve();
@@ -16002,6 +16398,392 @@ var init_discover = __esm(() => {
   init_source();
 });
 
+// src/backend/encounter-lines.ts
+function storyPov(story, player) {
+  const you = (story.match(/\byou(r|rs|rself)?\b/gi) ?? []).length;
+  const first = player.trim().split(/\s+/)[0];
+  const named = first ? (story.match(new RegExp(`\\b${first.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "g")) ?? []).length : 0;
+  return named > you ? "third" : "second";
+}
+function third(verb) {
+  if (/(s|sh|ch|x|z|o)$/i.test(verb))
+    return `${verb}es`;
+  if (/[^aeiou]y$/i.test(verb))
+    return `${verb.slice(0, -1)}ies`;
+  return `${verb}s`;
+}
+function retell(text, pov, player) {
+  let t = text.replace(/\*/g, "").replace(/\s+/g, " ").trim();
+  if (pov === "second") {
+    t = t.replace(/\bI am\b/g, "you are").replace(/\bI'm\b/g, "you're").replace(/\bI've\b/g, "you've").replace(/\bI'll\b/g, "you'll").replace(/\bI'd\b/g, "you'd").replace(/\bmyself\b/gi, "yourself").replace(/\bmine\b/gi, "yours").replace(/\bmy\b/gi, "your").replace(/\bme\b/g, "you").replace(/\bI\b/g, "you");
+  } else {
+    if (/\bI \w+/.test(t)) {
+      t = t.replace(/\b(and|then|or) ([a-z]+)\b/g, (m, j, v) => NOT_VERBS.has(v) || /(ly|ed|ing|s)$/.test(v) ? m : `${j} ${third(v)}`);
+    }
+    t = t.replace(/\bI am\b/g, `${player} is`).replace(/\bI'm\b/g, `${player}'s`).replace(/\bI've\b/g, `${player} has`).replace(/\bI'll\b/g, `${player} will`).replace(/\bI'd\b/g, `${player} would`).replace(/\bmyself\b/gi, "themself").replace(/\bmine\b/gi, `${player}'s`).replace(/\bmy\b/gi, "their").replace(/\bme\b/g, "them").replace(/\bI (\w+)/g, (_m, v) => `${player} ${MODALS.has(v.toLowerCase()) || /s$/.test(v) ? v : third(v)}`).replace(/\bI\b/g, player);
+  }
+  return cap2(t);
+}
+function told(text, pov, player) {
+  const who = pov === "second" ? "you" : player;
+  const poss = pov === "second" ? "your" : `${player}'s`;
+  return cap2(text.replace(/\{\{user\}\}'s/gi, poss).replace(/\{\{user\}\}/gi, who).replace(/\byou is\b/g, "you are").replace(/\byou has\b/g, "you have").replace(/\byou looks\b/g, "you look").replace(/\byou gets\b/g, "you get"));
+}
+function authoredHint(a, rec) {
+  if (!a)
+    return null;
+  if (!rec.check)
+    return a.effects.hint ?? null;
+  const key = TIER_FALLBACK[rec.check.tier].find((t) => a.outcomes[t]);
+  return key && a.outcomes[key]?.hint || null;
+}
+function scriptedRound(o) {
+  const rng = seededRng(`${o.seed}:round`);
+  const pov = storyPov(o.story, o.player);
+  const subject = pov === "second" ? "You" : o.player;
+  const used = o.earlier.join(" ");
+  const parts = [];
+  let move;
+  if (o.typed && o.typed.length <= 220)
+    move = retell(o.typed, pov, o.player);
+  else if (o.action?.say)
+    move = retell(o.action.say, pov, o.player);
+  else if (o.action)
+    move = `${subject} ${pov === "second" ? "try" : "tries"} to ${lc(o.action.label)}`;
+  else
+    move = `${subject} ${pov === "second" ? "hold" : "holds"} back, looking for an opening`;
+  move = stop(move);
+  if (used.includes(move))
+    move = `${pick3(AGAIN, rng)} ${lc(move)}`;
+  parts.push(move);
+  const hint = authoredHint(o.action, o.rec);
+  const outcome = hint ? stop(told(hint, pov, o.player)) : o.card.check ? pick3(TIER_PLAIN[o.rec.check.tier], rng) : "";
+  if (outcome)
+    parts.push(used.includes(outcome) && o.card.check ? pick3(TIER_PLAIN[o.rec.check.tier].filter((x) => !used.includes(x)).concat(TIER_PLAIN[o.rec.check.tier]), rng) : outcome);
+  if (o.card.foe)
+    parts.push(stop(`${foeName(o.r, o.before)} ${lc(told(o.card.foe, pov, o.player))}`));
+  return parts.join(" ");
+}
+function facts(o, pov) {
+  const c = o.card;
+  const lines = [
+    `Point of view: ${pov === "second" ? `second person ("you" is ${o.player})` : `third person (${o.player})`}`,
+    `${o.player}'s move: ${c.move}${o.typed ? ` — in their words: "${o.typed.replace(/\*/g, "").slice(0, 400)}"` : o.action?.say ? ` — "${o.action.say.replace(/\*/g, "")}"` : ""}`,
+    c.check ? `How it turned out: ${c.check.tier}${c.check.gear.length ? ` (helped by ${c.check.gear.join(", ")})` : ""}` : "",
+    authoredHint(o.action, o.rec) ? `The ruleset's note on this outcome: ${told(authoredHint(o.action, o.rec), pov, o.player)}` : "",
+    c.foe ? `${foeName(o.r, o.before)}'s move: ${c.foe}` : "",
+    c.changes.length ? `What shifted (show it, don't state numbers): ${c.changes.map((x) => `${x.label} ${x.to > x.from ? "up" : "down"}`).join(", ")}` : "",
+    c.ended ? `It ENDED this round: ${c.ended.label}.` : "It is NOT over yet."
+  ];
+  return lines.filter(Boolean).join(`
+`);
+}
+async function modelRound(o, settings, userId) {
+  const pov = storyPov(o.story, o.player);
+  const enc = o.before.encounter ? o.r.encounters[o.before.encounter.id] : undefined;
+  const user = [
+    o.story ? `The story so far (excerpt):
+${o.story.slice(-1800)}` : "",
+    enc ? `The encounter: ${enc.name}${enc.desc ? ` — ${enc.desc.replace(/\{\{user\}\}/gi, o.player)}` : ""}` : "",
+    `The other side: ${foeName(o.r, o.before)}${o.foeAbout ? `
+${o.foeAbout.slice(0, 1500)}` : ""}`,
+    o.earlier.length ? `Earlier rounds (don't repeat their wording):
+${o.earlier.slice(-4).join(`
+
+`)}` : "",
+    `This round:
+${facts(o, pov)}`
+  ].filter(Boolean).join(`
+
+`);
+  try {
+    const text = (await ask(ROUND_SYSTEM, user, settings, userId, 20000, { temperature: 0.85, maxTokens: 260 })).trim().replace(/^```\w*|```$/g, "").replace(/^(?:here'?s[^:]*:|round \d+:)\s*/i, "").trim();
+    if (text.length < 20)
+      return null;
+    return text.length > 900 ? `${text.slice(0, 900).replace(/\s+\S*$/, "")}…` : text;
+  } catch (e) {
+    logError("encounter round", e);
+    return null;
+  }
+}
+async function writeRound(o, settings, userId) {
+  if (settings.sceneLines === "model") {
+    const t = await modelRound(o, settings, userId);
+    if (t)
+      return t;
+  }
+  return scriptedRound(o);
+}
+function scriptedSummary(o) {
+  const enc = o.r.encounters[o.encId];
+  const pov = storyPov(o.story, o.player);
+  const subject = pov === "second" ? "you" : o.player;
+  const moved = [];
+  for (const id of o.r.statOrder) {
+    const a = o.start.stats[id], b = o.end.stats[id];
+    const def = o.r.stats[id];
+    if (a === undefined || b === undefined || def.kind === "hidden" || Math.abs(b - a) < 3)
+      continue;
+    moved.push(`${def.label.toLowerCase()} ${b > a ? "up" : "down"}`);
+  }
+  const n = o.rounds.length;
+  const how = `${cap2(enc?.name ?? "The encounter")} with ${o.foe}: ${o.outcome.label.toLowerCase()}${n > 1 ? ` after ${n} rounds` : ""}.`;
+  return `*${how}${moved.length ? ` It left ${subject} with ${moved.slice(0, 3).join(", ")}.` : ""}*`;
+}
+async function encounterSummary(o, settings, userId) {
+  const fallback = scriptedSummary(o);
+  if (settings.sceneLines !== "model")
+    return fallback;
+  const pov = storyPov(o.story, o.player);
+  try {
+    const text = (await ask([
+      "Sum up a finished encounter from a roleplay as ONE short paragraph the story keeps in place of the blow-by-blow.",
+      "2–3 sentences, under 70 words, in the story's point of view and tense. Say how it ended and what it cost or gained, using only the facts given.",
+      "No numbers, game terms or headings. Adults only in anything romantic. Reply with the paragraph only."
+    ].join(`
+`), [
+      `Point of view: ${pov === "second" ? `second person ("you" is ${o.player})` : `third person (${o.player})`}`,
+      `How it ended: ${o.outcome.label}${o.outcome.loss ? " (a defeat)" : ""}`,
+      `The facts in short: ${fallback.replace(/\*/g, "")}`,
+      `The rounds as they were told:
+${o.rounds.slice(-8).join(`
+
+`)}`
+    ].join(`
+
+`), settings, userId, 20000, { temperature: 0.6, maxTokens: 200 })).trim();
+    return text.length > 30 && text.length < 900 ? text : fallback;
+  } catch {
+    return fallback;
+  }
+}
+var MODALS, NOT_VERBS, cap2 = (t) => t ? t.charAt(0).toUpperCase() + t.slice(1) : t, lc = (t) => t ? t.charAt(0).toLowerCase() + t.slice(1) : t, stop = (t) => /[.!?…"”]$/.test(t.trim()) ? t.trim() : `${t.trim()}.`, pick3 = (xs, rng) => xs[Math.floor(rng() * xs.length) % xs.length], TIER_PLAIN, AGAIN, ROUND_SYSTEM;
+var init_encounter_lines = __esm(() => {
+  init_dice();
+  init_resolve();
+  init_state();
+  init_helpers();
+  MODALS = new Set(["can", "could", "will", "would", "shall", "should", "may", "might", "must", "am", "was", "have", "do", "did", "had", "just", "then", "quickly", "slowly", "carefully", "really", "try"]);
+  NOT_VERBS = new Set(["the", "a", "an", "my", "me", "i", "you", "your", "their", "them", "they", "it", "its", "his", "her", "he", "she", "we", "us", "our", "this", "that", "these", "those", "then", "still", "also", "just", "not", "never", "so", "too", "very", "now", "again", "back", "away", "out", "up", "down", "off", "in", "on", "at", "to", "with", "without", "for", "from", "into", "onto", "over", "under", "one", "two", "some", "all", "every", "each", "no", "more", "less", "hard", "fast", "low", "high"]);
+  TIER_PLAIN = {
+    crit_success: ["It works better than it had any right to.", "It lands perfectly.", "That couldn't have gone better."],
+    success: ["It works.", "It lands.", "That does it — for now.", "It gets through."],
+    partial: ["It half works.", "It helps, a little.", "It lands, but not cleanly."],
+    fail: ["It doesn't work.", "Nothing comes of it.", "It falls flat.", "It gets nowhere."],
+    crit_fail: ["It goes badly wrong.", "That backfires.", "It couldn't have gone worse."]
+  };
+  AGAIN = ["Again,", "Once more,", "Not giving up,", "One more try:"];
+  ROUND_SYSTEM = [
+    "You write one round of a tense encounter inside an ongoing roleplay, as a short passage the story keeps.",
+    "The game's rules already decided everything in this round. Narrate exactly that: the player's move, how it turned out, and the other side's move, in that order.",
+    "Never add outcomes, injuries, items or endings the facts don't state. Never end the encounter unless the facts say it ended.",
+    "Match the story's point of view, tense and voice, shown in the excerpt. 2–4 sentences, under 80 words. No headings, lists, game terms or numbers.",
+    "A repeated move is a fresh attempt: show how this one differs. Don't reuse phrasing from earlier rounds.",
+    "Never speak, think or decide for the player beyond the move they made. Dialogue from the other side is welcome, quoted inline.",
+    "Anything romantic or sexual involves adults only.",
+    "Reply with the passage only."
+  ].join(`
+`);
+});
+
+// src/backend/encounter.ts
+function isQuiet(r, s) {
+  return !!s.encounter && !!r.encounters[s.encounter.id] && !r.encounters[s.encounter.id].narrate;
+}
+function logMessage(msgs, s) {
+  const m = msgs[msgs.length - 1];
+  const log = m && !m.is_user ? warpMeta(m).encounter : undefined;
+  return m && log && log.status === "on" && log.enc === s.encounter?.id ? { m, log } : null;
+}
+function storyBefore(msgs) {
+  const out = [];
+  for (const m of [...msgs].reverse()) {
+    if (m.is_user || warpMeta(m).encounter)
+      continue;
+    out.unshift(m.content);
+    if (out.join(`
+`).length > 1800 || out.length >= 2)
+      break;
+  }
+  return out.join(`
+
+`).slice(-1800);
+}
+async function playerNameOf(chatId, userId) {
+  await Promise.resolve().then(() => init_turn());
+  return playerName(chatId, userId).catch(() => "You");
+}
+async function playRound(opts) {
+  const { chatId, userId } = opts;
+  const loaded = await getRuleset(chatId, userId);
+  const r = loaded?.ruleset;
+  if (!r)
+    return false;
+  const msgs = await getMessages(chatId);
+  const { state: before } = foldPath(r, msgs);
+  if (!isQuiet(r, before))
+    return false;
+  if (busyChats.has(chatId)) {
+    toast("info", "One moment — the last round is still being written.", userId);
+    return true;
+  }
+  busyChats.add(chatId);
+  send({ type: "busy", chatId, busy: true, label: "The round plays out…" }, userId);
+  try {
+    const settings = await getSettings(userId);
+    const decider = await getDecider(settings, userId);
+    const player = await playerNameOf(chatId, userId);
+    const story = storyBefore(msgs);
+    const typed = opts.typed?.trim() || null;
+    let intent = opts.intent;
+    if (!intent && typed && decider.id !== "rules") {
+      const reading = await readTurn({ decider, r, s: before, settings, playerText: typed, sceneText: story, player, timeoutMs: 15000 });
+      const read = reading.intent ?? reading.suggestion;
+      intent = read ? { actionId: read.actionId, via: "adjudicator", ...read.params ? { params: read.params } : {} } : null;
+    }
+    const found = intent ? findAction(r, before, intent.actionId) : null;
+    const chance = found?.a.check ? odds(r, before, found.a, intent?.params, found.target)?.success ?? null : null;
+    const seed = randomSeed();
+    const playerText = typed ?? found?.a.say ?? "";
+    let res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, playerText });
+    if (res.needs.length && decider.id !== "rules") {
+      const o = await odds2({ decider, r, s: before, specs: res.needs, playerText, sceneText: story, player, timeoutMs: 15000 });
+      if (Object.keys(o).length)
+        res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, odds: o, playerText });
+    }
+    const rec = res.record;
+    if (!rec.events.length && !rec.action) {
+      toast("warning", "That isn't possible right now.", userId);
+      return true;
+    }
+    const after = cloneState(before);
+    for (const e of rec.events)
+      applyEvent(after, e, r);
+    const held = logMessage(msgs, before);
+    const told = await tellRound({ chatId, userId, r, before, after, rec, action: found?.a ?? null, chance, msgs, player, settings, typed, prev: held?.log ?? latestLog(msgs, before)?.log ?? null, same: !!held });
+    const { log, content } = told;
+    const prev = held ? activeRecord(held.m) : null;
+    const merged = {
+      v: 1,
+      ...rec.action ? { action: rec.action } : prev?.action ? { action: prev.action } : {},
+      ...rec.check ? { check: rec.check } : {},
+      hints: [],
+      events: [...prev?.events ?? [], ...rec.events],
+      ...prev?.decisions || rec.decisions ? { decisions: [...prev?.decisions ?? [], ...rec.decisions ?? []] } : {},
+      at: Date.now()
+    };
+    if (log.status === "ended")
+      await foldEarlier(chatId, msgs, log.enc, held?.m.id ?? null);
+    if (held) {
+      const meta = { ...held.m.metadata ?? {} };
+      const w = { ...warpMeta(held.m), encounter: log, swipes: { ...warpMeta(held.m).swipes ?? {}, [String(held.m.swipe_id ?? 0)]: merged } };
+      meta.warp = w;
+      await host().chat.updateMessage(chatId, held.m.id, { content, metadata: meta });
+    } else {
+      await host().chat.appendMessage(chatId, { role: "assistant", content, metadata: { warp: { encounter: log, swipes: { "0": merged } } } });
+    }
+    return true;
+  } catch (e) {
+    logError("encounter round", e);
+    toast("warning", "That round didn't go through — try again.", userId);
+    return true;
+  } finally {
+    busyChats.delete(chatId);
+    send({ type: "busy", chatId, busy: false }, userId);
+    await pushState(chatId, userId);
+  }
+}
+function latestLog(msgs, s) {
+  for (const m of [...msgs].reverse()) {
+    const log = !m.is_user ? warpMeta(m).encounter : undefined;
+    if (log?.status === "on" && log.enc === s.encounter?.id)
+      return { m, log };
+  }
+  return null;
+}
+async function tellRound(o) {
+  const { r, before, after, rec, player, settings } = o;
+  const card = roundCard(r, rec, before, after, o.chance);
+  const story = storyBefore(o.msgs);
+  const earlier = o.prev?.rounds.map((x) => x.text) ?? [];
+  const foe = foeName(r, before);
+  const person = Object.values(before.people).some((p) => p.name.toLowerCase() === foe.toLowerCase());
+  const foeAbout = person ? (await personProfile(o.chatId, foe, o.userId).catch(() => null))?.text ?? "" : "";
+  const text = await writeRound({ r, before, after, rec, card, action: o.action, player, typed: o.typed, story, earlier, foeAbout, seed: rec.check?.seed ?? String(Date.now()) }, settings, o.userId);
+  const from = o.same ? o.prev?.from ?? 0 : o.prev?.rounds.length ?? 0;
+  const log = { enc: before.encounter.id, foe, status: "on", from, rounds: [...o.prev?.rounds ?? [], { text, card }] };
+  let content = log.rounds.slice(from).map((x) => x.text).join(`
+
+`);
+  if (card.ended) {
+    const logMsg = o.msgs.find((m) => warpMeta(m).encounter === o.prev) ?? null;
+    const start = startOf(r, o.msgs, firstLogOf(o.msgs, log.enc) ?? logMsg, before);
+    const enc = r.encounters[log.enc];
+    const ended = { label: outcomeLabel(enc, card.ended.outcome), loss: isLoss(enc, card.ended.outcome) };
+    const summary = await encounterSummary({ r, start, end: after, encId: log.enc, foe, outcome: ended, rounds: log.rounds.map((x) => x.text), player, story }, settings, o.userId);
+    log.status = "ended";
+    log.summary = summary;
+    log.ended = ended;
+    content = summary;
+  }
+  return { log, content };
+}
+function firstLogOf(msgs, enc) {
+  let first = null;
+  for (const m of [...msgs].reverse()) {
+    const log = !m.is_user ? warpMeta(m).encounter : undefined;
+    if (log?.enc === enc && log.status === "on")
+      first = m;
+    else if (first)
+      break;
+  }
+  return first;
+}
+async function foldEarlier(chatId, msgs, enc, except) {
+  for (const m of msgs) {
+    const log = !m.is_user && m.id !== except ? warpMeta(m).encounter : undefined;
+    if (!log || log.enc !== enc || log.status !== "on")
+      continue;
+    const meta = { ...m.metadata ?? {} };
+    meta.warp = { ...warpMeta(m), encounter: { ...log, status: "ended", summary: "" } };
+    await host().chat.updateMessage(chatId, m.id, { content: `*The struggle with ${log.foe} went on…*`, metadata: meta }).catch((e) => logError("fold encounter log", e));
+  }
+}
+async function quietReply(o) {
+  const found = o.rec.action ? findAction(o.r, o.before, o.rec.action.id) : null;
+  const chance = found?.a.check ? odds(o.r, o.before, found.a, o.rec.action?.params, found.target)?.success ?? null : null;
+  const lastUser = [...o.history].reverse().find((m) => m.is_user);
+  const prev = latestLog(o.history, o.before)?.log ?? null;
+  const { log, content } = await tellRound({ ...o, action: found?.a ?? null, chance, msgs: o.history, typed: lastUser?.content ?? null, prev, same: false });
+  return { content, log, fold: () => foldEarlier(o.chatId, o.history, log.enc, null) };
+}
+function startOf(r, msgs, logMsg, fallback) {
+  if (!logMsg)
+    return fallback;
+  const i = msgs.findIndex((m) => m.id === logMsg.id);
+  return i > 0 ? foldPath(r, msgs.slice(0, i)).state : fallback;
+}
+function compactLog(m) {
+  const log = warpMeta(m).encounter;
+  if (!log || log.status !== "on")
+    return null;
+  const last = log.rounds[log.rounds.length - 1];
+  return `[An encounter with ${log.foe} is under way — ${log.rounds.length} round${log.rounds.length === 1 ? "" : "s"} so far. Latest: ${last?.text.slice(0, 300) ?? ""}]`;
+}
+var init_encounter = __esm(() => {
+  init_dice();
+  init_encounter_view();
+  init_resolve();
+  init_state();
+  init_decisions();
+  init_deciders();
+  init_encounter_lines();
+  init_ledger();
+  init_settings();
+  init_source();
+  init_state_push();
+});
+
 // src/backend/turn.ts
 function ctxInfo(ctx) {
   const raw = ctx;
@@ -16012,6 +16794,11 @@ function ctxInfo(ctx) {
     generationId: typeof raw.generationId === "string" && raw.generationId || fresh?.generationId || null,
     targetMessageId: typeof raw.excludeMessageId === "string" && raw.excludeMessageId || fresh?.targetMessageId || null
   };
+}
+function textOf2(content) {
+  if (typeof content === "string")
+    return content;
+  return content.map((p) => ("text" in p) && typeof p.text === "string" ? p.text : "").join("");
 }
 async function playerName(chatId, userId) {
   const hit = playerNames.get(chatId);
@@ -16131,11 +16918,26 @@ async function interceptor(messages, ctx) {
         }
       }
     }
+    const shrunk = messages.map((lm) => {
+      const m = history.find((h) => !h.is_user && h.content === textOf2(lm.content) && warpMeta(h).encounter);
+      const short = m ? compactLog(m) : null;
+      return short ? { ...lm, content: short } : lm;
+    });
     const text = buildInjection(r, rec, before, after, player);
-    const { messages: out, index } = injectInto(messages, text);
+    const { messages: out, index } = injectInto(shrunk, text);
     const waiting = pending.get(info.generationId ?? ctx.chatId);
     if (waiting && !info.isDryRun)
       waiting.prompt = out;
+    if (waiting && rec && !info.isDryRun && ctx.generationType !== "continue" && isQuiet(r, before)) {
+      const quiet = await quietReply({ chatId: ctx.chatId, userId: ctx.userId, r, before, after, rec, history, player, settings }).catch((e) => {
+        logError("quiet round", e);
+        return null;
+      });
+      if (quiet) {
+        waiting.quiet = quiet;
+        return { messages: out, breakdown: [{ messageIndex: index, name: "Warp game state" }], finalResponse: { content: quiet.content, fallbackMessageIndex: Math.max(0, out.length - 1) } };
+      }
+    }
     return { messages: out, breakdown: [{ messageIndex: index, name: "Warp game state" }] };
   } catch (e) {
     logError("interceptor", e);
@@ -16258,6 +17060,13 @@ async function onGenerationEnded(payload, userId) {
       })).catch((e) => logError("save verdict", e));
     }
     await pushState(payload.chatId, userId);
+    if (p.quiet && (payload.content ?? msg.content).trim() === p.quiet.content.trim()) {
+      await patchWarpMeta(payload.chatId, msg.id, (w) => ({ ...w, encounter: p.quiet.log }));
+      if (p.quiet.log.status === "ended")
+        await p.quiet.fold();
+      await pushState(payload.chatId, userId);
+      return;
+    }
     if (payload.content)
       await afterReply(p, msg, payload.content, userId);
   } catch (e) {
@@ -16284,6 +17093,7 @@ var init_turn = __esm(() => {
   init_settings();
   init_source();
   init_state_push();
+  init_encounter();
   pending = new Map;
   playerNames = new Map;
   started = new Map;
@@ -16307,7 +17117,7 @@ function sceneViewFor(chatId, r, s) {
     return { kind, seq: 0, lines: [], said: null, image: null, imageBusy: false, writing: false };
   return { kind, seq: l.seq, lines: l.lines, said: l.said, image: l.image, imageBusy: l.imageBusy, writing: l.writing };
 }
-async function playerNameOf(chatId, userId) {
+async function playerNameOf2(chatId, userId) {
   await Promise.resolve().then(() => init_turn());
   return playerName(chatId, userId).catch(() => "You");
 }
@@ -16333,7 +17143,7 @@ async function playScene(opts) {
     const { state: before } = foldPath(r, msgs);
     if (!log.start)
       log.start = cloneState(before);
-    const player = await playerNameOf(chatId, userId);
+    const player = await playerNameOf2(chatId, userId);
     const seed = randomSeed();
     const playerText = opts.typed ?? opts.said ?? "";
     let res = resolveTurnFull(r, before, opts.intent, { seed, veils: settings.veils, playerText });
@@ -16538,11 +17348,30 @@ async function pushState(chatId, userId, force = false) {
       dungeon: settings.enabled ? await withName(buildDungeonView(r, state), chatId, userId) : null,
       dungeonEntries: settings.enabled ? buildDungeonEntries(r, state) : [],
       date: settings.enabled ? buildDateView(r, state, settings.lines) : null,
-      scene: settings.enabled ? sceneViewFor(chatId, r, state) : null
+      scene: settings.enabled ? sceneViewFor(chatId, r, state) : null,
+      encounterLogs: settings.enabled ? encounterLogsOf(r, msgs) : []
     }, userId);
   } catch (e) {
     logError("pushState", e);
   }
+}
+function encounterLogsOf(r, msgs) {
+  const out = [];
+  for (const m of msgs.slice(-30)) {
+    const log = warpMeta(m).encounter;
+    if (!log)
+      continue;
+    out.push({
+      messageId: m.id,
+      name: r.encounters[log.enc]?.name ?? "Encounter",
+      foe: log.foe,
+      status: log.status,
+      rounds: log.rounds.map((x) => x.card),
+      from: log.from ?? 0,
+      ended: log.ended ?? null
+    });
+  }
+  return out;
 }
 function markReady(choices, ready) {
   return ready.size ? choices.map((c) => ready.has(c.id) ? { ...c, ready: true } : c) : choices;
@@ -16604,6 +17433,7 @@ init_state_push();
 init_turn();
 init_intents();
 init_scene();
+init_encounter();
 init_talk();
 init_types2();
 init_drafts();
@@ -16842,7 +17672,7 @@ var PART_CONTENTS = {
   core: "name, description, player, clock, start, hud, narration",
   stats: "stats, growth",
   people: "relationships (stats + people with schedules), companions, lineage",
-  world: "weather, locations, items (incl. clothing), wardrobe, body, conditions, flags, start.items",
+  world: "weather, locations, items (incl. clothing, uses and gear bonuses), item_uses, wardrobe, body, conditions, flags, start.items",
   actions: "actions, improvise, obligations, jobs",
   encounters: "encounters, dungeons",
   journal: "codex, feats, perks, checkpoints, endings",
@@ -16859,7 +17689,7 @@ function partForIssue(where) {
     return "stats";
   if (["relationships", "people", "companions", "lineage"].some((k) => head.startsWith(k)))
     return "people";
-  if (["locations", "items", "wardrobe", "weather", "conditions", "flags", "body"].some((k) => head.startsWith(k)))
+  if (["locations", "items", "item uses", "wardrobe", "weather", "conditions", "flags", "body"].some((k) => head.startsWith(k)))
     return "world";
   if (["actions", "improvise", "obligations", "jobs"].some((k) => head.startsWith(k)))
     return "actions";
@@ -16926,7 +17756,13 @@ locations:
 items:
   phone: Phone
   raincoat: { name: Raincoat, slot: outer, warmth: 5, reveal: 0, traits: [rainproof] }   # clothing = item with a slot
-  pepper_spray: { name: Pepper Spray, uses: 5 }   # uses: each use the story shows spends one; the last spends the item (tags: [consumable] = 1 use)
+  pepper_spray:                    # an item that DOES something: use: is an action offered while it's held (in encounters too)
+    name: Pepper Spray
+    uses: 5                        # charges; each use spends one, the last spends the item (tags: [consumable] = 1 use)
+    use: { label: Spray it, foe: { nerve: -6 }, hint: "{{user}} empties a burst into their face." }   # effects (or check/success/fail like any action); when:, why_not: "…" optional
+  lucky_boots: { name: Lucky Boots, slot: feet, bonus: { athletics: 10 } }   # gear: added to every check that reads athletics while worn (carried, for non-clothing)
+  house_keys: { name: Keys, keep: true, use: { label: Lock the door behind you, stress: -5, when: "at('home')" } }   # keep: true = using it doesn't spend it
+item_uses: { phone: { label: Call a friend for a lift, check: { chance: 60 }, success: { move: home }, fail: { stress: +3 } } }   # uses/bonuses for items declared elsewhere (Warp writes drafted ones here)
 wardrobe: { slots: [outer, top, bottom, under_top, under_bottom, feet], cover: [top, bottom], start: [t_shirt, jeans] }
 conditions: { cold: { label: Cold, tone: bad } }
 flags: { met_boss: { start: false, narrator: true } }
@@ -16980,8 +17816,14 @@ encounters:
     foe: { name: Mugger, stats: { nerve: { start: 10, max: 10 } } }
     actions: { fight: { label: Fight back, check: { chance: "30 + athletics / 2" }, success: { foe: { nerve: -6 } }, fail: { pain: +10 } }, run: { label: Run, effects: { end: escaped } } }
     foe_moves: { grab: { desc: "Grabs you", weight: 2, pain: +8 }, threaten: { desc: "Threatens", weight: 1, stress: +6 } }
-    end_when: { won: "foe.nerve <= 0", beaten: "pain >= 80" }
+    end_when: { won: "foe.nerve <= 0", beaten: "pain >= 80" }   # simple comparisons let Warp show the goal and the danger to the player
     outcomes: { won: { hint: "They flee." }, escaped: { stress: +3 }, beaten: { money: "-min(money, 30)" } }
+    labels: { won: "You see them off", escaped: "You got away", beaten: "Overpowered" }   # how each ending reads
+    goal: "Break their nerve, or get away"        # optional; otherwise derived from end_when
+    danger: "Pain at 80 and you're overpowered"   # optional; otherwise derived
+    # narrate: true = every round goes to the narrator as a full reply (old style). Default: rounds are told briefly
+    #   in one encounter message that grows, then replaced by a summary — far fewer tokens, no repetitive loops.
+    # an action out of reach can say why: when: "has('bat')", why_not: "You'd need something to swing"
     # from_story: false = only actions/effects start it (by default the story can: a fight breaking out in the prose starts it, against whoever it's with)
     # momentum: { win: won, lose: beaten, swing: { crit_success: 40, success: 25, partial: 10, fail: -20, crit_fail: -35 } }
     #   a fight that swings (−100…+100): each check moves it, foe moves can too (effect momentum: -15), and only a full swing ends it;
@@ -17986,6 +18828,8 @@ spindle.onFrontendMessage(async (raw, userId) => {
             await playScene({ chatId: msg.chatId, userId, kind: "dungeon", intent: null, said: text, typed: text });
             break;
           }
+          if (isQuiet(r, state) && await playRound({ chatId: msg.chatId, userId, intent: null, typed: text }))
+            break;
         }
         await spindle.chat.appendMessage(msg.chatId, { role: "user", content: text }, { triggerGeneration: true });
         break;
@@ -18006,6 +18850,8 @@ spindle.onFrontendMessage(async (raw, userId) => {
           return;
         }
         const { say, intent } = ci;
+        if (isQuiet(r, state) && await playRound({ chatId: msg.chatId, userId, intent }))
+          break;
         if (msg.actionId.startsWith(DATE_PREFIX)) {
           if (busyChats.has(msg.chatId)) {
             toast("info", "Wait a moment — they're still answering.", userId);

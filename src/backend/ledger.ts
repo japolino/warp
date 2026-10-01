@@ -23,6 +23,21 @@ export interface WarpMeta {
   swipes?: Record<string, TurnRecord>;
   /** Choices written for the moment after this reply, per swipe. */
   live?: Record<string, LiveChoice[]>;
+  /** This message is a quiet encounter's log: its rounds, and how it ended. */
+  encounter?: EncounterLog;
+}
+
+export interface EncounterLog {
+  /** The encounter's id. */
+  enc: string;
+  foe: string;
+  status: "on" | "ended";
+  rounds: { text: string; card: import("../engine/encounter-view.js").RoundCard }[];
+  /** The first round shown in this message (earlier ones are in an earlier message, before a typed turn). */
+  from?: number;
+  /** When it ended: the closing paragraph that replaced the log, and how it ended. */
+  summary?: string;
+  ended?: { label: string; loss: boolean };
 }
 
 /** The live choices offered under a reply (its active swipe). */

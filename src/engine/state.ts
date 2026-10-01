@@ -34,6 +34,8 @@ export interface GameState {
   /** item id → current integrity, when damaged. */
   integrity: Record<string, number>;
   encounter: EncounterState | null;
+  /** The last encounter that ended: which, against whom, how, where and when (so the story can't simply restart it). */
+  lastEncounter?: { id: string; foeName?: string; outcome: string; at: number; loc: string | null } | null;
   codex: Record<string, true>;
   feats: Record<string, true>;
   perks: Record<string, true>;
@@ -350,6 +352,7 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       break;
     }
     case "enc":
+      if (!e.id && s.encounter) s.lastEncounter = { id: s.encounter.id, ...(s.encounter.foeName ? { foeName: s.encounter.foeName } : {}), outcome: e.outcome ?? "ended", at: s.minutes, loc: s.location };
       s.encounter = e.id ? { id: e.id, round: 0, foe: { ...(e.foe ?? {}) }, ...(e.momentum !== undefined ? { momentum: e.momentum } : {}), ...(e.foeName ? { foeName: e.foeName } : {}) } : null;
       break;
     case "swing":

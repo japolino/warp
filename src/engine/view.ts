@@ -7,7 +7,8 @@ import {
   type GameState, type WarpEvent,
 } from "./state.js";
 import { practiceProgress } from "./freeform.js";
-import { availableChoices, canExplore, EXPLORE, LIVE_PREFIX, odds, perkBlocker, RUN_EPILOGUE, TIER_LABEL, TRAVEL_PREFIX, travelTargets, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
+import { encounterGuide, itemRelevance } from "./encounter-view.js";
+import { actionPool, availableChoices, canExplore, EXPLORE, isAvailable, LIVE_PREFIX, lockReason, odds, usableItems, perkBlocker, RUN_EPILOGUE, TIER_LABEL, TRAVEL_PREFIX, travelTargets, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
 import {
   dateAt, exposedSlots, isIndoors, ordinal, personLocation, presentPeople, seasonAt, temperatureAt, warmthNeeded, warmthOf, weatherAt,
 } from "./world.js";
@@ -101,9 +102,17 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
       worn: wornIds.has(id),
     };
   };
+  const usable_ = usableItems(r, s);
   const items = Object.entries(s.items).map(([id, count]) => {
-    const per = r.items[id]?.uses ?? 0;
-    return { id, name: itemName(r, s, id), count, worn: wornIds.has(id), uses: per > 1 ? `${s.uses[id] ?? per}/${per}` : null };
+    const def = r.items[id];
+    const per = def?.uses ?? 0;
+    const usable = usable_.find((u) => u.id === `item:${id}`);
+    const bonus = def ? Object.entries(def.bonus).filter(([, b]) => b).map(([st, b]) => `${b > 0 ? "+" : ""}${b} ${r.stats[st]?.label ?? st}`).join(", ") : "";
+    return {
+      id, name: itemName(r, s, id), count, worn: wornIds.has(id), uses: per > 1 ? `${s.uses[id] ?? per}/${per}` : null,
+      use: usable ? { id: usable.id, label: usable.a.label, locked: usable.locked, drafted: !!def?.drafted } : null,
+      bonus: bonus ? `${bonus}${def?.slot ? " while worn" : ""}` : null,
+    };
   });
   const clothing = Object.keys(s.items).filter((id) => r.items[id]?.slot).map(clothingView);
   const outfit = r.wardrobe.enabled
@@ -128,7 +137,13 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
   let encounter: HudView["encounter"] = null;
   if (s.encounter) {
     const enc = r.encounters[s.encounter.id];
+    const guide = encounterGuide(r, s);
     encounter = {
+      goal: guide?.goal ?? null,
+      progress: guide?.progress ?? [],
+      danger: guide?.danger ?? [],
+      dangerText: guide?.dangerText ?? null,
+      quiet: !enc?.narrate,
       name: enc?.name ?? s.encounter.id,
       foe: foeName(r, s),
       round: s.encounter.round,
@@ -404,7 +419,38 @@ export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; 
         params: a.params.map((p) => ({ id: p.id, label: p.label, options: Object.keys(p.options), default: p.default })),
       };
     });
-  return [...live, ...actions, ...talk, ...work, ...dungeons, ...travel, ...explore];
+  // Encounter moves that are out of reach say why, when it's something the player could fix (an item, say).
+  const locked: ChoiceView[] = [];
+  if (s.encounter) {
+    const pool = actionPool(r, s);
+    for (const id of pool.order) {
+      const a = pool.defs[id];
+      if (a.hidden || a.perPerson || isAvailable(r, s, a) || a.tags.some((t) => lines.has(t))) continue;
+      if (!a.whyNot && !/has\(/.test(a.when ?? "")) continue;
+      locked.push({ ...plain(id, a.label, encName ?? "Encounter", a.desc ?? null), locked: lockReason(r, s, a) });
+    }
+  }
+  return [...live, ...actions, ...itemChoices(r, s, lines), ...locked, ...talk, ...work, ...dungeons, ...travel, ...explore];
+}
+
+/** Held items worth using now: in an encounter, any that bear on it (up to 3); otherwise only clearly helpful ones (up to 2). */
+function itemChoices(r: Ruleset, s: GameState, lines: Set<string>): ChoiceView[] {
+  if (s.job || s.ended) return [];
+  const veils = new Set<string>();
+  const ranked = usableItems(r, s)
+    .filter((u) => !u.locked && !u.a.tags.some((t) => lines.has(t)))
+    .map((u) => ({ u, ...itemRelevance(r, s, u.a) }))
+    .filter((x) => x.score >= (s.encounter ? 1 : 2))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, s.encounter ? 3 : 2);
+  return ranked.map(({ u, why }) => {
+    const o = odds(r, s, u.a);
+    return {
+      id: u.id, label: u.a.label, group: "Items", desc: u.a.desc ?? r.items[u.id.slice(5)]?.desc ?? null,
+      odds: o ? o.success : null, partialOdds: o && o.partial > 0 ? o.partial : null, checkLabel: u.a.check?.label ?? null,
+      veiled: u.a.tags.some((t) => veils.has(t)), params: [], ...(why ? { why } : {}),
+    };
+  });
 }
 
 // ───────────────────────── change summaries ─────────────────────────

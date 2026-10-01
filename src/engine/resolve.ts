@@ -1,7 +1,7 @@
 // Turn resolution: the only place outcomes are decided.
 
 import type { ExprEnv, Value } from "./expr.js";
-import { evalBool, evalNumber, evaluate } from "./expr.js";
+import { evalBool, evalNumber, evaluate, identifiers } from "./expr.js";
 import { rollDice, seededRng, type Rng } from "./dice.js";
 import type { ActionDef, CheckDef, DecideSpec, Effect, NarratorGate, RandomEventDef, Ruleset, SeenReaction, Tier } from "./ruleset.js";
 import { SEEN_REACTIONS } from "./ruleset.js";
@@ -26,6 +26,8 @@ export interface CheckResult {
   target: number | null;
   tier: Tier;
   seed: string;
+  /** Gear that helped ("Running Sneakers: +5 Athletics"). */
+  gear?: string[];
 }
 
 export interface TurnRecord {
@@ -203,10 +205,55 @@ export function availableChoices(r: Ruleset, s: GameState, lines: string[] = [])
 
 /** Live choices resolve through their tag: `live:<tag>` (or `live:<tag>@<person>`). */
 export const LIVE_PREFIX = "live:";
+/** Using an item: `item:<id>` runs the item's `use:` action, wherever the player is. */
+export const ITEM_PREFIX = "item:";
+
+/** Items the player holds that can be used right now. Locked uses come back with their reason. */
+export function usableItems(r: Ruleset, s: GameState): { id: string; a: ActionDef; locked: string | null }[] {
+  const out: { id: string; a: ActionDef; locked: string | null }[] = [];
+  for (const [id, n] of Object.entries(s.items)) {
+    const a = r.items[id]?.use;
+    if (!a || n <= 0) continue;
+    out.push({ id: `${ITEM_PREFIX}${id}`, a, locked: isAvailable(r, s, a) ? null : a.whyNot ?? lockReason(r, s, a) });
+  }
+  return out;
+}
+
+/** A plain reason a choice is locked, read from simple conditions ("Needs a Cream Brioche"). */
+export function lockReason(r: Ruleset, s: GameState, a: ActionDef): string {
+  if (a.whyNot) return a.whyNot;
+  const need = [...(a.when ?? "").matchAll(/has\(\s*'([^']+)'/g)].map((m) => m[1]).filter((id) => !(s.items[id] > 0));
+  if (need.length && /\bor\b/.test(a.when ?? "")) return `Needs ${need.map((id) => itemName(r, s, id)).join(" or ")}`;
+  if (need.length) return `Needs ${need.map((id) => itemName(r, s, id)).join(" and ")}`;
+  return "Not possible right now";
+}
+
+/** Carried gear (worn, for clothing) that adds to the stats a check reads. */
+export function gearFor(r: Ruleset, s: GameState, a: ActionDef): { stats: Record<string, number>; notes: string[] } {
+  const stats: Record<string, number> = {};
+  const notes: string[] = [];
+  if (!a.check) return { stats, notes };
+  const reads = new Set([...identifiers(a.check.add as string), ...identifiers(a.check.target as string)]);
+  const worn = new Set(Object.values(s.worn));
+  for (const [id, n] of Object.entries(s.items)) {
+    const it = r.items[id];
+    if (!it || n <= 0 || (it.slot && !worn.has(id))) continue;
+    for (const [stat, b] of Object.entries(it.bonus)) {
+      if (!b || !reads.has(stat)) continue;
+      stats[stat] = (stats[stat] ?? 0) + b;
+      notes.push(`${it.name}: ${b > 0 ? "+" : ""}${b} ${r.stats[stat]?.label ?? stat}`);
+    }
+  }
+  return { stats, notes };
+}
 
 /** Look up an intent's action (and target) in whatever pool is live. */
 export function findAction(r: Ruleset, s: GameState, actionId: string): { a: ActionDef; target?: string } | null {
   const [base, target] = actionId.split(TARGET_SEP);
+  if (base.startsWith(ITEM_PREFIX)) {
+    const a = r.items[base.slice(ITEM_PREFIX.length)]?.use;
+    return a ? { a, ...(target ? { target } : {}) } : null;
+  }
   if (base.startsWith(IMPROV)) {
     const a = improvAction(r, s, base);
     return a ? { a } : null;
@@ -246,7 +293,10 @@ function tierFor(check: CheckDef, roll: ReturnType<typeof rollDice>, add: number
 
 function checkNumbers(r: Ruleset, s: GameState, a: ActionDef, params?: Record<string, string>, who?: string) {
   const check = a.check!;
-  const env = makeEnv(r, s, paramValues(a, params, who));
+  // Gear counts as that much more of the stat it helps, for this check only.
+  const gear = gearFor(r, s, a).stats;
+  const eff = Object.keys(gear).length ? { ...s, stats: Object.fromEntries(Object.entries(s.stats).map(([k, v]) => [k, v + (gear[k] ?? 0)])) } : s;
+  const env = makeEnv(r, eff, paramValues(a, params, who));
   const add = check.add !== undefined ? Math.round(evalNumber(check.add, env, 0)) : 0;
   let target: number | null = null;
   if (check.target !== undefined) {
@@ -810,6 +860,22 @@ export function runOp(r: Ruleset, before: GameState, op: RunOp): WarpEvent[] | s
   return w.events;
 }
 
+/** How long an ended encounter stays ended for the story, in the same place (in-game minutes). */
+export const ENCOUNTER_REST = 60;
+
+/**
+ * The story can't restart an encounter that just ended — it's usually the same
+ * incident being described again. A new one needs time to pass, a different
+ * place, or the reader's word that it's genuinely new (and never in the same exchange).
+ */
+export function encounterJustEnded(s: GameState, id: string, fresh: boolean): boolean {
+  const last = s.lastEncounter;
+  if (!last || last.id !== id) return false;
+  if (s.minutes - last.at <= 15) return true; // the same exchange (or right after): never
+  if (fresh) return false;
+  return last.loc === s.location && s.minutes - last.at < ENCOUNTER_REST;
+}
+
 function startEncounter(w: Working, id: string, src: EventSource, opponent?: string) {
   const enc = w.r.encounters[id];
   if (!enc) return;
@@ -952,7 +1018,7 @@ function runTriggers(w: Working, includeRepeat: boolean) {
 
 // ───────────────────────── the turn ─────────────────────────
 
-const TIER_FALLBACK: Record<Tier, Tier[]> = {
+export const TIER_FALLBACK: Record<Tier, Tier[]> = {
   crit_success: ["crit_success", "success"],
   success: ["success"],
   partial: ["partial", "success"],
@@ -978,7 +1044,7 @@ export interface ResolveOptions {
   /** Judged plain-language trigger conditions, by trigger id. */
   scene?: Record<string, boolean>;
   /** The scene says an encounter is breaking out (and who the opponent is, when it's someone from the story). */
-  encounter?: { id: string; foe?: string };
+  encounter?: { id: string; foe?: string; fresh?: boolean };
 }
 
 export interface Resolution { record: TurnRecord; needs: DecideSpec[] }
@@ -1036,7 +1102,7 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   let encBase = before;
   if (opts.encounter && !before.encounter && !before.dungeon && !before.job && !before.ended) {
     const enc = r.encounters[opts.encounter.id];
-    if (enc?.fromStory) {
+    if (enc?.fromStory && !encounterJustEnded(before, enc.id, opts.encounter.fresh === true)) {
       because(w, `The scene: ${enc.name} breaks out`, () => startEncounter(w, enc.id, "trigger", opts.encounter!.foe));
       encBase = cloneState(w.s);
     }
@@ -1114,6 +1180,12 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
           : `{{user}} goes ahead, but ${mind.cause.toLowerCase()} colours it: ${why}`);
     }
     because(w, `Cost of "${label}"`, () => effectToEvents(w, a.cost, "cost", extra));
+    // Using an item spends a charge, or one of it — unless it's a tool that keeps.
+    if (a.id.startsWith(ITEM_PREFIX)) {
+      const itemId = a.id.slice(ITEM_PREFIX.length);
+      const it = r.items[itemId];
+      if (it && !it.keep && (w.s.items[itemId] ?? 0) > 0) because(w, `Used ${it.name}`, () => w.push(it.uses > 0 ? { t: "use", id: itemId, n: 1, src: "action" } : { t: "item", id: itemId, d: -1, src: "action" }));
+    }
 
     if (mind?.kind === "fail") {
       const fail = a.outcomes.fail ?? a.outcomes.crit_fail;
@@ -1135,6 +1207,8 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
         tier,
         seed: opts.seed,
       };
+      const gear = gearFor(r, w.s, a).notes;
+      if (gear.length) rec.check.gear = gear;
       const key = TIER_FALLBACK[tier].find((t) => a.outcomes[t]);
       if (key) because(w, `"${label}": ${rec.check.label} rolled ${rec.check.total}${target !== null ? ` vs ${target}` : ""} → ${TIER_LABEL[tier]}`, () => effectToEvents(w, a.outcomes[key]!, "check", extra));
       if (improvised) {
@@ -1226,6 +1300,8 @@ export interface Proposal {
   foe?: string;
   /** The encounter in progress ended in the reply, with this outcome. */
   encounterEnd?: string;
+  /** The story is sure this is a genuinely new incident, not the one that just ended. */
+  encounterFresh?: boolean;
 }
 
 /** What the story's changes are checked against: the exchange's text and the action that was taken. */
@@ -1409,7 +1485,8 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
   if (p.encounter && !w.s.encounter && !w.s.dungeon && !w.s.job) {
     const k = String(p.encounter).toLowerCase();
     const enc = r.encounters[k] ?? Object.values(r.encounters).find((x) => x.name.toLowerCase() === k);
-    if (enc?.fromStory) because(w, `${enc.name} broke out`, () => startEncounter(w, enc.id, src, typeof p.foe === "string" && p.foe.trim() ? p.foe.trim().slice(0, 60) : undefined));
+    if (enc && encounterJustEnded(w.s, enc.id, p.encounterFresh === true)) { /* the prose is still describing the one that ended */ }
+    else if (enc?.fromStory) because(w, `${enc.name} broke out`, () => startEncounter(w, enc.id, src, typeof p.foe === "string" && p.foe.trim() ? p.foe.trim().slice(0, 60) : undefined));
   } else if (p.encounterEnd && w.s.encounter) {
     const name = r.encounters[w.s.encounter.id]?.name ?? "The encounter";
     because(w, `${name} ended`, () => endEncounter(w, slug(String(p.encounterEnd)), src));

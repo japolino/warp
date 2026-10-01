@@ -59,7 +59,13 @@ export interface HudView {
   bars: BarView[];
   skills: SkillView[];
   people: PersonView[];
-  items: { id: string; name: string; count: number; worn: boolean; /** "3/5" uses left in the one in hand. */ uses: string | null }[];
+  items: {
+    id: string; name: string; count: number; worn: boolean; /** "3/5" uses left in the one in hand. */ uses: string | null;
+    /** Using it: the choice id (`item:<id>`), its label, and why it's locked (null = usable now). */
+    use: { id: string; label: string; locked: string | null; drafted: boolean } | null;
+    /** Gear: what it adds to checks ("+5 Athletics"). */
+    bonus: string | null;
+  }[];
   conditions: { id: string; label: string; tone: Tone; desc?: string; remaining?: string }[];
   /** Clothing warmth vs what the weather calls for. */
   warmth: { value: number; min: number; max: number; tone: Tone; text: string } | null;
@@ -75,6 +81,15 @@ export interface HudView {
     stats: { id: string; label: string; value: number; max: number; pct: number; tone: Tone }[];
     /** −100 … +100 for fights that swing. */
     momentum: number | null;
+    /** What the player is trying to do ("Bring their fervor to 0"). */
+    goal: string | null;
+    /** Progress toward it: foe stats with the value that ends it. */
+    progress: { label: string; value: number; target: number; max: number }[];
+    /** Player stats it can be lost on, nearest first. */
+    danger: { label: string; value: number; at: number; text: string; close: boolean }[];
+    dangerText: string | null;
+    /** Rounds play quietly in one growing message (false: each round is narrated in full). */
+    quiet: boolean;
   } | null;
   codex: { id: string; title: string; text: string; category: string | null }[];
   codexTotal: number;
@@ -111,6 +126,29 @@ export interface MapView {
   edges: [string, string][];
 }
 
+/** One encounter round, straight from the ledger: the check is the check, not the encounter. */
+export interface RoundCardView {
+  move: string;
+  check: { label: string; tier: string; odds: number | null; gear: string[] } | null;
+  foe: string | null;
+  changes: { label: string; from: number; to: number; of: number | null; good: boolean }[];
+  /** Set only when the rules ended it. */
+  ended: { outcome: string; label: string; loss: boolean } | null;
+  round: number;
+}
+
+/** A quiet encounter's log message, for the cards shown under it. */
+export interface EncounterLogView {
+  messageId: string;
+  name: string;
+  foe: string;
+  status: "on" | "ended";
+  rounds: RoundCardView[];
+  /** The first round this message shows. */
+  from: number;
+  ended: { label: string; loss: boolean } | null;
+}
+
 export interface ChoiceView {
   id: string;
   label: string;
@@ -124,6 +162,10 @@ export interface ChoiceView {
   params: { id: string; label: string; options: string[]; default: string }[];
   /** Its reply is already written: clicking it is instant. */
   ready?: boolean;
+  /** Can't be taken right now, and why ("Needs a Cream Brioche"). */
+  locked?: string;
+  /** Why it's suggested now (items: "Clears Scented"). */
+  why?: string;
 }
 
 export interface FighterView {
@@ -499,6 +541,8 @@ export type BackendToFrontend =
       date: DateView | null;
       /** A date or dungeon run on the stage: its latest snippet of lines, and the date's picture. */
       scene: SceneView | null;
+      /** Quiet encounter logs among the recent messages, for their round cards. */
+      encounterLogs?: EncounterLogView[];
     }
   | { type: "busy"; chatId: string; busy: boolean; label?: string }
   | { type: "settings"; settings: Settings; templates: TemplateInfo[]; connections: { id: string; name: string }[]; imageConnections: { id: string; name: string }[]; jevKeySet: boolean }

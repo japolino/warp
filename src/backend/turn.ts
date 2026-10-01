@@ -22,6 +22,7 @@ import { discoverPlace } from "./discover.js";
 import { getSettings } from "./settings.js";
 import { characterBrief, getRuleset } from "./source.js";
 import { busyChats, pushState, schedulePush } from "./state-push.js";
+import { compactLog, isQuiet, quietReply, type QuietRound } from "./encounter.js";
 
 export interface Pending {
   chatId: string;
@@ -37,6 +38,8 @@ export interface Pending {
   player: string;
   /** The prompt this reply was written from (with Warp's block), for drafts and pre-writing. */
   prompt?: LlmMessageDTO[];
+  /** A quiet encounter round typed in the chat: Warp wrote the reply itself (when the host allows it). */
+  quiet?: QuietRound;
 }
 
 /** Keyed by generation id when the host gives us one, otherwise by chat id. */
@@ -188,10 +191,24 @@ export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorCon
       }
     }
 
+    // A running encounter's log reaches the narrator as one line, not the blow-by-blow.
+    const shrunk = messages.map((lm) => {
+      const m = history.find((h) => !h.is_user && h.content === textOf(lm.content) && warpMeta(h).encounter);
+      const short = m ? compactLog(m) : null;
+      return short ? { ...lm, content: short } : lm;
+    });
     const text = buildInjection(r, rec, before, after, player);
-    const { messages: out, index } = injectInto(messages, text);
+    const { messages: out, index } = injectInto(shrunk, text);
     const waiting = pending.get(info.generationId ?? ctx.chatId);
     if (waiting && !info.isDryRun) waiting.prompt = out;
+    // Typed in the chat during a quiet encounter: the round is told briefly by Warp, not by the narrator.
+    if (waiting && rec && !info.isDryRun && ctx.generationType !== "continue" && isQuiet(r, before)) {
+      const quiet = await quietReply({ chatId: ctx.chatId, userId: ctx.userId, r, before, after, rec, history, player, settings }).catch((e) => { logError("quiet round", e); return null; });
+      if (quiet) {
+        waiting.quiet = quiet;
+        return { messages: out, breakdown: [{ messageIndex: index, name: "Warp game state" }], finalResponse: { content: quiet.content, fallbackMessageIndex: Math.max(0, out.length - 1) } };
+      }
+    }
     return { messages: out, breakdown: [{ messageIndex: index, name: "Warp game state" }] };
   } catch (e) {
     logError("interceptor", e);
@@ -318,6 +335,13 @@ export async function onGenerationEnded(payload: { generationId: string; chatId:
       })).catch((e) => logError("save verdict", e));
     }
     await pushState(payload.chatId, userId);
+    // Warp wrote this reply (a quiet encounter round): it becomes the encounter's log; nothing to read back from it.
+    if (p.quiet && (payload.content ?? msg.content).trim() === p.quiet.content.trim()) {
+      await patchWarpMeta(payload.chatId, msg.id, (w) => ({ ...w, encounter: p.quiet!.log }));
+      if (p.quiet.log.status === "ended") await p.quiet.fold();
+      await pushState(payload.chatId, userId);
+      return;
+    }
     if (payload.content) await afterReply(p, msg, payload.content, userId);
   } catch (e) {
     logError("generation ended", e);

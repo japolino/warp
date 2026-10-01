@@ -95,7 +95,7 @@ export function dropPrewritten(chatId: string) {
 }
 
 /** Choices that open a screen or change the game without a reply can't be pre-written. */
-const writable = (id: string) => !id.startsWith("dungeon:") && id !== "date:open" && !(id.startsWith("run:") && id !== "run:epilogue");
+const writable = (id: string) => !id.startsWith("item:") && !id.startsWith("dungeon:") && id !== "date:open" && !(id.startsWith("run:") && id !== "run:epilogue");
 
 export async function prewrite(opts: {
   chatId: string; userId?: string; r: Ruleset; settings: Settings; decider: Decider;
@@ -105,6 +105,8 @@ export async function prewrite(opts: {
   if (settings.prewrite <= 0) return;
   const msgs = await getMessages(chatId);
   const { state } = foldPath(r, msgs);
+  // A quiet encounter writes its own short rounds — nothing to pre-write.
+  if (state.encounter && !r.encounters[state.encounter.id]?.narrate) return;
   const key = momentKey(msgs, state);
   const choices = buildChoices(r, state, { ...settings, live: liveChoicesOf(msgs[msgs.length - 1]) })
     .filter((c) => writable(c.id) && !c.params.length).slice(0, settings.prewrite);

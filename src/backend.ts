@@ -12,6 +12,7 @@ import { busyChats, connectionsFor, getActiveChat, lastStates, pushState, schedu
 import { afterReply, interceptor, onGenerationEnded, onGenerationStarted, playerName } from "./backend/turn.js";
 import { intentFor } from "./backend/intents.js";
 import { playScene } from "./backend/scene.js";
+import { isQuiet, playRound } from "./backend/encounter.js";
 import { activeSession } from "./engine/date/talk.js";
 import { DATE_PREFIX } from "./engine/date/types.js";
 import { momentKey, takePrewritten } from "./backend/drafts.js";
@@ -194,6 +195,8 @@ spindle.onFrontendMessage(async (raw, userId) => {
           const { state } = foldPath(r, await getMessages(msg.chatId));
           if (activeSession(r, state)) { await playScene({ chatId: msg.chatId, userId, kind: "date", intent: { actionId: `${DATE_PREFIX}say`, via: "adjudicator" }, said: text, typed: text }); break; }
           if (state.dungeon) { await playScene({ chatId: msg.chatId, userId, kind: "dungeon", intent: null, said: text, typed: text }); break; }
+          // In a quiet encounter, a typed move is a round told in the encounter's message.
+          if (isQuiet(r, state) && await playRound({ chatId: msg.chatId, userId, intent: null, typed: text })) break;
         }
         await spindle.chat.appendMessage(msg.chatId, { role: "user", content: text }, { triggerGeneration: true });
         break;
@@ -213,6 +216,8 @@ spindle.onFrontendMessage(async (raw, userId) => {
           return;
         }
         const { say, intent } = ci;
+        // A quiet encounter: the round is resolved and told briefly in the encounter's own message.
+        if (isQuiet(r, state) && await playRound({ chatId: msg.chatId, userId, intent })) break;
         // Dates play on the stage, off the chat.
         if (msg.actionId.startsWith(DATE_PREFIX)) {
           if (busyChats.has(msg.chatId)) { toast("info", "Wait a moment — they're still answering.", userId); await pushState(msg.chatId, userId); return; }

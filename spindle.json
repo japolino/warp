@@ -6,7 +6,7 @@
   "github": "https://github.com/japolino/warp",
   "homepage": "https://github.com/japolino/warp",
   "description": "A game engine under your roleplay. Stats, dice checks, time, inventory and relationships owned by rules instead of the model — with clickable choices and a live status sidebar. Rulesets live in a character's `warp-ruleset` lorebook.",
-  "permissions": ["generation", "interceptor", "chat_mutation", "chats", "characters", "world_books", "ui_panels", "cors_proxy", "image_gen"],
+  "permissions": ["generation", "interceptor", "chat_mutation", "chats", "characters", "world_books", "ui_panels", "cors_proxy", "image_gen", "final_response"],
   "entry_backend": "dist/backend.js",
   "entry_frontend": "dist/frontend.js",
   "minimum_lumiverse_version": "0.1.0"

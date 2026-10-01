@@ -131,6 +131,8 @@ export interface ActionDef {
   at: string[];
   when?: string;
   hidden: boolean;
+  /** Shown on the locked choice when `when` doesn't hold ("Needs a lighter"). */
+  whyNot?: string;
   time?: number;
   cost: Effect;
   check?: CheckDef;
@@ -173,6 +175,14 @@ export interface ItemDef {
   traits: string[];
   /** Uses per item (a spray with 5 sprays); each use spends one, and at 0 the item is gone. 0 = not used up by use. */
   uses: number;
+  /** What using it does: an action like any other (`item:<id>`), offered while it's held. */
+  use?: ActionDef;
+  /** A tool that isn't spent by using it (keys, a phone). */
+  keep: boolean;
+  /** Gear: added to every check that reads these stats, while it's carried (or worn, for clothing). */
+  bonus: Record<string, number>;
+  /** Its use or bonus was drafted by Warp from the description (shown so the author can check it). */
+  drafted?: boolean;
 }
 export interface ConditionDef { id: string; label: string; tone: Tone; desc?: string; narrator: boolean; gate?: NarratorGate }
 export interface ScheduleEntry { when?: string; at: string }
@@ -233,6 +243,17 @@ export interface EncounterDef {
   momentum: { win: string; lose: string; start: number; swing: Record<Tier, number> } | null;
   /** The story can start it (a fight breaks out in the prose). */
   fromStory: boolean;
+  /**
+   * Each round goes to the narrator as a full reply (the old way). Off by default:
+   * rounds are written briefly into one encounter message that grows, and summed up at the end.
+   */
+  narrate: boolean;
+  /** What the player is trying to do, in their words ("Bring their fervor to 0"). Derived from `end_when` when absent. */
+  goal?: string;
+  /** What to watch out for ("Stress 80 and you're overwhelmed"). Derived from `end_when` when absent. */
+  danger?: string;
+  /** How each ending reads ("won" → "You talked them down"). */
+  labels: Record<string, string>;
 }
 
 export interface CodexEntry { id: string; title: string; text: string; category?: string; unlock?: string; lore: string[] }
@@ -992,6 +1013,7 @@ function normAction(id: string, raw: unknown, where: string, c: Ctx, known: { st
     at,
     when: when === undefined ? undefined : String(when),
     hidden: raw.hidden === true,
+    ...(typeof raw.why_not === "string" ? { whyNot: raw.why_not } : typeof raw.locked === "string" ? { whyNot: raw.locked } : {}),
     time: raw.time !== undefined ? c.num(raw.time, `${where} › time`, 0) : undefined,
     cost: normEffect(raw.cost ?? raw.costs, `${where} › cost`, c, known),
     check,
@@ -1090,6 +1112,35 @@ function normWardrobe(raw: unknown, items: Record<string, ItemDef>, c: Ctx): War
   return def;
 }
 
+/** Keys of an item's `use:` that describe the action itself; everything else is its effect. */
+const USE_KEYS = new Set(["label", "say", "desc", "description", "when", "time", "tags", "check", "params", "why_not", "locked", "group", "cost", "effects", "effect", "outcomes", "per_person", "hidden", "at", "order", "success", "fail", "partial", "crit_success", "crit_fail", "critical_success", "critical_fail", "failure"]);
+
+/** An item's `use:` (an action, or plain effects) and `bonus:` (gear that helps checks). */
+function applyItemUse(it: ItemDef, r: Raw, w: string, c: Ctx, known: { stats: Set<string> }, drafted: boolean) {
+  if (r.keep === true) it.keep = true;
+  if (isObj(r.bonus)) {
+    for (const [stat, v] of Object.entries(r.bonus)) {
+      if (!known.stats.has(stat)) { c.warn(`${w} › bonus › ${stat}`, `"${stat}" isn't a declared stat`); continue; }
+      it.bonus[stat] = c.num(v, `${w} › bonus › ${stat}`, 0);
+    }
+  }
+  const u = r.use;
+  if (u !== undefined && u !== false) {
+    const raw: Raw = isObj(u) ? u : typeof u === "string" ? { hint: u } : {};
+    const action: Raw = {};
+    const rest: Raw = {};
+    for (const [k, v] of Object.entries(raw)) (USE_KEYS.has(k) || TIER_KEYS[k] ? action : rest)[k] = v;
+    if (Object.keys(rest).length && !action.effects && !action.check) action.effects = rest;
+    // The item is in hand, or this isn't offered.
+    const has = `has('${it.id}')`;
+    action.when = action.when !== undefined ? `(${String(action.when)}) and ${has}` : has;
+    if (!action.label) action.label = `Use the ${it.name}`;
+    const def = normAction(`item:${it.id}`, action, `${w} › use`, c, known, 0);
+    if (def) { def.tags = [...new Set([...def.tags, "item"])]; it.use = def; }
+  }
+  if (drafted && (it.use || Object.keys(it.bonus).length)) it.drafted = true;
+}
+
 function normEncounter(id: string, raw: unknown, c: Ctx, known: { stats: Set<string> }): EncounterDef | null {
   const w = `Encounters › ${id}`;
   if (!isObj(raw)) { c.warn(w, "expected an encounter definition"); return null; }
@@ -1152,6 +1203,10 @@ function normEncounter(id: string, raw: unknown, c: Ctx, known: { stats: Set<str
     start: normEffect(startRaw, `${w} › start`, c, known),
     momentum,
     fromStory: raw.from_story !== false,
+    narrate: raw.narrate === true || raw.narrate === "rounds",
+    ...(typeof raw.goal === "string" ? { goal: raw.goal } : {}),
+    ...(typeof raw.danger === "string" ? { danger: raw.danger } : {}),
+    labels: Object.fromEntries(Object.entries(isObj(raw.labels) ? raw.labels : {}).filter(([, v]) => typeof v === "string")) as Record<string, string>,
   };
 }
 
@@ -1652,7 +1707,22 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
       traits: list(r.traits).map((t) => t.toLowerCase()),
       // `uses: 5` — five uses per item; a `consumable` tag means one.
       uses: Math.max(0, Math.round(c.num(r.uses ?? r.charges, `${w} › uses`, list(r.tags).map((t) => t.toLowerCase()).includes("consumable") ? 1 : 0))),
+      keep: r.keep === true,
+      bonus: {},
     };
+    applyItemUse(items[id], r, w, c, known, false);
+  }
+  // `item_uses:` gives uses and bonuses to items declared elsewhere (Warp's drafted uses live here).
+  for (const [id, u] of Object.entries(isObj(raw.item_uses) ? raw.item_uses : {})) {
+    const it = items[id];
+    if (!it) { c.warn(`Item uses › ${id}`, `"${id}" isn't a declared item`); continue; }
+    if (!isObj(u)) continue;
+    // The item's own definition wins over a drafted one.
+    if (it.use || Object.keys(it.bonus).length) continue;
+    // The entry is the use itself (plus optional bonus/keep), or has an explicit `use:`.
+    const { bonus, keep, drafted, use, ...rest } = u;
+    const raw: Raw = { bonus, keep, use: use ?? (Object.keys(rest).length ? rest : undefined) };
+    applyItemUse(it, raw, `Item uses › ${id}`, c, known, drafted === true);
   }
 
   // Locations

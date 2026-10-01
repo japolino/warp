@@ -27,7 +27,7 @@ interface PanelRequest { version: 1; chatId: string; messageId: string; swipeId:
 
 /** Choices Cue can act on. Dungeon moves and "More…" open Warp's own screens, which Cue would cover. */
 export function cueChoices(choices: ChoiceView[], showOdds: boolean) {
-  return choices.filter((c) => !c.id.startsWith("dungeon:") && c.id !== "date:open").slice(0, MAX_CHOICES).map((c) => ({
+  return choices.filter((c) => !c.locked && !c.id.startsWith("dungeon:") && c.id !== "date:open").slice(0, MAX_CHOICES).map((c) => ({
     id: c.id,
     label: c.label,
     group: c.group,

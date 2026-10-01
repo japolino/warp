@@ -11,7 +11,7 @@ import { connectCue } from "./frontend/cue-bridge.js";
 import { renderDate } from "./frontend/date-ui.js";
 import { formatStory, renderStage, stageModeOf, type StageMode } from "./frontend/stage.js";
 import { STAGE_STYLES } from "./frontend/stage-styles.js";
-import { esc, hudParts, renderChips, renderChoices, renderHud, renderJournal, renderPart, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
+import { esc, hudParts, renderChips, renderEncounterLog, renderChoices, renderHud, renderJournal, renderPart, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
 import { createPanels } from "./frontend/panel-windows.js";
 import { restoreMaps, wireMaps } from "./frontend/map-view.js";
 
@@ -427,7 +427,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const anchor = state?.choicesAnchor ?? null;
     const isBusy = busy.on && busy.chatId === state?.chatId;
     const html = settings.enabled && state?.hud && anchor
-      ? renderChoices(state.choices, { showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined })
+      ? renderChoices(state.choices, { showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined, encounter: state.hud.encounter })
       : "";
     if (!force && anchor === choicesFor && html === choicesHtml && choicesEl?.isConnected) return;
     if (choicesEl) { ctx.dom.uninject(choicesEl); choicesEl = null; }
@@ -449,6 +449,11 @@ export function setup(ctx: SpindleFrontendContext) {
       }
       // Suggestions sit on the player's own message.
       for (const s of state?.suggestions ?? []) wantChips.set(s.messageId, (wantChips.get(s.messageId) ?? "") + renderSuggestion(s));
+      // A quiet encounter's message carries its round cards (and every round behind "Show rounds").
+      for (const log of state?.encounterLogs ?? []) {
+        const html = renderEncounterLog(log);
+        if (html) wantChips.set(log.messageId, (wantChips.get(log.messageId) ?? "") + html);
+      }
     }
     let anchorTouched = false;
     for (const [id, cur] of chipEls) {
@@ -820,6 +825,8 @@ export function setup(ctx: SpindleFrontendContext) {
       else jump.setAttribute("title", "That message isn't loaded — scroll up in the chat to find it.");
       return;
     }
+    const use = t.closest<HTMLElement>("[data-use]");
+    if (use) { if (!(use as HTMLButtonElement).disabled) act(use.dataset.use!); return; }
     const perk = t.closest<HTMLElement>("[data-buy-perk]");
     if (perk) { const cid = chatId(); if (cid) send({ type: "buy_perk", chatId: cid, perk: perk.dataset.buyPerk! }); return; }
     if (t.closest("[data-install]")) { void confirmReplace(); return; }
@@ -1085,7 +1092,8 @@ export function setup(ctx: SpindleFrontendContext) {
     const t = e.target as Element | null;
     if (!t?.closest) return;
     const choice = t.closest<HTMLElement>(".warp-choices [data-act]");
-    if (choice) { e.preventDefault(); act(choice.dataset.act!); return; }
+    if (choice) { e.preventDefault(); if (!(choice as HTMLButtonElement).disabled) act(choice.dataset.act!); return; }
+    if (t.closest(".warp-choices [data-enc-send]")) { e.preventDefault(); sendEncounterLine(t.closest(".warp-choices")?.querySelector<HTMLInputElement>("[data-enc-say]") ?? null); return; }
     const dice = t.closest<HTMLElement>(".warp-chips [data-dice]");
     if (dice) {
       const row = dice.closest<HTMLElement>(".warp-chips")!;
@@ -1117,6 +1125,25 @@ export function setup(ctx: SpindleFrontendContext) {
   };
   document.addEventListener("click", onDocClick, true);
   cleanups.push(() => document.removeEventListener("click", onDocClick, true));
+
+  /** A move typed into the encounter box: told as a round in the encounter's message, not sent to the narrator. */
+  function sendEncounterLine(input: HTMLInputElement | null) {
+    const text = input?.value.trim();
+    const cid = chatId();
+    if (!input || !text || !cid || (busy.on && busy.chatId === cid)) return;
+    send({ type: "say", chatId: cid, text });
+    input.value = "";
+    lockUntilReply(cid);
+  }
+  const onEncKey = (e: KeyboardEvent) => {
+    const t = e.target as HTMLElement | null;
+    if (!(t instanceof HTMLInputElement) || !t.matches(".warp-choices [data-enc-say]")) return;
+    // Typing here is ours: the host's shortcuts and our number hotkeys stay out of it.
+    e.stopPropagation();
+    if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); sendEncounterLine(t); }
+  };
+  document.addEventListener("keydown", onEncKey, true);
+  cleanups.push(() => document.removeEventListener("keydown", onEncKey, true));
 
   const onKey = (e: KeyboardEvent) => {
     if (!settings.hotkeys || e.ctrlKey || e.metaKey || e.altKey || stageVisible()) return;

@@ -7,7 +7,7 @@
 
 import type { Answer, Answers, Decider, Questions } from "../engine/decide.js";
 import { normalize, noulConfidence } from "../engine/decide.js";
-import { availableChoices, TRAVEL_PREFIX, travelTargets, type Intent, type Proposal } from "../engine/resolve.js";
+import { usableItems, availableChoices, TRAVEL_PREFIX, travelTargets, type Intent, type Proposal } from "../engine/resolve.js";
 import { DIFFICULTIES, type DecideSpec, type Ruleset, type StatDef } from "../engine/ruleset.js";
 import { itemName, makeEnv, personName, type GameState } from "../engine/state.js";
 import { IMPROV, improvStats } from "../engine/freeform.js";
@@ -92,7 +92,7 @@ export interface Reading {
   confidence: number;
   scene: Record<string, boolean>;
   /** An encounter the latest exchange is breaking into (and who the opponent is, when it's someone present). */
-  encounter?: { id: string; foe?: string };
+  encounter?: { id: string; foe?: string; fresh?: boolean };
 }
 
 const DIFFICULTY = [
@@ -110,7 +110,10 @@ export async function readTurn(opts: {
   const q: Questions = {};
   // In a conversation or on a date, typed lines are the player's words in it (read when the turn resolves), not actions.
   const talking = !!activeSession(r, s) || !!s.job;
-  const actions = playerText && !talking ? availableChoices(r, s, settings.lines) : [];
+  // Items in hand count as things the player can do ("I spray myself" uses the spray).
+  const actions = playerText && !talking
+    ? [...availableChoices(r, s, settings.lines), ...usableItems(r, s).filter((u) => !u.locked).map((u) => ({ id: u.id, a: u.a, label: u.a.label }))]
+    : [];
   const travel = playerText && !talking ? travelTargets(r, s) : [];
   // Anything risky the list doesn't cover is still an attempt: it rolls on the closest ability.
   const improv = !!playerText && !talking && r.improvise.enabled && !s.dungeon;
@@ -144,6 +147,14 @@ export async function readTurn(opts: {
       instructions: `Is one of these actually breaking out right now, in the latest exchange (not just threatened, feared or talked about)?`,
       criteria: { [NONE]: "No — nothing like this is starting right now", ...Object.fromEntries(storyEnc.map((x) => [`enc:${x.id}`, `${x.name}${x.desc ? ` — ${x.desc}` : ""}`])) },
     };
+    // One just ended: the prose often goes on describing it. Only a genuinely new incident starts another.
+    const last = s.lastEncounter;
+    if (last && s.minutes - last.at < 24 * 60) {
+      q.encounter_fresh = {
+        type: "noul",
+        instructions: `${r.encounters[last.id]?.name ?? "An encounter"} just ended (${last.outcome.replace(/_/g, " ")}). If something is breaking out now, is it a genuinely NEW incident — not the same one still being described, its aftermath, or a memory of it?`,
+      };
+    }
     if (here.length) {
       q.opponent = {
         type: "choice",
@@ -185,7 +196,8 @@ export async function readTurn(opts: {
     if (storyEnc.some((x) => x.id === id)) {
       const opp = ans.opponent;
       const who = opp?.type === "choice" && opp.choice.startsWith("p:") && opp.confidence >= 0.5 ? opp.choice.slice(2) : null;
-      out.encounter = { id, ...(who && here.includes(who) ? { foe: personName(r, s, who) } : {}) };
+      const fresh = ans.encounter_fresh;
+      out.encounter = { id, ...(who && here.includes(who) ? { foe: personName(r, s, who) } : {}), ...(fresh?.type === "noul" && fresh.noul >= 0.7 ? { fresh: true } : {}) };
     }
   }
   const act = ans.action;
@@ -403,6 +415,13 @@ export async function bookkeeping(opts: {
       instructions: `At the end of the reply, has one of these actually broken out (not just threatened)?`,
       criteria: { [NONE]: "No", ...Object.fromEntries(storyEnc.map((x) => [`enc:${x.id}`, `${x.name}${x.desc ? ` — ${x.desc}` : ""}`])) },
     };
+    const last = s.lastEncounter;
+    if (last && s.minutes - last.at < 24 * 60) {
+      q.encounter_fresh = {
+        type: "noul",
+        instructions: `${r.encounters[last.id]?.name ?? "An encounter"} just ended (${last.outcome.replace(/_/g, " ")}). If one broke out in this reply, is it a genuinely NEW incident — not the same one still being described, its aftermath, or a memory of it?`,
+      };
+    }
     const people = [...new Set([...hereBefore, ...mentioned])];
     if (people.length) q.opponent = { type: "choice", instructions: `If a confrontation broke out, who is ${player} up against?`, criteria: { other: "Someone else, or no one in particular", ...Object.fromEntries(people.map((id) => [`p:${id}`, personName(r, s, id)])) } };
   } else if (s.encounter) {
@@ -471,6 +490,8 @@ export async function bookkeeping(opts: {
   const enc = ans.encounter;
   if (enc?.type === "choice" && enc.choice.startsWith("enc:") && (enc.probabilities[enc.choice] ?? enc.confidence) >= ENCOUNTER_SURE) {
     p.encounter = enc.choice.slice(4);
+    const fresh = ans.encounter_fresh;
+    if (fresh?.type === "noul" && fresh.noul >= 0.7) p.encounterFresh = true;
     const opp = ans.opponent;
     if (opp?.type === "choice" && opp.choice.startsWith("p:") && opp.confidence >= 0.5) p.foe = personName(r, s, opp.choice.slice(2));
   }
