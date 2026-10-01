@@ -15960,6 +15960,14 @@ function firstJson2(text) {
   return null;
 }
 async function ask(system, user, settings, userId, timeoutMs, opts = {}) {
+  return (await askRaw(system, user, settings, userId, timeoutMs, opts)).content;
+}
+async function askProse(system, user, settings, userId, timeoutMs, opts = {}) {
+  const res = await askRaw(system, user, settings, userId, timeoutMs, opts);
+  const text = res.content.trim().replace(/^```\w*|```$/g, "").trim();
+  return res.finish === "length" || !finishedProse(text) ? "" : text;
+}
+async function askRaw(system, user, settings, userId, timeoutMs, opts) {
   const res = await host().generate.quiet({
     type: "quiet",
     messages: [
@@ -15968,11 +15976,11 @@ async function ask(system, user, settings, userId, timeoutMs, opts = {}) {
     ],
     connection_id: settings.helperConnectionId || undefined,
     reasoning: { source: "off" },
-    parameters: { temperature: opts.temperature ?? 0.1, max_tokens: opts.maxTokens ?? 500 },
+    parameters: { temperature: opts.temperature ?? 0.1, ...opts.maxTokens ? { max_tokens: opts.maxTokens } : {} },
     userId,
     signal: AbortSignal.timeout(Math.max(3000, timeoutMs))
   });
-  return typeof res === "string" ? res : res?.content ?? "";
+  return typeof res === "string" ? { content: res, finish: "" } : { content: res?.content ?? "", finish: res?.finish_reason ?? "" };
 }
 function clip2(s, n) {
   return s.length > n ? `…${s.slice(-n)}` : s;
@@ -16090,7 +16098,7 @@ async function extract(r, s, playerText, reply, settings, userId, only, applied)
     return null;
   }
 }
-var sameName = (a, b) => {
+var finishedProse = (t) => /[.!?…]["”’'*_)\]]*$/.test(t.trim()), sameName = (a, b) => {
   const x = a.trim().toLowerCase(), y = b.trim().toLowerCase();
   return x === y || x.split(/\s+/)[0] === y.split(/\s+/)[0];
 };
@@ -16248,7 +16256,7 @@ ${fillNames(outcome, o.player)}` : ""
 
 `);
   try {
-    const raw = firstJson2(await ask(SYSTEM, user, settings, userId, 15000, { temperature: 0.85, maxTokens: 350 }));
+    const raw = firstJson2(await ask(SYSTEM, user, settings, userId, 15000, { temperature: 0.85 }));
     const lines = Array.isArray(raw?.lines) ? raw.lines : [];
     const out = [];
     for (const l of lines.slice(0, MAX_LINES)) {
@@ -16287,11 +16295,11 @@ async function summaryLine(o) {
   if (o.settings.sceneLines !== "model")
     return fallback;
   try {
-    const text = await ask("Summarise a finished mini-game scene as ONE short narration sentence (under 35 words) for a roleplay's history, in italics with *asterisks*. Past tense, third person, no dialogue.", [`Facts: ${fallback.replace(/\*/g, "")}`, `How it went:
+    const text = await askProse("Summarise a finished mini-game scene as ONE short narration sentence (under 35 words) for a roleplay's history, in italics with *asterisks*. Past tense, third person, no dialogue.", [`Facts: ${fallback.replace(/\*/g, "")}`, `How it went:
 ${o.lines.slice(-10).map((l) => `${l.speaker ?? "(narration)"}: ${l.text}`).join(`
 `)}`].join(`
 
-`), o.settings, o.userId, 12000, { temperature: 0.6, maxTokens: 120 });
+`), o.settings, o.userId, 12000, { temperature: 0.6 });
     const line = text.trim().split(`
 `).find((x) => x.trim())?.trim() ?? "";
     return line.length > 10 && line.length < 400 ? line.startsWith("*") ? line : `*${line.replace(/^\*|\*$/g, "")}*` : fallback;
@@ -16598,7 +16606,7 @@ async function writeLiveChoices(opts) {
   const user = ["Current state:", stateDigest(r, s), "", "Narrator's latest reply:", clip4(opts.reply, 4000)].join(`
 `);
   try {
-    const out = firstJson2(await ask(system, user, settings, opts.userId, 25000, { temperature: 0.8, maxTokens: 450 }));
+    const out = firstJson2(await ask(system, user, settings, opts.userId, 25000, { temperature: 0.8 }));
     return cleanChoices(r, s, tags, out?.choices, count);
   } catch (e) {
     logError("live choices", e);
@@ -16632,7 +16640,7 @@ ${card}` : "",
 
 `);
   try {
-    const out = firstJson2(await ask(system, user, settings, userId, timeoutMs, { temperature: 0.9, maxTokens: 300 }));
+    const out = firstJson2(await ask(system, user, settings, userId, timeoutMs, { temperature: 0.9 }));
     const name = typeof out?.name === "string" ? out.name.trim().slice(0, 60) : "";
     if (!name)
       return null;
@@ -16756,7 +16764,7 @@ function facts(o, pov) {
     `${o.player}'s move: ${c.move}${o.typed ? ` — in their words: "${o.typed.replace(/\*/g, "").slice(0, 400)}"` : o.action?.say ? ` — "${o.action.say.replace(/\*/g, "")}"` : ""}`,
     c.check ? `How it turned out: ${c.check.tier}${c.check.gear.length ? ` (helped by ${c.check.gear.join(", ")})` : ""}` : "",
     authoredHint(o.action, o.rec) ? `The ruleset's note on this outcome: ${told(authoredHint(o.action, o.rec), pov, o.player)}` : "",
-    c.foe ? `${foeName(o.r, o.before)}'s move: ${c.foe}` : "",
+    c.foe ? `${foeName(o.r, o.before)}'s move: ${c.foe.replace(/\{\{user\}\}/gi, o.player)}` : "",
     c.changes.length ? `What shifted (show it, don't state numbers): ${c.changes.map((x) => `${x.label} ${x.to > x.from ? "up" : "down"}`).join(", ")}` : "",
     c.ended ? `It ENDED this round: ${c.ended.label}.` : "It is NOT over yet."
   ];
@@ -16782,10 +16790,8 @@ ${facts(o, pov)}`
 
 `);
   try {
-    const text = (await ask(ROUND_SYSTEM, user, settings, userId, 20000, { temperature: 0.85, maxTokens: 260 })).trim().replace(/^```\w*|```$/g, "").replace(/^(?:here'?s[^:]*:|round \d+:)\s*/i, "").trim();
-    if (text.length < 20)
-      return null;
-    return text.length > 900 ? `${text.slice(0, 900).replace(/\s+\S*$/, "")}…` : text;
+    const text = (await askProse(ROUND_SYSTEM, user, settings, userId, 20000, { temperature: 0.85 })).replace(/^(?:here'?s[^:]*:|round \d+:)\s*/i, "").trim();
+    return text.length < 40 ? null : text;
   } catch (e) {
     logError("encounter round", e);
     return null;
@@ -16821,7 +16827,7 @@ async function encounterSummary(o, settings, userId) {
     return fallback;
   const pov = storyPov(o.story, o.player);
   try {
-    const text = (await ask([
+    const text = (await askProse([
       "Sum up a finished encounter from a roleplay as ONE short paragraph the story keeps in place of the blow-by-blow.",
       "2–3 sentences, under 70 words, in the story's point of view and tense. Say how it ended and what it cost or gained, using only the facts given.",
       "No numbers, game terms or headings. Adults only in anything romantic. Reply with the paragraph only."
@@ -16836,7 +16842,7 @@ ${o.rounds.slice(-8).join(`
 `)}`
     ].join(`
 
-`), settings, userId, 20000, { temperature: 0.6, maxTokens: 200 })).trim();
+`), settings, userId, 20000, { temperature: 0.6 })).trim();
     return text.length > 30 && text.length < 900 ? text : fallback;
   } catch {
     return fallback;
@@ -17551,7 +17557,7 @@ async function imagePrompt(r, s, who, venueId, card, settings, userId) {
     const text = await ask("Write ONE image-generation prompt as comma-separated tags for a visual-novel scene: exactly one adult character, centered in the frame, upper body, facing the viewer, fully clothed, with the place behind them as a detailed background. Take their appearance (hair, eyes, build, clothes) from what you're given. Tags only, no sentences, under 70 words.", [`Character: ${name}${r.people[who]?.desc ? ` — ${r.people[who].desc}` : ""}`, card ? `What's known about them (use only what describes ${name}):
 ${card.slice(0, 3000)}` : "", `Place: ${placeName}${placeDesc ? ` — ${placeDesc}` : ""}`, `Time of day: ${phase}`].filter(Boolean).join(`
 
-`), settings, userId, 20000, { temperature: 0.4, maxTokens: 160 });
+`), settings, userId, 20000, { temperature: 0.4 });
     const tags = text.replace(/```[a-z]*|```/g, "").split(`
 `).map((x) => x.trim()).find((x) => x.includes(",")) ?? "";
     return tags.length > 20 ? `${tags}, centered composition, visual novel style` : fallback;
@@ -19484,7 +19490,7 @@ async function pushState(chatId, userId, force = false) {
     }
     const latest = msgs[msgs.length - 1] ?? null;
     const anchor = latest && !latest.is_user ? latest.id : null;
-    send({
+    send(await withName({
       type: "state",
       chatId,
       status,
@@ -19496,12 +19502,12 @@ async function pushState(chatId, userId, force = false) {
       latestMessageId: latest?.id ?? null,
       choicesAnchor: anchor,
       busy: busyChats.has(chatId),
-      dungeon: settings.enabled ? await withName(buildDungeonView(r, state), chatId, userId) : null,
+      dungeon: settings.enabled ? buildDungeonView(r, state) : null,
       dungeonEntries: settings.enabled ? buildDungeonEntries(r, state) : [],
       date: settings.enabled ? buildDateView(r, state, settings.lines) : null,
       scene: settings.enabled ? sceneViewFor(chatId, r, state) : null,
       encounterLogs: settings.enabled ? encounterLogsOf(r, msgs) : []
-    }, userId);
+    }, chatId, userId), userId);
   } catch (e) {
     logError("pushState", e);
   }

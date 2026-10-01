@@ -210,7 +210,7 @@ async function imagePrompt(r: Ruleset, s: GameState, who: string, venueId: strin
     const text = await ask(
       "Write ONE image-generation prompt as comma-separated tags for a visual-novel scene: exactly one adult character, centered in the frame, upper body, facing the viewer, fully clothed, with the place behind them as a detailed background. Take their appearance (hair, eyes, build, clothes) from what you're given. Tags only, no sentences, under 70 words.",
       [`Character: ${name}${r.people[who]?.desc ? ` — ${r.people[who].desc}` : ""}`, card ? `What's known about them (use only what describes ${name}):\n${card.slice(0, 3000)}` : "", `Place: ${placeName}${placeDesc ? ` — ${placeDesc}` : ""}`, `Time of day: ${phase}`].filter(Boolean).join("\n\n"),
-      settings, userId, 20000, { temperature: 0.4, maxTokens: 160 },
+      settings, userId, 20000, { temperature: 0.4 },
     );
     const tags = text.replace(/```[a-z]*|```/g, "").split("\n").map((x) => x.trim()).find((x) => x.includes(",")) ?? "";
     return tags.length > 20 ? `${tags}, centered composition, visual novel style` : fallback;

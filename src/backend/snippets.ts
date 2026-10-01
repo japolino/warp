@@ -12,7 +12,7 @@ import { stageLabel } from "../engine/date/stage.js";
 import { outcomePacket } from "../engine/view.js";
 import type { Reaction } from "../engine/date/types.js";
 import type { SceneLine, Settings } from "../shared/protocol.js";
-import { ask, firstJson } from "./helpers.js";
+import { ask, askProse, firstJson } from "./helpers.js";
 import { fillNames } from "./inject.js";
 import { logError } from "./host.js";
 
@@ -137,7 +137,7 @@ export async function modelLines(o: SnippetInput, settings: Settings, userId?: s
     outcome ? `Decided by the rules (voice this):\n${fillNames(outcome, o.player)}` : "",
   ].filter(Boolean).join("\n\n");
   try {
-    const raw = firstJson(await ask(SYSTEM, user, settings, userId, 15000, { temperature: 0.85, maxTokens: 350 }));
+    const raw = firstJson(await ask(SYSTEM, user, settings, userId, 15000, { temperature: 0.85 }));
     const lines = Array.isArray(raw?.lines) ? raw!.lines : [];
     const out: SceneLine[] = [];
     for (const l of lines.slice(0, MAX_LINES)) {
@@ -177,10 +177,10 @@ export async function summaryLine(o: { kind: "date" | "dungeon"; r: Ruleset; sta
   } else fallback = `*Some time passes.*`;
   if (o.settings.sceneLines !== "model") return fallback;
   try {
-    const text = await ask(
+    const text = await askProse(
       "Summarise a finished mini-game scene as ONE short narration sentence (under 35 words) for a roleplay's history, in italics with *asterisks*. Past tense, third person, no dialogue.",
       [`Facts: ${fallback.replace(/\*/g, "")}`, `How it went:\n${o.lines.slice(-10).map((l) => `${l.speaker ?? "(narration)"}: ${l.text}`).join("\n")}`].join("\n\n"),
-      o.settings, o.userId, 12000, { temperature: 0.6, maxTokens: 120 },
+      o.settings, o.userId, 12000, { temperature: 0.6 },
     );
     const line = text.trim().split("\n").find((x) => x.trim())?.trim() ?? "";
     return line.length > 10 && line.length < 400 ? (line.startsWith("*") ? line : `*${line.replace(/^\*|\*$/g, "")}*`) : fallback;

@@ -34,11 +34,41 @@ export function firstJson(text: string): Record<string, unknown> | null {
   return null;
 }
 
-/** One quiet call on the helper connection (or the chat's own). */
+/**
+ * One quiet call on the helper connection (or the chat's own). Length comes
+ * from the instructions, not a token cap: with no `maxTokens` the
+ * connection's own limit applies, so a helper that thinks before it writes
+ * isn't cut off mid-sentence.
+ */
 export async function ask(
   system: string, user: string, settings: Settings, userId: string | undefined, timeoutMs: number,
   opts: { temperature?: number; maxTokens?: number } = {},
 ): Promise<string> {
+  return (await askRaw(system, user, settings, userId, timeoutMs, opts)).content;
+}
+
+/**
+ * Prose the story keeps (a round, a summary), or "" when the reply didn't
+ * finish: it ran out of tokens (common when the helper thinks before it
+ * writes) or trails off mid-sentence. The caller then uses its scripted line,
+ * since a cut passage loses its end — for a round, the other side's move.
+ */
+export async function askProse(
+  system: string, user: string, settings: Settings, userId: string | undefined, timeoutMs: number,
+  opts: { temperature?: number; maxTokens?: number } = {},
+): Promise<string> {
+  const res = await askRaw(system, user, settings, userId, timeoutMs, opts);
+  const text = res.content.trim().replace(/^```\w*|```$/g, "").trim();
+  return res.finish === "length" || !finishedProse(text) ? "" : text;
+}
+
+/** Ends like a finished sentence: . ! ? … with any closing quotes or emphasis. */
+export const finishedProse = (t: string) => /[.!?…]["”’'*_)\]]*$/.test(t.trim());
+
+async function askRaw(
+  system: string, user: string, settings: Settings, userId: string | undefined, timeoutMs: number,
+  opts: { temperature?: number; maxTokens?: number },
+): Promise<{ content: string; finish: string }> {
   const res = (await host().generate.quiet({
     type: "quiet",
     messages: [
@@ -47,11 +77,11 @@ export async function ask(
     ],
     connection_id: settings.helperConnectionId || undefined,
     reasoning: { source: "off" },
-    parameters: { temperature: opts.temperature ?? 0.1, max_tokens: opts.maxTokens ?? 500 },
+    parameters: { temperature: opts.temperature ?? 0.1, ...(opts.maxTokens ? { max_tokens: opts.maxTokens } : {}) },
     userId,
     signal: AbortSignal.timeout(Math.max(3000, timeoutMs)),
   })) as GenerationResponseDTO | string;
-  return typeof res === "string" ? res : res?.content ?? "";
+  return typeof res === "string" ? { content: res, finish: "" } : { content: res?.content ?? "", finish: res?.finish_reason ?? "" };
 }
 
 function clip(s: string, n: number) {

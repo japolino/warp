@@ -29,7 +29,7 @@ export async function inventPlace(r: Ruleset, s: GameState, card: string, settin
     `The player is exploring around: ${from?.name ?? s.locationName ?? "here"}${from?.desc ? ` — ${from.desc}` : ""}`,
   ].filter(Boolean).join("\n\n");
   try {
-    const out = firstJson(await ask(system, user, settings, userId, timeoutMs, { temperature: 0.9, maxTokens: 300 }));
+    const out = firstJson(await ask(system, user, settings, userId, timeoutMs, { temperature: 0.9 }));
     const name = typeof out?.name === "string" ? out.name.trim().slice(0, 60) : "";
     if (!name) return null;
     let id = slug(name);

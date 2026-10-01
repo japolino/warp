@@ -72,8 +72,9 @@ export async function pushState(chatId: string | null, userId?: string, force = 
     }
     const latest = msgs[msgs.length - 1] ?? null;
     const anchor = latest && !latest.is_user ? latest.id : null;
-    send({
-      type: "state",
+    // Rulesets name the player "{{user}}" (foe moves, hints, choices); show their persona's name.
+    send(await withName({
+      type: "state" as const,
       chatId,
       status,
       hud: settings.enabled ? buildHud(r, state) : null,
@@ -84,12 +85,12 @@ export async function pushState(chatId: string | null, userId?: string, force = 
       latestMessageId: latest?.id ?? null,
       choicesAnchor: anchor,
       busy: busyChats.has(chatId),
-      dungeon: settings.enabled ? await withName(buildDungeonView(r, state), chatId, userId) : null,
+      dungeon: settings.enabled ? buildDungeonView(r, state) : null,
       dungeonEntries: settings.enabled ? buildDungeonEntries(r, state) : [],
       date: settings.enabled ? buildDateView(r, state, settings.lines) : null,
       scene: settings.enabled ? sceneViewFor(chatId, r, state) : null,
       encounterLogs: settings.enabled ? encounterLogsOf(r, msgs) : [],
-    }, userId);
+    }, chatId, userId), userId);
   } catch (e) {
     logError("pushState", e);
   }
@@ -140,7 +141,7 @@ function markReady(choices: ChoiceView[], ready: Set<string>): ChoiceView[] {
   return ready.size ? choices.map((c) => (ready.has(c.id) ? { ...c, ready: true } : c)) : choices;
 }
 
-/** Dungeon lines name the player "{{user}}"; show their persona's name. */
+/** Swap "{{user}}" for the player's persona name throughout a view. */
 async function withName<T>(v: T, chatId: string, userId?: string): Promise<T> {
   if (!v) return v;
   const { playerName } = await import("./turn.js");

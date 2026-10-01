@@ -10,7 +10,7 @@ import { TIER_FALLBACK, type TurnRecord } from "../engine/resolve.js";
 import type { ActionDef, Ruleset, Tier } from "../engine/ruleset.js";
 import { foeName, type GameState } from "../engine/state.js";
 import type { Settings } from "../shared/protocol.js";
-import { ask } from "./helpers.js";
+import { askProse } from "./helpers.js";
 import { logError } from "./host.js";
 
 export type Pov = "second" | "third";
@@ -142,7 +142,7 @@ function facts(o: RoundInput, pov: Pov): string {
     `${o.player}'s move: ${c.move}${o.typed ? ` — in their words: "${o.typed.replace(/\*/g, "").slice(0, 400)}"` : o.action?.say ? ` — "${o.action.say.replace(/\*/g, "")}"` : ""}`,
     c.check ? `How it turned out: ${c.check.tier}${c.check.gear.length ? ` (helped by ${c.check.gear.join(", ")})` : ""}` : "",
     authoredHint(o.action, o.rec) ? `The ruleset's note on this outcome: ${told(authoredHint(o.action, o.rec)!, pov, o.player)}` : "",
-    c.foe ? `${foeName(o.r, o.before)}'s move: ${c.foe}` : "",
+    c.foe ? `${foeName(o.r, o.before)}'s move: ${c.foe.replace(/\{\{user\}\}/gi, o.player)}` : "",
     c.changes.length ? `What shifted (show it, don't state numbers): ${c.changes.map((x) => `${x.label} ${x.to > x.from ? "up" : "down"}`).join(", ")}` : "",
     c.ended ? `It ENDED this round: ${c.ended.label}.` : "It is NOT over yet.",
   ];
@@ -160,10 +160,9 @@ export async function modelRound(o: RoundInput, settings: Settings, userId?: str
     `This round:\n${facts(o, pov)}`,
   ].filter(Boolean).join("\n\n");
   try {
-    const text = (await ask(ROUND_SYSTEM, user, settings, userId, 20000, { temperature: 0.85, maxTokens: 260 })).trim()
-      .replace(/^```\w*|```$/g, "").replace(/^(?:here'?s[^:]*:|round \d+:)\s*/i, "").trim();
-    if (text.length < 20) return null;
-    return text.length > 900 ? `${text.slice(0, 900).replace(/\s+\S*$/, "")}…` : text;
+    const text = (await askProse(ROUND_SYSTEM, user, settings, userId, 20000, { temperature: 0.85 }))
+      .replace(/^(?:here'?s[^:]*:|round \d+:)\s*/i, "").trim();
+    return text.length < 40 ? null : text;
   } catch (e) {
     logError("encounter round", e);
     return null;
@@ -206,7 +205,7 @@ export async function encounterSummary(o: SummaryInput, settings: Settings, user
   if (settings.sceneLines !== "model") return fallback;
   const pov = storyPov(o.story, o.player);
   try {
-    const text = (await ask(
+    const text = (await askProse(
       [
         "Sum up a finished encounter from a roleplay as ONE short paragraph the story keeps in place of the blow-by-blow.",
         "2–3 sentences, under 70 words, in the story's point of view and tense. Say how it ended and what it cost or gained, using only the facts given.",
@@ -218,7 +217,7 @@ export async function encounterSummary(o: SummaryInput, settings: Settings, user
         `The facts in short: ${fallback.replace(/\*/g, "")}`,
         `The rounds as they were told:\n${o.rounds.slice(-8).join("\n\n")}`,
       ].join("\n\n"),
-      settings, userId, 20000, { temperature: 0.6, maxTokens: 200 },
+      settings, userId, 20000, { temperature: 0.6 },
     )).trim();
     return text.length > 30 && text.length < 900 ? text : fallback;
   } catch {

@@ -115,7 +115,7 @@ export async function writeLiveChoices(opts: {
   ].join("\n");
   const user = ["Current state:", stateDigest(r, s), "", "Narrator's latest reply:", clip(opts.reply, 4000)].join("\n");
   try {
-    const out = firstJson(await ask(system, user, settings, opts.userId, 25000, { temperature: 0.8, maxTokens: 450 }));
+    const out = firstJson(await ask(system, user, settings, opts.userId, 25000, { temperature: 0.8 }));
     return cleanChoices(r, s, tags, out?.choices, count);
   } catch (e) {
     logError("live choices", e);

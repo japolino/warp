@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { foldPath, warpMeta, type Msg } from "./ledger.js";
 import { loadRuleset } from "../engine/loader.js";
 import { playRound } from "./encounter.js";
-import { retell, scriptedRound, storyPov } from "./encounter-lines.js";
+import { retell, scriptedRound, storyPov, writeRound } from "./encounter-lines.js";
 
 const RULES = {
   clock: { start: "Mon 12:00" },
@@ -109,5 +109,44 @@ describe("telling it in the story's voice", () => {
       action: r.encounters.cornered.actions.talk, player: "Sam", typed: null, story: "Sam turns the corner. Sam freezes.", earlier: [], foeAbout: "", seed: "a",
     });
     expect(line).toBe("Sam raises their hands and smiles. They hesitate, muttering among themselves. The Pack presses in close.");
+  });
+});
+
+describe("a model-written round that doesn't finish", () => {
+  const roundInput = () => {
+    const r = ruleset();
+    const s = foldPath(r, [msgs[0]]).state;
+    return {
+      r, before: s, after: s, rec: { v: 1 as const, hints: [], events: [], at: 0, check: { label: "Talk", style: "chance" as const, dice: "d100", faces: [], roll: 1, add: 0, total: 1, target: 100, tier: "success" as const, seed: "a" } },
+      card: { move: "Talk them down", check: { label: "Talk", tier: "success", odds: 1, gear: [] }, foe: "Sniffs the air, tracking {{user}}'s scent", changes: [], ended: null, round: 1 },
+      action: r.encounters.cornered.actions.talk, player: "Sam", typed: null, story: "Sam turns the corner. Sam freezes.", earlier: [], foeAbout: "", seed: "a",
+    };
+  };
+  const reply = (content: string, finish_reason = "stop") => {
+    const asked: any[] = [];
+    (globalThis as any).spindle.generate = { quiet: async (req: any) => { asked.push(req); return { content, finish_reason }; } };
+    return asked;
+  };
+  const settings = { sceneLines: "model" } as any;
+  const scripted = "Sam raises their hands and smiles. They hesitate, muttering among themselves. The Pack sniffs the air, tracking Sam's scent.";
+
+  test("a reply cut off by the token limit falls back to the scripted round", async () => {
+    reply("Sam kicked over a nearby metal trash bin to trigger her", "length");
+    expect(await writeRound(roundInput(), settings)).toBe(scripted);
+  });
+
+  test("a reply that trails off mid-sentence falls back too", async () => {
+    reply("Sam kicked over a nearby metal trash bin to trigger her");
+    expect(await writeRound(roundInput(), settings)).toBe(scripted);
+  });
+
+  test("a finished passage is kept; no token cap is sent and the foe's move names the player", async () => {
+    const passage = "Sam lifts both hands, voice low and even, and the pack's leader falters. Then she draws a long breath, nostrils flaring, and steps closer on Sam's scent.";
+    const asked = reply(passage);
+    expect(await writeRound(roundInput(), settings)).toBe(passage);
+    expect(asked[0].parameters.max_tokens).toBeUndefined();
+    const prompt = asked[0].messages.map((m: any) => m.content).join(" ");
+    expect(prompt).toContain("tracking Sam's scent");
+    expect(prompt).not.toContain("{{user}}");
   });
 });
