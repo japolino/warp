@@ -293,6 +293,7 @@ export const STYLES = `
 .warp-depth-row > p { margin: 2px 0 6px 14px; font-size: 12px; }
 .warp-depth-gap > summary::marker { color: var(--warp-bad); }
 .warp-depth-thin > summary::marker { color: var(--warp-warn); }
+.warp-issues-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 4px; font-size: 12.5px; }
 .warp-depth-drafted { font-size: 12px; border-left: 3px solid var(--warp-accent); padding-left: 8px; }
 
 /* ───────── encounters: goal, danger, rounds ───────── */

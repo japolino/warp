@@ -338,6 +338,7 @@ var STYLES = `
 .warp-depth-row > p { margin: 2px 0 6px 14px; font-size: 12px; }
 .warp-depth-gap > summary::marker { color: var(--warp-bad); }
 .warp-depth-thin > summary::marker { color: var(--warp-warn); }
+.warp-issues-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 4px; font-size: 12.5px; }
 .warp-depth-drafted { font-size: 12px; border-left: 3px solid var(--warp-accent); padding-left: 8px; }
 
 /* ───────── encounters: goal, danger, rounds ───────── */
@@ -1201,7 +1202,11 @@ function renderBuilder(s, d, templates, connections, hasRuleset) {
         ${depth}
         ${s.changeSummary ? `<p>${esc(s.changeSummary)}</p>` : ""}
         <p>${esc(p?.summary ?? "The draft doesn't run yet — see the sections marked in red.")}</p>
-        ${p?.warnings.length ? `<div class="warp-issues">${p.warnings.map((w) => `<div class="warp-warning-row"><span class="warp-tone-warn">!</span><span>${esc(w.text)}</span><button class="warp-btn warp-mini" data-b="fix" data-w="${esc(w.id)}"${dis}>Fix</button></div>`).join("")}</div>` : p ? `<p class="warp-tone-good">No balance problems found.</p>` : ""}
+        ${errors ? `<p class="warp-tone-bad"><b>Must fix:</b> ${errors} section${errors === 1 ? "" : "s"} below ${errors === 1 ? "doesn't" : "don't"} match the format Warp reads (marked in red). They block installing — use Redo on ${errors === 1 ? "it" : "them"}.</p>` : ""}
+        ${p?.warnings.length ? `<div class="warp-issues">
+          <div class="warp-issues-head"><span><b>Could go deeper</b> <span class="warp-dim">— optional. The game runs without these; they're parts of it nothing uses yet.</span></span><button class="warp-btn warp-mini" data-b="deepen"${dis} title="The designer works through every one of these, changing whichever sections each needs">Fix all</button></div>
+          ${p.warnings.map((w) => `<div class="warp-warning-row"><span class="warp-tone-warn">!</span><span>${esc(w.text)}</span><button class="warp-btn warp-mini" data-b="fix" data-w="${esc(w.id)}"${dis} title="Changes whichever sections this needs">Fix</button></div>`).join("")}
+        </div>` : p ? `<p class="warp-tone-good">No balance problems found.</p>` : ""}
       </div>`;
     const preview = p?.hud ? `<details class="warp-card warp-preview" open><summary><b>Preview</b> <span class="warp-dim">— the sidebar and choices at the start</span></summary>
         <div class="warp-preview-grid"><div class="warp-preview-hud">${renderHud(p.hud, { editing: null, compact: true })}</div>

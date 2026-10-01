@@ -559,7 +559,9 @@ export async function builderFix(chatId: string, warningId: string, userId?: str
   const { ruleset } = check(s.parts);
   const w = ruleset ? reviewBalance(ruleset).find((x) => x.id === warningId) : undefined;
   if (!w) { buildPreview(s); emit(s, userId); return; }
-  await builderRedo(chatId, w.part, w.fix, userId);
+  // Not a rewrite of the section the warning is filed under: "Charm never
+  // changes" lives in stats, but the cure is an action or event that moves it.
+  await builderRefine(chatId, `Fix this, changing whichever sections it takes (usually not just ${w.part}): ${w.text} ${w.fix}`, userId);
 }
 
 export async function builderRefine(chatId: string, request: string, userId?: string) {

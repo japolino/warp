@@ -19087,7 +19087,7 @@ async function builderFix(chatId, warningId, userId) {
     emit(s, userId);
     return;
   }
-  await builderRedo(chatId, w.part, w.fix, userId);
+  await builderRefine(chatId, `Fix this, changing whichever sections it takes (usually not just ${w.part}): ${w.text} ${w.fix}`, userId);
 }
 async function builderRefine(chatId, request, userId) {
   const s = await sessionFor(chatId, userId);
