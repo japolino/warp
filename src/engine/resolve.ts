@@ -1501,9 +1501,13 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
 
   // Fights (and other encounters) the prose started or finished.
   if (p.encounter && !w.s.encounter && !w.s.dungeon && !w.s.job) {
-    const k = String(p.encounter).toLowerCase();
-    const enc = r.encounters[k] ?? Object.values(r.encounters).find((x) => x.name.toLowerCase() === k);
-    if (enc?.fromStory) because(w, `${enc.name} broke out`, () => startEncounter(w, enc.id, src, typeof p.foe === "string" && p.foe.trim() ? p.foe.trim().slice(0, 60) : undefined));
+    if (applied.some((e) => e.t === "enc" && e.id === null)) {
+      reject("The encounter already ended in this exchange. Narration cannot restart it.");
+    } else {
+      const k = String(p.encounter).toLowerCase();
+      const enc = r.encounters[k] ?? Object.values(r.encounters).find((x) => x.name.toLowerCase() === k);
+      if (enc?.fromStory) because(w, `${enc.name} broke out`, () => startEncounter(w, enc.id, src, typeof p.foe === "string" && p.foe.trim() ? p.foe.trim().slice(0, 60) : undefined));
+    }
   } else if (p.encounterEnd && w.s.encounter) {
     const name = r.encounters[w.s.encounter.id]?.name ?? "The encounter";
     because(w, `${name} ended`, () => endEncounter(w, slug(String(p.encounterEnd)), src));

@@ -84,11 +84,10 @@ export function renderHud(h: HudView, opts: { editing: string | null; compact: b
     ? loose.map((i) => `<div class="warp-item"><span>${esc(i.name)}${i.uses ? ` <span class="warp-dim" title="Uses left in the one in hand">· ${esc(i.uses)}</span>` : ""}</span>${i.count > 1 ? `<span class="warp-kbd">×${i.count}</span>` : ""}</div>`).join("")
     : `<div class="warp-empty">Empty-handed.</div>`, !opts.compact);
 
-  return `${renderEncounter(h)}<div class="warp-hud-top">${top}</div>${renderWarmth(h)}<div class="warp-bars">${bars}</div>${renderOutfit(h, opts.compact)}${skills}${dues}${people}${family}${body}${items}${renderPerks(h, opts.compact)}`;
+  return `${renderEncounter(h.encounter)}<div class="warp-hud-top">${top}</div>${renderWarmth(h)}<div class="warp-bars">${bars}</div>${renderOutfit(h, opts.compact)}${skills}${dues}${people}${family}${body}${items}${renderPerks(h, opts.compact)}`;
 }
 
-function renderEncounter(h: HudView): string {
-  const e = h.encounter;
+function renderEncounter(e: HudView["encounter"]): string {
   if (!e) return "";
   return `<div class="warp-encounter">
     <div class="warp-eyebrow"><span>⚔ ${esc(e.name)}</span><span>Round ${e.round + 1}</span></div>
@@ -234,8 +233,8 @@ function section(title: string, count: number, body: string, open: boolean, key 
 
 // ───────────────────────── choices ─────────────────────────
 
-export function renderChoices(choices: ChoiceView[], opts: { showOdds: boolean; hotkeys: boolean; busy: boolean; busyLabel?: string }): string {
-  if (!choices.length && !opts.busy) return "";
+export function renderChoices(choices: ChoiceView[], opts: { showOdds: boolean; hotkeys: boolean; busy: boolean; busyLabel?: string; encounter?: HudView["encounter"] }): string {
+  if (!choices.length && !opts.busy && !opts.encounter) return "";
   const groups = new Map<string, { c: ChoiceView; n: number }[]>();
   choices.forEach((c, i) => {
     const g = c.group ?? "Actions";
@@ -255,7 +254,7 @@ export function renderChoices(choices: ChoiceView[], opts: { showOdds: boolean; 
       }).join("")}</div>
     </div>`).join("");
   const status = opts.busy ? `<div class="warp-status-line"><span class="warp-spinner"></span>${esc(opts.busyLabel ?? "The story continues…")}</div>` : "";
-  return `${status}${body}`;
+  return `${status}${renderEncounter(opts.encounter ?? null)}${body}`;
 }
 
 // ───────────────────────── per-message chips ─────────────────────────

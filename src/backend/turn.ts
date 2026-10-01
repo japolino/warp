@@ -325,7 +325,7 @@ export async function afterReply(p: Pending, msg: Msg, content: string, userId?:
     if (proposal) {
       const action = p.rec.action ? { id: p.rec.action.id, tags: actionTags(r, p.rec.action.id) } : undefined;
       const rejected: string[] = [];
-      const events = applyProposal(r, p.after, proposal, { text: `${p.playerText}\n${content}`, action, applied: p.replyBefore === undefined ? p.rec.events : [], origin: p.origin, rejected });
+      const events = applyProposal(r, p.after, proposal, { text: `${p.playerText}\n${content}`, action, applied: p.replyBefore === undefined ? p.rec.events : p.rec.events.filter((e) => e.t === "enc"), origin: p.origin, rejected });
       if (rejected.length) rec.rejected = [...(rec.rejected ?? []), ...rejected];
       if (events.length) rec.events = [...rec.events, ...events];
     }

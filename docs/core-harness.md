@@ -1,5 +1,7 @@
 # Core reliability changes and offline evaluation
 
+For the narrow encounter-loop fix and separate future design research, see [encounter notes](encounter-research.md).
+
 Warp's core contract is that the engine decides outcomes, a provider supplies uncertain inputs and prose, and message metadata records the concrete events needed to replay a branch. The priorities below follow the consequences of breaking that contract: incorrect or duplicated state first, disclosure and authority boundaries next, then responsiveness and evaluation.
 
 ## Improvements, in impact order

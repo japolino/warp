@@ -6769,10 +6769,14 @@ function applyProposal(r, before, p, ctx) {
       w.push({ t: "scene", who: id, here, src, note: "renew" });
   }
   if (p.encounter && !w.s.encounter && !w.s.dungeon && !w.s.job) {
-    const k = String(p.encounter).toLowerCase();
-    const enc = r.encounters[k] ?? Object.values(r.encounters).find((x) => x.name.toLowerCase() === k);
-    if (enc?.fromStory)
-      because(w, `${enc.name} broke out`, () => startEncounter(w, enc.id, src, typeof p.foe === "string" && p.foe.trim() ? p.foe.trim().slice(0, 60) : undefined));
+    if (applied.some((e) => e.t === "enc" && e.id === null)) {
+      reject("The encounter already ended in this exchange. Narration cannot restart it.");
+    } else {
+      const k = String(p.encounter).toLowerCase();
+      const enc = r.encounters[k] ?? Object.values(r.encounters).find((x) => x.name.toLowerCase() === k);
+      if (enc?.fromStory)
+        because(w, `${enc.name} broke out`, () => startEncounter(w, enc.id, src, typeof p.foe === "string" && p.foe.trim() ? p.foe.trim().slice(0, 60) : undefined));
+    }
   } else if (p.encounterEnd && w.s.encounter) {
     const name = r.encounters[w.s.encounter.id]?.name ?? "The encounter";
     because(w, `${name} ended`, () => endEncounter(w, slug(String(p.encounterEnd)), src));
@@ -12461,6 +12465,8 @@ function lintRuleset(r) {
     if (a.check) {
       check(a.check.target, `${w} › check`, extra);
       check(a.check.add, `${w} › check › add`, extra);
+      if (a.effects.end)
+        issues.push({ level: "warning", where: `${w} › effects › end`, message: "a checked action does not execute `effects:` — put `end:` in a success or failure outcome" });
     }
     checkEffect(a.cost, `${w} › cost`, extra);
     checkEffect(a.effects, `${w} › effects`, extra);
@@ -12498,7 +12504,7 @@ function lintRuleset(r) {
     for (const [o, e] of Object.entries(enc.outcomes))
       checkEffect(e, `${w} › outcomes › ${o}`);
     checkEffect(enc.start, `${w} › start`);
-    if (!enc.endWhen.length && !Object.values(enc.actions).some((a) => [a.effects, ...Object.values(a.outcomes)].some((e) => e?.end))) {
+    if (!enc.momentum && !enc.endWhen.length && !Object.values(enc.actions).some((a) => [a.cost, ...a.check ? Object.values(a.outcomes) : [a.effects]].some((e) => e?.end))) {
       issues.push({ level: "warning", where: w, message: "has no way to end — add `end_when:` or an action with `end:`" });
     }
   }
@@ -17050,7 +17056,7 @@ async function afterReply(p, msg, content, userId) {
       const action = p.rec.action ? { id: p.rec.action.id, tags: actionTags(r, p.rec.action.id) } : undefined;
       const rejected = [];
       const events = applyProposal(r, p.after, proposal, { text: `${p.playerText}
-${content}`, action, applied: p.replyBefore === undefined ? p.rec.events : [], origin: p.origin, rejected });
+${content}`, action, applied: p.replyBefore === undefined ? p.rec.events : p.rec.events.filter((e) => e.t === "enc"), origin: p.origin, rejected });
       if (rejected.length)
         rec.rejected = [...rec.rejected ?? [], ...rejected];
       if (events.length)

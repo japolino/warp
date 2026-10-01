@@ -545,10 +545,9 @@ Practice toward the next point: ${Math.round(s.practice * 100)}% — it grows ev
   const family = h.family.length ? section("Family", h.family.length, h.family.map((f) => `<div class="warp-item"><span>${esc(f.name)}</span><span class="warp-dim">${esc(f.text)}</span></div>`).join(""), !opts.compact) : "";
   const loose = h.items.filter((i) => !i.worn);
   const items = section("Inventory", loose.length, loose.length ? loose.map((i) => `<div class="warp-item"><span>${esc(i.name)}${i.uses ? ` <span class="warp-dim" title="Uses left in the one in hand">· ${esc(i.uses)}</span>` : ""}</span>${i.count > 1 ? `<span class="warp-kbd">×${i.count}</span>` : ""}</div>`).join("") : `<div class="warp-empty">Empty-handed.</div>`, !opts.compact);
-  return `${renderEncounter(h)}<div class="warp-hud-top">${top}</div>${renderWarmth(h)}<div class="warp-bars">${bars}</div>${renderOutfit(h, opts.compact)}${skills}${dues}${people}${family}${body}${items}${renderPerks(h, opts.compact)}`;
+  return `${renderEncounter(h.encounter)}<div class="warp-hud-top">${top}</div>${renderWarmth(h)}<div class="warp-bars">${bars}</div>${renderOutfit(h, opts.compact)}${skills}${dues}${people}${family}${body}${items}${renderPerks(h, opts.compact)}`;
 }
-function renderEncounter(h) {
-  const e = h.encounter;
+function renderEncounter(e) {
   if (!e)
     return "";
   return `<div class="warp-encounter">
@@ -676,7 +675,7 @@ function section(title, count, body, open, key = title) {
   return `<details class="warp-section" data-section="${esc(key)}"${open ? " open" : ""}><summary><span>${esc(title)}${count ? ` · ${count}` : ""}</span></summary><div class="warp-section-body">${body}</div></details>`;
 }
 function renderChoices(choices, opts) {
-  if (!choices.length && !opts.busy)
+  if (!choices.length && !opts.busy && !opts.encounter)
     return "";
   const groups = new Map;
   choices.forEach((c, i) => {
@@ -698,7 +697,7 @@ Ready — this reply is already written` : ""}">${key}<span class="warp-choice-l
   }).join("")}</div>
     </div>`).join("");
   const status = opts.busy ? `<div class="warp-status-line"><span class="warp-spinner"></span>${esc(opts.busyLabel ?? "The story continues…")}</div>` : "";
-  return `${status}${body}`;
+  return `${status}${renderEncounter(opts.encounter ?? null)}${body}`;
 }
 var TIER_TONE = { crit_success: "good", success: "good", partial: "warn", fail: "bad", crit_fail: "bad" };
 function renderChips(rec, opts) {
@@ -2518,7 +2517,7 @@ function setup(ctx) {
   function placeChoices(force = false) {
     const anchor = state?.choicesAnchor ?? null;
     const isBusy = busy.on && busy.chatId === state?.chatId;
-    const html = settings.enabled && state?.hud && anchor ? renderChoices(state.choices, { showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined }) : "";
+    const html = settings.enabled && state?.hud && anchor ? renderChoices(state.choices, { showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined, encounter: state.hud.encounter }) : "";
     if (!force && anchor === choicesFor && html === choicesHtml && choicesEl?.isConnected)
       return;
     if (choicesEl) {

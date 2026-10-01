@@ -13,7 +13,7 @@ import { invalidateCharacter, personProfile } from "./source.js";
 import { dropPrewritten, momentKey, prewrite, writeReply } from "./drafts.js";
 import { DEFAULT_SETTINGS } from "../shared/protocol.js";
 import { JevDecider } from "./deciders.js";
-import { interceptor, onGenerationEnded, onGenerationStarted, onGenerationStopped } from "./turn.js";
+import { afterReply, interceptor, onGenerationEnded, onGenerationStarted, onGenerationStopped } from "./turn.js";
 import { busyChats } from "./state-push.js";
 import { patchSettings } from "./settings.js";
 import { getRuleset } from "./source.js";
@@ -157,6 +157,23 @@ async function stagedGeneration(id = "generation", yaml = 'clock: { start: "Mon 
   return { root, user, target, payload };
 }
 describe("generation transaction", () => {
+  test("bookkeeping and continuations cannot reopen a mechanically ended encounter", async () => {
+    const r = normalizeRuleset({ encounters: { cornered: { actions: { escape: { effects: { end: "escaped" } } } } } }).ruleset!;
+    const root = fixture.message("An encounter starts", false, { warp: { swipes: { "0": { v: 1, events: [{ t: "enc", id: "cornered", foe: {}, src: "manual" }], hints: [], at: 1 } } } });
+    const user = fixture.message("I escape", true), target = fixture.message("The way is clear.");
+    const before = foldPath(r, [root, user]).state;
+    const rec = resolveTurnFull(r, before, { actionId: "escape", via: "choice" }, { seed: "escape" }).record;
+    await writeRecord(root.chat_id, target.id, 0, rec, r);
+    const ended = foldPath(r, fixture.messages).state;
+    await patchSettings({ decider: "llm", narratorUpdates: true }, fixture.character.id);
+    fixture.controls.quiet = async () => ({ content: '{"encounter":"cornered"}' });
+    for (const replyBefore of [undefined, target.content]) {
+      await afterReply({ chatId: root.chat_id, ruleset: r, rec, after: ended, origin: replyBefore === undefined ? before : ended,
+        player: "Player", playerText: user.content, at: Date.now(), outcome: "The encounter ended: escaped.", replyBefore }, target, `${target.content} More narration.`, fixture.character.id);
+      expect(foldPath(r, fixture.messages).state.encounter).toBeNull();
+      expect(warpMeta(target).swipes!["0"].rejected).toContain("The encounter already ended in this exchange. Narration cannot restart it.");
+    }
+  });
   test("an empty stop aborts the prepared outcome and clears busy state", async () => {
     const { target, payload } = await stagedGeneration();
     expect(warpMeta(target).prepared!["0"].record.events.length).toBeGreaterThan(0);

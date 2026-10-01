@@ -384,7 +384,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const anchor = state?.choicesAnchor ?? null;
     const isBusy = busy.on && busy.chatId === state?.chatId;
     const html = settings.enabled && state?.hud && anchor
-      ? renderChoices(state.choices, { showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined })
+      ? renderChoices(state.choices, { showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined, encounter: state.hud.encounter })
       : "";
     if (!force && anchor === choicesFor && html === choicesHtml && choicesEl?.isConnected) return;
     if (choicesEl) { ctx.dom.uninject(choicesEl); choicesEl = null; }

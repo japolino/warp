@@ -143,6 +143,7 @@ export function lintRuleset(r: Ruleset): Issue[] {
     if (a.check) {
       check(a.check.target, `${w} › check`, extra);
       check(a.check.add, `${w} › check › add`, extra);
+      if (a.effects.end) issues.push({ level: "warning", where: `${w} › effects › end`, message: "a checked action does not execute `effects:` — put `end:` in a success or failure outcome" });
     }
     checkEffect(a.cost, `${w} › cost`, extra);
     checkEffect(a.effects, `${w} › effects`, extra);
@@ -164,7 +165,7 @@ export function lintRuleset(r: Ruleset): Issue[] {
     for (const e of enc.endWhen) check(e.when, `${w} › end_when › ${e.outcome}`);
     for (const [o, e] of Object.entries(enc.outcomes)) checkEffect(e, `${w} › outcomes › ${o}`);
     checkEffect(enc.start, `${w} › start`);
-    if (!enc.endWhen.length && !Object.values(enc.actions).some((a) => [a.effects, ...Object.values(a.outcomes)].some((e) => e?.end))) {
+    if (!enc.momentum && !enc.endWhen.length && !Object.values(enc.actions).some((a) => [a.cost, ...(a.check ? Object.values(a.outcomes) : [a.effects])].some((e) => e?.end))) {
       issues.push({ level: "warning", where: w, message: "has no way to end — add `end_when:` or an action with `end:`" });
     }
   }
