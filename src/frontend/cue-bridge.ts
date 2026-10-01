@@ -9,6 +9,8 @@
 
 import type { BackendToFrontend, ChoiceView, DateView, HudView } from "../shared/protocol.js";
 import { esc } from "./render.js";
+import { connectCueImages } from "./cue-images.js";
+import type { CueImageResult, ImageFit } from "../shared/cue-images.js";
 
 type StateMsg = Extract<BackendToFrontend, { type: "state" }>;
 
@@ -18,6 +20,7 @@ const MAX_CHOICES = 12;
 export interface BridgeView {
   state: StateMsg | null;
   enabled: boolean;
+  imagesEnabled?: boolean;
   showOdds: boolean;
   busy: boolean;
   busyLabel: string;
@@ -98,7 +101,8 @@ export interface CueBridge {
   destroy(): void;
 }
 
-export function connectCue(opts: { act(id: string): void; chatId(): string | null }): CueBridge {
+export function connectCue(opts: { act(id: string): void; chatId(): string | null; imageResult?(r: CueImageResult): void; imageFit?(chatId: string, fit: ImageFit): void }): CueBridge {
+  const images = connectCueImages(window, (result) => opts.imageResult?.(result), undefined, (id, fit) => { if (opts.chatId() === id) opts.imageFit?.(id, fit); });
   let view: BridgeView = { state: null, enabled: false, showOdds: true, busy: false, busyLabel: "" };
   let request: PanelRequest | null = null;
   let revision = 0;
@@ -165,11 +169,13 @@ export function connectCue(opts: { act(id: string): void; chatId(): string | nul
     update(next) {
       view = next;
       if (dead) return;
+      images.update(next.enabled && next.imagesEnabled !== false ? next.state?.scene?.imageRequest ?? null : null, opts.chatId());
       sendChoices();
       sendCards();
     },
     destroy() {
       dead = true;
+      images.destroy();
       window.removeEventListener("vn-game-pick-v1", onPick);
       window.removeEventListener("vn-game-request-v1", onGameRequest);
       window.removeEventListener("vn-panel-request-v1", onPanelRequest);

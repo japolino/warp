@@ -7,7 +7,7 @@ import { appendDrafts, encounterLogOf, foldPath, liveChoicesOf, patchMeta, patch
 import { interceptor, onGenerationEnded, onGenerationStarted, onGenerationStopped } from "./turn.js";
 import { foldEvents, initialState } from "../engine/state.js";
 import { enterDungeon, leaveDungeon } from "../engine/dungeon/run.js";
-import { playScene, sceneViewFor } from "./scene.js";
+import { playScene, sceneViewFor, dropScene } from "./scene.js";
 import { characterBrief, characterForChat, personProfile } from "./source.js";
 import { runDungeonOp } from "./dungeon.js";
 import { discoverPlace } from "./discover.js";
@@ -483,4 +483,39 @@ test("the registered lore gate folds the selected generation path instead of the
   await onGenerationStarted({ chatId: f.id, generationId: `${generationId}-continue`, targetMessageId: m.id, generationType: "continue" }, f.id);
   expect((await worldInfo(ctx)).forced).toContain("spoiler");
   await onGenerationStopped({ chatId: f.id, generationId: `${generationId}-continue` }, f.id);
+});
+
+test("date pictures request Cue by name only, apply fit, retry without a turn, and reject stale results", async () => {
+  const f = fixture({ start: { location: "home" }, locations: { home: { name: "Garden" } }, dating: true,
+    relationships: { people: { mira: { name: "Mira", desc: "TRAIT_MUST_NOT_LEAVE_WARP", schedule: [{ at: "home" }] } } } });
+  f.settings.dateImages = true;
+  const session = { who: "mira", kind: "talk", at: "home", venue: null, beat: 0, beats: 4, fatigue: 0,
+    mood: 1, combo: 0, enjoy: 0, used: {}, last: null, offer: [], closing: false, started: 0 };
+  f.add("assistant", "At the garden.", { warp: { swipes: { "0": record([{ t: "dt_start", session, src: "manual" }]) } } });
+  const before = foldPath(f.r, f.messages).state;
+  await frontendMessage({ type: "retry_date_image", chatId: f.id }, f.id);
+  const pending = sceneViewFor(f.id, f.r, before)!;
+  expect(pending.imageBusy).toBe(true);
+  expect(pending.imageRequest!.characterName).toBe("Mira");
+  expect(pending.imageRequest!.venue).toBe("Garden");
+  expect(Object.keys(pending.imageRequest!).sort()).toEqual(["version", "provider", "chatId", "requestId", "characterName", "venue", "timeOfDay", "mood"].sort());
+  expect(JSON.stringify(pending.imageRequest)).not.toContain("TRAIT_MUST_NOT");
+  expect(f.calls).toBe(0); // Warp's helper is never used for this picture.
+  const result = { ...pending.imageRequest, status: "ready", imageUrl: "/api/v1/images/date", fit: "fill" };
+  await frontendMessage({ type: "cue_image_result", chatId: f.id, result: { ...result, requestId: "wrong" } }, f.id);
+  expect(sceneViewFor(f.id, f.r, before)!.image).toBeNull();
+  await frontendMessage({ type: "cue_image_result", chatId: f.id, result }, "other-user");
+  expect(sceneViewFor(f.id, f.r, before)!.image).toBeNull();
+  await frontendMessage({ type: "cue_image_result", chatId: f.id, result }, f.id);
+  expect(sceneViewFor(f.id, f.r, before)).toMatchObject({ image: "/api/v1/images/date", imageFit: "fill", imageBusy: false });
+  await frontendMessage({ type: "cue_image_fit", chatId: f.id, fit: "scale-down" }, f.id);
+  expect(sceneViewFor(f.id, f.r, before)!.imageFit).toBe("scale-down");
+  await frontendMessage({ type: "retry_date_image", chatId: f.id }, f.id);
+  const next = sceneViewFor(f.id, f.r, before)!.imageRequest!;
+  expect(next.requestId).not.toBe(result.requestId);
+  expect(foldPath(f.r, f.messages).state).toEqual(before);
+  dropScene(f.id);
+  await frontendMessage({ type: "cue_image_result", chatId: f.id, result: { ...result, requestId: next.requestId } }, f.id);
+  expect(sceneViewFor(f.id, f.r, before)!.image).toBeNull();
+  expect(f.calls).toBe(0); expect(f.narratorCalls ?? 0).toBe(0);
 });

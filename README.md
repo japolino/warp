@@ -35,12 +35,12 @@ A game engine under your roleplay. Warp owns stats, dice, time, inventory and re
 
 A date and a dungeon run each play full screen as a little game of their own, off the chat:
 
-- **Dates** look like a visual novel. One picture is made for each person and place: the place, with them in the middle. It's reused on later dates there. Your stats and where you stand sit on the left and the topic menu on the right (number keys pick). The dialogue box shows short snippets you click through.
+- **Dates** look like a visual novel. Cue illustrates the person and place using its own assistant, character identity, pose catalogue, image connection and cache. The picture follows Cue's cover/fit/stretch setting. Your stats and where you stand sit on the left and the topic menu on the right (number keys pick). The dialogue box shows short snippets you click through.
 - **Dungeons** keep their floor map and battle screen. Story moments (treasure, events, a new floor) play as snippets in the same box.
 - **Lines:** the rules decide what happens. Only the wording comes from the helper model, through a tiny prompt of its own (never your chat preset); scripted lines take over if it's slow or you pick them in Settings.
 - **The chat:** it isn't touched while you play. When the date or run ends, one narrator line goes into it so the story remembers.
 - **Typing and leaving:** you can type your own line in the box. **Chat ⤓** or Esc drops back to the chat, and the ⚔ / 💬 button on the status panel returns to the stage.
-- **Needs:** date pictures need Warp's image permission and an image connection (Settings → Dates & dungeons).
+- **Needs:** date pictures require an updated [Cue extension](https://github.com/japolino/cue-living-novel), enabled with image generation or native card images. Configure pictures in Cue; Warp only has an **Illustrate dates through Cue** switch. Cue's reading view can stay closed. Missing or failed pictures offer a retry, and dates still work without them.
 
 ## Minigames and gambling
 

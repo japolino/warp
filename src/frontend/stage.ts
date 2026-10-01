@@ -226,8 +226,9 @@ function dateScene(v: DateView, hud: Hud, scene: StateMsg["scene"], ui: StageUi)
         return `<button class="warp-stage-bar cat" data-date-cat="${esc(c.id)}" data-key="${i + 1}"${open ? "" : " disabled"}><span class="warp-stage-bar-n">${i + 1}.</span><span>${esc(c.icon)} ${esc(c.label)}</span>${open ? `<small>${open}</small>` : "🔒"}</button>`;
       }).join("");
 
-  return `<div class="warp-stage-bg${image ? " has-photo" : ""}" style="--warp-hue:${hue(p.name)}">${image ? `<div class="warp-stage-photo" style="background-image:url(&quot;${esc(cssUrl(image))}&quot;)"></div>` : ""}</div>`
-    + top(kicker, p.name, ladder(v), scene?.imageBusy ? `<span class="warp-stage-painting">Painting the scene…</span>` : "")
+  const fit = ["cover", "contain", "fill", "none", "scale-down"].includes(scene?.imageFit ?? "") ? scene!.imageFit : "cover";
+  return `<div class="warp-stage-bg${image ? " has-photo" : ""}" style="--warp-hue:${hue(p.name)}">${image ? `<img class="warp-stage-photo" src="${esc(image)}" alt="Date with ${esc(p.name)}" style="object-fit:${fit}"/>` : ""}</div>`
+    + top(kicker, p.name, ladder(v), scene?.imageBusy ? `<span class="warp-stage-painting">Cue is illustrating the date…</span>` : scene?.imageError ? `<span class="warp-stage-painting" title="${esc(scene.imageError)}">${esc(scene.imageError.slice(0, 220))} <button class="warp-btn warp-mini" data-date-image-retry>Retry picture</button></span>` : image ? `<button class="warp-btn warp-mini" data-date-image-retry title="Ask Cue again using its current settings. Compatible cached images may be reused.">Refresh picture</button>` : "")
     + `<main class="warp-stage-main warp-stage-date ${esc(s.kind)}">
       <section class="warp-stage-left">${corner}${stats}${last}</section>
       <section class="warp-stage-center">${image ? "" : ring(p.love, p.fear, p.name, s.moodFace)}</section>

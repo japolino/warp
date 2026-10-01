@@ -79,6 +79,14 @@ describe("the stage", () => {
     const pictured = renderStage({ ...m, scene: { kind: "date", seq: 1, lines: [], said: null, image: "/img.png", imageBusy: false, writing: false } }, "date", ui);
     expect(pictured).toContain("warp-stage-photo");
     expect(pictured).not.toContain("warp-stage-portrait");
+    for (const fit of ["cover", "contain", "fill", "none", "scale-down"] as const) {
+      const fitted = renderStage({ ...m, scene: { kind: "date", seq: 1, lines: [], said: null,
+        image: "/api/v1/images/date", imageBusy: false, writing: false, imageFit: fit } }, "date", ui);
+      expect(fitted).toContain(`object-fit:${fit}`);
+    }
+    const failed = renderStage({ ...m, scene: { kind: "date", seq: 1, lines: [], said: null,
+      image: null, imageBusy: false, writing: false, imageError: "Cue unavailable" } }, "date", ui);
+    expect(failed).toContain("data-date-image-retry");
   });
 
   test("narration keeps its shape: paragraphs, emphasis, dialogue — and nothing unescaped", () => {

@@ -592,10 +592,11 @@ export function setup(ctx: SpindleFrontendContext) {
   } catch { /* no observer: chips appear on the next state push */ }
 
   // The visual-novel extension (Cue) covers the chat; hand it our choices and status card.
-  const cue = connectCue({ act: (id) => act(id), chatId });
+  const cue = connectCue({ act: (id) => act(id), chatId, imageResult: (result) => send({ type: "cue_image_result", chatId: result.chatId, result }),
+    imageFit: (id, fit) => send({ type: "cue_image_fit", chatId: id, fit }) });
   cleanups.push(() => cue.destroy());
   function syncCue() {
-    cue.update({ state, enabled: settings.enabled, showOdds: settings.showOdds, busy: busy.on && busy.chatId === state?.chatId, busyLabel: busy.label });
+    cue.update({ state, enabled: settings.enabled, imagesEnabled: settings.dateImages, showOdds: settings.showOdds, busy: busy.on && busy.chatId === state?.chatId, busyLabel: busy.label });
   }
 
   // ───────── the stage ─────────
@@ -736,6 +737,7 @@ export function setup(ctx: SpindleFrontendContext) {
     lockUntilReply(cid);
   }
   stageEl.addEventListener("click", (e) => {
+    if ((e.target as HTMLElement).closest("[data-date-image-retry]")) { const id = chatId(); if (id) send({ type: "retry_date_image", chatId: id }); return; }
     const t = e.target as Element;
     if (t.closest("[data-stage-close]")) { closeStage(); return; }
     if (t.closest("[data-stage-fold]")) {

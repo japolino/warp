@@ -194,6 +194,26 @@ var init_game_ids = __esm(() => {
   };
 });
 
+// src/shared/cue-images.ts
+function imageIdentity(v) {
+  return record(v) && v.version === 1 && v.provider === "warp" && text(v.chatId, 128) && text(v.requestId, 128);
+}
+function parseImageResult(v) {
+  if (!imageIdentity(v) || !record(v))
+    return null;
+  if (v.status === "accepted")
+    return v;
+  if (v.status === "error" && text(v.error, 1000))
+    return v;
+  if (v.status === "ready" && text(v.imageUrl, 4000) && /^(https?:\/\/|\/api\/v1\/images\/)/i.test(v.imageUrl) && IMAGE_FITS.includes(v.fit))
+    return v;
+  return null;
+}
+var CUE_IMAGE_REQUEST = "vn-scene-image-request-v1", CUE_IMAGE_RESULT = "vn-scene-image-result-v1", CUE_IMAGE_CANCEL = "vn-scene-image-cancel-v1", CUE_IMAGE_FIT = "vn-scene-image-fit-v1", IMAGE_FITS, record = (v) => !!v && typeof v === "object" && !Array.isArray(v), text = (v, n) => typeof v === "string" && !!v.trim() && v.length <= n;
+var init_cue_images = __esm(() => {
+  IMAGE_FITS = ["cover", "contain", "fill", "none", "scale-down"];
+});
+
 // src/frontend.ts
 init_protocol();
 init_classifier_config();
@@ -1315,14 +1335,7 @@ function renderSettings(s, status, connections, jevKeySet = false, imageConnecti
     ${toggle("themeDating", "Dating that fits the card", "The built-in topics and outings (films, a café, an arcade…) are rewritten once for the card's setting — a medieval card gets tales and the harvest fair.", s.themeDating)}
     ${status?.state === "ok" ? `<div class="warp-row"><button class="warp-btn warp-mini" data-theme-dating title="Rewrite dating's topics and outings for this card now">Re-theme dating now</button></div>` : ""}
     ${toggle("draftItemUses", "Give useless items a purpose", 'Items the rules never use get one drafted from their description (a use or a gear bonus), saved as an editable "item uses" lorebook entry.', s.draftItemUses)}
-    ${toggle("dateImages", "A picture for each date", "The place, with them in the middle — made once per person and place, then reused.", s.dateImages)}
-    <label class="warp-slider">Image connection
-      <select class="warp-select" data-setting="imageConnectionId">
-        <option value="">Your default image connection</option>
-        ${imageConnections.map((c) => `<option value="${esc(c.id)}"${c.id === s.imageConnectionId ? " selected" : ""}>${esc(c.name)}</option>`).join("")}
-      </select>
-      ${imageConnections.length ? "" : `<small class="warp-dim">No image connections found — add one in Lumiverse, or allow Warp's image permission.</small>`}
-    </label>
+    ${toggle("dateImages", "Illustrate dates through Cue", "Uses Cue's assistant, character consistency, image settings and image fit. Requires an updated Cue extension. Configure pictures in Cue.", s.dateImages)}
   </div>
   <div class="warp-card">
     <h3>Minigames</h3>
@@ -1837,6 +1850,79 @@ function renderDungeon(v, entries, ui) {
   return head + `<div class="warp-dg-party">${v.party.map((f) => memberCard(f, { targetable: pickAlly })).join("")}</div>` + (pickAlly ? `<div class="warp-dg-prompt">Who drinks it? <button class="warp-btn warp-mini" data-dg-cancel>Cancel</button></div>` : "") + board(v) + herePanel(v, ui) + `<div class="warp-dg-bag">${bag}${bombs ? `<span class="warp-dim">${sprite("bomb", "warp-dg-mini")}Bomb ×${bombs.count}</span>` : ""}${v.loot.length ? `<span class="warp-dim" title="Kept when you leave">Found: ${esc2(v.loot.map((l) => `${l.name}${l.count > 1 ? ` ×${l.count}` : ""}`).join(", "))}</span>` : ""}</div>` + `<div class="warp-dg-log">${v.log.slice(0, 6).map((l) => `<div>${esc2(you(l))}</div>`).join("")}</div>` + `<button class="warp-btn warp-dg-leave" data-dg-leave ${ui.busy ? "disabled" : ""}>Leave the dungeon</button>`;
 }
 
+// src/frontend/cue-images.ts
+init_cue_images();
+function connectCueImages(target, receive, timings = { acknowledgement: 2000, completion: 305000 }, fitChanged) {
+  let pending = null;
+  let lastId = null;
+  let timer;
+  let dead = false;
+  let accepted = false;
+  const emit = (name, detail) => target.dispatchEvent(new CustomEvent(name, { detail }));
+  function finish(r) {
+    clearTimeout(timer);
+    timer = undefined;
+    pending = null;
+    receive(r);
+  }
+  function fail(error) {
+    if (!pending)
+      return;
+    const r = pending;
+    emit(CUE_IMAGE_CANCEL, r);
+    finish({ version: 1, provider: "warp", chatId: r.chatId, requestId: r.requestId, status: "error", error });
+  }
+  const onResult = (event) => {
+    const r = parseImageResult(event.detail);
+    if (dead || !r || !pending || r.chatId !== pending.chatId || r.requestId !== pending.requestId)
+      return;
+    if (r.status === "accepted") {
+      if (accepted)
+        return;
+      clearTimeout(timer);
+      accepted = true;
+      timer = setTimeout(() => fail("Cue did not finish the picture. You can retry it."), timings.completion);
+    } else
+      finish(r);
+  };
+  target.addEventListener(CUE_IMAGE_RESULT, onResult);
+  const onFit = (event) => {
+    const d = event.detail;
+    if (!dead && d?.version === 1 && typeof d.chatId === "string" && IMAGE_FITS.includes(d.fit))
+      fitChanged?.(d.chatId, d.fit);
+  };
+  target.addEventListener(CUE_IMAGE_FIT, onFit);
+  return {
+    update(request, chatId) {
+      if (dead)
+        return;
+      const next = request?.chatId === chatId ? request : null;
+      if (pending && (!next || pending.requestId !== next.requestId))
+        fail("The date image request was cancelled.");
+      if (!next) {
+        lastId = null;
+        return;
+      }
+      if (next.requestId === lastId)
+        return;
+      lastId = next.requestId;
+      pending = next;
+      accepted = false;
+      timer = setTimeout(() => fail("Cue is unavailable or needs an update. Enable Cue, then retry the picture."), timings.acknowledgement);
+      emit(CUE_IMAGE_REQUEST, next);
+    },
+    destroy() {
+      if (dead)
+        return;
+      fail("The date image request was cancelled.");
+      dead = true;
+      target.removeEventListener(CUE_IMAGE_RESULT, onResult);
+      target.removeEventListener(CUE_IMAGE_FIT, onFit);
+      clearTimeout(timer);
+    }
+  };
+}
+
 // src/frontend/cue-bridge.ts
 var PROVIDER = "warp";
 var MAX_CHOICES = 12;
@@ -1902,6 +1988,10 @@ function renderCueDateCard(d) {
   </div>`;
 }
 function connectCue(opts) {
+  const images = connectCueImages(window, (result) => opts.imageResult?.(result), undefined, (id, fit) => {
+    if (opts.chatId() === id)
+      opts.imageFit?.(id, fit);
+  });
   let view = { state: null, enabled: false, showOdds: true, busy: false, busyLabel: "" };
   let request = null;
   let revision = 0;
@@ -1977,11 +2067,13 @@ function connectCue(opts) {
       view = next;
       if (dead)
         return;
+      images.update(next.enabled && next.imagesEnabled !== false ? next.state?.scene?.imageRequest ?? null : null, opts.chatId());
       sendChoices();
       sendCards();
     },
     destroy() {
       dead = true;
+      images.destroy();
       window.removeEventListener("vn-game-pick-v1", onPick);
       window.removeEventListener("vn-game-request-v1", onGameRequest);
       window.removeEventListener("vn-panel-request-v1", onPanelRequest);
@@ -2243,7 +2335,6 @@ function ladder(v) {
     return `<ol class="warp-stage-ladder"><li class="hostile now">${esc(p.stage)}</li></ol>`;
   return `<ol class="warp-stage-ladder" aria-label="Where you stand">${v.stages.map((st, i) => `<li class="${i < p.stageIndex ? "past" : i === p.stageIndex ? "now" : ""}">${esc(st)}</li>`).join("")}</ol>`;
 }
-var cssUrl = (u) => u.replace(/["\\\r\n]/g, (c) => encodeURIComponent(c));
 function dateScene(v, hud, scene, ui) {
   const s = v.session;
   const p = v.person;
@@ -2277,7 +2368,8 @@ function dateScene(v, hud, scene, ui) {
     const open = c.topics.filter((t) => !t.lock).length;
     return `<button class="warp-stage-bar cat" data-date-cat="${esc(c.id)}" data-key="${i + 1}"${open ? "" : " disabled"}><span class="warp-stage-bar-n">${i + 1}.</span><span>${esc(c.icon)} ${esc(c.label)}</span>${open ? `<small>${open}</small>` : "\uD83D\uDD12"}</button>`;
   }).join("");
-  return `<div class="warp-stage-bg${image ? " has-photo" : ""}" style="--warp-hue:${hue(p.name)}">${image ? `<div class="warp-stage-photo" style="background-image:url(&quot;${esc(cssUrl(image))}&quot;)"></div>` : ""}</div>` + top(kicker, p.name, ladder(v), scene?.imageBusy ? `<span class="warp-stage-painting">Painting the scene…</span>` : "") + `<main class="warp-stage-main warp-stage-date ${esc(s.kind)}">
+  const fit = ["cover", "contain", "fill", "none", "scale-down"].includes(scene?.imageFit ?? "") ? scene.imageFit : "cover";
+  return `<div class="warp-stage-bg${image ? " has-photo" : ""}" style="--warp-hue:${hue(p.name)}">${image ? `<img class="warp-stage-photo" src="${esc(image)}" alt="Date with ${esc(p.name)}" style="object-fit:${fit}"/>` : ""}</div>` + top(kicker, p.name, ladder(v), scene?.imageBusy ? `<span class="warp-stage-painting">Cue is illustrating the date…</span>` : scene?.imageError ? `<span class="warp-stage-painting" title="${esc(scene.imageError)}">${esc(scene.imageError.slice(0, 220))} <button class="warp-btn warp-mini" data-date-image-retry>Retry picture</button></span>` : image ? `<button class="warp-btn warp-mini" data-date-image-retry title="Ask Cue again using its current settings. Compatible cached images may be reused.">Refresh picture</button>` : "") + `<main class="warp-stage-main warp-stage-date ${esc(s.kind)}">
       <section class="warp-stage-left">${corner}${stats}${last}</section>
       <section class="warp-stage-center">${image ? "" : ring(p.love, p.fear, p.name, s.moodFace)}</section>
       <section class="warp-stage-menu-col"><div class="warp-stage-kicker">${cat ? "Topics" : "Talk"}</div>${cat ? "" : moves}${list}</section>
@@ -2515,7 +2607,7 @@ var STAGE_STYLES = `
 .warp-stage-ladder li.hostile { background: #ef6a7a; color: #2a0710; }
 .warp-stage-date { display: grid; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr) minmax(260px, 360px); grid-template-rows: minmax(0, 1fr); gap: 20px; align-items: stretch; }
 /* the date's picture: the place, with them in the middle */
-.warp-stage-photo { position: absolute; inset: 0; background-size: cover; background-position: center 30%; animation: warp-stage-in 600ms ease both; }
+.warp-stage-photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; animation: warp-stage-in 600ms ease both; }
 .warp-stage-bg.has-photo::before { display: none; }
 .warp-stage[data-mode=date] .warp-stage-bg.has-photo::after { background: linear-gradient(90deg, rgba(8, 4, 10, .55), transparent 28%, transparent 68%, rgba(8, 4, 10, .6)), linear-gradient(0deg, rgba(8, 4, 10, .7), transparent 38%); }
 .warp-stage-painting { font-size: 12px; color: var(--st-muted); padding: 4px 10px; border-radius: 999px; border: 1px dashed var(--st-line); animation: warp-stage-dot 1.6s ease-in-out infinite; }
@@ -10614,10 +10706,15 @@ function setup(ctx) {
         clearTimeout(moTimer);
     });
   } catch {}
-  const cue = connectCue({ act: (id) => act(id), chatId });
+  const cue = connectCue({
+    act: (id) => act(id),
+    chatId,
+    imageResult: (result) => send({ type: "cue_image_result", chatId: result.chatId, result }),
+    imageFit: (id, fit) => send({ type: "cue_image_fit", chatId: id, fit })
+  });
   cleanups.push(() => cue.destroy());
   function syncCue() {
-    cue.update({ state, enabled: settings.enabled, showOdds: settings.showOdds, busy: busy.on && busy.chatId === state?.chatId, busyLabel: busy.label });
+    cue.update({ state, enabled: settings.enabled, imagesEnabled: settings.dateImages, showOdds: settings.showOdds, busy: busy.on && busy.chatId === state?.chatId, busyLabel: busy.label });
   }
   function raiseStage() {
     const host = stage?.root.parentElement?.parentElement;
@@ -10777,6 +10874,12 @@ function setup(ctx) {
     lockUntilReply(cid);
   }
   stageEl.addEventListener("click", (e) => {
+    if (e.target.closest("[data-date-image-retry]")) {
+      const id = chatId();
+      if (id)
+        send({ type: "retry_date_image", chatId: id });
+      return;
+    }
     const t = e.target;
     if (t.closest("[data-stage-close]")) {
       closeStage();

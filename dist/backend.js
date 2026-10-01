@@ -20028,6 +20028,26 @@ var init_view3 = __esm(() => {
   init_types2();
 });
 
+// src/shared/cue-images.ts
+function imageIdentity(v) {
+  return record(v) && v.version === 1 && v.provider === "warp" && text(v.chatId, 128) && text(v.requestId, 128);
+}
+function parseImageResult(v) {
+  if (!imageIdentity(v) || !record(v))
+    return null;
+  if (v.status === "accepted")
+    return v;
+  if (v.status === "error" && text(v.error, 1000))
+    return v;
+  if (v.status === "ready" && text(v.imageUrl, 4000) && /^(https?:\/\/|\/api\/v1\/images\/)/i.test(v.imageUrl) && IMAGE_FITS.includes(v.fit))
+    return v;
+  return null;
+}
+var CUE_IMAGE_REQUEST = "vn-scene-image-request-v1", CUE_IMAGE_RESULT = "vn-scene-image-result-v1", CUE_IMAGE_CANCEL = "vn-scene-image-cancel-v1", CUE_IMAGE_FIT = "vn-scene-image-fit-v1", IMAGE_FITS, record = (v) => !!v && typeof v === "object" && !Array.isArray(v), text = (v, n) => typeof v === "string" && !!v.trim() && v.length <= n;
+var init_cue_images = __esm(() => {
+  IMAGE_FITS = ["cover", "contain", "fill", "none", "scale-down"];
+});
+
 // src/backend/helpers.ts
 function firstJson(text) {
   const cleaned = text.replace(/```(?:json)?/gi, "");
@@ -22680,6 +22700,8 @@ var init_turn = __esm(() => {
 function logFor(chatId, kind) {
   let l = logs.get(chatId);
   if (!l || l.kind !== kind) {
+    if (l?.imageTimer)
+      clearTimeout(l.imageTimer);
     l = { kind, seq: 0, lines: [], said: null, history: [], writing: false, image: null, imageBusy: false, start: null };
     logs.set(chatId, l);
   }
@@ -22692,7 +22714,18 @@ function sceneViewFor(chatId, r, s) {
     return null;
   if (!l || l.kind !== kind)
     return { kind, seq: 0, lines: [], said: null, image: null, imageBusy: false, writing: false };
-  return { kind, seq: l.seq, lines: l.lines, said: l.said, image: l.image, imageBusy: l.imageBusy, writing: l.writing };
+  return {
+    kind,
+    seq: l.seq,
+    lines: l.lines,
+    said: l.said,
+    image: l.image,
+    imageBusy: l.imageBusy,
+    writing: l.writing,
+    imageRequest: l.imageRequest,
+    imageError: l.imageError,
+    imageFit: l.imageFit
+  };
 }
 async function playerNameOf2(chatId, userId) {
   await Promise.resolve().then(() => init_turn());
@@ -22775,8 +22808,8 @@ ${prof.setting}` : ""].filter(Boolean).join(`
       });
     await pushState(chatId, userId);
     const sess = activeSession(r, after);
-    if (kind === "date" && sess && settings.dateImages && !log.image && !log.imageBusy)
-      dateImage(chatId, userId, r, after, sess.who, sess.venue ?? null, card, log);
+    if (kind === "date" && sess && settings.dateImages && requestDateImage(chatId, userId, r, after, log))
+      await pushState(chatId, userId);
     const lines = await writeLines({ kind, r, before, after, rec, player, said: opts.said, recent: log.history, card, seed }, settings, userId);
     if (!operationCurrent(chatId, operation) || logs.get(chatId) !== log)
       return;
@@ -22796,7 +22829,7 @@ ${prof.setting}` : ""].filter(Boolean).join(`
       if (!operationCurrent(chatId, operation) || logs.get(chatId) !== log)
         return;
       await host().chat.appendMessage(chatId, { role: "assistant", content: line });
-      logs.delete(chatId);
+      dropScene(chatId);
     }
   } catch (e) {
     logError("scene", e);
@@ -22808,81 +22841,112 @@ ${prof.setting}` : ""].filter(Boolean).join(`
     await pushState(chatId, userId);
   }
 }
-async function dateImage(chatId, userId, r, s, who, venueId, card, log) {
-  const settings = await getSettings(userId);
-  const characterId = await characterForChat(chatId, userId).catch(() => null);
-  const place = venueId ?? s.location ?? "somewhere";
-  const key = `${characterId ?? "chat"}:${who}:${place}`;
-  let cache = {};
-  try {
-    cache = await host().userStorage.getJson(IMAGE_STORE, { fallback: {}, userId });
-  } catch {}
-  if (cache[key]) {
-    log.image = cache[key];
-    await pushState(chatId, userId);
-    return;
-  }
-  if (inflight.has(key))
-    return;
-  inflight.add(key);
-  log.imageBusy = true;
-  await pushState(chatId, userId);
-  try {
-    const prompt = await imagePrompt(r, s, who, venueId, card, settings, userId);
-    const res = await host().imageGen.generate({
-      ...settings.imageConnectionId ? { connection_id: settings.imageConnectionId } : {},
-      prompt,
-      negativePrompt: "multiple people, crowd, text, watermark, signature, lowres, blurry, deformed, extra limbs, nsfw, nude",
-      owner_chat_id: chatId,
-      includeDataUrl: false,
-      ...userId ? { userId } : {}
-    });
-    const url = res.imageUrl ?? (res.imageId ? `/api/v1/images/${res.imageId}` : null);
-    if (url) {
-      cache = { ...cache, [key]: url };
-      await host().userStorage.setJson(IMAGE_STORE, cache, { userId });
-      log.image = url;
-    }
-  } catch (e) {
-    logError("date picture", e);
-  } finally {
-    inflight.delete(key);
-    log.imageBusy = false;
-    await pushState(chatId, userId);
-  }
+function imageSubject(r, s) {
+  const sess = activeSession(r, s);
+  return sess ? JSON.stringify([sess.who, sess.kind, sess.venue ?? s.location ?? null, sess.started]) : null;
 }
-async function imagePrompt(r, s, who, venueId, card, settings, userId) {
-  const name = personName(r, s, who);
-  const venue = venueId ? r.dating.venues[venueId] : null;
-  const loc = s.location ? r.locations[s.location] : undefined;
-  const placeName = venue?.name ?? s.locationName ?? "a quiet place";
-  const placeDesc = loc?.desc ?? "";
-  const phase = r.clock.enabled ? formatClock(r, s.minutes).phase : "day";
-  const fallback = `${name}, one person, centered, upper body, facing the viewer, gentle smile, fully clothed, ${placeName}, ${phase}, detailed background, visual novel style, soft lighting`;
-  try {
-    const text = await ask("Write ONE image-generation prompt as comma-separated tags for a visual-novel scene: exactly one adult character, centered in the frame, upper body, facing the viewer, fully clothed, with the place behind them as a detailed background. Take their appearance (hair, eyes, build, clothes) from what you're given. Tags only, no sentences, under 70 words.", [`Character: ${name}${r.people[who]?.desc ? ` — ${r.people[who].desc}` : ""}`, card ? `What's known about them (use only what describes ${name}):
-${card.slice(0, 3000)}` : "", `Place: ${placeName}${placeDesc ? ` — ${placeDesc}` : ""}`, `Time of day: ${phase}`].filter(Boolean).join(`
-
-`), settings, userId, 20000, { temperature: 0.4 });
-    const tags = text.replace(/```[a-z]*|```/g, "").split(`
-`).map((x) => x.trim()).find((x) => x.includes(",")) ?? "";
-    return tags.length > 20 ? `${tags}, centered composition, visual novel style` : fallback;
-  } catch {
-    return fallback;
+function requestDateImage(chatId, userId, r, s, log, retry = false) {
+  const sess = activeSession(r, s), subject = imageSubject(r, s);
+  if (!sess || !subject)
+    return;
+  if (log.imageSubject !== subject) {
+    if (log.imageTimer)
+      clearTimeout(log.imageTimer);
+    log.image = null;
+    log.imageBusy = false;
+    log.imageAttempted = false;
+    log.imageError = undefined;
+    log.imageRequest = undefined;
+    log.imageFit = undefined;
   }
+  if (!retry && log.imageAttempted)
+    return;
+  if (log.imageTimer)
+    clearTimeout(log.imageTimer);
+  log.imageSubject = subject;
+  log.imageUser = userId;
+  log.imageAttempted = true;
+  log.imageBusy = true;
+  log.imageError = undefined;
+  log.imageRequest = {
+    version: 1,
+    provider: "warp",
+    chatId,
+    requestId: randomSeed(),
+    characterName: personName(r, s, sess.who),
+    venue: (sess.venue ? r.dating.venues[sess.venue]?.name : null) ?? s.locationName ?? (s.location ? r.locations[s.location]?.name : null) ?? null,
+    timeOfDay: r.clock.enabled ? formatClock(r, s.minutes).phase : null,
+    mood: moodOf(sess.mood).label
+  };
+  const request = log.imageRequest;
+  log.imageTimer = setTimeout(() => {
+    if (logs.get(chatId) !== log || log.imageRequest !== request)
+      return;
+    log.imageBusy = false;
+    log.imageRequest = undefined;
+    log.imageError = "Cue did not finish the picture. You can retry it.";
+    pushState(chatId, userId).catch((e) => logError("date image timeout", e));
+  }, 310000);
+  return true;
+}
+async function setDateImageFit(chatId, fit, userId) {
+  const log = logs.get(chatId);
+  if (!log || log.imageUser !== userId || !IMAGE_FITS.includes(fit))
+    return;
+  log.imageFit = fit;
+  await pushState(chatId, userId);
+}
+async function acceptDateImage(chatId, value, userId) {
+  const result = parseImageResult(value), log = logs.get(chatId);
+  if (!result || result.status === "accepted" || result.chatId !== chatId || !log || log.imageUser !== userId || result.requestId !== log.imageRequest?.requestId)
+    return;
+  const r = (await getRuleset(chatId, userId))?.ruleset;
+  if (!r)
+    return;
+  const folded = foldPath(r, await getMessages(chatId), 0);
+  if (logs.get(chatId) !== log || log.imageRequest?.requestId !== result.requestId || folded.conflict || imageSubject(r, folded.state) !== log.imageSubject)
+    return;
+  if (log.imageTimer)
+    clearTimeout(log.imageTimer);
+  log.imageTimer = undefined;
+  log.imageBusy = false;
+  log.imageRequest = undefined;
+  if (result.status === "ready") {
+    log.image = result.imageUrl;
+    log.imageFit = result.fit;
+    log.imageError = undefined;
+  } else
+    log.imageError = result.error;
+  await pushState(chatId, userId);
+}
+async function retryDateImage(chatId, userId) {
+  const r = (await getRuleset(chatId, userId))?.ruleset;
+  if (!r || !(await getSettings(userId)).dateImages)
+    return;
+  const folded = foldPath(r, await getMessages(chatId), 0);
+  if (folded.conflict || !activeSession(r, folded.state))
+    return;
+  const log = logFor(chatId, "date");
+  if (log.imageBusy)
+    return;
+  requestDateImage(chatId, userId, r, folded.state, log, true);
+  await pushState(chatId, userId);
 }
 function dropScene(chatId) {
+  const log = logs.get(chatId);
+  if (log?.imageTimer)
+    clearTimeout(log.imageTimer);
   logs.delete(chatId);
 }
-var logs, IMAGE_STORE = "scene-images.json", inflight;
+var logs;
 var init_scene = __esm(() => {
   init_dice();
   init_resolve();
   init_state();
   init_talk();
+  init_cue_images();
   init_decisions();
   init_deciders();
-  init_helpers();
   init_ledger();
   init_operations();
   init_settings();
@@ -22890,7 +22954,6 @@ var init_scene = __esm(() => {
   init_state_push();
   init_snippets();
   logs = new Map;
-  inflight = new Set;
 });
 
 // src/engine/reference.ts
@@ -25646,16 +25709,8 @@ async function sendSettings(userId) {
     jevKeySet,
     templates: TEMPLATES.map(({ id, name, blurb }) => ({ id, name, blurb })),
     connections: await connectionsFor(userId),
-    imageConnections: await imageConnectionsFor(userId)
+    imageConnections: []
   }, userId);
-}
-async function imageConnectionsFor(userId) {
-  try {
-    const list = await spindle.imageGen.listConnections(userId);
-    return list.map((c) => ({ id: c.id, name: `${c.name}${c.model ? ` — ${c.model}` : ""}` }));
-  } catch {
-    return [];
-  }
 }
 spindle.onFrontendMessage(async (raw, userId) => {
   const msg = raw;
@@ -25669,6 +25724,15 @@ spindle.onFrontendMessage(async (raw, userId) => {
       }
     }
     switch (msg.type) {
+      case "cue_image_fit":
+        await setDateImageFit(msg.chatId, msg.fit, userId);
+        break;
+      case "cue_image_result":
+        await acceptDateImage(msg.chatId, msg.result, userId);
+        break;
+      case "retry_date_image":
+        await retryDateImage(msg.chatId, userId);
+        break;
       case "reconcile_history": {
         if (busyChats.has(msg.chatId)) {
           toast("info", "Wait for the current turn to finish first.", userId);

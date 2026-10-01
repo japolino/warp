@@ -12,7 +12,7 @@ import { getRuleset, installTemplate, invalidateCharacter, invalidateChat, known
 import { busyChats, connectionsFor, getActiveChat, pushState, schedulePush, setActiveChat } from "./backend/state-push.js";
 import { afterReply, generationHistory, interceptor, onGenerationEnded, onGenerationStarted, onGenerationStopped, playerName } from "./backend/turn.js";
 import { intentFor } from "./backend/intents.js";
-import { dropScene, playScene } from "./backend/scene.js";
+import { dropScene, playScene, acceptDateImage, retryDateImage, setDateImageFit } from "./backend/scene.js";
 import { isQuiet, playRound } from "./backend/encounter.js";
 import { operationCurrent, releaseOperation, takeOperation } from "./backend/operations.js";
 import { activeSession } from "./engine/date/talk.js";
@@ -159,17 +159,8 @@ async function sendSettings(userId?: string) {
     type: "settings", settings, jevKeySet,
     templates: TEMPLATES.map(({ id, name, blurb }) => ({ id, name, blurb })),
     connections: await connectionsFor(userId),
-    imageConnections: await imageConnectionsFor(userId),
+    imageConnections: [],
   }, userId);
-}
-
-async function imageConnectionsFor(userId?: string): Promise<{ id: string; name: string }[]> {
-  try {
-    const list = await spindle.imageGen.listConnections(userId);
-    return list.map((c) => ({ id: c.id, name: `${c.name}${(c as { model?: string }).model ? ` — ${(c as { model?: string }).model}` : ""}` }));
-  } catch {
-    return []; // image permission not granted yet
-  }
 }
 
 spindle.onFrontendMessage(async (raw, userId) => {
@@ -184,6 +175,15 @@ spindle.onFrontendMessage(async (raw, userId) => {
       }
     }
     switch (msg.type) {
+      case "cue_image_fit":
+        await setDateImageFit(msg.chatId, msg.fit, userId);
+        break;
+      case "cue_image_result":
+        await acceptDateImage(msg.chatId, msg.result, userId);
+        break;
+      case "retry_date_image":
+        await retryDateImage(msg.chatId, userId);
+        break;
       case "reconcile_history": {
         if (busyChats.has(msg.chatId)) { toast("info", "Wait for the current turn to finish first.", userId); break; }
         const r = (await getRuleset(msg.chatId, userId))?.ruleset;

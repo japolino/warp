@@ -1,6 +1,7 @@
 // Messages and view models shared by backend and frontend.
 
 import type { Tier } from "../engine/ruleset.js";
+import type { CueImageRequest, CueImageResult, ImageFit } from "./cue-images.js";
 import type { GambleOffer, GameOffer, GameResult } from "../engine/game-ids.js";
 
 export type { GambleOffer, GameOffer, GameResult };
@@ -490,7 +491,7 @@ export interface Settings {
   minigameScope: "rulebook" | "all";
   /** Generate a picture for each date (the place, with them in the middle). */
   dateImages: boolean;
-  /** Image connection for date pictures; empty = the user's default. */
+  /** Legacy setting retained for saved configurations; date pictures now use Cue's connection. */
   imageConnectionId: string;
 }
 
@@ -623,6 +624,9 @@ export interface SceneView {
   /** The date's picture (the place, with them in the middle), once it's ready. */
   image: string | null;
   imageBusy: boolean;
+  imageRequest?: CueImageRequest;
+  imageError?: string;
+  imageFit?: ImageFit;
   /** A snippet is being written. */
   writing: boolean;
 }
@@ -661,6 +665,9 @@ export type BackendToFrontend =
   | { type: "rulebook_export"; name: string; text: string };
 
 export type FrontendToBackend =
+  | { type: "cue_image_fit"; chatId: string; fit: ImageFit }
+  | { type: "cue_image_result"; chatId: string; result: CueImageResult }
+  | { type: "retry_date_image"; chatId: string }
   | { type: "reconcile_history"; chatId: string; keep: boolean }
   | { type: "hello"; chatId: string | null }
   | { type: "refresh"; chatId: string | null }

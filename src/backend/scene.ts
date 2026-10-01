@@ -8,16 +8,16 @@ import { randomSeed } from "../engine/dice.js";
 import { resolveTurnFull, type Intent, type TurnRecord } from "../engine/resolve.js";
 import type { Ruleset } from "../engine/ruleset.js";
 import { applyEvent, cloneState, formatClock, personName, type GameState, type WarpEvent } from "../engine/state.js";
-import { activeSession } from "../engine/date/talk.js";
-import type { SceneLine, SceneView, Settings } from "../shared/protocol.js";
+import { activeSession, moodOf } from "../engine/date/talk.js";
+import type { SceneLine, SceneView } from "../shared/protocol.js";
+import { IMAGE_FITS, parseImageResult, type CueImageRequest, type ImageFit } from "../shared/cue-images.js";
 import { odds } from "./decisions.js";
 import { getTurnDecider } from "./deciders.js";
-import { ask } from "./helpers.js";
 import { host, logError, send, toast } from "./host.js";
 import { foldPath, getMessages, patchWarpMeta, pathRevision, warpMeta } from "./ledger.js";
 import { operationCurrent, releaseOperation, takeOperation } from "./operations.js";
 import { getSettings } from "./settings.js";
-import { characterBrief, characterForChat, getRuleset, personProfile } from "./source.js";
+import { characterBrief, getRuleset, personProfile } from "./source.js";
 import { pushState } from "./state-push.js";
 import { summaryLine, writeLines, type DungeonSummary } from "./snippets.js";
 
@@ -31,6 +31,13 @@ interface Log {
   writing: boolean;
   image: string | null;
   imageBusy: boolean;
+  imageRequest?: CueImageRequest;
+  imageError?: string;
+  imageFit?: ImageFit;
+  imageAttempted?: boolean;
+  imageSubject?: string;
+  imageUser?: string;
+  imageTimer?: ReturnType<typeof setTimeout>;
   /** The state when the date or run began (for the closing line). */
   start: GameState | null;
 }
@@ -40,6 +47,7 @@ const logs = new Map<string, Log>();
 function logFor(chatId: string, kind: "date" | "dungeon"): Log {
   let l = logs.get(chatId);
   if (!l || l.kind !== kind) {
+    if (l?.imageTimer) clearTimeout(l.imageTimer);
     l = { kind, seq: 0, lines: [], said: null, history: [], writing: false, image: null, imageBusy: false, start: null };
     logs.set(chatId, l);
   }
@@ -52,7 +60,8 @@ export function sceneViewFor(chatId: string, r: Ruleset, s: GameState): SceneVie
   const l = logs.get(chatId);
   if (!kind) return null;
   if (!l || l.kind !== kind) return { kind, seq: 0, lines: [], said: null, image: null, imageBusy: false, writing: false };
-  return { kind, seq: l.seq, lines: l.lines, said: l.said, image: l.image, imageBusy: l.imageBusy, writing: l.writing };
+  return { kind, seq: l.seq, lines: l.lines, said: l.said, image: l.image, imageBusy: l.imageBusy, writing: l.writing,
+    imageRequest: l.imageRequest, imageError: l.imageError, imageFit: l.imageFit };
 }
 
 async function playerNameOf(chatId: string, userId?: string): Promise<string> {
@@ -137,7 +146,7 @@ export async function playScene(opts: {
 
     // Dates get their picture while the first lines are written.
     const sess = activeSession(r, after);
-    if (kind === "date" && sess && settings.dateImages && !log.image && !log.imageBusy) void dateImage(chatId, userId, r, after, sess.who, sess.venue ?? null, card, log);
+    if (kind === "date" && sess && settings.dateImages && requestDateImage(chatId, userId, r, after, log)) await pushState(chatId, userId);
 
     const lines = await writeLines({ kind, r, before, after, rec, player, said: opts.said, recent: log.history, card, seed }, settings, userId);
     if (!operationCurrent(chatId, operation) || logs.get(chatId) !== log) return;
@@ -158,7 +167,7 @@ export async function playScene(opts: {
       const line = await summaryLine({ kind, r, start, end: after, lines: log.history, player, settings, userId, who, venue, dungeon });
       if (!operationCurrent(chatId, operation) || logs.get(chatId) !== log) return;
       await host().chat.appendMessage(chatId, { role: "assistant", content: line });
-      logs.delete(chatId);
+      dropScene(chatId);
     }
   } catch (e) {
     logError("scene", e);
@@ -172,69 +181,77 @@ export async function playScene(opts: {
 
 // ───────────────────────── the date's picture ─────────────────────────
 
-const IMAGE_STORE = "scene-images.json";
-const inflight = new Set<string>();
-
-async function dateImage(chatId: string, userId: string | undefined, r: Ruleset, s: GameState, who: string, venueId: string | null, card: string, log: Log): Promise<void> {
-  const settings = await getSettings(userId);
-  const characterId = await characterForChat(chatId, userId).catch(() => null);
-  const place = venueId ?? s.location ?? "somewhere";
-  const key = `${characterId ?? "chat"}:${who}:${place}`;
-  let cache: Record<string, string> = {};
-  try { cache = await host().userStorage.getJson<Record<string, string>>(IMAGE_STORE, { fallback: {}, userId }); } catch { /* first one */ }
-  if (cache[key]) { log.image = cache[key]; await pushState(chatId, userId); return; }
-  if (inflight.has(key)) return;
-  inflight.add(key);
-  log.imageBusy = true;
-  await pushState(chatId, userId);
-  try {
-    const prompt = await imagePrompt(r, s, who, venueId, card, settings, userId);
-    const res = await host().imageGen.generate({
-      ...(settings.imageConnectionId ? { connection_id: settings.imageConnectionId } : {}),
-      prompt,
-      negativePrompt: "multiple people, crowd, text, watermark, signature, lowres, blurry, deformed, extra limbs, nsfw, nude",
-      owner_chat_id: chatId,
-      includeDataUrl: false,
-      ...(userId ? { userId } : {}),
-    } as never) as { imageUrl?: string; imageId?: string };
-    const url = res.imageUrl ?? (res.imageId ? `/api/v1/images/${res.imageId}` : null);
-    if (url) {
-      cache = { ...cache, [key]: url };
-      await host().userStorage.setJson(IMAGE_STORE, cache, { userId });
-      log.image = url;
-    }
-  } catch (e) {
-    logError("date picture", e);
-  } finally {
-    inflight.delete(key);
-    log.imageBusy = false;
-    await pushState(chatId, userId);
+function imageSubject(r: Ruleset, s: GameState): string | null {
+  const sess = activeSession(r, s);
+  return sess ? JSON.stringify([sess.who, sess.kind, sess.venue ?? s.location ?? null, sess.started]) : null;
+}
+function requestDateImage(chatId: string, userId: string | undefined, r: Ruleset, s: GameState, log: Log, retry = false) {
+  const sess = activeSession(r, s), subject = imageSubject(r, s);
+  if (!sess || !subject) return;
+  if (log.imageSubject !== subject) {
+    if (log.imageTimer) clearTimeout(log.imageTimer);
+    log.image = null; log.imageBusy = false; log.imageAttempted = false; log.imageError = undefined;
+    log.imageRequest = undefined; log.imageFit = undefined;
   }
+  if (!retry && log.imageAttempted) return;
+  if (log.imageTimer) clearTimeout(log.imageTimer);
+  log.imageSubject = subject; log.imageUser = userId;
+  log.imageAttempted = true; log.imageBusy = true; log.imageError = undefined;
+  log.imageRequest = {
+    version: 1, provider: "warp", chatId, requestId: randomSeed(),
+    characterName: personName(r, s, sess.who),
+    venue: (sess.venue ? r.dating.venues[sess.venue]?.name : null) ?? s.locationName ?? (s.location ? r.locations[s.location]?.name : null) ?? null,
+    timeOfDay: r.clock.enabled ? formatClock(r, s.minutes).phase : null,
+    mood: moodOf(sess.mood).label,
+  };
+  // Backend fallback if the browser disappears before reporting an error.
+  const request = log.imageRequest;
+  log.imageTimer = setTimeout(() => {
+    if (logs.get(chatId) !== log || log.imageRequest !== request) return;
+    log.imageBusy = false; log.imageRequest = undefined;
+    log.imageError = "Cue did not finish the picture. You can retry it.";
+    void pushState(chatId, userId).catch((e) => logError("date image timeout", e));
+  }, 310_000);
+  return true;
 }
 
-/** The picture's prompt: the helper model reads the card and the place; a plain template if it can't. */
-async function imagePrompt(r: Ruleset, s: GameState, who: string, venueId: string | null, card: string, settings: Settings, userId?: string): Promise<string> {
-  const name = personName(r, s, who);
-  const venue = venueId ? r.dating.venues[venueId] : null;
-  const loc = s.location ? r.locations[s.location] : undefined;
-  const placeName = venue?.name ?? s.locationName ?? "a quiet place";
-  const placeDesc = loc?.desc ?? "";
-  const phase = r.clock.enabled ? formatClock(r, s.minutes).phase : "day";
-  const fallback = `${name}, one person, centered, upper body, facing the viewer, gentle smile, fully clothed, ${placeName}, ${phase}, detailed background, visual novel style, soft lighting`;
-  try {
-    const text = await ask(
-      "Write ONE image-generation prompt as comma-separated tags for a visual-novel scene: exactly one adult character, centered in the frame, upper body, facing the viewer, fully clothed, with the place behind them as a detailed background. Take their appearance (hair, eyes, build, clothes) from what you're given. Tags only, no sentences, under 70 words.",
-      [`Character: ${name}${r.people[who]?.desc ? ` — ${r.people[who].desc}` : ""}`, card ? `What's known about them (use only what describes ${name}):\n${card.slice(0, 3000)}` : "", `Place: ${placeName}${placeDesc ? ` — ${placeDesc}` : ""}`, `Time of day: ${phase}`].filter(Boolean).join("\n\n"),
-      settings, userId, 20000, { temperature: 0.4 },
-    );
-    const tags = text.replace(/```[a-z]*|```/g, "").split("\n").map((x) => x.trim()).find((x) => x.includes(",")) ?? "";
-    return tags.length > 20 ? `${tags}, centered composition, visual novel style` : fallback;
-  } catch {
-    return fallback;
-  }
+export async function setDateImageFit(chatId: string, fit: ImageFit, userId?: string) {
+  const log = logs.get(chatId);
+  if (!log || log.imageUser !== userId || !IMAGE_FITS.includes(fit)) return;
+  log.imageFit = fit;
+  await pushState(chatId, userId);
+}
+
+export async function acceptDateImage(chatId: string, value: unknown, userId?: string): Promise<void> {
+  const result = parseImageResult(value), log = logs.get(chatId);
+  if (!result || result.status === "accepted" || result.chatId !== chatId || !log
+    || log.imageUser !== userId || result.requestId !== log.imageRequest?.requestId) return;
+  const r = (await getRuleset(chatId, userId))?.ruleset;
+  if (!r) return;
+  const folded = foldPath(r, await getMessages(chatId), 0);
+  if (logs.get(chatId) !== log || log.imageRequest?.requestId !== result.requestId
+    || folded.conflict || imageSubject(r, folded.state) !== log.imageSubject) return;
+  if (log.imageTimer) clearTimeout(log.imageTimer);
+  log.imageTimer = undefined; log.imageBusy = false; log.imageRequest = undefined;
+  if (result.status === "ready") { log.image = result.imageUrl; log.imageFit = result.fit; log.imageError = undefined; }
+  else log.imageError = result.error;
+  await pushState(chatId, userId);
+}
+
+export async function retryDateImage(chatId: string, userId?: string): Promise<void> {
+  const r = (await getRuleset(chatId, userId))?.ruleset;
+  if (!r || !(await getSettings(userId)).dateImages) return;
+  const folded = foldPath(r, await getMessages(chatId), 0);
+  if (folded.conflict || !activeSession(r, folded.state)) return;
+  const log = logFor(chatId, "date");
+  if (log.imageBusy) return;
+  requestDateImage(chatId, userId, r, folded.state, log, true);
+  await pushState(chatId, userId);
 }
 
 /** Forget a chat's stage lines (a chat switch doesn't need this; a new date or run starts fresh by itself). */
 export function dropScene(chatId: string) {
+  const log = logs.get(chatId);
+  if (log?.imageTimer) clearTimeout(log.imageTimer);
   logs.delete(chatId);
 }
