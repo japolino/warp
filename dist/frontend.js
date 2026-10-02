@@ -5327,6 +5327,7 @@ function trunkPiece(b, g, grow) {
         pieces.push(c);
     }
   }
+  const trunk = pieces.length;
   let handsOver = false;
   if (sleeves !== "none" || g.neckline === "offshoulder") {
     const t = sleeves === "none" ? 0.2 : SLEEVE_T[sleeves];
@@ -5347,7 +5348,7 @@ function trunkPiece(b, g, grow) {
     const B = nk.top[1];
     lines.push({ d: line([{ x: nk.top[2].x, y: nk.top[2].y }, B, { x: b.cx - widthAt(b, y1 - 20) - grow + 2, y: y1 - 6 }]), w: 1.3 });
   }
-  return { pieces, lines, handsOver };
+  return { pieces, trunk, lines, handsOver };
 }
 function build(b, g) {
   const out = { pieces: [], back: [], trim: [], lines: [] };
@@ -5394,23 +5395,22 @@ function build(b, g) {
       const style = g.style ?? "jacket";
       const t = trunkPiece(b, { ...g, neckline: g.neckline ?? (style === "hoodie" ? "crew" : "v"), sleeves: style === "vest" ? "none" : g.sleeves ?? "long", sleeveFit: g.sleeveFit ?? "loose", hem: style === "coat" ? "hip" : g.hem ?? "hip" }, grow + 1.2);
       let pieces = t.pieces;
-      if (style === "coat")
-        pieces.push(skirtShape(b, b.hipY - 6, g.length ?? "knee", g.flare ?? 0.3, grow + 2).pts);
+      const coatTail = style === "coat" ? skirtShape(b, b.hipY - 6, g.length ?? "knee", g.flare ?? 0.3, grow + 2).pts : null;
       if (g.open ?? style !== "hoodie") {
         const gapTop = b.s.neck + 3, gapBot = 7;
         const { neckBot: yTop, ground: yBot } = b;
-        const trunkLike = pieces.slice(0, 1 + (b.breast ? 2 : 0));
-        const rest = pieces.slice(trunkLike.length);
-        const coat = style === "coat" ? [rest.pop()] : [];
+        const trunkLike = pieces.slice(0, t.trunk);
+        const rest = pieces.slice(t.trunk);
         const halves = [];
-        for (const p of [...trunkLike, ...coat]) {
+        for (const p of [...trunkLike, ...coatTail ? [coatTail] : []]) {
           halves.push(clipPoly(p, { x: cx + gapTop, y: yTop }, { x: cx + gapBot, y: b.waistY }, -1));
           halves.push(clipPoly(p, { x: cx - gapTop, y: yTop }, { x: cx - gapBot, y: b.waistY }, 1));
         }
-        pieces = [...halves.map((h) => h.filter(() => true)), ...rest].filter((h) => h.length > 2);
+        pieces = [...halves, ...rest].filter((h) => h.length > 2);
         for (const s of [1, -1])
           out.lines.push({ d: line([{ x: cx + s * (b.s.neck + 3), y: b.neckBot - 2 }, { x: cx + s * (b.s.neck + 12), y: b.bustY - 4 }, { x: cx + s * gapBot * 1.6, y: b.underY + 6 }]), w: 1.3 });
-      }
+      } else if (coatTail)
+        pieces.push(coatTail);
       if (style === "hoodie") {
         out.back.push(closedSpline([{ x: cx - b.s.neck - 16, y: b.shoulderY + 4 }, { x: cx - b.s.neck - 14, y: b.neckTop - 4 }, { x: cx, y: b.neckTop - 14 }, { x: cx + b.s.neck + 14, y: b.neckTop - 4 }, { x: cx + b.s.neck + 16, y: b.shoulderY + 4 }], 6));
         out.lines.push({ d: line([{ x: cx - 4, y: b.neckBot + 2 }, { x: cx - 5, y: b.bustY + 6 }]), w: 1.2 }, { d: line([{ x: cx + 4, y: b.neckBot + 2 }, { x: cx + 5, y: b.bustY + 6 }]), w: 1.2 });
@@ -5997,7 +5997,8 @@ function defaultLook(sex = "f") {
 function cleanLook(raw) {
   const r = Array.isArray(raw) ? { outfit: raw } : raw && typeof raw === "object" ? raw : {};
   const bodyR = r.body && typeof r.body === "object" ? r.body : {};
-  const sex = bodyR.sex === "m" || r.sex === "m" ? "m" : "f";
+  const sexWord = String(bodyR.sex ?? r.sex ?? "").trim().toLowerCase();
+  const sex = ["m", "male", "man", "boy", "masculine"].includes(sexWord) ? "m" : "f";
   const base = defaultLook(sex);
   const presets = Object.keys(PRESETS[sex]);
   const presetWord = (v) => typeof v === "string" ? v.split(/[:\s]+/).filter(Boolean).pop() : v;
@@ -6223,8 +6224,11 @@ function renderDoll(raw, opts = {}) {
       stroke(l.d, c, l.w ?? 1, mask ? ` mask="url(#${mask})"` : "");
     }
   }
-  const vb = opts.crop === "bust" ? `${f(b.cx - 80)} ${f(b.head.c.y - b.head.ry * 2.1)} 160 ${f(b.waistY - (b.head.c.y - b.head.ry * 2.1) + 10)}` : "0 -8 240 540";
-  const w = opts.width ? ` width="${opts.width}"` : "", h = opts.height ? ` height="${opts.height}"` : "";
+  const tall = look.ears === "bunny" || built.some((x) => x.g.kind === "hat" && x.g.style === "witch") ? 26 : look.ears || look.horns ? 12 : 8;
+  const wide = look.tail ? 30 : 0;
+  const vb = opts.crop === "bust" ? `${f(b.cx - 80)} ${f(b.head.c.y - b.head.ry * 2.1)} 160 ${f(b.waistY - (b.head.c.y - b.head.ry * 2.1) + 10)}` : `${-wide} ${-tall} ${240 + wide * 2} ${532 + tall}`;
+  const px = (v) => typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.round(v) : null;
+  const w = px(opts.width) ? ` width="${px(opts.width)}"` : "", h = px(opts.height) ? ` height="${px(opts.height)}"` : "";
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}"${w}${h} class="warp-doll-svg" role="img"><defs>${defs.join("")}</defs>${g.join("")}</svg>`;
 }
 function bodyMarks(b, skin, stroke) {

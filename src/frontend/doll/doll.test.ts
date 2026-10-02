@@ -30,6 +30,17 @@ describe("the doll", () => {
     for (const sex of ["f", "m"] as const) for (const p of Object.keys(PRESETS[sex])) for (const g of opts) sound(renderDoll(base(sex, p, [g])));
   });
 
+  test("outerwear in every style, sleeve length and fit, open or closed, on every build", () => {
+    for (const sex of ["f", "m"] as const) for (const p of Object.keys(PRESETS[sex])) for (const style of STYLES.outer!) for (const sleeves of SLEEVES) for (const fit of [undefined, "loose", "tight"] as const) for (const open of [true, false])
+      sound(renderDoll(base(sex, p, [{ kind: "outer", colour: "#555", style, sleeves, fit, open }])));
+  });
+
+  test("tall ears and hats, and tails, stay inside the picture", () => {
+    const top = (svg: string) => Number(/viewBox="([-\d.]+) ([-\d.]+)/.exec(svg)![2]);
+    expect(top(renderDoll({ ...base("f", "slim"), ears: "bunny" }))).toBeLessThanOrEqual(-26);
+    expect(top(renderDoll(base("f", "slim", [{ kind: "hat", style: "witch", colour: "#222" }])))).toBeLessThanOrEqual(-26);
+  });
+
   test("hair, ears, tails and horns all draw", () => {
     for (const style of HAIR_STYLES) for (const ears of EARS) sound(renderDoll({ ...base("f", "slim"), hair: { style, colour: "#e8c26a" }, ears }));
     for (const tail of TAILS) for (const horns of HORNS) sound(renderDoll({ ...base("m", "broad"), tail, horns }));
@@ -69,6 +80,17 @@ describe("loose looks are made drawable", () => {
     expect(l.outfit.map((g) => g.kind)).toEqual(["robe", "sash", "shoes"]);
     expect(l.outfit[2].style).toBeUndefined();
     sound(renderDoll(l));
+  });
+
+  test("sex written as a word", () => {
+    for (const w of ["M", "male", "Man"]) expect(cleanLook({ body: { sex: w } }).body.sex).toBe("m");
+    for (const w of ["F", "female", "", 3]) expect(cleanLook({ body: { sex: w } }).body.sex).toBe("f");
+  });
+
+  test("a picture id or size can't add markup", () => {
+    const svg = renderDoll(base("f", "slim"), { id: 'x"><b', width: '1" onload="x' as unknown as number });
+    expect(svg).not.toContain('"><b');
+    expect(svg).not.toContain("onload");
   });
 
   test("nothing at all still gives a whole doll", () => {

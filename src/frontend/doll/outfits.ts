@@ -213,7 +213,8 @@ export function cleanLook(raw: unknown): Look {
   // A bare list of garments is an outfit.
   const r = (Array.isArray(raw) ? { outfit: raw } : raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const bodyR = (r.body && typeof r.body === "object" ? r.body : {}) as Record<string, unknown>;
-  const sex: Sex = bodyR.sex === "m" || r.sex === "m" ? "m" : "f";
+  const sexWord = String(bodyR.sex ?? r.sex ?? "").trim().toLowerCase();
+  const sex: Sex = ["m", "male", "man", "boy", "masculine"].includes(sexWord) ? "m" : "f";
   const base = defaultLook(sex);
   const presets = Object.keys(PRESETS[sex]);
   // Tolerate "f: curvy" and "Curvy".

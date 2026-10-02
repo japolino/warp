@@ -276,7 +276,7 @@ function sleevePolys(b: Body, side: 1 | -1, len: number, fit: SleeveFit, grow: n
   return { polys, lines, handsOver };
 }
 
-function trunkPiece(b: Body, g: Garment, grow: number): { pieces: Pt[][]; lines: Built["lines"]; handsOver: boolean } {
+function trunkPiece(b: Body, g: Garment, grow: number): { pieces: Pt[][]; trunk: number; lines: Built["lines"]; handsOver: boolean } {
   const nk = neckline(b, g.neckline ?? "crew", grow);
   const sleeves = g.neckline === "strapless" || g.neckline === "halter" ? "none" : g.sleeves ?? "short";
   const hem = g.hem ?? "hip";
@@ -296,6 +296,8 @@ function trunkPiece(b: Body, g: Garment, grow: number): { pieces: Pt[][]; lines:
       if (c.length > 2) pieces.push(c);
     }
   }
+  /** How many of the pieces so far are the trunk (body and bust), before any sleeves. */
+  const trunk = pieces.length;
   let handsOver = false;
   if (sleeves !== "none" || g.neckline === "offshoulder") {
     const t = sleeves === "none" ? 0.2 : SLEEVE_T[sleeves];
@@ -314,7 +316,7 @@ function trunkPiece(b: Body, g: Garment, grow: number): { pieces: Pt[][]; lines:
     const B = nk.top[1];
     lines.push({ d: line([{ x: nk.top[2].x, y: nk.top[2].y }, B, { x: b.cx - widthAt(b, y1 - 20) - grow + 2, y: y1 - 6 }]), w: 1.3 });
   }
-  return { pieces, lines, handsOver };
+  return { pieces, trunk, lines, handsOver };
 }
 
 // ───────── the builders ─────────
@@ -353,24 +355,23 @@ export function build(b: Body, g: Garment): Built {
       const style = g.style ?? "jacket";
       const t = trunkPiece(b, { ...g, neckline: g.neckline ?? (style === "hoodie" ? "crew" : "v"), sleeves: style === "vest" ? "none" : g.sleeves ?? "long", sleeveFit: g.sleeveFit ?? "loose", hem: style === "coat" ? "hip" : g.hem ?? "hip" }, grow + 1.2);
       let pieces = t.pieces;
-      if (style === "coat") pieces.push(skirtShape(b, b.hipY - 6, g.length ?? "knee", g.flare ?? 0.3, grow + 2).pts);
+      const coatTail = style === "coat" ? skirtShape(b, b.hipY - 6, g.length ?? "knee", g.flare ?? 0.3, grow + 2).pts : null;
       if (g.open ?? style !== "hoodie") {
         // Open down the front: cut the trunk pieces either side of a gap that narrows toward the hem.
         const gapTop = b.s.neck + 3, gapBot = 7;
         const yTop = b.neckBot, yBot = b.ground;
-        const trunkLike = pieces.slice(0, 1 + (b.breast ? 2 : 0));
-        const rest = pieces.slice(trunkLike.length);
-        const coat = style === "coat" ? [rest.pop()!] : [];
+        const trunkLike = pieces.slice(0, t.trunk);
+        const rest = pieces.slice(t.trunk);
         const halves: Pt[][] = [];
-        for (const p of [...trunkLike, ...coat]) {
+        for (const p of [...trunkLike, ...(coatTail ? [coatTail] : [])]) {
           halves.push(clipPoly(p, { x: cx + gapTop, y: yTop }, { x: cx + gapBot, y: b.waistY }, -1));
           halves.push(clipPoly(p, { x: cx - gapTop, y: yTop }, { x: cx - gapBot, y: b.waistY }, 1));
         }
         // Below the waist the gap stays the same.
-        pieces = [...halves.map((h) => h.filter(() => true)), ...rest].filter((h) => h.length > 2);
+        pieces = [...halves, ...rest].filter((h) => h.length > 2);
         for (const s of [1, -1]) out.lines.push({ d: line([{ x: cx + s * (b.s.neck + 3), y: b.neckBot - 2 }, { x: cx + s * (b.s.neck + 12), y: b.bustY - 4 }, { x: cx + s * gapBot * 1.6, y: b.underY + 6 }]), w: 1.3 });
         void yBot;
-      }
+      } else if (coatTail) pieces.push(coatTail);
       if (style === "hoodie") {
         // The hood lies down behind the neck.
         out.back.push(closedSpline([{ x: cx - b.s.neck - 16, y: b.shoulderY + 4 }, { x: cx - b.s.neck - 14, y: b.neckTop - 4 }, { x: cx, y: b.neckTop - 14 }, { x: cx + b.s.neck + 14, y: b.neckTop - 4 }, { x: cx + b.s.neck + 16, y: b.shoulderY + 4 }], 6));

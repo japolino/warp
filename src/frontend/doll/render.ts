@@ -177,8 +177,14 @@ export function renderDoll(raw: Look, opts: { id?: string; width?: number; heigh
     }
   }
 
-  const vb = opts.crop === "bust" ? `${f(b.cx - 80)} ${f(b.head.c.y - b.head.ry * 2.1)} 160 ${f(b.waistY - (b.head.c.y - b.head.ry * 2.1) + 10)}` : "0 -8 240 540";
-  const w = opts.width ? ` width="${opts.width}"` : "", h = opts.height ? ` height="${opts.height}"` : "";
+  // Room above for tall ears and hats, and to the side for tails.
+  const tall = look.ears === "bunny" || built.some((x) => x.g.kind === "hat" && x.g.style === "witch") ? 26 : look.ears || look.horns ? 12 : 8;
+  const wide = look.tail ? 30 : 0;
+  const vb = opts.crop === "bust"
+    ? `${f(b.cx - 80)} ${f(b.head.c.y - b.head.ry * 2.1)} 160 ${f(b.waistY - (b.head.c.y - b.head.ry * 2.1) + 10)}`
+    : `${-wide} ${-tall} ${240 + wide * 2} ${532 + tall}`;
+  const px = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.round(v) : null);
+  const w = px(opts.width) ? ` width="${px(opts.width)}"` : "", h = px(opts.height) ? ` height="${px(opts.height)}"` : "";
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}"${w}${h} class="warp-doll-svg" role="img"><defs>${defs.join("")}</defs>${g.join("")}</svg>`;
 }
 
