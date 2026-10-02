@@ -94,6 +94,7 @@ export async function pushState(chatId: string | null, userId?: string, force = 
       busy: busyChats.has(chatId),
       dungeon: settings.enabled ? buildDungeonView(r, state) : null,
       dungeonEntries: settings.enabled ? buildDungeonEntries(r, state) : [],
+      look: r.look,
       date: settings.enabled ? buildDateView(r, state, settings.lines) : null,
       scene: settings.enabled ? sceneViewFor(chatId, r, state) : null,
       encounterLogs: settings.enabled ? encounterLogsOf(r, msgs) : [],

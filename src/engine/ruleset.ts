@@ -789,8 +789,8 @@ export interface Ruleset {
   questOrder: string[];
   /** Quests the story hands out: someone asks {{user}} for something, and it's tracked with stakes. */
   storyQuests: { enabled: boolean; max: number };
-  /** How the minigames look: medieval (parchment, oak, gold), modern (paper and ink) or sci-fi (an instrument panel). */
-  minigameStyle: "medieval" | "modern" | "scifi";
+  /** How dungeons, dates and minigames look: medieval (parchment, oak, gold), modern (paper and ink) or sci-fi (an instrument panel). */
+  look: "medieval" | "modern" | "scifi";
   secrets: Record<string, SecretDef>;
   fronts: Record<string, FrontDef>;
   randomEvents: RandomEventsDef;
@@ -1282,13 +1282,13 @@ function normCheck(raw: unknown, where: string, c: Ctx): CheckDef | undefined {
   };
 }
 
-/** `minigames: { style: medieval }` — the arcade's look for this rulebook. */
-function normMinigameStyle(raw: unknown, c: Ctx): Ruleset["minigameStyle"] {
+/** `look: medieval` — how the stage and the arcade look (`minigames: { style }` says the same). */
+function normLook(raw: unknown, c: Ctx): Ruleset["look"] {
   if (raw === undefined) return "modern";
   const v = String((isObj(raw) ? raw.style ?? raw.look : raw) ?? "").toLowerCase().replace(/[^a-z]/g, "");
-  const map: Record<string, Ruleset["minigameStyle"]> = { medieval: "medieval", fantasy: "medieval", modern: "modern", contemporary: "modern", scifi: "scifi", sf: "scifi", future: "scifi", space: "scifi", cyberpunk: "scifi" };
+  const map: Record<string, Ruleset["look"]> = { medieval: "medieval", fantasy: "medieval", modern: "modern", contemporary: "modern", scifi: "scifi", sf: "scifi", future: "scifi", space: "scifi", cyberpunk: "scifi" };
   if (map[v]) return map[v];
-  c.warn("Minigames › style", "should be medieval, modern or scifi");
+  c.warn("Look", "should be medieval, modern or scifi");
   return "modern";
 }
 
@@ -2662,7 +2662,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     weather, wardrobe, encounters, codex, feats, perks,
     ...(perkPoints && stats[perkPoints] ? { perkPoints } : {}),
     perkPick, abilities, quests, questOrder, storyQuests,
-    minigameStyle: normMinigameStyle(raw.minigames, c),
+    look: normLook(raw.look ?? raw.minigames, c),
     secrets, fronts, randomEvents, liveChoices, dungeons, dating, mind, checkpoints, endings, legacy, body, companions, bonds, lineage, obligations, jobs, observers, discovery, improvise, growth,
   };
 

@@ -6,7 +6,7 @@ import { PART_LABELS, type PartLabel } from "./reference.js";
 
 /** Which section each top-level key belongs in (anything else goes to core). */
 const PART_OF_KEY: Record<string, PartLabel> = {
-  name: "core", description: "core", player: "core", clock: "core", start: "core", hud: "core", narration: "core", minigames: "core",
+  name: "core", description: "core", player: "core", clock: "core", start: "core", hud: "core", narration: "core", minigames: "core", look: "core",
   stats: "stats", growth: "stats", practice: "stats",
   relationships: "people", people: "people", companions: "people", lineage: "people",
   weather: "world", locations: "world", locations_open: "world", items: "world", inventory: "world", item_uses: "world",

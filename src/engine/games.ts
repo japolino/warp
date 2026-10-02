@@ -63,7 +63,7 @@ export function gameOffer(r: Ruleset, s: GameState, a: ActionDef, chance: number
   if (partner && partner.sync > 0.05) aids.push({ kind: "window", amount: Math.round(partner.sync * 35), from: `In step with ${partner.name}` });
   return {
     game,
-    style: r.minigameStyle,
+    style: r.look,
     options: named.length ? named : [game],
     action: opts.label ?? a.label,
     label: check.label ?? (stats[0] ? r.stats[stats[0]]?.label ?? stats[0] : "Luck"),
@@ -217,7 +217,7 @@ export function gambleOffer(r: Ruleset, s: GameState, a: ActionDef, seed?: strin
   const edge = Math.max(-0.2, Math.min(0.4, (g.edge ?? BASE_EDGE[g.game]) - luck - aidTotal(aids, "luck") / 400));
   return {
     game: g.game,
-    style: r.minigameStyle,
+    style: r.look,
     action: a.label,
     stakes: g.stakes.filter((x) => x <= have),
     rounds: g.rounds,

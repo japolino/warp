@@ -489,8 +489,8 @@ export interface Settings {
   minigames: "off" | "ask" | "always";
   /** Which checks: only the ones the rulebook names a game for, or every check (a fitting game is picked). */
   minigameScope: "rulebook" | "all";
-  /** How the arcade looks: the rulebook's choice, or always one look. */
-  minigameLook: "rulebook" | "medieval" | "modern" | "scifi";
+  /** How dungeons, dates and the arcade look: the rulebook's choice, or always one look. */
+  look: "rulebook" | "medieval" | "modern" | "scifi";
   /** Generate a picture for each date (the place, with them in the middle). */
   dateImages: boolean;
   /** Legacy setting retained for saved configurations; date pictures now use Cue's connection. */
@@ -526,7 +526,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sfxVolume: 0.4,
   minigames: "ask",
   minigameScope: "rulebook",
-  minigameLook: "rulebook",
+  look: "rulebook",
   dateImages: true,
   imageConnectionId: "",
 };
@@ -656,6 +656,8 @@ export type BackendToFrontend =
       dungeonEntries: DungeonEntryView[];
       /** Dating: people, and the conversation or date in progress (null when the ruleset has no dating). */
       date: DateView | null;
+      /** The rulebook's look for the stage and the arcade (the player's setting can override it). */
+      look?: "medieval" | "modern" | "scifi";
       /** A date or dungeon run on the stage: its latest snippet of lines, and the date's picture. */
       scene: SceneView | null;
       /** Quiet encounter logs among the recent messages, for their round cards. */

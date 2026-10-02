@@ -404,7 +404,7 @@ export const STYLES = `
 .warp-dg-bar.mp .warp-dg-bar-track > div { background: linear-gradient(90deg, #3d8fe0, #62d3f0); }
 .warp-dg-bar.tp .warp-dg-bar-track > div { background: linear-gradient(90deg, #2ca65a, #6fe07e); }
 .warp-dg-board { display: grid; gap: 3px; background: rgba(0,0,0,.35); padding: 4px; border-radius: var(--warp-radius); }
-.warp-dg-tile { aspect-ratio: 1; border: 1px solid rgba(0,0,0,.4); border-radius: 3px; padding: 0; background-size: 100% 100%; image-rendering: pixelated; display: grid; place-items: center; position: relative; }
+.warp-dg-tile { aspect-ratio: 1; border: 1px solid rgba(0,0,0,.4); border-radius: 3px; padding: 0; background-image: var(--tile); background-size: 100% 100%; image-rendering: pixelated; display: grid; place-items: center; position: relative; }
 .warp-dg-tile.hidden { filter: brightness(.45) saturate(.6); }
 .warp-dg-tile.reachable { cursor: pointer; outline: 2px solid var(--warp-accent); outline-offset: -2px; filter: none; }
 .warp-dg-tile.reachable.hidden { filter: brightness(.7); }

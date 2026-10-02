@@ -40,6 +40,11 @@ A date and a dungeon run each play full screen as a little game of their own, of
 - **Lines:** the rules decide what happens. Only the wording comes from the helper model, through a tiny prompt of its own (never your chat preset); scripted lines take over if it's slow or you pick them in Settings.
 - **The chat:** it isn't touched while you play. When the date or run ends, one narrator line goes into it so the story remembers.
 - **Typing and leaving:** you can type your own line in the box. **Chat ⤓** or Esc drops back to the chat, and the ⚔ / 💬 button on the status panel returns to the stage.
+- **Three looks**, shared with the minigames and set by the rulebook's `look:`:
+  - **Medieval:** torch-lit flagstones, parchment panels and an oak-and-gold frame around the map and the fight.
+  - **Modern:** warm paper and white cards, with one coral accent.
+  - **Sci-fi:** a dark instrument panel with hairlines and cut corners.
+  - Settings → Effects & sound can keep the rulebook's look or always use one.
 - **Needs:** date pictures require an updated [Cue extension](https://github.com/japolino/cue-living-novel), enabled with image generation or native card images. Configure pictures in Cue; Warp only has an **Illustrate dates through Cue** switch. Cue's reading view can stay closed. Missing or failed pictures offer a retry, and dates still work without them.
 
 ## Minigames and gambling
@@ -52,11 +57,10 @@ A check can be **played instead of rolled**. When a choice has a game (its icon 
 - **Same outcomes:** the score lands on the same tiers a roll would (critical, success, partial, fail, disaster). The story hears how it went in its own terms ("a shaky start, cleared it with seconds left"), never the score.
 - **Songs:** eleven built-in pieces old enough to be free to use, from Twinkle Twinkle to Flight of the Bumblebee, in our own arrangements. Harder songs lower the bar. You can also import your own osu! beatmaps (`.osz`): standard maps play as Aim and mania maps as Keys. They're stored in your browser only.
 - **Gambling:** a `gamble:` table stakes real in-game money at blackjack, roulette or slots. Pick a buy-in, play, and cash out whenever you like. A bad night can set off the table's `broke:` effects.
-- **Three looks:** medieval (parchment, oak and gold leaf, a wax seal on the result), modern (paper, ink and one coral accent) and sci-fi (a quiet instrument panel). The rulebook picks with `minigames: { style: medieval }`; Questbound is medieval, Starfarer sci-fi, the rest modern.
+- **Three looks:** medieval (parchment, oak and gold leaf, a wax seal on the result), modern (paper, ink and one coral accent) and sci-fi (a quiet instrument panel), the same as the stage's. The rulebook picks with `look: medieval`; Questbound is medieval, Starfarer sci-fi, the rest modern.
 - **Settings → Minigames:**
   - Show the briefing (Play or Roll the dice), go straight into the game, or turn minigames off.
   - Choose whether only the checks the rulebook names get a game, or every check.
-  - Keep the rulebook's look, or always use one.
 
 ## Typing freely
 
@@ -209,8 +213,12 @@ The Ruleset tab lists problems in plain language, with "did you mean" suggestion
 bun install
 bun run verify   # tests + typecheck
 bun run build    # dist/backend.js, dist/frontend.js
-bun run arcade   # the minigame bench: every game, any odds and aids, at http://localhost:5177
+bun run bench    # every minigame at any odds and aids (http://localhost:5177), and the stage in all three looks (/stage.html)
 ```
+
+The [stage UI checks](docs/STAGE_LOOKS.md) cover dungeon entrances, exploration,
+battles, dates and outings, phone layouts, and local picture fixtures with Cue's
+image-fit options.
 
 ## Credits
 

@@ -66,8 +66,8 @@ export function board(v: DungeonView): string {
     const inner = t.state === "here" ? sprite(leader, "warp-dg-icon") : t.state === "seen" ? tileIcon(t.kind, t.cleared) : "";
     const cls = ["warp-dg-tile", t.state, t.reachable ? "reachable" : ""].filter(Boolean).join(" ");
     return t.reachable
-      ? `<button class="${cls}" data-tile="${t.x},${t.y}" data-dg-move="${t.x},${t.y}" title="${esc(title)} — move here" style="background-image:url(${bg})">${inner}</button>`
-      : `<div class="${cls}" data-tile="${t.x},${t.y}" title="${esc(title)}" style="background-image:url(${bg})">${inner}</div>`;
+      ? `<button class="${cls}" data-tile="${t.x},${t.y}" data-dg-move="${t.x},${t.y}" title="${esc(title)} — move here" style="--tile:url(${bg})">${inner}</button>`
+      : `<div class="${cls}" data-tile="${t.x},${t.y}" title="${esc(title)}" style="--tile:url(${bg})">${inner}</div>`;
   }).join("");
   return `<div class="warp-dg-board" style="grid-template-columns:repeat(${v.size},1fr)">${cells}</div>`;
 }

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Warp stage bench</title>
+<style>
+  html, body { margin: 0; height: 100%; font: 13px system-ui, sans-serif; background: #111; color: #eee; }
+  body { display: grid; grid-template-rows: auto 1fr; }
+  #bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 10px; background: #1b1b1f; border-bottom: 1px solid #333; }
+  #bar button, #bar select { font: inherit; padding: 4px 10px; cursor: pointer; }
+  #host { position: relative; min-height: 0; }
+  .warp-stage.bench-empty .warp-stage-story { display: none; }
+</style>
+</head>
+<body>
+<div id="bar"></div>
+<div id="host"></div>
+<script type="module" src="./build/stage-dev.js"></script>
+</body>
+</html>

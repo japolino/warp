@@ -7,6 +7,7 @@ import { bar, board, herePanel, memberCard, sprite, you, type DungeonPick } from
 import { hue, knows, meter, odds, REACT_ICON, REACT_TONE, topicTile } from "./date-ui.js";
 import { esc } from "./render.js";
 import { SPRITES } from "./sprites.gen.js";
+import { loadFonts, textureUrl, THEMES, type Style } from "./arcade/themes.js";
 
 type StateMsg = Extract<BackendToFrontend, { type: "state" }>;
 
@@ -32,6 +33,31 @@ export function stageModeOf(s: StateMsg | null, wantGate: boolean): StageMode | 
   if (s?.date?.session) return "date";
   if (wantGate && s?.dungeonEntries.length) return "gate";
   return null;
+}
+
+/** Dress the stage in a look: its fonts, and the stone, oak, parchment or panel its CSS draws with. */
+export function dressStage(el: HTMLElement, style: Style) {
+  if (el.dataset.style === style) return;
+  el.dataset.style = style;
+  loadFonts();
+  const t = THEMES[style];
+  const set = (name: string, url: string) => { if (url) el.style.setProperty(name, `url(${url})`); };
+  if (style === "medieval") {
+    set("--st-stone", textureUrl("stone", t));
+    set("--st-wood", textureUrl("wood", { ...t, wood: "#4a2e18" }));
+    set("--st-parch", textureUrl("parchment", t));
+  } else if (style === "scifi") set("--st-panel-tex", textureUrl("panel", { ...t, ground: "#060a10" }));
+}
+
+/** State pushes replace the scene while leaving each scrollable pane where the player put it. */
+export function replaceStageScene(el: HTMLElement, html: string) {
+  const panes = [".warp-stage-side", ".warp-stage-left", ".warp-stage-menu-col", ".warp-stage-command", ".warp-stage-main"];
+  const kept = panes.map((selector) => el.querySelector<HTMLElement>(selector)?.scrollTop ?? 0);
+  el.innerHTML = html;
+  panes.forEach((selector, i) => {
+    const pane = el.querySelector<HTMLElement>(selector);
+    if (pane && kept[i]) pane.scrollTop = kept[i];
+  });
 }
 
 // ───────────────────────── the story ─────────────────────────
@@ -163,18 +189,20 @@ function gateScene(entries: DungeonEntryView[], ui: StageUi): string {
 
 // ───────────────────────── date ─────────────────────────
 
-function ring(love: number, fear: number, name: string, face: string): string {
+function ring(love: number, fear: number, name: string, face: string, mood: string): string {
   const C = 2 * Math.PI * 46, c2 = 2 * Math.PI * 38;
   const l = Math.max(0, Math.min(1, love)), f = Math.max(0, Math.min(1, fear));
   return `<div class="warp-stage-portrait" style="--warp-hue:${hue(name)}">
     <svg viewBox="0 0 100 100" aria-hidden="true">
+      <circle cx="50" cy="50" r="49.2" class="deco"/>
       <circle cx="50" cy="50" r="46" class="track"/>
       ${l > 0.005 ? `<circle cx="50" cy="50" r="46" class="love" stroke-dasharray="${(C * l).toFixed(1)} ${C.toFixed(1)}"/>` : ""}
       ${f > 0.005 ? `<circle cx="50" cy="50" r="38" class="track thin"/><circle cx="50" cy="50" r="38" class="fear" stroke-dasharray="${(c2 * f).toFixed(1)} ${c2.toFixed(1)}"/>` : ""}
     </svg>
     <span class="warp-stage-initial">${esc(name.trim().charAt(0).toUpperCase() || "?")}</span>
     <span class="warp-stage-face" aria-hidden="true">${face}</span>
-  </div>`;
+  </div>
+  <div class="warp-stage-who"><b>${esc(name)}</b><span>${esc(mood)}</span></div>`;
 }
 
 function ladder(v: DateView): string {
@@ -205,9 +233,9 @@ function dateScene(v: DateView, hud: Hud, scene: StateMsg["scene"], ui: StageUi)
       <dt>Love</dt><dd><span class="warp-stage-mini love"><i style="width:${Math.round(p.love * 100)}%"></i></span>${esc(p.loveText ?? `${Math.round(p.love * 100)}%`)}</dd>
       ${p.fear > 0.005 ? `<dt>Fear</dt><dd><span class="warp-stage-mini fear"><i style="width:${Math.round(p.fear * 100)}%"></i></span>${esc(p.fearText ?? `${Math.round(p.fear * 100)}%`)}</dd>` : ""}
       <dt>Stage</dt><dd class="${p.hostile ? "warp-tone-bad" : p.partner ? "love" : ""}">${esc(p.stage)}</dd>
-      <dt>Mood</dt><dd>${s.moodFace} ${esc(s.moodLabel)}</dd>
+      <dt>Mood</dt><dd><span class="warp-stage-emo">${s.moodFace}</span> ${esc(s.moodLabel)}</dd>
       <dt>Fatigue</dt><dd class="${s.fatigue >= 80 ? "warp-tone-bad" : s.fatigue >= 60 ? "warp-tone-warn" : ""}">${Math.round(s.fatigue)}% · ${fatigue}</dd>
-      <dt>Streak</dt><dd class="${s.combo >= 3 ? "hot" : ""}">${s.combo >= 3 ? "🔥 " : ""}×${s.combo}</dd>
+      <dt>Streak</dt><dd class="${s.combo >= 3 ? "hot" : ""}">${s.combo >= 3 ? `<span class="warp-stage-emo">🔥</span> ` : ""}×${s.combo}</dd>
       ${s.kind === "outing" ? `<dt>Date</dt><dd>${s.closing ? "Winding down" : `Moment ${Math.min(s.beat + 1, s.beats)} / ${s.beats}`} · ${Math.round(s.enjoy)}% fun</dd>` : ""}
     </dl>`;
 
@@ -216,22 +244,22 @@ function dateScene(v: DateView, hud: Hud, scene: StateMsg["scene"], ui: StageUi)
   const cats = v.categories;
   const cat = cats.find((c) => c.id === ui.cat) ?? null;
   const list = cat
-    ? `<button class="warp-stage-bar back" data-date-cat="">‹ ${esc(cat.icon)} ${esc(cat.label)}</button>
+    ? `<button class="warp-stage-bar back" data-date-cat="">‹ <span class="warp-stage-emo">${esc(cat.icon)}</span> ${esc(cat.label)}</button>
        ${cat.topics.map((t, i) => {
          const react = t.known ? `<span class="warp-stage-bar-react warp-tone-${REACT_TONE[t.known]}" title="${esc(t.knownLabel ?? "")}">${REACT_ICON[t.known]}</span>` : `<span class="warp-stage-bar-react dim">?</span>`;
-         return `<button class="warp-stage-bar topic${t.lock ? " locked" : ""}" data-date-act="date:topic:${esc(t.id)}" data-key="${i + 1}" ${t.lock || ui.busy ? "disabled" : ""} title="${esc([t.desc, t.lock, t.used ? `Raised ${t.used}× already — it wears thin` : null].filter(Boolean).join("\n"))}"><span class="warp-stage-bar-n">${i + 1}.</span><span>${esc(t.label)}</span>${t.lock ? "🔒" : react}${odds(t.odds)}</button>`;
+         return `<button class="warp-stage-bar topic${t.lock ? " locked" : ""}" data-date-act="date:topic:${esc(t.id)}" data-key="${i + 1}" ${t.lock || ui.busy ? "disabled" : ""} title="${esc([t.desc, t.lock, t.used ? `Raised ${t.used}× already — it wears thin` : null].filter(Boolean).join("\n"))}"><span class="warp-stage-bar-n">${i + 1}.</span><span>${esc(t.label)}</span>${t.lock ? `<span class="warp-stage-emo">🔒</span>` : react}${odds(t.odds)}</button>`;
        }).join("")}`
     : cats.map((c, i) => {
         const open = c.topics.filter((t) => !t.lock).length;
-        return `<button class="warp-stage-bar cat" data-date-cat="${esc(c.id)}" data-key="${i + 1}"${open ? "" : " disabled"}><span class="warp-stage-bar-n">${i + 1}.</span><span>${esc(c.icon)} ${esc(c.label)}</span>${open ? `<small>${open}</small>` : "🔒"}</button>`;
+        return `<button class="warp-stage-bar cat" data-date-cat="${esc(c.id)}" data-key="${i + 1}"${open ? "" : " disabled"}><span class="warp-stage-bar-n">${i + 1}.</span><span><span class="warp-stage-emo">${esc(c.icon)}</span> ${esc(c.label)}</span>${open ? `<small>${open}</small>` : `<span class="warp-stage-emo">🔒</span>`}</button>`;
       }).join("");
 
   const fit = ["cover", "contain", "fill", "none", "scale-down"].includes(scene?.imageFit ?? "") ? scene!.imageFit : "cover";
   return `<div class="warp-stage-bg${image ? " has-photo" : ""}" style="--warp-hue:${hue(p.name)}">${image ? `<img class="warp-stage-photo" src="${esc(image)}" alt="Date with ${esc(p.name)}" style="object-fit:${fit}"/>` : ""}</div>`
-    + top(kicker, p.name, ladder(v), scene?.imageBusy ? `<span class="warp-stage-painting">Cue is illustrating the date…</span>` : scene?.imageError ? `<span class="warp-stage-painting" title="${esc(scene.imageError)}">${esc(scene.imageError.slice(0, 220))} <button class="warp-btn warp-mini" data-date-image-retry>Retry picture</button></span>` : image ? `<button class="warp-btn warp-mini" data-date-image-retry title="Ask Cue again using its current settings. Compatible cached images may be reused.">Refresh picture</button>` : "")
+    + top(kicker, p.name, ladder(v), scene?.imageBusy ? `<span class="warp-stage-painting">Cue is illustrating the date…</span>` : scene?.imageError ? `<div class="warp-stage-painting error"><details><summary>Picture unavailable</summary><div class="warp-stage-picture-error">${esc(scene.imageError)}</div></details><button class="warp-btn warp-mini" data-date-image-retry>Retry picture</button></div>` : image ? `<button class="warp-btn warp-mini" data-date-image-retry title="Ask Cue again using its current settings. Compatible cached images may be reused.">Refresh picture</button>` : "")
     + `<main class="warp-stage-main warp-stage-date ${esc(s.kind)}">
       <section class="warp-stage-left">${corner}${stats}${last}</section>
-      <section class="warp-stage-center">${image ? "" : ring(p.love, p.fear, p.name, s.moodFace)}</section>
+      <section class="warp-stage-center">${image ? "" : ring(p.love, p.fear, p.name, s.moodFace, s.moodLabel)}</section>
       <section class="warp-stage-menu-col"><div class="warp-stage-kicker">${cat ? "Topics" : "Talk"}</div>${cat ? "" : moves}${list}</section>
     </main>`;
 }

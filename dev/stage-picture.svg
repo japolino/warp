@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800">
+  <defs>
+    <linearGradient id="room" x2="0" y2="1"><stop stop-color="#27445b"/><stop offset="1" stop-color="#15212c"/></linearGradient>
+    <radialGradient id="light"><stop stop-color="#dcb986" stop-opacity=".45"/><stop offset="1" stop-color="#dcb986" stop-opacity="0"/></radialGradient>
+  </defs>
+  <path fill="url(#room)" d="M0 0h1200v800H0z"/>
+  <path fill="#566b76" d="M60 80h280v420H60zm800 0h280v420H860z"/>
+  <path fill="#bcc3b9" d="M80 100h240v380H80zm800 0h240v380H880z"/>
+  <path fill="#344d5c" d="M194 100h12v380h-12zm800 0h12v380h-12zM80 284h240v12H80zm800 0h240v12H880z"/>
+  <ellipse cx="600" cy="280" rx="440" ry="370" fill="url(#light)"/>
+  <path fill="#a98668" d="M410 720v-70c0-100 85-155 190-155s190 55 190 155v70z"/>
+  <ellipse cx="600" cy="365" rx="88" ry="115" fill="#e2c6a0"/>
+  <path fill="#332b2b" d="M506 340c-8-105 33-153 94-153s111 56 96 171l-25-35-7-52c-41 45-106 56-143 58z"/>
+  <path fill="#715543" d="M0 690h1200v110H0z"/>
+  <path fill="none" stroke="#eddbbb" stroke-width="4" stroke-dasharray="16 12" d="M12 12h1176v776H12z"/>
+  <g fill="#fff1d7" font-family="sans-serif" font-size="24" text-anchor="middle">
+    <text x="600" y="55">Date picture fixture</text>
+    <text x="600" y="765">The dashed frame helps check cover, contain and stretch</text>
+  </g>
+</svg>

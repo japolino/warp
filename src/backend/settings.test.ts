@@ -10,6 +10,31 @@ test("legacy or malformed settings normalize before any runtime consumer reads t
     autoConfidence: 0.2, askConfidence: 0.2, decider: "llm", sfxVolume: 0, jevUrl: DEFAULT_SETTINGS.jevUrl });
 });
 
+test("the shared look keeps old arcade preferences and lets a new choice override them", () => {
+  for (const look of ["medieval", "modern", "scifi", "rulebook"] as const) {
+    expect(normalizeSettings({ minigameLook: look }).look).toBe(look);
+    expect(normalizeSettings({ look, minigameLook: "medieval" }).look).toBe(look);
+  }
+  expect(normalizeSettings({ look: " scifi " }).look).toBe("scifi");
+  expect(normalizeSettings({ minigameLook: " medieval " }).look).toBe("medieval");
+  expect(normalizeSettings({ look: "unrecognized", minigameLook: "medieval" }).look).toBe("rulebook");
+});
+
+test("a stored arcade look survives an unrelated save and can return to the rulebook's look", async () => {
+  const id = "shared-look-migration";
+  let stored: any = { minigameLook: "scifi" };
+  (globalThis as any).spindle = { userStorage: {
+    getJson: async () => structuredClone(stored),
+    setJson: async (_: string, value: any) => { stored = structuredClone(value); },
+  } };
+  expect((await getSettings(id)).look).toBe("scifi");
+  await patchSettings({ sfxVolume: 0.2 }, id);
+  expect(stored).toMatchObject({ look: "scifi", sfxVolume: 0.2 });
+  expect(stored.minigameLook).toBeUndefined();
+  await patchSettings({ look: "rulebook" }, id);
+  expect((await getSettings(id)).look).toBe("rulebook");
+});
+
 test("failed durable saves do not change runtime settings and concurrent patches merge", async () => {
   const id = "settings-durability";
   let stored: any = {}, fail = true;

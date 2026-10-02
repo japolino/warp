@@ -10,7 +10,7 @@ import { emptyDraft, renderBuilder, renderBuilderCta, type BuilderDraft } from "
 import { renderDungeon, type DungeonPick } from "./frontend/dungeon-ui.js";
 import { connectCue } from "./frontend/cue-bridge.js";
 import { renderDate } from "./frontend/date-ui.js";
-import { formatStory, renderStage, stageModeOf, type StageMode } from "./frontend/stage.js";
+import { dressStage, formatStory, renderStage, replaceStageScene, stageModeOf, type StageMode } from "./frontend/stage.js";
 import { STAGE_STYLES } from "./frontend/stage-styles.js";
 import { FX_STYLES } from "./frontend/fx-styles.js";
 import { esc, hudParts, renderChips, renderDepthCard, renderEncounterLog, renderWhyFold, renderChoices, renderHud, renderJournal, renderPart, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
@@ -190,7 +190,7 @@ export function setup(ctx: SpindleFrontendContext) {
     volume: () => settings.sfxVolume,
     sound: () => settings.sfx !== "off",
     reduced: () => settings.fx !== "full" || matchMedia("(prefers-reduced-motion: reduce)").matches,
-    look: () => (settings.minigameLook === "rulebook" ? null : settings.minigameLook),
+    look: () => (settings.look === "rulebook" ? null : settings.look),
   });
   let stageOpen = false;
   let stageWantGate = false;
@@ -662,7 +662,6 @@ export function setup(ctx: SpindleFrontendContext) {
     renderHead();
   }
 
-  const SCROLLERS = [".warp-stage-side", ".warp-stage-deck", ".warp-stage-heart", ".warp-stage-main"];
   function renderStageScene() {
     if (!state || !stageMode || lingering || !stageVisible()) { renderStory(); return; }
     const isBusy = busy.on && busy.chatId === state.chatId;
@@ -670,10 +669,8 @@ export function setup(ctx: SpindleFrontendContext) {
     const rk = sess?.last ? `${sess.who}|${sess.last.label}|${sess.last.reaction}|${sess.fatigue}` : "";
     const fresh = reactionKey !== null && rk !== "" && rk !== reactionKey;
     reactionKey = rk;
-    // Keep each pane where the player had scrolled it.
-    const kept = SCROLLERS.map((sel) => sceneEl.querySelector<HTMLElement>(sel)?.scrollTop ?? 0);
-    sceneEl.innerHTML = renderStage(state, stageMode, { pick: dgPick, mates: dgMates, busy: isBusy, cat: dateCat, freshReaction: fresh });
-    SCROLLERS.forEach((sel, i) => { const el = sceneEl.querySelector<HTMLElement>(sel); if (el && kept[i]) el.scrollTop = kept[i]; });
+    dressStage(stageEl, settings.look === "rulebook" ? state.look ?? "modern" : settings.look);
+    replaceStageScene(sceneEl, renderStage(state, stageMode, { pick: dgPick, mates: dgMates, busy: isBusy, cat: dateCat, freshReaction: fresh }));
     renderStory();
   }
 
@@ -769,7 +766,8 @@ export function setup(ctx: SpindleFrontendContext) {
     if (a && a !== document.body && !stageEl.contains(a)) return;
     if (a instanceof HTMLTextAreaElement || a instanceof HTMLInputElement) return;
     if (e.key === "Escape") { e.preventDefault(); closeStage(); return; }
-    if ((e.key === " " || e.key === "Enter") && nextLine()) { e.preventDefault(); return; }
+    // Focused controls keep their native Enter / Space activation instead of advancing the story.
+    if ((e.key === " " || e.key === "Enter") && !(a instanceof HTMLButtonElement) && nextLine()) { e.preventDefault(); return; }
     // Number keys pick from the open menu (categories, or a category's topics).
     if (/^[1-9]$/.test(e.key)) {
       const btn = sceneEl.querySelector<HTMLButtonElement>(`.warp-stage-menu-col [data-key="${e.key}"]`);

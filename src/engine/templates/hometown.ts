@@ -26,7 +26,7 @@ start:
   location: apartment
   items: { phone: 1, keys: 1 }
 
-minigames: { style: modern }   # the arcade's look: medieval, modern or scifi
+look: modern   # how dungeons, dates and minigames look: medieval, modern or scifi
 hud:
   currency: "£"
   bars: [pain, arousal, fatigue, stress, trauma, control, allure]

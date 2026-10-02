@@ -82,16 +82,20 @@ describe("rulebooks", () => {
   });
 });
 
-describe("the arcade's look", () => {
+describe("the look", () => {
   test("a rulebook names its look; offers carry it; nonsense falls back to modern with a warning", () => {
-    expect(rules().minigameStyle).toBe("modern");
-    const fantasy = normalizeRuleset({ minigames: { style: "Fantasy" }, stats: { x: { kind: "skill" } }, actions: { a: { label: "A", check: { chance: 50, game: "aim" } } } });
-    expect(fantasy.ruleset!.minigameStyle).toBe("medieval");
+    expect(rules().look).toBe("modern");
+    const fantasy = normalizeRuleset({ look: "Fantasy", stats: { x: { kind: "skill" } }, actions: { a: { label: "A", check: { chance: 50, game: "aim" } } } });
+    expect(fantasy.ruleset!.look).toBe("medieval");
     expect(buildChoices(fantasy.ruleset!, initialState(fantasy.ruleset!), { lines: [], veils: [], minigames: "ask" }).find((c) => c.id === "a")?.game?.style).toBe("medieval");
-    expect(normalizeRuleset({ minigames: { style: "sci-fi" } }).ruleset!.minigameStyle).toBe("scifi");
-    const bad = normalizeRuleset({ minigames: { style: "baroque" } });
-    expect(bad.ruleset!.minigameStyle).toBe("modern");
-    expect(bad.issues.some((i) => i.where === "Minigames › style")).toBe(true);
+    expect(normalizeRuleset({ look: "sci-fi" }).ruleset!.look).toBe("scifi");
+    // The older spelling, from when the look only dressed the arcade.
+    expect(normalizeRuleset({ minigames: { style: "space" } }).ruleset!.look).toBe("scifi");
+    expect(normalizeRuleset({ minigames: { style: "medieval" } }).ruleset!.look).toBe("medieval");
+    expect(normalizeRuleset({ look: "modern", minigames: { style: "medieval" } }).ruleset!.look).toBe("modern");
+    const bad = normalizeRuleset({ look: "baroque" });
+    expect(bad.ruleset!.look).toBe("modern");
+    expect(bad.issues.some((i) => i.where === "Look")).toBe(true);
   });
 });
 
