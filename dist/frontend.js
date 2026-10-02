@@ -603,6 +603,7 @@ var STYLES = `
   border: 1px solid var(--warp-accent, #8b7cff); box-shadow: 0 10px 24px rgba(0,0,0,.4);
 }
 .warp-drag-ghost.warp-ghost-new::after { content: "  ·  new window"; opacity: .6; }
+.warp-drag-ghost[data-full]:not([data-full=""])::after { content: "  ·  " attr(data-full); opacity: .6; }
 
 /* ───────── modal ───────── */
 .warp-modal { display: flex; flex-direction: column; gap: 10px; padding: 4px 2px; }
@@ -3682,6 +3683,10 @@ var FX_STYLES = `
 `;
 
 // src/frontend/panels.ts
+var MAX_PANELS = 3;
+function capPanels(l, max = MAX_PANELS) {
+  return l.panels.length <= max ? l : { panels: l.panels.slice(0, max) };
+}
 var GAP = 6;
 var emptyLayout = () => ({ panels: [] });
 function panelOf(l, part) {
@@ -3987,7 +3992,7 @@ function wireMaps(root) {
 var MAP_W = 340;
 var widthFor = (parts) => parts.includes("map") ? MAP_W : PANEL_W;
 function createPanels(o) {
-  let layout = parseLayout(o.load());
+  let layout = capPanels(parseLayout(o.load()));
   let parts = [];
   const wins = new Map;
   const cleanups = [];
@@ -4023,14 +4028,14 @@ function createPanels(o) {
     }
     handle.root.appendChild(el);
     handle.setVisible(false);
-    const win = { id: p.id, handle, el, head, body, box: { x: p.x, y: p.y, w, h: 200 }, shown: false, html: "" };
+    const win = { id: p.id, handle, el, head, body, box: { x: p.x, y: p.y, w, h: 200 }, shown: false, html: "", off: [] };
     body.addEventListener("pointerdown", (e) => {
       if (!e.target.closest?.("input, select, textarea"))
         e.preventDefault();
     });
     body.addEventListener("pointerdown", (e) => startSectionDrag(e, p.id));
     o.wire(body);
-    cleanups.push(wireMaps(body));
+    win.off.push(wireMaps(body));
     head.addEventListener("pointerdown", (e) => {
       if (e.button === 0)
         panelDrag = { id: win.id, at: { x: e.clientX, y: e.clientY } };
@@ -4047,10 +4052,15 @@ function createPanels(o) {
           commit(updatePanel(layout, win.id, { folded: !cur.folded }));
       }
     });
-    cleanups.push(handle.onDragEnd((pos) => dropPanel(win, pos)));
+    win.off.push(handle.onDragEnd((pos) => dropPanel(win, pos)));
     return win;
   }
   function destroyWin(w) {
+    for (const f of w.off.splice(0)) {
+      try {
+        f();
+      } catch {}
+    }
     try {
       w.handle.destroy();
     } catch {}
@@ -4091,16 +4101,16 @@ function createPanels(o) {
       const visible = show && here.length > 0 && (!p.attach || !!m && m.open);
       let w = wins.get(p.id);
       if (!visible) {
-        if (w?.shown) {
-          w.handle.setVisible(false);
-          w.shown = false;
-        }
+        if (w)
+          destroyWin(w);
         continue;
       }
       if (!w) {
         const made = makeWin(p);
-        if (!made)
-          continue;
+        if (!made) {
+          commit(mergePanel(layout, p.id, null));
+          return;
+        }
         w = made;
         wins.set(p.id, w);
       }
@@ -4220,7 +4230,9 @@ function createPanels(o) {
     const t = targetAt(pointer, null);
     highlight(t?.kind === "main" && sec.from === null ? null : t);
     sec.ghost.style.transform = `translate(${e.clientX + 12}px, ${e.clientY + 8}px)`;
-    sec.ghost.classList.toggle("warp-ghost-new", !t);
+    const full = !t && atLimit(sec.from);
+    sec.ghost.classList.toggle("warp-ghost-new", !t && !full);
+    sec.ghost.dataset.full = full ? "joins the nearest panel (3 at most)" : "";
   };
   const onUp = (e) => {
     if (panelDrag && !sec) {
@@ -4258,6 +4270,12 @@ function createPanels(o) {
       commit(movePart(layout, s.part, t.id, index));
       return;
     }
+    if (atLimit(s.from)) {
+      const near = nearestPanel(pt);
+      if (near && near !== s.from)
+        commit(movePart(layout, s.part, near));
+      return;
+    }
     const x = toLayout(pt.x) - 24, y = toLayout(pt.y) - 14;
     let next = tearOff(layout, s.part, x, y);
     const made = panelOf(next, s.part);
@@ -4268,6 +4286,26 @@ function createPanels(o) {
     next = updatePanel(next, made.id, { x: b.x, y: b.y, attach });
     commit(next);
   };
+  function atLimit(from) {
+    const src = from ? layout.panels.find((p) => p.id === from) : null;
+    if (src && src.parts.length === 1)
+      return false;
+    return layout.panels.length >= MAX_PANELS;
+  }
+  function nearestPanel(pt) {
+    let best = null, dist = Infinity;
+    for (const w of wins.values()) {
+      if (!w.shown)
+        continue;
+      const b = rect(w.el);
+      const d = Math.hypot(pt.x - (b.x + b.w / 2), pt.y - (b.y + b.h / 2));
+      if (d < dist) {
+        dist = d;
+        best = w.id;
+      }
+    }
+    return best ?? layout.panels[layout.panels.length - 1]?.id ?? null;
+  }
   const onClickCapture = (e) => {
     if (swallowClick) {
       e.preventDefault();
@@ -12775,42 +12813,82 @@ function setup(ctx) {
   const sayForm = stageEl.querySelector(".warp-stage-say");
   const sayInput = sayForm.querySelector("textarea");
   const sayButton = sayForm.querySelector("button");
+  const canFloat = !!overlay;
   let stage = null;
-  try {
-    stage = ctx.ui.createFloatWidget({ fullscreen: true, chromeless: true, snapToEdge: false });
-    stage.root.appendChild(stageEl);
-    stage.setVisible(false);
-    cleanups.push(() => stage?.destroy());
-  } catch {
+  let stageWanted = false;
+  function mountStage() {
+    if (stage)
+      return true;
+    try {
+      stage = ctx.ui.createFloatWidget({ fullscreen: true, chromeless: true, snapToEdge: false });
+      stage.root.appendChild(stageEl);
+      return true;
+    } catch {
+      stage = null;
+      return false;
+    }
+  }
+  function unmountStage() {
+    if (!stage)
+      return;
+    try {
+      stage.destroy();
+    } catch {}
     stage = null;
   }
+  cleanups.push(() => unmountStage());
   stageEl.addEventListener("contextmenu", (e) => e.stopPropagation());
   let arcadeWidget = null;
+  let arcadeOn = false;
+  cleanups.push(() => {
+    try {
+      arcadeWidget?.destroy();
+    } catch {}
+  });
   const arcadeEl = document.createElement("div");
   arcadeEl.className = "warp-arcade-host";
   arcadeEl.style.cssText = "position:absolute;inset:0";
   arcadeEl.addEventListener("contextmenu", (e) => e.stopPropagation());
   const arcade = createArcade({
     surface: () => {
-      try {
-        if (!arcadeWidget) {
-          arcadeWidget = ctx.ui.createFloatWidget({ fullscreen: true, chromeless: true, snapToEdge: false });
-          arcadeWidget.root.appendChild(arcadeEl);
-          cleanups.push(() => arcadeWidget?.destroy());
-        }
-        const w = arcadeWidget;
-        return {
-          root: arcadeEl,
-          show: (on) => {
-            w.setVisible(on);
-            const host = w.root.parentElement?.parentElement;
-            if (on && host instanceof HTMLElement)
-              host.style.zIndex = "9994";
-          }
-        };
-      } catch {
+      if (!canFloat)
         return null;
-      }
+      return {
+        root: arcadeEl,
+        show: (on) => {
+          if (!on) {
+            if (arcadeWidget) {
+              try {
+                arcadeWidget.destroy();
+              } catch {}
+              arcadeWidget = null;
+            }
+            arcadeOn = false;
+            syncDockVisibility();
+            return;
+          }
+          arcadeOn = true;
+          panels.sync();
+          if (!arcadeWidget) {
+            try {
+              arcadeWidget = ctx.ui.createFloatWidget({ fullscreen: true, chromeless: true, snapToEdge: false });
+              arcadeWidget.root.appendChild(arcadeEl);
+            } catch {
+              arcadeWidget = null;
+              return;
+            }
+          }
+          const w = arcadeWidget;
+          w.setVisible(true);
+          const raise = () => {
+            const host = w.root.parentElement?.parentElement;
+            if (host instanceof HTMLElement)
+              host.style.zIndex = "9994";
+          };
+          raise();
+          requestAnimationFrame(() => requestAnimationFrame(raise));
+        }
+      };
     },
     volume: () => settings.sfxVolume,
     sound: () => settings.sfx !== "off",
@@ -12836,7 +12914,7 @@ function setup(ctx) {
     ctx,
     viewport,
     main: () => overlay?.isVisible() ? { box: cur, el: overlayEl, open: overlayOpen } : null,
-    shown: () => !!overlay && (!!state?.hud || state?.status.state === "broken") && !stageVisible(),
+    shown: () => !!overlay && (!!state?.hud || state?.status.state === "broken") && !stageVisible() && !stageWanted && !arcadeOn,
     wire: (body) => wirePanel(body),
     rememberSections: (root) => rememberSections(root),
     restoreSections: (root) => restoreSections(root),
@@ -13272,19 +13350,27 @@ function setup(ctx) {
       stageEl.dataset.mode = stageMode === "date" ? "date" : stageMode ? "dungeon" : "";
       stageEl.dataset.view = stageMode ?? "";
     }
-    const show = !!stage && stageOpen && (!!mode || lingering);
+    const show = canFloat && stageOpen && (!!mode || lingering);
     if (show !== stageVisible()) {
-      stage?.setVisible(show);
       if (show) {
-        raiseStage();
-        requestAnimationFrame(() => requestAnimationFrame(raiseStage));
+        stageWanted = true;
+        panels.sync();
+        if (mountStage()) {
+          stage.setVisible(true);
+          raiseStage();
+          requestAnimationFrame(() => requestAnimationFrame(raiseStage));
+        } else
+          stageWanted = false;
+      } else {
+        stageWanted = false;
+        unmountStage();
       }
     }
     if (show)
       renderStageScene();
   }
   function openStage() {
-    if (!stage) {
+    if (!canFloat) {
       openDungeonDrawer();
       return;
     }
@@ -13310,7 +13396,8 @@ function setup(ctx) {
       stageMode = null;
       stageKey = "";
     }
-    stage?.setVisible(false);
+    stageWanted = false;
+    unmountStage();
     syncDockVisibility();
     renderHead();
   }
@@ -13937,7 +14024,7 @@ function setup(ctx) {
     renderDrawer();
   }
   function openDungeon() {
-    if (!stage) {
+    if (!canFloat) {
       openDungeonDrawer();
       return;
     }
@@ -14129,7 +14216,7 @@ function setup(ctx) {
   }
   function act(actionId, params) {
     if (actionId === "date:open") {
-      if (stage && state?.date?.session)
+      if (canFloat && state?.date?.session)
         openStage();
       else {
         drawerView = "date";

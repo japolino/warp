@@ -12,6 +12,18 @@ export interface Attach { side: Side; /** Along that side, from the main window'
 export interface Panel { id: string; parts: string[]; x: number; y: number; attach: Attach | null; folded?: boolean }
 export interface Layout { panels: Panel[] }
 
+/**
+ * Lumiverse gives an extension 4 floating windows. The main window has one, so
+ * up to 3 panels; the stage and the arcade borrow theirs while the panels are
+ * hidden behind them.
+ */
+export const MAX_PANELS = 3;
+
+/** Panels past the limit (an older saved layout) pour back into the main window, so nothing goes missing. */
+export function capPanels(l: Layout, max = MAX_PANELS): Layout {
+  return l.panels.length <= max ? l : { panels: l.panels.slice(0, max) };
+}
+
 /** The gap between the main window and a panel attached to it. */
 export const GAP = 6;
 

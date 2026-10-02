@@ -6,13 +6,13 @@
 import type { SpindleFloatWidgetHandle, SpindleFrontendContext } from "lumiverse-spindle-types";
 import { PANEL_W, PILL, type Box, type Viewport } from "./overlay-layout.js";
 import {
-  attachedAt, inside, mergePanel, movePart, overlapShare, panelOf, parseLayout, sideFor, slotAt, snapToScreen, tearOff, updatePanel,
+  attachedAt, capPanels, inside, MAX_PANELS, mergePanel, movePart, overlapShare, panelOf, parseLayout, sideFor, slotAt, snapToScreen, tearOff, updatePanel,
   type Layout, type Panel,
 } from "./panels.js";
 import { esc, renderPart, type HudPart } from "./render.js";
 import { restoreMaps, wireMaps } from "./map-view.js";
 
-interface Win { id: string; handle: SpindleFloatWidgetHandle; el: HTMLElement; head: HTMLElement; body: HTMLElement; box: Box; shown: boolean; html: string }
+interface Win { id: string; handle: SpindleFloatWidgetHandle; el: HTMLElement; head: HTMLElement; body: HTMLElement; box: Box; shown: boolean; html: string; off: (() => void)[] }
 
 export interface PanelHost {
   ctx: SpindleFrontendContext;
@@ -35,7 +35,7 @@ const MAP_W = 340;
 const widthFor = (parts: string[]) => (parts.includes("map") ? MAP_W : PANEL_W);
 
 export function createPanels(o: PanelHost) {
-  let layout: Layout = parseLayout(o.load());
+  let layout: Layout = capPanels(parseLayout(o.load()));
   let parts: HudPart[] = [];
   const wins = new Map<string, Win>();
   const cleanups: (() => void)[] = [];
@@ -64,13 +64,13 @@ export function createPanels(o: PanelHost) {
     } catch { return null; }
     handle.root.appendChild(el);
     handle.setVisible(false);
-    const win: Win = { id: p.id, handle, el, head, body, box: { x: p.x, y: p.y, w, h: 200 }, shown: false, html: "" };
+    const win: Win = { id: p.id, handle, el, head, body, box: { x: p.x, y: p.y, w, h: 200 }, shown: false, html: "", off: [] };
     body.addEventListener("pointerdown", (e) => {
       if (!(e.target as Element).closest?.("input, select, textarea")) e.preventDefault();
     });
     body.addEventListener("pointerdown", (e) => startSectionDrag(e, p.id));
     o.wire(body);
-    cleanups.push(wireMaps(body));
+    win.off.push(wireMaps(body));
     head.addEventListener("pointerdown", (e) => { if (e.button === 0) panelDrag = { id: win.id, at: { x: e.clientX, y: e.clientY } }; });
     head.addEventListener("click", (e) => {
       const t = e.target as Element;
@@ -80,11 +80,12 @@ export function createPanels(o: PanelHost) {
         if (cur) commit(updatePanel(layout, win.id, { folded: !cur.folded }));
       }
     });
-    cleanups.push(handle.onDragEnd((pos) => dropPanel(win, pos)));
+    win.off.push(handle.onDragEnd((pos) => dropPanel(win, pos)));
     return win;
   }
 
   function destroyWin(w: Win) {
+    for (const f of w.off.splice(0)) { try { f(); } catch { /* keep going */ } }
     try { w.handle.destroy(); } catch { /* gone already */ }
     wins.delete(w.id);
   }
@@ -123,8 +124,14 @@ export function createPanels(o: PanelHost) {
       // Attached panels fold away with the main window; a panel with nothing to show stays hidden.
       const visible = show && here.length > 0 && (!p.attach || (!!m && m.open));
       let w = wins.get(p.id);
-      if (!visible) { if (w?.shown) { w.handle.setVisible(false); w.shown = false; } continue; }
-      if (!w) { const made = makeWin(p); if (!made) continue; w = made; wins.set(p.id, w); }
+      // A hidden panel gives its window back (the stage and the arcade need one), and gets a new one when it shows again.
+      if (!visible) { if (w) destroyWin(w); continue; }
+      if (!w) {
+        const made = makeWin(p);
+        // No window to be had: its sections go back to the main window rather than vanish.
+        if (!made) { commit(mergePanel(layout, p.id, null)); return; }
+        w = made; wins.set(p.id, w);
+      }
       const single = here.length === 1;
       const title = here.map((x) => `${x.title}${x.count ? ` · ${x.count}` : ""}`).join(" · ");
       w.head.innerHTML = `<span class="warp-overlay-title">${esc(title)}</span>
@@ -233,7 +240,9 @@ export function createPanels(o: PanelHost) {
     const t = targetAt(pointer, null);
     highlight(t?.kind === "main" && sec.from === null ? null : t);
     sec.ghost!.style.transform = `translate(${e.clientX + 12}px, ${e.clientY + 8}px)`;
-    sec.ghost!.classList.toggle("warp-ghost-new", !t);
+    const full = !t && atLimit(sec.from);
+    sec.ghost!.classList.toggle("warp-ghost-new", !t && !full);
+    sec.ghost!.dataset.full = full ? "joins the nearest panel (3 at most)" : "";
   };
 
   const onUp = (e: PointerEvent) => {
@@ -260,6 +269,12 @@ export function createPanels(o: PanelHost) {
       commit(movePart(layout, s.part, t.id, index));
       return;
     }
+    // No room for another window: it joins the panel nearest the drop.
+    if (atLimit(s.from)) {
+      const near = nearestPanel(pt);
+      if (near && near !== s.from) commit(movePart(layout, s.part, near));
+      return;
+    }
     // Out in the open: a window of its own, where it was dropped — attached if it's right beside the main window.
     const x = toLayout(pt.x) - 24, y = toLayout(pt.y) - 14;
     let next = tearOff(layout, s.part, x, y);
@@ -271,6 +286,24 @@ export function createPanels(o: PanelHost) {
     next = updatePanel(next, made.id, { x: b.x, y: b.y, attach });
     commit(next);
   };
+
+  /** Tearing a section out would need a window past the limit (a panel's only section just moves its window: no new one). */
+  function atLimit(from: string | null): boolean {
+    const src = from ? layout.panels.find((p) => p.id === from) : null;
+    if (src && src.parts.length === 1) return false;
+    return layout.panels.length >= MAX_PANELS;
+  }
+
+  function nearestPanel(pt: { x: number; y: number }): string | null {
+    let best: string | null = null, dist = Infinity;
+    for (const w of wins.values()) {
+      if (!w.shown) continue;
+      const b = rect(w.el);
+      const d = Math.hypot(pt.x - (b.x + b.w / 2), pt.y - (b.y + b.h / 2));
+      if (d < dist) { dist = d; best = w.id; }
+    }
+    return best ?? layout.panels[layout.panels.length - 1]?.id ?? null;
+  }
 
   // A drag that ends over a header isn't a click on it (it would fold the section).
   const onClickCapture = (e: MouseEvent) => {

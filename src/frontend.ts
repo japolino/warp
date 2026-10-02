@@ -152,43 +152,68 @@ export function setup(ctx: SpindleFrontendContext) {
   const sayForm = stageEl.querySelector<HTMLFormElement>(".warp-stage-say")!;
   const sayInput = sayForm.querySelector<HTMLTextAreaElement>("textarea")!;
   const sayButton = sayForm.querySelector<HTMLButtonElement>("button")!;
+  // Lumiverse gives an extension 4 floating windows. The main window keeps one; the stage and the arcade take theirs
+  // only while they're up, and the torn-off panels (hidden behind them then) hand theirs back meanwhile.
+  // Without floating surfaces (no main window either), the drawer's Dungeon and Dating tabs still work.
+  const canFloat = !!overlay;
   let stage: SpindleFloatWidgetHandle | null = null;
-  try {
-    stage = ctx.ui.createFloatWidget({ fullscreen: true, chromeless: true, snapToEdge: false });
-    stage.root.appendChild(stageEl);
-    stage.setVisible(false);
-    cleanups.push(() => stage?.destroy());
-  } catch {
-    stage = null; // no floating surfaces: the drawer's Dungeon and Dating tabs still work
+  /** The stage is wanted on screen: the panels step aside first so it has a window. */
+  let stageWanted = false;
+  function mountStage(): boolean {
+    if (stage) return true;
+    try {
+      stage = ctx.ui.createFloatWidget({ fullscreen: true, chromeless: true, snapToEdge: false });
+      stage.root.appendChild(stageEl);
+      return true;
+    } catch {
+      stage = null;
+      return false;
+    }
   }
+  function unmountStage() {
+    if (!stage) return;
+    try { stage.destroy(); } catch { /* gone already */ }
+    stage = null;
+  }
+  cleanups.push(() => unmountStage());
   // The host's widget menu ("hide widget") has no place on the stage.
   stageEl.addEventListener("contextmenu", (e) => e.stopPropagation());
 
   // The arcade: a check played as a minigame instead of rolled, or a seat at a table.
   // Its own full-screen layer, above the stage, made the first time it's needed.
   let arcadeWidget: SpindleFloatWidgetHandle | null = null;
+  let arcadeOn = false;
+  cleanups.push(() => { try { arcadeWidget?.destroy(); } catch { /* gone already */ } });
   const arcadeEl = document.createElement("div");
   arcadeEl.className = "warp-arcade-host";
   arcadeEl.style.cssText = "position:absolute;inset:0";
   arcadeEl.addEventListener("contextmenu", (e) => e.stopPropagation());
   const arcade = createArcade({
     surface: () => {
-      try {
-        if (!arcadeWidget) {
-          arcadeWidget = ctx.ui.createFloatWidget({ fullscreen: true, chromeless: true, snapToEdge: false });
-          arcadeWidget.root.appendChild(arcadeEl);
-          cleanups.push(() => arcadeWidget?.destroy());
-        }
-        const w = arcadeWidget;
-        return {
-          root: arcadeEl,
-          show: (on) => {
-            w.setVisible(on);
-            const host = w.root.parentElement?.parentElement;
-            if (on && host instanceof HTMLElement) host.style.zIndex = "9994";
-          },
-        };
-      } catch { return null; }
+      if (!canFloat) return null;
+      return {
+        root: arcadeEl,
+        show: (on) => {
+          if (!on) {
+            if (arcadeWidget) { try { arcadeWidget.destroy(); } catch { /* gone already */ } arcadeWidget = null; }
+            arcadeOn = false;
+            syncDockVisibility();
+            return;
+          }
+          arcadeOn = true;
+          panels.sync(); // the panels hand back their windows while the arcade is up
+          if (!arcadeWidget) {
+            try {
+              arcadeWidget = ctx.ui.createFloatWidget({ fullscreen: true, chromeless: true, snapToEdge: false });
+              arcadeWidget.root.appendChild(arcadeEl);
+            } catch { arcadeWidget = null; return; }
+          }
+          const w = arcadeWidget;
+          w.setVisible(true);
+          const raise = () => { const host = w.root.parentElement?.parentElement; if (host instanceof HTMLElement) host.style.zIndex = "9994"; };
+          raise(); requestAnimationFrame(() => requestAnimationFrame(raise));
+        },
+      };
     },
     volume: () => settings.sfxVolume,
     sound: () => settings.sfx !== "off",
@@ -219,7 +244,7 @@ export function setup(ctx: SpindleFrontendContext) {
     ctx,
     viewport,
     main: () => (overlay?.isVisible() ? { box: cur, el: overlayEl, open: overlayOpen } : null),
-    shown: () => !!overlay && (!!state?.hud || state?.status.state === "broken") && !stageVisible(),
+    shown: () => !!overlay && (!!state?.hud || state?.status.state === "broken") && !stageVisible() && !stageWanted && !arcadeOn,
     wire: (body) => wirePanel(body),
     rememberSections: (root) => rememberSections(root),
     restoreSections: (root) => restoreSections(root),
@@ -637,17 +662,27 @@ export function setup(ctx: SpindleFrontendContext) {
       stageEl.dataset.mode = stageMode === "date" ? "date" : stageMode ? "dungeon" : "";
       stageEl.dataset.view = stageMode ?? "";
     }
-    const show = !!stage && stageOpen && (!!mode || lingering);
+    const show = canFloat && stageOpen && (!!mode || lingering);
     if (show !== stageVisible()) {
-      stage?.setVisible(show);
-      // The host mounts the widget on the next frames; raise it once it's there.
-      if (show) { raiseStage(); requestAnimationFrame(() => requestAnimationFrame(raiseStage)); }
+      if (show) {
+        // The panels hand back their windows first, so the stage has one.
+        stageWanted = true;
+        panels.sync();
+        if (mountStage()) {
+          stage!.setVisible(true);
+          // The host mounts the widget on the next frames; raise it once it's there.
+          raiseStage(); requestAnimationFrame(() => requestAnimationFrame(raiseStage));
+        } else stageWanted = false;
+      } else {
+        stageWanted = false;
+        unmountStage();
+      }
     }
     if (show) renderStageScene();
   }
 
   function openStage() {
-    if (!stage) { openDungeonDrawer(); return; }
+    if (!canFloat) { openDungeonDrawer(); return; }
     if (stageKey) stageDismissed.delete(stageKey);
     stageOpen = true;
     syncStage();
@@ -660,7 +695,8 @@ export function setup(ctx: SpindleFrontendContext) {
     stageOpen = false;
     if (lingering) { lingering = false; stageMode = null; stageWantGate = false; stageKey = ""; }
     if (stageMode === "gate") { stageWantGate = false; stageMode = null; stageKey = ""; }
-    stage?.setVisible(false);
+    stageWanted = false;
+    unmountStage();
     syncDockVisibility();
     renderHead();
   }
@@ -1080,7 +1116,7 @@ export function setup(ctx: SpindleFrontendContext) {
   }
   /** The dungeon on the stage (the entrance when no run is on), or in the drawer without a stage. */
   function openDungeon() {
-    if (!stage) { openDungeonDrawer(); return; }
+    if (!canFloat) { openDungeonDrawer(); return; }
     if (!state?.dungeon) stageWantGate = true;
     openStage();
   }
@@ -1214,7 +1250,7 @@ export function setup(ctx: SpindleFrontendContext) {
   function act(actionId: string, params?: Record<string, string>) {
     // "More…" during a conversation opens the date on the stage (every topic is there).
     if (actionId === "date:open") {
-      if (stage && state?.date?.session) openStage();
+      if (canFloat && state?.date?.session) openStage();
       else { drawerView = "date"; tab.activate(); renderDrawer(); }
       return;
     }

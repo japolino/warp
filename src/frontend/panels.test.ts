@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { attachedAt, GAP, mergePanel, movePart, panelOf, parseLayout, sideFor, slotAt, snapToScreen, tearOff, type Layout } from "./panels.js";
+import { attachedAt, capPanels, GAP, MAX_PANELS, mergePanel, movePart, panelOf, parseLayout, sideFor, slotAt, snapToScreen, tearOff, type Layout } from "./panels.js";
 import { centreOn, clampView, MAX_ZOOM, panBy, zoomAt } from "./map-view.js";
 
 const vp = { width: 1400, height: 900 };
@@ -116,4 +116,13 @@ describe("attached panels with no room beside the main window", () => {
     const strip = { x: 12, y: 520, w: 1376, h: 190 };
     expect(attachedAt({ side: "left", offset: 0 }, 340, 300, strip, vp)).toEqual({ x: 12, y: 520 - GAP - 300, w: 340, h: 300 });
   });
+});
+
+test("Lumiverse allows 4 floating windows: panels past 3 (an older saved layout) go back to the main window", () => {
+  expect(MAX_PANELS).toBe(3);
+  const l = parseLayout(JSON.stringify({ panels: [1, 2, 3, 4, 5].map((n) => ({ id: `p${n}`, parts: [`s${n}`], x: 0, y: 0, attach: null })) }));
+  const capped = capPanels(l);
+  expect(capped.panels.map((p) => p.id)).toEqual(["p1", "p2", "p3"]);
+  expect(panelOf(capped, "s4")).toBeNull();
+  expect(capPanels(capped)).toBe(capped);
 });

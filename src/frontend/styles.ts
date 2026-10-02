@@ -384,6 +384,7 @@ export const STYLES = `
   border: 1px solid var(--warp-accent, #8b7cff); box-shadow: 0 10px 24px rgba(0,0,0,.4);
 }
 .warp-drag-ghost.warp-ghost-new::after { content: "  ·  new window"; opacity: .6; }
+.warp-drag-ghost[data-full]:not([data-full=""])::after { content: "  ·  " attr(data-full); opacity: .6; }
 
 /* ───────── modal ───────── */
 .warp-modal { display: flex; flex-direction: column; gap: 10px; padding: 4px 2px; }
