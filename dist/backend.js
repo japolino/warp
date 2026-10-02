@@ -19302,7 +19302,7 @@ function floorSize(d, depth) {
 function isBossFloor(d, depth) {
   return d.bossEvery > 0 && depth % d.bossEvery === 0;
 }
-function pick(weights, rng) {
+function pick2(weights, rng) {
   const total = weights.reduce((n, [, w]) => n + Math.max(0, w), 0);
   let x = rng() * total;
   for (const [k, w] of weights) {
@@ -19346,7 +19346,7 @@ function generateFloor(d, seed, depth) {
       }
       const nearStart = Math.abs(x - start[0]) + Math.abs(y - start[1]) <= 1;
       const allowed = weights.filter(([k]) => (CAPS[k] === undefined || (counts[k] ?? 0) < CAPS[k]) && !(nearStart && k === "elite"));
-      const kind = pick(allowed, rng);
+      const kind = pick2(allowed, rng);
       counts[kind] = (counts[kind] ?? 0) + 1;
       tiles[y][x] = kind;
     }
@@ -21552,6 +21552,207 @@ var init_view = __esm(() => {
   init_expr();
 });
 
+// src/backend/helpers.ts
+function firstJson(text) {
+  const cleaned = text.replace(/```(?:json)?/gi, "");
+  const start = cleaned.indexOf("{");
+  if (start < 0)
+    return null;
+  let depth = 0;
+  let inStr = false;
+  for (let i = start;i < cleaned.length; i++) {
+    const c = cleaned[i];
+    if (inStr) {
+      if (c === "\\")
+        i++;
+      else if (c === '"')
+        inStr = false;
+      continue;
+    }
+    if (c === '"')
+      inStr = true;
+    else if (c === "{")
+      depth++;
+    else if (c === "}" && --depth === 0) {
+      try {
+        return JSON.parse(cleaned.slice(start, i + 1));
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+async function ask(system, user, settings, userId, timeoutMs, opts = {}) {
+  return (await askRaw(system, user, settings, userId, timeoutMs, opts)).content;
+}
+async function askProse(system, user, settings, userId, timeoutMs, opts = {}) {
+  const res = await askRaw(system, user, settings, userId, timeoutMs, opts);
+  const text = res.content.trim().replace(/^```\w*|```$/g, "").trim();
+  return res.finish === "length" || !finishedProse(text) ? "" : text;
+}
+async function askRaw(system, user, settings, userId, timeoutMs, opts) {
+  const res = await host().generate.quiet({
+    type: "quiet",
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: user }
+    ],
+    connection_id: settings.helperConnectionId || undefined,
+    reasoning: { source: "off" },
+    parameters: { temperature: opts.temperature ?? 0.1, ...opts.maxTokens ? { max_tokens: opts.maxTokens } : {} },
+    userId,
+    signal: AbortSignal.timeout(Math.max(3000, timeoutMs))
+  });
+  return typeof res === "string" ? { content: res, finish: "" } : { content: res?.content ?? "", finish: res?.finish_reason ?? "" };
+}
+function clip(s, n) {
+  return s.length > n ? `…${s.slice(-n)}` : s;
+}
+async function extract(r, s, playerText, reply, settings, userId, only, applied) {
+  const judged = judgedQuests(r, s);
+  const stats = r.statOrder.map((id) => r.stats[id]).filter((d) => d.narrator > 0);
+  const rels = r.relStatOrder.map((id) => r.relStats[id]).filter((d) => d.narrator > 0);
+  const conds = Object.values(r.conditions).filter((c) => c.narrator);
+  const flags = Object.values(r.flags).filter((f) => f.narrator);
+  const locs = Object.values(r.locations);
+  const want = (k) => !only || only.has(k);
+  const allowed = [];
+  if (want("minutes") && r.clock.enabled)
+    allowed.push(`- "minutes": how much in-story time the reply covers (0–${r.clock.narratorMax}).`);
+  if (want("stats") && stats.length)
+    allowed.push(`- "stats": changes (deltas) to: ${stats.map((d) => `${d.id} (±${formatNumber(d.narrator)})`).join(", ")}`);
+  if (want("rel") && rels.length)
+    allowed.push(`- "rel": per person name, deltas to: ${rels.map((d) => `${d.id} (±${formatNumber(d.narrator)})`).join(", ")}`);
+  const feelScale = rels.map((d) => `${d.id} ${d.min}–${d.max}${d.bands.length ? ` (${d.bands.map((b) => `${b.at}=${b.text}`).join(", ")})` : ""}`).join("; ");
+  const tracked = Object.values(s.people).map((p) => p.name);
+  if (want("people") && r.peopleOpen) {
+    allowed.push(`- "people": named characters who appear in the reply (speak, act, or are spoken to) and aren't tracked yet${tracked.length ? ` (already tracked: ${tracked.join(", ")})` : ""}, as [{"name": "...", "feelings": {<how they feel toward the player RIGHT NOW, absolute values>}}]${rels.length ? ` — scales: ${feelScale}` : ""}`);
+  }
+  if (want("scene") && (tracked.length || r.peopleOpen)) {
+    allowed.push(`- "present": names of everyone (tracked or new) physically in the scene with the player at the end of the reply — not people only mentioned, remembered, on the phone, or left behind. Always include it, even as [].`);
+  }
+  const uncalibrated = Object.keys(s.people).filter((id) => !s.calibrated[id]).map((id) => s.people[id].name);
+  if (want("people") && rels.length && uncalibrated.length) {
+    allowed.push(`- "feelings": for these tracked people who appear in the reply, where they stand toward the player right now (absolute values, same scales): ${uncalibrated.join(", ")} — as {"Name": {"stat": value}}`);
+  }
+  if (want("items") && (r.itemsOpen || Object.keys(r.items).length))
+    allowed.push(`- "items": item name → count gained (+) or lost (−); lost includes used up, eaten, drunk, emptied, broken, given away or taken. Held: ${Object.entries(s.items).map(([id, n]) => `${itemName(r, s, id)}${n > 1 ? ` ×${n}` : ""}`).join(", ") || "nothing"}`);
+  const withUses = Object.keys(s.items).filter((id) => (r.items[id]?.uses ?? 0) > 0);
+  if (want("used") && withUses.length)
+    allowed.push(`- "used": item name → times used, for items that have uses: ${withUses.map((id) => `${itemName(r, s, id)} (${s.uses[id] ?? r.items[id].uses}/${r.items[id].uses} uses left)`).join(", ")}`);
+  const growable = r.growth.enabled && r.growth.train ? r.statOrder.filter((id) => (r.stats[id].kind === "skill" || r.stats[id].kind === "attribute") && r.stats[id].growth > 0) : [];
+  if (want("train") && growable.length)
+    allowed.push(`- "trained": ids of abilities the player spent real effort practising, training, studying or rehearsing during the reply: ${growable.join(", ")}`);
+  if (want("encounter")) {
+    const storyEnc = !s.encounter && !s.dungeon && !s.job ? Object.values(r.encounters).filter((x) => x.fromStory) : [];
+    if (storyEnc.length)
+      allowed.push(`- "encounter": the id of one of these if it actually broke out in the reply (not just threatened): ${storyEnc.map((x) => `${x.id} (${x.name})`).join(", ")}; with "foe": the opponent's name when it's a specific person`);
+    else if (s.encounter) {
+      const def = r.encounters[s.encounter.id];
+      const outcomes = [...new Set([...Object.keys(def?.outcomes ?? {}), ...def?.momentum ? [def.momentum.win, def.momentum.lose] : []]), "broke_off"];
+      allowed.push(`- "encounter_end": only if ${def?.name ?? "the encounter"} is clearly over by the end of the reply, how it ended: ${outcomes.join(", ")}`);
+    }
+  }
+  if (want("move") && (locs.length || r.locationsOpen))
+    allowed.push(`- "move": where the player character ends up, if they moved${locs.length && !r.locationsOpen ? ` (one of: ${locs.map((l) => l.name).join(", ")})` : ""}`);
+  if (want("conditions") && conds.length)
+    allowed.push(`- "conditions": {"add": [...], "remove": [...]} from: ${conds.map((c) => c.id).join(", ")}`);
+  if (want("flags") && flags.length)
+    allowed.push(`- "flags": set any of: ${flags.map((f) => f.id).join(", ")}`);
+  if (want("wardrobe") && r.wardrobe.enabled && r.wardrobe.narrator) {
+    const worn = Object.entries(s.worn).map(([slot, id]) => `${slot}: ${itemName(r, s, id)}`).join(", ") || "nothing";
+    const owned = Object.keys(s.items).filter((id) => r.items[id]?.slot && !Object.values(s.worn).includes(id));
+    allowed.push(`- "undress": slots whose clothing came off (currently worn — ${worn})`);
+    if (owned.length)
+      allowed.push(`- "wear": ids of carried clothing put on, or that the reply shows the player wearing (${owned.join(", ")})`);
+  }
+  if (want("body") && r.body.enabled && r.body.narrator) {
+    const now = Object.entries(s.body).map(([p, t]) => `${p}: ${Object.entries(t).map(([k, v]) => `${k} ${v}`).join(", ")}`).join("; ") || "nothing recorded";
+    allowed.push(`- "body": lasting changes to the player's body as {"part": {"trait": "new value"}} (null removes a trait)${r.body.open ? "; new parts are allowed" : `; parts: ${Object.keys(r.body.parts).join(", ")}`}. Now: ${now}`);
+  }
+  if (want("quests") && (judged.length || r.storyQuests.enabled && settings.storyQuests)) {
+    const open = judged.map((j) => `${j.id} (done: ${j.done}${j.fail ? `; failed: ${j.fail}` : ""})`).join("; ");
+    allowed.push(`- "quests": {${r.storyQuests.enabled && settings.storyQuests ? `"new": [{"name": "short title", "giver": "who asked", "goal": "what counts as done", "fail": "what would count as failing (optional)", "stakes": "what's at stake (optional)", "hours": in-game hours until it's due (only if a time was set)}], ` : ""}"done": [ids], "failed": [ids]}${r.storyQuests.enabled && settings.storyQuests ? ` — new: ONLY when someone in the reply asked the player for a specific task or favour (or the player promised one) and it isn't one of these already` : ""}${open ? `; done/failed: only quests the reply clearly finished or failed. Open quests: ${open}` : ""}`);
+  }
+  if (want("memories") && Object.keys(s.people).length) {
+    allowed.push(`- "memories": {"Name": "one line, from their side, of what they'll remember about the player"} — ONLY for moments that will matter to them for a long time (a kindness, a betrayal, a promise made or broken, a humiliation, a first). Usually {}.`);
+  }
+  if (!allowed.length)
+    return null;
+  const system = [
+    "You are the bookkeeper for a text roleplay game. You never write story.",
+    "Read the narrator's latest reply and record only what CLEARLY happened in it.",
+    "Small, sensible deltas for changes. Omit anything unchanged. Do not re-apply dice outcomes that were already applied.",
+    'Exception: "feelings" (and people.feelings) are where someone stands overall right now — read them from how they act, even if that means strong values.',
+    "You may report:",
+    ...allowed,
+    'Reply with JSON only, e.g. {"minutes": 20, "stats": {"stress": 300}, "rel": {"Robin": {"trust": 3}}}. Use {} if nothing changed.'
+  ].join(`
+`);
+  const user = [
+    "Current state:",
+    stateDigest(r, s),
+    "",
+    "Player's message:",
+    clip(playerText, 1200) || "(none)",
+    "",
+    "Narrator's reply:",
+    clip(reply, 4000),
+    ...applied ? ["", "Already applied by the rules this turn (don't report these again):", applied] : []
+  ].join(`
+`);
+  try {
+    const out = firstJson(await ask(system, user, settings, userId, 30000));
+    if (!out)
+      return null;
+    const p = out;
+    if (Array.isArray(p.present)) {
+      const listed = p.present.map(String).filter(Boolean);
+      const scene = Object.fromEntries(listed.map((n) => [n, true]));
+      for (const id of presentPeople(r, s, makeEnv(r, s))) {
+        const name = s.people[id]?.name;
+        if (name && !listed.some((l) => sameName(l, name)))
+          scene[id] = false;
+      }
+      p.scene = scene;
+    }
+    delete p.present;
+    if (Array.isArray(p.trained))
+      p.train = p.trained.map(String);
+    delete p.trained;
+    if (typeof p.encounter_end === "string" && p.encounter_end)
+      p.encounterEnd = p.encounter_end;
+    delete p.encounter_end;
+    return p;
+  } catch (e) {
+    logError("extractor", e);
+    return null;
+  }
+}
+function judgedQuests(r, s) {
+  const out = [];
+  for (const [id, st] of Object.entries(s.quests ?? {})) {
+    if (st.st !== "active")
+      continue;
+    const q = questDef(r, s, id);
+    if (!q?.judge.done && !q?.judge.fail)
+      continue;
+    out.push({ id, name: q.name, done: q.judge.done ?? q.goals.map((g) => g.text).join("; "), ...q.judge.fail ? { fail: q.judge.fail } : {} });
+  }
+  return out;
+}
+var finishedProse = (t) => /[.!?…]["”’'*_)\]]*$/.test(t.trim()), sameName = (a, b) => {
+  const x = a.trim().toLowerCase(), y = b.trim().toLowerCase();
+  return x === y || x.split(/\s+/)[0] === y.split(/\s+/)[0];
+};
+var init_helpers = __esm(() => {
+  init_state();
+  init_world();
+  init_quests();
+  init_view();
+});
+
 // src/engine/dungeon/view.ts
 function fighterView(f, active) {
   return {
@@ -21802,207 +22003,6 @@ function parseImageResult(v) {
 var CUE_IMAGE_REQUEST = "vn-scene-image-request-v1", CUE_IMAGE_RESULT = "vn-scene-image-result-v1", CUE_IMAGE_CANCEL = "vn-scene-image-cancel-v1", CUE_IMAGE_FIT = "vn-scene-image-fit-v1", IMAGE_FITS, record = (v) => !!v && typeof v === "object" && !Array.isArray(v), text = (v, n) => typeof v === "string" && !!v.trim() && v.length <= n;
 var init_cue_images = __esm(() => {
   IMAGE_FITS = ["cover", "contain", "fill", "none", "scale-down"];
-});
-
-// src/backend/helpers.ts
-function firstJson(text) {
-  const cleaned = text.replace(/```(?:json)?/gi, "");
-  const start = cleaned.indexOf("{");
-  if (start < 0)
-    return null;
-  let depth = 0;
-  let inStr = false;
-  for (let i = start;i < cleaned.length; i++) {
-    const c = cleaned[i];
-    if (inStr) {
-      if (c === "\\")
-        i++;
-      else if (c === '"')
-        inStr = false;
-      continue;
-    }
-    if (c === '"')
-      inStr = true;
-    else if (c === "{")
-      depth++;
-    else if (c === "}" && --depth === 0) {
-      try {
-        return JSON.parse(cleaned.slice(start, i + 1));
-      } catch {
-        return null;
-      }
-    }
-  }
-  return null;
-}
-async function ask(system, user, settings, userId, timeoutMs, opts = {}) {
-  return (await askRaw(system, user, settings, userId, timeoutMs, opts)).content;
-}
-async function askProse(system, user, settings, userId, timeoutMs, opts = {}) {
-  const res = await askRaw(system, user, settings, userId, timeoutMs, opts);
-  const text = res.content.trim().replace(/^```\w*|```$/g, "").trim();
-  return res.finish === "length" || !finishedProse(text) ? "" : text;
-}
-async function askRaw(system, user, settings, userId, timeoutMs, opts) {
-  const res = await host().generate.quiet({
-    type: "quiet",
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: user }
-    ],
-    connection_id: settings.helperConnectionId || undefined,
-    reasoning: { source: "off" },
-    parameters: { temperature: opts.temperature ?? 0.1, ...opts.maxTokens ? { max_tokens: opts.maxTokens } : {} },
-    userId,
-    signal: AbortSignal.timeout(Math.max(3000, timeoutMs))
-  });
-  return typeof res === "string" ? { content: res, finish: "" } : { content: res?.content ?? "", finish: res?.finish_reason ?? "" };
-}
-function clip(s, n) {
-  return s.length > n ? `…${s.slice(-n)}` : s;
-}
-async function extract(r, s, playerText, reply, settings, userId, only, applied) {
-  const judged = judgedQuests(r, s);
-  const stats = r.statOrder.map((id) => r.stats[id]).filter((d) => d.narrator > 0);
-  const rels = r.relStatOrder.map((id) => r.relStats[id]).filter((d) => d.narrator > 0);
-  const conds = Object.values(r.conditions).filter((c) => c.narrator);
-  const flags = Object.values(r.flags).filter((f) => f.narrator);
-  const locs = Object.values(r.locations);
-  const want = (k) => !only || only.has(k);
-  const allowed = [];
-  if (want("minutes") && r.clock.enabled)
-    allowed.push(`- "minutes": how much in-story time the reply covers (0–${r.clock.narratorMax}).`);
-  if (want("stats") && stats.length)
-    allowed.push(`- "stats": changes (deltas) to: ${stats.map((d) => `${d.id} (±${formatNumber(d.narrator)})`).join(", ")}`);
-  if (want("rel") && rels.length)
-    allowed.push(`- "rel": per person name, deltas to: ${rels.map((d) => `${d.id} (±${formatNumber(d.narrator)})`).join(", ")}`);
-  const feelScale = rels.map((d) => `${d.id} ${d.min}–${d.max}${d.bands.length ? ` (${d.bands.map((b) => `${b.at}=${b.text}`).join(", ")})` : ""}`).join("; ");
-  const tracked = Object.values(s.people).map((p) => p.name);
-  if (want("people") && r.peopleOpen) {
-    allowed.push(`- "people": named characters who appear in the reply (speak, act, or are spoken to) and aren't tracked yet${tracked.length ? ` (already tracked: ${tracked.join(", ")})` : ""}, as [{"name": "...", "feelings": {<how they feel toward the player RIGHT NOW, absolute values>}}]${rels.length ? ` — scales: ${feelScale}` : ""}`);
-  }
-  if (want("scene") && (tracked.length || r.peopleOpen)) {
-    allowed.push(`- "present": names of everyone (tracked or new) physically in the scene with the player at the end of the reply — not people only mentioned, remembered, on the phone, or left behind. Always include it, even as [].`);
-  }
-  const uncalibrated = Object.keys(s.people).filter((id) => !s.calibrated[id]).map((id) => s.people[id].name);
-  if (want("people") && rels.length && uncalibrated.length) {
-    allowed.push(`- "feelings": for these tracked people who appear in the reply, where they stand toward the player right now (absolute values, same scales): ${uncalibrated.join(", ")} — as {"Name": {"stat": value}}`);
-  }
-  if (want("items") && (r.itemsOpen || Object.keys(r.items).length))
-    allowed.push(`- "items": item name → count gained (+) or lost (−); lost includes used up, eaten, drunk, emptied, broken, given away or taken. Held: ${Object.entries(s.items).map(([id, n]) => `${itemName(r, s, id)}${n > 1 ? ` ×${n}` : ""}`).join(", ") || "nothing"}`);
-  const withUses = Object.keys(s.items).filter((id) => (r.items[id]?.uses ?? 0) > 0);
-  if (want("used") && withUses.length)
-    allowed.push(`- "used": item name → times used, for items that have uses: ${withUses.map((id) => `${itemName(r, s, id)} (${s.uses[id] ?? r.items[id].uses}/${r.items[id].uses} uses left)`).join(", ")}`);
-  const growable = r.growth.enabled && r.growth.train ? r.statOrder.filter((id) => (r.stats[id].kind === "skill" || r.stats[id].kind === "attribute") && r.stats[id].growth > 0) : [];
-  if (want("train") && growable.length)
-    allowed.push(`- "trained": ids of abilities the player spent real effort practising, training, studying or rehearsing during the reply: ${growable.join(", ")}`);
-  if (want("encounter")) {
-    const storyEnc = !s.encounter && !s.dungeon && !s.job ? Object.values(r.encounters).filter((x) => x.fromStory) : [];
-    if (storyEnc.length)
-      allowed.push(`- "encounter": the id of one of these if it actually broke out in the reply (not just threatened): ${storyEnc.map((x) => `${x.id} (${x.name})`).join(", ")}; with "foe": the opponent's name when it's a specific person`);
-    else if (s.encounter) {
-      const def = r.encounters[s.encounter.id];
-      const outcomes = [...new Set([...Object.keys(def?.outcomes ?? {}), ...def?.momentum ? [def.momentum.win, def.momentum.lose] : []]), "broke_off"];
-      allowed.push(`- "encounter_end": only if ${def?.name ?? "the encounter"} is clearly over by the end of the reply, how it ended: ${outcomes.join(", ")}`);
-    }
-  }
-  if (want("move") && (locs.length || r.locationsOpen))
-    allowed.push(`- "move": where the player character ends up, if they moved${locs.length && !r.locationsOpen ? ` (one of: ${locs.map((l) => l.name).join(", ")})` : ""}`);
-  if (want("conditions") && conds.length)
-    allowed.push(`- "conditions": {"add": [...], "remove": [...]} from: ${conds.map((c) => c.id).join(", ")}`);
-  if (want("flags") && flags.length)
-    allowed.push(`- "flags": set any of: ${flags.map((f) => f.id).join(", ")}`);
-  if (want("wardrobe") && r.wardrobe.enabled && r.wardrobe.narrator) {
-    const worn = Object.entries(s.worn).map(([slot, id]) => `${slot}: ${itemName(r, s, id)}`).join(", ") || "nothing";
-    const owned = Object.keys(s.items).filter((id) => r.items[id]?.slot && !Object.values(s.worn).includes(id));
-    allowed.push(`- "undress": slots whose clothing came off (currently worn — ${worn})`);
-    if (owned.length)
-      allowed.push(`- "wear": ids of carried clothing put on, or that the reply shows the player wearing (${owned.join(", ")})`);
-  }
-  if (want("body") && r.body.enabled && r.body.narrator) {
-    const now = Object.entries(s.body).map(([p, t]) => `${p}: ${Object.entries(t).map(([k, v]) => `${k} ${v}`).join(", ")}`).join("; ") || "nothing recorded";
-    allowed.push(`- "body": lasting changes to the player's body as {"part": {"trait": "new value"}} (null removes a trait)${r.body.open ? "; new parts are allowed" : `; parts: ${Object.keys(r.body.parts).join(", ")}`}. Now: ${now}`);
-  }
-  if (want("quests") && (judged.length || r.storyQuests.enabled && settings.storyQuests)) {
-    const open = judged.map((j) => `${j.id} (done: ${j.done}${j.fail ? `; failed: ${j.fail}` : ""})`).join("; ");
-    allowed.push(`- "quests": {${r.storyQuests.enabled && settings.storyQuests ? `"new": [{"name": "short title", "giver": "who asked", "goal": "what counts as done", "fail": "what would count as failing (optional)", "stakes": "what's at stake (optional)", "hours": in-game hours until it's due (only if a time was set)}], ` : ""}"done": [ids], "failed": [ids]}${r.storyQuests.enabled && settings.storyQuests ? ` — new: ONLY when someone in the reply asked the player for a specific task or favour (or the player promised one) and it isn't one of these already` : ""}${open ? `; done/failed: only quests the reply clearly finished or failed. Open quests: ${open}` : ""}`);
-  }
-  if (want("memories") && Object.keys(s.people).length) {
-    allowed.push(`- "memories": {"Name": "one line, from their side, of what they'll remember about the player"} — ONLY for moments that will matter to them for a long time (a kindness, a betrayal, a promise made or broken, a humiliation, a first). Usually {}.`);
-  }
-  if (!allowed.length)
-    return null;
-  const system = [
-    "You are the bookkeeper for a text roleplay game. You never write story.",
-    "Read the narrator's latest reply and record only what CLEARLY happened in it.",
-    "Small, sensible deltas for changes. Omit anything unchanged. Do not re-apply dice outcomes that were already applied.",
-    'Exception: "feelings" (and people.feelings) are where someone stands overall right now — read them from how they act, even if that means strong values.',
-    "You may report:",
-    ...allowed,
-    'Reply with JSON only, e.g. {"minutes": 20, "stats": {"stress": 300}, "rel": {"Robin": {"trust": 3}}}. Use {} if nothing changed.'
-  ].join(`
-`);
-  const user = [
-    "Current state:",
-    stateDigest(r, s),
-    "",
-    "Player's message:",
-    clip(playerText, 1200) || "(none)",
-    "",
-    "Narrator's reply:",
-    clip(reply, 4000),
-    ...applied ? ["", "Already applied by the rules this turn (don't report these again):", applied] : []
-  ].join(`
-`);
-  try {
-    const out = firstJson(await ask(system, user, settings, userId, 30000));
-    if (!out)
-      return null;
-    const p = out;
-    if (Array.isArray(p.present)) {
-      const listed = p.present.map(String).filter(Boolean);
-      const scene = Object.fromEntries(listed.map((n) => [n, true]));
-      for (const id of presentPeople(r, s, makeEnv(r, s))) {
-        const name = s.people[id]?.name;
-        if (name && !listed.some((l) => sameName(l, name)))
-          scene[id] = false;
-      }
-      p.scene = scene;
-    }
-    delete p.present;
-    if (Array.isArray(p.trained))
-      p.train = p.trained.map(String);
-    delete p.trained;
-    if (typeof p.encounter_end === "string" && p.encounter_end)
-      p.encounterEnd = p.encounter_end;
-    delete p.encounter_end;
-    return p;
-  } catch (e) {
-    logError("extractor", e);
-    return null;
-  }
-}
-function judgedQuests(r, s) {
-  const out = [];
-  for (const [id, st] of Object.entries(s.quests ?? {})) {
-    if (st.st !== "active")
-      continue;
-    const q = questDef(r, s, id);
-    if (!q?.judge.done && !q?.judge.fail)
-      continue;
-    out.push({ id, name: q.name, done: q.judge.done ?? q.goals.map((g) => g.text).join("; "), ...q.judge.fail ? { fail: q.judge.fail } : {} });
-  }
-  return out;
-}
-var finishedProse = (t) => /[.!?…]["”’'*_)\]]*$/.test(t.trim()), sameName = (a, b) => {
-  const x = a.trim().toLowerCase(), y = b.trim().toLowerCase();
-  return x === y || x.split(/\s+/)[0] === y.split(/\s+/)[0];
-};
-var init_helpers = __esm(() => {
-  init_state();
-  init_world();
-  init_quests();
-  init_view();
 });
 
 // src/backend/decisions.ts
@@ -23042,8 +23042,8 @@ function scriptedLines(o) {
     const name = sess ? personName(o.r, o.after, sess.who) : "They";
     const reaction = reactionOf(o.rec);
     if (reaction) {
-      out.push({ speaker: null, text: pick2(REACTION_BEAT[reaction], rng).replace(/\{name\}/g, name) });
-      out.push({ speaker: name, text: pick2(REACTION_LINES[reaction], rng) });
+      out.push({ speaker: null, text: pick3(REACTION_BEAT[reaction], rng).replace(/\{name\}/g, name) });
+      out.push({ speaker: name, text: pick3(REACTION_LINES[reaction], rng) });
       return out;
     }
   }
@@ -23152,7 +23152,7 @@ ${o.lines.slice(-10).map((l) => `${l.speaker ?? "(narration)"}: ${l.text}`).join
     return fallback;
   }
 }
-var MAX_LINES = 4, MAX_CHARS = 400, REACTION_LINES, REACTION_BEAT, pick2 = (xs, rng) => xs[Math.floor(rng() * xs.length) % xs.length], SYSTEM;
+var MAX_LINES = 4, MAX_CHARS = 400, REACTION_LINES, REACTION_BEAT, pick3 = (xs, rng) => xs[Math.floor(rng() * xs.length) % xs.length], SYSTEM;
 var init_snippets = __esm(() => {
   init_dice();
   init_state();
@@ -23708,12 +23708,12 @@ function scriptedRound(o) {
     move = `${subject} ${pov === "second" ? "hold" : "holds"} back, looking for an opening`;
   move = stop(move);
   if (used.includes(move))
-    move = `${pick3(AGAIN, rng)} ${lc(move)}`;
+    move = `${pick4(AGAIN, rng)} ${lc(move)}`;
   parts.push(move);
   const hint = authoredHint(o.action, o.rec);
-  const outcome = hint ? stop(told(hint, pov, o.player)) : o.card.check ? pick3(TIER_PLAIN[o.rec.check.tier], rng) : "";
+  const outcome = hint ? stop(told(hint, pov, o.player)) : o.card.check ? pick4(TIER_PLAIN[o.rec.check.tier], rng) : "";
   if (outcome)
-    parts.push(used.includes(outcome) && o.card.check ? pick3(TIER_PLAIN[o.rec.check.tier].filter((x) => !used.includes(x)).concat(TIER_PLAIN[o.rec.check.tier]), rng) : outcome);
+    parts.push(used.includes(outcome) && o.card.check ? pick4(TIER_PLAIN[o.rec.check.tier].filter((x) => !used.includes(x)).concat(TIER_PLAIN[o.rec.check.tier]), rng) : outcome);
   if (o.card.foe)
     parts.push(stop(`${foeName(o.r, o.before)} ${lc(told(o.card.foe, pov, o.player))}`));
   return parts.join(" ");
@@ -23809,7 +23809,7 @@ ${o.rounds.slice(-8).join(`
     return fallback;
   }
 }
-var MODALS, NOT_VERBS, cap2 = (t) => t ? t.charAt(0).toUpperCase() + t.slice(1) : t, lc = (t) => t ? t.charAt(0).toLowerCase() + t.slice(1) : t, stop = (t) => /[.!?…"”]$/.test(t.trim()) ? t.trim() : `${t.trim()}.`, pick3 = (xs, rng) => xs[Math.floor(rng() * xs.length) % xs.length], TIER_PLAIN, AGAIN, ROUND_SYSTEM;
+var MODALS, NOT_VERBS, cap2 = (t) => t ? t.charAt(0).toUpperCase() + t.slice(1) : t, lc = (t) => t ? t.charAt(0).toLowerCase() + t.slice(1) : t, stop = (t) => /[.!?…"”]$/.test(t.trim()) ? t.trim() : `${t.trim()}.`, pick4 = (xs, rng) => xs[Math.floor(rng() * xs.length) % xs.length], TIER_PLAIN, AGAIN, ROUND_SYSTEM;
 var init_encounter_lines = __esm(() => {
   init_dice();
   init_resolve();
@@ -27551,6 +27551,1571 @@ init_resolve();
 init_templates();
 init_ledger();
 init_settings();
+
+// src/frontend/doll/geom.ts
+var lerp = (a, b, t) => a + (b - a) * t;
+var clamp2 = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+var f = (n) => (Math.round(n * 10) / 10).toString();
+function poly(pts) {
+  if (!pts.length)
+    return "";
+  return `M${pts.map((p) => `${f(p.x)} ${f(p.y)}`).join("L")}Z`;
+}
+function line(pts) {
+  if (!pts.length)
+    return "";
+  return `M${pts.map((p) => `${f(p.x)} ${f(p.y)}`).join("L")}`;
+}
+function ellipse(c, rx, ry) {
+  return `M${f(c.x - rx)} ${f(c.y)}a${f(rx)} ${f(ry)} 0 1 0 ${f(rx * 2)} 0a${f(rx)} ${f(ry)} 0 1 0 ${f(-rx * 2)} 0Z`;
+}
+function spline(knots, steps = 8) {
+  if (knots.length < 3)
+    return knots.slice();
+  const out = [];
+  for (let i = 0;i < knots.length - 1; i++) {
+    const p0 = knots[Math.max(0, i - 1)], p1 = knots[i], p2 = knots[i + 1], p3 = knots[Math.min(knots.length - 1, i + 2)];
+    for (let s = 0;s < steps; s++) {
+      const t = s / steps, t2 = t * t, t3 = t2 * t;
+      const k = (a, b, c, d) => 0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
+      out.push({ x: k(p0.x, p1.x, p2.x, p3.x), y: k(p0.y, p1.y, p2.y, p3.y) });
+    }
+  }
+  out.push(knots[knots.length - 1]);
+  return out;
+}
+function closedSpline(knots, steps = 8) {
+  const n = knots.length;
+  const out = [];
+  for (let i = 0;i < n; i++) {
+    const p0 = knots[(i - 1 + n) % n], p1 = knots[i], p2 = knots[(i + 1) % n], p3 = knots[(i + 2) % n];
+    for (let s = 0;s < steps; s++) {
+      const t = s / steps, t2 = t * t, t3 = t2 * t;
+      const k = (a, b, c, d) => 0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
+      out.push({ x: k(p0.x, p1.x, p2.x, p3.x), y: k(p0.y, p1.y, p2.y, p3.y) });
+    }
+  }
+  return out;
+}
+function hull(a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const d = Math.hypot(dx, dy) || 0.000001;
+  const th = Math.atan2(dy, dx);
+  const al = Math.acos(clamp2((a.r - b.r) / d, -1, 1));
+  const at = (c, ang) => ({ x: c.x + c.r * Math.cos(ang), y: c.y + c.r * Math.sin(ang) });
+  return [at(a, th + al), at(b, th + al), at(b, th - al), at(a, th - al)];
+}
+function along(chain, t) {
+  const lens = chain.slice(1).map((j, i) => Math.hypot(j.x - chain[i].x, j.y - chain[i].y));
+  const total = lens.reduce((a, b) => a + b, 0);
+  let want = clamp2(t, 0, 1) * total;
+  for (let i = 0;i < lens.length; i++) {
+    if (want <= lens[i] || i === lens.length - 1) {
+      const k = lens[i] ? clamp2(want / lens[i], 0, 1) : 0;
+      const a = chain[i], b = chain[i + 1];
+      return { x: lerp(a.x, b.x, k), y: lerp(a.y, b.y, k), r: lerp(a.r, b.r, k) };
+    }
+    want -= lens[i];
+  }
+  return chain[chain.length - 1];
+}
+function segment(chain, t0, t1) {
+  const lens = chain.slice(1).map((j, i) => Math.hypot(j.x - chain[i].x, j.y - chain[i].y));
+  const total = lens.reduce((a, b) => a + b, 0);
+  const out = [along(chain, t0)];
+  let acc = 0;
+  for (let i = 0;i < lens.length - 1; i++) {
+    acc += lens[i];
+    const t = acc / total;
+    if (t > t0 && t < t1)
+      out.push(chain[i + 1]);
+  }
+  out.push(along(chain, t1));
+  return out;
+}
+function clipPoly(pts, a, b, side = 1) {
+  const s = (p) => side * ((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x));
+  const out = [];
+  for (let i = 0;i < pts.length; i++) {
+    const p = pts[i], q = pts[(i + 1) % pts.length];
+    const sp = s(p), sq = s(q);
+    if (sp >= 0)
+      out.push(p);
+    if (sp >= 0 !== sq >= 0) {
+      const t = sp / (sp - sq);
+      out.push({ x: lerp(p.x, q.x, t), y: lerp(p.y, q.y, t) });
+    }
+  }
+  return out;
+}
+function rng(seed) {
+  let h = 2166136261;
+  for (let i = 0;i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return () => {
+    h += 1831565813;
+    let t = h;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function hexToRgb(hex) {
+  let h = hex.replace("#", "").trim();
+  if (h.length === 3)
+    h = h.split("").map((c) => c + c).join("");
+  const n = parseInt(h.slice(0, 6), 16);
+  if (!Number.isFinite(n))
+    return [128, 128, 128];
+  return [n >> 16 & 255, n >> 8 & 255, n & 255];
+}
+var toHex = (r, g, b) => "#" + [r, g, b].map((v) => Math.round(clamp2(v, 0, 255)).toString(16).padStart(2, "0")).join("");
+function mix(a, b, t) {
+  const x = hexToRgb(a), y = hexToRgb(b);
+  return toHex(lerp(x[0], y[0], t), lerp(x[1], y[1], t), lerp(x[2], y[2], t));
+}
+var shade = (c, t) => mix(c, "#2a1f3d", t);
+var light = (c, t) => mix(c, "#ffffff", t);
+var ink = (c) => mix(shade(c, 0.62), "#241a2c", 0.35);
+
+// src/frontend/doll/body.ts
+var F_BASE = { height: 1, head: 1, neck: 8.5, shoulder: 39, chest: 32, bust: 0.5, waist: 24, hip: 38, thigh: 15, knee: 9, calf: 10.5, ankle: 5.8, arm: 7, fore: 6, wrist: 4.2, belly: 0, muscle: 0, jaw: 0 };
+var M_BASE = { height: 1.06, head: 1, neck: 11.5, shoulder: 49, chest: 40, bust: 0, waist: 32, hip: 35, thigh: 15, knee: 10, calf: 11.5, ankle: 7, arm: 9, fore: 7.8, wrist: 5.4, belly: 0, muscle: 0.3, jaw: 0.7 };
+var PRESETS = {
+  f: {
+    slim: { label: "Slim", shape: { shoulder: 36, chest: 29, bust: 0.25, waist: 21, hip: 33, thigh: 12.5, knee: 8.2, calf: 9.2, arm: 6, fore: 5.2, wrist: 3.8 } },
+    athletic: { label: "Athletic", shape: { shoulder: 42, chest: 34, bust: 0.4, waist: 25, hip: 36, thigh: 15.5, calf: 11.5, arm: 8, fore: 6.8, muscle: 0.6, height: 1.02 } },
+    curvy: { label: "Curvy", shape: { shoulder: 39, chest: 33, bust: 1, waist: 23.5, hip: 45, thigh: 18, knee: 10, calf: 11.5, arm: 7.5, fore: 6.3 } },
+    heavy: { label: "Heavy", shape: { neck: 10.5, shoulder: 45, chest: 41, bust: 1, waist: 39, hip: 51, thigh: 22, knee: 12.5, calf: 14, ankle: 7, arm: 11, fore: 9, wrist: 5, belly: 0.8 } }
+  },
+  m: {
+    slim: { label: "Slim", shape: { neck: 10, shoulder: 44, chest: 35, waist: 27.5, hip: 31, thigh: 13, knee: 9, calf: 10, arm: 7.8, fore: 6.8, wrist: 4.8, muscle: 0.1 } },
+    athletic: { label: "Athletic", shape: { neck: 12, shoulder: 52, chest: 42, waist: 30.5, hip: 34, thigh: 16, calf: 12.5, arm: 10.5, fore: 8.8, muscle: 0.75 } },
+    broad: { label: "Broad", shape: { neck: 14, shoulder: 59, chest: 48, waist: 36, hip: 37, thigh: 18.5, knee: 11.5, calf: 14, ankle: 8, arm: 13, fore: 10.5, wrist: 6.2, muscle: 1, height: 1.08 } },
+    heavy: { label: "Heavy", shape: { neck: 14, shoulder: 54, chest: 48, waist: 47, hip: 46, thigh: 20.5, knee: 12, calf: 13.5, ankle: 8, arm: 12, fore: 10, belly: 1, muscle: 0.1 } }
+  }
+};
+function shapeOf(b) {
+  const base = b.sex === "m" ? M_BASE : F_BASE;
+  const set = PRESETS[b.sex];
+  const a = { ...base, ...(set[b.preset] ?? Object.values(set)[0]).shape };
+  let s = a;
+  if (b.blend && set[b.blend.preset]) {
+    const c = { ...base, ...set[b.blend.preset].shape };
+    const t = clamp2(b.blend.amount, 0, 1);
+    s = Object.fromEntries(Object.keys(a).map((k) => [k, lerp(a[k], c[k], t)]));
+  }
+  if (b.height)
+    s = { ...s, height: s.height * clamp2(b.height, 0.85, 1.15) };
+  return s;
+}
+var CX = 120;
+var GROUND = 522;
+function buildBody(pick) {
+  const s = shapeOf(pick);
+  const H = s.height;
+  const Y = (v) => GROUND - (GROUND - v) * H;
+  const headRy = 33.5 * s.head * (pick.sex === "m" ? 1.02 : 1);
+  const headRx = 28 * s.head * (pick.sex === "m" ? 1.04 : 1);
+  const head = { c: { x: CX, y: Y(70) }, rx: headRx, ry: headRy };
+  const neckTop = head.c.y + headRy * 0.62;
+  const neckBot = Y(118);
+  const shoulderY = Y(126);
+  const armpitY = Y(148);
+  const bustY = Y(165);
+  const underY = Y(182);
+  const waistY = Y(214);
+  const hipY = Y(252);
+  const crotchY = Y(284);
+  const kneeY = Y(392);
+  const ankleY = Y(486);
+  const belly = s.belly;
+  const prof = [
+    { x: s.neck, y: neckBot - 4 },
+    { x: s.neck + 1.5, y: neckBot },
+    { x: lerp(s.neck, s.shoulder, 0.62), y: shoulderY - 3 },
+    { x: s.shoulder, y: shoulderY + 7 },
+    { x: s.chest + 1 + s.muscle * 2, y: armpitY + 2 },
+    { x: s.chest + s.bust * 3 + s.muscle * 1.5, y: bustY },
+    { x: lerp(s.chest, s.waist, 0.35) + belly * 6, y: underY },
+    { x: s.waist + belly * 5, y: waistY },
+    { x: lerp(s.waist, s.hip, 0.75) + belly * 3, y: lerp(waistY, hipY, 0.55) },
+    { x: s.hip, y: hipY },
+    { x: s.hip - 2.5, y: crotchY - 6 }
+  ];
+  const profile = spline(prof, 10).map((p) => ({ x: p.x, y: p.y }));
+  const sj = { x: CX + s.shoulder - s.arm * 0.75, y: shoulderY + s.arm * 0.95, r: s.arm + s.muscle * 1.2 };
+  const elbowY = Y(216), wristY = Y(282);
+  const spread = 8 + s.hip * 0.18 + belly * 6;
+  const arm = [
+    sj,
+    { x: sj.x + spread * 0.4, y: lerp(sj.y, elbowY, 0.45), r: s.arm * 0.98 + s.muscle * 1.6 },
+    { x: sj.x + spread * 0.78, y: elbowY, r: s.fore * 0.92 },
+    { x: sj.x + spread * 0.95, y: lerp(elbowY, wristY, 0.35), r: s.fore + s.muscle * 0.6 },
+    { x: sj.x + spread * 1.12, y: wristY, r: s.wrist }
+  ];
+  const w = arm[arm.length - 1];
+  const handLen = 16 * H;
+  const hand = { c: { x: w.x + 2.5, y: w.y + handLen }, rx: s.wrist * 1.55, ry: handLen * 1.05, angle: -7 };
+  const thighR = Math.max(s.thigh, (s.hip - (pick.sex === "m" ? 4 : 1.5)) / 2);
+  const legX = s.hip - thighR;
+  const kneeX = legX - thighR * 0.28 + s.knee * 0.3;
+  const leg = [
+    { x: CX + legX, y: hipY - 2, r: thighR },
+    { x: CX + lerp(legX, kneeX, 0.45), y: lerp(hipY, kneeY, 0.42), r: lerp(thighR, s.knee, 0.4) },
+    { x: CX + kneeX, y: kneeY, r: s.knee },
+    { x: CX + kneeX + 0.5, y: lerp(kneeY, ankleY, 0.3), r: s.calf },
+    { x: CX + kneeX + 1.5, y: lerp(kneeY, ankleY, 0.72), r: lerp(s.calf, s.ankle, 0.65) },
+    { x: CX + kneeX + 2.5, y: ankleY, r: s.ankle }
+  ];
+  const foot = { c: { x: CX + kneeX + 5, y: GROUND - 10 }, rx: s.ankle * 1.45 + 1.5, ry: 12 };
+  const breast = pick.sex === "f" && s.bust > 0.05 ? { x: CX + s.chest * 0.46, y: bustY + 2, r: 8 + s.bust * 8.5 } : null;
+  const legY = (t) => lerp(hipY, ankleY, t);
+  return { sex: pick.sex, s, cx: CX, ground: GROUND, head, neckTop, neckBot, shoulderY, armpitY, bustY, underY, waistY, hipY, crotchY, profile, arm, hand, leg, foot, breast, legY };
+}
+function widthAt(b, y) {
+  const p = b.profile;
+  if (y <= p[0].y)
+    return p[0].x;
+  for (let i = 1;i < p.length; i++) {
+    if (p[i].y >= y) {
+      const t = (y - p[i - 1].y) / (p[i].y - p[i - 1].y || 1);
+      return lerp(p[i - 1].x, p[i].x, t);
+    }
+  }
+  return p[p.length - 1].x;
+}
+var mirrorChain = (b, c) => c.map((j) => ({ ...j, x: 2 * b.cx - j.x }));
+function trunkSlice(b, y0, y1, grow = 0, opts = {}) {
+  const ys = [y0];
+  for (const p of b.profile)
+    if (p.y > y0 && p.y < y1)
+      ys.push(p.y);
+  ys.push(y1);
+  const span = Math.max(1, y1 - y0);
+  const wAt = (y) => {
+    let w = widthAt(b, y) + grow;
+    if (opts.maxW)
+      w = Math.min(w, opts.maxW(y));
+    if (opts.flare)
+      w += opts.flare * Math.max(0, (y - y0) / span) ** 1.5 * 10;
+    return w;
+  };
+  const right = ys.map((y) => ({ x: b.cx + wAt(y), y }));
+  const left = ys.map((y) => ({ x: b.cx - wAt(y), y })).reverse();
+  const dip = opts.hemDip ?? 0;
+  const hem = dip ? [{ x: b.cx, y: y1 + dip }] : [];
+  return [...(opts.top ?? [left[left.length - 1], right[0]]).slice(), ...right.slice(1), ...hem, ...left.slice(0, -1)];
+}
+
+// src/frontend/doll/features.ts
+var HAIR_STYLES = ["long", "bob", "ponytail", "twintails", "short", "spiky", "messy", "bun", "buzz"];
+var EARS = ["cat", "fox", "wolf", "bunny", "elf"];
+var TAILS = ["fox", "cat", "wolf", "demon", "kitsune"];
+var HORNS = ["small", "ram", "oni"];
+var EXPRESSIONS = ["neutral", "smile", "serious", "surprised", "smug"];
+var P = (b, u, v) => ({ x: b.head.c.x + u * b.head.rx, y: b.head.c.y + v * b.head.ry });
+function strand(root, o) {
+  const N = 28;
+  const t0 = o.t0 ?? 0, t1 = o.t1 ?? 1;
+  const peak = o.peak ?? 0.35, tipW = o.tip ?? 0, baseW = o.base ?? 0.7;
+  const centre = [];
+  const ang = [];
+  let p = { ...root };
+  for (let i = 0;i <= N; i++) {
+    const t = i / N;
+    const a = (o.angle + o.bend * t + (o.wave ? Math.sin(t * Math.PI * 2) * o.wave : 0)) * Math.PI / 180;
+    centre.push({ ...p });
+    ang.push(a);
+    p = { x: p.x + Math.cos(a) * (o.length / N), y: p.y + Math.sin(a) * (o.length / N) };
+  }
+  const width = (t) => {
+    const k = t < peak ? lerp(baseW, 1, Math.sin(t / peak * Math.PI / 2)) : lerp(1, tipW, ((t - peak) / (1 - peak)) ** 1.4);
+    return o.width / 2 * k;
+  };
+  const L = [], R = [];
+  for (let i = 0;i <= N; i++) {
+    const t = i / N;
+    if (t < t0 - 0.000000001 || t > t1 + 0.000000001)
+      continue;
+    const a = ang[i], w = width(t), c = centre[i];
+    L.push({ x: c.x + Math.cos(a - Math.PI / 2) * w, y: c.y + Math.sin(a - Math.PI / 2) * w });
+    R.push({ x: c.x + Math.cos(a + Math.PI / 2) * w, y: c.y + Math.sin(a + Math.PI / 2) * w });
+  }
+  return [...L, ...R.reverse()];
+}
+function tips(a, b, n, depth, seed, dirY = 1) {
+  const out = [];
+  for (let i = 0;i <= n * 2; i++) {
+    const t = i / (n * 2);
+    const tipish = i % 2 === 1;
+    const jitter = Math.sin(seed + i * 2.3) * 0.35 + 1;
+    out.push({ x: lerp(a.x, b.x, t) + (tipish ? Math.sin(seed + i) * 1.5 : 0), y: lerp(a.y, b.y, t) + (tipish ? depth * jitter * dirY : 0) });
+  }
+  return out;
+}
+function headPath(b) {
+  const j = b.s.jaw;
+  const k = [[0, -1], [0.72, -0.8], [1, -0.18], [0.97, 0.3], [0.72 + j * 0.12, 0.72], [0.3 + j * 0.12, 0.97], [0, 1.02]];
+  const pts = [...k, ...k.slice(1, -1).reverse().map(([u, v]) => [-u, v])].map(([u, v]) => P(b, u, v));
+  return poly(closedSpline(pts, 8));
+}
+function neckPath(b) {
+  const n = b.s.neck;
+  return poly([{ x: b.cx - n * 0.85, y: b.neckTop - 8 }, { x: b.cx + n * 0.85, y: b.neckTop - 8 }, { x: b.cx + n * 1.02, y: b.neckBot + 2 }, { x: b.cx - n * 1.02, y: b.neckBot + 2 }]);
+}
+function earPath(b, side, elf) {
+  const base = P(b, side * 0.94, 0.12);
+  if (elf) {
+    return poly(spline([P(b, side * 0.9, -0.1), { x: base.x + side * b.head.rx * 0.75, y: base.y - b.head.ry * 0.42 }, P(b, side * 1.02, 0.25), P(b, side * 0.92, 0.36)], 6));
+  }
+  return poly(closedSpline([P(b, side * 0.92, -0.05), P(b, side * 1.12, 0.02), P(b, side * 1.1, 0.3), P(b, side * 0.93, 0.36)], 6));
+}
+function face(b, eyes, expr, skin, lineC) {
+  const fem = b.sex === "f";
+  const ew = b.head.rx * (fem ? 0.36 : 0.32), eh = b.head.ry * (fem ? 0.27 : 0.18);
+  const ey = b.head.c.y + b.head.ry * 0.2;
+  const dark = mix(eyes, "#120c1c", 0.55);
+  const lash = "#231827";
+  const parts = [];
+  for (const side of [-1, 1]) {
+    const ex = b.head.c.x + side * b.head.rx * 0.42;
+    const inner = ex - side * ew * 0.95, outer = ex + side * ew * 0.95;
+    const top = ey - eh * (expr === "surprised" ? 0.62 : 0.5);
+    const bottom = ey + eh * 0.5;
+    const narrow = expr === "serious" || expr === "smug" ? 0.25 : 0;
+    const t = top + eh * narrow;
+    parts.push(`<path d="${poly(spline([{ x: inner, y: ey + eh * 0.05 }, { x: ex, y: t - eh * 0.04 }, { x: outer, y: ey - eh * 0.1 }, { x: outer - side * ew * 0.15, y: bottom - eh * 0.1 }, { x: ex, y: bottom }, { x: inner, y: ey + eh * 0.15 }], 5))}" fill="#fbf8ff"/>`);
+    const ir = ew * (fem ? 0.6 : 0.55);
+    const irY = ey + eh * 0.06;
+    parts.push(`<ellipse cx="${f(ex)}" cy="${f(irY)}" rx="${f(ir)}" ry="${f(eh * 0.58)}" fill="${eyes}"/>`);
+    parts.push(`<ellipse cx="${f(ex)}" cy="${f(irY - eh * 0.18)}" rx="${f(ir)}" ry="${f(eh * 0.34)}" fill="${dark}" opacity=".55"/>`);
+    parts.push(`<ellipse cx="${f(ex)}" cy="${f(irY + eh * 0.04)}" rx="${f(ir * 0.42)}" ry="${f(eh * 0.3)}" fill="#120c1c"/>`);
+    parts.push(`<ellipse cx="${f(ex - side * ir * 0.38)}" cy="${f(irY - eh * 0.2)}" rx="${f(ir * 0.3)}" ry="${f(eh * 0.17)}" fill="#fff"/>`);
+    parts.push(`<circle cx="${f(ex + side * ir * 0.35)}" cy="${f(irY + eh * 0.26)}" r="${f(ir * 0.13)}" fill="#fff" opacity=".85"/>`);
+    parts.push(`<path d="M${f(inner - 3 * side)} ${f(t - eh)}L${f(outer + side * 3)} ${f(t - eh)}L${f(outer + side * 3)} ${f(ey - eh * 0.18)}Q${f(ex)} ${f(t - eh * 0.62)} ${f(inner - 1 * side)} ${f(ey + eh * 0.04)}Z" fill="${skin}"/>`);
+    const lashW = fem ? 2.6 : 2;
+    parts.push(`<path d="M${f(inner)} ${f(ey + eh * 0.02)}Q${f(ex)} ${f(t - eh * 0.62)} ${f(outer + side * 1.5)} ${f(ey - eh * 0.2)}" stroke="${lash}" stroke-width="${lashW}" fill="none" stroke-linecap="round"/>`);
+    if (fem)
+      parts.push(`<path d="M${f(outer - side * 1)} ${f(ey - eh * 0.2)}l${f(side * 4)} ${f(-2.5)}" stroke="${lash}" stroke-width="1.6" stroke-linecap="round"/>`);
+    parts.push(`<path d="M${f(ex - side * ew * 0.2)} ${f(bottom + 0.5)}Q${f(ex + side * ew * 0.4)} ${f(bottom + 0.8)} ${f(outer - side * ew * 0.1)} ${f(ey + eh * 0.25)}" stroke="${lineC}" stroke-width=".9" fill="none" opacity=".7"/>`);
+    const by = top - eh * (expr === "surprised" ? 1.25 : 0.95) - (fem ? 1.5 : 0);
+    const tilt = expr === "serious" ? 3.5 : expr === "smug" ? side === 1 ? -2 : 1.5 : -0.5;
+    parts.push(`<path d="M${f(ex - side * ew * 0.85)} ${f(by + tilt)}Q${f(ex - side * ew * 0.1)} ${f(by - 3)} ${f(ex + side * ew * 1)} ${f(by + 2.5 - tilt * 0.3)}" stroke="${lineC}" stroke-width="${fem ? 1.3 : 2.1}" fill="none" stroke-linecap="round"/>`);
+  }
+  if (fem)
+    for (const side of [-1, 1])
+      parts.push(`<ellipse cx="${f(b.head.c.x + side * b.head.rx * 0.52)}" cy="${f(ey + eh * 1.05)}" rx="${f(b.head.rx * 0.17)}" ry="${f(b.head.ry * 0.06)}" fill="#ff7b9c" opacity=".22"/>`);
+  const ny = b.head.c.y + b.head.ry * 0.5;
+  parts.push(`<path d="M${f(b.head.c.x + 0.5)} ${f(ny - 3)}l${f(1.6)} ${f(3.6)}l${f(-2.2)} ${f(0.6)}" stroke="${shade(skin, 0.35)}" stroke-width="1" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`);
+  const my = b.head.c.y + b.head.ry * 0.71, mw = b.head.rx * (fem ? 0.17 : 0.22);
+  const mouth = {
+    neutral: `M${f(b.head.c.x - mw)} ${f(my)}Q${f(b.head.c.x)} ${f(my + 1.6)} ${f(b.head.c.x + mw)} ${f(my)}`,
+    smile: `M${f(b.head.c.x - mw * 1.2)} ${f(my - 1.5)}Q${f(b.head.c.x)} ${f(my + 4.5)} ${f(b.head.c.x + mw * 1.2)} ${f(my - 1.5)}`,
+    serious: `M${f(b.head.c.x - mw)} ${f(my + 0.5)}L${f(b.head.c.x + mw)} ${f(my + 0.3)}`,
+    surprised: "",
+    smug: `M${f(b.head.c.x - mw)} ${f(my + 0.5)}Q${f(b.head.c.x + mw * 0.3)} ${f(my + 1.5)} ${f(b.head.c.x + mw * 1.2)} ${f(my - 2)}`
+  }[expr];
+  if (expr === "surprised")
+    parts.push(`<ellipse cx="${f(b.head.c.x)}" cy="${f(my + 1)}" rx="${f(mw * 0.45)}" ry="${f(mw * 0.6)}" fill="#7a2a3a" stroke="${lineC}" stroke-width="1"/>`);
+  else
+    parts.push(`<path d="${mouth}" stroke="${lineC}" stroke-width="1.3" fill="none" stroke-linecap="round"/>`);
+  return parts.join("");
+}
+function hair(b, style, length = 0.6) {
+  const rx = b.head.rx, ry = b.head.ry;
+  const out = { back: [], front: [], extra: [] };
+  const fem = b.sex === "f";
+  const cap = (bang, sideDown) => {
+    const arcK = [P(b, -1.04, sideDown), P(b, -1.13, -0.25), P(b, -0.98, -0.82), P(b, -0.55, -1.14), P(b, 0, -1.2), P(b, 0.55, -1.14), P(b, 0.98, -0.82), P(b, 1.13, -0.25), P(b, 1.04, sideDown)];
+    let top = spline(arcK, 8);
+    if (bang === "spiky") {
+      top = [];
+      const n = 7;
+      for (let i = 0;i <= n * 2; i++) {
+        const a = Math.PI + i / (n * 2) * Math.PI;
+        const r = i % 2 ? 1.42 + Math.sin(i * 1.7) * 0.1 : 1.08;
+        top.push(P(b, Math.cos(a) * r * 1.05, Math.sin(a) * r * 0.98 - 0.12));
+      }
+      top.unshift(P(b, -1.04, sideDown));
+      top.push(P(b, 1.04, sideDown));
+    }
+    const sideTip = (s) => P(b, s * 0.92, sideDown + 0.12);
+    let bottom;
+    switch (bang) {
+      case "full":
+        bottom = tips(P(b, 0.9, 0), P(b, -0.9, 0), 6, ry * 0.12, 3);
+        bottom = bottom.map((p) => ({ x: p.x, y: p.y - ry * 0.12 * (1 - Math.abs((p.x - b.head.c.x) / rx)) }));
+        break;
+      case "side":
+        bottom = [P(b, 0.92, -0.1), P(b, 0.55, -0.45), P(b, 0.3, -0.2), P(b, 0.05, -0.5), P(b, -0.35, -0.12), P(b, -0.55, -0.3), P(b, -0.85, 0.15)];
+        break;
+      case "spiky":
+        bottom = tips(P(b, 0.9, -0.25), P(b, -0.9, -0.25), 5, ry * 0.25, 1.5);
+        break;
+      case "short":
+        bottom = tips(P(b, 0.9, -0.35), P(b, -0.9, -0.35), 6, ry * 0.12, 2);
+        break;
+      default:
+        bottom = spline([P(b, 0.92, -0.3), P(b, 0.5, -0.62), P(b, 0, -0.68), P(b, -0.5, -0.62), P(b, -0.92, -0.3)], 6);
+    }
+    return poly([...top, sideTip(1), ...bottom, sideTip(-1)]);
+  };
+  const lockPair = (len, width, wave = 0) => [-1, 1].map((s) => poly(strand(P(b, s * 0.95, -0.15), { angle: 90 - s * 4, bend: s * 6, length: len, width, peak: 0.25, tip: 0.05, base: 0.9, wave })));
+  const back = (bottomY, halfW, jag = 8) => {
+    const L = P(b, -1.12, -0.5), R = P(b, 1.12, -0.5);
+    const side = (s) => spline([P(b, s * 1.12, -0.5), P(b, s * 1.25, 0.4), { x: b.cx + s * halfW, y: lerp(b.head.c.y + ry, bottomY, 0.55) }, { x: b.cx + s * halfW * 0.92, y: bottomY - 4 }], 8);
+    const r = side(1), l = side(-1).reverse();
+    const crown = spline([L, P(b, -0.6, -1.15), P(b, 0, -1.22), P(b, 0.6, -1.15), R], 8);
+    const bottom = tips({ x: b.cx + halfW * 0.92, y: bottomY - 4 }, { x: b.cx - halfW * 0.92, y: bottomY - 4 }, jag, 10, 5);
+    return poly([...crown, ...r.slice(1), ...bottom, ...l.slice(1)]);
+  };
+  const lenY = (t) => lerp(b.shoulderY + 10, b.hipY + 10, t);
+  switch (style) {
+    case "long":
+      out.back.push(back(lenY(clamp2(length, 0.3, 1)), b.s.shoulder * 0.95 + 4, 7));
+      out.front.push(cap("full", 0.3), ...lockPair((lenY(clamp2(length, 0.3, 1)) - b.head.c.y) * 0.62, rx * 0.42, 6));
+      break;
+    case "bob":
+      out.back.push(back(b.head.c.y + ry * 1.25, rx * 1.38, 6));
+      out.front.push(cap("full", 0.75));
+      break;
+    case "messy":
+      out.back.push(back(lenY(0.12), rx * 1.5, 6));
+      out.front.push(cap("side", 0.5), ...lockPair(ry * 1.2, rx * 0.36, 10));
+      break;
+    case "ponytail": {
+      out.back.push(back(b.head.c.y + ry * 0.7, rx * 1.15, 4));
+      out.back.push(poly(strand(P(b, 0.55, -0.85), { angle: 20, bend: 95, length: 60 + 130 * clamp2(length, 0.2, 1), width: rx * 0.85, peak: 0.3, tip: 0.05, wave: 8 })));
+      out.front.push(cap("side", 0.35));
+      out.extra.push(`tie:${f(P(b, 0.8, -0.8).x)},${f(P(b, 0.8, -0.8).y)}`);
+      break;
+    }
+    case "twintails":
+      out.back.push(back(b.head.c.y + ry * 0.75, rx * 1.15, 4));
+      for (const s of [-1, 1])
+        out.back.push(poly(strand(P(b, s * 0.85, -0.7), { angle: 90 - s * 48, bend: s * 40, length: 70 + 140 * clamp2(length, 0.2, 1), width: rx * 0.8, peak: 0.35, tip: 0.04, wave: 7, base: 0.5 })));
+      out.front.push(cap("full", 0.3));
+      break;
+    case "bun":
+      out.back.push(back(b.head.c.y + ry * 0.6, rx * 1.12, 4));
+      out.front.push(cap("side", 0.25));
+      out.front.push(ellipse(P(b, 0, -1.25), rx * 0.48, ry * 0.36));
+      break;
+    case "short":
+      out.back.push(back(b.head.c.y + ry * (fem ? 0.75 : 0.45), rx * 1.12, 5));
+      out.front.push(cap("short", fem ? 0.35 : 0));
+      break;
+    case "spiky":
+      out.back.push(back(b.head.c.y + ry * 0.5, rx * 1.15, 5));
+      out.front.push(cap("spiky", 0));
+      break;
+    case "buzz":
+      out.front.push(cap("none", -0.15));
+      break;
+  }
+  return out;
+}
+function animalEars(b, kind, colour) {
+  if (kind === "elf")
+    return null;
+  const rx = b.head.rx, ry = b.head.ry;
+  const outer = [], innerD = [], tipD = [];
+  for (const s of [-1, 1]) {
+    if (kind === "bunny") {
+      const root = P(b, s * 0.38, -0.95);
+      outer.push(poly(strand(root, { angle: -90 + s * 12, bend: s * 14, length: ry * 1.75, width: rx * 0.46, peak: 0.55, tip: 0.35, base: 0.6 })));
+      innerD.push(poly(strand({ x: root.x, y: root.y - ry * 0.25 }, { angle: -90 + s * 12, bend: s * 14, length: ry * 1.35, width: rx * 0.22, peak: 0.6, tip: 0.3, base: 0.4 })));
+      continue;
+    }
+    const big = kind === "fox" ? 1.15 : kind === "wolf" ? 1.05 : 0.85;
+    const a = P(b, s * 0.2, -1), c = P(b, s * 0.98, -0.62);
+    const tipP = P(b, s * (0.78 + 0.1 * big), -1 - 0.72 * big);
+    const ear = spline([a, { x: lerp(a.x, tipP.x, 0.55) - s * 2, y: lerp(a.y, tipP.y, 0.6) }, tipP, { x: lerp(c.x, tipP.x, 0.5) + s * 2, y: lerp(c.y, tipP.y, 0.5) }, c], 6);
+    outer.push(poly(ear));
+    const k = 0.58;
+    const ctr = { x: (a.x + c.x + tipP.x) / 3, y: (a.y + c.y + tipP.y) / 3 + 3 };
+    innerD.push(poly(ear.map((p) => ({ x: ctr.x + (p.x - ctr.x) * k, y: ctr.y + (p.y - ctr.y) * k }))));
+    if (kind === "fox" || kind === "wolf")
+      tipD.push(poly([tipP, ...ear.filter((p) => p.y < tipP.y + ry * 0.3 * big)].sort((p, q) => p.x - q.x)));
+  }
+  const inner = kind === "cat" || kind === "bunny" ? "#f6a7b8" : kind === "fox" ? "#fff6ec" : light(colour, 0.45);
+  return { fill: colour, inner, outer, innerD, tipD };
+}
+function tail(b, kind, colour) {
+  const root = { x: b.cx + b.s.hip * 0.3, y: b.hipY - 4 };
+  const main = [], tip = [];
+  const add = (o, r = root, tipFrom = 0.78) => {
+    main.push(poly(strand(r, o)));
+    if (tipFrom < 1)
+      tip.push(poly(strand(r, { ...o, t0: tipFrom })));
+  };
+  switch (kind) {
+    case "fox":
+      add({ angle: 30, bend: -105, length: 150, width: 58, peak: 0.55, tip: 0.02, base: 0.25 });
+      break;
+    case "kitsune":
+      for (const [a, bend, len, dx] of [[35, -130, 140, 0.3], [-170, 105, 150, -0.3], [8, -95, 155, 0.3]])
+        add({ angle: a, bend, length: len, width: 48, peak: 0.55, tip: 0.02, base: 0.25 }, { x: b.cx + b.s.hip * dx, y: b.hipY - 4 });
+      break;
+    case "wolf":
+      add({ angle: 55, bend: -50, length: 140, width: 40, peak: 0.5, tip: 0.05, base: 0.35 }, root, 0.85);
+      break;
+    case "cat":
+      add({ angle: 40, bend: -150, length: 170, width: 11, peak: 0.1, tip: 0.6, base: 0.9, wave: 18 }, root, 1);
+      break;
+    case "demon": {
+      add({ angle: 40, bend: -120, length: 160, width: 7, peak: 0.1, tip: 0.5, base: 1, wave: 15 }, root, 1);
+      const pts = strand(root, { angle: 40, bend: -120, length: 160, width: 7, wave: 15 });
+      const end = pts[Math.floor(pts.length / 2) - 1];
+      main.push(poly([{ x: end.x, y: end.y + 2 }, { x: end.x - 11, y: end.y - 6 }, { x: end.x + 1, y: end.y - 20 }, { x: end.x + 11, y: end.y - 4 }]));
+      break;
+    }
+  }
+  const tipColour = kind === "fox" || kind === "kitsune" ? "#fff8f0" : kind === "wolf" ? light(colour, 0.55) : colour;
+  return { main, tip, tipColour };
+}
+function horns(b, kind) {
+  const out = [];
+  for (const s of [-1, 1]) {
+    if (kind === "ram")
+      out.push(poly(strand(P(b, s * 0.62, -0.85), { angle: -90 + s * 70, bend: s * 300, length: b.head.rx * 2.2, width: b.head.rx * 0.38, peak: 0.05, tip: 0.25, base: 1 })));
+    else if (kind === "oni")
+      out.push(poly(strand(P(b, s * 0.35, -0.98), { angle: -90 + s * 8, bend: s * -8, length: b.head.ry * 0.6, width: b.head.rx * 0.26, peak: 0.05, tip: 0.05, base: 1 })));
+    else
+      out.push(poly(strand(P(b, s * 0.5, -0.92), { angle: -90 + s * 35, bend: s * 40, length: b.head.ry * 0.75, width: b.head.rx * 0.22, peak: 0.05, tip: 0.04, base: 1 })));
+  }
+  return out;
+}
+
+// src/frontend/doll/garments.ts
+var KINDS = ["top", "dress", "robe", "outer", "cape", "armor", "bottom", "skirt", "legwear", "shoes", "gloves", "sleeves", "hat", "neck", "belt", "sash", "apron", "bra", "briefs"];
+var NECKLINES = ["crew", "scoop", "v", "wrap", "collar", "turtle", "boat", "strapless", "offshoulder", "halter"];
+var SLEEVES = ["none", "cap", "short", "elbow", "three", "long"];
+var SLEEVE_FITS = ["tight", "loose", "wide", "puff", "bell"];
+var HEMS = ["crop", "waist", "hip", "thigh", "knee", "ankle"];
+var LENGTHS = ["micro", "short", "mid", "knee", "calf", "ankle", "floor"];
+var FITS = ["tight", "regular", "loose"];
+var MATERIALS = ["cloth", "leather", "metal", "sheer", "knit", "silk"];
+var PATTERNS = ["none", "stripes", "vstripes", "plaid", "check", "dots", "cow", "floral", "waves", "stars", "fishnet", "scales", "leopard"];
+var STYLES = {
+  hat: ["newsboy", "beanie", "witch", "sunhat", "cap", "crown", "tiara", "headband", "hood"],
+  shoes: ["shoes", "boots", "heels", "sandals", "geta", "sneakers"],
+  gloves: ["full", "fingerless"],
+  neck: ["choker", "necklace", "scarf", "collar"],
+  legwear: ["socks", "tights", "stockings"],
+  bottom: ["pants", "shorts"],
+  outer: ["jacket", "coat", "vest", "hoodie"]
+};
+var LAYER = {
+  cape: 5,
+  briefs: 8,
+  bra: 9,
+  legwear: 10,
+  shoes: 20,
+  bottom: 30,
+  skirt: 34,
+  top: 40,
+  dress: 41,
+  armor: 44,
+  robe: 45,
+  sash: 50,
+  belt: 52,
+  apron: 55,
+  outer: 60,
+  sleeves: 62,
+  gloves: 65,
+  neck: 70,
+  hat: 90
+};
+var SLEEVE_T = { none: 0, cap: 0.1, short: 0.27, elbow: 0.5, three: 0.72, long: 0.98 };
+var LEG_T = { micro: 0.05, short: 0.14, mid: 0.3, knee: 0.52, calf: 0.75, ankle: 0.97, floor: 1.08 };
+var GROW = { tight: 0.9, regular: 2.2, loose: 4.5 };
+var circ = (c, r, n = 22) => Array.from({ length: n }, (_, i) => ({ x: c.x + Math.cos(i / n * Math.PI * 2) * r, y: c.y + Math.sin(i / n * Math.PI * 2) * r }));
+var ell = (c, rx, ry, n = 26, rot = 0) => Array.from({ length: n }, (_, i) => {
+  const a = i / n * Math.PI * 2, x = Math.cos(a) * rx, y = Math.sin(a) * ry, r = rot * Math.PI / 180;
+  return { x: c.x + x * Math.cos(r) - y * Math.sin(r), y: c.y + x * Math.sin(r) + y * Math.cos(r) };
+});
+function limbPolys(chain, grow = 0, caps = {}) {
+  const js = chain.map((j) => ({ ...j, r: Math.max(0.5, j.r + grow) }));
+  const out = [];
+  for (let i = 0;i < js.length - 1; i++)
+    out.push(hull(js[i], js[i + 1]));
+  js.forEach((j, i) => {
+    if (i === 0 && caps.start === false)
+      return;
+    if (i === js.length - 1 && caps.end === false)
+      return;
+    out.push(circ(j, j.r));
+  });
+  return out;
+}
+var clipAbove = (pts, y) => clipPoly(pts, { x: 0, y }, { x: 1, y }, 1);
+var clipBelow = (pts, y) => clipPoly(pts, { x: 0, y }, { x: 1, y }, -1);
+var both = (b, make, chain) => [...make(1, chain), ...make(-1, mirrorChain(b, chain))];
+var flipX = (b, pts) => pts.map((p) => ({ x: 2 * b.cx - p.x, y: p.y }));
+function handPoly(b, side, grow = 0) {
+  const h = b.hand;
+  const c = side === 1 ? h.c : { x: 2 * b.cx - h.c.x, y: h.c.y };
+  const k = [[0, -1.05], [0.62, -0.7], [0.85, 0.1], [0.7, 0.75], [0.15, 1], [-0.45, 0.82], [-0.75, 0.3], [-1.05, -0.05], [-0.8, -0.35], [-0.55, -0.7]];
+  return closedSpline(k.map(([u, v]) => ({ x: c.x + u * side * (h.rx + grow), y: c.y + v * (h.ry * 0.62 + grow) })), 5);
+}
+function footPoly(b, side, grow = 0) {
+  const ft = b.foot, ank = b.leg[b.leg.length - 1];
+  const cx = side === 1 ? ft.c.x : 2 * b.cx - ft.c.x, ax = side === 1 ? ank.x : 2 * b.cx - ank.x;
+  const g = grow;
+  return closedSpline([
+    { x: ax - ank.r - g, y: ank.y - 2 },
+    { x: ax + ank.r + g, y: ank.y - 2 },
+    { x: cx + ft.rx + g + side * 1.5, y: ft.c.y + 2 },
+    { x: cx + ft.rx * 0.5 * side, y: b.ground + g * 0.5 },
+    { x: cx - ft.rx * 0.5 * side, y: b.ground + g * 0.5 },
+    { x: cx - ft.rx - g, y: ft.c.y + 1 }
+  ], 6);
+}
+function skinShapes(b) {
+  const trunk = [];
+  trunk.push(trunkSlice(b, b.profile[0].y, b.crotchY - 4, 0, { hemDip: 8 }));
+  if (b.breast)
+    for (const s of [1, -1])
+      trunk.push(s === 1 ? circ(b.breast, b.breast.r) : flipX(b, circ(b.breast, b.breast.r)));
+  trunk.push(...both(b, (_s, c) => limbPolys(c), b.arm), ...both(b, (_s, c) => limbPolys(c), b.leg));
+  for (const s of [1, -1])
+    trunk.push(handPoly(b, s), footPoly(b, s));
+  const lines = [];
+  for (const s of [1, -1]) {
+    const leg = s === 1 ? b.leg : mirrorChain(b, b.leg);
+    const pts = [];
+    for (let t = 0.06;t <= 0.5; t += 0.04) {
+      const j = along(leg, t);
+      if (j.y > b.crotchY - 2)
+        pts.push({ x: j.x - s * j.r, y: j.y });
+    }
+    if (pts.length > 1)
+      lines.push(line(pts));
+  }
+  return { trunk, lines };
+}
+function neckline(b, kind, grow) {
+  const cx = b.cx;
+  const onSlope = (nw) => {
+    for (let i = 1;i < b.profile.length; i++)
+      if (b.profile[i].x >= nw)
+        return lerp(b.profile[i - 1].y, b.profile[i].y, (nw - b.profile[i - 1].x) / (b.profile[i].x - b.profile[i - 1].x || 1));
+    return b.shoulderY;
+  };
+  const mk = (nw, depth, sharp = false) => {
+    const y0 = onSlope(nw - grow);
+    const L = { x: cx - nw, y: y0 }, R = { x: cx + nw, y: y0 }, B = { x: cx, y: y0 + depth };
+    const top = sharp ? [L, B, R] : spline([L, { x: cx - nw * 0.6, y: y0 + depth * 0.75 }, B, { x: cx + nw * 0.6, y: y0 + depth * 0.75 }, R], 6);
+    return { top, y0, cut: { a: R, b: B } };
+  };
+  const n = b.s.neck;
+  switch (kind) {
+    case "crew":
+    case "turtle":
+      return mk(n + 3, 6);
+    case "collar":
+      return mk(n + 2.5, 9, true);
+    case "scoop":
+      return mk(lerp(n, b.s.shoulder, 0.45), b.bustY - b.neckBot - 6 - b.s.bust * 3);
+    case "boat":
+      return mk(lerp(n, b.s.shoulder, 0.72), 5);
+    case "v":
+      return mk(n + 5, b.bustY - b.neckBot + 4, true);
+    case "wrap": {
+      const nk = mk(n + 3, b.underY - b.neckBot - 4, true);
+      nk.top[1] = { x: cx - 7, y: nk.top[1].y };
+      return nk;
+    }
+    case "halter": {
+      const y0 = b.bustY - 12 - b.s.bust * 6;
+      const w = widthAt(b, y0) + grow;
+      return { y0, top: [{ x: cx - w, y: y0 }, { x: cx - n * 0.6, y: b.neckBot - 2 }, { x: cx + n * 0.6, y: b.neckBot - 2 }, { x: cx + w, y: y0 }] };
+    }
+    case "strapless":
+    case "offshoulder": {
+      const y0 = kind === "offshoulder" ? b.armpitY - 6 : b.bustY - 9 - b.s.bust * 6;
+      const w = widthAt(b, y0) + grow;
+      const bx = b.breast ? b.breast.x - cx : w * 0.5;
+      const top = spline([{ x: cx - w, y: y0 + 2 }, { x: cx - bx, y: y0 - 2 }, { x: cx, y: y0 + 4 }, { x: cx + bx, y: y0 - 2 }, { x: cx + w, y: y0 + 2 }], 6);
+      return { y0, top };
+    }
+  }
+}
+function hemY(b, hem) {
+  return { crop: b.underY + 3, waist: b.waistY + 6, hip: b.hipY - 2, thigh: b.hipY + 4, knee: b.hipY + 4, ankle: b.hipY + 4 }[hem];
+}
+function skirtShape(b, y0, len, flare, grow) {
+  const y1 = Math.min(b.ground - 4, b.legY(LEG_T[len]) + (len === "floor" ? 30 : 0));
+  const legOut = (y) => {
+    let w = 0;
+    for (let t = 0;t <= 1; t += 0.05) {
+      const j = along(b.leg, t);
+      if (Math.abs(j.y - y) < 16)
+        w = Math.max(w, j.x - b.cx + j.r);
+    }
+    return w;
+  };
+  const ys = [];
+  for (let y = y0;y < y1; y += 8)
+    ys.push(y);
+  ys.push(y1);
+  const wAt = (y) => {
+    const k = (y - y0) / Math.max(1, y1 - y0);
+    const natural = Math.max(widthAt(b, Math.min(y, b.crotchY)) + grow, legOut(y) + grow + 2);
+    return natural + flare * 46 * k ** 1.2;
+  };
+  let maxSoFar = 0;
+  const ws = ys.map((y) => maxSoFar = Math.max(maxSoFar, wAt(y)));
+  const right = ys.map((y, i) => ({ x: b.cx + ws[i], y }));
+  const left = ys.map((y, i) => ({ x: b.cx - ws[i], y })).reverse();
+  const W = ws[ws.length - 1];
+  const hem = spline([{ x: b.cx + W, y: y1 }, { x: b.cx + W * 0.5, y: y1 + 3 + flare * 4 }, { x: b.cx, y: y1 + 4 + flare * 5 }, { x: b.cx - W * 0.5, y: y1 + 3 + flare * 4 }, { x: b.cx - W, y: y1 }], 5);
+  return { pts: [...right, ...hem.slice(1, -1), ...left], y1 };
+}
+function sleevePolys(b, side, len, fit, grow, start = 0) {
+  const arm = side === 1 ? b.arm : mirrorChain(b, b.arm);
+  const polys = [], lines = [];
+  let handsOver = false;
+  if (len <= start)
+    return { polys, lines, handsOver };
+  const seg = segment(arm, start, len);
+  const end = seg[seg.length - 1];
+  const prev = seg[seg.length - 2] ?? seg[0];
+  const dir = Math.atan2(end.y - prev.y, end.x - prev.x);
+  const cuff = (r) => {
+    const n = { x: Math.cos(dir + Math.PI / 2) * r, y: Math.sin(dir + Math.PI / 2) * r };
+    return line([{ x: end.x - n.x, y: end.y - n.y }, { x: end.x + n.x, y: end.y + n.y }]);
+  };
+  switch (fit) {
+    case "tight":
+      polys.push(...limbPolys(seg, grow, { start: start > 0 ? false : undefined, end: false }));
+      break;
+    case "loose":
+    case "bell": {
+      const R = Math.max(...seg.map((j) => j.r)) + grow + 1.5;
+      const flareEnd = fit === "bell" ? R * 1.9 : R + 2;
+      const js = seg.map((j, i) => ({ ...j, r: lerp(R, flareEnd, (i / (seg.length - 1)) ** 2) }));
+      polys.push(...limbPolys(js, 0, { start: start > 0 ? false : undefined, end: false }));
+      lines.push({ d: cuff(flareEnd), c: "shade" });
+      if (fit === "bell")
+        handsOver = true;
+      break;
+    }
+    case "puff": {
+      const top = along(arm, Math.max(start, 0.1));
+      polys.push(circ({ x: top.x + side * 2, y: top.y }, top.r * 1.75 + grow));
+      polys.push(...limbPolys(seg, grow, { end: false }));
+      lines.push({ d: cuff(end.r + grow), c: "ink" });
+      break;
+    }
+    case "wide": {
+      const j0 = seg[0];
+      const R = Math.max(18, end.r * 4.2);
+      const drop = 34 + end.r * 2;
+      polys.push(closedSpline([
+        { x: j0.x - side * j0.r * 0.3, y: j0.y - j0.r - grow },
+        { x: j0.x + side * (j0.r + grow + 3), y: j0.y + 2 },
+        { x: lerp(j0.x, end.x, 0.5) + side * (R * 0.55 + 2), y: lerp(j0.y, end.y, 0.5) },
+        { x: end.x + side * R * 0.62, y: end.y + 2 },
+        { x: end.x + side * R * 0.55, y: end.y + drop },
+        { x: end.x - side * R * 0.2, y: end.y + drop + 4 },
+        { x: end.x - side * R * 0.75, y: end.y + drop - 6 },
+        { x: lerp(j0.x, end.x, 0.55) - side * (j0.r + 6), y: lerp(j0.y, end.y, 0.55) },
+        { x: j0.x - side * j0.r * 1.2, y: j0.y + j0.r * 1.5 }
+      ], 5));
+      lines.push({ d: `M${f(end.x - side * R * 0.45)} ${f(end.y - 3)}Q${f(end.x)} ${f(end.y + 6)} ${f(end.x + side * R * 0.55)} ${f(end.y + 1)}`, c: "ink" });
+      lines.push({ d: line([{ x: end.x - side * R * 0.1, y: end.y + 12 }, { x: end.x, y: end.y + drop - 2 }]), c: "shade" });
+      handsOver = true;
+      break;
+    }
+  }
+  return { polys, lines, handsOver };
+}
+function trunkPiece(b, g, grow) {
+  const nk = neckline(b, g.neckline ?? "crew", grow);
+  const sleeves = g.neckline === "strapless" || g.neckline === "halter" ? "none" : g.sleeves ?? "short";
+  const hem = g.hem ?? "hip";
+  const y1 = hemY(b, hem);
+  const lines = [];
+  const sleeveless = sleeves === "none" && g.neckline !== "offshoulder";
+  const maxW = sleeveless ? (y) => y < b.armpitY + 2 ? lerp(Math.abs(nk.top[nk.top.length - 1].x - b.cx) + 4, widthAt(b, b.armpitY) + grow, clamp2((y - nk.y0) / Math.max(1, b.armpitY - nk.y0), 0, 1) ** 0.7) : 999 : undefined;
+  let body = trunkSlice(b, nk.y0, y1, grow, { maxW, top: nk.top, hemDip: hem === "crop" ? 0 : 3 });
+  const pieces = [body];
+  if (b.breast && (g.fit ?? "regular") !== "loose" && hem !== "crop" || b.breast && hem === "crop") {
+    for (const s of [1, -1]) {
+      let c = circ({ x: b.breast.x, y: b.breast.y }, b.breast.r + grow * 0.7);
+      if (s === -1)
+        c = flipX(b, c);
+      c = clipAbove(c, nk.y0 + 1);
+      if (nk.cut) {
+        const cut = s === 1 ? nk.cut : { a: { x: 2 * b.cx - nk.cut.a.x, y: nk.cut.a.y }, b: nk.cut.b };
+        c = clipPoly(c, cut.a, cut.b, s === 1 ? 1 : -1);
+      }
+      if (c.length > 2)
+        pieces.push(c);
+    }
+  }
+  let handsOver = false;
+  if (sleeves !== "none" || g.neckline === "offshoulder") {
+    const t = sleeves === "none" ? 0.2 : SLEEVE_T[sleeves];
+    for (const s of [1, -1]) {
+      const sl = sleevePolys(b, s, t, g.sleeveFit ?? "tight", grow, g.neckline === "offshoulder" ? 0.12 : 0);
+      pieces.push(...sl.polys);
+      lines.push(...sl.lines);
+      handsOver ||= sl.handsOver;
+    }
+  }
+  if (g.neckline === "turtle")
+    pieces.push([{ x: b.cx - b.s.neck - 2, y: b.neckTop - 2 }, { x: b.cx + b.s.neck + 2, y: b.neckTop - 2 }, { x: b.cx + b.s.neck + 4, y: b.neckBot + 4 }, { x: b.cx - b.s.neck - 4, y: b.neckBot + 4 }]);
+  if (g.neckline === "collar") {
+    for (const s of [1, -1])
+      lines.push({ d: line([{ x: b.cx + s * (b.s.neck + 3), y: nk.y0 - 1 }, { x: b.cx + s * (b.s.neck + 9), y: nk.y0 + 12 }, { x: b.cx + s * 1, y: nk.y0 + 10 }]), w: 1.2 });
+  }
+  if (g.neckline === "wrap") {
+    const B = nk.top[1];
+    lines.push({ d: line([{ x: nk.top[2].x, y: nk.top[2].y }, B, { x: b.cx - widthAt(b, y1 - 20) - grow + 2, y: y1 - 6 }]), w: 1.3 });
+  }
+  return { pieces, lines, handsOver };
+}
+function build(b, g) {
+  const out = { pieces: [], back: [], trim: [], lines: [] };
+  const grow = GROW[g.fit ?? "regular"] + (g.material === "metal" ? 1.5 : g.material === "knit" ? 0.6 : 0);
+  const cx = b.cx;
+  switch (g.kind) {
+    case "top":
+    case "armor": {
+      const t = trunkPiece(b, { ...g, hem: g.hem ?? (g.kind === "armor" ? "waist" : "hip") }, grow);
+      out.pieces.push(...t.pieces);
+      out.lines.push(...t.lines);
+      out.handsOver = t.handsOver;
+      if (g.kind === "armor") {
+        for (const s of [1, -1]) {
+          const j = s === 1 ? b.arm[0] : { ...b.arm[0], x: 2 * cx - b.arm[0].x };
+          out.trim.push(ell({ x: j.x + s * 3, y: j.y + 2 }, j.r * 1.75, j.r * 1.4, 22, s * 25));
+        }
+        out.lines.push({ d: line([{ x: cx, y: b.neckBot + 8 }, { x: cx, y: b.waistY }]), c: "light", w: 1.5 });
+        out.lines.push({ d: `M${f(cx - b.s.waist)} ${f(b.underY + 6)}Q${f(cx)} ${f(b.underY + 14)} ${f(cx + b.s.waist)} ${f(b.underY + 6)}`, c: "shade", w: 1.3 });
+      }
+      if (g.neckline === "collar" && !g.open)
+        for (let y = b.bustY - 8;y < hemY(b, g.hem ?? "hip") - 8; y += 16)
+          out.trim.push(circ({ x: cx + 0.5, y }, 1.5, 8));
+      break;
+    }
+    case "dress":
+    case "robe": {
+      const robe = g.kind === "robe";
+      const t = trunkPiece(b, { ...g, neckline: g.neckline ?? (robe ? "wrap" : "scoop"), sleeves: g.sleeves ?? (robe ? "long" : "none"), sleeveFit: g.sleeveFit ?? (robe ? "wide" : "tight"), hem: "waist" }, grow);
+      out.pieces.push(...t.pieces);
+      out.lines.push(...t.lines);
+      out.handsOver = t.handsOver;
+      const sk = skirtShape(b, b.waistY - 2, g.length ?? (robe ? "ankle" : "knee"), g.flare ?? (robe ? 0.15 : 0.5), grow);
+      out.pieces.push(sk.pts);
+      if (robe)
+        out.lines.push({ d: line([{ x: cx - widthAt(b, b.waistY) - grow + 2, y: b.waistY + 4 }, { x: cx - 4, y: sk.y1 + 3 }]), w: 1.2 });
+      else
+        out.lines.push({ d: `M${f(cx - widthAt(b, b.waistY) - grow)} ${f(b.waistY + 2)}Q${f(cx)} ${f(b.waistY + 5)} ${f(cx + widthAt(b, b.waistY) + grow)} ${f(b.waistY + 2)}`, c: "shade", w: 1 });
+      if ((g.flare ?? 0.5) > 0.3 && !robe)
+        pleats(out, cx, b.waistY + 8, sk.y1, sk.pts);
+      break;
+    }
+    case "outer": {
+      const style = g.style ?? "jacket";
+      const t = trunkPiece(b, { ...g, neckline: g.neckline ?? (style === "hoodie" ? "crew" : "v"), sleeves: style === "vest" ? "none" : g.sleeves ?? "long", sleeveFit: g.sleeveFit ?? "loose", hem: style === "coat" ? "hip" : g.hem ?? "hip" }, grow + 1.2);
+      let pieces = t.pieces;
+      if (style === "coat")
+        pieces.push(skirtShape(b, b.hipY - 6, g.length ?? "knee", g.flare ?? 0.3, grow + 2).pts);
+      if (g.open ?? style !== "hoodie") {
+        const gapTop = b.s.neck + 3, gapBot = 7;
+        const { neckBot: yTop, ground: yBot } = b;
+        const trunkLike = pieces.slice(0, 1 + (b.breast ? 2 : 0));
+        const rest = pieces.slice(trunkLike.length);
+        const coat = style === "coat" ? [rest.pop()] : [];
+        const halves = [];
+        for (const p of [...trunkLike, ...coat]) {
+          halves.push(clipPoly(p, { x: cx + gapTop, y: yTop }, { x: cx + gapBot, y: b.waistY }, -1));
+          halves.push(clipPoly(p, { x: cx - gapTop, y: yTop }, { x: cx - gapBot, y: b.waistY }, 1));
+        }
+        pieces = [...halves.map((h) => h.filter(() => true)), ...rest].filter((h) => h.length > 2);
+        for (const s of [1, -1])
+          out.lines.push({ d: line([{ x: cx + s * (b.s.neck + 3), y: b.neckBot - 2 }, { x: cx + s * (b.s.neck + 12), y: b.bustY - 4 }, { x: cx + s * gapBot * 1.6, y: b.underY + 6 }]), w: 1.3 });
+      }
+      if (style === "hoodie") {
+        out.back.push(closedSpline([{ x: cx - b.s.neck - 16, y: b.shoulderY + 4 }, { x: cx - b.s.neck - 14, y: b.neckTop - 4 }, { x: cx, y: b.neckTop - 14 }, { x: cx + b.s.neck + 14, y: b.neckTop - 4 }, { x: cx + b.s.neck + 16, y: b.shoulderY + 4 }], 6));
+        out.lines.push({ d: line([{ x: cx - 4, y: b.neckBot + 2 }, { x: cx - 5, y: b.bustY + 6 }]), w: 1.2 }, { d: line([{ x: cx + 4, y: b.neckBot + 2 }, { x: cx + 5, y: b.bustY + 6 }]), w: 1.2 });
+        const py = b.waistY + 6;
+        out.lines.push({ d: `M${f(cx - 20)} ${f(b.hipY - 8)}L${f(cx - 14)} ${f(py)}L${f(cx + 14)} ${f(py)}L${f(cx + 20)} ${f(b.hipY - 8)}`, w: 1.1 });
+      }
+      out.pieces.push(...pieces);
+      out.lines.push(...t.lines);
+      out.handsOver = t.handsOver;
+      break;
+    }
+    case "cape": {
+      const top = b.neckBot - 2;
+      const y1 = b.legY(LEG_T[g.length ?? "calf"]);
+      const W = b.s.shoulder + 14;
+      out.back.push([{ x: cx - b.s.neck - 2, y: top }, { x: cx + b.s.neck + 2, y: top }, { x: cx + W, y: b.shoulderY + 10 }, { x: cx + W + 18, y: y1 }, { x: cx, y: y1 + 6 }, { x: cx - W - 18, y: y1 }, { x: cx - W, y: b.shoulderY + 10 }]);
+      out.pieces.push(closedSpline([{ x: cx - b.s.neck - 3, y: top - 2 }, { x: cx + b.s.neck + 3, y: top - 2 }, { x: cx + W + 4, y: b.armpitY + 4 }, { x: cx + W - 10, y: b.armpitY + 14 }, { x: cx, y: b.armpitY + 6 }, { x: cx - W + 10, y: b.armpitY + 14 }, { x: cx - W - 4, y: b.armpitY + 4 }], 6));
+      out.trim.push(circ({ x: cx, y: b.neckBot + 4 }, 4, 12));
+      break;
+    }
+    case "bottom": {
+      const shorts = g.style === "shorts" || ["micro", "short", "mid"].includes(g.length ?? "ankle");
+      const t = LEG_T[g.length ?? (shorts ? "short" : "ankle")];
+      const riseY = { high: b.waistY - 4, mid: b.waistY + 8, low: lerp(b.waistY, b.hipY, 0.62) }[g.rise ?? "mid"];
+      out.pieces.push(trunkSlice(b, riseY, b.crotchY + 4, grow, { hemDip: 4 }));
+      const loose = g.fit === "loose";
+      for (const s of [1, -1]) {
+        const leg = s === 1 ? b.leg : mirrorChain(b, b.leg);
+        let seg = segment(leg, 0, Math.min(1, t));
+        if (loose) {
+          const R = Math.max(...seg.map((j) => j.r));
+          seg = seg.map((j, i) => ({ ...j, r: lerp(j.r, R * 0.92, i / (seg.length - 1)) }));
+        }
+        for (const p of limbPolys(seg, grow, { end: false })) {
+          const c = clipAbove(p, riseY);
+          if (c.length > 2)
+            out.pieces.push(c);
+        }
+        const e = seg[seg.length - 1];
+        if (!shorts)
+          out.lines.push({ d: line([{ x: e.x - s * (e.r * 0.2), y: b.crotchY + 14 }, { x: e.x - s * (e.r * 0.15), y: e.y - 6 }]), c: "shade", w: 1 });
+      }
+      out.lines.push({ d: line([{ x: cx, y: riseY + 3 }, { x: cx, y: b.crotchY - 2 }]), w: 1 });
+      break;
+    }
+    case "skirt": {
+      const riseY = { high: b.waistY - 4, mid: b.waistY + 6, low: lerp(b.waistY, b.hipY, 0.55) }[g.rise ?? "mid"];
+      const sk = skirtShape(b, riseY, g.length ?? "short", g.flare ?? 0.45, grow);
+      out.pieces.push(sk.pts);
+      if ((g.flare ?? 0.45) > 0.25)
+        pleats(out, cx, riseY + 8, sk.y1, sk.pts);
+      out.trim.push(trunkSlice(b, riseY - 1, riseY + 5, grow + 0.6));
+      break;
+    }
+    case "legwear": {
+      const style = g.style ?? "socks";
+      const t0 = style === "tights" ? 0 : style === "stockings" ? LEG_T[g.length ?? "short"] + 0.02 : 1 - LEG_T[g.length ?? "mid"] * 0.6;
+      const t = clamp2(style === "socks" ? Math.min(t0, 0.9) : t0, 0, 0.92);
+      for (const s of [1, -1]) {
+        const leg = s === 1 ? b.leg : mirrorChain(b, b.leg);
+        out.pieces.push(...limbPolys(segment(leg, t, 1), 0.7, { start: false }), footPoly(b, s, 0.7));
+        if (style !== "tights") {
+          const top = along(leg, t);
+          out.trim.push(clipBelow(clipAbove(circ(top, top.r + 0.9, 18), top.y - 1), top.y + 4));
+          out.trim.push([{ x: top.x - top.r - 1, y: top.y }, { x: top.x + top.r + 1, y: top.y }, { x: top.x + top.r + 1, y: top.y + 4 }, { x: top.x - top.r - 1, y: top.y + 4 }]);
+        }
+      }
+      if (style === "tights")
+        out.pieces.push(trunkSlice(b, lerp(b.waistY, b.hipY, 0.3), b.crotchY + 4, 0.6, { hemDip: 4 }));
+      break;
+    }
+    case "shoes": {
+      const style = g.style ?? "shoes";
+      for (const s of [1, -1]) {
+        const leg = s === 1 ? b.leg : mirrorChain(b, b.leg);
+        const foot = footPoly(b, s, style === "boots" ? 2.2 : 1.4);
+        if (style === "sandals" || style === "geta") {
+          const ft = s === 1 ? b.foot.c : { x: 2 * cx - b.foot.c.x, y: b.foot.c.y };
+          out.pieces.push([{ x: ft.x - b.foot.rx - 2, y: b.ground - 1 }, { x: ft.x + b.foot.rx + 2, y: b.ground - 1 }, { x: ft.x + b.foot.rx + 2, y: b.ground + (style === "geta" ? 9 : 3) }, { x: ft.x - b.foot.rx - 2, y: b.ground + (style === "geta" ? 9 : 3) }]);
+          out.lines.push({ d: line([{ x: ft.x - b.foot.rx * 0.6, y: ft.y + 2 }, { x: ft.x, y: ft.y - 6 }, { x: ft.x + b.foot.rx * 0.6, y: ft.y + 2 }]), c: "trim", w: 2.4 });
+          continue;
+        }
+        out.pieces.push(foot);
+        if (style === "boots") {
+          const t0 = 1 - LEG_T[g.length ?? "calf"] * 0.9;
+          out.pieces.push(...limbPolys(segment(leg, clamp2(t0, 0.35, 0.9), 1), 2.2, { start: false }));
+          const top = along(leg, clamp2(t0, 0.35, 0.9));
+          out.trim.push([{ x: top.x - top.r - 3.2, y: top.y - 1 }, { x: top.x + top.r + 3.2, y: top.y - 1 }, { x: top.x + top.r + 3, y: top.y + 6 }, { x: top.x - top.r - 3, y: top.y + 6 }]);
+        }
+        const ft = s === 1 ? b.foot.c : { x: 2 * cx - b.foot.c.x, y: b.foot.c.y };
+        if (style === "sneakers") {
+          out.trim.push([{ x: ft.x - b.foot.rx - 1.5, y: b.ground - 4 }, { x: ft.x + b.foot.rx + 1.5, y: b.ground - 4 }, { x: ft.x + b.foot.rx * 0.5, y: b.ground + 1.5 }, { x: ft.x - b.foot.rx * 0.5, y: b.ground + 1.5 }]);
+          for (let i = 0;i < 3; i++)
+            out.lines.push({ d: line([{ x: ft.x - 3, y: ft.y - 6 + i * 4 }, { x: ft.x + 3, y: ft.y - 6 + i * 4 }]), c: "light", w: 1 });
+        }
+        if (style === "heels")
+          out.lines.push({ d: line([{ x: ft.x - 4, y: ft.y - 2 }, { x: ft.x + 2, y: ft.y + 6 }]), c: "light", w: 1.2 });
+      }
+      break;
+    }
+    case "gloves": {
+      const fingerless = g.style === "fingerless";
+      const t0 = 1 - SLEEVE_T[g.sleeves ?? "cap"] * 1;
+      for (const s of [1, -1]) {
+        const arm = s === 1 ? b.arm : mirrorChain(b, b.arm);
+        const t = clamp2(t0, 0.05, 0.92);
+        out.pieces.push(...limbPolys(segment(arm, t, 1), 1, { start: false }));
+        let h = handPoly(b, s, 1);
+        if (fingerless)
+          h = clipBelow(h, b.hand.c.y + b.hand.ry * 0.12);
+        out.pieces.push(h);
+        const top = along(arm, t);
+        out.trim.push([{ x: top.x - top.r - 2, y: top.y - 1 }, { x: top.x + top.r + 2, y: top.y - 1 }, { x: top.x + top.r + 2, y: top.y + 4 }, { x: top.x - top.r - 2, y: top.y + 4 }]);
+      }
+      break;
+    }
+    case "sleeves": {
+      for (const s of [1, -1]) {
+        const sl = sleevePolys(b, s, SLEEVE_T[g.sleeves ?? "long"], g.sleeveFit ?? "bell", grow, 0.3);
+        out.pieces.push(...sl.polys);
+        out.lines.push(...sl.lines);
+        const arm = s === 1 ? b.arm : mirrorChain(b, b.arm);
+        const top = along(arm, 0.3);
+        out.trim.push([{ x: top.x - top.r - 3, y: top.y - 2 }, { x: top.x + top.r + 3, y: top.y - 2 }, { x: top.x + top.r + 3, y: top.y + 3 }, { x: top.x - top.r - 3, y: top.y + 3 }]);
+      }
+      break;
+    }
+    case "bra": {
+      const y0 = b.bustY - 7 - b.s.bust * 6;
+      const top = spline([{ x: cx - widthAt(b, y0) - 1, y: y0 + 3 }, { x: cx - (b.breast ? b.breast.x - cx : 10), y: y0 - 3 }, { x: cx, y: y0 + 7 }, { x: cx + (b.breast ? b.breast.x - cx : 10), y: y0 - 3 }, { x: cx + widthAt(b, y0) + 1, y: y0 + 3 }], 6);
+      out.pieces.push(trunkSlice(b, y0, b.underY + 1, 1, { top }));
+      if (b.breast)
+        for (const s of [1, -1]) {
+          let c = circ(b.breast, b.breast.r + 1);
+          if (s === -1)
+            c = flipX(b, c);
+          c = clipAbove(c, y0 + 1);
+          out.pieces.push(c);
+        }
+      for (const s of [1, -1])
+        out.lines.push({ d: line([{ x: cx + s * (b.s.chest * 0.4), y: y0 }, { x: cx + s * lerp(b.s.neck, b.s.shoulder, 0.55), y: b.shoulderY - 2 }]), c: "trim", w: 1.8 });
+      break;
+    }
+    case "briefs": {
+      const y0 = lerp(b.waistY, b.hipY, b.sex === "m" ? 0.4 : 0.6);
+      const w0 = widthAt(b, y0) + 1;
+      const end = b.sex === "m" ? 15 : 7;
+      out.pieces.push(trunkSlice(b, y0, b.crotchY + 5, 1, { maxW: (y) => lerp(w0, end, clamp2((y - y0) / (b.crotchY + 5 - y0), 0, 1) ** (b.sex === "m" ? 1.6 : 1.15)), hemDip: 2 }));
+      out.trim.push(trunkSlice(b, y0 - 0.5, y0 + 3, 1.5));
+      break;
+    }
+    case "hat":
+      hat(b, g, out);
+      break;
+    case "neck": {
+      const style = g.style ?? "choker";
+      const n = b.s.neck;
+      const chin = b.head.c.y + b.head.ry * 0.98;
+      const ny = lerp(chin, b.neckBot, 0.45);
+      if (style === "choker" || style === "collar") {
+        out.pieces.push([{ x: cx - n - 1.5, y: ny - 3 }, { x: cx + n + 1.5, y: ny - 3 }, { x: cx + n + 2, y: ny + 3 }, { x: cx - n - 2, y: ny + 3 }]);
+        if (style === "collar")
+          out.trim.push(circ({ x: cx, y: ny + 7 }, 4, 14));
+        else
+          out.trim.push(closedSpline([{ x: cx, y: ny + 4 }, { x: cx + 4, y: ny + 8 }, { x: cx, y: ny + 13 }, { x: cx - 4, y: ny + 8 }], 4));
+      } else if (style === "necklace") {
+        out.lines.push({ d: `M${f(cx - n - 1)} ${f(b.neckBot - 3)}Q${f(cx)} ${f(b.bustY + 4)} ${f(cx + n + 1)} ${f(b.neckBot - 3)}`, c: "trim", w: 1.4 });
+        const py = lerp(b.neckBot, b.bustY + 4, 0.55);
+        out.trim.push(closedSpline([{ x: cx, y: py - 2 }, { x: cx + 5, y: py - 6 }, { x: cx + 7, y: py + 0 }, { x: cx, y: py + 9 }, { x: cx - 7, y: py }, { x: cx - 5, y: py - 6 }], 4));
+      } else if (style === "scarf") {
+        out.pieces.push(closedSpline([{ x: cx - n - 6, y: chin + 1 }, { x: cx + n + 6, y: chin + 1 }, { x: cx + n + 12, y: b.neckBot + 4 }, { x: cx, y: b.neckBot + 12 }, { x: cx - n - 12, y: b.neckBot + 4 }], 6));
+        out.pieces.push([{ x: cx + n - 2, y: b.neckBot }, { x: cx + n + 10, y: b.neckBot + 2 }, { x: cx + n + 14, y: b.bustY + 30 }, { x: cx + n + 2, y: b.bustY + 32 }]);
+        out.lines.push({ d: line([{ x: cx + n + 3, y: b.bustY + 31 }, { x: cx + n + 3, y: b.bustY + 36 }]), w: 1 }, { d: line([{ x: cx + n + 8, y: b.bustY + 31 }, { x: cx + n + 9, y: b.bustY + 36 }]), w: 1 });
+      }
+      break;
+    }
+    case "belt": {
+      const y = g.rise === "low" ? lerp(b.waistY, b.hipY, 0.55) : b.waistY + 5;
+      out.pieces.push(trunkSlice(b, y - 3.5, y + 3.5, 3.2));
+      out.trim.push([{ x: cx - 6, y: y - 5 }, { x: cx + 6, y: y - 5 }, { x: cx + 6, y: y + 5 }, { x: cx - 6, y: y + 5 }]);
+      break;
+    }
+    case "sash": {
+      out.pieces.push(trunkSlice(b, b.underY - 2, b.waistY + 8, GROW.regular + 3.5));
+      out.lines.push({ d: `M${f(cx - widthAt(b, b.waistY) - 5)} ${f(lerp(b.underY, b.waistY, 0.55))}L${f(cx + widthAt(b, b.waistY) + 5)} ${f(lerp(b.underY, b.waistY, 0.55))}`, c: "trim", w: 2.6 });
+      out.trim.push(circ({ x: cx + 4, y: lerp(b.underY, b.waistY, 0.55) }, 3, 12));
+      break;
+    }
+    case "apron": {
+      const y0 = b.waistY + 2, y1 = b.legY(LEG_T[g.length ?? "knee"]) - 6;
+      const w0 = b.s.waist * 0.75, w1 = b.s.hip * 0.78;
+      const ym = lerp(y0, y1, 0.3);
+      out.pieces.push([{ x: cx - w0, y: y0 }, { x: cx + w0, y: y0 }, { x: cx + w1, y: ym }, { x: cx + w1, y: y1 - 6 }, { x: cx + w1 - 6, y: y1 }, { x: cx - w1 + 6, y: y1 }, { x: cx - w1, y: y1 - 6 }, { x: cx - w1, y: ym }]);
+      out.pieces.push([{ x: cx - b.s.chest * 0.45, y: b.bustY - 10 }, { x: cx + b.s.chest * 0.45, y: b.bustY - 10 }, { x: cx + b.s.waist * 0.7, y: y0 + 2 }, { x: cx - b.s.waist * 0.7, y: y0 + 2 }]);
+      for (const s of [1, -1])
+        out.lines.push({ d: line([{ x: cx + s * b.s.chest * 0.42, y: b.bustY - 9 }, { x: cx + s * lerp(b.s.neck, b.s.shoulder, 0.5), y: b.shoulderY - 1 }]), c: "trim", w: 2.4 });
+      out.lines.push({ d: line([{ x: cx - w1 + 3, y: y1 - 3 }, { x: cx, y: y1 }, { x: cx + w1 - 3, y: y1 - 3 }]), c: "shade", w: 1 });
+      break;
+    }
+  }
+  return out;
+}
+function pleats(out, cx, y0, y1, shape) {
+  const w = Math.max(...shape.map((p) => Math.abs(p.x - cx)));
+  for (const k of [-0.62, -0.25, 0.25, 0.62])
+    out.lines.push({ d: line([{ x: cx + k * w * 0.45, y: y0 }, { x: cx + k * w * 0.92, y: y1 - 1 }]), c: "shade", w: 1 });
+}
+function hat(b, g, out) {
+  const rx = b.head.rx;
+  switch (g.style ?? "newsboy") {
+    case "newsboy":
+      out.pieces.push(closedSpline([P(b, -1.18, -0.42), P(b, -1.3, -0.85), P(b, -0.7, -1.38), P(b, 0.2, -1.42), P(b, 1.1, -1.18), P(b, 1.25, -0.6), P(b, 1.12, -0.38), P(b, 0, -0.5)], 7));
+      out.trim.push(closedSpline([P(b, -0.7, -0.5), P(b, 0, -0.62), P(b, 0.7, -0.5), P(b, 0.55, -0.28), P(b, 0, -0.24), P(b, -0.55, -0.28)], 6));
+      out.lines.push({ d: `M${f(P(b, -1.05, -0.62).x)} ${f(P(b, -1.05, -0.62).y)}Q${f(P(b, 0, -0.78).x)} ${f(P(b, 0, -0.78).y)} ${f(P(b, 1.1, -0.6).x)} ${f(P(b, 1.1, -0.6).y)}`, c: "shade", w: 1.2 });
+      out.trim.push(circ(P(b, 0.1, -1.38), 2.6, 10));
+      break;
+    case "beanie":
+      out.pieces.push(closedSpline([P(b, -1.14, -0.42), P(b, -1.12, -0.95), P(b, -0.5, -1.32), P(b, 0.5, -1.32), P(b, 1.12, -0.95), P(b, 1.14, -0.42)], 8));
+      out.trim.push(closedSpline([P(b, -1.18, -0.62), P(b, 0, -0.72), P(b, 1.18, -0.62), P(b, 1.18, -0.34), P(b, 0, -0.42), P(b, -1.18, -0.34)], 6));
+      out.trim.push(circ(P(b, 0, -1.4), rx * 0.24, 14));
+      break;
+    case "witch": {
+      out.pieces.push(ell(P(b, 0, -0.72), rx * 2.25, b.head.ry * 0.3, 32));
+      out.pieces.push(spline([P(b, -0.95, -0.7), P(b, -0.5, -1.6), P(b, 0.1, -2.5), P(b, 0.9, -2.9), P(b, 0.55, -2.3), P(b, 0.6, -1.4), P(b, 0.95, -0.7)], 6));
+      out.trim.push(closedSpline([P(b, -0.92, -0.9), P(b, 0, -0.98), P(b, 0.93, -0.9), P(b, 0.95, -0.72), P(b, 0, -0.78), P(b, -0.95, -0.72)], 6));
+      break;
+    }
+    case "sunhat":
+      out.pieces.push(ell(P(b, 0, -0.7), rx * 2.05, b.head.ry * 0.42, 32));
+      out.pieces.push(closedSpline([P(b, -0.95, -0.72), P(b, -0.85, -1.25), P(b, 0, -1.45), P(b, 0.85, -1.25), P(b, 0.95, -0.72)], 7));
+      out.trim.push(closedSpline([P(b, -0.95, -0.95), P(b, 0, -1.02), P(b, 0.95, -0.95), P(b, 0.96, -0.76), P(b, 0, -0.82), P(b, -0.96, -0.76)], 6));
+      break;
+    case "cap":
+      out.pieces.push(closedSpline([P(b, -1.12, -0.48), P(b, -1.05, -1), P(b, 0, -1.33), P(b, 1.05, -1), P(b, 1.12, -0.48), P(b, 0, -0.56)], 8));
+      out.trim.push(closedSpline([P(b, -0.95, -0.52), P(b, 0, -0.62), P(b, 0.95, -0.52), P(b, 0.7, -0.3), P(b, 0, -0.24), P(b, -0.7, -0.3)], 6));
+      break;
+    case "crown": {
+      const pts = [];
+      for (let i = 0;i <= 8; i++)
+        pts.push(P(b, -0.8 + i / 8 * 1.6, i % 2 ? -1.55 : -1.15));
+      out.pieces.push([...pts, P(b, 0.82, -0.85), P(b, -0.82, -0.85)]);
+      for (const u of [-0.6, 0, 0.6])
+        out.trim.push(circ(P(b, u, -1), 2.4, 10));
+      break;
+    }
+    case "tiara":
+      out.pieces.push(closedSpline([P(b, -0.85, -0.85), P(b, -0.4, -1.12), P(b, 0, -1.38), P(b, 0.4, -1.12), P(b, 0.85, -0.85), P(b, 0, -1.05)], 6));
+      out.trim.push(closedSpline([P(b, 0, -1.32), P(b, 0.12, -1.18), P(b, 0, -1.06), P(b, -0.12, -1.18)], 3));
+      break;
+    case "headband": {
+      out.pieces.push(closedSpline([P(b, -1.08, -0.55), P(b, -0.75, -1.08), P(b, 0, -1.28), P(b, 0.75, -1.08), P(b, 1.08, -0.55), P(b, 0.7, -0.92), P(b, 0, -1.08), P(b, -0.7, -0.92)], 6));
+      for (let i = 0;i < 7; i++) {
+        const a = Math.PI + 0.35 + i / 6 * (Math.PI - 0.7);
+        out.trim.push(circ(P(b, Math.cos(a) * 1.02, Math.sin(a) * 1.2 - 0.02), 3.4, 10));
+      }
+      break;
+    }
+    case "hood":
+      out.back.push(closedSpline([P(b, -1.42, 0.6), P(b, -1.45, -0.5), P(b, -0.8, -1.38), P(b, 0, -1.48), P(b, 0.8, -1.38), P(b, 1.45, -0.5), P(b, 1.42, 0.6), { x: b.cx, y: b.neckBot + 10 }], 8));
+      out.pieces.push(closedSpline([P(b, -1.3, 0.5), P(b, -1.38, -0.5), P(b, -0.75, -1.35), P(b, 0, -1.45), P(b, 0.75, -1.35), P(b, 1.38, -0.5), P(b, 1.3, 0.5), P(b, 1, 0.45), P(b, 1.05, -0.4), P(b, 0.6, -1.05), P(b, 0, -1.15), P(b, -0.6, -1.05), P(b, -1.05, -0.4), P(b, -1, 0.45)], 6));
+      out.hairUnder = true;
+      break;
+  }
+}
+function tears(pieces, amount, rand) {
+  if (amount <= 0 || !pieces.length)
+    return [];
+  const n = Math.round(amount * 7);
+  const out = [];
+  const big = pieces.reduce((a, p) => area(p) > area(a) ? p : a, pieces[0]);
+  const xs = big.map((p) => p.x), ys = big.map((p) => p.y);
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  for (let i = 0;i < n * 4 && out.length < n; i++) {
+    const c = { x: lerp(x0, x1, rand()), y: lerp(y0 + (y1 - y0) * 0.25, y1, rand()) };
+    if (!inside(big, c))
+      continue;
+    const r = 3 + rand() * 5 * (0.6 + amount);
+    const k = 7;
+    out.push(Array.from({ length: k }, (_, j) => {
+      const a = j / k * Math.PI * 2;
+      const rr = r * (j % 2 ? 0.45 : 1) * (0.7 + rand() * 0.6);
+      return { x: c.x + Math.cos(a) * rr, y: c.y + Math.sin(a) * rr * 1.3 };
+    }));
+  }
+  return out;
+}
+function area(p) {
+  let a = 0;
+  for (let i = 0;i < p.length; i++) {
+    const q = p[(i + 1) % p.length];
+    a += p[i].x * q.y - q.x * p[i].y;
+  }
+  return Math.abs(a / 2);
+}
+function inside(p, c) {
+  let x = false;
+  for (let i = 0, j = p.length - 1;i < p.length; j = i++)
+    if (p[i].y > c.y !== p[j].y > c.y && c.x < (p[j].x - p[i].x) * (c.y - p[i].y) / (p[j].y - p[i].y) + p[i].x)
+      x = !x;
+  return x;
+}
+
+// src/frontend/doll/outfits.ts
+var OUTFITS = {
+  adventurer: {
+    label: "Adventurer",
+    f: [
+      { kind: "top", colour: "#e9dfc8", neckline: "collar", sleeves: "long", sleeveFit: "loose", hem: "hip", label: "Linen shirt" },
+      { kind: "outer", style: "vest", colour: "#7a4a2a", material: "leather", hem: "hip", label: "Leather vest" },
+      { kind: "bottom", colour: "#4a4a3a", length: "ankle", label: "Trousers" },
+      { kind: "belt", colour: "#3a2418", colour2: "#c9a54a", label: "Belt" },
+      { kind: "shoes", style: "boots", colour: "#4a2e1e", length: "knee", material: "leather", label: "Riding boots" }
+    ]
+  },
+  kimono: {
+    label: "Kimono",
+    f: [
+      { kind: "robe", colour: "#8e2f4f", pattern: "floral", patternColour: "#f4c6d2", label: "Kimono" },
+      { kind: "sash", colour: "#e9c46a", colour2: "#c0392b", label: "Obi" },
+      { kind: "shoes", style: "geta", colour: "#a07850", colour2: "#c0392b", label: "Geta" },
+      { kind: "legwear", style: "socks", colour: "#f4f1ea", length: "short", label: "Tabi" }
+    ],
+    m: [
+      { kind: "robe", colour: "#2c3e5a", pattern: "waves", patternColour: "#4f6b94", label: "Kimono" },
+      { kind: "sash", colour: "#5a4a3a", colour2: "#d9c8a0", label: "Obi" },
+      { kind: "shoes", style: "geta", colour: "#a07850", colour2: "#222", label: "Geta" }
+    ]
+  },
+  street: {
+    label: "Street (your screenshot)",
+    f: [
+      { kind: "legwear", style: "stockings", colour: "#1d1720", pattern: "fishnet", length: "short", label: "Fishnets" },
+      { kind: "top", colour: "#f4f1ea", pattern: "cow", neckline: "halter", hem: "crop", fit: "tight", label: "Cow-print halter" },
+      { kind: "sleeves", colour: "#f4f1ea", pattern: "cow", sleeves: "long", sleeveFit: "loose", label: "Detached sleeves" },
+      { kind: "bottom", style: "shorts", colour: "#3a3a40", length: "micro", rise: "low", label: "Shorts" },
+      { kind: "shoes", style: "boots", colour: "#2a2a30", length: "short", colour2: "#f29ac0", label: "Boots" },
+      { kind: "gloves", style: "fingerless", colour: "#2a2a30", sleeves: "cap", label: "Fingerless gloves" },
+      { kind: "neck", style: "choker", colour: "#222", colour2: "#6fd0e8", label: "Choker" },
+      { kind: "hat", style: "newsboy", colour: "#2a2a30", label: "Newsboy cap" }
+    ]
+  },
+  knight: {
+    label: "Knight",
+    f: [
+      { kind: "top", colour: "#5a3a5a", neckline: "crew", sleeves: "long", hem: "thigh", label: "Gambeson" },
+      { kind: "bottom", colour: "#3a3040", length: "ankle", label: "Hose" },
+      { kind: "armor", colour: "#9aa3b2", material: "metal", neckline: "crew", sleeves: "none", label: "Breastplate" },
+      { kind: "gloves", colour: "#9aa3b2", material: "metal", sleeves: "short", label: "Gauntlets" },
+      { kind: "shoes", style: "boots", colour: "#9aa3b2", material: "metal", length: "knee", label: "Greaves" },
+      { kind: "cape", colour: "#7a1f2a", length: "calf", label: "Cape" },
+      { kind: "belt", colour: "#3a2418", label: "Sword belt" }
+    ]
+  },
+  maid: {
+    label: "Maid",
+    f: [
+      { kind: "dress", colour: "#22202a", neckline: "collar", sleeves: "short", sleeveFit: "puff", length: "knee", flare: 0.7, label: "Dress" },
+      { kind: "apron", colour: "#f6f4f0", length: "knee", label: "Apron" },
+      { kind: "legwear", style: "stockings", colour: "#f6f4f0", length: "short", label: "Stockings" },
+      { kind: "shoes", style: "heels", colour: "#1a1a1e", label: "Shoes" },
+      { kind: "hat", style: "headband", colour: "#f6f4f0", colour2: "#ffffff", label: "Headdress" }
+    ],
+    m: [
+      { kind: "top", colour: "#f4f2ee", neckline: "collar", sleeves: "long", hem: "hip", label: "Shirt" },
+      { kind: "outer", style: "vest", colour: "#22202a", open: false, hem: "waist", label: "Waistcoat" },
+      { kind: "bottom", colour: "#22202a", length: "ankle", label: "Trousers" },
+      { kind: "shoes", colour: "#1a1a1e", label: "Shoes" }
+    ]
+  },
+  school: {
+    label: "School",
+    f: [
+      { kind: "top", colour: "#f4f2ee", neckline: "collar", sleeves: "long", hem: "waist", label: "Blouse" },
+      { kind: "outer", style: "jacket", colour: "#2b3a5c", hem: "hip", label: "Blazer" },
+      { kind: "skirt", colour: "#3a4a6a", pattern: "plaid", patternColour: "#8a2a3a", length: "mid", flare: 0.5, label: "Pleated skirt" },
+      { kind: "legwear", style: "socks", colour: "#22202a", length: "knee", label: "Knee socks" },
+      { kind: "shoes", colour: "#3a2418", label: "Loafers" }
+    ],
+    m: [
+      { kind: "top", colour: "#f4f2ee", neckline: "collar", sleeves: "long", hem: "hip", label: "Shirt" },
+      { kind: "outer", style: "jacket", colour: "#2b3a5c", hem: "hip", label: "Blazer" },
+      { kind: "bottom", colour: "#3a4a6a", length: "ankle", label: "Trousers" },
+      { kind: "shoes", colour: "#3a2418", label: "Shoes" }
+    ]
+  },
+  mage: {
+    label: "Mage",
+    f: [
+      { kind: "robe", colour: "#2a2360", pattern: "stars", patternColour: "#e8c86a", neckline: "v", sleeveFit: "bell", length: "floor", flare: 0.35, label: "Robe" },
+      { kind: "belt", colour: "#c9a54a", label: "Cord" },
+      { kind: "hat", style: "witch", colour: "#2a2360", colour2: "#c9a54a", label: "Hat" },
+      { kind: "neck", style: "necklace", colour: "#c9a54a", colour2: "#6fd0e8", label: "Amulet" }
+    ]
+  },
+  casual: {
+    label: "Casual",
+    f: [
+      { kind: "top", colour: "#e05a7e", neckline: "crew", sleeves: "short", hem: "hip", label: "T-shirt" },
+      { kind: "bottom", colour: "#3d5a8a", length: "ankle", fit: "tight", label: "Jeans" },
+      { kind: "outer", style: "hoodie", colour: "#6b6f7a", open: true, label: "Hoodie" },
+      { kind: "shoes", style: "sneakers", colour: "#f0eef2", colour2: "#e05a7e", label: "Sneakers" }
+    ]
+  },
+  ranger: {
+    label: "Ranger (torn)",
+    f: [
+      { kind: "top", colour: "#5a6a3a", neckline: "v", sleeves: "elbow", hem: "thigh", damage: 0.6, label: "Tunic" },
+      { kind: "bottom", colour: "#4a3a2a", length: "ankle", fit: "tight", damage: 0.4, label: "Leggings" },
+      { kind: "cape", colour: "#3a4a2a", length: "knee", damage: 0.5, label: "Cloak" },
+      { kind: "hat", style: "hood", colour: "#3a4a2a", label: "Hood" },
+      { kind: "shoes", style: "boots", colour: "#4a2e1e", length: "calf", label: "Boots" },
+      { kind: "gloves", colour: "#4a2e1e", material: "leather", sleeves: "cap", label: "Bracers" }
+    ]
+  },
+  swim: {
+    label: "Beach",
+    f: [
+      { kind: "bra", colour: "#2fa3b8", pattern: "dots", patternColour: "#f4f1ea", label: "Bikini top" },
+      { kind: "briefs", colour: "#2fa3b8", pattern: "dots", patternColour: "#f4f1ea", label: "Bikini bottom" },
+      { kind: "hat", style: "sunhat", colour: "#e9d6a0", colour2: "#e05a7e", label: "Sun hat" },
+      { kind: "shoes", style: "sandals", colour: "#c9a070", colour2: "#e05a7e", label: "Sandals" }
+    ],
+    m: [
+      { kind: "bottom", style: "shorts", colour: "#2fa3b8", pattern: "floral", patternColour: "#f4f1ea", length: "mid", fit: "loose", label: "Swim shorts" },
+      { kind: "shoes", style: "sandals", colour: "#c9a070", colour2: "#333", label: "Sandals" }
+    ]
+  }
+};
+function outfitFor(key, sex) {
+  const o = OUTFITS[key];
+  if (!o)
+    return [];
+  return (sex === "m" ? o.m ?? o.f.filter((g) => !["bra", "dress", "skirt", "apron"].includes(g.kind)) : o.f).map((g) => ({ ...g }));
+}
+var pick = (v, list) => typeof v === "string" && list.includes(v.toLowerCase().trim()) ? v.toLowerCase().trim() : undefined;
+var colour = (v, fallback) => {
+  if (typeof v !== "string")
+    return fallback;
+  const s = v.trim();
+  if (/^#[0-9a-f]{6}$/i.test(s))
+    return s.toLowerCase();
+  if (/^#[0-9a-f]{3}$/i.test(s))
+    return "#" + s.slice(1).split("").map((c) => c + c).join("").toLowerCase();
+  return NAMED[s.toLowerCase()] ?? fallback;
+};
+var num2 = (v, lo, hi) => typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : undefined;
+var NAMED = {
+  black: "#1f1d24",
+  white: "#f4f2ee",
+  grey: "#7a7a84",
+  gray: "#7a7a84",
+  silver: "#b8bcc6",
+  red: "#c0392b",
+  crimson: "#9e1b32",
+  pink: "#f29ac0",
+  orange: "#e07b39",
+  gold: "#d4a83a",
+  yellow: "#e9c46a",
+  cream: "#efe6cf",
+  beige: "#d8c8a8",
+  brown: "#6b4a32",
+  tan: "#c49a6c",
+  green: "#3f8a4f",
+  olive: "#6b7a3a",
+  teal: "#2a8a8a",
+  cyan: "#4fc3d8",
+  blue: "#3d6fd0",
+  navy: "#24305a",
+  purple: "#6a3d9a",
+  violet: "#8a5ad0",
+  lavender: "#b8a6e0",
+  maroon: "#6a1f2a",
+  burgundy: "#6e1f34",
+  charcoal: "#33323a",
+  ivory: "#f6f1e3",
+  blonde: "#e8c26a",
+  auburn: "#8e3b22",
+  ginger: "#c45a2a",
+  chestnut: "#6b3a24",
+  platinum: "#e8e4dc"
+};
+function cleanGarment(raw) {
+  if (!raw || typeof raw !== "object")
+    return null;
+  const r = raw;
+  const kind = pick(r.kind, KINDS);
+  if (!kind)
+    return null;
+  const g = { kind, colour: colour(r.colour ?? r.color, "#7a7a84") };
+  const c2 = r.colour2 ?? r.color2;
+  if (c2 !== undefined)
+    g.colour2 = colour(c2, g.colour);
+  const set = (k, v) => {
+    if (v !== undefined)
+      g[k] = v;
+  };
+  set("pattern", pick(r.pattern, PATTERNS));
+  if (r.patternColour ?? r.patternColor)
+    g.patternColour = colour(r.patternColour ?? r.patternColor, "#1d1a22");
+  set("material", pick(r.material, MATERIALS));
+  set("neckline", pick(r.neckline, NECKLINES));
+  set("sleeves", pick(r.sleeves, SLEEVES));
+  set("sleeveFit", pick(r.sleeveFit, SLEEVE_FITS));
+  set("hem", pick(r.hem, HEMS));
+  set("fit", pick(r.fit, FITS));
+  set("length", pick(r.length, LENGTHS));
+  set("rise", pick(r.rise, ["high", "mid", "low"]));
+  set("flare", num2(r.flare, 0, 1));
+  set("damage", num2(r.damage, 0, 1));
+  if (typeof r.open === "boolean")
+    g.open = r.open;
+  const styles = STYLES[kind];
+  if (styles)
+    set("style", pick(r.style, styles));
+  if (typeof r.label === "string" && r.label.trim())
+    g.label = r.label.trim().slice(0, 40);
+  return g;
+}
+var SKINS = ["#fbe3d3", "#f6d7c3", "#e8b896", "#d9a37e", "#c98e65", "#a8714c", "#8d5a3b", "#6a4128", "#c9d8e8", "#9fd3a8"];
+var HAIR_COLOURS = ["#1f1a22", "#3b2a2a", "#6b3a24", "#8e3b22", "#c45a2a", "#e8c26a", "#e8e4dc", "#b8bcc6", "#e07aa8", "#6a8ad8", "#5ab88a", "#8a5ad0"];
+function defaultLook(sex = "f") {
+  return { body: { sex, preset: sex === "f" ? "athletic" : "athletic" }, skin: "#f0c8a8", hair: { style: sex === "f" ? "long" : "short", colour: "#3b2a2a", length: 0.6 }, eyes: "#6f4ad8", expression: "smile", outfit: outfitFor("adventurer", sex) };
+}
+function cleanLook(raw) {
+  const r = raw && typeof raw === "object" ? raw : {};
+  const bodyR = r.body && typeof r.body === "object" ? r.body : {};
+  const sex = bodyR.sex === "m" || r.sex === "m" ? "m" : "f";
+  const base = defaultLook(sex);
+  const presets = Object.keys(PRESETS[sex]);
+  const body = { sex, preset: pick(bodyR.preset, presets) ?? base.body.preset };
+  const bl = bodyR.blend;
+  if (bl && pick(bl.preset, presets))
+    body.blend = { preset: pick(bl.preset, presets), amount: num2(bl.amount, 0, 1) ?? 0.5 };
+  const h = num2(bodyR.height, 0.85, 1.15);
+  if (h)
+    body.height = h;
+  const hairR = r.hair && typeof r.hair === "object" ? r.hair : {};
+  const look = {
+    body,
+    skin: colour(r.skin, base.skin),
+    hair: { style: pick(hairR.style, HAIR_STYLES) ?? base.hair.style, colour: colour(hairR.colour ?? hairR.color, base.hair.colour), length: num2(hairR.length, 0, 1) ?? 0.6 },
+    eyes: colour(r.eyes, base.eyes),
+    expression: pick(r.expression, EXPRESSIONS) ?? "neutral",
+    ears: pick(r.ears, EARS) ?? null,
+    tail: pick(r.tail, TAILS) ?? null,
+    horns: pick(r.horns, HORNS) ?? null,
+    outfit: Array.isArray(r.outfit) ? r.outfit.map(cleanGarment).filter((g) => !!g).slice(0, 16) : base.outfit
+  };
+  if (r.earColour ?? r.earColor)
+    look.earColour = colour(r.earColour ?? r.earColor, look.hair.colour);
+  if (r.tailColour ?? r.tailColor)
+    look.tailColour = colour(r.tailColour ?? r.tailColor, look.hair.colour);
+  if (r.modest === false)
+    look.modest = false;
+  return look;
+}
+
+// src/backend/doll.ts
+init_helpers();
+init_ledger();
+init_settings();
+init_source();
+var list2 = (xs) => xs.join(" | ");
+var DOLL_SYSTEM = `You dress a paper doll for a roleplay game. You never draw; you pick from fixed lists, and the game draws it.
+
+Reply with JSON only:
+{"look": {...}, "invented": ["short notes on what you made up because the sources didn't say"]}
+
+look fields:
+- body: {"sex": "f" | "m", "preset": f: ${list2(Object.keys(PRESETS.f))}; m: ${list2(Object.keys(PRESETS.m))}, "blend": {"preset": another preset, "amount": 0..1} (optional, for in-between builds), "height": 0.85..1.15 (1 = average)}
+- skin, eyes: hex colours ("#e8b896"). Colour words also work: ${Object.keys(NAMED).slice(0, 20).join(", ")}…
+- hair: {"style": ${list2(HAIR_STYLES)}, "colour": hex, "length": 0..1 (for long styles)}
+- expression: ${list2(EXPRESSIONS)}
+- ears (only for non-human ears): ${list2(EARS)} or null; earColour
+- tail: ${list2(TAILS)} or null; tailColour. kitsune = several fox tails.
+- horns: ${list2(HORNS)} or null
+- outfit: a list of garments, innermost first. Each garment:
+  {"kind": ${list2(KINDS)}, "label": "what it is, 1-3 words", "colour": hex, "colour2": trim hex (optional),
+   "pattern": ${list2(PATTERNS)}, "patternColour": hex, "material": ${list2(MATERIALS)},
+   "neckline": ${list2(NECKLINES)}, "sleeves": ${list2(SLEEVES)}, "sleeveFit": ${list2(SLEEVE_FITS)},
+   "hem": ${list2(HEMS)} (tops), "length": ${list2(LENGTHS)} (legs, skirts, socks, boots), "fit": ${list2(FITS)},
+   "rise": high | mid | low, "flare": 0..1 (skirts, coat tails), "open": true|false (jackets), "damage": 0..1 (torn or worn),
+   "style": ${Object.entries(STYLES).map(([k, v]) => `${k}: ${list2(v)}`).join("; ")}}
+
+How to build things that aren't on the lists — compose them:
+- kimono / yukata: robe (wrap neckline, wide sleeves, a pattern) + sash (obi) + shoes geta
+- hanfu, bathrobe, wizard robe: robe with sleeveFit bell or wide; a priest's cassock: robe with collar neckline
+- plate armour: armor (material metal) + gloves metal + shoes boots metal; chainmail: top with pattern scales, material metal
+- a dress shirt: top, collar neckline; a hoodie: outer style hoodie; a trench coat: outer style coat, length knee
+- leggings / jeans: bottom, fit tight; a kilt: skirt with plaid; overalls: bottom + apron in the same colour
+- detached sleeves: sleeves; arm warmers: gloves style fingerless, sleeves elbow
+Never add a garment the sources don't support unless you need it to clothe them plausibly for the setting; note those in "invented".
+Keep what the sources say exactly (colours, cuts, animal features). Fill gaps to fit the setting and the person.`;
+async function macro(text, chatId, userId) {
+  if (!chatId)
+    return "";
+  try {
+    const { text: t } = await host().macros.resolve(text, { chatId, userId, commit: false });
+    return t && t !== text ? t.trim() : "";
+  } catch {
+    return "";
+  }
+}
+async function dollLook(m, userId) {
+  const settings = await getSettings(userId);
+  const parts = [];
+  let name = m.who;
+  try {
+    if (m.source === "text") {
+      parts.push(`Describe this look:
+${String(m.text ?? "").slice(0, 3000)}`);
+    } else if (m.who === "you") {
+      name = await macro("{{user}}", m.chatId, userId) || "the player";
+      const persona = await macro("{{persona}}", m.chatId, userId);
+      parts.push(`Who: ${name}, the player character.`);
+      if (persona)
+        parts.push(`Their persona:
+${persona.slice(0, 3000)}`);
+    } else if (m.chatId) {
+      const p = await personProfile(m.chatId, m.who, userId);
+      parts.push(`Who: ${m.who}.`);
+      if (p.text)
+        parts.push(p.text);
+      if (p.setting)
+        parts.push(`The setting:
+${p.setting}`);
+    }
+    if (m.worn?.length)
+      parts.push(`What the game says they are wearing now (keep all of these; describe each as a garment):
+${m.worn.map((w) => `- ${w}`).join(`
+`)}`);
+    if (m.source === "story" && m.chatId) {
+      const msgs = await getMessages(m.chatId);
+      const recent = msgs.slice(-6).map((x) => `${x.is_user ? "(player)" : "(story)"} ${x.content.slice(0, 1500)}`).join(`
+
+`);
+      parts.push(`Their look right now:
+${JSON.stringify(m.current ?? {}).slice(0, 4000)}`);
+      parts.push(`The latest story:
+${recent}`);
+      parts.push(`Return the whole look, changed only where the latest story changed it (clothes put on, taken off, torn, swapped; hair let down; a transformation). If nothing changed, return it as it was.`);
+    } else if (m.source !== "text" && m.current) {
+      parts.push(`Their current look, for reference (replace it): ${JSON.stringify(m.current).slice(0, 2000)}`);
+    }
+    if (m.chatId && m.source !== "text" && m.source !== "story") {
+      const msgs = await getMessages(m.chatId).catch(() => []);
+      const tail = msgs.slice(-3).map((x) => x.content.slice(0, 800)).join(`
+
+`);
+      if (tail)
+        parts.push(`The story lately (for what they're wearing now):
+${tail}`);
+    }
+    if (parts.length === 0) {
+      send({ type: "doll_look", who: m.who, look: null, note: "", error: "Nothing to go on: open a chat first, or describe the look." }, userId);
+      return;
+    }
+    const raw = firstJson(await ask(DOLL_SYSTEM, parts.join(`
+
+`), settings, userId, 45000, { temperature: 0.6, maxTokens: 2400 }));
+    if (!raw || typeof raw.look !== "object")
+      throw new Error("the helper didn't send a look");
+    const look = cleanLook(raw.look);
+    const invented = Array.isArray(raw.invented) ? raw.invented.filter((x) => typeof x === "string").slice(0, 8) : [];
+    send({ type: "doll_look", who: m.who, look, note: invented.length ? `Made up: ${invented.join("; ")}` : "", name }, userId);
+  } catch (e) {
+    logError("doll look", e);
+    toast("warning", "The helper couldn't dress the doll this time. Try again, or describe the look.", userId);
+    send({ type: "doll_look", who: m.who, look: null, note: "", error: String(e?.message ?? e) }, userId);
+  }
+}
+
+// src/backend.ts
 init_source();
 init_state_push();
 init_turn();
@@ -27816,7 +29381,7 @@ async function sendSettings(userId) {
 spindle.onFrontendMessage(async (raw, userId) => {
   const msg = raw;
   try {
-    if ("chatId" in msg && msg.chatId && !["hello", "refresh", "reload", "reconcile_history", "undo"].includes(msg.type) && !msg.type.startsWith("builder") && msg.type !== "export_rulebook" && msg.type !== "install_template") {
+    if ("chatId" in msg && msg.chatId && !["hello", "refresh", "reload", "reconcile_history", "undo", "doll_look"].includes(msg.type) && !msg.type.startsWith("builder") && msg.type !== "export_rulebook" && msg.type !== "install_template") {
       const r = (await getRuleset(msg.chatId, userId))?.ruleset;
       if (r && foldPath(r, await getMessages(msg.chatId), 0).conflict) {
         toast("warning", "Earlier history or rules changed. Review the recorded outcomes in the Warp sheet before continuing.", userId);
@@ -27825,6 +29390,9 @@ spindle.onFrontendMessage(async (raw, userId) => {
       }
     }
     switch (msg.type) {
+      case "doll_look":
+        await dollLook(msg, userId);
+        break;
       case "cue_image_fit":
         await setDateImageFit(msg.chatId, msg.fit, userId);
         break;

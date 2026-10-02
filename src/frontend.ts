@@ -15,6 +15,7 @@ import { STAGE_STYLES } from "./frontend/stage-styles.js";
 import { FX_STYLES } from "./frontend/fx-styles.js";
 import { esc, hudParts, renderChips, renderDepthCard, renderEncounterLog, renderWhyFold, renderChoices, renderHud, renderJournal, renderPart, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
 import { createPanels, wireGrip } from "./frontend/panel-windows.js";
+import { createDollLab, DOLL_STYLES } from "./frontend/doll/lab.js";
 import { fxEvents } from "./frontend/fx-events.js";
 import { playFx, typewrite } from "./frontend/fx.js";
 import { armAudio, play, setVolume } from "./frontend/sfx.js";
@@ -45,6 +46,7 @@ export function setup(ctx: SpindleFrontendContext) {
   cleanups.push(ctx.dom.addStyle(STAGE_STYLES));
   cleanups.push(ctx.dom.addStyle(FX_STYLES));
   cleanups.push(ctx.dom.addStyle(ARCADE_STYLES));
+  cleanups.push(ctx.dom.addStyle(DOLL_STYLES));
   cleanups.push(armAudio());
 
   let state: StateMsg | null = null;
@@ -61,7 +63,7 @@ export function setup(ctx: SpindleFrontendContext) {
   let editingBar: string | null = null;
   /** Steps placed with +/− on `allocate:` stats, not yet spent. */
   let allocDraft: Record<string, number> = {};
-  let drawerView: "sheet" | "journal" | "date" | "dungeon" | "rules" | "settings" = "sheet";
+  let drawerView: "sheet" | "journal" | "date" | "dungeon" | "doll" | "rules" | "settings" = "sheet";
   let dateCat: string | null = null;
   let dgPick: DungeonPick = null;
   const dgMates = new Set<string>();
@@ -69,6 +71,8 @@ export function setup(ctx: SpindleFrontendContext) {
 
   const send = (m: FrontendToBackend) => ctx.sendToBackend(m);
   const chatId = () => { try { return ctx.getActiveChat().chatId ?? null; } catch { return null; } };
+  // The doll: its tab in the drawer, and the player's doll as a status-panel section.
+  const dollLab = createDollLab({ send, chatId, hud: () => state?.hud ?? null, changed: () => renderAll() });
 
   // ───────── surfaces: drawer tab (always) + left dock panel (when allowed) ─────────
   const tab = ctx.ui.registerDrawerTab({
@@ -450,6 +454,8 @@ export function setup(ctx: SpindleFrontendContext) {
     if (state?.hud) {
       // The head always stays here; each section sits here unless it's been torn off into a panel.
       const { head, parts } = hudParts(state.hud, { editing: editingBar, compact: true, map: state.map, alloc: allocDraft });
+      const doll = dollLab.hudSection();
+      if (doll) parts.push(doll);
       const mine = parts.filter((p) => panels.inMain(p.id));
       dockRoot.innerHTML = historyNotice() + head + mine.map((p) => renderPart(p, true)).join("");
       panels.render(parts);
@@ -488,6 +494,7 @@ export function setup(ctx: SpindleFrontendContext) {
       ...(state?.hud ? [["journal", "Journal"] as [typeof drawerView, string]] : []),
       ...(state?.date ? [["date", state.date.session ? "Dating 💬" : "Dating"] as [typeof drawerView, string]] : []),
       ...(state?.dungeon || state?.dungeonEntries?.length ? [["dungeon", state?.dungeon ? "Dungeon ⚔" : "Dungeon"] as [typeof drawerView, string]] : []),
+      ["doll", "Doll"],
       ["rules", `Ruleset${status.issues.some((i) => i.level === "error") ? " ⚠" : ""}`],
       ["settings", "Settings"],
     ];
@@ -503,6 +510,8 @@ export function setup(ctx: SpindleFrontendContext) {
     } else if (drawerView === "dungeon") {
       const isBusy = busy.on && busy.chatId === state?.chatId;
       body = renderDungeon(state?.dungeon ?? null, state?.dungeonEntries ?? [], { pick: dgPick, mates: dgMates, busy: isBusy });
+    } else if (drawerView === "doll") {
+      body = dollLab.html();
     } else if (drawerView === "journal") {
       body = renderJournal(state?.hud ?? null, state?.records ?? []);
     } else if (drawerView === "rules" && builder) {
@@ -1015,6 +1024,7 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   function onPanelClick(e: Event) {
+    if (dollLab.handle(e, drawerRoot)) return;
     const t = e.target as Element;
     if (t.closest("[data-jev-openrouter]")) { send({ type: "settings", patch: { ...OPENROUTER_JEV } }); return; }
     const view = t.closest<HTMLElement>("[data-view]");
@@ -1196,6 +1206,7 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   function onPanelInput(e: Event) {
+    if (dollLab.handle(e as Event, drawerRoot)) return;
     const t = e.target as HTMLInputElement;
     if (onBuilderInput(t)) return;
     // Slider and number box share the stat's real range; keep them in step both ways.
@@ -1208,6 +1219,7 @@ export function setup(ctx: SpindleFrontendContext) {
     }
   }
   function onPanelChange(e: Event) {
+    if (dollLab.handle(e as Event, drawerRoot)) return;
     const t = e.target as HTMLInputElement | HTMLSelectElement;
     if (onBuilderInput(t as HTMLInputElement)) return;
     // A rulebook file picked for import: its text goes into the box to check and preview.
@@ -1475,6 +1487,9 @@ export function setup(ctx: SpindleFrontendContext) {
         renderDrawer();
         break;
       }
+      case "doll_look":
+        dollLab.onLook(m);
+        break;
       case "settings":
         settings = m.settings;
         setVolume(settings.sfxVolume);

@@ -651,6 +651,7 @@ export interface SceneView {
 }
 
 export type BackendToFrontend =
+  | { type: "doll_look"; who: string; look: unknown | null; note: string; name?: string; error?: string }
   | {
       type: "state";
       chatId: string | null;
@@ -685,7 +686,22 @@ export type BackendToFrontend =
   /** The installed rulebook as one file, for editing elsewhere. */
   | { type: "rulebook_export"; name: string; text: string };
 
+/** Ask the helper to dress a doll: from what's known about someone, a typed description, or the latest story. */
+export interface DollRequest {
+  type: "doll_look";
+  chatId: string | null;
+  /** "you" (the player) or a person's name. */
+  who: string;
+  source: "profile" | "text" | "story";
+  text?: string;
+  /** Their look now (for story updates). */
+  current?: unknown;
+  /** Clothing the rules say they're wearing ("Raincoat (torn)"). */
+  worn?: string[];
+}
+
 export type FrontendToBackend =
+  | DollRequest
   | { type: "cue_image_fit"; chatId: string; fit: ImageFit }
   | { type: "cue_image_result"; chatId: string; result: CueImageResult }
   | { type: "retry_date_image"; chatId: string }

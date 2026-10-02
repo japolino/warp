@@ -8,6 +8,7 @@ import type { FrontendToBackend } from "./shared/protocol.js";
 import { logError, send, toast } from "./backend/host.js";
 import { foldPath, getMessages, patchWarpMeta, reconcilePath, shiftAfterSwipeDelete, warpMeta, writeRecord } from "./backend/ledger.js";
 import { getSettings, patchSettings } from "./backend/settings.js";
+import { dollLook } from "./backend/doll.js";
 import { getRuleset, installTemplate, invalidateCharacter, invalidateChat, knownRulesetBookIds, knownRulesetEntryIds } from "./backend/source.js";
 import { busyChats, connectionsFor, getActiveChat, pushState, schedulePush, setActiveChat } from "./backend/state-push.js";
 import { afterReply, generationHistory, interceptor, onGenerationEnded, onGenerationStarted, onGenerationStopped, playerName } from "./backend/turn.js";
@@ -172,7 +173,7 @@ async function sendSettings(userId?: string) {
 spindle.onFrontendMessage(async (raw, userId) => {
   const msg = raw as FrontendToBackend;
   try {
-    if ("chatId" in msg && msg.chatId && !["hello", "refresh", "reload", "reconcile_history", "undo"].includes(msg.type) && !msg.type.startsWith("builder") && msg.type !== "export_rulebook" && msg.type !== "install_template") {
+    if ("chatId" in msg && msg.chatId && !["hello", "refresh", "reload", "reconcile_history", "undo", "doll_look"].includes(msg.type) && !msg.type.startsWith("builder") && msg.type !== "export_rulebook" && msg.type !== "install_template") {
       const r = (await getRuleset(msg.chatId, userId))?.ruleset;
       if (r && foldPath(r, await getMessages(msg.chatId), 0).conflict) {
         toast("warning", "Earlier history or rules changed. Review the recorded outcomes in the Warp sheet before continuing.", userId);
@@ -181,6 +182,9 @@ spindle.onFrontendMessage(async (raw, userId) => {
       }
     }
     switch (msg.type) {
+      case "doll_look":
+        await dollLook(msg, userId);
+        break;
       case "cue_image_fit":
         await setDateImageFit(msg.chatId, msg.fit, userId);
         break;

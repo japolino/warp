@@ -4,6 +4,7 @@ A game engine under your roleplay. Warp owns stats, dice, time, inventory and re
 
 - **Choices** appear under the latest reply (hotkeys 1–9, odds on each button). You can also just type — a quick referee call maps risky attempts to an action (or, when nothing listed fits, rolls it on your closest ability), and the dice decide.
 - **Status panel** floats over the chat (drag it to any screen edge to attach it as a sidebar or strip). Drag a section's header out to give it a window of its own (up to 3); drop one window near another's side to sit beside it as a second column; resize any window from its corner grip (double-click the grip to fit again). Plus a **Warp** drawer tab: Sheet · Map · Journal · Ruleset · Settings.
+- **Doll** (testing): a drawn figure for you and one other person, in the **Doll** drawer tab and as a status-panel section. 4 builds per sex that blend, 9 hairstyles, animal ears, tails and horns, and an outfit made of described garments (kind, cut, colour, pattern, wear) that fit any build. The helper can dress it from your persona, a character's card and lorebook, a typed description, or the latest replies. Try it outside Lumiverse with `bun run bench` and `/doll.html`.
 - **Dice & change chips** on every reply. Changes read from the story are dashed and can be undone with ×.
 - **Swipes reroll** (Casual) by default; turn off for Ironman. State always follows the active swipe.
 
