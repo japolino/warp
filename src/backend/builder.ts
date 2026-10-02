@@ -515,9 +515,9 @@ export async function builderStart(chatId: string, opts: { connectionId: string;
       cast: Array.isArray(out.cast) ? out.cast.slice(0, 12).map((c) => ({ name: String((c as Record<string, unknown>)?.name ?? ""), relation: String((c as Record<string, unknown>)?.relation ?? "") })).filter((c) => c.name) : [],
     };
     s.base = opts.base || suggested;
-    // Quests give almost any game goals with stakes, and minigames make its big checks playable: on unless turned off.
+    // Suggest only systems that fit the card. Quests and minigames remain selectable.
     const picked = Array.isArray(out.systems) ? out.systems.map(String).filter((x) => SYSTEMS.some((y) => y.id === x)) : ["needs", "relationships", "money", "skills", "story"];
-    const defaults = [...new Set([...picked, "quests", "minigames"])];
+    const defaults = [...new Set(picked)];
     s.rounds = [{ questions: [...coreQuestions(defaults), ...normQuestions(out.followUps, "f1_")], answers: {} }];
     s.step = "questions";
   } catch (e) {

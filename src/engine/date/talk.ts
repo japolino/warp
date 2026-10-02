@@ -9,6 +9,7 @@ import { emptyEffect, type DecideSpec, type Ruleset } from "../ruleset.js";
 import { itemName, makeEnv, personName, type GameState } from "../state.js";
 import { presentPeople, sceneWord } from "../world.js";
 import { venueTags } from "./content.js";
+import { affectionFactor, recentCount, restedFatigue, socialRepeat } from "./memory.js";
 import { isHostile, relPct, stageIndex, stageLabel } from "./stage.js";
 import {
   DATE_PREFIX, REACTION_LABEL, REACTION_VALUE, REACTIONS,
@@ -211,6 +212,13 @@ function relMove(t: TurnBuilder, who: string, love: number, fear: number) {
   if (f) t.push({ t: "rel", who, stat: r.dating.fear, d: f, src: "action" });
 }
 
+/** Reward a special move once, then taper repeats even after reopening. */
+function socialMove(t: TurnBuilder, who: string, key: string, love: number, fear: number) {
+  const repeat = recentCount(t.s, who, key, t.r.dating.memory);
+  relMove(t, who, love > 0 ? love * affectionFactor(repeat) : love, fear);
+  t.push({ t: "dt_recent", who, key, at: t.s.minutes, count: repeat + 1, fatigue: t.s.date?.fatigue ?? restedFatigue(t.s, who, t.r.dating.memory), src: "action" });
+}
+
 /** Tell the narrator when a relationship crosses a rung. */
 function watchStage(t: TurnBuilder, who: string, fn: () => void) {
   const before = stageIndex(t.r, t.s, who);
@@ -236,11 +244,18 @@ function react(t: TurnBuilder, who: string, reaction: Reaction, o: { key: string
   const { r } = t;
   const sess = t.s.date!;
   const name = personName(r, t.s, who);
+  const repeat = socialRepeat(t.s, sess, o.key, t.r.dating.memory);
   const mult = reaction === "love" || reaction === "like" ? 1 + 0.25 * Math.min(sess.combo, 4) : 1;
-  watchStage(t, who, () => relMove(t, who, LOVE[reaction] * o.scale * mult * (o.activity ? 0.7 : 1), FEAR[reaction]));
+  const reward = LOVE[reaction] > 0 ? affectionFactor(repeat) : 1;
+  // Authored category and weight distinguish ordinary chat from significant topics.
+  const topic = r.dating.topics[o.key];
+  const significance = topic?.category === "small_talk" || o.key === "chat" ? 0.5 : 1;
+  watchStage(t, who, () => relMove(t, who, LOVE[reaction] * o.scale * mult * reward * significance * (o.activity ? 0.7 : 1), FEAR[reaction]));
   const warm = reaction === "love" || reaction === "like";
   const combo = warm ? sess.combo + 1 : reaction === "neutral" ? sess.combo : 0;
-  const fatigue = Math.max(0, Math.min(100, sess.fatigue + (o.activity ? 3 : r.dating.fatiguePerTopic) + (reaction === "dislike" ? 5 : reaction === "hate" ? 10 : reaction === "love" ? -4 : 0)));
+  // Fresh warm exchanges sustain flow. Repetition and poor reactions still end a talk.
+  const flow = warm && repeat < 0.5 ? 0.5 : 1;
+  const fatigue = Math.max(0, Math.min(100, sess.fatigue + (o.activity ? 3 : r.dating.fatiguePerTopic * flow) + (reaction === "dislike" ? 5 : reaction === "hate" ? 10 : reaction === "love" ? -4 : 0)));
   const patch: Partial<DateSession> = {
     mood: clampMood(sess.mood + MOOD[reaction]),
     combo,
@@ -250,6 +265,7 @@ function react(t: TurnBuilder, who: string, reaction: Reaction, o: { key: string
   };
   if (sess.kind === "outing") patch.enjoy = Math.max(0, Math.min(100, sess.enjoy + (o.activity ? ENJOY[reaction] : Math.round(ENJOY[reaction] / 2))));
   t.push({ t: "dt_patch", patch, src: "action" });
+  t.push({ t: "dt_recent", who, key: o.key, at: t.s.minutes, count: recentCount(t.s, who, o.key, t.r.dating.memory) + 1, fatigue, src: "action" });
   if (o.seen) t.push({ t: "dt_seen", who, topic: o.seen, reaction, src: "action" });
 
   t.announce(LINE[reaction](name));
@@ -346,8 +362,8 @@ function kissPrior(r: Ruleset, s: GameState, sess: DateSession, who: string) {
 /** Topics to feature under the reply: good ones the player knows about first, then untried ones. */
 function featuredTopics(r: Ruleset, s: GameState, sess: DateSession, who: string, list: TopicDef[], n: number): Set<string> {
   const known = s.dating.known[who] ?? {};
-  const good = list.filter((tp) => (known[tp.id] === "love" || known[tp.id] === "like") && !sess.used[tp.id]);
-  const fresh = list.filter((tp) => !known[tp.id] && !sess.used[tp.id]);
+  const good = list.filter((tp) => (known[tp.id] === "love" || known[tp.id] === "like") && socialRepeat(s, sess, tp.id, r.dating.memory) < 0.5);
+  const fresh = list.filter((tp) => !known[tp.id] && socialRepeat(s, sess, tp.id, r.dating.memory) < 0.5);
   const rest = list.filter((tp) => !good.includes(tp) && !fresh.includes(tp) && known[tp.id] !== "hate" && known[tp.id] !== "dislike");
   // Rotate the untried ones so different topics come up turn to turn.
   const shuffled = shuffle(fresh, seededRng(`feature:${who}:${s.turn}`));
@@ -393,7 +409,7 @@ export function dateMoves(r: Ruleset, s: GameState, lines: string[] = []): DateM
     const shown = featuredTopics(r, s, sess, who, topics, sess.kind === "outing" ? 3 : 6);
     const known = s.dating.known[who] ?? {};
     for (const tp of topics) {
-      const p = reactionPrior(r, s, sess, who, topicPref(r, s, who, tp), { stage: tp.stage, repeat: sess.used[tp.id] ?? 0 });
+      const p = reactionPrior(r, s, sess, who, topicPref(r, s, who, tp), { stage: tp.stage, repeat: socialRepeat(s, sess, tp.id, r.dating.memory) });
       out.push({
         id: `${DATE_PREFIX}topic:${tp.id}`, label: tp.label,
         say: (tp.say ?? `*I bring up ${tp.label.charAt(0).toLowerCase()}${tp.label.slice(1)}.*`).replace(/\{\{target\}\}|\{target\}/gi, name),
@@ -470,7 +486,7 @@ function startTalk(t: TurnBuilder, who: string): string | null {
   const fear = relPct(r, t.s, who, r.dating.fear);
   const session: DateSession = {
     who, kind: "talk", at: t.s.location, venue: null, beat: 0, beats: 0,
-    fatigue: 0, mood: clampMood((love - fear) / 40), combo: 0, enjoy: 0, used: {}, last: null, offer: [], closing: false, started: t.s.minutes,
+    fatigue: restedFatigue(t.s, who, t.r.dating.memory), mood: clampMood((love - fear) / 40), combo: 0, enjoy: 0, used: {}, last: null, offer: [], closing: false, started: t.s.minutes,
   };
   t.push({ t: "dt_start", session, src: "action" });
   const name = personName(r, t.s, who);
@@ -485,7 +501,7 @@ function endOuting(t: TurnBuilder, who: string, early: boolean) {
   const enjoy = Math.max(0, sess.enjoy - (early ? 10 : 0));
   const name = personName(r, t.s, who);
   const tier = enjoy >= 80 ? ["wonderful", 10] : enjoy >= 60 ? ["good", 6] : enjoy >= 40 ? ["okay", 2] : ["awkward", -3];
-  watchStage(t, who, () => relMove(t, who, tier[1] as number, tier[1] as number < 0 ? 1 : -1));
+  watchStage(t, who, () => socialMove(t, who, "outing_end", tier[1] as number, tier[1] as number < 0 ? 1 : -1));
   t.push({ t: "dt_dated", who, enjoy, src: "action" });
   t.announce(`${early ? "The date ends early. " : "The date is winding down. "}Overall it was ${tier[0]} for ${name} (${Math.round(enjoy)}% enjoyed).${!early && romanceOk(r, t.s, who) && enjoy >= 60 ? " There may be a moment at the end, if {{user}} takes it." : ""}`);
 }
@@ -537,7 +553,7 @@ export function resolveDate(t: TurnBuilder, intent: Intent): { label: string; ta
   if (id.startsWith("topic:")) {
     const tp = r.dating.topics[id.slice(6)];
     if (!tp || sess.closing || !topicAvailable(r, t.s, who, tp, new Set())) return null;
-    const p = reactionPrior(r, t.s, sess, who, topicPref(r, t.s, who, tp), { stage: tp.stage, repeat: sess.used[tp.id] ?? 0 });
+    const p = reactionPrior(r, t.s, sess, who, topicPref(r, t.s, who, tp), { stage: tp.stage, repeat: socialRepeat(t.s, sess, tp.id, t.r.dating.memory) });
     const reaction = t.roll(`date:topic:${tp.id}`, `How does ${name} take it?`, p, REACTION_LABEL, "weights") as Reaction;
     t.announce(`{{user}} brings up ${tp.label.toLowerCase()}.`);
     const going = react(t, who, reaction, { key: tp.id, label: tp.label, scale: tp.weight, seen: tp.id });
@@ -551,7 +567,7 @@ export function resolveDate(t: TurnBuilder, intent: Intent): { label: string; ta
     const a = v?.activities.find((x) => x.id === id.slice(4));
     if (!v || !a || sess.kind !== "outing" || sess.closing || !sess.offer.includes(a.id)) return null;
     if (a.romantic && !romanceOk(r, t.s, who)) return null;
-    const p = reactionPrior(r, t.s, sess, who, activityPref(r, t.s, who, a), { repeat: sess.used[`act:${a.id}`] ?? 0 });
+    const p = reactionPrior(r, t.s, sess, who, activityPref(r, t.s, who, a), { repeat: socialRepeat(t.s, sess, `act:${a.id}`, t.r.dating.memory) });
     const reaction = t.roll(`date:act:${a.id}`, `How does ${name} enjoy it?`, p, REACTION_LABEL, "weights") as Reaction;
     t.announce(`On the date, {{user}} and ${name}: ${a.label.charAt(0).toLowerCase()}${a.label.slice(1)}.`);
     if (react(t, who, reaction, { key: `act:${a.id}`, label: a.label, scale: 1, seen: `act:${a.id}`, activity: true })) nextBeat(t, who);
@@ -569,7 +585,7 @@ export function resolveDate(t: TurnBuilder, intent: Intent): { label: string; ta
     const pick = t.roll("date:ask_out", `Will ${name} go out with {{user}}?`, combine(prior, model), { yes: "Says yes", later: "Maybe another time", no: "Turns them down" }, model ? "model" : "weights");
     t.push({ t: "dt_patch", patch: { used: { ...sess.used, ask_out: (sess.used.ask_out ?? 0) + 1 } }, src: "action" });
     if (pick === "yes") {
-      watchStage(t, who, () => relMove(t, who, 2, 0));
+      watchStage(t, who, () => socialMove(t, who, "ask_out", 2, 0));
       t.push({ t: "dt_patch", patch: { kind: "plan" }, src: "action" });
       t.announce(`${name} says yes. They're deciding where to go.`);
     } else if (pick === "later") {
@@ -642,8 +658,8 @@ export function resolveDate(t: TurnBuilder, intent: Intent): { label: string; ta
     const pick = t.roll("date:kiss", `Does ${name} want the kiss?`, combine(prior, model), { welcome: "Kisses back", hesitant: "Hesitates", refuse: "Pulls away" }, model ? "model" : "weights");
     t.push({ t: "dt_patch", patch: { used: { ...sess.used, kiss: (sess.used.kiss ?? 0) + 1 } }, src: "action" });
     watchStage(t, who, () => {
-      if (pick === "welcome") relMove(t, who, 8, -1);
-      else if (pick === "hesitant") relMove(t, who, 1, 0);
+      if (pick === "welcome") socialMove(t, who, "kiss", 8, -1);
+      else if (pick === "hesitant") socialMove(t, who, "kiss", 1, 0);
       else { relMove(t, who, -3, 2); t.push({ t: "dt_patch", patch: { mood: clampMood(sess.mood - 1) }, src: "action" }); }
     });
     t.announce(pick === "welcome" ? `${name} kisses {{user}} back.` : pick === "hesitant" ? `${name} hesitates; the moment passes, a little awkwardly.` : `${name} pulls away.`);
@@ -659,7 +675,7 @@ export function resolveDate(t: TurnBuilder, intent: Intent): { label: string; ta
     if (!(t.s.items[item] > 0) || sess.closing) return null;
     const label = itemName(r, t.s, item);
     learnTastes(t, who, [{ key: `item:${item}`, about: `receiving ${label} as a gift from {{user}}`, extra: r.items[item]?.tags.map((x) => `tag:${x}`) }]);
-    const p = reactionPrior(r, t.s, sess, who, prefOf(r, t.s, who, `item:${item}`), { repeat: sess.used.gift ?? 0 });
+    const p = reactionPrior(r, t.s, sess, who, prefOf(r, t.s, who, `item:${item}`), { repeat: socialRepeat(t.s, sess, "gift", t.r.dating.memory) });
     const reaction = t.roll(`date:gift:${item}`, `How does ${name} like the gift?`, p, REACTION_LABEL, "weights") as Reaction;
     t.push({ t: "item", id: item, d: -1, src: "action" });
     t.announce(`{{user}} gives ${name} ${label}.`);
@@ -669,8 +685,8 @@ export function resolveDate(t: TurnBuilder, intent: Intent): { label: string; ta
   }
 
   if (id === "apologize") {
-    const times = sess.used.apologize ?? 0;
-    watchStage(t, who, () => relMove(t, who, times ? 0 : 1, -6 / (1 + times)));
+    const times = socialRepeat(t.s, sess, "apologize", t.r.dating.memory);
+    watchStage(t, who, () => socialMove(t, who, "apologize", times ? 0 : 1, -6 / (1 + times)));
     t.push({ t: "dt_patch", patch: { mood: clampMood(sess.mood + 1 / (1 + times)), used: { ...sess.used, apologize: times + 1 }, fatigue: Math.min(100, sess.fatigue + 5) }, src: "action" });
     t.announce(times ? `{{user}} apologises again; ${name} is starting to find it tiresome.` : `{{user}} apologises. ${name} softens a little.`);
     t.time(minutes, "action");
@@ -679,7 +695,7 @@ export function resolveDate(t: TurnBuilder, intent: Intent): { label: string; ta
 
   if (id === "goodbye") {
     if (sess.kind === "outing" && !sess.closing) endOuting(t, who, true);
-    if (sess.mood >= 0.5 && sess.kind !== "outing") relMove(t, who, 1, 0);
+    if (sess.mood >= 0.5 && sess.kind !== "outing" && Object.keys(sess.used).length > 0) socialMove(t, who, "goodbye", 1, 0);
     t.announce(`{{user}} says goodbye; ${name} parts ${sess.mood >= 0.5 ? "warmly" : sess.mood <= -1 ? "coolly" : "on easy terms"}.`);
     t.push({ t: "dt_end", src: "action" });
     t.time(2, "action");
@@ -725,8 +741,8 @@ function saidLine(t: TurnBuilder, sess: DateSession, who: string, name: string):
     if (best !== "none" && p >= 0.45) tp = r.dating.topics[best];
   }
   const prior = tp
-    ? reactionPrior(r, t.s, sess, who, topicPref(r, t.s, who, tp), { stage: tp.stage, repeat: sess.used[tp.id] ?? 0 })
-    : reactionPrior(r, t.s, sess, who, 0.3, { repeat: 0 });
+    ? reactionPrior(r, t.s, sess, who, topicPref(r, t.s, who, tp), { stage: tp.stage, repeat: socialRepeat(t.s, sess, tp.id, t.r.dating.memory) })
+    : reactionPrior(r, t.s, sess, who, 0.3, { repeat: socialRepeat(t.s, sess, "chat", t.r.dating.memory) });
   // The words matter more than the taste when the model has read them.
   const p = combine(prior, reception, 0.5);
   const reaction = t.roll("date:say", `How does ${name} take what {{user}} said?`, p, REACTION_LABEL, reception ? "model" : "weights") as Reaction;

@@ -212,10 +212,15 @@ async function session(surface: ArcadeSurface, choice: ChoiceView, auto: boolean
     };
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement).matches?.("input")) return;
+      // Focused buttons keep native Enter/Space activation, including Roll and Cancel.
+      if (e.key === "Enter" && (e.target as HTMLElement).closest?.("button")) return;
       if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); if (!gamble || gamble.stakes.length) done("play"); }
       else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done("cancel"); }
     };
+    let settled = false;
     function done(v: "play" | "roll" | "cancel") {
+      if (settled) return;
+      settled = true;
       el.removeEventListener("click", onClick);
       el.removeEventListener("change", onChange);
       el.removeEventListener("input", onInput);

@@ -1,7 +1,7 @@
 // What a clicked choice means: the line posted as the player's message and the
 // intent the turn resolves. Shared by clicking and by pre-writing replies.
 
-import { ABILITY_PREFIX, availableChoices, canExplore, EXPLORE, findAction, ITEM_PREFIX, LIVE_PREFIX, usableAbilities, usableItems, RUN_EPILOGUE, TARGET_SEP, TRAVEL_PREFIX, travelTargets, type Intent } from "../engine/resolve.js";
+import { cleanLiveForecast, ABILITY_PREFIX, availableChoices, canExplore, EXPLORE, findAction, ITEM_PREFIX, LIVE_PREFIX, usableAbilities, usableItems, RUN_EPILOGUE, TARGET_SEP, TRAVEL_PREFIX, travelTargets, type Intent } from "../engine/resolve.js";
 import type { Ruleset } from "../engine/ruleset.js";
 import type { GameState } from "../engine/state.js";
 import { dateMoves } from "../engine/date/talk.js";
@@ -25,8 +25,13 @@ export function intentFor(r: Ruleset, state: GameState, settings: Settings, msgs
   if (actionId.startsWith(LIVE_PREFIX)) {
     // Choices written for the latest reply: the tag decides what happens, the label is what the player saw.
     const c = liveChoicesOf(msgs[msgs.length - 1])[Number(actionId.slice(LIVE_PREFIX.length))];
-    if (!c || !findAction(r, state, `${LIVE_PREFIX}${c.tag}${c.target ? `${TARGET_SEP}${c.target}` : ""}`)) return { error: "That choice isn't available anymore." };
-    return { say: `*${c.label}*`, intent: { actionId: `${LIVE_PREFIX}${c.tag}${c.target ? `${TARGET_SEP}${c.target}` : ""}`, via: "choice", label: c.label } };
+    const found = c ? findAction(r, state, `${LIVE_PREFIX}${c.tag}${c.target ? `${TARGET_SEP}${c.target}` : ""}`) : null;
+    if (!c || !found) return { error: "That choice isn't available anymore." };
+    const forecast = cleanLiveForecast(c.forecast);
+    // Explicit choices (the tag's own params, a chosen mind resistance) ride on the intent; the engine validates them.
+    const known = new Set(["mind_resist", ...found.a.params.map((p) => p.id)]);
+    const explicit = Object.fromEntries(Object.entries(params ?? {}).filter(([k, v]) => known.has(k) && typeof v === "string"));
+    return { say: `*${c.label}*`, intent: { ...(forecast ? { forecast } : {}), actionId: `${LIVE_PREFIX}${c.tag}${c.target ? `${TARGET_SEP}${c.target}` : ""}`, ...(Object.keys(explicit).length ? { params: explicit } : {}), via: "choice", label: c.label } };
   }
   if (actionId.startsWith(PAY_PREFIX) || actionId.startsWith(JOB_PREFIX)) {
     const m = workMoves(r, state).find((x) => x.id === actionId);

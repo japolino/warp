@@ -8,7 +8,7 @@ import { foldEvents, initialState, type GameState } from "../state.js";
 import { buildChoices, narratorKnowledge, stateDigest } from "../view.js";
 import { generateFloor, key } from "./floor.js";
 import {
-  battleCommand, chooseEvent, choicesFor, descend, enterDungeon, leaveDungeon, moveTo, shopBuy, useItem, type DungeonResult,
+  battleCommand, chooseEvent, choicesFor, descend, enterDungeon, leaveDungeon, memberFighter, classFor, moveTo, shopBuy, useItem, type DungeonResult,
 } from "./run.js";
 import { buildDungeonEntries, buildDungeonView } from "./view.js";
 
@@ -171,6 +171,29 @@ describe("fights, events and the way out", () => {
     expect(st.rel.mira.trust).toBeGreaterThan(trust);
   });
 
+  test("a generated resident with no known age never gets a dungeon romance scene", () => {
+    const raw = structuredClone(RULES) as any;
+    raw.locations.cove = { name: "Cove", exits: ["town"] };
+    raw.relationships.people.drift = { name: "Drift", schedule: [{ at: "cove" }] };
+    const { ruleset } = normalizeRuleset(raw);
+    const r = ruleset!;
+    for (let i = 0; i < 200; i++) {
+      // The resident's place was discovered, so they count as generated.
+      const base = foldEvents(r, [[{ t: "discovered", id: "cove", src: "action" }]], initialState(r));
+      const s = apply(r, base, enterDungeon(r, base, "mines", ["drift"], `seed-${i}`));
+      const hit = nextTo(r, s, "romance");
+      if (!hit) continue;
+      const st = apply(r, hit.s, moveTo(r, hit.s, hit.x, hit.y));
+      expect(choicesFor(r, st)?.target).not.toBe("drift");
+      // Once the story establishes they're an adult, romance can include them.
+      const known = foldEvents(r, [[{ t: "dt_pref", who: "drift", key: "__adult", v: 1, src: "action" }]], hit.s);
+      const after = apply(r, known, moveTo(r, known, hit.x, hit.y));
+      expect(choicesFor(r, after)?.target).toBe("drift");
+      return;
+    }
+    throw new Error("no romance tile found");
+  });
+
   test("the shop sells for run gold", () => {
     const r = rules();
     const { s, x, y } = findSeed(r, "shop");
@@ -268,4 +291,138 @@ describe("balance", () => {
     expect(reached(5)).toBeGreaterThan(0.6);
     expect(reached(10)).toBeLessThan(0.5);
   }, 30000);
+});
+
+
+describe("authored dungeon carryover", () => {
+  function configured(extra: Record<string, unknown> = {}) {
+    const raw = structuredClone(RULES) as any;
+    raw.stats.sword = { kind: "skill", start: 10, max: 12, growth: 1 };
+    raw.dungeons.mines = { ...raw.dungeons.mines,
+      party: { classes: { mira: "healer" }, stats: { mira: { atk: "10 + rel_bond(target) / 5", hp: "sword * 10" } } },
+      supplies: { bomb: 3 },
+      exit_rewards: { money: { amount: "run_gold + run_xp", cap: 4 } },
+      exit_practice: { sword: { amount: "run_xp / 10", cap: 2.5 } }, ...extra };
+    return normalizeRuleset(raw);
+  }
+
+  test("defaults keep run-only growth and original supplies", () => {
+    const r = rules();
+    let s = enter(r);
+    expect(s.dungeon!.bag).toEqual({ potion: 2, ether: 0, bomb: 0 });
+    const before = structuredClone(s.stats);
+    s = foldEvents(r, [[{ t: "dg_xp", d: 500, src: "action" }]], s);
+    s = apply(r, s, leaveDungeon(r, s));
+    expect(s.stats).toEqual(before);
+    expect(s.practice).toEqual({});
+  });
+
+  test("companion formulas use live relationships but retain authored class and skills", () => {
+    const r = configured().ruleset!;
+    let s = enter(r);
+    const d = r.dungeons.mines;
+    const m = s.dungeon!.party.find((p) => p.id === "mira")!;
+    const f = memberFighter(r, s, d, s.dungeon!, m);
+    expect(classFor(d, "mira")).toBe("healer");
+    expect(f.mhp).toBe(100);
+    expect(f.atk).toBe(20);
+    s = foldEvents(r, [[{ t: "rel", who: "mira", stat: "trust", set: 100, src: "action" }]], s);
+    const warmer = memberFighter(r, s, d, s.dungeon!, m);
+    expect(warmer.atk).toBe(30);
+    expect(warmer.skills).toEqual(f.skills);
+    expect(s.dungeon!.bag).toEqual({ potion: 2, ether: 0, bomb: 3 });
+  });
+
+  test("earned exit retains bounded stat and practice improvements and cannot pay twice", () => {
+    const r = configured().ruleset!;
+    let s = enter(r);
+    s = foldEvents(r, [[{ t: "dg_xp", d: 100, src: "action" }]], s);
+    const res = leaveDungeon(r, s);
+    s = apply(r, s, res);
+    expect(s.stats.money).toBe(14);
+    expect(s.stats.sword).toBe(12);
+    expect(s.practice.sword ?? 0).toBe(0);
+    expect(leaveDungeon(r, s).error).toBeTruthy();
+    expect(s.dungeon).toBeNull();
+  });
+
+  test("reward events report only retained room under live stat caps", () => {
+    const r = configured().ruleset!;
+    r.stats.money.max = 12;
+    let s = enter(r);
+    s = foldEvents(r, [[{ t: "dg_xp", d: 100, src: "action" }]], s);
+    const res = leaveDungeon(r, s);
+    expect(res.events.filter((e) => e.t === "stat" && e.id === "money")).toEqual([{ t: "stat", id: "money", d: 2, src: "action" }]);
+    expect(apply(r, s, res).stats.money).toBe(12);
+  });
+
+  test("banked gold reports only the gold actually retained at the money cap", () => {
+    const r = rules();
+    r.stats.money.max = 12;
+    let s = enter(r);
+    s = foldEvents(r, [[{ t: "dg_gold", d: 99, src: "action" }]], s);
+    const res = leaveDungeon(r, s);
+    expect(res.events.filter((e) => e.t === "stat" && e.id === "money")).toEqual([{ t: "stat", id: "money", d: 2, src: "action" }]);
+    s = apply(r, s, res);
+    expect(s.stats.money).toBe(12);
+    expect(s.notices.join(" ")).toContain("carrying 2 gold");
+  });
+
+  test("fractional practice survives below its cap and grants whole points normally", () => {
+    const r = configured().ruleset!;
+    r.stats.sword.max = 100;
+    let s = enter(r);
+    s = foldEvents(r, [[{ t: "dg_xp", d: 100, src: "action" }]], s);
+    s = apply(r, s, leaveDungeon(r, s));
+    expect(s.stats.sword).toBe(12);
+    expect(s.practice.sword).toBe(0.5);
+  });
+
+  test("empty exits, negative and nonfinite formulas do not grant carryover", () => {
+    const r = configured().ruleset!;
+    const empty = apply(r, enter(r), leaveDungeon(r, enter(r)));
+    expect(empty.stats.money).toBe(10);
+    expect(empty.stats.sword).toBe(10);
+    r.dungeons.mines.exitRewards!.money.amount = "-5";
+    r.dungeons.mines.exitPractice!.sword.amount = "1 / 0";
+    let s = enter(r);
+    s = foldEvents(r, [[{ t: "dg_xp", d: 100, src: "action" }]], s);
+    s = apply(r, s, leaveDungeon(r, s));
+    expect(s.stats.money).toBe(10);
+    expect(s.stats.sword).toBe(10);
+    expect(Object.values(s.stats).every(Number.isFinite)).toBe(true);
+  });
+
+  test("malformed configuration warns and omits unsafe mappings", () => {
+    const res = configured({ party: { stats: { mira: { luck: 3, atk: {} } } },
+      supplies: { potion: -5, unknown: 1 },
+      exit_rewards: { missing: { amount: 5, cap: 2 }, money: { amount: 5, cap: Infinity } },
+      exit_practice: { sword: { amount: 1 } } });
+    expect(res.issues.length).toBeGreaterThanOrEqual(6);
+    const d = res.ruleset!.dungeons.mines;
+    expect(d.exitRewards).toBeUndefined();
+    expect(d.exitPractice).toBeUndefined();
+    expect(d.supplies).toEqual({ potion: 0 });
+    expect(d.party.stats!.mira).toEqual({});
+  });
+
+  test("defeat never grants the authored exit carryover", () => {
+    const r = configured().ruleset!;
+    let s = enter(r);
+    const f = generateFloor(r.dungeons.mines, s.dungeon!.seed, 1);
+    let at: [number, number] | undefined;
+    for (let y = 0; y < f.size; y++) for (let x = 0; x < f.size; x++) if (f.tiles[y][x] === "enemy") at = [x, y];
+    expect(at).toBeDefined();
+    const [x, y] = at!;
+    s = foldEvents(r, [[{ t: "dg_step", x: x > 0 ? x - 1 : x + 1, y, src: "action" }, { t: "dg_xp", d: 100, src: "action" }]], s);
+    s = apply(r, s, moveTo(r, s, x, y));
+    const b = structuredClone(s.dungeon!.battle!);
+    for (const fighter of b.fighters) if (fighter.side === "party") { fighter.hp = 1; fighter.def = 0; }
+    s = foldEvents(r, [[{ t: "dg_battle", battle: b, src: "action" }]], s);
+    for (let i = 0; i < 50 && s.dungeon; i++) s = apply(r, s, battleCommand(r, s, { skill: "guard" }));
+    expect(s.dungeon).toBeNull();
+    expect(s.stats.money).toBe(10);
+    expect(s.stats.sword).toBe(10);
+    expect(s.practice.sword ?? 0).toBe(0);
+  });
 });

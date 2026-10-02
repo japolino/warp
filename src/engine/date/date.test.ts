@@ -6,6 +6,7 @@ import { evaluate } from "../expr.js";
 import { buildChoices, stateDigest } from "../view.js";
 import { activeSession, dateMoves, romanceOk } from "./talk.js";
 import { stageIndex } from "./stage.js";
+import { recentCount, SOCIAL_KEYS_KEPT } from "./memory.js";
 import type { Ruleset } from "../ruleset.js";
 
 const YAML = `
@@ -195,5 +196,123 @@ describe("date mode", () => {
     expect(dateMoves(r, s, ["romance"]).some((m) => m.romantic)).toBe(false);
     const veiled = resolveTurnFull(r, s, { actionId: "date:confess", via: "choice" }, { seed: "v", veils: ["romance"], odds: { "date:confess": { returns: 1 } } });
     expect(veiled.record.veiled).toBe(true);
+  });
+});
+
+
+const lovedWords = (topic = "none") => ({
+  "date:topic": { [topic]: 1 }, "date:leave": { stay: 1 },
+  "date:reception": { love: 1, like: 0, neutral: 0, dislike: 0, hate: 0 },
+});
+
+describe("persistent social repetition", () => {
+  test("reopening cannot reset typed-topic or generic-chat affection rewards", () => {
+    const r = load();
+    for (const topic of ["none", "music"]) {
+      let s = turn(r, initialState(r), "date:talk@robin").s;
+      const first = turn(r, s, null, "warm", lovedWords(topic));
+      const gain = first.s.rel.robin.love - s.rel.robin.love;
+      expect(gain).toBeGreaterThan(0);
+      s = turn(r, first.s, "date:goodbye").s;
+      s = turn(r, s, "date:talk@robin").s;
+      const second = turn(r, s, null, "warm", lovedWords(topic));
+      expect(second.s.rel.robin.love - s.rel.robin.love).toBeLessThan(gain / 2);
+      expect(recentCount(second.s, "robin", topic === "none" ? "chat" : topic)).toBeGreaterThan(1);
+    }
+  });
+
+  test("empty warm hello/goodbye loops earn nothing", () => {
+    const r = load();
+    let s = initialState(r);
+    s.rel.robin.love = 40;
+    for (let i = 0; i < 5; i++) {
+      s = turn(r, s, "date:talk@robin").s;
+      s = turn(r, s, "date:goodbye").s;
+    }
+    expect(s.rel.robin.love).toBe(40);
+  });
+
+  test("elapsed game time restores rewards and fatigue, not wall-clock or reopen", () => {
+    const r = load();
+    let s = turn(r, initialState(r), "date:talk@robin").s;
+    s = turn(r, s, null, "warm", lovedWords("music")).s;
+    s = foldEvents(r, [[{ t: "dt_recent", who: "robin", key: "music", at: s.minutes, count: 1, fatigue: 70, src: "action" }]], s);
+    const quick = turn(r, s, "date:talk@robin").s;
+    expect(quick.date!.fatigue).toBe(70);
+    const rested = foldEvents(r, [[{ t: "time", min: 240, src: "action" }]], s);
+    const reopened = turn(r, rested, "date:talk@robin").s;
+    expect(reopened.date!.fatigue).toBe(0);
+    expect(recentCount(reopened, "robin", "music")).toBe(0);
+    const next = turn(r, reopened, null, "warm", lovedWords("music"));
+    expect(next.s.rel.robin.love - reopened.rel.robin.love).toBe(6);
+  });
+
+  test("novel topics maintain warm flow and authored weight remains meaningful", () => {
+    const r = load();
+    let s = turn(r, initialState(r), "date:talk@robin").s;
+    s.rel.robin.love = 35;
+    const music = turn(r, s, null, "warm", lovedWords("music")).s;
+    expect(music.date!.fatigue).toBe(2);
+    const dreams = turn(r, music, null, "warm", lovedWords("dreams")).s;
+    expect(dreams.rel.robin.love - music.rel.robin.love).toBeGreaterThanOrEqual(6);
+    expect(dreams.date!.fatigue).toBe(4);
+    const worries = turn(r, dreams, null, "warm", lovedWords("worries")).s;
+    expect(worries.rel.robin.love - dreams.rel.robin.love).toBeGreaterThan(8);
+    expect(worries.date!.fatigue).toBe(6);
+    expect(worries.date).not.toBeNull();
+  });
+
+  test("new shared activities are not penalized by conversation history", () => {
+    const r = load();
+    let s = turn(r, initialState(r), "date:talk@robin").s;
+    s.rel.robin.love = 40;
+    s = turn(r, s, "date:ask_out", "yes", { "date:ask_out": { yes: 1 } }).s;
+    s = turn(r, s, "date:venue:park").s;
+    const baseline = structuredClone(s);
+    s = foldEvents(r, [[{ t: "dt_recent", who: "robin", key: "chat", at: s.minutes, count: 20, fatigue: 0, src: "action" }]], s);
+    const id = dateMoves(r, s).find((m) => m.kind === "activity")!.id;
+    const a = turn(r, s, id, "act");
+    const b = turn(r, baseline, id, "act");
+    expect(a.s.rel.robin.love).toBe(b.s.rel.robin.love);
+    expect(a.s.date!.last).toEqual(b.s.date!.last);
+    expect(recentCount(a.s, "robin", id.slice(5))).toBeGreaterThan(0);
+  });
+
+  test("old saves work and concrete social events replay without new rolls", () => {
+    const r = load();
+    const old = initialState(r);
+    delete old.dating.recent;
+    const started = turn(r, old, "date:talk@robin");
+    const talked = turn(r, started.s, null, "warm", lovedWords("music"));
+    const batches = [started.rec.events, talked.rec.events];
+    const replayed = foldEvents(r, batches, old);
+    expect(replayed).toEqual(talked.s);
+    expect(old.dating.recent).toBeUndefined();
+    expect(replayed.dating.recent!.robin.topics.music.count).toBe(1);
+    const edited = load();
+    edited.dating.fatiguePerTopic = 50;
+    edited.dating.topics.music.weight = 10;
+    expect(foldEvents(edited, batches, old).dating.recent).toEqual(replayed.dating.recent);
+    expect(foldEvents(edited, batches, old).rel).toEqual(replayed.rel);
+  });
+
+  test("apology fear recovery also tapers across reopened sessions", () => {
+    const r = load();
+    let s = turn(r, initialState(r), "date:talk@robin").s;
+    s.rel.robin.fear = 50;
+    const first = turn(r, s, "date:apologize").s;
+    expect(s.rel.robin.fear - first.rel.robin.fear).toBe(6);
+    const reopened = turn(r, first, "date:talk@robin").s;
+    const second = turn(r, reopened, "date:apologize").s;
+    expect(reopened.rel.robin.fear - second.rel.robin.fear).toBeLessThan(4);
+  });
+
+  test("recent memory is bounded and expired keys are removed", () => {
+    const r = load();
+    let s = initialState(r);
+    for (let i = 0; i < 100; i++) s = foldEvents(r, [[{ t: "dt_recent", who: "robin", key: `key${i}`, at: s.minutes, count: 1, fatigue: 0, src: "action" }]], s);
+    expect(Object.keys(s.dating.recent!.robin.topics)).toHaveLength(SOCIAL_KEYS_KEPT);
+    s = foldEvents(r, [[{ t: "time", min: 240, src: "action" }, { t: "dt_recent", who: "robin", key: "fresh", at: s.minutes + 240, count: 1, fatigue: 0, src: "action" }]], s);
+    expect(Object.keys(s.dating.recent!.robin.topics)).toEqual(["fresh"]);
   });
 });

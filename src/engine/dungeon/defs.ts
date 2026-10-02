@@ -134,6 +134,42 @@ export function normDungeons(raw: unknown, c: Ctx, known: Known): Record<string,
       if (CLASS_IDS.includes(cls as ClassId)) classes[who] = cls as ClassId;
       else c.warn(`${w} › party › classes › ${who}`, `classes are ${CLASS_IDS.join(", ")}`);
     }
+    const companionStats: NonNullable<DungeonDef["party"]["stats"]> = {};
+    if (partyRaw.stats !== undefined && !isObj(partyRaw.stats)) c.warn(`${w} › party › stats`, "expected a map of people to stat formulas");
+    for (const [who, rawStats] of Object.entries(isObj(partyRaw.stats) ? partyRaw.stats : {})) {
+      if (!isObj(rawStats)) { c.warn(`${w} › party › stats › ${who}`, "expected stat formulas"); continue; }
+      const stats: Partial<Record<keyof Stats, string | number>> = {};
+      for (const [k, v] of Object.entries(rawStats)) {
+        if (!STAT_KEYS.includes(k as keyof Stats)) { c.warn(`${w} › party › stats › ${who} › ${k}`, `stats are ${STAT_KEYS.join(", ")}`); continue; }
+        const x = c.expr(v, `${w} › party › stats › ${who} › ${k}`);
+        if (x !== undefined) stats[k as keyof Stats] = x;
+      }
+      companionStats[who] = stats;
+    }
+    const supplies: NonNullable<DungeonDef["supplies"]> = {};
+    if (r.supplies !== undefined && !isObj(r.supplies)) c.warn(`${w} › supplies`, "expected a consumable count map");
+    for (const [item, n] of Object.entries(isObj(r.supplies) ? r.supplies : {})) {
+      if (!["potion", "ether", "bomb"].includes(item)) { c.warn(`${w} › supplies › ${item}`, "use potion, ether or bomb"); continue; }
+      const value = c.num(n, `${w} › supplies › ${item}`, 0);
+      if (value < 0 || value > 99 || !Number.isInteger(value)) c.warn(`${w} › supplies › ${item}`, "use a whole count from 0 to 99");
+      supplies[item as keyof typeof supplies] = Math.max(0, Math.min(99, Math.round(value)));
+    }
+    const normExit = (raw: unknown, key: string): Record<string, { amount: string | number; cap: number }> => {
+      const out: Record<string, { amount: string | number; cap: number }> = {};
+      if (raw !== undefined && !isObj(raw)) c.warn(`${w} › ${key}`, "expected a map of stats to { amount, cap }");
+      for (const [stat, value] of Object.entries(isObj(raw) ? raw : {})) {
+        const where = `${w} › ${key} › ${stat}`;
+        if (!known.stats.has(stat)) { c.warn(where, "unknown main-world stat"); continue; }
+        if (!isObj(value) || value.amount === undefined || typeof value.cap !== "number" || !Number.isFinite(value.cap) || value.cap <= 0) {
+          c.warn(where, "needs amount (number or formula) and a finite positive cap"); continue;
+        }
+        const amount = c.expr(value.amount, `${where} › amount`);
+        if (amount !== undefined) out[stat] = { amount, cap: value.cap };
+      }
+      return out;
+    };
+    const exitRewards = normExit(r.exit_rewards, "exit_rewards");
+    const exitPractice = normExit(r.exit_practice, "exit_practice");
     const partyWhen = partyRaw.when !== undefined ? c.expr(partyRaw.when, `${w} › party › when`) : undefined;
 
     const playerRaw: Raw = isObj(r.player) ? r.player : {};
@@ -145,6 +181,7 @@ export function normDungeons(raw: unknown, c: Ctx, known: Known): Record<string,
     if (typeof playerRaw.sprite === "string") player.sprite = playerRaw.sprite;
 
     const when = r.when !== undefined ? c.expr(r.when, `${w} › when`) : undefined;
+    if (r.boons !== undefined && typeof r.boons !== "boolean") c.warn(`${w} › boons`, "use true or false");
     out[id] = {
       id,
       name: typeof r.name === "string" ? r.name : titleCase(id),
@@ -156,7 +193,11 @@ export function normDungeons(raw: unknown, c: Ctx, known: Known): Record<string,
       floors: Math.max(0, Math.round(c.num(r.floors ?? r.depth, `${w} › floors`, 0))),
       bossEvery: Math.max(0, Math.round(c.num(r.boss_every, `${w} › boss_every`, 5))),
       tiles, monsters, bosses: bosses.length ? bosses : DEFAULT_BOSSES, events, romance, loot,
-      party: { max: Math.max(0, Math.min(3, Math.round(c.num(partyRaw.max, `${w} › party › max`, 3)))), ...(partyWhen !== undefined ? { when: String(partyWhen) } : {}), classes },
+      party: { max: Math.max(0, Math.min(3, Math.round(c.num(partyRaw.max, `${w} › party › max`, 3)))), ...(partyWhen !== undefined ? { when: String(partyWhen) } : {}), classes, ...(Object.keys(companionStats).length ? { stats: companionStats } : {}) },
+      ...(Object.keys(supplies).length ? { supplies } : {}),
+      ...(Object.keys(exitRewards).length ? { exitRewards } : {}),
+      ...(Object.keys(exitPractice).length ? { exitPractice } : {}),
+      ...(r.boons === true ? { boons: true } : {}),
       player,
       ...(typeof r.currency === "string" ? { currency: r.currency } : {}),
       onLeave: normEffect(r.on_leave, `${w} › on_leave`, c, known),

@@ -107,9 +107,19 @@ export interface DungeonDef {
   romance: Record<string, DgEventDef>;
   /** Ruleset items that can turn up in chests. */
   loot: { item: string; weight: number; minDepth: number }[];
-  party: { max: number; when?: string; classes: Record<string, ClassId> };
+  party: { max: number; when?: string; classes: Record<string, ClassId>;
+    /** Per-person stat formulas; target is the companion id. Classes and skills stay authored. */
+    stats?: Record<string, Partial<Record<keyof Stats, string | number>>> };
+  /** Optional starting consumables; omitted entries retain the normal loadout. */
+  supplies?: Partial<Record<"potion" | "ether" | "bomb", number>>;
+  /** Opt-in main-world stat rewards after an earned exit; cap is per exit. */
+  exitRewards?: Record<string, { amount: string | number; cap: number }>;
+  /** Opt-in skill/attribute practice after an earned exit; cap is practice points per exit (whole points improve the stat). */
+  exitPractice?: Record<string, { amount: string | number; cap: number }>;
   /** The player's battle stats as formulas over ruleset stats (missing = class defaults). */
   player: Partial<Record<keyof Stats, string | number>> & { class: ClassId; sprite?: string };
+  /** Opt-in run-local level-up boons: each new party level offers three seeded choices. */
+  boons?: boolean;
   /** Run gold is paid into this stat when you leave. */
   currency?: string;
   onLeave: Effect;
@@ -135,6 +145,8 @@ export interface Fighter extends Stats {
   gold?: number;
   elite?: boolean;
   boss?: boolean;
+  /** Extra crit chance on physical hits (run boons). */
+  crit?: number;
 }
 
 export interface BattleState {
@@ -182,4 +194,15 @@ export interface DungeonRun {
   log: string[];
   /** What happened since the narrator last heard about the run. */
   untold: string[];
+  /** Run-local level-up boons taken, in order (only with `boons: true`). */
+  boons?: string[];
+  /** A level-up boon choice waiting to be made; blocks moving like an event. */
+  boonOffer?: BoonOffer | null;
+}
+
+export interface BoonOffer {
+  /** The party level this boon is for. */
+  level: number;
+  /** Boon ids on offer (see boons.ts), e.g. "might" or "learn:fire". */
+  options: string[];
 }

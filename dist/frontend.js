@@ -1066,13 +1066,20 @@ function renderChoices(choices, opts) {
       <div class="warp-choice-grid">${list.map(({ c, n }) => {
     const key = opts.hotkeys && n <= 10 ? `<span class="warp-kbd">${n === 10 ? 0 : n}</span>` : "";
     const odds = opts.showOdds && c.odds !== null ? `<span class="warp-choice-odds warp-tone-${pctTone(c.odds + (c.partialOdds ?? 0) / 2)}" title="${esc(`${c.checkLabel ?? "Check"}: ${Math.round(c.odds * 100)}% success${c.partialOdds ? `, ${Math.round(c.partialOdds * 100)}% partial` : ""}`)}">${Math.round(c.odds * 100)}%</span>` : "";
-    const tip = [c.desc, c.why ? `Why now: ${c.why}` : null, c.checkLabel ? `Check: ${c.checkLabel} — the chance of this check, not of winning` : null, c.veiled ? "Veiled: happens off-screen" : null].filter(Boolean).join(`
+    const resistance = c.params.find((p) => p.id === "mind_resist");
+    const resistButtons = resistance ? resistance.options.filter((id) => id !== "none").map((id) => `<button type="button" class="warp-choice" data-resist-action="${esc(c.id)}" data-resist-id="${esc(id)}" title="${esc(c.desc ?? "Explicitly resist this override if it triggers")}" ${opts.busy ? "disabled" : ""}>Resist ${esc(id)}: ${esc(c.label)}</button>`).join("") : "";
+    const forecastText = c.forecast ? `Goal: ${c.forecast.goal}
+Possible risk: ${c.forecast.risk}
+Possible payoff: ${c.forecast.payoff}
+Story forecast only — not guaranteed effects; tag-defined mechanics and odds are unchanged.` : null;
+    const forecast = forecastText ? `<span class="warp-choice-why">${esc(forecastText)}</span>` : "";
+    const tip = [forecastText, c.desc, c.why ? `Why now: ${c.why}` : null, c.checkLabel ? `Check: ${c.checkLabel} — the chance of this check, not of winning` : null, c.veiled ? "Veiled: happens off-screen" : null].filter(Boolean).join(`
 `);
     if (c.locked)
       return `<button class="warp-choice warp-choice-locked" disabled title="${esc(`${c.desc ?? c.label}
 Locked: ${c.locked}`)}"><span class="warp-choice-label">${esc(c.label)}<span class="warp-choice-why">\uD83D\uDD12 ${esc(c.locked)}</span></span></button>`;
     return `<button class="warp-choice${c.id.startsWith("item:") ? " warp-choice-item" : ""}" data-act="${esc(c.id)}" title="${esc(tip)}${c.ready ? `
-Ready — this reply is already written` : ""}">${key}<span class="warp-choice-label">${esc(c.label)}${c.why ? `<span class="warp-choice-why">${esc(c.why)}</span>` : ""}</span>${c.ready ? `<span class="warp-choice-ready" aria-label="instant">⚡</span>` : ""}${c.veiled ? `<span class="warp-choice-veil" aria-label="veiled">◐</span>` : ""}${c.game || c.gamble ? `<span class="warp-choice-game" title="${esc(c.gamble ? `A table: ${GAMES[c.gamble.game].name} for real money` : `Can be played as ${GAMES[c.game.game].name} instead of rolled`)}">${GAMES[(c.game ?? c.gamble).game].icon}</span>` : ""}${odds}</button>`;
+Ready — this reply is already written` : ""}">${key}<span class="warp-choice-label">${esc(c.label)}${forecast}${c.why ? `<span class="warp-choice-why">${esc(c.why)}</span>` : ""}</span>${c.ready ? `<span class="warp-choice-ready" aria-label="instant">⚡</span>` : ""}${c.veiled ? `<span class="warp-choice-veil" aria-label="veiled">◐</span>` : ""}${odds}</button>${resistButtons}${opts.minigames !== "off" && (c.game || c.gamble) ? `<button type="button" class="warp-choice warp-choice-game" data-play-challenge="${esc(c.id)}" aria-label="${esc(`${c.gamble ? "Play table" : "Play challenge"}: ${GAMES[(c.game ?? c.gamble).game].name} for ${c.label}${c.gamble ? " — wagers use in-game money" : " instead of rolling"}`)}" ${opts.busy ? "disabled" : ""}>${GAMES[(c.game ?? c.gamble).game].icon} ${c.gamble ? "Play table" : "Play challenge"}: ${esc(GAMES[(c.game ?? c.gamble).game].name)}</button>` : ""}`;
   }).join("")}</div>
     </div>`).join("");
   const status = opts.busy ? `<div class="warp-status-line"><span class="warp-spinner"></span>${esc(opts.busyLabel ?? "The story continues…")}</div>` : "";
@@ -1198,12 +1205,12 @@ function renderDepthCard(s) {
   const gaps = d.gaps.filter((g) => g.severity === "gap"), thin = d.gaps.filter((g) => g.severity === "thin");
   const row = (g) => `<details class="warp-depth-row warp-depth-${g.severity}"><summary>${esc(g.text)}</summary><p class="warp-dim">${esc(g.fix)}</p></details>`;
   return `<div class="warp-card warp-depth">
-    <h3>Depth <span class="warp-dim">${d.score} / 100</span></h3>
-    <p class="warp-dim">What in these rules doesn't connect to anything yet — items that do nothing, stats nothing reads, encounters with one way through.${d.gaps.length ? "" : " Nothing: every piece is wired in."}</p>
+    <h3>Rules connectivity <span class="warp-dim">${d.score} / 100</span></h3>
+    <p class="warp-dim">A static check of how rules connect: item uses, stat references and encounter routes. This is not a rating of fun or story quality. A small, focused ruleset can be ready to play without reaching 100.${d.gaps.length ? "" : " No connectivity findings."}</p>
     ${d.drafted.length ? `<p class="warp-depth-drafted">✎ Warp drafted what these items do, from their descriptions: <b>${esc(d.drafted.join(", "))}</b>. They're in the <i>warp-ruleset · item uses</i> entry — edit or delete it freely.</p>` : ""}
-    ${gaps.length ? `<div class="warp-choice-group-label">Unfinished · ${gaps.length}</div>${gaps.map(row).join("")}` : ""}
-    ${thin.length ? `<div class="warp-choice-group-label">Could do more · ${thin.length}</div>${thin.slice(0, 12).map(row).join("")}${thin.length > 12 ? `<p class="warp-dim">…and ${thin.length - 12} more.</p>` : ""}` : ""}
-    ${d.gaps.length ? `<div class="warp-row"><button class="warp-btn warp-btn-primary" data-b="open-deepen">Deepen this ruleset with the builder</button>${gaps.some((g) => g.id.startsWith("item-dead:")) ? `<button class="warp-btn" data-draft-items>Draft item uses</button>` : ""}</div>` : ""}
+    ${gaps.length ? `<div class="warp-choice-group-label">Connections to review · ${gaps.length}</div>${gaps.map(row).join("")}` : ""}
+    ${thin.length ? `<div class="warp-choice-group-label">Optional expansion ideas · ${thin.length}</div>${thin.slice(0, 12).map(row).join("")}${thin.length > 12 ? `<p class="warp-dim">…and ${thin.length - 12} more.</p>` : ""}` : ""}
+    ${d.gaps.length ? `<div class="warp-row"><button class="warp-btn warp-btn-primary" data-b="open-deepen">Review connections with the builder</button>${gaps.some((g) => g.id.startsWith("item-dead:")) ? `<button class="warp-btn" data-draft-items>Draft item uses</button>` : ""}</div>` : ""}
   </div>`;
 }
 function renderRulesetCard(s, hasChat) {
@@ -1249,6 +1256,7 @@ function renderDecider(s, jevKeySet) {
       ${opt("jev", "Classifier endpoint — TypeSafe's Jev or any compatible model (fast, cheap)")}
       ${opt("rules", "Rules only — no model calls (suggests, never acts)")}
     </select>
+    <details data-section="advanced-classifier"${s.decider === "jev" ? " open" : ""}><summary>Advanced: classifier endpoint & confidence</summary>
     ${s.decider === "jev" ? (() => {
     const typesafe = s.jevFormat !== "openai" && s.jevUrl === DEFAULT_SETTINGS.jevUrl;
     const issue = classifierIssue(s.jevFormat, s.jevModel, s.jevUrl);
@@ -1284,16 +1292,20 @@ function renderDecider(s, jevKeySet) {
       <input type="range" min="40" max="99" value="${pct(s.autoConfidence)}" data-setting-pct="autoConfidence"></label>
     <label class="warp-slider"><span>Offer a one-tap “Roll it?” from <b>${pct(s.askConfidence)}%</b></span>
       <input type="range" min="10" max="95" value="${pct(s.askConfidence)}" data-setting-pct="askConfidence"></label>
+    </details>
     ${toggle("consistencyCheck", "Check replies against the state", "Flags replies that contradict the game (wrong place, items, injuries, dice result). One extra quick question per reply — cheap with Jev.", s.consistencyCheck)}
+    <details data-section="advanced-generation"${s.drafts > 1 || s.prewrite > 0 ? " open" : ""}><summary>Optional: extra drafts & pre-written replies</summary>
+    <p class="warp-tone-warn">These options spend extra generations on your chat's connection. Pre-written replies can cost money even when you never choose them.</p>
     <label class="warp-slider">Drafts per reply
-      <select class="warp-select" data-setting="drafts">${[1, 2, 3, 4].map((n) => `<option value="${n}"${s.drafts === n ? " selected" : ""}>${n === 1 ? "1 (off)" : `${n} — keep the best`}</option>`).join("")}</select>
-      <small class="warp-dim">Extra drafts are written with your chat's connection after each reply; the decision model keeps the one that narrates the outcome best (the others stay as swipes). Costs a generation per extra draft — best with a fast, cheap model.</small>
+      <select class="warp-select" data-setting="drafts">${[1, 2, 3, 4].map((n) => `<option value="${n}"${s.drafts === n ? " selected" : ""}>${n === 1 ? "1 (off)" : `${n} — optional swipes`}</option>`).join("")}</select>
+      <small class="warp-dim">Extra drafts are written with your chat's connection after each reply and saved as swipes. The reply you are reading stays selected; choose an alternative yourself. Costs one generation per extra draft.</small>
     </label>
     <label class="warp-slider">Pre-write replies
       <select class="warp-select" data-setting="prewrite">${[0, 1, 2, 3, 4].map((n) => `<option value="${n}"${s.prewrite === n ? " selected" : ""}>${n === 0 ? "Off" : `First ${n} choice${n === 1 ? "" : "s"}`}</option>`).join("")}</select>
-      <small class="warp-dim">While you read, the first choices are rolled and written ahead, so clicking one (⚡) is instant. Costs a generation per choice each turn.</small>
+      <small class="warp-dim">While you read, the first choices are rolled and written ahead, so clicking one (⚡) is instant. Costs one generation per prepared choice each turn, including choices you do not use. Only available when swipe rerolls are enabled.</small>
     </label>
-    <div class="warp-row"><button class="warp-btn" data-test-decider>Test</button></div>
+    </details>
+    <div class="warp-row"><button class="warp-btn" data-test-decider>Test decision model</button></div>
   </div>`;
 }
 function renderSettings(s, status, connections, jevKeySet = false, imageConnections = []) {
@@ -1344,7 +1356,7 @@ function renderSettings(s, status, connections, jevKeySet = false, imageConnecti
     <p class="warp-dim">Play a check instead of rolling it: Aim, Keys, Mines, Stack, Snake, a three-legged race, Pinball, Blackjack, Roulette or Slots. The dice's odds set the score to beat; your stats and perks make the game easier. Casino tables bet real in-game money.</p>
     <label class="warp-slider">When a check can be played
       <select class="warp-select" data-setting="minigames">
-        <option value="ask"${s.minigames === "ask" ? " selected" : ""}>Show the briefing — play it or roll the dice</option>
+        <option value="ask"${s.minigames === "ask" ? " selected" : ""}>Roll by default — offer a Play button</option>
         <option value="always"${s.minigames === "always" ? " selected" : ""}>Straight into the game</option>
         <option value="off"${s.minigames === "off" ? " selected" : ""}>Off — always dice</option>
       </select>
@@ -1796,7 +1808,8 @@ function board(v) {
 }
 function herePanel(v, ui) {
   if (v.event) {
-    return `<div class="warp-card warp-dg-event${v.event.romance ? " romance" : ""}">
+    const boon = v.event.choices.some((c) => c.id.startsWith("boon:"));
+    return `<div class="warp-card warp-dg-event${v.event.romance ? " romance" : ""}${boon ? " boon" : ""}">
       <p>${esc2(you(v.event.text))}</p>
       <div class="warp-dg-actions">${v.event.choices.map((c) => `<button class="warp-btn" data-dg-choose="${esc2(c.id)}" ${!c.ok || ui.busy ? "disabled" : ""}>${esc2(you(c.label))}${c.chance !== null ? ` <span class="warp-dim">${c.chance}%</span>` : ""}${c.cost ? ` <span class="warp-money">${c.cost}g</span>` : ""}</button>`).join("")}</div>
     </div>`;
@@ -11772,6 +11785,8 @@ async function session(surface, choice, auto, host) {
     const onKey = (e) => {
       if (e.target.matches?.("input"))
         return;
+      if (e.key === "Enter" && e.target.closest?.("button"))
+        return;
       if (e.key === "Enter") {
         e.preventDefault();
         e.stopPropagation();
@@ -11783,7 +11798,11 @@ async function session(surface, choice, auto, host) {
         done("cancel");
       }
     };
+    let settled = false;
     function done(v) {
+      if (settled)
+        return;
+      settled = true;
       el.removeEventListener("click", onClick);
       el.removeEventListener("change", onChange);
       el.removeEventListener("input", onInput);
@@ -12174,6 +12193,17 @@ function resultCard(el, res, bar, currency, synth, def) {
     btn.addEventListener("click", done);
     setTimeout(() => document.addEventListener("keydown", onKey, true), 300);
   });
+}
+
+// src/frontend/arcade/choice-flow.ts
+function playableChoice(choices, actionId) {
+  return choices.find((c) => c.id === actionId && !c.locked && (c.game || c.gamble));
+}
+function acceptsArcadeResult(snapshot, current, startedChat, activeChat, busy) {
+  return snapshot === current && startedChat === activeChat && !busy;
+}
+function automaticChallenge(mode, choice) {
+  return mode === "always" && !!choice && !choice.locked && !!(choice.game || choice.gamble);
 }
 
 // src/frontend/arcade/styles.ts
@@ -13016,7 +13046,7 @@ function setup(ctx) {
     const isBusy = busy.on && busy.chatId === state?.chatId;
     const live = liveLog();
     const recap = live ? { foe: live.foe, rounds: live.rounds, why: renderWhyFold(state?.records.find((r) => r.messageId === live.messageId)) } : null;
-    const html = settings.enabled && state?.hud && anchor ? renderChoices(state.choices, { showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined, encounter: state.hud.encounter, recap }) : "";
+    const html = settings.enabled && state?.hud && anchor ? renderChoices(state.choices, { minigames: settings.minigames, showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined, encounter: state.hud.encounter, recap }) : "";
     if (!force && anchor === choicesFor && html === choicesHtml && choicesEl?.isConnected)
       return;
     if (choicesEl) {
@@ -13968,7 +13998,7 @@ function setup(ctx) {
     wirePanel(root);
     cleanups.push(wireMaps(root));
   }
-  function act(actionId) {
+  function act(actionId, params) {
     if (actionId === "date:open") {
       if (stage && state?.date?.session)
         openStage();
@@ -13993,20 +14023,25 @@ function setup(ctx) {
     const cid = chatId();
     if (!cid || busy.on && busy.chatId === cid)
       return;
-    const choice = state?.choices.find((c) => c.id === actionId);
-    if (choice && (choice.game || choice.gamble) && settings.minigames !== "off") {
-      if (!arcade.busy())
-        playChoice(cid, actionId, choice);
+    if (arcade.busy())
+      return;
+    if (!params && automaticChallenge(settings.minigames, state?.choices.find((c) => c.id === actionId))) {
+      playChoice(actionId, true);
       return;
     }
-    send({ type: "act", chatId: cid, actionId });
+    send({ type: "act", chatId: cid, actionId, ...params ? { params } : {} });
     lockUntilReply(cid);
   }
-  async function playChoice(cid, actionId, choice) {
-    const out = await arcade.run(choice, settings.minigames === "always");
-    if (out.kind === "cancel" || chatId() !== cid || busy.on && busy.chatId === cid)
+  async function playChoice(actionId, auto = false) {
+    const cid = chatId();
+    const snapshot = state;
+    const choice = snapshot && playableChoice(snapshot.choices, actionId);
+    if (!cid || snapshot?.chatId !== cid || !choice || settings.minigames === "off" || arcade.busy() || busy.on && busy.chatId === cid)
       return;
-    send({ type: "act", chatId: cid, actionId, ...out.kind === "played" ? { game: out.result } : out.params ? { params: out.params } : {} });
+    const out = await arcade.run(choice, auto);
+    if (out.kind === "cancel" || !acceptsArcadeResult(snapshot, state, cid, chatId(), busy.on && busy.chatId === cid))
+      return;
+    send({ type: "act", chatId: cid, actionId: choice.id, ...out.kind === "played" ? { game: out.result } : out.params ? { params: out.params } : {} });
     lockUntilReply(cid);
   }
   function lockUntilReply(cid) {
@@ -14069,6 +14104,20 @@ function setup(ctx) {
     const t = e.target;
     if (!t?.closest)
       return;
+    const resistance = t.closest(".warp-choices [data-resist-action]");
+    if (resistance) {
+      e.preventDefault();
+      if (!resistance.disabled)
+        act(resistance.dataset.resistAction, { mind_resist: resistance.dataset.resistId });
+      return;
+    }
+    const challenge = t.closest(".warp-choices [data-play-challenge]");
+    if (challenge) {
+      e.preventDefault();
+      if (!challenge.disabled)
+        playChoice(challenge.dataset.playChallenge);
+      return;
+    }
     const choice = t.closest(".warp-choices [data-act]");
     if (choice) {
       e.preventDefault();

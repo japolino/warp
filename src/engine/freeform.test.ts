@@ -106,7 +106,11 @@ describe("growth by use", () => {
     expect(next.practice.charm).toBeGreaterThan(0);
     expect(buildHud(r, next).skills.find((x) => x.id === "charm")?.practice).toBeCloseTo(next.practice.charm, 5);
     expect(summarizeEvents(r, s, next, rec.events).some((c) => c.text.startsWith("📈 Charm"))).toBe(true);
-    for (let i = 0; i < 40; i++) s = turn(s, { actionId: "try:charm", params: { difficulty: "hard" }, via: "adjudicator" }, { seed: `c${i}` }).s;
+    // Space repeated practice out: identical rapid checks now teach less.
+    for (let i = 0; i < 40; i++) {
+      s.minutes += 120;
+      s = turn(s, { actionId: "try:charm", params: { difficulty: "hard" }, via: "adjudicator" }, { seed: `c${i}` }).s;
+    }
     expect(s.stats.charm).toBeGreaterThan(3);
     expect(s.stats.charm).toBeLessThan(10);
   });

@@ -108,7 +108,7 @@ narration:
     time: 5
     check: { vs: 12, add: mind, label: Mind }
     success: { hint: "Reveal something useful or hidden that a careless person would miss." }
-    fail: { hint: "Nothing stands out right now." }
+    fail: { hint: "The careful search yields no useful discovery. Show what this failed approach rules out, or a new lead that requires a different approach; do not invite an identical retry or invent a successful discovery." }
 
   rest:
     label: Rest a while
@@ -152,7 +152,7 @@ narration:
       difficulty: { easy: 8, normal: 12, hard: 16, extreme: 20 }
     check: { vs: difficulty, add: mind, label: Mind, partial: 3 }
     success: { mind: +0.2, hint: "The answer or insight comes clearly." }
-    fail: { hint: "It doesn't add up — nothing useful comes of it." }
+    fail: { hint: "The attempt fails. Show a concrete obstacle or a lost opportunity and a different next approach; do not grant the answer or repeat the same dead end." }
 
   social_feat:
     label: Social feat

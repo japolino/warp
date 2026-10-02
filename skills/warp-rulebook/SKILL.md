@@ -19,8 +19,8 @@ Use whichever is available:
 1. **Read the guide first** (`warp_guide` / `guide`). It is the format reference and the design guide; don't write keys it doesn't describe.
 2. **Read the card or brief.** Name the core loop before writing YAML: what the player does most days, what pushes back, what they work toward. Note the cast, places, tone, and anything the card tracks (a status block → proper stats).
 3. **Pick a starting template** (`templates`), get it (`template <id>`) and adapt it: rename, retune, trim and extend. Questbound is a fantasy RPG, Starfarer a space opera, Casefile a noir mystery, Hometown a slice-of-life survival sim, Universal a light frame for anything.
-4. **Write the file** (e.g. `rulebook.yaml`). Plain YAML with top-level keys is fine. Wire everything in: every stat has a source, a sink and a consequence; every item does something; every encounter has readable routes, an escape, and a danger; quests have goals the rules can see, a reward and a price for failing; there's a notice board somewhere central.
-5. **Check after every meaningful change** (`check`). Fix every error and lint warning. Work the balance list and the depth audit: fix every `[gap]`, and fix or knowingly accept each `[thin]`. Aim for depth 90+.
+4. **Write the file** (e.g. `rulebook.yaml`). Plain YAML with top-level keys is fine. Wire everything in: every stat has a source, a sink and a consequence; every item does something; every encounter has readable routes, an escape, and a danger; quests have goals the rules can see, a reward and a price for failing. Add a notice board only for quest-driven adventures, not relationship drama or a freeform sandbox. A meter may intentionally only colour the prose.
+5. **Check after every meaningful change** (`check`). Fix every error and lint warning. Work the balance list and the depth audit: fix every `[gap]`, and fix or knowingly accept each `[thin]`. Depth measures static wiring, not fun — don't chase 100 by adding systems the game doesn't need.
 6. **Simulate the encounters** (`simulate`). Random play should end well roughly 30–70% of the time; no route should be pointless or a sure win; escaping should cost something. Tune and re-check.
 7. **Preview** (`preview`): the sidebar, choices and the narrator's view at the start. Bands should read as words, odds should be sensible, something should be on offer.
 8. **Hand it over**: tell the user to import it in Lumiverse — **Warp → Ruleset → Import a rulebook** (paste it or choose the file), review, then **Install**. Summarise what the game is, its loop, and anything you deliberately left thin.
@@ -28,7 +28,9 @@ Use whichever is available:
 ## Rules
 
 - snake_case ids; meters 0–100 unless there's a reason; quote formulas that contain commas; refer to the player as `{{user}}`; in-world text in the card's voice.
-- Prefer fewer stats that all matter over many idle ones.
+- Prefer fewer stats that all matter over many idle ones, and fewer systems with stronger interactions over many loose ones. Quests, minigames, dungeons and dating are optional — add them when they serve the card.
+- Make different approaches carry different risks or payoffs, and make failures change the situation rather than invite an identical retry.
+- Newer optional keys (see the guide): `growth.repeat`, `dating.memory`, `mind.overrides_mode` and `resist_cost`, companion `knows_full`, `discovery.people`, and dungeon `boons`, `party.stats`, `supplies`, `exit_rewards`, `exit_practice`.
 - Make moves differ in kind, not only in which stat they roll: armor and piercing, multi-hit, statuses that tick or cost turns, heals, blood-price moves, percentage damage on big foes.
 - Gate the best actions with `requires:` (a skill level, a companion present, an item, a quest) — a locked choice that says what's missing is a goal.
 - Never anything sexual involving anyone under 18. Warp refuses to run a rulebook that declares minors alongside sexual actions.

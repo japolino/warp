@@ -21,6 +21,7 @@ import { armAudio, play, setVolume } from "./frontend/sfx.js";
 import { restoreMaps, wireMaps } from "./frontend/map-view.js";
 import { acceptsResponse } from "./frontend/response-gate.js";
 import { createArcade } from "./frontend/arcade/arcade.js";
+import { acceptsArcadeResult, automaticChallenge, playableChoice } from "./frontend/arcade/choice-flow.js";
 import { ARCADE_STYLES } from "./frontend/arcade/styles.js";
 
 type StateMsg = Extract<BackendToFrontend, { type: "state" }>;
@@ -525,7 +526,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const live = liveLog();
     const recap = live ? { foe: live.foe, rounds: live.rounds, why: renderWhyFold(state?.records.find((r) => r.messageId === live.messageId)) } : null;
     const html = settings.enabled && state?.hud && anchor
-      ? renderChoices(state.choices, { showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined, encounter: state.hud.encounter, recap })
+      ? renderChoices(state.choices, { minigames: settings.minigames, showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined, encounter: state.hud.encounter, recap })
       : "";
     if (!force && anchor === choicesFor && html === choicesHtml && choicesEl?.isConnected) return;
     if (choicesEl) { ctx.dom.uninject(choicesEl); choicesEl = null; }
@@ -1190,7 +1191,7 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   // ───────── events: in-chat clicks (delegated; injected nodes are sanitized) ─────────
-  function act(actionId: string) {
+  function act(actionId: string, params?: Record<string, string>) {
     // "More…" during a conversation opens the date on the stage (every topic is there).
     if (actionId === "date:open") {
       if (stage && state?.date?.session) openStage();
@@ -1207,19 +1208,25 @@ export function setup(ctx: SpindleFrontendContext) {
     }
     const cid = chatId();
     if (!cid || (busy.on && busy.chatId === cid)) return;
-    // A check that can be played, or a table: the arcade first.
-    const choice = state?.choices.find((c) => c.id === actionId);
-    if (choice && (choice.game || choice.gamble) && settings.minigames !== "off") {
-      if (!arcade.busy()) void playChoice(cid, actionId, choice);
+    if (arcade.busy()) return;
+    // Default ask rolls immediately. Only the explicit "always" preference auto-plays.
+    if (!params && automaticChallenge(settings.minigames, state?.choices.find((c) => c.id === actionId))) {
+      void playChoice(actionId, true);
       return;
     }
-    send({ type: "act", chatId: cid, actionId });
+    send({ type: "act", chatId: cid, actionId, ...(params ? { params } : {}) });
     lockUntilReply(cid);
   }
-  async function playChoice(cid: string, actionId: string, choice: NonNullable<StateMsg["choices"]>[number]) {
-    const out = await arcade.run(choice, settings.minigames === "always");
-    if (out.kind === "cancel" || chatId() !== cid || (busy.on && busy.chatId === cid)) return;
-    send({ type: "act", chatId: cid, actionId, ...(out.kind === "played" ? { game: out.result } : out.params ? { params: out.params } : {}) });
+  async function playChoice(actionId: string, auto = false) {
+    const cid = chatId();
+    const snapshot = state;
+    const choice = snapshot && playableChoice(snapshot.choices, actionId);
+    if (!cid || snapshot?.chatId !== cid || !choice || settings.minigames === "off" || arcade.busy() || (busy.on && busy.chatId === cid)) return;
+    // Explicit Play opens stake/song selection; "always" keeps its direct-play preference.
+    const out = await arcade.run(choice, auto);
+    // Never submit a result into a new chat or a changed set of choices.
+    if (out.kind === "cancel" || !acceptsArcadeResult(snapshot, state, cid, chatId(), busy.on && busy.chatId === cid)) return;
+    send({ type: "act", chatId: cid, actionId: choice.id, ...(out.kind === "played" ? { game: out.result } : out.params ? { params: out.params } : {}) });
     lockUntilReply(cid);
   }
   /** Lock the choices while a turn starts; if nothing starts (rejected, network hiccup), unlock again. */
@@ -1280,6 +1287,10 @@ export function setup(ctx: SpindleFrontendContext) {
   const onDocClick = (e: MouseEvent) => {
     const t = e.target as Element | null;
     if (!t?.closest) return;
+    const resistance = t.closest<HTMLButtonElement>(".warp-choices [data-resist-action]");
+    if (resistance) { e.preventDefault(); if (!resistance.disabled) act(resistance.dataset.resistAction!, { mind_resist: resistance.dataset.resistId! }); return; }
+    const challenge = t.closest<HTMLButtonElement>(".warp-choices [data-play-challenge]");
+    if (challenge) { e.preventDefault(); if (!challenge.disabled) void playChoice(challenge.dataset.playChallenge!); return; }
     const choice = t.closest<HTMLElement>(".warp-choices [data-act]");
     if (choice) { e.preventDefault(); if (!(choice as HTMLButtonElement).disabled) act(choice.dataset.act!); return; }
     if (t.closest(".warp-choices [data-enc-send]")) { e.preventDefault(); sendEncounterLine(t.closest(".warp-choices")?.querySelector<HTMLInputElement>("[data-enc-say]") ?? null); return; }

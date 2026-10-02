@@ -80,7 +80,21 @@ export interface DatingDef {
   minutesPerBeat: number;
   /** Romantic topics, confessions and kisses exist at all. */
   romance: boolean;
+  /** Social repetition memory (`dating.memory`). Optional so hand-built defs keep the defaults. */
+  memory?: SocialMemoryDef;
 }
+
+/** How recent topics and conversational fatigue fade, in game time. */
+export interface SocialMemoryDef {
+  /** In-game minutes for one recent use of a topic or action to fade. */
+  recoveryMinutes: number;
+  /** Recent keys kept per person. */
+  keys: number;
+  /** Fatigue points restored per in-game minute away from a conversation. */
+  restPerMinute: number;
+}
+
+export const DEFAULT_SOCIAL_MEMORY: SocialMemoryDef = { recoveryMinutes: 240, keys: 64, restPerMinute: 1 };
 
 export type DateKind = "talk" | "plan" | "outing";
 
@@ -110,6 +124,13 @@ export interface DateSession {
   started: number;
 }
 
+/** Bounded recent topic/action counts and conversational fatigue, using in-game minutes. */
+export interface SocialMemory {
+  at: number;
+  fatigue: number;
+  topics: Record<string, { at: number; count: number }>;
+}
+
 /** Long-lived dating memory, kept across sessions. */
 export interface DatingMemory {
   /** person → key → taste (−2…+2). Keys: topic ids, `tag:<activity tag>`, `item:<item id>`. */
@@ -120,6 +141,8 @@ export interface DatingMemory {
   partners: Record<string, true>;
   /** Outings per person, and the best enjoyment reached. */
   dates: Record<string, { count: number; best: number }>;
+  /** Recent social effort per person. Optional for saves made before repetition memory existed. */
+  recent?: Record<string, SocialMemory>;
 }
 
 export const DATE_PREFIX = "date:";

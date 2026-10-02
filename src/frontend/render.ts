@@ -348,7 +348,7 @@ function section(title: string, count: number, body: string, open: boolean, key 
 
 // ───────────────────────── choices ─────────────────────────
 
-export function renderChoices(choices: ChoiceView[], opts: { showOdds: boolean; hotkeys: boolean; busy: boolean; busyLabel?: string; encounter?: HudView["encounter"]; recap?: EncounterRecap | null }): string {
+export function renderChoices(choices: ChoiceView[], opts: { minigames?: Settings["minigames"]; showOdds: boolean; hotkeys: boolean; busy: boolean; busyLabel?: string; encounter?: HudView["encounter"]; recap?: EncounterRecap | null }): string {
   if (!choices.length && !opts.busy && !opts.encounter) return "";
   const groups = new Map<string, { c: ChoiceView; n: number }[]>();
   choices.forEach((c, i) => {
@@ -364,9 +364,16 @@ export function renderChoices(choices: ChoiceView[], opts: { showOdds: boolean; 
         const odds = opts.showOdds && c.odds !== null
           ? `<span class="warp-choice-odds warp-tone-${pctTone(c.odds + (c.partialOdds ?? 0) / 2)}" title="${esc(`${c.checkLabel ?? "Check"}: ${Math.round(c.odds * 100)}% success${c.partialOdds ? `, ${Math.round(c.partialOdds * 100)}% partial` : ""}`)}">${Math.round(c.odds * 100)}%</span>`
           : "";
-        const tip = [c.desc, c.why ? `Why now: ${c.why}` : null, c.checkLabel ? `Check: ${c.checkLabel} — the chance of this check, not of winning` : null, c.veiled ? "Veiled: happens off-screen" : null].filter(Boolean).join("\n");
+        const resistance = c.params.find((p) => p.id === "mind_resist");
+        const resistButtons = resistance ? resistance.options.filter((id) => id !== "none").map((id) => `<button type="button" class="warp-choice" data-resist-action="${esc(c.id)}" data-resist-id="${esc(id)}" title="${esc(c.desc ?? "Explicitly resist this override if it triggers")}" ${opts.busy ? "disabled" : ""}>Resist ${esc(id)}: ${esc(c.label)}</button>`).join("") : "";
+        const forecastText = c.forecast ? `Goal: ${c.forecast.goal}
+Possible risk: ${c.forecast.risk}
+Possible payoff: ${c.forecast.payoff}
+Story forecast only — not guaranteed effects; tag-defined mechanics and odds are unchanged.` : null;
+        const forecast = forecastText ? `<span class="warp-choice-why">${esc(forecastText)}</span>` : "";
+        const tip = [forecastText, c.desc, c.why ? `Why now: ${c.why}` : null, c.checkLabel ? `Check: ${c.checkLabel} — the chance of this check, not of winning` : null, c.veiled ? "Veiled: happens off-screen" : null].filter(Boolean).join("\n");
         if (c.locked) return `<button class="warp-choice warp-choice-locked" disabled title="${esc(`${c.desc ?? c.label}\nLocked: ${c.locked}`)}"><span class="warp-choice-label">${esc(c.label)}<span class="warp-choice-why">🔒 ${esc(c.locked)}</span></span></button>`;
-        return `<button class="warp-choice${c.id.startsWith("item:") ? " warp-choice-item" : ""}" data-act="${esc(c.id)}" title="${esc(tip)}${c.ready ? "\nReady — this reply is already written" : ""}">${key}<span class="warp-choice-label">${esc(c.label)}${c.why ? `<span class="warp-choice-why">${esc(c.why)}</span>` : ""}</span>${c.ready ? `<span class="warp-choice-ready" aria-label="instant">⚡</span>` : ""}${c.veiled ? `<span class="warp-choice-veil" aria-label="veiled">◐</span>` : ""}${c.game || c.gamble ? `<span class="warp-choice-game" title="${esc(c.gamble ? `A table: ${GAMES[c.gamble.game].name} for real money` : `Can be played as ${GAMES[c.game!.game].name} instead of rolled`)}">${GAMES[(c.game ?? c.gamble)!.game].icon}</span>` : ""}${odds}</button>`;
+        return `<button class="warp-choice${c.id.startsWith("item:") ? " warp-choice-item" : ""}" data-act="${esc(c.id)}" title="${esc(tip)}${c.ready ? "\nReady — this reply is already written" : ""}">${key}<span class="warp-choice-label">${esc(c.label)}${forecast}${c.why ? `<span class="warp-choice-why">${esc(c.why)}</span>` : ""}</span>${c.ready ? `<span class="warp-choice-ready" aria-label="instant">⚡</span>` : ""}${c.veiled ? `<span class="warp-choice-veil" aria-label="veiled">◐</span>` : ""}${odds}</button>${resistButtons}${opts.minigames !== "off" && (c.game || c.gamble) ? `<button type="button" class="warp-choice warp-choice-game" data-play-challenge="${esc(c.id)}" aria-label="${esc(`${c.gamble ? "Play table" : "Play challenge"}: ${GAMES[(c.game ?? c.gamble)!.game].name} for ${c.label}${c.gamble ? " — wagers use in-game money" : " instead of rolling"}`)}" ${opts.busy ? "disabled" : ""}>${GAMES[(c.game ?? c.gamble)!.game].icon} ${c.gamble ? "Play table" : "Play challenge"}: ${esc(GAMES[(c.game ?? c.gamble)!.game].name)}</button>` : ""}`;
       }).join("")}</div>
     </div>`).join("");
   const status = opts.busy ? `<div class="warp-status-line"><span class="warp-spinner"></span>${esc(opts.busyLabel ?? "The story continues…")}</div>` : "";
@@ -522,12 +529,12 @@ export function renderDepthCard(s: RulesetStatus): string {
   const gaps = d.gaps.filter((g) => g.severity === "gap"), thin = d.gaps.filter((g) => g.severity === "thin");
   const row = (g: NonNullable<RulesetStatus["depth"]>["gaps"][number]) => `<details class="warp-depth-row warp-depth-${g.severity}"><summary>${esc(g.text)}</summary><p class="warp-dim">${esc(g.fix)}</p></details>`;
   return `<div class="warp-card warp-depth">
-    <h3>Depth <span class="warp-dim">${d.score} / 100</span></h3>
-    <p class="warp-dim">What in these rules doesn't connect to anything yet — items that do nothing, stats nothing reads, encounters with one way through.${d.gaps.length ? "" : " Nothing: every piece is wired in."}</p>
+    <h3>Rules connectivity <span class="warp-dim">${d.score} / 100</span></h3>
+    <p class="warp-dim">A static check of how rules connect: item uses, stat references and encounter routes. This is not a rating of fun or story quality. A small, focused ruleset can be ready to play without reaching 100.${d.gaps.length ? "" : " No connectivity findings."}</p>
     ${d.drafted.length ? `<p class="warp-depth-drafted">✎ Warp drafted what these items do, from their descriptions: <b>${esc(d.drafted.join(", "))}</b>. They're in the <i>warp-ruleset · item uses</i> entry — edit or delete it freely.</p>` : ""}
-    ${gaps.length ? `<div class="warp-choice-group-label">Unfinished · ${gaps.length}</div>${gaps.map(row).join("")}` : ""}
-    ${thin.length ? `<div class="warp-choice-group-label">Could do more · ${thin.length}</div>${thin.slice(0, 12).map(row).join("")}${thin.length > 12 ? `<p class="warp-dim">…and ${thin.length - 12} more.</p>` : ""}` : ""}
-    ${d.gaps.length ? `<div class="warp-row"><button class="warp-btn warp-btn-primary" data-b="open-deepen">Deepen this ruleset with the builder</button>${gaps.some((g) => g.id.startsWith("item-dead:")) ? `<button class="warp-btn" data-draft-items>Draft item uses</button>` : ""}</div>` : ""}
+    ${gaps.length ? `<div class="warp-choice-group-label">Connections to review · ${gaps.length}</div>${gaps.map(row).join("")}` : ""}
+    ${thin.length ? `<div class="warp-choice-group-label">Optional expansion ideas · ${thin.length}</div>${thin.slice(0, 12).map(row).join("")}${thin.length > 12 ? `<p class="warp-dim">…and ${thin.length - 12} more.</p>` : ""}` : ""}
+    ${d.gaps.length ? `<div class="warp-row"><button class="warp-btn warp-btn-primary" data-b="open-deepen">Review connections with the builder</button>${gaps.some((g) => g.id.startsWith("item-dead:")) ? `<button class="warp-btn" data-draft-items>Draft item uses</button>` : ""}</div>` : ""}
   </div>`;
 }
 
@@ -583,6 +590,7 @@ function renderDecider(s: Settings, jevKeySet: boolean): string {
       ${opt("jev", "Classifier endpoint — TypeSafe's Jev or any compatible model (fast, cheap)")}
       ${opt("rules", "Rules only — no model calls (suggests, never acts)")}
     </select>
+    <details data-section="advanced-classifier"${s.decider === "jev" ? " open" : ""}><summary>Advanced: classifier endpoint & confidence</summary>
     ${s.decider === "jev" ? (() => {
       const typesafe = s.jevFormat !== "openai" && s.jevUrl === DEFAULT_SETTINGS.jevUrl;
       const issue = classifierIssue(s.jevFormat, s.jevModel, s.jevUrl);
@@ -612,16 +620,20 @@ function renderDecider(s: Settings, jevKeySet: boolean): string {
       <input type="range" min="40" max="99" value="${pct(s.autoConfidence)}" data-setting-pct="autoConfidence"></label>
     <label class="warp-slider"><span>Offer a one-tap “Roll it?” from <b>${pct(s.askConfidence)}%</b></span>
       <input type="range" min="10" max="95" value="${pct(s.askConfidence)}" data-setting-pct="askConfidence"></label>
+    </details>
     ${toggle("consistencyCheck", "Check replies against the state", "Flags replies that contradict the game (wrong place, items, injuries, dice result). One extra quick question per reply — cheap with Jev.", s.consistencyCheck)}
+    <details data-section="advanced-generation"${s.drafts > 1 || s.prewrite > 0 ? " open" : ""}><summary>Optional: extra drafts & pre-written replies</summary>
+    <p class="warp-tone-warn">These options spend extra generations on your chat's connection. Pre-written replies can cost money even when you never choose them.</p>
     <label class="warp-slider">Drafts per reply
-      <select class="warp-select" data-setting="drafts">${[1, 2, 3, 4].map((n) => `<option value="${n}"${s.drafts === n ? " selected" : ""}>${n === 1 ? "1 (off)" : `${n} — keep the best`}</option>`).join("")}</select>
-      <small class="warp-dim">Extra drafts are written with your chat's connection after each reply; the decision model keeps the one that narrates the outcome best (the others stay as swipes). Costs a generation per extra draft — best with a fast, cheap model.</small>
+      <select class="warp-select" data-setting="drafts">${[1, 2, 3, 4].map((n) => `<option value="${n}"${s.drafts === n ? " selected" : ""}>${n === 1 ? "1 (off)" : `${n} — optional swipes`}</option>`).join("")}</select>
+      <small class="warp-dim">Extra drafts are written with your chat's connection after each reply and saved as swipes. The reply you are reading stays selected; choose an alternative yourself. Costs one generation per extra draft.</small>
     </label>
     <label class="warp-slider">Pre-write replies
       <select class="warp-select" data-setting="prewrite">${[0, 1, 2, 3, 4].map((n) => `<option value="${n}"${s.prewrite === n ? " selected" : ""}>${n === 0 ? "Off" : `First ${n} choice${n === 1 ? "" : "s"}`}</option>`).join("")}</select>
-      <small class="warp-dim">While you read, the first choices are rolled and written ahead, so clicking one (⚡) is instant. Costs a generation per choice each turn.</small>
+      <small class="warp-dim">While you read, the first choices are rolled and written ahead, so clicking one (⚡) is instant. Costs one generation per prepared choice each turn, including choices you do not use. Only available when swipe rerolls are enabled.</small>
     </label>
-    <div class="warp-row"><button class="warp-btn" data-test-decider>Test</button></div>
+    </details>
+    <div class="warp-row"><button class="warp-btn" data-test-decider>Test decision model</button></div>
   </div>`;
 }
 
@@ -673,7 +685,7 @@ export function renderSettings(s: Settings, status: RulesetStatus | null, connec
     <p class="warp-dim">Play a check instead of rolling it: Aim, Keys, Mines, Stack, Snake, a three-legged race, Pinball, Blackjack, Roulette or Slots. The dice's odds set the score to beat; your stats and perks make the game easier. Casino tables bet real in-game money.</p>
     <label class="warp-slider">When a check can be played
       <select class="warp-select" data-setting="minigames">
-        <option value="ask"${s.minigames === "ask" ? " selected" : ""}>Show the briefing — play it or roll the dice</option>
+        <option value="ask"${s.minigames === "ask" ? " selected" : ""}>Roll by default — offer a Play button</option>
         <option value="always"${s.minigames === "always" ? " selected" : ""}>Straight into the game</option>
         <option value="off"${s.minigames === "off" ? " selected" : ""}>Off — always dice</option>
       </select>

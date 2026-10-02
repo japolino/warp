@@ -2,14 +2,14 @@
 
 import { aidWords, gambleOffer, gameOffer, GAMES, type AidKind, type GamesScope } from "./games.js";
 import type { ActionDef, KeepSpec, Ruleset, StatDef } from "./ruleset.js";
-import { TIERS } from "./ruleset.js";
+import { percentOf, TIERS } from "./ruleset.js";
 import {
   bandFor, foeName, formatClock, formatNumber, gradeFor, initialState, itemName, kinAge, makeEnv, personName, statMax,
   usesOf, type GameState, type WarpEvent,
 } from "./state.js";
 import { practiceProgress } from "./freeform.js";
 import { encounterGuide, itemRelevance } from "./encounter-view.js";
-import { ABILITY_PREFIX, abilityStatus, actionPool, availableChoices, canExplore, dangerStats, EXPLORE, findAction, foeArmor, isAvailable, knowsAbility, LIVE_PREFIX, lockReason, mainMeter, odds, perkOffers, playerArmor, usableAbilities, usableItems, perkBlocker, RUN_EPILOGUE, TIER_LABEL, TRAVEL_PREFIX, travelTargets, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
+import { cleanLiveForecast, paramValues, ABILITY_PREFIX, abilityStatus, actionPool, availableChoices, canExplore, dangerStats, EXPLORE, findAction, foeArmor, isAvailable, knowsAbility, LIVE_PREFIX, lockReason, mainMeter, odds, perkOffers, playerArmor, usableAbilities, usableItems, perkBlocker, RUN_EPILOGUE, TIER_LABEL, TRAVEL_PREFIX, travelTargets, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
 import { dueWords, effectWords, goalDone, questDef, questDigest, questOffers, questsToReport, QUEST_PREFIX } from "./quests.js";
 import {
   dateAt, exposedSlots, isIndoors, ordinal, personLocation, presentPeople, seasonAt, temperatureAt, warmthNeeded, warmthOf, weatherAt,
@@ -406,19 +406,62 @@ export function keepWords(r: Ruleset, k: KeepSpec): string {
 
 export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; veils: string[]; live?: LiveChoice[]; minigames?: "off" | "ask" | "always"; minigameScope?: GamesScope }): ChoiceView[] {
   const out = choiceList(r, s, opts);
+  for (const c of out) withMindCounterplay(r, s, c, opts.live ?? []);
   if (opts.minigames && opts.minigames !== "off") for (const c of out) withGame(r, s, c, opts.minigameScope ?? "rulebook", opts.live ?? []);
   return out;
+}
+
+/** Expose authored vetoes and explicit resistance before the player commits. */
+function withMindCounterplay(r: Ruleset, s: GameState, c: ChoiceView, live: LiveChoice[]) {
+  if (c.locked) return;
+  // A live choice is decided by its authored tag, so the tag's overrides apply to it.
+  const found = c.id.startsWith(LIVE_PREFIX) ? liveAction(r, live, c.id) : findAction(r, s, c.id);
+  if (!found) return;
+  // Same context as resolve.ts mindOverride (param defaults + target), so a firing override is never hidden.
+  const env = makeEnv(r, s, paramValues(found.a, undefined, found.target));
+  const applicable = r.mind.overrides.filter((o) => o.do !== found.a.id
+    && (o.on.length ? o.on.some((id) => id === found.a.id || found.a.tags.includes(id)) : !!found.a.check)
+    && evalBool(o.when, env, false) && evalNumber(o.chance, env, 0) > 0);
+  const warnings: string[] = [];
+  const resist: string[] = [];
+  for (const o of applicable) {
+    const hard = r.mind.overridesMode !== "soft" && o.do !== "alter";
+    warnings.push(`${o.cause}: ${hard ? o.do === "fail" ? "may fail without a roll" : "may replace your chosen action" : "narration pressure only; your action stays chosen"}.`);
+    if (!hard || !o.resistCost || !Object.keys(o.resistCost).length) continue;
+    const valid = Object.entries(o.resistCost).every(([id, n]) => r.stats[id]?.kind === "meter" && Number.isFinite(n) && n > 0);
+    if (!valid) continue;
+    const cost = Object.entries(o.resistCost).map(([id, n]) => `${n} ${r.stats[id].label}`).join(", ");
+    const affordable = Object.entries(o.resistCost).every(([id, n]) => found.a.cost.set[id] === undefined
+      && (s.stats[id] ?? r.stats[id].start) - n + Math.min(0, actionCost(r, s, found.a, id, env)) >= r.stats[id].min);
+    warnings.push(`Resist ${o.id}: ${cost}, paid only if this override triggers. ${affordable ? "Choose resistance below to keep your action." : "Not enough resources to resist."}`);
+    if (affordable) resist.push(o.id);
+  }
+  if (warnings.length) c.desc = [c.desc, ...warnings].filter(Boolean).join(" ");
+  if (resist.length && !c.params.some((p) => p.id === "mind_resist")) c.params.push({
+    id: "mind_resist", label: "Resist mind override", options: ["none", ...resist], default: "none",
+  });
+}
+
+/** The authored tag action behind a shown live choice ("live:<index>"). */
+function liveAction(r: Ruleset, live: LiveChoice[], id: string): { a: ActionDef; target?: string } | null {
+  const l = live[Number(id.slice(LIVE_PREFIX.length))];
+  const a = l ? r.liveChoices.tags[l.tag] : undefined;
+  return a ? { a, ...(l.target ? { target: l.target } : {}) } : null;
+}
+
+/** The action's own stat cost as the turn will charge it (percent costs are shares of the maximum). */
+function actionCost(r: Ruleset, s: GameState, a: ActionDef, id: string, env: ReturnType<typeof makeEnv>): number {
+  const raw = a.cost.stats[id] ?? 0;
+  const pct = percentOf(raw);
+  return pct !== null ? Math.round(pct * statMax(r, r.stats[id], s)) : evalNumber(raw, env, 0);
 }
 
 /** Checks that can be played instead of rolled get their game; gambling tables get theirs. */
 function withGame(r: Ruleset, s: GameState, c: ChoiceView, scope: GamesScope, live: LiveChoice[]) {
   if (c.locked) return;
   let found: { a: ActionDef; target?: string } | null = null;
-  if (c.id.startsWith(LIVE_PREFIX)) {
-    const l = live[Number(c.id.slice(LIVE_PREFIX.length))];
-    const a = l ? r.liveChoices.tags[l.tag] : undefined;
-    found = a ? { a, ...(l.target ? { target: l.target } : {}) } : null;
-  } else found = findAction(r, s, c.id);
+  if (c.id.startsWith(LIVE_PREFIX)) found = liveAction(r, live, c.id);
+  else found = findAction(r, s, c.id);
   if (!found) return;
   const seed = `${c.id}:${s.minutes}`;
   if (found.a.gamble) {
@@ -482,10 +525,12 @@ function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: st
     if (!a || a.tags.some((t) => lines.has(t)) || !isAvailable(r, s, a, c.target)
       || (a.perPerson && !c.target) || (c.target && !presentPeople(r, s, makeEnv(r, s)).includes(c.target))) return;
     const o = odds(r, s, a, undefined, c.target);
+    const forecast = cleanLiveForecast(c.forecast);
     live.push({
       id: `${LIVE_PREFIX}${i}`,
       label: c.label,
       group: r.liveChoices.label,
+      ...(forecast ? { forecast } : {}),
       desc: a.desc ?? null,
       odds: o ? o.success : null,
       partialOdds: o && o.partial > 0 ? o.partial : null,
@@ -1071,8 +1116,8 @@ export function stateDigest(r: Ruleset, s: GameState): string {
 
 /**
  * What only the narrator knows: opened secret stages, what's happened behind the
- * scenes, and signs of what's coming. Everything not yet opened stays out of the
- * prompt entirely — that's the guarantee, not an instruction to keep quiet.
+ * scenes, and signs of what's coming. Unopened stage text stays out of the
+ * prompt unless an author explicitly opts a companion into full knowledge.
  */
 export function narratorKnowledge(r: Ruleset, s: GameState): string | null {
   const lines: string[] = [];
@@ -1086,7 +1131,12 @@ export function narratorKnowledge(r: Ruleset, s: GameState): string | null {
     for (const id of c.knows) {
       const sec = r.secrets[id];
       if (!sec) continue;
-      lines.push(`Only ${personName(r, s, c.id)} knows this (no one else can mention it; ${personName(r, s, c.id)} reveals it only if the scene truly earns it): ${sec.about} — ${sec.stages.map((st) => st.text).join(" ")}`);
+      const name = personName(r, s, c.id);
+      if (c.knowsFull) {
+        lines.push(`Only ${name} knows this (author opted in to full narrator knowledge; no one else can mention it): ${sec.about} — ${sec.stages.map((st) => st.text).join(" ")}`);
+      } else {
+        lines.push(`${name} knows more about ${sec.about} than {{user}} does. Portray them as knowledgeable, but do not invent or reveal unopened details. Only the opened stages below may be stated.`);
+      }
     }
   }
   for (const sec of Object.values(r.secrets)) {

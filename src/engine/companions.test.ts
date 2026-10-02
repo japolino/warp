@@ -62,9 +62,17 @@ describe("companions with lives of their own", () => {
     expect(s2.rel.jo.love).toBe(7);
   });
 
+  test("authors can explicitly restore a companion's full narrator knowledge", () => {
+    const full = { ...r, companions: { ...r.companions, dex: { ...r.companions.dex, knowsFull: true } } };
+    const s = initialState(full);
+    expect(narratorKnowledge(full, s)).toContain("Only Dex knows this");
+    expect(narratorKnowledge(full, s)).toContain("Dex robbed the warehouse.");
+  });
+
   test("the narrator knows who knows what, and how people feel about each other", () => {
     const s = initialState(r);
-    expect(narratorKnowledge(r, s)).toContain("Only Dex knows this");
+    expect(narratorKnowledge(r, s)).toContain("Dex knows more about The warehouse job");
+    expect(narratorKnowledge(r, s)).not.toContain("Dex robbed the warehouse.");
     expect(stateDigest(r, s)).toContain("Jo is fond of Dex");
     expect(buildHud(r, s).people.find((p) => p.id === "jo")?.goal).toBe("Buy the café outright");
     expect(resolveTurn(r, s, null, { seed: "x" }).events.some((e) => e.t === "clock")).toBe(false);

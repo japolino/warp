@@ -10,7 +10,7 @@ import type { Ruleset } from "../engine/ruleset.js";
 import { applyEvent, cloneState, type GameState } from "../engine/state.js";
 import { outcomePacket, sceneHints, stateDigest } from "../engine/view.js";
 import { buildInjection, fillNames, injectInto } from "./inject.js";
-import { dropPrewritten, judgeDrafts, prewrite, writeDrafts } from "./drafts.js";
+import { dropPrewritten, prewrite, writeDrafts } from "./drafts.js";
 import type { Settings } from "../shared/protocol.js";
 import { bookkeeping, contradiction, odds, readTurn } from "./decisions.js";
 import { getTurnDecider } from "./deciders.js";
@@ -188,6 +188,7 @@ export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorCon
       let scene: Record<string, boolean> = {};
       let encounter: { id: string; foe?: string } | undefined;
       let confidence: number | undefined;
+      let pendingSuggestion = !!meta.suggest && !intent;
       const sceneText = [...history].reverse().find((m) => !m.is_user)?.content ?? "";
       const budget = () => Math.min(20000, (typeof ctx.interceptorDeadlineAt === "number" ? ctx.interceptorDeadlineAt : Date.now() + 20000) - Date.now() - 2000);
       const decider = info.isDryRun ? null : await getTurnDecider(settings, ctx.userId);
@@ -201,19 +202,20 @@ export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorCon
         if (readText !== null && lastUser) {
           intent = reading.intent;
           confidence = reading.confidence;
+          pendingSuggestion = !!reading.suggestion && !reading.intent;
           verdict = { messageId: lastUser.id, intent, suggestion: reading.suggestion };
         }
       }
 
       const seed = settings.swipesReroll ? randomSeed() : `${lastUser?.id ?? "start"}:${intent?.actionId ?? "none"}`;
       const playerText = lastUser?.content ?? "";
-      let res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene, playerText, encounter });
+      let res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene, playerText, encounter, pendingSuggestion });
       if (decider && res.needs.length) {
         // Uncertain reactions: the model supplies odds, the same seed re-rolls the same dice with them.
         // Questions about who someone is (tastes, age) need the card, not just the scene.
         const card = res.needs.some((n) => n.id.startsWith("date:pref:") || n.id.startsWith("date:adult:")) ? await characterBrief(ctx.chatId, ctx.userId) : undefined;
         const o = await odds({ decider, r, s: before, specs: res.needs, playerText: lastUser?.content ?? "", sceneText, player, timeoutMs: budget(), card });
-        if (Object.keys(o).length) res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene, odds: o, playerText, encounter });
+        if (Object.keys(o).length) res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene, odds: o, playerText, encounter, pendingSuggestion });
       }
       rec = res.record;
       if (confidence !== undefined && rec.action) rec.confidence = confidence;
@@ -311,6 +313,8 @@ export async function afterReply(p: Pending, msg: Msg, content: string, userId?:
   const currentMessages = async (): Promise<Msg[] | null> => {
     if (p.isCurrent && !p.isCurrent()) return null;
     const messages = await getMessages(chatId);
+    // Stop or a replacement generation can arrive while the host read is pending.
+    if (p.isCurrent && !p.isCurrent()) return null;
     const target = messages.find((m) => m.id === msg.id);
     if (!target || (target.swipe_id ?? 0) !== swipe || target.content !== expectedContent) return null;
     if (pathRevision(messages.filter((m) => m.id !== msg.id)) !== surroundings) return null;
@@ -320,15 +324,13 @@ export async function afterReply(p: Pending, msg: Msg, content: string, userId?:
   const decider = await getTurnDecider(settings, userId);
   dropPrewritten(chatId);
 
-  // Best of several drafts: the one already shown stays unless another is clearly better.
+  // Extra drafts are optional swipes. Never replace a reply the player already saw.
   if (p.continueFrom === undefined && settings.drafts > 1 && p.prompt && decider.id !== "rules") {
     host().sendToFrontend({ type: "busy", chatId, busy: true, label: `Writing ${settings.drafts - 1} more draft${settings.drafts > 2 ? "s" : ""}…` }, userId);
     const extra = await writeDrafts(p.prompt, settings.drafts - 1, userId, chatId);
     if (extra.length) {
-      const all = [content, ...extra];
-      const pick = await judgeDrafts(decider, all, p.outcome ? fillNames(p.outcome, p.player) : null, fillNames(stateDigest(r, p.after), p.player));
       if (!await currentMessages()) return;
-      const added = await appendDrafts(chatId, msg.id, extra, pick, p.rec, async () => !!await currentMessages());
+      const added = await appendDrafts(chatId, msg.id, extra, 0, p.rec, async () => !!await currentMessages());
       if (!added) return;
       swipe = added.swipe; content = added.content; expectedContent = content;
     }
@@ -338,16 +340,14 @@ export async function afterReply(p: Pending, msg: Msg, content: string, userId?:
   const appended = p.continueFrom !== undefined && content.startsWith(p.continueFrom) ? content.slice(p.continueFrom.length) : content;
   if (settings.narratorUpdates || settings.consistencyCheck || wantLive) {
     host().sendToFrontend({ type: "busy", chatId, busy: true, label: "Updating state…" }, userId);
-    const [proposal, contra, live] = await Promise.all([
+    const [proposal, contra] = await Promise.all([
       settings.narratorUpdates && appended.trim() ? proposeChanges(decider, r, p, appended, settings, userId) : Promise.resolve(null),
       settings.consistencyCheck && decider.id !== "rules"
         ? contradiction({ decider, r, s: p.after, reply: content, outcome: p.outcome })
         : Promise.resolve(null),
-      wantLive
-        ? writeLiveChoices({ r, s: p.after, reply: content, player: p.player, settings, userId, decider })
-        : Promise.resolve([]),
     ]);
     // Extraction extends the current record, preserving edits made while it ran.
+    let committed = false;
     await patchWarpMeta(chatId, msg.id, async (w) => {
       const messages = await currentMessages();
       if (!messages) return w;
@@ -356,16 +356,36 @@ export async function afterReply(p: Pending, msg: Msg, content: string, userId?:
         || JSON.stringify(existing.check) !== JSON.stringify(p.rec.check)
         || JSON.stringify(existing.events.slice(0, p.rec.events.length)) !== JSON.stringify(p.rec.events)) return w;
       const target = messages.find((m) => m.id === msg.id)!;
-      const state = foldPath(r, messages.filter((m) => m.index_in_chat <= target.index_in_chat), 0).state;
+      const folded = foldPath(r, messages.filter((m) => m.index_in_chat <= target.index_in_chat), 0);
+      if (folded.conflict) return w;
+      const state = folded.state;
       const action = p.continueFrom === undefined && p.rec.action ? { id: p.rec.action.id, tags: actionTags(r, p.rec.action.id) } : undefined;
       const events = proposal ? applyProposal(r, state, proposal, { text: `${p.playerText}\n${appended}`, action }) : [];
       const changed = existing.events.length !== p.rec.events.length || events.length > 0;
       const rec = { ...existing, events: [...existing.events, ...events],
         ...(!changed && contra !== null ? { contradiction: contra } : {}) };
+      committed = true;
+      // Invalidate old choices before writing replacements, including failed/empty output.
       return { ...w, swipes: { ...w.swipes, [String(swipe)]: rec },
-        // Parallel choice generation described p.after, not the newer state.
-        ...(!changed && live.length ? { live: { ...w.live, [String(swipe)]: live } } : {}) };
+        ...(wantLive ? { live: { ...w.live, [String(swipe)]: [] } } : {}) };
     });
+    if (committed && wantLive) {
+      const messages = await currentMessages();
+      const target = messages?.find((m) => m.id === msg.id);
+      if (!messages || !target) return;
+      // Choices must see committed bookkeeping and every manual target-record edit.
+      const revision = JSON.stringify(activeRecord(target));
+      const folded = foldPath(r, messages.filter((m) => m.index_in_chat <= target.index_in_chat), 0);
+      if (folded.conflict) return;
+      const state = folded.state;
+      const live = await writeLiveChoices({ r, s: state, reply: content, player: p.player, settings, userId, decider })
+        .catch((e) => { logError("live choices", e); return []; });
+      await patchWarpMeta(chatId, msg.id, async (w) => {
+        const current = await currentMessages();
+        if (!current || (p.isCurrent && !p.isCurrent()) || JSON.stringify(w.swipes?.[String(swipe)]) !== revision) return w;
+        return { ...w, live: { ...w.live, [String(swipe)]: live } };
+      });
+    }
   }
 
   // Pre-write the first few choices while the player reads.

@@ -6,7 +6,7 @@ import { itemName, makeEnv, type GameState } from "../state.js";
 import { canUse, skillCost } from "./battle.js";
 import { SHOP, SKILLS } from "./content.js";
 import { adjacent, generateFloor, key } from "./floor.js";
-import { bondOf, choicesFor, dungeonOf, dungeonsHere, eligibleCompanions, levelOf, memberFighter } from "./run.js";
+import { bondOf, boonChoices, choicesFor, dungeonOf, dungeonsHere, eligibleCompanions, levelOf, memberFighter } from "./run.js";
 import type { Fighter } from "./types.js";
 import type { DungeonEntryView, DungeonView, FighterView } from "../../shared/protocol.js";
 
@@ -34,7 +34,7 @@ export function buildDungeonView(r: Ruleset, s: GameState): DungeonView | null {
   const floor = generateFloor(d, run.seed, run.depth);
   const seen = new Set(run.seen);
   const cleared = new Set(run.cleared);
-  const busy = !!run.battle || !!run.pending;
+  const busy = !!run.battle || !!run.pending || !!run.boonOffer;
   const tiles: DungeonView["tiles"] = [];
   for (let y = 0; y < floor.size; y++) for (let x = 0; x < floor.size; x++) {
     const k = key(x, y);
@@ -55,8 +55,14 @@ export function buildDungeonView(r: Ruleset, s: GameState): DungeonView | null {
   const onStairs = hereKey === key(...floor.stairs) && (!floor.boss || cleared.has(hereKey));
   const level = levelOf(run.xp);
 
-  const open = choicesFor(r, s);
-  const event: DungeonView["event"] = open ? {
+  // A level-up boon shows as an event card; its choices route through "choose" as "boon:<id>".
+  const boon = boonChoices(r, s);
+  const open = boon ? null : choicesFor(r, s);
+  const event: DungeonView["event"] = boon ? {
+    text: `Level ${boon.level}! Choose a boon for the rest of this run.`,
+    romance: false,
+    choices: boon.options.map((o) => ({ id: `boon:${o.id}`, label: `${o.name}: ${o.desc}`, ok: !run.battle, chance: null, cost: null })),
+  } : open ? {
     text: open.ev.text.replace(/\{target\}/g, open.target ? s.people[open.target]?.name ?? open.target : ""),
     romance: run.pending?.kind === "romance",
     choices: open.choices.map((c) => {

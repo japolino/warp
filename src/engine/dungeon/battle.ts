@@ -41,7 +41,7 @@ function hit(b: BattleState, a: Fighter, t: Fighter, s: SkillDef, rng: Rng, igno
   if (s.kind === "phys") dmg = Math.max(1, a.atk * 3 - t.def * 1.5) * s.power;
   else dmg = Math.max(1, 15 + a.mat * 2.5 - t.mdf) * s.power;
   dmg *= variance(rng);
-  const crit = s.kind === "phys" && rng() < 0.05 + (s.crit ?? 0);
+  const crit = s.kind === "phys" && rng() < 0.05 + (s.crit ?? 0) + (a.crit ?? 0);
   if (crit) dmg *= 1.8;
   if (t.guard && !ignoreGuard) dmg *= 0.5;
   const n = Math.max(1, Math.round(dmg));

@@ -1,6 +1,6 @@
 // Spending cheap, fast generation where it helps most:
-//   • best of several drafts — extra drafts of a reply, the decision model picks the one
-//     that narrates the decided outcome most faithfully and reads best;
+//   • optional alternatives — extra drafts of a reply stored as swipes for the player
+//     to choose; the visible reply is never automatically replaced;
 //   • pre-written replies — while the player reads, the first few choices are resolved
 //     (dice included) and written, so clicking one is instant.
 
@@ -40,7 +40,7 @@ export async function writeDrafts(prompt: LlmMessageDTO[], n: number, userId?: s
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
 
-/** Which draft to keep (index into drafts). The first — the one already shown — wins ties. */
+/** Optional draft recommendation (index into drafts), not permission to switch the visible reply. */
 export async function judgeDrafts(decider: Decider, drafts: string[], outcome: string | null, state: string): Promise<number> {
   if (drafts.length < 2) return 0;
   try {
@@ -55,7 +55,7 @@ export async function judgeDrafts(decider: Decider, drafts: string[], outcome: s
     const a = ans.best;
     if (a?.type !== "choice") return 0;
     const i = Number(a.choice.slice(1));
-    // Only swap away from what the player already saw if the model is clearly surer.
+    // Recommend an alternative only when the model is clearly surer.
     return Number.isInteger(i) && i > 0 && (a.probabilities[a.choice] ?? 0) >= (a.probabilities.d0 ?? 0) + 0.15 ? i : 0;
   } catch (e) {
     logError("judge drafts", e);

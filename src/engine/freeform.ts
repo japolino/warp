@@ -6,8 +6,8 @@
 
 import { identifiers } from "./expr.js";
 import type { TurnBuilder } from "./resolve.js";
-import { DIFFICULTIES, emptyEffect, type ActionDef, type Difficulty, type Ruleset, type Tier } from "./ruleset.js";
-import { statMax, type GameState } from "./state.js";
+import { DEFAULT_PRACTICE_REPEAT, DIFFICULTIES, emptyEffect, type ActionDef, type Difficulty, type PracticeRepeatDef, type Ruleset, type Tier } from "./ruleset.js";
+import { encounterKey, statMax, type GameState } from "./state.js";
 
 /** An improvised attempt: `try:<stat>` (or `try:` with nothing to lean on). */
 export const IMPROV = "try:";
@@ -24,7 +24,7 @@ export const IMPROV_DIRECTION: Record<Tier, string> = {
   crit_success: "It goes better than {{user}} could have hoped — a clean success with something extra.",
   success: "It works.",
   partial: "It works, but not cleanly — add a cost, a complication or a price.",
-  fail: "It doesn't work. Show the failure and a consequence that makes things harder.",
+  fail: "It doesn't work. Show a concrete consequence, lost opportunity, or changed situation that makes the next choice different; do not resolve it as an identical retry. Do not grant the intended success.",
   crit_fail: "It goes badly wrong — a failure that costs {{user}} something real.",
 };
 
@@ -122,11 +122,52 @@ export function trainingGain(r: Ruleset, s: GameState, stat: string, minutes: nu
   return practiceGain(r, s, stat, 1, 1.5 * hours);
 }
 
+/** Identity of a checked opportunity. Training deliberately has no such identity. */
+export interface PracticeContext {
+  actionId: string;
+  target?: string;
+  params?: Record<string, string>;
+}
+
+/** A stable key: changing actions, opponents, places or scene participants is fresh practice. */
+export function practiceKey(s: GameState, context: PracticeContext): string {
+  const people = Object.entries(s.scene ?? {}).filter(([, v]) => v.here && v.loc === s.location).map(([id]) => id).sort();
+  // Only improvised difficulty is a known mechanical opportunity here. Cosmetic
+  // labels, mind_resist and arbitrary intent params must not reset repetition.
+  const difficulty = context.actionId.startsWith(IMPROV)
+    ? (isDifficulty(context.params?.difficulty) ? context.params!.difficulty : "fair") : null;
+  return JSON.stringify([context.actionId, s.location, people, context.target ?? null, difficulty,
+    encounterKey(s) ?? null, s.encounter?.foeName ?? null,
+    s.dungeon ? [s.dungeon.id, s.dungeon.depth, ...s.dungeon.pos] : null]);
+}
+
+/** Repeated checks in the same context teach less, but failures still teach.
+ * By default a two-hour break or eight intervening turns restores full learning
+ * (`growth.repeat` tunes this; a recovery value of 0 turns that path off).
+ */
+export function practiceRepetition(s: GameState, key: string, repeat: PracticeRepeatDef | false = DEFAULT_PRACTICE_REPEAT): { multiplier: number; n: number } {
+  if (repeat === false) return { multiplier: 1, n: 1 };
+  const previous = s.practiceUse?.[key];
+  const recovered = !previous
+    || (repeat.recoverMinutes > 0 && s.minutes - previous.minutes >= repeat.recoverMinutes)
+    || (repeat.recoverTurns > 0 && s.turn - previous.turn >= repeat.recoverTurns);
+  const repeats = recovered ? 0 : Math.max(0, Math.min(100, previous.n));
+  return { multiplier: Math.min(1, Math.max(repeat.floor, 1 / (1 + repeat.step * repeats))), n: Math.min(100, repeats + 1) };
+}
+
 /** Add progress; every whole point reached raises the stat. */
-export function practise(t: TurnBuilder, gains: Record<string, number>, why: string): void {
-  for (const [id, g] of Object.entries(gains)) {
+export function practise(t: TurnBuilder, gains: Record<string, number>, why: string, context?: PracticeContext): void {
+  let multiplier = 1;
+  if (context && t.r.growth.repeat !== false && Object.entries(gains).some(([id, g]) => t.r.stats[id] && Number.isFinite(g) && g > 0)) {
+    const key = practiceKey(t.s, context);
+    const repetition = practiceRepetition(t.s, key, t.r.growth.repeat);
+    multiplier = repetition.multiplier;
+    t.push({ t: "practice_use", key, n: repetition.n, turn: t.s.turn, minutes: t.s.minutes, src: "check", why });
+  }
+  for (const [id, raw] of Object.entries(gains)) {
+    const g = raw * multiplier;
     const def = t.r.stats[id];
-    if (!def || !(g > 0)) continue;
+    if (!def || !Number.isFinite(g) || !(g > 0)) continue;
     const pool = (t.s.practice[id] ?? 0) + g;
     const room = Math.max(0, statMax(t.r, def, t.s) - (t.s.stats[id] ?? def.start));
     const up = Math.min(Math.floor(pool), Math.floor(room));

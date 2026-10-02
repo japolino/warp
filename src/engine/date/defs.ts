@@ -2,16 +2,30 @@
 // outings; a map changes any of them.
 
 import type { StatDef } from "../ruleset.js";
-import { Ctx, isObj, list, titleCase, type Raw } from "../ruleset.js";
+import { Ctx, isObj, list, titleCase, tuned, type Raw } from "../ruleset.js";
 import { DEFAULT_CATEGORIES, DEFAULT_STAGES, DEFAULT_TOPICS, DEFAULT_VENUES } from "./content.js";
-import { REACTIONS, type ActivityDef, type CategoryDef, type DatingDef, type Reaction, type StageDef, type TopicDef, type VenueDef, type VenueEventDef } from "./types.js";
+import { DEFAULT_SOCIAL_MEMORY, REACTIONS, type SocialMemoryDef, type ActivityDef, type CategoryDef, type DatingDef, type Reaction, type StageDef, type TopicDef, type VenueDef, type VenueEventDef } from "./types.js";
 
 export function disabledDating(): DatingDef {
   return {
     enabled: false, love: "love", fear: "fear", stages: DEFAULT_STAGES, hostileAt: 60, hostileLabel: "Hostile",
     categories: DEFAULT_CATEGORIES, topics: {}, topicOrder: [], venues: {}, people: {},
     minutesPerTopic: 5, fatiguePerTopic: 12, beats: 4, minutesPerBeat: 30, romance: true,
+    memory: { ...DEFAULT_SOCIAL_MEMORY },
   };
+}
+
+/** `dating.memory: { recovery_minutes: 240, keys: 64, rest_per_minute: 1 }` — how social repetition fades. */
+function normSocialMemory(raw: unknown, c: Ctx): SocialMemoryDef {
+  const def = { ...DEFAULT_SOCIAL_MEMORY };
+  if (raw === undefined || raw === null || raw === true) return def;
+  if (!isObj(raw)) { c.warn("Dating › memory", "expected a map like `{ recovery_minutes: 240, keys: 64, rest_per_minute: 1 }`"); return def; }
+  const known = new Set(["recovery_minutes", "keys", "rest_per_minute"]);
+  for (const k of Object.keys(raw)) if (!known.has(k)) c.warn(`Dating › memory › ${k}`, "unknown setting — use recovery_minutes, keys or rest_per_minute");
+  def.recoveryMinutes = tuned(c, raw.recovery_minutes, "Dating › memory › recovery_minutes", def.recoveryMinutes, 1, 525600, "in-game minutes for one recent use to fade");
+  def.keys = Math.round(tuned(c, raw.keys, "Dating › memory › keys", def.keys, 1, 512, "recent topics kept per person"));
+  def.restPerMinute = tuned(c, raw.rest_per_minute, "Dating › memory › rest_per_minute", def.restPerMinute, 0, 100, "fatigue restored per in-game minute");
+  return def;
 }
 
 function defaultRelStat(id: string, kind: "love" | "fear"): StatDef {
@@ -176,5 +190,6 @@ export function normDating(raw: unknown, c: Ctx, rel: { stats: Record<string, St
   def.fatiguePerTopic = Math.max(1, c.num(pace.fatigue_per_topic, "Dating › fatigue_per_topic", def.fatiguePerTopic));
   def.beats = Math.max(1, Math.min(10, Math.round(c.num(pace.beats, "Dating › beats", def.beats))));
   def.minutesPerBeat = Math.max(0, c.num(pace.minutes_per_beat, "Dating › minutes_per_beat", def.minutesPerBeat));
+  if (r.memory !== undefined) def.memory = normSocialMemory(r.memory, c);
   return def;
 }

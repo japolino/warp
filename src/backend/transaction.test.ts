@@ -59,7 +59,11 @@ beforeAll(async () => {
     } },
     userStorage: { getJson: async (_: string, opts: any) => structuredClone(get(opts.userId).settings) },
     chat: {
-      getMessages: async (id: string) => structuredClone(get(id).messages),
+      getMessages: async (id: string) => {
+        const snapshot = structuredClone(get(id).messages);
+        await get(id).beforeMessagesReturn?.();
+        return snapshot;
+      },
       updateMessage: async (id: string, mid: string, patch: any) => {
         const f = get(id);
         if (f.failWrite) { f.failWrite = false; throw new Error("scripted storage failure"); }
@@ -233,7 +237,7 @@ test("duplicate successful End extracts and commits exactly once", async () => {
 test("failed map writes preserve the current location; retry creates both routes before arrival", async () => {
   const f = fixture({ start: { location: "home" }, locations: { home: { name: "Home", exits: ["town"] }, town: { exits: ["home"] } }, discovery: true });
   f.failCreate = true;
-  f.quiet = async () => ({ content: '{"name":"Courtyard","desc":"A small courtyard.","indoors":false}' });
+  f.quiet = async () => ({ content: '{"name":"Courtyard","desc":"A small courtyard.","indoors":false,"opportunity":{"label":"Inspect courtyard","hint":"Inspect the courtyard walls."}}' });
   const failed = { ...record(), discover: { from: "home" } };
   const loaded = { bookIds: [f.id], characterId: f.id } as any;
   await discoverPlace(loaded, f.r, initialState(f.r), failed, f.id, f.settings, f.id);
@@ -581,4 +585,125 @@ test("date pictures request Cue by name only, apply fit, retry without a turn, a
   await frontendMessage({ type: "cue_image_result", chatId: f.id, result: { ...result, requestId: next.requestId } }, f.id);
   expect(sceneViewFor(f.id, f.r, before)!.image).toBeNull();
   expect(f.calls).toBe(0); expect(f.narratorCalls ?? 0).toBe(0);
+});
+
+// Exercise the complete End pipeline, not only live-choice cleaning.
+function liveFixture() {
+  return fixture({ ...raw,
+    relationships: { stats: { trust: { start: 0, narrator: 5 } } },
+    live_choices: { count: 2, tags: {
+      bold: { desc: "Try a bold move", effects: {} },
+      kind: { desc: "Talk to someone", per_person: true, effects: {} },
+    } },
+  });
+}
+const isLiveRequest = (req: any) => req.messages[0].content.includes("clickable choices");
+const liveResponse = { content: '{"choices":[{"label":"Try again","tag":"bold"}]}' };
+
+for (const changed of [true, false]) test(`live choices use the committed ${changed ? "changed" : "unchanged"} state`, async () => {
+  const f = liveFixture(); const { target, payload } = await start(f);
+  let prompt = "", sawCommitted = false;
+  f.quiet = async (req: any) => {
+    if (!isLiveRequest(req)) return { content: JSON.stringify(changed
+      ? { stats: { health: 5 }, people: [{ name: "Mira" }], present: ["Mira"] } : {}) };
+    prompt = req.messages[1].content;
+    sawCommitted = foldPath(f.r, f.messages).state.stats.health === (changed ? 45 : 40);
+    return { content: JSON.stringify({ choices: [{ label: "Try again", tag: "bold" },
+      ...(changed ? [{ label: "Talk to Mira", tag: "kind", target: "Mira" }] : [])] }) };
+  };
+  await onGenerationEnded(payload, f.id);
+  expect(sawCommitted).toBe(true);
+  expect(prompt).toContain(changed ? "45" : "40");
+  expect(liveChoicesOf(target)).toHaveLength(changed ? 2 : 1);
+  if (changed) { expect(prompt).toContain("Mira"); expect(liveChoicesOf(target)[1].target).toBe("mira"); }
+});
+
+function deferLive(f: any) {
+  let release!: (value: any) => void;
+  let entered!: () => void;
+  const waiting = new Promise<void>((resolve) => { entered = resolve; });
+  f.quiet = async (req: any) => {
+    if (!isLiveRequest(req)) return { content: "{}" };
+    entered(); return new Promise((resolve) => { release = resolve; });
+  };
+  return { waiting, release: () => release(liveResponse) };
+}
+
+for (const change of ["stop", "content", "swipe", "history", "target-event", "target-hint"]) test(`late live choices reject ${change} changes`, async () => {
+  const f = liveFixture(); const { target, payload } = await start(f);
+  target.metadata.warp = { live: { "0": [{ label: "Stale", tag: "bold" }] } };
+  const gate = deferLive(f); const ending = onGenerationEnded(payload, f.id);
+  await gate.waiting;
+  // No model call holds the metadata queue: a manual write completes while it waits.
+  if (change === "stop") await onGenerationStopped({ chatId: f.id, generationId: f.id }, f.id);
+  if (change === "content") target.content = "Edited reply";
+  if (change === "swipe") target.swipe_id = 1;
+  if (change === "history") f.messages[0].content = "Edited history";
+  if (change === "target-event" || change === "target-hint") await patchWarpMeta(f.id, target.id, (w) => {
+    const rec = w.swipes!["0"];
+    return { ...w, swipes: { ...w.swipes, "0": change === "target-event"
+      ? { ...rec, events: [...rec.events, { t: "stat", id: "health", set: 80, src: "manual" }] }
+      : { ...rec, hints: [...rec.hints, "Manual annotation"] } } };
+  });
+  gate.release(); await ending;
+  expect(warpMeta(target).live?.["0"]).toEqual([]);
+  if (change === "target-event") expect(foldPath(f.r, f.messages).state.stats.health).toBe(80);
+});
+
+for (const result of ["empty", "failure"]) test(`${result} live output clears stale active choices and preserves inactive slots`, async () => {
+  const f = liveFixture(); const { target, payload } = await start(f);
+  target.metadata.warp = { live: {
+    "0": [{ label: "Stale", tag: "bold" }], "1": [{ label: "Other swipe", tag: "bold" }],
+  } };
+  f.quiet = async (req: any) => {
+    if (!isLiveRequest(req)) return { content: "{}" };
+    if (result === "failure") throw new Error("scripted live writer failure");
+    return { content: '{"choices":[]}' };
+  };
+  await onGenerationEnded(payload, f.id);
+  expect(liveChoicesOf(target)).toEqual([]);
+  expect(warpMeta(target).live?.["1"][0].label).toBe("Other swipe");
+});
+
+
+test("Stop during the final live-choice host read rejects its late snapshot", async () => {
+  const f = liveFixture(); const { target, payload } = await start(f);
+  let entered!: () => void, release!: () => void;
+  const waiting = new Promise<void>((resolve) => { entered = resolve; });
+  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  f.quiet = async (req: any) => {
+    if (!isLiveRequest(req)) return { content: "{}" };
+    // patchWarpMeta first reads its queue snapshot; currentMessages then reads
+    // the validation snapshot. Stop lands while that second read is in flight.
+    let reads = 0;
+    f.beforeMessagesReturn = async () => {
+      if (++reads === 2) {
+        f.beforeMessagesReturn = undefined;
+        entered(); await blocked;
+      }
+    };
+    return liveResponse;
+  };
+  const ending = onGenerationEnded(payload, f.id);
+  await waiting;
+  await onGenerationStopped({ chatId: f.id, generationId: f.id }, f.id);
+  release(); await ending;
+  expect(warpMeta(target).live?.["0"]).toEqual([]);
+});
+
+
+
+test("postprocessing rejects a conflicting target record instead of folding a partial state", async () => {
+  const f = liveFixture(); const { target, payload } = await start(f);
+  const gate = deferExtraction(f); const ending = onGenerationEnded(payload, f.id);
+  await gate.waiting;
+  const originalEvents = structuredClone(warpMeta(target).swipes!["0"].events);
+  await patchWarpMeta(f.id, target.id, (w) => ({ ...w, swipes: { ...w.swipes,
+    "0": { ...w.swipes!["0"], path: "invalid-target-path" },
+  } }));
+  gate.release(5); await ending;
+  expect(warpMeta(target).swipes!["0"].events).toEqual(originalEvents);
+  expect(foldPath(f.r, f.messages).conflict).toBe(target.id);
+  expect(f.calls).toBe(1);
+  expect(liveChoicesOf(target)).toEqual([]);
 });

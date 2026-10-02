@@ -202,6 +202,8 @@ export interface EncounterLogView {
 }
 
 export interface ChoiceView {
+  /** Nonbinding story forecast. Mechanics and odds still come only from the tag. */
+  forecast?: { goal: string; risk: string; payoff: string };
   id: string;
   label: string;
   group: string | null;

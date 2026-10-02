@@ -33,7 +33,8 @@ decision, applies pressure or rewards play — and it fits the character card or
    - Lint warnings: names that don't resolve, effects pointing at nothing — fix them.
    - Balance: odds that are hopeless or automatic, meters that run away, encounters that are unwinnable or free.
    - Depth audit: what doesn't connect (items that do nothing, stats nothing reads, quests nothing finishes…).
-     Aim for depth 90+; fix every [gap]; fix or knowingly accept each [thin].
+     Fix every [gap]; fix or knowingly accept each [thin]. Depth measures static wiring, not fun — don't chase 100
+     by adding systems the game doesn't need; a narrative-only meter can be deliberate.
 5. Simulate each encounter (\`warp-rulebook simulate rulebook.yaml\`): no route should be pointless, none a sure win,
    and the escape should cost something. Tune numbers until random play wins roughly 30–70% of the time.
 6. Preview (\`warp-rulebook preview rulebook.yaml\`): the sidebar, choices and the narrator's view at the start.

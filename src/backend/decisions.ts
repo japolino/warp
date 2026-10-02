@@ -110,20 +110,19 @@ export async function readTurn(opts: {
 }): Promise<Reading> {
   const { decider, r, s, settings, playerText, player } = opts;
   const q: Questions = {};
-  // In a conversation or on a date, typed lines are the player's words in it (read when the turn resolves), not actions.
-  const talking = !!activeSession(r, s) || !!s.job;
-  // Items in hand and the player's own abilities count as things they can do ("I spray myself", "I cast haste").
-  const actions = playerText && !talking
+  // Actions, items, abilities, travel, quests, and improv remain candidates during dating/work,
+  // while dialogue and thoughts are classified as NONE.
+  const actions = playerText
     ? [
         ...availableChoices(r, s, settings.lines),
         ...usableItems(r, s).filter((u) => !u.locked).map((u) => ({ id: u.id, a: u.a, label: u.a.label })),
         ...usableAbilities(r, s).filter((u) => !u.status.locked).map((u) => ({ id: u.id, a: u.a, label: u.a.label })),
       ]
     : [];
-  const travel = playerText && !talking ? travelTargets(r, s) : [];
+  const travel = playerText ? travelTargets(r, s) : [];
   // Saying yes to someone's request, or telling them it's done, takes or hands in the quest.
   const questMoves: Record<string, string> = {};
-  if (playerText && !talking) {
+  if (playerText) {
     // Only what someone here is asking: notices on a board are taken by clicking them.
     for (const o of questOffers(r, s).filter((x) => x.via === "giver")) {
       const q = r.quests[o.id];
@@ -132,7 +131,7 @@ export async function readTurn(opts: {
     for (const x of questsToReport(r, s)) questMoves[`${QUEST_PREFIX}report:${x.id}`] = `Tell ${x.to ?? "them"} that "${questDef(r, s, x.id)?.name ?? x.id}" is done`;
   }
   // Anything risky the list doesn't cover is still an attempt: it rolls on the closest ability.
-  const improv = !!playerText && !talking && r.improvise.enabled && !s.dungeon;
+  const improv = !!playerText && r.improvise.enabled && !s.dungeon;
   const approach = improv ? improvStats(r) : [];
 
   if (playerText && (actions.length || travel.length || improv || Object.keys(questMoves).length)) {
@@ -143,7 +142,8 @@ export async function readTurn(opts: {
     for (const t of travel) criteria[`${TRAVEL_PREFIX}${t}`] = `Go to ${r.locations[t].name}`;
     Object.assign(criteria, questMoves);
     if (improv) criteria[ATTEMPT] = "Something else with a real chance of failing that matters to the story, not listed above (sneaking, persuading, lying, fighting, climbing, stealing, resisting, performing…)";
-    q.action = { type: "choice", instructions: `Which of these does ${player}'s latest message actually attempt right now?`, criteria };
+    const session = s.job ? "They are serving a customer during a work shift." : activeSession(r, s) ? "They are in a conversation or outing." : "";
+    q.action = { type: "choice", instructions: `Which of these does ${player}'s latest message actually attempt right now?${session ? ` ${session} Ordinary dialogue, thoughts, and discussion of a possible action are NONE; choose an action only when actually attempted now.` : ""}`, criteria };
     if (improv || actions.some((c) => c.a.params.length)) {
       q.difficulty = { type: "score", instructions: `How hard is what ${player} is attempting, given the scene?`, criteria: DIFFICULTY };
     }

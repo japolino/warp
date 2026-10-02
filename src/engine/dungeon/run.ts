@@ -5,13 +5,15 @@
 
 import { seededRng, type Rng } from "../dice.js";
 import { evalBool, evalNumber, type ExprEnv, type Value } from "../expr.js";
+import { practise } from "../freeform.js";
 import { buildTurn, type TurnBuilder } from "../resolve.js";
 import type { Ruleset } from "../ruleset.js";
-import { formatNumber, itemName, makeEnv, personName, type GameState, type WarpEvent } from "../state.js";
+import { formatNumber, itemName, makeEnv, personName, statMax, type GameState, type WarpEvent } from "../state.js";
 import { presentPeople } from "../world.js";
 import { autoCommand, command, startBattle, type Command } from "./battle.js";
 import { CLASS_IDS, CLASSES, PARTY_SPRITES, SHOP } from "./content.js";
 import { adjacent, generateFloor, key, parseKey, tileAt, type Floor } from "./floor.js";
+import { BOONS, boonCount, boonInfo, boonScale, learnedSkills, rollBoonOffer } from "./boons.js";
 import type { BattleState, ClassId, DgChoice, DgEventDef, DgOutcome, DungeonDef, DungeonRun, Fighter, MonsterDef, PartyMember, Stats } from "./types.js";
 
 export const PLAYER = "you";
@@ -78,13 +80,15 @@ export function classFor(d: DungeonDef, who: string): ClassId {
 export function memberFighter(r: Ruleset, s: GameState, d: DungeonDef, run: DungeonRun, m: PartyMember): Fighter {
   const cls = classFor(d, m.id);
   const base = CLASSES[cls];
-  const env = makeEnv(r, s);
+  const env = m.id === PLAYER ? makeEnv(r, s) : dgEnv({ r, s }, run, { target: m.id });
   const scale = levelScale(levelOf(run.xp));
   const stat = (k: keyof Stats) => {
-    const f = m.id === PLAYER ? d.player[k] : undefined;
+    const f = m.id === PLAYER ? d.player[k] : d.party.stats?.[m.id]?.[k];
     const v = f !== undefined ? evalNumber(f, env, base[k]) : base[k];
-    return Math.max(k === "hp" ? 1 : 0, Math.round(v * scale));
+    return Math.max(k === "hp" ? 1 : 0, Math.round(v * scale * boonScale(run, k)));
   };
+  const learned = m.id === PLAYER ? learnedSkills(run).filter((id) => !base.skills.includes(id)) : [];
+  const keen = boonCount(run, "keen");
   const mhp = stat("hp"), mmp = stat("mp");
   const name = m.id === PLAYER ? "{{user}}" : personName(r, s, m.id);
   return {
@@ -92,7 +96,8 @@ export function memberFighter(r: Ruleset, s: GameState, d: DungeonDef, run: Dung
     sprite: m.id === PLAYER && d.player.sprite ? d.player.sprite : PARTY_SPRITES[cls][hash(m.id === PLAYER ? "player" : name) % PARTY_SPRITES[cls].length],
     hp: Math.min(m.hp, mhp), mhp, mp: Math.min(m.mp, mmp), mmp, tp: m.tp,
     atk: stat("atk"), def: stat("def"), mat: stat("mat"), mdf: stat("mdf"), agi: stat("agi"),
-    skills: base.skills, guard: false,
+    skills: learned.length ? [...base.skills, ...learned] : base.skills, guard: false,
+    ...(keen ? { crit: 0.1 * keen } : {}),
   };
 }
 
@@ -118,7 +123,17 @@ export function eligibleCompanions(r: Ruleset, s: GameState, d: DungeonDef): { i
     .map((id) => ({ id, name: personName(r, s, id), present: here.has(id), cls: classFor(d, id) }));
 }
 
-const isAdult = (r: Ruleset, id: string) => (r.people[id]?.age ?? 18) >= 18;
+/**
+ * Romance scenes need an adult. Authored people keep the old rule (undeclared age = adult), but a
+ * resident generated at a discovered place has no authored age: only a known-adult read counts for them.
+ */
+const isAdult = (r: Ruleset, s: GameState, id: string) => {
+  const p = r.people[id];
+  if (p?.age !== undefined) return p.age >= 18;
+  const read = s.dating.prefs[id]?.["__adult"]; // date/talk.ts ADULT_KEY (inlined to avoid an import cycle)
+  if (read !== undefined) return read > 0;
+  return !p?.schedule.some((e) => s.discovered?.includes(e.at));
+};
 
 // ───────────────────────── helpers ─────────────────────────
 
@@ -246,7 +261,7 @@ export function enterDungeon(r: Ruleset, s: GameState, id: string, companions: s
     const floor = generateFloor(d, seed, 1);
     const run: DungeonRun = {
       id, seed, depth: 1, pos: floor.start, seen: [key(...floor.start)], cleared: [key(...floor.start)],
-      party: [], xp: 0, gold: 0, bag: { potion: 2, ether: 0, bomb: 0 }, loot: {}, battle: null, pending: null, log: [], untold: [],
+      party: [], xp: 0, gold: 0, bag: { potion: 2, ether: 0, bomb: 0, ...d.supplies }, loot: {}, battle: null, pending: null, log: [], untold: [],
     };
     run.party = [PLAYER, ...chosen].map((m) => fullVitals(t.r, t.s, d, run, m));
     t.push({ t: "dg_enter", run, src: "action" });
@@ -264,7 +279,7 @@ export function moveTo(r: Ruleset, s: GameState, x: number, y: number): DungeonR
   const d = run && dungeonOf(r, run);
   if (!run || !d) return fail("You're not in a dungeon.");
   if (run.battle) return fail("Finish the fight first.");
-  if (run.pending) return fail("Decide what to do here first.");
+  if (run.pending || run.boonOffer) return fail("Decide what to do here first.");
   const floor = generateFloor(d, run.seed, run.depth);
   const kind = tileAt(floor, x, y);
   if (!kind) return fail("That's outside the floor.");
@@ -324,7 +339,7 @@ function resolveTile(t: TurnBuilder, d: DungeonDef, run: DungeonRun, floor: Floo
       return undefined;
     }
     case "romance": {
-      const mates = run.party.filter((m) => m.id !== PLAYER && m.hp > 0 && isAdult(t.r, m.id));
+      const mates = run.party.filter((m) => m.id !== PLAYER && m.hp > 0 && isAdult(t.r, t.s, m.id));
       clear();
       if (!mates.length) {
         changeVitals(t, d, run, { heal: 10 });
@@ -392,6 +407,7 @@ export function chooseEvent(r: Ruleset, s: GameState, choiceId: string): Dungeon
   const run = s.dungeon;
   const d = run && dungeonOf(r, run);
   const open = choicesFor(r, s);
+  if (run?.boonOffer && d) return chooseBoon(r, s, choiceId.replace(/^boon:/, ""));
   if (!run || !d || !open) return fail("There's nothing to decide here.");
   const c = open.choices.find((x) => x.id === choiceId);
   if (!c) return fail("That option isn't available.");
@@ -424,7 +440,7 @@ function applyOutcome(t: TurnBuilder, d: DungeonDef, run: DungeonRun, o: DgOutco
   }
   if (o.xp !== undefined) {
     const x = Math.round(evalNumber(o.xp, env, 0));
-    if (x) t.push({ t: "dg_xp", d: x, src: "action" });
+    if (x) gainXp(t, d, x);
   }
   for (const [item, n] of Object.entries(o.bag ?? {})) if (n) t.push({ t: "dg_bag", item, d: n, src: "action" });
   if (who && (o.bond || o.desire)) {
@@ -441,6 +457,52 @@ function applyOutcome(t: TurnBuilder, d: DungeonDef, run: DungeonRun, o: DgOutco
     beginBattle(t, d, live(), `${at}:fight`, kind, o.fight !== "enemy" && o.fight !== "elite" ? o.fight : undefined);
   }
 }
+
+// ───────────────────────── level-up boons ─────────────────────────
+
+/** Add run XP; with `boons: true`, a new party level offers a boon. */
+function gainXp(t: TurnBuilder, d: DungeonDef, x: number) {
+  t.push({ t: "dg_xp", d: x, src: "action" });
+  offerBoon(t, d);
+}
+
+/** Offer the next owed boon (one per level gained past 1), unless one is already waiting. */
+function offerBoon(t: TurnBuilder, d: DungeonDef) {
+  const run = t.s.dungeon;
+  if (!d.boons || !run || run.boonOffer) return;
+  const taken = run.boons?.length ?? 0;
+  if (levelOf(run.xp) - 1 <= taken) return;
+  const offer = rollBoonOffer(run, taken + 2, d.player.class);
+  if (!offer.options.length) return;
+  t.push({ t: "dg_boon_offer", offer, src: "action" });
+  log(t, `Level ${offer.level}! Choose a boon for the rest of this run.`);
+}
+
+/** What the boon choice looks like (null when none is waiting). */
+export function boonChoices(r: Ruleset, s: GameState): { level: number; options: { id: string; name: string; desc: string }[] } | null {
+  const offer = s.dungeon?.boonOffer;
+  if (!offer) return null;
+  return { level: offer.level, options: offer.options.flatMap((id) => { const b = boonInfo(id); return b ? [{ id, ...b }] : []; }) };
+}
+
+export function chooseBoon(r: Ruleset, s: GameState, id: string): DungeonResult {
+  const run = s.dungeon;
+  const d = run && dungeonOf(r, run);
+  if (!run || !d || !run.boonOffer) return fail("There's no boon to choose.");
+  if (run.battle) return fail("Finish the fight first.");
+  if (!run.boonOffer.options.includes(id)) return fail("That boon isn't on offer.");
+  const info = boonInfo(id)!;
+  const events = buildTurn(r, s, `${run.seed}:boon:${run.boonOffer.level}:${id}`, (t) => {
+    t.push({ t: "dg_boon", id, src: "action" });
+    if (id === "supplies") t.push({ t: "dg_bag", item: "potion", d: 2, src: "action" });
+    if (id === "focus") t.push({ t: "dg_bag", item: "ether", d: 2, src: "action" });
+    log(t, `Boon: ${info.name} — ${info.desc}.`);
+    offerBoon(t, d);
+  });
+  return { events };
+}
+
+export { BOONS };
 
 // ───────────────────────── battles ─────────────────────────
 
@@ -502,7 +564,7 @@ function finishBattle(t: TurnBuilder, d: DungeonDef, run: DungeonRun, b: BattleS
   const xp = foes.reduce((n, f) => n + (f.xp ?? 0), 0);
   const gold = foes.reduce((n, f) => n + (f.gold ?? 0), 0);
   const before = levelOf(run.xp);
-  if (xp) t.push({ t: "dg_xp", d: xp, src: "action" });
+  if (xp) gainXp(t, d, xp);
   if (gold) t.push({ t: "dg_gold", d: gold, src: "action" });
   if (!b.at.endsWith(":fight")) t.push({ t: "dg_clear", key: b.at, src: "action" });
   const after = levelOf(run.xp + xp);
@@ -531,7 +593,7 @@ export function descend(r: Ruleset, s: GameState): DungeonResult {
   const run = s.dungeon;
   const d = run && dungeonOf(r, run);
   if (!run || !d) return fail("You're not in a dungeon.");
-  if (run.battle || run.pending) return fail("Deal with what's here first.");
+  if (run.battle || run.pending || run.boonOffer) return fail("Deal with what's here first.");
   const floor = generateFloor(d, run.seed, run.depth);
   const here = key(...run.pos);
   if (here !== key(...floor.stairs)) return fail("The way down isn't here.");
@@ -543,7 +605,8 @@ export function descend(r: Ruleset, s: GameState): DungeonResult {
     t.push({ t: "dg_down", pos: next.start, src: "action" });
     t.push({ t: "dg_clear", key: key(...next.start), src: "action" });
     // A breather on the stairs.
-    changeVitals(t, d, t.s.dungeon!, { heal: 20, mana: 20 });
+    const wind = boonCount(t.s.dungeon!, "second_wind") ? 20 : 0;
+    changeVitals(t, d, t.s.dungeon!, { heal: 20 + wind, mana: 20 + wind });
     t.time(10, "action");
     log(t, `The party descends to floor ${run.depth + 1}.${next.boss ? " Something powerful waits on this floor." : ""}`);
     if (d.narrate === "all" || next.boss) {
@@ -561,11 +624,38 @@ export function leaveDungeon(r: Ruleset, s: GameState): DungeonResult {
   const events = buildTurn(r, s, `${run.seed}:leave:${run.depth}`, (t) => {
     const money = d.currency ?? r.hud.money;
     const found: string[] = [];
-    if (run.gold && money && r.stats[money]) { t.push({ t: "stat", id: money, d: run.gold, src: "action" }); found.push(`${formatNumber(run.gold)} gold`); }
+    if (run.gold && money && r.stats[money]) {
+      const room = Math.max(0, statMax(r, r.stats[money], t.s) - (t.s.stats[money] ?? r.stats[money].start));
+      const kept = Math.min(Math.max(0, run.gold), room);
+      if (kept > 0) { t.push({ t: "stat", id: money, d: kept, src: "action" }); found.push(`${formatNumber(kept)} gold`); }
+    }
     for (const [item, n] of Object.entries(run.loot)) { t.push({ t: "item", id: item, d: n, src: "action" }); found.push(itemName(r, s, item)); }
     tell(t, d, run, `{{user}}'s party climbs back out of ${d.name} from floor ${run.depth}${found.length ? `, carrying ${found.join(", ")}` : ", empty-handed"}.`);
+    const extra = { depth: run.depth, run_xp: run.xp, run_gold: run.gold };
+    // Exit before practice so its repetition key describes the main-world location,
+    // not the random dungeon tile from which this run happened to end.
     t.push({ t: "dg_exit", outcome: "left", src: "action" });
-    t.apply(d.onLeave, "action");
+    // Only earned exits carry practice/rewards. Enter-and-leave cannot farm them.
+    // Dungeon XP remains run-local; authors choose each main-world mapping explicitly.
+    if (run.xp > 0) {
+      const env = dgEnv(t, run, extra);
+      for (const [id, reward] of Object.entries(d.exitRewards ?? {})) {
+        if (!r.stats[id]) continue;
+        const room = Math.max(0, statMax(r, r.stats[id], t.s) - (t.s.stats[id] ?? r.stats[id].start));
+        const raw = evalNumber(reward.amount, env, 0);
+        const amount = Number.isFinite(raw) ? Math.max(0, Math.min(room, reward.cap, raw)) : 0;
+        if (amount > 0) t.push({ t: "stat", id, d: amount, src: "action" });
+      }
+      for (const [id, reward] of Object.entries(d.exitPractice ?? {})) {
+        const stat = r.stats[id];
+        if (!stat || (stat.kind !== "skill" && stat.kind !== "attribute")) continue;
+        if (!r.growth.enabled || stat.growth <= 0) continue;
+        const raw = evalNumber(reward.amount, env, 0);
+        const amount = Number.isFinite(raw) ? Math.max(0, Math.min(reward.cap, raw)) : 0;
+        if (amount > 0) practise(t, { [id]: amount }, `Practice from ${d.name}`, { actionId: `dungeon:${d.id}:exit` });
+      }
+    }
+    t.apply(d.onLeave, "action", extra);
     t.time(Math.min(120, 10 * run.depth), "action");
   });
   return { events, narrate: { say: "*We make our way back out of the dungeon.*" } };

@@ -74,7 +74,8 @@ export function board(v: DungeonView): string {
 
 export function herePanel(v: DungeonView, ui: DungeonUi): string {
   if (v.event) {
-    return `<div class="warp-card warp-dg-event${v.event.romance ? " romance" : ""}">
+    const boon = v.event.choices.some((c) => c.id.startsWith("boon:"));
+    return `<div class="warp-card warp-dg-event${v.event.romance ? " romance" : ""}${boon ? " boon" : ""}">
       <p>${esc(you(v.event.text))}</p>
       <div class="warp-dg-actions">${v.event.choices.map((c) => `<button class="warp-btn" data-dg-choose="${esc(c.id)}" ${!c.ok || ui.busy ? "disabled" : ""}>${esc(you(c.label))}${c.chance !== null ? ` <span class="warp-dim">${c.chance}%</span>` : ""}${c.cost ? ` <span class="warp-money">${c.cost}g</span>` : ""}</button>`).join("")}</div>
     </div>`;

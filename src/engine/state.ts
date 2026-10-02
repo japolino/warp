@@ -8,9 +8,10 @@
 import type { Value, ExprEnv } from "./expr.js";
 import { evalNumber } from "./expr.js";
 import type { Ruleset, StatDef, Band, KeepSpec } from "./ruleset.js";
-import type { BattleState, DungeonRun, PartyMember, Pending } from "./dungeon/types.js";
+import type { BattleState, BoonOffer, DungeonRun, PartyMember, Pending } from "./dungeon/types.js";
 import type { DateSession, DatingMemory, Reaction } from "./date/types.js";
 import { stageIndex } from "./date/stage.js";
+import { rememberSocial } from "./date/memory.js";
 import {
   dateAt, exposedSlots, hasTrait, isIndoors, personLocation, revealOf, seasonAt, temperatureAt,
   warmthNeeded, warmthOf, weatherAt,
@@ -131,6 +132,8 @@ export interface GameState {
   dismissedEndings: string[];
   /** Progress toward the next point, per stat (in the stat's own units; a point is gained at 1). */
   practice: Record<string, number>;
+  /** Recent checked action/context uses. Optional for saves made before diminishing practice. */
+  practiceUse?: Record<string, { n: number; turn: number; minutes: number }>;
   /** Who the story has in the scene: judged here or gone, at the place and time it was judged. */
   scene: Record<string, { here: boolean; loc: string | null; at: number }>;
   /** Where {{user}} was before the last move (people there may or may not have come along). */
@@ -206,6 +209,8 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "dg_loot"; item: string; d: number }
   | { t: "dg_battle"; battle: BattleState | null }
   | { t: "dg_pending"; pending: Pending | null }
+  | { t: "dg_boon_offer"; offer: BoonOffer | null }
+  | { t: "dg_boon"; id: string }
   | { t: "dg_log"; text: string }
   | { t: "dg_told" }
   | { t: "dg_exit"; outcome?: "left" | "lost" }
@@ -214,6 +219,7 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "dt_end" }
   | { t: "dt_pref"; who: string; key: string; v: number }
   | { t: "dt_seen"; who: string; topic: string; reaction: Reaction }
+  | { t: "dt_recent"; who: string; key: string; at: number; count: number; fatigue: number }
   | { t: "dt_partner"; who: string; on: boolean }
   | { t: "dt_dated"; who: string; enjoy: number }
   | { t: "body"; part: string; trait: string; v: string | null }
@@ -230,6 +236,7 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "explored"; loc: string; found: boolean }
   | { t: "discovered"; id: string }
   | { t: "practice"; id: string; d: number }
+  | { t: "practice_use"; key: string; n: number; turn: number; minutes: number }
   | { t: "scene"; who: string; here: boolean }
   | { t: "use"; id: string; n: number }
   | { t: "save"; slot: string; label: string }
@@ -286,7 +293,7 @@ export function initialState(r: Ruleset): GameState {
     dungeon: null,
     deepest: {},
     date: null,
-    dating: { prefs: {}, known: {}, partners: {}, dates: {} },
+    dating: { prefs: {}, known: {}, partners: {}, dates: {}, recent: {} },
     saves: {},
     runs: 1,
     loops: 0,
@@ -303,6 +310,7 @@ export function initialState(r: Ruleset): GameState {
     explored: {},
     discovered: [],
     practice: {},
+    practiceUse: {},
     scene: {},
     lastLocation: null,
     uses: {},
@@ -465,6 +473,17 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       s.locationName = r.locations[e.to]?.name ?? e.name ?? e.to;
       break;
     case "practice": s.practice = { ...s.practice, [e.id]: Math.max(0, (s.practice[e.id] ?? 0) + e.d) }; break;
+    case "practice_use": {
+      if (!Number.isFinite(e.n) || !Number.isFinite(e.turn) || !Number.isFinite(e.minutes)) break;
+      // Keep this history small. Event order, not wall-clock time, controls eviction.
+      const uses = { ...(s.practiceUse ?? {}) };
+      delete uses[e.key];
+      uses[e.key] = { n: clamp(Math.floor(e.n), 1, 100), turn: e.turn, minutes: e.minutes };
+      const keys = Object.keys(uses);
+      for (const key of keys.slice(0, Math.max(0, keys.length - 64))) delete uses[key];
+      s.practiceUse = uses;
+      break;
+    }
     case "scene": s.scene = { ...s.scene, [e.who]: { here: e.here, loc: s.location, at: s.minutes } }; break;
     case "use": {
       const per = r.items[e.id]?.uses ?? 0;
@@ -578,6 +597,9 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       s.deepest[e.run.id] = Math.max(s.deepest[e.run.id] ?? 0, e.run.depth);
       break;
     case "dg_exit": s.dungeon = null; break;
+    case "dt_recent":
+      s.dating.recent = { ...(s.dating.recent ?? {}), [e.who]: rememberSocial(s.dating.recent?.[e.who], e.key, e.at, e.count, e.fatigue, r.dating?.memory) };
+      break;
     case "dt_start": s.date = structuredClone(e.session); break;
     case "dt_patch": if (s.date) s.date = { ...s.date, ...structuredClone(e.patch) }; break;
     case "dt_end": s.date = null; break;
@@ -730,6 +752,8 @@ function applyDungeon(s: GameState, d: DungeonRun, e: WarpEvent) {
     }
     case "dg_battle": d.battle = e.battle ? structuredClone(e.battle) : null; break;
     case "dg_pending": d.pending = e.pending ? { ...e.pending } : null; break;
+    case "dg_boon_offer": d.boonOffer = e.offer ? { level: e.offer.level, options: [...e.offer.options] } : null; break;
+    case "dg_boon": d.boons = [...(d.boons ?? []), e.id]; d.boonOffer = null; break;
     case "dg_log":
       d.log = [...d.log, e.text].slice(-DG_LOG_KEPT);
       d.untold = [...(d.untold ?? []), e.text].slice(-DG_LOG_KEPT);

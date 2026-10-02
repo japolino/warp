@@ -39,7 +39,8 @@ decision, applies pressure or rewards play — and it fits the character card or
    - Lint warnings: names that don't resolve, effects pointing at nothing — fix them.
    - Balance: odds that are hopeless or automatic, meters that run away, encounters that are unwinnable or free.
    - Depth audit: what doesn't connect (items that do nothing, stats nothing reads, quests nothing finishes…).
-     Aim for depth 90+; fix every [gap]; fix or knowingly accept each [thin].
+     Fix every [gap]; fix or knowingly accept each [thin]. Depth measures static wiring, not fun — don't chase 100
+     by adding systems the game doesn't need; a narrative-only meter can be deliberate.
 5. Simulate each encounter (`warp-rulebook simulate rulebook.yaml`): no route should be pointless, none a sure win,
    and the escape should cost something. Tune numbers until random play wins roughly 30–70% of the time.
 6. Preview (`warp-rulebook preview rulebook.yaml`): the sidebar, choices and the narrator's view at the start.
@@ -81,6 +82,8 @@ stats:            # kinds: meter (bar) | attribute | skill | money | hidden
   #   narrator_words: [panic, scared] (the exchange must mention one), narrator_actions: [fight, violence] (action ids or tags)
   # skills and attributes improve with use: every check that reads them (and practice the story describes) adds progress; growth: 0 on a stat stops it, growth: 2 doubles it
 growth: { rate: 1, attributes: 0.5, train: true }   # optional; growth: false turns it off. Attributes move at half the skill rate by default
+# Repeating the same checked opportunity teaches less (never below 10%); a two-hour break or eight intervening turns restores full practice. Training and authored milestone effects are not reduced.
+#   tune it: growth: { repeat: { step: 0.5, floor: 0.1, recover_minutes: 120, recover_turns: 8 } }  (learning × 1 / (1 + step × repeats), never below floor; 0 for a recover_* turns that recovery off); growth: { repeat: false } turns the taper off
 
 relationships:
   open: true                       # track new people the story introduces
@@ -101,7 +104,8 @@ companions:       # people with lives of their own (ids from relationships.peopl
       options: { shift: { desc: Works an extra shift, weight: 2, arc: +6 }, out: { desc: Goes drinking with Dex, weight: 1, bond: { dex: +5 } } }
     jealous_of: [dex]                        # or [anyone]: cools toward {{user}} (and the rival) when {{user}} grows close to them
     bonds: { dex: 30 }                       # how they feel about others, −100…100
-    knows: [ward_accident]                   # secrets only they know: the narrator plays them with it, nobody else can mention it
+    knows: [ward_accident]                   # portrayal cue + opened stages only; unopened truths stay out of the narrator prompt
+    knows_full: false                       # explicit true exposes every stage to portray an informed NPC; weaker spoiler isolation
 EFFECTS for companions: arc: { jo: +5 }, bond: { jo: { dex: -10 } }. FUNCTIONS: arc(person), bond(a, b).
 
 lineage:          # pregnancy and children; only ever between two people known to be adults (declare ages, or the decision model is asked)
@@ -245,6 +249,12 @@ dungeons:         # roguelike diving: floors of face-down tiles, one way down, q
     loot: { lockpick: 2 }          # ruleset items that can turn up in chests
     party: { max: 3, when: "rel(target, 'trust') >= 30", classes: { jo: healer } }   # fighter | mage | healer | rogue | adventurer
     player: { class: adventurer, atk: "10 + athletics / 10" }                       # battle stats from ruleset stats (optional)
+    # party.stats: { jo: { hp: "50 + rel(target, 'trust') / 2", atk: "8 + rel_bond(target) / 20" } }  # opt-in companion formulas; authored classes still choose skills
+    supplies: { potion: 2, ether: 0, bomb: 0 }   # optional starting loadout, whole counts 0..99; not pulled from inventory
+    # exit_rewards: { renown: { amount: "run_xp / 100", cap: 3 } }    # declared main-world stats only; bounded per earned exit
+    # exit_practice: { athletics: { amount: "run_xp / 200", cap: 1 } } # skill/attribute practice; per-exit cap, repeat checks taper
+    # boons: true                  # opt-in: each new party level offers 3 seeded run-only boons (+15% atk/def/magic/HP/agi, crit, potions, ethers, stair healing, or a skill from another class); choosing blocks moving like an event; gone when the run ends
+    # Rewards require earned run_xp > 0 and successful exit, never defeat. XP/levels remain run-local. Balance repeatable shallow runs explicitly.
     on_leave: { fatigue: +15 }
     on_defeat: { pain: +40, stress: +20 }
     events:                        # added to the built-ins (builtin_events: false to drop them); romance: works the same with {target}
@@ -262,6 +272,7 @@ FUNCTIONS: body('hair', 'color') ('' when absent), transformed('feline_splice') 
 
 discovery:        # exploring can turn up places the ruleset never had; each is written into the ruleset lorebook and stays on the map
   at: [docks, park]                # where (empty = anywhere); found places can be explored too
+  people: true                     # optional (default false): a found place may come with one generated resident (name, short desc, always there). No age is set, so romance stays blocked until the story shows they are an adult. Only offered when the rulebook has relationship stats or no people yet.
   chance: 25                       # percent per try (formula); each fruitless try adds 10
   max: 12
   guide: "Small, grounded places: a back-alley bar, a hidden garden."
@@ -331,10 +342,12 @@ triggers:
   danger: { when_scene: "{{user}} is in immediate danger", do: { stress: +5 } }                # judged in plain language
 
 mind:             # the character's mind can overrule the player (in the "rules" part)
+  overrides_mode: hard   # legacy default; soft keeps the chosen action and treats fail/redirect as narrative pressure
   overrides:      # first one that holds and rolls under its chance wins; a 🧠 chip says why
-    freeze: { when: "control < 25", chance: "60 - control * 2", on: [violence], cause: Panic, text: "their body won't obey." }   # do: fail (default) = fails with no roll
+    freeze: { when: "control < 25", chance: "60 - control * 2", on: [violence], cause: Panic, text: "their body won't obey.", resist_cost: { control: 10 } }   # do: fail (default) = fails with no roll
     urge: { when: "lust >= 70", chance: 30, on: [talk], do: flirt, cause: Desire }      # do: <action id> = that happens instead
     nerves: { when: "control < 50", chance: 50, do: alter, cause: Nerves }               # do: alter = goes ahead, coloured by the cause; on: [] = any action with a check
+    # resist_cost: { control: 10 } offers an explicit Resist button (paid only if the override triggers; must be affordable with the action's own cost). Applies to contextual live choices too, via their authored tag.
   perception: [ { when: "awareness < 20", text: "{{user}} is naive: describe only what they understand." } ]   # filters the narration while true
 
 QUESTS (the "quests" part): things to do for someone or for yourself — a bounty, a favour, cooking the best breakfast, slaying the dragon.
@@ -422,6 +435,7 @@ dating:           # talk topic by topic (tastes stay hidden until learned), ask 
     pier: { name: The pier, at: docks, cost: 10, activities: { fish: { label: Go fishing, tags: [nature, calm] }, sunset: { label: Watch the sunset together, tags: [romance], romantic: true } }, events: { gulls: { text: "Gulls steal the chips.", enjoy: -5 } } }
   with: "not flag('grounded')"     # who can be talked to (target = the person)
   pace: { minutes_per_topic: 5, fatigue_per_topic: 12, beats: 4, minutes_per_beat: 30 }
+  memory: { recovery_minutes: 240, keys: 64, rest_per_minute: 1 }   # optional: in-game minutes for one repeat of a topic/move to fade, recent keys kept per person, conversation fatigue restored per in-game minute away
 items: { flowers: { name: Flowers, tags: [gift] } }   # items tagged gift can be given during a conversation
 
 FORMULA NAMES: stats, flags, hour, minute, day, weekday, month, date, season, weather, temperature, indoors, outside,
@@ -486,7 +500,7 @@ The same condition can sit on {{user}}, on the opponent (inflict:) or on someone
 ### places
 Every place needs a reason to go there: actions at: it, people scheduled there, a job, a shop, a dungeon entrance, a venue, a quest board.
 Connect them with exits so the map is walkable from the start.
-Put a notice board (board: true) somewhere central — a tavern, a guild hall, a station concourse, a school corridor, a café corkboard — so there's always work to find.
+For quest-driven adventures, a central notice board (board: true) offers reliable work. Do not add one automatically to relationship drama, political intrigue, or a freeform sandbox; use people and scene-specific goals instead.
 Gate the best actions behind things the player can work toward, with requires: (a skill level, someone who has to come along, an item, a quest, trust) — a locked choice that says "Needs Lockpicking 30, Brann with you" is a goal, not a dead end.
 
 ### people
@@ -506,6 +520,7 @@ Scale rewards to the economy: the king's 50,000 is a life-changing sum only if d
 Mistake: a quest with no way to fail; goals nothing counts toward; rewards that are only flavour text.
 
 ### dating
+Recent topics and social actions persist per person across reopened conversations. One use fades per four in-game hours; fatigue recovers one point per in-game minute. Repeats taper positive affection, including typed chat, kisses, invitations, apologies, goodbye and outing bonuses. New topics and activities retain first-use rewards. Small talk/general chat earns half normal affection; authored topic weight still controls significance. Fresh warm topics cost less fatigue. Empty hello/goodbye loops earn nothing. These rules use deterministic game time, not wall time; no promise parser is implied.
 The built-in topics and outings are modern (films, games, a café, an arcade). For any other setting, rewrite them under dating: — topics: { books_films: { label: Tales and songs, say: "*I ask {{target}} which ballads they know.*" }, games: false } and venues: for outings that exist there (fairs, taverns, tea houses, orbital gardens). Give people tastes (loves/likes/dislikes/hates) so conversations reward learning who they are.
 
 ### flags and story machinery
@@ -522,4 +537,6 @@ A perk or two with rule: { game: … } makes them feel different (+1 life, a wid
 If the setting has a casino, a card den, dice at the inn or a fruit machine in the bar, make it a gamble: table, with win:/lose:/broke: effects so a bad night has consequences — a debt flag a quest can pick up, stress, someone who saw.
 
 ### finishing
-You're done when every piece connects: run the audit and either fix each gap or say why it's deliberate. Simulate each encounter — no route should be pointless, none should be a guaranteed win, and the escape should cost something.
+Prefer fewer systems with stronger interactions. Add a subsystem only when it serves the chosen experience; quests and minigames remain available but are not mandatory. Narrative-only meters can intentionally inform prose without changing checks.
+The audit measures static mechanical connections, not fun or completeness. Fix errors, review gaps, and accept deliberate thin spots rather than chasing 100. Check that different approaches have different risks or payoffs and that setbacks change the next decision.
+You're done when the intended experience is playable: run the audit and either fix each gap or say why it's deliberate. Simulate each encounter — no route should be pointless, none should be a guaranteed win, and the escape should cost something.

@@ -559,8 +559,12 @@ export interface MindOverride {
   do: string;
   cause: string;
   text?: string;
+  /** Explicit player counterplay: intent.params.mind_resist = this override's id. Positive stat costs. */
+  resistCost?: Record<string, number>;
 }
 export interface MindDef {
+  /** hard (legacy default) permits fail/redirect; soft keeps the chosen action as narration pressure. */
+  overridesMode?: "hard" | "soft";
   overrides: MindOverride[];
   /** How the narrator should describe things to the player character while a condition holds. */
   perception: { when: string; text: string }[];
@@ -622,6 +626,8 @@ export interface CompanionDef {
   jealousOf: string[];
   /** Secrets only they know. */
   knows: string[];
+  /** Explicit opt-in: expose all known secret stages to the narrator, including unopened truths. */
+  knowsFull: boolean;
 }
 
 /**
@@ -704,6 +710,8 @@ export interface DiscoveryDef {
   label: string;
   /** Guidance for the writer inventing places ("small, grounded places…"). */
   guide?: string;
+  /** `people: true` lets a discovered place come with one generated resident (no age; romance stays blocked until known adult). */
+  people: boolean;
 }
 
 export type Difficulty = "easy" | "fair" | "hard" | "extreme";
@@ -736,7 +744,19 @@ export interface GrowthDef {
   attributes: number;
   /** Training, studying and practising the story describes counts too. */
   train: boolean;
+  /** Repeated checked practice in the same context teaches less (`false` turns the taper off). */
+  repeat: PracticeRepeatDef | false;
 }
+
+/** `growth.repeat`: learning × `1 / (1 + step × repeats)`, never below `floor`; a break of `recover_minutes` or `recover_turns` resets it. */
+export interface PracticeRepeatDef {
+  step: number;
+  floor: number;
+  recoverMinutes: number;
+  recoverTurns: number;
+}
+
+export const DEFAULT_PRACTICE_REPEAT: PracticeRepeatDef = { step: 0.5, floor: 0.1, recoverMinutes: 120, recoverTurns: 8 };
 
 export interface Ruleset {
   name: string;
@@ -2050,6 +2070,8 @@ function normMind(raw: unknown, c: Ctx): MindDef {
   const def: MindDef = { overrides: [], perception: [] };
   if (raw === undefined) return def;
   if (!isObj(raw)) { c.warn("Mind", "should be a map with `overrides:` and/or `perception:`"); return def; }
+  if (raw.overrides_mode === "soft" || raw.overrides_mode === "hard") def.overridesMode = raw.overrides_mode;
+  else if (raw.overrides_mode !== undefined) c.warn("Mind › overrides_mode", "expected hard or soft; using legacy hard overrides");
   for (const [id, o] of Object.entries(isObj(raw.overrides) ? raw.overrides : {})) {
     const w = `Mind › overrides › ${id}`;
     if (!isObj(o)) { c.warn(w, "expected `when:`, `chance:` and `do:`"); continue; }
@@ -2057,9 +2079,17 @@ function normMind(raw: unknown, c: Ctx): MindDef {
     const chance = c.expr(o.chance ?? 100, `${w} › chance`);
     if (when === undefined || chance === undefined) continue;
     const act = typeof o.do === "string" ? o.do : "fail";
+    let resistCost: Record<string, number> | undefined;
+    if (o.resist_cost !== undefined) {
+      if (isObj(o.resist_cost) && Object.keys(o.resist_cost).length > 0
+        && Object.values(o.resist_cost).every((v) => typeof v === "number" && Number.isFinite(v) && v > 0)) {
+        resistCost = { ...o.resist_cost } as Record<string, number>;
+      } else c.warn(`${w} › resist_cost`, "expected a nonempty map of positive finite stat costs; resistance disabled");
+    }
     def.overrides.push({
       id, when: String(when), chance, on: list(o.on).map((x) => x.toLowerCase()), do: act,
       cause: typeof o.cause === "string" ? o.cause : titleCase(id),
+      ...(resistCost ? { resistCost } : {}),
       ...(typeof o.text === "string" ? { text: o.text } : {}),
     });
   }
@@ -2192,6 +2222,7 @@ function normCompanions(raw: unknown, c: Ctx, known: { stats: Set<string> }, fro
       ...(typeof cr.goal === "string" ? { goal: cr.goal } : {}),
       jealousOf: list(cr.jealous_of ?? cr.jealous),
       knows: list(cr.knows),
+      knowsFull: cr.knows_full === true,
     };
   }
   return out;
@@ -2313,7 +2344,7 @@ function normImprovise(raw: unknown, c: Ctx, known: { stats: Set<string> }, stat
 }
 
 function normGrowth(raw: unknown, c: Ctx): GrowthDef {
-  const def: GrowthDef = { enabled: true, rate: 1, attributes: 0.5, train: true };
+  const def: GrowthDef = { enabled: true, rate: 1, attributes: 0.5, train: true, repeat: { ...DEFAULT_PRACTICE_REPEAT } };
   if (raw === undefined || raw === true) return def;
   if (raw === false) return { ...def, enabled: false };
   if (typeof raw === "number") return { ...def, rate: Math.max(0, raw), enabled: raw > 0 };
@@ -2322,11 +2353,39 @@ function normGrowth(raw: unknown, c: Ctx): GrowthDef {
   def.rate = Math.max(0, c.num(raw.rate, "Growth › rate", 1));
   def.attributes = Math.max(0, c.num(raw.attributes, "Growth › attributes", 0.5));
   def.train = raw.train !== false;
+  if (raw.repeat !== undefined) def.repeat = normPracticeRepeat(raw.repeat, c);
+  return def;
+}
+
+/** A tuning number kept inside [lo, hi] with a readable warning; out-of-range values are clamped. */
+export function tuned(c: Ctx, v: unknown, where: string, fallback: number, lo: number, hi: number, hint = ""): number {
+  if (v === undefined) return fallback;
+  const n = c.num(v, where, fallback);
+  if (n < lo || n > hi) {
+    const x = Math.max(lo, Math.min(hi, n));
+    c.warn(where, `${n} is outside ${lo}–${hi}${hint ? ` (${hint})` : ""} — using ${x}`);
+    return x;
+  }
+  return n;
+}
+
+function normPracticeRepeat(raw: unknown, c: Ctx): PracticeRepeatDef | false {
+  const def = { ...DEFAULT_PRACTICE_REPEAT };
+  if (raw === false) return false;
+  if (raw === true || raw === null) return def;
+  if (!isObj(raw)) { c.warn("Growth › repeat", "expected `repeat: false` or a map like `{ step: 0.5, floor: 0.1, recover_minutes: 120, recover_turns: 8 }`"); return def; }
+  if (raw.enabled === false) return false;
+  const known = new Set(["enabled", "step", "floor", "recover_minutes", "recover_turns"]);
+  for (const k of Object.keys(raw)) if (!known.has(k)) c.warn(`Growth › repeat › ${k}`, "unknown setting — use step, floor, recover_minutes or recover_turns");
+  def.step = tuned(c, raw.step, "Growth › repeat › step", def.step, 0, 10, "0 means repeats never taper");
+  def.floor = tuned(c, raw.floor, "Growth › repeat › floor", def.floor, 0, 1, "the smallest share of learning a repeat keeps");
+  def.recoverMinutes = tuned(c, raw.recover_minutes, "Growth › repeat › recover_minutes", def.recoverMinutes, 0, 525600, "in-game minutes; 0 never recovers by time");
+  def.recoverTurns = Math.round(tuned(c, raw.recover_turns, "Growth › repeat › recover_turns", def.recoverTurns, 0, 1000, "turns; 0 never recovers by turns"));
   return def;
 }
 
 function normDiscovery(raw: unknown, c: Ctx): DiscoveryDef {
-  const def: DiscoveryDef = { enabled: false, at: [], chance: 25, max: 12, time: 60, label: "Explore around here" };
+  const def: DiscoveryDef = { enabled: false, at: [], chance: 25, max: 12, time: 60, label: "Explore around here", people: false };
   if (raw === undefined || raw === false) return def;
   const r: Raw = isObj(raw) ? raw : {};
   def.enabled = true;
@@ -2336,6 +2395,10 @@ function normDiscovery(raw: unknown, c: Ctx): DiscoveryDef {
   def.time = Math.max(0, c.num(r.time, "Discovery › time", 60));
   if (typeof r.label === "string") def.label = r.label;
   if (typeof r.guide === "string") def.guide = r.guide;
+  if (r.people !== undefined) {
+    if (typeof r.people === "boolean") def.people = r.people;
+    else c.warn("Discovery › people", "should be true or false; discovered places will have no resident");
+  }
   return def;
 }
 
