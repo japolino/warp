@@ -394,6 +394,9 @@ var STYLES = `
 .warp-mini-select { width: auto; max-width: 110px; padding: 2px 4px; font-size: 12px; }
 .warp-perk { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12.5px; }
 .warp-perk-owned { opacity: .8; }
+.warp-group + .warp-group { margin-top: 8px; }
+.warp-group-head { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--warp-muted); padding: 4px 0 2px; border-bottom: 1px solid var(--warp-border); margin-bottom: 4px; }
+.warp-perk-later { font-size: 12px; display: flex; flex-wrap: wrap; gap: 0 6px; }
 .warp-perk-text { min-width: 0; }
 .warp-perk-notes { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 11.5px; color: var(--warp-good); }
 .warp-perk-drawback { font-size: 11.5px; color: var(--warp-warn); }
@@ -804,12 +807,12 @@ function renderAllocButtons(h, s, draft) {
     return "";
   return ` <span class="warp-alloc">${placed ? `<button class="warp-btn warp-btn-mini" data-alloc-sub="${esc(s.id)}" title="Take back a step" aria-label="Lower ${esc(s.label)}">−</button><b class="warp-tone-good">+${esc(placed * al.step)}</b>` : ""}${canAdd ? `<button class="warp-btn warp-btn-mini" data-alloc-add="${esc(s.id)}" title="${esc(`+${al.step} ${s.label} for ${al.cost} ${al.poolLabel}`)}" aria-label="Raise ${esc(s.label)}">+</button>` : ""}</span>`;
 }
-function renderAllocBar(h, draft) {
-  const pools = [...new Map(h.skills.filter((x) => x.allocate).map((x) => [x.allocate.pool, x.allocate])).values()];
+function renderAllocBar(h, draft, only) {
+  const pools = [...new Map(h.skills.filter((x) => x.allocate && (!only || only.has(x.allocate.pool))).map((x) => [x.allocate.pool, x.allocate])).values()];
   const shown = pools.filter((p) => p.left > 0 || h.skills.some((x) => x.allocate?.pool === p.pool && draft[x.id]));
   if (!shown.length)
     return "";
-  const placed = Object.values(draft).some((n) => n > 0);
+  const placed = h.skills.some((x) => x.allocate && shown.some((p) => p.pool === x.allocate.pool) && (draft[x.id] ?? 0) > 0);
   return `<div class="warp-alloc-bar">${shown.map((p) => `<span>${esc(p.poolLabel)}: <b>${esc(allocLeft(h, p.pool, draft))}</b> to spend</span>`).join(" ")}${placed ? ` <button class="warp-btn warp-btn-primary warp-btn-mini" data-alloc-confirm>Spend</button> <button class="warp-btn warp-btn-mini" data-alloc-clear>Clear</button>` : ""}</div>`;
 }
 function renderHud(h, opts) {
@@ -843,7 +846,7 @@ Click to adjust`)}">
     })() : ""}
     </div>`;
   }).join("");
-  const skills = h.skills.length ? part("skills", "Skills & attributes", h.skills.length, renderAllocBar(h, opts.alloc ?? {}) + h.skills.map((s) => `
+  const skillRow = (s) => `
     <div class="warp-skill" title="${esc(`${s.label}: ${s.display}${s.text ? ` — ${s.text}` : ""}${s.practice !== null ? `
 Practice toward the next point: ${Math.round(s.practice * 100)}% — it grows every time you use it` : ""}`)}">
       <span>${esc(s.label)}${renderAllocButtons(h, s, opts.alloc ?? {})}</span>
@@ -852,7 +855,18 @@ Practice toward the next point: ${Math.round(s.practice * 100)}% — it grows ev
         <div class="warp-mini-track"><div class="warp-mini-fill" style="width:${(s.pct * 100).toFixed(1)}%"></div></div>
         ${s.practice !== null ? `<div class="warp-practice-track"><div class="warp-practice-fill" style="width:${(s.practice * 100).toFixed(1)}%"></div></div>` : ""}
       </div>
-    </div>`).join(""), !opts.compact || h.skills.some((x) => (x.allocate?.left ?? 0) > 0)) : null;
+    </div>`;
+  const draft = opts.alloc ?? {};
+  const skillGroups = [...new Set(h.skills.map((x) => x.group))];
+  const pooled = new Set;
+  const skillsBody = skillGroups.length < 2 ? renderAllocBar(h, draft) + h.skills.map(skillRow).join("") : skillGroups.map((g) => {
+    const rows = h.skills.filter((x) => x.group === g);
+    const mine = new Set(rows.flatMap((x) => x.allocate && !pooled.has(x.allocate.pool) ? [x.allocate.pool] : []));
+    for (const p of mine)
+      pooled.add(p);
+    return `<div class="warp-group"><div class="warp-group-head">${esc(g)}</div>${mine.size ? renderAllocBar(h, draft, mine) : ""}${rows.map(skillRow).join("")}</div>`;
+  }).join("");
+  const skills = h.skills.length ? part("skills", "Skills & attributes", h.skills.length, skillsBody, !opts.compact || h.skills.some((x) => (x.allocate?.left ?? 0) > 0)) : null;
   const here = h.people.filter((p) => p.present);
   const away = h.people.filter((p) => !p.present);
   const personRow = (p) => `
@@ -953,8 +967,18 @@ function renderPerks(h, compact) {
   const offer = h.perks.filter((p) => p.offered && !p.owned);
   const owned = h.perks.filter((p) => p.owned);
   const rest = h.perks.filter((p) => !p.owned && !p.offered);
+  const open = h.perkPick ? owned : [...owned, ...rest.filter((p) => !p.locked)];
+  const later = h.perkPick ? [] : rest.filter((p) => p.locked);
+  const grouped = (list, card) => {
+    const gs = [...new Set(list.map((p) => p.group ?? ""))];
+    if (gs.length < 2 && !gs[0])
+      return list.map(card).join("");
+    return gs.map((g) => `${g ? `<div class="warp-group-head">${esc(g)}</div>` : ""}${list.filter((p) => (p.group ?? "") === g).map(card).join("")}`).join("");
+  };
+  const laterRow = (p) => `<div class="warp-perk-later" title="${esc(p.desc)}"><b>${esc(p.name)}</b> <span class="warp-dim">${esc(p.needs ? `Needs ${p.needs}` : "Not yet")}</span></div>`;
   const pick = offer.length ? `<div class="warp-perk-pick"><div class="warp-perk-pick-head">✦ Pick ${h.perkPick > 1 ? "one" : "it"}</div>${offer.map((p) => perkCard(p, true)).join("")}</div>` : "";
-  const body = `${pick}${owned.map((p) => perkCard(p, false)).join("")}${h.perkPick ? "" : rest.map((p) => perkCard(p, true)).join("")}${!pick && !owned.length && h.perkPick ? `<div class="warp-empty">Earn a point to choose your first perk.</div>` : ""}`;
+  const folded = later.length ? `<details class="warp-away"><summary>Not yet · ${later.length}</summary><div class="warp-section-body">${grouped(later, laterRow)}</div></details>` : "";
+  const body = `${pick}${grouped(open, (p) => perkCard(p, !p.owned))}${folded}${!pick && !owned.length && h.perkPick ? `<div class="warp-empty">Earn a point to choose your first perk.</div>` : ""}`;
   const label = h.perkPoints !== null ? `Perks · ${h.perkPoints} point${h.perkPoints === 1 ? "" : "s"}` : "Perks";
   return part("perks", label, offer.length, body, !compact && ((h.perkPoints ?? 0) > 0 || offer.length > 0));
 }

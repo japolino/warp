@@ -175,6 +175,9 @@ export const STYLES = `
 .warp-mini-select { width: auto; max-width: 110px; padding: 2px 4px; font-size: 12px; }
 .warp-perk { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12.5px; }
 .warp-perk-owned { opacity: .8; }
+.warp-group + .warp-group { margin-top: 8px; }
+.warp-group-head { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--warp-muted); padding: 4px 0 2px; border-bottom: 1px solid var(--warp-border); margin-bottom: 4px; }
+.warp-perk-later { font-size: 12px; display: flex; flex-wrap: wrap; gap: 0 6px; }
 .warp-perk-text { min-width: 0; }
 .warp-perk-notes { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 11.5px; color: var(--warp-good); }
 .warp-perk-drawback { font-size: 11.5px; color: var(--warp-warn); }

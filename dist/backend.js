@@ -1939,6 +1939,7 @@ function normStat(id, raw, where, c, forRel = false) {
     ...perHourOf(r.per_hour ?? r.perHour, `${where} › per_hour`, c),
     show: k === "hidden" ? "hidden" : show,
     ...r.show !== undefined ? { showSet: true } : {},
+    ...groupOf(r.group, `${where} › group`, c),
     narrator,
     ...gate ? { gate } : {},
     growth: 0,
@@ -2943,6 +2944,14 @@ function perkOffer(v, where, c) {
   c.warn(where, "use `always` (offered outside the random pick) or `random`");
   return {};
 }
+function groupOf(v, where, c) {
+  if (v === undefined || v === null)
+    return {};
+  if (typeof v === "string" && v.trim())
+    return { group: v.trim() };
+  c.warn(where, "expected a heading, like `group: Combat`");
+  return {};
+}
 function normPerk(id, p, w, c, known, abilities) {
   const req = p.requires !== undefined ? c.expr(p.requires, `${w} › requires`) : undefined;
   const bonus = statNums(p.bonus, `${w} › bonus`, c, known);
@@ -2979,7 +2988,9 @@ function normPerk(id, p, w, c, known, abilities) {
     weight: Math.max(0, c.num(p.weight, `${w} › weight`, 1)),
     ...drawback ? { drawback } : {},
     ...perkOffer(p.offer, `${w} › offer`, c),
-    ...p.points !== undefined ? typeof p.points === "string" ? { points: p.points } : (c.warn(`${w} › points`, "expected the stat that pays for it, like `points: class_points`"), {}) : {}
+    ...p.points !== undefined ? typeof p.points === "string" ? { points: p.points } : (c.warn(`${w} › points`, "expected the stat that pays for it, like `points: class_points`"), {}) : {},
+    ...groupOf(p.group, `${w} › group`, c),
+    ...p.hidden === true ? { hidden: true } : p.hidden !== undefined && p.hidden !== false ? (c.warn(`${w} › hidden`, "expected true or false"), {}) : {}
   };
 }
 function normAbilities(raw, c, known) {
@@ -20219,7 +20230,8 @@ function buildHud(r, s) {
       desc: def.desc
     };
   });
-  const skills = r.statOrder.filter((id) => (r.stats[id].kind === "attribute" || r.stats[id].kind === "skill") && !r.hud.bars.includes(id) && r.stats[id].show !== "hidden").map((id) => {
+  const pools = new Set([...Object.values(r.stats).flatMap((d) => d.allocate ? [d.allocate.with] : []), ...r.perkPoints ? [r.perkPoints] : []]);
+  const skills = r.statOrder.filter((id) => (r.stats[id].kind === "attribute" || r.stats[id].kind === "skill") && !r.hud.bars.includes(id) && r.stats[id].show !== "hidden").filter((id) => !pools.has(id) || r.stats[id].group !== undefined).map((id) => {
     const def = r.stats[id];
     const v = s.stats[id] ?? def.start;
     const max = statMax(r, def, s);
@@ -20234,6 +20246,7 @@ function buildHud(r, s) {
       text: shownText(def.showSet ? def : { ...def, show: "both" }, band, formatNumber(v)),
       tone: band?.tone ?? "neutral",
       practice: practiceProgress(r, s, id),
+      group: def.group ?? (def.kind === "skill" ? "Skills" : "Attributes"),
       ...def.allocate ? { allocate: {
         pool: def.allocate.with,
         poolLabel: r.stats[def.allocate.with]?.label ?? def.allocate.with,
@@ -20863,9 +20876,53 @@ function abilityChoices(r, s, lines) {
   out.sort((x, y) => Number(!!x.locked) - Number(!!y.locked));
   return out.slice(0, s.encounter ? 6 : 3);
 }
+function perkClashes(r, s, id) {
+  return Object.keys(s.perks).some((o) => o !== id && (r.perks[id]?.excludes.includes(o) || r.perks[o]?.excludes.includes(id)));
+}
+function perkClosed(r, s, id) {
+  const p = r.perks[id];
+  if (!p || s.perks[id])
+    return false;
+  if (perkClashes(r, s, id))
+    return true;
+  if (!p.requires || /\bor\b|\|\|/.test(p.requires))
+    return false;
+  for (const m of p.requires.matchAll(/(\bnot\s+|!\s*)?\bperk\(\s*['"]([\w-]+)['"]\s*\)/g)) {
+    if (!m[1] && !s.perks[m[2]] && perkClashes(r, s, m[2]))
+      return true;
+  }
+  return false;
+}
+function requiresWords(r, s, expr) {
+  if (/\bor\b|\|\|/.test(expr))
+    return null;
+  const env = makeEnv(r, s);
+  const out = [];
+  let unknown = 0;
+  for (const raw of expr.split(/\s+and\s+|\s*&&\s*/i)) {
+    const part = raw.trim().replace(/^\((.*)\)$/, "$1").trim();
+    if (!part || evalBool(part, env, false))
+      continue;
+    let m;
+    if (m = part.match(/^perk\(\s*['"]([\w-]+)['"]\s*\)$/))
+      out.push(r.perks[m[1]]?.name ?? m[1]);
+    else if ((m = part.match(/^quest_done\(\s*['"]([\w-]+)['"]\s*\)$/)) && r.quests[m[1]] && (!r.quests[m[1]].hidden || s.quests?.[m[1]]))
+      out.push(`${r.quests[m[1]].name} done`);
+    else if ((m = part.match(/^([a-z_][\w]*)\s*(>=|>|==)\s*(-?\d+(?:\.\d+)?)$/i)) && r.stats[m[1]]) {
+      const def = r.stats[m[1]];
+      const n = Number(m[3]) + (m[2] === ">" ? Number.isInteger(Number(m[3])) ? 1 : 0 : 0);
+      const band = def.bands.length && !def.pctBands && def.bands.some((b) => b.at === n) ? bandFor(def, n, def.max) : null;
+      out.push(band ? `${def.label}: ${band.text}` : `${def.label} ${formatNumber(n)}${m[2] === "==" ? "" : "+"}`);
+    } else
+      unknown++;
+  }
+  if (unknown)
+    out.push(out.length ? "and more" : "something you haven't found yet");
+  return out.length ? out.join(", ") : null;
+}
 function perkViews(r, s) {
   const offers = new Set(perkOffers(r, s));
-  return Object.values(r.perks).filter((p) => !r.perkPick || s.perks[p.id] || offers.has(p.id)).map((p) => {
+  return Object.values(r.perks).filter((p) => !r.perkPick || s.perks[p.id] || offers.has(p.id)).filter((p) => !perkClosed(r, s, p.id)).filter((p) => !p.hidden || s.perks[p.id] || !p.requires || evalBool(p.requires, makeEnv(r, s), false)).map((p) => {
     const notes = [];
     const plus = (stats) => Object.entries(stats).map(([k, v]) => `${v > 0 ? "+" : ""}${v} ${r.stats[k]?.label ?? k}`).join(", ");
     if (Object.keys(p.bonus).length)
@@ -20897,7 +20954,12 @@ function perkViews(r, s) {
       offered: offers.has(p.id),
       drawback: p.drawback ?? null,
       notes,
-      ...p.points && p.points !== r.perkPoints ? { pointsLabel: r.stats[p.points]?.label ?? p.points } : {}
+      ...p.points && p.points !== r.perkPoints ? { pointsLabel: r.stats[p.points]?.label ?? p.points } : {},
+      group: p.group ?? null,
+      ...(() => {
+        const locked = !s.perks[p.id] && !!p.requires && !evalBool(p.requires, makeEnv(r, s), false);
+        return { locked, needs: locked ? requiresWords(r, s, p.requires) : null };
+      })()
     };
   });
 }
@@ -24790,7 +24852,7 @@ stats:            # kinds: meter (bar) | attribute | skill | money | hidden
   hp: { kind: meter, max: "20 + level * 8", bands: { 0%: Down., 40%: Wounded., 75%: Hale. } }   # bands in % of the current max, for stats whose max grows
   mana: { kind: meter, max: "20 + wits * 5", start: full, per_hour: "+2%" }   # start: a number, full, "50%" (of the max) or a formula (without start:, a meter with a max formula begins at 100 — write start: full for a full pool); per_hour: a number, a formula ("wits / 10") or a % of the current max
   tier: { kind: attribute, start: 1, bands: { 0: Iron, 3: Bronze }, show: both }   # show: text | number | both | hidden. Unset with bands: the narrator gets the words, the sidebar words plus the number
-  str: { kind: attribute, start: 5, max: 99, allocate: { with: stat_points, step: 1, cost: 1 } }   # +/− in the sidebar spend points from stat_points (or allocate: stat_points)
+  str: { kind: attribute, start: 5, max: 99, allocate: { with: stat_points, step: 1, cost: 1 }, group: Attributes }   # +/− in the sidebar spend points from stat_points (or allocate: stat_points); group: the sidebar heading (default Attributes / Skills by kind; the pool shows on the heading, not as a row)
   athletics: { kind: skill, max: 100, start: 10, grades: [F, D, C, B, A, S] }
   money: { kind: money, start: 50, narrator: 50 }
   # good: high|low|none (colours); per_hour: drift; narrator: max change the story may make per reply (0 = rules only); max may be a formula ("level * 5")
@@ -25061,7 +25123,8 @@ abilities:        # the player's OWN moves (spells, techniques, tricks): offered
 perks:
   points: perk_points               # the stat that pays for them; something must raise it (level-ups, feats, milestones)
   pick: 3                           # offer 3 to choose from when there's a point (one that builds on how they've played, one new direction, one random); 0/omitted = buy from the whole list
-  knight: { name: Knight, offer: always, points: class_points, excludes: [mage] }   # offer: always = on offer beside the pick (a class choice); points: paid from this stat instead of perks: points
+  knight: { name: Knight, offer: always, points: class_points, excludes: [mage], group: Classes }   # offer: always = on offer beside the pick (a class choice); points: paid from this stat instead of perks: points; group: sidebar heading
+  lich: { name: Lich, requires: "flag('dark_pact')", hidden: true }   # hidden: not listed until requires holds. Perks whose requires don't hold yet fold under "Not yet" with what they need; ones that clash with a perk you took (or build on one that does) drop out
   sharp: { name: Sharpshooter, desc: "+2 Aim", cost: 1, requires: "level >= 2", effects: { aim: +2 } }   # effects: once, when taken
   crowd_ghost: { name: Crowd Ghost, bonus: { stealth: 10 }, edge: { stealth: 15, when: "at('plaza')" }, tags: [stealth] }   # bonus: always counts in checks; edge: only while when holds
   silver_tongue: { name: Silver Tongue, rule: { reroll: { stats: [persuasion], per_day: 1 } } }   # rules: reroll / soften (a failure becomes partial) on these stats or tags; gains / losses: { scent: -30% } (rises or drops that much bigger/smaller)

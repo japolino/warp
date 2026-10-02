@@ -29,6 +29,7 @@ Use whichever is available:
 
 - snake_case ids; meters 0–100 unless there's a reason; quote formulas that contain commas; refer to the player as `{{user}}`; in-world text in the card's voice.
 - Every action is a story turn: a click posts a line and costs a narrator reply. Never model sheet changes as actions. Stat points are spent with `allocate:` on the stats (+/− in the sidebar), classes and talents are perks (their own panel), clothes go through the wardrobe. `warp_check` warns about point-spending buttons.
+- Long sheets need headings: give stats `group:` (Level, Attributes, Combat, Skills) and perks `group:` (Classes, Advanced classes, Talents). Perks the player can't have yet fold under "Not yet" with what they need; mark secret ones `hidden: true` so they stay off the list until earned.
 - Prefer fewer stats that all matter over many idle ones, and fewer systems with stronger interactions over many loose ones. Quests, minigames, dungeons and dating are optional — add them when they serve the card.
 - Make different approaches carry different risks or payoffs, and make failures change the situation rather than invite an identical retry.
 - Name endings freely, but declare `losses:` / `outcome_kinds:` when a name could mislead.

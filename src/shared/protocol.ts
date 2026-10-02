@@ -36,6 +36,8 @@ export interface SkillView {
   practice: number | null;
   /** Raised by hand with points (`allocate:`): the pool, its points left, what a step costs and adds, and steps of room under the max. */
   allocate?: { pool: string; poolLabel: string; left: number; cost: number; step: number; room: number };
+  /** The heading it's filed under (`group:`, else Attributes or Skills by kind). */
+  group: string;
 }
 
 export interface PersonView {
@@ -146,6 +148,12 @@ export interface HudView {
     notes: string[];
     /** The pool it's paid from when that isn't the main perk points (points: class_points). */
     pointsLabel?: string;
+    /** The heading it's filed under (`group:`), if any. */
+    group: string | null;
+    /** Its requirements don't hold yet: listed folded, by name and what it needs. */
+    locked: boolean;
+    /** What it still needs, in words ("Level 10, Rogue"), when locked. */
+    needs: string | null;
   }[];
   perkPoints: number | null;
   /** How many perks are offered at a time (0: the whole list, like a shop). */

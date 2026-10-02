@@ -48,6 +48,8 @@ export interface StatDef {
   /** Raised by hand from a pool of points (`allocate: { with: stat_points, step: 1, cost: 1 }`): the sidebar shows +/−. */
   allocate?: { with: string; step: number; cost: number };
   show: ShowMode;
+  /** A heading the sidebar files it under ("Attributes", "Combat"); default: by kind. */
+  group?: string;
   /** The author wrote show: (absent: the sidebar keeps the number beside band words for skills and money). */
   showSet?: true;
   /** Max absolute change the narrator may make per turn. 0 = engine only. */
@@ -488,6 +490,10 @@ export interface PerkDef {
   always?: boolean;
   /** Paid from this stat instead of `perks: { points }` (a separate pool, e.g. class points). */
   points?: string;
+  /** A heading the sidebar files it under ("Classes", "Talents"). */
+  group?: string;
+  /** Not listed until its requirements hold (a secret class). */
+  hidden?: true;
 }
 
 /**
@@ -1168,6 +1174,7 @@ function normStat(id: string, raw: unknown, where: string, c: Ctx, forRel = fals
     show: k === "hidden" ? "hidden" : show,
     // Written by the author (absent = the default; the sidebar then keeps numbers beside band words).
     ...(r.show !== undefined ? { showSet: true as const } : {}),
+    ...groupOf(r.group, `${where} › group`, c),
     narrator,
     ...(gate ? { gate } : {}),
     growth: 0,
@@ -1913,6 +1920,14 @@ function perkOffer(v: unknown, where: string, c: Ctx): { always?: true } {
   return {};
 }
 
+/** A sidebar heading (`group: Classes`). */
+function groupOf(v: unknown, where: string, c: Ctx): { group?: string } {
+  if (v === undefined || v === null) return {};
+  if (typeof v === "string" && v.trim()) return { group: v.trim() };
+  c.warn(where, "expected a heading, like `group: Combat`");
+  return {};
+}
+
 function normPerk(id: string, p: Raw, w: string, c: Ctx, known: { stats: Set<string>; rel?: Set<string> }, abilities: Record<string, AbilityDef>): PerkDef {
   const req = p.requires !== undefined ? c.expr(p.requires, `${w} › requires`) : undefined;
   const bonus = statNums(p.bonus, `${w} › bonus`, c, known);
@@ -1946,6 +1961,8 @@ function normPerk(id: string, p: Raw, w: string, c: Ctx, known: { stats: Set<str
     ...(drawback ? { drawback } : {}),
     ...perkOffer(p.offer, `${w} › offer`, c),
     ...(p.points !== undefined ? (typeof p.points === "string" ? { points: p.points } : (c.warn(`${w} › points`, "expected the stat that pays for it, like `points: class_points`"), {})) : {}),
+    ...groupOf(p.group, `${w} › group`, c),
+    ...(p.hidden === true ? { hidden: true as const } : p.hidden !== undefined && p.hidden !== false ? (c.warn(`${w} › hidden`, "expected true or false"), {}) : {}),
   };
 }
 

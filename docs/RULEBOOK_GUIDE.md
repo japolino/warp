@@ -80,7 +80,7 @@ stats:            # kinds: meter (bar) | attribute | skill | money | hidden
   hp: { kind: meter, max: "20 + level * 8", bands: { 0%: Down., 40%: Wounded., 75%: Hale. } }   # bands in % of the current max, for stats whose max grows
   mana: { kind: meter, max: "20 + wits * 5", start: full, per_hour: "+2%" }   # start: a number, full, "50%" (of the max) or a formula (without start:, a meter with a max formula begins at 100 — write start: full for a full pool); per_hour: a number, a formula ("wits / 10") or a % of the current max
   tier: { kind: attribute, start: 1, bands: { 0: Iron, 3: Bronze }, show: both }   # show: text | number | both | hidden. Unset with bands: the narrator gets the words, the sidebar words plus the number
-  str: { kind: attribute, start: 5, max: 99, allocate: { with: stat_points, step: 1, cost: 1 } }   # +/− in the sidebar spend points from stat_points (or allocate: stat_points)
+  str: { kind: attribute, start: 5, max: 99, allocate: { with: stat_points, step: 1, cost: 1 }, group: Attributes }   # +/− in the sidebar spend points from stat_points (or allocate: stat_points); group: the sidebar heading (default Attributes / Skills by kind; the pool shows on the heading, not as a row)
   athletics: { kind: skill, max: 100, start: 10, grades: [F, D, C, B, A, S] }
   money: { kind: money, start: 50, narrator: 50 }
   # good: high|low|none (colours); per_hour: drift; narrator: max change the story may make per reply (0 = rules only); max may be a formula ("level * 5")
@@ -351,7 +351,8 @@ abilities:        # the player's OWN moves (spells, techniques, tricks): offered
 perks:
   points: perk_points               # the stat that pays for them; something must raise it (level-ups, feats, milestones)
   pick: 3                           # offer 3 to choose from when there's a point (one that builds on how they've played, one new direction, one random); 0/omitted = buy from the whole list
-  knight: { name: Knight, offer: always, points: class_points, excludes: [mage] }   # offer: always = on offer beside the pick (a class choice); points: paid from this stat instead of perks: points
+  knight: { name: Knight, offer: always, points: class_points, excludes: [mage], group: Classes }   # offer: always = on offer beside the pick (a class choice); points: paid from this stat instead of perks: points; group: sidebar heading
+  lich: { name: Lich, requires: "flag('dark_pact')", hidden: true }   # hidden: not listed until requires holds. Perks whose requires don't hold yet fold under "Not yet" with what they need; ones that clash with a perk you took (or build on one that does) drop out
   sharp: { name: Sharpshooter, desc: "+2 Aim", cost: 1, requires: "level >= 2", effects: { aim: +2 } }   # effects: once, when taken
   crowd_ghost: { name: Crowd Ghost, bonus: { stealth: 10 }, edge: { stealth: 15, when: "at('plaza')" }, tags: [stealth] }   # bonus: always counts in checks; edge: only while when holds
   silver_tongue: { name: Silver Tongue, rule: { reroll: { stats: [persuasion], per_day: 1 } } }   # rules: reroll / soften (a failure becomes partial) on these stats or tags; gains / losses: { scent: -30% } (rises or drops that much bigger/smaller)

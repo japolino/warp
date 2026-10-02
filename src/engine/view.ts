@@ -66,8 +66,11 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
     };
   });
 
+  // Point pools already shown elsewhere (the +/− bar, the perks heading) don't take a row of their own unless the author filed them.
+  const pools = new Set([...Object.values(r.stats).flatMap((d) => (d.allocate ? [d.allocate.with] : [])), ...(r.perkPoints ? [r.perkPoints] : [])]);
   const skills = r.statOrder
     .filter((id) => (r.stats[id].kind === "attribute" || r.stats[id].kind === "skill") && !r.hud.bars.includes(id) && r.stats[id].show !== "hidden")
+    .filter((id) => !pools.has(id) || r.stats[id].group !== undefined)
     .map((id) => {
       const def = r.stats[id];
       const v = s.stats[id] ?? def.start;
@@ -84,6 +87,7 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
         text: shownText(def.showSet ? def : { ...def, show: "both" }, band, formatNumber(v)),
         tone: band?.tone ?? "neutral" as Tone,
         practice: practiceProgress(r, s, id),
+        group: def.group ?? (def.kind === "skill" ? "Skills" : "Attributes"),
         ...(def.allocate ? { allocate: {
           pool: def.allocate.with, poolLabel: r.stats[def.allocate.with]?.label ?? def.allocate.with,
           left: s.stats[def.allocate.with] ?? r.stats[def.allocate.with]?.start ?? 0,
@@ -664,11 +668,55 @@ function abilityChoices(r: Ruleset, s: GameState, lines: Set<string>): ChoiceVie
 }
 
 /** Every perk as the HUD shows it: owned, on offer, or blocked — and what it does in short. */
+/** Clashes with a perk already taken (`excludes:`, either way round): a road not taken. */
+function perkClashes(r: Ruleset, s: GameState, id: string): boolean {
+  return Object.keys(s.perks).some((o) => o !== id && (r.perks[id]?.excludes.includes(o) || r.perks[o]?.excludes.includes(id)));
+}
+
+/** Can never be taken now: it clashes with a perk you have, or it builds on one that does (Assassin once you're a Warrior). */
+function perkClosed(r: Ruleset, s: GameState, id: string): boolean {
+  const p = r.perks[id];
+  if (!p || s.perks[id]) return false;
+  if (perkClashes(r, s, id)) return true;
+  if (!p.requires || /\bor\b|\|\|/.test(p.requires)) return false;
+  for (const m of p.requires.matchAll(/(\bnot\s+|!\s*)?\bperk\(\s*['"]([\w-]+)['"]\s*\)/g)) {
+    if (!m[1] && !s.perks[m[2]] && perkClashes(r, s, m[2])) return true;
+  }
+  return false;
+}
+
+/** A requirement in words, listing only the parts that don't hold yet ("Level 10+, Rogue"). Null when it can't be put simply. */
+export function requiresWords(r: Ruleset, s: GameState, expr: string): string | null {
+  if (/\bor\b|\|\|/.test(expr)) return null;
+  const env = makeEnv(r, s);
+  const out: string[] = [];
+  let unknown = 0;
+  for (const raw of expr.split(/\s+and\s+|\s*&&\s*/i)) {
+    const part = raw.trim().replace(/^\((.*)\)$/, "$1").trim();
+    if (!part || evalBool(part, env, false)) continue;
+    let m: RegExpMatchArray | null;
+    if ((m = part.match(/^perk\(\s*['"]([\w-]+)['"]\s*\)$/))) out.push(r.perks[m[1]]?.name ?? m[1]);
+    // A hidden quest isn't named until it has turned up.
+    else if ((m = part.match(/^quest_done\(\s*['"]([\w-]+)['"]\s*\)$/)) && r.quests[m[1]] && (!r.quests[m[1]].hidden || s.quests?.[m[1]])) out.push(`${r.quests[m[1]].name} done`);
+    else if ((m = part.match(/^([a-z_][\w]*)\s*(>=|>|==)\s*(-?\d+(?:\.\d+)?)$/i)) && r.stats[m[1]]) {
+      const def = r.stats[m[1]];
+      const n = Number(m[3]) + (m[2] === ">" ? (Number.isInteger(Number(m[3])) ? 1 : 0) : 0);
+      const band = def.bands.length && !def.pctBands && def.bands.some((b) => b.at === n) ? bandFor(def, n, def.max) : null;
+      out.push(band ? `${def.label}: ${band.text}` : `${def.label} ${formatNumber(n)}${m[2] === "==" ? "" : "+"}`);
+    } else unknown++;
+  }
+  if (unknown) out.push(out.length ? "and more" : "something you haven't found yet");
+  return out.length ? out.join(", ") : null;
+}
+
 function perkViews(r: Ruleset, s: GameState): HudView["perks"] {
   const offers = new Set(perkOffers(r, s));
   return Object.values(r.perks)
     // Picking from a few: show what's owned and what's on offer, not the whole deck.
     .filter((p) => !r.perkPick || s.perks[p.id] || offers.has(p.id))
+    // Roads not taken stay out of the way; a hidden perk turns up once it can be had.
+    .filter((p) => !perkClosed(r, s, p.id))
+    .filter((p) => !p.hidden || s.perks[p.id] || !p.requires || evalBool(p.requires, makeEnv(r, s), false))
     .map((p) => {
       const notes: string[] = [];
       const plus = (stats: Record<string, number>) => Object.entries(stats).map(([k, v]) => `${v > 0 ? "+" : ""}${v} ${r.stats[k]?.label ?? k}`).join(", ");
@@ -689,6 +737,11 @@ function perkViews(r: Ruleset, s: GameState): HudView["perks"] {
         offered: offers.has(p.id), drawback: p.drawback ?? null, notes,
         // A perk paid from its own pool (points: class_points) names that pool on its price.
         ...(p.points && p.points !== r.perkPoints ? { pointsLabel: r.stats[p.points]?.label ?? p.points } : {}),
+        group: p.group ?? null,
+        ...(() => {
+          const locked = !s.perks[p.id] && !!p.requires && !evalBool(p.requires, makeEnv(r, s), false);
+          return { locked, needs: locked ? requiresWords(r, s, p.requires!) : null };
+        })(),
       };
     });
 }
