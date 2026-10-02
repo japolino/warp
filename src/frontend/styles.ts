@@ -317,6 +317,7 @@ export const STYLES = `
 /* ───────── depth audit ───────── */
 .warp-depth-row > summary { cursor: pointer; padding: 3px 0; }
 .warp-depth-row > p { margin: 2px 0 6px 14px; font-size: 12px; }
+.warp-depth-row .warp-warning-row { grid-template-columns: auto minmax(0, 1fr); align-items: start; margin: 6px 0; overflow-wrap: anywhere; }
 .warp-depth-gap > summary::marker { color: var(--warp-bad); }
 .warp-depth-thin > summary::marker { color: var(--warp-warn); }
 .warp-issues-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 4px; font-size: 12.5px; }

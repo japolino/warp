@@ -73,11 +73,11 @@ describe("the designer's loop", () => {
     const res = await runAgent(s, {
       brief: "A test card.", task: "Close the audit.", maxSteps: 10, strict: false,
       hooks: {
-        llm: async (messages) => { seen.push(String(messages[messages.length - 1].content)); return script.shift()!; },
+        llm: async (messages) => { seen.push(messages.map(m => String(m.content)).join("\n")); return script.shift()!; },
         progress: async (_label, line) => { if (line) log.push(line); },
       },
     });
-    expect(res).toEqual({ finished: true, summary: "The spray now clears your scent.", steps: 4 });
+    expect(res).toEqual({ finished: true, summary: "The spray now clears your scent.", steps: 4, reason: "finished" });
     expect(seen[1]).toContain("Not finished");
     expect(log).toContain("write_section(world, " + FIXED.length + " chars)");
     expect(s.parts[0].changed).toBe(true);
@@ -86,10 +86,30 @@ describe("the designer's loop", () => {
   test("stops after its step budget, or when the model stops using tools", async () => {
     const s = session();
     const idle = await runAgent(s, { brief: "", task: "x", maxSteps: 10, strict: false, hooks: { llm: async () => ({ content: "I think it's fine.", calls: [] }), progress: async () => {} } });
-    expect(idle.finished).toBe(false);
+    expect(idle).toEqual({ finished: false, summary: "", steps: 3, reason: "no_tools" });
     let n = 0;
     const busy = await runAgent(s, { brief: "", task: "x", maxSteps: 3, strict: false, hooks: { llm: async () => { n++; return { content: "", calls: [{ name: "check", args: {} }] }; }, progress: async () => {} } });
-    expect(busy).toEqual({ finished: false, summary: "", steps: 3 });
+    expect(busy).toEqual({ finished: false, summary: "", steps: 3, reason: "budget" });
     expect(n).toBe(3);
+  });
+
+  test("each call sees the remaining findings after a write", async () => {
+    const s = session();
+    const prompts: string[] = [];
+    const calls: AgentCall[] = [
+      { content: "", calls: [{ name: "write_section", args: { label: "world", yaml: FIXED } }] },
+      { content: "", calls: [{ name: "finish", args: { summary: "Fixed." } }] },
+    ];
+    await runAgent(s, { brief: "", task: "Fix the spray", maxSteps: 4, strict: false, hooks: {
+      llm: async messages => { prompts.push(String(messages.at(-1)?.content)); return calls.shift()!; }, progress: async () => {},
+    } });
+    expect(prompts[0]).toContain("item-dead:spray");
+    expect(prompts[1]).not.toContain("item-dead:spray");
+  });
+
+  test("waive accepts only a current finding", () => {
+    const s = session();
+    expect(runTool(s, "waive", { id: "missing", reason: "A deliberate exception." }, true).text).toContain("No current audit finding");
+    expect(s.waived).toEqual({});
   });
 });

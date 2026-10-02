@@ -7,7 +7,7 @@
 
 import jsyaml from "js-yaml";
 import type { GenerationResponseDTO, LlmMessageDTO, ToolSchemaDTO } from "lumiverse-spindle-types";
-import { evaluate, openGaps, runAgent, type AgentCall } from "./builder-agent.js";
+import { evaluate, runAgent, updateDepth, type AgentCall } from "./builder-agent.js";
 import { auditRuleset } from "../engine/audit.js";
 import { DESIGN_GUIDE } from "../engine/reference.js";
 import { getRuleset } from "./source.js";
@@ -337,7 +337,8 @@ async function repair(s: BuilderSession, parts: BuilderPart[], userId?: string, 
 
 function buildPreview(s: BuilderSession) {
   const { ruleset: r } = check(s.parts);
-  if (!r) { s.preview = null; return; }
+  if (!r) { s.preview = null; s.depth = null; return; }
+  updateDepth(s, auditRuleset(r));
   const st = initialState(r);
   const counts: Record<string, number> = {
     meters: r.statOrder.filter((id) => r.stats[id].kind === "meter").length,
@@ -422,9 +423,13 @@ async function designPlan(s: BuilderSession, systems: string[], userId?: string)
 }
 
 /** The designer's pass: work with the tools until the checker and the audit are clean (or the budget runs out). */
-async function deepen(s: BuilderSession, task: string, userId?: string) {
+async function deepen(s: BuilderSession, task: string, userId?: string, revisit: readonly string[] = []) {
   const before = evaluate(s.parts);
   const thorough = s.effort === "thorough";
+  s.designPass = null;
+  s.changeSummary = null;
+  let steps = 0;
+  let reason: NonNullable<BuilderSession["designPass"]>["reason"] = "error";
   s.log = [...(s.log ?? []), `— ${thorough ? "Thorough" : "Quick"} design pass —`];
   const card = await cardText(s.characterId, userId).catch(() => ({ text: "", name: s.characterName, hasRuleset: false }));
   try {
@@ -432,34 +437,43 @@ async function deepen(s: BuilderSession, task: string, userId?: string) {
       brief: [card.text.slice(0, 5000), brief(s)].filter(Boolean).join("\n\n"),
       task,
       maxSteps: thorough ? 40 : 14,
-      strict: thorough,
+      strict: thorough || revisit.length > 0,
+      revisit,
       hooks: {
-        llm: (messages, tools) => llmTools(s, messages, tools, userId),
+        llm: (messages, tools) => { steps++; return llmTools(s, messages, tools, userId); },
         progress: (label, line) => logStep(s, label, line, userId),
       },
     });
+    reason = res.reason;
     if (res.finished) { s.changeSummary = res.summary; s.log = [...(s.log ?? []), `Finished: ${res.summary}`]; }
-    else s.log = [...(s.log ?? []), `Stopped after ${res.steps} steps with work left — "Keep deepening" carries on.`];
+    else s.log = [...(s.log ?? []), res.reason === "no_tools"
+      ? `Stopped after ${res.steps} designer calls: the helper returned no tools three times. Your draft is kept.`
+      : `Stopped at the ${res.steps}-call design limit. Your draft is kept.`];
   } catch (e) {
     logError("builder agent", e);
     s.log = [...(s.log ?? []), `The designer stopped: ${e instanceof Error ? e.message : String(e)}`];
   }
   await repair(s, s.parts, userId, false);
   const after = evaluate(s.parts);
-  s.depth = { before: before.depth, after: after.depth, open: openGaps(s, after.gaps, false).length };
+  updateDepth(s, after, before.depth);
+  const remaining = new Set(after.gaps.map(g => g.id));
+  s.designPass = { reason, steps, changed: JSON.stringify(before.ruleset) !== JSON.stringify(after.ruleset), resolved: before.gaps.filter(g => !remaining.has(g.id)).length };
+  if (after.gaps.length && s.designPass.resolved === 0) s.log = [...(s.log ?? []), `No audit findings were resolved. Depth ${before.depth} → ${after.depth}/100.`];
 }
 
 /** "Deepen this ruleset" (or keep going on a draft): the designer works the audit with tools. */
-export async function builderDeepen(chatId: string, opts: { connectionId?: string; effort?: "quick" | "thorough" }, userId?: string) {
+export async function builderDeepen(chatId: string, opts: { connectionId?: string; effort?: "quick" | "thorough"; revisitWaivers?: boolean }, userId?: string) {
   const s = await sessionFor(chatId, userId);
   if (!s || !s.parts.length) throw new Error("Open the builder on a ruleset first.");
   if (opts.connectionId !== undefined) s.connectionId = opts.connectionId;
   if (opts.effort) s.effort = opts.effort;
+  const revisit = opts.revisitWaivers === true ? evaluate(s.parts).gaps.filter(g => s.waived?.[g.id]).map(g => g.id) : [];
+  for (const id of revisit) delete s.waived![id];
   await progress(s, "Auditing what connects…", userId);
   try {
     await deepen(s, s.mode === "deepen"
       ? "Deepen this installed ruleset without breaking what works: close every audit gap — items that do nothing get a use: or bonus: true to their description, stats and conditions get sources, sinks and consequences, encounters get readable goals, more than one route, an escape and items that matter (simulate them), places get reasons to visit. Keep names, tone and existing ids."
-      : "Keep going: close the remaining audit gaps and tune the encounters by simulation.", userId);
+      : "Keep going: close the remaining audit gaps and tune the encounters by simulation.", userId, revisit);
     for (const p of s.parts) if (p.changed) p.status = p.status ?? "ok";
     buildPreview(s);
   } catch (e) {
@@ -582,6 +596,7 @@ export async function builderRedo(chatId: string, label: string, note: string | 
   const s = await sessionFor(chatId, userId);
   const part = s?.parts.find((p) => p.label === label);
   if (!s || !part) throw new Error("Nothing to redo.");
+  s.designPass = null;
   await progress(s, `Rewriting ${label}…`, userId);
   try {
     const ctx = contextOf(s.parts.filter((p) => p !== part));
@@ -610,6 +625,7 @@ export async function builderFix(chatId: string, warningId: string, userId?: str
 export async function builderRefine(chatId: string, request: string, userId?: string) {
   const s = await sessionFor(chatId, userId);
   if (!s || !s.parts.length) throw new Error("Nothing to refine.");
+  s.designPass = null;
   s.request = request;
   await progress(s, "Working out what to change…", userId);
   try {
@@ -735,11 +751,6 @@ export async function builderImport(chatId: string, text: string, userId?: strin
   };
   sessionChats.set(s, chatId);
   buildPreview(s);
-  const { ruleset } = check(s.parts);
-  if (ruleset) {
-    const a = auditRuleset(ruleset);
-    s.depth = { before: a.depth, after: a.depth, open: a.gaps.filter((g) => g.severity === "gap").length };
-  }
   s.changeSummary = `Imported ${s.parts.length} section${s.parts.length === 1 ? "" : "s"}: ${s.parts.map((p) => p.label).join(", ")}.${card.hasRuleset ? " Installing replaces the current ruleset." : ""}`;
   await save(s, userId);
   emit(s, userId);

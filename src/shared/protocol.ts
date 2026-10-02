@@ -580,8 +580,10 @@ export interface BuilderSession {
   log?: string[];
   /** Audit gaps left as they are on purpose, with the reason. */
   waived?: Record<string, string>;
-  /** Depth before and after this session's work. */
-  depth?: { before: number; after: number; open: number } | null;
+  /** All unwaived findings count as open, including optional thin spots. Rebuilt from the current YAML. */
+  depth?: { before: number; after: number; open: number; findings?: (NonNullable<RulesetStatus["depth"]>["gaps"][number] & { reason?: string })[] } | null;
+  /** What the most recent designer pass actually did. */
+  designPass?: { reason: "finished" | "no_tools" | "budget" | "error"; steps: number; changed: boolean; resolved: number } | null;
   connectionId: string;
   creative: boolean;
   base: string;
@@ -696,7 +698,7 @@ export type FrontendToBackend =
   | { type: "export_rulebook"; chatId: string }
   | { type: "builder_start"; chatId: string; connectionId: string; creative: boolean; base?: string; effort?: "quick" | "thorough" }
   /** Run the designer over the current draft (or the installed rules) until the audit is clean. */
-  | { type: "builder_deepen"; chatId: string; connectionId?: string; effort?: "quick" | "thorough" }
+  | { type: "builder_deepen"; chatId: string; connectionId?: string; effort?: "quick" | "thorough"; revisitWaivers?: boolean }
   /** Draft uses for items that do nothing, from their descriptions, into a "warp-ruleset · item uses" entry. */
   | { type: "draft_item_uses"; chatId: string }
   /** Rewrite dating's topics and outings for this card's setting (again, if it was done before). */

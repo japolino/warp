@@ -137,4 +137,13 @@ describe("saved builder draft recovery", () => {
       expect(writes).toBe(0);
     } finally {log.mockRestore();}
   });
+
+  test("restores a valid pass result but rejects malformed counters", () => {
+    stored.designPass = {reason: "no_tools", steps: 3, changed: false, resolved: 0};
+    expect(restoreBuilderSession(stored, characterId).designPass).toEqual(stored.designPass);
+    stored.designPass.steps = -1;
+    expect(restoreBuilderSession(stored, characterId).designPass).toBeNull();
+    stored.designPass.steps = Infinity;
+    expect(restoreBuilderSession(stored, characterId).designPass).toBeNull();
+  });
 });

@@ -536,6 +536,7 @@ var STYLES = `
 /* ───────── depth audit ───────── */
 .warp-depth-row > summary { cursor: pointer; padding: 3px 0; }
 .warp-depth-row > p { margin: 2px 0 6px 14px; font-size: 12px; }
+.warp-depth-row .warp-warning-row { grid-template-columns: auto minmax(0, 1fr); align-items: start; margin: 6px 0; overflow-wrap: anywhere; }
 .warp-depth-gap > summary::marker { color: var(--warp-bad); }
 .warp-depth-thin > summary::marker { color: var(--warp-warn); }
 .warp-issues-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 4px; font-size: 12.5px; }
@@ -1480,6 +1481,31 @@ function renderBuilder(s, d, templates, connections, hasRuleset) {
     return `<div class="warp-card"><h3>The draft couldn't be displayed</h3><p>Your saved draft is kept. Reload Warp to reopen it. You can still use the other tabs.</p></div>`;
   }
 }
+function depthReview(s, dis, errors) {
+  const depth = s.depth;
+  if (!depth)
+    return "";
+  const findings = depth.findings;
+  const open = findings?.filter((g) => !g.reason) ?? [];
+  const exceptions = findings?.filter((g) => g.reason) ?? [];
+  const gaps = open.filter((g) => g.severity === "gap").length;
+  const thin = open.length - gaps;
+  const count = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  const counts = findings ? `${count(gaps, "gap")} · ${count(thin, "thin spot")} · ${count(exceptions.length, "deliberate exception")}` : "Audit details need refreshing.";
+  const status = errors ? "Fix the checker errors before finishing." : !findings ? "Run Deepen to refresh the findings." : open.length ? "Findings remain. Thin spots are optional, but still lower depth." : exceptions.length ? "The remaining findings were left as deliberate exceptions. They still lower depth." : "No audit findings remain.";
+  const actions = `${open.length || errors || !findings ? `<button class="warp-btn warp-mini" data-b="deepen"${dis}>Keep deepening</button>` : ""}${exceptions.length ? `<button class="warp-btn warp-mini" data-b="revisit-waivers"${dis} title="Reopen these findings and ask the designer to fix them without waiving them again">Fix exceptions</button>` : ""}`;
+  const pass = s.designPass;
+  const stop = pass ? pass.reason === "no_tools" ? `The helper stopped making tool calls after ${pass.steps} designer calls.` : pass.reason === "budget" ? `The designer reached its ${pass.steps}-call limit.` : pass.reason === "error" ? "The helper stopped with an error. Your draft is kept." : "The design pass finished." : "";
+  const progress = pass && findings?.length && pass.resolved === 0 ? ` ${pass.changed ? "" : "No rules changed. "}No audit findings were resolved.` : "";
+  const rows = open.map((g) => `<div class="warp-warning-row"><span class="warp-tone-warn">${g.severity === "gap" ? "Gap" : "Thin spot"}</span><span>${esc(g.text)}<br><span class="warp-dim">${esc(g.fix)}</span></span></div>`).join("");
+  const waived = exceptions.map((g) => `<p>${esc(g.text)}<br><span class="warp-dim">Reason: ${esc(g.reason)}</span></p>`).join("");
+  return `<p class="warp-depth-line">Depth <b>${depth.before}</b> → <b class="warp-tone-${depth.after >= depth.before ? "good" : "warn"}">${depth.after}</b> / 100</p>
+    <p>${counts}</p><p class="warp-tone-${errors || open.length || !findings ? "warn" : "good"}">${status}</p>
+    ${stop ? `<p class="warp-dim">${esc(stop + progress)}</p>` : ""}
+    ${actions ? `<div class="warp-row">${actions}</div>` : ""}
+    ${rows ? `<details class="warp-depth-row"><summary>What still needs work · ${open.length}</summary>${rows}</details>` : ""}
+    ${waived ? `<details class="warp-depth-row"><summary>Deliberate exceptions · ${exceptions.length}</summary>${waived}</details>` : ""}`;
+}
 function builderHtml(s, d, templates, connections, hasRuleset) {
   const busy = !!s.busy;
   const dis = busy ? " disabled" : "";
@@ -1539,7 +1565,7 @@ function builderHtml(s, d, templates, connections, hasRuleset) {
   } else if (s.step === "review") {
     const p = s.preview;
     const errors = s.parts.filter((x) => x.status === "error").length;
-    const depth = s.depth ? `<p class="warp-depth-line">Depth <b>${s.depth.before}</b> → <b class="warp-tone-${s.depth.after >= s.depth.before ? "good" : "warn"}">${s.depth.after}</b> / 100${s.depth.open ? ` · <span class="warp-tone-warn">${s.depth.open} gap${s.depth.open === 1 ? "" : "s"} still open</span> <button class="warp-btn warp-mini" data-b="deepen"${dis}>Keep deepening</button>` : ` · <span class="warp-tone-good">every piece connects</span>`}${Object.keys(s.waived ?? {}).length ? ` · left as is on purpose: ${esc(Object.entries(s.waived ?? {}).map(([id, why]) => `${id} (${why})`).join("; "))}` : ""}</p>` : "";
+    const depth = depthReview(s, dis, errors);
     const summary = `<div class="warp-card">
         <h3>${s.mode !== "build" && s.changeSummary ? "What changed" : "The draft"}</h3>
         ${depth}
@@ -13151,7 +13177,10 @@ function setup(ctx) {
         send({ type: "builder_open", chatId: cid, mode: "deepen" });
         break;
       case "deepen":
-        send({ type: "builder_deepen", chatId: cid, connectionId: bDraft.connectionId, effort: bDraft.effort });
+        send({ type: "builder_deepen", chatId: cid });
+        break;
+      case "revisit-waivers":
+        send({ type: "builder_deepen", chatId: cid, revisitWaivers: true });
         break;
       case "start":
         send({ type: "builder_start", chatId: cid, connectionId: bDraft.connectionId, creative: bDraft.creative, base: bDraft.base || undefined, effort: bDraft.effort });

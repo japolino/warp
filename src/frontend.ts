@@ -892,7 +892,8 @@ export function setup(ctx: SpindleFrontendContext) {
       }
       case "open-refine": drawerView = "rules"; send({ type: "builder_open", chatId: cid, mode: "refine" }); break;
       case "open-deepen": drawerView = "rules"; tab.activate(); send({ type: "builder_open", chatId: cid, mode: "deepen" }); break;
-      case "deepen": send({ type: "builder_deepen", chatId: cid, connectionId: bDraft.connectionId, effort: bDraft.effort }); break;
+      case "deepen": send({ type: "builder_deepen", chatId: cid }); break;
+      case "revisit-waivers": send({ type: "builder_deepen", chatId: cid, revisitWaivers: true }); break;
       case "start": send({ type: "builder_start", chatId: cid, connectionId: bDraft.connectionId, creative: bDraft.creative, base: bDraft.base || undefined, effort: bDraft.effort }); break;
       case "more": case "build":
         send({ type: "builder_answer", chatId: cid, answers: builderAnswers(), additions: bDraft.additions, more: b.dataset.b === "more" });

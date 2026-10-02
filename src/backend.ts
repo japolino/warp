@@ -378,7 +378,7 @@ spindle.onFrontendMessage(async (raw, userId) => {
         if (msg.mode === "deepen") await builderDeepen(msg.chatId, {}, userId);
         break;
       }
-      case "builder_deepen": await builderDeepen(msg.chatId, { connectionId: msg.connectionId, effort: msg.effort }, userId); break;
+      case "builder_deepen": await builderDeepen(msg.chatId, { connectionId: msg.connectionId, effort: msg.effort, revisitWaivers: msg.revisitWaivers }, userId); break;
       case "builder_import": await builderImport(msg.chatId, msg.text, userId); break;
       case "export_rulebook": {
         const out = await exportRulebook(msg.chatId, userId);

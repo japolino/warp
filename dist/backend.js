@@ -23603,6 +23603,16 @@ function openGaps(s, gaps, strict) {
   const waived = s.waived ?? {};
   return gaps.filter((g) => !waived[g.id] && (strict || g.severity === "gap"));
 }
+function updateDepth(s, audit, before = s.depth?.before ?? audit.depth) {
+  const ids = new Set(audit.gaps.map((g) => g.id));
+  s.waived = Object.fromEntries(Object.entries(s.waived ?? {}).filter(([id, reason]) => ids.has(id) && reason.trim().length >= 8));
+  s.depth = {
+    before,
+    after: audit.depth,
+    open: openGaps(s, audit.gaps, true).length,
+    findings: audit.gaps.map((g) => ({ ...g, ...s.waived?.[g.id] ? { reason: s.waived[g.id] } : {} }))
+  };
+}
 function referenceFor(topic) {
   const t = topic.toLowerCase().replace(/s$/, "");
   const guide = DESIGN_GUIDE.split(/\n(?=## )/).filter((b) => b.toLowerCase().includes(t)).join(`
@@ -23640,7 +23650,7 @@ function previewText(r, location, hour) {
   ].filter(Boolean).join(`
 `);
 }
-function runTool(s, name, args, strict) {
+function runTool(s, name, args, strict, revisit = []) {
   const label = String(args.label ?? "");
   switch (name) {
     case "read_section": {
@@ -23706,6 +23716,10 @@ ${issuesText(e.issues)}` };
       const id = String(args.id ?? ""), reason = String(args.reason ?? "").trim();
       if (!id || reason.length < 8)
         return { text: "A waiver needs the gap's id and a real reason." };
+      if (revisit.includes(id))
+        return { text: `The player asked you to fix ${id}. It cannot be waived again during this pass. Connect it to gameplay or explain why you could not fix it.` };
+      if (!evaluate2(s.parts).gaps.some((g) => g.id === id))
+        return { text: `No current audit finding "${id}". Run audit to see what remains.` };
       s.waived = { ...s.waived ?? {}, [id]: reason.slice(0, 200) };
       return { text: `Waived ${id}: ${reason}` };
     }
@@ -23762,19 +23776,28 @@ ${issuesText(start.issues)}`,
     start.ruleset ? `Audit — depth ${start.depth}/100:
 ${openGaps(s, start.gaps, true).slice(0, 40).map(gapLine).join(`
 `) || "no gaps"}` : "",
-    `Done means: no checker errors, and every audit gap fixed or waived${opts.strict ? " (thin spots too)" : ""}. Then call finish.`
+    `Done means: no checker errors, and every audit gap fixed or waived${opts.strict ? " (thin spots too)" : ""}. Then call finish.`,
+    opts.revisit?.length ? `The player reopened these exceptions and wants them fixed: ${opts.revisit.join(", ")}. You cannot waive them again during this pass.` : ""
   ].filter(Boolean).join(`
 
 `);
   const head = [{ role: "system", content: AGENT_SYSTEM }, { role: "user", content: first }];
   let tail = [];
   let idle = 0;
+  let steps = 0;
   for (let step = 1;step <= opts.maxSteps; step++) {
-    const res = await opts.hooks.llm([...head, ...tail], TOOLS);
+    steps = step;
+    const current = evaluate2(s.parts);
+    const remaining = openGaps(s, current.gaps, true);
+    const focus = `Current depth: ${current.depth}/100. Remaining findings: ${remaining.length}.
+${remaining.slice(0, 8).map(gapLine).join(`
+`)}
+${remaining.length ? "Make a focused write_section change that addresses a remaining finding. Read only what you need; do not repeat checks without changing the rules." : "Run check if needed, then finish."}`;
+    const res = await opts.hooks.llm([...head, ...tail, { role: "user", content: focus }], TOOLS);
     const calls = res.calls.length ? res.calls : textCalls(res.content);
     if (!calls.length) {
       if (++idle >= 3)
-        break;
+        return { finished: false, summary: "", steps, reason: "no_tools" };
       tail.push({ role: "assistant", content: res.content.slice(0, 2000) || "(no reply)" }, { role: "user", content: 'Use a tool (natively, or reply with JSON {"tool": …, "args": …}). If everything is done, call finish.' });
       continue;
     }
@@ -23782,11 +23805,11 @@ ${openGaps(s, start.gaps, true).slice(0, 40).map(gapLine).join(`
     const results = [];
     for (const c of calls.slice(0, 6)) {
       await opts.hooks.progress(PROGRESS[c.name]?.(c.args) ?? `${c.name}…`, describeCall(c.name, c.args));
-      const out = runTool(s, c.name, c.args ?? {}, opts.strict);
+      const out = runTool(s, c.name, c.args ?? {}, opts.strict, opts.revisit);
       results.push(`[${describeCall(c.name, c.args)}]
 ${out.text}`);
       if (out.finished)
-        return { finished: true, summary: out.finished, steps: step };
+        return { finished: true, summary: out.finished, steps, reason: "finished" };
     }
     tail.push({ role: "assistant", content: `${res.content ? `${res.content.slice(0, 1500)}
 ` : ""}Called: ${calls.slice(0, 6).map((c) => describeCall(c.name, c.args)).join("; ")}` }, { role: "user", content: `Results:
@@ -23798,7 +23821,7 @@ ${results.join(`
     if (tail.length > 16)
       tail = tail.slice(-16);
   }
-  return { finished: false, summary: "", steps: opts.maxSteps };
+  return { finished: false, summary: "", steps, reason: "budget" };
 }
 var TOOLS, AGENT_SYSTEM, gapLine = (g) => `- [${g.severity}] ${g.id}: ${g.text} → ${g.fix}`, describeCall = (name, args) => {
   if (name === "write_section")
@@ -24195,6 +24218,8 @@ function restoreBuilderSession(raw, characterId) {
   const a = object(raw.analysis) ? raw.analysis : null;
   const sb = a && object(a.statusBlock) ? a.statusBlock : null;
   const depth = object(raw.depth) ? raw.depth : null;
+  const pass = object(raw.designPass) ? raw.designPass : null;
+  const designPass = pass && ["finished", "no_tools", "budget", "error"].includes(String(pass.reason)) && [pass.steps, pass.resolved].every((v) => typeof v === "number" && Number.isSafeInteger(v) && v >= 0) && typeof pass.changed === "boolean" ? pass : null;
   return {
     ...raw,
     schemaVersion: BUILDER_SESSION_VERSION,
@@ -24226,7 +24251,8 @@ function restoreBuilderSession(raw, characterId) {
     plan: typeof raw.plan === "string" ? raw.plan : null,
     log: strings(raw.log),
     waived: object(raw.waived) ? Object.fromEntries(Object.entries(raw.waived).filter(([, v]) => typeof v === "string")) : {},
-    depth: depth && [depth.before, depth.after, depth.open].every((v) => typeof v === "number" && Number.isFinite(v)) ? depth : null
+    depth: depth && [depth.before, depth.after, depth.open].every((v) => typeof v === "number" && Number.isFinite(v)) ? { before: Number(depth.before), after: Number(depth.after), open: Number(depth.open) } : null,
+    designPass
   };
 }
 var BUILDER_SESSION_VERSION = 1, object = (v) => !!v && typeof v === "object" && !Array.isArray(v), string = (v, fallback = "") => typeof v === "string" ? v : fallback, strings = (v) => Array.isArray(v) ? v.filter((x) => typeof x === "string") : [], answer = (v) => typeof v === "string" || typeof v === "number" && Number.isFinite(v) || Array.isArray(v) && v.every((x) => typeof x === "string"), answers = (v) => object(v) ? Object.fromEntries(Object.entries(v).filter((entry) => answer(entry[1]))) : {};
@@ -24577,8 +24603,10 @@ function buildPreview(s) {
   const { ruleset: r } = check(s.parts);
   if (!r) {
     s.preview = null;
+    s.depth = null;
     return;
   }
+  updateDepth(s, auditRuleset(r));
   const st = initialState(r);
   const counts = {
     meters: r.statOrder.filter((id) => r.stats[id].kind === "meter").length,
@@ -24683,9 +24711,13 @@ ${DESIGN_GUIDE}`, [
   const t = text.trim();
   return t.length > 80 ? t.slice(0, 5000) : null;
 }
-async function deepen(s, task, userId) {
+async function deepen(s, task, userId, revisit = []) {
   const before = evaluate2(s.parts);
   const thorough = s.effort === "thorough";
+  s.designPass = null;
+  s.changeSummary = null;
+  let steps = 0;
+  let reason = "error";
   s.log = [...s.log ?? [], `— ${thorough ? "Thorough" : "Quick"} design pass —`];
   const card = await cardText(s.characterId, userId).catch(() => ({ text: "", name: s.characterName, hasRuleset: false }));
   try {
@@ -24695,24 +24727,33 @@ async function deepen(s, task, userId) {
 `),
       task,
       maxSteps: thorough ? 40 : 14,
-      strict: thorough,
+      strict: thorough || revisit.length > 0,
+      revisit,
       hooks: {
-        llm: (messages, tools) => llmTools(s, messages, tools, userId),
+        llm: (messages, tools) => {
+          steps++;
+          return llmTools(s, messages, tools, userId);
+        },
         progress: (label, line) => logStep(s, label, line, userId)
       }
     });
+    reason = res.reason;
     if (res.finished) {
       s.changeSummary = res.summary;
       s.log = [...s.log ?? [], `Finished: ${res.summary}`];
     } else
-      s.log = [...s.log ?? [], `Stopped after ${res.steps} steps with work left — "Keep deepening" carries on.`];
+      s.log = [...s.log ?? [], res.reason === "no_tools" ? `Stopped after ${res.steps} designer calls: the helper returned no tools three times. Your draft is kept.` : `Stopped at the ${res.steps}-call design limit. Your draft is kept.`];
   } catch (e) {
     logError("builder agent", e);
     s.log = [...s.log ?? [], `The designer stopped: ${e instanceof Error ? e.message : String(e)}`];
   }
   await repair(s, s.parts, userId, false);
   const after = evaluate2(s.parts);
-  s.depth = { before: before.depth, after: after.depth, open: openGaps(s, after.gaps, false).length };
+  updateDepth(s, after, before.depth);
+  const remaining = new Set(after.gaps.map((g) => g.id));
+  s.designPass = { reason, steps, changed: JSON.stringify(before.ruleset) !== JSON.stringify(after.ruleset), resolved: before.gaps.filter((g) => !remaining.has(g.id)).length };
+  if (after.gaps.length && s.designPass.resolved === 0)
+    s.log = [...s.log ?? [], `No audit findings were resolved. Depth ${before.depth} → ${after.depth}/100.`];
 }
 async function builderDeepen(chatId, opts, userId) {
   const s = await sessionFor(chatId, userId);
@@ -24722,9 +24763,12 @@ async function builderDeepen(chatId, opts, userId) {
     s.connectionId = opts.connectionId;
   if (opts.effort)
     s.effort = opts.effort;
+  const revisit = opts.revisitWaivers === true ? evaluate2(s.parts).gaps.filter((g) => s.waived?.[g.id]).map((g) => g.id) : [];
+  for (const id of revisit)
+    delete s.waived[id];
   await progress(s, "Auditing what connects…", userId);
   try {
-    await deepen(s, s.mode === "deepen" ? "Deepen this installed ruleset without breaking what works: close every audit gap — items that do nothing get a use: or bonus: true to their description, stats and conditions get sources, sinks and consequences, encounters get readable goals, more than one route, an escape and items that matter (simulate them), places get reasons to visit. Keep names, tone and existing ids." : "Keep going: close the remaining audit gaps and tune the encounters by simulation.", userId);
+    await deepen(s, s.mode === "deepen" ? "Deepen this installed ruleset without breaking what works: close every audit gap — items that do nothing get a use: or bonus: true to their description, stats and conditions get sources, sinks and consequences, encounters get readable goals, more than one route, an escape and items that matter (simulate them), places get reasons to visit. Keep names, tone and existing ids." : "Keep going: close the remaining audit gaps and tune the encounters by simulation.", userId, revisit);
     for (const p of s.parts)
       if (p.changed)
         p.status = p.status ?? "ok";
@@ -24877,6 +24921,7 @@ async function builderRedo(chatId, label, note, userId) {
   const part = s?.parts.find((p) => p.label === label);
   if (!s || !part)
     throw new Error("Nothing to redo.");
+  s.designPass = null;
   await progress(s, `Rewriting ${label}…`, userId);
   try {
     const ctx = contextOf(s.parts.filter((p) => p !== part));
@@ -24907,6 +24952,7 @@ async function builderRefine(chatId, request, userId) {
   const s = await sessionFor(chatId, userId);
   if (!s || !s.parts.length)
     throw new Error("Nothing to refine.");
+  s.designPass = null;
   s.request = request;
   await progress(s, "Working out what to change…", userId);
   try {
@@ -25067,11 +25113,6 @@ async function builderImport(chatId, text, userId) {
   };
   sessionChats.set(s, chatId);
   buildPreview(s);
-  const { ruleset } = check(s.parts);
-  if (ruleset) {
-    const a = auditRuleset(ruleset);
-    s.depth = { before: a.depth, after: a.depth, open: a.gaps.filter((g) => g.severity === "gap").length };
-  }
   s.changeSummary = `Imported ${s.parts.length} section${s.parts.length === 1 ? "" : "s"}: ${s.parts.map((p) => p.label).join(", ")}.${card.hasRuleset ? " Installing replaces the current ruleset." : ""}`;
   await save(s, userId);
   emit(s, userId);
@@ -25985,7 +26026,7 @@ spindle.onFrontendMessage(async (raw, userId) => {
         break;
       }
       case "builder_deepen":
-        await builderDeepen(msg.chatId, { connectionId: msg.connectionId, effort: msg.effort }, userId);
+        await builderDeepen(msg.chatId, { connectionId: msg.connectionId, effort: msg.effort, revisitWaivers: msg.revisitWaivers }, userId);
         break;
       case "builder_import":
         await builderImport(msg.chatId, msg.text, userId);

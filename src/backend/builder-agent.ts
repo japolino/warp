@@ -7,7 +7,7 @@
 // Models that call tools natively use them; others reply with a JSON tool call.
 
 import type { LlmMessageDTO, ToolSchemaDTO } from "lumiverse-spindle-types";
-import { auditRuleset, type AuditGap } from "../engine/audit.js";
+import { auditRuleset, type AuditGap, type AuditReport } from "../engine/audit.js";
 import { loadRuleset } from "../engine/loader.js";
 import { DESIGN_GUIDE, PART_CONTENTS, PART_LABELS, REFERENCE, type PartLabel } from "../engine/reference.js";
 import type { Issue, Ruleset } from "../engine/ruleset.js";
@@ -63,6 +63,16 @@ export function openGaps(s: BuilderSession, gaps: AuditGap[], strict: boolean): 
   return gaps.filter((g) => !waived[g.id] && (strict || g.severity === "gap"));
 }
 
+/** Review and recovery use the same current findings, regardless of the pass's effort. */
+export function updateDepth(s: BuilderSession, audit: Pick<AuditReport, "gaps" | "depth">, before = s.depth?.before ?? audit.depth) {
+  const ids = new Set(audit.gaps.map(g => g.id));
+  s.waived = Object.fromEntries(Object.entries(s.waived ?? {}).filter(([id, reason]) => ids.has(id) && reason.trim().length >= 8));
+  s.depth = {
+    before, after: audit.depth, open: openGaps(s, audit.gaps, true).length,
+    findings: audit.gaps.map(g => ({ ...g, ...(s.waived?.[g.id] ? { reason: s.waived[g.id] } : {}) })),
+  };
+}
+
 function referenceFor(topic: string): string {
   const t = topic.toLowerCase().replace(/s$/, "");
   const guide = DESIGN_GUIDE.split(/\n(?=## )/).filter((b) => b.toLowerCase().includes(t)).join("\n");
@@ -95,7 +105,7 @@ function previewText(r: Ruleset, location?: string, hour?: number): string {
 }
 
 /** Run one tool against the session; returns what the model is told. */
-export function runTool(s: BuilderSession, name: string, args: Record<string, unknown>, strict: boolean): { text: string; finished?: string } {
+export function runTool(s: BuilderSession, name: string, args: Record<string, unknown>, strict: boolean, revisit: readonly string[] = []): { text: string; finished?: string } {
   const label = String(args.label ?? "") as PartLabel;
   switch (name) {
     case "read_section": {
@@ -140,6 +150,8 @@ export function runTool(s: BuilderSession, name: string, args: Record<string, un
     case "waive": {
       const id = String(args.id ?? ""), reason = String(args.reason ?? "").trim();
       if (!id || reason.length < 8) return { text: "A waiver needs the gap's id and a real reason." };
+      if (revisit.includes(id)) return { text: `The player asked you to fix ${id}. It cannot be waived again during this pass. Connect it to gameplay or explain why you could not fix it.` };
+      if (!evaluate(s.parts).gaps.some(g => g.id === id)) return { text: `No current audit finding "${id}". Run audit to see what remains.` };
       s.waived = { ...(s.waived ?? {}), [id]: reason.slice(0, 200) };
       return { text: `Waived ${id}: ${reason}` };
     }
@@ -199,7 +211,7 @@ const PROGRESS: Record<string, (a: Record<string, unknown>) => string> = {
  * Work until `finish` is accepted or the step budget runs out.
  * `brief` is what the model knows about the card, the player's wishes and the plan.
  */
-export async function runAgent(s: BuilderSession, opts: { brief: string; task: string; maxSteps: number; strict: boolean; hooks: AgentHooks }): Promise<{ finished: boolean; summary: string; steps: number }> {
+export async function runAgent(s: BuilderSession, opts: { brief: string; task: string; maxSteps: number; strict: boolean; hooks: AgentHooks; revisit?: readonly string[] }): Promise<{ finished: boolean; summary: string; steps: number; reason: "finished" | "no_tools" | "budget" }> {
   const start = evaluate(s.parts);
   const first = [
     opts.brief,
@@ -208,15 +220,21 @@ export async function runAgent(s: BuilderSession, opts: { brief: string; task: s
     start.ruleset ? `Checker: ${issuesText(start.issues)}` : `The ruleset doesn't load yet:\n${issuesText(start.issues)}`,
     start.ruleset ? `Audit — depth ${start.depth}/100:\n${openGaps(s, start.gaps, true).slice(0, 40).map(gapLine).join("\n") || "no gaps"}` : "",
     `Done means: no checker errors, and every audit gap fixed or waived${opts.strict ? " (thin spots too)" : ""}. Then call finish.`,
+    opts.revisit?.length ? `The player reopened these exceptions and wants them fixed: ${opts.revisit.join(", ")}. You cannot waive them again during this pass.` : "",
   ].filter(Boolean).join("\n\n");
   const head: LlmMessageDTO[] = [{ role: "system", content: AGENT_SYSTEM }, { role: "user", content: first }];
   let tail: LlmMessageDTO[] = [];
   let idle = 0;
+  let steps = 0;
   for (let step = 1; step <= opts.maxSteps; step++) {
-    const res = await opts.hooks.llm([...head, ...tail], TOOLS);
+    steps = step;
+    const current = evaluate(s.parts);
+    const remaining = openGaps(s, current.gaps, true);
+    const focus = `Current depth: ${current.depth}/100. Remaining findings: ${remaining.length}.\n${remaining.slice(0, 8).map(gapLine).join("\n")}\n${remaining.length ? "Make a focused write_section change that addresses a remaining finding. Read only what you need; do not repeat checks without changing the rules." : "Run check if needed, then finish."}`;
+    const res = await opts.hooks.llm([...head, ...tail, { role: "user", content: focus }], TOOLS);
     const calls = res.calls.length ? res.calls : textCalls(res.content);
     if (!calls.length) {
-      if (++idle >= 3) break;
+      if (++idle >= 3) return { finished: false, summary: "", steps, reason: "no_tools" };
       tail.push({ role: "assistant", content: res.content.slice(0, 2000) || "(no reply)" }, { role: "user", content: "Use a tool (natively, or reply with JSON {\"tool\": …, \"args\": …}). If everything is done, call finish." });
       continue;
     }
@@ -224,9 +242,9 @@ export async function runAgent(s: BuilderSession, opts: { brief: string; task: s
     const results: string[] = [];
     for (const c of calls.slice(0, 6)) {
       await opts.hooks.progress(PROGRESS[c.name]?.(c.args) ?? `${c.name}…`, describeCall(c.name, c.args));
-      const out = runTool(s, c.name, c.args ?? {}, opts.strict);
+      const out = runTool(s, c.name, c.args ?? {}, opts.strict, opts.revisit);
       results.push(`[${describeCall(c.name, c.args)}]\n${out.text}`);
-      if (out.finished) return { finished: true, summary: out.finished, steps: step };
+      if (out.finished) return { finished: true, summary: out.finished, steps, reason: "finished" };
     }
     tail.push(
       { role: "assistant", content: `${res.content ? `${res.content.slice(0, 1500)}\n` : ""}Called: ${calls.slice(0, 6).map((c) => describeCall(c.name, c.args)).join("; ")}` },
@@ -235,5 +253,5 @@ export async function runAgent(s: BuilderSession, opts: { brief: string; task: s
     // Keep the conversation within reach: the brief, plus the latest exchanges.
     if (tail.length > 16) tail = tail.slice(-16);
   }
-  return { finished: false, summary: "", steps: opts.maxSteps };
+  return { finished: false, summary: "", steps, reason: "budget" };
 }

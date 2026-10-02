@@ -29,6 +29,10 @@ export function restoreBuilderSession(raw: unknown, characterId: string): Builde
   const a = object(raw.analysis) ? raw.analysis : null;
   const sb = a && object(a.statusBlock) ? a.statusBlock : null;
   const depth = object(raw.depth) ? raw.depth : null;
+  const pass = object(raw.designPass) ? raw.designPass : null;
+  const designPass = pass && ["finished", "no_tools", "budget", "error"].includes(String(pass.reason))
+    && [pass.steps, pass.resolved].every(v => typeof v === "number" && Number.isSafeInteger(v) && v >= 0)
+    && typeof pass.changed === "boolean" ? pass as unknown as BuilderSession["designPass"] : null;
   return {
     ...raw, schemaVersion: BUILDER_SESSION_VERSION,
     characterId, characterName: string(raw.characterName, "This character"), mode: raw.mode as BuilderSession["mode"], step: raw.step as BuilderSession["step"],
@@ -42,6 +46,8 @@ export function restoreBuilderSession(raw: unknown, characterId: string): Builde
     updatedAt: typeof raw.updatedAt === "number" && Number.isFinite(raw.updatedAt) ? raw.updatedAt : 0,
     effort: raw.effort === "quick" ? "quick" : "thorough", plan: typeof raw.plan === "string" ? raw.plan : null, log: strings(raw.log),
     waived: object(raw.waived) ? Object.fromEntries(Object.entries(raw.waived).filter(([, v]) => typeof v === "string")) as Record<string, string> : {},
-    depth: depth && [depth.before, depth.after, depth.open].every(v => typeof v === "number" && Number.isFinite(v)) ? depth as unknown as BuilderSession["depth"] : null,
+    // Counts and findings are derived again when the draft opens; retain only the comparison's starting score.
+    depth: depth && [depth.before, depth.after, depth.open].every(v => typeof v === "number" && Number.isFinite(v)) ? { before: Number(depth.before), after: Number(depth.after), open: Number(depth.open) } : null,
+    designPass,
   };
 }
