@@ -4,7 +4,7 @@ import { resolveTurnFull } from "../engine/resolve.js";
 import { foldEvents, initialState } from "../engine/state.js";
 import { TEMPLATES } from "../engine/templates/index.js";
 import { dateMoves } from "../engine/date/talk.js";
-import { scriptedLines } from "./snippets.js";
+import { clipLine, scriptedLines } from "./snippets.js";
 
 const t = TEMPLATES.find((x) => x.id === "hometown")!;
 const r = loadRuleset(t.parts.map((p, i) => ({ label: p.label, content: p.yaml, order: i }))).ruleset!;
@@ -30,4 +30,12 @@ describe("stage snippets, scripted", () => {
     const lines = scriptedLines({ kind: "dungeon", r, before: s, after: s, rec, player: "Sam", said: null, recent: [], card: "", seed: "c" });
     expect(lines[0]).toEqual({ speaker: null, text: "A rat bites Sam. We head down the stairs." });
   });
+});
+
+test("long helper lines are cut at a sentence or word, never mid-word", () => {
+  const a = "She laughs. " + "word ".repeat(100);
+  expect(clipLine("Short.")).toBe("Short.");
+  expect(clipLine(`${"x".repeat(30)}. ${"Then more words follow here. ".repeat(20)}`, 120).endsWith(".")).toBe(true);
+  const w = clipLine(a, 60);
+  expect(w.endsWith("word…")).toBe(true);
 });

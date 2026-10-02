@@ -2643,12 +2643,56 @@ function dressStage(el, style) {
 function replaceStageScene(el, html) {
   const panes = [".warp-stage-side", ".warp-stage-left", ".warp-stage-menu-col", ".warp-stage-command", ".warp-stage-main"];
   const kept = panes.map((selector) => el.querySelector(selector)?.scrollTop ?? 0);
+  const shown = el.querySelector("img.warp-stage-photo:not(.leaving)");
+  const leaving = el.querySelector("img.warp-stage-photo.leaving");
   el.innerHTML = html;
   panes.forEach((selector, i) => {
     const pane = el.querySelector(selector);
     if (pane && kept[i])
       pane.scrollTop = kept[i];
   });
+  keepPhoto(el, shown, leaving);
+}
+function keepPhoto(el, shown, leaving) {
+  const fresh = el.querySelector("img.warp-stage-photo");
+  if (!fresh || !shown && !leaving)
+    return;
+  const loaded = (img) => !!img && img.complete && img.naturalWidth > 0;
+  if (shown && shown.getAttribute("src") === fresh.getAttribute("src")) {
+    shown.style.objectFit = fresh.style.objectFit;
+    if (!shown.classList.contains("arriving"))
+      shown.style.animation = "none";
+    fresh.replaceWith(shown);
+    if (leaving)
+      shown.before(leaving);
+    return;
+  }
+  const under = loaded(shown) ? shown : loaded(leaving) ? leaving : null;
+  if (!under)
+    return;
+  under.classList.add("leaving");
+  fresh.before(under);
+  fresh.classList.add("arriving");
+  const done = () => {
+    if (!fresh.isConnected)
+      return;
+    fresh.classList.remove("arriving");
+    setTimeout(() => {
+      if (fresh.isConnected)
+        under.remove();
+    }, 650);
+  };
+  if (loaded(fresh))
+    done();
+  else {
+    fresh.addEventListener("load", done, { once: true });
+    fresh.addEventListener("error", () => {
+      if (!fresh.isConnected)
+        return;
+      fresh.remove();
+      under.classList.remove("leaving");
+    }, { once: true });
+  }
 }
 function formatStory(text) {
   const safe = esc(text.trim());
@@ -3017,6 +3061,9 @@ var STAGE_STYLES = `
 .warp-stage[data-style=scifi][data-mode=date] .warp-stage-bg::before { background: radial-gradient(circle at 20% 25%, hsl(var(--warp-hue, 330) 70% 50% / .12), transparent 40%), radial-gradient(circle at 80% 70%, rgba(94, 200, 229, .08), transparent 40%), var(--st-panel-tex, none) 0 0 / 256px, #070c13; }
 /* the date's picture: the place, with them in the middle */
 .warp-stage-photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; animation: warp-stage-in 600ms ease both; }
+.warp-stage-photo.leaving { animation: none; }
+.warp-stage-photo.arriving { opacity: 0; animation: none; }
+
 .warp-stage-bg.has-photo::before { display: none; }
 .warp-stage .warp-stage-bg.has-photo::after { background: linear-gradient(90deg, rgba(0, 0, 0, .35), transparent 28%, transparent 68%, rgba(0, 0, 0, .4)), linear-gradient(0deg, rgba(0, 0, 0, .45), transparent 38%); }
 .warp-stage:has(.has-photo) .warp-stage-menu-col > .warp-stage-kicker { color: #fff; text-shadow: 0 1px 4px rgba(0, 0, 0, .7); }

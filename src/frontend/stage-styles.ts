@@ -187,6 +187,9 @@ export const STAGE_STYLES = `
 .warp-stage[data-style=scifi][data-mode=date] .warp-stage-bg::before { background: radial-gradient(circle at 20% 25%, hsl(var(--warp-hue, 330) 70% 50% / .12), transparent 40%), radial-gradient(circle at 80% 70%, rgba(94, 200, 229, .08), transparent 40%), var(--st-panel-tex, none) 0 0 / 256px, #070c13; }
 /* the date's picture: the place, with them in the middle */
 .warp-stage-photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; animation: warp-stage-in 600ms ease both; }
+.warp-stage-photo.leaving { animation: none; }
+.warp-stage-photo.arriving { opacity: 0; animation: none; }
+
 .warp-stage-bg.has-photo::before { display: none; }
 .warp-stage .warp-stage-bg.has-photo::after { background: linear-gradient(90deg, rgba(0, 0, 0, .35), transparent 28%, transparent 68%, rgba(0, 0, 0, .4)), linear-gradient(0deg, rgba(0, 0, 0, .45), transparent 38%); }
 .warp-stage:has(.has-photo) .warp-stage-menu-col > .warp-stage-kicker { color: #fff; text-shadow: 0 1px 4px rgba(0, 0, 0, .7); }

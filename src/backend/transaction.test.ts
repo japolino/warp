@@ -587,6 +587,33 @@ test("date pictures request Cue by name only, apply fit, retry without a turn, a
   expect(f.calls).toBe(0); expect(f.narratorCalls ?? 0).toBe(0);
 });
 
+test("a new date picture replaces the old one only when it arrives; another person starts blank", async () => {
+  const f = fixture({ start: { location: "home" }, locations: { home: { name: "Garden" }, park: { name: "Park" } }, dating: true,
+    relationships: { people: { mira: { name: "Mira", schedule: [{ at: "home" }] }, ash: { name: "Ash", schedule: [{ at: "home" }] } } } });
+  f.settings.dateImages = true;
+  const session = (who: string, started: number) => ({ who, kind: "talk", at: "home", venue: null, beat: 0, beats: 4, fatigue: 0,
+    mood: 1, combo: 0, enjoy: 0, used: {}, last: null, offer: [], closing: false, started });
+  f.add("assistant", "At the garden.", { warp: { swipes: { "0": record([{ t: "dt_start", session: session("mira", 0), src: "manual" }]) } } });
+  let state = foldPath(f.r, f.messages).state;
+  await frontendMessage({ type: "retry_date_image", chatId: f.id }, f.id);
+  const req = sceneViewFor(f.id, f.r, state)!.imageRequest!;
+  await frontendMessage({ type: "cue_image_result", chatId: f.id, result: { ...req, status: "ready", imageUrl: "/api/v1/images/one", fit: "cover" } }, f.id);
+  // The scene moves on with Mira: a new picture is asked for, the old one stays up meanwhile.
+  f.add("assistant", "Later.", { warp: { swipes: { "0": record([{ t: "dt_start", session: session("mira", 60), src: "manual" }]) } } });
+  state = foldPath(f.r, f.messages).state;
+  await frontendMessage({ type: "retry_date_image", chatId: f.id }, f.id);
+  expect(sceneViewFor(f.id, f.r, state)).toMatchObject({ image: "/api/v1/images/one", imageBusy: true });
+  // A failed new picture leaves the old one up too.
+  const req2 = sceneViewFor(f.id, f.r, state)!.imageRequest!;
+  await frontendMessage({ type: "cue_image_result", chatId: f.id, result: { ...req2, status: "error", error: "busy" } }, f.id);
+  expect(sceneViewFor(f.id, f.r, state)).toMatchObject({ image: "/api/v1/images/one", imageBusy: false, imageError: "busy" });
+  // Someone else: their date doesn't open on Mira's picture.
+  f.add("assistant", "Ash arrives.", { warp: { swipes: { "0": record([{ t: "dt_start", session: session("ash", 120), src: "manual" }]) } } });
+  state = foldPath(f.r, f.messages).state;
+  await frontendMessage({ type: "retry_date_image", chatId: f.id }, f.id);
+  expect(sceneViewFor(f.id, f.r, state)).toMatchObject({ image: null, imageBusy: true });
+});
+
 // Exercise the complete End pipeline, not only live-choice cleaning.
 function liveFixture() {
   return fixture({ ...raw,

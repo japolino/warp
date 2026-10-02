@@ -53,11 +53,45 @@ export function dressStage(el: HTMLElement, style: Style) {
 export function replaceStageScene(el: HTMLElement, html: string) {
   const panes = [".warp-stage-side", ".warp-stage-left", ".warp-stage-menu-col", ".warp-stage-command", ".warp-stage-main"];
   const kept = panes.map((selector) => el.querySelector<HTMLElement>(selector)?.scrollTop ?? 0);
+  const shown = el.querySelector<HTMLImageElement>("img.warp-stage-photo:not(.leaving)");
+  const leaving = el.querySelector<HTMLImageElement>("img.warp-stage-photo.leaving");
   el.innerHTML = html;
   panes.forEach((selector, i) => {
     const pane = el.querySelector<HTMLElement>(selector);
     if (pane && kept[i]) pane.scrollTop = kept[i];
   });
+  keepPhoto(el, shown, leaving);
+}
+
+/**
+ * The date picture survives re-renders: the same picture keeps its element (no reload, no fade-in on every click),
+ * and a new one is laid over the old, which stays until the new one has loaded.
+ */
+function keepPhoto(el: HTMLElement, shown: HTMLImageElement | null, leaving: HTMLImageElement | null) {
+  const fresh = el.querySelector<HTMLImageElement>("img.warp-stage-photo");
+  if (!fresh || (!shown && !leaving)) return;
+  const loaded = (img: HTMLImageElement | null) => !!img && img.complete && img.naturalWidth > 0;
+  if (shown && shown.getAttribute("src") === fresh.getAttribute("src")) {
+    shown.style.objectFit = fresh.style.objectFit;
+    // Re-attaching would replay the fade-in; it has already been seen.
+    if (!shown.classList.contains("arriving")) shown.style.animation = "none";
+    fresh.replaceWith(shown);
+    if (leaving) shown.before(leaving);
+    return;
+  }
+  // A new picture: keep the best one already on screen beneath it until it's ready.
+  const under = loaded(shown) ? shown : loaded(leaving) ? leaving : null;
+  if (!under) return;
+  under.classList.add("leaving");
+  fresh.before(under);
+  fresh.classList.add("arriving");
+  // The new one fades in over the old, then the old goes.
+  const done = () => { if (!fresh.isConnected) return; fresh.classList.remove("arriving"); setTimeout(() => { if (fresh.isConnected) under.remove(); }, 650); };
+  if (loaded(fresh)) done();
+  else {
+    fresh.addEventListener("load", done, { once: true });
+    fresh.addEventListener("error", () => { if (!fresh.isConnected) return; fresh.remove(); under.classList.remove("leaving"); }, { once: true });
+  }
 }
 
 // ───────────────────────── the story ─────────────────────────

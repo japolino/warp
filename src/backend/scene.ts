@@ -207,8 +207,11 @@ function requestDateImage(chatId: string, userId: string | undefined, r: Ruleset
   if (!sess || !subject) return;
   if (log.imageSubject !== subject) {
     if (log.imageTimer) clearTimeout(log.imageTimer);
-    log.image = null; log.imageBusy = false; log.imageAttempted = false; log.imageError = undefined;
-    log.imageRequest = undefined; log.imageFit = undefined;
+    // The picture on screen stays up until the next one arrives; only a different person clears it.
+    const samePerson = !!log.imageSubject && (JSON.parse(log.imageSubject) as unknown[])[0] === sess.who;
+    if (!samePerson) { log.image = null; log.imageFit = undefined; }
+    log.imageBusy = false; log.imageAttempted = false; log.imageError = undefined;
+    log.imageRequest = undefined;
   }
   if (!retry && log.imageAttempted) return;
   if (log.imageTimer) clearTimeout(log.imageTimer);

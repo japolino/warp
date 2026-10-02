@@ -23017,6 +23017,16 @@ var init_inject = __esm(() => {
 });
 
 // src/backend/snippets.ts
+function clipLine(text, max = MAX_CHARS) {
+  if (text.length <= max)
+    return text;
+  const cut = text.slice(0, max - 1);
+  const sentence = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("! "), cut.lastIndexOf("? "), cut.lastIndexOf("… "));
+  if (sentence > max * 0.5)
+    return cut.slice(0, sentence + 1);
+  const word = cut.lastIndexOf(" ");
+  return `${(word > max * 0.5 ? cut.slice(0, word) : cut).replace(/[\s,;:—-]+$/, "")}…`;
+}
 function plain(text, player) {
   return fillNames(text, player).replace(/^Dungeon \([^)]*\)\s*(—\s*since last time:\s*)?/, "").replace(/\s*Now:\s*/, " ").replace(/\*/g, "").replace(/\s+/g, " ").trim();
 }
@@ -23040,8 +23050,8 @@ function scriptedLines(o) {
   for (const h of o.rec.hints) {
     const t = plain(h, o.player);
     if (t && !/^(?:This round's beats|Handle this beat)/.test(t))
-      out.push({ speaker: null, text: t.length > MAX_CHARS ? `${t.slice(0, MAX_CHARS - 1)}…` : t });
-    if (out.length >= MAX_LINES)
+      out.push({ speaker: null, text: clipLine(t, 220) });
+    if (out.length >= 3)
       break;
   }
   return out.length ? out : [{ speaker: null, text: o.kind === "date" ? "A quiet moment passes between you." : "The dungeon is quiet for a moment." }];
@@ -23085,13 +23095,13 @@ ${o.card.slice(0, 3000)}` : "",
 ${o.recent.slice(-4).map((l) => `${l.speaker ?? "(narration)"}: ${l.text}`).join(`
 `)}` : "",
     o.said ? `${o.player} now: ${o.said}` : "",
-    outcome ? `Decided by the rules (voice this):
+    outcome ? `What the rules decided (keep the outcome; how it plays out is yours):
 ${fillNames(outcome, o.player)}` : ""
   ].filter(Boolean).join(`
 
 `);
   try {
-    const raw = firstJson(await ask(SYSTEM, user, settings, userId, 15000, { temperature: 0.85 }));
+    const raw = firstJson(await ask(SYSTEM, user, settings, userId, 15000, { temperature: 0.9 }));
     const lines = Array.isArray(raw?.lines) ? raw.lines : [];
     const out = [];
     for (const l of lines.slice(0, MAX_LINES)) {
@@ -23099,7 +23109,7 @@ ${fillNames(outcome, o.player)}` : ""
       if (!text)
         continue;
       const sp = typeof l.speaker === "string" ? l.speaker.trim() : "";
-      out.push({ speaker: sp && sp.toLowerCase() !== "narration" && sp.toLowerCase() !== "narrator" ? sp.slice(0, 40) : null, text: text.slice(0, MAX_CHARS) });
+      out.push({ speaker: sp && sp.toLowerCase() !== "narration" && sp.toLowerCase() !== "narrator" ? sp.slice(0, 40) : null, text: clipLine(text) });
     }
     return out.length ? out : null;
   } catch (e) {
@@ -23142,7 +23152,7 @@ ${o.lines.slice(-10).map((l) => `${l.speaker ?? "(narration)"}: ${l.text}`).join
     return fallback;
   }
 }
-var MAX_LINES = 3, MAX_CHARS = 220, REACTION_LINES, REACTION_BEAT, pick2 = (xs, rng) => xs[Math.floor(rng() * xs.length) % xs.length], SYSTEM;
+var MAX_LINES = 4, MAX_CHARS = 400, REACTION_LINES, REACTION_BEAT, pick2 = (xs, rng) => xs[Math.floor(rng() * xs.length) % xs.length], SYSTEM;
 var init_snippets = __esm(() => {
   init_dice();
   init_state();
@@ -23165,10 +23175,12 @@ var init_snippets = __esm(() => {
     hate: ["{name}'s face goes cold.", "{name} folds their arms.", "{name} stiffens."]
   };
   SYSTEM = [
-    "You write short snippets for a visual-novel mini-game played alongside a roleplay.",
-    "What happened is already decided by the game's rules — voice it faithfully; never change or add outcomes.",
-    `Write at most ${MAX_LINES} short lines, each under 25 words: a character's spoken line, or a brief narration beat. Snappy, in character, present tense.`,
-    "Never speak or act for the player character beyond what they did.",
+    "You write the next moment of a visual-novel scene (a date, a talk, a dungeon step) played alongside a roleplay.",
+    "The game's rules have already decided this moment's outcome: how it was taken, and anything that changed. Keep that outcome.",
+    "Everything else is yours: what they say and how they say it, gestures, the place around them, callbacks to earlier lines, a question back, teasing, subtext, a small surprise.",
+    `Write 1 to ${MAX_LINES} lines and let the moment set the length: a shrug can be one line, something that lands can take a short run of narration and speech. Keep each line under about 45 words. Present tense.`,
+    "Give them their own voice from the character card: opinions, humour, quirks, history. Don't just echo the player's words back or describe the rules.",
+    "Don't put new words or actions in the player character's mouth; react to what they did.",
     "Romance and anything sexual only ever involve adults.",
     'Reply with JSON only: {"lines": [{"speaker": "Name" or "", "text": "..."}]} — speaker "" is narration.'
   ].join(`
@@ -24711,12 +24723,15 @@ function requestDateImage(chatId, userId, r, s, log, retry = false) {
   if (log.imageSubject !== subject) {
     if (log.imageTimer)
       clearTimeout(log.imageTimer);
-    log.image = null;
+    const samePerson = !!log.imageSubject && JSON.parse(log.imageSubject)[0] === sess.who;
+    if (!samePerson) {
+      log.image = null;
+      log.imageFit = undefined;
+    }
     log.imageBusy = false;
     log.imageAttempted = false;
     log.imageError = undefined;
     log.imageRequest = undefined;
-    log.imageFit = undefined;
   }
   if (!retry && log.imageAttempted)
     return;
