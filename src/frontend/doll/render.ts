@@ -6,6 +6,7 @@ import { build, type Built, type Garment, LAYER, skinShapes, tears } from "./gar
 import { animalEars, earPath, type Ears, type Expression, face, hair, type HairStyle, headPath, horns, type Horns, neckPath, tail, type Tail } from "./features.js";
 import { f, ink, light, mix, poly, rng, shade, type Pt } from "./geom.js";
 import { patternDef } from "./patterns.js";
+import { cleanLook } from "./outfits.js";
 
 export interface Look {
   body: BodyPick;
@@ -27,8 +28,10 @@ let seq = 0;
 
 const LW = 1.25;
 
-export function renderDoll(look: Look, opts: { id?: string; width?: number; height?: number; crop?: "full" | "bust" } = {}): string {
-  const uid = opts.id ?? `wd${++seq}`;
+export function renderDoll(raw: Look, opts: { id?: string; width?: number; height?: number; crop?: "full" | "bust" } = {}): string {
+  // Whatever arrives (a save, an edit in progress, a helper reply), only checked values reach the markup.
+  const look = cleanLook(raw);
+  const uid = (opts.id ?? `wd${++seq}`).replace(/[^\w-]/g, "");
   const b = buildBody(look.body);
   const defs: string[] = [];
   const g: string[] = [];

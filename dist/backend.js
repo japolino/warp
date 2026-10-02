@@ -28220,6 +28220,7 @@ function neckline(b, kind, grow) {
   };
   const n = b.s.neck;
   switch (kind) {
+    default:
     case "crew":
     case "turtle":
       return mk(n + 3, 6);
@@ -29026,6 +29027,7 @@ function cleanGarment(raw) {
     g.label = r.label.trim().slice(0, 40);
   return g;
 }
+var MAX_GARMENTS = 24;
 var SKINS = ["#fbe3d3", "#f6d7c3", "#e8b896", "#d9a37e", "#c98e65", "#a8714c", "#8d5a3b", "#6a4128", "#c9d8e8", "#9fd3a8"];
 var HAIR_COLOURS = ["#1f1a22", "#3b2a2a", "#6b3a24", "#8e3b22", "#c45a2a", "#e8c26a", "#e8e4dc", "#b8bcc6", "#e07aa8", "#6a8ad8", "#5ab88a", "#8a5ad0"];
 function defaultLook(sex = "f") {
@@ -29055,7 +29057,7 @@ function cleanLook(raw) {
     ears: pick(r.ears, EARS) ?? null,
     tail: pick(r.tail, TAILS) ?? null,
     horns: pick(r.horns, HORNS) ?? null,
-    outfit: Array.isArray(r.outfit) ? r.outfit.map(cleanGarment).filter((g) => !!g).slice(0, 16) : base.outfit
+    outfit: Array.isArray(r.outfit) ? r.outfit.map(cleanGarment).filter((g) => !!g).slice(0, MAX_GARMENTS) : base.outfit
   };
   if (r.earColour ?? r.earColor)
     look.earColour = colour(r.earColour ?? r.earColor, look.hair.colour);

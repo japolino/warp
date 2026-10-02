@@ -5,7 +5,7 @@ import type { DollRequest, HudView } from "../../shared/protocol.js";
 import { PRESETS, type Sex } from "./body.js";
 import { EARS, EXPRESSIONS, HAIR_STYLES, HORNS, TAILS } from "./features.js";
 import { FITS, type Garment, HEMS, type Kind, KINDS, LENGTHS, MATERIALS, NECKLINES, PATTERNS, SLEEVE_FITS, SLEEVES, STYLES } from "./garments.js";
-import { cleanLook, defaultLook, HAIR_COLOURS, OUTFITS, outfitFor, SKINS } from "./outfits.js";
+import { cleanLook, defaultLook, HAIR_COLOURS, MAX_GARMENTS, OUTFITS, outfitFor, SKINS } from "./outfits.js";
 import { type Look, renderDoll } from "./render.js";
 
 type Who = "you" | "them";
@@ -64,8 +64,11 @@ export interface DollLab {
 
 export function createDollLab(o: { send(m: DollRequest): void; chatId(): string | null; hud(): HudView | null; changed(): void }): DollLab {
   const st = load();
-  let busy: Who | null = null;
+  /** Who has a helper request out (both can at once). */
+  const busy = new Set<Who>();
   let text = "";
+  /** The "As data" box's text when it didn't parse, so a typo doesn't wipe it. */
+  let jsonDraft: string | null = null;
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch { /* full */ } };
   const cur = () => st[st.who];
 
@@ -90,7 +93,7 @@ export function createDollLab(o: { send(m: DollRequest): void; chatId(): string 
       const opts = OPTIONS[k];
       return opts ? row(cap(k === "sleeveFit" ? "sleeve fit" : k), sel(`outfit.${i}.${k}`, String(g[k] ?? ""), opts, undefined, "default")) : "";
     }).join("");
-    return `<details class="warp-doll-garment" data-doll-g="${i}">
+    return `<details class="warp-doll-garment" data-doll-g="${i}" data-section="doll-g-${i}">
       <summary>${colour(`outfit.${i}.colour`, g.colour)}<span class="warp-doll-gname">${esc(g.label ?? cap(g.kind))}</span><span class="warp-dim">${esc(g.kind)}</span><button class="warp-btn warp-doll-x" data-doll-del="${i}" title="Take it off">×</button></summary>
       <div class="warp-doll-fields">
         ${row("Name", `<input class="warp-input" data-doll-set="outfit.${i}.label" value="${esc(g.label ?? "")}" placeholder="${esc(cap(g.kind))}">`)}
@@ -108,12 +111,12 @@ export function createDollLab(o: { send(m: DollRequest): void; chatId(): string 
     const presets = Object.entries(PRESETS[sex]);
     const people = (o.hud()?.people ?? []).map((p) => p.name);
     const who = st.who;
-    const isBusy = busy === who;
+    const isBusy = busy.has(who);
     const doll = renderDoll(L, { id: `lab${who}` });
     return `<div class="warp-doll-lab">
       <div class="warp-doll-who" role="tablist">
         <button class="warp-tab" data-doll-who="you" aria-selected="${who === "you"}">You</button>
-        <button class="warp-tab" data-doll-who="them" aria-selected="${who === "them"}">${esc(st.themName || "Someone else")}</button>
+        <button class="warp-tab" data-doll-who="them" data-doll-them-tab aria-selected="${who === "them"}">${esc(st.themName.trim() || "Someone else")}</button>
       </div>
       <div class="warp-doll-stage" data-doll-stage>${doll}</div>
       ${st.notes[who] ? `<p class="warp-dim warp-doll-note">${esc(st.notes[who])}</p>` : ""}
@@ -151,39 +154,48 @@ export function createDollLab(o: { send(m: DollRequest): void; chatId(): string 
       <details class="warp-section" data-section="doll-outfit" open><summary>Outfit · ${L.outfit.length}</summary>
         ${row("Ready-made", `<select class="warp-input" data-doll-outfit><option value="">Pick one…</option>${Object.entries(OUTFITS).map(([k, x]) => `<option value="${k}">${esc(x.label)}</option>`).join("")}<option value="none">Nothing</option></select>`)}
         <div class="warp-doll-garments">${L.outfit.map(garmentRow).join("")}</div>
-        ${row("Add", `<select class="warp-input" data-doll-add><option value="">A garment…</option>${KINDS.map((k) => `<option value="${k}">${cap(k)}</option>`).join("")}</select>`)}
+        ${L.outfit.length >= MAX_GARMENTS ? `<p class="warp-dim">That's as many layers as the doll can wear.</p>` : ""}
+        ${L.outfit.length >= MAX_GARMENTS ? "" : row("Add", `<select class="warp-input" data-doll-add><option value="">A garment…</option>${KINDS.map((k) => `<option value="${k}">${cap(k)}</option>`).join("")}</select>`)}
         <label class="warp-doll-row"><span>Underwear when bare</span><input type="checkbox" data-doll-set="modest"${L.modest === false ? "" : " checked"}></label>
       </details>
       <details class="warp-section" data-section="doll-json"><summary>As data</summary>
         <p class="warp-dim">The look the helper writes and the game saves. Edit and apply, or paste one in.</p>
-        <textarea class="warp-input warp-doll-json" data-doll-json rows="8">${esc(JSON.stringify(L, null, 1))}</textarea>
+        <textarea class="warp-input warp-doll-json" data-doll-json rows="8">${esc(jsonDraft ?? JSON.stringify(L, null, 1))}</textarea>
         <button class="warp-btn" data-doll-json-apply>Apply</button>
       </details>
       <label class="warp-doll-row"><span>Show my doll in the status panel</span><input type="checkbox" data-doll-hud${st.hud ? " checked" : ""}></label>
     </div>`;
   }
 
-  function setPath(L: Look, path: string, raw: string | boolean) {
+  const BAD_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+  const NUMERIC = new Set(["amount", "height", "flare", "damage"]);
+
+  function setPath(L: Look, path: string, v: string | boolean) {
     const parts = path.split(".");
-    const v: unknown = typeof raw === "boolean" ? raw : raw;
-    const numeric = ["amount", "height", "length", "flare", "damage"];
-    const val = (k: string) => (typeof v === "string" && numeric.includes(k) && !(parts[0] === "outfit" && k === "length") ? Number(v) : v === "" ? undefined : v);
-    if (parts[0] === "body" && parts[1] === "sex") {
-      const sex = v as Sex;
-      const idx = Object.keys(PRESETS[L.body.sex]).indexOf(L.body.preset);
-      L.body = { sex, preset: Object.keys(PRESETS[sex])[Math.max(0, idx)] ?? "athletic" };
+    if (parts.some((k) => BAD_KEYS.has(k))) return;
+    if (path === "body.sex") {
+      const sex: Sex = v === "m" ? "m" : "f";
+      const from = Object.keys(PRESETS[L.body.sex]), to = Object.keys(PRESETS[sex]);
+      // Same position in the list (slim stays slim); height and blend carry over.
+      const map = (p: string) => to[Math.max(0, from.indexOf(p))] ?? to[0];
+      L.body = { sex, preset: map(L.body.preset), ...(L.body.height ? { height: L.body.height } : {}), ...(L.body.blend ? { blend: { preset: map(L.body.blend.preset), amount: L.body.blend.amount } } : {}) };
       return;
     }
     if (path === "body.blend.preset") { L.body.blend = v ? { preset: String(v), amount: L.body.blend?.amount ?? 0.5 } : undefined; return; }
     if (path === "modest") { L.modest = v ? undefined : false; return; }
+    const last = parts[parts.length - 1];
+    let x: unknown = v;
+    if (typeof v === "string") {
+      if (v === "") x = undefined;
+      else if (NUMERIC.has(last) || (last === "length" && parts[0] === "hair")) { const n = Number(v); x = Number.isFinite(n) ? n : undefined; }
+    }
     let obj: Record<string, unknown> = L as unknown as Record<string, unknown>;
     for (let i = 0; i < parts.length - 1; i++) {
       const k = parts[i];
-      obj = (Array.isArray(obj) ? (obj as unknown[])[Number(k)] : obj[k]) as Record<string, unknown>;
-      if (!obj) return;
+      const next = Array.isArray(obj) ? (obj as unknown[])[Number(k)] : Object.prototype.hasOwnProperty.call(obj, k) ? obj[k] : undefined;
+      if (!next || typeof next !== "object") return;
+      obj = next as Record<string, unknown>;
     }
-    const last = parts[parts.length - 1];
-    const x = val(last);
     if (x === undefined || (last === "pattern" && x === "none")) delete obj[last];
     else obj[last] = x;
     if (["ears", "tail", "horns"].includes(path) && x === undefined) (L as unknown as Record<string, unknown>)[path] = null;
@@ -191,6 +203,8 @@ export function createDollLab(o: { send(m: DollRequest): void; chatId(): string 
 
   /** Redraw just the doll (while dragging a slider), or the whole tab. */
   function refresh(root: HTMLElement, full: boolean) {
+    // Keep the saved look drawable whatever was just edited (a cleared colour, a stray value).
+    st[st.who] = cleanLook(st[st.who]);
     save();
     if (full) { o.changed(); return; }
     const stage = root.querySelector<HTMLElement>("[data-doll-stage]");
@@ -200,7 +214,7 @@ export function createDollLab(o: { send(m: DollRequest): void; chatId(): string 
   function ask(source: DollRequest["source"]) {
     const who = st.who;
     if (who === "them" && source === "profile" && !st.themName.trim()) { st.notes.them = "Type their name first."; o.changed(); return; }
-    busy = who;
+    busy.add(who);
     o.send({ type: "doll_look", chatId: o.chatId(), who: who === "you" ? "you" : st.themName.trim() || "them", source, text: source === "text" ? text : undefined, current: source === "story" ? cur() : undefined, worn: worn() });
     o.changed();
   }
@@ -211,30 +225,39 @@ export function createDollLab(o: { send(m: DollRequest): void; chatId(): string 
     const L = cur();
     if (e.type === "click") {
       const b = t.closest<HTMLElement>("[data-doll-who],[data-doll-pick],[data-doll-del],[data-doll-ask],[data-doll-json-apply]");
-      if (!b) return true;
+      // Anything else (a section opening, a checkbox) is left to the browser and the drawer.
+      if (!b) return false;
       e.preventDefault();
-      if (b.dataset.dollWho) { st.who = b.dataset.dollWho as Who; refresh(root, true); }
+      if (b.dataset.dollWho) { if (b.dataset.dollWho === "you" || b.dataset.dollWho === "them") { st.who = b.dataset.dollWho; jsonDraft = null; refresh(root, true); } }
       else if (b.dataset.dollPick) { setPath(L, b.dataset.dollPick, b.dataset.value ?? ""); refresh(root, true); }
-      else if (b.dataset.dollDel) { L.outfit.splice(Number(b.dataset.dollDel), 1); refresh(root, true); }
-      else if (b.dataset.dollAsk) ask(b.dataset.dollAsk as DollRequest["source"]);
+      else if (b.dataset.dollDel) { const i = Number(b.dataset.dollDel); if (Number.isInteger(i) && i >= 0 && i < L.outfit.length) { L.outfit.splice(i, 1); refresh(root, true); } }
+      else if (b.dataset.dollAsk) { const s = b.dataset.dollAsk; if (s === "profile" || s === "story" || s === "text") ask(s); }
       else if (b.hasAttribute("data-doll-json-apply")) {
         const ta = root.querySelector<HTMLTextAreaElement>("[data-doll-json]");
-        try { st[st.who] = cleanLook(JSON.parse(ta?.value ?? "")); st.notes[st.who] = ""; } catch { st.notes[st.who] = "That isn't valid JSON."; }
+        try { st[st.who] = cleanLook(JSON.parse(ta?.value ?? "")); st.notes[st.who] = ""; jsonDraft = null; }
+        catch { jsonDraft = ta?.value ?? ""; st.notes[st.who] = "That isn't valid JSON — fix it and apply again."; }
         refresh(root, true);
       }
       return true;
     }
     if (t.matches("[data-doll-text]")) { text = (t as HTMLTextAreaElement).value; return true; }
-    if (t.matches("[data-doll-name]")) { st.themName = (t as HTMLInputElement).value; save(); return true; }
+    if (t.matches("[data-doll-name]")) {
+      st.themName = (t as HTMLInputElement).value.slice(0, 80);
+      save();
+      const tab = root.querySelector<HTMLElement>("[data-doll-them-tab]");
+      if (tab) tab.textContent = st.themName.trim() || "Someone else";
+      return true;
+    }
+    if (t.matches("[data-doll-json]")) { jsonDraft = (t as HTMLTextAreaElement).value; return true; }
     if (t.matches("[data-doll-hud]") && e.type === "change") { st.hud = (t as HTMLInputElement).checked; refresh(root, true); return true; }
     if (t.matches("[data-doll-outfit]") && e.type === "change") {
       const k = (t as HTMLSelectElement).value;
-      if (k) { L.outfit = k === "none" ? [] : outfitFor(k, L.body.sex); refresh(root, true); }
+      if (k && (k === "none" || OUTFITS[k])) { L.outfit = k === "none" ? [] : outfitFor(k, L.body.sex); refresh(root, true); }
       return true;
     }
     if (t.matches("[data-doll-add]") && e.type === "change") {
       const k = (t as HTMLSelectElement).value as Kind;
-      if (k) { L.outfit.push({ kind: k, colour: "#5a6a8a" }); refresh(root, true); }
+      if ((KINDS as readonly string[]).includes(k) && L.outfit.length < MAX_GARMENTS) { L.outfit.push({ kind: k, colour: "#5a6a8a" }); refresh(root, true); }
       return true;
     }
     const path = t.dataset?.dollSet;
@@ -247,12 +270,12 @@ export function createDollLab(o: { send(m: DollRequest): void; chatId(): string 
       else if (e.type === "change") refresh(root, !live || path.startsWith("body.blend"));
       return true;
     }
-    return true;
+    return false;
   }
 
   function onLook(m: { who: string; look: unknown | null; note: string; name?: string; error?: string }) {
     const who: Who = m.who === "you" ? "you" : "them";
-    busy = null;
+    busy.delete(who);
     if (m.look) { st[who] = cleanLook(m.look); st.notes[who] = m.note; if (who === "them" && m.name && m.name !== "them" && !st.themName.trim()) st.themName = m.name; }
     else st.notes[who] = m.error ? `The helper couldn't do it: ${m.error}` : "";
     save();

@@ -3,7 +3,10 @@
 import type { Pattern } from "./garments.js";
 import { mix } from "./geom.js";
 
-export function patternDef(id: string, kind: Pattern, c: string, base: string): string {
+const HEX = /^#[0-9a-f]{6}$/i;
+
+export function patternDef(id: string, kind: Pattern, colour: string, baseColour: string): string {
+  const c = HEX.test(colour) ? colour : "#1d1a22", base = HEX.test(baseColour) ? baseColour : "#7a7a84";
   const tile = (w: number, h: number, body: string, extra = "") => `<pattern id="${id}" width="${w}" height="${h}" patternUnits="userSpaceOnUse"${extra}>${body}</pattern>`;
   switch (kind) {
     case "stripes": return tile(10, 10, `<rect y="0" width="10" height="4" fill="${c}"/>`);

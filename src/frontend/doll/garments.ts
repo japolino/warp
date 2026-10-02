@@ -165,6 +165,7 @@ function neckline(b: Body, kind: Neckline, grow: number): Neck {
   };
   const n = b.s.neck;
   switch (kind) {
+    default:
     case "crew": case "turtle": return mk(n + 3, 6);
     case "collar": return mk(n + 2.5, 9, true);
     case "scoop": return mk(lerp(n, b.s.shoulder, 0.45), b.bustY - b.neckBot - 6 - b.s.bust * 3);

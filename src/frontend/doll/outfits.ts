@@ -198,6 +198,9 @@ export function cleanGarment(raw: unknown): Garment | null {
   return g;
 }
 
+/** More than this and the doll is a pile of cloth; the editor stops adding at the same number. */
+export const MAX_GARMENTS = 24;
+
 export const SKINS = ["#fbe3d3", "#f6d7c3", "#e8b896", "#d9a37e", "#c98e65", "#a8714c", "#8d5a3b", "#6a4128", "#c9d8e8", "#9fd3a8"];
 export const HAIR_COLOURS = ["#1f1a22", "#3b2a2a", "#6b3a24", "#8e3b22", "#c45a2a", "#e8c26a", "#e8e4dc", "#b8bcc6", "#e07aa8", "#6a8ad8", "#5ab88a", "#8a5ad0"];
 
@@ -230,7 +233,7 @@ export function cleanLook(raw: unknown): Look {
     ears: pick(r.ears, EARS) ?? null,
     tail: pick(r.tail, TAILS) ?? null,
     horns: pick(r.horns, HORNS) ?? null,
-    outfit: Array.isArray(r.outfit) ? r.outfit.map(cleanGarment).filter((g): g is Garment => !!g).slice(0, 16) : base.outfit,
+    outfit: Array.isArray(r.outfit) ? r.outfit.map(cleanGarment).filter((g): g is Garment => !!g).slice(0, MAX_GARMENTS) : base.outfit,
   };
   if (r.earColour ?? r.earColor) look.earColour = colour(r.earColour ?? r.earColor, look.hair.colour);
   if (r.tailColour ?? r.tailColor) look.tailColour = colour(r.tailColour ?? r.tailColor, look.hair.colour);

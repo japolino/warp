@@ -5181,6 +5181,7 @@ function neckline(b, kind, grow) {
   };
   const n = b.s.neck;
   switch (kind) {
+    default:
     case "crew":
     case "turtle":
       return mk(n + 3, 6);
@@ -5987,6 +5988,7 @@ function cleanGarment(raw) {
     g.label = r.label.trim().slice(0, 40);
   return g;
 }
+var MAX_GARMENTS = 24;
 var SKINS = ["#fbe3d3", "#f6d7c3", "#e8b896", "#d9a37e", "#c98e65", "#a8714c", "#8d5a3b", "#6a4128", "#c9d8e8", "#9fd3a8"];
 var HAIR_COLOURS = ["#1f1a22", "#3b2a2a", "#6b3a24", "#8e3b22", "#c45a2a", "#e8c26a", "#e8e4dc", "#b8bcc6", "#e07aa8", "#6a8ad8", "#5ab88a", "#8a5ad0"];
 function defaultLook(sex = "f") {
@@ -6016,7 +6018,7 @@ function cleanLook(raw) {
     ears: pick(r.ears, EARS) ?? null,
     tail: pick(r.tail, TAILS) ?? null,
     horns: pick(r.horns, HORNS) ?? null,
-    outfit: Array.isArray(r.outfit) ? r.outfit.map(cleanGarment).filter((g) => !!g).slice(0, 16) : base.outfit
+    outfit: Array.isArray(r.outfit) ? r.outfit.map(cleanGarment).filter((g) => !!g).slice(0, MAX_GARMENTS) : base.outfit
   };
   if (r.earColour ?? r.earColor)
     look.earColour = colour(r.earColour ?? r.earColor, look.hair.colour);
@@ -6028,7 +6030,9 @@ function cleanLook(raw) {
 }
 
 // src/frontend/doll/patterns.ts
-function patternDef(id, kind, c, base) {
+var HEX = /^#[0-9a-f]{6}$/i;
+function patternDef(id, kind, colour, baseColour) {
+  const c = HEX.test(colour) ? colour : "#1d1a22", base = HEX.test(baseColour) ? baseColour : "#7a7a84";
   const tile = (w, h, body, extra = "") => `<pattern id="${id}" width="${w}" height="${h}" patternUnits="userSpaceOnUse"${extra}>${body}</pattern>`;
   switch (kind) {
     case "stripes":
@@ -6063,8 +6067,9 @@ function patternDef(id, kind, c, base) {
 // src/frontend/doll/render.ts
 var seq = 0;
 var LW = 1.25;
-function renderDoll(look, opts = {}) {
-  const uid = opts.id ?? `wd${++seq}`;
+function renderDoll(raw, opts = {}) {
+  const look = cleanLook(raw);
+  const uid = (opts.id ?? `wd${++seq}`).replace(/[^\w-]/g, "");
   const b = buildBody(look.body);
   const defs = [];
   const g = [];
@@ -6297,8 +6302,9 @@ function load() {
 }
 function createDollLab(o) {
   const st = load();
-  let busy = null;
+  const busy = new Set;
   let text = "";
+  let jsonDraft = null;
   const save = () => {
     try {
       localStorage.setItem(KEY, JSON.stringify(st));
@@ -6327,7 +6333,7 @@ function createDollLab(o) {
       const opts = OPTIONS[k];
       return opts ? row(cap(k === "sleeveFit" ? "sleeve fit" : k), sel(`outfit.${i}.${k}`, String(g[k] ?? ""), opts, undefined, "default")) : "";
     }).join("");
-    return `<details class="warp-doll-garment" data-doll-g="${i}">
+    return `<details class="warp-doll-garment" data-doll-g="${i}" data-section="doll-g-${i}">
       <summary>${colour(`outfit.${i}.colour`, g.colour)}<span class="warp-doll-gname">${esc3(g.label ?? cap(g.kind))}</span><span class="warp-dim">${esc3(g.kind)}</span><button class="warp-btn warp-doll-x" data-doll-del="${i}" title="Take it off">×</button></summary>
       <div class="warp-doll-fields">
         ${row("Name", `<input class="warp-input" data-doll-set="outfit.${i}.label" value="${esc3(g.label ?? "")}" placeholder="${esc3(cap(g.kind))}">`)}
@@ -6344,12 +6350,12 @@ function createDollLab(o) {
     const presets = Object.entries(PRESETS[sex]);
     const people = (o.hud()?.people ?? []).map((p) => p.name);
     const who = st.who;
-    const isBusy = busy === who;
+    const isBusy = busy.has(who);
     const doll = renderDoll(L, { id: `lab${who}` });
     return `<div class="warp-doll-lab">
       <div class="warp-doll-who" role="tablist">
         <button class="warp-tab" data-doll-who="you" aria-selected="${who === "you"}">You</button>
-        <button class="warp-tab" data-doll-who="them" aria-selected="${who === "them"}">${esc3(st.themName || "Someone else")}</button>
+        <button class="warp-tab" data-doll-who="them" data-doll-them-tab aria-selected="${who === "them"}">${esc3(st.themName.trim() || "Someone else")}</button>
       </div>
       <div class="warp-doll-stage" data-doll-stage>${doll}</div>
       ${st.notes[who] ? `<p class="warp-dim warp-doll-note">${esc3(st.notes[who])}</p>` : ""}
@@ -6387,26 +6393,29 @@ function createDollLab(o) {
       <details class="warp-section" data-section="doll-outfit" open><summary>Outfit · ${L.outfit.length}</summary>
         ${row("Ready-made", `<select class="warp-input" data-doll-outfit><option value="">Pick one…</option>${Object.entries(OUTFITS).map(([k, x]) => `<option value="${k}">${esc3(x.label)}</option>`).join("")}<option value="none">Nothing</option></select>`)}
         <div class="warp-doll-garments">${L.outfit.map(garmentRow).join("")}</div>
-        ${row("Add", `<select class="warp-input" data-doll-add><option value="">A garment…</option>${KINDS2.map((k) => `<option value="${k}">${cap(k)}</option>`).join("")}</select>`)}
+        ${L.outfit.length >= MAX_GARMENTS ? `<p class="warp-dim">That's as many layers as the doll can wear.</p>` : ""}
+        ${L.outfit.length >= MAX_GARMENTS ? "" : row("Add", `<select class="warp-input" data-doll-add><option value="">A garment…</option>${KINDS2.map((k) => `<option value="${k}">${cap(k)}</option>`).join("")}</select>`)}
         <label class="warp-doll-row"><span>Underwear when bare</span><input type="checkbox" data-doll-set="modest"${L.modest === false ? "" : " checked"}></label>
       </details>
       <details class="warp-section" data-section="doll-json"><summary>As data</summary>
         <p class="warp-dim">The look the helper writes and the game saves. Edit and apply, or paste one in.</p>
-        <textarea class="warp-input warp-doll-json" data-doll-json rows="8">${esc3(JSON.stringify(L, null, 1))}</textarea>
+        <textarea class="warp-input warp-doll-json" data-doll-json rows="8">${esc3(jsonDraft ?? JSON.stringify(L, null, 1))}</textarea>
         <button class="warp-btn" data-doll-json-apply>Apply</button>
       </details>
       <label class="warp-doll-row"><span>Show my doll in the status panel</span><input type="checkbox" data-doll-hud${st.hud ? " checked" : ""}></label>
     </div>`;
   }
-  function setPath(L, path, raw) {
+  const BAD_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+  const NUMERIC = new Set(["amount", "height", "flare", "damage"]);
+  function setPath(L, path, v) {
     const parts = path.split(".");
-    const v = typeof raw === "boolean" ? raw : raw;
-    const numeric = ["amount", "height", "length", "flare", "damage"];
-    const val = (k) => typeof v === "string" && numeric.includes(k) && !(parts[0] === "outfit" && k === "length") ? Number(v) : v === "" ? undefined : v;
-    if (parts[0] === "body" && parts[1] === "sex") {
-      const sex = v;
-      const idx = Object.keys(PRESETS[L.body.sex]).indexOf(L.body.preset);
-      L.body = { sex, preset: Object.keys(PRESETS[sex])[Math.max(0, idx)] ?? "athletic" };
+    if (parts.some((k) => BAD_KEYS.has(k)))
+      return;
+    if (path === "body.sex") {
+      const sex = v === "m" ? "m" : "f";
+      const from = Object.keys(PRESETS[L.body.sex]), to = Object.keys(PRESETS[sex]);
+      const map = (p) => to[Math.max(0, from.indexOf(p))] ?? to[0];
+      L.body = { sex, preset: map(L.body.preset), ...L.body.height ? { height: L.body.height } : {}, ...L.body.blend ? { blend: { preset: map(L.body.blend.preset), amount: L.body.blend.amount } } : {} };
       return;
     }
     if (path === "body.blend.preset") {
@@ -6417,15 +6426,24 @@ function createDollLab(o) {
       L.modest = v ? undefined : false;
       return;
     }
+    const last = parts[parts.length - 1];
+    let x = v;
+    if (typeof v === "string") {
+      if (v === "")
+        x = undefined;
+      else if (NUMERIC.has(last) || last === "length" && parts[0] === "hair") {
+        const n = Number(v);
+        x = Number.isFinite(n) ? n : undefined;
+      }
+    }
     let obj = L;
     for (let i = 0;i < parts.length - 1; i++) {
       const k = parts[i];
-      obj = Array.isArray(obj) ? obj[Number(k)] : obj[k];
-      if (!obj)
+      const next = Array.isArray(obj) ? obj[Number(k)] : Object.prototype.hasOwnProperty.call(obj, k) ? obj[k] : undefined;
+      if (!next || typeof next !== "object")
         return;
+      obj = next;
     }
-    const last = parts[parts.length - 1];
-    const x = val(last);
     if (x === undefined || last === "pattern" && x === "none")
       delete obj[last];
     else
@@ -6434,6 +6452,7 @@ function createDollLab(o) {
       L[path] = null;
   }
   function refresh(root, full) {
+    st[st.who] = cleanLook(st[st.who]);
     save();
     if (full) {
       o.changed();
@@ -6450,7 +6469,7 @@ function createDollLab(o) {
       o.changed();
       return;
     }
-    busy = who;
+    busy.add(who);
     o.send({ type: "doll_look", chatId: o.chatId(), who: who === "you" ? "you" : st.themName.trim() || "them", source, text: source === "text" ? text : undefined, current: source === "story" ? cur() : undefined, worn: worn() });
     o.changed();
   }
@@ -6462,26 +6481,36 @@ function createDollLab(o) {
     if (e.type === "click") {
       const b = t.closest("[data-doll-who],[data-doll-pick],[data-doll-del],[data-doll-ask],[data-doll-json-apply]");
       if (!b)
-        return true;
+        return false;
       e.preventDefault();
       if (b.dataset.dollWho) {
-        st.who = b.dataset.dollWho;
-        refresh(root, true);
+        if (b.dataset.dollWho === "you" || b.dataset.dollWho === "them") {
+          st.who = b.dataset.dollWho;
+          jsonDraft = null;
+          refresh(root, true);
+        }
       } else if (b.dataset.dollPick) {
         setPath(L, b.dataset.dollPick, b.dataset.value ?? "");
         refresh(root, true);
       } else if (b.dataset.dollDel) {
-        L.outfit.splice(Number(b.dataset.dollDel), 1);
-        refresh(root, true);
-      } else if (b.dataset.dollAsk)
-        ask(b.dataset.dollAsk);
-      else if (b.hasAttribute("data-doll-json-apply")) {
+        const i = Number(b.dataset.dollDel);
+        if (Number.isInteger(i) && i >= 0 && i < L.outfit.length) {
+          L.outfit.splice(i, 1);
+          refresh(root, true);
+        }
+      } else if (b.dataset.dollAsk) {
+        const s = b.dataset.dollAsk;
+        if (s === "profile" || s === "story" || s === "text")
+          ask(s);
+      } else if (b.hasAttribute("data-doll-json-apply")) {
         const ta = root.querySelector("[data-doll-json]");
         try {
           st[st.who] = cleanLook(JSON.parse(ta?.value ?? ""));
           st.notes[st.who] = "";
+          jsonDraft = null;
         } catch {
-          st.notes[st.who] = "That isn't valid JSON.";
+          jsonDraft = ta?.value ?? "";
+          st.notes[st.who] = "That isn't valid JSON — fix it and apply again.";
         }
         refresh(root, true);
       }
@@ -6492,8 +6521,15 @@ function createDollLab(o) {
       return true;
     }
     if (t.matches("[data-doll-name]")) {
-      st.themName = t.value;
+      st.themName = t.value.slice(0, 80);
       save();
+      const tab = root.querySelector("[data-doll-them-tab]");
+      if (tab)
+        tab.textContent = st.themName.trim() || "Someone else";
+      return true;
+    }
+    if (t.matches("[data-doll-json]")) {
+      jsonDraft = t.value;
       return true;
     }
     if (t.matches("[data-doll-hud]") && e.type === "change") {
@@ -6503,7 +6539,7 @@ function createDollLab(o) {
     }
     if (t.matches("[data-doll-outfit]") && e.type === "change") {
       const k = t.value;
-      if (k) {
+      if (k && (k === "none" || OUTFITS[k])) {
         L.outfit = k === "none" ? [] : outfitFor(k, L.body.sex);
         refresh(root, true);
       }
@@ -6511,7 +6547,7 @@ function createDollLab(o) {
     }
     if (t.matches("[data-doll-add]") && e.type === "change") {
       const k = t.value;
-      if (k) {
+      if (KINDS2.includes(k) && L.outfit.length < MAX_GARMENTS) {
         L.outfit.push({ kind: k, colour: "#5a6a8a" });
         refresh(root, true);
       }
@@ -6528,11 +6564,11 @@ function createDollLab(o) {
         refresh(root, !live || path.startsWith("body.blend"));
       return true;
     }
-    return true;
+    return false;
   }
   function onLook(m) {
     const who = m.who === "you" ? "you" : "them";
-    busy = null;
+    busy.delete(who);
     if (m.look) {
       st[who] = cleanLook(m.look);
       st.notes[who] = m.note;
