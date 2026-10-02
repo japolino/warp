@@ -4945,10 +4945,14 @@ function hair(b, style, length = 0.6) {
       out.back.push(back(b.head.c.y + ry * 1.25, rx * 1.38, 6));
       out.front.push(cap("full", 0.75));
       break;
-    case "messy":
-      out.back.push(back(lenY(0.12), rx * 1.5, 6));
-      out.front.push(cap("side", 0.5), ...lockPair(ry * 1.2, rx * 0.36, 10));
+    case "messy": {
+      const L = clamp(length, 0, 1);
+      out.back.push(back(lerp(b.head.c.y + ry * 0.9, lenY(0.3), L), rx * lerp(1.3, 1.55, L), 6));
+      out.front.push(cap("side", lerp(0.3, 0.55, L)));
+      if (L > 0.55)
+        out.front.push(...lockPair(ry * lerp(0.8, 1.4, L), rx * 0.34, 10));
       break;
+    }
     case "ponytail": {
       out.back.push(back(b.head.c.y + ry * 0.7, rx * 1.15, 4));
       out.back.push(poly(strand(P(b, 0.55, -0.85), { angle: 20, bend: 95, length: 60 + 130 * clamp(length, 0.2, 1), width: rx * 0.85, peak: 0.3, tip: 0.05, wave: 8 })));
@@ -5411,6 +5415,24 @@ function build(b, g) {
         out.lines.push({ d: line([{ x: cx - 4, y: b.neckBot + 2 }, { x: cx - 5, y: b.bustY + 6 }]), w: 1.2 }, { d: line([{ x: cx + 4, y: b.neckBot + 2 }, { x: cx + 5, y: b.bustY + 6 }]), w: 1.2 });
         const py = b.waistY + 6;
         out.lines.push({ d: `M${f(cx - 20)} ${f(b.hipY - 8)}L${f(cx - 14)} ${f(py)}L${f(cx + 14)} ${f(py)}L${f(cx + 20)} ${f(b.hipY - 8)}`, w: 1.1 });
+      }
+      if (style !== "vest") {
+        const sleeveT = SLEEVE_T[g.sleeves ?? "long"];
+        const yEnd = Math.min(hemY(b, style === "coat" ? "hip" : g.hem ?? "hip"), along(b.arm, sleeveT).y);
+        for (const s of [1, -1]) {
+          const arm = s === 1 ? b.arm : mirrorChain(b, b.arm);
+          const inner = [];
+          for (let k = 0.08;k <= sleeveT + 0.000000001; k += 0.06) {
+            const j = along(arm, k);
+            if (j.y <= yEnd)
+              inner.push({ x: j.x - s * (j.r + grow), y: j.y });
+          }
+          if (inner.length < 2)
+            continue;
+          const side = inner.map((p) => ({ x: cx + s * (widthAt(b, p.y) + grow - 1), y: p.y })).reverse();
+          pieces.push([...inner, ...side]);
+          out.lines.push({ d: line(inner.map((p) => ({ x: p.x + s * 0.5, y: p.y }))), c: "shade", w: 1.1 });
+        }
       }
       out.pieces.push(...pieces);
       out.lines.push(...t.lines);
@@ -5946,7 +5968,7 @@ function cleanLook(raw) {
   const look = {
     body,
     skin: colour(r.skin, base.skin),
-    hair: { style: pick(hairR.style, HAIR_STYLES) ?? base.hair.style, colour: colour(hairR.colour ?? hairR.color, base.hair.colour), length: num(hairR.length, 0, 1) ?? 0.6 },
+    hair: { style: pick(hairR.style, HAIR_STYLES) ?? base.hair.style, colour: colour(hairR.colour ?? hairR.color, base.hair.colour), length: num(hairR.length, 0, 1) ?? (sex === "m" ? 0.3 : 0.6) },
     eyes: colour(r.eyes, base.eyes),
     expression: pick(r.expression, EXPRESSIONS) ?? "neutral",
     ears: pick(r.ears, EARS) ?? null,
@@ -6124,12 +6146,11 @@ function renderDoll(look, opts = {}) {
       defs.push(patternDef(pat, x.pattern, x.patternColour ?? (x.pattern === "fishnet" ? "#1d1720" : "#1d1a22"), base));
     }
     let mask;
-    if (x.damage && x.damage > 0) {
-      const holes = tears(bt.pieces, x.damage, rng2(`${x.kind}:${x.label ?? ""}:${base}`));
-      if (holes.length) {
-        mask = id("dm");
-        defs.push(`<mask id="${mask}" maskUnits="userSpaceOnUse" x="-50" y="-50" width="340" height="640"><rect x="-50" y="-50" width="340" height="640" fill="#fff"/>${holes.map((h) => `<path d="${poly(h)}" fill="#000"/>`).join("")}</mask>`);
-      }
+    const scuffs = x.kind === "shoes" || x.kind === "gloves" || x.kind === "hat" || x.kind === "armor" || x.material === "metal" || x.material === "leather";
+    const holes = x.damage && x.damage > 0 ? tears(bt.pieces, x.damage, rng2(`${x.kind}:${x.label ?? ""}:${base}`)) : [];
+    if (holes.length && !scuffs) {
+      mask = id("dm");
+      defs.push(`<mask id="${mask}" maskUnits="userSpaceOnUse" x="-50" y="-50" width="340" height="640"><rect x="-50" y="-50" width="340" height="640" fill="#fff"/>${holes.map((h) => `<path d="${poly(h)}" fill="#000"/>`).join("")}</mask>`);
     }
     const metal = x.material === "metal";
     const sheer = x.material === "sheer" || x.pattern === "fishnet";
@@ -6145,6 +6166,11 @@ function renderDoll(look, opts = {}) {
     const c2 = x.colour2 ?? (metal ? "#c9a54a" : x.kind === "shoes" || x.kind === "belt" ? light(base, 0.6) : shade(base, 0.35));
     if (bt.trim.length)
       paint(bt.trim, c2, { line: ink(c2), shadeAmt: 0.15 });
+    if (holes.length && scuffs) {
+      const clip = id("sc");
+      defs.push(`<clipPath id="${clip}">${bt.pieces.map((p) => `<path d="${poly(p)}"/>`).join("")}</clipPath>`);
+      g.push(`<g clip-path="url(#${clip})" fill="${light(base, 0.35)}" opacity=".55">${holes.map((h) => `<path d="${poly(h)}"/>`).join("")}</g>`);
+    }
     for (const l of bt.lines) {
       const c = l.c === "trim" ? c2 : l.c === "shade" ? shade(base, 0.35) : l.c === "light" ? light(base, 0.5) : lc;
       stroke(l.d, c, l.w ?? 1, mask ? ` mask="url(#${mask})"` : "");

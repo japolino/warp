@@ -377,6 +377,21 @@ export function build(b: Body, g: Garment): Built {
         const py = b.waistY + 6;
         out.lines.push({ d: `M${f(cx - 20)} ${f(b.hipY - 8)}L${f(cx - 14)} ${f(py)}L${f(cx + 14)} ${f(py)}L${f(cx + 20)} ${f(b.hipY - 8)}`, w: 1.1 });
       }
+      // Close the slit between a loose sleeve and the body: coats hang straight down from the armpit.
+      if (style !== "vest") {
+        const sleeveT = SLEEVE_T[g.sleeves ?? "long"];
+        const yEnd = Math.min(hemY(b, style === "coat" ? "hip" : g.hem ?? "hip"), along(b.arm, sleeveT).y);
+        for (const s of [1, -1] as const) {
+          const arm = s === 1 ? b.arm : mirrorChain(b, b.arm);
+          const inner: Pt[] = [];
+          for (let k = 0.08; k <= sleeveT + 1e-9; k += 0.06) { const j = along(arm, k); if (j.y <= yEnd) inner.push({ x: j.x - s * (j.r + grow), y: j.y }); }
+          if (inner.length < 2) continue;
+          // Follow the body's side at every height, so the waist's curve leaves no gap.
+          const side = inner.map((p) => ({ x: cx + s * (widthAt(b, p.y) + grow - 1), y: p.y })).reverse();
+          pieces.push([...inner, ...side]);
+          out.lines.push({ d: line(inner.map((p) => ({ x: p.x + s * 0.5, y: p.y }))), c: "shade", w: 1.1 });
+        }
+      }
       out.pieces.push(...pieces); out.lines.push(...t.lines); out.handsOver = t.handsOver;
       break;
     }

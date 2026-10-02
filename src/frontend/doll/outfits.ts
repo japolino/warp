@@ -211,7 +211,7 @@ export function cleanLook(raw: unknown): Look {
   const look: Look = {
     body,
     skin: colour(r.skin, base.skin),
-    hair: { style: pick(hairR.style, HAIR_STYLES) ?? base.hair.style, colour: colour(hairR.colour ?? hairR.color, base.hair.colour), length: num(hairR.length, 0, 1) ?? 0.6 },
+    hair: { style: pick(hairR.style, HAIR_STYLES) ?? base.hair.style, colour: colour(hairR.colour ?? hairR.color, base.hair.colour), length: num(hairR.length, 0, 1) ?? (sex === "m" ? 0.3 : 0.6) },
     eyes: colour(r.eyes, base.eyes),
     expression: pick(r.expression, EXPRESSIONS) ?? "neutral",
     ears: pick(r.ears, EARS) ?? null,

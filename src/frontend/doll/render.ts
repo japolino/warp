@@ -144,12 +144,12 @@ export function renderDoll(look: Look, opts: { id?: string; width?: number; heig
       defs.push(patternDef(pat, x.pattern, x.patternColour ?? (x.pattern === "fishnet" ? "#1d1720" : "#1d1a22"), base));
     }
     let mask: string | undefined;
-    if (x.damage && x.damage > 0) {
-      const holes = tears(bt.pieces, x.damage, rng(`${x.kind}:${x.label ?? ""}:${base}`));
-      if (holes.length) {
-        mask = id("dm");
-        defs.push(`<mask id="${mask}" maskUnits="userSpaceOnUse" x="-50" y="-50" width="340" height="640"><rect x="-50" y="-50" width="340" height="640" fill="#fff"/>${holes.map((h) => `<path d="${poly(h)}" fill="#000"/>`).join("")}</mask>`);
-      }
+    // Cloth tears open; shoes, gloves, hats and armour get scuffed instead.
+    const scuffs = x.kind === "shoes" || x.kind === "gloves" || x.kind === "hat" || x.kind === "armor" || x.material === "metal" || x.material === "leather";
+    const holes = x.damage && x.damage > 0 ? tears(bt.pieces, x.damage, rng(`${x.kind}:${x.label ?? ""}:${base}`)) : [];
+    if (holes.length && !scuffs) {
+      mask = id("dm");
+      defs.push(`<mask id="${mask}" maskUnits="userSpaceOnUse" x="-50" y="-50" width="340" height="640"><rect x="-50" y="-50" width="340" height="640" fill="#fff"/>${holes.map((h) => `<path d="${poly(h)}" fill="#000"/>`).join("")}</mask>`);
     }
     const metal = x.material === "metal";
     const sheer = x.material === "sheer" || x.pattern === "fishnet";
@@ -163,6 +163,11 @@ export function renderDoll(look: Look, opts: { id?: string; width?: number; heig
     if (bt.pieces.length) paint(bt.pieces, fill, { line: lc, pattern: pat, mask, sheer, gloss: metal || x.material === "leather" || x.material === "silk", shadeAmt: metal ? 0 : x.material === "silk" ? 0.18 : 0.24 });
     const c2 = x.colour2 ?? (metal ? "#c9a54a" : x.kind === "shoes" || x.kind === "belt" ? light(base, 0.6) : shade(base, 0.35));
     if (bt.trim.length) paint(bt.trim, c2, { line: ink(c2), shadeAmt: 0.15 });
+    if (holes.length && scuffs) {
+      const clip = id("sc");
+      defs.push(`<clipPath id="${clip}">${bt.pieces.map((p) => `<path d="${poly(p)}"/>`).join("")}</clipPath>`);
+      g.push(`<g clip-path="url(#${clip})" fill="${light(base, 0.35)}" opacity=".55">${holes.map((h) => `<path d="${poly(h)}"/>`).join("")}</g>`);
+    }
     for (const l of bt.lines) {
       const c = l.c === "trim" ? c2 : l.c === "shade" ? shade(base, 0.35) : l.c === "light" ? light(base, 0.5) : lc;
       stroke(l.d, c, l.w ?? 1, mask ? ` mask="url(#${mask})"` : "");

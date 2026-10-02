@@ -191,10 +191,14 @@ export function hair(b: Body, style: HairStyle, length = 0.6): HairLayers {
       out.back.push(back(b.head.c.y + ry * 1.25, rx * 1.38, 6));
       out.front.push(cap("full", 0.75));
       break;
-    case "messy":
-      out.back.push(back(lenY(0.12), rx * 1.5, 6));
-      out.front.push(cap("side", 0.5), ...lockPair(ry * 1.2, rx * 0.36, 10));
+    case "messy": {
+      // Length decides it: chin-length tousled, out to past the shoulders with locks in front.
+      const L = clamp(length, 0, 1);
+      out.back.push(back(lerp(b.head.c.y + ry * 0.9, lenY(0.3), L), rx * lerp(1.3, 1.55, L), 6));
+      out.front.push(cap("side", lerp(0.3, 0.55, L)));
+      if (L > 0.55) out.front.push(...lockPair(ry * lerp(0.8, 1.4, L), rx * 0.34, 10));
       break;
+    }
     case "ponytail": {
       out.back.push(back(b.head.c.y + ry * 0.7, rx * 1.15, 4));
       out.back.push(poly(strand(P(b, 0.55, -0.85), { angle: 20, bend: 95, length: 60 + 130 * clamp(length, 0.2, 1), width: rx * 0.85, peak: 0.3, tip: 0.05, wave: 8 })));
