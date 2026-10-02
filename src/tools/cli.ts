@@ -6,7 +6,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { checkReport, checkText, guideMarkdown, guideText, previewText, readPatch, simulateText, templateList, templateText } from "./rulebook-tools.js";
 
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 
 const USAGE = `warp-rulebook — write Warp rulebooks with any tool
 

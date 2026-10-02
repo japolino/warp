@@ -19989,7 +19989,7 @@ ${issues.filter((i) => i.level === "error").map((i) => `  - ${i.where}: ${i.mess
 }
 
 // src/tools/cli.ts
-var VERSION = "0.3.0";
+var VERSION = "0.4.0";
 var USAGE = `warp-rulebook — write Warp rulebooks with any tool
 
   guide [--section workflow|format|design]   The authoring guide (format reference + design guide)
