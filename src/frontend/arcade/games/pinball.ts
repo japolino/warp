@@ -2,7 +2,8 @@
 // that raise the multiplier when all are lit. Three balls (more with lives); a ball
 // saver catches early drains. Score enough points before the last ball drains.
 
-import { clamp, FONT_NUM, FONT_UI, Floaters, Sparks, withMusic, type GameDef, type Kit } from "../kit.js";
+import { clamp, Floaters, rrect, Sparks, withMusic, type GameDef, type Kit } from "../kit.js";
+import { glow, lift, paint, unlift } from "../themes.js";
 import { backing } from "../synth.js";
 
 type Vec = { x: number; y: number };
@@ -37,7 +38,6 @@ function table(): Seg[] {
 export const PINBALL: GameDef = {
   id: "pinball",
   title: "Pinball",
-  theme: { bg: "#0c0716", bg2: "#2b1036", accent: "#ff8a3d", accent2: "#3de1ff" },
   howTo: [
     "Hold Space to pull the plunger and let go to launch.",
     "Flip to keep the ball alive. Bumpers and slingshots score; light all three top lanes to raise the multiplier.",
@@ -63,7 +63,14 @@ export const PINBALL: GameDef = {
     let points = 0, mult = 1, timeLeft = limit, plunge = 0, pulling = false, over = false, launched = 0, drained = 0, bestBall = 0, ballPts = 0;
     const c = kit.canvas();
     const g = c.g;
-    const sparks = new Sparks(), floats = new Floaters();
+    const th = kit.theme;
+    const sparks = new Sparks(), floats = new Floaters(th.style === "scifi" ? th.fontNum : th.fontDisplay, th.style === "scifi" ? null : "rgba(0,0,0,.45)");
+    // What each kind of hit looks like in this look.
+    const hue = th.style === "medieval"
+      ? { sling: "#e9c46a", bump: "#e9c46a", lane: "#e9c46a", bonus: "#f3e7c8", target: "#f3e7c8" }
+      : th.style === "modern"
+        ? { sling: "#2f6fe4", bump: "#ff5a36", lane: "#22a06b", bonus: "#ffb020", target: "#8e5cf0" }
+        : { sling: th.accent, bump: th.accent2, lane: th.good, bonus: th.gold, target: "#c792ea" };
     const trail: Vec[] = [];
 
     const tip = (f: Flipper): Vec => ({ x: f.pivot.x + Math.cos(f.ang) * f.len * f.side, y: f.pivot.y + Math.sin(f.ang) * f.len });
@@ -95,7 +102,7 @@ export const PINBALL: GameDef = {
       if (vn < 0) {
         const e = s.e ?? 0.45;
         ball.vx -= (1 + e) * vn * nx; ball.vy -= (1 + e) * vn * ny;
-        if (s.kick) { ball.vx += nx * s.kick; ball.vy += ny * s.kick; kit.synth.fx("bumper", 4); add(50, { x: px, y: py }, "#3de1ff"); sparks.burst(px, py, "#3de1ff", 8, 180); }
+        if (s.kick) { ball.vx += nx * s.kick; ball.vy += ny * s.kick; kit.synth.fx("bumper", 4); add(50, { x: px, y: py }, hue.sling); sparks.burst(px, py, hue.sling, 8, 160, 2.5); }
       }
       return true;
     };
@@ -126,8 +133,8 @@ export const PINBALL: GameDef = {
           ball.vx += nx * 380; ball.vy += ny * 380;
           b.lit = 1;
           kit.synth.fx("bumper", bumpers.indexOf(b) * 3);
-          sparks.burst(ball.x - nx * BR, ball.y - ny * BR, "#ff8a3d", 10, 200);
-          add(100, { x: b.x, y: b.y - b.r }, "#ff8a3d");
+          sparks.burst(ball.x - nx * BR, ball.y - ny * BR, hue.bump, 8, 170, 2.5);
+          add(100, { x: b.x, y: b.y - b.r }, hue.bump);
         }
       }
       for (const f of flippers) {
@@ -143,12 +150,12 @@ export const PINBALL: GameDef = {
       for (const l of lanes) {
         if (Math.hypot(ball.x - l.x, ball.y - l.y) < 16 && l.flash <= 0) {
           l.flash = 0.6;
-          if (!l.on) { l.on = true; kit.synth.fx("target"); add(250, l, "#7cff6b"); }
+          if (!l.on) { l.on = true; kit.synth.fx("target"); add(250, l, hue.lane); }
           if (lanes.every((x) => x.on)) {
             for (const x of lanes) x.on = false;
             mult = Math.min(5, mult + 1);
             kit.banner(`Multiplier ×${mult}`, "gold"); kit.synth.fx("combo");
-            add(1000, { x: 200, y: 120 }, "#ffe066");
+            add(1000, { x: 200, y: 120 }, hue.bonus);
           }
         }
       }
@@ -157,7 +164,7 @@ export const PINBALL: GameDef = {
           tg.hit = 0.8;
           ball.vx = -ball.vx * 0.8 + (tg.x < 200 ? 200 : -200);
           kit.synth.fx("target", 5);
-          add(500, tg, "#ff5fa2");
+          add(500, tg, hue.target);
         }
       }
       if (ball.y > TH + 30) drain();
@@ -254,72 +261,174 @@ export const PINBALL: GameDef = {
       draw();
     });
 
+    function tablePath() {
+      g.beginPath(); g.moveTo(18, 720); g.lineTo(18, 150); g.arc(200, 150, 182, Math.PI, 0); g.lineTo(382, 720); g.closePath();
+    }
+
+    function playfield() {
+      if (th.style === "medieval") {
+        // An oak cabinet with a painted parchment field: a compass rose and a dragon's coil in faded ink.
+        g.save(); tablePath(); g.clip();
+        paint(g, "parchment", th, 0, 0, TW, TH);
+        g.strokeStyle = "rgba(90, 61, 28, .18)"; g.lineWidth = 1.5;
+        for (let k = 0; k < 16; k++) { const a = (k * Math.PI) / 8; g.beginPath(); g.moveTo(200, 400); g.lineTo(200 + Math.cos(a) * (k % 2 ? 60 : 110), 400 + Math.sin(a) * (k % 2 ? 60 : 110)); g.stroke(); }
+        g.beginPath(); g.arc(200, 400, 70, 0, Math.PI * 2); g.stroke();
+        g.strokeStyle = "rgba(158, 43, 31, .14)"; g.lineWidth = 6;
+        g.beginPath(); for (let k = 0; k < 120; k++) { const u = k / 119; g.lineTo(200 + Math.sin(u * 9) * 120 * (1 - u * 0.5), 200 + u * 340); } g.stroke();
+        g.restore();
+        g.strokeStyle = "#4a2e16"; g.lineWidth = 10; tablePath(); g.stroke();
+      } else if (th.style === "modern") {
+        g.save(); tablePath(); g.clip();
+        const bg = g.createLinearGradient(0, 0, 0, TH);
+        bg.addColorStop(0, "#fbfaf7"); bg.addColorStop(1, "#ece9e2");
+        g.fillStyle = bg; g.fillRect(0, 0, TW, TH);
+        // Painted shapes: soft arcs and a big chevron, like table art.
+        g.fillStyle = "rgba(255, 90, 54, .08)"; g.beginPath(); g.arc(200, 260, 150, 0, Math.PI * 2); g.fill();
+        g.fillStyle = "rgba(47, 111, 228, .07)"; g.beginPath(); g.moveTo(80, 600); g.lineTo(200, 470); g.lineTo(320, 600); g.lineTo(290, 600); g.lineTo(200, 500); g.lineTo(110, 600); g.closePath(); g.fill();
+        g.restore();
+      } else {
+        g.save(); tablePath(); g.clip();
+        g.fillStyle = "#08101a"; g.fillRect(0, 0, TW, TH);
+        g.strokeStyle = "rgba(120, 170, 210, .06)"; g.lineWidth = 1;
+        for (let x = 0; x < TW; x += 20) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, TH); g.stroke(); }
+        for (let y = 0; y < TH; y += 20) { g.beginPath(); g.moveTo(0, y); g.lineTo(TW, y); g.stroke(); }
+        g.strokeStyle = "rgba(94, 200, 229, .12)"; g.beginPath(); g.arc(200, 400, 90, 0, Math.PI * 2); g.stroke();
+        g.restore();
+      }
+    }
+
+    function walls() {
+      g.lineCap = "round"; g.lineJoin = "round";
+      for (const sg of segs) {
+        const line = () => { g.beginPath(); g.moveTo(sg.a.x, sg.a.y); g.lineTo(sg.b.x, sg.b.y); g.stroke(); };
+        if (th.style === "medieval") {
+          if (sg.kind === "sling") { g.strokeStyle = "#6b1a12"; g.lineWidth = 8; line(); g.strokeStyle = "#b48a2c"; g.lineWidth = 3; line(); }
+          else { g.strokeStyle = "#5a3d1c"; g.lineWidth = 6; line(); g.strokeStyle = "#c9952f"; g.lineWidth = 2.5; line(); }
+        } else if (th.style === "modern") {
+          if (sg.kind === "sling") { g.strokeStyle = hue.sling; g.lineWidth = 7; line(); }
+          else { g.strokeStyle = "#1d1d1f"; g.lineWidth = 4; line(); }
+        } else {
+          g.strokeStyle = sg.kind === "sling" ? th.accent2 : th.accent; g.lineWidth = sg.kind === "sling" ? 3 : 1.5;
+          glow(g, th, g.strokeStyle as string, 6); line(); g.shadowBlur = 0;
+        }
+      }
+    }
+
+    function bumper(b: Bumper) {
+      const r = b.r * (1 + b.lit * 0.1);
+      if (th.style === "medieval") {
+        // A round shield: quartered red and blue, a gold rim and boss.
+        lift(g, th, 1.5);
+        g.fillStyle = "#c9952f"; g.beginPath(); g.arc(b.x, b.y, r + 3, 0, Math.PI * 2); g.fill(); unlift(g);
+        const q = ["#9e2b1f", "#2c4a7a", "#9e2b1f", "#2c4a7a"];
+        for (let k = 0; k < 4; k++) { g.fillStyle = q[k]; g.beginPath(); g.moveTo(b.x, b.y); g.arc(b.x, b.y, r, (k * Math.PI) / 2, ((k + 1) * Math.PI) / 2); g.closePath(); g.fill(); }
+        g.fillStyle = b.lit > 0 ? "#f6dc8a" : "#c9952f"; g.beginPath(); g.arc(b.x, b.y, r * 0.3, 0, Math.PI * 2); g.fill();
+        g.strokeStyle = "#5a3d1c"; g.lineWidth = 1; g.stroke();
+      } else if (th.style === "modern") {
+        lift(g, th, 2);
+        g.fillStyle = hue.bump; g.beginPath(); g.arc(b.x, b.y, r, 0, Math.PI * 2); g.fill(); unlift(g);
+        g.fillStyle = "#fff"; g.beginPath(); g.arc(b.x, b.y - 2, r * 0.62, 0, Math.PI * 2); g.fill();
+        g.fillStyle = b.lit > 0 ? hue.bump : "#ece9e2"; g.beginPath(); g.arc(b.x, b.y - 2, r * 0.32, 0, Math.PI * 2); g.fill();
+      } else {
+        g.fillStyle = b.lit > 0 ? "rgba(242, 165, 65, .3)" : "rgba(242, 165, 65, .08)";
+        g.beginPath(); for (let k = 0; k < 6; k++) { const a = (k * Math.PI) / 3 + Math.PI / 6; g.lineTo(b.x + Math.cos(a) * r, b.y + Math.sin(a) * r); } g.closePath(); g.fill();
+        glow(g, th, th.accent2, 8);
+        g.strokeStyle = th.accent2; g.lineWidth = 1.5; g.stroke(); g.shadowBlur = 0;
+        g.beginPath(); g.arc(b.x, b.y, r * 0.38, 0, Math.PI * 2); g.stroke();
+      }
+    }
+
+    function flipper(f: Flipper) {
+      const tp = tip(f);
+      if (th.style === "medieval") {
+        lift(g, th, 1.5);
+        g.strokeStyle = "#3b2414"; g.lineWidth = 16; g.beginPath(); g.moveTo(f.pivot.x, f.pivot.y); g.lineTo(tp.x, tp.y); g.stroke(); unlift(g);
+        g.strokeStyle = "#7a5230"; g.lineWidth = 11; g.beginPath(); g.moveTo(f.pivot.x, f.pivot.y); g.lineTo(tp.x, tp.y); g.stroke();
+        g.fillStyle = "#c9952f"; g.beginPath(); g.arc(f.pivot.x, f.pivot.y, 5, 0, Math.PI * 2); g.fill();
+      } else if (th.style === "modern") {
+        lift(g, th, 1.5);
+        g.strokeStyle = "#1d1d1f"; g.lineWidth = 16; g.beginPath(); g.moveTo(f.pivot.x, f.pivot.y); g.lineTo(tp.x, tp.y); g.stroke(); unlift(g);
+        g.strokeStyle = "#ffffff"; g.lineWidth = 10; g.beginPath(); g.moveTo(f.pivot.x, f.pivot.y); g.lineTo(tp.x, tp.y); g.stroke();
+      } else {
+        g.strokeStyle = "#0d1724"; g.lineWidth = 14; g.beginPath(); g.moveTo(f.pivot.x, f.pivot.y); g.lineTo(tp.x, tp.y); g.stroke();
+        glow(g, th, th.accent, f.pressed ? 10 : 4);
+        g.strokeStyle = th.accent; g.lineWidth = 2;
+        const nx = -(tp.y - f.pivot.y), ny = tp.x - f.pivot.x, nl = Math.hypot(nx, ny) || 1;
+        for (const sg of [-1, 1]) { g.beginPath(); g.moveTo(f.pivot.x + (nx / nl) * 6 * sg, f.pivot.y + (ny / nl) * 6 * sg); g.lineTo(tp.x + (nx / nl) * 4 * sg, tp.y + (ny / nl) * 4 * sg); g.stroke(); }
+        g.shadowBlur = 0;
+      }
+    }
+
     function draw() {
       g.clearRect(0, 0, c.w, c.h);
+      if (th.style === "medieval") paint(g, "wood", th, 0, 0, c.w, c.h);
+      else if (th.style === "modern") { g.fillStyle = "#e4e1d9"; g.fillRect(0, 0, c.w, c.h); }
+      else { g.fillStyle = "#05080d"; g.fillRect(0, 0, c.w, c.h); }
       const s = Math.min((c.h - 16) / TH, (c.w - 16) / TW);
       const ox = (c.w - TW * s) / 2, oy = (c.h - TH * s) / 2;
       g.save(); g.translate(ox, oy); g.scale(s, s);
-      // Playfield.
-      const bg = g.createLinearGradient(0, 0, 0, TH);
-      bg.addColorStop(0, "#2a0f3d"); bg.addColorStop(0.6, "#160a26"); bg.addColorStop(1, "#0a0612");
-      g.fillStyle = bg;
-      g.beginPath(); g.moveTo(18, 720); g.lineTo(18, 150); g.arc(200, 150, 182, Math.PI, 0); g.lineTo(382, 720); g.closePath(); g.fill();
-      // Decorative arrows and stars.
-      g.fillStyle = "rgba(255,138,61,.08)";
-      for (let i = 0; i < 5; i++) { g.beginPath(); g.moveTo(200, 400 + i * 34); g.lineTo(184, 420 + i * 34); g.lineTo(216, 420 + i * 34); g.fill(); }
-      // Walls.
-      g.lineCap = "round"; g.lineJoin = "round";
-      for (const sg of segs) {
-        g.strokeStyle = sg.kind === "sling" ? "#3de1ff" : "#c9b7ff"; g.lineWidth = sg.kind === "sling" ? 5 : 4;
-        g.shadowColor = sg.kind === "sling" ? "#3de1ff" : "#8f6bff"; g.shadowBlur = 10;
-        g.beginPath(); g.moveTo(sg.a.x, sg.a.y); g.lineTo(sg.b.x, sg.b.y); g.stroke();
-      }
-      g.shadowBlur = 0;
-      // Lanes, targets, bumpers.
+      playfield();
+      walls();
+      // Lanes: studs that light up (candles in the medieval look).
       for (const l of lanes) {
-        g.fillStyle = l.on ? "#7cff6b" : "rgba(124,255,107,.15)"; g.shadowColor = "#7cff6b"; g.shadowBlur = l.on ? 16 : 0;
-        g.beginPath(); g.arc(l.x, l.y, 8 + l.flash * 6, 0, Math.PI * 2); g.fill(); g.shadowBlur = 0;
+        if (th.style === "medieval") {
+          g.fillStyle = "#efe4c8"; g.fillRect(l.x - 3, l.y - 4, 6, 14);
+          if (l.on) { g.fillStyle = "#e9a43a"; g.beginPath(); g.ellipse(l.x, l.y - 8, 3, 6 + l.flash * 4, 0, 0, Math.PI * 2); g.fill(); }
+        } else if (th.style === "modern") {
+          g.fillStyle = l.on ? hue.lane : "#d9d6cf"; g.beginPath(); g.arc(l.x, l.y, 7 + l.flash * 4, 0, Math.PI * 2); g.fill();
+        } else {
+          g.strokeStyle = l.on ? th.good : "rgba(95, 211, 160, .3)"; g.lineWidth = 1.5;
+          g.beginPath(); g.moveTo(l.x, l.y - 8); g.lineTo(l.x + 7, l.y); g.lineTo(l.x, l.y + 8); g.lineTo(l.x - 7, l.y); g.closePath(); g.stroke();
+          if (l.on) { g.fillStyle = "rgba(95, 211, 160, .4)"; g.fill(); }
+        }
       }
-      for (const t of targets) {
-        g.fillStyle = t.hit > 0 ? "#fff" : "#ff5fa2"; g.shadowColor = "#ff5fa2"; g.shadowBlur = 12;
-        g.fillRect(t.x - 5, t.y - 22, 10, 44); g.shadowBlur = 0;
+      for (const tg of targets) {
+        const hit = tg.hit > 0;
+        if (th.style === "medieval") { g.fillStyle = hit ? "#f6dc8a" : "#6b4426"; g.fillRect(tg.x - 6, tg.y - 22, 12, 44); g.strokeStyle = "#c9952f"; g.lineWidth = 1.5; g.strokeRect(tg.x - 6, tg.y - 22, 12, 44); }
+        else if (th.style === "modern") { g.fillStyle = hit ? "#1d1d1f" : hue.target; rrect(g, tg.x - 6, tg.y - 22, 12, 44, 6); g.fill(); }
+        else { g.strokeStyle = hue.target; g.lineWidth = 1.5; g.strokeRect(tg.x - 5, tg.y - 22, 10, 44); if (hit) { g.fillStyle = "rgba(199, 146, 234, .4)"; g.fillRect(tg.x - 5, tg.y - 22, 10, 44); } }
       }
-      for (const b of bumpers) {
-        g.fillStyle = "#3a1530"; g.beginPath(); g.arc(b.x, b.y, b.r + 4, 0, Math.PI * 2); g.fill();
-        const grd = g.createRadialGradient(b.x - 6, b.y - 6, 3, b.x, b.y, b.r);
-        grd.addColorStop(0, b.lit > 0 ? "#fff" : "#ffc08a"); grd.addColorStop(1, "#ff8a3d");
-        g.fillStyle = grd; g.shadowColor = "#ff8a3d"; g.shadowBlur = 10 + b.lit * 30;
-        g.beginPath(); g.arc(b.x, b.y, b.r * (1 + b.lit * 0.12), 0, Math.PI * 2); g.fill(); g.shadowBlur = 0;
-        g.strokeStyle = "#fff"; g.lineWidth = 2; g.beginPath(); g.arc(b.x, b.y, b.r * 0.55, 0, Math.PI * 2); g.stroke();
-      }
-      // Flippers.
-      for (const f of flippers) {
-        const t = tip(f);
-        g.strokeStyle = "#ffe066"; g.lineWidth = 16; g.shadowColor = "#ffe066"; g.shadowBlur = f.pressed ? 18 : 6;
-        g.beginPath(); g.moveTo(f.pivot.x, f.pivot.y); g.lineTo(t.x, t.y); g.stroke();
-        g.strokeStyle = "#fff6c8"; g.lineWidth = 6; g.shadowBlur = 0;
-        g.beginPath(); g.moveTo(f.pivot.x, f.pivot.y); g.lineTo(t.x, t.y); g.stroke();
-      }
+      for (const b of bumpers) bumper(b);
+      for (const f of flippers) flipper(f);
       // Plunger.
-      g.fillStyle = "#555"; g.fillRect(358, 700 + plunge * 18, 16, 24);
-      g.fillStyle = "#ff3d5a"; g.fillRect(356, 698 + plunge * 18, 20, 6);
-      // Ball and trail.
+      g.fillStyle = th.style === "medieval" ? "#6b4426" : th.style === "modern" ? "#1d1d1f" : "#2a3a4c";
+      g.fillRect(358, 700 + plunge * 18, 16, 24);
+      g.fillStyle = th.style === "medieval" ? "#c9952f" : th.style === "modern" ? th.accent : th.accent2;
+      g.fillRect(356, 698 + plunge * 18, 20, 5);
+      // Ball.
       if (ball.live) {
-        trail.forEach((p, i) => { g.globalAlpha = (i / trail.length) * 0.35; g.fillStyle = "#3de1ff"; g.beginPath(); g.arc(p.x, p.y, BR * (i / trail.length), 0, Math.PI * 2); g.fill(); });
+        if (th.style === "scifi") trail.forEach((p, i) => { g.globalAlpha = (i / trail.length) * 0.25; g.fillStyle = th.accent; g.beginPath(); g.arc(p.x, p.y, BR * (i / trail.length), 0, Math.PI * 2); g.fill(); });
         g.globalAlpha = 1;
+        lift(g, th, 1);
         const bg2 = g.createRadialGradient(ball.x - 3, ball.y - 3, 1, ball.x, ball.y, BR);
-        bg2.addColorStop(0, "#ffffff"); bg2.addColorStop(1, "#8a93a6");
+        bg2.addColorStop(0, "#ffffff"); bg2.addColorStop(1, th.style === "medieval" ? "#6f6658" : "#8a93a6");
         g.fillStyle = bg2; g.beginPath(); g.arc(ball.x, ball.y, BR, 0, Math.PI * 2); g.fill();
+        unlift(g);
       }
       sparks.draw(g); floats.draw(g);
-      // Score on the backglass strip.
-      g.fillStyle = "rgba(0,0,0,.55)"; g.fillRect(110, 118, 180, 46);
-      g.font = `800 22px ${FONT_NUM}`; g.fillStyle = "#ffe066"; g.textAlign = "center"; g.textBaseline = "middle";
+      // The score, in a cartouche across the top of the field.
+      if (th.style === "medieval") {
+        g.fillStyle = "#2a1a0d"; g.fillRect(108, 116, 184, 50);
+        paint(g, "parchment", th, 111, 119, 178, 44);
+        g.strokeStyle = "#b48a2c"; g.lineWidth = 1; g.strokeRect(114.5, 122.5, 171, 37);
+        g.fillStyle = "#2c1f12"; g.font = `700 21px ${th.fontDisplay}`;
+      } else if (th.style === "modern") {
+        g.fillStyle = "#1d1d1f"; rrect(g, 110, 118, 180, 46, 23); g.fill();
+        g.fillStyle = "#fff"; g.font = `800 20px ${th.fontDisplay}`;
+      } else {
+        g.fillStyle = "rgba(8, 14, 22, .9)"; g.fillRect(110, 118, 180, 46);
+        g.strokeStyle = th.accent; g.lineWidth = 1; g.strokeRect(110.5, 118.5, 179, 45);
+        g.fillStyle = th.accent; g.font = `600 20px ${th.fontNum}`;
+      }
+      g.textAlign = "center"; g.textBaseline = "middle";
       g.fillText(points.toLocaleString(), 200, 136);
-      g.font = `700 10px ${FONT_UI}`; g.fillStyle = "rgba(255,255,255,.7)";
-      g.fillText(`BALL ${Math.min(balls, drained + 1)}/${balls} · ×${mult} · ${Math.ceil(timeLeft)}s`, 200, 155);
+      g.font = th.style === "scifi" ? `500 9px ${th.fontNum}` : `600 10px ${th.fontUi}`;
+      g.fillStyle = th.style === "medieval" ? "#6b5638" : th.style === "modern" ? "rgba(255,255,255,.7)" : th.inkSoft;
+      g.fillText(`BALL ${Math.min(balls, drained + 1)} OF ${balls} · ×${mult} · ${Math.ceil(timeLeft)}s`, 200, 155);
       if (ball.inLane && ball.live && ball.y > 660) {
-        g.font = `800 12px ${FONT_UI}`; g.fillStyle = "#fff"; g.fillText("HOLD SPACE", 366, 650);
+        g.font = th.style === "scifi" ? `600 11px ${th.fontNum}` : `700 11px ${th.fontUi}`;
+        g.fillStyle = th.style === "medieval" ? "#2c1f12" : th.style === "modern" ? "#1d1d1f" : th.accent;
+        g.fillText("HOLD SPACE", 366, 650);
       }
       g.restore();
     }

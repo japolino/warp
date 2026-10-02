@@ -4,6 +4,7 @@
 import type { AidKind, GameAid, GameBar, GameId } from "../../engine/game-ids.js";
 import type { Synth } from "./synth.js";
 import type { Song } from "./songs.js";
+import type { Theme } from "./themes.js";
 
 export interface Play {
   mode: "check" | "gamble";
@@ -36,6 +37,8 @@ export interface Finish {
 
 export interface Kit {
   play: Play;
+  /** The look: medieval, modern or sci-fi tokens to draw with. */
+  theme: Theme;
   /** The game's own area; it fills the stage. */
   root: HTMLElement;
   rng: () => number;
@@ -82,8 +85,6 @@ export interface Canvas {
 export interface GameDef {
   id: GameId;
   title: string;
-  /** The look: background, accent, second accent. */
-  theme: { bg: string; bg2: string; accent: string; accent2: string };
   howTo: string[];
   controls: string;
   /** Rhythm games pick a song first. */
@@ -203,6 +204,7 @@ export class Sparks {
 
 /** Floating text that rises and fades ("PERFECT", "+120"). */
 export class Floaters {
+  constructor(private font = FONT_UI, private outline: string | null = null) {}
   private fs: { x: number; y: number; text: string; color: string; life: number; size: number }[] = [];
   add(x: number, y: number, text: string, color: string, size = 18) { this.fs.push({ x, y, text, color, life: 0, size }); }
   step(dt: number) { for (const f of this.fs) { f.life += dt; f.y -= 40 * dt; } this.fs = this.fs.filter((f) => f.life < 0.7); }
@@ -211,7 +213,8 @@ export class Floaters {
     for (const f of this.fs) {
       const k = 1 - f.life / 0.7;
       g.globalAlpha = k;
-      g.font = `800 ${f.size * (1 + (1 - k) * 0.15)}px ${FONT_UI}`;
+      g.font = `700 ${f.size * (1 + (1 - k) * 0.15)}px ${this.font}`;
+      if (this.outline) { g.lineWidth = 3; g.strokeStyle = this.outline; g.lineJoin = "round"; g.strokeText(f.text, f.x, f.y); }
       g.fillStyle = f.color;
       g.fillText(f.text, f.x, f.y);
     }

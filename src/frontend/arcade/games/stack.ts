@@ -2,7 +2,8 @@
 // or the clock runs out. Clearing four at once counts extra. The music is
 // Korobeiniki, a Russian folk song, and it speeds up as the stack climbs.
 
-import { clamp, FONT_NUM, FONT_UI, Floaters, rrect, shuffle, Sparks, type GameDef, type Kit } from "../kit.js";
+import { clamp, Floaters, rrect, shuffle, Sparks, type GameDef, type Kit } from "../kit.js";
+import { brackets, glow, ground, lift, paint, unlift } from "../themes.js";
 import { KOROBEINIKI, parseLine } from "../songs.js";
 
 const W = 10, H = 20;
@@ -16,17 +17,13 @@ const SHAPES: Record<P, [number, number][]> = {
   J: [[-1, -1], [-1, 0], [0, 0], [1, 0]],
   L: [[1, -1], [-1, 0], [0, 0], [1, 0]],
 };
-const COLOR: Record<P, [string, string]> = {
-  I: ["#5ef0ff", "#11a4c4"], O: ["#ffe45c", "#d1a512"], T: ["#c38bff", "#7c3fd1"], S: ["#6dff9a", "#1fae4d"],
-  Z: ["#ff6b7f", "#c22740"], J: ["#6b9bff", "#2e55d1"], L: ["#ffab5c", "#d66a12"],
-};
+const ORDER: P[] = ["Z", "O", "J", "S", "T", "L", "I"];
 const KICKS: [number, number][] = [[0, 0], [-1, 0], [1, 0], [0, -1], [-2, 0], [2, 0], [0, 1]];
 const BASS = "E2/.5 E3 E2 E3 E2 E3 E2 E3 | A2 A3 A2 A3 A2 A3 A2 A3 | E2 E3 E2 E3 E2 E3 E2 E3 | A2 A3 A2 A3 A2 A3 A2 A3 | D2 D3 D2 D3 D2 D3 D2 D3 | C2 C3 C2 C3 C2 C3 C2 C3 | E2 E3 E2 E3 E2 E3 E2 E3 | A2 A3 A2 A3 A2 A3 A2 A3";
 
 export const STACK: GameDef = {
   id: "stack",
   title: "Stack",
-  theme: { bg: "#070914", bg2: "#141a3a", accent: "#5ef0ff", accent2: "#c38bff" },
   howTo: [
     "Blocks fall one at a time. Move and turn them to fill whole rows — full rows clear.",
     "Clear enough lines before time's up. Four at once counts as five.",
@@ -52,7 +49,9 @@ export const STACK: GameDef = {
     let tetrises = 0, maxHeight = 0;
     const c = kit.canvas();
     const g = c.g;
-    const sparks = new Sparks(), floats = new Floaters();
+    const t = kit.theme;
+    const colorOf = (p: P) => t.pieces[ORDER.indexOf(p)];
+    const sparks = new Sparks(), floats = new Floaters(t.fontDisplay, t.light ? "rgba(255,255,255,.75)" : null);
 
     const cells = (p: P, r: number, x: number, y: number) => SHAPES[p].map(([cx, cy]) => {
       let a = cx, b = cy;
@@ -93,8 +92,8 @@ export const STACK: GameDef = {
         lines += full.length; credit += n;
         if (full.length === 4) { tetrises++; kit.synth.fx("tetris"); kit.banner("Four lines!", "gold"); kit.shake(0.8); } else kit.synth.fx("line");
         const B = board();
-        for (const row of full) for (let x = 0; x < W; x++) sparks.burst(B.x + (x + 0.5) * B.s, B.y + (row + 0.5) * B.s, COLOR[grid[row][x] ?? "I"][0], 3, 180);
-        floats.add(B.x + B.w / 2, B.y + (full[0] + 0.5) * B.s, full.length === 4 ? "+5" : `+${full.length}`, "#ffe066", 26);
+        for (const row of full) for (let x = 0; x < W; x++) sparks.burst(B.x + (x + 0.5) * B.s, B.y + (row + 0.5) * B.s, colorOf(grid[row][x] ?? "I"), 3, 160, 2.5);
+        floats.add(B.x + B.w / 2, B.y + (full[0] + 0.5) * B.s, full.length === 4 ? "+5" : `+${full.length}`, t.style === "medieval" ? "#9e2b1f" : t.gold, 26);
         kit.score(clamp(credit / goal));
         kit.track(clamp((credit / goal) / Math.max(0.15, 1 - timeLeft / limit)));
         if (credit >= goal) setTimeout(() => finish("goal"), 400);
@@ -212,15 +211,38 @@ export const STACK: GameDef = {
       draw();
     });
 
+    // ───────── drawing ─────────
+
+    /** One block in the look's material: carved stone, flat colour, or a glass pane. */
     const block = (x: number, y: number, s: number, p: P, alpha = 1) => {
-      const [hi, lo] = COLOR[p];
+      const col = colorOf(p);
       g.globalAlpha = alpha;
-      const grd = g.createLinearGradient(x, y, x + s, y + s);
-      grd.addColorStop(0, hi); grd.addColorStop(1, lo);
-      g.fillStyle = grd;
-      rrect(g, x + 1, y + 1, s - 2, s - 2, Math.max(2, s * 0.14)); g.fill();
-      g.fillStyle = "rgba(255,255,255,.35)"; g.fillRect(x + 3, y + 3, s - 6, Math.max(2, s * 0.12));
+      if (t.style === "medieval") {
+        g.fillStyle = col; g.fillRect(x + 1, y + 1, s - 2, s - 2);
+        g.globalAlpha = alpha * 0.35; paint(g, "stone", t, x + 1, y + 1, s - 2, s - 2); g.globalAlpha = alpha;
+        // Chiselled edges: light above and left, shadow below and right.
+        g.fillStyle = "rgba(255, 240, 210, .28)"; g.fillRect(x + 1, y + 1, s - 2, 2); g.fillRect(x + 1, y + 1, 2, s - 2);
+        g.fillStyle = "rgba(20, 10, 2, .4)"; g.fillRect(x + 1, y + s - 3, s - 2, 2); g.fillRect(x + s - 3, y + 1, 2, s - 2);
+        g.strokeStyle = "rgba(20, 10, 2, .5)"; g.lineWidth = 1; g.strokeRect(x + 1.5, y + 1.5, s - 3, s - 3);
+      } else if (t.style === "modern") {
+        g.fillStyle = col; rrect(g, x + 1, y + 1, s - 2, s - 2, Math.max(2, s * 0.16)); g.fill();
+        g.fillStyle = "rgba(255,255,255,.18)"; rrect(g, x + 1, y + 1, s - 2, (s - 2) * 0.45, Math.max(2, s * 0.16)); g.fill();
+      } else {
+        g.fillStyle = `${col}2e`; g.fillRect(x + 1.5, y + 1.5, s - 3, s - 3);
+        glow(g, t, col, 6);
+        g.strokeStyle = col; g.lineWidth = 1.5; g.strokeRect(x + 2, y + 2, s - 4, s - 4);
+        g.shadowBlur = 0;
+        g.fillStyle = col; g.fillRect(x + s * 0.38, y + s * 0.38, s * 0.24, s * 0.24);
+      }
       g.globalAlpha = 1;
+    };
+    const ghost = (x: number, y: number, s: number, p: P) => {
+      const col = colorOf(p);
+      if (t.style === "modern") { g.fillStyle = "rgba(29,29,31,.07)"; rrect(g, x + 1, y + 1, s - 2, s - 2, Math.max(2, s * 0.16)); g.fill(); return; }
+      g.setLineDash([3, 3]);
+      g.strokeStyle = t.style === "medieval" ? "rgba(236, 223, 191, .5)" : `${col}99`; g.lineWidth = 1.5;
+      g.strokeRect(x + 2.5, y + 2.5, s - 5, s - 5);
+      g.setLineDash([]);
     };
     const mini = (p: P, cx: number, cy: number, s: number, alpha = 1) => {
       const pts = cells(p, 0, 0, 0);
@@ -228,45 +250,80 @@ export const STACK: GameDef = {
       const w = (Math.max(...xs) - Math.min(...xs) + 1) * s, h = (Math.max(...ys) - Math.min(...ys) + 1) * s;
       for (const [a, b] of pts) block(cx - w / 2 + (a - Math.min(...xs)) * s, cy - h / 2 + (b - Math.min(...ys)) * s, s, p, alpha);
     };
+    /** The side boxes: hold, next, lines and time. */
+    const panel = (x: number, y: number, w: number, h: number, title: string) => {
+      if (t.style === "medieval") {
+        lift(g, t, 1.5); g.fillStyle = "#2a1a0d"; g.fillRect(x, y, w, h); unlift(g);
+        paint(g, "parchment", t, x + 3, y + 3, w - 6, h - 6);
+        g.strokeStyle = "#b48a2c"; g.lineWidth = 1; g.strokeRect(x + 6.5, y + 6.5, w - 13, h - 13);
+        g.fillStyle = "#9e2b1f"; g.font = `700 11px ${t.fontDisplay}`;
+      } else if (t.style === "modern") {
+        lift(g, t, 1); g.fillStyle = "#fff"; rrect(g, x, y, w, h, 14); g.fill(); unlift(g);
+        g.fillStyle = t.inkSoft; g.font = `700 10.5px ${t.fontUi}`;
+      } else {
+        g.fillStyle = "rgba(10, 17, 27, .9)"; g.fillRect(x, y, w, h);
+        g.strokeStyle = "rgba(120, 170, 210, .22)"; g.lineWidth = 1; g.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+        brackets(g, x, y, w, h, t.accent, 8);
+        g.fillStyle = t.accent; g.font = `500 10.5px ${t.fontNum}`;
+      }
+      g.textAlign = "center"; g.textBaseline = "top";
+      g.fillText(t.style === "scifi" ? `// ${title}` : title.toUpperCase(), x + w / 2, y + 12);
+    };
+    const inkOn = () => (t.style === "medieval" ? "#2c1f12" : t.ink);
+
     function draw() {
       const B = board();
       g.clearRect(0, 0, c.w, c.h);
-      // Well.
-      g.fillStyle = "rgba(4, 6, 18, .85)";
-      rrect(g, B.x - 6, B.y - 6, B.w + 12, B.h + 12, 10); g.fill();
-      g.strokeStyle = "rgba(94, 240, 255, .35)"; g.lineWidth = 2; g.shadowColor = "#5ef0ff"; g.shadowBlur = 16;
-      rrect(g, B.x - 6, B.y - 6, B.w + 12, B.h + 12, 10); g.stroke(); g.shadowBlur = 0;
-      g.strokeStyle = "rgba(255,255,255,.04)"; g.lineWidth = 1;
-      for (let x = 1; x < W; x++) { g.beginPath(); g.moveTo(B.x + x * B.s, B.y); g.lineTo(B.x + x * B.s, B.y + B.h); g.stroke(); }
-      for (let y = 1; y < H; y++) { g.beginPath(); g.moveTo(B.x, B.y + y * B.s); g.lineTo(B.x + B.w, B.y + y * B.s); g.stroke(); }
+      ground(g, t, c.w, c.h, t.style === "medieval" ? "table" : "page");
+      // The well.
+      if (t.style === "medieval") {
+        lift(g, t, 2); g.fillStyle = "#1a0f06"; g.fillRect(B.x - 10, B.y - 10, B.w + 20, B.h + 20); unlift(g);
+        g.strokeStyle = "#b48a2c"; g.lineWidth = 2; g.strokeRect(B.x - 6, B.y - 6, B.w + 12, B.h + 12);
+        g.fillStyle = "#24170c"; g.fillRect(B.x, B.y, B.w, B.h);
+        g.strokeStyle = "rgba(236, 223, 191, .05)";
+      } else if (t.style === "modern") {
+        lift(g, t, 2); g.fillStyle = "#ffffff"; rrect(g, B.x - 8, B.y - 8, B.w + 16, B.h + 16, 14); g.fill(); unlift(g);
+        g.strokeStyle = "rgba(29, 29, 31, .05)";
+      } else {
+        g.fillStyle = "rgba(8, 14, 22, .92)"; g.fillRect(B.x, B.y, B.w, B.h);
+        g.strokeStyle = "rgba(120, 170, 210, .25)"; g.lineWidth = 1; g.strokeRect(B.x - 0.5, B.y - 0.5, B.w + 1, B.h + 1);
+        brackets(g, B.x - 6, B.y - 6, B.w + 12, B.h + 12, t.accent, 14);
+        g.strokeStyle = "rgba(120, 170, 210, .07)";
+      }
+      g.lineWidth = 1;
+      for (let x = 1; x < W; x++) { g.beginPath(); g.moveTo(B.x + x * B.s + 0.5, B.y); g.lineTo(B.x + x * B.s + 0.5, B.y + B.h); g.stroke(); }
+      for (let y = 1; y < H; y++) { g.beginPath(); g.moveTo(B.x, B.y + y * B.s + 0.5); g.lineTo(B.x + B.w, B.y + y * B.s + 0.5); g.stroke(); }
       for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
         const p = grid[y][x];
         if (!p) continue;
-        const flashing = clearing?.rows.includes(y);
-        if (flashing) { g.fillStyle = `rgba(255,255,255,${1 - clearing!.t / 0.28})`; g.fillRect(B.x + x * B.s, B.y + y * B.s, B.s, B.s); }
-        else block(B.x + x * B.s, B.y + y * B.s, B.s, p);
+        if (clearing?.rows.includes(y)) {
+          const k = 1 - clearing.t / 0.28;
+          g.fillStyle = t.style === "medieval" ? `rgba(233, 196, 106, ${k})` : t.style === "modern" ? `rgba(255, 255, 255, ${k})` : `rgba(94, 200, 229, ${k * 0.8})`;
+          g.fillRect(B.x + x * B.s, B.y + y * B.s, B.s, B.s);
+        } else block(B.x + x * B.s, B.y + y * B.s, B.s, p);
       }
       if (!clearing && !over) {
         const gy = ghostY();
-        for (const [a, b] of cells(cur.p, cur.r, cur.x, gy)) if (b >= 0) { g.strokeStyle = `${COLOR[cur.p][0]}88`; g.lineWidth = 2; rrect(g, B.x + a * B.s + 2, B.y + b * B.s + 2, B.s - 4, B.s - 4, 4); g.stroke(); }
+        for (const [a, b] of cells(cur.p, cur.r, cur.x, gy)) if (b >= 0) ghost(B.x + a * B.s, B.y + b * B.s, B.s, cur.p);
         for (const [a, b] of cells(cur.p, cur.r, cur.x, cur.y)) if (b >= 0) block(B.x + a * B.s, B.y + b * B.s, B.s, cur.p);
       }
-      // Hold and next.
-      const side = Math.min(120, (c.w - B.w) / 2 - 30);
-      const ms = Math.max(10, Math.min(20, B.s * 0.6));
-      g.font = `700 11px ${FONT_UI}`; g.fillStyle = "rgba(255,255,255,.55)"; g.textAlign = "center";
-      if (side > 50) {
-        const lx = B.x - 18 - side / 2, rx = B.x + B.w + 18 + side / 2;
-        g.fillText(canHold ? "HOLD" : "", lx, B.y + 10);
-        if (hold) mini(hold, lx, B.y + 50, ms, held ? 0.4 : 1);
-        g.fillText("NEXT", rx, B.y + 10);
-        for (let i = 0; i < previews; i++) mini(queue[i], rx, B.y + 50 + i * ms * 3.3, i ? ms * 0.8 : ms);
-        // Lines and time.
-        g.font = `800 ${Math.round(Math.min(34, side * 0.3))}px ${FONT_NUM}`; g.fillStyle = "#fff";
-        g.fillText(`${Math.min(credit, goal)}/${goal}`, lx, B.y + B.h * 0.55);
-        g.font = `700 11px ${FONT_UI}`; g.fillStyle = "rgba(255,255,255,.55)"; g.fillText("LINES", lx, B.y + B.h * 0.55 + 20);
-        g.font = `800 ${Math.round(Math.min(28, side * 0.26))}px ${FONT_NUM}`; g.fillStyle = timeLeft < 10 ? "#ff5d6c" : "#fff";
-        g.fillText(`${Math.ceil(timeLeft)}s`, lx, B.y + B.h * 0.72);
+      // Hold, next, lines and time.
+      const side = Math.min(130, (c.w - B.w) / 2 - 36);
+      const ms = Math.max(9, Math.min(18, B.s * 0.55));
+      if (side > 64) {
+        const lx = B.x - 24 - side, rx = B.x + B.w + 24;
+        if (canHold) { panel(lx, B.y, side, 92, "Hold"); if (hold) mini(hold, lx + side / 2, B.y + 58, ms, held ? 0.4 : 1); }
+        const nh = 40 + previews * ms * 3;
+        panel(rx, B.y, side, nh, "Next");
+        for (let i = 0; i < previews; i++) mini(queue[i], rx + side / 2, B.y + 48 + i * ms * 3 + ms, i ? ms * 0.8 : ms);
+        const sy = canHold ? B.y + 108 : B.y;
+        panel(lx, sy, side, 130, "Lines");
+        g.textAlign = "center"; g.textBaseline = "middle";
+        g.fillStyle = inkOn(); g.font = `${t.style === "medieval" ? 700 : t.style === "scifi" ? 600 : 800} ${Math.round(Math.min(30, side * 0.26))}px ${t.style === "scifi" ? t.fontNum : t.fontDisplay}`;
+        g.fillText(`${Math.min(credit, goal)} / ${goal}`, lx + side / 2, sy + 52);
+        g.fillStyle = timeLeft < 10 ? t.bad : t.style === "medieval" ? "#6b5638" : t.inkSoft;
+        g.font = `${t.style === "scifi" ? 500 : 600} 15px ${t.style === "scifi" ? t.fontNum : t.fontUi}`;
+        g.fillText(`${Math.ceil(timeLeft)}s left`, lx + side / 2, sy + 92);
       }
       sparks.draw(g); floats.draw(g);
     }

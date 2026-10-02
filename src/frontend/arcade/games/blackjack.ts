@@ -36,56 +36,88 @@ export function advice(player: Card[], dealerUp: Card, canDouble: boolean): "hit
 }
 
 const CSS = `
-.bj { position: absolute; inset: 0; display: grid; grid-template-rows: 1fr auto 1fr auto; padding: 18px 18px 14px; gap: 8px;
-  background: radial-gradient(ellipse 90% 70% at 50% 40%, #14794f, #0b4a31 60%, #062a1c); color: #f7f1e1; overflow: hidden; }
-.bj::before { content: ""; position: absolute; inset: 0; background-image: radial-gradient(rgba(255,255,255,.05) 1px, transparent 1px); background-size: 5px 5px; pointer-events: none; }
-.bj-arc { position: absolute; left: 50%; top: 46%; transform: translate(-50%, -50%); width: min(70%, 620px); text-align: center; font: 700 11px/1.6 "Bahnschrift", system-ui, sans-serif; letter-spacing: .3em; color: rgba(232, 195, 106, .55); text-transform: uppercase; pointer-events: none; }
-.bj:has(.bj-msg) .bj-arc { opacity: .12; }
-.bj-arc { transition: opacity .2s; }
-.bj-arc b { display: block; font-size: 15px; letter-spacing: .24em; color: rgba(232, 195, 106, .75); }
+.bj { position: absolute; inset: 0; display: grid; grid-template-rows: 1fr auto 1fr auto; padding: 18px 18px 14px; gap: 8px; overflow: hidden;
+  background: var(--bj-table); color: var(--bj-ink); font-family: var(--ar-ui); }
+.bj::before { content: ""; position: absolute; inset: 0; pointer-events: none; background: var(--bj-sheen, none); }
+.bj-arc { position: absolute; left: 50%; top: 46%; transform: translate(-50%, -50%); width: min(70%, 620px); text-align: center; font: 600 11px/1.6 var(--bj-font); letter-spacing: .26em; color: var(--bj-dim); text-transform: uppercase; pointer-events: none; transition: opacity .2s; }
+.bj:has(.bj-msg) .bj-arc { opacity: .1; }
+.bj-arc b { display: block; font-size: 15px; letter-spacing: .2em; color: var(--bj-gold); font-weight: 700; }
 .bj-side { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
-.bj-label { font: 700 11px "Bahnschrift", system-ui, sans-serif; letter-spacing: .2em; text-transform: uppercase; color: rgba(247,241,225,.65); display: flex; gap: 10px; align-items: center; }
-.bj-total { font: 800 15px ui-monospace, Consolas, monospace; padding: 2px 10px; border-radius: 999px; background: rgba(0,0,0,.35); color: #fff; letter-spacing: 0; }
-.bj-total.bust { background: #b8323f; } .bj-total.bj21 { background: #e8c36a; color: #2a1d05; }
+.bj-label { font: 700 11px var(--bj-font); letter-spacing: .2em; text-transform: uppercase; color: var(--bj-dim); display: flex; gap: 10px; align-items: center; }
+.bj-total { font: 700 15px var(--ar-num); padding: 2px 10px; border-radius: var(--bj-pill, 999px); background: var(--bj-plate); color: var(--bj-ink); letter-spacing: 0; }
+.bj-total.bust { background: var(--ar-bad); color: #fff; } .bj-total.bj21 { background: var(--bj-gold); color: #1d1405; }
 .bj-hand { display: flex; justify-content: center; min-height: calc(var(--cw) * 1.4); }
-.bj-card { width: var(--cw); height: calc(var(--cw) * 1.4); margin-left: calc(var(--cw) * -0.38); border-radius: calc(var(--cw) * .09); position: relative; perspective: 600px; animation: bj-deal .38s cubic-bezier(.2,.9,.25,1) both; }
+.bj-card { width: var(--cw); height: calc(var(--cw) * 1.4); margin-left: calc(var(--cw) * -0.38); border-radius: var(--card-r, calc(var(--cw) * .08)); position: relative; perspective: 600px; animation: bj-deal .38s cubic-bezier(.2,.9,.25,1) both; }
 .bj-card:first-child { margin-left: 0; }
 @keyframes bj-deal { from { transform: translate(40vw, -30vh) rotate(-30deg); opacity: 0; } }
-.bj-face, .bj-back { position: absolute; inset: 0; border-radius: inherit; backface-visibility: hidden; transition: transform .45s cubic-bezier(.3,.7,.3,1); box-shadow: 0 6px 14px rgba(0,0,0,.4); }
-.bj-face { background: linear-gradient(160deg, #fffdf6, #efe7d4); color: #1c1c22; display: grid; }
-.bj-face.red { color: #c0243a; }
-.bj-face .c { position: absolute; font: 800 calc(var(--cw) * .2)/1 "Georgia", serif; text-align: center; }
+.bj-face, .bj-back { position: absolute; inset: 0; border-radius: inherit; backface-visibility: hidden; transition: transform .45s cubic-bezier(.3,.7,.3,1); box-shadow: var(--card-shadow, 0 4px 12px rgba(0,0,0,.3)); }
+.bj-face { background: var(--card-face); color: var(--card-black); display: grid; box-shadow: var(--card-shadow, 0 4px 12px rgba(0,0,0,.3)), inset 0 0 0 1px var(--card-edge, rgba(0,0,0,.12)); }
+.bj-face.red { color: var(--card-red); }
+.bj-face .c { position: absolute; font: 700 calc(var(--cw) * .2)/1 var(--card-font); text-align: center; }
 .bj-face .c.tl { top: 6%; left: 8%; } .bj-face .c.br { bottom: 6%; right: 8%; transform: rotate(180deg); }
 .bj-face .c i { display: block; font-style: normal; font-size: .8em; }
-.bj-face .pip { place-self: center; font-size: calc(var(--cw) * .5); line-height: 1; }
-.bj-back { transform: rotateY(180deg); background: repeating-linear-gradient(45deg, #8c1d2c 0 6px, #a32436 6px 12px); border: 4px solid #f3ead4; }
+.bj-face .pip { place-self: center; font: 400 calc(var(--cw) * .5)/1 var(--card-font); }
+.bj-back { transform: rotateY(180deg); background: var(--card-back); }
 .bj-card.down .bj-face { transform: rotateY(180deg); } .bj-card.down .bj-back { transform: rotateY(0); }
 .bj-card.peek .bj-back { opacity: .3; }
-.bj-card.peek .bj-face { transform: none; opacity: .85; outline: 2px dashed #e8c36a; }
+.bj-card.peek .bj-face { transform: none; opacity: .85; outline: 2px dashed var(--bj-gold); }
 .bj-mid { display: flex; justify-content: center; align-items: center; gap: 18px; min-height: 44px; position: relative; }
-.bj-msg { font: 800 clamp(20px, 3.4vw, 30px) "Bahnschrift", system-ui, sans-serif; letter-spacing: .06em; text-transform: uppercase; text-shadow: 0 3px 12px rgba(0,0,0,.5); animation: bj-pop .4s cubic-bezier(.2,1.3,.4,1) both; }
-@keyframes bj-pop { from { transform: scale(.6); opacity: 0; } }
-.bj-msg.win { color: #ffe066; } .bj-msg.lose { color: #ff8a95; } .bj-msg.push { color: #cfe; }
+.bj-msg { font: 700 clamp(20px, 3.2vw, 28px) var(--bj-font); letter-spacing: .05em; padding: 4px 18px; border-radius: var(--bj-pill, 999px); background: var(--bj-plate); animation: bj-pop .4s cubic-bezier(.2,1.3,.4,1) both; }
+@keyframes bj-pop { from { transform: scale(.7); opacity: 0; } }
+.bj-msg.win { color: var(--bj-win); } .bj-msg.lose { color: var(--bj-lose); } .bj-msg.push { color: var(--bj-ink); }
 .bj-bar { position: relative; display: flex; justify-content: center; align-items: center; gap: 10px; flex-wrap: wrap; }
-.bj-btn { min-width: 96px; padding: 11px 16px; border-radius: 12px; border: 1px solid rgba(232,195,106,.45); background: rgba(0,0,0,.35); color: #f7f1e1; font: 700 14px "Bahnschrift", system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; cursor: pointer; transition: transform .1s, background .12s; }
-.bj-btn:hover:not(:disabled) { background: rgba(232,195,106,.18); }
-.bj-btn:disabled { opacity: .35; cursor: not-allowed; }
-.bj-btn.main { background: linear-gradient(180deg, #f1d488, #c99a3d); color: #2a1d05; border-color: transparent; }
-.bj-btn.tip { box-shadow: 0 0 0 2px #7cff9a, 0 0 18px rgba(124,255,154,.6); }
-.bj-btn kbd { opacity: .55; font: 600 10px ui-monospace, monospace; margin-left: 6px; }
-.bj-bets { display: flex; gap: 8px; align-items: center; }
-.bj-chip { width: 52px; height: 52px; border-radius: 50%; border: 0; cursor: pointer; display: grid; place-items: center; font: 800 12px ui-monospace, monospace; color: #1b1b1b;
-  background: radial-gradient(circle, #fff 0 36%, transparent 37%), repeating-conic-gradient(var(--chip) 0 22.5deg, #f6efe2 22.5deg 30deg); box-shadow: 0 4px 10px rgba(0,0,0,.45); transition: transform .12s; }
-.bj-chip.on { transform: translateY(-5px); box-shadow: 0 0 0 3px #ffe066, 0 8px 18px rgba(0,0,0,.5); }
-.bj-chip:disabled { opacity: .3; }
-.bj-info { font: 600 12px ui-monospace, monospace; color: rgba(247,241,225,.75); }
-.bj-tip { font: 600 12px system-ui, sans-serif; color: #b9ffcf; }
+.bj .bj-btn { min-width: 96px; padding: 11px 18px; border-radius: var(--bj-pill, 999px); border: 1px solid var(--bj-line); background: var(--bj-plate); color: var(--bj-ink); font: 700 13.5px var(--bj-font); letter-spacing: .08em; text-transform: uppercase; cursor: pointer; transition: transform .1s, background .12s, border-color .12s; }
+.bj .bj-btn:hover:not(:disabled) { border-color: var(--bj-gold); }
+.bj .bj-btn:active:not(:disabled) { transform: translateY(1px); }
+.bj .bj-btn:disabled { opacity: .35; cursor: not-allowed; }
+.bj .bj-btn.main { background: var(--bj-main); color: var(--bj-on-main); border-color: transparent; }
+.bj .bj-btn.tip { box-shadow: 0 0 0 2px var(--bj-tip); }
+.bj .bj-btn kbd { opacity: .55; font: 600 10px var(--ar-num); margin-left: 6px; }
+.bj-bets { display: flex; gap: 10px; align-items: center; }
+.bj .bj-chip { width: 52px; height: 52px; border-radius: 50%; border: 0; cursor: pointer; display: grid; place-items: center; font: 700 12px var(--ar-num); color: #1b1b1b;
+  background: radial-gradient(circle, #fbf8f1 0 36%, transparent 37%), repeating-conic-gradient(var(--chip) 0 22.5deg, #f4efe4 22.5deg 30deg); box-shadow: 0 3px 8px rgba(0,0,0,.35), inset 0 0 0 3px rgba(0,0,0,.12); transition: transform .12s; }
+.bj .bj-chip.on { transform: translateY(-5px); box-shadow: 0 0 0 3px var(--bj-gold), 0 8px 16px rgba(0,0,0,.4); }
+.bj .bj-chip:disabled { opacity: .3; }
+.bj-info { font: 500 12.5px var(--ar-num); color: var(--bj-dim); }
+.bj-tip { font: 500 13px var(--ar-ui); color: var(--bj-tip); }
+
+/* modern: green baize under soft light, white cards, navy backs */
+.bj[data-style=modern] { --bj-table: radial-gradient(ellipse 90% 75% at 50% 40%, #2a7a5a, #1c5a42 60%, #123c2c); --bj-ink: #f6f4ef; --bj-dim: rgba(246, 244, 239, .6); --bj-gold: #f2d27a;
+  --bj-plate: rgba(0, 0, 0, .22); --bj-line: rgba(255, 255, 255, .22); --bj-main: #ffffff; --bj-on-main: #1d1d1f; --bj-win: #f2d27a; --bj-lose: #ffb4a8; --bj-tip: #9be5bd; --bj-font: var(--ar-display);
+  --card-face: #ffffff; --card-red: #d23434; --card-black: #1d1d1f; --card-font: var(--ar-display); --card-back: repeating-linear-gradient(45deg, #24407a 0 5px, #2c4c8e 5px 10px); --card-shadow: 0 6px 14px rgba(0,0,0,.25); }
+.bj[data-style=modern] .bj-back { border: 5px solid #fff; }
+
+/* medieval: an oak tavern table, parchment cards, crimson backs with gilt lattice, gold coins */
+.bj[data-style=medieval] { --bj-table: var(--ar-wood) 0 0 / 256px; --bj-sheen: radial-gradient(ellipse 70% 60% at 50% 45%, rgba(255, 210, 140, .12), transparent 70%), radial-gradient(ellipse at center, transparent 45%, rgba(10, 5, 0, .65) 100%);
+  --bj-ink: #ecdfbf; --bj-dim: rgba(236, 223, 191, .6); --bj-gold: #e9c46a; --bj-plate: rgba(20, 10, 2, .5); --bj-line: rgba(214, 181, 106, .5); --bj-pill: 2px;
+  --bj-main: #9e2b1f; --bj-on-main: #f3e7c8; --bj-win: #e9c46a; --bj-lose: #e8a090; --bj-tip: #a8d08d; --bj-font: var(--ar-display);
+  --card-face: var(--ar-parch) 0 0 / 512px; --card-red: #9e2b1f; --card-black: #231a10; --card-font: var(--ar-display); --card-r: 4px; --card-edge: rgba(90, 61, 28, .45);
+  --card-back: linear-gradient(45deg, transparent 46%, rgba(233,196,106,.55) 47% 53%, transparent 54%) 0 0 / 14px 14px, linear-gradient(-45deg, transparent 46%, rgba(233,196,106,.55) 47% 53%, transparent 54%) 0 0 / 14px 14px, #7a1f17;
+  --card-shadow: 0 4px 10px rgba(20, 10, 2, .5); }
+.bj[data-style=medieval] .bj-back { box-shadow: var(--card-shadow), inset 0 0 0 3px #e9c46a, inset 0 0 0 5px #7a1f17, inset 0 0 0 6px rgba(233,196,106,.6); }
+.bj[data-style=medieval] .bj-btn.main { box-shadow: inset 0 0 0 2px #9e2b1f, inset 0 0 0 3px rgba(233, 196, 106, .7); }
+.bj[data-style=medieval] .bj-chip { width: 50px; height: 50px; color: #3a2508; font-family: var(--ar-display); font-weight: 700;
+  background: radial-gradient(circle at 35% 30%, #f6dc8a, #c9952f 55%, #8a6214 100%); box-shadow: 0 3px 6px rgba(20,10,2,.5), inset 0 0 0 3px rgba(107,74,18,.5), inset 0 0 0 6px rgba(246,220,138,.35); }
+.bj[data-style=medieval] .bj-chip:nth-child(2) { background: radial-gradient(circle at 35% 30%, #f1f1ea, #b8b6ab 55%, #6f6c61 100%); }
+.bj[data-style=medieval] .bj-chip:nth-child(1) { background: radial-gradient(circle at 35% 30%, #f0b98a, #b5703a 55%, #6b3a14 100%); }
+.bj[data-style=medieval] .bj-msg, .bj[data-style=medieval] .bj-total { font-family: var(--ar-display); }
+
+/* sci-fi: a dark holo-table, light cards, mono readouts */
+.bj[data-style=scifi] { --bj-table: radial-gradient(ellipse 80% 65% at 50% 45%, #0f2132, #0a1622 60%, #060c13); --bj-sheen: radial-gradient(ellipse 46% 34% at 50% 46%, transparent 98%, rgba(94,200,229,.35) 99%, transparent 100%);
+  --bj-ink: #d6e2ee; --bj-dim: rgba(142, 163, 184, .8); --bj-gold: #f2c14e; --bj-plate: rgba(10, 17, 27, .85); --bj-line: rgba(94, 200, 229, .35); --bj-pill: 0px;
+  --bj-main: rgba(94, 200, 229, .16); --bj-on-main: #5ec8e5; --bj-win: #5fd3a0; --bj-lose: #ef6461; --bj-tip: #5fd3a0; --bj-font: var(--ar-display);
+  --card-face: linear-gradient(160deg, #eef2f6, #d9e1e9); --card-red: #c4364e; --card-black: #15202c; --card-font: var(--ar-num); --card-r: 3px;
+  --card-back: repeating-linear-gradient(60deg, rgba(94,200,229,.18) 0 1px, transparent 1px 9px), repeating-linear-gradient(-60deg, rgba(94,200,229,.18) 0 1px, transparent 1px 9px), #0d1a28; --card-shadow: 0 4px 12px rgba(0,0,0,.5); }
+.bj[data-style=scifi] .bj-back { box-shadow: var(--card-shadow), inset 0 0 0 1px #5ec8e5; }
+.bj[data-style=scifi] .bj-btn.main { border-color: #5ec8e5; }
+.bj[data-style=scifi] .bj-chip { border-radius: 0; width: 58px; height: 40px; background: rgba(10,17,27,.9); color: #d6e2ee; box-shadow: inset 0 0 0 1px rgba(120,170,210,.35); clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px); }
+.bj[data-style=scifi] .bj-chip.on { transform: none; color: #5ec8e5; box-shadow: inset 0 0 0 1px #5ec8e5; background: rgba(94,200,229,.14); }
+.bj[data-style=scifi] .bj-arc { font-family: var(--ar-num); }
 `;
 
 export const BLACKJACK: GameDef = {
   id: "blackjack",
   title: "Blackjack",
-  theme: { bg: "#06170f", bg2: "#0f4a31", accent: "#e8c36a", accent2: "#c0243a" },
   howTo: [
     "Pick a bet, then get closer to 21 than the dealer without going over.",
     "Hit for another card, Stand to stop, Double to double the bet for exactly one more card.",
@@ -116,6 +148,7 @@ export const BLACKJACK: GameDef = {
 
     const root = document.createElement("div");
     root.className = "bj";
+    root.dataset.style = kit.theme.style;
     root.innerHTML = `<style>${CSS}</style>
       <div class="bj-arc"><b>Blackjack pays ${bjPays === 1.5 ? "3 to 2" : "6 to 5"}</b>Dealer ${hitsSoft17 ? "hits" : "stands on"} soft 17</div>
       <div class="bj-side"><div class="bj-label">Dealer <span class="bj-total" data-dt></span></div><div class="bj-hand" data-dealer></div></div>
@@ -157,7 +190,7 @@ export const BLACKJACK: GameDef = {
     const bar = () => {
       const b = $("[data-bar]");
       if (phase === "bet") {
-        b.innerHTML = `<div class="bj-bets">${betOptions.map((x, i) => `<button class="bj-chip${x === bet ? " on" : ""}" style="--chip:${["#c0392b", "#1f6fbf", "#1d8f4e"][i]}" data-bet="${x}" ${x > chips ? "disabled" : ""}>${x}</button>`).join("")}</div>
+        b.innerHTML = `<div class="bj-bets">${betOptions.map((x, i) => `<button class="bj-chip${x === bet ? " on" : ""}" style="--chip:${["#b8352a", "#2f5fa8", "#2a7a4b"][i]}" data-bet="${x}" ${x > chips ? "disabled" : ""}>${x}</button>`).join("")}</div>
           <button class="bj-btn main" data-deal ${bet > chips ? "disabled" : ""}>Deal <kbd>Enter</kbd></button>
           ${gamble && hand > 0 ? `<button class="bj-btn" data-leave>Cash out</button>` : ""}
           <span class="bj-info">${kit.play.currency ?? ""}${Math.round(chips)} in chips</span>`;
@@ -166,7 +199,7 @@ export const BLACKJACK: GameDef = {
         b.innerHTML = `<button class="bj-btn main${t === "hit" ? " tip" : ""}" data-hit>Hit <kbd>H</kbd></button>
           <button class="bj-btn${t === "stand" ? " tip" : ""}" data-stand>Stand <kbd>S</kbd></button>
           <button class="bj-btn${t === "double" ? " tip" : ""}" data-double ${player.length === 2 && chips >= stake ? "" : "disabled"}>Double <kbd>D</kbd></button>
-          ${t ? `<span class="bj-tip">✦ A whisper: ${t}</span>` : ""}`;
+          ${t ? `<span class="bj-tip">A whisper: ${t}</span>` : ""}`;
       } else b.innerHTML = `<span class="bj-info">…</span>`;
     };
 

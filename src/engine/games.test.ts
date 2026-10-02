@@ -82,6 +82,19 @@ describe("rulebooks", () => {
   });
 });
 
+describe("the arcade's look", () => {
+  test("a rulebook names its look; offers carry it; nonsense falls back to modern with a warning", () => {
+    expect(rules().minigameStyle).toBe("modern");
+    const fantasy = normalizeRuleset({ minigames: { style: "Fantasy" }, stats: { x: { kind: "skill" } }, actions: { a: { label: "A", check: { chance: 50, game: "aim" } } } });
+    expect(fantasy.ruleset!.minigameStyle).toBe("medieval");
+    expect(buildChoices(fantasy.ruleset!, initialState(fantasy.ruleset!), { lines: [], veils: [], minigames: "ask" }).find((c) => c.id === "a")?.game?.style).toBe("medieval");
+    expect(normalizeRuleset({ minigames: { style: "sci-fi" } }).ruleset!.minigameStyle).toBe("scifi");
+    const bad = normalizeRuleset({ minigames: { style: "baroque" } });
+    expect(bad.ruleset!.minigameStyle).toBe("modern");
+    expect(bad.issues.some((i) => i.where === "Minigames › style")).toBe(true);
+  });
+});
+
 describe("offers on choices", () => {
   test("rulebook games are offered; every check when asked; never with minigames off or game: false", () => {
     const r = rules();

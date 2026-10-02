@@ -489,6 +489,8 @@ export interface Settings {
   minigames: "off" | "ask" | "always";
   /** Which checks: only the ones the rulebook names a game for, or every check (a fitting game is picked). */
   minigameScope: "rulebook" | "all";
+  /** How the arcade looks: the rulebook's choice, or always one look. */
+  minigameLook: "rulebook" | "medieval" | "modern" | "scifi";
   /** Generate a picture for each date (the place, with them in the middle). */
   dateImages: boolean;
   /** Legacy setting retained for saved configurations; date pictures now use Cue's connection. */
@@ -524,6 +526,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sfxVolume: 0.4,
   minigames: "ask",
   minigameScope: "rulebook",
+  minigameLook: "rulebook",
   dateImages: true,
   imageConnectionId: "",
 };

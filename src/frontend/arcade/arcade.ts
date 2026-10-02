@@ -11,6 +11,7 @@ import { GAME_DEFS } from "./games/index.js";
 import { Synth } from "./synth.js";
 import { builtinSongs, suggestSong, TIER_EASE, TIER_LABEL, mmss, type Song } from "./songs.js";
 import { importedSongs, importOsz, removeImported } from "./library.js";
+import { loadFonts, textureUrl, THEMES, type Style, type Theme } from "./themes.js";
 
 export type ArcadeOutcome =
   | { kind: "played"; result: GameResult }
@@ -23,6 +24,8 @@ export interface ArcadeHost {
   volume(): number;
   sound(): boolean;
   reduced(): boolean;
+  /** A look the player always wants, overriding the rulebook's. */
+  look?(): Style | null;
 }
 
 const TIER_WORD: Record<Tier, string> = { crit_success: "Critical!", success: "Success", partial: "Partial", fail: "Failed", crit_fail: "Disaster" };
@@ -66,9 +69,16 @@ async function session(surface: ArcadeSurface, choice: ChoiceView, auto: boolean
   const gamble = choice.gamble ?? null;
   let game: GameId = offer?.game ?? gamble!.game;
   let def: GameDef = GAME_DEFS[game];
+  // The look: the player's override, else the rulebook's, else modern.
+  const style: Style = host.look?.() ?? offer?.style ?? gamble?.style ?? "modern";
+  const theme = THEMES[style];
+  loadFonts();
   const el = document.createElement("div");
   el.className = "warp-ar";
+  el.dataset.style = style;
   el.tabIndex = -1;
+  if (style === "medieval") { el.style.setProperty("--ar-wood", `url(${textureUrl("wood", { ...theme, wood: "#4a2e18" })})`); el.style.setProperty("--ar-parch", `url(${textureUrl("parchment", theme)})`); }
+  else if (style === "scifi") el.style.setProperty("--ar-panel-tex", `url(${textureUrl("panel", { ...theme, ground: "#060a10" })})`);
   root.innerHTML = "";
   root.appendChild(el);
   surface.show(true);
@@ -87,13 +97,11 @@ async function session(surface: ArcadeSurface, choice: ChoiceView, auto: boolean
   };
   await loadSongs();
 
-  const themeVars = () => `--ar-bg:${def.theme.bg};--ar-bg2:${def.theme.bg2};--ar-ac:${def.theme.accent};--ar-ac2:${def.theme.accent2}`;
 
   // ───────── briefing ─────────
   const briefing = (): Promise<"play" | "roll" | "cancel"> => new Promise((resolve) => {
     const draw = () => {
       el.dataset.game = game;
-      el.setAttribute("style", themeVars());
       const info = GAMES[game];
       const aids: GameAid[] = offer?.aids ?? gamble?.aids ?? [];
       const ease = song ? TIER_EASE[song.tier] : 0;
@@ -123,7 +131,7 @@ async function session(surface: ArcadeSurface, choice: ChoiceView, auto: boolean
         <div class="warp-ar-brief">
           <button class="warp-ar-x" data-ar-cancel title="Back to the story (Esc)" aria-label="Close">✕</button>
           <div class="warp-ar-brief-head">
-            <div class="warp-ar-badge">${info.icon}</div>
+            <div class="warp-ar-badge" aria-hidden="true"><span class="i">${info.icon}</span><span class="l">${esc(def.title.charAt(0))}</span></div>
             <div class="warp-ar-brief-title">
               <div class="warp-ar-kicker">${esc(offer ? `${offer.action} · ${offer.label}` : gamble!.action)}</div>
               <h1>${esc(def.title)}</h1>
@@ -243,7 +251,7 @@ async function session(surface: ArcadeSurface, choice: ChoiceView, auto: boolean
     ...(gamble ? { stake, rounds: gamble.rounds, currency: gamble.money.currency, edge: gamble.edge } : {}),
     ...(picked ? { song: picked } : {}),
   };
-  const finish = await playGame(el, def, play, synth, host, gamble ? `${gamble.action}` : `${offer!.action} · ${offer!.label}`);
+  const finish = await playGame(el, def, play, synth, host, theme, gamble ? `${gamble.action}` : `${offer!.action} · ${offer!.label}`);
   synth.hush();
 
   // ───────── result ─────────
@@ -272,7 +280,7 @@ function shift(bar: GameBar, by: number): GameBar {
 }
 
 /** The playing screen: the game, the bar beside it, lives, pause. */
-function playGame(el: HTMLElement, def: GameDef, play: Play, synth: Synth, host: ArcadeHost, kicker: string): Promise<Finish & { livesUsed: number; perk?: string }> {
+function playGame(el: HTMLElement, def: GameDef, play: Play, synth: Synth, host: ArcadeHost, theme: Theme, kicker: string): Promise<Finish & { livesUsed: number; perk?: string }> {
   return new Promise((resolve) => {
     const bar = play.bar;
     const gamble = play.mode === "gamble";
@@ -332,7 +340,7 @@ function playGame(el: HTMLElement, def: GameDef, play: Play, synth: Synth, host:
     };
     const quitFns: (() => void)[] = [];
     const kit: Kit = {
-      play, root: gameEl, rng: seeded(`${play.seed}:${Date.now()}`), synth,
+      play, theme, root: gameEl, rng: seeded(`${play.seed}:${Date.now()}`), synth,
       aid: (k) => aidTotal(play.aids, k),
       canvas() { const c = makeCanvas(gameEl); canvases.push(c); return c; },
       loop(fn) { loops.push(fn); },

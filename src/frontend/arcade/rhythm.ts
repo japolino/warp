@@ -3,12 +3,14 @@
 // timing windows scaled by difficulty and aids, and the score.
 
 import type { Kit } from "./kit.js";
+import type { Theme } from "./themes.js";
 import { aimChart, tileChart, type AimNote, type Song, type TileNote } from "./songs.js";
 
 export type Judge = "perfect" | "great" | "ok" | "miss";
 export const JUDGE_WEIGHT: Record<Judge, number> = { perfect: 1, great: 0.7, ok: 0.4, miss: 0 };
 export const JUDGE_LABEL: Record<Judge, string> = { perfect: "Perfect", great: "Great", ok: "OK", miss: "Miss" };
-export const JUDGE_COLOR: Record<Judge, string> = { perfect: "#ffe066", great: "#4fe0a4", ok: "#6cc7ff", miss: "#ff5d6c" };
+/** Judgement colours in the look's own palette. */
+export const judgeColor = (t: Theme, j: Judge) => (j === "perfect" ? t.gold : j === "great" ? t.good : j === "ok" ? t.accent2 : t.bad);
 
 function offsetMs(): number {
   try { return Number(localStorage.getItem("warp:arcade:offset") ?? 0) || 0; } catch { return 0; }
@@ -85,6 +87,9 @@ export class SongClock {
     this.kit.synth.note(midi, this.kit.synth.now(), Math.max(0.12, dur / this.rate), "piano", vel);
   }
 }
+
+/** The bench's autoplay switch: rhythm games hit every note themselves (for looking at them). */
+export const autoplay = () => (globalThis as { __warpAutoplay?: boolean }).__warpAutoplay === true;
 
 /** Timing windows in seconds: tighter as checks get harder, wider with aids. */
 export function windows(kit: Kit): Record<Exclude<Judge, "miss">, number> {

@@ -18,12 +18,14 @@ const arcade = createArcade({
   volume: () => 0.5,
   sound: () => true,
   reduced: () => false,
+  look: () => (document.getElementById("style") as HTMLSelectElement | null)?.value as "medieval" | "modern" | "scifi" ?? null,
 });
 
 const panel = document.getElementById("bench")!;
 panel.innerHTML = `
   <h1>Warp arcade bench</h1>
   <label>Game <select id="g">${GAME_IDS.map((g) => `<option value="${g}">${GAMES[g].icon} ${GAMES[g].name}</option>`).join("")}</select></label>
+  <label>Look <select id="style"><option value="medieval">Medieval</option><option value="modern" selected>Modern</option><option value="scifi">Sci-fi</option></select></label>
   <label>Dice odds <input id="p" type="range" min="5" max="95" value="55"><b id="pv">55%</b></label>
   <label><input id="gamble" type="checkbox"> Gamble (casino games only)</label>
   <fieldset><legend>Aids</legend>
@@ -36,11 +38,13 @@ panel.innerHTML = `
     <label><input type="checkbox" data-aid="hold" data-n="1"> hold</label>
     <label><input type="checkbox" data-aid="saver" data-n="1"> ball saver</label>
   </fieldset>
+  <label><input id="auto" type="checkbox"> Autoplay rhythm games (to look at them)</label>
   <button id="go">Open the arcade</button>
   <pre id="out"></pre>`;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 $("p").addEventListener("input", () => { $("pv").textContent = `${$<HTMLInputElement>("p").value}%`; });
 $("go").addEventListener("click", async () => {
+  (globalThis as { __warpAutoplay?: boolean }).__warpAutoplay = $<HTMLInputElement>("auto").checked;
   const game = $<HTMLSelectElement>("g").value as GameId;
   const chance = Number($<HTMLInputElement>("p").value) / 100;
   const aids: GameAid[] = [...document.querySelectorAll<HTMLInputElement>("[data-aid]:checked")].map((x) => ({ kind: x.dataset.aid as GameAid["kind"], amount: Number(x.dataset.n), from: x.dataset.aid === "lives" ? "★ Lucky Charm" : "Bench" }));

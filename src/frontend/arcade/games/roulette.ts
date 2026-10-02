@@ -2,7 +2,8 @@
 // pay little; a single number pays 35 to 1. Played as a check, your odds lean on the
 // wheel — the briefing says so — and a lucky charm buys a re-spin.
 
-import { clamp, easeOut, FONT_NUM, type GameDef, type Kit, withMusic } from "../kit.js";
+import { clamp, easeOut, type GameDef, type Kit, withMusic } from "../kit.js";
+import { glow, lift, paint as texture, unlift } from "../themes.js";
 import { backing } from "../synth.js";
 
 const ORDER = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
@@ -32,41 +33,59 @@ export function betWins(bet: string, n: number): number {
 
 const CSS = `
 .rl { position: absolute; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr); gap: 18px; padding: 16px; align-items: center;
-  background: radial-gradient(ellipse at 30% 50%, #1b5e3f, #0c3a27 55%, #06231a); color: #f7f1e1; }
+  background: var(--rl-table); color: var(--rl-ink); font-family: var(--ar-ui); }
 .rl-wheel { position: relative; height: 100%; min-height: 0; display: grid; place-items: center; }
 .rl-wheel canvas { width: 100%; height: 100%; }
 .rl-right { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.rl-board { display: grid; grid-template-columns: .9fr repeat(12, 1fr) 1.15fr; grid-template-rows: repeat(3, var(--rh)) var(--rh) var(--rh); gap: 3px; padding: 8px; border-radius: 12px; background: #0e4a32; box-shadow: inset 0 0 0 2px rgba(232,195,106,.45); }
-.rl-c { position: relative; border: 1px solid rgba(255,255,255,.35); border-radius: 4px; display: grid; place-items: center; font: 800 clamp(10px, 1.2vw, 14px) "Bahnschrift", system-ui, sans-serif; color: #fff; background: transparent; cursor: pointer; padding: 0; transition: filter .1s, box-shadow .1s; }
-.rl-c:hover { filter: brightness(1.25); box-shadow: inset 0 0 0 2px #ffe066; }
-.rl-c.red { background: #b3202f; } .rl-c.black { background: #1c1c22; } .rl-c.green { background: #198754; }
-.rl-c.zero { grid-row: 1 / 4; }
-.rl-c.out { background: rgba(0,0,0,.18); font-size: clamp(9px, 1vw, 12px); letter-spacing: .04em; }
-.rl-c.out.red { background: #b3202f; } .rl-c.out.black { background: #1c1c22; }
-.rl-c.win { animation: rl-win .9s ease-in-out 3; box-shadow: 0 0 0 3px #ffe066, 0 0 20px #ffe066; z-index: 1; }
-@keyframes rl-win { 50% { filter: brightness(1.8); } }
-.rl-chipon { position: absolute; right: -4px; top: -6px; min-width: 24px; height: 24px; padding: 0 4px; border-radius: 12px; display: grid; place-items: center; font: 800 10px ui-monospace, monospace; color: #1b1b1b;
-  background: radial-gradient(circle, #fff 0 45%, #e8c36a 46%); box-shadow: 0 2px 6px rgba(0,0,0,.5); pointer-events: none; z-index: 2; animation: rl-drop .2s ease-out both; }
-@keyframes rl-drop { from { transform: translateY(-10px) scale(1.4); opacity: 0; } }
+.rl-board { display: grid; grid-template-columns: .9fr repeat(12, 1fr) 1.15fr; grid-template-rows: repeat(3, var(--rh)) var(--rh) var(--rh); gap: 3px; padding: 8px; border-radius: var(--rl-r, 10px); background: var(--rl-felt); box-shadow: var(--rl-frame); }
+.rl .rl-c { position: relative; border: 1px solid var(--rl-cell-line); border-radius: var(--rl-cr, 4px); display: grid; place-items: center; font: 700 clamp(10px, 1.2vw, 14px) var(--rl-font); color: var(--rl-num); background: transparent; cursor: pointer; padding: 0; transition: filter .1s, box-shadow .1s; }
+.rl .rl-c:hover { filter: brightness(1.15); box-shadow: inset 0 0 0 2px var(--rl-hi); }
+.rl .rl-c.red, .rl .rl-c.out.red { background: var(--rl-red); } .rl-c.black, .rl .rl-c.out.black { background: var(--rl-black); } .rl-c.green { background: var(--rl-green); }
+.rl .rl-c.zero { grid-row: 1 / 4; }
+.rl .rl-c.out { background: var(--rl-out); font-size: clamp(9px, 1vw, 12px); letter-spacing: .04em; }
+.rl .rl-c.win { animation: rl-win .9s ease-in-out 3; box-shadow: 0 0 0 3px var(--rl-hi); z-index: 1; }
+@keyframes rl-win { 50% { filter: brightness(1.5); } }
+.rl-chipon { position: absolute; right: -4px; top: -6px; min-width: 24px; height: 24px; padding: 0 4px; border-radius: 12px; display: grid; place-items: center; font: 700 10px var(--ar-num); color: #1b1b1b;
+  background: var(--rl-chipon); box-shadow: 0 2px 5px rgba(0,0,0,.4); pointer-events: none; z-index: 2; animation: rl-drop .2s ease-out both; }
+@keyframes rl-drop { from { transform: translateY(-10px) scale(1.3); opacity: 0; } }
 .rl-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.rl-chip { width: 48px; height: 48px; border-radius: 50%; border: 0; cursor: pointer; font: 800 11px ui-monospace, monospace; color: #1b1b1b;
-  background: radial-gradient(circle, #fff 0 36%, transparent 37%), repeating-conic-gradient(var(--chip) 0 22.5deg, #f6efe2 22.5deg 30deg); box-shadow: 0 4px 10px rgba(0,0,0,.45); transition: transform .12s; }
-.rl-chip.on { transform: translateY(-5px); box-shadow: 0 0 0 3px #ffe066, 0 8px 18px rgba(0,0,0,.5); }
-.rl-btn { padding: 11px 18px; border-radius: 12px; border: 1px solid rgba(232,195,106,.45); background: rgba(0,0,0,.35); color: #f7f1e1; font: 700 14px "Bahnschrift", system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; cursor: pointer; }
-.rl-btn.main { background: linear-gradient(180deg, #f1d488, #c99a3d); color: #2a1d05; border-color: transparent; min-width: 120px; }
-.rl-btn:disabled { opacity: .35; cursor: not-allowed; }
-.rl-btn.luck { background: linear-gradient(180deg, #ffe066, #e2a93a); color: #2a1d05; animation: rl-win 1s ease-in-out infinite; }
-.rl-info { font: 600 12.5px ui-monospace, monospace; color: rgba(247,241,225,.8); }
+.rl .rl-chip { width: 48px; height: 48px; border-radius: 50%; border: 0; cursor: pointer; font: 700 11px var(--ar-num); color: #1b1b1b;
+  background: radial-gradient(circle, #fbf8f1 0 36%, transparent 37%), repeating-conic-gradient(var(--chip) 0 22.5deg, #f4efe4 22.5deg 30deg); box-shadow: 0 3px 8px rgba(0,0,0,.35); transition: transform .12s; }
+.rl .rl-chip.on { transform: translateY(-5px); box-shadow: 0 0 0 3px var(--rl-hi), 0 8px 16px rgba(0,0,0,.4); }
+.rl .rl-btn { padding: 11px 18px; border-radius: var(--rl-pill, 999px); border: 1px solid var(--rl-line); background: var(--rl-plate); color: var(--rl-ink); font: 700 13.5px var(--rl-font); letter-spacing: .08em; text-transform: uppercase; cursor: pointer; }
+.rl .rl-btn.main { background: var(--rl-main); color: var(--rl-on-main); border-color: transparent; min-width: 120px; }
+.rl .rl-btn:disabled { opacity: .35; cursor: not-allowed; }
+.rl .rl-btn.luck { border-color: var(--rl-hi); color: var(--rl-hi); }
+.rl-info { font: 500 12.5px var(--ar-num); color: var(--rl-dim); }
 .rl-hist { display: flex; gap: 4px; }
-.rl-hist span { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font: 800 11px ui-monospace, monospace; color: #fff; }
-.rl-hist .red { background: #b3202f; } .rl-hist .black { background: #1c1c22; } .rl-hist .green { background: #198754; }
+.rl-hist span { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font: 700 11px var(--ar-num); color: #fff; }
+.rl-hist .red { background: var(--rl-red); } .rl-hist .black { background: var(--rl-black); } .rl-hist .green { background: var(--rl-green); }
 @media (max-width: 760px) { .rl { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, .8fr) auto; } }
+
+.rl[data-style=modern] { --rl-table: #f3f1ec; --rl-ink: #1d1d1f; --rl-dim: #6e6e73; --rl-felt: #1f6b4f; --rl-frame: 0 10px 30px rgba(0,0,0,.12); --rl-cell-line: rgba(255,255,255,.4); --rl-num: #fff; --rl-font: var(--ar-display);
+  --rl-red: #c8302d; --rl-black: #1d1d1f; --rl-green: #22a06b; --rl-out: rgba(255,255,255,.08); --rl-hi: #f2d27a; --rl-chipon: radial-gradient(circle, #fff 0 45%, #f2d27a 46%);
+  --rl-line: rgba(29,29,31,.15); --rl-plate: #fff; --rl-main: #1d1d1f; --rl-on-main: #fff; }
+.rl[data-style=medieval] { --rl-table: var(--ar-wood) 0 0 / 256px; --rl-ink: #ecdfbf; --rl-dim: rgba(236,223,191,.7); --rl-felt: #2f4a2a; --rl-r: 2px; --rl-cr: 1px;
+  --rl-frame: 0 0 0 2px #b48a2c, 0 0 0 6px #3b2414, 0 0 0 7px rgba(180,138,44,.6), 0 14px 30px rgba(0,0,0,.5); --rl-cell-line: rgba(233,196,106,.35); --rl-num: #f3e7c8; --rl-font: var(--ar-display);
+  --rl-red: #8c2a1f; --rl-black: #231a10; --rl-green: #3e6b3a; --rl-out: rgba(0,0,0,.18); --rl-hi: #e9c46a; --rl-chipon: radial-gradient(circle at 35% 30%, #f6dc8a, #b48a2c 70%);
+  --rl-line: rgba(214,181,106,.5); --rl-plate: rgba(20,10,2,.5); --rl-main: #9e2b1f; --rl-on-main: #f3e7c8; --rl-pill: 2px; }
+.rl[data-style=medieval] .rl-chip { color: #3a2508; font-family: var(--ar-display); background: radial-gradient(circle at 35% 30%, #f6dc8a, #c9952f 55%, #8a6214 100%); box-shadow: 0 3px 6px rgba(20,10,2,.5), inset 0 0 0 3px rgba(107,74,18,.5); }
+.rl[data-style=medieval] .rl-chip:nth-child(1) { background: radial-gradient(circle at 35% 30%, #f0b98a, #b5703a 55%, #6b3a14 100%); }
+.rl[data-style=medieval] .rl-chip:nth-child(2) { background: radial-gradient(circle at 35% 30%, #f1f1ea, #b8b6ab 55%, #6f6c61 100%); }
+.rl[data-style=medieval] .rl-c { box-shadow: inset 0 0 0 1px rgba(0,0,0,.25); }
+.rl[data-style=scifi] { --rl-table: radial-gradient(ellipse at 30% 50%, #0f2132, #08111b 60%); --rl-ink: #d6e2ee; --rl-dim: #8ea3b8; --rl-felt: rgba(8, 14, 22, .9); --rl-r: 0; --rl-cr: 0;
+  --rl-frame: inset 0 0 0 1px rgba(94,200,229,.4); --rl-cell-line: rgba(120,170,210,.25); --rl-num: #d6e2ee; --rl-font: var(--ar-num);
+  --rl-red: rgba(239, 100, 97, .28); --rl-black: rgba(20, 32, 46, .9); --rl-green: rgba(95, 211, 160, .28); --rl-out: transparent; --rl-hi: #5ec8e5; --rl-chipon: #5ec8e5;
+  --rl-line: rgba(94,200,229,.35); --rl-plate: rgba(10,17,27,.9); --rl-main: rgba(94,200,229,.16); --rl-on-main: #5ec8e5; --rl-pill: 0; }
+.rl[data-style=scifi] .rl-chip { border-radius: 0; width: 54px; height: 38px; background: rgba(10,17,27,.9); color: #d6e2ee; box-shadow: inset 0 0 0 1px rgba(120,170,210,.35); clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px); }
+.rl[data-style=scifi] .rl-chip.on { transform: none; color: #5ec8e5; box-shadow: inset 0 0 0 1px #5ec8e5; background: rgba(94,200,229,.14); }
+.rl[data-style=scifi] .rl-btn.main { border-color: #5ec8e5; }
+.rl[data-style=scifi] .rl-hist span { border-radius: 0; }
 `;
 
 export const ROULETTE: GameDef = {
   id: "roulette",
   title: "Roulette",
-  theme: { bg: "#06170f", bg2: "#1b5e3f", accent: "#e8c36a", accent2: "#b3202f" },
   howTo: [
     "Pick a chip, then click the felt to bet: numbers pay 35 to 1, dozens and columns 2 to 1, red/black/odd/even 1 to 1.",
     "Spin. Zero beats every outside bet.",
@@ -89,6 +108,8 @@ export const ROULETTE: GameDef = {
 
     const root = document.createElement("div");
     root.className = "rl";
+    root.dataset.style = kit.theme.style;
+    const th = kit.theme;
     const cells: string[] = [];
     cells.push(`<button class="rl-c green zero" data-bet="n:0">0</button>`);
     for (let col = 0; col < 12; col++) for (let row = 0; row < 3; row++) {
@@ -104,7 +125,7 @@ export const ROULETTE: GameDef = {
       <div class="rl-right">
         <div class="rl-row"><div class="rl-hist" data-hist></div><span class="rl-info" data-info></span></div>
         <div class="rl-board">${cells.join("")}</div>
-        <div class="rl-row" data-chips>${denoms.map((d, i) => `<button class="rl-chip${d === chip ? " on" : ""}" style="--chip:${["#c0392b", "#1f6fbf", "#1d8f4e", "#222"][i]}" data-chip="${d}">${d}</button>`).join("")}</div>
+        <div class="rl-row" data-chips>${denoms.map((d, i) => `<button class="rl-chip${d === chip ? " on" : ""}" style="--chip:${["#b8352a", "#2f5fa8", "#2a7a4b", "#232323"][i]}" data-chip="${d}">${d}</button>`).join("")}</div>
         <div class="rl-row" data-actions></div>
       </div>`;
     kit.root.appendChild(root);
@@ -121,11 +142,11 @@ export const ROULETTE: GameDef = {
       $("[data-info]").textContent = `Spin ${Math.min(spin + 1, spins)} of ${spins} · ${kit.play.currency ?? ""}${chips} · on the felt ${staked()}`;
       root.querySelectorAll<HTMLElement>("[data-chip]").forEach((b) => { b.classList.toggle("on", Number(b.dataset.chip) === chip); (b as HTMLButtonElement).disabled = Number(b.dataset.chip) > chips; });
       const done = spin >= spins || chips + staked() < denoms[0];
-      $("[data-actions]").innerHTML = done && !spinning ? `<button class="rl-btn main" data-leave>Done</button>${undo && kit.lives.left() > 0 ? `<button class="rl-btn luck" data-luck>✦ Lucky re-spin</button>` : ""}` : `<button class="rl-btn main" data-spin ${staked() && !spinning ? "" : "disabled"}>Spin</button>
+      $("[data-actions]").innerHTML = done && !spinning ? `<button class="rl-btn main" data-leave>Done</button>${undo && kit.lives.left() > 0 ? `<button class="rl-btn luck" data-luck>Lucky re-spin</button>` : ""}` : `<button class="rl-btn main" data-spin ${staked() && !spinning ? "" : "disabled"}>Spin</button>
         <button class="rl-btn" data-clear ${staked() && !spinning ? "" : "disabled"}>Clear</button>
         <button class="rl-btn" data-rebet ${lastBets.size && !staked() && !spinning ? "" : "disabled"}>Rebet</button>
         ${gamble && spin > 0 && !spinning ? `<button class="rl-btn" data-leave>Cash out</button>` : ""}
-        ${undo && kit.lives.left() > 0 && !spinning ? `<button class="rl-btn luck" data-luck>✦ Lucky re-spin</button>` : ""}`;
+        ${undo && kit.lives.left() > 0 && !spinning ? `<button class="rl-btn luck" data-luck>Lucky re-spin</button>` : ""}`;
       kit.chips(chips + staked());
       kit.status(`Spin ${Math.min(spin + 1, spins)} of ${spins}\nChips ${chips + staked()}`);
     };
@@ -157,35 +178,75 @@ export const ROULETTE: GameDef = {
       const r0 = cv.getBoundingClientRect();
       const W = r0.width, H = r0.height, R = Math.min(W, H) * 0.46, cx = W / 2, cy = H / 2;
       g.clearRect(0, 0, W, H);
-      // Bowl.
-      const bowl = g.createRadialGradient(cx, cy, R * 0.6, cx, cy, R * 1.08);
-      bowl.addColorStop(0, "#3b2412"); bowl.addColorStop(0.85, "#6b3f1e"); bowl.addColorStop(1, "#2a170a");
-      g.fillStyle = bowl; g.beginPath(); g.arc(cx, cy, R * 1.08, 0, Math.PI * 2); g.fill();
-      g.strokeStyle = "#e8c36a"; g.lineWidth = 3; g.beginPath(); g.arc(cx, cy, R * 1.0, 0, Math.PI * 2); g.stroke();
-      // Pockets.
       const n = ORDER.length, step = (Math.PI * 2) / n;
+      const pocket = (num: number) => {
+        const col = colorOf(num);
+        if (th.style === "medieval") return col === "red" ? "#8c2a1f" : col === "black" ? "#231a10" : "#3e6b3a";
+        if (th.style === "modern") return col === "red" ? "#c8302d" : col === "black" ? "#1d1d1f" : "#22a06b";
+        return col === "red" ? "#3a1a22" : col === "black" ? "#0d1724" : "#123a2c";
+      };
+      // Bowl and rim.
+      if (th.style === "medieval") {
+        g.save(); g.beginPath(); g.arc(cx, cy, R * 1.08, 0, Math.PI * 2); g.clip(); texture(g, "wood", { ...th, wood: "#5a3a20" }, cx - R * 1.1, cy - R * 1.1, R * 2.2, R * 2.2); g.restore();
+        g.strokeStyle = "#2a1a0d"; g.lineWidth = 4; g.beginPath(); g.arc(cx, cy, R * 1.08, 0, Math.PI * 2); g.stroke();
+        g.strokeStyle = "#c9952f"; g.lineWidth = 2; g.beginPath(); g.arc(cx, cy, R * 0.96, 0, Math.PI * 2); g.stroke();
+        // Brass studs round the rim.
+        for (let k = 0; k < 24; k++) { const a = (k * Math.PI) / 12; g.fillStyle = "#c9952f"; g.beginPath(); g.arc(cx + Math.cos(a) * R * 1.02, cy + Math.sin(a) * R * 1.02, Math.max(2, R * 0.018), 0, Math.PI * 2); g.fill(); }
+      } else if (th.style === "modern") {
+        lift(g, th, 3); g.fillStyle = "#2b2b2e"; g.beginPath(); g.arc(cx, cy, R * 1.08, 0, Math.PI * 2); g.fill(); unlift(g);
+        const rim = g.createRadialGradient(cx, cy, R * 0.9, cx, cy, R * 1.08);
+        rim.addColorStop(0, "#3a3a3e"); rim.addColorStop(1, "#1d1d1f");
+        g.fillStyle = rim; g.beginPath(); g.arc(cx, cy, R * 1.06, 0, Math.PI * 2); g.fill();
+      } else {
+        g.fillStyle = "#08111b"; g.beginPath(); g.arc(cx, cy, R * 1.08, 0, Math.PI * 2); g.fill();
+        g.strokeStyle = "rgba(94, 200, 229, .5)"; g.lineWidth = 1; g.beginPath(); g.arc(cx, cy, R * 1.06, 0, Math.PI * 2); g.stroke();
+        g.setLineDash([2, 6]); g.beginPath(); g.arc(cx, cy, R * 0.97, 0, Math.PI * 2); g.stroke(); g.setLineDash([]);
+      }
+      // Pockets and numbers.
       for (let i = 0; i < n; i++) {
         const a = wheelAng + i * step - Math.PI / 2;
-        g.fillStyle = colorOf(ORDER[i]) === "red" ? "#b3202f" : colorOf(ORDER[i]) === "black" ? "#16161b" : "#198754";
+        g.fillStyle = pocket(ORDER[i]);
         g.beginPath(); g.moveTo(cx, cy); g.arc(cx, cy, R * 0.9, a - step / 2, a + step / 2); g.closePath(); g.fill();
         g.save(); g.translate(cx + Math.cos(a) * R * 0.8, cy + Math.sin(a) * R * 0.8); g.rotate(a + Math.PI / 2);
-        g.fillStyle = "#fff"; g.font = `700 ${Math.max(8, R * 0.075)}px ${FONT_NUM}`; g.textAlign = "center"; g.textBaseline = "middle";
+        g.fillStyle = th.style === "medieval" ? "#f3e7c8" : th.style === "scifi" ? (colorOf(ORDER[i]) === "red" ? "#ef6461" : colorOf(ORDER[i]) === "green" ? "#5fd3a0" : "#d6e2ee") : "#fff";
+        g.font = `${th.style === "scifi" ? 500 : 700} ${Math.max(8, R * 0.075)}px ${th.style === "scifi" ? th.fontNum : th.fontDisplay}`;
+        g.textAlign = "center"; g.textBaseline = "middle";
         g.fillText(String(ORDER[i]), 0, 0); g.restore();
       }
-      g.strokeStyle = "rgba(232,195,106,.7)"; g.lineWidth = 1.5;
+      g.strokeStyle = th.style === "medieval" ? "rgba(201, 149, 47, .8)" : th.style === "modern" ? "rgba(255,255,255,.35)" : "rgba(94, 200, 229, .3)";
+      g.lineWidth = th.style === "modern" ? 1 : 1.5;
       for (let i = 0; i < n; i++) { const a = wheelAng + i * step - Math.PI / 2 + step / 2; g.beginPath(); g.moveTo(cx + Math.cos(a) * R * 0.62, cy + Math.sin(a) * R * 0.62); g.lineTo(cx + Math.cos(a) * R * 0.9, cy + Math.sin(a) * R * 0.9); g.stroke(); }
       // Hub.
-      const hub = g.createRadialGradient(cx - R * 0.1, cy - R * 0.1, 2, cx, cy, R * 0.62);
-      hub.addColorStop(0, "#8a5a2b"); hub.addColorStop(1, "#3b2412");
-      g.fillStyle = hub; g.beginPath(); g.arc(cx, cy, R * 0.62, 0, Math.PI * 2); g.fill();
-      g.strokeStyle = "#e8c36a"; g.lineWidth = 4;
-      for (let k = 0; k < 4; k++) { const a = wheelAng * 1 + (k * Math.PI) / 2; g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.cos(a) * R * 0.45, cy + Math.sin(a) * R * 0.45); g.stroke(); }
-      g.fillStyle = "#e8c36a"; g.beginPath(); g.arc(cx, cy, R * 0.08, 0, Math.PI * 2); g.fill();
-      // Ball.
+      if (th.style === "medieval") {
+        g.save(); g.beginPath(); g.arc(cx, cy, R * 0.62, 0, Math.PI * 2); g.clip(); texture(g, "wood", { ...th, wood: "#7a5230" }, cx - R, cy - R, R * 2, R * 2); g.restore();
+        g.strokeStyle = "#c9952f"; g.lineWidth = 2; g.beginPath(); g.arc(cx, cy, R * 0.62, 0, Math.PI * 2); g.stroke();
+        // A carved sun at the centre.
+        g.fillStyle = "#c9952f";
+        for (let k = 0; k < 12; k++) { const a = wheelAng + (k * Math.PI) / 6; g.beginPath(); g.moveTo(cx + Math.cos(a - 0.12) * R * 0.14, cy + Math.sin(a - 0.12) * R * 0.14); g.lineTo(cx + Math.cos(a) * R * 0.36, cy + Math.sin(a) * R * 0.36); g.lineTo(cx + Math.cos(a + 0.12) * R * 0.14, cy + Math.sin(a + 0.12) * R * 0.14); g.closePath(); g.fill(); }
+        g.beginPath(); g.arc(cx, cy, R * 0.14, 0, Math.PI * 2); g.fill();
+      } else if (th.style === "modern") {
+        const hub = g.createRadialGradient(cx - R * 0.15, cy - R * 0.15, 2, cx, cy, R * 0.62);
+        hub.addColorStop(0, "#f3f1ec"); hub.addColorStop(1, "#c9c5bc");
+        g.fillStyle = hub; g.beginPath(); g.arc(cx, cy, R * 0.62, 0, Math.PI * 2); g.fill();
+        g.strokeStyle = "#8e8e93"; g.lineWidth = Math.max(3, R * 0.03);
+        for (let k = 0; k < 4; k++) { const a = wheelAng + (k * Math.PI) / 2; g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.cos(a) * R * 0.42, cy + Math.sin(a) * R * 0.42); g.stroke(); }
+        g.fillStyle = "#1d1d1f"; g.beginPath(); g.arc(cx, cy, R * 0.07, 0, Math.PI * 2); g.fill();
+      } else {
+        g.fillStyle = "#0b131d"; g.beginPath(); g.arc(cx, cy, R * 0.62, 0, Math.PI * 2); g.fill();
+        g.strokeStyle = "rgba(94, 200, 229, .5)"; g.lineWidth = 1; g.beginPath(); g.arc(cx, cy, R * 0.62, 0, Math.PI * 2); g.stroke();
+        g.beginPath(); g.arc(cx, cy, R * 0.3, wheelAng, wheelAng + Math.PI * 1.4); g.stroke();
+        g.strokeStyle = "rgba(242, 165, 65, .6)"; g.beginPath(); g.arc(cx, cy, R * 0.2, -wheelAng * 2, -wheelAng * 2 + Math.PI * 0.8); g.stroke();
+      }
+      // The ball.
       const br = R * (0.86 + 0.12 * ballR);
-      g.fillStyle = "#fdfdfd"; g.shadowColor = "rgba(0,0,0,.6)"; g.shadowBlur = 6;
-      g.beginPath(); g.arc(cx + Math.cos(ballAng - Math.PI / 2) * br, cy + Math.sin(ballAng - Math.PI / 2) * br, Math.max(4, R * 0.04), 0, Math.PI * 2); g.fill();
-      g.shadowBlur = 0;
+      const bx = cx + Math.cos(ballAng - Math.PI / 2) * br, by = cy + Math.sin(ballAng - Math.PI / 2) * br, bs = Math.max(4, R * 0.04);
+      if (th.style === "scifi") { g.fillStyle = th.accent; glow(g, th, th.accent, 8); g.beginPath(); g.arc(bx, by, bs * 0.8, 0, Math.PI * 2); g.fill(); g.shadowBlur = 0; }
+      else {
+        lift(g, th, 1);
+        const bg2 = g.createRadialGradient(bx - bs * 0.3, by - bs * 0.3, 1, bx, by, bs);
+        bg2.addColorStop(0, "#ffffff"); bg2.addColorStop(1, th.style === "medieval" ? "#cfc6b0" : "#c8c8cc");
+        g.fillStyle = bg2; g.beginPath(); g.arc(bx, by, bs, 0, Math.PI * 2); g.fill(); unlift(g);
+      }
     };
 
     const pickResult = (): number => {

@@ -21,6 +21,7 @@ start:
   location: bridge
   items: { holdout_pistol: 1, medkit: 2, codex: 1 }
 
+minigames: { style: scifi }   # the arcade's look: medieval, modern or scifi
 hud:
   currency: "₡"
   bars: [shields, hp, lust, energy, xp]

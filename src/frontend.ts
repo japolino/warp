@@ -190,6 +190,7 @@ export function setup(ctx: SpindleFrontendContext) {
     volume: () => settings.sfxVolume,
     sound: () => settings.sfx !== "off",
     reduced: () => settings.fx !== "full" || matchMedia("(prefers-reduced-motion: reduce)").matches,
+    look: () => (settings.minigameLook === "rulebook" ? null : settings.minigameLook),
   });
   let stageOpen = false;
   let stageWantGate = false;

@@ -22,6 +22,7 @@ start:
   location: office
   items: { revolver: 1, notebook: 1, cigarettes: 2 }
 
+minigames: { style: modern }   # the arcade's look: medieval, modern or scifi
 hud:
   currency: "$"
   bars: [grit, nerve, heat, clues]

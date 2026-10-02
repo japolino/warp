@@ -52,9 +52,11 @@ A check can be **played instead of rolled**. When a choice has a game (its icon 
 - **Same outcomes:** the score lands on the same tiers a roll would (critical, success, partial, fail, disaster). The story hears how it went in its own terms ("a shaky start, cleared it with seconds left"), never the score.
 - **Songs:** eleven built-in pieces old enough to be free to use, from Twinkle Twinkle to Flight of the Bumblebee, in our own arrangements. Harder songs lower the bar. You can also import your own osu! beatmaps (`.osz`): standard maps play as Aim and mania maps as Keys. They're stored in your browser only.
 - **Gambling:** a `gamble:` table stakes real in-game money at blackjack, roulette or slots. Pick a buy-in, play, and cash out whenever you like. A bad night can set off the table's `broke:` effects.
+- **Three looks:** medieval (parchment, oak and gold leaf, a wax seal on the result), modern (paper, ink and one coral accent) and sci-fi (a quiet instrument panel). The rulebook picks with `minigames: { style: medieval }`; Questbound is medieval, Starfarer sci-fi, the rest modern.
 - **Settings → Minigames:**
   - Show the briefing (Play or Roll the dice), go straight into the game, or turn minigames off.
   - Choose whether only the checks the rulebook names get a game, or every check.
+  - Keep the rulebook's look, or always use one.
 
 ## Typing freely
 

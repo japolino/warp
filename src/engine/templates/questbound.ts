@@ -23,6 +23,7 @@ start:
   location: inn
   items: { short_sword: 1, healing_draught: 2, rations: 3, torch: 1 }
 
+minigames: { style: medieval }   # the arcade's look: medieval, modern or scifi
 hud:
   currency: "g"
   bars: [hp, stamina, mana, xp]

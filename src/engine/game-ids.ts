@@ -77,6 +77,8 @@ export interface GameBar { critFail: number | null; partial: number; success: nu
 
 export interface GameOffer {
   game: GameId;
+  /** The rulebook's look for the arcade. */
+  style?: "medieval" | "modern" | "scifi";
   /** Other games the rulebook allows for this check (the player may switch). */
   options: GameId[];
   /** The action, as the player saw it. */
@@ -96,6 +98,7 @@ export interface GameOffer {
 
 export interface GambleOffer {
   game: GambleGame;
+  style?: "medieval" | "modern" | "scifi";
   action: string;
   /** Buy-in choices the player can afford, smallest first. */
   stakes: number[];

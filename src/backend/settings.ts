@@ -28,6 +28,7 @@ export function normalizeSettings(value: unknown): Settings {
   s.sfx = s.sfx === "off" || s.sfx === "all" ? s.sfx : "games";
   s.minigames = s.minigames === "off" || s.minigames === "always" ? s.minigames : "ask";
   s.minigameScope = s.minigameScope === "all" ? "all" : "rulebook";
+  s.minigameLook = s.minigameLook === "medieval" || s.minigameLook === "modern" || s.minigameLook === "scifi" ? s.minigameLook : "rulebook";
   s.jevUrl = /^https?:\/\/\S+$/i.test(s.jevUrl) ? s.jevUrl : DEFAULT_SETTINGS.jevUrl;
   return s;
 }

@@ -5190,6 +5190,16 @@ function normCheck(raw, where, c) {
     ...raw.game !== undefined || raw.games !== undefined || raw.minigame !== undefined ? { game: normGames(raw.game ?? raw.games ?? raw.minigame, `${where} › game`, c) } : {}
   };
 }
+function normMinigameStyle(raw, c) {
+  if (raw === undefined)
+    return "modern";
+  const v = String((isObj(raw) ? raw.style ?? raw.look : raw) ?? "").toLowerCase().replace(/[^a-z]/g, "");
+  const map = { medieval: "medieval", fantasy: "medieval", modern: "modern", contemporary: "modern", scifi: "scifi", sf: "scifi", future: "scifi", space: "scifi", cyberpunk: "scifi" };
+  if (map[v])
+    return map[v];
+  c.warn("Minigames › style", "should be medieval, modern or scifi");
+  return "modern";
+}
 function normGames(raw, where, c) {
   if (raw === false || raw === "none" || raw === "dice")
     return false;
@@ -6863,6 +6873,7 @@ function normalizeRuleset(raw) {
     quests,
     questOrder,
     storyQuests,
+    minigameStyle: normMinigameStyle(raw.minigames, c),
     secrets,
     fronts,
     randomEvents,
@@ -8771,6 +8782,7 @@ function gameOffer(r, s, a, chance, opts) {
     aids.push({ kind: "window", amount: Math.round(partner.sync * 35), from: `In step with ${partner.name}` });
   return {
     game,
+    style: r.minigameStyle,
     options: named.length ? named : [game],
     action: opts.label ?? a.label,
     label: check.label ?? (stats[0] ? r.stats[stats[0]]?.label ?? stats[0] : "Luck"),
@@ -8893,6 +8905,7 @@ function gambleOffer(r, s, a, seed) {
   const edge = Math.max(-0.2, Math.min(0.4, (g.edge ?? BASE_EDGE[g.game]) - luck - aidTotal(aids, "luck") / 400));
   return {
     game: g.game,
+    style: r.minigameStyle,
     action: a.label,
     stakes: g.stakes.filter((x) => x <= have),
     rounds: g.rounds,
@@ -12924,6 +12937,7 @@ EFFECT: conceive: { with: target, chance: 20, carrier: player }   # carrier: pla
 
 name: Harbour Town                 # the game's name (shown on the HUD); description: one line about it
 description: A fishing town where the tide brings secrets.
+minigames: { style: modern }       # how the minigames look: medieval (parchment, oak, gold), modern (paper and ink) or scifi (an instrument panel)
 clock: { start: "Mon 07:00", date: "Sep 4", minutes_per_action: 15, narrator_max: 240 }
 start: { location: home, items: { phone: 1 } }
 hud: { currency: "$", bars: [health, stress] }
@@ -12973,6 +12987,7 @@ actions:
     #   games: aim (circles to a song), keys (4-lane piano tiles), mines, stack (falling blocks), snake, race (three-legged, with
     #   whoever is here), pinball, blackjack, roulette, slots. The dice's odds set the score to beat; the stat behind the check,
     #   perks and a partner's trust become aids. Played or rolled, the same tiers and outcomes apply.
+    #   The arcade's look is the rulebook's: minigames: { style: medieval } (or modern, scifi) at the top level.
     success: { flags: { door_open: true }, skulduggery: +1 }
     fail: { stress: +5, hint: "The pick snaps." }
     # tiers: crit_success, success, partial, fail, crit_fail; without a check use effects:
@@ -13324,6 +13339,7 @@ Odds should usually sit between 25% and 85% at the start and improve with skill;
 Partial outcomes and costs make failures interesting: a fail should change something, not just waste a turn.
 
 ## minigames and gambling
+Set the arcade's look to the setting with minigames: { style: medieval | modern | scifi } — parchment and oak for fantasy and history, paper and ink for the present day, an instrument panel for the future.
 Give the checks that feel like a feat of hands or nerve a game: (aim for shooting and throwing, keys for music and performance, mines for locks, traps and investigation, stack for building and repairs, snake for chases and sneaking, race for anything done side by side with someone, pinball for brawls, blackjack for bluffs and deals, slots or roulette for pure luck). Leave quiet everyday checks on dice.
 A perk or two with rule: { game: … } makes them feel different (+1 life, a wider timing window, a peek at the dealer's card).
 If the setting has a casino, a card den, dice at the inn or a fruit machine in the bar, make it a gamble: table, with win:/lose:/broke: effects so a bad night has consequences — a debt flag a quest can pick up, stress, someone who saw.
@@ -13341,6 +13357,7 @@ var PART_OF_KEY = {
   start: "core",
   hud: "core",
   narration: "core",
+  minigames: "core",
   stats: "stats",
   growth: "stats",
   practice: "stats",
@@ -13740,6 +13757,7 @@ start:
   location: apartment
   items: { phone: 1, keys: 1 }
 
+minigames: { style: modern }   # the arcade's look: medieval, modern or scifi
 hud:
   currency: "£"
   bars: [pain, arousal, fatigue, stress, trauma, control, allure]
@@ -14764,6 +14782,7 @@ start:
   location: bridge
   items: { holdout_pistol: 1, medkit: 2, codex: 1 }
 
+minigames: { style: scifi }   # the arcade's look: medieval, modern or scifi
 hud:
   currency: "₡"
   bars: [shields, hp, lust, energy, xp]
@@ -15572,6 +15591,7 @@ start:
   location: inn
   items: { short_sword: 1, healing_draught: 2, rations: 3, torch: 1 }
 
+minigames: { style: medieval }   # the arcade's look: medieval, modern or scifi
 hud:
   currency: "g"
   bars: [hp, stamina, mana, xp]
@@ -16478,6 +16498,7 @@ start:
   location: office
   items: { revolver: 1, notebook: 1, cigarettes: 2 }
 
+minigames: { style: modern }   # the arcade's look: medieval, modern or scifi
 hud:
   currency: "$"
   bars: [grit, nerve, heat, clues]

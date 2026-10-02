@@ -684,6 +684,14 @@ export function renderSettings(s: Settings, status: RulesetStatus | null, connec
         <option value="all"${s.minigameScope === "all" ? " selected" : ""}>Every check (a game that fits the skill is picked)</option>
       </select>
     </label>
+    <label class="warp-slider">Look
+      <select class="warp-select" data-setting="minigameLook">
+        <option value="rulebook"${s.minigameLook === "rulebook" ? " selected" : ""}>The rulebook's (medieval, modern or sci-fi)</option>
+        <option value="medieval"${s.minigameLook === "medieval" ? " selected" : ""}>Always medieval — parchment, oak and gold</option>
+        <option value="modern"${s.minigameLook === "modern" ? " selected" : ""}>Always modern — paper and ink</option>
+        <option value="scifi"${s.minigameLook === "scifi" ? " selected" : ""}>Always sci-fi — an instrument panel</option>
+      </select>
+    </label>
   </div>
   <div class="warp-card">
     <h3>Effects & sound</h3>
