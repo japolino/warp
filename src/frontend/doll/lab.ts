@@ -253,7 +253,7 @@ export function createDollLab(o: { send(m: DollRequest): void; chatId(): string 
   function onLook(m: { who: string; look: unknown | null; note: string; name?: string; error?: string }) {
     const who: Who = m.who === "you" ? "you" : "them";
     busy = null;
-    if (m.look) { st[who] = cleanLook(m.look); st.notes[who] = m.note; if (who === "them" && m.name && !st.themName) st.themName = m.name; }
+    if (m.look) { st[who] = cleanLook(m.look); st.notes[who] = m.note; if (who === "them" && m.name && m.name !== "them" && !st.themName.trim()) st.themName = m.name; }
     else st.notes[who] = m.error ? `The helper couldn't do it: ${m.error}` : "";
     save();
     o.changed();

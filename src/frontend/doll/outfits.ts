@@ -146,7 +146,12 @@ const colour = (v: unknown, fallback: string): string => {
   const s = v.trim();
   if (/^#[0-9a-f]{6}$/i.test(s)) return s.toLowerCase();
   if (/^#[0-9a-f]{3}$/i.test(s)) return "#" + s.slice(1).split("").map((c) => c + c).join("").toLowerCase();
-  return NAMED[s.toLowerCase()] ?? fallback;
+  if (/^#[0-9a-f]{8}$/i.test(s)) return s.slice(0, 7).toLowerCase();
+  const w = s.toLowerCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ");
+  if (NAMED[w]) return NAMED[w];
+  // "deep crimson", "pale gold": the last colour word in it.
+  const hit = w.split(" ").reverse().find((x) => NAMED[x]);
+  return hit ? NAMED[hit] : fallback;
 };
 const num = (v: unknown, lo: number, hi: number): number | undefined => (typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : undefined);
 
@@ -157,6 +162,11 @@ export const NAMED: Record<string, string> = {
   green: "#3f8a4f", olive: "#6b7a3a", teal: "#2a8a8a", cyan: "#4fc3d8", blue: "#3d6fd0", navy: "#24305a", purple: "#6a3d9a", violet: "#8a5ad0",
   lavender: "#b8a6e0", maroon: "#6a1f2a", burgundy: "#6e1f34", charcoal: "#33323a", ivory: "#f6f1e3",
   blonde: "#e8c26a", auburn: "#8e3b22", ginger: "#c45a2a", chestnut: "#6b3a24", platinum: "#e8e4dc",
+  hazel: "#8e7652", amber: "#c9822b", bronze: "#9c6838", peach: "#f4c29f", copper: "#b86d3b", golden: "#d4a83a", ash: "#8a8886",
+  indigo: "#3b4d8a", turquoise: "#38a3a5", coral: "#e76f51", rose: "#c94a6e", magenta: "#c03a8a", mint: "#9fd8b8", sky: "#8cc4ec",
+  emerald: "#2e8b57", sapphire: "#2a52be", ruby: "#a8203a", jade: "#3a9a6a", khaki: "#b5a27a", "dark brown": "#4a3022", "light brown": "#a07850",
+  "dark blue": "#24305a", "light blue": "#8cc4ec", "dark green": "#2f5a3a", "light green": "#9fd3a8", "dark red": "#7a1f2a", "light pink": "#f6c6d6",
+  pale: "#fbe3d3", fair: "#f6d7c3", "olive skin": "#c9a37a", dark: "#6a4128", ebony: "#4a2e1e", snow: "#f8f8fb", raven: "#1f1a22", jet: "#141218",
 };
 
 /** Turn any loose garment description into a drawable one, or null if it can't be. */
@@ -197,14 +207,17 @@ export function defaultLook(sex: Sex = "f"): Look {
 
 /** Turn any loose look (saved, typed in, or from a helper model) into a drawable one. */
 export function cleanLook(raw: unknown): Look {
-  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  // A bare list of garments is an outfit.
+  const r = (Array.isArray(raw) ? { outfit: raw } : raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const bodyR = (r.body && typeof r.body === "object" ? r.body : {}) as Record<string, unknown>;
   const sex: Sex = bodyR.sex === "m" || r.sex === "m" ? "m" : "f";
   const base = defaultLook(sex);
   const presets = Object.keys(PRESETS[sex]);
-  const body: BodyPick = { sex, preset: pick(bodyR.preset, presets) ?? base.body.preset };
+  // Tolerate "f: curvy" and "Curvy".
+  const presetWord = (v: unknown) => (typeof v === "string" ? v.split(/[:\s]+/).filter(Boolean).pop() : v);
+  const body: BodyPick = { sex, preset: pick(presetWord(bodyR.preset), presets) ?? base.body.preset };
   const bl = bodyR.blend as Record<string, unknown> | undefined;
-  if (bl && pick(bl.preset, presets)) body.blend = { preset: pick(bl.preset, presets)!, amount: num(bl.amount, 0, 1) ?? 0.5 };
+  if (bl && typeof bl === "object" && pick(presetWord(bl.preset), presets)) body.blend = { preset: pick(presetWord(bl.preset), presets)!, amount: num(bl.amount, 0, 1) ?? 0.5 };
   const h = num(bodyR.height, 0.85, 1.15);
   if (h) body.height = h;
   const hairR = (r.hair && typeof r.hair === "object" ? r.hair : {}) as Record<string, unknown>;

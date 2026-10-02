@@ -7,7 +7,7 @@ import { EARS, EXPRESSIONS, HAIR_STYLES, HORNS, TAILS } from "../frontend/doll/f
 import { FITS, HEMS, KINDS, LENGTHS, MATERIALS, NECKLINES, PATTERNS, SLEEVE_FITS, SLEEVES, STYLES } from "../frontend/doll/garments.js";
 import { cleanLook, NAMED } from "../frontend/doll/outfits.js";
 import type { DollRequest } from "../shared/protocol.js";
-import { ask, firstJson } from "./helpers.js";
+import { ask } from "./helpers.js";
 import { host, logError, send, toast } from "./host.js";
 import { getMessages } from "./ledger.js";
 import { getSettings } from "./settings.js";
@@ -21,9 +21,9 @@ Reply with JSON only:
 {"look": {...}, "invented": ["short notes on what you made up because the sources didn't say"]}
 
 look fields:
-- body: {"sex": "f" | "m", "preset": f: ${list(Object.keys(PRESETS.f))}; m: ${list(Object.keys(PRESETS.m))}, "blend": {"preset": another preset, "amount": 0..1} (optional, for in-between builds), "height": 0.85..1.15 (1 = average)}
+- body: {"sex": "f" | "m", "preset": one word — for "f" one of ${list(Object.keys(PRESETS.f))}; for "m" one of ${list(Object.keys(PRESETS.m))}, "blend": {"preset": another preset of the same sex, "amount": 0..1} (optional, for in-between builds), "height": 0.85..1.15 (1 = average)}
 - skin, eyes: hex colours ("#e8b896"). Colour words also work: ${Object.keys(NAMED).slice(0, 20).join(", ")}…
-- hair: {"style": ${list(HAIR_STYLES)}, "colour": hex, "length": 0..1 (for long styles)}
+- hair: {"style": ${list(HAIR_STYLES)}, "colour": hex, "length": a number 0..1 (0 short, 1 waist-long)}
 - expression: ${list(EXPRESSIONS)}
 - ears (only for non-human ears): ${list(EARS)} or null; earColour
 - tail: ${list(TAILS)} or null; tailColour. kitsune = several fox tails.
@@ -32,7 +32,7 @@ look fields:
   {"kind": ${list(KINDS)}, "label": "what it is, 1-3 words", "colour": hex, "colour2": trim hex (optional),
    "pattern": ${list(PATTERNS)}, "patternColour": hex, "material": ${list(MATERIALS)},
    "neckline": ${list(NECKLINES)}, "sleeves": ${list(SLEEVES)}, "sleeveFit": ${list(SLEEVE_FITS)},
-   "hem": ${list(HEMS)} (tops), "length": ${list(LENGTHS)} (legs, skirts, socks, boots), "fit": ${list(FITS)},
+   "hem": ${list(HEMS)} (tops), "length": one word, ${list(LENGTHS)} (how far legs, skirts, socks and boots reach), "fit": ${list(FITS)},
    "rise": high | mid | low, "flare": 0..1 (skirts, coat tails), "open": true|false (jackets), "damage": 0..1 (torn or worn),
    "style": ${Object.entries(STYLES).map(([k, v]) => `${k}: ${list(v!)}`).join("; ")}}
 
@@ -44,7 +44,8 @@ How to build things that aren't on the lists — compose them:
 - leggings / jeans: bottom, fit tight; a kilt: skirt with plaid; overalls: bottom + apron in the same colour
 - detached sleeves: sleeves; arm warmers: gloves style fingerless, sleeves elbow
 Never add a garment the sources don't support unless you need it to clothe them plausibly for the setting; note those in "invented".
-Keep what the sources say exactly (colours, cuts, animal features). Fill gaps to fit the setting and the person.`;
+Keep what the sources say exactly (colours, cuts, animal features). Fill gaps to fit the setting and the person.
+"look" is one object with the fields above (not a list of garments). Write nothing before or after the JSON.`;
 
 async function macro(text: string, chatId: string | null, userId?: string): Promise<string> {
   if (!chatId) return "";
@@ -54,26 +55,57 @@ async function macro(text: string, chatId: string | null, userId?: string): Prom
   } catch { return ""; }
 }
 
-/** Gather what's known about someone and ask the helper for their look. */
+/** The helper's reply: the first JSON object that holds a look (or is one), skipping any thinking-out-loud objects before it. */
+export function lookFrom(text: string): { look: Record<string, unknown> | unknown[]; invented: string[] } | null {
+  const cleaned = text.replace(/```(?:json)?/gi, "");
+  for (let start = cleaned.indexOf("{"); start >= 0; start = cleaned.indexOf("{", start + 1)) {
+    let depth = 0, inStr = false, end = -1;
+    for (let i = start; i < cleaned.length; i++) {
+      const c = cleaned[i];
+      if (inStr) { if (c === "\\") i++; else if (c === '"') inStr = false; continue; }
+      if (c === '"') inStr = true;
+      else if (c === "{") depth++;
+      else if (c === "}" && --depth === 0) { end = i; break; }
+    }
+    if (end < 0) return null;
+    let o: unknown;
+    try { o = JSON.parse(cleaned.slice(start, end + 1)); } catch { continue; }
+    if (!o || typeof o !== "object" || Array.isArray(o)) continue;
+    const r = o as Record<string, unknown>;
+    const invented = Array.isArray(r.invented) ? r.invented.filter((x): x is string => typeof x === "string").slice(0, 8) : [];
+    // {"look": {...}} or {"look": [garments]}, or the look's own fields at the top.
+    if (r.look && typeof r.look === "object") return { look: r.look as Record<string, unknown> | unknown[], invented };
+    if ("outfit" in r || "body" in r || "hair" in r) return { look: r, invented };
+    start = end;
+  }
+  return null;
+}
+
+/** Gather what's known about someone and ask the helper for their look. Always answers the frontend, so its buttons never stay busy. */
 export async function dollLook(m: DollRequest, userId?: string): Promise<void> {
-  const settings = await getSettings(userId);
-  const parts: string[] = [];
-  let name = m.who;
+  const who = String(m.who ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+  let name = who;
   try {
+    const settings = await getSettings(userId);
+    const parts: string[] = [];
     if (m.source === "text") {
-      parts.push(`Describe this look:\n${String(m.text ?? "").slice(0, 3000)}`);
-    } else if (m.who === "you") {
-      name = (await macro("{{user}}", m.chatId, userId)) || "the player";
+      const text = String(m.text ?? "").trim().slice(0, 3000);
+      if (text) parts.push(`Describe this look:\n${text}`);
+    } else if (who === "you") {
+      name = ((await macro("{{user}}", m.chatId, userId)) || "the player").slice(0, 80);
       const persona = await macro("{{persona}}", m.chatId, userId);
       parts.push(`Who: ${name}, the player character.`);
       if (persona) parts.push(`Their persona:\n${persona.slice(0, 3000)}`);
-    } else if (m.chatId) {
-      const p = await personProfile(m.chatId, m.who, userId);
-      parts.push(`Who: ${m.who}.`);
-      if (p.text) parts.push(p.text);
-      if (p.setting) parts.push(`The setting:\n${p.setting}`);
+    } else {
+      parts.push(who && who !== "them" ? `Who: ${who}.` : "Who: the other person in the scene.");
+      if (m.chatId && who && who !== "them") {
+        const p = await personProfile(m.chatId, who, userId);
+        if (p.text) parts.push(p.text);
+        if (p.setting) parts.push(`The setting:\n${p.setting}`);
+      }
     }
-    if (m.worn?.length) parts.push(`What the game says they are wearing now (keep all of these; describe each as a garment):\n${m.worn.map((w) => `- ${w}`).join("\n")}`);
+    const worn = (m.worn ?? []).filter((w) => typeof w === "string").slice(0, 16).map((w) => w.slice(0, 120));
+    if (worn.length) parts.push(`What the game says they are wearing now (keep all of these; describe each as a garment):\n${worn.map((w) => `- ${w}`).join("\n")}`);
     if (m.source === "story" && m.chatId) {
       const msgs = await getMessages(m.chatId);
       const recent = msgs.slice(-6).map((x) => `${x.is_user ? "(player)" : "(story)"} ${x.content.slice(0, 1500)}`).join("\n\n");
@@ -83,20 +115,23 @@ export async function dollLook(m: DollRequest, userId?: string): Promise<void> {
     } else if (m.source !== "text" && m.current) {
       parts.push(`Their current look, for reference (replace it): ${JSON.stringify(m.current).slice(0, 2000)}`);
     }
-    if (m.chatId && m.source !== "text" && m.source !== "story") {
+    if (m.chatId && m.source === "profile") {
       const msgs = await getMessages(m.chatId).catch(() => []);
       const tail = msgs.slice(-3).map((x) => x.content.slice(0, 800)).join("\n\n");
       if (tail) parts.push(`The story lately (for what they're wearing now):\n${tail}`);
     }
-    if (parts.length === 0) { send({ type: "doll_look", who: m.who, look: null, note: "", error: "Nothing to go on: open a chat first, or describe the look." }, userId); return; }
-    const raw = firstJson(await ask(DOLL_SYSTEM, parts.join("\n\n"), settings, userId, 45000, { temperature: 0.6, maxTokens: 2400 }));
-    if (!raw || typeof raw.look !== "object") throw new Error("the helper didn't send a look");
-    const look = cleanLook(raw.look);
-    const invented = Array.isArray(raw.invented) ? raw.invented.filter((x): x is string => typeof x === "string").slice(0, 8) : [];
-    send({ type: "doll_look", who: m.who, look, note: invented.length ? `Made up: ${invented.join("; ")}` : "", name }, userId);
+    const enough = m.source === "text" ? parts.length > 0 : m.source === "story" ? !!m.chatId : who === "you" ? parts.length > 1 : parts.length > 1;
+    if (!enough) {
+      send({ type: "doll_look", who: m.who, look: null, note: "", error: m.source === "text" ? "Describe the look first." : "Nothing to go on yet: open a chat with them, or describe the look." }, userId);
+      return;
+    }
+    const got = lookFrom(await ask(DOLL_SYSTEM, parts.join("\n\n"), settings, userId, 60000, { temperature: 0.6 }));
+    if (!got) throw new Error("the helper didn't send a look");
+    const look = cleanLook(got.look);
+    send({ type: "doll_look", who: m.who, look, note: got.invented.length ? `Made up: ${got.invented.join("; ")}` : "", ...(who !== "them" ? { name } : {}) }, userId);
   } catch (e) {
     logError("doll look", e);
     toast("warning", "The helper couldn't dress the doll this time. Try again, or describe the look.", userId);
-    send({ type: "doll_look", who: m.who, look: null, note: "", error: String((e as Error)?.message ?? e) }, userId);
+    send({ type: "doll_look", who: m.who, look: null, note: "", error: String((e as Error)?.message ?? e).slice(0, 200) }, userId);
   }
 }

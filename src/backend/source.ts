@@ -219,6 +219,8 @@ const PROFILE_TTL = 10 * 60_000;
 
 export const nameRe = (name: string) => {
   const first = name.trim();
+  // An empty name would match everywhere (every card, every lorebook entry).
+  if (!first) return /(?!)/u;
   const safe = first.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(^|[^\\p{L}])${safe}(?=[^\\p{L}]|$)`, "iu");
 };
