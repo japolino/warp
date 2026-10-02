@@ -9,7 +9,16 @@ import { PAD, SNAP, type Box, type Viewport } from "./overlay-layout.js";
 
 export type Side = "left" | "right" | "bottom";
 export interface Attach { side: Side; /** Along that side, from the main window's top (left/right) or left (bottom). */ offset: number }
-export interface Panel { id: string; parts: string[]; x: number; y: number; attach: Attach | null; folded?: boolean }
+export interface Panel {
+  id: string;
+  /** Its sections, the first column then the second. */
+  parts: string[];
+  x: number; y: number; attach: Attach | null; folded?: boolean;
+  /** The sections in a second column beside the first (a dual panel). */
+  right?: string[];
+  /** A size set by hand with the corner grip (layout px); otherwise it fits its sections. */
+  w?: number; h?: number;
+}
 export interface Layout { panels: Panel[] }
 
 /**
@@ -34,8 +43,43 @@ export function panelOf(l: Layout, part: string): Panel | null {
   return l.panels.find((p) => p.parts.includes(part)) ?? null;
 }
 
+export type Col = 0 | 1;
+/** Where sections dropped on a panel go: into one of its columns (at `index`, last when left out), or beside everything as a column of their own. */
+export type Slot = { col: Col; index?: number } | { beside: "left" | "right" };
+
+/** A panel's two columns (the second is empty for a single-column panel). */
+export function columnsOf(p: Panel): [string[], string[]] {
+  const right = new Set(p.right ?? []);
+  return [p.parts.filter((x) => !right.has(x)), p.parts.filter((x) => right.has(x))];
+}
+
+/** Rebuild a panel from its columns. An empty first column closes up; going between one and two columns forgets a hand-set width. */
+function withColumns(p: Panel, left: string[], right: string[]): Panel {
+  if (!left.length) { left = right; right = []; }
+  const { right: _r, ...rest } = p;
+  const next: Panel = { ...rest, parts: [...left, ...right], ...(right.length ? { right } : {}) };
+  if (!!right.length !== !!p.right?.length) delete next.w;
+  return next;
+}
+
+function placeInto(p: Panel, items: string[], slot: Slot): Panel {
+  const [left, right] = columnsOf(p).map((c) => c.filter((x) => !items.includes(x))) as [string[], string[]];
+  if ("beside" in slot) {
+    // Already two columns: it joins the column on that side.
+    if (right.length) return placeInto(p, items, { col: slot.beside === "left" ? 0 : 1 });
+    return slot.beside === "left" ? withColumns(p, items, left) : withColumns(p, left, items);
+  }
+  const cols: [string[], string[]] = [left, right];
+  const c = cols[slot.col];
+  c.splice(slot.index === undefined ? c.length : Math.max(0, Math.min(slot.index, c.length)), 0, ...items);
+  return withColumns(p, cols[0], cols[1]);
+}
+
 function without(l: Layout, parts: string[]): Panel[] {
-  return l.panels.map((p) => ({ ...p, parts: p.parts.filter((x) => !parts.includes(x)) })).filter((p) => p.parts.length);
+  return l.panels.map((p) => {
+    const [left, right] = columnsOf(p);
+    return withColumns(p, left.filter((x) => !parts.includes(x)), right.filter((x) => !parts.includes(x)));
+  }).filter((p) => p.parts.length);
 }
 
 function nextId(l: Layout): string {
@@ -45,30 +89,25 @@ function nextId(l: Layout): string {
 }
 
 /**
- * Move a section into the main window (`to` null) or into a panel, at `index`
- * (last when left out). Emptied panels close.
+ * Move a section into the main window (`to` null) or into a panel: a number is
+ * a place in its first column, a slot picks the column or a new one beside.
+ * Emptied panels close.
  */
-export function movePart(l: Layout, part: string, to: string | null, index?: number): Layout {
+export function movePart(l: Layout, part: string, to: string | null, where?: number | Slot): Layout {
+  const slot: Slot = typeof where === "number" || where === undefined ? { col: 0, index: where } : where;
   const from = panelOf(l, part);
   if (to && from?.id === to) {
-    // Reordering inside one panel.
-    const parts = from.parts.filter((x) => x !== part);
-    const was = from.parts.indexOf(part);
-    const i = index === undefined ? parts.length : index > was ? index - 1 : index;
-    parts.splice(Math.max(0, Math.min(i, parts.length)), 0, part);
-    return updatePanel(l, from.id, { parts });
+    // Reordering inside one panel (or across its columns).
+    const cols = columnsOf(from);
+    const col = cols.findIndex((c) => c.includes(part)) as Col;
+    const was = cols[col].indexOf(part);
+    const s: Slot = "col" in slot && slot.col === col && slot.index !== undefined && slot.index > was ? { col, index: slot.index - 1 } : slot;
+    return { panels: l.panels.map((p) => (p.id === to ? placeInto(p, [part], s) : p)) };
   }
   if (to && !l.panels.some((p) => p.id === to)) return l;
   const panels = without(l, [part]);
   if (!to) return { panels };
-  return {
-    panels: panels.map((p) => {
-      if (p.id !== to) return p;
-      const parts = [...p.parts];
-      parts.splice(index === undefined ? parts.length : Math.max(0, Math.min(index, parts.length)), 0, part);
-      return { ...p, parts };
-    }),
-  };
+  return { panels: panels.map((p) => (p.id === to ? placeInto(p, [part], slot) : p)) };
 }
 
 /** Tear a section out into a new panel of its own at (x, y). */
@@ -77,13 +116,13 @@ export function tearOff(l: Layout, part: string, x: number, y: number): Layout {
   return { panels: [...panels, { id: nextId({ panels: l.panels }), parts: [part], x, y, attach: null }] };
 }
 
-/** Pour a whole panel into another panel, or back into the main window (`to` null). */
-export function mergePanel(l: Layout, id: string, to: string | null): Layout {
+/** Pour a whole panel into another panel (stacked into a column, or side by side), or back into the main window (`to` null). */
+export function mergePanel(l: Layout, id: string, to: string | null, slot: Slot = { col: 0 }): Layout {
   const src = l.panels.find((p) => p.id === id);
   if (!src || id === to) return l;
   const rest = l.panels.filter((p) => p.id !== id);
   if (!to) return { panels: rest };
-  return { panels: rest.map((p) => (p.id === to ? { ...p, parts: [...p.parts, ...src.parts] } : p)) };
+  return { panels: rest.map((p) => (p.id === to ? placeInto(p, src.parts, slot) : p)) };
 }
 
 export function updatePanel(l: Layout, id: string, patch: Partial<Panel>): Layout {
@@ -157,6 +196,31 @@ export function slotAt(y: number, rows: { y: number; h: number }[]): number {
   return i < 0 ? rows.length : i;
 }
 
+/** The outer share of a single-column panel where a drop goes beside it, as a second column. */
+export const BESIDE = 0.25;
+
+/**
+ * Where a drop at `pt` on a panel lands. A single-column panel: near its left
+ * or right edge, a new column beside it; elsewhere, into its column at the row
+ * under the pointer. A dual panel: into whichever column is under the pointer.
+ */
+export function dropSlot(box: Box, pt: { x: number; y: number }, dual: boolean, rows: [{ y: number; h: number }[], { y: number; h: number }[]]): Slot {
+  const at = (pt.x - box.x) / Math.max(1, box.w);
+  if (!dual) {
+    if (at < BESIDE) return { beside: "left" };
+    if (at > 1 - BESIDE) return { beside: "right" };
+    return { col: 0, ...(rows[0].length ? { index: slotAt(pt.y, rows[0]) } : {}) };
+  }
+  const col: Col = at < 0.5 ? 0 : 1;
+  return { col, ...(rows[col].length ? { index: slotAt(pt.y, rows[col]) } : {}) };
+}
+
+/** A size dragged out with the corner grip: the start size plus the pointer's travel, kept within limits. */
+export function resized(start: { w: number; h: number }, dx: number, dy: number, min: { w: number; h: number }, max: { w: number; h: number }): { w: number; h: number } {
+  const clamp = (v: number, lo: number, hi: number) => Math.round(Math.max(lo, Math.min(hi, v)));
+  return { w: clamp(start.w + dx, min.w, Math.max(min.w, max.w)), h: clamp(start.h + dy, min.h, Math.max(min.h, max.h)) };
+}
+
 // ───────────────────────── saving ─────────────────────────
 
 export function parseLayout(raw: string | null): Layout {
@@ -176,6 +240,9 @@ export function parseLayout(raw: string | null): Layout {
         x: Number.isFinite(p.x) ? p.x : 80, y: Number.isFinite(p.y) ? p.y : 80,
         attach: side === "left" || side === "right" || side === "bottom" ? { side, offset: Number(p.attach!.offset) || 0 } : null,
         ...(p.folded ? { folded: true } : {}),
+        ...(Array.isArray(p.right) && p.right.some((x) => parts.includes(x)) && parts.some((x) => !p.right!.includes(x)) ? { right: parts.filter((x) => p.right!.includes(x)) } : {}),
+        ...(Number.isFinite(p.w) && p.w! > 0 ? { w: Math.round(p.w!) } : {}),
+        ...(Number.isFinite(p.h) && p.h! > 0 ? { h: Math.round(p.h!) } : {}),
       });
     }
     return { panels };

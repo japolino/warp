@@ -377,6 +377,23 @@ export const STYLES = `
 .warp-panel .warp-overlay-body { padding-bottom: 8px; }
 .warp-panel-solo { display: flex; flex-direction: column; gap: 6px; padding-top: 6px; }
 .warp-overlay.warp-drop-target { border-color: var(--warp-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warp-accent) 35%, transparent), 0 12px 32px rgba(0,0,0,.35); }
+/* Dropping on a panel: near a side, beside it as a second column; on a dual panel, into the column under the pointer. */
+.warp-overlay.warp-drop-target[data-drop=left] { box-shadow: inset 5px 0 0 var(--warp-accent), 0 0 0 3px color-mix(in srgb, var(--warp-accent) 35%, transparent); }
+.warp-overlay.warp-drop-target[data-drop=right] { box-shadow: inset -5px 0 0 var(--warp-accent), 0 0 0 3px color-mix(in srgb, var(--warp-accent) 35%, transparent); }
+.warp-overlay.warp-drop-target[data-drop=col0] .warp-col[data-col="0"],
+.warp-overlay.warp-drop-target[data-drop=col1] .warp-col[data-col="1"] { background: color-mix(in srgb, var(--warp-accent) 10%, transparent); border-radius: 8px; }
+.warp-cols { display: flex; align-items: flex-start; gap: 0; }
+.warp-col { flex: 1 1 0; min-width: 0; padding: 0 8px; box-sizing: border-box; }
+.warp-col:first-child { padding-left: 0; }
+.warp-col:last-child { padding-right: 0; }
+.warp-col + .warp-col { border-left: 1px solid var(--lumiverse-border, rgba(255,255,255,0.12)); }
+/* The corner grip: drag to resize, double-click to fit again. */
+.warp-overlay { position: relative; }
+.warp-resize { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; touch-action: none; z-index: 2;
+  background: linear-gradient(135deg, transparent 0 55%, var(--lumiverse-text-dim, rgba(255,255,255,.35)) 55% 62%, transparent 62% 72%, var(--lumiverse-text-dim, rgba(255,255,255,.35)) 72% 79%, transparent 79%);
+  border-bottom-right-radius: 14px; opacity: .55; }
+.warp-resize:hover { opacity: 1; }
+.warp-overlay-collapsed > .warp-resize, .warp-overlay[data-edge]:not([data-edge=""]) > .warp-resize { display: none; }
 .warp-drag-ghost {
   position: fixed; left: 0; top: 0; z-index: 2147483000; pointer-events: none;
   padding: 7px 12px; border-radius: 10px; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;

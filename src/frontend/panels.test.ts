@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { attachedAt, capPanels, GAP, MAX_PANELS, mergePanel, movePart, panelOf, parseLayout, sideFor, slotAt, snapToScreen, tearOff, type Layout } from "./panels.js";
+import { attachedAt, capPanels, columnsOf, dropSlot, GAP, MAX_PANELS, mergePanel, resized, updatePanel, movePart, panelOf, parseLayout, sideFor, slotAt, snapToScreen, tearOff, type Layout } from "./panels.js";
 import { centreOn, clampView, MAX_ZOOM, panBy, zoomAt } from "./map-view.js";
 
 const vp = { width: 1400, height: 900 };
@@ -125,4 +125,61 @@ test("Lumiverse allows 4 floating windows: panels past 3 (an older saved layout)
   expect(capped.panels.map((p) => p.id)).toEqual(["p1", "p2", "p3"]);
   expect(panelOf(capped, "s4")).toBeNull();
   expect(capPanels(capped)).toBe(capped);
+});
+
+describe("dual panels and resizing", () => {
+  const two = () => tearOff(tearOff({ panels: [] }, "map", 100, 100), "quests", 500, 100);
+
+  test("a panel dropped near another's side sits beside it as a second column; in the middle it stacks", () => {
+    const l = two();
+    const [a, b] = l.panels;
+    const beside = mergePanel(l, b.id, a.id, { beside: "right" });
+    expect(beside.panels).toHaveLength(1);
+    expect(columnsOf(beside.panels[0])).toEqual([["map"], ["quests"]]);
+    const left = mergePanel(l, b.id, a.id, { beside: "left" });
+    expect(columnsOf(left.panels[0])).toEqual([["quests"], ["map"]]);
+    expect(columnsOf(mergePanel(l, b.id, a.id).panels[0])).toEqual([["map", "quests"], []]);
+  });
+
+  test("sections move between columns; an emptied column closes up; tearing out leaves the rest", () => {
+    let l = mergePanel(two(), "p2", "p1", { beside: "right" });
+    l = movePart(l, "people", "p1", { col: 1, index: 0 });
+    expect(columnsOf(l.panels[0])).toEqual([["map"], ["people", "quests"]]);
+    l = movePart(l, "map", "p1", { col: 1 });
+    expect(columnsOf(l.panels[0])).toEqual([["people", "quests", "map"], []]);
+    expect(l.panels[0].right).toBeUndefined();
+    l = movePart(l, "quests", "p1", { beside: "left" });
+    expect(columnsOf(l.panels[0])).toEqual([["quests"], ["people", "map"]]);
+    l = tearOff(l, "quests", 0, 0);
+    expect(columnsOf(l.panels[0])).toEqual([["people", "map"], []]);
+  });
+
+  test("going between one and two columns forgets a hand-set width (the height stays)", () => {
+    let l = updatePanel(two(), "p1", { w: 420, h: 300 });
+    l = mergePanel(l, "p2", "p1", { beside: "right" });
+    expect(l.panels[0].w).toBeUndefined();
+    expect(l.panels[0].h).toBe(300);
+  });
+
+  test("where a drop lands: near the sides of a single column it goes beside; on a dual panel, the column under the pointer", () => {
+    const box = { x: 100, y: 0, w: 300, h: 400 };
+    const rows: [{ y: number; h: number }[], { y: number; h: number }[]] = [[{ y: 40, h: 100 }, { y: 140, h: 100 }], [{ y: 40, h: 50 }]];
+    expect(dropSlot(box, { x: 110, y: 50 }, false, rows)).toEqual({ beside: "left" });
+    expect(dropSlot(box, { x: 390, y: 50 }, false, rows)).toEqual({ beside: "right" });
+    expect(dropSlot(box, { x: 250, y: 150 }, false, rows)).toEqual({ col: 0, index: 1 });
+    expect(dropSlot(box, { x: 380, y: 10 }, true, rows)).toEqual({ col: 1, index: 0 });
+    expect(dropSlot(box, { x: 120, y: 300 }, true, rows)).toEqual({ col: 0, index: 2 });
+  });
+
+  test("the grip's size stays within limits", () => {
+    expect(resized({ w: 290, h: 400 }, 50, -30, { w: 200, h: 120 }, { w: 1000, h: 800 })).toEqual({ w: 340, h: 370 });
+    expect(resized({ w: 290, h: 400 }, -500, 900, { w: 200, h: 120 }, { w: 1000, h: 800 })).toEqual({ w: 200, h: 800 });
+  });
+
+  test("columns and sizes survive saving; bad ones are dropped", () => {
+    const l = updatePanel(mergePanel(two(), "p2", "p1", { beside: "right" }), "p1", { w: 600, h: 350 });
+    expect(parseLayout(JSON.stringify(l))).toEqual(l);
+    const bad = parseLayout(JSON.stringify({ panels: [{ id: "p1", parts: ["a"], x: 0, y: 0, attach: null, right: ["a", "zz"], w: -4, h: "x" }] }));
+    expect(bad.panels[0]).toEqual({ id: "p1", parts: ["a"], x: 0, y: 0, attach: null });
+  });
 });

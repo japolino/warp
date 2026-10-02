@@ -596,6 +596,23 @@ var STYLES = `
 .warp-panel .warp-overlay-body { padding-bottom: 8px; }
 .warp-panel-solo { display: flex; flex-direction: column; gap: 6px; padding-top: 6px; }
 .warp-overlay.warp-drop-target { border-color: var(--warp-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warp-accent) 35%, transparent), 0 12px 32px rgba(0,0,0,.35); }
+/* Dropping on a panel: near a side, beside it as a second column; on a dual panel, into the column under the pointer. */
+.warp-overlay.warp-drop-target[data-drop=left] { box-shadow: inset 5px 0 0 var(--warp-accent), 0 0 0 3px color-mix(in srgb, var(--warp-accent) 35%, transparent); }
+.warp-overlay.warp-drop-target[data-drop=right] { box-shadow: inset -5px 0 0 var(--warp-accent), 0 0 0 3px color-mix(in srgb, var(--warp-accent) 35%, transparent); }
+.warp-overlay.warp-drop-target[data-drop=col0] .warp-col[data-col="0"],
+.warp-overlay.warp-drop-target[data-drop=col1] .warp-col[data-col="1"] { background: color-mix(in srgb, var(--warp-accent) 10%, transparent); border-radius: 8px; }
+.warp-cols { display: flex; align-items: flex-start; gap: 0; }
+.warp-col { flex: 1 1 0; min-width: 0; padding: 0 8px; box-sizing: border-box; }
+.warp-col:first-child { padding-left: 0; }
+.warp-col:last-child { padding-right: 0; }
+.warp-col + .warp-col { border-left: 1px solid var(--lumiverse-border, rgba(255,255,255,0.12)); }
+/* The corner grip: drag to resize, double-click to fit again. */
+.warp-overlay { position: relative; }
+.warp-resize { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; touch-action: none; z-index: 2;
+  background: linear-gradient(135deg, transparent 0 55%, var(--lumiverse-text-dim, rgba(255,255,255,.35)) 55% 62%, transparent 62% 72%, var(--lumiverse-text-dim, rgba(255,255,255,.35)) 72% 79%, transparent 79%);
+  border-bottom-right-radius: 14px; opacity: .55; }
+.warp-resize:hover { opacity: 1; }
+.warp-overlay-collapsed > .warp-resize, .warp-overlay[data-edge]:not([data-edge=""]) > .warp-resize { display: none; }
 .warp-drag-ghost {
   position: fixed; left: 0; top: 0; z-index: 2147483000; pointer-events: none;
   padding: 7px 12px; border-radius: 10px; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
@@ -3692,8 +3709,38 @@ var emptyLayout = () => ({ panels: [] });
 function panelOf(l, part) {
   return l.panels.find((p) => p.parts.includes(part)) ?? null;
 }
+function columnsOf(p) {
+  const right = new Set(p.right ?? []);
+  return [p.parts.filter((x) => !right.has(x)), p.parts.filter((x) => right.has(x))];
+}
+function withColumns(p, left, right) {
+  if (!left.length) {
+    left = right;
+    right = [];
+  }
+  const { right: _r, ...rest } = p;
+  const next = { ...rest, parts: [...left, ...right], ...right.length ? { right } : {} };
+  if (!!right.length !== !!p.right?.length)
+    delete next.w;
+  return next;
+}
+function placeInto(p, items, slot) {
+  const [left, right] = columnsOf(p).map((c) => c.filter((x) => !items.includes(x)));
+  if ("beside" in slot) {
+    if (right.length)
+      return placeInto(p, items, { col: slot.beside === "left" ? 0 : 1 });
+    return slot.beside === "left" ? withColumns(p, items, left) : withColumns(p, left, items);
+  }
+  const cols = [left, right];
+  const c = cols[slot.col];
+  c.splice(slot.index === undefined ? c.length : Math.max(0, Math.min(slot.index, c.length)), 0, ...items);
+  return withColumns(p, cols[0], cols[1]);
+}
 function without(l, parts) {
-  return l.panels.map((p) => ({ ...p, parts: p.parts.filter((x) => !parts.includes(x)) })).filter((p) => p.parts.length);
+  return l.panels.map((p) => {
+    const [left, right] = columnsOf(p);
+    return withColumns(p, left.filter((x) => !parts.includes(x)), right.filter((x) => !parts.includes(x)));
+  }).filter((p) => p.parts.length);
 }
 function nextId(l) {
   let n = 1;
@@ -3701,42 +3748,35 @@ function nextId(l) {
     n++;
   return `p${n}`;
 }
-function movePart(l, part, to, index) {
+function movePart(l, part, to, where) {
+  const slot = typeof where === "number" || where === undefined ? { col: 0, index: where } : where;
   const from = panelOf(l, part);
   if (to && from?.id === to) {
-    const parts = from.parts.filter((x) => x !== part);
-    const was = from.parts.indexOf(part);
-    const i = index === undefined ? parts.length : index > was ? index - 1 : index;
-    parts.splice(Math.max(0, Math.min(i, parts.length)), 0, part);
-    return updatePanel(l, from.id, { parts });
+    const cols = columnsOf(from);
+    const col = cols.findIndex((c) => c.includes(part));
+    const was = cols[col].indexOf(part);
+    const s = "col" in slot && slot.col === col && slot.index !== undefined && slot.index > was ? { col, index: slot.index - 1 } : slot;
+    return { panels: l.panels.map((p) => p.id === to ? placeInto(p, [part], s) : p) };
   }
   if (to && !l.panels.some((p) => p.id === to))
     return l;
   const panels = without(l, [part]);
   if (!to)
     return { panels };
-  return {
-    panels: panels.map((p) => {
-      if (p.id !== to)
-        return p;
-      const parts = [...p.parts];
-      parts.splice(index === undefined ? parts.length : Math.max(0, Math.min(index, parts.length)), 0, part);
-      return { ...p, parts };
-    })
-  };
+  return { panels: panels.map((p) => p.id === to ? placeInto(p, [part], slot) : p) };
 }
 function tearOff(l, part, x, y) {
   const panels = without(l, [part]);
   return { panels: [...panels, { id: nextId({ panels: l.panels }), parts: [part], x, y, attach: null }] };
 }
-function mergePanel(l, id, to) {
+function mergePanel(l, id, to, slot = { col: 0 }) {
   const src = l.panels.find((p) => p.id === id);
   if (!src || id === to)
     return l;
   const rest = l.panels.filter((p) => p.id !== id);
   if (!to)
     return { panels: rest };
-  return { panels: rest.map((p) => p.id === to ? { ...p, parts: [...p.parts, ...src.parts] } : p) };
+  return { panels: rest.map((p) => p.id === to ? placeInto(p, src.parts, slot) : p) };
 }
 function updatePanel(l, id, patch) {
   return { panels: l.panels.map((p) => p.id === id ? { ...p, ...patch } : p) };
@@ -3797,6 +3837,23 @@ function slotAt(y, rows) {
   const i = rows.findIndex((r) => y < r.y + r.h / 2);
   return i < 0 ? rows.length : i;
 }
+var BESIDE = 0.25;
+function dropSlot(box, pt, dual, rows) {
+  const at = (pt.x - box.x) / Math.max(1, box.w);
+  if (!dual) {
+    if (at < BESIDE)
+      return { beside: "left" };
+    if (at > 1 - BESIDE)
+      return { beside: "right" };
+    return { col: 0, ...rows[0].length ? { index: slotAt(pt.y, rows[0]) } : {} };
+  }
+  const col = at < 0.5 ? 0 : 1;
+  return { col, ...rows[col].length ? { index: slotAt(pt.y, rows[col]) } : {} };
+}
+function resized(start, dx, dy, min, max) {
+  const clamp = (v, lo, hi) => Math.round(Math.max(lo, Math.min(hi, v)));
+  return { w: clamp(start.w + dx, min.w, Math.max(min.w, max.w)), h: clamp(start.h + dy, min.h, Math.max(min.h, max.h)) };
+}
 function parseLayout(raw) {
   try {
     const v = JSON.parse(raw ?? "");
@@ -3818,7 +3875,10 @@ function parseLayout(raw) {
         x: Number.isFinite(p.x) ? p.x : 80,
         y: Number.isFinite(p.y) ? p.y : 80,
         attach: side === "left" || side === "right" || side === "bottom" ? { side, offset: Number(p.attach.offset) || 0 } : null,
-        ...p.folded ? { folded: true } : {}
+        ...p.folded ? { folded: true } : {},
+        ...Array.isArray(p.right) && p.right.some((x) => parts.includes(x)) && parts.some((x) => !p.right.includes(x)) ? { right: parts.filter((x) => p.right.includes(x)) } : {},
+        ...Number.isFinite(p.w) && p.w > 0 ? { w: Math.round(p.w) } : {},
+        ...Number.isFinite(p.h) && p.h > 0 ? { h: Math.round(p.h) } : {}
       });
     }
     return { panels };
@@ -3990,7 +4050,14 @@ function wireMaps(root) {
 
 // src/frontend/panel-windows.ts
 var MAP_W = 340;
-var widthFor = (parts) => parts.includes("map") ? MAP_W : PANEL_W;
+var colWidth = (parts) => parts.includes("map") ? MAP_W : PANEL_W;
+var widthFor = (p) => {
+  if (p.w)
+    return p.w;
+  const [left, right] = columnsOf(p);
+  return right.length ? colWidth(left) + colWidth(right) : colWidth(p.parts);
+};
+var MIN_SIZE = { w: 200, h: 120 };
 function createPanels(o) {
   let layout = capPanels(parseLayout(o.load()));
   let parts = [];
@@ -4016,10 +4083,11 @@ function createPanels(o) {
   function makeWin(p) {
     const el = document.createElement("div");
     el.className = "warp-overlay warp-panel";
-    el.innerHTML = `<div class="warp-overlay-head" title="Drag to move · drop on the main window to put it back, or on another panel to merge"></div><div class="warp-overlay-body warp-root"></div>`;
+    el.innerHTML = `<div class="warp-overlay-head" title="Drag to move · drop on the main window to put it back, on another panel to merge, or near its side to sit beside it"></div><div class="warp-overlay-body warp-root"></div><div class="warp-resize" data-spindle-float-resize-handle title="Drag to resize · double-click to fit" aria-hidden="true"></div>`;
     const head = el.firstElementChild;
-    const body = el.lastElementChild;
-    const w = widthFor(p.parts);
+    const body = el.children[1];
+    const grip = el.lastElementChild;
+    const w = widthFor(p);
     let handle;
     try {
       handle = o.ctx.ui.createFloatWidget({ width: w, height: 200, initialPosition: { x: p.x, y: p.y }, snapToEdge: false, tooltip: "Warp", chromeless: true });
@@ -4028,7 +4096,28 @@ function createPanels(o) {
     }
     handle.root.appendChild(el);
     handle.setVisible(false);
-    const win = { id: p.id, handle, el, head, body, box: { x: p.x, y: p.y, w, h: 200 }, shown: false, html: "", off: [] };
+    const win = { id: p.id, handle, el, head, body, box: { x: p.x, y: p.y, w, h: 200 }, shown: false, html: "", off: [], resizing: false };
+    win.off.push(wireGrip(grip, {
+      start: () => ({ w: win.box.w, h: win.box.h }),
+      scale,
+      max: () => {
+        const vp = o.viewport();
+        return { w: vp.width - 24, h: vp.height - 24 };
+      },
+      live: (s) => {
+        win.resizing = true;
+        win.el.style.setProperty("--warp-overlay-max", `${s.h - PILL.h}px`);
+        place(win, { ...win.box, w: s.w, h: s.h });
+      },
+      done: (s) => {
+        win.resizing = false;
+        commit(updatePanel(layout, win.id, { w: s.w, h: s.h }));
+      },
+      reset: () => {
+        win.resizing = false;
+        commit(updatePanel(layout, win.id, { w: undefined, h: undefined }));
+      }
+    }));
     body.addEventListener("pointerdown", (e) => {
       if (!e.target.closest?.("input, select, textarea"))
         e.preventDefault();
@@ -4081,11 +4170,16 @@ function createPanels(o) {
       return attachedAt(p.attach, w, h, m.box, vp);
     return snapToScreen({ x: p.x, y: p.y, w, h }, vp, 0);
   }
-  function heightFor(win, folded) {
+  function heightFor(win, folded, set) {
     if (folded)
       return PILL.h;
     const vp = o.viewport();
     const maxH = Math.max(160, vp.height - 140);
+    if (set) {
+      const h = Math.min(Math.max(MIN_SIZE.h, set), vp.height - 24);
+      win.el.style.setProperty("--warp-overlay-max", `${h - PILL.h}px`);
+      return h;
+    }
     win.el.style.setProperty("--warp-overlay-max", `${maxH - PILL.h}px`);
     return Math.min(maxH, PILL.h + win.body.scrollHeight + 2);
   }
@@ -4114,6 +4208,9 @@ function createPanels(o) {
         w = made;
         wins.set(p.id, w);
       }
+      const [leftIds, rightIds] = columnsOf(p);
+      const cols = [leftIds, rightIds].map((ids) => ids.map((id) => byId.get(id)).filter((x) => !!x));
+      const dual = cols[0].length > 0 && cols[1].length > 0;
       const single = here.length === 1;
       const title = here.map((x) => `${x.title}${x.count ? ` · ${x.count}` : ""}`).join(" · ");
       w.head.innerHTML = `<span class="warp-overlay-title">${esc(title)}</span>
@@ -4123,7 +4220,8 @@ function createPanels(o) {
         </span>`;
       w.el.classList.toggle("warp-overlay-collapsed", !!p.folded);
       w.el.dataset.attach = p.attach?.side ?? "";
-      const html = single ? `<div class="warp-panel-solo" data-solo="${esc(here[0].id)}">${here[0].body}</div>` : here.map((x) => renderPart(x, true)).join("");
+      const html = dual ? `<div class="warp-cols">${cols.map((c, i) => `<div class="warp-col" data-col="${i}">${c.map((x) => renderPart(x, true)).join("")}</div>`).join("")}</div>` : single ? `<div class="warp-panel-solo" data-solo="${esc(here[0].id)}">${here[0].body}</div>` : here.map((x) => renderPart(x, true)).join("");
+      w.el.classList.toggle("warp-panel-dual", dual);
       if (html !== w.html) {
         const kept = w.body.scrollTop;
         o.rememberSections(w.body);
@@ -4138,9 +4236,14 @@ function createPanels(o) {
         w.shown = true;
       }
       const win = w;
-      const width = widthFor(p.parts);
+      if (win.resizing)
+        continue;
+      const width = widthFor(p);
       place(win, boxFor(p, width, win.box.h));
-      requestAnimationFrame(() => place(win, boxFor(p, width, heightFor(win, !!p.folded))));
+      requestAnimationFrame(() => {
+        if (!win.resizing)
+          place(win, boxFor(p, width, heightFor(win, !!p.folded, p.h)));
+      });
     }
   }
   function follow() {
@@ -4164,11 +4267,21 @@ function createPanels(o) {
       return { kind: "main" };
     return null;
   }
-  function highlight(t) {
+  function highlight(t, pt) {
     const m = o.main();
     m?.el.classList.toggle("warp-drop-target", t?.kind === "main");
-    for (const w of wins.values())
-      w.el.classList.toggle("warp-drop-target", t?.kind === "panel" && t.id === w.id);
+    for (const w of wins.values()) {
+      const on = t?.kind === "panel" && t.id === w.id;
+      w.el.classList.toggle("warp-drop-target", on);
+      const s = on && pt ? slotOn(w, pt) : null;
+      w.el.dataset.drop = !s ? "" : ("beside" in s) ? s.beside : `col${s.col}`;
+    }
+  }
+  function slotOn(w, pt) {
+    const dual = w.el.classList.contains("warp-panel-dual");
+    const rows = (sel) => [...w.body.querySelectorAll(sel)].map((d) => rect(d));
+    const r = dual ? [rows('.warp-col[data-col="0"] > details[data-section]'), rows('.warp-col[data-col="1"] > details[data-section]')] : [rows(":scope > details[data-section]"), []];
+    return dropSlot(rect(w.el), pt, dual, r);
   }
   function dropPanel(win, pos) {
     const pt = pointer;
@@ -4187,7 +4300,8 @@ function createPanels(o) {
     }
     const other = t?.kind === "panel" ? t.id : [...wins.values()].find((w) => w.id !== win.id && w.shown && overlapShare(box, w.box) > 0.5)?.id;
     if (other) {
-      commit(mergePanel(layout, win.id, other));
+      const target = wins.get(other);
+      commit(mergePanel(layout, win.id, other, t?.kind === "panel" && pt && target ? slotOn(target, pt) : { col: 0 }));
       return;
     }
     const attach = m?.open ? sideFor(box, m.box) : null;
@@ -4208,7 +4322,7 @@ function createPanels(o) {
     pointer = { x: e.clientX, y: e.clientY };
     if (panelDrag) {
       if (Math.hypot(e.clientX - panelDrag.at.x, e.clientY - panelDrag.at.y) > 4)
-        highlight(targetAt(pointer, panelDrag.id));
+        highlight(targetAt(pointer, panelDrag.id), pointer);
       return;
     }
     if (!sec || e.pointerId !== sec.id)
@@ -4228,7 +4342,7 @@ function createPanels(o) {
       } catch {}
     }
     const t = targetAt(pointer, null);
-    highlight(t?.kind === "main" && sec.from === null ? null : t);
+    highlight(t?.kind === "main" && sec.from === null ? null : t, pointer);
     sec.ghost.style.transform = `translate(${e.clientX + 12}px, ${e.clientY + 8}px)`;
     const full = !t && atLimit(sec.from);
     sec.ghost.classList.toggle("warp-ghost-new", !t && !full);
@@ -4264,10 +4378,7 @@ function createPanels(o) {
       return;
     }
     if (t?.kind === "panel") {
-      const w = wins.get(t.id);
-      const rows = [...w.body.querySelectorAll(":scope > details[data-section]")].map((d) => rect(d));
-      const index = rows.length ? slotAt(pt.y, rows) : undefined;
-      commit(movePart(layout, s.part, t.id, index));
+      commit(movePart(layout, s.part, t.id, slotOn(wins.get(t.id), pt)));
       return;
     }
     if (atLimit(s.from)) {
@@ -4280,7 +4391,7 @@ function createPanels(o) {
     let next = tearOff(layout, s.part, x, y);
     const made = panelOf(next, s.part);
     const m = o.main();
-    const box = { x, y, w: widthFor([s.part]), h: 200 };
+    const box = { x, y, w: colWidth([s.part]), h: 200 };
     const attach = m?.open ? sideFor(box, m.box, 60) : null;
     const b = attach ? box : snapToScreen(box, o.viewport());
     next = updatePanel(next, made.id, { x: b.x, y: b.y, attach });
@@ -4355,6 +4466,52 @@ function createPanels(o) {
       for (const w of [...wins.values()])
         destroyWin(w);
     }
+  };
+}
+function wireGrip(grip, o, min = MIN_SIZE) {
+  let drag = null;
+  const down = (e) => {
+    if (e.button !== 0)
+      return;
+    e.preventDefault();
+    e.stopPropagation();
+    drag = { id: e.pointerId, x: e.clientX, y: e.clientY, from: o.start(), last: null };
+    try {
+      grip.setPointerCapture(e.pointerId);
+    } catch {}
+  };
+  const move = (e) => {
+    if (!drag || e.pointerId !== drag.id)
+      return;
+    e.preventDefault();
+    const k = o.scale() || 1;
+    drag.last = resized(drag.from, (e.clientX - drag.x) / k, (e.clientY - drag.y) / k, min, o.max());
+    o.live(drag.last);
+  };
+  const up = (e) => {
+    if (!drag || e.pointerId !== drag.id)
+      return;
+    const last = drag.last;
+    drag = null;
+    if (last)
+      o.done(last);
+  };
+  const dbl = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    o.reset();
+  };
+  grip.addEventListener("pointerdown", down);
+  grip.addEventListener("pointermove", move);
+  grip.addEventListener("pointerup", up);
+  grip.addEventListener("pointercancel", up);
+  grip.addEventListener("dblclick", dbl);
+  return () => {
+    grip.removeEventListener("pointerdown", down);
+    grip.removeEventListener("pointermove", move);
+    grip.removeEventListener("pointerup", up);
+    grip.removeEventListener("pointercancel", up);
+    grip.removeEventListener("dblclick", dbl);
   };
 }
 
@@ -12766,9 +12923,19 @@ function setup(ctx) {
   let overlay = null;
   const overlayEl = document.createElement("div");
   overlayEl.className = "warp-overlay";
-  overlayEl.innerHTML = `<div class="warp-overlay-head" title="Drag to move · drop on a screen edge to attach"></div><div class="warp-overlay-body warp-root"></div>`;
+  overlayEl.innerHTML = `<div class="warp-overlay-head" title="Drag to move · drop on a screen edge to attach"></div><div class="warp-overlay-body warp-root"></div><div class="warp-resize" data-spindle-float-resize-handle title="Drag to resize · double-click to fit" aria-hidden="true"></div>`;
   const headEl = overlayEl.firstElementChild;
-  const dockRoot = overlayEl.lastElementChild;
+  const dockRoot = overlayEl.children[1];
+  const gripEl = overlayEl.lastElementChild;
+  let mainSize = (() => {
+    try {
+      const v = JSON.parse(store2("overlaySize") ?? "null");
+      return v && v.w > 0 && v.h > 0 ? { w: Math.round(v.w), h: Math.round(v.h) } : null;
+    } catch {
+      return null;
+    }
+  })();
+  const mainW = () => mainSize?.w ?? PANEL_W;
   dockRoot.addEventListener("pointerdown", (e) => {
     if (!e.target.closest?.("input, select, textarea"))
       e.preventDefault();
@@ -12777,7 +12944,7 @@ function setup(ctx) {
   let cur = { x: 0, y: 72, w: PILL.w, h: PILL.h };
   try {
     const vp = viewport();
-    const w = overlayOpen ? PANEL_W : PILL.w;
+    const w = overlayOpen ? mainW() : PILL.w;
     const h = overlayOpen ? 420 : PILL.h;
     const start = edge ? attachedBox(edge, overlayOpen, vp) : { x: Math.max(PAD, vp.width - w - 20), y: 72, w, h };
     overlay = ctx.ui.createFloatWidget({
@@ -12928,6 +13095,34 @@ function setup(ctx) {
     }
   });
   cleanups.push(() => panels.destroy());
+  cleanups.push(wireGrip(gripEl, {
+    start: () => ({ w: cur.w, h: cur.h }),
+    scale: () => {
+      try {
+        return ctx.ui.geometry?.getUiScale() || 1;
+      } catch {
+        return 1;
+      }
+    },
+    max: () => {
+      const vp = viewport();
+      return { w: vp.width - 24, h: vp.height - 24 };
+    },
+    live: (s) => {
+      overlayEl.style.setProperty("--warp-overlay-max", `${s.h - PILL.h}px`);
+      place({ ...cur, w: s.w, h: s.h });
+    },
+    done: (s) => {
+      mainSize = s;
+      store2("overlaySize", JSON.stringify(s));
+      fitOverlay();
+    },
+    reset: () => {
+      mainSize = null;
+      store2("overlaySize", "");
+      fitOverlay();
+    }
+  }));
   function place(b) {
     if (!overlay)
       return;
@@ -12964,8 +13159,17 @@ function setup(ctx) {
       return;
     }
     const maxH = Math.max(240, vp.height - 140);
+    if (mainSize) {
+      const h = Math.min(mainSize.h, vp.height - 24);
+      overlayEl.style.setProperty("--warp-overlay-max", `${h - PILL.h}px`);
+      resizeFloating(Math.min(mainSize.w, vp.width - 24), h);
+      return;
+    }
     overlayEl.style.setProperty("--warp-overlay-max", `${maxH - PILL.h}px`);
-    requestAnimationFrame(() => resizeFloating(PANEL_W, Math.min(maxH, PILL.h + dockRoot.scrollHeight + 2)));
+    requestAnimationFrame(() => {
+      if (!mainSize)
+        resizeFloating(PANEL_W, Math.min(maxH, PILL.h + dockRoot.scrollHeight + 2));
+    });
   }
   let dragStart = null;
   let pressAt = null;
@@ -12998,8 +13202,8 @@ function setup(ctx) {
       edge = null;
       store2("overlayEdge", "");
       overlayEl.dataset.edge = "";
-      const w = overlayOpen ? PANEL_W : PILL.w;
-      const h = overlayOpen ? Math.min(420, cur.h) : PILL.h;
+      const w = overlayOpen ? mainW() : PILL.w;
+      const h = overlayOpen ? Math.min(mainSize?.h ?? 420, cur.h) : PILL.h;
       overlay.setSize(w, h);
       cur = { ...cur, w, h };
     }
@@ -13073,7 +13277,7 @@ function setup(ctx) {
       const vp = viewport();
       edge = null;
       store2("overlayEdge", "");
-      place({ x: Math.max(PAD, vp.width - PANEL_W - 40), y: 72, w: PANEL_W, h: Math.min(420, cur.h) });
+      place({ x: Math.max(PAD, vp.width - mainW() - 40), y: 72, w: mainW(), h: Math.min(mainSize?.h ?? 420, cur.h) });
       renderHead();
       fitOverlay();
       return;

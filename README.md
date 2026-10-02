@@ -3,7 +3,7 @@
 A game engine under your roleplay. Warp owns stats, dice, time, inventory and relationships; the model only narrates outcomes the engine has already decided.
 
 - **Choices** appear under the latest reply (hotkeys 1–9, odds on each button). You can also just type — a quick referee call maps risky attempts to an action (or, when nothing listed fits, rolls it on your closest ability), and the dice decide.
-- **Status panel** floats over the chat (drag it to any screen edge to attach it as a sidebar or strip), plus a **Warp** drawer tab: Sheet · Map · Journal · Ruleset · Settings.
+- **Status panel** floats over the chat (drag it to any screen edge to attach it as a sidebar or strip). Drag a section's header out to give it a window of its own (up to 3); drop one window near another's side to sit beside it as a second column; resize any window from its corner grip (double-click the grip to fit again). Plus a **Warp** drawer tab: Sheet · Map · Journal · Ruleset · Settings.
 - **Dice & change chips** on every reply. Changes read from the story are dashed and can be undone with ×.
 - **Swipes reroll** (Casual) by default; turn off for Ironman. State always follows the active swipe.
 
