@@ -66,6 +66,7 @@ A check can be **played instead of rolled**. When a choice has a game (its icon 
 
 Most roleplay is typed, so the core systems follow the story rather than waiting for a button:
 
+- **Spend points on the sheet.** Stats with `allocate:` get + and − in the sidebar, so spending points never costs a story turn. See [docs/FORMAT_LIMITS.md](docs/FORMAT_LIMITS.md) for what the format gained after the stress tests.
 - **Fewer grind loops.** Repeating the same check, topic or social move gives diminishing rewards that recover with in-game time; new approaches keep full value. See [docs/DEPTH_PASS.md](docs/DEPTH_PASS.md).
 - **Actions while talking or working.** Typed actions can still use items, abilities, travel, quests, or improvised checks during a conversation or shift. Ordinary dialogue stays in the session. Leaving or starting an encounter ends the session; interrupting a shift gives no pay. An uncertain action waits for confirmation without spending a turn.
 - **Improvised attempts.** A risky thing you type that no action covers (talking your way past a bouncer, vaulting a bar, shoving someone) still rolls: d20 plus your closest skill or attribute's share of a bonus, against a difficulty the decision model reads from the scene. The narrator keeps what you wrote you do; the dice decide only how it turns out. In a fight it's a move like any other. Tune or turn off with `improvise:`.

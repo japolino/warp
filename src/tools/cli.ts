@@ -4,7 +4,7 @@
 // Built to dist/warp-rulebook.js (plain Node, no dependencies).
 
 import { readFileSync, writeFileSync } from "node:fs";
-import { checkReport, checkText, guideMarkdown, guideText, previewText, simulateText, templateList, templateText } from "./rulebook-tools.js";
+import { checkReport, checkText, guideMarkdown, guideText, previewText, readPatch, simulateText, templateList, templateText } from "./rulebook-tools.js";
 
 const VERSION = "0.3.0";
 
@@ -14,7 +14,14 @@ const USAGE = `warp-rulebook — write Warp rulebooks with any tool
   templates                                   The starting templates
   template <id>                               One template as a rulebook file
   check <file...> [--json]                    Load, lint, balance-review and depth-audit (exit 1 on errors)
-  simulate <file...> [--encounter id] [--runs n]   Random play through the encounters
+  simulate <file...> [--encounter id] [--runs n] [--set json] [--stat id=value]... [--no-strategies]
+                                              Play the encounters: random play plus each always-the-same-move
+                                              strategy; endings counted as won / escaped / conceded / lost.
+                                              --set simulates from a patched state, e.g.
+                                              --set '{"stats":{"level":12,"hp":"max"},"flags":{"met":true},
+                                                      "items":{"sword":1},"location":"gate","rel":{"maud":{"trust":60}}}'
+                                              --stat level=12 is a shorthand (repeatable; "max"/"min" work).
+                                              Without them, an encounter with sim: is played from that state.
   preview <file...>                           The sidebar, choices and narrator view at the start
   mcp                                         Serve all of this over MCP (stdio)
 
@@ -25,10 +32,17 @@ function flag(args: string[], name: string): string | undefined {
   return i >= 0 ? args[i + 1] : undefined;
 }
 
+const VALUELESS = new Set(["--json", "--no-strategies", "--markdown"]);
+
+/** Every value of a repeatable flag. */
+function flags(args: string[], name: string): string[] {
+  return args.flatMap((a, i) => (a === name && args[i + 1] !== undefined ? [args[i + 1]] : []));
+}
+
 function files(args: string[]): string[] {
   const out: string[] = [];
   for (let i = 0; i < args.length; i++) {
-    if (args[i].startsWith("--")) { if (args[i] !== "--json") i++; continue; }
+    if (args[i].startsWith("--")) { if (!VALUELESS.has(args[i])) i++; continue; }
     out.push(args[i]);
   }
   return out;
@@ -65,8 +79,31 @@ const TOOLS = [
   },
   {
     name: "warp_simulate",
-    description: "Simulate the encounters with random play from the starting state: how often each ending happens and how many rounds it takes.",
-    inputSchema: { type: "object", properties: { ...SOURCE, encounter: { type: "string", description: "Just this encounter id." }, runs: { type: "number", description: "Default 200." } } },
+    description: "Simulate the encounters: random play plus each always-the-same-move strategy, how often each ending happens (counted as won / escaped / conceded / lost — the same classifier the checker uses) and how many rounds it takes. Pass `set` to simulate from a later point in the game (a level, gear, flags) instead of the start; it overrides each encounter's own `sim:`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...SOURCE,
+        encounter: { type: "string", description: "Just this encounter id." },
+        runs: { type: "number", description: "Default 200." },
+        strategies: { type: "boolean", description: "Also play each always-the-same-move strategy (default true)." },
+        set: {
+          type: "object",
+          description: "Simulate from the start with these changes; triggers then run once so derived values settle.",
+          properties: {
+            stats: { type: "object", description: "stat id → value, or \"max\" / \"min\". E.g. { level: 12, hp: \"max\" }.", additionalProperties: { type: ["number", "string"] } },
+            flags: { type: "object", description: "flag → value." },
+            items: { type: "object", description: "item id → count.", additionalProperties: { type: "number" } },
+            location: { type: "string", description: "Place id." },
+            conditions: { description: "Status ids, or id → minutes (null = until cured).", type: ["array", "object"] },
+            rel: { type: "object", description: "person → relationship stat → value. E.g. { maud: { trust: 60 } }." },
+            perks: { type: "array", items: { type: "string" }, description: "Perks taken (their effects apply)." },
+            wear: { description: "Clothing to put on: item ids, or slot → item.", type: ["array", "object"] },
+            triggers: { type: "boolean", description: "Run triggers after patching (default true)." },
+          },
+        },
+      },
+    },
   },
   {
     name: "warp_preview",
@@ -87,7 +124,7 @@ function callTool(name: string, a: Record<string, unknown>): string {
     case "warp_templates": return templateList();
     case "warp_template": return templateText(String(a.id ?? "")) ?? `No template "${a.id}". ${templateList()}`;
     case "warp_check": return checkText(checkReport(sourceOf(a)));
-    case "warp_simulate": return simulateText(sourceOf(a), typeof a.encounter === "string" ? a.encounter : undefined, Math.max(20, Math.min(2000, Number(a.runs) || 200)));
+    case "warp_simulate": return simulateText(sourceOf(a), typeof a.encounter === "string" ? a.encounter : undefined, Math.max(20, Math.min(2000, Number(a.runs) || 200)), { set: readPatch(a.set), strategies: a.strategies !== false });
     case "warp_preview": return previewText(sourceOf(a));
   }
   throw new Error(`Unknown tool "${name}"`);
@@ -166,7 +203,7 @@ function main(argv: string[]): number {
         console.log(args.includes("--json") ? JSON.stringify(rep, null, 2) : checkText(rep));
         return rep.ok ? 0 : 1;
       }
-      case "simulate": console.log(simulateText(read(files(args)), flag(args, "--encounter"), Number(flag(args, "--runs")) || 200)); return 0;
+      case "simulate": console.log(simulateText(read(files(args)), flag(args, "--encounter"), Number(flag(args, "--runs")) || 200, { set: readPatch(flag(args, "--set"), flags(args, "--stat")), strategies: !args.includes("--no-strategies") })); return 0;
       case "preview": console.log(previewText(read(files(args)))); return 0;
       case "mcp": serveMcp(); return -1;
       case "version": case "--version": console.log(VERSION); return 0;

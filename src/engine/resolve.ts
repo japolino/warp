@@ -8,7 +8,7 @@ import type { ActionDef, CheckDef, DecideSpec, Effect, NarratorGate, RandomEvent
 import { SEEN_REACTIONS } from "./ruleset.js";
 import { normalize, sample } from "./decide.js";
 import { emptyEffect, percentOf, slug } from "./ruleset.js";
-import { applyEvent, cloneState, dayOf, encounterKey, foeName, formatClock, formatNumber, itemName, kinAge, makeEnv, personName, statMax, timeKey, usesOf, type EventSource, type GameState, type WarpEvent } from "./state.js";
+import { amountValue, bonusSources, applyEvent, cloneState, dayOf, encounterKey, foeMaxOf, foeName, formatClock, formatNumber, itemName, kinAge, makeEnv, personName, statMax, timeKey, usesOf, type EventSource, type GameState, type WarpEvent } from "./state.js";
 import { isLoss, thresholds } from "./encounter-view.js";
 import { checkGains, checkStats, DIFFICULTY_WORD, hardnessFrom, IMPROV, IMPROV_DIRECTION, improvAction, isDifficulty, practise, trainingGain } from "./freeform.js";
 import { endingDirection } from "./chronicle.js";
@@ -154,6 +154,11 @@ class Working {
       const m = statRate(this.r, this.s, e.id, e.d);
       if (m !== 1) e = { ...e, d: e.d * m };
     }
+    // Perk gains/losses on a relationship stat scale changes in how anyone feels.
+    if (e.t === "rel" && e.d && e.set === undefined && e.src !== "manual" && e.src !== "start") {
+      const m = statRate(this.r, this.s, e.stat, e.d, true);
+      if (m !== 1) e = { ...e, d: e.d * m };
+    }
     applyEvent(this.s, e, this.r);
     this.events.push(e);
   }
@@ -189,7 +194,36 @@ export const TRAVEL_PREFIX = "go:";
 export function travelTargets(r: Ruleset, s: GameState): string[] {
   if (s.encounter) return []; // no walking away mid-encounter; use its actions
   const here = s.location ? r.locations[s.location] : undefined;
-  return here ? here.exits.filter((x) => r.locations[x]) : [];
+  return here ? here.exits.filter((x) => r.locations[x] && placeKnown(r, s, x) && !placeLock(r, s, x)) : [];
+}
+
+/** Does this place exist for travel and the map right now? (A place's `when:`.) */
+export function placeKnown(r: Ruleset, s: GameState, id: string): boolean {
+  const l = r.locations[id];
+  return !!l && (!l.when || evalBool(l.when, makeEnv(r, s), true));
+}
+
+/** Why travel to a place is locked right now (its `requires:`), or null when it's open. */
+export function placeLock(r: Ruleset, s: GameState, id: string): string | null {
+  const l = r.locations[id];
+  return l ? gateLock(r, s, l.requires ?? [], l.whyNot) : null;
+}
+
+/** Exits from here that are shown but locked, with the reason. */
+export function lockedExits(r: Ruleset, s: GameState): { id: string; locked: string }[] {
+  if (s.encounter) return [];
+  const here = s.location ? r.locations[s.location] : undefined;
+  if (!here) return [];
+  return here.exits.flatMap((x) => {
+    const locked = r.locations[x] && placeKnown(r, s, x) ? placeLock(r, s, x) : null;
+    return locked ? [{ id: x, locked }] : [];
+  });
+}
+
+/** Minutes from one place to the next: the exit's own minutes, else the origin's `travel:`. */
+export function travelMinutes(r: Ruleset, from: string | null | undefined, to: string): number {
+  const f = from ? r.locations[from] : undefined;
+  return f?.exitTravel?.[to] ?? f?.travel ?? r.locations[to]?.travel ?? 10;
 }
 
 // ───────────────────────── availability & odds ─────────────────────────
@@ -214,10 +248,128 @@ export function actionPool(r: Ruleset, s: GameState): { defs: Record<string, Act
   return { defs: r.actions, order: r.actionOrder, tags: [] };
 }
 
-export function isAvailable(r: Ruleset, s: GameState, a: ActionDef, target?: string): boolean {
+/** Where and when allow it (its place, `when:` and `requires:`), before what it costs. */
+export function whenHolds(r: Ruleset, s: GameState, a: ActionDef, target?: string): boolean {
   if (!s.encounter && a.at.length && !a.at.includes(s.location ?? "")) return false;
   if (a.when && !evalBool(a.when, makeEnv(r, s, paramValues(a, undefined, target)), true)) return false;
   return true;
+}
+
+export function isAvailable(r: Ruleset, s: GameState, a: ActionDef, target?: string): boolean {
+  if (a.targets && target !== undefined && !a.targets.includes(target)) return false; // per_person `targets:`
+  return whenHolds(r, s, a, target) && !spentLock(r, s, a, target);
+}
+
+/**
+ * One stat's cost as the turn will charge it: "-15%" is a share of the stat's current maximum
+ * (whole numbers once it's at least one, as in effects); anything else is a formula.
+ */
+export function costValue(r: Ruleset, s: GameState, stat: string, raw: string | number, env: ExprEnv): number {
+  const p = percentOf(raw);
+  if (p === null) return evalNumber(raw, env, 0);
+  const def = r.stats[stat];
+  const x = p * (def ? statMax(r, def, s) : 100);
+  return Math.abs(x) >= 1 ? Math.round(x) : x;
+}
+
+/**
+ * The first `cost:` it can't pay ("Needs 8 Mana"), or null. A drop must fit above the stat's min.
+ * Stats that are better low (stress, dread) never gate on a drop: that's relief, not a price.
+ * Rises (positive costs) are allowed and never gate.
+ */
+export function costShortfall(r: Ruleset, s: GameState, a: ActionDef, target?: string, params?: Record<string, string>): string | null {
+  const costs = Object.entries(a.cost.stats);
+  if (!costs.length) return null;
+  const env = makeEnv(r, s, paramValues(a, params, target));
+  for (const [stat, d] of costs) {
+    const def = r.stats[stat];
+    if (def?.good === "low") continue;
+    const v = costValue(r, s, stat, d, env);
+    const have = s.stats[stat] ?? def?.start ?? 0;
+    if (v < 0 && have + v < (def?.min ?? 0)) return `Needs ${formatNumber(-v)} ${def?.label ?? stat}`;
+  }
+  return null;
+}
+
+/** Does this effect do anything at all? (Empty maps and lists don't; any other key that's set does.) */
+export function hasEffect(e: Effect): boolean {
+  return Object.values(e).some((v) => v !== undefined && v !== null && v !== false
+    && (typeof v !== "object" || (Array.isArray(v) ? v.length > 0 : Object.keys(v).length > 0)));
+}
+
+/** Charge key for an encounter move's `per_encounter:` / `per_day:` uses. */
+export function moveChargeKey(s: GameState, a: ActionDef): string | null {
+  return s.encounter && (a.perEncounter || a.perDay) ? `move:${s.encounter.id}:${a.id}` : null;
+}
+
+/** An encounter move with no uses left says so ("Used up for this encounter"); null otherwise. */
+export function usesLock(s: GameState, a: ActionDef): string | null {
+  const key = moveChargeKey(s, a);
+  if (!key) return null;
+  const used = usesOf(s, key);
+  if (a.perEncounter && used.here >= a.perEncounter) return "Used up for this encounter";
+  if (a.perDay && used.today >= a.perDay) return "Used up for today";
+  return null;
+}
+
+/** What a move's costs take, in total, from the stats it can't go below on (good: low stats are relief, not a price). */
+function costPrice(r: Ruleset, s: GameState, a: ActionDef, target?: string, params?: Record<string, string>): number {
+  const env = makeEnv(r, s, paramValues(a, params, target));
+  let price = 0;
+  for (const [stat, d] of Object.entries(a.cost.stats)) {
+    if (r.stats[stat]?.good === "low") continue;
+    const v = costValue(r, s, stat, d, env);
+    if (v < 0) price -= v;
+  }
+  return price;
+}
+
+/**
+ * In an encounter, is every move that's allowed now (shown, its \`when:\` holds, uses left) out of reach only by
+ * its cost? Then the CHEAPEST of those moves stay open and their cost takes what's left: a fight never leaves
+ * {{user}} without a move, but being broke never makes the expensive moves free. Returns the open move ids.
+ */
+function strappedMoves(r: Ruleset, s: GameState): Set<string> {
+  const enc = s.encounter ? r.encounters[s.encounter.id] : undefined;
+  const none = new Set<string>();
+  if (!enc) return none;
+  const blocked: { id: string; price: number }[] = [];
+  for (const id of enc.actionOrder) {
+    const m = enc.actions[id];
+    if (!m || m.hidden || !whenHolds(r, s, m) || usesLock(s, m)) continue;
+    if (!costShortfall(r, s, m)) return none;
+    blocked.push({ id, price: costPrice(r, s, m) });
+  }
+  if (!blocked.length) return none;
+  const cheapest = Math.min(...blocked.map((b) => b.price));
+  return new Set(blocked.filter((b) => b.price === cheapest).map((b) => b.id));
+}
+
+/** Every combination of an action's param options (bounded), for "can any choice be paid for?". */
+function paramCombos(a: ActionDef): Record<string, string>[] {
+  let out: Record<string, string>[] = [{}];
+  for (const p of a.params) {
+    out = out.flatMap((c) => Object.keys(p.options).map((k) => ({ ...c, [p.id]: k })));
+    if (out.length > 64) return out.slice(0, 64);
+  }
+  return out;
+}
+
+/**
+ * Why an action that is otherwise allowed can't be taken now: no uses left, or a cost it can't pay.
+ * With \`params\` the exact choice is judged; without them, an action with params is open while ANY option is affordable.
+ */
+export function spentLock(r: Ruleset, s: GameState, a: ActionDef, target?: string, params?: Record<string, string>): string | null {
+  const uses = usesLock(s, a);
+  if (uses) return uses;
+  let short: string | null;
+  if (params || !a.params.length) short = costShortfall(r, s, a, target, params);
+  else {
+    const combos = paramCombos(a);
+    short = combos.some((c) => !costShortfall(r, s, a, target, c)) ? null : costShortfall(r, s, a, target, combos[0]);
+  }
+  if (short && s.encounter && r.encounters[s.encounter.id]?.actions[a.id] === a && strappedMoves(r, s).has(a.id)) return null;
+  return short;
 }
 
 export function availableActions(r: Ruleset, s: GameState, lines: string[] = []): ActionDef[] {
@@ -258,7 +410,7 @@ export function usableItems(r: Ruleset, s: GameState): { id: string; a: ActionDe
   for (const [id, n] of Object.entries(s.items)) {
     const a = r.items[id]?.use;
     if (!a || n <= 0) continue;
-    out.push({ id: `${ITEM_PREFIX}${id}`, a, locked: isAvailable(r, s, a) ? null : a.whyNot ?? lockReason(r, s, a) });
+    out.push({ id: `${ITEM_PREFIX}${id}`, a, locked: isAvailable(r, s, a) ? null : lockReason(r, s, a) });
   }
   return out;
 }
@@ -285,8 +437,26 @@ export function requirementText(r: Ruleset, s: GameState, q: Requirement): strin
   }
 }
 
+/**
+ * Why a gate (`requires:` on a place or a dungeon) is shut right now, or null when every
+ * requirement holds. `whyNot` replaces the generated words.
+ */
+export function gateLock(r: Ruleset, s: GameState, requires: Requirement[], whyNot?: string): string | null {
+  if (!requires.length) return null;
+  const env = makeEnv(r, s);
+  const unmet = requires.filter((q) => !evalBool(q.when, env, false));
+  if (!unmet.length) return null;
+  if (whyNot) return whyNot;
+  const needs = unmet.filter((q) => q.kind !== "formula").map((q) => requirementText(r, s, q));
+  const other = unmet.filter((q) => q.kind === "formula").map((q) => requirementText(r, s, q));
+  return [needs.length ? `Needs ${needs.join(", ")}` : "", ...other].filter(Boolean).join(" · ") || "Not possible right now";
+}
+
 /** A plain reason a choice is locked, read from simple conditions ("Needs a Cream Brioche"). */
 export function lockReason(r: Ruleset, s: GameState, a: ActionDef): string {
+  // Allowed here and now, but out of uses or unaffordable: say that, not the `when:` text.
+  const spent = whenHolds(r, s, a) ? spentLock(r, s, a) : null;
+  if (spent) return spent;
   if (a.whyNot) return a.whyNot;
   if (a.requires.length) {
     const env = makeEnv(r, s);
@@ -316,35 +486,20 @@ export function gearFor(r: Ruleset, s: GameState, a: ActionDef): { stats: Record
     for (const [stat, b] of Object.entries(bonus)) {
       if (!b || !reads.has(stat)) continue;
       stats[stat] = (stats[stat] ?? 0) + b;
-      notes.push(`${from}: ${b > 0 ? "+" : ""}${b} ${r.stats[stat]?.label ?? stat}`);
+      notes.push(`${from}: ${b > 0 ? "+" : ""}${formatNumber(b)} ${r.stats[stat]?.label ?? stat}`);
     }
   };
-  const worn = new Set(Object.values(s.worn));
-  for (const [id, n] of Object.entries(s.items)) {
-    const it = r.items[id];
-    if (!it || n <= 0 || (it.slot && !worn.has(id))) continue;
-    add(it.name, it.bonus);
-  }
-  const env = makeEnv(r, s);
-  for (const id of Object.keys(s.perks)) {
-    const p = r.perks[id];
-    if (!p) continue;
-    add(`★ ${p.name}`, p.bonus);
-    for (const e of p.edges) if (!e.when || evalBool(e.when, env, false)) add(`★ ${p.name}`, e.stats);
-  }
-  for (const id of Object.keys(s.conditions)) {
-    const c = r.conditions[id];
-    if (c && Object.keys(c.bonus).length) add(c.label, c.bonus);
-  }
+  // The same sources `eff()` counts: gear, perks (and edges that hold), statuses — formulas worked out now.
+  for (const src of bonusSources(r, s)) add(src.from, src.bonus);
   return { stats, notes };
 }
 
 /** How much bigger (or smaller) a rise or drop in a stat is, from the perks held. */
-export function statRate(r: Ruleset, s: GameState, stat: string, d: number): number {
+export function statRate(r: Ruleset, s: GameState, stat: string, d: number, rel = false): number {
   let pct = 0;
   for (const id of Object.keys(s.perks)) {
     for (const rule of r.perks[id]?.rules ?? []) {
-      if ((rule.kind === "gains" && d > 0) || (rule.kind === "losses" && d < 0)) if (rule.stat === stat) pct += rule.pct;
+      if ((rule.kind === "gains" && d > 0) || (rule.kind === "losses" && d < 0)) if (rule.stat === stat && !!rule.rel === rel) pct += rule.pct;
     }
   }
   return Math.max(0, 1 + pct);
@@ -384,15 +539,9 @@ export function abilityStatus(r: Ruleset, s: GameState, id: string): AbilityStat
   const here = ab.where === "any" || (ab.where === "encounter") === !!s.encounter;
   let locked: string | null = null;
   if (left === 0) locked = ab.perEncounter && s.encounter && ab.perEncounter - used.here <= 0 ? "Used up for this encounter" : "Used up for today";
-  else if (!isAvailable(r, s, ab.action)) locked = ab.action.whyNot ?? lockReason(r, s, ab.action);
-  else {
-    // A cost it can't pay (8 Mana with 5 left) locks it, with the reason.
-    const env = makeEnv(r, s);
-    for (const [stat, d] of Object.entries(ab.action.cost.stats)) {
-      const v = evalNumber(d, env, 0);
-      if (v < 0 && (s.stats[stat] ?? r.stats[stat]?.start ?? 0) < -v) { locked = `Needs ${-v} ${r.stats[stat]?.label ?? stat}`; break; }
-    }
-  }
+  else if (!whenHolds(r, s, ab.action)) locked = ab.action.whyNot ?? lockReason(r, s, ab.action);
+  // A cost it can't pay (8 Mana with 5 left, or "-15%" of a pool too low) locks it, with the reason.
+  else locked = costShortfall(r, s, ab.action);
   return { id, known, left, here, locked };
 }
 
@@ -424,7 +573,9 @@ export function dangerStats(r: Ruleset, s: GameState): string[] {
 /** {{user}}'s armor against blows to a stat: gear held (worn, for clothing) and conditions. "_" counts for what the fight beats you on. */
 export function playerArmor(r: Ruleset, s: GameState, stat: string): number {
   const main = dangerStats(r, s).includes(stat);
-  const pick = (m: Record<string, number>) => (m[stat] ?? 0) + (main ? m._ ?? 0 : 0);
+  const env = makeEnv(r, s);
+  // Gear and status armor may be formulas ("2 + level / 5"), worked out at the blow.
+  const pick = (m: Record<string, number | string>) => amountValue(m[stat], env) + (main ? amountValue(m._, env) : 0);
   const worn = new Set(Object.values(s.worn));
   let n = 0;
   for (const [id, have] of Object.entries(s.items)) {
@@ -441,8 +592,11 @@ export function foeArmor(r: Ruleset, s: GameState, stat: string): number {
   const enc = s.encounter ? r.encounters[s.encounter.id] : undefined;
   if (!enc) return 0;
   const main = mainMeter(r, s)?.stat === stat;
-  const pick = (m: Record<string, number>) => (m[stat] ?? 0) + (main ? m._ ?? 0 : 0);
-  let n = pick(enc.foe.armor);
+  let env: ReturnType<typeof makeEnv> | null = null;
+  const val = (v: number | string | undefined) => (typeof v === "string" ? amountValue(v, (env ??= makeEnv(r, s))) : v ?? 0);
+  const pick = (m: Record<string, number | string>) => val(m[stat]) + (main ? val(m._) : 0);
+  // Formula armor was worked out when the encounter started (so a foe keeps the armor it began with).
+  let n = pick(s.encounter!.armor ?? enc.foe.armor);
   for (const id of Object.keys(s.encounter!.conds ?? {})) n += pick(r.conditions[id]?.armor ?? {});
   return n;
 }
@@ -549,11 +703,49 @@ export function findAction(r: Ruleset, s: GameState, actionId: string): { a: Act
   return a && allowed(a) ? { a, ...(target ? { target } : {}) } : null;
 }
 
-function tierFor(check: CheckDef, roll: ReturnType<typeof rollDice>, add: number, target: number | null): Tier {
+/** How high the dice came up (0 = all ones, 1 = all top faces), for a `crit:` chance on several dice. */
+function diceShare(roll: ReturnType<typeof rollDice>): number {
+  let got = 0, span = 0;
+  for (const f of roll.dice) if (f.kept) { got += f.value - 1; span += f.sides - 1; }
+  return span > 0 ? got / span : 0;
+}
+
+/**
+ * `crit` (when the check has `crit:`) is the chance in percent that a roll is a critical success:
+ * on one die, the top (vs) or bottom (chance) faces that make up that share; on several dice, a success
+ * whose dice land in that top share. Critical failures keep the usual 5% band.
+ */
+function tierFor(check: CheckDef, roll: ReturnType<typeof rollDice>, add: number, target: number | null, crit: number | null = null): Tier {
   const total = roll.total + add;
   const sides = roll.primarySides;
   const single = roll.natural !== null;
   const critBand = Math.max(1, Math.floor(sides * 0.05));
+  if (crit !== null && check.crits) {
+    const pct = Math.max(0, Math.min(100, crit));
+    const band = Math.round((sides * pct) / 100);
+    const top = pct > 0 && diceShare(roll) >= 1 - pct / 100;
+    switch (check.style) {
+      case "chance": {
+        const ok = total <= (target ?? 50);
+        const low = pct > 0 && diceShare(roll) <= pct / 100;
+        if (ok && (single ? roll.natural! <= band : low)) return "crit_success";
+        if (single && !ok && roll.natural! > sides - critBand) return "crit_fail";
+        return ok ? "success" : "fail";
+      }
+      case "vs": {
+        const t = target ?? 10;
+        if (single ? band > 0 && roll.natural! > sides - band : total >= t && top) return "crit_success";
+        if (single && roll.natural === 1) return "crit_fail";
+        if (total >= t) return "success";
+        if (check.partialMargin > 0 && total >= t - check.partialMargin) return "partial";
+        return "fail";
+      }
+      case "pbta":
+        if (total >= 10) return top ? "crit_success" : "success";
+        if (total >= 7) return "partial";
+        return "fail";
+    }
+  }
   switch (check.style) {
     case "chance": {
       const t = target ?? 50;
@@ -583,14 +775,19 @@ function checkNumbers(r: Ruleset, s: GameState, a: ActionDef, params?: Record<st
   // Gear counts as that much more of the stat it helps, for this check only.
   const gear = gearFor(r, s, a).stats;
   const eff = Object.keys(gear).length ? { ...s, stats: Object.fromEntries(Object.entries(s.stats).map(([k, v]) => [k, v + (gear[k] ?? 0)])) } : s;
-  const env = makeEnv(r, eff, paramValues(a, params, who));
+  const adjusted = makeEnv(r, eff, paramValues(a, params, who));
+  const plain = makeEnv(r, s, paramValues(a, params, who));
+  // eff('str') / gear('str') add the gear themselves, so they read the unadjusted state (no double count).
+  const env: ExprEnv = { lookup: adjusted.lookup, call: (n, args) => (n === "eff" || n === "gear" ? plain.call?.(n, args) : adjusted.call?.(n, args)) };
   const add = check.add !== undefined ? Math.round(evalNumber(check.add, env, 0)) : 0;
   let target: number | null = null;
   if (check.target !== undefined) {
     target = Math.round(evalNumber(check.target, env, check.style === "chance" ? 50 : 10));
     if (check.style === "chance") target = Math.max(0, Math.min(100, target));
   }
-  return { add, target };
+  // `crit: "5 + luk / 4"`: the chance (percent) of a critical success, instead of the fixed 5%.
+  const crit = check.crit !== undefined ? Math.max(0, Math.min(100, evalNumber(check.crit, env, 5))) : null;
+  return { add, target, crit };
 }
 
 export interface Odds { success: number; partial: number }
@@ -599,7 +796,7 @@ export interface Odds { success: number; partial: number }
 export function odds(r: Ruleset, s: GameState, a: ActionDef, params?: Record<string, string>, who?: string, includePerks = true): Odds | null {
   const check = a.check;
   if (!check) return null;
-  const { add, target } = checkNumbers(r, s, a, params, who);
+  const { add, target, crit } = checkNumbers(r, s, a, params, who);
   if (check.style === "chance" && check.dice === "d100" && target !== null) {
     const success = Math.max(0, Math.min(100, target - add)) / 100;
     // A reroll happens only after failure. Soften converts ordinary failures to
@@ -616,8 +813,8 @@ export function odds(r: Ruleset, s: GameState, a: ActionDef, params?: Record<str
   const N = 2000;
   let ok = 0, part = 0;
   for (let i = 0; i < N; i++) {
-    let t = tierFor(check, rollDice(check.dice, rng), add, target);
-    if ((t === "fail" || t === "crit_fail") && reroll) t = tierFor(check, rollDice(check.dice, rng), add, target);
+    let t = tierFor(check, rollDice(check.dice, rng), add, target, crit);
+    if ((t === "fail" || t === "crit_fail") && reroll) t = tierFor(check, rollDice(check.dice, rng), add, target, crit);
     if ((t === "fail" || t === "crit_fail") && soften) t = t === "crit_fail" ? "fail" : "partial";
     if (t === "success" || t === "crit_success") ok++;
     else if (t === "partial") part++;
@@ -709,7 +906,7 @@ function effectToEvents(w: Working, e: Effect, src: EventSource, extra: Record<s
     for (const [stat, d] of Object.entries(e.foe)) {
       // An ability written for one kind of foe ("hp") simply misses one that doesn't have it.
       if (foeStats?.length && !foeStats.some((x) => x.id === stat)) continue;
-      const v = amountOf(w, d, extra, foeStats?.find((x) => x.id === stat)?.max ?? 100);
+      const v = amountOf(w, d, extra, foeStats?.some((x) => x.id === stat) ? foeMaxOf(r, w.s, stat) : 100);
       if (v !== 0) blows.push({ stat, v });
     }
     if (e.harm !== undefined) {
@@ -737,7 +934,8 @@ function effectToEvents(w: Working, e: Effect, src: EventSource, extra: Record<s
     if (e.end) w.pendingEnd = e.end;
   }
   for (const id of e.learn) if (r.abilities[id] && !w.s.learned?.[id]) w.push({ t: "learn", id, src });
-  if (e.startEncounter && !w.s.encounter) startEncounter(w, e.startEncounter, src);
+  // A rule can't restart the encounter that just ended (an edge trigger on `not in_encounter` turns true again the moment it ends).
+  if (e.startEncounter && !w.s.encounter && !(src === "trigger" && encounterJustEnded(w.s, e.startEncounter, false))) startEncounter(w, e.startEncounter, src);
 
   for (const id of e.unlock) if (w.r.codex[id] && !w.s.codex[id]) w.push({ t: "codex", id, src });
 
@@ -907,7 +1105,7 @@ function tickSide(w: Working, side: "player" | "foe") {
     const stat = def.stat && w.r.encounters[enc.id]?.foe.stats.some((x) => x.id === def.stat) ? def.stat : m?.stat;
     if (!stat) continue;
     const fs = w.r.encounters[enc.id]?.foe.stats.find((x) => x.id === stat);
-    const dmg = amountOf(w, def.dot, {}, fs?.max ?? 100);
+    const dmg = amountOf(w, def.dot, {}, fs ? foeMaxOf(w.r, w.s, stat) : 100);
     // Damage over time wears the meter the same way a blow would; negative heals.
     const down = stat === m?.stat ? m.down : fs?.good !== "high";
     if (dmg) because(w, `${def.label} (on ${foe})`, () => w.push({ t: "foe", stat, d: (down ? -1 : 1) * dmg, src: "trigger" }));
@@ -948,7 +1146,9 @@ function openFrontStages(w: Working) {
       if ((w.s.fronts[f.id]?.v ?? f.start) < st.at) break;
       because(w, `World: ${f.label} reached stage ${n + 1}`, () => {
         w.push({ t: "stage", id: f.id, n, src: "world" });
-        effectToEvents(w, st.effects, "world", {});
+        // `if:` is judged as the stage surfaces (after the stage itself counts, so front_stage() sees it).
+        const fx = st.if === undefined || evalBool(st.if, w.env(), false) ? st.effects : st.else;
+        if (fx) effectToEvents(w, fx, "world", {});
       });
       if (st.surface) announce(w, `In the wider world: ${st.surface}`);
     }
@@ -1348,7 +1548,23 @@ function startEncounter(w: Working, id: string, src: EventSource, opponent?: str
   const enc = w.r.encounters[id];
   if (!enc) return;
   const foe = Object.fromEntries(enc.foe.stats.map((s) => [s.id, s.start]));
-  w.push({ t: "enc", id, foe, ...(enc.momentum ? { momentum: enc.momentum.start } : {}), ...(opponent ? { foeName: opponent } : {}), src });
+  // Formula stats and armor ("100 * level") are worked out once, now, against {{user}}'s state, and kept in the event (replays match).
+  const max: Record<string, number> = {};
+  const armor: Record<string, number> = {};
+  const scaled = enc.foe.stats.some((s) => s.startExpr || s.maxExpr) || Object.values(enc.foe.armor).some((v) => typeof v === "string");
+  if (scaled) {
+    const env = w.env();
+    const num = (f: string, fallback: number) => { const v = evalNumber(f, env, fallback); return Number.isFinite(v) ? Math.max(0, v) : fallback; };
+    for (const s of enc.foe.stats) {
+      if (!s.startExpr && !s.maxExpr) continue;
+      const start = s.startExpr ? num(s.startExpr, s.start) : s.start;
+      const top = s.maxExpr ? Math.max(1, num(s.maxExpr, s.max)) : s.maxFromStart ? Math.max(1, start) : s.max;
+      foe[s.id] = Math.min(start, top);
+      max[s.id] = top;
+    }
+    for (const [k, v] of Object.entries(enc.foe.armor)) armor[k] = typeof v === "string" ? amountValue(v, env) : v;
+  }
+  w.push({ t: "enc", id, foe, ...(enc.momentum ? { momentum: enc.momentum.start } : {}), ...(opponent ? { foeName: opponent } : {}), ...(Object.keys(max).length ? { max } : {}), ...(scaled && Object.values(enc.foe.armor).some((v) => typeof v === "string") ? { armor } : {}), src });
   announce(w, `An encounter begins: ${enc.name}${enc.desc ? ` — ${enc.desc}` : ""}. Opponent: ${opponent ?? enc.foe.name}.`);
   because(w, `${enc.name} begins`, () => effectToEvents(w, enc.start, src, {}));
 }
@@ -1439,6 +1655,12 @@ function beatSheet(w: Working, before: GameState, rec: TurnRecord, playerText?: 
 
 function decide(w: Working, d: DecideSpec, src: EventSource, extra: Record<string, Value>) {
   if (w.decisions.some((x) => x.id === d.id)) return; // one draw per decision per turn
+  // Options with `when:` are weighed only while it holds (boss phases); if none holds, every option is.
+  if (d.options.some((o) => o.when !== undefined)) {
+    const env = w.env(extra);
+    const open = d.options.filter((o) => o.when === undefined || evalBool(o.when, env, false));
+    if (open.length && open.length < d.options.length) d = { ...d, options: open };
+  }
   const keys = d.options.map((o) => o.id);
   const model = w.odds[d.id];
   if (!model) w.needs.push(d);
@@ -1454,14 +1676,18 @@ function advanceTime(w: Working, minutes: number, src: EventSource) {
   w.push({ t: "time", min: minutes, src });
   for (const id of w.r.statOrder) {
     const def = w.r.stats[id];
-    if (!def.perHour) continue;
-    const d = (def.perHour * minutes) / 60;
-    if (Math.abs(d) > 1e-9) w.push({ t: "stat", id, d, src: "drift", why: `${minutes >= 60 ? `${Math.round(minutes / 6) / 10}h` : `${minutes} min`} passed (${def.label} drifts ${def.perHour > 0 ? "+" : ""}${def.perHour}/h)` });
+    // A formula (or "+6%" of the maximum) is worked out as the time passes.
+    const rate = def.perHourExpr !== undefined ? amountValue(def.perHourExpr, w.env(), statMax(w.r, def, w.s)) : def.perHour;
+    if (!rate) continue;
+    const d = (rate * minutes) / 60;
+    if (Math.abs(d) > 1e-9) w.push({ t: "stat", id, d, src: "drift", why: `${minutes >= 60 ? `${Math.round(minutes / 6) / 10}h` : `${minutes} min`} passed (${def.label} drifts ${rate > 0 ? "+" : ""}${formatNumber(rate)}/h)` });
   }
   // Hourly statuses: damage over time scales with the time that passed; tick effects run once per hour crossed.
   const from = w.s.minutes - minutes;
   for (const [id, c] of Object.entries(w.s.conditions)) {
-    if (w.r.conditions[id]?.every !== "hour") continue;
+    const every = w.r.conditions[id]?.every;
+    // [round, hour] statuses tick by rounds during a fight, so fight time doesn't count twice.
+    if (every !== "hour" && !(every === "both" && !w.s.encounter)) continue;
     // Only the time it actually lasted counts.
     const end = c.until !== null ? Math.min(w.s.minutes, c.until) : w.s.minutes;
     if (end > from) tickPlayer(w, id, (end - from) / 60, Math.min(24, Math.floor(end / 60) - Math.floor(from / 60)));
@@ -1572,6 +1798,26 @@ export function resolveTurn(r: Ruleset, before: GameState, intent: Intent | null
   return resolveInner(r, before, intent, opts, []);
 }
 
+/** "10 Control, +8 Dread": a resist cost (signed deltas) in words. Drops read as plain amounts, rises with a plus. */
+export function resistCostText(r: Ruleset, cost: Record<string, number>): string {
+  return Object.entries(cost).map(([id, d]) => `${d > 0 ? "+" : ""}${formatNumber(Math.abs(d))} ${r.stats[id]?.label ?? id}`).join(", ");
+}
+
+/**
+ * Can {{user}} pay this resist cost together with the action's own cost? Each entry is a signed change to a meter:
+ * a drop must stay at or above its min, a rise at or below its (current) max. `set:` on the same stat is ambiguous: no.
+ */
+export function resistAffordable(r: Ruleset, s: GameState, a: ActionDef, cost: Record<string, number>, env: ExprEnv): boolean {
+  const entries = Object.entries(cost);
+  return entries.length > 0 && entries.every(([id, d]) => {
+    const stat = r.stats[id];
+    if (!stat || stat.kind !== "meter" || !Number.isFinite(d) || d === 0 || a.cost.set[id] !== undefined) return false;
+    const have = s.stats[id] ?? stat.start;
+    const own = a.cost.stats[id] !== undefined ? costValue(r, s, id, a.cost.stats[id], env) : 0;
+    return d < 0 ? have + d + Math.min(0, own) >= stat.min : have + d + Math.max(0, own) <= statMax(r, stat, s);
+  });
+}
+
 interface MindHit { id: string; cause: string; text: string; kind: "fail" | "alter" | "redirect"; to?: string; chance: number; resisted?: boolean; resistCost?: Record<string, number> }
 
 /** Does the character's mind overrule this action? First matching override that rolls under its chance wins. */
@@ -1586,16 +1832,7 @@ function mindOverride(r: Ruleset, s: GameState, a: ActionDef, target: string | u
     const authoredKind = o.do === "fail" ? "fail" : o.do === "alter" ? "alter" : "redirect";
     const cost = o.resistCost;
     const resisted = r.mind.overridesMode !== "soft" && authoredKind !== "alter" && resist === o.id && !!cost
-      && Object.keys(cost).length > 0 && Object.entries(cost).every(([id, amount]) => {
-        const stat = r.stats[id];
-        return !!stat && stat.kind === "meter" && Number.isFinite(amount) && amount > 0
-          && (s.stats[id] ?? stat.start) - amount >= stat.min
-          // Shared costs must be affordable together; reject set-based payment ambiguity.
-          && a.cost.set[id] === undefined
-          && (s.stats[id] ?? stat.start) - amount + Math.min(0, percentOf(a.cost.stats[id] ?? 0) !== null
-            ? Math.round(percentOf(a.cost.stats[id] ?? 0)! * statMax(r, stat, s))
-            : evalNumber(a.cost.stats[id] ?? 0, env, 0)) >= stat.min;
-      });
+      && resistAffordable(r, s, a, cost, env);
     const kind = r.mind.overridesMode === "soft" || resisted ? "alter" : authoredKind;
     return { id: o.id, cause: o.cause, text: o.text ?? `${o.cause} takes over.`, kind,
       ...(kind === "redirect" ? { to: o.do } : {}), chance,
@@ -1617,7 +1854,13 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
     const valid = intent.actionId === EXPLORE ? canExplore(r, before)
       : intent.actionId.startsWith(TRAVEL_PREFIX) ? travelTargets(r, before).includes(intent.actionId.slice(TRAVEL_PREFIX.length))
       : !!findAction(r, before, intent.actionId);
+    const shut = !valid && intent.actionId.startsWith(TRAVEL_PREFIX) ? lockedExits(r, before).find((x) => x.id === intent.actionId.slice(TRAVEL_PREFIX.length)) : undefined;
+    if (shut) return { ...rec, hints: [`{{user}} can't go to ${r.locations[shut.id].name} yet (${shut.locked}). It did not happen and spent no turn or resources.`] };
     if (!valid) return { ...rec, hints: ["The attempted action isn't available in the current state. It did not happen and spent no turn or resources."] };
+    // The chosen params decide the price ("buy ten" costs more than "buy one"): judge the exact choice.
+    const chosen = intent.params && !intent.actionId.startsWith(TRAVEL_PREFIX) && intent.actionId !== EXPLORE ? findAction(r, before, intent.actionId) : null;
+    const short = chosen && chosen.a.params.length ? spentLock(r, before, chosen.a, chosen.target, intent.params) : null;
+    if (short) return { ...rec, hints: [`The attempted action can't be paid for with that choice (${short}). It did not happen and spent no turn or resources.`] };
   }
   // First turn of a chat fixes its world seed (weather etc.).
   if (!w.s.seed) w.push({ t: "seed", v: opts.seed, src: "start" });
@@ -1693,11 +1936,10 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
     const to = intent.actionId.slice(TRAVEL_PREFIX.length);
     const dest = r.locations[to];
     if (dest) {
-      const from = before.location ? r.locations[before.location] : undefined;
       rec.action = { id: intent.actionId, label: `Go to ${dest.name}`, via: intent.via };
       because(w, `Travel to ${dest.name}`, () => {
         w.push({ t: "move", to, src: "action" });
-        advanceTime(w, from?.travel ?? dest.travel, "action");
+        advanceTime(w, travelMinutes(r, before.location, to), "action");
       });
       if (dest.desc) w.hints.push(`Arriving at ${dest.name}: ${dest.desc}`);
     }
@@ -1737,11 +1979,18 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
     const checkBefore = cloneState(w.s);
       if (mind?.resisted && mind.resistCost) {
         because(w, `Resisted ${mind.cause}`, () => {
-          for (const [id, amount] of Object.entries(mind!.resistCost!)) w.push({ t: "stat", id, d: -amount, src: "cost" });
+          // Signed: a drop for stats that are better high, a rise for ones better low (+8 Dread).
+          for (const [id, d] of Object.entries(mind!.resistCost!)) w.push({ t: "stat", id, d, src: "cost" });
         });
-        w.hints.push(`{{user}} explicitly resists ${mind.cause.toLowerCase()}; the chosen action still happens. Resistance costs ${Object.entries(mind.resistCost).map(([id, amount]) => `${amount} ${r.stats[id]?.label ?? id}`).join(", ")}.`);
+        w.hints.push(`{{user}} explicitly resists ${mind.cause.toLowerCase()}; the chosen action still happens. Resistance costs ${resistCostText(r, mind.resistCost)}.`);
       }
     because(w, `Cost of "${label}"`, () => effectToEvents(w, a.cost, "cost", extra));
+    // An encounter move with `per_encounter:` / `per_day:` spends one use.
+    const moveKey = moveChargeKey(checkBefore, a);
+    if (moveKey) {
+      const enc = encounterKey(checkBefore);
+      because(w, `Used "${a.label}"`, () => w.push({ t: "charge", key: moveKey, day: dayOf(checkBefore), ...(enc ? { enc } : {}), src: "action" }));
+    }
     // Using an item spends a charge, or one of it — unless it's a tool that keeps.
     if (a.id.startsWith(ITEM_PREFIX)) {
       const itemId = a.id.slice(ITEM_PREFIX.length);
@@ -1760,9 +2009,9 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
       gambleTurn(w, a, intent!, rec, label, opts.seed);
     } else if (a.check) {
       const rng: Rng = seededRng(opts.seed);
-      const { add, target } = checkNumbers(r, checkBefore, a, intent!.params, who);
+      const { add, target, crit } = checkNumbers(r, checkBefore, a, intent!.params, who);
       let roll = rollDice(a.check.dice, rng);
-      let tier = tierFor(a.check, roll, add, target);
+      let tier = tierFor(a.check, roll, add, target, crit);
       // Played as a minigame: the score decides, against a bar set by the same odds the dice would have used.
       const played = intent!.game && intent!.game.score !== undefined && a.check.game !== false ? intent!.game : null;
       let game: CheckResult["game"];
@@ -1782,7 +2031,7 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
         if (re) {
           because(w, `★ ${re.name}`, () => w.push({ t: "charge", key: `perk:${re.perk}:reroll`, day: dayOf(checkBefore), src: "action" }));
           roll = rollDice(a.check.dice, seededRng(`${opts.seed}:reroll`));
-          tier = tierFor(a.check, roll, add, target);
+          tier = tierFor(a.check, roll, add, target, crit);
           perkNote = `${re.name} rerolled a failure`;
         }
       }
@@ -1814,6 +2063,8 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
         w.hints.push(gameHint(rec.check.label, played!, tier, game.bar));
       }
       questHooks(builderOf(w), { kind: "action", id: a.id, result: tier, good: tier === "success" || tier === "crit_success" });
+      // `effects:` next to a check always happen, whatever the dice say (then the tier's own effects).
+      if (hasEffect(a.effects)) because(w, `"${label}"`, () => effectToEvents(w, a.effects, "action", extra));
       const key = TIER_FALLBACK[tier].find((t) => a.outcomes[t]);
       const how = game ? `played ${GAMES[game.id].name}, ${Math.round(game.score * 100)}% vs ${Math.round(game.bar.success * 100)}%` : `rolled ${rec.check.total}${target !== null ? ` vs ${target}` : ""}`;
       if (key) because(w, `"${label}": ${rec.check.label} ${how} → ${TIER_LABEL[tier]}`, () => effectToEvents(w, a.outcomes[key]!, "check", extra));
@@ -2066,7 +2317,10 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
   if (p.move) {
     const k = p.move.toLowerCase();
     const loc = Object.values(r.locations).find((l) => l.id === k || l.name.toLowerCase() === k);
-    if (loc && loc.id !== w.s.location) w.push({ t: "move", to: loc.id, src });
+    // The story can't walk {{user}} past a gate the rules hold shut: a place still hidden (when:) or locked (requires:).
+    const shut = loc && loc.id !== w.s.location ? (!placeKnown(r, w.s, loc.id) ? "not found yet" : placeLock(r, w.s, loc.id)) : null;
+    if (loc && shut) w.hints.push(`{{user}} doesn't reach ${loc.name} (${shut}); they are still at ${w.s.locationName ?? r.locations[w.s.location ?? ""]?.name ?? "the same place"}.`);
+    else if (loc && loc.id !== w.s.location) w.push({ t: "move", to: loc.id, src });
     else if (!loc && r.locationsOpen && k !== (w.s.locationName ?? "").toLowerCase()) w.push({ t: "move", to: slug(p.move), name: p.move, src });
   }
 
@@ -2267,7 +2521,8 @@ export function perkBlocker(r: Ruleset, s: GameState, id: string, offered = true
   const clash = Object.keys(s.perks).find((o) => p.excludes.includes(o) || r.perks[o]?.excludes.includes(id));
   if (clash) return `Can't go with ${r.perks[clash]?.name ?? clash}.`;
   if (p.requires && !evalBool(p.requires, makeEnv(r, s), false)) return "Requirements not met.";
-  if (r.perkPoints && (s.stats[r.perkPoints] ?? 0) < p.cost) return `Needs ${p.cost} point${p.cost === 1 ? "" : "s"}.`;
+  const pool = p.points ?? r.perkPoints;
+  if (pool && (s.stats[pool] ?? 0) < p.cost) return `Needs ${p.cost} ${p.points ? r.stats[p.points]?.label ?? p.points : `point${p.cost === 1 ? "" : "s"}`}.`;
   if (offered && r.perkPick && !perkOffers(r, s).includes(id)) return "Not on offer right now.";
   return null;
 }
@@ -2303,8 +2558,10 @@ function perkAffinity(r: Ruleset, s: GameState, id: string): number {
  */
 export function perkOffers(r: Ruleset, s: GameState): string[] {
   if (!r.perkPick) return [];
-  const open = Object.values(r.perks).filter((p) => p.weight > 0 && !perkBlocker(r, s, p.id, false));
-  if (!open.length) return [];
+  // `offer: always` perks (a class choice) sit beside the drawn ones whenever they can be taken.
+  const always = Object.values(r.perks).filter((p) => p.always && !perkBlocker(r, s, p.id, false)).map((p) => p.id);
+  const open = Object.values(r.perks).filter((p) => !p.always && p.weight > 0 && !perkBlocker(r, s, p.id, false));
+  if (!open.length) return always;
   const rng = seededRng(`${s.seed ?? "warp"}:perks:${Object.keys(s.perks).sort().join(",")}`);
   const score = new Map(open.map((p) => [p.id, perkAffinity(r, s, p.id) + rng() * 0.01]));
   const left = [...open];
@@ -2317,7 +2574,7 @@ export function perkOffers(r: Ruleset, s: GameState): string[] {
     let x = rng() * total;
     take(left.find((p) => (x -= p.weight) <= 0) ?? left[left.length - 1]);
   }
-  return out;
+  return [...out, ...always];
 }
 
 export function buyPerk(r: Ruleset, before: GameState, id: string): WarpEvent[] | string {
@@ -2326,8 +2583,37 @@ export function buyPerk(r: Ruleset, before: GameState, id: string): WarpEvent[] 
   const p = r.perks[id];
   const w = new Working(r, cloneState(before));
   w.push({ t: "perk", id, src: "manual" });
-  if (r.perkPoints && p.cost) w.push({ t: "stat", id: r.perkPoints, d: -p.cost, src: "manual" });
+  const pool = p.points ?? r.perkPoints;
+  if (pool && p.cost) w.push({ t: "stat", id: pool, d: -p.cost, src: "manual" });
   effectToEvents(w, p.effects, "manual", {});
+  runTriggers(w, false);
+  return w.events;
+}
+
+/**
+ * Spend points on stats that declare `allocate:` — `{ str: 2, dex: 1 }` is two steps of STR and one of DEX.
+ * Checked as a whole (stats allocatable, whole positive steps, room under the max, points enough): all of it happens, or none.
+ */
+export function allocateStats(r: Ruleset, before: GameState, spend: Record<string, number>): WarpEvent[] | string {
+  const steps = Object.entries(spend ?? {}).filter(([, n]) => n !== 0);
+  if (!steps.length) return "Nothing to spend.";
+  const cost: Record<string, number> = {};
+  for (const [id, n] of steps) {
+    const def = r.stats[id];
+    if (!def?.allocate) return `${def?.label ?? id} can't be raised with points.`;
+    if (!Number.isInteger(n) || n < 0 || n > 1000) return "Points go on in whole steps, one way.";
+    const v = before.stats[id] ?? def.start;
+    const max = statMax(r, def, before);
+    if (v + n * def.allocate.step > max + 1e-9) return `${def.label} can't go above ${formatNumber(max)}.`;
+    cost[def.allocate.with] = (cost[def.allocate.with] ?? 0) + n * def.allocate.cost;
+  }
+  for (const [pool, c] of Object.entries(cost)) {
+    const have = before.stats[pool] ?? r.stats[pool]?.start ?? 0;
+    if (have < c - 1e-9) return `Not enough ${r.stats[pool]?.label ?? pool}: needs ${formatNumber(c)}, have ${formatNumber(have)}.`;
+  }
+  const w = new Working(r, cloneState(before));
+  for (const [pool, c] of Object.entries(cost)) w.push({ t: "stat", id: pool, d: -c, src: "manual", why: "Points spent" });
+  for (const [id, n] of steps) w.push({ t: "stat", id, d: n * r.stats[id].allocate!.step, src: "manual", why: `Points spent on ${r.stats[id].label}` });
   runTriggers(w, false);
   return w.events;
 }

@@ -114,7 +114,12 @@ export function normDating(raw: unknown, c: Ctx, rel: { stats: Record<string, St
   def.enabled = true;
   def.romance = r.romance !== false;
 
+  // `fear: false` — no fear stat at all (nobody grows afraid; dates never turn hostile).
+  if (r.fear === false) def.fear = "";
+  else if (r.fear !== undefined && typeof r.fear !== "string") c.warn("Dating › fear", "use a relationship stat id (made if missing) or `false` for no fear");
+  if (r.love !== undefined && typeof r.love !== "string") c.warn("Dating › love", "use a relationship stat id (made if missing)");
   for (const k of ["love", "fear"] as const) {
+    if (k === "fear" && r.fear === false) continue;
     const id = typeof r[k] === "string" ? String(r[k]) : k;
     def[k] = id;
     if (!rel.stats[id]) {

@@ -385,8 +385,8 @@ encounters:
       name: Scavenger
       armor: { hp: 2 }            # scavenged plating: blows to the body land 2 lighter
       stats:
-        shields: { label: Shields, start: 12, max: 12 }
-        hp: { label: HP, start: 30, max: 30 }
+        shields: { label: Shields, start: 8, max: 8 }
+        hp: { label: HP, start: 18, max: 18 }
         lust: { label: Lust, start: 0, max: 100, good: low }
     actions:
       shoot:
@@ -394,7 +394,7 @@ encounters:
         cost: { energy: -5 }
         check: { vs: 12, add: floor(aim / 2), label: Aim, game: aim }
         crit_success: { foe: { shields: -14, hp: "foe.shields <= 0 ? -12 : 0" }, hint: "A perfect shot." }
-        success: { foe: { shields: -8, hp: "foe.shields <= 0 ? -7 : 0" }, hint: "The shot lands." }
+        success: { foe: { shields: -8, hp: "foe.shields <= 0 ? -9 : -2" }, hint: "The shot lands." }
         fail: { hint: "Missed." }
       burst:
         label: Burst fire
@@ -406,7 +406,7 @@ encounters:
         label: Melee
         cost: { energy: -8 }
         check: { vs: 12, add: floor(physique / 2), label: Physique }
-        success: { foe: { hp: "-(6 + floor(physique / 2))" }, hint: "A heavy blow gets past their shields." }
+        success: { foe: { hp: "-(8 + floor(physique / 2))" }, hint: "A heavy blow gets past their shields." }
         fail: { hint: "Blocked." }
       tease:
         label: Tease
@@ -419,7 +419,7 @@ encounters:
         effects: { take: medkit, hp: +25 }
       flee:
         label: Flee
-        check: { vs: 13, add: floor(reflexes / 2), label: Reflexes, game: snake }
+        check: { vs: 15, add: floor(reflexes / 2), label: Reflexes, game: snake }
         success: { energy: -10, end: fled }
         fail: { hint: "Cut off — the fight goes on." }
     foe_moves:

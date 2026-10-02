@@ -1,6 +1,6 @@
 import { cleanResult } from "./engine/games.js";
 import type { SpindleAPI } from "lumiverse-spindle-types";
-import { buyPerk, changeClothes, forgetPerson, manualSet, manualSetRel, runOp, type TurnRecord } from "./engine/resolve.js";
+import { allocateStats, buyPerk, changeClothes, forgetPerson, manualSet, manualSetRel, runOp, type TurnRecord } from "./engine/resolve.js";
 import type { Ruleset } from "./engine/ruleset.js";
 import type { GameState, WarpEvent } from "./engine/state.js";
 import { TEMPLATES } from "./engine/templates/index.js";
@@ -332,6 +332,12 @@ spindle.onFrontendMessage(async (raw, userId) => {
         const ok = await applyManual(msg.chatId, userId, (r, state) => runOp(r, state, op));
         if (ok && msg.op !== "save") dropScene(msg.chatId);
         if (ok) toast("success", msg.op === "save" ? "Saved." : msg.op === "load" ? "Rewound. The next reply picks up from there." : msg.op === "restart" ? "A new playthrough begins." : "The story goes on.", userId);
+        break;
+      }
+
+      case "allocate": {
+        const ok = await applyManual(msg.chatId, userId, (r, state) => allocateStats(r, state, msg.spend));
+        if (ok) toast("success", "Points spent.", userId);
         break;
       }
 

@@ -387,8 +387,8 @@ encounters:
     foe:
       name: Sal's boys
       stats:
-        patience: { label: Patience, start: 14, max: 14 }
-        hp: { label: Grit, start: 30, max: 30 }
+        patience: { label: Patience, start: 12, max: 12 }
+        hp: { label: Grit, start: 20, max: 20 }
     actions:
       talk:
         label: Talk them down

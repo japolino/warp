@@ -1,7 +1,7 @@
 // What a clicked choice means: the line posted as the player's message and the
 // intent the turn resolves. Shared by clicking and by pre-writing replies.
 
-import { cleanLiveForecast, ABILITY_PREFIX, availableChoices, canExplore, EXPLORE, findAction, ITEM_PREFIX, LIVE_PREFIX, usableAbilities, usableItems, RUN_EPILOGUE, TARGET_SEP, TRAVEL_PREFIX, travelTargets, type Intent } from "../engine/resolve.js";
+import { cleanLiveForecast, ABILITY_PREFIX, availableChoices, canExplore, EXPLORE, findAction, ITEM_PREFIX, LIVE_PREFIX, usableAbilities, usableItems, lockedExits, RUN_EPILOGUE, TARGET_SEP, TRAVEL_PREFIX, travelTargets, type Intent } from "../engine/resolve.js";
 import type { Ruleset } from "../engine/ruleset.js";
 import type { GameState } from "../engine/state.js";
 import { dateMoves } from "../engine/date/talk.js";
@@ -45,7 +45,10 @@ export function intentFor(r: Ruleset, state: GameState, settings: Settings, msgs
   }
   if (actionId.startsWith(TRAVEL_PREFIX)) {
     const to = actionId.slice(TRAVEL_PREFIX.length);
-    if (!travelTargets(r, state).includes(to)) return { error: "You can't get there from here." };
+    if (!travelTargets(r, state).includes(to)) {
+      const shut = lockedExits(r, state).find((x) => x.id === to);
+      return { error: shut ? `${r.locations[to].name} is locked: ${shut.locked}` : "You can't get there from here." };
+    }
     return { say: `*I head to ${r.locations[to].name}.*`, intent: { actionId, params, via: "choice" } };
   }
   if (actionId.startsWith(ITEM_PREFIX)) {

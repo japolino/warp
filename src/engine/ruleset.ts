@@ -11,6 +11,8 @@ import { normDungeons } from "./dungeon/defs.js";
 import type { DungeonDef } from "./dungeon/types.js";
 import { normDating } from "./date/defs.js";
 import type { DatingDef } from "./date/types.js";
+import { classifyOutcomes, encounterOutcomeIds, parseOutcomeKind, type OutcomeKind } from "./outcomes.js";
+import type { StatePatch } from "./simulate.js";
 
 export type Tone = "good" | "warn" | "bad" | "neutral";
 export type StatKind = "meter" | "attribute" | "skill" | "money" | "hidden";
@@ -36,10 +38,18 @@ export interface StatDef {
   /** Expression allowed so caps can scale, e.g. "level * 5". Evaluated at clamp time. */
   maxExpr?: string;
   start: number;
+  /** A start worked out when the game begins (`start: full`, "50%" of a max formula, or a formula), then clamped to the max then. */
+  startExpr?: string;
   /** Which end is desirable. Drives default band tones and bar colours. */
   good: "high" | "low" | "none";
   perHour: number;
+  /** `per_hour:` written as a formula or "+6%" of the maximum: worked out as time passes (perHour is 0 then). */
+  perHourExpr?: string;
+  /** Raised by hand from a pool of points (`allocate: { with: stat_points, step: 1, cost: 1 }`): the sidebar shows +/−. */
+  allocate?: { with: string; step: number; cost: number };
   show: ShowMode;
+  /** The author wrote show: (absent: the sidebar keeps the number beside band words for skills and money). */
+  showSet?: true;
   /** Max absolute change the narrator may make per turn. 0 = engine only. */
   narrator: number;
   gate?: NarratorGate;
@@ -124,7 +134,11 @@ export type QuestOp = "start" | "done" | "fail" | "drop" | "report";
 /** A condition put on someone else: rounds in an encounter (minutes outside one), and an optional chance to land. */
 export interface InflictSpec { rounds?: string | number; chance?: string | number }
 
-export interface DecideOption { id: string; desc: string; weight: number; effect: Effect }
+export interface DecideOption {
+  id: string; desc: string; weight: number; effect: Effect;
+  /** Only weighed while this holds (boss phases). When no option holds, every option is weighed as before. */
+  when?: string;
+}
 export interface DecideSpec { id: string; ask: string; options: DecideOption[] }
 
 export type CheckStyle = "chance" | "vs" | "pbta";
@@ -140,6 +154,8 @@ export interface CheckDef {
   partialMargin: number;
   label?: string;
   crits: boolean;
+  /** Chance in percent of a critical success (a formula, e.g. "5 + luk / 4"); unset = the usual 5% band. */
+  crit?: string | number;
   /** Minigames this check can be played as instead of rolled (the first is offered); false = always dice. */
   game?: GameId[] | false;
 }
@@ -192,12 +208,17 @@ export interface ActionDef {
   order: number;
   /** One choice per person present ("Talk to X"); `target` is that person in formulas and `rel: { target: … }`. */
   perPerson: boolean;
+  /** Per-person actions: only these people are offered as the target. */
+  targets?: string[];
   /** Readable requirements (already folded into `when`): each says what's missing on the locked choice. */
   requires: Requirement[];
   /** A gambling table: the stake and the game decide the money, not a check. */
   gamble?: GambleDef;
   /** Show it locked, with what's missing, when the requirements aren't met (default when it has `requires:`). */
   showLocked: boolean;
+  /** Encounter moves only: uses per encounter / per in-game day (0 or absent = unlimited), counted like abilities' charges. */
+  perEncounter?: number;
+  perDay?: number;
 }
 
 /** One requirement of an action, kept readable so a locked choice can say exactly what's missing. */
@@ -227,8 +248,18 @@ export interface TriggerDef {
 
 export interface LocationDef {
   id: string; name: string; desc?: string; exits: string[]; travel: number;
+  /** Minutes to a particular exit (`exits: { field: 30 }`); exits not listed take `travel`. */
+  exitTravel?: Record<string, number>;
   /** Indoors: temperature is the indoor temperature and weather doesn't touch you. */
   indoors: boolean;
+  /** This place's own indoor temperature (°C), instead of the ruleset's `weather: { indoors }`. */
+  temp?: number;
+  /** The place only exists for travel and the map while this holds (a hidden spot, a ruin not yet found). */
+  when?: string;
+  /** Travel here is shown locked, with what's missing, until these are met. */
+  requires?: Requirement[];
+  /** Words on the locked travel choice instead of the missing requirements. */
+  whyNot?: string;
   /** Optional map position (any units; the map scales to fit). */
   pos?: [number, number];
   /** Has a quest board: quests with `board: true` are posted here. */
@@ -251,32 +282,34 @@ export interface ItemDef {
   use?: ActionDef;
   /** A tool that isn't spent by using it (keys, a phone). */
   keep: boolean;
-  /** Gear: added to every check that reads these stats, while it's carried (or worn, for clothing). */
-  bonus: Record<string, number>;
-  /** Armor: blows that would hurt these stats in an encounter are this much smaller ("_" = whatever the encounter beats you on). */
-  armor: Record<string, number>;
+  /** Gear: added to every check that reads these stats (and to `eff()`/`gear()`), while it's carried (or worn, for clothing). Numbers or formulas. */
+  bonus: Record<string, Amount>;
+  /** Armor: blows that would hurt these stats in an encounter are this much smaller ("_" = whatever the encounter beats you on). Numbers or formulas. */
+  armor: Record<string, Amount>;
   /** Its use or bonus was drafted by Warp from the description (shown so the author can check it). */
   drafted?: boolean;
 }
 export interface ConditionDef {
   id: string; label: string; tone: Tone; desc?: string; narrator: boolean; gate?: NarratorGate;
-  /** While it lasts: counts as this much more (or less) of each stat in checks — a buff or a debuff. */
-  bonus: Record<string, number>;
+  /** While it lasts: counts as this much more (or less) of each stat in checks and `eff()` — a buff or a debuff. Numbers or formulas. */
+  bonus: Record<string, Amount>;
   /** How long it lasts when nothing says: encounter rounds (in a fight) and minutes (outside one). Rounds-only statuses end with the fight. */
   rounds?: number;
   lasts?: number;
   /** Damage (negative heals) each round, turn or hour to `stat` — the player's, or the opponent's when it's on them (default: what the fight is won or lost on). */
   dot?: string | number;
   stat?: string;
-  every: "round" | "turn" | "hour";
+  /** "both": each encounter round in a fight (full dot, one tick), each hour outside one (dot scaled by time, one tick per clock hour). */
+  every: "round" | "turn" | "hour" | "both";
   /** Chance (0–100) that whoever has it loses their turn — stunned, frozen, asleep. */
   skip?: string | number;
-  /** Armor while it lasts (negative = sundered): "_" = the main meter, or by stat. */
-  armor: Record<string, number>;
+  /** Armor while it lasts (negative = sundered): "_" = the main meter, or by stat. Numbers or formulas. */
+  armor: Record<string, Amount>;
   /** Anything else that happens to the player each round, turn or hour while it lasts. */
   tick: Effect;
 }
-export interface ScheduleEntry { when?: string; at: string }
+/** `at: null` (or `at: away`) = not anywhere the player can go while `when` holds. */
+export interface ScheduleEntry { when?: string; at: string | null }
 export interface PersonDef {
   id: string; name: string; age?: number; start: Record<string, number>; desc?: string;
   /** First entry whose `when` holds decides where they are; an entry without `when` is the default. */
@@ -310,7 +343,13 @@ export interface WardrobeDef {
   narrator: boolean;
 }
 
-export interface FoeStatDef { id: string; label: string; start: number; max: number; good: "high" | "low" | "none" }
+export interface FoeStatDef {
+  id: string; label: string; start: number; max: number; good: "high" | "low" | "none";
+  /** Formulas for start / max, worked out once when the encounter starts (against {{user}}'s state then). */
+  startExpr?: string; maxExpr?: string;
+  /** No max given and start is a formula: the max is whatever start worked out to. */
+  maxFromStart?: true;
+}
 
 /**
  * A quest objective: a formula that holds when it's done, or a count to reach — through `progress:`
@@ -366,7 +405,8 @@ export interface EncounterDef {
   desc?: string;
   tags: string[];
   /** armor: blows that would wear down these foe stats are this much smaller ("_" = the main meter). */
-  foe: { name: string; stats: FoeStatDef[]; armor: Record<string, number> };
+  /** armor values may be formulas: they're worked out once when the encounter starts. */
+  foe: { name: string; stats: FoeStatDef[]; armor: Record<string, number | string> };
   /** Player moves while the encounter is on (replace normal choices). */
   actions: Record<string, ActionDef>;
   actionOrder: string[];
@@ -398,6 +438,15 @@ export interface EncounterDef {
   danger?: string;
   /** How each ending reads ("won" → "You talked them down"). */
   labels: Record<string, string>;
+  /**
+   * How each ending counts — won, escaped, conceded or lost — from `losses:` / `outcome_kinds:`,
+   * else inferred from the rules (see outcomes.ts). Filled when the rulebook loads.
+   */
+  outcomeKinds?: Record<string, OutcomeKind>;
+  /** The author's own `losses:` / `outcome_kinds:` (part of the rules revision; outcomeKinds itself is derived and hidden from JSON). */
+  authoredKinds?: Record<string, OutcomeKind>;
+  /** `sim:` — the state the checker and simulator judge it from (a late boss at its intended level). */
+  sim?: StatePatch;
 }
 
 export interface CodexEntry { id: string; title: string; text: string; category?: string; unlock?: string; lore: string[] }
@@ -410,7 +459,7 @@ export type PerkRule =
   /** reroll: a failed check (on these stats or tags) is rolled again; soften: a failure becomes a partial. `perDay` 0 = always. */
   | { kind: "reroll" | "soften"; stats: string[]; tags: string[]; perDay: number }
   /** gains / losses: rises (or drops) in a stat are this much bigger or smaller (−0.3 = 30% smaller). */
-  | { kind: "gains" | "losses"; stat: string; pct: number }
+  | { kind: "gains" | "losses"; stat: string; pct: number; /** a relationship stat (with everyone), not one of {{user}}'s */ rel?: true }
   /** pierce: blows from these moves (stats or tags; none = every move) ignore this much of the opponent's armor. */
   | { kind: "pierce"; amount: number; stats: string[]; tags: string[] }
   /** game: aids in minigames (these games; none = every game), e.g. +1 life, +20% timing window. */
@@ -435,6 +484,10 @@ export interface PerkDef {
   weight: number;
   /** The downside, in words (its mechanics are in bonus / gains / losses). */
   drawback?: string;
+  /** `offer: always` — with `perks: { pick }`, always on offer beside the drawn ones (a class choice). */
+  always?: boolean;
+  /** Paid from this stat instead of `perks: { points }` (a separate pool, e.g. class points). */
+  points?: string;
 }
 
 /**
@@ -486,6 +539,9 @@ export interface FrontStage {
   /** Journal line (defaults to the surface text). */
   news?: string;
   effects: Effect;
+  /** `do:` only happens if this holds when the stage surfaces; `else:` happens instead. */
+  if?: string;
+  else?: Effect;
 }
 export interface FrontDef {
   id: string;
@@ -559,7 +615,7 @@ export interface MindOverride {
   do: string;
   cause: string;
   text?: string;
-  /** Explicit player counterplay: intent.params.mind_resist = this override's id. Positive stat costs. */
+  /** Explicit player counterplay: intent.params.mind_resist = this override's id. Signed meter changes, each in the stat's bad direction. */
   resistCost?: Record<string, number>;
 }
 export interface MindDef {
@@ -792,7 +848,8 @@ export interface Ruleset {
     /** Calendar date of day 1 (month 1–12, day of month), when dates are shown. */
     startDate: { month: number; day: number } | null;
   };
-  hud: { bars: string[]; money?: string; currency: string };
+  /** currency: the sign; currencyAfter: written after the amount ("18d") instead of before ("$18"). */
+  hud: { bars: string[]; money?: string; currency: string; currencyAfter?: boolean };
   narration: { notes?: string; numbers: boolean };
   weather: WeatherDef;
   wardrobe: WardrobeDef;
@@ -932,13 +989,73 @@ export function minutesOf(v: unknown, where: string, c: Ctx, fallback: number): 
   return c.num(v, where, fallback);
 }
 
-/** `armor: 3` (the main meter) or `armor: { hp: 3, resolve: 1 }`. */
-function armorMap(v: unknown, where: string, c: Ctx): Record<string, number> {
+/** A number or a formula worked out when it's used (`armor: "2 + level / 5"`). */
+export type Amount = number | string;
+
+/** A number, or a formula (checked now, worked out when it's applied). Percentages aren't allowed here. */
+function amount(v: unknown, where: string, c: Ctx): Amount {
+  if (typeof v === "string" && !Number.isFinite(Number(v)) && percentOf(v) === null) {
+    const x = c.expr(v, where);
+    return typeof x === "string" ? x : typeof x === "number" ? x : 0;
+  }
+  return c.num(v, where, 0);
+}
+
+/** `armor: 3` (the main meter) or `armor: { hp: 3, resolve: 1 }`; each may be a formula. */
+function armorMap(v: unknown, where: string, c: Ctx): Record<string, Amount> {
   if (v === undefined || v === null || v === false) return {};
-  if (!isObj(v)) { const n = c.num(v, where, 0); return n ? { _: n } : {}; }
-  const out: Record<string, number> = {};
-  for (const [k, n] of Object.entries(v)) { const x = c.num(n, `${where} › ${k}`, 0); if (x) out[k] = x; }
+  if (!isObj(v)) { const n = amount(v, where, c); return n ? { _: n } : {}; }
+  const out: Record<string, Amount> = {};
+  for (const [k, n] of Object.entries(v)) { const x = amount(n, `${where} › ${k}`, c); if (x) out[k] = x; }
   return out;
+}
+
+/** `per_hour: -0.5`, `per_hour: "+6%"` (of the current maximum) or `per_hour: "vit / 10"` (worked out as time passes). */
+function perHourOf(v: unknown, where: string, c: Ctx): { perHour: number; perHourExpr?: string } {
+  if (typeof v === "string" && !Number.isFinite(Number(v))) {
+    if (percentOf(v) !== null) return { perHour: 0, perHourExpr: v.trim() };
+    const x = c.expr(v, where);
+    return typeof x === "string" ? { perHour: 0, perHourExpr: x } : { perHour: typeof x === "number" ? x : 0 };
+  }
+  return { perHour: c.num(v, where, 0) };
+}
+
+/** `currency: "$"`, `currency: "{n}d"` (the amount goes where {n} is) or `currency: { symbol: d, after: true }`. */
+function normCurrency(v: unknown, c: Ctx): { currency: string; currencyAfter?: true } {
+  if (v === undefined || v === null) return { currency: "$" };
+  if (typeof v === "string" || typeof v === "number") {
+    const t = String(v);
+    const at = t.indexOf("{n}");
+    if (at < 0) return { currency: t };
+    const before = t.slice(0, at), after = t.slice(at + 3);
+    if (before && after) c.warn("HUD › currency", `"${t}" — put the sign on one side of {n} only; using "${after}" after the amount`);
+    return after ? { currency: after, currencyAfter: true } : { currency: before };
+  }
+  if (isObj(v)) {
+    const known = new Set(["symbol", "sign", "after"]);
+    for (const k of Object.keys(v)) if (!known.has(k)) c.warn(`HUD › currency › ${k}`, "currency takes `symbol:` and `after: true`");
+    const sym = v.symbol ?? v.sign;
+    if (typeof sym !== "string" && typeof sym !== "number") { c.warn("HUD › currency", "needs `symbol:` (e.g. `{ symbol: d, after: true }`) — using $"); return { currency: "$" }; }
+    if (v.after !== undefined && typeof v.after !== "boolean") c.warn("HUD › currency › after", "should be true or false");
+    return v.after === true ? { currency: String(sym), currencyAfter: true } : { currency: String(sym) };
+  }
+  c.warn("HUD › currency", `expected a sign like "$", "{n}d" or { symbol: d, after: true } — using $`);
+  return { currency: "$" };
+}
+
+/** `allocate: stat_points` or `allocate: { with: stat_points, step: 1, cost: 1 }` — each step costs `cost` of the pool stat. */
+function normAllocate(v: unknown, where: string, c: Ctx): { with: string; step: number; cost: number } | undefined {
+  if (typeof v === "string") return { with: v, step: 1, cost: 1 };
+  if (!isObj(v)) { c.warn(where, "expected `{ with: stat_points, step: 1 }` (the stat the points come from)"); return undefined; }
+  const known = new Set(["with", "from", "pool", "step", "cost"]);
+  for (const k of Object.keys(v)) if (!known.has(k)) c.warn(`${where} › ${k}`, "allocate takes `with:` (the points stat), `step:` and `cost:`");
+  const pool = v.with ?? v.from ?? v.pool;
+  if (typeof pool !== "string" || !pool) { c.warn(where, "needs `with:` — the stat the points come from (e.g. stat_points)"); return undefined; }
+  let step = c.num(v.step, `${where} › step`, 1);
+  if (!(step > 0)) { c.warn(`${where} › step`, "should be above 0 — using 1"); step = 1; }
+  let cost = c.num(v.cost, `${where} › cost`, 1);
+  if (!(cost > 0)) { c.warn(`${where} › cost`, "should be above 0 — using 1"); cost = 1; }
+  return { with: pool, step, cost };
 }
 
 /** `narrator_when:`, `narrator_words:` and `narrator_actions:` on anything the story may change. */
@@ -1015,17 +1132,42 @@ function normStat(id: string, raw: unknown, where: string, c: Ctx, forRel = fals
   let narrator = 0;
   if (r.narrator === true) narrator = Math.max(1, Math.round((max - min) / 10));
   else if (r.narrator !== undefined && r.narrator !== false) narrator = Math.abs(c.num(r.narrator, `${where} › narrator`, 0));
-  const start = c.num(r.start ?? r.value, `${where} › start`, good === "low" ? min : k === "meter" ? max : min);
+  // `start:` may be a number, `full` (= max), a share of the max ("50%") or a formula ("10 + vit * 5").
+  // Anything that depends on other stats, or a max formula, is worked out (and clamped) once the game begins.
+  let startRaw: unknown = r.start ?? r.value;
+  let startExpr: string | undefined;
+  if (typeof startRaw === "string" && startRaw.trim() && !Number.isFinite(Number(startRaw))) {
+    const word = startRaw.trim().toLowerCase();
+    const pct = percentOf(startRaw);
+    if (word === "full" || word === "max") { startExpr = maxExpr; startRaw = max; }
+    else if (pct !== null) {
+      if (pct < 0 || pct > 1) c.warn(`${where} › start`, `"${startRaw}" — a share of the max should be 0% to 100%`);
+      const p = Math.max(0, Math.min(1, pct));
+      startExpr = maxExpr ? `(${maxExpr}) * ${p}` : undefined;
+      startRaw = min + (max - min) * p;
+    } else {
+      const e = c.expr(startRaw, `${where} › start`);
+      if (typeof e === "string") startExpr = e;
+      startRaw = undefined;
+    }
+  }
+  // No start: on a meter with a max formula keeps its long-standing start (100, then clamped at game start) so existing
+  // chats replay the same. Write start: full for a full pool.
+  const start = c.num(startRaw, `${where} › start`, good === "low" ? min : k === "meter" ? max : min);
   const gate = narrator > 0 ? normGate(r, where, c) : undefined;
   const def: StatDef = {
     id,
     label: typeof r.label === "string" ? r.label : titleCase(id),
     kind: k,
     min, max, maxExpr,
-    start: Math.min(max, Math.max(min, start)),
+    // A max formula is clamped against at game start, not against the placeholder max.
+    start: maxExpr ? Math.max(min, start) : Math.min(max, Math.max(min, start)),
+    ...(startExpr !== undefined ? { startExpr } : {}),
     good,
-    perHour: c.num(r.per_hour ?? r.perHour, `${where} › per_hour`, 0),
+    ...perHourOf(r.per_hour ?? r.perHour, `${where} › per_hour`, c),
     show: k === "hidden" ? "hidden" : show,
+    // Written by the author (absent = the default; the sidebar then keeps numbers beside band words).
+    ...(r.show !== undefined ? { showSet: true as const } : {}),
     narrator,
     ...(gate ? { gate } : {}),
     growth: 0,
@@ -1035,6 +1177,10 @@ function normStat(id: string, raw: unknown, where: string, c: Ctx, forRel = fals
     desc: typeof r.desc === "string" ? r.desc : typeof r.description === "string" ? r.description : undefined,
   };
   if (Array.isArray(r.grades) && r.grades.length) def.grades = r.grades.map(String);
+  if (r.allocate !== undefined && r.allocate !== false) {
+    const al = normAllocate(r.allocate, `${where} › allocate`, c);
+    if (al) def.allocate = al;
+  }
   // Skills and attributes improve with use unless told otherwise (`growth: 0` or a speed multiplier).
   const grows = k === "skill" || k === "attribute";
   def.growth = r.growth === false ? 0 : r.growth === true ? 1 : r.growth !== undefined ? Math.max(0, c.num(r.growth, `${where} › growth`, grows ? 1 : 0)) : grows ? 1 : 0;
@@ -1086,8 +1232,9 @@ function normDecide(raw: unknown, where: string, c: Ctx, known: { stats: Set<str
       const r: Raw = isObj(o) ? { ...o } : typeof o === "string" ? { desc: o } : {};
       const desc = typeof r.desc === "string" ? r.desc : typeof r.label === "string" ? r.label : titleCase(oid);
       const weight = c.num(r.weight, `${w} › ${oid} › weight`, 1);
-      delete r.desc; delete r.label; delete r.weight;
-      options.push({ id: oid, desc, weight: Math.max(0, weight), effect: normEffect(r, `${w} › ${oid}`, c, known) });
+      const when = r.when !== undefined ? c.expr(r.when, `${w} › ${oid} › when`) : undefined;
+      delete r.desc; delete r.label; delete r.weight; delete r.when;
+      options.push({ id: oid, desc, weight: Math.max(0, weight), effect: normEffect(r, `${w} › ${oid}`, c, known), ...(when !== undefined ? { when: String(when) } : {}) });
     }
     if (options.length < minOptions) { c.warn(w, minOptions > 1 ? "decide needs at least two options" : "needs at least one option"); continue; }
     out.push({ id: typeof spec.id === "string" ? spec.id : id, ask: spec.ask, options });
@@ -1282,6 +1429,16 @@ export function normEffect(raw: unknown, where: string, c: Ctx, known: { stats: 
   return e;
 }
 
+/** `crit: "5 + luk / 4"` — the chance (percent) of a critical success on this check. */
+function critOf(v: unknown, where: string, c: Ctx, off: boolean): { crit?: string | number } {
+  if (v === undefined || v === null) return {};
+  if (off) { c.warn(where, "`crits: false` turns critical results off, so `crit:` does nothing"); return {}; }
+  if (typeof v === "string" && percentOf(v) !== null) return { crit: percentOf(v)! * 100 };
+  const x = c.expr(v, where);
+  if (typeof x === "number" && (x < 0 || x > 100)) { c.warn(where, `crit is a chance in percent (0–100), not ${x} — using ${Math.max(0, Math.min(100, x))}`); return { crit: Math.max(0, Math.min(100, x)) }; }
+  return x === undefined ? {} : { crit: x };
+}
+
 function normCheck(raw: unknown, where: string, c: Ctx): CheckDef | undefined {
   if (!isObj(raw)) { c.warn(where, "check should be a map, e.g. `chance: 40 + athletics / 10`"); return undefined; }
   let style: CheckStyle;
@@ -1298,6 +1455,7 @@ function normCheck(raw: unknown, where: string, c: Ctx): CheckDef | undefined {
     partialMargin: c.num(raw.partial ?? raw.partial_margin, `${where} › partial`, 0),
     label: typeof raw.label === "string" ? raw.label : typeof raw.skill === "string" ? raw.skill : undefined,
     crits: raw.crits !== false,
+    ...critOf(raw.crit ?? raw.crit_chance, `${where} › crit`, c, raw.crits === false),
     ...(raw.game !== undefined || raw.games !== undefined || raw.minigame !== undefined ? { game: normGames(raw.game ?? raw.games ?? raw.minigame, `${where} › game`, c) } : {}),
   };
 }
@@ -1353,6 +1511,35 @@ const TIER_KEYS: Record<string, Tier> = {
   crit_fail: "crit_fail", critical_fail: "crit_fail", fumble: "crit_fail",
 };
 
+/**
+ * Every key an action (or a live-choice tag, an encounter move, an item's use) may have. A key outside it is
+ * a typo or a misplaced block, and gets a warning instead of being dropped silently. Add new action keys here.
+ */
+export const ACTION_KEYS = new Set([
+  "label", "say", "desc", "description", "group", "at", "when", "hidden", "why_not", "locked", "time", "cost", "costs", "check",
+  "outcomes", "effects", "effect", "params", "tags", "order", "per_person", "with", "targets", "requires", "needs", "show_locked", "gamble",
+  "per_day", "per_encounter",
+]);
+
+function editDistance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+/** Warn (with a "did you mean") about keys a block doesn't read. */
+function warnUnknownKeys(raw: Raw, keys: Set<string>, where: string, c: Ctx) {
+  for (const k of Object.keys(raw)) {
+    if (keys.has(k) || TIER_KEYS[k]) continue;
+    const near = [...keys, ...Object.keys(TIER_KEYS)].find((x) => editDistance(x, k.toLowerCase()) <= (k.length > 4 ? 2 : 1));
+    c.warn(`${where} › ${k}`, `"${k}" isn't something this block reads, so it does nothing${near ? ` — did you mean "${near}"?` : ""} (it reads ${[...keys].slice(0, 12).join(", ")}…)`);
+  }
+}
+
 function normAction(id: string, raw: unknown, where: string, c: Ctx, known: { stats: Set<string> }, order: number): ActionDef | null {
   if (typeof raw === "string") raw = { label: raw };
   if (!isObj(raw)) { c.warn(where, "expected an action definition"); return null; }
@@ -1386,6 +1573,7 @@ function normAction(id: string, raw: unknown, where: string, c: Ctx, known: { st
   const gamble = raw.gamble !== undefined ? normGamble(raw.gamble, `${where} › gamble`, c, known) : undefined;
   if (gamble && check) c.warn(where, "a gambling table doesn't take a check — the cards (or the wheel) decide");
   if (gamble && !params.some((p) => p.id === "stake")) params.unshift({ id: "stake", label: "Stake", options: Object.fromEntries(gamble.stakes.map((x) => [String(x), x])), default: String(gamble.stakes[0]) });
+  warnUnknownKeys(raw, ACTION_KEYS, where, c);
   const at = raw.at === undefined ? [] : Array.isArray(raw.at) ? raw.at.map(String) : [String(raw.at)];
   const own = raw.when !== undefined ? c.expr(raw.when, `${where} › when`) : undefined;
   // Requirements fold into `when`, and stay readable so a locked choice can say what's missing.
@@ -1410,7 +1598,8 @@ function normAction(id: string, raw: unknown, where: string, c: Ctx, known: { st
     params,
     tags: Array.isArray(raw.tags) ? raw.tags.map((t: unknown) => String(t).toLowerCase()) : [],
     order: typeof raw.order === "number" ? raw.order : order,
-    perPerson: raw.per_person === true || raw.with === "person" || raw.with === "people",
+    perPerson: raw.per_person === true || raw.with === "person" || raw.with === "people" || raw.targets !== undefined,
+    ...(raw.targets !== undefined ? { targets: list(raw.targets) } : {}),
     requires,
     showLocked: raw.show_locked === true || (raw.show_locked !== false && requires.length > 0),
     ...(gamble ? { gamble } : {}),
@@ -1423,7 +1612,7 @@ function normAction(id: string, raw: unknown, where: string, c: Ctx, known: { st
  *     when: { "hour >= 20": "After dark" } }
  * Also a list of formulas or { when, text } pairs.
  */
-function normRequires(raw: unknown, where: string, c: Ctx, known: { stats: Set<string> }): Requirement[] {
+export function normRequires(raw: unknown, where: string, c: Ctx, known: { stats: Set<string> }): Requirement[] {
   const out: Requirement[] = [];
   if (raw === undefined || raw === null) return out;
   const formula = (f: unknown, text: string | undefined, w: string) => {
@@ -1582,7 +1771,7 @@ function applyItemUse(it: ItemDef, r: Raw, w: string, c: Ctx, known: { stats: Se
   if (isObj(r.bonus)) {
     for (const [stat, v] of Object.entries(r.bonus)) {
       if (!known.stats.has(stat)) { c.warn(`${w} › bonus › ${stat}`, `"${stat}" isn't a declared stat`); continue; }
-      it.bonus[stat] = c.num(v, `${w} › bonus › ${stat}`, 0);
+      it.bonus[stat] = amount(v, `${w} › bonus › ${stat}`, c);
     }
   }
   const u = r.use;
@@ -1604,7 +1793,11 @@ function applyItemUse(it: ItemDef, r: Raw, w: string, c: Ctx, known: { stats: Se
 
 /** A condition's life and bite: how long it lasts, damage over time, lost turns, armor, and anything else each tick. */
 function condTiming(r: Raw, w: string, c: Ctx, known: { stats: Set<string> }): Pick<ConditionDef, "rounds" | "lasts" | "dot" | "stat" | "every" | "skip" | "armor" | "tick"> {
-  const every = String(r.every ?? "round").toLowerCase();
+  // `every: [round, hour]` (or `both`): each round in a fight, each hour outside one.
+  const everyList = (Array.isArray(r.every) ? r.every.map(String) : String(r.every ?? "round").split(/[\s,+&]+|\band\b/)).map((x) => x.trim().toLowerCase()).filter(Boolean);
+  const every = everyList.includes("both") || (everyList.includes("round") && everyList.includes("hour")) ? "both" : everyList.length === 1 ? everyList[0] : "?";
+  if (!["round", "turn", "hour", "both"].includes(every)) c.warn(`${w} › every`, `"${everyList.join(", ")}" — use round, turn, hour, or [round, hour] (each round in a fight, each hour outside); using round`);
+  if (every === "both" && r.rounds !== undefined) c.warn(`${w} › rounds`, "a status that ticks [round, hour] lasts by `lasts:` (minutes) in and out of fights; `rounds:` is ignored");
   const dotRaw = r.dot ?? r.per_round ?? r.damage;
   const dot = dotRaw !== undefined ? c.expr(diceExpr(dotRaw), `${w} › dot`) : undefined;
   const heal = r.heal !== undefined ? c.expr(diceExpr(r.heal), `${w} › heal`) : undefined;
@@ -1612,12 +1805,12 @@ function condTiming(r: Raw, w: string, c: Ctx, known: { stats: Set<string> }): P
   const skip = skipRaw === true ? 100 : skipRaw !== undefined && skipRaw !== false ? c.expr(skipRaw, `${w} › skip`) : undefined;
   const lastsRaw = r.lasts ?? r.minutes ?? r.duration;
   return {
-    ...(r.rounds !== undefined ? { rounds: Math.max(1, Math.round(c.num(r.rounds, `${w} › rounds`, 1))) } : {}),
+    ...(r.rounds !== undefined && every !== "both" ? { rounds: Math.max(1, Math.round(c.num(r.rounds, `${w} › rounds`, 1))) } : {}),
     ...(lastsRaw !== undefined ? { lasts: Math.max(1, minutesOf(lastsRaw, `${w} › lasts`, c, 60)) } : {}),
     // heal: 4 is a dot of −4.
     ...(dot !== undefined ? { dot } : heal !== undefined ? { dot: typeof heal === "number" ? -heal : `-(${heal})` } : {}),
     ...(typeof r.stat === "string" ? { stat: r.stat } : {}),
-    every: every === "turn" ? "turn" : every === "hour" ? "hour" : "round",
+    every: every === "turn" ? "turn" : every === "hour" ? "hour" : every === "both" ? "both" : "round",
     ...(skip !== undefined ? { skip } : {}),
     armor: armorMap(r.armor, `${w} › armor`, c),
     tick: normEffect(r.tick ?? r.each, `${w} › tick`, c, known),
@@ -1631,6 +1824,17 @@ function statNums(v: unknown, where: string, c: Ctx, known: { stats: Set<string>
   for (const [stat, n] of Object.entries(v)) {
     if (!known.stats.has(stat)) { c.warn(`${where} › ${stat}`, `"${stat}" isn't a declared stat`); continue; }
     out[stat] = c.num(n, `${where} › ${stat}`, 0);
+  }
+  return out;
+}
+
+/** `{ str: 2, atk: "level / 2" }` over declared stats: numbers or formulas. */
+function statAmounts(v: unknown, where: string, c: Ctx, known: { stats: Set<string> }): Record<string, Amount> {
+  const out: Record<string, Amount> = {};
+  if (!isObj(v)) return out;
+  for (const [stat, n] of Object.entries(v)) {
+    if (!known.stats.has(stat)) { c.warn(`${where} › ${stat}`, `"${stat}" isn't a declared stat`); continue; }
+    out[stat] = amount(n, `${where} › ${stat}`, c);
   }
   return out;
 }
@@ -1660,7 +1864,7 @@ function normEdges(v: unknown, where: string, c: Ctx, known: { stats: Set<string
   return out;
 }
 
-function normPerkRules(v: unknown, where: string, c: Ctx, known: { stats: Set<string> }): PerkRule[] {
+function normPerkRules(v: unknown, where: string, c: Ctx, known: { stats: Set<string>; rel?: Set<string> }): PerkRule[] {
   const out: PerkRule[] = [];
   if (!isObj(v)) return out;
   for (const [k, x] of Object.entries(v)) {
@@ -1672,9 +1876,11 @@ function normPerkRules(v: unknown, where: string, c: Ctx, known: { stats: Set<st
     } else if (k === "gains" || k === "losses") {
       if (!isObj(x)) { c.warn(w, "expected stats with a percentage, like `scent: -30%`"); continue; }
       for (const [stat, n] of Object.entries(x)) {
-        if (!known.stats.has(stat)) { c.warn(`${w} › ${stat}`, `"${stat}" isn't a declared stat`); continue; }
+        // A relationship stat (fondness, trust…) scales changes toward everyone.
+        const rel = !known.stats.has(stat) && !!known.rel?.has(stat);
+        if (!known.stats.has(stat) && !rel) { c.warn(`${w} › ${stat}`, `"${stat}" isn't a declared stat or relationship stat`); continue; }
         const p = pct(n, `${w} › ${stat}`, c);
-        if (p !== null && p !== 0) out.push({ kind: k, stat, pct: Math.max(-1, p) });
+        if (p !== null && p !== 0) out.push({ kind: k, stat, pct: Math.max(-1, p), ...(rel ? { rel: true as const } : {}) });
       }
     } else if (k === "pierce") {
       // pierce: 3 (every move) or { amount: 3, stats: [blades], tags: [melee] }; true = all armor.
@@ -1699,7 +1905,15 @@ function normPerkRules(v: unknown, where: string, c: Ctx, known: { stats: Set<st
   return out;
 }
 
-function normPerk(id: string, p: Raw, w: string, c: Ctx, known: { stats: Set<string> }, abilities: Record<string, AbilityDef>): PerkDef {
+/** A perk's `offer:` — `always` keeps it on offer outside the random pick; `random` (default) is drawn like the rest. */
+function perkOffer(v: unknown, where: string, c: Ctx): { always?: true } {
+  if (v === undefined || v === "random" || v === false) return {};
+  if (v === "always" || v === true) return { always: true };
+  c.warn(where, "use `always` (offered outside the random pick) or `random`");
+  return {};
+}
+
+function normPerk(id: string, p: Raw, w: string, c: Ctx, known: { stats: Set<string>; rel?: Set<string> }, abilities: Record<string, AbilityDef>): PerkDef {
   const req = p.requires !== undefined ? c.expr(p.requires, `${w} › requires`) : undefined;
   const bonus = statNums(p.bonus, `${w} › bonus`, c, known);
   const rules = normPerkRules(p.rule ?? p.rules, `${w} › rule`, c, known);
@@ -1730,6 +1944,8 @@ function normPerk(id: string, p: Raw, w: string, c: Ctx, known: { stats: Set<str
     excludes: list(p.excludes),
     weight: Math.max(0, c.num(p.weight, `${w} › weight`, 1)),
     ...(drawback ? { drawback } : {}),
+    ...perkOffer(p.offer, `${w} › offer`, c),
+    ...(p.points !== undefined ? (typeof p.points === "string" ? { points: p.points } : (c.warn(`${w} › points`, "expected the stat that pays for it, like `points: class_points`"), {})) : {}),
   };
 }
 
@@ -1750,7 +1966,7 @@ function normAbilities(raw: unknown, c: Ctx, known: { stats: Set<string> }): Rec
     if (Object.keys(rest).length) {
       if (!action.check) action.effects = { ...(isObj(action.effects) ? action.effects : {}), ...rest };
       else if (!action.success) action.success = rest;
-      else c.warn(w, `${Object.keys(rest).join(", ")}: put these under success: or fail: when the ability rolls`);
+      else c.warn(w, `${Object.keys(rest).join(", ")}: put these under success: or fail: when the ability rolls (or under effects: to apply them whatever the roll)`);
     }
     const name = typeof a.name === "string" ? a.name : typeof a.label === "string" ? a.label : titleCase(id);
     if (!action.label) action.label = name;
@@ -1770,21 +1986,26 @@ function normAbilities(raw: unknown, c: Ctx, known: { stats: Set<string> }): Rec
   return out;
 }
 
-function normEncounter(id: string, raw: unknown, c: Ctx, known: { stats: Set<string> }): EncounterDef | null {
+function normEncounter(id: string, raw: unknown, c: Ctx, known: { stats: Set<string> }, statDefs?: Record<string, StatDef>): EncounterDef | null {
   const w = `Encounters › ${id}`;
   if (!isObj(raw)) { c.warn(w, "expected an encounter definition"); return null; }
   const foeRaw: Raw = isObj(raw.foe) ? raw.foe : {};
   const stats: FoeStatDef[] = [];
   for (const [sid, s] of Object.entries(isObj(foeRaw.stats) ? foeRaw.stats : {})) {
     const r: Raw = isObj(s) ? s : { start: s };
-    const start = c.num(r.start, `${w} › foe › ${sid}`, 10);
+    // A number, or a formula worked out once when the encounter starts ("100 * level": foes that scale).
+    const startExpr = foeFormula(r.start, `${w} › foe › ${sid}`, c);
+    const maxExpr = foeFormula(r.max, `${w} › foe › ${sid} › max`, c);
+    const start = startExpr !== undefined || isFormulaText(r.start) ? 10 : c.num(r.start, `${w} › foe › ${sid}`, 10);
     const goodRaw = String(r.good ?? "low").toLowerCase();
     stats.push({
       id: sid,
       label: typeof r.label === "string" ? r.label : titleCase(sid),
       start,
-      max: c.num(r.max, `${w} › foe › ${sid} › max`, Math.max(start, 1)),
+      max: maxExpr !== undefined || isFormulaText(r.max) ? Math.max(start, 1) : c.num(r.max, `${w} › foe › ${sid} › max`, Math.max(start, 1)),
       good: goodRaw === "high" ? "high" : goodRaw === "none" ? "none" : "low",
+      ...(startExpr !== undefined ? { startExpr } : {}),
+      ...(maxExpr !== undefined ? { maxExpr } : startExpr !== undefined && (r.max === undefined || r.max === null || r.max === "") ? { maxFromStart: true } : {}),
     });
   }
   const actions: Record<string, ActionDef> = {};
@@ -1792,6 +2013,15 @@ function normEncounter(id: string, raw: unknown, c: Ctx, known: { stats: Set<str
   let i = 0;
   for (const [aid, a] of Object.entries(isObj(raw.actions) ? raw.actions : {})) {
     const def = normAction(aid, a, `${w} › actions › ${aid}`, c, known, i++);
+    if (def && isObj(a)) {
+      // Limited uses, like abilities: "Snatch the reliquary" once per encounter.
+      for (const [key, field] of [["per_encounter", "perEncounter"], ["per_day", "perDay"]] as const) {
+        if (a[key] === undefined) continue;
+        const n = Number(a[key]);
+        if (Number.isFinite(n) && n >= 1) def[field] = Math.round(n);
+        else if (n !== 0) c.warn(`${w} › actions › ${aid} › ${key}`, `should be a whole number of uses, 1 or more (got ${JSON.stringify(a[key])}) — unlimited`);
+      }
+    }
     if (def) { actions[aid] = def; actionOrder.push(aid); }
   }
   if (!actionOrder.length) c.warn(w, "has no player `actions:` — the player can't do anything during it");
@@ -1822,7 +2052,7 @@ function normEncounter(id: string, raw: unknown, c: Ctx, known: { stats: Set<str
     const lose = typeof m.lose === "string" ? m.lose : "lost";
     momentum = { win, lose, start: Math.max(-99, Math.min(99, c.num(m.start, `${w} › momentum › start`, 0))), swing };
   }
-  return {
+  const def: EncounterDef = {
     id,
     name: typeof raw.name === "string" ? raw.name : titleCase(id),
     desc: typeof raw.desc === "string" ? raw.desc : undefined,
@@ -1839,10 +2069,96 @@ function normEncounter(id: string, raw: unknown, c: Ctx, known: { stats: Set<str
     ...(typeof raw.danger === "string" ? { danger: raw.danger } : {}),
     labels: Object.fromEntries(Object.entries(isObj(raw.labels) ? raw.labels : {}).filter(([, v]) => typeof v === "string")) as Record<string, string>,
   };
+  // Derived from the rest of the definition: kept out of JSON so it doesn't change the rules revision of
+  // existing chats (history checks hash the normalized rules). Author-written losses:/outcome_kinds: still do.
+  const authored = normOutcomeKinds(raw, def, w, c);
+  Object.defineProperty(def, "outcomeKinds", { value: classifyOutcomes(def, statDefs, authored), enumerable: false, writable: true, configurable: true });
+  if (Object.keys(authored).length) def.authoredKinds = authored;
+  const sim = normSimPatch(raw.sim, `${w} › sim`, c, known);
+  if (sim) def.sim = sim;
+  return def;
 }
 
-function foeArmor(foeRaw: Raw, stats: FoeStatDef[], w: string, c: Ctx): Record<string, number> {
-  const armor = armorMap(foeRaw.armor ?? foeRaw.defense, `${w} › foe › armor`, c);
+const SIM_KEYS = new Set(["stats", "flags", "items", "location", "conditions", "rel", "perks", "wear", "triggers"]);
+
+/**
+ * `sim: { stats: { level: 12, hp: max }, flags: {…}, items: {…}, location, conditions, rel, perks, wear }` —
+ * the shape `warp_simulate`'s `set` takes. Stats are checked here; other names when the checker uses it.
+ */
+function normSimPatch(raw: unknown, w: string, c: Ctx, known: { stats: Set<string> }): StatePatch | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!isObj(raw)) { c.warn(w, "expected a map like { stats: { level: 12, hp: max }, flags: { met_kael: true } }"); return undefined; }
+  const out: StatePatch = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (!SIM_KEYS.has(k)) { c.warn(`${w} › ${k}`, `isn't a sim: key (${[...SIM_KEYS].join(", ")})`); continue; }
+    if (k === "location") { if (typeof v === "string" && v.trim()) out.location = v.trim(); else c.warn(`${w} › location`, "expected a place id"); continue; }
+    if (k === "triggers") { out.triggers = v !== false; continue; }
+    if (k === "perks") { out.perks = list(v); continue; }
+    if (k === "conditions" || k === "wear") {
+      if (Array.isArray(v)) out[k] = v.map(String);
+      else if (isObj(v)) (out as Record<string, unknown>)[k] = v;
+      else c.warn(`${w} › ${k}`, "expected a list or a map");
+      continue;
+    }
+    if (!isObj(v)) { c.warn(`${w} › ${k}`, "expected a map"); continue; }
+    if (k === "stats") {
+      const stats: Record<string, number | string> = {};
+      for (const [id, x] of Object.entries(v)) {
+        if (!known.stats.has(id)) { c.warn(`${w} › stats › ${id}`, `"${id}" isn't a declared stat`); continue; }
+        if (typeof x === "string" && /^(max|min)$/i.test(x.trim())) stats[id] = x.trim().toLowerCase();
+        else if (Number.isFinite(Number(x)) && x !== null && x !== "") stats[id] = Number(x);
+        else c.warn(`${w} › stats › ${id}`, `${JSON.stringify(x)} — use a number, max or min`);
+      }
+      out.stats = stats;
+    } else if (k === "items") {
+      const items: Record<string, number> = {};
+      for (const [id, x] of Object.entries(v)) {
+        const n = Number(x);
+        if (Number.isFinite(n)) items[id] = Math.round(n); else c.warn(`${w} › items › ${id}`, "expected a count");
+      }
+      out.items = items;
+    } else if (k === "flags") out.flags = v as StatePatch["flags"];
+    else if (k === "rel") out.rel = v as StatePatch["rel"];
+  }
+  return out;
+}
+
+/** `losses: [ids]` and `outcome_kinds: { id: won|escaped|conceded|lost }`: the author says how each ending counts. */
+function normOutcomeKinds(raw: Raw, enc: EncounterDef, w: string, c: Ctx): Record<string, OutcomeKind> {
+  const out: Record<string, OutcomeKind> = {};
+  const known = new Set(encounterOutcomeIds(enc));
+  const check = (id: string, where: string) => {
+    if (!known.has(id)) c.warn(where, `"${id}" isn't one of this encounter's endings (${[...known].join(", ")})`);
+  };
+  if (raw.losses !== undefined) {
+    if (!Array.isArray(raw.losses) && typeof raw.losses !== "string") c.warn(`${w} › losses`, "expected a list of ending ids, like [beaten, captured]");
+    else for (const id of list(raw.losses)) { check(id, `${w} › losses`); out[id] = "lost"; }
+  }
+  const kindsRaw = raw.outcome_kinds;
+  if (kindsRaw !== undefined) {
+    if (!isObj(kindsRaw)) c.warn(`${w} › outcome_kinds`, "expected a map of ending id → won, escaped, conceded or lost");
+    else for (const [id, v] of Object.entries(kindsRaw)) {
+      const kind = parseOutcomeKind(v);
+      if (!kind) { c.warn(`${w} › outcome_kinds › ${id}`, `"${String(v)}" — use won, escaped, conceded or lost`); continue; }
+      check(id, `${w} › outcome_kinds`);
+      if (out[id] && out[id] !== kind) c.warn(`${w} › outcome_kinds › ${id}`, `also listed in losses: — using ${kind}`);
+      out[id] = kind;
+    }
+  }
+  return out;
+}
+
+/** A foe stat's start / max as a formula (a string that isn't a plain number); undefined for numbers and bad values. */
+function isFormulaText(v: unknown): v is string { return typeof v === "string" && !!v.trim() && !Number.isFinite(Number(v)); }
+function foeFormula(v: unknown, where: string, c: Ctx): string | undefined {
+  if (!isFormulaText(v)) return undefined;
+  if (percentOf(v) !== null) { c.warn(where, `"${v}" — a foe's start or max can't be a percentage; use a number or a formula like "100 * level"`); return undefined; }
+  const x = c.expr(v, where);
+  return typeof x === "string" ? x : undefined;
+}
+
+function foeArmor(foeRaw: Raw, stats: FoeStatDef[], w: string, c: Ctx): Record<string, number | string> {
+  const armor: Record<string, number | string> = armorMap(foeRaw.armor ?? foeRaw.defense, `${w} › foe › armor`, c);
   for (const k of Object.keys(armor)) {
     if (k !== "_" && !stats.some((x) => x.id === k)) { c.warn(`${w} › foe › armor`, `"${k}" isn't one of the foe's stats`); delete armor[k]; }
   }
@@ -1962,6 +2278,42 @@ function normSecrets(raw: unknown, c: Ctx): Record<string, SecretDef> {
   return out;
 }
 
+/**
+ * `exits:` — a list (`[street, park]`, each taking the place's `travel:` minutes) or a map with
+ * minutes per exit (`{ street: 5, far_field: 45 }`; `~` = the place's `travel:`). List entries may be
+ * one-key maps too (`[street, { far_field: 45 }]`).
+ */
+function normExits(v: unknown, where: string, c: Ctx): { exits: string[]; exitTravel?: Record<string, number> } {
+  const exits: string[] = [];
+  const exitTravel: Record<string, number> = {};
+  const add = (id: string, mins: unknown) => {
+    if (!exits.includes(id)) exits.push(id);
+    if (mins === null || mins === undefined || mins === true) return;
+    const n = typeof mins === "number" ? mins : Number(mins);
+    if (Number.isFinite(n) && n >= 0) exitTravel[id] = n;
+    else c.warn(`${where} › ${id}`, `"${String(mins)}" should be travel minutes (0 or more) — using the place's \`travel:\``);
+  };
+  if (v === undefined || v === null) return { exits };
+  if (Array.isArray(v)) {
+    for (const x of v) {
+      if (isObj(x)) for (const [id, m] of Object.entries(x)) add(id, m);
+      else add(String(x), undefined);
+    }
+  } else if (isObj(v)) for (const [id, m] of Object.entries(v)) add(id, m);
+  else if (typeof v === "string") add(v, undefined);
+  else c.warn(where, "expected a list of places (`[street, park]`) or minutes per place (`{ street: 5, park: 20 }`)");
+  return Object.keys(exitTravel).length ? { exits, exitTravel } : { exits };
+}
+
+/** A stage's `if:` (alias `when:`) decides whether its `do:` happens; `else:` happens when it doesn't. */
+function stageIf(st: Raw, sw: string, c: Ctx, known: { stats: Set<string> }): Pick<FrontStage, "if" | "else"> {
+  const raw = st.if ?? st.when;
+  const cond = raw !== undefined ? c.expr(raw, `${sw} › if`) : undefined;
+  if (st.else !== undefined && cond === undefined) c.warn(`${sw} › else`, "only happens when the stage's `if:` doesn't hold — add `if:`");
+  if (cond === undefined) return {};
+  return { if: String(cond), ...(st.else !== undefined ? { else: normEffect(st.else, `${sw} › else`, c, known) } : {}) };
+}
+
 function normFronts(raw: unknown, c: Ctx, known: { stats: Set<string> }, where: (id: string) => string = (id) => `Fronts › ${id}`): Record<string, FrontDef> {
   const out: Record<string, FrontDef> = {};
   if (raw === undefined) return out;
@@ -1993,6 +2345,7 @@ function normFronts(raw: unknown, c: Ctx, known: { stats: Set<string> }, where: 
         hintAt: st.hint_at !== undefined ? c.num(st.hint_at, `${sw} › hint_at`, at) : prev + (at - prev) / 2,
         hint: str("hint"), backstage: str("backstage"), surface: str("surface"), news: str("news"),
         effects: normEffect(st.do ?? st.effects, `${sw} › do`, c, known),
+        ...stageIf(st, sw, c, known),
       });
       prev = at;
     });
@@ -2066,7 +2419,32 @@ function normLiveChoices(raw: unknown, c: Ctx, known: { stats: Set<string> }): L
   return def;
 }
 
-function normMind(raw: unknown, c: Ctx): MindDef {
+/**
+ * `resist_cost:` → signed changes to meters. A plain amount is paid in the stat's bad direction: `{ control: 10 }`
+ * lowers Control (better high), `{ dread: 8 }` raises Dread (better low). A quoted sign says it outright ("+8", "-10"),
+ * but must still hurt. Anything else disables resistance, with a warning.
+ */
+function normResistCost(raw: unknown, where: string, c: Ctx, stats: Record<string, StatDef>): Record<string, number> | undefined {
+  const fail = (why: string) => { c.warn(where, `${why}; resistance disabled`); return undefined; };
+  if (!isObj(raw) || !Object.keys(raw).length) return fail("expected a map of meter costs, e.g. `{ control: 10 }` (or `{ dread: 8 }` to raise a stat that's better low)");
+  const out: Record<string, number> = {};
+  for (const [id, v] of Object.entries(raw)) {
+    const def = stats[id];
+    if (!def) return fail(`"${id}" isn't a declared stat`);
+    if (def.kind !== "meter") return fail(`"${id}" is a ${def.kind}; resist costs are paid from meters`);
+    const signed = typeof v === "string" ? /^\s*([+-])\s*(\d+(?:\.\d+)?)\s*$/.exec(v) : null;
+    const n = signed ? Number(signed[2]) : typeof v === "number" ? v : NaN;
+    if (!Number.isFinite(n) || n <= 0) return fail(`${id}: ${JSON.stringify(v)} — use a positive amount (paid in the stat's bad direction) or a quoted "+N"/"-N"`);
+    const d = signed ? (signed[1] === "-" ? -n : n) : def.good === "low" ? n : -n;
+    if ((d > 0 && def.good === "high") || (d < 0 && def.good === "low")) {
+      return fail(`${id}: ${JSON.stringify(v)} would help (${def.label} is better ${def.good}), not cost`);
+    }
+    out[id] = d;
+  }
+  return out;
+}
+
+function normMind(raw: unknown, c: Ctx, stats: Record<string, StatDef> = {}): MindDef {
   const def: MindDef = { overrides: [], perception: [] };
   if (raw === undefined) return def;
   if (!isObj(raw)) { c.warn("Mind", "should be a map with `overrides:` and/or `perception:`"); return def; }
@@ -2079,13 +2457,7 @@ function normMind(raw: unknown, c: Ctx): MindDef {
     const chance = c.expr(o.chance ?? 100, `${w} › chance`);
     if (when === undefined || chance === undefined) continue;
     const act = typeof o.do === "string" ? o.do : "fail";
-    let resistCost: Record<string, number> | undefined;
-    if (o.resist_cost !== undefined) {
-      if (isObj(o.resist_cost) && Object.keys(o.resist_cost).length > 0
-        && Object.values(o.resist_cost).every((v) => typeof v === "number" && Number.isFinite(v) && v > 0)) {
-        resistCost = { ...o.resist_cost } as Record<string, number>;
-      } else c.warn(`${w} › resist_cost`, "expected a nonempty map of positive finite stat costs; resistance disabled");
-    }
+    const resistCost = o.resist_cost !== undefined ? normResistCost(o.resist_cost, `${w} › resist_cost`, c, stats) : undefined;
     def.overrides.push({
       id, when: String(when), chance, on: list(o.on).map((x) => x.toLowerCase()), do: act,
       cause: typeof o.cause === "string" ? o.cause : titleCase(id),
@@ -2422,6 +2794,13 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     if (s) { stats[id] = s; statOrder.push(id); }
   }
   const known = { stats: new Set(statOrder) };
+  for (const id of statOrder) {
+    const al = stats[id].allocate;
+    if (al && (!stats[al.with] || al.with === id)) {
+      c.warn(`Stats › ${id} › allocate › with`, al.with === id ? "can't spend a stat on itself" : `"${al.with}" isn't a declared stat — add it (e.g. \`${al.with}: { kind: attribute, start: 0 }\`)`);
+      delete stats[id].allocate;
+    }
+  }
 
   // Relationships
   const relRaw: Raw = isObj(raw.relationships) ? raw.relationships : isObj(raw.people) ? { people: raw.people } : {};
@@ -2444,9 +2823,11 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     const schedList: unknown[] = Array.isArray(sched) ? sched : typeof sched === "string" ? [{ at: sched }] : isObj(sched) ? Object.entries(sched).map(([at, when]) => ({ at, when })) : [];
     schedList.forEach((e, n) => {
       const sw = `Relationships › people › ${id} › schedule #${n + 1}`;
-      if (!isObj(e) || typeof e.at !== "string") { c.warn(sw, "each schedule entry needs `at:` (a location) and optionally `when:`"); return; }
+      // `at: null` / `at: away` (or `away: true`) — not anywhere the player can go while `when` holds.
+      const away = isObj(e) && (e.away === true || ("at" in e && (e.at === null || e.at === false)));
+      if (!isObj(e) || (!away && typeof e.at !== "string")) { c.warn(sw, "each schedule entry needs `at:` (a location, or `away`) and optionally `when:`"); return; }
       const when = e.when === undefined || e.when === true ? undefined : c.expr(e.when, `${sw} › when`);
-      schedule.push({ at: e.at, ...(when !== undefined ? { when: String(when) } : {}) });
+      schedule.push({ at: away ? null : e.at, ...(when !== undefined ? { when: String(when) } : {}) });
     });
     people[id] = {
       id,
@@ -2500,13 +2881,27 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const locations: Record<string, LocationDef> = {};
   for (const [id, l] of Object.entries(isObj(raw.locations) ? raw.locations : {})) {
     const r: Raw = isObj(l) ? l : typeof l === "string" ? { name: l } : {};
+    const lw = `Locations › ${id}`;
+    const { exits, exitTravel } = normExits(r.exits, `${lw} › exits`, c);
+    const indoors = r.indoors === true || r.inside === true;
+    const temp = r.temp ?? r.temperature;
+    if (temp !== undefined && !indoors) c.warn(`${lw} › temp`, "only indoor places take `temp:` — outdoors follows the weather (add `indoors: true`)");
+    const when = r.when !== undefined ? c.expr(r.when, `${lw} › when`) : undefined;
+    const requires = normRequires(r.requires ?? r.needs, `${lw} › requires`, c, known);
+    const whyNot = typeof r.why_not === "string" ? r.why_not : typeof r.locked === "string" ? r.locked : undefined;
+    if (whyNot && !requires.length) c.warn(`${lw} › why_not`, "only shows on a place locked by `requires:` — add `requires:` (a `when:` hides the place instead)");
     locations[id] = {
       id,
       name: typeof r.name === "string" ? r.name : titleCase(id),
       desc: typeof r.desc === "string" ? r.desc : undefined,
-      exits: Array.isArray(r.exits) ? r.exits.map(String) : [],
-      travel: c.num(r.travel, `Locations › ${id} › travel`, 10),
-      indoors: r.indoors === true || r.inside === true,
+      exits,
+      ...(exitTravel ? { exitTravel } : {}),
+      travel: c.num(r.travel, `${lw} › travel`, 10),
+      indoors,
+      ...(temp !== undefined && indoors ? { temp: c.num(temp, `${lw} › temp`, 20) } : {}),
+      ...(when !== undefined ? { when: String(when) } : {}),
+      ...(requires.length ? { requires } : {}),
+      ...(whyNot && requires.length ? { whyNot } : {}),
       board: r.board === true || r.quest_board === true,
       ...(Array.isArray(r.pos) && r.pos.length === 2 && r.pos.every((n: unknown) => Number.isFinite(Number(n))) ? { pos: [Number(r.pos[0]), Number(r.pos[1])] as [number, number] } : {}),
     };
@@ -2527,7 +2922,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
       desc: typeof r.desc === "string" ? r.desc : undefined,
       narrator: r.narrator === true,
       ...(gate ? { gate } : {}),
-      bonus: statNums(r.bonus, `Conditions › ${id} › bonus`, c, known),
+      bonus: statAmounts(r.bonus, `Conditions › ${id} › bonus`, c, known),
       ...condTiming(r, `Conditions › ${id}`, c, known),
     };
   }
@@ -2547,7 +2942,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   if (isObj(si)) for (const [it, n] of Object.entries(si)) startItems[it] = c.num(n, `Start › items › ${it}`, 1);
   else if (Array.isArray(si)) for (const it of si) startItems[String(it)] = 1;
   if (isObj(startRaw.stats)) for (const [s, v] of Object.entries(startRaw.stats)) {
-    if (stats[s]) stats[s].start = c.num(v, `Start › stats › ${s}`, stats[s].start);
+    if (stats[s]) { stats[s].start = c.num(v, `Start › stats › ${s}`, stats[s].start); delete stats[s].startExpr; }
     else c.warn(`Start › stats › ${s}`, "isn't a declared stat");
   }
   let startLocation: string | null = typeof startRaw.location === "string" ? startRaw.location : null;
@@ -2576,6 +2971,9 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   for (const [id, a] of Object.entries(isObj(raw.actions) ? raw.actions : {})) {
     const def = normAction(id, a, `Actions › ${id}`, c, known, i++);
     if (def) { actions[id] = def; actionOrder.push(id); }
+    for (const key of ["per_encounter", "per_day"]) if (isObj(a) && a[key] !== undefined) {
+      c.warn(`Actions › ${id} › ${key}`, "use limits work on encounter moves and abilities only — ignored here (gate it with `when:` and a flag)");
+    }
   }
   actionOrder.sort((a, b) => actions[a].order - actions[b].order);
   for (const a of Object.values(actions)) for (const loc of a.at) {
@@ -2614,7 +3012,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   // Encounters, codex, feats, perks
   const encounters: Record<string, EncounterDef> = {};
   for (const [id, e] of Object.entries(isObj(raw.encounters) ? raw.encounters : {})) {
-    const def = normEncounter(id, e, c, known);
+    const def = normEncounter(id, e, c, known, stats);
     if (def) encounters[id] = def;
   }
   const codex: Record<string, CodexEntry> = {};
@@ -2654,15 +3052,17 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   for (const [id, p] of Object.entries(perkList)) {
     const w = `Perks › ${id}`;
     if (!isObj(p)) { c.warn(w, "expected a perk definition"); continue; }
-    perks[id] = normPerk(id, p, w, c, known, abilities);
+    perks[id] = normPerk(id, p, w, c, { ...known, rel: new Set(relStatOrder) }, abilities);
   }
   for (const p of Object.values(perks)) for (const x of p.excludes) if (!perks[x]) c.warn(`Perks › ${p.id} › excludes`, `"${x}" isn't a declared perk`);
+  for (const p of Object.values(perks)) if (p.points && !stats[p.points]) { c.warn(`Perks › ${p.id} › points`, `"${p.points}" isn't a declared stat`); delete p.points; }
   // An ability nothing teaches is known from the start, unless it says otherwise.
   const taught = new Set(Object.values(perks).flatMap((p) => p.abilities));
   for (const a of Object.values(abilities)) if (a.known === DEFAULT_KNOWN) a.known = !taught.has(a.id);
   const perkPoints = typeof perksRaw.points === "string" ? perksRaw.points : undefined;
   if (perkPoints && !stats[perkPoints]) c.warn("Perks › points", `"${perkPoints}" isn't a declared stat`);
   const perkPick = Math.max(0, Math.round(c.num(perksRaw.pick ?? perksRaw.offer, "Perks › pick", 0)));
+  if (!perkPick) for (const p of Object.values(perks)) if (p.always) c.warn(`Perks › ${p.id} › offer`, "`offer: always` only matters with `perks: { pick: N }` — every perk is already on offer");
   const { quests, order: questOrder, story: storyQuests } = normQuests(raw.quests, c, known, { encounters: new Set(Object.keys(encounters)), actions: new Set(Object.keys(actions)) });
   for (const q of Object.values(quests)) {
     const w = `Quests › ${q.id}`;
@@ -2679,7 +3079,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const dungeons = normDungeons(raw.dungeons, c, known);
   // Dating adds its love and fear relationship stats if the ruleset doesn't have them.
   const dating = normDating(raw.dating, c, { stats: relStats, order: relStatOrder }, new Set(Object.keys(people)));
-  const mind = normMind(raw.mind, c);
+  const mind = normMind(raw.mind, c, stats);
   const endingsRaw: Raw = isObj(raw.endings) ? raw.endings : {};
   const endings = normEndings(Object.fromEntries(Object.entries(endingsRaw).filter(([k]) => k !== "legacy")), c);
   const legacy = normKeep(endingsRaw.legacy, "Endings › legacy", c, { codex: true, feats: true, perks: true });
@@ -2720,7 +3120,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
       weekdays,
       startDate,
     },
-    hud: { bars, money: moneyStat && stats[moneyStat] ? moneyStat : undefined, currency: typeof hudRaw.currency === "string" ? hudRaw.currency : "$" },
+    hud: { bars, money: moneyStat && stats[moneyStat] ? moneyStat : undefined, ...normCurrency(hudRaw.currency, c) },
     narration: { notes: typeof narrRaw.notes === "string" ? narrRaw.notes : undefined, numbers: narrRaw.numbers === true },
     weather, wardrobe, encounters, codex, feats, perks,
     ...(perkPoints && stats[perkPoints] ? { perkPoints } : {}),
@@ -2731,8 +3131,14 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
 
   // Cross-references that need everything loaded.
   for (const p of Object.values(people)) for (const e of p.schedule) {
-    if (Object.keys(locations).length && !locations[e.at]) c.warn(`Relationships › people › ${p.id} › schedule`, `"${e.at}" isn't a declared location`);
+    if (e.at === "away" && !locations.away) e.at = null; // `at: away` — not anywhere, unless a place is called that
+    if (e.at === null) continue;
+    if (Object.keys(locations).length && !locations[e.at]) c.warn(`Relationships › people › ${p.id} › schedule`, `"${e.at}" isn't a declared location (use \`at: away\` for "not around")`);
   }
+  for (const a of Object.values(actions)) for (const who of a.targets ?? []) {
+    if (!people[who]) c.warn(`Actions › ${a.id} › targets`, `"${who}" isn't a person in relationships › people`);
+  }
+  for (const a of Object.values(actions)) if (a.targets && !a.targets.length) c.warn(`Actions › ${a.id} › targets`, "names no one — list the people it can be aimed at");
   for (const id of wardrobe.startWorn) {
     if (!items[id]?.slot) c.warn("Wardrobe › start", `"${id}" isn't a declared clothing item (items need a \`slot:\`)`);
     else if (!(startItems[id] > 0)) startItems[id] = 1; // wearing it means owning it

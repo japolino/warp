@@ -29,7 +29,7 @@ export interface AuditReport {
 }
 
 /** Keys whose string values are formulas (in the normalized ruleset). */
-const FORMULA_KEYS = new Set(["when", "add", "target", "unlock", "requires", "amount", "maxExpr", "chance", "pay", "tip", "perDay", "perTurn", "per_day", "per_turn", "momentum", "gauge", "atk", "def", "mat", "mdf", "agi", "hp", "mp"]);
+const FORMULA_KEYS = new Set(["when", "add", "target", "unlock", "requires", "amount", "maxExpr", "crit", "perHourExpr", "chance", "pay", "tip", "perDay", "perTurn", "per_day", "per_turn", "momentum", "gauge", "atk", "def", "mat", "mdf", "agi", "hp", "mp"]);
 
 interface Seen {
   /** Stats any effect changes (incl. set). */
@@ -62,7 +62,7 @@ function isEffect(o: unknown): o is Effect {
 function readFormula(v: string, seen: Seen) {
   try { compile(v); } catch { return; }
   for (const id of identifiers(v)) seen.reads.add(id);
-  for (const m of v.matchAll(/\b(has|count|cond|flag|at|present|where|wearing|met|rel|worn|secret|front|codex|feat|perk|deepest|stage|partner|dates|transformed|saved|happened|owed|missed|days_until|arc|bond|seen_by|quest|quest_active|quest_done|quest_failed|goal|cond_of|foe_cond|memories)\(\s*'([^']+)'/g)) seen.calls.add(`${m[1]}:${m[2]}`);
+  for (const m of v.matchAll(/\b(has|count|cond|flag|at|present|where|wearing|met|rel|worn|secret|front|codex|feat|perk|deepest|stage|partner|dates|transformed|saved|happened|owed|missed|days_until|arc|bond|seen_by|quest|quest_active|quest_done|quest_failed|goal|cond_of|foe_cond|memories|eff|gear|integrity)\(\s*'([^']+)'/g)) seen.calls.add(`${m[1]}:${m[2]}`);
 }
 
 function walk(o: unknown, seen: Seen, money: string | undefined, key = "") {
@@ -114,20 +114,22 @@ export function auditRuleset(r: Ruleset): AuditReport {
   const gap = (g: AuditGap) => gaps.push(g);
   // A cost is a read too: an ability can't be used without enough mana.
   const costs = new Set(Object.values(r.abilities).flatMap((ab) => Object.keys(ab.action.cost.stats)));
-  const readsStat = (id: string) => seen.reads.has(id) || costs.has(id);
+  const readsStat = (id: string) => seen.reads.has(id) || costs.has(id) || seen.calls.has(`eff:${id}`) || seen.calls.has(`gear:${id}`);
 
   // ── items ──
   for (const it of Object.values(r.items)) {
-    const referenced = seen.calls.has(`has:${it.id}`) || seen.calls.has(`count:${it.id}`) || seen.calls.has(`wearing:${it.id}`) || seen.itemsTaken.has(it.id);
+    const referenced = seen.calls.has(`has:${it.id}`) || seen.calls.has(`count:${it.id}`) || seen.calls.has(`wearing:${it.id}`) || seen.calls.has(`integrity:${it.id}`) || seen.itemsTaken.has(it.id);
     const gift = it.tags.includes("gift") && r.dating.enabled;
     const bonus = Object.keys(it.bonus).length > 0;
     if (it.use) links.push(`${it.name}: ${it.use.label}`);
     if (bonus) links.push(`${it.name} helps ${Object.keys(it.bonus).map((s) => r.stats[s]?.label ?? s).join(", ")} checks`);
     if (!it.use && !bonus && !referenced && !gift && !it.slot) {
       gap({ id: `item-dead:${it.id}`, severity: "gap", part: "world", text: `${it.name} does nothing: no use, no bonus, and nothing needs it.`, fix: `Give it a use: (what using it does, in this game's stats and conditions${it.desc ? ` — its description says: "${it.desc}"` : ""}), a bonus: to the checks it would help, or an action/encounter move that needs it.` });
-    } else if (it.slot && !bonus && !it.traits.length && it.warmth === 0 && it.reveal === 0 && !referenced) {
-      gap({ id: `item-flat:${it.id}`, severity: "thin", part: "world", text: `${it.name} is clothing with no effect (no warmth, traits or bonus).`, fix: "Give it warmth, a trait something checks, or a bonus: (sturdy boots → athletics)." });
+    } else if (it.slot && !bonus && !Object.keys(it.armor).length && !it.traits.length && it.warmth === 0 && it.reveal === 0 && !referenced) {
+      gap({ id: `item-flat:${it.id}`, severity: "thin", part: "world", text: `${it.name} is clothing with no effect (no warmth, traits, armor or bonus).`, fix: "Give it warmth, a trait something checks, armor:, or a bonus: (sturdy boots → athletics)." });
     }
+    // Armor softens blows in encounters while it's carried (worn, for clothing): that's an effect.
+    if (Object.keys(it.armor).length) links.push(`${it.name} is armor (${Object.keys(it.armor).map((s) => s === "_" ? "the main meter" : r.stats[s]?.label ?? s).join(", ")})`);
     if ((referenced || it.use) && !seen.itemsGiven.has(it.id) && !it.slot) {
       gap({ id: `item-unobtainable:${it.id}`, severity: "gap", part: "world", text: `${it.name} matters, but nothing gives it to the player.`, fix: "Add it to start.items, a shop or job reward (give:), dungeon loot, or an action that finds it." });
     }
@@ -147,7 +149,7 @@ export function auditRuleset(r: Ruleset): AuditReport {
     }
   }
   const perks = Object.values(r.perks);
-  if (perks.length && r.perkPoints && !seen.changed.has(r.perkPoints) && r.stats[r.perkPoints]?.perHour === 0) {
+  if (perks.length && r.perkPoints && !seen.changed.has(r.perkPoints) && r.stats[r.perkPoints]?.perHour === 0 && r.stats[r.perkPoints]?.perHourExpr === undefined) {
     gap({ id: "perk-no-points", severity: "gap", part: "journal", text: "Perks cost points, but nothing ever gives the player any.", fix: `Raise ${r.perkPoints} on level-ups (a trigger), feat rewards, won encounters or story milestones.` });
   }
   for (const p of perks) {
@@ -163,10 +165,12 @@ export function auditRuleset(r: Ruleset): AuditReport {
     const def = r.stats[id];
     if (def.kind === "hidden") continue;
     const grows = (def.kind === "skill" || def.kind === "attribute") && r.growth.enabled && def.growth > 0;
-    const changes = seen.changed.has(id) || def.perHour !== 0 || def.narrator > 0 || grows;
+    // Drift written as a formula and points spent by hand (`allocate:`) move it too.
+    const changes = seen.changed.has(id) || def.perHour !== 0 || def.perHourExpr !== undefined || !!def.allocate || def.narrator > 0 || grows;
     const read = readsStat(id);
     if (!changes) gap({ id: `stat-static:${id}`, severity: "gap", part: "stats", text: `${def.label} never changes: no action, event or drift moves it.`, fix: `Have actions, foe moves, triggers or time move ${def.label}${def.kind === "meter" ? " (per_hour drift, costs, consequences)" : ""}.` });
-    if ((def.kind === "skill" || def.kind === "attribute") && !read && id !== r.perkPoints) {
+    const allocPool = r.statOrder.some((x) => r.stats[x].allocate?.with === id);
+    if ((def.kind === "skill" || def.kind === "attribute") && !read && id !== r.perkPoints && !allocPool && !perks.some((p) => p.points === id)) {
       gap({ id: `skill-unused:${id}`, severity: "gap", part: "actions", text: `${def.label} is a ${def.kind} no check uses.`, fix: `Make some action or encounter checks read ${id} (e.g. chance: "30 + ${id} / 2"), so it matters and grows.` });
     } else if (def.kind === "meter" && !read && id !== money) {
       gap({ id: `stat-unread:${id}`, severity: "thin", part: "rules", text: `${def.label} is shown but has no consequence.`, fix: `Let something read it: a trigger at a threshold, a check penalty ("- ${id} / 4"), an ending, an encounter's end_when, or an action's when.` });

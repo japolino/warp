@@ -1,6 +1,6 @@
 // Dungeon diving: shared types.
 
-import type { Effect } from "../ruleset.js";
+import type { Effect, Requirement } from "../ruleset.js";
 
 export type TileKind =
   | "start" | "empty" | "stairs"
@@ -92,6 +92,10 @@ export interface DungeonDef {
   /** Where the entrance is (empty = anywhere). */
   at: string[];
   when?: string;
+  /** The entrance shows locked, with what's missing, until these are met (`when:` hides it instead). */
+  requires?: Requirement[];
+  /** Words on the locked entrance instead of the missing requirements. */
+  whyNot?: string;
   theme: Theme;
   /** Tiles per side on floor 1 (grows by one every three floors, up to 9). */
   size: number;

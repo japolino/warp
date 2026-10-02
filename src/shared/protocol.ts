@@ -34,6 +34,8 @@ export interface SkillView {
   tone: Tone;
   /** Progress toward the next point from use and practice, 0–1 (null = doesn't grow, or maxed). */
   practice: number | null;
+  /** Raised by hand with points (`allocate:`): the pool, its points left, what a step costs and adds, and steps of room under the max. */
+  allocate?: { pool: string; poolLabel: string; left: number; cost: number; step: number; room: number };
 }
 
 export interface PersonView {
@@ -142,6 +144,8 @@ export interface HudView {
     drawback: string | null;
     /** What it does, in short ("+15 Stealth on the promenade", "1 reroll left today"). */
     notes: string[];
+    /** The pool it's paid from when that isn't the main perk points (points: class_points). */
+    pointsLabel?: string;
   }[];
   perkPoints: number | null;
   /** How many perks are offered at a time (0: the whole list, like a shop). */
@@ -155,7 +159,7 @@ export interface HudView {
   /** Transformations under way. */
   transforms: { label: string; stage: number; of: number }[];
   /** Bills and debts. */
-  dues: { label: string; owed: number; text: string; tone: Tone }[];
+  dues: { label: string; owed: number; /** the amount with the currency sign, before or after */ owedText?: string; text: string; tone: Tone }[];
   /** A pregnancy (once it's known) and children. */
   family: { name: string; text: string }[];
   /** Checkpoints and endings, when the ruleset has them. */
@@ -174,7 +178,7 @@ export interface HudView {
 }
 
 export interface MapView {
-  nodes: { id: string; name: string; x: number; y: number; here: boolean; reachable: boolean; indoors: boolean; people: string[] }[];
+  nodes: { id: string; name: string; x: number; y: number; here: boolean; reachable: boolean; indoors: boolean; people: string[]; /** Why travel there is locked (its `requires:`). */ locked?: string }[];
   edges: [string, string][];
 }
 
@@ -694,6 +698,8 @@ export type FrontendToBackend =
   /** Wardrobe: put on an item, or take off a slot (item null). */
   | { type: "wear"; chatId: string; slot: string; item: string | null }
   | { type: "buy_perk"; chatId: string; perk: string }
+  /** Spend points on stats with `allocate:`, in steps: `{ str: 2, dex: 1 }`. */
+  | { type: "allocate"; chatId: string; spend: Record<string, number> }
   | { type: "adjust_rel"; chatId: string; who: string; stat: string; value: number }
   | { type: "forget"; chatId: string; who: string }
   | { type: "builder_open"; chatId: string; mode: "build" | "refine" | "deepen" }

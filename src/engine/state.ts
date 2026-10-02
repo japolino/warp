@@ -6,7 +6,7 @@
 // only clamping follows the current ruleset.
 
 import type { Value, ExprEnv } from "./expr.js";
-import { evalNumber } from "./expr.js";
+import { evalBool, evalNumber } from "./expr.js";
 import type { Ruleset, StatDef, Band, KeepSpec } from "./ruleset.js";
 import type { BattleState, BoonOffer, DungeonRun, PartyMember, Pending } from "./dungeon/types.js";
 import type { DateSession, DatingMemory, Reaction } from "./date/types.js";
@@ -29,6 +29,9 @@ export interface EncounterState {
   at?: number;
   /** Statuses on the opponent: rounds left (null = until the fight ends). */
   conds?: Record<string, number | null>;
+  /** Foe stat maximums and armor worked out from formulas when it started (absent = the rulebook's numbers). */
+  max?: Record<string, number>;
+  armor?: Record<string, number>;
 }
 
 export type QuestStatus = "active" | "ready" | "done" | "failed";
@@ -178,7 +181,7 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "seed"; v: string }
   | { t: "wear"; slot: string; item: string | null }
   | { t: "dmg"; item: string; d: number }
-  | { t: "enc"; id: string | null; foe?: Record<string, number>; outcome?: string; momentum?: number; foeName?: string }
+  | { t: "enc"; id: string | null; foe?: Record<string, number>; outcome?: string; momentum?: number; foeName?: string; max?: Record<string, number>; armor?: Record<string, number> }
   | { t: "swing"; d: number }
   | { t: "foe"; stat: string; d?: number; set?: number }
   | { t: "round" }
@@ -324,6 +327,14 @@ export function initialState(r: Ruleset): GameState {
     s.dues[o.id] = { due: r.clock.start + o.first * 1440, owed: Math.max(0, owed), missed: 0 };
   }
   for (const id of r.statOrder) s.stats[id] = r.stats[id].start;
+  // Starts that read other stats (`start: full` against a max formula, a start formula), and any stat with a max
+  // formula, are worked out now that the plain starts are in — and clamped to the max they evaluate to.
+  for (const id of r.statOrder) {
+    const def = r.stats[id];
+    if (!def.maxExpr && def.startExpr === undefined) continue;
+    const v = def.startExpr !== undefined ? evalNumber(def.startExpr, makeEnv(r, s), def.start) : def.start;
+    s.stats[id] = Math.min(statMax(r, def, s), Math.max(def.min, Number.isFinite(v) ? v : def.start));
+  }
   // Stages with no condition at the top of a secret's ladder are known from the start.
   for (const sec of Object.values(r.secrets)) {
     let open = -1;
@@ -356,6 +367,77 @@ export function statMax(r: Ruleset, def: StatDef, s: GameState): number {
   if (!def.maxExpr) return def.max;
   const m = evalNumber(def.maxExpr, makeEnv(r, s), def.max);
   return Math.max(def.min + 1, m);
+}
+
+/**
+ * A number a rulebook may write as a formula (gear and status `armor:`/`bonus:`, `per_hour:`), worked out now.
+ * "+6%" is a share of `max` (when given). Anything that can't be read counts as 0.
+ */
+export function amountValue(v: number | string | undefined, env: ExprEnv, max?: number): number {
+  if (v === undefined) return 0;
+  if (typeof v === "number") return v;
+  const pm = /^\s*([+-]?)\s*(\d+(?:\.\d+)?)\s*%\s*$/.exec(v);
+  if (pm) return max === undefined ? 0 : ((pm[1] === "-" ? -1 : 1) * Number(pm[2]) / 100) * max;
+  const n = evalNumber(v, env, 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** One place a stat bonus comes from right now: carried gear (worn, for clothing), a perk (or its edge that holds), a condition. */
+export interface BonusSource { from: string; kind: "gear" | "perk" | "cond"; id: string; bonus: Record<string, number> }
+
+// Bonus formulas may read eff()/gear() themselves; past this depth they count as 0 (no endless loops).
+let bonusDepth = 0;
+
+/** Every bonus in force on {{user}}'s stats, with formulas worked out. Checks, `eff()` and `gear()` all read this. */
+export function bonusSources(r: Ruleset, s: GameState, env?: ExprEnv): BonusSource[] {
+  if (bonusDepth > 2) return [];
+  bonusDepth++;
+  try {
+    const e = env ?? makeEnv(r, s);
+    const nums = (m: Record<string, number | string>) => {
+      const out: Record<string, number> = {};
+      for (const [k, v] of Object.entries(m)) { const n = amountValue(v, e); if (n) out[k] = n; }
+      return out;
+    };
+    const out: BonusSource[] = [];
+    const worn = new Set(Object.values(s.worn));
+    for (const [id, n] of Object.entries(s.items)) {
+      const it = r.items[id];
+      if (!it || n <= 0 || (it.slot && !worn.has(id)) || !Object.keys(it.bonus).length) continue;
+      out.push({ from: it.name, kind: "gear", id, bonus: nums(it.bonus) });
+    }
+    for (const id of Object.keys(s.perks)) {
+      const p = r.perks[id];
+      if (!p) continue;
+      if (Object.keys(p.bonus).length) out.push({ from: `★ ${p.name}`, kind: "perk", id, bonus: nums(p.bonus) });
+      for (const ed of p.edges) {
+        if (ed.when && !evalBool(ed.when, e, false)) continue;
+        out.push({ from: `★ ${p.name}`, kind: "perk", id, bonus: nums(ed.stats) });
+      }
+    }
+    for (const id of Object.keys(s.conditions)) {
+      const c = r.conditions[id];
+      if (c && Object.keys(c.bonus).length) out.push({ from: c.label, kind: "cond", id, bonus: nums(c.bonus) });
+    }
+    return out;
+  } finally { bonusDepth--; }
+}
+
+/** A stat plus everything that helps or hinders it right now (`eff('str')`); `gearOnly` counts carried and worn gear alone (`gear('atk')`). */
+export function effectiveStat(r: Ruleset, s: GameState, stat: string, env: ExprEnv, gearOnly = false): number {
+  let n = 0;
+  for (const src of bonusSources(r, s, env)) if (!gearOnly || src.kind === "gear") n += src.bonus[stat] ?? 0;
+  if (gearOnly) return n;
+  const base = s.stats[stat] ?? r.stats[stat]?.start ?? 0;
+  return base + n;
+}
+
+/** Current integrity of a piece of clothing (by item id, or by the slot it's worn in); 0 when not held. */
+export function integrityOf(r: Ruleset, s: GameState, idOrSlot: string): number {
+  const id = r.items[idOrSlot] ? idOrSlot : s.worn[idOrSlot] ?? "";
+  const def = r.items[id];
+  if (!def || (s.items[id] ?? 0) <= 0) return 0;
+  return s.integrity[id] ?? def.integrity;
 }
 
 function clamp(v: number, lo: number, hi: number) {
@@ -414,7 +496,7 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
         // Statuses that only last rounds end with the fight.
         for (const [id, c] of Object.entries(s.conditions)) if (c.rounds !== undefined && c.until === null) delete s.conditions[id];
       }
-      s.encounter = e.id ? { id: e.id, round: 0, foe: { ...(e.foe ?? {}) }, ...(e.momentum !== undefined ? { momentum: e.momentum } : {}), ...(e.foeName ? { foeName: e.foeName } : {}), at: s.minutes } : null;
+      s.encounter = e.id ? { id: e.id, round: 0, foe: { ...(e.foe ?? {}) }, ...(e.momentum !== undefined ? { momentum: e.momentum } : {}), ...(e.foeName ? { foeName: e.foeName } : {}), at: s.minutes, ...(e.max ? { max: { ...e.max } } : {}), ...(e.armor ? { armor: { ...e.armor } } : {}) } : null;
       break;
     case "swing":
       if (s.encounter && s.encounter.momentum !== undefined) s.encounter.momentum = clamp(s.encounter.momentum + e.d, -100, 100);
@@ -424,7 +506,7 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       const def = r.encounters[s.encounter.id]?.foe.stats.find((x) => x.id === e.stat);
       const cur = s.encounter.foe[e.stat] ?? def?.start ?? 0;
       const next = e.set !== undefined ? e.set : cur + (e.d ?? 0);
-      s.encounter.foe[e.stat] = def ? clamp(next, 0, def.max) : next;
+      s.encounter.foe[e.stat] = def ? clamp(next, 0, s.encounter.max?.[e.stat] ?? def.max) : next;
       break;
     }
     case "round": if (s.encounter) s.encounter.round += 1; break;
@@ -794,7 +876,7 @@ export const BUILTIN_NAMES = [
   "minutes", "hour", "minute", "day", "weekday", "turn", "location",
   "month", "date", "season", "weather", "temperature", "indoors", "outside",
   "warmth", "warmth_min", "warmth_max", "too_cold", "too_hot", "reveal", "exposed", "naked",
-  "in_encounter", "round", "momentum", "target", "in_dungeon", "dungeon_depth",
+  "in_encounter", "encounter", "encounter_round", "round", "momentum", "target", "in_dungeon", "dungeon_depth",
   "in_date", "on_outing", "loops", "runs", "pregnant", "pregnancy_weeks", "at_work",
 ];
 
@@ -827,6 +909,9 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
       exposed,
       naked: r.wardrobe.enabled && exposed === r.wardrobe.cover.length && r.wardrobe.cover.length > 0,
       in_encounter: !!s.encounter,
+      // Which encounter is on ('' = none), and its round (also plain `round`).
+      encounter: s.encounter?.id ?? "",
+      encounter_round: s.encounter?.round ?? 0,
       momentum: s.encounter?.momentum ?? 0,
       in_dungeon: !!s.dungeon,
       dungeon_depth: s.dungeon?.depth ?? 0,
@@ -899,6 +984,10 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
         }
         case "wearing": return Object.values(s.worn).includes(a0);
         case "worn": return s.worn[a0] ?? "";
+        // A stat with gear, perks and statuses counted (as checks see it), gear alone, and a piece of clothing's integrity.
+        case "eff": return effectiveStat(r, s, a0, base);
+        case "gear": return effectiveStat(r, s, a0, base, true);
+        case "integrity": return integrityOf(r, s, a0);
         case "trait": return hasTrait(r, s, a0);
         case "present": return personLocation(r, s, a0, scheduleEnv()) === s.location && !!s.location;
         case "where": return personLocation(r, s, a0, scheduleEnv()) ?? "";
@@ -949,12 +1038,20 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
         case "foe_cond": return !!s.encounter?.conds && a0 in s.encounter.conds;
         // A stat's current maximum (for "25% of max" by hand), and the opponent's.
         case "stat_max": return r.stats[a0] ? statMax(r, r.stats[a0], s) : 0;
-        case "foe_max": return s.encounter ? r.encounters[s.encounter.id]?.foe.stats.find((x) => x.id === a0)?.max ?? 0 : 0;
+        case "foe_max": return foeMaxOf(r, s, a0);
+        // in_encounter('hollow_king'): that encounter is on (in_encounter() with no id: any).
+        case "in_encounter": return args.length ? s.encounter?.id === a0 : !!s.encounter;
       }
       return undefined;
     },
   };
   return base;
+}
+
+/** A foe stat's current maximum: worked out when the encounter started (formula max), else the rulebook's number; 0 when not in it. */
+export function foeMaxOf(r: Ruleset, s: GameState, stat: string): number {
+  if (!s.encounter) return 0;
+  return s.encounter.max?.[stat] ?? r.encounters[s.encounter.id]?.foe.stats.find((x) => x.id === stat)?.max ?? 0;
 }
 
 // ───────────────────────── presentation helpers ─────────────────────────
@@ -990,6 +1087,11 @@ export function formatClock(r: Ruleset, minutes: number): { label: string; time:
 export function formatNumber(n: number): string {
   const r = Math.round(n * 10) / 10;
   return Number.isInteger(r) ? String(r) : r.toFixed(1);
+}
+
+/** An amount of money with the ruleset's sign before ("$18") or after ("18d") it. */
+export function formatMoney(r: Ruleset, n: number): string {
+  return r.hud.currencyAfter ? `${formatNumber(n)}${r.hud.currency}` : `${r.hud.currency}${formatNumber(n)}`;
 }
 
 export function itemName(r: Ruleset, s: GameState, id: string): string {

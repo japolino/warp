@@ -6,7 +6,7 @@ import { itemName, makeEnv, type GameState } from "../state.js";
 import { canUse, skillCost } from "./battle.js";
 import { SHOP, SKILLS } from "./content.js";
 import { adjacent, generateFloor, key } from "./floor.js";
-import { bondOf, boonChoices, choicesFor, dungeonOf, dungeonsHere, eligibleCompanions, levelOf, memberFighter } from "./run.js";
+import { bondOf, boonChoices, choicesFor, dungeonLock, dungeonOf, dungeonsHere, eligibleCompanions, levelOf, memberFighter } from "./run.js";
 import type { Fighter } from "./types.js";
 import type { DungeonEntryView, DungeonView, FighterView } from "../../shared/protocol.js";
 
@@ -20,7 +20,7 @@ function fighterView(f: Fighter, active: string | null): FighterView {
 }
 
 export function buildDungeonEntries(r: Ruleset, s: GameState): DungeonEntryView[] {
-  return dungeonsHere(r, s).map((d) => ({
+  return dungeonsHere(r, s).filter((d) => !dungeonLock(r, s, d)).map((d) => ({
     id: d.id, name: d.name, desc: d.desc ?? null, theme: d.theme,
     deepest: s.deepest[d.id] ?? 0, floors: d.floors, max: d.party.max,
     companions: eligibleCompanions(r, s, d),

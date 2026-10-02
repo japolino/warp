@@ -5,14 +5,16 @@
 
 import { loadRuleset } from "../engine/loader.js";
 import { lintRuleset } from "../engine/lint.js";
-import { reviewBalance, simulateEncounter } from "../engine/balance.js";
+import { reviewBalance } from "../engine/balance.js";
 import { auditRuleset } from "../engine/audit.js";
 import { DESIGN_GUIDE, PART_CONTENTS, PART_LABELS, REFERENCE } from "../engine/reference.js";
 import { joinRulebook, splitRulebook, type RulebookPart } from "../engine/rulebook.js";
 import { TEMPLATES } from "../engine/templates/index.js";
 import { initialState } from "../engine/state.js";
 import { buildChoices, buildHud, stateDigest } from "../engine/view.js";
-import { isLoss, outcomeLabel } from "../engine/encounter-view.js";
+import { outcomeLabel } from "../engine/encounter-view.js";
+import { outcomeKind, type OutcomeKind } from "../engine/outcomes.js";
+import { kindsLine, patchedState, simulateEncounter as playtestEncounter, type StatePatch } from "../engine/simulate.js";
 import type { Issue, Ruleset } from "../engine/ruleset.js";
 
 export const WORKFLOW = `HOW TO WRITE A WARP RULEBOOK (with an agent harness or by hand)
@@ -36,7 +38,10 @@ decision, applies pressure or rewards play — and it fits the character card or
      Fix every [gap]; fix or knowingly accept each [thin]. Depth measures static wiring, not fun — don't chase 100
      by adding systems the game doesn't need; a narrative-only meter can be deliberate.
 5. Simulate each encounter (\`warp-rulebook simulate rulebook.yaml\`): no route should be pointless, none a sure win,
-   and the escape should cost something. Tune numbers until random play wins roughly 30–70% of the time.
+   and the escape should cost something. Endings count as won / escaped / conceded / lost (mark any the engine
+   misreads with \`losses:\` or \`outcome_kinds:\`). Tune numbers until random play WINS roughly 30–70% of the time —
+   getting away doesn't count. For encounters met later in the game, simulate from that point:
+   \`--set '{"stats":{"level":12,"hp":"max"},"flags":{"met_kael":true}}'\`.
 6. Preview (\`warp-rulebook preview rulebook.yaml\`): the sidebar, choices and the narrator's view at the start.
    Check it reads well: bands in words, choices with sensible odds, quests on offer, nothing confusing.
 7. Hand the file over. In Lumiverse: Warp → Ruleset → Import a rulebook (paste or choose the file) → review → Install.
@@ -188,25 +193,98 @@ export function checkText(rep: CheckReport): string {
   return out.join("\n");
 }
 
-/** Random play through each encounter from the starting state: how it tends to end, and how long it takes. */
-export function simulateText(texts: string[], only?: string, runs = 200): string {
+export interface SimulateOptions {
+  /** Simulate from the start with these changes (a level, gear, flags, a place…), after triggers run. Overrides each encounter's own `sim:`. */
+  set?: StatePatch;
+  /** Also play each "always the same move" strategy (default true). */
+  strategies?: boolean;
+}
+
+/** A state patch from `--set <json>` and `--stat id=value` flags (or an MCP `set` / `stats` argument). */
+export function readPatch(set: unknown, stats: string[] = []): StatePatch | undefined {
+  let patch: StatePatch | undefined;
+  if (typeof set === "string" && set.trim()) {
+    try { patch = JSON.parse(set) as StatePatch; } catch { throw new Error(`--set needs JSON, like '{"stats":{"level":12}}' (got ${set})`); }
+  } else if (set && typeof set === "object") patch = set as StatePatch;
+  if (patch !== undefined && (typeof patch !== "object" || Array.isArray(patch))) throw new Error("set must be an object: { stats, flags, items, location, conditions, rel, perks, wear }");
+  for (const kv of stats) {
+    const m = /^([a-z_]\w*)\s*=\s*(.+)$/i.exec(kv.trim());
+    if (!m) throw new Error(`--stat needs id=value (got "${kv}")`);
+    patch = { ...(patch ?? {}), stats: { ...(patch?.stats ?? {}), [m[1]]: /^(max|min)$/i.test(m[2]) ? m[2] : Number(m[2]) } };
+  }
+  return patch;
+}
+
+const KIND_MARK: Record<OutcomeKind, string> = { won: "(won)", escaped: "(escaped)", conceded: "(conceded)", lost: "(loss)" };
+
+/** Describe a patch in one line ("level 12, hp max, flag met_kael…"). */
+function patchText(p: StatePatch): string {
+  const bits: string[] = [];
+  for (const [k, v] of Object.entries(p.stats ?? {})) bits.push(`${k} ${v}`);
+  for (const [k, v] of Object.entries(p.flags ?? {})) bits.push(`flag ${k}=${JSON.stringify(v)}`);
+  for (const [k, v] of Object.entries(p.items ?? {})) bits.push(`${k} ×${v}`);
+  if (p.location) bits.push(`at ${p.location}`);
+  const conds = Array.isArray(p.conditions) ? p.conditions : Object.keys(p.conditions ?? {});
+  if (conds.length) bits.push(`status ${conds.join(", ")}`);
+  for (const [who, m] of Object.entries(p.rel ?? {})) for (const [k, v] of Object.entries(m ?? {})) bits.push(`${who}.${k} ${v}`);
+  if (p.perks?.length) bits.push(`perks ${p.perks.join(", ")}`);
+  const worn = Array.isArray(p.wear) ? p.wear : Object.values(p.wear ?? {});
+  if (worn.length) bits.push(`wearing ${worn.join(", ")}`);
+  return bits.join(", ") || "no changes";
+}
+
+/**
+ * Play through each encounter from the starting state (or a patched one): random play, how it tends to end,
+ * and how each "always the same move" strategy fares. Endings count as won / escaped / conceded / lost —
+ * the same classifier the checker and quest goals use. "Ends well" = anything but lost; the checker's
+ * balance target judges wins, so a fight everyone flees from doesn't pass as balanced.
+ */
+export function simulateText(texts: string[], only?: string, runs = 200, opts: SimulateOptions = {}): string {
   const { ruleset: r, issues } = loadText(texts);
   if (!r) return `The rulebook doesn't load:\n${issues.filter((i) => i.level === "error").map((i) => `  - ${i.where}: ${i.message}`).join("\n")}`;
   const ids = only ? [only] : Object.keys(r.encounters);
   if (!ids.length) return "No encounters to simulate.";
-  const start = initialState(r);
-  const out: string[] = [`Random play from the starting state, ${runs} runs each (a player who picks any available move):`, ""];
+  let start = initialState(r);
+  const head: string[] = [];
+  if (opts.set) {
+    const { state, notes } = patchedState(r, opts.set, start);
+    if (state.encounter) { notes.push(`a trigger started "${state.encounter.id}" — simulating from just before it`); state.encounter = null; }
+    start = state;
+    head.push(`From the start with: ${patchText(opts.set)} (then triggers ran).`);
+    for (const n of notes) head.push(`  ! ${n}`);
+  }
+  const out: string[] = [
+    `Random play from the ${opts.set ? "patched" : "starting"} state, ${runs} runs each (a player who picks any available move):`,
+    ...head,
+    `Endings count as won / escaped / conceded / lost; "ends well" = anything but lost. The checker judges wins.`, "",
+  ];
   for (const id of ids) {
     const enc = r.encounters[id];
     if (!enc) { out.push(`${id}: no such encounter (${Object.keys(r.encounters).join(", ")})`); continue; }
-    const sim = simulateEncounter(r, start, id, runs);
-    if (!sim) continue;
-    const rows = Object.entries(sim.outcomes).sort((a, b) => b[1] - a[1])
-      .map(([o, n]) => `    ${String(Math.round((n / runs) * 100)).padStart(3)}%  ${outcomeLabel(enc, o)}${isLoss(enc, o) ? "  (loss)" : ""}`);
-    const won = Object.entries(sim.outcomes).filter(([o]) => !isLoss(enc, o)).reduce((n, [, x]) => n + x, 0);
-    out.push(`${enc.name} (${id}) — ends well ${Math.round((won / runs) * 100)}%, about ${sim.rounds.toFixed(1)} rounds`);
+    // The encounter's own sim: (its intended point in the game) unless a patch was passed in.
+    let from = start;
+    if (!opts.set && enc.sim) {
+      const p = patchedState(r, enc.sim, start);
+      from = p.state;
+      from.encounter = null;
+      out.push(`${enc.name}: judged from its sim: ${patchText(enc.sim)}${p.notes.length ? ` (! ${p.notes.join("; ")})` : ""}`);
+    }
+    const sim = playtestEncounter(r, id, { from, runs, maxRounds: 25, randomOnly: opts.strategies === false });
+    const random = sim?.policies.find((p) => p.policy === "a random mix");
+    if (!sim || !random) continue;
+    const rows = Object.entries(random.outcomes).sort((a, b) => b[1] - a[1])
+      .map(([o, n]) => `    ${String(Math.round((n / runs) * 100)).padStart(3)}%  ${outcomeLabel(enc, o)}  ${KIND_MARK[outcomeKind(enc, o)]}`);
+    const k = random.kinds;
+    const well = k.won + k.escaped + k.conceded;
+    out.push(`${enc.name} (${id}) — ends well ${Math.round((well / runs) * 100)}% (${kindsLine(k, runs)}), about ${(random.meanRounds ?? random.medianRounds).toFixed(1)} rounds`);
     out.push(...rows);
-    if (sim.stuck) out.push(`    ${String(Math.round((sim.stuck / runs) * 100)).padStart(3)}%  still going after 25 rounds`);
+    if (random.unfinished) out.push(`    ${String(Math.round((random.unfinished / runs) * 100)).padStart(3)}%  still going after 25 rounds`);
+    const fixed = sim.policies.filter((p) => p !== random);
+    if (fixed.length) {
+      out.push("  By strategy (the same move every round, when it's offered):");
+      for (const p of fixed) out.push(`    ${p.policy}: ${kindsLine(p.kinds, p.runs, p.unfinished)} · median ${p.medianRounds} rounds`);
+    }
+    for (const n of sim.notes) out.push(`  note: ${n}`);
     out.push("");
   }
   return out.join("\n").trim();
@@ -223,7 +301,14 @@ export function previewText(texts: string[]): string {
   if (hud.clock) out.push(`  ${hud.date ?? hud.clock.day}, ${hud.clock.time}`);
   if (hud.location) out.push(`  📍 ${hud.location.name}${hud.money ? `  ·  ${hud.money}` : ""}`);
   for (const b of hud.bars) out.push(`  ${b.label}: ${b.text ? `${b.text} (${b.display})` : b.display}`);
-  if (hud.skills.length) out.push(`  Skills: ${hud.skills.map((x) => `${x.label} ${x.grade ?? x.display}`).join(", ")}`);
+  if (hud.skills.length) out.push(`  Skills: ${hud.skills.map((x) => `${x.label} ${x.grade ?? x.text ?? x.display}`).join(", ")}`);  // same as the sidebar
+  const pools = new Map<string, { label: string; left: number; stats: string[] }>();
+  for (const x of hud.skills) if (x.allocate) {
+    const p = pools.get(x.allocate.pool) ?? { label: x.allocate.poolLabel, left: x.allocate.left, stats: [] };
+    p.stats.push(x.label);
+    pools.set(x.allocate.pool, p);
+  }
+  for (const p of pools.values()) out.push(`  Spend ${p.label} (${p.left} now) with + beside: ${p.stats.join(", ")} — a sheet change, no story turn`);
   if (hud.items.length) out.push(`  Carrying: ${hud.items.map((i) => `${i.name}${i.count > 1 ? ` ×${i.count}` : ""}${i.use ? ` [${i.use.label}]` : ""}${i.bonus ? ` (${i.bonus})` : ""}`).join(", ")}`);
   if (hud.abilities.length) out.push(`  Abilities: ${hud.abilities.map((a) => `${a.name}${a.cost ? ` (${a.cost})` : ""}`).join(", ")}`);
   for (const q of hud.quests) out.push(`  Quest (${q.status}): ${q.name}${q.from ? ` — ${q.from}` : ""}${q.reward ? ` · reward ${q.reward}` : ""}${q.stakes ? ` · ${q.stakes}` : ""}`);

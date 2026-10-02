@@ -4,7 +4,7 @@
 
 import { seededRng } from "../dice.js";
 import { evalBool } from "../expr.js";
-import type { Intent, TurnBuilder } from "../resolve.js";
+import { placeKnown, placeLock, type Intent, type TurnBuilder } from "../resolve.js";
 import { emptyEffect, type DecideSpec, type Ruleset } from "../ruleset.js";
 import { itemName, makeEnv, personName, type GameState } from "../state.js";
 import { presentPeople, sceneWord } from "../world.js";
@@ -209,7 +209,7 @@ function relMove(t: TurnBuilder, who: string, love: number, fear: number) {
   const l = Math.round(love * unit(r, r.dating.love) * 10) / 10;
   const f = Math.round(fear * unit(r, r.dating.fear) * 10) / 10;
   if (l) t.push({ t: "rel", who, stat: r.dating.love, d: l, src: "action" });
-  if (f) t.push({ t: "rel", who, stat: r.dating.fear, d: f, src: "action" });
+  if (f && r.relStats[r.dating.fear]) t.push({ t: "rel", who, stat: r.dating.fear, d: f, src: "action" });
 }
 
 /** Reward a special move once, then taper repeats even after reopening. */
@@ -335,6 +335,8 @@ function money(r: Ruleset, s: GameState): number | null {
 function venueOk(r: Ruleset, s: GameState, who: string, v: VenueDef): boolean {
   if (v.romantic && !romanceOk(r, s, who)) return false;
   if (v.when && !evalBool(v.when, makeEnv(r, s, { target: who }), true)) return false;
+  // An outing can't take {{user}} somewhere the rules keep hidden or locked.
+  if (v.at && r.locations[v.at] && v.at !== s.location && (!placeKnown(r, s, v.at) || placeLock(r, s, v.at))) return false;
   const cash = money(r, s);
   return cash === null || cash >= v.cost;
 }

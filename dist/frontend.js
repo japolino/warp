@@ -288,6 +288,9 @@ var STYLES = `
 
 .warp-skill { display: grid; grid-template-columns: 1fr auto 44px; align-items: center; gap: 8px; }
 .warp-grade { font-weight: 700; min-width: 22px; text-align: center; }
+.warp-alloc { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; }
+.warp-btn-mini { padding: 0 6px; min-width: 20px; line-height: 18px; font-size: 12px; }
+.warp-alloc-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12px; }
 .warp-mini-track { height: 3px; background: var(--warp-fill); border-radius: 3px; overflow: hidden; }
 .warp-mini-fill { height: 100%; background: var(--warp-accent); }
 .warp-skill-tracks { display: flex; flex-direction: column; gap: 2px; }
@@ -441,6 +444,7 @@ var STYLES = `
 .warp-map-node.here circle { fill: var(--warp-accent); stroke: var(--warp-accent); }
 .warp-map-node.here text { fill: var(--warp-text); font-weight: 700; }
 .warp-map-node.reachable { cursor: pointer; }
+.warp-map-node.locked circle { stroke-dasharray: 3 3; opacity: .6; }
 .warp-map-node.reachable circle { stroke: var(--warp-accent); }
 .warp-map-node.reachable:hover circle, .warp-map-node.reachable:focus circle { fill: color-mix(in srgb, var(--warp-accent) 35%, transparent); }
 .warp-codex summary { cursor: pointer; padding: 3px 0; }
@@ -780,6 +784,34 @@ var PHASE_ICON = { morning: "\uD83C\uDF05", afternoon: "☀️", evening: "\uD83
 function pctTone(p) {
   return p >= 0.66 ? "good" : p >= 0.33 ? "warn" : "bad";
 }
+function allocLeft(h, pool, draft) {
+  const sk = h.skills.find((x) => x.allocate?.pool === pool);
+  if (!sk?.allocate)
+    return 0;
+  let left = sk.allocate.left;
+  for (const x of h.skills)
+    if (x.allocate?.pool === pool)
+      left -= (draft[x.id] ?? 0) * x.allocate.cost;
+  return left;
+}
+function renderAllocButtons(h, s, draft) {
+  const al = s.allocate;
+  if (!al)
+    return "";
+  const placed = draft[s.id] ?? 0;
+  const canAdd = allocLeft(h, al.pool, draft) >= al.cost && placed < al.room;
+  if (!placed && !canAdd)
+    return "";
+  return ` <span class="warp-alloc">${placed ? `<button class="warp-btn warp-btn-mini" data-alloc-sub="${esc(s.id)}" title="Take back a step" aria-label="Lower ${esc(s.label)}">−</button><b class="warp-tone-good">+${esc(placed * al.step)}</b>` : ""}${canAdd ? `<button class="warp-btn warp-btn-mini" data-alloc-add="${esc(s.id)}" title="${esc(`+${al.step} ${s.label} for ${al.cost} ${al.poolLabel}`)}" aria-label="Raise ${esc(s.label)}">+</button>` : ""}</span>`;
+}
+function renderAllocBar(h, draft) {
+  const pools = [...new Map(h.skills.filter((x) => x.allocate).map((x) => [x.allocate.pool, x.allocate])).values()];
+  const shown = pools.filter((p) => p.left > 0 || h.skills.some((x) => x.allocate?.pool === p.pool && draft[x.id]));
+  if (!shown.length)
+    return "";
+  const placed = Object.values(draft).some((n) => n > 0);
+  return `<div class="warp-alloc-bar">${shown.map((p) => `<span>${esc(p.poolLabel)}: <b>${esc(allocLeft(h, p.pool, draft))}</b> to spend</span>`).join(" ")}${placed ? ` <button class="warp-btn warp-btn-primary warp-btn-mini" data-alloc-confirm>Spend</button> <button class="warp-btn warp-btn-mini" data-alloc-clear>Clear</button>` : ""}</div>`;
+}
 function renderHud(h, opts) {
   const { head, parts } = hudParts(h, opts);
   return head + parts.map((p) => renderPart(p)).join("");
@@ -811,16 +843,16 @@ Click to adjust`)}">
     })() : ""}
     </div>`;
   }).join("");
-  const skills = h.skills.length ? part("skills", "Skills & attributes", h.skills.length, h.skills.map((s) => `
+  const skills = h.skills.length ? part("skills", "Skills & attributes", h.skills.length, renderAllocBar(h, opts.alloc ?? {}) + h.skills.map((s) => `
     <div class="warp-skill" title="${esc(`${s.label}: ${s.display}${s.text ? ` — ${s.text}` : ""}${s.practice !== null ? `
 Practice toward the next point: ${Math.round(s.practice * 100)}% — it grows every time you use it` : ""}`)}">
-      <span>${esc(s.label)}</span>
-      <span class="warp-grade ${s.grade ? `warp-tone-${pctTone(s.pct)}` : ""}">${esc(s.grade ?? s.display)}</span>
+      <span>${esc(s.label)}${renderAllocButtons(h, s, opts.alloc ?? {})}</span>
+      <span class="warp-grade ${s.grade ? `warp-tone-${pctTone(s.pct)}` : s.text ? `warp-tone-${s.tone}` : ""}">${esc(s.grade ?? s.text ?? s.display)}</span>
       <div class="warp-skill-tracks">
         <div class="warp-mini-track"><div class="warp-mini-fill" style="width:${(s.pct * 100).toFixed(1)}%"></div></div>
         ${s.practice !== null ? `<div class="warp-practice-track"><div class="warp-practice-fill" style="width:${(s.practice * 100).toFixed(1)}%"></div></div>` : ""}
       </div>
-    </div>`).join(""), !opts.compact) : null;
+    </div>`).join(""), !opts.compact || h.skills.some((x) => (x.allocate?.left ?? 0) > 0)) : null;
   const here = h.people.filter((p) => p.present);
   const away = h.people.filter((p) => !p.present);
   const personRow = (p) => `
@@ -839,7 +871,7 @@ Practice toward the next point: ${Math.round(s.practice * 100)}% — it grows ev
     </div>`;
   const people = part("people", here.length ? "People here" : "People", here.length, h.people.length ? `${here.length ? here.map(personRow).join("") : `<div class="warp-empty">No one you know is here.</div>`}${away.length ? `<details class="warp-away" data-section="people-away"><summary>Elsewhere · ${away.length}</summary><div class="warp-section-body">${away.map(personRow).join("")}</div></details>` : ""}` : `<div class="warp-empty">No one yet.</div>`, !opts.compact || here.length > 0);
   const body = h.body ? part("body", "Body", 0, `${h.body.map((b) => `<div class="warp-item"><span>${esc(b.label)}</span><span class="${b.covered ? "warp-dim" : ""}" title="${b.covered ? "Covered by clothing" : "Visible"}">${esc(b.text)}${b.covered ? " \uD83D\uDC55" : ""}</span></div>`).join("")}${h.transforms.map((t) => `<div class="warp-item"><span>✦ ${esc(t.label)}</span><span class="warp-dim">stage ${t.stage} / ${t.of}</span></div>`).join("")}`, false) : null;
-  const dues = h.dues.length ? part("bills", "Bills", h.dues.filter((d) => d.tone === "bad").length, h.dues.map((d) => `<div class="warp-item"><span>${esc(d.label)}${d.owed > 0 ? ` <span class="warp-dim">${esc(h.money?.replace(/[\d.,]+/, "") ?? "")}${esc(d.owed)}</span>` : ""}</span><span class="warp-tone-${d.tone}">${esc(d.text)}</span></div>`).join(""), !opts.compact || h.dues.some((d) => d.tone === "bad")) : null;
+  const dues = h.dues.length ? part("bills", "Bills", h.dues.filter((d) => d.tone === "bad").length, h.dues.map((d) => `<div class="warp-item"><span>${esc(d.label)}${d.owed > 0 ? ` <span class="warp-dim">${esc(d.owedText ?? d.owed)}</span>` : ""}</span><span class="warp-tone-${d.tone}">${esc(d.text)}</span></div>`).join(""), !opts.compact || h.dues.some((d) => d.tone === "bad")) : null;
   const family = h.family.length ? part("family", "Family", h.family.length, h.family.map((f) => `<div class="warp-item"><span>${esc(f.name)}</span><span class="warp-dim">${esc(f.text)}</span></div>`).join(""), !opts.compact) : null;
   const loose = h.items.filter((i) => !i.worn);
   const items = part("inventory", "Inventory", loose.length, loose.length ? loose.map((i) => `<div class="warp-item${i.use ? " warp-item-usable" : ""}">
@@ -912,7 +944,7 @@ function perkCard(p, take) {
         ${p.notes.length ? `<div class="warp-perk-notes">${p.notes.map((n) => `<span>${esc(n)}</span>`).join("")}</div>` : ""}
         ${p.drawback ? `<div class="warp-perk-drawback">⚠ ${esc(p.drawback)}</div>` : ""}
       </div>
-      ${p.owned ? `<span class="warp-tone-good" aria-label="taken">✓</span>` : take && !p.blocker ? `<button class="warp-btn warp-mini${p.offered ? " warp-btn-primary" : ""}" data-buy-perk="${esc(p.id)}">${p.offered ? "Choose" : `Take · ${esc(p.cost)} pt`}</button>` : `<span class="warp-dim" title="${esc(p.blocker ?? "")}">${esc(p.cost)} pt</span>`}
+      ${p.owned ? `<span class="warp-tone-good" aria-label="taken">✓</span>` : take && !p.blocker ? `<button class="warp-btn warp-mini${p.offered ? " warp-btn-primary" : ""}" data-buy-perk="${esc(p.id)}">${p.offered ? "Choose" : `Take · ${esc(p.cost)} ${esc(p.pointsLabel ?? "pt")}`}</button>` : `<span class="warp-dim" title="${esc(p.blocker ?? "")}">${esc(p.cost)} ${esc(p.pointsLabel ?? "pt")}</span>`}
     </div>`;
 }
 function renderPerks(h, compact) {
@@ -980,10 +1012,10 @@ function renderMapView(m) {
     return p && q ? `<line x1="${p.x}" y1="${p.y}" x2="${q.x}" y2="${q.y}" class="warp-map-edge" />` : "";
   }).join("");
   const nodes = m.nodes.map((n) => `
-    <g class="warp-map-node${n.here ? " here" : ""}${n.reachable ? " reachable" : ""}" ${n.reachable ? `data-go="${esc(n.id)}" tabindex="0" role="button" aria-label="Go to ${esc(n.name)}"` : ""}>
-      <title>${esc(n.reachable ? `Go to ${n.name}` : n.name)}</title>
+    <g class="warp-map-node${n.here ? " here" : ""}${n.reachable ? " reachable" : ""}${n.locked ? " locked" : ""}" ${n.reachable ? `data-go="${esc(n.id)}" tabindex="0" role="button" aria-label="Go to ${esc(n.name)}"` : ""}>
+      <title>${esc(n.reachable ? `Go to ${n.name}` : n.locked ? `${n.name} — \uD83D\uDD12 ${n.locked}` : n.name)}</title>
       <circle cx="${n.x}" cy="${n.y}" r="${n.here ? 13 : 10}" />
-      <text x="${n.x}" y="${n.y + 26}" text-anchor="middle">${esc(n.name)}</text>
+      <text x="${n.x}" y="${n.y + 26}" text-anchor="middle">${n.locked ? "\uD83D\uDD12 " : ""}${esc(n.name)}</text>
       ${n.people.length ? `<text x="${n.x}" y="${n.y + 40}" text-anchor="middle" class="warp-map-people">${esc(n.people.join(", "))}</text>` : ""}
       ${n.indoors ? `<text x="${n.x}" y="${n.y + 4}" text-anchor="middle" class="warp-map-icon">⌂</text>` : ""}
     </g>`).join("");
@@ -12583,6 +12615,7 @@ function setup(ctx) {
   let bDraft = emptyDraft();
   let busy = { chatId: "", on: false, label: "" };
   let editingBar = null;
+  let allocDraft = {};
   let drawerView = "sheet";
   let dateCat = null;
   let dgPick = null;
@@ -12931,7 +12964,7 @@ function setup(ctx) {
     rememberSections(dockRoot);
     const kept = dockRoot.scrollTop;
     if (state?.hud) {
-      const { head, parts } = hudParts(state.hud, { editing: editingBar, compact: true, map: state.map });
+      const { head, parts } = hudParts(state.hud, { editing: editingBar, compact: true, map: state.map, alloc: allocDraft });
       const mine = parts.filter((p) => panels.inMain(p.id));
       dockRoot.innerHTML = historyNotice() + head + mine.map((p) => renderPart(p, true)).join("");
       panels.render(parts);
@@ -12979,7 +13012,7 @@ function setup(ctx) {
     </div>`;
     let body = "";
     if (drawerView === "sheet") {
-      body = state?.hud ? renderHud(state.hud, { editing: editingBar, compact: false, map: state.map }) : renderRulesetCard(status, hasChat);
+      body = state?.hud ? renderHud(state.hud, { editing: editingBar, compact: false, map: state.map, alloc: allocDraft }) : renderRulesetCard(status, hasChat);
     } else if (drawerView === "date") {
       body = renderDate(state?.date ?? null, { cat: dateCat, busy: busy.on && busy.chatId === state?.chatId });
     } else if (drawerView === "dungeon") {
@@ -13686,6 +13719,31 @@ function setup(ctx) {
       }, 4000);
       return;
     }
+    const allocAdd = t.closest("[data-alloc-add]");
+    const allocSub = t.closest("[data-alloc-sub]");
+    if (allocAdd || allocSub) {
+      const id = (allocAdd ?? allocSub).dataset[allocAdd ? "allocAdd" : "allocSub"];
+      const n = Math.max(0, (allocDraft[id] ?? 0) + (allocAdd ? 1 : -1));
+      allocDraft = { ...allocDraft, [id]: n };
+      if (!n)
+        delete allocDraft[id];
+      renderDock();
+      renderDrawer();
+      return;
+    }
+    if (t.closest("[data-alloc-clear]")) {
+      allocDraft = {};
+      renderDock();
+      renderDrawer();
+      return;
+    }
+    if (t.closest("[data-alloc-confirm]")) {
+      const cid = chatId();
+      if (cid && Object.keys(allocDraft).length)
+        send({ type: "allocate", chatId: cid, spend: allocDraft });
+      allocDraft = {};
+      return;
+    }
     const perk = t.closest("[data-buy-perk]");
     if (perk) {
       const cid = chatId();
@@ -14220,6 +14278,7 @@ function setup(ctx) {
         if (state?.chatId !== m.chatId) {
           editingBar = null;
           lastBars = new Map;
+          allocDraft = {};
         }
         const entered = !state?.dungeon && !!m.dungeon && state?.chatId === m.chatId;
         if (!m.dungeon?.battle)

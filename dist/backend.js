@@ -973,6 +973,10 @@ function normDungeons(raw, c, known) {
     if (typeof playerRaw.sprite === "string")
       player.sprite = playerRaw.sprite;
     const when = r.when !== undefined ? c.expr(r.when, `${w} › when`) : undefined;
+    const requires = normRequires(r.requires ?? r.needs, `${w} › requires`, c, known);
+    const whyNot = typeof r.why_not === "string" ? r.why_not : typeof r.locked === "string" ? r.locked : undefined;
+    if (whyNot && !requires.length)
+      c.warn(`${w} › why_not`, "only shows on an entrance locked by `requires:` — add `requires:`");
     if (r.boons !== undefined && typeof r.boons !== "boolean")
       c.warn(`${w} › boons`, "use true or false");
     out[id] = {
@@ -981,6 +985,7 @@ function normDungeons(raw, c, known) {
       ...typeof r.desc === "string" ? { desc: r.desc } : {},
       at: list(r.at ?? r.entrance),
       ...when !== undefined ? { when: String(when) } : {},
+      ...requires.length ? { requires, ...whyNot ? { whyNot } : {} } : {},
       theme,
       size: Math.max(3, Math.min(9, Math.round(c.num(r.size, `${w} › size`, 5)))),
       floors: Math.max(0, Math.round(c.num(r.floors ?? r.depth, `${w} › floors`, 0))),
@@ -1339,7 +1344,15 @@ function normDating(raw, c, rel, people) {
   const r = isObj(raw) ? raw : {};
   def.enabled = true;
   def.romance = r.romance !== false;
+  if (r.fear === false)
+    def.fear = "";
+  else if (r.fear !== undefined && typeof r.fear !== "string")
+    c.warn("Dating › fear", "use a relationship stat id (made if missing) or `false` for no fear");
+  if (r.love !== undefined && typeof r.love !== "string")
+    c.warn("Dating › love", "use a relationship stat id (made if missing)");
   for (const k of ["love", "fear"]) {
+    if (k === "fear" && r.fear === false)
+      continue;
     const id = typeof r[k] === "string" ? String(r[k]) : k;
     def[k] = id;
     if (!rel.stats[id]) {
@@ -1448,6 +1461,171 @@ var init_defs2 = __esm(() => {
   REACTION_KEYS = { loves: "love", love: "love", likes: "like", like: "like", neutral: "neutral", dislikes: "dislike", dislike: "dislike", hates: "hate", hate: "hate" };
 });
 
+// src/engine/outcomes.ts
+function parseOutcomeKind(v) {
+  return typeof v === "string" ? KIND_WORDS[v.trim().toLowerCase()] ?? null : null;
+}
+function encounterOutcomeIds(enc) {
+  const ids = new Set;
+  for (const e of enc.endWhen)
+    ids.add(e.outcome);
+  for (const o of Object.keys(enc.outcomes))
+    ids.add(o);
+  if (enc.momentum) {
+    ids.add(enc.momentum.win);
+    ids.add(enc.momentum.lose);
+  }
+  for (const a of Object.values(enc.actions))
+    for (const fx of [a.effects, ...Object.values(a.outcomes)])
+      if (fx?.end)
+        ids.add(fx.end);
+  for (const o of enc.foeMoves?.options ?? [])
+    if (o.effect?.end)
+      ids.add(o.effect.end);
+  ids.add(enc.timeoutOutcome);
+  return [...ids];
+}
+function atomVerdict(enc, stats, atom) {
+  const t = atom.trim().replace(/^\(+/, "").replace(/\)+$/, "").trim();
+  let m = /^(foe\.)?([a-z_]\w*)\s*(<=|>=|<|>|==)\s*(-?\d+(?:\.\d+)?)$/i.exec(t);
+  let foe, id, op;
+  if (m) {
+    foe = !!m[1];
+    id = m[2];
+    op = m[3];
+  } else {
+    m = /^(-?\d+(?:\.\d+)?)\s*(<=|>=|<|>|==)\s*(foe\.)?([a-z_]\w*)$/i.exec(t);
+    if (!m)
+      return;
+    foe = !!m[3];
+    id = m[4];
+    op = { "<=": ">=", ">=": "<=", "<": ">", ">": "<", "==": "==" }[m[2]];
+  }
+  const dir = op.startsWith("<") ? "down" : op.startsWith(">") ? "up" : null;
+  if (foe) {
+    const fs = enc.foe.stats.find((x) => x.id === id);
+    if (!fs)
+      return;
+    if (dir && fs.good !== "none" && dir === "down" === (fs.good === "low"))
+      return "win";
+    return null;
+  }
+  const def = stats?.[id];
+  if (!def)
+    return;
+  if (dir && def.good !== "none" && dir === "down" === (def.good === "high"))
+    return "loss";
+  return null;
+}
+function endWhenVerdict(enc, stats, outcome) {
+  const votes = new Set;
+  for (const e of enc.endWhen) {
+    if (e.outcome !== outcome)
+      continue;
+    for (const atom of e.when.split(/\s+(?:or|and)\s+|\|\||&&/i)) {
+      const v = atomVerdict(enc, stats, atom);
+      if (v === undefined)
+        continue;
+      votes.add(v ?? "unsure");
+    }
+  }
+  if (votes.size === 1 && votes.has("win"))
+    return { v: "win", basis: "foe" };
+  if (votes.size === 1 && votes.has("loss"))
+    return { v: "loss", basis: "player" };
+  return { v: null, basis: "default" };
+}
+function moveVerdict(enc, outcome) {
+  let good = false, bad = false;
+  for (const a of Object.values(enc.actions)) {
+    if (!a.check)
+      continue;
+    for (const [tier, fx] of Object.entries(a.outcomes)) {
+      if (fx?.end !== outcome)
+        continue;
+      if (tier === "fail" || tier === "crit_fail")
+        bad = true;
+      else
+        good = true;
+    }
+  }
+  return good && !bad ? "win" : bad && !good ? "loss" : null;
+}
+function goodKind(outcome) {
+  return ESCAPE.test(outcome) ? "escaped" : CONCESSION.test(outcome) ? "conceded" : "won";
+}
+function inferOutcomeKind(enc, outcome, stats, explicit) {
+  const told = explicit?.[outcome];
+  if (told)
+    return { kind: told, basis: "author" };
+  if (enc.momentum && outcome === enc.momentum.lose)
+    return { kind: "lost", basis: "momentum" };
+  if (enc.momentum && outcome === enc.momentum.win)
+    return { kind: "won", basis: "momentum" };
+  const ew = endWhenVerdict(enc, stats, outcome);
+  if (ew.v === "win")
+    return { kind: "won", basis: ew.basis };
+  if (ew.v === "loss")
+    return { kind: "lost", basis: ew.basis };
+  const mv = moveVerdict(enc, outcome);
+  if (mv === "loss")
+    return { kind: "lost", basis: "move" };
+  if (mv === "win")
+    return { kind: goodKind(outcome), basis: "move" };
+  if (FAILURE.test(outcome))
+    return { kind: "lost", basis: "name" };
+  if (ESCAPE.test(outcome))
+    return { kind: "escaped", basis: "name" };
+  if (CONCESSION.test(outcome))
+    return { kind: "conceded", basis: "name" };
+  const reached = enc.endWhen.some((e) => e.outcome === outcome) || mv !== null || Object.values(enc.actions).some((a) => a.effects?.end === outcome) || (enc.foeMoves?.options ?? []).some((o) => o.effect?.end === outcome);
+  if (outcome === enc.timeoutOutcome && !reached)
+    return { kind: "escaped", basis: "timeout" };
+  return { kind: "won", basis: "default" };
+}
+function classifyOutcomes(enc, stats, explicit) {
+  const out = {};
+  for (const id of new Set([...encounterOutcomeIds(enc), ...Object.keys(explicit ?? {})]))
+    out[id] = inferOutcomeKind(enc, id, stats, explicit).kind;
+  return out;
+}
+function outcomeKind(enc, outcome) {
+  if (!enc)
+    return FAILURE.test(outcome) ? "lost" : goodKind(outcome);
+  return enc.outcomeKinds?.[outcome] ?? enc.authoredKinds?.[outcome] ?? inferOutcomeKind(enc, outcome).kind;
+}
+function tallyKinds(enc, outcomes) {
+  const t = { won: 0, escaped: 0, conceded: 0, lost: 0 };
+  for (const [o, n] of Object.entries(outcomes))
+    t[outcomeKind(enc, o)] += n;
+  return t;
+}
+var KIND_WORDS, FAILURE, ESCAPE, CONCESSION;
+var init_outcomes = __esm(() => {
+  KIND_WORDS = {
+    won: "won",
+    win: "won",
+    victory: "won",
+    success: "won",
+    escaped: "escaped",
+    escape: "escaped",
+    fled: "escaped",
+    flee: "escaped",
+    conceded: "conceded",
+    concede: "conceded",
+    concession: "conceded",
+    paid: "conceded",
+    lost: "lost",
+    lose: "lost",
+    loss: "lost",
+    defeat: "lost",
+    defeated: "lost"
+  };
+  FAILURE = /^(lost|lose|loss|beaten|defeat(ed)?|overwhelmed|caught|captured|ko|knocked_out|downed|fallen|slain|killed|dead|died|wiped(_out)?|fled_in_panic|broken|failed?)$/i;
+  ESCAPE = /escap|fled|flee|got_?away|get_?away|ran_?(away|off)|run_?away|slip(ped)?|evade|evaded|evasion|retreat|withdr[ae]w|bolted|hid$|hidden|lost_them|outran/i;
+  CONCESSION = /paid|pay|robbed|bribe|surrender|gave_?in|submit|walked|walk_away|left|gave_up|yield|conced/i;
+});
+
 // src/engine/ruleset.ts
 function titleCase(id) {
   return id.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -1542,20 +1720,94 @@ function minutesOf(v, where, c, fallback) {
   }
   return c.num(v, where, fallback);
 }
+function amount(v, where, c) {
+  if (typeof v === "string" && !Number.isFinite(Number(v)) && percentOf(v) === null) {
+    const x = c.expr(v, where);
+    return typeof x === "string" ? x : typeof x === "number" ? x : 0;
+  }
+  return c.num(v, where, 0);
+}
 function armorMap(v, where, c) {
   if (v === undefined || v === null || v === false)
     return {};
   if (!isObj(v)) {
-    const n = c.num(v, where, 0);
+    const n = amount(v, where, c);
     return n ? { _: n } : {};
   }
   const out = {};
   for (const [k, n] of Object.entries(v)) {
-    const x = c.num(n, `${where} › ${k}`, 0);
+    const x = amount(n, `${where} › ${k}`, c);
     if (x)
       out[k] = x;
   }
   return out;
+}
+function perHourOf(v, where, c) {
+  if (typeof v === "string" && !Number.isFinite(Number(v))) {
+    if (percentOf(v) !== null)
+      return { perHour: 0, perHourExpr: v.trim() };
+    const x = c.expr(v, where);
+    return typeof x === "string" ? { perHour: 0, perHourExpr: x } : { perHour: typeof x === "number" ? x : 0 };
+  }
+  return { perHour: c.num(v, where, 0) };
+}
+function normCurrency(v, c) {
+  if (v === undefined || v === null)
+    return { currency: "$" };
+  if (typeof v === "string" || typeof v === "number") {
+    const t = String(v);
+    const at = t.indexOf("{n}");
+    if (at < 0)
+      return { currency: t };
+    const before = t.slice(0, at), after = t.slice(at + 3);
+    if (before && after)
+      c.warn("HUD › currency", `"${t}" — put the sign on one side of {n} only; using "${after}" after the amount`);
+    return after ? { currency: after, currencyAfter: true } : { currency: before };
+  }
+  if (isObj(v)) {
+    const known = new Set(["symbol", "sign", "after"]);
+    for (const k of Object.keys(v))
+      if (!known.has(k))
+        c.warn(`HUD › currency › ${k}`, "currency takes `symbol:` and `after: true`");
+    const sym = v.symbol ?? v.sign;
+    if (typeof sym !== "string" && typeof sym !== "number") {
+      c.warn("HUD › currency", "needs `symbol:` (e.g. `{ symbol: d, after: true }`) — using $");
+      return { currency: "$" };
+    }
+    if (v.after !== undefined && typeof v.after !== "boolean")
+      c.warn("HUD › currency › after", "should be true or false");
+    return v.after === true ? { currency: String(sym), currencyAfter: true } : { currency: String(sym) };
+  }
+  c.warn("HUD › currency", `expected a sign like "$", "{n}d" or { symbol: d, after: true } — using $`);
+  return { currency: "$" };
+}
+function normAllocate(v, where, c) {
+  if (typeof v === "string")
+    return { with: v, step: 1, cost: 1 };
+  if (!isObj(v)) {
+    c.warn(where, "expected `{ with: stat_points, step: 1 }` (the stat the points come from)");
+    return;
+  }
+  const known = new Set(["with", "from", "pool", "step", "cost"]);
+  for (const k of Object.keys(v))
+    if (!known.has(k))
+      c.warn(`${where} › ${k}`, "allocate takes `with:` (the points stat), `step:` and `cost:`");
+  const pool = v.with ?? v.from ?? v.pool;
+  if (typeof pool !== "string" || !pool) {
+    c.warn(where, "needs `with:` — the stat the points come from (e.g. stat_points)");
+    return;
+  }
+  let step = c.num(v.step, `${where} › step`, 1);
+  if (!(step > 0)) {
+    c.warn(`${where} › step`, "should be above 0 — using 1");
+    step = 1;
+  }
+  let cost = c.num(v.cost, `${where} › cost`, 1);
+  if (!(cost > 0)) {
+    c.warn(`${where} › cost`, "should be above 0 — using 1");
+    cost = 1;
+  }
+  return { with: pool, step, cost };
 }
 function normGate(r, where, c) {
   const g = {};
@@ -1651,7 +1903,28 @@ function normStat(id, raw, where, c, forRel = false) {
     narrator = Math.max(1, Math.round((max - min) / 10));
   else if (r.narrator !== undefined && r.narrator !== false)
     narrator = Math.abs(c.num(r.narrator, `${where} › narrator`, 0));
-  const start = c.num(r.start ?? r.value, `${where} › start`, good === "low" ? min : k === "meter" ? max : min);
+  let startRaw = r.start ?? r.value;
+  let startExpr;
+  if (typeof startRaw === "string" && startRaw.trim() && !Number.isFinite(Number(startRaw))) {
+    const word = startRaw.trim().toLowerCase();
+    const pct = percentOf(startRaw);
+    if (word === "full" || word === "max") {
+      startExpr = maxExpr;
+      startRaw = max;
+    } else if (pct !== null) {
+      if (pct < 0 || pct > 1)
+        c.warn(`${where} › start`, `"${startRaw}" — a share of the max should be 0% to 100%`);
+      const p = Math.max(0, Math.min(1, pct));
+      startExpr = maxExpr ? `(${maxExpr}) * ${p}` : undefined;
+      startRaw = min + (max - min) * p;
+    } else {
+      const e = c.expr(startRaw, `${where} › start`);
+      if (typeof e === "string")
+        startExpr = e;
+      startRaw = undefined;
+    }
+  }
+  const start = c.num(startRaw, `${where} › start`, good === "low" ? min : k === "meter" ? max : min);
   const gate = narrator > 0 ? normGate(r, where, c) : undefined;
   const def = {
     id,
@@ -1660,10 +1933,12 @@ function normStat(id, raw, where, c, forRel = false) {
     min,
     max,
     maxExpr,
-    start: Math.min(max, Math.max(min, start)),
+    start: maxExpr ? Math.max(min, start) : Math.min(max, Math.max(min, start)),
+    ...startExpr !== undefined ? { startExpr } : {},
     good,
-    perHour: c.num(r.per_hour ?? r.perHour, `${where} › per_hour`, 0),
+    ...perHourOf(r.per_hour ?? r.perHour, `${where} › per_hour`, c),
     show: k === "hidden" ? "hidden" : show,
+    ...r.show !== undefined ? { showSet: true } : {},
     narrator,
     ...gate ? { gate } : {},
     growth: 0,
@@ -1674,6 +1949,11 @@ function normStat(id, raw, where, c, forRel = false) {
   };
   if (Array.isArray(r.grades) && r.grades.length)
     def.grades = r.grades.map(String);
+  if (r.allocate !== undefined && r.allocate !== false) {
+    const al = normAllocate(r.allocate, `${where} › allocate`, c);
+    if (al)
+      def.allocate = al;
+  }
   const grows = k === "skill" || k === "attribute";
   def.growth = r.growth === false ? 0 : r.growth === true ? 1 : r.growth !== undefined ? Math.max(0, c.num(r.growth, `${where} › growth`, grows ? 1 : 0)) : grows ? 1 : 0;
   return def;
@@ -1745,10 +2025,12 @@ function normDecide(raw, where, c, known, minOptions = 2) {
       const r = isObj(o) ? { ...o } : typeof o === "string" ? { desc: o } : {};
       const desc = typeof r.desc === "string" ? r.desc : typeof r.label === "string" ? r.label : titleCase(oid);
       const weight = c.num(r.weight, `${w} › ${oid} › weight`, 1);
+      const when = r.when !== undefined ? c.expr(r.when, `${w} › ${oid} › when`) : undefined;
       delete r.desc;
       delete r.label;
       delete r.weight;
-      options.push({ id: oid, desc, weight: Math.max(0, weight), effect: normEffect(r, `${w} › ${oid}`, c, known) });
+      delete r.when;
+      options.push({ id: oid, desc, weight: Math.max(0, weight), effect: normEffect(r, `${w} › ${oid}`, c, known), ...when !== undefined ? { when: String(when) } : {} });
     }
     if (options.length < minOptions) {
       c.warn(w, minOptions > 1 ? "decide needs at least two options" : "needs at least one option");
@@ -2106,6 +2388,22 @@ function normEffect(raw, where, c, known) {
   }
   return e;
 }
+function critOf(v, where, c, off) {
+  if (v === undefined || v === null)
+    return {};
+  if (off) {
+    c.warn(where, "`crits: false` turns critical results off, so `crit:` does nothing");
+    return {};
+  }
+  if (typeof v === "string" && percentOf(v) !== null)
+    return { crit: percentOf(v) * 100 };
+  const x = c.expr(v, where);
+  if (typeof x === "number" && (x < 0 || x > 100)) {
+    c.warn(where, `crit is a chance in percent (0–100), not ${x} — using ${Math.max(0, Math.min(100, x))}`);
+    return { crit: Math.max(0, Math.min(100, x)) };
+  }
+  return x === undefined ? {} : { crit: x };
+}
 function normCheck(raw, where, c) {
   if (!isObj(raw)) {
     c.warn(where, "check should be a map, e.g. `chance: 40 + athletics / 10`");
@@ -2139,6 +2437,7 @@ function normCheck(raw, where, c) {
     partialMargin: c.num(raw.partial ?? raw.partial_margin, `${where} › partial`, 0),
     label: typeof raw.label === "string" ? raw.label : typeof raw.skill === "string" ? raw.skill : undefined,
     crits: raw.crits !== false,
+    ...critOf(raw.crit ?? raw.crit_chance, `${where} › crit`, c, raw.crits === false),
     ...raw.game !== undefined || raw.games !== undefined || raw.minigame !== undefined ? { game: normGames(raw.game ?? raw.games ?? raw.minigame, `${where} › game`, c) } : {}
   };
 }
@@ -2190,6 +2489,24 @@ function normGamble(raw, where, c, known) {
     broke: normEffect(r.broke ?? r.bust, `${where} › broke`, c, known)
   };
 }
+function editDistance(a, b) {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1;i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1;j <= b.length; j++)
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+function warnUnknownKeys(raw, keys, where, c) {
+  for (const k of Object.keys(raw)) {
+    if (keys.has(k) || TIER_KEYS[k])
+      continue;
+    const near = [...keys, ...Object.keys(TIER_KEYS)].find((x) => editDistance(x, k.toLowerCase()) <= (k.length > 4 ? 2 : 1));
+    c.warn(`${where} › ${k}`, `"${k}" isn't something this block reads, so it does nothing${near ? ` — did you mean "${near}"?` : ""} (it reads ${[...keys].slice(0, 12).join(", ")}…)`);
+  }
+}
 function normAction(id, raw, where, c, known, order) {
   if (typeof raw === "string")
     raw = { label: raw };
@@ -2239,6 +2556,7 @@ function normAction(id, raw, where, c, known, order) {
     c.warn(where, "a gambling table doesn't take a check — the cards (or the wheel) decide");
   if (gamble && !params.some((p) => p.id === "stake"))
     params.unshift({ id: "stake", label: "Stake", options: Object.fromEntries(gamble.stakes.map((x) => [String(x), x])), default: String(gamble.stakes[0]) });
+  warnUnknownKeys(raw, ACTION_KEYS, where, c);
   const at = raw.at === undefined ? [] : Array.isArray(raw.at) ? raw.at.map(String) : [String(raw.at)];
   const own = raw.when !== undefined ? c.expr(raw.when, `${where} › when`) : undefined;
   const requires = normRequires(raw.requires ?? raw.needs, `${where} › requires`, c, known);
@@ -2262,7 +2580,8 @@ function normAction(id, raw, where, c, known, order) {
     params,
     tags: Array.isArray(raw.tags) ? raw.tags.map((t) => String(t).toLowerCase()) : [],
     order: typeof raw.order === "number" ? raw.order : order,
-    perPerson: raw.per_person === true || raw.with === "person" || raw.with === "people",
+    perPerson: raw.per_person === true || raw.with === "person" || raw.with === "people" || raw.targets !== undefined,
+    ...raw.targets !== undefined ? { targets: list(raw.targets) } : {},
     requires,
     showLocked: raw.show_locked === true || raw.show_locked !== false && requires.length > 0,
     ...gamble ? { gamble } : {}
@@ -2463,7 +2782,7 @@ function applyItemUse(it, r, w, c, known, drafted) {
         c.warn(`${w} › bonus › ${stat}`, `"${stat}" isn't a declared stat`);
         continue;
       }
-      it.bonus[stat] = c.num(v, `${w} › bonus › ${stat}`, 0);
+      it.bonus[stat] = amount(v, `${w} › bonus › ${stat}`, c);
     }
   }
   const u = r.use;
@@ -2489,7 +2808,12 @@ function applyItemUse(it, r, w, c, known, drafted) {
     it.drafted = true;
 }
 function condTiming(r, w, c, known) {
-  const every = String(r.every ?? "round").toLowerCase();
+  const everyList = (Array.isArray(r.every) ? r.every.map(String) : String(r.every ?? "round").split(/[\s,+&]+|\band\b/)).map((x) => x.trim().toLowerCase()).filter(Boolean);
+  const every = everyList.includes("both") || everyList.includes("round") && everyList.includes("hour") ? "both" : everyList.length === 1 ? everyList[0] : "?";
+  if (!["round", "turn", "hour", "both"].includes(every))
+    c.warn(`${w} › every`, `"${everyList.join(", ")}" — use round, turn, hour, or [round, hour] (each round in a fight, each hour outside); using round`);
+  if (every === "both" && r.rounds !== undefined)
+    c.warn(`${w} › rounds`, "a status that ticks [round, hour] lasts by `lasts:` (minutes) in and out of fights; `rounds:` is ignored");
   const dotRaw = r.dot ?? r.per_round ?? r.damage;
   const dot = dotRaw !== undefined ? c.expr(diceExpr(dotRaw), `${w} › dot`) : undefined;
   const heal = r.heal !== undefined ? c.expr(diceExpr(r.heal), `${w} › heal`) : undefined;
@@ -2497,11 +2821,11 @@ function condTiming(r, w, c, known) {
   const skip = skipRaw === true ? 100 : skipRaw !== undefined && skipRaw !== false ? c.expr(skipRaw, `${w} › skip`) : undefined;
   const lastsRaw = r.lasts ?? r.minutes ?? r.duration;
   return {
-    ...r.rounds !== undefined ? { rounds: Math.max(1, Math.round(c.num(r.rounds, `${w} › rounds`, 1))) } : {},
+    ...r.rounds !== undefined && every !== "both" ? { rounds: Math.max(1, Math.round(c.num(r.rounds, `${w} › rounds`, 1))) } : {},
     ...lastsRaw !== undefined ? { lasts: Math.max(1, minutesOf(lastsRaw, `${w} › lasts`, c, 60)) } : {},
     ...dot !== undefined ? { dot } : heal !== undefined ? { dot: typeof heal === "number" ? -heal : `-(${heal})` } : {},
     ...typeof r.stat === "string" ? { stat: r.stat } : {},
-    every: every === "turn" ? "turn" : every === "hour" ? "hour" : "round",
+    every: every === "turn" ? "turn" : every === "hour" ? "hour" : every === "both" ? "both" : "round",
     ...skip !== undefined ? { skip } : {},
     armor: armorMap(r.armor, `${w} › armor`, c),
     tick: normEffect(r.tick ?? r.each, `${w} › tick`, c, known)
@@ -2517,6 +2841,19 @@ function statNums(v, where, c, known) {
       continue;
     }
     out[stat] = c.num(n, `${where} › ${stat}`, 0);
+  }
+  return out;
+}
+function statAmounts(v, where, c, known) {
+  const out = {};
+  if (!isObj(v))
+    return out;
+  for (const [stat, n] of Object.entries(v)) {
+    if (!known.stats.has(stat)) {
+      c.warn(`${where} › ${stat}`, `"${stat}" isn't a declared stat`);
+      continue;
+    }
+    out[stat] = amount(n, `${where} › ${stat}`, c);
   }
   return out;
 }
@@ -2561,13 +2898,14 @@ function normPerkRules(v, where, c, known) {
         continue;
       }
       for (const [stat, n] of Object.entries(x)) {
-        if (!known.stats.has(stat)) {
-          c.warn(`${w} › ${stat}`, `"${stat}" isn't a declared stat`);
+        const rel = !known.stats.has(stat) && !!known.rel?.has(stat);
+        if (!known.stats.has(stat) && !rel) {
+          c.warn(`${w} › ${stat}`, `"${stat}" isn't a declared stat or relationship stat`);
           continue;
         }
         const p = pct(n, `${w} › ${stat}`, c);
         if (p !== null && p !== 0)
-          out.push({ kind: k, stat, pct: Math.max(-1, p) });
+          out.push({ kind: k, stat, pct: Math.max(-1, p), ...rel ? { rel: true } : {} });
       }
     } else if (k === "pierce") {
       const r = isObj(x) ? x : { amount: x };
@@ -2596,6 +2934,14 @@ function normPerkRules(v, where, c, known) {
       c.warn(w, "isn't a perk rule (reroll, soften, gains, losses, pierce, game)");
   }
   return out;
+}
+function perkOffer(v, where, c) {
+  if (v === undefined || v === "random" || v === false)
+    return {};
+  if (v === "always" || v === true)
+    return { always: true };
+  c.warn(where, "use `always` (offered outside the random pick) or `random`");
+  return {};
 }
 function normPerk(id, p, w, c, known, abilities) {
   const req = p.requires !== undefined ? c.expr(p.requires, `${w} › requires`) : undefined;
@@ -2631,7 +2977,9 @@ function normPerk(id, p, w, c, known, abilities) {
     ...typeof p.narrator === "string" ? { narrator: p.narrator } : {},
     excludes: list(p.excludes),
     weight: Math.max(0, c.num(p.weight, `${w} › weight`, 1)),
-    ...drawback ? { drawback } : {}
+    ...drawback ? { drawback } : {},
+    ...perkOffer(p.offer, `${w} › offer`, c),
+    ...p.points !== undefined ? typeof p.points === "string" ? { points: p.points } : (c.warn(`${w} › points`, "expected the stat that pays for it, like `points: class_points`"), {}) : {}
   };
 }
 function normAbilities(raw, c, known) {
@@ -2655,7 +3003,7 @@ function normAbilities(raw, c, known) {
       else if (!action.success)
         action.success = rest;
       else
-        c.warn(w, `${Object.keys(rest).join(", ")}: put these under success: or fail: when the ability rolls`);
+        c.warn(w, `${Object.keys(rest).join(", ")}: put these under success: or fail: when the ability rolls (or under effects: to apply them whatever the roll)`);
     }
     const name = typeof a.name === "string" ? a.name : typeof a.label === "string" ? a.label : titleCase(id);
     if (!action.label)
@@ -2678,7 +3026,7 @@ function normAbilities(raw, c, known) {
   }
   return out;
 }
-function normEncounter(id, raw, c, known) {
+function normEncounter(id, raw, c, known, statDefs) {
   const w = `Encounters › ${id}`;
   if (!isObj(raw)) {
     c.warn(w, "expected an encounter definition");
@@ -2688,14 +3036,18 @@ function normEncounter(id, raw, c, known) {
   const stats = [];
   for (const [sid, s] of Object.entries(isObj(foeRaw.stats) ? foeRaw.stats : {})) {
     const r = isObj(s) ? s : { start: s };
-    const start = c.num(r.start, `${w} › foe › ${sid}`, 10);
+    const startExpr = foeFormula(r.start, `${w} › foe › ${sid}`, c);
+    const maxExpr = foeFormula(r.max, `${w} › foe › ${sid} › max`, c);
+    const start = startExpr !== undefined || isFormulaText(r.start) ? 10 : c.num(r.start, `${w} › foe › ${sid}`, 10);
     const goodRaw = String(r.good ?? "low").toLowerCase();
     stats.push({
       id: sid,
       label: typeof r.label === "string" ? r.label : titleCase(sid),
       start,
-      max: c.num(r.max, `${w} › foe › ${sid} › max`, Math.max(start, 1)),
-      good: goodRaw === "high" ? "high" : goodRaw === "none" ? "none" : "low"
+      max: maxExpr !== undefined || isFormulaText(r.max) ? Math.max(start, 1) : c.num(r.max, `${w} › foe › ${sid} › max`, Math.max(start, 1)),
+      good: goodRaw === "high" ? "high" : goodRaw === "none" ? "none" : "low",
+      ...startExpr !== undefined ? { startExpr } : {},
+      ...maxExpr !== undefined ? { maxExpr } : startExpr !== undefined && (r.max === undefined || r.max === null || r.max === "") ? { maxFromStart: true } : {}
     });
   }
   const actions = {};
@@ -2703,6 +3055,17 @@ function normEncounter(id, raw, c, known) {
   let i = 0;
   for (const [aid, a] of Object.entries(isObj(raw.actions) ? raw.actions : {})) {
     const def = normAction(aid, a, `${w} › actions › ${aid}`, c, known, i++);
+    if (def && isObj(a)) {
+      for (const [key, field] of [["per_encounter", "perEncounter"], ["per_day", "perDay"]]) {
+        if (a[key] === undefined)
+          continue;
+        const n = Number(a[key]);
+        if (Number.isFinite(n) && n >= 1)
+          def[field] = Math.round(n);
+        else if (n !== 0)
+          c.warn(`${w} › actions › ${aid} › ${key}`, `should be a whole number of uses, 1 or more (got ${JSON.stringify(a[key])}) — unlimited`);
+      }
+    }
     if (def) {
       actions[aid] = def;
       actionOrder.push(aid);
@@ -2742,7 +3105,7 @@ function normEncounter(id, raw, c, known) {
     const lose = typeof m.lose === "string" ? m.lose : "lost";
     momentum = { win, lose, start: Math.max(-99, Math.min(99, c.num(m.start, `${w} › momentum › start`, 0))), swing };
   }
-  return {
+  const def = {
     id,
     name: typeof raw.name === "string" ? raw.name : titleCase(id),
     desc: typeof raw.desc === "string" ? raw.desc : undefined,
@@ -2763,6 +3126,135 @@ function normEncounter(id, raw, c, known) {
     ...typeof raw.danger === "string" ? { danger: raw.danger } : {},
     labels: Object.fromEntries(Object.entries(isObj(raw.labels) ? raw.labels : {}).filter(([, v]) => typeof v === "string"))
   };
+  const authored = normOutcomeKinds(raw, def, w, c);
+  Object.defineProperty(def, "outcomeKinds", { value: classifyOutcomes(def, statDefs, authored), enumerable: false, writable: true, configurable: true });
+  if (Object.keys(authored).length)
+    def.authoredKinds = authored;
+  const sim = normSimPatch(raw.sim, `${w} › sim`, c, known);
+  if (sim)
+    def.sim = sim;
+  return def;
+}
+function normSimPatch(raw, w, c, known) {
+  if (raw === undefined || raw === null)
+    return;
+  if (!isObj(raw)) {
+    c.warn(w, "expected a map like { stats: { level: 12, hp: max }, flags: { met_kael: true } }");
+    return;
+  }
+  const out = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (!SIM_KEYS.has(k)) {
+      c.warn(`${w} › ${k}`, `isn't a sim: key (${[...SIM_KEYS].join(", ")})`);
+      continue;
+    }
+    if (k === "location") {
+      if (typeof v === "string" && v.trim())
+        out.location = v.trim();
+      else
+        c.warn(`${w} › location`, "expected a place id");
+      continue;
+    }
+    if (k === "triggers") {
+      out.triggers = v !== false;
+      continue;
+    }
+    if (k === "perks") {
+      out.perks = list(v);
+      continue;
+    }
+    if (k === "conditions" || k === "wear") {
+      if (Array.isArray(v))
+        out[k] = v.map(String);
+      else if (isObj(v))
+        out[k] = v;
+      else
+        c.warn(`${w} › ${k}`, "expected a list or a map");
+      continue;
+    }
+    if (!isObj(v)) {
+      c.warn(`${w} › ${k}`, "expected a map");
+      continue;
+    }
+    if (k === "stats") {
+      const stats = {};
+      for (const [id, x] of Object.entries(v)) {
+        if (!known.stats.has(id)) {
+          c.warn(`${w} › stats › ${id}`, `"${id}" isn't a declared stat`);
+          continue;
+        }
+        if (typeof x === "string" && /^(max|min)$/i.test(x.trim()))
+          stats[id] = x.trim().toLowerCase();
+        else if (Number.isFinite(Number(x)) && x !== null && x !== "")
+          stats[id] = Number(x);
+        else
+          c.warn(`${w} › stats › ${id}`, `${JSON.stringify(x)} — use a number, max or min`);
+      }
+      out.stats = stats;
+    } else if (k === "items") {
+      const items = {};
+      for (const [id, x] of Object.entries(v)) {
+        const n = Number(x);
+        if (Number.isFinite(n))
+          items[id] = Math.round(n);
+        else
+          c.warn(`${w} › items › ${id}`, "expected a count");
+      }
+      out.items = items;
+    } else if (k === "flags")
+      out.flags = v;
+    else if (k === "rel")
+      out.rel = v;
+  }
+  return out;
+}
+function normOutcomeKinds(raw, enc, w, c) {
+  const out = {};
+  const known = new Set(encounterOutcomeIds(enc));
+  const check = (id, where) => {
+    if (!known.has(id))
+      c.warn(where, `"${id}" isn't one of this encounter's endings (${[...known].join(", ")})`);
+  };
+  if (raw.losses !== undefined) {
+    if (!Array.isArray(raw.losses) && typeof raw.losses !== "string")
+      c.warn(`${w} › losses`, "expected a list of ending ids, like [beaten, captured]");
+    else
+      for (const id of list(raw.losses)) {
+        check(id, `${w} › losses`);
+        out[id] = "lost";
+      }
+  }
+  const kindsRaw = raw.outcome_kinds;
+  if (kindsRaw !== undefined) {
+    if (!isObj(kindsRaw))
+      c.warn(`${w} › outcome_kinds`, "expected a map of ending id → won, escaped, conceded or lost");
+    else
+      for (const [id, v] of Object.entries(kindsRaw)) {
+        const kind = parseOutcomeKind(v);
+        if (!kind) {
+          c.warn(`${w} › outcome_kinds › ${id}`, `"${String(v)}" — use won, escaped, conceded or lost`);
+          continue;
+        }
+        check(id, `${w} › outcome_kinds`);
+        if (out[id] && out[id] !== kind)
+          c.warn(`${w} › outcome_kinds › ${id}`, `also listed in losses: — using ${kind}`);
+        out[id] = kind;
+      }
+  }
+  return out;
+}
+function isFormulaText(v) {
+  return typeof v === "string" && !!v.trim() && !Number.isFinite(Number(v));
+}
+function foeFormula(v, where, c) {
+  if (!isFormulaText(v))
+    return;
+  if (percentOf(v) !== null) {
+    c.warn(where, `"${v}" — a foe's start or max can't be a percentage; use a number or a formula like "100 * level"`);
+    return;
+  }
+  const x = c.expr(v, where);
+  return typeof x === "string" ? x : undefined;
 }
 function foeArmor(foeRaw, stats, w, c) {
   const armor = armorMap(foeRaw.armor ?? foeRaw.defense, `${w} › foe › armor`, c);
@@ -2894,6 +3386,48 @@ function normSecrets(raw, c) {
   }
   return out;
 }
+function normExits(v, where, c) {
+  const exits = [];
+  const exitTravel = {};
+  const add = (id, mins) => {
+    if (!exits.includes(id))
+      exits.push(id);
+    if (mins === null || mins === undefined || mins === true)
+      return;
+    const n = typeof mins === "number" ? mins : Number(mins);
+    if (Number.isFinite(n) && n >= 0)
+      exitTravel[id] = n;
+    else
+      c.warn(`${where} › ${id}`, `"${String(mins)}" should be travel minutes (0 or more) — using the place's \`travel:\``);
+  };
+  if (v === undefined || v === null)
+    return { exits };
+  if (Array.isArray(v)) {
+    for (const x of v) {
+      if (isObj(x))
+        for (const [id, m] of Object.entries(x))
+          add(id, m);
+      else
+        add(String(x), undefined);
+    }
+  } else if (isObj(v))
+    for (const [id, m] of Object.entries(v))
+      add(id, m);
+  else if (typeof v === "string")
+    add(v, undefined);
+  else
+    c.warn(where, "expected a list of places (`[street, park]`) or minutes per place (`{ street: 5, park: 20 }`)");
+  return Object.keys(exitTravel).length ? { exits, exitTravel } : { exits };
+}
+function stageIf(st, sw, c, known) {
+  const raw = st.if ?? st.when;
+  const cond = raw !== undefined ? c.expr(raw, `${sw} › if`) : undefined;
+  if (st.else !== undefined && cond === undefined)
+    c.warn(`${sw} › else`, "only happens when the stage's `if:` doesn't hold — add `if:`");
+  if (cond === undefined)
+    return {};
+  return { if: String(cond), ...st.else !== undefined ? { else: normEffect(st.else, `${sw} › else`, c, known) } : {} };
+}
 function normFronts(raw, c, known, where = (id) => `Fronts › ${id}`) {
   const out = {};
   if (raw === undefined)
@@ -2941,7 +3475,8 @@ function normFronts(raw, c, known, where = (id) => `Fronts › ${id}`) {
         backstage: str("backstage"),
         surface: str("surface"),
         news: str("news"),
-        effects: normEffect(st.do ?? st.effects, `${sw} › do`, c, known)
+        effects: normEffect(st.do ?? st.effects, `${sw} › do`, c, known),
+        ...stageIf(st, sw, c, known)
       });
       prev = at;
     });
@@ -3044,7 +3579,33 @@ function normLiveChoices(raw, c, known) {
     c.warn("Live choices", "has no tags — add some under `tags:`");
   return def;
 }
-function normMind(raw, c) {
+function normResistCost(raw, where, c, stats) {
+  const fail = (why) => {
+    c.warn(where, `${why}; resistance disabled`);
+    return;
+  };
+  if (!isObj(raw) || !Object.keys(raw).length)
+    return fail("expected a map of meter costs, e.g. `{ control: 10 }` (or `{ dread: 8 }` to raise a stat that's better low)");
+  const out = {};
+  for (const [id, v] of Object.entries(raw)) {
+    const def = stats[id];
+    if (!def)
+      return fail(`"${id}" isn't a declared stat`);
+    if (def.kind !== "meter")
+      return fail(`"${id}" is a ${def.kind}; resist costs are paid from meters`);
+    const signed = typeof v === "string" ? /^\s*([+-])\s*(\d+(?:\.\d+)?)\s*$/.exec(v) : null;
+    const n = signed ? Number(signed[2]) : typeof v === "number" ? v : NaN;
+    if (!Number.isFinite(n) || n <= 0)
+      return fail(`${id}: ${JSON.stringify(v)} — use a positive amount (paid in the stat's bad direction) or a quoted "+N"/"-N"`);
+    const d = signed ? signed[1] === "-" ? -n : n : def.good === "low" ? n : -n;
+    if (d > 0 && def.good === "high" || d < 0 && def.good === "low") {
+      return fail(`${id}: ${JSON.stringify(v)} would help (${def.label} is better ${def.good}), not cost`);
+    }
+    out[id] = d;
+  }
+  return out;
+}
+function normMind(raw, c, stats = {}) {
   const def = { overrides: [], perception: [] };
   if (raw === undefined)
     return def;
@@ -3067,13 +3628,7 @@ function normMind(raw, c) {
     if (when === undefined || chance === undefined)
       continue;
     const act = typeof o.do === "string" ? o.do : "fail";
-    let resistCost;
-    if (o.resist_cost !== undefined) {
-      if (isObj(o.resist_cost) && Object.keys(o.resist_cost).length > 0 && Object.values(o.resist_cost).every((v) => typeof v === "number" && Number.isFinite(v) && v > 0)) {
-        resistCost = { ...o.resist_cost };
-      } else
-        c.warn(`${w} › resist_cost`, "expected a nonempty map of positive finite stat costs; resistance disabled");
-    }
+    const resistCost = o.resist_cost !== undefined ? normResistCost(o.resist_cost, `${w} › resist_cost`, c, stats) : undefined;
     def.overrides.push({
       id,
       when: String(when),
@@ -3504,6 +4059,13 @@ function normalizeRuleset(raw) {
     }
   }
   const known = { stats: new Set(statOrder) };
+  for (const id of statOrder) {
+    const al = stats[id].allocate;
+    if (al && (!stats[al.with] || al.with === id)) {
+      c.warn(`Stats › ${id} › allocate › with`, al.with === id ? "can't spend a stat on itself" : `"${al.with}" isn't a declared stat — add it (e.g. \`${al.with}: { kind: attribute, start: 0 }\`)`);
+      delete stats[id].allocate;
+    }
+  }
   const relRaw = isObj(raw.relationships) ? raw.relationships : isObj(raw.people) ? { people: raw.people } : {};
   const relStats = {};
   const relStatOrder = [];
@@ -3528,12 +4090,13 @@ function normalizeRuleset(raw) {
     const schedList = Array.isArray(sched) ? sched : typeof sched === "string" ? [{ at: sched }] : isObj(sched) ? Object.entries(sched).map(([at, when]) => ({ at, when })) : [];
     schedList.forEach((e, n) => {
       const sw = `Relationships › people › ${id} › schedule #${n + 1}`;
-      if (!isObj(e) || typeof e.at !== "string") {
-        c.warn(sw, "each schedule entry needs `at:` (a location) and optionally `when:`");
+      const away = isObj(e) && (e.away === true || ("at" in e) && (e.at === null || e.at === false));
+      if (!isObj(e) || !away && typeof e.at !== "string") {
+        c.warn(sw, "each schedule entry needs `at:` (a location, or `away`) and optionally `when:`");
         return;
       }
       const when = e.when === undefined || e.when === true ? undefined : c.expr(e.when, `${sw} › when`);
-      schedule.push({ at: e.at, ...when !== undefined ? { when: String(when) } : {} });
+      schedule.push({ at: away ? null : e.at, ...when !== undefined ? { when: String(when) } : {} });
     });
     people[id] = {
       id,
@@ -3584,13 +4147,29 @@ function normalizeRuleset(raw) {
   const locations = {};
   for (const [id, l] of Object.entries(isObj(raw.locations) ? raw.locations : {})) {
     const r = isObj(l) ? l : typeof l === "string" ? { name: l } : {};
+    const lw = `Locations › ${id}`;
+    const { exits, exitTravel } = normExits(r.exits, `${lw} › exits`, c);
+    const indoors = r.indoors === true || r.inside === true;
+    const temp = r.temp ?? r.temperature;
+    if (temp !== undefined && !indoors)
+      c.warn(`${lw} › temp`, "only indoor places take `temp:` — outdoors follows the weather (add `indoors: true`)");
+    const when = r.when !== undefined ? c.expr(r.when, `${lw} › when`) : undefined;
+    const requires = normRequires(r.requires ?? r.needs, `${lw} › requires`, c, known);
+    const whyNot = typeof r.why_not === "string" ? r.why_not : typeof r.locked === "string" ? r.locked : undefined;
+    if (whyNot && !requires.length)
+      c.warn(`${lw} › why_not`, "only shows on a place locked by `requires:` — add `requires:` (a `when:` hides the place instead)");
     locations[id] = {
       id,
       name: typeof r.name === "string" ? r.name : titleCase(id),
       desc: typeof r.desc === "string" ? r.desc : undefined,
-      exits: Array.isArray(r.exits) ? r.exits.map(String) : [],
-      travel: c.num(r.travel, `Locations › ${id} › travel`, 10),
-      indoors: r.indoors === true || r.inside === true,
+      exits,
+      ...exitTravel ? { exitTravel } : {},
+      travel: c.num(r.travel, `${lw} › travel`, 10),
+      indoors,
+      ...temp !== undefined && indoors ? { temp: c.num(temp, `${lw} › temp`, 20) } : {},
+      ...when !== undefined ? { when: String(when) } : {},
+      ...requires.length ? { requires } : {},
+      ...whyNot && requires.length ? { whyNot } : {},
       board: r.board === true || r.quest_board === true,
       ...Array.isArray(r.pos) && r.pos.length === 2 && r.pos.every((n) => Number.isFinite(Number(n))) ? { pos: [Number(r.pos[0]), Number(r.pos[1])] } : {}
     };
@@ -3611,7 +4190,7 @@ function normalizeRuleset(raw) {
       desc: typeof r.desc === "string" ? r.desc : undefined,
       narrator: r.narrator === true,
       ...gate ? { gate } : {},
-      bonus: statNums(r.bonus, `Conditions › ${id} › bonus`, c, known),
+      bonus: statAmounts(r.bonus, `Conditions › ${id} › bonus`, c, known),
       ...condTiming(r, `Conditions › ${id}`, c, known)
     };
   }
@@ -3632,9 +4211,10 @@ function normalizeRuleset(raw) {
       startItems[String(it)] = 1;
   if (isObj(startRaw.stats))
     for (const [s, v] of Object.entries(startRaw.stats)) {
-      if (stats[s])
+      if (stats[s]) {
         stats[s].start = c.num(v, `Start › stats › ${s}`, stats[s].start);
-      else
+        delete stats[s].startExpr;
+      } else
         c.warn(`Start › stats › ${s}`, "isn't a declared stat");
     }
   let startLocation = typeof startRaw.location === "string" ? startRaw.location : null;
@@ -3664,6 +4244,10 @@ function normalizeRuleset(raw) {
       actions[id] = def;
       actionOrder.push(id);
     }
+    for (const key of ["per_encounter", "per_day"])
+      if (isObj(a) && a[key] !== undefined) {
+        c.warn(`Actions › ${id} › ${key}`, "use limits work on encounter moves and abilities only — ignored here (gate it with `when:` and a flag)");
+      }
   }
   actionOrder.sort((a, b) => actions[a].order - actions[b].order);
   for (const a of Object.values(actions))
@@ -3704,7 +4288,7 @@ function normalizeRuleset(raw) {
   const playerRaw = isObj(raw.player) ? raw.player : {};
   const encounters = {};
   for (const [id, e] of Object.entries(isObj(raw.encounters) ? raw.encounters : {})) {
-    const def = normEncounter(id, e, c, known);
+    const def = normEncounter(id, e, c, known, stats);
     if (def)
       encounters[id] = def;
   }
@@ -3753,12 +4337,17 @@ function normalizeRuleset(raw) {
       c.warn(w, "expected a perk definition");
       continue;
     }
-    perks[id] = normPerk(id, p, w, c, known, abilities);
+    perks[id] = normPerk(id, p, w, c, { ...known, rel: new Set(relStatOrder) }, abilities);
   }
   for (const p of Object.values(perks))
     for (const x of p.excludes)
       if (!perks[x])
         c.warn(`Perks › ${p.id} › excludes`, `"${x}" isn't a declared perk`);
+  for (const p of Object.values(perks))
+    if (p.points && !stats[p.points]) {
+      c.warn(`Perks › ${p.id} › points`, `"${p.points}" isn't a declared stat`);
+      delete p.points;
+    }
   const taught = new Set(Object.values(perks).flatMap((p) => p.abilities));
   for (const a of Object.values(abilities))
     if (a.known === DEFAULT_KNOWN)
@@ -3767,6 +4356,11 @@ function normalizeRuleset(raw) {
   if (perkPoints && !stats[perkPoints])
     c.warn("Perks › points", `"${perkPoints}" isn't a declared stat`);
   const perkPick = Math.max(0, Math.round(c.num(perksRaw.pick ?? perksRaw.offer, "Perks › pick", 0)));
+  if (!perkPick) {
+    for (const p of Object.values(perks))
+      if (p.always)
+        c.warn(`Perks › ${p.id} › offer`, "`offer: always` only matters with `perks: { pick: N }` — every perk is already on offer");
+  }
   const { quests, order: questOrder, story: storyQuests } = normQuests(raw.quests, c, known, { encounters: new Set(Object.keys(encounters)), actions: new Set(Object.keys(actions)) });
   for (const q of Object.values(quests)) {
     const w = `Quests › ${q.id}`;
@@ -3784,7 +4378,7 @@ function normalizeRuleset(raw) {
   const liveChoices = normLiveChoices(raw.live_choices, c, known);
   const dungeons = normDungeons(raw.dungeons, c, known);
   const dating = normDating(raw.dating, c, { stats: relStats, order: relStatOrder }, new Set(Object.keys(people)));
-  const mind = normMind(raw.mind, c);
+  const mind = normMind(raw.mind, c, stats);
   const endingsRaw = isObj(raw.endings) ? raw.endings : {};
   const endings = normEndings(Object.fromEntries(Object.entries(endingsRaw).filter(([k]) => k !== "legacy")), c);
   const legacy = normKeep(endingsRaw.legacy, "Endings › legacy", c, { codex: true, feats: true, perks: true });
@@ -3832,7 +4426,7 @@ function normalizeRuleset(raw) {
       weekdays,
       startDate
     },
-    hud: { bars, money: moneyStat && stats[moneyStat] ? moneyStat : undefined, currency: typeof hudRaw.currency === "string" ? hudRaw.currency : "$" },
+    hud: { bars, money: moneyStat && stats[moneyStat] ? moneyStat : undefined, ...normCurrency(hudRaw.currency, c) },
     narration: { notes: typeof narrRaw.notes === "string" ? narrRaw.notes : undefined, numbers: narrRaw.numbers === true },
     weather,
     wardrobe,
@@ -3870,9 +4464,21 @@ function normalizeRuleset(raw) {
   };
   for (const p of Object.values(people))
     for (const e of p.schedule) {
+      if (e.at === "away" && !locations.away)
+        e.at = null;
+      if (e.at === null)
+        continue;
       if (Object.keys(locations).length && !locations[e.at])
-        c.warn(`Relationships › people › ${p.id} › schedule`, `"${e.at}" isn't a declared location`);
+        c.warn(`Relationships › people › ${p.id} › schedule`, `"${e.at}" isn't a declared location (use \`at: away\` for "not around")`);
     }
+  for (const a of Object.values(actions))
+    for (const who of a.targets ?? []) {
+      if (!people[who])
+        c.warn(`Actions › ${a.id} › targets`, `"${who}" isn't a person in relationships › people`);
+    }
+  for (const a of Object.values(actions))
+    if (a.targets && !a.targets.length)
+      c.warn(`Actions › ${a.id} › targets`, "names no one — list the people it can be aimed at");
   for (const id of wardrobe.startWorn) {
     if (!items[id]?.slot)
       c.warn("Wardrobe › start", `"${id}" isn't a declared clothing item (items need a \`slot:\`)`);
@@ -3895,13 +4501,14 @@ function normalizeRuleset(raw) {
   }
   return { ruleset, issues: c.issues };
 }
-var SEEN_REACTIONS, DIFFICULTIES, DEFAULT_PRACTICE_REPEAT, isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v), DEFAULT_WEEKDAYS, KIND_ALIASES, INFLICT_KEYS, QUEST_OPS, list = (v) => Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : [], TIER_KEYS, MONTHS, DEFAULT_WEATHER, DEFAULT_SLOTS, USE_KEYS, PERK_META, DEFAULT_KNOWN = "\x00default", ABILITY_META, QUEST_META, KEEP_FLAGS, KEEP_LISTS, CHILD_NAMES, SEXUAL_TAGS;
+var SEEN_REACTIONS, DIFFICULTIES, DEFAULT_PRACTICE_REPEAT, isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v), DEFAULT_WEEKDAYS, KIND_ALIASES, INFLICT_KEYS, QUEST_OPS, list = (v) => Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : [], TIER_KEYS, ACTION_KEYS, MONTHS, DEFAULT_WEATHER, DEFAULT_SLOTS, USE_KEYS, PERK_META, DEFAULT_KNOWN = "\x00default", ABILITY_META, SIM_KEYS, QUEST_META, KEEP_FLAGS, KEEP_LISTS, CHILD_NAMES, SEXUAL_TAGS;
 var init_ruleset = __esm(() => {
   init_game_ids();
   init_expr();
   init_dice();
   init_defs();
   init_defs2();
+  init_outcomes();
   SEEN_REACTIONS = ["unnoticed", "glance", "interested", "disapproving", "predatory"];
   DIFFICULTIES = ["easy", "fair", "hard", "extreme"];
   DEFAULT_PRACTICE_REPEAT = { step: 0.5, floor: 0.1, recoverMinutes: 120, recoverTurns: 8 };
@@ -3958,6 +4565,37 @@ var init_ruleset = __esm(() => {
     critical_fail: "crit_fail",
     fumble: "crit_fail"
   };
+  ACTION_KEYS = new Set([
+    "label",
+    "say",
+    "desc",
+    "description",
+    "group",
+    "at",
+    "when",
+    "hidden",
+    "why_not",
+    "locked",
+    "time",
+    "cost",
+    "costs",
+    "check",
+    "outcomes",
+    "effects",
+    "effect",
+    "params",
+    "tags",
+    "order",
+    "per_person",
+    "with",
+    "targets",
+    "requires",
+    "needs",
+    "show_locked",
+    "gamble",
+    "per_day",
+    "per_encounter"
+  ]);
   MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
   DEFAULT_WEATHER = [
     { id: "clear", label: "Clear", icon: "☀️", weight: 4, temp: 1, seasons: null, tags: [] },
@@ -3970,6 +4608,7 @@ var init_ruleset = __esm(() => {
   USE_KEYS = new Set(["label", "say", "desc", "description", "when", "time", "tags", "check", "params", "why_not", "locked", "group", "cost", "effects", "effect", "outcomes", "per_person", "hidden", "at", "order", "success", "fail", "partial", "crit_success", "crit_fail", "critical_success", "critical_fail", "failure", "requires", "needs", "show_locked", "gamble"]);
   PERK_META = new Set(["points", "pick", "offer", "list"]);
   ABILITY_META = new Set(["name", "known", "per_day", "per_encounter", "where"]);
+  SIM_KEYS = new Set(["stats", "flags", "items", "location", "conditions", "rel", "perks", "wear", "triggers"]);
   QUEST_META = new Set(["from_story", "story", "story_max", "max_story"]);
   KEEP_FLAGS = ["codex", "feats", "perks", "secrets", "people", "dating", "deepest"];
   KEEP_LISTS = ["stats", "flags", "items", "rel"];
@@ -4091,7 +4730,7 @@ function temperatureAt(r, s) {
   if (!r.weather.enabled)
     return null;
   if (isIndoors(r, s))
-    return r.weather.indoorTemp;
+    return r.locations[s.location]?.temp ?? r.weather.indoorTemp;
   const season = seasonAt(r, s.minutes);
   const base = season !== null ? r.weather.seasonTemps[season] ?? 12 : 14;
   const hour = s.minutes % 1440 / 60;
@@ -4239,6 +4878,13 @@ function initialState(r) {
   }
   for (const id of r.statOrder)
     s.stats[id] = r.stats[id].start;
+  for (const id of r.statOrder) {
+    const def = r.stats[id];
+    if (!def.maxExpr && def.startExpr === undefined)
+      continue;
+    const v = def.startExpr !== undefined ? evalNumber(def.startExpr, makeEnv(r, s), def.start) : def.start;
+    s.stats[id] = Math.min(statMax(r, def, s), Math.max(def.min, Number.isFinite(v) ? v : def.start));
+  }
   for (const sec of Object.values(r.secrets)) {
     let open = -1;
     while (open + 1 < sec.stages.length && !sec.stages[open + 1].when)
@@ -4274,6 +4920,79 @@ function statMax(r, def, s) {
     return def.max;
   const m = evalNumber(def.maxExpr, makeEnv(r, s), def.max);
   return Math.max(def.min + 1, m);
+}
+function amountValue(v, env, max) {
+  if (v === undefined)
+    return 0;
+  if (typeof v === "number")
+    return v;
+  const pm = /^\s*([+-]?)\s*(\d+(?:\.\d+)?)\s*%\s*$/.exec(v);
+  if (pm)
+    return max === undefined ? 0 : (pm[1] === "-" ? -1 : 1) * Number(pm[2]) / 100 * max;
+  const n = evalNumber(v, env, 0);
+  return Number.isFinite(n) ? n : 0;
+}
+function bonusSources(r, s, env) {
+  if (bonusDepth > 2)
+    return [];
+  bonusDepth++;
+  try {
+    const e = env ?? makeEnv(r, s);
+    const nums = (m) => {
+      const out = {};
+      for (const [k, v] of Object.entries(m)) {
+        const n = amountValue(v, e);
+        if (n)
+          out[k] = n;
+      }
+      return out;
+    };
+    const out = [];
+    const worn = new Set(Object.values(s.worn));
+    for (const [id, n] of Object.entries(s.items)) {
+      const it = r.items[id];
+      if (!it || n <= 0 || it.slot && !worn.has(id) || !Object.keys(it.bonus).length)
+        continue;
+      out.push({ from: it.name, kind: "gear", id, bonus: nums(it.bonus) });
+    }
+    for (const id of Object.keys(s.perks)) {
+      const p = r.perks[id];
+      if (!p)
+        continue;
+      if (Object.keys(p.bonus).length)
+        out.push({ from: `★ ${p.name}`, kind: "perk", id, bonus: nums(p.bonus) });
+      for (const ed of p.edges) {
+        if (ed.when && !evalBool(ed.when, e, false))
+          continue;
+        out.push({ from: `★ ${p.name}`, kind: "perk", id, bonus: nums(ed.stats) });
+      }
+    }
+    for (const id of Object.keys(s.conditions)) {
+      const c = r.conditions[id];
+      if (c && Object.keys(c.bonus).length)
+        out.push({ from: c.label, kind: "cond", id, bonus: nums(c.bonus) });
+    }
+    return out;
+  } finally {
+    bonusDepth--;
+  }
+}
+function effectiveStat(r, s, stat, env, gearOnly = false) {
+  let n = 0;
+  for (const src of bonusSources(r, s, env))
+    if (!gearOnly || src.kind === "gear")
+      n += src.bonus[stat] ?? 0;
+  if (gearOnly)
+    return n;
+  const base = s.stats[stat] ?? r.stats[stat]?.start ?? 0;
+  return base + n;
+}
+function integrityOf(r, s, idOrSlot) {
+  const id = r.items[idOrSlot] ? idOrSlot : s.worn[idOrSlot] ?? "";
+  const def = r.items[id];
+  if (!def || (s.items[id] ?? 0) <= 0)
+    return 0;
+  return s.integrity[id] ?? def.integrity;
 }
 function clamp(v, lo, hi) {
   return Math.min(hi, Math.max(lo, v));
@@ -4351,7 +5070,7 @@ function applyEvent(s, e, r) {
           if (c.rounds !== undefined && c.until === null)
             delete s.conditions[id];
       }
-      s.encounter = e.id ? { id: e.id, round: 0, foe: { ...e.foe ?? {} }, ...e.momentum !== undefined ? { momentum: e.momentum } : {}, ...e.foeName ? { foeName: e.foeName } : {}, at: s.minutes } : null;
+      s.encounter = e.id ? { id: e.id, round: 0, foe: { ...e.foe ?? {} }, ...e.momentum !== undefined ? { momentum: e.momentum } : {}, ...e.foeName ? { foeName: e.foeName } : {}, at: s.minutes, ...e.max ? { max: { ...e.max } } : {}, ...e.armor ? { armor: { ...e.armor } } : {} } : null;
       break;
     case "swing":
       if (s.encounter && s.encounter.momentum !== undefined)
@@ -4363,7 +5082,7 @@ function applyEvent(s, e, r) {
       const def = r.encounters[s.encounter.id]?.foe.stats.find((x) => x.id === e.stat);
       const cur = s.encounter.foe[e.stat] ?? def?.start ?? 0;
       const next = e.set !== undefined ? e.set : cur + (e.d ?? 0);
-      s.encounter.foe[e.stat] = def ? clamp(next, 0, def.max) : next;
+      s.encounter.foe[e.stat] = def ? clamp(next, 0, s.encounter.max?.[e.stat] ?? def.max) : next;
       break;
     }
     case "round":
@@ -4922,6 +5641,8 @@ function makeEnv(r, s, extra = {}) {
       exposed,
       naked: r.wardrobe.enabled && exposed === r.wardrobe.cover.length && r.wardrobe.cover.length > 0,
       in_encounter: !!s.encounter,
+      encounter: s.encounter?.id ?? "",
+      encounter_round: s.encounter?.round ?? 0,
       momentum: s.encounter?.momentum ?? 0,
       in_dungeon: !!s.dungeon,
       dungeon_depth: s.dungeon?.depth ?? 0,
@@ -5016,6 +5737,12 @@ function makeEnv(r, s, extra = {}) {
           return Object.values(s.worn).includes(a0);
         case "worn":
           return s.worn[a0] ?? "";
+        case "eff":
+          return effectiveStat(r, s, a0, base);
+        case "gear":
+          return effectiveStat(r, s, a0, base, true);
+        case "integrity":
+          return integrityOf(r, s, a0);
         case "trait":
           return hasTrait(r, s, a0);
         case "present":
@@ -5089,12 +5816,19 @@ function makeEnv(r, s, extra = {}) {
         case "stat_max":
           return r.stats[a0] ? statMax(r, r.stats[a0], s) : 0;
         case "foe_max":
-          return s.encounter ? r.encounters[s.encounter.id]?.foe.stats.find((x) => x.id === a0)?.max ?? 0 : 0;
+          return foeMaxOf(r, s, a0);
+        case "in_encounter":
+          return args.length ? s.encounter?.id === a0 : !!s.encounter;
       }
       return;
     }
   };
   return base;
+}
+function foeMaxOf(r, s, stat) {
+  if (!s.encounter)
+    return 0;
+  return s.encounter.max?.[stat] ?? r.encounters[s.encounter.id]?.foe.stats.find((x) => x.id === stat)?.max ?? 0;
 }
 function bandFor(def, value, max) {
   let hit = null;
@@ -5128,13 +5862,16 @@ function formatNumber(n) {
   const r = Math.round(n * 10) / 10;
   return Number.isInteger(r) ? String(r) : r.toFixed(1);
 }
+function formatMoney(r, n) {
+  return r.hud.currencyAfter ? `${formatNumber(n)}${r.hud.currency}` : `${r.hud.currency}${formatNumber(n)}`;
+}
 function itemName(r, s, id) {
   return r.items[id]?.name ?? s.itemNames[id] ?? id.replace(/[_-]+/g, " ");
 }
 function personName(r, s, id) {
   return s.people[id]?.name ?? r.people[id]?.name ?? id;
 }
-var DG_LOG_KEPT = 12, NEWS_KEPT = 30, MEMORIES_KEPT = 12, BUILTIN_NAMES;
+var DG_LOG_KEPT = 12, NEWS_KEPT = 30, MEMORIES_KEPT = 12, bonusDepth = 0, BUILTIN_NAMES;
 var init_state = __esm(() => {
   init_expr();
   init_memory();
@@ -5163,6 +5900,8 @@ var init_state = __esm(() => {
     "exposed",
     "naked",
     "in_encounter",
+    "encounter",
+    "encounter_round",
     "round",
     "momentum",
     "target",
@@ -5656,9 +6395,7 @@ function outcomeLabel(enc, outcome) {
   return enc?.labels[outcome] ?? titleCase(outcome);
 }
 function isLoss(enc, outcome) {
-  if (enc?.momentum && outcome === enc.momentum.lose)
-    return true;
-  return FAILURE.test(outcome);
+  return outcomeKind(enc, outcome) === "lost";
 }
 function endsIn(e) {
   return e?.end ?? null;
@@ -5687,7 +6424,7 @@ function encounterGuide(r, s) {
     const fs = enc.foe.stats.find((f) => f.id === t.stat);
     if (!fs)
       continue;
-    progress.push({ label: fs.label, value: st.foe[fs.id] ?? fs.start, target: t.value, max: fs.max });
+    progress.push({ label: fs.label, value: st.foe[fs.id] ?? fs.start, target: t.value, max: st.max?.[fs.id] ?? fs.max });
     goals.push(`${t.op.startsWith("<") ? "bring" : "push"} their ${fs.label.toLowerCase()} to ${t.value}`);
   }
   if (enc.momentum)
@@ -5726,7 +6463,7 @@ function roundCard(r, rec, before, after, odds) {
       const touched = rec.events.some((e) => e.t === "foe" && e.stat === fs.id);
       const to = fin ? fin.foe[fs.id] ?? fs.start : from + rec.events.reduce((n, e) => n + (e.t === "foe" && e.stat === fs.id ? e.set !== undefined ? e.set - from : e.d ?? 0 : 0), 0);
       if (touched && to !== from)
-        changes.push({ label: `${foeName(r, before)}: ${fs.label}`, from, to: Math.max(0, to), of: fs.max, good: to < from === (fs.good !== "high") });
+        changes.push({ label: `${foeName(r, before)}: ${fs.label}`, from, to: Math.max(0, to), of: before.encounter.max?.[fs.id] ?? fs.max, good: to < from === (fs.good !== "high") });
     }
     if (before.encounter.momentum !== undefined) {
       const to = fin?.momentum ?? before.encounter.momentum + rec.events.reduce((n, e) => n + (e.t === "swing" ? e.d : 0), 0);
@@ -5824,12 +6561,13 @@ function itemRelevance(r, s, a) {
     add(1, "Can end the encounter");
   return { score, why: best?.why ?? null };
 }
-var FAILURE, cap = (t) => t.charAt(0).toUpperCase() + t.slice(1), TIER_WORD;
+var cap = (t) => t.charAt(0).toUpperCase() + t.slice(1), TIER_WORD;
 var init_encounter_view = __esm(() => {
   init_ruleset();
   init_state();
   init_expr();
-  FAILURE = /^(lost|lose|loss|beaten|defeat(ed)?|overwhelmed|caught|captured|ko|knocked_out|downed|fallen|slain|killed|dead|died|wiped(_out)?|fled_in_panic|broken|failed?)$/i;
+  init_outcomes();
+  init_outcomes();
   TIER_WORD = { crit_success: "great success", success: "success", partial: "partial", fail: "failed", crit_fail: "badly failed" };
 });
 
@@ -6039,7 +6777,7 @@ function relMove(t, who, love, fear) {
   const f = Math.round(fear * unit(r, r.dating.fear) * 10) / 10;
   if (l)
     t.push({ t: "rel", who, stat: r.dating.love, d: l, src: "action" });
-  if (f)
+  if (f && r.relStats[r.dating.fear])
     t.push({ t: "rel", who, stat: r.dating.fear, d: f, src: "action" });
 }
 function socialMove(t, who, key, love, fear) {
@@ -6144,6 +6882,8 @@ function venueOk(r, s, who, v) {
   if (v.romantic && !romanceOk(r, s, who))
     return false;
   if (v.when && !evalBool(v.when, makeEnv(r, s, { target: who }), true))
+    return false;
+  if (v.at && r.locations[v.at] && v.at !== s.location && (!placeKnown(r, s, v.at) || placeLock(r, s, v.at)))
     return false;
   const cash = money(r, s);
   return cash === null || cash >= v.cost;
@@ -6608,6 +7348,7 @@ var ADULT_KEY = "__adult", SEEDED, TASTE_DESC, clampMood = (m) => Math.max(-2, M
 var init_talk = __esm(() => {
   init_dice();
   init_expr();
+  init_resolve();
   init_ruleset();
   init_state();
   init_world();
@@ -7308,6 +8049,11 @@ class Working {
       if (m !== 1)
         e = { ...e, d: e.d * m };
     }
+    if (e.t === "rel" && e.d && e.set === undefined && e.src !== "manual" && e.src !== "start") {
+      const m = statRate(this.r, this.s, e.stat, e.d, true);
+      if (m !== 1)
+        e = { ...e, d: e.d * m };
+    }
     applyEvent(this.s, e, this.r);
     this.events.push(e);
   }
@@ -7340,7 +8086,30 @@ function travelTargets(r, s) {
   if (s.encounter)
     return [];
   const here = s.location ? r.locations[s.location] : undefined;
-  return here ? here.exits.filter((x) => r.locations[x]) : [];
+  return here ? here.exits.filter((x) => r.locations[x] && placeKnown(r, s, x) && !placeLock(r, s, x)) : [];
+}
+function placeKnown(r, s, id) {
+  const l = r.locations[id];
+  return !!l && (!l.when || evalBool(l.when, makeEnv(r, s), true));
+}
+function placeLock(r, s, id) {
+  const l = r.locations[id];
+  return l ? gateLock(r, s, l.requires ?? [], l.whyNot) : null;
+}
+function lockedExits(r, s) {
+  if (s.encounter)
+    return [];
+  const here = s.location ? r.locations[s.location] : undefined;
+  if (!here)
+    return [];
+  return here.exits.flatMap((x) => {
+    const locked = r.locations[x] && placeKnown(r, s, x) ? placeLock(r, s, x) : null;
+    return locked ? [{ id: x, locked }] : [];
+  });
+}
+function travelMinutes(r, from, to) {
+  const f = from ? r.locations[from] : undefined;
+  return f?.exitTravel?.[to] ?? f?.travel ?? r.locations[to]?.travel ?? 10;
 }
 function paramValues(a, chosen, target) {
   const out = {};
@@ -7358,12 +8127,113 @@ function actionPool(r, s) {
     return { defs: enc.actions, order: enc.actionOrder, tags: enc.tags };
   return { defs: r.actions, order: r.actionOrder, tags: [] };
 }
-function isAvailable(r, s, a, target) {
+function whenHolds(r, s, a, target) {
   if (!s.encounter && a.at.length && !a.at.includes(s.location ?? ""))
     return false;
   if (a.when && !evalBool(a.when, makeEnv(r, s, paramValues(a, undefined, target)), true))
     return false;
   return true;
+}
+function isAvailable(r, s, a, target) {
+  if (a.targets && target !== undefined && !a.targets.includes(target))
+    return false;
+  return whenHolds(r, s, a, target) && !spentLock(r, s, a, target);
+}
+function costValue(r, s, stat, raw, env) {
+  const p = percentOf(raw);
+  if (p === null)
+    return evalNumber(raw, env, 0);
+  const def = r.stats[stat];
+  const x = p * (def ? statMax(r, def, s) : 100);
+  return Math.abs(x) >= 1 ? Math.round(x) : x;
+}
+function costShortfall(r, s, a, target, params) {
+  const costs = Object.entries(a.cost.stats);
+  if (!costs.length)
+    return null;
+  const env = makeEnv(r, s, paramValues(a, params, target));
+  for (const [stat, d] of costs) {
+    const def = r.stats[stat];
+    if (def?.good === "low")
+      continue;
+    const v = costValue(r, s, stat, d, env);
+    const have = s.stats[stat] ?? def?.start ?? 0;
+    if (v < 0 && have + v < (def?.min ?? 0))
+      return `Needs ${formatNumber(-v)} ${def?.label ?? stat}`;
+  }
+  return null;
+}
+function hasEffect(e) {
+  return Object.values(e).some((v) => v !== undefined && v !== null && v !== false && (typeof v !== "object" || (Array.isArray(v) ? v.length > 0 : Object.keys(v).length > 0)));
+}
+function moveChargeKey(s, a) {
+  return s.encounter && (a.perEncounter || a.perDay) ? `move:${s.encounter.id}:${a.id}` : null;
+}
+function usesLock(s, a) {
+  const key = moveChargeKey(s, a);
+  if (!key)
+    return null;
+  const used = usesOf(s, key);
+  if (a.perEncounter && used.here >= a.perEncounter)
+    return "Used up for this encounter";
+  if (a.perDay && used.today >= a.perDay)
+    return "Used up for today";
+  return null;
+}
+function costPrice(r, s, a, target, params) {
+  const env = makeEnv(r, s, paramValues(a, params, target));
+  let price = 0;
+  for (const [stat, d] of Object.entries(a.cost.stats)) {
+    if (r.stats[stat]?.good === "low")
+      continue;
+    const v = costValue(r, s, stat, d, env);
+    if (v < 0)
+      price -= v;
+  }
+  return price;
+}
+function strappedMoves(r, s) {
+  const enc = s.encounter ? r.encounters[s.encounter.id] : undefined;
+  const none = new Set;
+  if (!enc)
+    return none;
+  const blocked = [];
+  for (const id of enc.actionOrder) {
+    const m = enc.actions[id];
+    if (!m || m.hidden || !whenHolds(r, s, m) || usesLock(s, m))
+      continue;
+    if (!costShortfall(r, s, m))
+      return none;
+    blocked.push({ id, price: costPrice(r, s, m) });
+  }
+  if (!blocked.length)
+    return none;
+  const cheapest = Math.min(...blocked.map((b) => b.price));
+  return new Set(blocked.filter((b) => b.price === cheapest).map((b) => b.id));
+}
+function paramCombos(a) {
+  let out = [{}];
+  for (const p of a.params) {
+    out = out.flatMap((c) => Object.keys(p.options).map((k) => ({ ...c, [p.id]: k })));
+    if (out.length > 64)
+      return out.slice(0, 64);
+  }
+  return out;
+}
+function spentLock(r, s, a, target, params) {
+  const uses = usesLock(s, a);
+  if (uses)
+    return uses;
+  let short;
+  if (params || !a.params.length)
+    short = costShortfall(r, s, a, target, params);
+  else {
+    const combos = paramCombos(a);
+    short = combos.some((c) => !costShortfall(r, s, a, target, c)) ? null : costShortfall(r, s, a, target, combos[0]);
+  }
+  if (short && s.encounter && r.encounters[s.encounter.id]?.actions[a.id] === a && strappedMoves(r, s).has(a.id))
+    return null;
+  return short;
 }
 function availableActions(r, s, lines = []) {
   const blocked = new Set(lines.map((l) => l.toLowerCase()));
@@ -7396,7 +8266,7 @@ function usableItems(r, s) {
     const a = r.items[id]?.use;
     if (!a || n <= 0)
       continue;
-    out.push({ id: `${ITEM_PREFIX}${id}`, a, locked: isAvailable(r, s, a) ? null : a.whyNot ?? lockReason(r, s, a) });
+    out.push({ id: `${ITEM_PREFIX}${id}`, a, locked: isAvailable(r, s, a) ? null : lockReason(r, s, a) });
   }
   return out;
 }
@@ -7426,7 +8296,23 @@ function requirementText(r, s, q) {
       return q.text ?? "the right moment";
   }
 }
+function gateLock(r, s, requires, whyNot) {
+  if (!requires.length)
+    return null;
+  const env = makeEnv(r, s);
+  const unmet = requires.filter((q) => !evalBool(q.when, env, false));
+  if (!unmet.length)
+    return null;
+  if (whyNot)
+    return whyNot;
+  const needs = unmet.filter((q) => q.kind !== "formula").map((q) => requirementText(r, s, q));
+  const other = unmet.filter((q) => q.kind === "formula").map((q) => requirementText(r, s, q));
+  return [needs.length ? `Needs ${needs.join(", ")}` : "", ...other].filter(Boolean).join(" · ") || "Not possible right now";
+}
 function lockReason(r, s, a) {
+  const spent = whenHolds(r, s, a) ? spentLock(r, s, a) : null;
+  if (spent)
+    return spent;
   if (a.whyNot)
     return a.whyNot;
   if (a.requires.length) {
@@ -7456,39 +8342,19 @@ function gearFor(r, s, a) {
       if (!b || !reads.has(stat))
         continue;
       stats[stat] = (stats[stat] ?? 0) + b;
-      notes.push(`${from}: ${b > 0 ? "+" : ""}${b} ${r.stats[stat]?.label ?? stat}`);
+      notes.push(`${from}: ${b > 0 ? "+" : ""}${formatNumber(b)} ${r.stats[stat]?.label ?? stat}`);
     }
   };
-  const worn = new Set(Object.values(s.worn));
-  for (const [id, n] of Object.entries(s.items)) {
-    const it = r.items[id];
-    if (!it || n <= 0 || it.slot && !worn.has(id))
-      continue;
-    add(it.name, it.bonus);
-  }
-  const env = makeEnv(r, s);
-  for (const id of Object.keys(s.perks)) {
-    const p = r.perks[id];
-    if (!p)
-      continue;
-    add(`★ ${p.name}`, p.bonus);
-    for (const e of p.edges)
-      if (!e.when || evalBool(e.when, env, false))
-        add(`★ ${p.name}`, e.stats);
-  }
-  for (const id of Object.keys(s.conditions)) {
-    const c = r.conditions[id];
-    if (c && Object.keys(c.bonus).length)
-      add(c.label, c.bonus);
-  }
+  for (const src of bonusSources(r, s))
+    add(src.from, src.bonus);
   return { stats, notes };
 }
-function statRate(r, s, stat, d) {
+function statRate(r, s, stat, d, rel = false) {
   let pct = 0;
   for (const id of Object.keys(s.perks)) {
     for (const rule of r.perks[id]?.rules ?? []) {
       if (rule.kind === "gains" && d > 0 || rule.kind === "losses" && d < 0) {
-        if (rule.stat === stat)
+        if (rule.stat === stat && !!rule.rel === rel)
           pct += rule.pct;
       }
     }
@@ -7521,18 +8387,10 @@ function abilityStatus(r, s, id) {
   let locked = null;
   if (left === 0)
     locked = ab.perEncounter && s.encounter && ab.perEncounter - used.here <= 0 ? "Used up for this encounter" : "Used up for today";
-  else if (!isAvailable(r, s, ab.action))
+  else if (!whenHolds(r, s, ab.action))
     locked = ab.action.whyNot ?? lockReason(r, s, ab.action);
-  else {
-    const env = makeEnv(r, s);
-    for (const [stat, d] of Object.entries(ab.action.cost.stats)) {
-      const v = evalNumber(d, env, 0);
-      if (v < 0 && (s.stats[stat] ?? r.stats[stat]?.start ?? 0) < -v) {
-        locked = `Needs ${-v} ${r.stats[stat]?.label ?? stat}`;
-        break;
-      }
-    }
-  }
+  else
+    locked = costShortfall(r, s, ab.action);
   return { id, known, left, here, locked };
 }
 function usableAbilities(r, s) {
@@ -7559,7 +8417,8 @@ function dangerStats(r, s) {
 }
 function playerArmor(r, s, stat) {
   const main = dangerStats(r, s).includes(stat);
-  const pick = (m) => (m[stat] ?? 0) + (main ? m._ ?? 0 : 0);
+  const env = makeEnv(r, s);
+  const pick = (m) => amountValue(m[stat], env) + (main ? amountValue(m._, env) : 0);
   const worn = new Set(Object.values(s.worn));
   let n = 0;
   for (const [id, have] of Object.entries(s.items)) {
@@ -7577,8 +8436,10 @@ function foeArmor2(r, s, stat) {
   if (!enc)
     return 0;
   const main = mainMeter(r, s)?.stat === stat;
-  const pick = (m) => (m[stat] ?? 0) + (main ? m._ ?? 0 : 0);
-  let n = pick(enc.foe.armor);
+  let env = null;
+  const val = (v) => typeof v === "string" ? amountValue(v, env ??= makeEnv(r, s)) : v ?? 0;
+  const pick = (m) => val(m[stat]) + (main ? val(m._) : 0);
+  let n = pick(s.encounter.armor ?? enc.foe.armor);
   for (const id of Object.keys(s.encounter.conds ?? {}))
     n += pick(r.conditions[id]?.armor ?? {});
   return n;
@@ -7677,11 +8538,54 @@ function findAction(r, s, actionId) {
   const a = base.startsWith(LIVE_PREFIX) ? r.liveChoices.tags[base.slice(LIVE_PREFIX.length)] : actionPool(r, s).defs[base];
   return a && allowed(a) ? { a, ...target ? { target } : {} } : null;
 }
-function tierFor(check, roll, add, target) {
+function diceShare(roll) {
+  let got = 0, span = 0;
+  for (const f of roll.dice)
+    if (f.kept) {
+      got += f.value - 1;
+      span += f.sides - 1;
+    }
+  return span > 0 ? got / span : 0;
+}
+function tierFor(check, roll, add, target, crit = null) {
   const total = roll.total + add;
   const sides = roll.primarySides;
   const single = roll.natural !== null;
   const critBand = Math.max(1, Math.floor(sides * 0.05));
+  if (crit !== null && check.crits) {
+    const pct = Math.max(0, Math.min(100, crit));
+    const band = Math.round(sides * pct / 100);
+    const top = pct > 0 && diceShare(roll) >= 1 - pct / 100;
+    switch (check.style) {
+      case "chance": {
+        const ok = total <= (target ?? 50);
+        const low = pct > 0 && diceShare(roll) <= pct / 100;
+        if (ok && (single ? roll.natural <= band : low))
+          return "crit_success";
+        if (single && !ok && roll.natural > sides - critBand)
+          return "crit_fail";
+        return ok ? "success" : "fail";
+      }
+      case "vs": {
+        const t = target ?? 10;
+        if (single ? band > 0 && roll.natural > sides - band : total >= t && top)
+          return "crit_success";
+        if (single && roll.natural === 1)
+          return "crit_fail";
+        if (total >= t)
+          return "success";
+        if (check.partialMargin > 0 && total >= t - check.partialMargin)
+          return "partial";
+        return "fail";
+      }
+      case "pbta":
+        if (total >= 10)
+          return top ? "crit_success" : "success";
+        if (total >= 7)
+          return "partial";
+        return "fail";
+    }
+  }
   switch (check.style) {
     case "chance": {
       const t = target ?? 50;
@@ -7718,7 +8622,9 @@ function checkNumbers(r, s, a, params, who) {
   const check = a.check;
   const gear = gearFor(r, s, a).stats;
   const eff = Object.keys(gear).length ? { ...s, stats: Object.fromEntries(Object.entries(s.stats).map(([k, v]) => [k, v + (gear[k] ?? 0)])) } : s;
-  const env = makeEnv(r, eff, paramValues(a, params, who));
+  const adjusted = makeEnv(r, eff, paramValues(a, params, who));
+  const plain = makeEnv(r, s, paramValues(a, params, who));
+  const env = { lookup: adjusted.lookup, call: (n, args) => n === "eff" || n === "gear" ? plain.call?.(n, args) : adjusted.call?.(n, args) };
   const add = check.add !== undefined ? Math.round(evalNumber(check.add, env, 0)) : 0;
   let target = null;
   if (check.target !== undefined) {
@@ -7726,13 +8632,14 @@ function checkNumbers(r, s, a, params, who) {
     if (check.style === "chance")
       target = Math.max(0, Math.min(100, target));
   }
-  return { add, target };
+  const crit = check.crit !== undefined ? Math.max(0, Math.min(100, evalNumber(check.crit, env, 5))) : null;
+  return { add, target, crit };
 }
 function odds(r, s, a, params, who, includePerks = true) {
   const check = a.check;
   if (!check)
     return null;
-  const { add, target } = checkNumbers(r, s, a, params, who);
+  const { add, target, crit } = checkNumbers(r, s, a, params, who);
   if (check.style === "chance" && check.dice === "d100" && target !== null) {
     const success = Math.max(0, Math.min(100, target - add)) / 100;
     const reroll = includePerks && !!perkRuleFor(r, s, a, "reroll");
@@ -7749,9 +8656,9 @@ function odds(r, s, a, params, who, includePerks = true) {
   const N = 2000;
   let ok = 0, part = 0;
   for (let i = 0;i < N; i++) {
-    let t = tierFor(check, rollDice(check.dice, rng), add, target);
+    let t = tierFor(check, rollDice(check.dice, rng), add, target, crit);
     if ((t === "fail" || t === "crit_fail") && reroll)
-      t = tierFor(check, rollDice(check.dice, rng), add, target);
+      t = tierFor(check, rollDice(check.dice, rng), add, target, crit);
     if ((t === "fail" || t === "crit_fail") && soften)
       t = t === "crit_fail" ? "fail" : "partial";
     if (t === "success" || t === "crit_success")
@@ -7857,7 +8764,7 @@ function effectToEvents(w, e, src, extra) {
     for (const [stat, d] of Object.entries(e.foe)) {
       if (foeStats?.length && !foeStats.some((x) => x.id === stat))
         continue;
-      const v = amountOf2(w, d, extra, foeStats?.find((x) => x.id === stat)?.max ?? 100);
+      const v = amountOf2(w, d, extra, foeStats?.some((x) => x.id === stat) ? foeMaxOf(r, w.s, stat) : 100);
       if (v !== 0)
         blows.push({ stat, v });
     }
@@ -7899,7 +8806,7 @@ function effectToEvents(w, e, src, extra) {
   for (const id of e.learn)
     if (r.abilities[id] && !w.s.learned?.[id])
       w.push({ t: "learn", id, src });
-  if (e.startEncounter && !w.s.encounter)
+  if (e.startEncounter && !w.s.encounter && !(src === "trigger" && encounterJustEnded(w.s, e.startEncounter, false)))
     startEncounter(w, e.startEncounter, src);
   for (const id of e.unlock)
     if (w.r.codex[id] && !w.s.codex[id])
@@ -8094,7 +9001,7 @@ function tickSide(w, side) {
     if (!stat)
       continue;
     const fs = w.r.encounters[enc.id]?.foe.stats.find((x) => x.id === stat);
-    const dmg = amountOf2(w, def.dot, {}, fs?.max ?? 100);
+    const dmg = amountOf2(w, def.dot, {}, fs ? foeMaxOf(w.r, w.s, stat) : 100);
     const down = stat === m?.stat ? m.down : fs?.good !== "high";
     if (dmg)
       because(w, `${def.label} (on ${foe})`, () => w.push({ t: "foe", stat, d: (down ? -1 : 1) * dmg, src: "trigger" }));
@@ -8133,7 +9040,9 @@ function openFrontStages(w) {
         break;
       because(w, `World: ${f.label} reached stage ${n + 1}`, () => {
         w.push({ t: "stage", id: f.id, n, src: "world" });
-        effectToEvents(w, st.effects, "world", {});
+        const fx = st.if === undefined || evalBool(st.if, w.env(), false) ? st.effects : st.else;
+        if (fx)
+          effectToEvents(w, fx, "world", {});
       });
       if (st.surface)
         announce(w, `In the wider world: ${st.surface}`);
@@ -8529,7 +9438,27 @@ function startEncounter(w, id, src, opponent) {
   if (!enc)
     return;
   const foe = Object.fromEntries(enc.foe.stats.map((s) => [s.id, s.start]));
-  w.push({ t: "enc", id, foe, ...enc.momentum ? { momentum: enc.momentum.start } : {}, ...opponent ? { foeName: opponent } : {}, src });
+  const max = {};
+  const armor = {};
+  const scaled = enc.foe.stats.some((s) => s.startExpr || s.maxExpr) || Object.values(enc.foe.armor).some((v) => typeof v === "string");
+  if (scaled) {
+    const env = w.env();
+    const num = (f, fallback) => {
+      const v = evalNumber(f, env, fallback);
+      return Number.isFinite(v) ? Math.max(0, v) : fallback;
+    };
+    for (const s of enc.foe.stats) {
+      if (!s.startExpr && !s.maxExpr)
+        continue;
+      const start = s.startExpr ? num(s.startExpr, s.start) : s.start;
+      const top = s.maxExpr ? Math.max(1, num(s.maxExpr, s.max)) : s.maxFromStart ? Math.max(1, start) : s.max;
+      foe[s.id] = Math.min(start, top);
+      max[s.id] = top;
+    }
+    for (const [k, v] of Object.entries(enc.foe.armor))
+      armor[k] = typeof v === "string" ? amountValue(v, env) : v;
+  }
+  w.push({ t: "enc", id, foe, ...enc.momentum ? { momentum: enc.momentum.start } : {}, ...opponent ? { foeName: opponent } : {}, ...Object.keys(max).length ? { max } : {}, ...scaled && Object.values(enc.foe.armor).some((v) => typeof v === "string") ? { armor } : {}, src });
   announce(w, `An encounter begins: ${enc.name}${enc.desc ? ` — ${enc.desc}` : ""}. Opponent: ${opponent ?? enc.foe.name}.`);
   because(w, `${enc.name} begins`, () => effectToEvents(w, enc.start, src, {}));
 }
@@ -8637,6 +9566,12 @@ Narrate them in order. ${w.s.encounter ? "The fight isn't over until the rules e
 function decide(w, d, src, extra) {
   if (w.decisions.some((x) => x.id === d.id))
     return;
+  if (d.options.some((o) => o.when !== undefined)) {
+    const env = w.env(extra);
+    const open = d.options.filter((o) => o.when === undefined || evalBool(o.when, env, false));
+    if (open.length && open.length < d.options.length)
+      d = { ...d, options: open };
+  }
   const keys = d.options.map((o) => o.id);
   const model = w.odds[d.id];
   if (!model)
@@ -8653,15 +9588,17 @@ function advanceTime(w, minutes, src) {
   w.push({ t: "time", min: minutes, src });
   for (const id of w.r.statOrder) {
     const def = w.r.stats[id];
-    if (!def.perHour)
+    const rate = def.perHourExpr !== undefined ? amountValue(def.perHourExpr, w.env(), statMax(w.r, def, w.s)) : def.perHour;
+    if (!rate)
       continue;
-    const d = def.perHour * minutes / 60;
+    const d = rate * minutes / 60;
     if (Math.abs(d) > 0.000000001)
-      w.push({ t: "stat", id, d, src: "drift", why: `${minutes >= 60 ? `${Math.round(minutes / 6) / 10}h` : `${minutes} min`} passed (${def.label} drifts ${def.perHour > 0 ? "+" : ""}${def.perHour}/h)` });
+      w.push({ t: "stat", id, d, src: "drift", why: `${minutes >= 60 ? `${Math.round(minutes / 6) / 10}h` : `${minutes} min`} passed (${def.label} drifts ${rate > 0 ? "+" : ""}${formatNumber(rate)}/h)` });
   }
   const from = w.s.minutes - minutes;
   for (const [id, c] of Object.entries(w.s.conditions)) {
-    if (w.r.conditions[id]?.every !== "hour")
+    const every = w.r.conditions[id]?.every;
+    if (every !== "hour" && !(every === "both" && !w.s.encounter))
       continue;
     const end = c.until !== null ? Math.min(w.s.minutes, c.until) : w.s.minutes;
     if (end > from)
@@ -8737,6 +9674,20 @@ function resolveTurnFull(r, before, intent, opts) {
 function resolveTurn(r, before, intent, opts) {
   return resolveInner(r, before, intent, opts, []);
 }
+function resistCostText(r, cost) {
+  return Object.entries(cost).map(([id, d]) => `${d > 0 ? "+" : ""}${formatNumber(Math.abs(d))} ${r.stats[id]?.label ?? id}`).join(", ");
+}
+function resistAffordable(r, s, a, cost, env) {
+  const entries = Object.entries(cost);
+  return entries.length > 0 && entries.every(([id, d]) => {
+    const stat = r.stats[id];
+    if (!stat || stat.kind !== "meter" || !Number.isFinite(d) || d === 0 || a.cost.set[id] !== undefined)
+      return false;
+    const have = s.stats[id] ?? stat.start;
+    const own = a.cost.stats[id] !== undefined ? costValue(r, s, id, a.cost.stats[id], env) : 0;
+    return d < 0 ? have + d + Math.min(0, own) >= stat.min : have + d + Math.max(0, own) <= statMax(r, stat, s);
+  });
+}
 function mindOverride(r, s, a, target, seed, resist, params) {
   for (const o of r.mind.overrides) {
     const applies = o.on.length ? o.on.some((x) => x === a.id || a.tags.includes(x)) : !!a.check;
@@ -8750,10 +9701,7 @@ function mindOverride(r, s, a, target, seed, resist, params) {
       continue;
     const authoredKind = o.do === "fail" ? "fail" : o.do === "alter" ? "alter" : "redirect";
     const cost = o.resistCost;
-    const resisted = r.mind.overridesMode !== "soft" && authoredKind !== "alter" && resist === o.id && !!cost && Object.keys(cost).length > 0 && Object.entries(cost).every(([id, amount]) => {
-      const stat = r.stats[id];
-      return !!stat && stat.kind === "meter" && Number.isFinite(amount) && amount > 0 && (s.stats[id] ?? stat.start) - amount >= stat.min && a.cost.set[id] === undefined && (s.stats[id] ?? stat.start) - amount + Math.min(0, percentOf(a.cost.stats[id] ?? 0) !== null ? Math.round(percentOf(a.cost.stats[id] ?? 0) * statMax(r, stat, s)) : evalNumber(a.cost.stats[id] ?? 0, env, 0)) >= stat.min;
-    });
+    const resisted = r.mind.overridesMode !== "soft" && authoredKind !== "alter" && resist === o.id && !!cost && resistAffordable(r, s, a, cost, env);
     const kind = r.mind.overridesMode === "soft" || resisted ? "alter" : authoredKind;
     return {
       id: o.id,
@@ -8777,8 +9725,15 @@ function resolveInner(r, before, intent, opts, needs) {
     return rec;
   if (intent && !before.ended && !intent.actionId.startsWith(DATE_PREFIX) && !intent.actionId.startsWith(PAY_PREFIX) && !intent.actionId.startsWith(JOB_PREFIX) && !intent.actionId.startsWith(QUEST_PREFIX) && intent.actionId !== RUN_EPILOGUE && !(before.dungeon && intent.actionId === "dungeon")) {
     const valid = intent.actionId === EXPLORE ? canExplore(r, before) : intent.actionId.startsWith(TRAVEL_PREFIX) ? travelTargets(r, before).includes(intent.actionId.slice(TRAVEL_PREFIX.length)) : !!findAction(r, before, intent.actionId);
+    const shut = !valid && intent.actionId.startsWith(TRAVEL_PREFIX) ? lockedExits(r, before).find((x) => x.id === intent.actionId.slice(TRAVEL_PREFIX.length)) : undefined;
+    if (shut)
+      return { ...rec, hints: [`{{user}} can't go to ${r.locations[shut.id].name} yet (${shut.locked}). It did not happen and spent no turn or resources.`] };
     if (!valid)
       return { ...rec, hints: ["The attempted action isn't available in the current state. It did not happen and spent no turn or resources."] };
+    const chosen = intent.params && !intent.actionId.startsWith(TRAVEL_PREFIX) && intent.actionId !== EXPLORE ? findAction(r, before, intent.actionId) : null;
+    const short = chosen && chosen.a.params.length ? spentLock(r, before, chosen.a, chosen.target, intent.params) : null;
+    if (short)
+      return { ...rec, hints: [`The attempted action can't be paid for with that choice (${short}). It did not happen and spent no turn or resources.`] };
   }
   if (!w.s.seed)
     w.push({ t: "seed", v: opts.seed, src: "start" });
@@ -8853,11 +9808,10 @@ function resolveInner(r, before, intent, opts, needs) {
     const to = intent.actionId.slice(TRAVEL_PREFIX.length);
     const dest = r.locations[to];
     if (dest) {
-      const from = before.location ? r.locations[before.location] : undefined;
       rec.action = { id: intent.actionId, label: `Go to ${dest.name}`, via: intent.via };
       because(w, `Travel to ${dest.name}`, () => {
         w.push({ t: "move", to, src: "action" });
-        advanceTime(w, from?.travel ?? dest.travel, "action");
+        advanceTime(w, travelMinutes(r, before.location, to), "action");
       });
       if (dest.desc)
         w.hints.push(`Arriving at ${dest.name}: ${dest.desc}`);
@@ -8890,12 +9844,17 @@ function resolveInner(r, before, intent, opts, needs) {
     const checkBefore = cloneState(w.s);
     if (mind?.resisted && mind.resistCost) {
       because(w, `Resisted ${mind.cause}`, () => {
-        for (const [id, amount] of Object.entries(mind.resistCost))
-          w.push({ t: "stat", id, d: -amount, src: "cost" });
+        for (const [id, d] of Object.entries(mind.resistCost))
+          w.push({ t: "stat", id, d, src: "cost" });
       });
-      w.hints.push(`{{user}} explicitly resists ${mind.cause.toLowerCase()}; the chosen action still happens. Resistance costs ${Object.entries(mind.resistCost).map(([id, amount]) => `${amount} ${r.stats[id]?.label ?? id}`).join(", ")}.`);
+      w.hints.push(`{{user}} explicitly resists ${mind.cause.toLowerCase()}; the chosen action still happens. Resistance costs ${resistCostText(r, mind.resistCost)}.`);
     }
     because(w, `Cost of "${label}"`, () => effectToEvents(w, a.cost, "cost", extra));
+    const moveKey = moveChargeKey(checkBefore, a);
+    if (moveKey) {
+      const enc = encounterKey(checkBefore);
+      because(w, `Used "${a.label}"`, () => w.push({ t: "charge", key: moveKey, day: dayOf(checkBefore), ...enc ? { enc } : {}, src: "action" }));
+    }
     if (a.id.startsWith(ITEM_PREFIX)) {
       const itemId = a.id.slice(ITEM_PREFIX.length);
       const it = r.items[itemId];
@@ -8914,9 +9873,9 @@ function resolveInner(r, before, intent, opts, needs) {
       gambleTurn(w, a, intent, rec, label, opts.seed);
     } else if (a.check) {
       const rng = seededRng(opts.seed);
-      const { add, target } = checkNumbers(r, checkBefore, a, intent.params, who);
+      const { add, target, crit } = checkNumbers(r, checkBefore, a, intent.params, who);
       let roll = rollDice(a.check.dice, rng);
-      let tier = tierFor(a.check, roll, add, target);
+      let tier = tierFor(a.check, roll, add, target, crit);
       const played = intent.game && intent.game.score !== undefined && a.check.game !== false ? intent.game : null;
       let game;
       if (played) {
@@ -8934,7 +9893,7 @@ function resolveInner(r, before, intent, opts, needs) {
         if (re) {
           because(w, `★ ${re.name}`, () => w.push({ t: "charge", key: `perk:${re.perk}:reroll`, day: dayOf(checkBefore), src: "action" }));
           roll = rollDice(a.check.dice, seededRng(`${opts.seed}:reroll`));
-          tier = tierFor(a.check, roll, add, target);
+          tier = tierFor(a.check, roll, add, target, crit);
           perkNote = `${re.name} rerolled a failure`;
         }
       }
@@ -8968,6 +9927,8 @@ function resolveInner(r, before, intent, opts, needs) {
         w.hints.push(gameHint(rec.check.label, played, tier, game.bar));
       }
       questHooks(builderOf(w), { kind: "action", id: a.id, result: tier, good: tier === "success" || tier === "crit_success" });
+      if (hasEffect(a.effects))
+        because(w, `"${label}"`, () => effectToEvents(w, a.effects, "action", extra));
       const key = TIER_FALLBACK[tier].find((t) => a.outcomes[t]);
       const how = game ? `played ${GAMES[game.id].name}, ${Math.round(game.score * 100)}% vs ${Math.round(game.bar.success * 100)}%` : `rolled ${rec.check.total}${target !== null ? ` vs ${target}` : ""}`;
       if (key)
@@ -9186,7 +10147,10 @@ function applyProposal(r, before, p, ctx) {
   if (p.move) {
     const k = p.move.toLowerCase();
     const loc = Object.values(r.locations).find((l) => l.id === k || l.name.toLowerCase() === k);
-    if (loc && loc.id !== w.s.location)
+    const shut = loc && loc.id !== w.s.location ? !placeKnown(r, w.s, loc.id) ? "not found yet" : placeLock(r, w.s, loc.id) : null;
+    if (loc && shut)
+      w.hints.push(`{{user}} doesn't reach ${loc.name} (${shut}); they are still at ${w.s.locationName ?? r.locations[w.s.location ?? ""]?.name ?? "the same place"}.`);
+    else if (loc && loc.id !== w.s.location)
       w.push({ t: "move", to: loc.id, src });
     else if (!loc && r.locationsOpen && k !== (w.s.locationName ?? "").toLowerCase())
       w.push({ t: "move", to: slug(p.move), name: p.move, src });
@@ -9379,8 +10343,9 @@ function perkBlocker(r, s, id, offered = true) {
     return `Can't go with ${r.perks[clash]?.name ?? clash}.`;
   if (p.requires && !evalBool(p.requires, makeEnv(r, s), false))
     return "Requirements not met.";
-  if (r.perkPoints && (s.stats[r.perkPoints] ?? 0) < p.cost)
-    return `Needs ${p.cost} point${p.cost === 1 ? "" : "s"}.`;
+  const pool = p.points ?? r.perkPoints;
+  if (pool && (s.stats[pool] ?? 0) < p.cost)
+    return `Needs ${p.cost} ${p.points ? r.stats[p.points]?.label ?? p.points : `point${p.cost === 1 ? "" : "s"}`}.`;
   if (offered && r.perkPick && !perkOffers(r, s).includes(id))
     return "Not on offer right now.";
   return null;
@@ -9410,9 +10375,10 @@ function perkAffinity(r, s, id) {
 function perkOffers(r, s) {
   if (!r.perkPick)
     return [];
-  const open = Object.values(r.perks).filter((p) => p.weight > 0 && !perkBlocker(r, s, p.id, false));
+  const always = Object.values(r.perks).filter((p) => p.always && !perkBlocker(r, s, p.id, false)).map((p) => p.id);
+  const open = Object.values(r.perks).filter((p) => !p.always && p.weight > 0 && !perkBlocker(r, s, p.id, false));
   if (!open.length)
-    return [];
+    return always;
   const rng = seededRng(`${s.seed ?? "warp"}:perks:${Object.keys(s.perks).sort().join(",")}`);
   const score = new Map(open.map((p) => [p.id, perkAffinity(r, s, p.id) + rng() * 0.01]));
   const left = [...open];
@@ -9432,7 +10398,7 @@ function perkOffers(r, s) {
     let x = rng() * total;
     take(left.find((p) => (x -= p.weight) <= 0) ?? left[left.length - 1]);
   }
-  return out;
+  return [...out, ...always];
 }
 function buyPerk(r, before, id) {
   const blocked = perkBlocker(r, before, id);
@@ -9441,9 +10407,40 @@ function buyPerk(r, before, id) {
   const p = r.perks[id];
   const w = new Working(r, cloneState(before));
   w.push({ t: "perk", id, src: "manual" });
-  if (r.perkPoints && p.cost)
-    w.push({ t: "stat", id: r.perkPoints, d: -p.cost, src: "manual" });
+  const pool = p.points ?? r.perkPoints;
+  if (pool && p.cost)
+    w.push({ t: "stat", id: pool, d: -p.cost, src: "manual" });
   effectToEvents(w, p.effects, "manual", {});
+  runTriggers(w, false);
+  return w.events;
+}
+function allocateStats(r, before, spend) {
+  const steps = Object.entries(spend ?? {}).filter(([, n]) => n !== 0);
+  if (!steps.length)
+    return "Nothing to spend.";
+  const cost = {};
+  for (const [id, n] of steps) {
+    const def = r.stats[id];
+    if (!def?.allocate)
+      return `${def?.label ?? id} can't be raised with points.`;
+    if (!Number.isInteger(n) || n < 0 || n > 1000)
+      return "Points go on in whole steps, one way.";
+    const v = before.stats[id] ?? def.start;
+    const max = statMax(r, def, before);
+    if (v + n * def.allocate.step > max + 0.000000001)
+      return `${def.label} can't go above ${formatNumber(max)}.`;
+    cost[def.allocate.with] = (cost[def.allocate.with] ?? 0) + n * def.allocate.cost;
+  }
+  for (const [pool, c] of Object.entries(cost)) {
+    const have = before.stats[pool] ?? r.stats[pool]?.start ?? 0;
+    if (have < c - 0.000000001)
+      return `Not enough ${r.stats[pool]?.label ?? pool}: needs ${formatNumber(c)}, have ${formatNumber(have)}.`;
+  }
+  const w = new Working(r, cloneState(before));
+  for (const [pool, c] of Object.entries(cost))
+    w.push({ t: "stat", id: pool, d: -c, src: "manual", why: "Points spent" });
+  for (const [id, n] of steps)
+    w.push({ t: "stat", id, d: n * r.stats[id].allocate.step, src: "manual", why: `Points spent on ${r.stats[id].label}` });
   runTriggers(w, false);
   return w.events;
 }
@@ -11178,8 +12175,8 @@ encounters:
       name: Scavenger
       armor: { hp: 2 }            # scavenged plating: blows to the body land 2 lighter
       stats:
-        shields: { label: Shields, start: 12, max: 12 }
-        hp: { label: HP, start: 30, max: 30 }
+        shields: { label: Shields, start: 8, max: 8 }
+        hp: { label: HP, start: 18, max: 18 }
         lust: { label: Lust, start: 0, max: 100, good: low }
     actions:
       shoot:
@@ -11187,7 +12184,7 @@ encounters:
         cost: { energy: -5 }
         check: { vs: 12, add: floor(aim / 2), label: Aim, game: aim }
         crit_success: { foe: { shields: -14, hp: "foe.shields <= 0 ? -12 : 0" }, hint: "A perfect shot." }
-        success: { foe: { shields: -8, hp: "foe.shields <= 0 ? -7 : 0" }, hint: "The shot lands." }
+        success: { foe: { shields: -8, hp: "foe.shields <= 0 ? -9 : -2" }, hint: "The shot lands." }
         fail: { hint: "Missed." }
       burst:
         label: Burst fire
@@ -11199,7 +12196,7 @@ encounters:
         label: Melee
         cost: { energy: -8 }
         check: { vs: 12, add: floor(physique / 2), label: Physique }
-        success: { foe: { hp: "-(6 + floor(physique / 2))" }, hint: "A heavy blow gets past their shields." }
+        success: { foe: { hp: "-(8 + floor(physique / 2))" }, hint: "A heavy blow gets past their shields." }
         fail: { hint: "Blocked." }
       tease:
         label: Tease
@@ -11212,7 +12209,7 @@ encounters:
         effects: { take: medkit, hp: +25 }
       flee:
         label: Flee
-        check: { vs: 13, add: floor(reflexes / 2), label: Reflexes, game: snake }
+        check: { vs: 15, add: floor(reflexes / 2), label: Reflexes, game: snake }
         success: { energy: -10, end: fled }
         fail: { hint: "Cut off — the fight goes on." }
     foe_moves:
@@ -12122,6 +13119,7 @@ encounters:
     desc: Something in old armour climbs out of the barrow, cold light where its eyes should be.
     tags: [violence, horror]
     goal: Destroy it, or break the oath that binds it with a dawn-blessing
+    sim: { stats: { level: 5, might: 6, blades: 40, lore: 30 }, items: { holy_symbol: 1 } }   # judged where it's meant to be met: a seasoned adventurer with Aldous's symbol
     foe:
       name: Barrow-Wight
       armor: { hp: 3 }            # rusted plate: steel bites less, the rite doesn't care
@@ -12901,8 +13899,8 @@ encounters:
     foe:
       name: Sal's boys
       stats:
-        patience: { label: Patience, start: 14, max: 14 }
-        hp: { label: Grit, start: 30, max: 30 }
+        patience: { label: Patience, start: 12, max: 12 }
+        hp: { label: Grit, start: 20, max: 20 }
     actions:
       talk:
         label: Talk them down
@@ -16380,6 +17378,32 @@ function suggest(name, pool) {
 function venueCostsWithoutMoney(r) {
   return !r.hud.money && Object.values(r.dating.venues).some((v) => v.cost > 0);
 }
+function condCures(r) {
+  const removed = new Set, timed = new Set;
+  const visited = new Set;
+  const visit = (o) => {
+    if (!o || typeof o !== "object" || visited.has(o))
+      return;
+    visited.add(o);
+    if (Array.isArray(o)) {
+      for (const x of o)
+        visit(x);
+      return;
+    }
+    const e = o;
+    if (Array.isArray(e.removeConditions) && e.addConditions && typeof e.addConditions === "object") {
+      for (const k of e.removeConditions)
+        removed.add(k);
+      for (const [k, d] of Object.entries(e.addConditions))
+        if (d !== null)
+          timed.add(k);
+    }
+    for (const v of Object.values(o))
+      visit(v);
+  };
+  visit(r);
+  return { removed, timed };
+}
 function lintRuleset(r) {
   const issues = [];
   const s = initialState(r);
@@ -16388,18 +17412,33 @@ function lintRuleset(r) {
     if (src === undefined || typeof src === "number")
       return;
     const base = makeEnv(r, s, extra);
-    const env = { lookup: base.lookup, call: (n, a) => n === "roll" ? 1 : dungeon && (n === "bag" || n === "rel_bond") ? 0 : base.call?.(n, a) };
+    const env = { lookup: base.lookup, call: (n, a) => {
+      if (n === "in_encounter" && a.length && !r.encounters[String(a[0])])
+        badEncounter.add(String(a[0]));
+      return n === "roll" ? 1 : dungeon && (n === "bag" || n === "rel_bond") ? 0 : base.call?.(n, a);
+    } };
+    const badEncounter = new Set;
     const unknown = new Set;
     try {
       evaluate(src, env, { unknown });
     } catch {
       return;
     }
+    for (const m of String(src).matchAll(/\b(eff|gear|integrity)\(\s*['"]([^'"]+)['"]/g)) {
+      const [, fn, id] = m;
+      if (fn === "integrity") {
+        if (!r.items[id] && !r.wardrobe.slots.some((x) => x.id === id))
+          issues.push({ level: "warning", where, message: `integrity('${id}'): "${id}" isn't an item or a wardrobe slot${suggest(id, [...Object.keys(r.items), ...r.wardrobe.slots.map((x) => x.id)])}` });
+      } else if (!r.stats[id])
+        issues.push({ level: "warning", where, message: `${fn}('${id}'): "${id}" isn't a stat${suggest(id, r.statOrder)}` });
+    }
     for (const u of unknown) {
       const isCall = u.endsWith("()");
       const msg = isCall ? `"${u}" isn't a known function (${FUNCTIONS.join(", ")})` : `"${u}" isn't a stat, flag or clock value${suggest(u, [...names, ...Object.keys(extra)])}`;
       issues.push({ level: "warning", where, message: msg });
     }
+    for (const id of badEncounter)
+      issues.push({ level: "warning", where, message: `in_encounter('${id}'): "${id}" isn't an encounter${suggest(id, Object.keys(r.encounters))}` });
   };
   const checkEffect = (e, where, extra = {}) => {
     for (const [id, v] of Object.entries(e.stats)) {
@@ -16423,8 +17462,10 @@ function lintRuleset(r) {
         issues.push({ level: "warning", where, message: `adds condition "${id}", which isn't declared under conditions:` });
     }
     for (const d of e.decide)
-      for (const o of d.options)
+      for (const o of d.options) {
+        check(o.when, `${where} › decide › ${d.id} › ${o.id} › when`, extra);
         checkEffect(o.effect, `${where} › decide › ${d.id} › ${o.id}`, extra);
+      }
     if (e.move && Object.keys(r.locations).length && !r.locations[e.move]) {
       issues.push({ level: "warning", where, message: `moves to "${e.move}", which isn't a declared location${suggest(e.move, Object.keys(r.locations))}` });
     }
@@ -16521,8 +17562,22 @@ function lintRuleset(r) {
         issues.push({ level: "warning", where, message: `"${who}" isn't a person to remember it${suggest(who, people)}` });
   };
   const people = Object.keys(r.people);
+  const cures = condCures(r);
   for (const id of r.statOrder)
     check(r.stats[id].maxExpr, `Stats › ${id} › max`);
+  for (const id of r.statOrder)
+    check(r.stats[id].startExpr, `Stats › ${id} › start`);
+  const checkCost = (a, w, extra) => {
+    const env = makeEnv(r, s, extra);
+    for (const [id, v] of Object.entries(a.cost.stats)) {
+      try {
+        if (!Number.isFinite(costValue(r, s, id, v, env)))
+          issues.push({ level: "warning", where: `${w} › cost › ${id}`, message: `"${v}" doesn't work out to a number` });
+      } catch (e) {
+        issues.push({ level: "warning", where: `${w} › cost › ${id}`, message: `"${v}" can't be worked out (${e instanceof Error ? e.message : String(e)}) — use a number, a share of the max like "-15%", or a formula` });
+      }
+    }
+  };
   const checkAction = (a, w) => {
     const extra = Object.fromEntries(a.params.map((p) => [p.id, p.options[p.default]]));
     if (a.perPerson)
@@ -16531,8 +17586,10 @@ function lintRuleset(r) {
     if (a.check) {
       check(a.check.target, `${w} › check`, extra);
       check(a.check.add, `${w} › check › add`, extra);
+      check(a.check.crit, `${w} › check › crit`, extra);
     }
     checkEffect(a.cost, `${w} › cost`, extra);
+    checkCost(a, w, extra);
     checkEffect(a.effects, `${w} › effects`, extra);
     for (const [tier, e] of Object.entries(a.outcomes))
       if (e)
@@ -16548,6 +17605,29 @@ function lintRuleset(r) {
   };
   for (const a of Object.values(r.actions))
     checkAction(a, `Actions › ${a.id}`);
+  const statsOnly = (e) => {
+    const rest = { ...e, stats: {}, hint: undefined };
+    return JSON.stringify(rest, (_k, v) => v === undefined ? undefined : v) === JSON.stringify(emptyEffect());
+  };
+  for (const a of Object.values(r.actions)) {
+    if (a.check || a.gamble || a.perPerson || Object.keys(a.outcomes).length || !statsOnly(a.effects) || !statsOnly(a.cost))
+      continue;
+    const deltas = { ...a.cost.stats, ...a.effects.stats };
+    const n = (v) => typeof v === "number" ? v : Number(String(v).replace(/^\+/, ""));
+    const ups = Object.entries(deltas).filter(([id, v]) => n(v) > 0 && ["attribute", "skill"].includes(r.stats[id]?.kind ?? ""));
+    const downs = Object.entries(deltas).filter(([, v]) => n(v) < 0);
+    if (ups.length !== 1 || downs.length !== 1 || Object.keys(deltas).length !== 2)
+      continue;
+    const [pool] = downs[0], [target] = ups[0];
+    if (r.stats[target]?.allocate)
+      continue;
+    issues.push({ level: "warning", where: `Actions › ${a.id}`, message: `only turns ${r.stats[pool]?.label ?? pool} into ${r.stats[target]?.label ?? target}. If this is spending points, each click is a story turn (a player message and a narrator reply) — put allocate: ${pool} on ${target} instead for +/− in the sidebar, with no turn.` });
+  }
+  for (const ab of Object.values(r.abilities))
+    checkAction(ab.action, `Abilities › ${ab.id}`);
+  for (const it of Object.values(r.items))
+    if (it.use)
+      checkAction(it.use, `Items › ${it.id} › use`);
   const checkRequires = (a, w) => {
     for (const q of a.requires) {
       const id = q.id ?? "";
@@ -16578,14 +17658,26 @@ function lintRuleset(r) {
     checkEffect(c.tick, `${w} › tick`);
     if (c.stat && !r.stats[c.stat] && !Object.values(r.encounters).some((e) => e.foe.stats.some((x) => x.id === c.stat)))
       issues.push({ level: "warning", where: `${w} › stat`, message: `"${c.stat}" isn't a stat or a foe stat${suggest(c.stat, r.statOrder)}` });
-    if (c.every === "hour" && c.dot !== undefined && !c.lasts)
+    if ((c.every === "hour" || c.every === "both") && c.dot !== undefined && !c.lasts && !cures.removed.has(c.id) && !cures.timed.has(c.id))
       issues.push({ level: "warning", where: w, message: "hurts every hour and never wears off on its own — give it `lasts:` (or a cure)" });
+    for (const [k, v] of [...Object.entries(c.armor), ...Object.entries(c.bonus)]) {
+      if (k !== "_" && !r.stats[k])
+        issues.push({ level: "warning", where: `${w} › armor`, message: `"${k}" isn't a stat${suggest(k, r.statOrder)}` });
+      check(v, `${w} › ${k in c.bonus ? "bonus" : "armor"} › ${k}`);
+    }
   }
   for (const it of Object.values(r.items))
-    for (const k of Object.keys(it.armor)) {
+    for (const [k, v] of Object.entries(it.armor)) {
       if (k !== "_" && !r.stats[k])
         issues.push({ level: "warning", where: `Items › ${it.id} › armor`, message: `"${k}" isn't a stat${suggest(k, r.statOrder)}` });
+      check(v, `Items › ${it.id} › armor › ${k}`);
     }
+  for (const it of Object.values(r.items))
+    for (const [k, v] of Object.entries(it.bonus))
+      check(v, `Items › ${it.id} › bonus › ${k}`);
+  for (const id of r.statOrder)
+    if (r.stats[id].perHourExpr && !/%\s*$/.test(r.stats[id].perHourExpr))
+      check(r.stats[id].perHourExpr, `Stats › ${id} › per_hour`);
   for (const q of Object.values(r.quests)) {
     const w = `Quests › ${q.id}`;
     check(q.when, `${w} › when`);
@@ -16605,6 +17697,11 @@ function lintRuleset(r) {
   }
   for (const p of Object.values(r.people))
     p.schedule.forEach((e, i) => check(e.when, `People › ${p.id} › schedule #${i + 1}`));
+  for (const l of Object.values(r.locations)) {
+    check(l.when, `Locations › ${l.id} › when`);
+    for (const q of l.requires ?? [])
+      check(q.when, `Locations › ${l.id} › requires`);
+  }
   for (const c of Object.values(r.codex))
     check(c.unlock, `Codex › ${c.id} › unlock`);
   for (const f of Object.values(r.feats)) {
@@ -16620,8 +17717,41 @@ function lintRuleset(r) {
     for (const a of Object.values(enc.actions))
       checkAction(a, `${w} › actions › ${a.id}`);
     if (enc.foeMoves)
-      for (const o of enc.foeMoves.options)
+      for (const o of enc.foeMoves.options) {
+        check(o.when, `${w} › foe_moves › ${o.id} › when`);
         checkEffect(o.effect, `${w} › foe_moves › ${o.id}`);
+      }
+    for (const fs of enc.foe.stats) {
+      check(fs.startExpr, `${w} › foe › ${fs.id}`);
+      check(fs.maxExpr, `${w} › foe › ${fs.id} › max`);
+    }
+    for (const [k, v] of Object.entries(enc.foe.armor))
+      if (typeof v === "string")
+        check(v, `${w} › foe › armor${k === "_" ? "" : ` › ${k}`}`);
+    if (enc.foe.stats.length) {
+      const ids = enc.foe.stats.map((x) => x.id);
+      const foeWrites = (e, at) => {
+        if (!e)
+          return;
+        for (const stat of Object.keys(e.foe))
+          if (!ids.includes(stat))
+            issues.push({ level: "warning", where: at, message: `changes foe stat "${stat}", but ${enc.foe.name} only has ${ids.join(", ")} — the change does nothing${suggest(stat, ids)}` });
+        for (const d of e.decide)
+          for (const o of d.options)
+            foeWrites(o.effect, `${at} › decide › ${d.id} › ${o.id}`);
+      };
+      for (const a of Object.values(enc.actions)) {
+        const aw = `${w} › actions › ${a.id}`;
+        foeWrites(a.cost, `${aw} › cost`);
+        foeWrites(a.effects, `${aw} › effects`);
+        for (const [tier, e] of Object.entries(a.outcomes))
+          foeWrites(e, `${aw} › ${tier}`);
+      }
+      if (enc.foeMoves)
+        for (const o of enc.foeMoves.options)
+          foeWrites(o.effect, `${w} › foe_moves › ${o.id}`);
+      foeWrites(enc.start, `${w} › start`);
+    }
     for (const e of enc.endWhen)
       check(e.when, `${w} › end_when › ${e.outcome}`);
     for (const [o, e] of Object.entries(enc.outcomes))
@@ -16641,7 +17771,12 @@ function lintRuleset(r) {
     check(f.rate, `${w} › per_day`);
     check(f.perTurn, `${w} › per_turn`);
     check(f.when, `${w} › when`);
-    f.stages.forEach((st, i) => checkEffect(st.effects, `${w} › stage ${i + 1}`));
+    f.stages.forEach((st, i) => {
+      checkEffect(st.effects, `${w} › stage ${i + 1}`);
+      check(st.if, `${w} › stage ${i + 1} › if`);
+      if (st.else)
+        checkEffect(st.else, `${w} › stage ${i + 1} › else`);
+    });
     const moved = f.pushes.length > 0 || f.rate !== 0 || f.perTurn !== 0;
     if (!moved)
       issues.push({ level: "warning", where: w, message: "never moves on its own — give it `per_day:`, `per_turn:` or `story:` pushes (or move it with `front:` effects)" });
@@ -16659,6 +17794,8 @@ function lintRuleset(r) {
     const w = `Dungeons › ${d.id}`;
     const dx = { depth: 1, target: Object.keys(r.people)[0] ?? "someone" };
     check(d.when, `${w} › when`);
+    for (const q of d.requires ?? [])
+      check(q.when, `${w} › requires`);
     check(d.party.when, `${w} › party › when`, dx);
     for (const [k, v] of Object.entries(d.player))
       if (k !== "class" && k !== "sprite")
@@ -16831,7 +17968,9 @@ function lintRuleset(r) {
 var FUNCTIONS;
 var init_lint = __esm(() => {
   init_expr();
+  init_ruleset();
   init_state();
+  init_resolve();
   init_content();
   FUNCTIONS = [
     "has",
@@ -16851,6 +17990,9 @@ var init_lint = __esm(() => {
     "codex",
     "feat",
     "perk",
+    "eff",
+    "gear",
+    "integrity",
     "secret",
     "front",
     "front_stage",
@@ -16882,6 +18024,7 @@ var init_lint = __esm(() => {
     "foe_cond",
     "stat_max",
     "foe_max",
+    "in_encounter",
     "min",
     "max",
     "clamp",
@@ -16904,7 +18047,7 @@ function readFormula(v, seen) {
   }
   for (const id of identifiers(v))
     seen.reads.add(id);
-  for (const m of v.matchAll(/\b(has|count|cond|flag|at|present|where|wearing|met|rel|worn|secret|front|codex|feat|perk|deepest|stage|partner|dates|transformed|saved|happened|owed|missed|days_until|arc|bond|seen_by|quest|quest_active|quest_done|quest_failed|goal|cond_of|foe_cond|memories)\(\s*'([^']+)'/g))
+  for (const m of v.matchAll(/\b(has|count|cond|flag|at|present|where|wearing|met|rel|worn|secret|front|codex|feat|perk|deepest|stage|partner|dates|transformed|saved|happened|owed|missed|days_until|arc|bond|seen_by|quest|quest_active|quest_done|quest_failed|goal|cond_of|foe_cond|memories|eff|gear|integrity)\(\s*'([^']+)'/g))
     seen.calls.add(`${m[1]}:${m[2]}`);
 }
 function walk(o, seen, money, key = "") {
@@ -17001,9 +18144,9 @@ function auditRuleset(r) {
   const links = [];
   const gap = (g) => gaps.push(g);
   const costs = new Set(Object.values(r.abilities).flatMap((ab) => Object.keys(ab.action.cost.stats)));
-  const readsStat = (id) => seen.reads.has(id) || costs.has(id);
+  const readsStat = (id) => seen.reads.has(id) || costs.has(id) || seen.calls.has(`eff:${id}`) || seen.calls.has(`gear:${id}`);
   for (const it of Object.values(r.items)) {
-    const referenced = seen.calls.has(`has:${it.id}`) || seen.calls.has(`count:${it.id}`) || seen.calls.has(`wearing:${it.id}`) || seen.itemsTaken.has(it.id);
+    const referenced = seen.calls.has(`has:${it.id}`) || seen.calls.has(`count:${it.id}`) || seen.calls.has(`wearing:${it.id}`) || seen.calls.has(`integrity:${it.id}`) || seen.itemsTaken.has(it.id);
     const gift = it.tags.includes("gift") && r.dating.enabled;
     const bonus = Object.keys(it.bonus).length > 0;
     if (it.use)
@@ -17012,9 +18155,11 @@ function auditRuleset(r) {
       links.push(`${it.name} helps ${Object.keys(it.bonus).map((s) => r.stats[s]?.label ?? s).join(", ")} checks`);
     if (!it.use && !bonus && !referenced && !gift && !it.slot) {
       gap({ id: `item-dead:${it.id}`, severity: "gap", part: "world", text: `${it.name} does nothing: no use, no bonus, and nothing needs it.`, fix: `Give it a use: (what using it does, in this game's stats and conditions${it.desc ? ` — its description says: "${it.desc}"` : ""}), a bonus: to the checks it would help, or an action/encounter move that needs it.` });
-    } else if (it.slot && !bonus && !it.traits.length && it.warmth === 0 && it.reveal === 0 && !referenced) {
-      gap({ id: `item-flat:${it.id}`, severity: "thin", part: "world", text: `${it.name} is clothing with no effect (no warmth, traits or bonus).`, fix: "Give it warmth, a trait something checks, or a bonus: (sturdy boots → athletics)." });
+    } else if (it.slot && !bonus && !Object.keys(it.armor).length && !it.traits.length && it.warmth === 0 && it.reveal === 0 && !referenced) {
+      gap({ id: `item-flat:${it.id}`, severity: "thin", part: "world", text: `${it.name} is clothing with no effect (no warmth, traits, armor or bonus).`, fix: "Give it warmth, a trait something checks, armor:, or a bonus: (sturdy boots → athletics)." });
     }
+    if (Object.keys(it.armor).length)
+      links.push(`${it.name} is armor (${Object.keys(it.armor).map((s) => s === "_" ? "the main meter" : r.stats[s]?.label ?? s).join(", ")})`);
     if ((referenced || it.use) && !seen.itemsGiven.has(it.id) && !it.slot) {
       gap({ id: `item-unobtainable:${it.id}`, severity: "gap", part: "world", text: `${it.name} matters, but nothing gives it to the player.`, fix: "Add it to start.items, a shop or job reward (give:), dungeon loot, or an action that finds it." });
     }
@@ -17032,7 +18177,7 @@ function auditRuleset(r) {
     }
   }
   const perks = Object.values(r.perks);
-  if (perks.length && r.perkPoints && !seen.changed.has(r.perkPoints) && r.stats[r.perkPoints]?.perHour === 0) {
+  if (perks.length && r.perkPoints && !seen.changed.has(r.perkPoints) && r.stats[r.perkPoints]?.perHour === 0 && r.stats[r.perkPoints]?.perHourExpr === undefined) {
     gap({ id: "perk-no-points", severity: "gap", part: "journal", text: "Perks cost points, but nothing ever gives the player any.", fix: `Raise ${r.perkPoints} on level-ups (a trigger), feat rewards, won encounters or story milestones.` });
   }
   for (const p of perks) {
@@ -17048,11 +18193,12 @@ function auditRuleset(r) {
     if (def.kind === "hidden")
       continue;
     const grows = (def.kind === "skill" || def.kind === "attribute") && r.growth.enabled && def.growth > 0;
-    const changes = seen.changed.has(id) || def.perHour !== 0 || def.narrator > 0 || grows;
+    const changes = seen.changed.has(id) || def.perHour !== 0 || def.perHourExpr !== undefined || !!def.allocate || def.narrator > 0 || grows;
     const read = readsStat(id);
     if (!changes)
       gap({ id: `stat-static:${id}`, severity: "gap", part: "stats", text: `${def.label} never changes: no action, event or drift moves it.`, fix: `Have actions, foe moves, triggers or time move ${def.label}${def.kind === "meter" ? " (per_hour drift, costs, consequences)" : ""}.` });
-    if ((def.kind === "skill" || def.kind === "attribute") && !read && id !== r.perkPoints) {
+    const allocPool = r.statOrder.some((x) => r.stats[x].allocate?.with === id);
+    if ((def.kind === "skill" || def.kind === "attribute") && !read && id !== r.perkPoints && !allocPool && !perks.some((p) => p.points === id)) {
       gap({ id: `skill-unused:${id}`, severity: "gap", part: "actions", text: `${def.label} is a ${def.kind} no check uses.`, fix: `Make some action or encounter checks read ${id} (e.g. chance: "30 + ${id} / 2"), so it matters and grows.` });
     } else if (def.kind === "meter" && !read && id !== money) {
       gap({ id: `stat-unread:${id}`, severity: "thin", part: "rules", text: `${def.label} is shown but has no consequence.`, fix: `Let something read it: a trigger at a threshold, a check penalty ("- ${id} / 4"), an ending, an encounter's end_when, or an action's when.` });
@@ -17202,7 +18348,7 @@ var FORMULA_KEYS;
 var init_audit = __esm(() => {
   init_expr();
   init_encounter_view();
-  FORMULA_KEYS = new Set(["when", "add", "target", "unlock", "requires", "amount", "maxExpr", "chance", "pay", "tip", "perDay", "perTurn", "per_day", "per_turn", "momentum", "gauge", "atk", "def", "mat", "mdf", "agi", "hp", "mp"]);
+  FORMULA_KEYS = new Set(["when", "add", "target", "unlock", "requires", "amount", "maxExpr", "crit", "perHourExpr", "chance", "pay", "tip", "perDay", "perTurn", "per_day", "per_turn", "momentum", "gauge", "atk", "def", "mat", "mdf", "agi", "hp", "mp"]);
 });
 
 // src/backend/rulebook-install.ts
@@ -18348,6 +19494,9 @@ function dungeonsHere(r, s) {
   const env = makeEnv(r, s);
   return Object.values(r.dungeons).filter((d) => (!d.at.length || d.at.includes(s.location ?? "")) && (!d.when || evalBool(d.when, env, true)));
 }
+function dungeonLock(r, s, d) {
+  return d.requires ? gateLock(r, s, d.requires, d.whyNot) : null;
+}
 function eligibleCompanions(r, s, d) {
   const here = new Set(presentPeople(r, s, makeEnv(r, s)));
   return Object.keys(s.people).filter((id) => !s.forgotten[id]).filter((id) => !d.party.when || evalBool(d.party.when, makeEnv(r, s, { target: id }), true)).map((id) => ({ id, name: personName(r, s, id), present: here.has(id), cls: classFor(d, id) }));
@@ -18494,6 +19643,9 @@ function enterDungeon(r, s, id, companions, seed) {
     return fail("You're already in a dungeon.");
   if (!dungeonsHere(r, s).some((x) => x.id === id))
     return fail(`${d.name} can't be entered from here.`);
+  const locked = dungeonLock(r, s, d);
+  if (locked)
+    return fail(`${d.name} is locked: ${locked}`);
   const allowed = new Set(eligibleCompanions(r, s, d).map((c) => c.id));
   const chosen = [...new Set(companions)].filter((c) => allowed.has(c)).slice(0, d.party.max);
   const events = buildTurn(r, s, seed, (t) => {
@@ -19008,7 +20160,7 @@ var PLAYER = "you", fail = (error) => ({ events: [], error }), levelOf = (xp) =>
   const read = s.dating.prefs[id]?.["__adult"];
   if (read !== undefined)
     return read > 0;
-  return !p?.schedule.some((e) => s.discovered?.includes(e.at));
+  return !p?.schedule.some((e) => e.at !== null && s.discovered?.includes(e.at));
 };
 var init_run = __esm(() => {
   init_dice();
@@ -19033,9 +20185,14 @@ function toneFromPct(p, good) {
   const g = good === "high" ? p : 1 - p;
   return g >= 0.67 ? "good" : g >= 0.34 ? "warn" : "bad";
 }
-function statDisplay(def, v, max, currency) {
+function shownText(def, band, num) {
+  if (!band || def.show === "number")
+    return null;
+  return def.show === "both" ? `${band.text} (${num})` : band.text;
+}
+function statDisplay(r, def, v, max) {
   if (def.kind === "money")
-    return `${currency}${formatNumber(v)}`;
+    return formatMoney(r, v);
   if (def.kind === "meter" && max !== 100)
     return `${formatNumber(v)} / ${formatNumber(max)}`;
   return formatNumber(v);
@@ -19053,16 +20210,16 @@ function buildHud(r, s) {
       value: v,
       min: def.min,
       max,
-      display: statDisplay(def, v, max, r.hud.currency),
+      display: statDisplay(r, def, v, max),
       pct: p,
-      text: band?.text ?? null,
+      text: shownText(def, band, statDisplay(r, def, v, max)),
       tone: band?.tone ?? toneFromPct(p, def.good),
       good: def.good,
       color: def.color,
       desc: def.desc
     };
   });
-  const skills = r.statOrder.filter((id) => (r.stats[id].kind === "attribute" || r.stats[id].kind === "skill") && !r.hud.bars.includes(id)).map((id) => {
+  const skills = r.statOrder.filter((id) => (r.stats[id].kind === "attribute" || r.stats[id].kind === "skill") && !r.hud.bars.includes(id) && r.stats[id].show !== "hidden").map((id) => {
     const def = r.stats[id];
     const v = s.stats[id] ?? def.start;
     const max = statMax(r, def, s);
@@ -19074,9 +20231,17 @@ function buildHud(r, s) {
       grade: gradeFor(def, v, max),
       pct: pct2(v, def.min, max),
       kind: def.kind,
-      text: band?.text ?? null,
+      text: shownText(def.showSet ? def : { ...def, show: "both" }, band, formatNumber(v)),
       tone: band?.tone ?? "neutral",
-      practice: practiceProgress(r, s, id)
+      practice: practiceProgress(r, s, id),
+      ...def.allocate ? { allocate: {
+        pool: def.allocate.with,
+        poolLabel: r.stats[def.allocate.with]?.label ?? def.allocate.with,
+        left: s.stats[def.allocate.with] ?? r.stats[def.allocate.with]?.start ?? 0,
+        cost: def.allocate.cost,
+        step: def.allocate.step,
+        room: Math.max(0, Math.floor((max - v) / def.allocate.step + 0.000000001))
+      } } : {}
     };
   });
   const env = makeEnv(r, s);
@@ -19091,7 +20256,7 @@ function buildHud(r, s) {
         const v = s.rel[id]?.[rs] ?? def.start;
         const band = bandFor(def, v);
         const pp = pct2(v, def.min, def.max);
-        return { id: rs, label: def.label, value: v, min: def.min, max: def.max, display: formatNumber(v), pct: pp, text: band?.text ?? null, tone: band?.tone ?? toneFromPct(pp, def.good) };
+        return { id: rs, label: def.label, value: v, min: def.min, max: def.max, display: formatNumber(v), pct: pp, text: shownText(def, band, formatNumber(v)), tone: band?.tone ?? toneFromPct(pp, def.good) };
       }),
       present: here.has(id),
       whereabouts: where ? r.locations[where]?.name ?? where : null,
@@ -19120,11 +20285,13 @@ function buildHud(r, s) {
     };
   };
   const usable_ = usableItems(r, s);
+  let gearEnv_ = null;
+  const gearEnv = () => gearEnv_ ??= makeEnv(r, s);
   const items = Object.entries(s.items).map(([id, count]) => {
     const def = r.items[id];
     const per = def?.uses ?? 0;
     const usable = usable_.find((u) => u.id === `item:${id}`);
-    const bonus = def ? Object.entries(def.bonus).filter(([, b]) => b).map(([st, b]) => `${b > 0 ? "+" : ""}${b} ${r.stats[st]?.label ?? st}`).join(", ") : "";
+    const bonus = def ? Object.entries(def.bonus).map(([st, b]) => [st, amountValue(b, gearEnv())]).filter(([, b]) => b).map(([st, b]) => `${b > 0 ? "+" : ""}${formatNumber(b)} ${r.stats[st]?.label ?? st}`).join(", ") : "";
     return {
       id,
       name: itemName(r, s, id),
@@ -19169,8 +20336,9 @@ function buildHud(r, s) {
       momentum: s.encounter.momentum ?? null,
       stats: (enc?.foe.stats ?? []).map((fs) => {
         const v = s.encounter.foe[fs.id] ?? fs.start;
-        const p = pct2(v, 0, fs.max);
-        return { id: fs.id, label: fs.label, value: v, max: fs.max, pct: p, tone: toneFromPct(p, fs.good === "none" ? "none" : fs.good === "high" ? "high" : "low") };
+        const top = s.encounter.max?.[fs.id] ?? fs.max;
+        const p = pct2(v, 0, top);
+        return { id: fs.id, label: fs.label, value: v, max: top, pct: p, tone: toneFromPct(p, fs.good === "none" ? "none" : fs.good === "high" ? "high" : "low") };
       }),
       foeConds: Object.entries(s.encounter.conds ?? {}).map(([id, n]) => ({
         id,
@@ -19202,7 +20370,9 @@ function buildHud(r, s) {
       remaining: c.rounds !== undefined ? `${c.rounds} round${c.rounds === 1 ? "" : "s"}` : left !== null && left > 0 ? minutesLeft(left) : undefined
     };
   });
-  const money = r.hud.money ? statDisplay(r.stats[r.hud.money], s.stats[r.hud.money] ?? 0, 0, r.hud.currency) : null;
+  const moneyDef = r.hud.money ? r.stats[r.hud.money] : undefined;
+  const moneyV = r.hud.money ? s.stats[r.hud.money] ?? moneyDef?.start ?? 0 : 0;
+  const money = moneyDef ? moneyDef.show === "hidden" ? null : shownText(moneyDef.showSet ? moneyDef : { ...moneyDef, show: "both" }, bandFor(moneyDef, moneyV, statMax(r, moneyDef, s)), formatMoney(r, moneyV)) ?? formatMoney(r, moneyV) : null;
   const loc = s.location ? r.locations[s.location] : undefined;
   return {
     rulesetName: r.name,
@@ -19253,6 +20423,7 @@ function buildHud(r, s) {
       return {
         label: o.label,
         owed: d?.owed ?? 0,
+        owedText: formatMoney(r, d?.owed ?? 0),
         text: !d || d.owed <= 0 ? `Paid · next ${r.clock.enabled && d ? formatClock(r, d.due).day : "later"}` : d.missed || days < 0 ? `Overdue · ${d.missed} missed` : days <= 0 ? "Due today" : `Due in ${days} day${days === 1 ? "" : "s"}`,
         tone: !d || d.owed <= 0 ? "good" : d.missed || days < 0 ? "bad" : days <= 1 ? "warn" : "neutral"
       };
@@ -19381,20 +20552,22 @@ function buildMap(r, s) {
       peopleAt.set(at, [...peopleAt.get(at) ?? [], personName(r, s, pid)]);
   }
   const reach = new Set(travelTargets(r, s));
+  const shown = new Set(ids.filter((id) => id === s.location || placeKnown(r, s, id)));
   const edges = [];
   const seen = new Set;
   for (const id of ids)
     for (const x of r.locations[id].exits) {
       const k = [id, x].sort().join("|");
-      if (r.locations[x] && !seen.has(k)) {
+      if (r.locations[x] && shown.has(id) && shown.has(x) && !seen.has(k)) {
         seen.add(k);
         edges.push([id, x]);
       }
     }
   return {
-    nodes: ids.map((id) => {
+    nodes: ids.filter((id) => shown.has(id)).map((id) => {
       const [x, y] = pos.get(id) ?? [0, 0];
-      return { id, name: r.locations[id].name, x, y, here: s.location === id, reachable: reach.has(id), indoors: r.locations[id].indoors, people: peopleAt.get(id) ?? [] };
+      const locked = s.location === id ? null : placeLock(r, s, id);
+      return { id, name: r.locations[id].name, x, y, here: s.location === id, reachable: reach.has(id), indoors: r.locations[id].indoors, people: peopleAt.get(id) ?? [], ...locked ? { locked } : {} };
     }),
     edges
   };
@@ -19470,11 +20643,11 @@ function withMindCounterplay(r, s, c, live) {
     warnings.push(`${o.cause}: ${hard ? o.do === "fail" ? "may fail without a roll" : "may replace your chosen action" : "narration pressure only; your action stays chosen"}.`);
     if (!hard || !o.resistCost || !Object.keys(o.resistCost).length)
       continue;
-    const valid = Object.entries(o.resistCost).every(([id, n]) => r.stats[id]?.kind === "meter" && Number.isFinite(n) && n > 0);
+    const valid = Object.entries(o.resistCost).every(([id, n]) => r.stats[id]?.kind === "meter" && Number.isFinite(n) && n !== 0);
     if (!valid)
       continue;
-    const cost = Object.entries(o.resistCost).map(([id, n]) => `${n} ${r.stats[id].label}`).join(", ");
-    const affordable = Object.entries(o.resistCost).every(([id, n]) => found.a.cost.set[id] === undefined && (s.stats[id] ?? r.stats[id].start) - n + Math.min(0, actionCost(r, s, found.a, id, env)) >= r.stats[id].min);
+    const cost = resistCostText(r, o.resistCost);
+    const affordable = resistAffordable(r, s, found.a, o.resistCost, env);
     warnings.push(`Resist ${o.id}: ${cost}, paid only if this override triggers. ${affordable ? "Choose resistance below to keep your action." : "Not enough resources to resist."}`);
     if (affordable)
       resist.push(o.id);
@@ -19493,11 +20666,6 @@ function liveAction(r, live, id) {
   const l = live[Number(id.slice(LIVE_PREFIX.length))];
   const a = l ? r.liveChoices.tags[l.tag] : undefined;
   return a ? { a, ...l.target ? { target: l.target } : {} } : null;
-}
-function actionCost(r, s, a, id, env) {
-  const raw = a.cost.stats[id] ?? 0;
-  const pct = percentOf(raw);
-  return pct !== null ? Math.round(pct * statMax(r, r.stats[id], s)) : evalNumber(raw, env, 0);
 }
 function withGame(r, s, c, scope, live) {
   if (c.locked)
@@ -19567,7 +20735,10 @@ function choiceList(r, s, opts) {
     return [...featured, ...more];
   }
   const talk = moves.filter((m) => m.featured).map(asChoice);
-  const dungeons = dungeonsHere(r, s).map((d) => plain(`dungeon:enter:${d.id}`, `Enter ${d.name}`, "Dungeon", d.desc ?? null));
+  const dungeons = dungeonsHere(r, s).map((d) => {
+    const shut = dungeonLock(r, s, d);
+    return { ...plain(`dungeon:enter:${d.id}`, `Enter ${d.name}`, "Dungeon", d.desc ?? null), ...shut ? { locked: shut } : {} };
+  });
   if (!s.encounter)
     (opts.live ?? []).forEach((c, i) => {
       const a = r.liveChoices.tags[c.tag];
@@ -19600,6 +20771,8 @@ function choiceList(r, s, opts) {
     veiled: false,
     params: []
   }));
+  for (const x of lockedExits(r, s))
+    travel.push({ ...plain(`${TRAVEL_PREFIX}${x.id}`, `Go to ${r.locations[x.id].name}`, "Travel", r.locations[x.id].desc ?? null), locked: x.locked });
   const encName = s.encounter ? r.encounters[s.encounter.id]?.name ?? "Encounter" : null;
   const actions = availableChoices(r, s, opts.lines).filter(({ a }) => !a.hidden).map(({ id, a, target, label }) => {
     const o = odds(r, s, a, undefined, target);
@@ -19621,13 +20794,14 @@ function choiceList(r, s, opts) {
     const a = pool.defs[id];
     if (a.hidden || a.perPerson || a.tags.some((t) => lines.has(t)))
       continue;
-    if (!s.encounter && (!a.showLocked || a.at.length && !a.at.includes(s.location ?? "")))
+    const spent = whenHolds(r, s, a) ? spentLock(r, s, a) : null;
+    if (!spent && !s.encounter && (!a.showLocked || a.at.length && !a.at.includes(s.location ?? "")))
       continue;
-    if (s.encounter && !a.showLocked && !a.whyNot && !/has\(/.test(a.when ?? ""))
+    if (!spent && s.encounter && !a.showLocked && !a.whyNot && !/has\(/.test(a.when ?? ""))
       continue;
     if (isAvailable(r, s, a))
       continue;
-    locked.push({ ...plain(id, a.label, encName ?? a.group ?? null, a.desc ?? null), locked: lockReason(r, s, a) });
+    locked.push({ ...plain(id, a.label, encName ?? a.group ?? null, a.desc ?? null), locked: spent ?? lockReason(r, s, a) });
   }
   return [...live, ...actions, ...abilityChoices(r, s, lines), ...itemChoices(r, s, lines), ...locked, ...questChoices(r, s), ...talk, ...work, ...dungeons, ...travel, ...explore];
 }
@@ -19654,7 +20828,7 @@ function questChoices(r, s) {
 }
 function costText(r, s, a) {
   const env = makeEnv(r, s);
-  const parts = Object.entries(a.cost.stats).map(([stat, d]) => [stat, evalNumber(d, env, 0)]).filter(([, v]) => v < 0).map(([stat, v]) => `${formatNumber(-v)} ${r.stats[stat]?.label ?? stat}`);
+  const parts = Object.entries(a.cost.stats).map(([stat, d]) => [stat, costValue(r, s, stat, d, env)]).filter(([, v]) => v !== 0).map(([stat, v]) => `${v > 0 ? "+" : ""}${formatNumber(Math.abs(v))} ${r.stats[stat]?.label ?? stat}`);
   return parts.length ? parts.join(", ") : null;
 }
 function abilityChoices(r, s, lines) {
@@ -19722,7 +20896,8 @@ function perkViews(r, s) {
       blocker: s.perks[p.id] ? null : perkBlocker(r, s, p.id),
       offered: offers.has(p.id),
       drawback: p.drawback ?? null,
-      notes
+      notes,
+      ...p.points && p.points !== r.perkPoints ? { pointsLabel: r.stats[p.points]?.label ?? p.points } : {}
     };
   });
 }
@@ -19934,7 +21109,7 @@ function summarizeEvents(r, before, after, events) {
     const bAfter = bandFor(def, after.stats[id] ?? def.start, statMax(r, def, after));
     const good = def.good === "none" ? null : d > 0 === (def.good === "high");
     out.push({
-      text: def.kind === "money" ? `${d > 0 ? "+" : "−"}${r.hud.currency}${formatNumber(Math.abs(d))}` : `${def.label} ${signed(d)}`,
+      text: def.kind === "money" ? `${d > 0 ? "+" : "−"}${formatMoney(r, Math.abs(d))}` : `${def.label} ${signed(d)}`,
       tone: good === null ? "neutral" : good ? "good" : "bad",
       src: a.src,
       band: bAfter && bBefore !== bAfter ? bAfter.text : undefined,
@@ -20049,7 +21224,7 @@ function statLine(r, def, s, forceNumbers) {
   const max = statMax(r, def, s);
   const band = bandFor(def, v, max);
   const grade = gradeFor(def, v, max);
-  const num = def.kind === "money" ? `${r.hud.currency}${formatNumber(v)}` : grade ? `${grade}` : `${formatNumber(v)}/${formatNumber(max)}`;
+  const num = def.kind === "money" ? formatMoney(r, v) : grade ? `${grade}` : def.kind === "meter" || def.kind === "hidden" ? `${formatNumber(v)}/${formatNumber(max)}` : formatNumber(v);
   const showNum = forceNumbers || def.show === "number" || def.show === "both" || !band;
   const showText = (def.show === "text" || def.show === "both") && band;
   if (showText && showNum)
@@ -20178,7 +21353,8 @@ function stateDigest(r, s) {
         return null;
       const v = s.rel[id]?.[rs] ?? def.start;
       const band = bandFor(def, v);
-      return band && def.show !== "number" ? `${def.label} ${band.text}` : `${def.label} ${formatNumber(v)}`;
+      const words = shownText(def, band, formatNumber(v));
+      return words ? `${def.label} ${words}` : `${def.label} ${formatNumber(v)}`;
     }).filter(Boolean);
     return parts.length ? `${name} (${parts.join(", ")})` : name;
   };
@@ -20334,7 +21510,7 @@ function fighterView(f, active) {
   };
 }
 function buildDungeonEntries(r, s) {
-  return dungeonsHere(r, s).map((d) => ({
+  return dungeonsHere(r, s).filter((d) => !dungeonLock(r, s, d)).map((d) => ({
     id: d.id,
     name: d.name,
     desc: d.desc ?? null,
@@ -21973,8 +23149,10 @@ function intentFor(r, state, settings, msgs, actionId, params) {
   }
   if (actionId.startsWith(TRAVEL_PREFIX)) {
     const to = actionId.slice(TRAVEL_PREFIX.length);
-    if (!travelTargets(r, state).includes(to))
-      return { error: "You can't get there from here." };
+    if (!travelTargets(r, state).includes(to)) {
+      const shut = lockedExits(r, state).find((x) => x.id === to);
+      return { error: shut ? `${r.locations[to].name} is locked: ${shut.locked}` : "You can't get there from here." };
+    }
     return { say: `*I head to ${r.locations[to].name}.*`, intent: { actionId, params, via: "choice" } };
   }
   if (actionId.startsWith(ITEM_PREFIX)) {
@@ -23610,6 +24788,9 @@ var PART_LABELS, PART_CONTENTS, REFERENCE = `WARP RULESET FORMAT (YAML). Numbers
 stats:            # kinds: meter (bar) | attribute | skill | money | hidden
   stress: { kind: meter, good: low, start: 0, per_hour: -0.5, narrator: 10, bands: { 0: You are calm., 30: You are stressed., 70: You are distressed. } }
   hp: { kind: meter, max: "20 + level * 8", bands: { 0%: Down., 40%: Wounded., 75%: Hale. } }   # bands in % of the current max, for stats whose max grows
+  mana: { kind: meter, max: "20 + wits * 5", start: full, per_hour: "+2%" }   # start: a number, full, "50%" (of the max) or a formula (without start:, a meter with a max formula begins at 100 — write start: full for a full pool); per_hour: a number, a formula ("wits / 10") or a % of the current max
+  tier: { kind: attribute, start: 1, bands: { 0: Iron, 3: Bronze }, show: both }   # show: text | number | both | hidden. Unset with bands: the narrator gets the words, the sidebar words plus the number
+  str: { kind: attribute, start: 5, max: 99, allocate: { with: stat_points, step: 1, cost: 1 } }   # +/− in the sidebar spend points from stat_points (or allocate: stat_points)
   athletics: { kind: skill, max: 100, start: 10, grades: [F, D, C, B, A, S] }
   money: { kind: money, start: 50, narrator: 50 }
   # good: high|low|none (colours); per_hour: drift; narrator: max change the story may make per reply (0 = rules only); max may be a formula ("level * 5")
@@ -23626,9 +24807,11 @@ relationships:
   people:
     jo:
       name: Jo
+      age: 31                      # declare adult ages for anyone romance or lineage could involve (unknown ages get friendship only)
       desc: Runs the café.
       schedule:                    # first matching entry wins; entry without when = default; no match = not around
         - { when: "between(hour, 7, 18) and weekday != 'Sun'", at: high_street }
+        - { when: "flag('jo_left_town')", at: away }   # at: away (or ~) = not anywhere while when holds
 
 companions:       # people with lives of their own (ids from relationships.people)
   jo:
@@ -23653,14 +24836,17 @@ description: A fishing town where the tide brings secrets.
 look: modern                       # how dungeons, dates and minigames look: medieval (parchment, oak, gold), modern (paper and ink) or scifi (an instrument panel)
 clock: { start: "Mon 07:00", date: "Sep 4", minutes_per_action: 15, narrator_max: 240 }
 start: { location: home, items: { phone: 1 } }
-hud: { currency: "$", bars: [health, stress] }
+hud: { currency: "$", bars: [health, stress] }   # currency: "$" (before the amount), "{n}d" / "£{n}" (template), or { symbol: d, after: true }
 narration: { notes: "Guidance for the narrator." }
 player: { age: 20 }
 
-weather: { temps: { spring: 12, summer: 22, autumn: 11, winter: 3 } }     # enables weather + temperature
+weather: { temps: { spring: 12, summer: 22, autumn: 11, winter: 3 }, indoors: 20 }     # enables weather + temperature; indoors: °C inside (a place's temp: wins)
 locations:
   home: { name: Home, desc: "...", indoors: true, exits: [street], travel: 10 }   # exits become travel buttons
   tavern: { name: The Drowned Rat, exits: [street], board: true }   # board: a notice board — quests with board: true are posted here
+  gate: { name: Hollow Gate, exits: { market: 15 }, requires: { level: 5 }, why_not: "The guild bars novices" }   # requires: travel shown LOCKED with what's missing (same keys as action requires); why_not: replaces the words
+  ruin: { name: Old Ruin, exits: [market, { deep_wood: 45 }], when: "flag('ruin_found')" }   # when: off the map and travel until it holds; exits as a map (or one-key list entries) = minutes per exit, ~ = the place's travel:
+  garret: { name: Garret, indoors: true, temp: 8, exits: [tavern] }   # temp: this indoor place's °C
 locations_open: true             # the story may name places the ruleset doesn't list (on by default when there are none)
 items:
   phone: Phone
@@ -23670,11 +24856,15 @@ items:
     uses: 5                        # charges; each use spends one, the last spends the item (tags: [consumable] = 1 use)
     use: { label: Spray it, foe: { nerve: -6 }, hint: "{{user}} empties a burst into their face." }   # effects (or check/success/fail like any action); when:, why_not: "…" optional
   lucky_boots: { name: Lucky Boots, slot: feet, bonus: { athletics: 10 } }   # gear: added to every check that reads athletics while worn (carried, for non-clothing)
+  sword: { name: Sword, bonus: { atk: "5 + level * 2" } }   # gear bonus/armor: numbers or formulas, worked out when used; eff('atk') reads it in effects
+  cloak: { name: Cloak, slot: outer, integrity: 40, armor: { hp: "1 + level / 5" } }   # integrity('cloak') or integrity('outer') = current integrity
   house_keys: { name: Keys, keep: true, use: { label: Lock the door behind you, stress: -5, when: "at('home')" } }   # keep: true = using it doesn't spend it
   chainmail: { name: Chainmail, slot: outer, armor: { hp: 3 } }   # armor: blows that would lower hp in a fight are 3 smaller (per hit); armor: 2 = whatever the fight beats you on
 item_uses: { phone: { label: Call a friend for a lift, check: { chance: 60 }, success: { move: home }, fail: { stress: +3 } } }   # uses/bonuses for items declared elsewhere (Warp writes drafted ones here)
 wardrobe: { slots: [outer, top, bottom, under_top, under_bottom, feet], cover: [top, bottom], start: [t_shirt, jeans] }
 conditions: { cold: { label: Cold, tone: bad }, hasted: { label: Hasted, tone: good, bonus: { evasion: 20 } } }   # bonus: a buff (or debuff, negative) counted in checks while it lasts
+#   iron_skin: { label: Iron Skin, armor: { hp: "level / 2" }, bonus: { str: "level / 4" }, lasts: 1h }   # armor/bonus may be formulas
+#   bleeding: { label: Bleeding, every: [round, hour], dot: 2, stat: hp, lasts: 3h }   # each round in a fight (full dot), each hour outside (dot scaled by time; tick: once per clock hour, max 24 per jump); lasts: times it everywhere
 # statuses — the same conditions work on {{user}}, on the opponent (inflict:) and on people (inflict on a per-person action's target):
 #   poisoned: { label: Poisoned, tone: bad, rounds: 3, dot: 4 }             # rounds: how long in a fight (they end with it); dot: damage each round ("1d4+1" ok; heal: 5 = negative)
 #   stunned:  { label: Stunned, tone: bad, rounds: 1, skip: true }          # skip: loses its turn (true, or a chance 0–100: skip: 50 = paralysed half the time)
@@ -23691,9 +24881,10 @@ actions:
     at: [street]                   # optional location filter
     when: "has('lockpick') and between(hour, 20, 6)"
     time: 10                       # minutes
-    cost: { fatigue: +2 }
+    cost: { fatigue: +2 }          # paid first, whatever happens. A drop it can't pay locks the choice ("Needs 8 Mana"; drops on good: low stats never lock). Positive amounts are allowed and never lock. "-15%" = a share of the current max
     tags: [crime]
     check: { chance: "20 + skulduggery / 2", label: Skulduggery }      # d100 roll-under percent
+    # check: { …, crit: "5 + luck / 4" }  — chance in % of a critical success (default 5%); the narrator is told Critical
     # or check: { vs: 12, add: "floor(dex / 2)", partial: 3 }          # d20 + add vs 12
     # or check: { style: pbta, add: cool }                             # 2d6: 10+ hit, 7–9 mixed
     # check: { …, game: mines }  — can be PLAYED as a minigame instead of rolled (or game: [mines, snake]; game: false = dice only).
@@ -23704,10 +24895,14 @@ actions:
     success: { flags: { door_open: true }, skulduggery: +1 }
     fail: { stress: +5, hint: "The pick snaps." }
     # tiers: crit_success, success, partial, fail, crit_fail; without a check use effects:
+    # effects: next to a check always apply, whatever the roll (then success:/fail: add theirs)
   chat:
     label: Chat with {target}
     per_person: true               # one button per person present; {target} = their name
     effects: { rel: { target: { trust: +2 } } }
+  spar:
+    label: Spar with {target}
+    targets: [jo, dex]             # per_person, but only these people; target is also a formula name in when: ("target != 'jo'")
   crack_vault:
     label: Crack the vault
     at: [bank]
@@ -23757,18 +24952,30 @@ encounters:
     name: Mugging
     tags: [violence]
     foe: { name: Mugger, armor: 2, stats: { nerve: { start: 10, max: 10 } } }   # armor: blows to its main meter are 2 smaller each (or { nerve: 2 }); damage over time ignores it
+    # foe stats and armor can be formulas, worked out ONCE when the encounter starts, from {{user}}'s state then (monsters that scale):
+    #   foe: { name: Goblin, armor: "level * 2", stats: { hp: { start: "100 * level", max: "100 * level" } } }   # no max = the start it rolled
     actions: { fight: { label: Fight back, check: { chance: "30 + athletics / 2" }, success: { foe: { nerve: -6 } }, fail: { pain: +10 } }, run: { label: Run, effects: { end: escaped } } }
     foe_moves: { grab: { desc: "Grabs you", weight: 2, pain: +8 }, threaten: { desc: "Threatens", weight: 1, stress: +6 } }
+    # boss phases: a move with when: is only weighed while it holds (if none holds, all are); any decide option takes when: the same way:
+    #   foe_moves: { swipe: { desc: Swipes, when: "foe.hp > foe_max('hp') / 2", hp: -5 }, rage: { desc: Rages, when: "foe.hp <= foe_max('hp') / 2", hp: -15 }, summon: { desc: Calls the dead, when: "encounter_round >= 5", stress: +10 } }
     end_when: { won: "foe.nerve <= 0", beaten: "pain >= 80" }   # simple comparisons let Warp show the goal and the danger to the player
     outcomes: { won: { hint: "They flee." }, escaped: { stress: +3 }, beaten: { money: "-min(money, 30)" } }
     labels: { won: "You see them off", escaped: "You got away", beaten: "Overpowered" }   # how each ending reads
     goal: "Break their nerve, or get away"        # optional; otherwise derived from end_when
     # round_limit: 20   # finite budget, default 20, range 1–200; normal endings take precedence
     # timeout_outcome: beaten   # default: momentum's lose outcome, otherwise lost; applies that outcome's effects
+    # losses: [beaten]            # these endings count as defeats, whatever they're called
+    # outcome_kinds: { won: won, escaped: escaped, paid_off: conceded }   # won | escaped | conceded | lost
+    #   Without these, Warp infers: an end_when on a foe stat heading your way is a win (slain: "foe.hp <= 0"), one on your stat
+    #   heading toward its bad end is a loss; an ending only a failed move reaches is a loss; then the name (beaten, captured… = lost;
+    #   escaped, fled… = escaped; paid, bribe, surrender… = conceded). "Ends well" = anything but lost. The checker wants random play to WIN sometimes — escapes don't count.
+    # sim: { stats: { level: 12, hp: max }, flags: { met_kael: true }, items: { sword: 1 }, location: gate }
+    #   the state warp_check and warp_simulate judge it from (a late boss at its intended level); also takes conditions, rel: { maud: { trust: 60 } }, perks, wear. Triggers run after it.
     danger: "Pain at 80 and you're overpowered"   # optional; otherwise derived
     # narrate: true = every round goes to the narrator as a full reply (old style). Default: rounds are told briefly
     #   in one encounter message that grows, then replaced by a summary — far fewer tokens, no repetitive loops.
     # an action out of reach can say why: when: "has('bat')", why_not: "You'd need something to swing"
+    # per_encounter: 1 / per_day: 2 on a move = limited uses, like abilities ("Used up for this encounter"). If every move is priced out of reach, they stay open and the cost takes what's left
     # from_story: false = only actions/effects start it (by default the story can: a fight breaking out in the prose starts it, against whoever it's with)
     # momentum: { win: won, lose: beaten, swing: { crit_success: 40, success: 25, partial: 10, fail: -20, crit_fail: -35 } }
     #   a fight that swings (−100…+100): each check moves it, foe moves can too (effect momentum: -15), and only a full swing ends it;
@@ -23778,6 +24985,7 @@ dungeons:         # roguelike diving: floors of face-down tiles, one way down, q
   old_mines:
     name: The Old Mines
     at: [docks]                    # entrance locations (empty = anywhere)
+    requires: { level: 3 }         # entrance shown LOCKED with what's missing (why_not: "…" optional); when: hides it instead
     theme: cave                    # cave | crypt | ruins | hell | lair
     floors: 10                     # 0 = endless; a guardian every boss_every floors (default 5)
     tiles: { enemy: 6, elite: 1, treasure: 2.5, trap: 1.5, rest: 1, shop: 0.6, event: 2, surprise: 1.5, romance: 1.2, empty: 7 }
@@ -23837,7 +25045,7 @@ abilities:        # the player's OWN moves (spells, techniques, tricks): offered
   haste:
     name: Haste
     desc: Quicken body and mind
-    cost: { mana: -8 }               # can't be used without enough (the choice says "Needs 8 Mana")
+    cost: { mana: -8 }               # can't be used without enough (the choice says "Needs 8 Mana"); "-15%" = a share of the current max; positive costs (suspicion: +3) are allowed
     add_condition: { hasted: 3 }     # minutes — an encounter round is one minute; the condition's bonus: does the rest
     per_day: 2                       # and/or per_encounter: 1 (0 = unlimited)
   firebolt:
@@ -23847,11 +25055,13 @@ abilities:        # the player's OWN moves (spells, techniques, tricks): offered
     check: { chance: "40 + arcana" } # scales with the stats its formulas read
     success: { harm: "6 + arcana / 5" }
     fail: { hint: "The bolt fizzles." }
+    # effects: { suspicion: +3 }     # with a check: always applies, as well as success:/fail:
     known: false                     # true (default unless a perk teaches it) | false (taught by a perk or learn:) | a formula ("arcana >= 40")
 
 perks:
   points: perk_points               # the stat that pays for them; something must raise it (level-ups, feats, milestones)
   pick: 3                           # offer 3 to choose from when there's a point (one that builds on how they've played, one new direction, one random); 0/omitted = buy from the whole list
+  knight: { name: Knight, offer: always, points: class_points, excludes: [mage] }   # offer: always = on offer beside the pick (a class choice); points: paid from this stat instead of perks: points
   sharp: { name: Sharpshooter, desc: "+2 Aim", cost: 1, requires: "level >= 2", effects: { aim: +2 } }   # effects: once, when taken
   crowd_ghost: { name: Crowd Ghost, bonus: { stealth: 10 }, edge: { stealth: 15, when: "at('plaza')" }, tags: [stealth] }   # bonus: always counts in checks; edge: only while when holds
   silver_tongue: { name: Silver Tongue, rule: { reroll: { stats: [persuasion], per_day: 1 } } }   # rules: reroll / soften (a failure becomes partial) on these stats or tags; gains / losses: { scent: -30% } (rises or drops that much bigger/smaller)
@@ -23859,6 +25069,7 @@ perks:
   steady_hands: { name: Steady Hands, rule: { game: { window: 20, lives: 1, games: [aim, keys] } } }   # game: aids in minigames (games: which; none = all): window, size, slow, time, luck (percent) · lives, hint, peek, preview, hold, wrap, saver (counts)
   mage_blood: { name: Mage Blood, abilities: [firebolt], narrator: "Sparks dance on {{user}}'s fingertips when angry.", excludes: [iron_will] }   # teaches abilities; narrator: what the story should show; excludes: can't have both
   adrenaline: { name: Adrenaline Junkie, edge: { athletics: 20, when: "stress >= 60" }, drawback: { desc: "Stress builds faster", gains: { stress: +10% } }, weight: 1 }
+  cold: { name: Cold, drawback: { desc: Hard to like, gains: { fondness: "-25%" } } }   # gains/losses may name relationship stats
 
 checkpoints:      # save slots in the journal; loading rewinds the game (the chat keeps its messages)
   slots: 3
@@ -23875,6 +25086,7 @@ triggers:
   exhausted: { when: "fatigue >= 85", do: { add_condition: [exhausted], hint: "..." } }         # fires once when it becomes true
   drain: { when: "fatigue >= 85", repeat: true, do: { stress: +2 } }                           # every turn while true
   danger: { when_scene: "{{user}} is in immediate danger", do: { stress: +5 } }                # judged in plain language
+# A rule can't restart the encounter that just ended: start_encounter from a rule is skipped for 15 min after it ends (60 min in the same place); the rule stays fired until its condition goes false again.
 
 mind:             # the character's mind can overrule the player (in the "rules" part)
   overrides_mode: hard   # legacy default; soft keeps the chosen action and treats fail/redirect as narrative pressure
@@ -23882,7 +25094,7 @@ mind:             # the character's mind can overrule the player (in the "rules"
     freeze: { when: "control < 25", chance: "60 - control * 2", on: [violence], cause: Panic, text: "their body won't obey.", resist_cost: { control: 10 } }   # do: fail (default) = fails with no roll
     urge: { when: "lust >= 70", chance: 30, on: [talk], do: flirt, cause: Desire }      # do: <action id> = that happens instead
     nerves: { when: "control < 50", chance: 50, do: alter, cause: Nerves }               # do: alter = goes ahead, coloured by the cause; on: [] = any action with a check
-    # resist_cost: { control: 10 } offers an explicit Resist button (paid only if the override triggers; must be affordable with the action's own cost). Applies to contextual live choices too, via their authored tag.
+    # resist_cost: { control: 10 } offers an explicit Resist button (paid only if the override triggers; must be affordable with the action's own cost). Amounts are paid in the stat's bad direction: { dread: 8 } RAISES a good: low meter (must stay under its max); quoted "+8"/"-8" say the direction outright. Meters only. Applies to contextual live choices too, via their authored tag.
   perception: [ { when: "awareness < 20", text: "{{user}} is naive: describe only what they understand." } ]   # filters the narration while true
 
 QUESTS (the "quests" part): things to do for someone or for yourself — a bounty, a favour, cooking the best breakfast, slaying the dragon.
@@ -23941,6 +25153,7 @@ fronts:           # hidden world clocks that fill with in-game time; each stage 
     story: { "{{user}} stirs up trouble with the gangs": 10, "{{user}} helps the police against the gangs": -10 }   # judged each turn
     stages:
       - { at: 30, hint: "More broken windows along the harbour road.", backstage: "The Kestrels took over the fish market.", surface: "A harbour shop is torched overnight.", do: { flags: { harbour_unrest: true } } }
+      - { at: 60, surface: "The watch comes for Maud.", if: "not flag('maud_fled')", do: { flags: { maud_taken: true } }, else: { flags: { empty_cell: true } } }   # if: decides whether do: happens as the stage surfaces; else: happens otherwise
       # hint = a sign with no reason, shown from halfway to this stage; backstage stays hidden until the stage surfaces
 random_events:    # a hidden gauge fills with in-game time, not per reply; near the top it picks the next event and shows its omen
   pace: { per_day: 25, jitter: 0.3, rest_days: 1, omen_at: 80 }     # per_day 25 ≈ one event every 4 days
@@ -23958,7 +25171,7 @@ STORY EFFECTS: front: { harbour_gangs: -20 }, reveal: [ward_accident] (opens its
 
 DATING (the "dating" part):
 dating:           # talk topic by topic (tastes stay hidden until learned), ask people out, go on outings. \`dating: true\` = all built-ins
-  love: love                       # relationship stat used as love (created if missing); fear: fear likewise
+  love: love                       # relationship stat used as love (created if missing); fear: fear likewise — fear: false = no fear stat (nobody turns hostile)
   romance: true                    # false = friendship only. Romance is never offered with anyone under 18 or of unknown age
   stages: { stranger: 0, acquaintance: 10, friend: 30, close: 55, partner: { at: 80, partner: true } }   # love (0–100 of its range) per rung; partner only through a returned confession
   hostile: { at: 60, label: Hostile }        # fear (0–100) that turns someone hostile
@@ -23974,14 +25187,15 @@ dating:           # talk topic by topic (tastes stay hidden until learned), ask 
 items: { flowers: { name: Flowers, tags: [gift] } }   # items tagged gift can be given during a conversation
 
 FORMULA NAMES: stats, flags, hour, minute, day, weekday, month, date, season, weather, temperature, indoors, outside,
-warmth, warmth_min, warmth_max, too_cold, too_hot, reveal, exposed, naked, in_encounter, round, foe.<stat>, target.<relstat>, location.
+warmth, warmth_min, warmth_max, too_cold, too_hot, reveal, exposed, naked, in_encounter, round, encounter (current encounter id, '' if none), encounter_round, foe.<stat>, target.<relstat>, location.
 FUNCTIONS: has(item[, n]), count(item), flag(x), cond(x), at(loc), rel(person, stat), met(person), between(v, lo, hi), roll('2d6'),
 wearing(item), worn(slot), trait(t), present(person), where(person), codex(id), feat(id), perk(id),
 secret(id) (stages the narrator knows), front(id) (clock value), front_stage(id) (stages surfaced), happened(event),
 deepest(dungeon) (deepest floor reached), in_dungeon, dungeon_depth,
 stage(person) (relationship rung, −1 hostile), partner(person), dates(person), in_date, on_outing,
 quest(id) ('' | 'active' | 'ready' | 'done' | 'failed'), quest_active(id), quest_done(id), quest_failed(id), goal(quest, goal) (count so far), quests_done() / quests_done('bounty'),
-memories(person) (how many), cond_of(person, cond), foe_cond(cond), stat_max(stat), foe_max(stat),
+memories(person) (how many), cond_of(person, cond), foe_cond(cond), stat_max(stat), foe_max(stat), in_encounter(id) (that encounter is on),
+eff(stat) (stat + gear + perks + statuses), gear(stat) (gear alone), integrity(item or slot),
 min, max, clamp, floor, ceil, round, abs.
 Operators: + - * / % < <= > >= == != and or not, a ? b : c. Strings in single quotes.
 `, DESIGN_GUIDE = `WARP DESIGN GUIDE — what makes a ruleset worth playing.
@@ -23997,6 +25211,10 @@ Every stat needs a SOURCE (what raises it), a SINK (what lowers it), and a CONSE
 A meter nothing reads is decoration. Use per_hour drift for needs; narrator: lets the story nudge it within limits.
 Skills grow when checks read them — so every skill should appear in at least two checks, in different places.
 Mistake: ten meters that only the narrator touches. Fewer stats, each wired into play, beat many idle ones.
+
+## actions are story turns
+Every action the player clicks posts a line and gets a narrator reply. Use actions for things that happen in the story.
+Sheet changes are not story turns: spending stat points (allocate: on the stats, +/− in the sidebar), buying perks and classes (perks:, their own panel), changing clothes (wardrobe). Never build a "Status Window" of +1 STR buttons.
 
 ## items
 Every item should DO something: a use: (an action with effects), a bonus: (gear that helps the checks that read a stat), a gift tag, or an action/encounter move that needs it (when: "has('x')").
@@ -24148,7 +25366,7 @@ function simulateEncounter(r, id, opts = {}) {
         unfinished++;
       lengths.push(n);
     }
-    out.push({ policy: pol.name, runs, outcomes, medianRounds: quantile(lengths, 0.5), meanRounds: lengths.reduce((a, b) => a + b, 0) / Math.max(1, runs), p90Rounds: quantile(lengths, 0.9), stalled: rounds ? still / rounds : 0, unfinished });
+    out.push({ policy: pol.name, runs, outcomes, kinds: tallyKinds(enc, outcomes), medianRounds: quantile(lengths, 0.5), meanRounds: lengths.reduce((a, b) => a + b, 0) / Math.max(1, runs), p90Rounds: quantile(lengths, 0.9), stalled: rounds ? still / rounds : 0, unfinished });
   }
   const notes = [];
   for (const p of out) {
@@ -24162,6 +25380,8 @@ function simulateEncounter(r, id, opts = {}) {
       notes.push(`"${p.policy}" changes nothing in ${Math.round(p.stalled * 100)}% of rounds — failures should still move something.`);
     if (p.p90Rounds > 12)
       notes.push(`"${p.policy}" drags on (1 in 10 runs take ${p.p90Rounds}+ rounds).`);
+    if (p.policy === "a random mix" && Object.values(enc.outcomeKinds ?? {}).includes("won") && p.kinds.escaped >= p.runs * 0.3 && p.kinds.won < p.runs * 0.2)
+      notes.push(`"${p.policy}" mostly gets out (escaped ${Math.round(p.kinds.escaped / p.runs * 100)}%) but rarely wins (${Math.round(p.kinds.won / p.runs * 100)}%) — fleeing isn't beating it.`);
   }
   return { id, name: enc.name, policies: out, notes };
 }
@@ -24175,14 +25395,115 @@ function mulberry(seed) {
     return ((t ^ t >>> 14) >>> 0) / 4294967296;
   };
 }
+function kindsLine(k, runs, unfinished = 0) {
+  const pct = (n) => `${Math.round(n / Math.max(1, runs) * 100)}%`;
+  return `won ${pct(k.won)} · escaped ${pct(k.escaped)} · conceded ${pct(k.conceded)} · lost ${pct(k.lost)}${unfinished ? ` · unfinished ${pct(unfinished)}` : ""}`;
+}
 function describeSim(sim) {
   const lines = sim.policies.map((p) => {
-    const total = Object.values(p.outcomes).reduce((a, b) => a + b, 0);
     const outs = Object.entries(p.outcomes).sort((a, b) => b[1] - a[1]).map(([o, n]) => `${o} ${Math.round(n / p.runs * 100)}%`).join(", ") || "never ends";
-    return `- ${p.policy}: ${outs}${p.unfinished ? `, unfinished ${Math.round(p.unfinished / p.runs * 100)}%` : ""} · median ${p.medianRounds} rounds (p90 ${p.p90Rounds}) · ${Math.round(p.stalled * 100)}% of rounds change nothing${total ? "" : ""}`;
+    return `- ${p.policy}: ${kindsLine(p.kinds, p.runs, p.unfinished)} (${outs}) · median ${p.medianRounds} rounds (p90 ${p.p90Rounds}) · ${Math.round(p.stalled * 100)}% of rounds change nothing`;
   });
   return [`${sim.name} — ${sim.policies[0]?.runs ?? 0} runs per strategy:`, ...lines, ...sim.notes.length ? ["Notes:", ...sim.notes.map((n) => `- ${n}`)] : []].join(`
 `);
+}
+function patchedState(r, patch, base) {
+  const notes = [];
+  const s0 = cloneState(base ?? initialState(r));
+  const src = "manual";
+  const events = buildTurn(r, s0, "sim:patch", (t) => {
+    const setStats = () => {
+      for (const [id, v] of Object.entries(patch.stats ?? {})) {
+        const def = r.stats[id];
+        if (!def)
+          continue;
+        const word = typeof v === "string" ? v.trim().toLowerCase() : "";
+        const n = word === "max" ? statMax(r, def, t.s) : word === "min" ? def.min : Number(v);
+        if (Number.isFinite(n))
+          t.push({ t: "stat", id, set: n, src });
+      }
+    };
+    for (const [id, v] of Object.entries(patch.stats ?? {})) {
+      if (!r.stats[id])
+        notes.push(`stats: "${id}" isn't a stat`);
+      else if (!(typeof v === "number" || typeof v === "string" && /^(max|min)$/i.test(v.trim()) || Number.isFinite(Number(v))))
+        notes.push(`stats: ${id} = ${JSON.stringify(v)} — use a number, "max" or "min"`);
+    }
+    setStats();
+    setStats();
+    for (const [k, v] of Object.entries(patch.flags ?? {}))
+      t.push({ t: "flag", key: k, v, src });
+    for (const [id, n] of Object.entries(patch.items ?? {})) {
+      if (!r.items[id] && !r.itemsOpen) {
+        notes.push(`items: "${id}" isn't an item`);
+        continue;
+      }
+      const d = Math.round(Number(n)) - (t.s.items[id] ?? 0);
+      if (!Number.isFinite(d)) {
+        notes.push(`items: ${id} needs a count`);
+        continue;
+      }
+      if (d)
+        t.push({ t: "item", id, d, src });
+    }
+    if (patch.location !== undefined) {
+      if (r.locations[patch.location])
+        t.push({ t: "move", to: patch.location, src });
+      else
+        notes.push(`location: "${patch.location}" isn't a place`);
+    }
+    const conds = Array.isArray(patch.conditions) ? patch.conditions.map((c) => [c, null]) : Object.entries(patch.conditions ?? {});
+    for (const [id, mins] of conds) {
+      if (!r.conditions[id]) {
+        notes.push(`conditions: "${id}" isn't a status`);
+        continue;
+      }
+      t.push({ t: "cond", id, on: true, until: mins === null || mins === undefined ? null : t.s.minutes + Number(mins), src });
+    }
+    for (const [who, m] of Object.entries(patch.rel ?? {})) {
+      if (!r.people[who] && !t.s.people[who]) {
+        notes.push(`rel: "${who}" isn't a person`);
+        continue;
+      }
+      for (const [stat, v] of Object.entries(m ?? {})) {
+        if (!r.relStats[stat]) {
+          notes.push(`rel: "${stat}" isn't a relationship stat`);
+          continue;
+        }
+        t.push({ t: "rel", who, stat, set: Number(v), src });
+      }
+    }
+    for (const id of patch.perks ?? []) {
+      const perk = r.perks[id];
+      if (!perk) {
+        notes.push(`perks: "${id}" isn't a perk`);
+        continue;
+      }
+      if (t.s.perks[id])
+        continue;
+      t.push({ t: "perk", id, src });
+      t.apply(perk.effects, src);
+    }
+    const wear = Array.isArray(patch.wear) ? patch.wear.map((it) => [null, it]) : Object.entries(patch.wear ?? {});
+    for (const [slot, item] of wear) {
+      const def = r.items[item];
+      const at = slot ?? def?.slot ?? null;
+      if (!def || !at) {
+        notes.push(`wear: "${item}" isn't clothing with a slot`);
+        continue;
+      }
+      if (!t.s.items[item])
+        t.push({ t: "item", id: item, d: 1, src });
+      t.push({ t: "wear", slot: at, item, src });
+    }
+  });
+  const state = cloneState(s0);
+  for (const e of events) {
+    if (patch.triggers === false && e.src === "trigger")
+      continue;
+    applyEvent(state, e, r);
+  }
+  return { state, notes };
 }
 var quantile = (xs, q) => {
   if (!xs.length)
@@ -24193,6 +25514,7 @@ var quantile = (xs, q) => {
 var init_simulate = __esm(() => {
   init_resolve();
   init_state();
+  init_outcomes();
 });
 
 // src/backend/builder-agent.ts
@@ -24602,22 +25924,35 @@ function reviewBalance(r) {
     if (d.kind === "money" && d.narrator > 0)
       continue;
     const grows = (d.kind === "skill" || d.kind === "attribute") && r.growth.enabled && d.growth > 0 && rolled.has(id);
-    if (!touched.has(id) && !d.perHour && d.narrator <= 0 && !grows) {
+    if (!touched.has(id) && !d.perHour && d.perHourExpr === undefined && !d.allocate && d.narrator <= 0 && !grows) {
       out.push({ id: `dead:${id}`, part: "stats", text: `${d.label} never changes — no action, rule or story update touches it.`, fix: `Give the "${id}" stat a way to change: at least one action or rule that raises or lowers it, or allow the narrator to adjust it.` });
     }
   }
   for (const enc of Object.values(r.encounters)) {
-    const sim = simulateEncounter2(r, start, enc.id, 120);
+    let from = start;
+    if (enc.sim) {
+      const p = patchedState(r, enc.sim, start);
+      for (const n of p.notes)
+        out.push({ id: `enc-sim:${enc.id}`, part: "encounters", text: `“${enc.name}” sim: ${n}.`, fix: `Fix the "${enc.id}" encounter's sim: so every name in it exists.` });
+      from = p.state;
+      from.encounter = null;
+    }
+    const sim = simulateEncounter2(r, from, enc.id, 120);
     if (!sim)
       continue;
-    const goodEnds = [...new Set([...Object.keys(enc.outcomes), ...enc.endWhen.map((e) => e.outcome)])].filter((o) => !isLoss(enc, o) && !CONCESSION.test(o));
-    const wins = goodEnds.reduce((n, o) => n + (sim.outcomes[o] ?? 0), 0) / sim.runs;
+    const kinds = Object.values(enc.outcomeKinds ?? {});
+    const canWin = kinds.includes("won");
+    const through = canWin || kinds.includes("escaped");
+    const k = sim.kinds, pct = (n) => Math.round(n / sim.runs * 100);
+    const split = kindsLine(k, sim.runs, sim.stuck);
     if (sim.stuck / sim.runs > 0.2) {
       out.push({ id: `enc-stuck:${enc.id}`, part: "encounters", text: `“${enc.name}” often doesn't end within 25 rounds.`, fix: `Make the "${enc.id}" encounter reliably end within about 4–10 rounds (stronger effects on foe stats or tighter end_when conditions).` });
-    } else if (goodEnds.length && wins < 0.2) {
-      out.push({ id: `enc-hard:${enc.id}`, part: "encounters", text: `“${enc.name}” is won or escaped only ${Math.round(wins * 100)}% of the time with random play.`, fix: `Make the "${enc.id}" encounter fairer for the player (aim for roughly half of random playthroughs ending well).` });
-    } else if (goodEnds.length && wins > 0.95) {
-      out.push({ id: `enc-easy:${enc.id}`, part: "encounters", text: `“${enc.name}” almost always goes the player's way — there's little risk.`, fix: `Make the "${enc.id}" encounter more dangerous (foe moves hit harder or the player's options are riskier).` });
+    } else if (through && (k.won + k.escaped) / sim.runs < 0.2) {
+      out.push({ id: `enc-hard:${enc.id}`, part: "encounters", text: `“${enc.name}” is won or escaped only ${pct(k.won + k.escaped)}% of the time with random play (${split}).`, fix: `Make the "${enc.id}" encounter fairer for the player (aim for roughly half of random playthroughs ending well). If an ending is mis-counted, mark it with losses: or outcome_kinds:.` });
+    } else if (canWin && k.won / sim.runs < 0.1 && k.escaped / sim.runs >= 0.3) {
+      out.push({ id: `enc-flee:${enc.id}`, part: "encounters", text: `“${enc.name}” is won only ${pct(k.won)}% of the time with random play; it mostly ends by getting away (${split}).`, fix: `Make winning "${enc.id}" a real option (aim for random play winning 30–70%), or make the way out cost more. If it's meant for later in the game, give it sim: (the state to judge it from). If an ending is mis-counted, mark it with losses: or outcome_kinds:.` });
+    } else if (through && (k.won + k.escaped) / sim.runs > 0.95) {
+      out.push({ id: `enc-easy:${enc.id}`, part: "encounters", text: `“${enc.name}” almost always goes the player's way — there's little risk (${split}).`, fix: `Make the "${enc.id}" encounter more dangerous (foe moves hit harder or the player's options are riskier).` });
     }
   }
   return out;
@@ -24625,17 +25960,14 @@ function reviewBalance(r) {
 function simulateEncounter2(r, from, id, runs) {
   const sim = simulateEncounter(r, id, { from, runs, maxRounds: 25, randomOnly: true });
   const random = sim?.policies.find((p) => p.policy === "a random mix");
-  return random ? { runs: random.runs, outcomes: random.outcomes, stuck: random.unfinished, rounds: random.meanRounds ?? random.medianRounds } : null;
+  return random ? { runs: random.runs, outcomes: random.outcomes, kinds: random.kinds, stuck: random.unfinished, rounds: random.meanRounds ?? random.medianRounds } : null;
 }
-var CONCESSION;
 var init_balance = __esm(() => {
   init_expr();
   init_state();
   init_resolve();
   init_simulate();
-  init_encounter_view();
   init_freeform();
-  CONCESSION = /paid|pay|robbed|bribe|surrender|gave_?in|submit|walked|walk_away|left|gave_up/i;
 });
 
 // src/engine/rulebook.ts
@@ -26588,6 +27920,12 @@ spindle.onFrontendMessage(async (raw, userId) => {
           dropScene(msg.chatId);
         if (ok)
           toast("success", msg.op === "save" ? "Saved." : msg.op === "load" ? "Rewound. The next reply picks up from there." : msg.op === "restart" ? "A new playthrough begins." : "The story goes on.", userId);
+        break;
+      }
+      case "allocate": {
+        const ok = await applyManual(msg.chatId, userId, (r, state) => allocateStats(r, state, msg.spend));
+        if (ok)
+          toast("success", "Points spent.", userId);
         break;
       }
       case "buy_perk": {

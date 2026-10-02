@@ -1,7 +1,7 @@
 // `dungeons:` in a ruleset. A bare entry (`dungeons: { mines: { name: The Old Mines } }`)
 // plays with the built-in bestiary, events and romance scenes; everything is overridable.
 
-import { Ctx, isObj, list, normEffect, titleCase, type Raw } from "../ruleset.js";
+import { Ctx, isObj, list, normEffect, normRequires, titleCase, type Raw } from "../ruleset.js";
 import { BESTIARY, BUILTIN_EVENTS, BUILTIN_ROMANCE, CLASS_IDS, DEFAULT_BOSSES, SKILLS } from "./content.js";
 import {
   DEALT_KINDS, THEMES,
@@ -181,6 +181,9 @@ export function normDungeons(raw: unknown, c: Ctx, known: Known): Record<string,
     if (typeof playerRaw.sprite === "string") player.sprite = playerRaw.sprite;
 
     const when = r.when !== undefined ? c.expr(r.when, `${w} › when`) : undefined;
+    const requires = normRequires(r.requires ?? r.needs, `${w} › requires`, c, known);
+    const whyNot = typeof r.why_not === "string" ? r.why_not : typeof r.locked === "string" ? r.locked : undefined;
+    if (whyNot && !requires.length) c.warn(`${w} › why_not`, "only shows on an entrance locked by `requires:` — add `requires:`");
     if (r.boons !== undefined && typeof r.boons !== "boolean") c.warn(`${w} › boons`, "use true or false");
     out[id] = {
       id,
@@ -188,6 +191,7 @@ export function normDungeons(raw: unknown, c: Ctx, known: Known): Record<string,
       ...(typeof r.desc === "string" ? { desc: r.desc } : {}),
       at: list(r.at ?? r.entrance),
       ...(when !== undefined ? { when: String(when) } : {}),
+      ...(requires.length ? { requires, ...(whyNot ? { whyNot } : {}) } : {}),
       theme,
       size: Math.max(3, Math.min(9, Math.round(c.num(r.size, `${w} › size`, 5)))),
       floors: Math.max(0, Math.round(c.num(r.floors ?? r.depth, `${w} › floors`, 0))),

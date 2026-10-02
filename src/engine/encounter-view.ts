@@ -8,6 +8,9 @@ import { titleCase } from "./ruleset.js";
 import type { TurnRecord } from "./resolve.js";
 import { foeName, itemName, statMax, type GameState } from "./state.js";
 import { identifiers } from "./expr.js";
+import { outcomeKind } from "./outcomes.js";
+
+export { outcomeKind, tallyKinds, type OutcomeKind, type KindTally } from "./outcomes.js";
 
 export interface Threshold { outcome: string; foe: boolean; stat: string; op: "<=" | ">=" | "<" | ">" | "=="; value: number }
 
@@ -23,17 +26,18 @@ export function thresholds(enc: EncounterDef): Threshold[] {
   return out;
 }
 
-const FAILURE = /^(lost|lose|loss|beaten|defeat(ed)?|overwhelmed|caught|captured|ko|knocked_out|downed|fallen|slain|killed|dead|died|wiped(_out)?|fled_in_panic|broken|failed?)$/i;
 
 /** How an ending reads to the player. */
 export function outcomeLabel(enc: EncounterDef | undefined, outcome: string): string {
   return enc?.labels[outcome] ?? titleCase(outcome);
 }
 
-/** Whether an ending is a loss (an author's momentum `lose`, or a name like "beaten"). */
+/**
+ * Whether an ending is a loss. One classifier (outcomes.ts) everywhere: the author's `losses:` /
+ * `outcome_kinds:`, momentum's lose, the shape of `end_when` and the moves, and only then the name.
+ */
 export function isLoss(enc: EncounterDef | undefined, outcome: string): boolean {
-  if (enc?.momentum && outcome === enc.momentum.lose) return true;
-  return FAILURE.test(outcome);
+  return outcomeKind(enc, outcome) === "lost";
 }
 
 function endsIn(e: Effect | undefined): string | null { return e?.end ?? null; }
@@ -68,7 +72,7 @@ export function encounterGuide(r: Ruleset, s: GameState): EncounterGuide | null 
   for (const t of th.filter((x) => x.foe && !isLoss(enc, x.outcome))) {
     const fs = enc.foe.stats.find((f) => f.id === t.stat);
     if (!fs) continue;
-    progress.push({ label: fs.label, value: st.foe[fs.id] ?? fs.start, target: t.value, max: fs.max });
+    progress.push({ label: fs.label, value: st.foe[fs.id] ?? fs.start, target: t.value, max: st.max?.[fs.id] ?? fs.max });
     goals.push(`${t.op.startsWith("<") ? "bring" : "push"} their ${fs.label.toLowerCase()} to ${t.value}`);
   }
   if (enc.momentum) goals.push("swing the fight all the way your way");
@@ -111,7 +115,7 @@ export function roundCard(r: Ruleset, rec: TurnRecord, before: GameState, after:
       const from = before.encounter.foe[fs.id] ?? fs.start;
       const touched = rec.events.some((e) => e.t === "foe" && e.stat === fs.id);
       const to = fin ? fin.foe[fs.id] ?? fs.start : from + rec.events.reduce((n, e) => n + (e.t === "foe" && e.stat === fs.id ? e.set !== undefined ? e.set - from : e.d ?? 0 : 0), 0);
-      if (touched && to !== from) changes.push({ label: `${foeName(r, before)}: ${fs.label}`, from, to: Math.max(0, to), of: fs.max, good: (to < from) === (fs.good !== "high") });
+      if (touched && to !== from) changes.push({ label: `${foeName(r, before)}: ${fs.label}`, from, to: Math.max(0, to), of: before.encounter.max?.[fs.id] ?? fs.max, good: (to < from) === (fs.good !== "high") });
     }
     if (before.encounter.momentum !== undefined) {
       const to = fin?.momentum ?? before.encounter.momentum + rec.events.reduce((n, e) => n + (e.t === "swing" ? e.d : 0), 0);

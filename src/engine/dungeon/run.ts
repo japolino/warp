@@ -6,7 +6,7 @@
 import { seededRng, type Rng } from "../dice.js";
 import { evalBool, evalNumber, type ExprEnv, type Value } from "../expr.js";
 import { practise } from "../freeform.js";
-import { buildTurn, type TurnBuilder } from "../resolve.js";
+import { buildTurn, gateLock, type TurnBuilder } from "../resolve.js";
 import type { Ruleset } from "../ruleset.js";
 import { formatNumber, itemName, makeEnv, personName, statMax, type GameState, type WarpEvent } from "../state.js";
 import { presentPeople } from "../world.js";
@@ -114,6 +114,11 @@ export function dungeonsHere(r: Ruleset, s: GameState): DungeonDef[] {
   return Object.values(r.dungeons).filter((d) => (!d.at.length || d.at.includes(s.location ?? "")) && (!d.when || evalBool(d.when, env, true)));
 }
 
+/** Why a dungeon's entrance is locked right now (its `requires:`), or null when it's open. */
+export function dungeonLock(r: Ruleset, s: GameState, d: DungeonDef): string | null {
+  return d.requires ? gateLock(r, s, d.requires, d.whyNot) : null;
+}
+
 /** People who can come along: tracked, adults or not (romance scenes check age), and passing the dungeon's `party.when`. */
 export function eligibleCompanions(r: Ruleset, s: GameState, d: DungeonDef): { id: string; name: string; present: boolean; cls: ClassId }[] {
   const here = new Set(presentPeople(r, s, makeEnv(r, s)));
@@ -132,7 +137,7 @@ const isAdult = (r: Ruleset, s: GameState, id: string) => {
   if (p?.age !== undefined) return p.age >= 18;
   const read = s.dating.prefs[id]?.["__adult"]; // date/talk.ts ADULT_KEY (inlined to avoid an import cycle)
   if (read !== undefined) return read > 0;
-  return !p?.schedule.some((e) => s.discovered?.includes(e.at));
+  return !p?.schedule.some((e) => e.at !== null && s.discovered?.includes(e.at));
 };
 
 // ───────────────────────── helpers ─────────────────────────
@@ -255,6 +260,8 @@ export function enterDungeon(r: Ruleset, s: GameState, id: string, companions: s
   if (!d) return fail("There's no such dungeon.");
   if (s.dungeon) return fail("You're already in a dungeon.");
   if (!dungeonsHere(r, s).some((x) => x.id === id)) return fail(`${d.name} can't be entered from here.`);
+  const locked = dungeonLock(r, s, d);
+  if (locked) return fail(`${d.name} is locked: ${locked}`);
   const allowed = new Set(eligibleCompanions(r, s, d).map((c) => c.id));
   const chosen = [...new Set(companions)].filter((c) => allowed.has(c)).slice(0, d.party.max);
   const events = buildTurn(r, s, seed, (t) => {

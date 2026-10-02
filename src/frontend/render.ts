@@ -22,7 +22,35 @@ function pctTone(p: number): "good" | "warn" | "bad" {
 /** One of the HUD's sections: it can sit in the main window or be torn off into a panel of its own. */
 export interface HudPart { id: string; title: string; count: number; body: string; open: boolean }
 
-export interface HudOpts { editing: string | null; compact: boolean; map?: MapView | null }
+export interface HudOpts { editing: string | null; compact: boolean; map?: MapView | null; /** Points placed with +/− but not yet spent: stat → steps. */ alloc?: Record<string, number> }
+
+/** Points left in a pool once the +/− placed so far are counted. */
+function allocLeft(h: HudView, pool: string, draft: Record<string, number>): number {
+  const sk = h.skills.find((x) => x.allocate?.pool === pool);
+  if (!sk?.allocate) return 0;
+  let left = sk.allocate.left;
+  for (const x of h.skills) if (x.allocate?.pool === pool) left -= (draft[x.id] ?? 0) * x.allocate.cost;
+  return left;
+}
+
+/** +/− beside a stat that's raised with points (`allocate:`); shown while there are points (or steps placed). */
+function renderAllocButtons(h: HudView, s: HudView["skills"][number], draft: Record<string, number>): string {
+  const al = s.allocate;
+  if (!al) return "";
+  const placed = draft[s.id] ?? 0;
+  const canAdd = allocLeft(h, al.pool, draft) >= al.cost && placed < al.room;
+  if (!placed && !canAdd) return "";
+  return ` <span class="warp-alloc">${placed ? `<button class="warp-btn warp-btn-mini" data-alloc-sub="${esc(s.id)}" title="Take back a step" aria-label="Lower ${esc(s.label)}">−</button><b class="warp-tone-good">+${esc(placed * al.step)}</b>` : ""}${canAdd ? `<button class="warp-btn warp-btn-mini" data-alloc-add="${esc(s.id)}" title="${esc(`+${al.step} ${s.label} for ${al.cost} ${al.poolLabel}`)}" aria-label="Raise ${esc(s.label)}">+</button>` : ""}</span>`;
+}
+
+/** Points to spend and the steps placed: confirm or clear. */
+function renderAllocBar(h: HudView, draft: Record<string, number>): string {
+  const pools = [...new Map(h.skills.filter((x) => x.allocate).map((x) => [x.allocate!.pool, x.allocate!])).values()];
+  const shown = pools.filter((p) => p.left > 0 || h.skills.some((x) => x.allocate?.pool === p.pool && draft[x.id]));
+  if (!shown.length) return "";
+  const placed = Object.values(draft).some((n) => n > 0);
+  return `<div class="warp-alloc-bar">${shown.map((p) => `<span>${esc(p.poolLabel)}: <b>${esc(allocLeft(h, p.pool, draft))}</b> to spend</span>`).join(" ")}${placed ? ` <button class="warp-btn warp-btn-primary warp-btn-mini" data-alloc-confirm>Spend</button> <button class="warp-btn warp-btn-mini" data-alloc-clear>Clear</button>` : ""}</div>`;
+}
 
 /** The HUD in full: the head (clock, place, bars) and every section, in order. */
 export function renderHud(h: HudView, opts: HudOpts): string {
@@ -61,15 +89,15 @@ export function hudParts(h: HudView, opts: HudOpts): { head: string; parts: HudP
     </div>`;
   }).join("");
 
-  const skills: HudPart | null = h.skills.length ? part("skills", "Skills & attributes", h.skills.length, h.skills.map((s) => `
+  const skills: HudPart | null = h.skills.length ? part("skills", "Skills & attributes", h.skills.length, renderAllocBar(h, opts.alloc ?? {}) + h.skills.map((s) => `
     <div class="warp-skill" title="${esc(`${s.label}: ${s.display}${s.text ? ` — ${s.text}` : ""}${s.practice !== null ? `\nPractice toward the next point: ${Math.round(s.practice * 100)}% — it grows every time you use it` : ""}`)}">
-      <span>${esc(s.label)}</span>
-      <span class="warp-grade ${s.grade ? `warp-tone-${pctTone(s.pct)}` : ""}">${esc(s.grade ?? s.display)}</span>
+      <span>${esc(s.label)}${renderAllocButtons(h, s, opts.alloc ?? {})}</span>
+      <span class="warp-grade ${s.grade ? `warp-tone-${pctTone(s.pct)}` : s.text ? `warp-tone-${s.tone}` : ""}">${esc(s.grade ?? s.text ?? s.display)}</span>
       <div class="warp-skill-tracks">
         <div class="warp-mini-track"><div class="warp-mini-fill" style="width:${(s.pct * 100).toFixed(1)}%"></div></div>
         ${s.practice !== null ? `<div class="warp-practice-track"><div class="warp-practice-fill" style="width:${(s.practice * 100).toFixed(1)}%"></div></div>` : ""}
       </div>
-    </div>`).join(""), !opts.compact) : null;
+    </div>`).join(""), !opts.compact || h.skills.some((x) => (x.allocate?.left ?? 0) > 0)) : null;
 
   // Who's in the scene comes first; everyone else waits, folded, under "Elsewhere".
   const here = h.people.filter((p) => p.present);
@@ -96,7 +124,7 @@ export function hudParts(h: HudView, opts: HudOpts): { head: string; parts: HudP
 
   const body = h.body ? part("body", "Body", 0, `${h.body.map((b) => `<div class="warp-item"><span>${esc(b.label)}</span><span class="${b.covered ? "warp-dim" : ""}" title="${b.covered ? "Covered by clothing" : "Visible"}">${esc(b.text)}${b.covered ? " 👕" : ""}</span></div>`).join("")}${h.transforms.map((t) => `<div class="warp-item"><span>✦ ${esc(t.label)}</span><span class="warp-dim">stage ${t.stage} / ${t.of}</span></div>`).join("")}`, false) : null;
 
-  const dues = h.dues.length ? part("bills", "Bills", h.dues.filter((d) => d.tone === "bad").length, h.dues.map((d) => `<div class="warp-item"><span>${esc(d.label)}${d.owed > 0 ? ` <span class="warp-dim">${esc(h.money?.replace(/[\d.,]+/, "") ?? "")}${esc(d.owed)}</span>` : ""}</span><span class="warp-tone-${d.tone}">${esc(d.text)}</span></div>`).join(""), !opts.compact || h.dues.some((d) => d.tone === "bad")) : null;
+  const dues = h.dues.length ? part("bills", "Bills", h.dues.filter((d) => d.tone === "bad").length, h.dues.map((d) => `<div class="warp-item"><span>${esc(d.label)}${d.owed > 0 ? ` <span class="warp-dim">${esc(d.owedText ?? d.owed)}</span>` : ""}</span><span class="warp-tone-${d.tone}">${esc(d.text)}</span></div>`).join(""), !opts.compact || h.dues.some((d) => d.tone === "bad")) : null;
   const family = h.family.length ? part("family", "Family", h.family.length, h.family.map((f) => `<div class="warp-item"><span>${esc(f.name)}</span><span class="warp-dim">${esc(f.text)}</span></div>`).join(""), !opts.compact) : null;
 
   const loose = h.items.filter((i) => !i.worn);
@@ -185,7 +213,7 @@ function perkCard(p: HudView["perks"][number], take: boolean): string {
         ${p.notes.length ? `<div class="warp-perk-notes">${p.notes.map((n) => `<span>${esc(n)}</span>`).join("")}</div>` : ""}
         ${p.drawback ? `<div class="warp-perk-drawback">⚠ ${esc(p.drawback)}</div>` : ""}
       </div>
-      ${p.owned ? `<span class="warp-tone-good" aria-label="taken">✓</span>` : take && !p.blocker ? `<button class="warp-btn warp-mini${p.offered ? " warp-btn-primary" : ""}" data-buy-perk="${esc(p.id)}">${p.offered ? "Choose" : `Take · ${esc(p.cost)} pt`}</button>` : `<span class="warp-dim" title="${esc(p.blocker ?? "")}">${esc(p.cost)} pt</span>`}
+      ${p.owned ? `<span class="warp-tone-good" aria-label="taken">✓</span>` : take && !p.blocker ? `<button class="warp-btn warp-mini${p.offered ? " warp-btn-primary" : ""}" data-buy-perk="${esc(p.id)}">${p.offered ? "Choose" : `Take · ${esc(p.cost)} ${esc(p.pointsLabel ?? "pt")}`}</button>` : `<span class="warp-dim" title="${esc(p.blocker ?? "")}">${esc(p.cost)} ${esc(p.pointsLabel ?? "pt")}</span>`}
     </div>`;
 }
 
@@ -265,10 +293,10 @@ export function renderMapView(m: MapView): string {
     return p && q ? `<line x1="${p.x}" y1="${p.y}" x2="${q.x}" y2="${q.y}" class="warp-map-edge" />` : "";
   }).join("");
   const nodes = m.nodes.map((n) => `
-    <g class="warp-map-node${n.here ? " here" : ""}${n.reachable ? " reachable" : ""}" ${n.reachable ? `data-go="${esc(n.id)}" tabindex="0" role="button" aria-label="Go to ${esc(n.name)}"` : ""}>
-      <title>${esc(n.reachable ? `Go to ${n.name}` : n.name)}</title>
+    <g class="warp-map-node${n.here ? " here" : ""}${n.reachable ? " reachable" : ""}${n.locked ? " locked" : ""}" ${n.reachable ? `data-go="${esc(n.id)}" tabindex="0" role="button" aria-label="Go to ${esc(n.name)}"` : ""}>
+      <title>${esc(n.reachable ? `Go to ${n.name}` : n.locked ? `${n.name} — 🔒 ${n.locked}` : n.name)}</title>
       <circle cx="${n.x}" cy="${n.y}" r="${n.here ? 13 : 10}" />
-      <text x="${n.x}" y="${n.y + 26}" text-anchor="middle">${esc(n.name)}</text>
+      <text x="${n.x}" y="${n.y + 26}" text-anchor="middle">${n.locked ? "🔒 " : ""}${esc(n.name)}</text>
       ${n.people.length ? `<text x="${n.x}" y="${n.y + 40}" text-anchor="middle" class="warp-map-people">${esc(n.people.join(", "))}</text>` : ""}
       ${n.indoors ? `<text x="${n.x}" y="${n.y + 4}" text-anchor="middle" class="warp-map-icon">⌂</text>` : ""}
     </g>`).join("");

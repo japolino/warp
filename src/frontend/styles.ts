@@ -69,6 +69,9 @@ export const STYLES = `
 
 .warp-skill { display: grid; grid-template-columns: 1fr auto 44px; align-items: center; gap: 8px; }
 .warp-grade { font-weight: 700; min-width: 22px; text-align: center; }
+.warp-alloc { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; }
+.warp-btn-mini { padding: 0 6px; min-width: 20px; line-height: 18px; font-size: 12px; }
+.warp-alloc-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12px; }
 .warp-mini-track { height: 3px; background: var(--warp-fill); border-radius: 3px; overflow: hidden; }
 .warp-mini-fill { height: 100%; background: var(--warp-accent); }
 .warp-skill-tracks { display: flex; flex-direction: column; gap: 2px; }
@@ -222,6 +225,7 @@ export const STYLES = `
 .warp-map-node.here circle { fill: var(--warp-accent); stroke: var(--warp-accent); }
 .warp-map-node.here text { fill: var(--warp-text); font-weight: 700; }
 .warp-map-node.reachable { cursor: pointer; }
+.warp-map-node.locked circle { stroke-dasharray: 3 3; opacity: .6; }
 .warp-map-node.reachable circle { stroke: var(--warp-accent); }
 .warp-map-node.reachable:hover circle, .warp-map-node.reachable:focus circle { fill: color-mix(in srgb, var(--warp-accent) 35%, transparent); }
 .warp-codex summary { cursor: pointer; padding: 3px 0; }

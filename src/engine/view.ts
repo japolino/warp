@@ -4,18 +4,18 @@ import { aidWords, gambleOffer, gameOffer, GAMES, type AidKind, type GamesScope 
 import type { ActionDef, KeepSpec, Ruleset, StatDef } from "./ruleset.js";
 import { percentOf, TIERS } from "./ruleset.js";
 import {
-  bandFor, foeName, formatClock, formatNumber, gradeFor, initialState, itemName, kinAge, makeEnv, personName, statMax,
+  amountValue, bandFor, foeName, formatClock, formatMoney, formatNumber, gradeFor, initialState, itemName, kinAge, makeEnv, personName, statMax,
   usesOf, type GameState, type WarpEvent,
 } from "./state.js";
 import { practiceProgress } from "./freeform.js";
 import { encounterGuide, itemRelevance } from "./encounter-view.js";
-import { cleanLiveForecast, paramValues, ABILITY_PREFIX, abilityStatus, actionPool, availableChoices, canExplore, dangerStats, EXPLORE, findAction, foeArmor, isAvailable, knowsAbility, LIVE_PREFIX, lockReason, mainMeter, odds, perkOffers, playerArmor, usableAbilities, usableItems, perkBlocker, RUN_EPILOGUE, TIER_LABEL, TRAVEL_PREFIX, travelTargets, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
+import { cleanLiveForecast, costValue, resistAffordable, resistCostText, spentLock, whenHolds, paramValues, ABILITY_PREFIX, abilityStatus, actionPool, availableChoices, canExplore, dangerStats, EXPLORE, findAction, foeArmor, isAvailable, knowsAbility, lockedExits, placeKnown, placeLock, LIVE_PREFIX, lockReason, mainMeter, odds, perkOffers, playerArmor, usableAbilities, usableItems, perkBlocker, RUN_EPILOGUE, TIER_LABEL, TRAVEL_PREFIX, travelTargets, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
 import { dueWords, effectWords, goalDone, questDef, questDigest, questOffers, questsToReport, QUEST_PREFIX } from "./quests.js";
 import {
   dateAt, exposedSlots, isIndoors, ordinal, personLocation, presentPeople, seasonAt, temperatureAt, warmthNeeded, warmthOf, weatherAt,
 } from "./world.js";
 import type { ChangeView, ChoiceView, ClothingView, HudView, MapView, QuestView, RecordView, Tone } from "../shared/protocol.js";
-import { dungeonOf, dungeonsHere, levelOf, memberFighter } from "./dungeon/run.js";
+import { dungeonLock, dungeonOf, dungeonsHere, levelOf, memberFighter } from "./dungeon/run.js";
 import { activeSession, dateDigest, dateMoves, moodOf, type DateMove } from "./date/talk.js";
 import { REACTION_LABEL } from "./date/types.js";
 import { workDigest, workMoves } from "./work.js";
@@ -31,8 +31,18 @@ function toneFromPct(p: number, good: StatDef["good"]): Tone {
   return g >= 0.67 ? "good" : g >= 0.34 ? "warn" : "bad";
 }
 
-function statDisplay(def: StatDef, v: number, max: number, currency: string): string {
-  if (def.kind === "money") return `${currency}${formatNumber(v)}`;
+/**
+ * What a stat's `show:` puts beside its name, in the sidebar and for the narrator alike:
+ * text (default with bands) = the band's words, number = the number, both = "words (number)".
+ * Null means "just the number".
+ */
+export function shownText(def: StatDef, band: { text: string } | null, num: string): string | null {
+  if (!band || def.show === "number") return null;
+  return def.show === "both" ? `${band.text} (${num})` : band.text;
+}
+
+function statDisplay(r: Ruleset, def: StatDef, v: number, max: number): string {
+  if (def.kind === "money") return formatMoney(r, v);
   if (def.kind === "meter" && max !== 100) return `${formatNumber(v)} / ${formatNumber(max)}`;
   return formatNumber(v);
 }
@@ -46,9 +56,9 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
     const p = pct(v, def.min, max);
     return {
       id, label: def.label, value: v, min: def.min, max,
-      display: statDisplay(def, v, max, r.hud.currency),
+      display: statDisplay(r, def, v, max),
       pct: p,
-      text: band?.text ?? null,
+      text: shownText(def, band, statDisplay(r, def, v, max)),
       tone: band?.tone ?? toneFromPct(p, def.good),
       good: def.good,
       color: def.color,
@@ -57,7 +67,7 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
   });
 
   const skills = r.statOrder
-    .filter((id) => (r.stats[id].kind === "attribute" || r.stats[id].kind === "skill") && !r.hud.bars.includes(id))
+    .filter((id) => (r.stats[id].kind === "attribute" || r.stats[id].kind === "skill") && !r.hud.bars.includes(id) && r.stats[id].show !== "hidden")
     .map((id) => {
       const def = r.stats[id];
       const v = s.stats[id] ?? def.start;
@@ -69,9 +79,16 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
         grade: gradeFor(def, v, max),
         pct: pct(v, def.min, max),
         kind: def.kind as "attribute" | "skill",
-        text: band?.text ?? null,
+        // `show:` decides, as for the narrator: the band's words (default when there are bands), the number, or both.
+        // Unset show: on a banded skill keeps the number beside the words in the sidebar (you need it to spend points).
+        text: shownText(def.showSet ? def : { ...def, show: "both" }, band, formatNumber(v)),
         tone: band?.tone ?? "neutral" as Tone,
         practice: practiceProgress(r, s, id),
+        ...(def.allocate ? { allocate: {
+          pool: def.allocate.with, poolLabel: r.stats[def.allocate.with]?.label ?? def.allocate.with,
+          left: s.stats[def.allocate.with] ?? r.stats[def.allocate.with]?.start ?? 0,
+          cost: def.allocate.cost, step: def.allocate.step, room: Math.max(0, Math.floor((max - v) / def.allocate.step + 1e-9)),
+        } } : {}),
       };
     });
 
@@ -86,7 +103,7 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
         const v = s.rel[id]?.[rs] ?? def.start;
         const band = bandFor(def, v);
         const pp = pct(v, def.min, def.max);
-        return { id: rs, label: def.label, value: v, min: def.min, max: def.max, display: formatNumber(v), pct: pp, text: band?.text ?? null, tone: band?.tone ?? toneFromPct(pp, def.good) };
+        return { id: rs, label: def.label, value: v, min: def.min, max: def.max, display: formatNumber(v), pct: pp, text: shownText(def, band, formatNumber(v)), tone: band?.tone ?? toneFromPct(pp, def.good) };
       }),
       present: here.has(id),
       whereabouts: where ? r.locations[where]?.name ?? where : null,
@@ -109,11 +126,14 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
     };
   };
   const usable_ = usableItems(r, s);
+  let gearEnv_: ReturnType<typeof makeEnv> | null = null;
+  const gearEnv = () => (gearEnv_ ??= makeEnv(r, s));
   const items = Object.entries(s.items).map(([id, count]) => {
     const def = r.items[id];
     const per = def?.uses ?? 0;
     const usable = usable_.find((u) => u.id === `item:${id}`);
-    const bonus = def ? Object.entries(def.bonus).filter(([, b]) => b).map(([st, b]) => `${b > 0 ? "+" : ""}${b} ${r.stats[st]?.label ?? st}`).join(", ") : "";
+    // Formula bonuses ("level / 2") show what they're worth right now.
+    const bonus = def ? Object.entries(def.bonus).map(([st, b]) => [st, amountValue(b, gearEnv())] as const).filter(([, b]) => b).map(([st, b]) => `${b > 0 ? "+" : ""}${formatNumber(b)} ${r.stats[st]?.label ?? st}`).join(", ") : "";
     return {
       id, name: itemName(r, s, id), count, worn: wornIds.has(id), uses: per > 1 ? `${s.uses[id] ?? per}/${per}` : null,
       use: usable ? { id: usable.id, label: usable.a.label, locked: usable.locked, drafted: !!def?.drafted } : null,
@@ -156,8 +176,9 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
       momentum: s.encounter.momentum ?? null,
       stats: (enc?.foe.stats ?? []).map((fs) => {
         const v = s.encounter!.foe[fs.id] ?? fs.start;
-        const p = pct(v, 0, fs.max);
-        return { id: fs.id, label: fs.label, value: v, max: fs.max, pct: p, tone: toneFromPct(p, fs.good === "none" ? "none" : fs.good === "high" ? "high" : "low") };
+        const top = s.encounter!.max?.[fs.id] ?? fs.max; // formula maxes were worked out when it started
+        const p = pct(v, 0, top);
+        return { id: fs.id, label: fs.label, value: v, max: top, pct: p, tone: toneFromPct(p, fs.good === "none" ? "none" : fs.good === "high" ? "high" : "low") };
       }),
       foeConds: Object.entries(s.encounter.conds ?? {}).map(([id, n]) => ({
         id, label: r.conditions[id]?.label ?? id, tone: r.conditions[id]?.tone ?? "warn" as Tone, rounds: n, ...(r.conditions[id]?.desc ? { desc: r.conditions[id].desc } : {}),
@@ -179,7 +200,11 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
     };
   });
 
-  const money = r.hud.money ? statDisplay(r.stats[r.hud.money], s.stats[r.hud.money] ?? 0, 0, r.hud.currency) : null;
+  const moneyDef = r.hud.money ? r.stats[r.hud.money] : undefined;
+  const moneyV = r.hud.money ? s.stats[r.hud.money] ?? moneyDef?.start ?? 0 : 0;
+  // Money follows `show:` too: a purse with bands reads "Enough for the week." unless it says number or both.
+  // The amount always shows unless the author asked for words only (show: text) or hid it.
+  const money = moneyDef ? moneyDef.show === "hidden" ? null : shownText(moneyDef.showSet ? moneyDef : { ...moneyDef, show: "both" }, bandFor(moneyDef, moneyV, statMax(r, moneyDef, s)), formatMoney(r, moneyV)) ?? formatMoney(r, moneyV) : null;
   const loc = s.location ? r.locations[s.location] : undefined;
 
   return {
@@ -223,6 +248,7 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
       return {
         label: o.label,
         owed: d?.owed ?? 0,
+        owedText: formatMoney(r, d?.owed ?? 0),
         text: !d || d.owed <= 0 ? `Paid · next ${r.clock.enabled && d ? formatClock(r, d.due).day : "later"}` : d.missed || days < 0 ? `Overdue · ${d.missed} missed` : days <= 0 ? "Due today" : `Due in ${days} day${days === 1 ? "" : "s"}`,
         tone: (!d || d.owed <= 0 ? "good" : d.missed || days < 0 ? "bad" : days <= 1 ? "warn" : "neutral") as Tone,
       };
@@ -345,16 +371,19 @@ export function buildMap(r: Ruleset, s: GameState): MapView | null {
     if (at) peopleAt.set(at, [...(peopleAt.get(at) ?? []), personName(r, s, pid)]);
   }
   const reach = new Set(travelTargets(r, s));
+  // A place whose `when:` doesn't hold isn't on the map (unless the player is there); one locked by `requires:` shows why.
+  const shown = new Set(ids.filter((id) => id === s.location || placeKnown(r, s, id)));
   const edges: [string, string][] = [];
   const seen = new Set<string>();
   for (const id of ids) for (const x of r.locations[id].exits) {
     const k = [id, x].sort().join("|");
-    if (r.locations[x] && !seen.has(k)) { seen.add(k); edges.push([id, x]); }
+    if (r.locations[x] && shown.has(id) && shown.has(x) && !seen.has(k)) { seen.add(k); edges.push([id, x]); }
   }
   return {
-    nodes: ids.map((id) => {
+    nodes: ids.filter((id) => shown.has(id)).map((id) => {
       const [x, y] = pos.get(id) ?? [0, 0];
-      return { id, name: r.locations[id].name, x, y, here: s.location === id, reachable: reach.has(id), indoors: r.locations[id].indoors, people: peopleAt.get(id) ?? [] };
+      const locked = s.location === id ? null : placeLock(r, s, id);
+      return { id, name: r.locations[id].name, x, y, here: s.location === id, reachable: reach.has(id), indoors: r.locations[id].indoors, people: peopleAt.get(id) ?? [], ...(locked ? { locked } : {}) };
     }),
     edges,
   };
@@ -428,11 +457,11 @@ function withMindCounterplay(r: Ruleset, s: GameState, c: ChoiceView, live: Live
     const hard = r.mind.overridesMode !== "soft" && o.do !== "alter";
     warnings.push(`${o.cause}: ${hard ? o.do === "fail" ? "may fail without a roll" : "may replace your chosen action" : "narration pressure only; your action stays chosen"}.`);
     if (!hard || !o.resistCost || !Object.keys(o.resistCost).length) continue;
-    const valid = Object.entries(o.resistCost).every(([id, n]) => r.stats[id]?.kind === "meter" && Number.isFinite(n) && n > 0);
+    const valid = Object.entries(o.resistCost).every(([id, n]) => r.stats[id]?.kind === "meter" && Number.isFinite(n) && n !== 0);
     if (!valid) continue;
-    const cost = Object.entries(o.resistCost).map(([id, n]) => `${n} ${r.stats[id].label}`).join(", ");
-    const affordable = Object.entries(o.resistCost).every(([id, n]) => found.a.cost.set[id] === undefined
-      && (s.stats[id] ?? r.stats[id].start) - n + Math.min(0, actionCost(r, s, found.a, id, env)) >= r.stats[id].min);
+    const cost = resistCostText(r, o.resistCost);
+    // The same test resolve.ts applies when the override fires.
+    const affordable = resistAffordable(r, s, found.a, o.resistCost, env);
     warnings.push(`Resist ${o.id}: ${cost}, paid only if this override triggers. ${affordable ? "Choose resistance below to keep your action." : "Not enough resources to resist."}`);
     if (affordable) resist.push(o.id);
   }
@@ -447,13 +476,6 @@ function liveAction(r: Ruleset, live: LiveChoice[], id: string): { a: ActionDef;
   const l = live[Number(id.slice(LIVE_PREFIX.length))];
   const a = l ? r.liveChoices.tags[l.tag] : undefined;
   return a ? { a, ...(l.target ? { target: l.target } : {}) } : null;
-}
-
-/** The action's own stat cost as the turn will charge it (percent costs are shares of the maximum). */
-function actionCost(r: Ruleset, s: GameState, a: ActionDef, id: string, env: ReturnType<typeof makeEnv>): number {
-  const raw = a.cost.stats[id] ?? 0;
-  const pct = percentOf(raw);
-  return pct !== null ? Math.round(pct * statMax(r, r.stats[id], s)) : evalNumber(raw, env, 0);
 }
 
 /** Checks that can be played instead of rolled get their game; gambling tables get theirs. */
@@ -519,7 +541,10 @@ function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: st
     return [...featured, ...more];
   }
   const talk = moves.filter((m) => m.featured).map(asChoice);
-  const dungeons = dungeonsHere(r, s).map((d) => plain(`dungeon:enter:${d.id}`, `Enter ${d.name}`, "Dungeon", d.desc ?? null));
+  const dungeons = dungeonsHere(r, s).map((d) => {
+    const shut = dungeonLock(r, s, d);
+    return { ...plain(`dungeon:enter:${d.id}`, `Enter ${d.name}`, "Dungeon", d.desc ?? null), ...(shut ? { locked: shut } : {}) };
+  });
   if (!s.encounter) (opts.live ?? []).forEach((c, i) => {
     const a = r.liveChoices.tags[c.tag];
     if (!a || a.tags.some((t) => lines.has(t)) || !isAvailable(r, s, a, c.target)
@@ -547,6 +572,8 @@ function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: st
     desc: r.locations[id].desc ?? null,
     odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [],
   }));
+  // Places shown but locked by their `requires:` say what's missing.
+  for (const x of lockedExits(r, s)) travel.push({ ...plain(`${TRAVEL_PREFIX}${x.id}`, `Go to ${r.locations[x.id].name}`, "Travel", r.locations[x.id].desc ?? null), locked: x.locked });
   const encName = s.encounter ? r.encounters[s.encounter.id]?.name ?? "Encounter" : null;
   const actions = availableChoices(r, s, opts.lines)
     .filter(({ a }) => !a.hidden)
@@ -570,10 +597,12 @@ function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: st
   for (const id of pool.order) {
     const a = pool.defs[id];
     if (a.hidden || a.perPerson || a.tags.some((t) => lines.has(t))) continue;
-    if (!s.encounter && (!a.showLocked || (a.at.length && !a.at.includes(s.location ?? "")))) continue;
-    if (s.encounter && !a.showLocked && !a.whyNot && !/has\(/.test(a.when ?? "")) continue;
+    // Allowed here but out of uses or unaffordable: always shown locked, with why ("Needs 80 Mana").
+    const spent = whenHolds(r, s, a) ? spentLock(r, s, a) : null;
+    if (!spent && !s.encounter && (!a.showLocked || (a.at.length && !a.at.includes(s.location ?? "")))) continue;
+    if (!spent && s.encounter && !a.showLocked && !a.whyNot && !/has\(/.test(a.when ?? "")) continue;
     if (isAvailable(r, s, a)) continue;
-    locked.push({ ...plain(id, a.label, encName ?? a.group ?? null, a.desc ?? null), locked: lockReason(r, s, a) });
+    locked.push({ ...plain(id, a.label, encName ?? a.group ?? null, a.desc ?? null), locked: spent ?? lockReason(r, s, a) });
   }
   return [...live, ...actions, ...abilityChoices(r, s, lines), ...itemChoices(r, s, lines), ...locked, ...questChoices(r, s), ...talk, ...work, ...dungeons, ...travel, ...explore];
 }
@@ -603,8 +632,9 @@ function questChoices(r: Ruleset, s: GameState): ChoiceView[] {
 /** "8 Mana, 5 Stamina": what using something costs, from its `cost:`. */
 function costText(r: Ruleset, s: GameState, a: ActionDef): string | null {
   const env = makeEnv(r, s);
-  const parts = Object.entries(a.cost.stats).map(([stat, d]) => [stat, evalNumber(d, env, 0)] as const).filter(([, v]) => v < 0)
-    .map(([stat, v]) => `${formatNumber(-v)} ${r.stats[stat]?.label ?? stat}`);
+  // Percent costs ("-15%") read as the amount they'll take now. Positive costs (+3 Suspicion) are prices too.
+  const parts = Object.entries(a.cost.stats).map(([stat, d]) => [stat, costValue(r, s, stat, d, env)] as const).filter(([, v]) => v !== 0)
+    .map(([stat, v]) => `${v > 0 ? "+" : ""}${formatNumber(Math.abs(v))} ${r.stats[stat]?.label ?? stat}`);
   return parts.length ? parts.join(", ") : null;
 }
 
@@ -657,6 +687,8 @@ function perkViews(r: Ruleset, s: GameState): HudView["perks"] {
       return {
         id: p.id, name: p.name, desc: p.desc, cost: p.cost, owned: !!s.perks[p.id], blocker: s.perks[p.id] ? null : perkBlocker(r, s, p.id),
         offered: offers.has(p.id), drawback: p.drawback ?? null, notes,
+        // A perk paid from its own pool (points: class_points) names that pool on its price.
+        ...(p.points && p.points !== r.perkPoints ? { pointsLabel: r.stats[p.points]?.label ?? p.points } : {}),
       };
     });
 }
@@ -862,7 +894,7 @@ export function summarizeEvents(r: Ruleset, before: GameState, after: GameState,
     const bAfter = bandFor(def, after.stats[id] ?? def.start, statMax(r, def, after));
     const good = def.good === "none" ? null : (d > 0) === (def.good === "high");
     out.push({
-      text: def.kind === "money" ? `${d > 0 ? "+" : "−"}${r.hud.currency}${formatNumber(Math.abs(d))}` : `${def.label} ${signed(d)}`,
+      text: def.kind === "money" ? `${d > 0 ? "+" : "−"}${formatMoney(r, Math.abs(d))}` : `${def.label} ${signed(d)}`,
       tone: good === null ? "neutral" : good ? "good" : "bad",
       src: a.src,
       band: bAfter && bBefore !== bAfter ? bAfter.text : undefined,
@@ -975,7 +1007,8 @@ function statLine(r: Ruleset, def: StatDef, s: GameState, forceNumbers: boolean)
   const max = statMax(r, def, s);
   const band = bandFor(def, v, max);
   const grade = gradeFor(def, v, max);
-  const num = def.kind === "money" ? `${r.hud.currency}${formatNumber(v)}` : grade ? `${grade}` : `${formatNumber(v)}/${formatNumber(max)}`;
+  // Meters read as value/max; attributes and skills as the value alone (a cap of 999 tells the story nothing).
+  const num = def.kind === "money" ? formatMoney(r, v) : grade ? `${grade}` : def.kind === "meter" || def.kind === "hidden" ? `${formatNumber(v)}/${formatNumber(max)}` : formatNumber(v);
   const showNum = forceNumbers || def.show === "number" || def.show === "both" || !band;
   const showText = (def.show === "text" || def.show === "both") && band;
   if (showText && showNum) return `${def.label}: ${band!.text} (${num})`;
@@ -1093,7 +1126,8 @@ export function stateDigest(r: Ruleset, s: GameState): string {
       if (def.show === "hidden") return null;
       const v = s.rel[id]?.[rs] ?? def.start;
       const band = bandFor(def, v);
-      return band && def.show !== "number" ? `${def.label} ${band.text}` : `${def.label} ${formatNumber(v)}`;
+      const words = shownText(def, band, formatNumber(v));
+      return words ? `${def.label} ${words}` : `${def.label} ${formatNumber(v)}`;
     }).filter(Boolean);
     return parts.length ? `${name} (${parts.join(", ")})` : name;
   };

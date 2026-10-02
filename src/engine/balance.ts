@@ -6,9 +6,9 @@ import { evalBool, evalNumber } from "./expr.js";
 import type { ActionDef, Effect, Ruleset } from "./ruleset.js";
 import { cloneState, initialState, makeEnv, type GameState } from "./state.js";
 import { odds } from "./resolve.js";
-import { simulateEncounter as playtestEncounter } from "./simulate.js";
+import { kindsLine, patchedState, simulateEncounter as playtestEncounter } from "./simulate.js";
+import type { KindTally } from "./outcomes.js";
 import type { PartLabel } from "./reference.js";
-import { isLoss } from "./encounter-view.js";
 import { checkStats } from "./freeform.js";
 
 export interface BalanceWarning {
@@ -55,9 +55,6 @@ function checkedActions(r: Ruleset): ActionDef[] {
     ...Object.values(r.items).flatMap((it) => (it.use ? [it.use] : [])),
   ].filter((a) => a.check);
 }
-
-/** Endings the player can always choose (pay the toll, hand over the money, walk away): not getting through. */
-const CONCESSION = /paid|pay|robbed|bribe|surrender|gave_?in|submit|walked|walk_away|left|gave_up/i;
 
 export function reviewBalance(r: Ruleset): BalanceWarning[] {
   const out: BalanceWarning[] = [];
@@ -126,31 +123,47 @@ export function reviewBalance(r: Ruleset): BalanceWarning[] {
     if (d.kind === "money" && d.narrator > 0) continue;
     // Skills and attributes grow each time a check reads them.
     const grows = (d.kind === "skill" || d.kind === "attribute") && r.growth.enabled && d.growth > 0 && rolled.has(id);
-    if (!touched.has(id) && !d.perHour && d.narrator <= 0 && !grows) {
+    if (!touched.has(id) && !d.perHour && d.perHourExpr === undefined && !d.allocate && d.narrator <= 0 && !grows) {
       out.push({ id: `dead:${id}`, part: "stats", text: `${d.label} never changes — no action, rule or story update touches it.`, fix: `Give the "${id}" stat a way to change: at least one action or rule that raises or lowers it, or allow the narrator to adjust it.` });
     }
   }
 
-  // Encounters: simulate random play.
+  // Encounters: simulate random play. Endings are counted as won / escaped / conceded / lost by the one
+  // classifier the simulator and quests use. "Getting through" = won or escaped (a concession is a price,
+  // not a way through); and when there is a win, random play should sometimes take it — a fight that is
+  // nearly always fled from isn't balanced just because fleeing works (a designed toll or bribe is fine).
   for (const enc of Object.values(r.encounters)) {
-    const sim = simulateEncounter(r, start, enc.id, 120);
+    // A late encounter is judged from the state its `sim:` describes (its intended level, gear, flags).
+    let from = start;
+    if (enc.sim) {
+      const p = patchedState(r, enc.sim, start);
+      for (const n of p.notes) out.push({ id: `enc-sim:${enc.id}`, part: "encounters", text: `“${enc.name}” sim: ${n}.`, fix: `Fix the "${enc.id}" encounter's sim: so every name in it exists.` });
+      from = p.state;
+      from.encounter = null;
+    }
+    const sim = simulateEncounter(r, from, enc.id, 120);
     if (!sim) continue;
-    // Any ending that isn't a loss went the player's way: paid off, talked down, slipped past, fled.
-    const goodEnds = [...new Set([...Object.keys(enc.outcomes), ...enc.endWhen.map((e) => e.outcome)])].filter((o) => !isLoss(enc, o) && !CONCESSION.test(o));
-    const wins = goodEnds.reduce((n, o) => n + (sim.outcomes[o] ?? 0), 0) / sim.runs;
+    const kinds = Object.values(enc.outcomeKinds ?? {});
+    const canWin = kinds.includes("won");
+    const through = canWin || kinds.includes("escaped");
+    const k = sim.kinds, pct = (n: number) => Math.round((n / sim.runs) * 100);
+    const split = kindsLine(k, sim.runs, sim.stuck);
     if (sim.stuck / sim.runs > 0.2) {
       out.push({ id: `enc-stuck:${enc.id}`, part: "encounters", text: `“${enc.name}” often doesn't end within 25 rounds.`, fix: `Make the "${enc.id}" encounter reliably end within about 4–10 rounds (stronger effects on foe stats or tighter end_when conditions).` });
-    } else if (goodEnds.length && wins < 0.2) {
-      out.push({ id: `enc-hard:${enc.id}`, part: "encounters", text: `“${enc.name}” is won or escaped only ${Math.round(wins * 100)}% of the time with random play.`, fix: `Make the "${enc.id}" encounter fairer for the player (aim for roughly half of random playthroughs ending well).` });
-    } else if (goodEnds.length && wins > 0.95) {
-      out.push({ id: `enc-easy:${enc.id}`, part: "encounters", text: `“${enc.name}” almost always goes the player's way — there's little risk.`, fix: `Make the "${enc.id}" encounter more dangerous (foe moves hit harder or the player's options are riskier).` });
+    } else if (through && (k.won + k.escaped) / sim.runs < 0.2) {
+      out.push({ id: `enc-hard:${enc.id}`, part: "encounters", text: `“${enc.name}” is won or escaped only ${pct(k.won + k.escaped)}% of the time with random play (${split}).`, fix: `Make the "${enc.id}" encounter fairer for the player (aim for roughly half of random playthroughs ending well). If an ending is mis-counted, mark it with losses: or outcome_kinds:.` });
+    } else if (canWin && k.won / sim.runs < 0.1 && k.escaped / sim.runs >= 0.3) {
+      out.push({ id: `enc-flee:${enc.id}`, part: "encounters", text: `“${enc.name}” is won only ${pct(k.won)}% of the time with random play; it mostly ends by getting away (${split}).`, fix: `Make winning "${enc.id}" a real option (aim for random play winning 30–70%), or make the way out cost more. If it's meant for later in the game, give it sim: (the state to judge it from). If an ending is mis-counted, mark it with losses: or outcome_kinds:.` });
+    } else if (through && (k.won + k.escaped) / sim.runs > 0.95) {
+      out.push({ id: `enc-easy:${enc.id}`, part: "encounters", text: `“${enc.name}” almost always goes the player's way — there's little risk (${split}).`, fix: `Make the "${enc.id}" encounter more dangerous (foe moves hit harder or the player's options are riskier).` });
     }
   }
   return out;
 }
 
-export function simulateEncounter(r: Ruleset, from: GameState, id: string, runs: number): { runs: number; outcomes: Record<string, number>; stuck: number; rounds: number } | null {
+/** Random play through one encounter (25 rounds at most): the numbers the checker judges and `simulate` prints. */
+export function simulateEncounter(r: Ruleset, from: GameState, id: string, runs: number): { runs: number; outcomes: Record<string, number>; kinds: KindTally; stuck: number; rounds: number } | null {
   const sim = playtestEncounter(r, id, { from, runs, maxRounds: 25, randomOnly: true });
   const random = sim?.policies.find((p) => p.policy === "a random mix");
-  return random ? { runs: random.runs, outcomes: random.outcomes, stuck: random.unfinished, rounds: random.meanRounds ?? random.medianRounds } : null;
+  return random ? { runs: random.runs, outcomes: random.outcomes, kinds: random.kinds, stuck: random.unfinished, rounds: random.meanRounds ?? random.medianRounds } : null;
 }

@@ -55,10 +55,10 @@ export function isIndoors(r: Ruleset, s: GameState): boolean {
   return !!(s.location && r.locations[s.location]?.indoors);
 }
 
-/** °C where the player is: indoor temperature inside; season + weather + time of day outside. */
+/** °C where the player is: the place's own `temp:` or the indoor temperature inside; season + weather + time of day outside. */
 export function temperatureAt(r: Ruleset, s: GameState): number | null {
   if (!r.weather.enabled) return null;
-  if (isIndoors(r, s)) return r.weather.indoorTemp;
+  if (isIndoors(r, s)) return r.locations[s.location!]?.temp ?? r.weather.indoorTemp;
   const season = seasonAt(r, s.minutes);
   const base = season !== null ? r.weather.seasonTemps[season] ?? 12 : 14;
   const hour = (s.minutes % 1440) / 60;
@@ -105,7 +105,7 @@ export function hasTrait(r: Ruleset, s: GameState, trait: string): boolean {
   return wornItems(r, s).some((id) => r.items[id]?.traits.includes(t));
 }
 
-/** Where a scheduled person is right now (null = no schedule applies). */
+/** Where a scheduled person is right now (null = no schedule applies, or an `at: away` entry does). */
 export function personLocation(r: Ruleset, s: GameState, id: string, env: ExprEnv): string | null {
   const p = r.people[id];
   if (!p?.schedule.length) return null;

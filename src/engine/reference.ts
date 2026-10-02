@@ -42,6 +42,9 @@ export const REFERENCE = `WARP RULESET FORMAT (YAML). Numbers may be formulas in
 stats:            # kinds: meter (bar) | attribute | skill | money | hidden
   stress: { kind: meter, good: low, start: 0, per_hour: -0.5, narrator: 10, bands: { 0: You are calm., 30: You are stressed., 70: You are distressed. } }
   hp: { kind: meter, max: "20 + level * 8", bands: { 0%: Down., 40%: Wounded., 75%: Hale. } }   # bands in % of the current max, for stats whose max grows
+  mana: { kind: meter, max: "20 + wits * 5", start: full, per_hour: "+2%" }   # start: a number, full, "50%" (of the max) or a formula (without start:, a meter with a max formula begins at 100 — write start: full for a full pool); per_hour: a number, a formula ("wits / 10") or a % of the current max
+  tier: { kind: attribute, start: 1, bands: { 0: Iron, 3: Bronze }, show: both }   # show: text | number | both | hidden. Unset with bands: the narrator gets the words, the sidebar words plus the number
+  str: { kind: attribute, start: 5, max: 99, allocate: { with: stat_points, step: 1, cost: 1 } }   # +/− in the sidebar spend points from stat_points (or allocate: stat_points)
   athletics: { kind: skill, max: 100, start: 10, grades: [F, D, C, B, A, S] }
   money: { kind: money, start: 50, narrator: 50 }
   # good: high|low|none (colours); per_hour: drift; narrator: max change the story may make per reply (0 = rules only); max may be a formula ("level * 5")
@@ -58,9 +61,11 @@ relationships:
   people:
     jo:
       name: Jo
+      age: 31                      # declare adult ages for anyone romance or lineage could involve (unknown ages get friendship only)
       desc: Runs the café.
       schedule:                    # first matching entry wins; entry without when = default; no match = not around
         - { when: "between(hour, 7, 18) and weekday != 'Sun'", at: high_street }
+        - { when: "flag('jo_left_town')", at: away }   # at: away (or ~) = not anywhere while when holds
 
 companions:       # people with lives of their own (ids from relationships.people)
   jo:
@@ -85,14 +90,17 @@ description: A fishing town where the tide brings secrets.
 look: modern                       # how dungeons, dates and minigames look: medieval (parchment, oak, gold), modern (paper and ink) or scifi (an instrument panel)
 clock: { start: "Mon 07:00", date: "Sep 4", minutes_per_action: 15, narrator_max: 240 }
 start: { location: home, items: { phone: 1 } }
-hud: { currency: "$", bars: [health, stress] }
+hud: { currency: "$", bars: [health, stress] }   # currency: "$" (before the amount), "{n}d" / "£{n}" (template), or { symbol: d, after: true }
 narration: { notes: "Guidance for the narrator." }
 player: { age: 20 }
 
-weather: { temps: { spring: 12, summer: 22, autumn: 11, winter: 3 } }     # enables weather + temperature
+weather: { temps: { spring: 12, summer: 22, autumn: 11, winter: 3 }, indoors: 20 }     # enables weather + temperature; indoors: °C inside (a place's temp: wins)
 locations:
   home: { name: Home, desc: "...", indoors: true, exits: [street], travel: 10 }   # exits become travel buttons
   tavern: { name: The Drowned Rat, exits: [street], board: true }   # board: a notice board — quests with board: true are posted here
+  gate: { name: Hollow Gate, exits: { market: 15 }, requires: { level: 5 }, why_not: "The guild bars novices" }   # requires: travel shown LOCKED with what's missing (same keys as action requires); why_not: replaces the words
+  ruin: { name: Old Ruin, exits: [market, { deep_wood: 45 }], when: "flag('ruin_found')" }   # when: off the map and travel until it holds; exits as a map (or one-key list entries) = minutes per exit, ~ = the place's travel:
+  garret: { name: Garret, indoors: true, temp: 8, exits: [tavern] }   # temp: this indoor place's °C
 locations_open: true             # the story may name places the ruleset doesn't list (on by default when there are none)
 items:
   phone: Phone
@@ -102,11 +110,15 @@ items:
     uses: 5                        # charges; each use spends one, the last spends the item (tags: [consumable] = 1 use)
     use: { label: Spray it, foe: { nerve: -6 }, hint: "{{user}} empties a burst into their face." }   # effects (or check/success/fail like any action); when:, why_not: "…" optional
   lucky_boots: { name: Lucky Boots, slot: feet, bonus: { athletics: 10 } }   # gear: added to every check that reads athletics while worn (carried, for non-clothing)
+  sword: { name: Sword, bonus: { atk: "5 + level * 2" } }   # gear bonus/armor: numbers or formulas, worked out when used; eff('atk') reads it in effects
+  cloak: { name: Cloak, slot: outer, integrity: 40, armor: { hp: "1 + level / 5" } }   # integrity('cloak') or integrity('outer') = current integrity
   house_keys: { name: Keys, keep: true, use: { label: Lock the door behind you, stress: -5, when: "at('home')" } }   # keep: true = using it doesn't spend it
   chainmail: { name: Chainmail, slot: outer, armor: { hp: 3 } }   # armor: blows that would lower hp in a fight are 3 smaller (per hit); armor: 2 = whatever the fight beats you on
 item_uses: { phone: { label: Call a friend for a lift, check: { chance: 60 }, success: { move: home }, fail: { stress: +3 } } }   # uses/bonuses for items declared elsewhere (Warp writes drafted ones here)
 wardrobe: { slots: [outer, top, bottom, under_top, under_bottom, feet], cover: [top, bottom], start: [t_shirt, jeans] }
 conditions: { cold: { label: Cold, tone: bad }, hasted: { label: Hasted, tone: good, bonus: { evasion: 20 } } }   # bonus: a buff (or debuff, negative) counted in checks while it lasts
+#   iron_skin: { label: Iron Skin, armor: { hp: "level / 2" }, bonus: { str: "level / 4" }, lasts: 1h }   # armor/bonus may be formulas
+#   bleeding: { label: Bleeding, every: [round, hour], dot: 2, stat: hp, lasts: 3h }   # each round in a fight (full dot), each hour outside (dot scaled by time; tick: once per clock hour, max 24 per jump); lasts: times it everywhere
 # statuses — the same conditions work on {{user}}, on the opponent (inflict:) and on people (inflict on a per-person action's target):
 #   poisoned: { label: Poisoned, tone: bad, rounds: 3, dot: 4 }             # rounds: how long in a fight (they end with it); dot: damage each round ("1d4+1" ok; heal: 5 = negative)
 #   stunned:  { label: Stunned, tone: bad, rounds: 1, skip: true }          # skip: loses its turn (true, or a chance 0–100: skip: 50 = paralysed half the time)
@@ -123,9 +135,10 @@ actions:
     at: [street]                   # optional location filter
     when: "has('lockpick') and between(hour, 20, 6)"
     time: 10                       # minutes
-    cost: { fatigue: +2 }
+    cost: { fatigue: +2 }          # paid first, whatever happens. A drop it can't pay locks the choice ("Needs 8 Mana"; drops on good: low stats never lock). Positive amounts are allowed and never lock. "-15%" = a share of the current max
     tags: [crime]
     check: { chance: "20 + skulduggery / 2", label: Skulduggery }      # d100 roll-under percent
+    # check: { …, crit: "5 + luck / 4" }  — chance in % of a critical success (default 5%); the narrator is told Critical
     # or check: { vs: 12, add: "floor(dex / 2)", partial: 3 }          # d20 + add vs 12
     # or check: { style: pbta, add: cool }                             # 2d6: 10+ hit, 7–9 mixed
     # check: { …, game: mines }  — can be PLAYED as a minigame instead of rolled (or game: [mines, snake]; game: false = dice only).
@@ -136,10 +149,14 @@ actions:
     success: { flags: { door_open: true }, skulduggery: +1 }
     fail: { stress: +5, hint: "The pick snaps." }
     # tiers: crit_success, success, partial, fail, crit_fail; without a check use effects:
+    # effects: next to a check always apply, whatever the roll (then success:/fail: add theirs)
   chat:
     label: Chat with {target}
     per_person: true               # one button per person present; {target} = their name
     effects: { rel: { target: { trust: +2 } } }
+  spar:
+    label: Spar with {target}
+    targets: [jo, dex]             # per_person, but only these people; target is also a formula name in when: ("target != 'jo'")
   crack_vault:
     label: Crack the vault
     at: [bank]
@@ -189,18 +206,30 @@ encounters:
     name: Mugging
     tags: [violence]
     foe: { name: Mugger, armor: 2, stats: { nerve: { start: 10, max: 10 } } }   # armor: blows to its main meter are 2 smaller each (or { nerve: 2 }); damage over time ignores it
+    # foe stats and armor can be formulas, worked out ONCE when the encounter starts, from {{user}}'s state then (monsters that scale):
+    #   foe: { name: Goblin, armor: "level * 2", stats: { hp: { start: "100 * level", max: "100 * level" } } }   # no max = the start it rolled
     actions: { fight: { label: Fight back, check: { chance: "30 + athletics / 2" }, success: { foe: { nerve: -6 } }, fail: { pain: +10 } }, run: { label: Run, effects: { end: escaped } } }
     foe_moves: { grab: { desc: "Grabs you", weight: 2, pain: +8 }, threaten: { desc: "Threatens", weight: 1, stress: +6 } }
+    # boss phases: a move with when: is only weighed while it holds (if none holds, all are); any decide option takes when: the same way:
+    #   foe_moves: { swipe: { desc: Swipes, when: "foe.hp > foe_max('hp') / 2", hp: -5 }, rage: { desc: Rages, when: "foe.hp <= foe_max('hp') / 2", hp: -15 }, summon: { desc: Calls the dead, when: "encounter_round >= 5", stress: +10 } }
     end_when: { won: "foe.nerve <= 0", beaten: "pain >= 80" }   # simple comparisons let Warp show the goal and the danger to the player
     outcomes: { won: { hint: "They flee." }, escaped: { stress: +3 }, beaten: { money: "-min(money, 30)" } }
     labels: { won: "You see them off", escaped: "You got away", beaten: "Overpowered" }   # how each ending reads
     goal: "Break their nerve, or get away"        # optional; otherwise derived from end_when
     # round_limit: 20   # finite budget, default 20, range 1–200; normal endings take precedence
     # timeout_outcome: beaten   # default: momentum's lose outcome, otherwise lost; applies that outcome's effects
+    # losses: [beaten]            # these endings count as defeats, whatever they're called
+    # outcome_kinds: { won: won, escaped: escaped, paid_off: conceded }   # won | escaped | conceded | lost
+    #   Without these, Warp infers: an end_when on a foe stat heading your way is a win (slain: "foe.hp <= 0"), one on your stat
+    #   heading toward its bad end is a loss; an ending only a failed move reaches is a loss; then the name (beaten, captured… = lost;
+    #   escaped, fled… = escaped; paid, bribe, surrender… = conceded). "Ends well" = anything but lost. The checker wants random play to WIN sometimes — escapes don't count.
+    # sim: { stats: { level: 12, hp: max }, flags: { met_kael: true }, items: { sword: 1 }, location: gate }
+    #   the state warp_check and warp_simulate judge it from (a late boss at its intended level); also takes conditions, rel: { maud: { trust: 60 } }, perks, wear. Triggers run after it.
     danger: "Pain at 80 and you're overpowered"   # optional; otherwise derived
     # narrate: true = every round goes to the narrator as a full reply (old style). Default: rounds are told briefly
     #   in one encounter message that grows, then replaced by a summary — far fewer tokens, no repetitive loops.
     # an action out of reach can say why: when: "has('bat')", why_not: "You'd need something to swing"
+    # per_encounter: 1 / per_day: 2 on a move = limited uses, like abilities ("Used up for this encounter"). If every move is priced out of reach, they stay open and the cost takes what's left
     # from_story: false = only actions/effects start it (by default the story can: a fight breaking out in the prose starts it, against whoever it's with)
     # momentum: { win: won, lose: beaten, swing: { crit_success: 40, success: 25, partial: 10, fail: -20, crit_fail: -35 } }
     #   a fight that swings (−100…+100): each check moves it, foe moves can too (effect momentum: -15), and only a full swing ends it;
@@ -210,6 +239,7 @@ dungeons:         # roguelike diving: floors of face-down tiles, one way down, q
   old_mines:
     name: The Old Mines
     at: [docks]                    # entrance locations (empty = anywhere)
+    requires: { level: 3 }         # entrance shown LOCKED with what's missing (why_not: "…" optional); when: hides it instead
     theme: cave                    # cave | crypt | ruins | hell | lair
     floors: 10                     # 0 = endless; a guardian every boss_every floors (default 5)
     tiles: { enemy: 6, elite: 1, treasure: 2.5, trap: 1.5, rest: 1, shop: 0.6, event: 2, surprise: 1.5, romance: 1.2, empty: 7 }
@@ -269,7 +299,7 @@ abilities:        # the player's OWN moves (spells, techniques, tricks): offered
   haste:
     name: Haste
     desc: Quicken body and mind
-    cost: { mana: -8 }               # can't be used without enough (the choice says "Needs 8 Mana")
+    cost: { mana: -8 }               # can't be used without enough (the choice says "Needs 8 Mana"); "-15%" = a share of the current max; positive costs (suspicion: +3) are allowed
     add_condition: { hasted: 3 }     # minutes — an encounter round is one minute; the condition's bonus: does the rest
     per_day: 2                       # and/or per_encounter: 1 (0 = unlimited)
   firebolt:
@@ -279,11 +309,13 @@ abilities:        # the player's OWN moves (spells, techniques, tricks): offered
     check: { chance: "40 + arcana" } # scales with the stats its formulas read
     success: { harm: "6 + arcana / 5" }
     fail: { hint: "The bolt fizzles." }
+    # effects: { suspicion: +3 }     # with a check: always applies, as well as success:/fail:
     known: false                     # true (default unless a perk teaches it) | false (taught by a perk or learn:) | a formula ("arcana >= 40")
 
 perks:
   points: perk_points               # the stat that pays for them; something must raise it (level-ups, feats, milestones)
   pick: 3                           # offer 3 to choose from when there's a point (one that builds on how they've played, one new direction, one random); 0/omitted = buy from the whole list
+  knight: { name: Knight, offer: always, points: class_points, excludes: [mage] }   # offer: always = on offer beside the pick (a class choice); points: paid from this stat instead of perks: points
   sharp: { name: Sharpshooter, desc: "+2 Aim", cost: 1, requires: "level >= 2", effects: { aim: +2 } }   # effects: once, when taken
   crowd_ghost: { name: Crowd Ghost, bonus: { stealth: 10 }, edge: { stealth: 15, when: "at('plaza')" }, tags: [stealth] }   # bonus: always counts in checks; edge: only while when holds
   silver_tongue: { name: Silver Tongue, rule: { reroll: { stats: [persuasion], per_day: 1 } } }   # rules: reroll / soften (a failure becomes partial) on these stats or tags; gains / losses: { scent: -30% } (rises or drops that much bigger/smaller)
@@ -291,6 +323,7 @@ perks:
   steady_hands: { name: Steady Hands, rule: { game: { window: 20, lives: 1, games: [aim, keys] } } }   # game: aids in minigames (games: which; none = all): window, size, slow, time, luck (percent) · lives, hint, peek, preview, hold, wrap, saver (counts)
   mage_blood: { name: Mage Blood, abilities: [firebolt], narrator: "Sparks dance on {{user}}'s fingertips when angry.", excludes: [iron_will] }   # teaches abilities; narrator: what the story should show; excludes: can't have both
   adrenaline: { name: Adrenaline Junkie, edge: { athletics: 20, when: "stress >= 60" }, drawback: { desc: "Stress builds faster", gains: { stress: +10% } }, weight: 1 }
+  cold: { name: Cold, drawback: { desc: Hard to like, gains: { fondness: "-25%" } } }   # gains/losses may name relationship stats
 
 checkpoints:      # save slots in the journal; loading rewinds the game (the chat keeps its messages)
   slots: 3
@@ -307,6 +340,7 @@ triggers:
   exhausted: { when: "fatigue >= 85", do: { add_condition: [exhausted], hint: "..." } }         # fires once when it becomes true
   drain: { when: "fatigue >= 85", repeat: true, do: { stress: +2 } }                           # every turn while true
   danger: { when_scene: "{{user}} is in immediate danger", do: { stress: +5 } }                # judged in plain language
+# A rule can't restart the encounter that just ended: start_encounter from a rule is skipped for 15 min after it ends (60 min in the same place); the rule stays fired until its condition goes false again.
 
 mind:             # the character's mind can overrule the player (in the "rules" part)
   overrides_mode: hard   # legacy default; soft keeps the chosen action and treats fail/redirect as narrative pressure
@@ -314,7 +348,7 @@ mind:             # the character's mind can overrule the player (in the "rules"
     freeze: { when: "control < 25", chance: "60 - control * 2", on: [violence], cause: Panic, text: "their body won't obey.", resist_cost: { control: 10 } }   # do: fail (default) = fails with no roll
     urge: { when: "lust >= 70", chance: 30, on: [talk], do: flirt, cause: Desire }      # do: <action id> = that happens instead
     nerves: { when: "control < 50", chance: 50, do: alter, cause: Nerves }               # do: alter = goes ahead, coloured by the cause; on: [] = any action with a check
-    # resist_cost: { control: 10 } offers an explicit Resist button (paid only if the override triggers; must be affordable with the action's own cost). Applies to contextual live choices too, via their authored tag.
+    # resist_cost: { control: 10 } offers an explicit Resist button (paid only if the override triggers; must be affordable with the action's own cost). Amounts are paid in the stat's bad direction: { dread: 8 } RAISES a good: low meter (must stay under its max); quoted "+8"/"-8" say the direction outright. Meters only. Applies to contextual live choices too, via their authored tag.
   perception: [ { when: "awareness < 20", text: "{{user}} is naive: describe only what they understand." } ]   # filters the narration while true
 
 QUESTS (the "quests" part): things to do for someone or for yourself — a bounty, a favour, cooking the best breakfast, slaying the dragon.
@@ -373,6 +407,7 @@ fronts:           # hidden world clocks that fill with in-game time; each stage 
     story: { "{{user}} stirs up trouble with the gangs": 10, "{{user}} helps the police against the gangs": -10 }   # judged each turn
     stages:
       - { at: 30, hint: "More broken windows along the harbour road.", backstage: "The Kestrels took over the fish market.", surface: "A harbour shop is torched overnight.", do: { flags: { harbour_unrest: true } } }
+      - { at: 60, surface: "The watch comes for Maud.", if: "not flag('maud_fled')", do: { flags: { maud_taken: true } }, else: { flags: { empty_cell: true } } }   # if: decides whether do: happens as the stage surfaces; else: happens otherwise
       # hint = a sign with no reason, shown from halfway to this stage; backstage stays hidden until the stage surfaces
 random_events:    # a hidden gauge fills with in-game time, not per reply; near the top it picks the next event and shows its omen
   pace: { per_day: 25, jitter: 0.3, rest_days: 1, omen_at: 80 }     # per_day 25 ≈ one event every 4 days
@@ -390,7 +425,7 @@ STORY EFFECTS: front: { harbour_gangs: -20 }, reveal: [ward_accident] (opens its
 
 DATING (the "dating" part):
 dating:           # talk topic by topic (tastes stay hidden until learned), ask people out, go on outings. \`dating: true\` = all built-ins
-  love: love                       # relationship stat used as love (created if missing); fear: fear likewise
+  love: love                       # relationship stat used as love (created if missing); fear: fear likewise — fear: false = no fear stat (nobody turns hostile)
   romance: true                    # false = friendship only. Romance is never offered with anyone under 18 or of unknown age
   stages: { stranger: 0, acquaintance: 10, friend: 30, close: 55, partner: { at: 80, partner: true } }   # love (0–100 of its range) per rung; partner only through a returned confession
   hostile: { at: 60, label: Hostile }        # fear (0–100) that turns someone hostile
@@ -406,14 +441,15 @@ dating:           # talk topic by topic (tastes stay hidden until learned), ask 
 items: { flowers: { name: Flowers, tags: [gift] } }   # items tagged gift can be given during a conversation
 
 FORMULA NAMES: stats, flags, hour, minute, day, weekday, month, date, season, weather, temperature, indoors, outside,
-warmth, warmth_min, warmth_max, too_cold, too_hot, reveal, exposed, naked, in_encounter, round, foe.<stat>, target.<relstat>, location.
+warmth, warmth_min, warmth_max, too_cold, too_hot, reveal, exposed, naked, in_encounter, round, encounter (current encounter id, '' if none), encounter_round, foe.<stat>, target.<relstat>, location.
 FUNCTIONS: has(item[, n]), count(item), flag(x), cond(x), at(loc), rel(person, stat), met(person), between(v, lo, hi), roll('2d6'),
 wearing(item), worn(slot), trait(t), present(person), where(person), codex(id), feat(id), perk(id),
 secret(id) (stages the narrator knows), front(id) (clock value), front_stage(id) (stages surfaced), happened(event),
 deepest(dungeon) (deepest floor reached), in_dungeon, dungeon_depth,
 stage(person) (relationship rung, −1 hostile), partner(person), dates(person), in_date, on_outing,
 quest(id) ('' | 'active' | 'ready' | 'done' | 'failed'), quest_active(id), quest_done(id), quest_failed(id), goal(quest, goal) (count so far), quests_done() / quests_done('bounty'),
-memories(person) (how many), cond_of(person, cond), foe_cond(cond), stat_max(stat), foe_max(stat),
+memories(person) (how many), cond_of(person, cond), foe_cond(cond), stat_max(stat), foe_max(stat), in_encounter(id) (that encounter is on),
+eff(stat) (stat + gear + perks + statuses), gear(stat) (gear alone), integrity(item or slot),
 min, max, clamp, floor, ceil, round, abs.
 Operators: + - * / % < <= > >= == != and or not, a ? b : c. Strings in single quotes.
 `;
@@ -435,6 +471,10 @@ Every stat needs a SOURCE (what raises it), a SINK (what lowers it), and a CONSE
 A meter nothing reads is decoration. Use per_hour drift for needs; narrator: lets the story nudge it within limits.
 Skills grow when checks read them — so every skill should appear in at least two checks, in different places.
 Mistake: ten meters that only the narrator touches. Fewer stats, each wired into play, beat many idle ones.
+
+## actions are story turns
+Every action the player clicks posts a line and gets a narrator reply. Use actions for things that happen in the story.
+Sheet changes are not story turns: spending stat points (allocate: on the stats, +/− in the sidebar), buying perks and classes (perks:, their own panel), changing clothes (wardrobe). Never build a "Status Window" of +1 STR buttons.
 
 ## items
 Every item should DO something: a use: (an action with effects), a bonus: (gear that helps the checks that read a stat), a gift tag, or an action/encounter move that needs it (when: "has('x')").
