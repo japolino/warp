@@ -102,8 +102,6 @@ export interface Effect {
   arc: Record<string, string | number>;
   /** Change how people feel about each other: `bond: { jo: { dex: +3 } }`. */
   bond: Record<string, Record<string, string | number>>;
-  /** A chance of pregnancy between two adults: `conceive: { with: target, chance: 20 }`. */
-  conceive?: { with: string; carrier: string; chance: string | number };
   /** Wear down the current encounter's main meter (HP, resolve, composure…) by this much — portable across encounters. */
   harm?: string | number;
   /** Teach abilities: `learn: [haste]`. */
@@ -661,24 +659,6 @@ export interface CompanionDef {
   knowsFull: boolean;
 }
 
-/**
- * Pregnancy and children. Children are kept apart from everything the player can
- * act on (they're family, not people in the scene) until they come of age.
- */
-export interface LineageDef {
-  enabled: boolean;
-  /** In-game weeks from conception to birth. */
-  weeks: number;
-  stages: { week: number; text: string; effects: Effect }[];
-  /** Children age this many times faster than the calendar. */
-  speed: number;
-  /** Age at which a child joins the cast as an adult (never below 18). */
-  joinAt: number;
-  /** Body parts children inherit from the player. */
-  inherit: string[];
-  names: string[];
-}
-
 /** Something owed on a schedule. Missing it lets the creditor decide what lateness costs. */
 export interface ObligationDef {
   id: string;
@@ -854,7 +834,6 @@ export interface Ruleset {
   companions: Record<string, CompanionDef>;
   /** Starting feelings between people: a → b → −100…100. */
   bonds: Record<string, Record<string, number>>;
-  lineage: LineageDef;
   obligations: Record<string, ObligationDef>;
   jobs: Record<string, JobDef>;
   observers: ObserversDef;
@@ -1218,6 +1197,11 @@ function normDecide(raw: unknown, where: string, c: Ctx, known: { stats: Set<str
   return out;
 }
 
+/** Effect keys of systems removed from Warp: an old ruleset that uses them gets a plain warning. */
+export const REMOVED_EFFECTS: Record<string, string> = {
+  conceive: "family and pregnancy", pregnancy: "family and pregnancy",
+};
+
 /** Effects accept both a structured form and a flat shorthand: `{ fatigue: +20, hint: "..." }`. */
 export function normEffect(raw: unknown, where: string, c: Ctx, known: { stats: Set<string> }): Effect {
   const e = emptyEffect();
@@ -1226,6 +1210,8 @@ export function normEffect(raw: unknown, where: string, c: Ctx, known: { stats: 
   if (!isObj(raw)) { c.warn(where, "expected a map of effects"); return e; }
   for (const [k, v] of Object.entries(raw)) {
     const w = `${where} › ${k}`;
+    // Effects of parts that were taken out: said plainly, then ignored (a stat of the same name keeps its shorthand).
+    if (REMOVED_EFFECTS[k] && !known.stats.has(k)) { c.removed(w, k, REMOVED_EFFECTS[k]); continue; }
     switch (k) {
       case "stats": case "change":
         if (isObj(v)) for (const [s, d] of Object.entries(v)) { const x = c.expr(d, `${w} › ${s}`); if (x !== undefined) e.stats[s] = x; }
@@ -1319,12 +1305,6 @@ export function normEffect(raw: unknown, where: string, c: Ctx, known: { stats: 
         if (isObj(v)) for (const [id, n] of Object.entries(v)) { const x = c.expr(n, `${w} › ${id}`); if (x !== undefined) e.transform[id] = x; }
         else for (const id of list(v)) e.transform[id] = 1;
         break;
-      case "conceive": case "pregnancy": {
-        const x: Raw = isObj(v) ? v : { with: v };
-        const chance = c.expr(x.chance ?? 100, `${w} › chance`) ?? 100;
-        e.conceive = { with: String(x.with ?? "target"), carrier: String(x.carrier ?? "player"), chance };
-        break;
-      }
       case "arc":
         if (isObj(v)) for (const [id, n] of Object.entries(v)) { const x = c.expr(n, `${w} › ${id}`); if (x !== undefined) e.arc[id] = x; }
         else c.warn(w, "expected arc changes by companion, like `jo: +5`");
@@ -1399,7 +1379,7 @@ export function normEffect(raw: unknown, where: string, c: Ctx, known: { stats: 
       default:
         // Flat shorthand: a known stat name maps to a delta.
         if (known.stats.has(k)) { const x = c.expr(v, w); if (x !== undefined) e.stats[k] = x; }
-        else c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, unlock, wear, undress, damage, front, reveal, gauge, momentum, body, transform, arc, bond, conceive, harm, hits, pierce, learn, inflict, cleanse, quest, progress, remember)`);
+        else c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, unlock, wear, undress, damage, front, reveal, gauge, momentum, body, transform, arc, bond, harm, hits, pierce, learn, inflict, cleanse, quest, progress, remember)`);
     }
   }
   return e;
@@ -2489,28 +2469,6 @@ function normCompanions(raw: unknown, c: Ctx, known: { stats: Set<string> }, fro
   return out;
 }
 
-const CHILD_NAMES = ["Ada", "Ben", "Cleo", "Dan", "Elin", "Finn", "Greta", "Hugo", "Iris", "Jonah", "Kira", "Leo", "Maya", "Nico", "Orla", "Pip", "Rosa", "Sam", "Tess", "Theo", "Uma", "Vic", "Wren", "Zoe"];
-
-function normLineage(raw: unknown, c: Ctx, known: { stats: Set<string> }): LineageDef {
-  const def: LineageDef = { enabled: false, weeks: 36, stages: [], speed: 1, joinAt: 18, inherit: [], names: CHILD_NAMES };
-  if (raw === undefined || raw === false) return def;
-  const r: Raw = isObj(raw) ? raw : {};
-  def.enabled = true;
-  const preg: Raw = isObj(r.pregnancy) ? r.pregnancy : r;
-  def.weeks = Math.max(1, c.num(preg.weeks, "Lineage › weeks", 36));
-  (Array.isArray(preg.stages) ? preg.stages : []).forEach((st: unknown, i: number) => {
-    if (!isObj(st) || typeof st.text !== "string") { c.warn(`Lineage › stage ${i + 1}`, "needs `week:` and `text:`"); return; }
-    def.stages.push({ week: c.num(st.week, `Lineage › stage ${i + 1} › week`, 1), text: st.text, effects: normEffect(st.do ?? st.effects, `Lineage › stage ${i + 1} › do`, c, known) });
-  });
-  def.stages.sort((a, b) => a.week - b.week);
-  const kids: Raw = isObj(r.children) ? r.children : r;
-  def.speed = Math.max(0.01, c.num(kids.speed, "Lineage › children › speed", 1));
-  def.joinAt = Math.max(18, c.num(kids.join_at, "Lineage › children › join_at", 18));
-  def.inherit = list(kids.inherit);
-  if (Array.isArray(kids.names) && kids.names.length) def.names = kids.names.map(String);
-  return def;
-}
-
 function normObligations(raw: unknown, c: Ctx, known: { stats: Set<string> }, money: string | undefined): Record<string, ObligationDef> {
   const out: Record<string, ObligationDef> = {};
   for (const [id, o] of Object.entries(isObj(raw) ? raw : {})) {
@@ -2669,6 +2627,7 @@ export const REMOVED_KEYS: Record<string, string> = {
   dating: "dating",
   look: "the stage and minigame looks",
   minigames: "minigames",
+  lineage: "family and pregnancy",
 };
 
 const SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
@@ -2983,7 +2942,6 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const body = normBody(raw.body, c);
   const bonds: Record<string, Record<string, number>> = {};
   const companions = normCompanions(raw.companions, c, known, fronts, bonds);
-  const lineage = normLineage(raw.lineage, c, known);
   const moneyId = typeof hudRaw.money === "string" ? hudRaw.money : statOrder.find((s) => stats[s].kind === "money");
   const obligations = normObligations(raw.obligations ?? raw.debts, c, known, moneyId);
   const jobs = normJobs(raw.jobs, c, known);
@@ -3021,7 +2979,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     weather, wardrobe, encounters, codex, feats, perks,
     ...(perkPoints && stats[perkPoints] ? { perkPoints } : {}),
     perkPick, abilities, quests, questOrder, storyQuests,
-    secrets, fronts, randomEvents, liveChoices, mind, checkpoints, endings, legacy, body, companions, bonds, lineage, obligations, jobs, observers, discovery, improvise, growth,
+    secrets, fronts, randomEvents, liveChoices, mind, checkpoints, endings, legacy, body, companions, bonds, obligations, jobs, observers, discovery, improvise, growth,
   };
 
   // Cross-references that need everything loaded.

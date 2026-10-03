@@ -106,10 +106,6 @@ export interface GameState {
   tf: Record<string, number>;
   /** How people feel about each other: a → b → −100…100. */
   bonds: Record<string, Record<string, number>>;
-  /** A pregnancy under way: who carries, with whom, since when, stages told. */
-  pregnancy: { carrier: string; with: string; since: number; told: number } | null;
-  /** Children. They stay out of the cast (and out of reach of every action) until they come of age. */
-  kin: Record<string, Kin>;
   /** Obligations: when the next payment is due, what's owed now, how many were missed. */
   dues: Record<string, { due: number; owed: number; missed: number }>;
   /** Who has seen {{user}} exposed (and what), and who only heard about it. */
@@ -133,14 +129,6 @@ export interface GameState {
   lastLocation: string | null;
   /** Uses left in the item in hand, for items with uses (absent = a fresh one). */
   uses: Record<string, number>;
-}
-
-export interface Kin { name: string; sex: "girl" | "boy"; born: number; parents: string[]; body: Record<string, Record<string, string>>; joined: boolean }
-
-/** A child's age in years (children can age faster than the calendar). */
-export function kinAge(r: Ruleset, s: GameState, id: string): number {
-  const k = s.kin[id];
-  return k ? Math.floor(((s.minutes - k.born) / 1440 / 365) * r.lineage.speed) : 0;
 }
 
 export interface SaveSlot { at: number; turn: number; label: string; snap: GameState }
@@ -196,10 +184,6 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "tf"; id: string; stage: number }
   | { t: "bond"; a: string; b: string; d: number }
   | { t: "news"; text: string }
-  | { t: "conceive"; carrier: string; with: string }
-  | { t: "preg_stage"; n: number }
-  | { t: "birth"; id: string; kin: Kin }
-  | { t: "kin_join"; id: string }
   | { t: "due"; id: string; due?: number; owed?: number; missed?: number }
   | { t: "job"; job: GameState["job"] }
   | { t: "seen"; who: string; what: string; where: string; heard?: boolean }
@@ -267,8 +251,6 @@ export function initialState(r: Ruleset): GameState {
     body: structuredClone(r.body.parts),
     tf: {},
     bonds: structuredClone(r.bonds),
-    pregnancy: null,
-    kin: {},
     dues: {},
     job: null,
     seen: {},
@@ -649,17 +631,6 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       break;
     }
     case "tf": s.tf = { ...s.tf, [e.id]: Math.max(s.tf[e.id] ?? 0, e.stage) }; break;
-    case "conceive": if (!s.pregnancy) s.pregnancy = { carrier: e.carrier, with: e.with, since: s.minutes, told: 0 }; break;
-    case "preg_stage": if (s.pregnancy) s.pregnancy = { ...s.pregnancy, told: Math.max(s.pregnancy.told, e.n) }; break;
-    case "birth": s.pregnancy = null; s.kin = { ...s.kin, [e.id]: structuredClone(e.kin) }; break;
-    case "kin_join": {
-      const k = s.kin[e.id];
-      if (!k || k.joined) break;
-      s.kin = { ...s.kin, [e.id]: { ...k, joined: true } };
-      s.people[e.id] = { name: k.name };
-      if (!s.rel[e.id]) { s.rel[e.id] = {}; for (const rs of r.relStatOrder) s.rel[e.id][rs] = r.relStats[rs].start; }
-      break;
-    }
     case "due": {
       const cur = s.dues[e.id] ?? { due: 0, owed: 0, missed: 0 };
       s.dues = { ...s.dues, [e.id]: { due: e.due ?? cur.due, owed: Math.max(0, e.owed ?? cur.owed), missed: e.missed ?? cur.missed } };
@@ -697,7 +668,7 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       s.ended = null;
       break;
     case "end_rearm": s.dismissedEndings = (s.dismissedEndings ?? []).filter((id) => id !== e.id); break;
-    // Events of removed systems (dungeons, dates) in old chats are ignored.
+    // Events of removed systems (dungeons, dates, family…) in old chats are ignored.
     default: break;
   }
 }
@@ -773,7 +744,7 @@ export const BUILTIN_NAMES = [
   "month", "date", "season", "weather", "temperature", "indoors", "outside",
   "warmth", "warmth_min", "warmth_max", "too_cold", "too_hot", "reveal", "exposed", "naked",
   "in_encounter", "encounter", "encounter_round", "round", "momentum", "target",
-  "loops", "runs", "pregnant", "pregnancy_weeks", "at_work",
+  "loops", "runs", "at_work",
 ];
 
 export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> = {}): ExprEnv {
@@ -812,8 +783,6 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
       loops: s.loops,
       runs: s.runs,
       at_work: !!s.job,
-      pregnant: !!s.pregnancy && s.pregnancy.carrier === "player",
-      pregnancy_weeks: s.pregnancy ? Math.floor((s.minutes - s.pregnancy.since) / 1440 / 7) : 0,
       round: s.encounter?.round ?? 0,
       target: "",
     };
@@ -900,9 +869,8 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
         // How one person feels about another (−100…100), and how far a companion's arc has gone.
         case "bond": return s.bonds[a0]?.[String(args[1] ?? "")] ?? 0;
         case "arc": return s.fronts[`arc_${a0}`]?.v ?? 0;
-        // Family: a child's age in years, and how many children there are.
-        case "age": return s.kin[a0] ? kinAge(r, s, a0) : r.people[a0]?.age ?? 0;
-        case "children": return Object.keys(s.kin).length;
+        // A person's declared age (0 when not given).
+        case "age": return r.people[a0]?.age ?? 0;
         // Obligations: what's owed, payments missed, whole days until the next is due (negative = overdue).
         case "owed": return s.dues[a0]?.owed ?? 0;
         // Being seen: whether someone saw (or heard about) {{user}} exposed, and how many have.

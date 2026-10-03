@@ -21,7 +21,7 @@ const isEmpty = (o: object | undefined) => !o || Object.keys(o).length === 0;
 function offStage(e: Effect | undefined): boolean {
   if (!e) return true;
   return isEmpty(e.rel) && !e.move && !e.startEncounter && !e.end && isEmpty(e.decide) && isEmpty(e.foe) && isEmpty(e.bond) && isEmpty(e.afflict)
-    && isEmpty(e.inflict) && !e.conceive && isEmpty(e.reveal) && isEmpty(e.front) && isEmpty(e.body) && isEmpty(e.transform) && isEmpty(e.arc)
+    && isEmpty(e.inflict) && isEmpty(e.reveal) && isEmpty(e.front) && isEmpty(e.body) && isEmpty(e.transform) && isEmpty(e.arc)
     && isEmpty(e.wear) && isEmpty(e.undress) && isEmpty(e.damage) && !e.harm && !e.momentum;
 }
 

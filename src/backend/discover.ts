@@ -81,7 +81,7 @@ export async function inventPlace(r: Ruleset, s: GameState, card: string, settin
 
 /**
  * A strict resident: exactly `name` and `desc`, bounded, a fresh name, and an id that cannot collide
- * with any declared, met, forgotten, companion, bond or kin id. Anything else drops only the resident.
+ * with any declared, met, forgotten, companion or bond id. Anything else drops only the resident.
  */
 const RESERVED_IDS = new Set(["player", "you", "user", "target", "char", "x", "anyone", "other"]);
 /** Host macros in generated text would be expanded by the host; reject them. */
@@ -94,13 +94,13 @@ export function residentFrom(r: Ruleset, s: GameState, raw: unknown): NewResiden
   const ok = (x: unknown, max: number): x is string => typeof x === "string" && !!x.trim() && x.length <= max && !hasMacro(x);
   if (!ok(v.name, RESIDENT_NAME_MAX) || !ok(v.desc, RESIDENT_DESC_MAX)) return undefined;
   const name = v.name.trim(), lower = name.toLowerCase();
-  const names = [...Object.values(r.people).map((p) => p.name), ...Object.values(s.people).map((p) => p.name), ...Object.values(s.kin).map((k) => k.name)];
+  const names = [...Object.values(r.people).map((p) => p.name), ...Object.values(s.people).map((p) => p.name)];
   if (names.some((n) => n.trim().toLowerCase() === lower)) return undefined;
   if (!/[\p{L}\p{N}]/u.test(name)) return undefined;
   // slug() falls back to "x" for names with no Latin letters or digits; use a readable base instead.
   const base = slug(name) === "x" && lower !== "x" ? "resident" : slug(name);
-  // Engine sentinels: "player"/"you" mean {{user}} in lineage; never hand them to a generated person.
-  const taken = (id: string) => RESERVED_IDS.has(id) || !!(r.people[id] || s.people[id] || s.forgotten[id] || s.kin[id] || r.companions[id] || r.bonds[id] || s.rel[id]);
+  // Engine sentinels: "player"/"you" mean {{user}}; never hand them to a generated person.
+  const taken = (id: string) => RESERVED_IDS.has(id) || !!(r.people[id] || s.people[id] || s.forgotten[id] || r.companions[id] || r.bonds[id] || s.rel[id]);
   let id = base;
   for (let n = 2; taken(id); n++) id = `${base}_${n}`;
   return { id, name, desc: v.desc.trim() };

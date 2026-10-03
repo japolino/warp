@@ -10,7 +10,7 @@ export const FUNCTIONS = [
   "has", "count", "flag", "cond", "at", "rel", "met", "between", "roll",
   "wearing", "worn", "trait", "present", "where", "codex", "feat", "perk",
   "eff", "gear", "integrity",
-  "secret", "front", "front_stage", "happened", "saved", "body", "transformed", "bond", "arc", "age", "children", "owed", "missed", "days_until", "seen_by", "fame",
+  "secret", "front", "front_stage", "happened", "saved", "body", "transformed", "bond", "arc", "age", "owed", "missed", "days_until", "seen_by", "fame",
   "quest", "quest_active", "quest_done", "quest_failed", "goal", "quests_done", "memories", "cond_of", "foe_cond", "stat_max", "foe_max", "in_encounter",
   "min", "max", "clamp", "floor", "ceil", "round", "abs",
 ];
@@ -19,6 +19,7 @@ export const FUNCTIONS = [
 const REMOVED_NAMES: Record<string, string> = {
   in_dungeon: "dungeons", dungeon_depth: "dungeons", "deepest()": "dungeons",
   in_date: "dating", on_outing: "dating", "partner()": "dating", "dates()": "dating", "stage()": "dating",
+  pregnant: "family and pregnancy", pregnancy_weeks: "family and pregnancy", "children()": "family and pregnancy",
 };
 
 function distance(a: string, b: string): number {
@@ -129,7 +130,6 @@ export function lintRuleset(r: Ruleset): Issue[] {
     else if (!r.body.open) for (const part of Object.keys(e.body)) {
       if (!r.body.parts[part]) issues.push({ level: "warning", where, message: `"${part}" isn't a body part (body › parts) and the body is closed (open: false)` });
     }
-    if (e.conceive && !r.lineage.enabled) issues.push({ level: "warning", where, message: "uses `conceive`, but the ruleset has no `lineage:` section" });
     for (const id of Object.keys(e.arc)) if (!r.companions[id]?.arc) issues.push({ level: "warning", where, message: `"${id}" isn't a companion with an arc` });
     if (e.startEncounter && !r.encounters[e.startEncounter]) {
       issues.push({ level: "warning", where, message: `starts encounter "${e.startEncounter}", which doesn't exist${suggest(e.startEncounter, Object.keys(r.encounters))}` });
@@ -381,8 +381,6 @@ export function lintRuleset(r: Ruleset): Issue[] {
     for (const loc of j.at) if (!r.locations[loc]) issues.push({ level: "warning", where: `${w} › at`, message: `"${loc}" isn't a location` });
     checkEffect(j.gain, `${w} › gain`);
   }
-  r.lineage.stages.forEach((st, i) => checkEffect(st.effects, `Lineage › stage ${i + 1}`));
-  for (const part of r.lineage.inherit) if (r.body.enabled && !r.body.parts[part]) issues.push({ level: "warning", where: "Lineage › children › inherit", message: `"${part}" isn't a body part${suggest(part, Object.keys(r.body.parts))}` });
   for (const c of Object.values(r.companions)) {
     const w = `Companions › ${c.id}`;
     if (!r.people[c.id]) issues.push({ level: "warning", where: w, message: `"${c.id}" isn't a person in relationships › people${suggest(c.id, people)}` });

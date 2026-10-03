@@ -3,7 +3,7 @@
 import type { ActionDef, KeepSpec, Ruleset, StatDef } from "./ruleset.js";
 import { percentOf, TIERS } from "./ruleset.js";
 import {
-  amountValue, bandFor, foeName, formatClock, formatMoney, formatNumber, gradeFor, initialState, itemName, kinAge, makeEnv, personName, statMax,
+  amountValue, bandFor, foeName, formatClock, formatMoney, formatNumber, gradeFor, initialState, itemName, makeEnv, personName, statMax,
   usesOf, type GameState, type WarpEvent,
 } from "./state.js";
 import { practiceProgress } from "./freeform.js";
@@ -255,10 +255,6 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
         tone: (!d || d.owed <= 0 ? "good" : d.missed || days < 0 ? "bad" : days <= 1 ? "warn" : "neutral") as Tone,
       };
     }),
-    family: [
-      ...(s.pregnancy && s.pregnancy.told > 0 ? [{ name: s.pregnancy.carrier === "player" ? "Expecting" : `${personName(r, s, s.pregnancy.carrier)} is expecting`, text: `${Math.floor((s.minutes - s.pregnancy.since) / 1440 / 7)} of ${r.lineage.weeks} weeks` }] : []),
-      ...Object.entries(s.kin).map(([id, k]) => ({ name: k.name, text: `${k.sex === "girl" ? "Daughter" : "Son"}, ${kinAge(r, s, id)}${k.joined ? " · grown up" : ""}` })),
-    ],
     transforms: Object.values(r.body.transforms).filter((t) => (s.tf[t.id] ?? 0) > 0).map((t) => ({ label: t.label, stage: s.tf[t.id], of: t.stages.length })),
     run: r.checkpoints.enabled ? {
       slots: Array.from({ length: r.checkpoints.slots }, (_, i) => ({ id: String(i + 1), label: s.saves[String(i + 1)]?.label ?? null })),
@@ -1164,14 +1160,6 @@ export function stateDigest(r: Ruleset, s: GameState, focus?: DigestFocus): stri
   const spare = loose.filter(([id]) => r.items[id]?.slot && named(itemName(r, s, id), bagNames)).map(([id]) => itemName(r, s, id));
   if (spare.length) lines.push(`Carried but NOT being worn (packed away — {{user}} isn't wearing these): ${spare.join(", ")}`);
 
-  if (s.pregnancy && s.pregnancy.told > 0) {
-    const weeks = Math.floor((s.minutes - s.pregnancy.since) / 1440 / 7);
-    const carrier = s.pregnancy.carrier === "player" ? "{{user}}" : personName(r, s, s.pregnancy.carrier);
-    const other = s.pregnancy.carrier === "player" ? personName(r, s, s.pregnancy.with) : "{{user}}";
-    lines.push(`${carrier} is ${weeks} week${weeks === 1 ? "" : "s"} pregnant (${other}'s child).`);
-  }
-  const kids = Object.entries(s.kin).filter(([, k]) => !k.joined).map(([id, k]) => `${k.name} (${k.sex === "girl" ? "daughter" : "son"}, age ${kinAge(r, s, id)})`);
-  if (kids.length) lines.push(`Family — {{user}}'s children: ${kids.join(", ")}. They are minors: never part of anything romantic or sexual, and kept out of any sexual scene.`);
   const between = bondLines(r, s, new Set(hud.people.filter((p) => p.present).map((p) => p.id)));
   if (between.length) lines.push(`Between people: ${between.join("; ")}`);
   const feel = (id: string, name: string) => {
@@ -1211,10 +1199,6 @@ export function stateDigest(r: Ruleset, s: GameState, focus?: DigestFocus): stri
  */
 export function narratorKnowledge(r: Ruleset, s: GameState): string | null {
   const lines: string[] = [];
-  if (s.pregnancy && s.pregnancy.told === 0) {
-    const who = s.pregnancy.carrier === "player" ? "{{user}}" : personName(r, s, s.pregnancy.carrier);
-    lines.push(`Behind the scenes: ${who} is pregnant. Nobody knows yet — show no signs until the rules say so.`);
-  }
   // Only what touches the scene: a secret about someone who isn't here is no use as subtext, and a big cast's
   // secrets would otherwise all ride along every turn. (Secrets about a place or a thing always come.)
   const { here, names } = sceneCast(r, s);

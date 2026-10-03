@@ -188,8 +188,6 @@ export interface HudView {
   transforms: { label: string; stage: number; of: number }[];
   /** Bills and debts. */
   dues: { label: string; owed: number; /** the amount with the currency sign, before or after */ owedText?: string; text: string; tone: Tone }[];
-  /** A pregnancy (once it's known) and children. */
-  family: { name: string; text: string }[];
   /** Checkpoints and endings, when the ruleset has them. */
   run: {
     slots: { id: string; label: string | null }[];

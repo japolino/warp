@@ -8,7 +8,7 @@ export type PartLabel = (typeof PART_LABELS)[number];
 export const PART_CONTENTS: Record<PartLabel, string> = {
   core: "name, description, player, clock, start, hud, narration",
   stats: "stats, growth",
-  people: "relationships (stats + people with schedules), companions, lineage",
+  people: "relationships (stats + people with schedules), companions",
   world: "weather, locations, items (incl. clothing, uses and gear bonuses), item_uses, wardrobe, body, conditions, flags, start.items",
   actions: "actions, improvise, obligations, jobs",
   encounters: "encounters",
@@ -24,7 +24,7 @@ export function partForIssue(where: string): PartLabel {
   const head = w.split(/[›,]/)[0].trim().toLowerCase();
   if ((PART_LABELS as readonly string[]).includes(head)) return head as PartLabel;
   if (head.startsWith("stats") || head.startsWith("growth")) return "stats";
-  if (["relationships", "people", "companions", "lineage"].some((k) => head.startsWith(k))) return "people";
+  if (["relationships", "people", "companions"].some((k) => head.startsWith(k))) return "people";
   if (["locations", "items", "item uses", "wardrobe", "weather", "conditions", "flags", "body"].some((k) => head.startsWith(k))) return "world";
   if (["actions", "improvise", "obligations", "jobs"].some((k) => head.startsWith(k))) return "actions";
   if (head.startsWith("encounters")) return "encounters";
@@ -59,7 +59,7 @@ relationships:
   people:
     jo:
       name: Jo
-      age: 31                      # declare adult ages for anyone lineage could involve (an unknown age never counts as adult)
+      age: 31                      # declare adult ages (an unknown age never counts as adult)
       desc: Runs the café.
       schedule:                    # first matching entry wins; entry without when = default; no match = not around
         - { when: "between(hour, 7, 18) and weekday != 'Sun'", at: high_street }
@@ -77,11 +77,6 @@ companions:       # people with lives of their own (ids from relationships.peopl
     knows: [ward_accident]                   # portrayal cue + opened stages only; unopened truths stay out of the narrator prompt
     knows_full: false                       # explicit true exposes every stage to portray an informed NPC; weaker spoiler isolation
 EFFECTS for companions: arc: { jo: +5 }, bond: { jo: { dex: -10 } }. FUNCTIONS: arc(person), bond(a, b).
-
-lineage:          # pregnancy and children; only ever between two people known to be adults (declare ages, or the decision model is asked)
-  pregnancy: { weeks: 36, stages: [ { week: 6, text: "{carrier} has been sick in the mornings." }, { week: 16, text: "It's starting to show." } ] }   # hidden until the first stage
-  children: { speed: 1, join_at: 18, inherit: [hair, eyes] }   # speed = how much faster than the calendar they age; they stay off-stage family until join_at (never below 18) and are never part of romance
-EFFECT: conceive: { with: target, chance: 20, carrier: player }   # carrier: player | partner. FUNCTIONS: children(), age(person); names: pregnant, pregnancy_weeks.
 
 name: Harbour Town                 # the game's name (shown on the HUD); description: one line about it
 description: A fishing town where the tide brings secrets.

@@ -22,7 +22,6 @@ A game engine under your roleplay. Warp owns stats, dice, time, inventory and re
 | Checks | d100 chance, d20 vs difficulty, 2d6 PbtA; crits and partial successes; odds shown on buttons |
 | Time & world | Clock and calendar, seasons, weather, temperature (indoors vs out), a map of places with travel. With `discovery`, exploring can find places the ruleset never had: the helper model invents one that fits the card, it's written into the ruleset lorebook, and it stays on the map. Each found place comes with one safe thing to look at, and with `discovery: { people: true }` sometimes a resident (no age is assumed, so they don't count as an adult until the story shows it) |
 | Body | Parts with any traits (hair, eyes, ears, tails, marks…), what clothing covers, and transformations in stages that each roll a chance. The story can change the body after a reply (new parts allowed unless closed), and the narrator always sees it — including what others can't see right now |
-| Family | Optional pregnancy (hidden until its first sign, in stages) and children who inherit body traits and grow up on the calendar (or faster). Only ever between two people known to be adults; children stay off-stage family, out of reach of every action and never part of romance, until they come of age and join the story |
 | Clothing | Slots, warmth vs the weather, damage, how revealing, traits like rainproof; change clothes from the sheet |
 | Being seen | While your character is exposed (or any condition you set), each adult present reacts individually — from their own personality, read by the decision model — plus a few passers-by outdoors. Reactions carry effects, witnesses are remembered, and word spreads to the people they're close to. Children are never part of it |
 | Money pressure | Bills on the calendar (rent, debts): pay choices appear while something's owed, arrears pile up, and a missed payment lets the creditor decide what lateness costs, weighed by the decision model from their mood and history. Work shifts: each customer wants something; your approach, or the words you type, is scored for their mood and tip |
@@ -185,7 +184,7 @@ triggers:
 
 **Formula names:** stats, flags, `hour`, `minute`, `day`, `weekday`, `turn`, `location`, and `has()`, `count()`, `flag()`, `cond()`, `at()`, `rel(person, stat)`, `met()`, `between(v, lo, hi)`, `min`, `max`, `clamp`, `floor`, `ceil`, `round`, `abs`.
 
-The Ruleset tab lists problems in plain language, with "did you mean" suggestions for typos. Keys of parts that were taken out of Warp (`dungeons:`, `dating:`, `look:`, minigame `game:` and `gamble:`, encounter `sim:`) are ignored with a plain warning; the old version is on the `legacy` branch.
+The Ruleset tab lists problems in plain language, with "did you mean" suggestions for typos. Keys of parts that were taken out of Warp (`dungeons:`, `dating:`, `look:`, minigame `game:` and `gamble:`, encounter `sim:`, `lineage:`) are ignored with a plain warning; the old version is on the `legacy` branch.
 
 ## Develop
 
