@@ -8,7 +8,7 @@ import { STYLES } from "./frontend/styles.js";
 import { attachedBox, edgeForDrop, PAD, PANEL_W, PILL, type Box, type Edge, type Viewport } from "./frontend/overlay-layout.js";
 import { emptyDraft, renderBuilder, renderBuilderCta, type BuilderDraft } from "./frontend/builder-ui.js";
 import { connectCue } from "./frontend/cue-bridge.js";
-import { esc, hudParts, renderChips, renderEncounterLog, renderWhyFold, renderChoices, renderHud, renderJournal, renderPart, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
+import { esc, hudParts, renderChips, renderEncounterLog, renderWhyFold, renderChoices, renderHud, renderJournal, renderPart, renderRulesetCard, renderSettings, renderTemplatePicker } from "./frontend/render.js";
 import { createPanels, wireGrip } from "./frontend/panel-windows.js";
 import { acceptsResponse } from "./frontend/response-gate.js";
 import { logoSvg } from "./frontend/logo.js";
@@ -461,8 +461,6 @@ export function setup(ctx: SpindleFrontendContext) {
         const html = renderChips(r, { showDice: settings.showDiceChips, showChanges: settings.showChanges });
         if (html) wantChips.set(r.messageId, html);
       }
-      // Suggestions sit on the player's own message.
-      for (const s of state?.suggestions ?? []) wantChips.set(s.messageId, (wantChips.get(s.messageId) ?? "") + renderSuggestion(s));
       // A quiet encounter's message carries its round cards (and every round behind "Show rounds").
       const live = liveLog();
       for (const log of state?.encounterLogs ?? []) {
@@ -778,13 +776,9 @@ export function setup(ctx: SpindleFrontendContext) {
       });
       return;
     }
-    const pctKey = t.dataset.settingPct as "autoConfidence" | "askConfidence" | undefined;
+    const pctKey = t.dataset.settingPct as "autoConfidence" | undefined;
     if (pctKey) {
-      let v = Number(t.value) / 100;
-      // Keep "ask" below "auto" so the three bands stay ordered.
-      if (pctKey === "askConfidence") v = Math.min(v, settings.autoConfidence - 0.01);
-      else v = Math.max(v, settings.askConfidence + 0.01);
-      send({ type: "settings", patch: { [pctKey]: v } });
+      send({ type: "settings", patch: { [pctKey]: Number(t.value) / 100 } });
       return;
     }
     const key = t.dataset.setting as keyof Settings | undefined;
@@ -832,21 +826,16 @@ export function setup(ctx: SpindleFrontendContext) {
     const cid = chatId();
     const userMessageId = btn.dataset.redo;
     if (!cid || !userMessageId) return;
-    const actionId = btn.dataset.redoAction || null;
-    let params: Record<string, string> | undefined;
-    try { params = btn.dataset.redoParams ? JSON.parse(btn.dataset.redoParams) : undefined; } catch { params = undefined; }
     const res = await ctx.ui.showConfirm({
-      title: actionId ? "Roll for it?" : "Redo without a roll?",
-      message: actionId
-        ? "The reply to your message is replaced with a new one where the dice decide."
-        : "The reply to your message is replaced with a new one, treating your message as plain roleplay (no check).",
-      confirmLabel: actionId ? "Roll it" : "Redo turn",
+      title: "Redo without a roll?",
+      message: "The reply to your message is replaced with a new one, treating your message as plain roleplay (no check).",
+      confirmLabel: "Redo turn",
       variant: "info",
     });
     if (!res.confirmed) return;
     busy = { chatId: cid, on: true, label: "Rolling…" };
     placeChoices(true);
-    send({ type: "redo", chatId: cid, userMessageId, actionId, params });
+    send({ type: "redo", chatId: cid, userMessageId, actionId: null });
   }
 
   const onDocClick = (e: MouseEvent) => {
@@ -874,12 +863,6 @@ export function setup(ctx: SpindleFrontendContext) {
       e.preventDefault();
       const cid = chatId();
       if (cid && reroll.dataset.reroll && !(busy.on && busy.chatId === cid)) { send({ type: "reroll", chatId: cid, messageId: reroll.dataset.reroll }); lockUntilReply(cid); }
-      return;
-    }
-    const dismiss = t.closest<HTMLElement>(".warp-chips [data-dismiss-suggest]");
-    if (dismiss) {
-      const cid = chatId();
-      if (cid) send({ type: "dismiss_suggestion", chatId: cid, messageId: dismiss.dataset.dismissSuggest! });
       return;
     }
     const undo = t.closest<HTMLElement>(".warp-chips [data-undo]");

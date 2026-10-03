@@ -25,15 +25,14 @@ const choice = (c: string, conf: number, keys: string[]) => ({
 describe("reading the player's turn", () => {
   const base = { settings: DEFAULT_SETTINGS, sceneText: "A busy street.", player: "Sam", timeoutMs: 5000 };
 
-  test("confidence decides: act, suggest, or leave as roleplay", async () => {
+  test("confidence decides: act, or leave as roleplay", async () => {
     const r = town();
     const s = initialState(r);
     s.location = "high_street";
-    for (const [conf, expectAct, expectSuggest] of [[0.9, true, false], [0.55, false, true], [0.2, false, false]] as const) {
+    for (const [conf, expectAct] of [[0.9, true], [0.55, false], [0.2, false]] as const) {
       const d = new Scripted((q) => ({ action: choice("pickpocket", conf, Object.keys((q.action as any).criteria)) }));
       const rd = await readTurn({ ...base, decider: d, r, s, playerText: "I lift his wallet" });
       expect(!!rd.intent).toBe(expectAct);
-      expect(!!rd.suggestion).toBe(expectSuggest);
     }
   });
 
@@ -77,7 +76,6 @@ describe("reading the player's turn", () => {
     s.location = "high_street";
     const rd = await readTurn({ ...base, decider: new RulesDecider(), r, s, playerText: "I try to pick a pocket of the tourist" });
     expect(rd.intent).toBeNull();
-    expect(rd.suggestion?.actionId).toBe("pickpocket");
   });
 });
 

@@ -114,8 +114,6 @@ async function safeAsk(d: Decider, state: unknown, q: Questions, timeoutMs: numb
 export interface Reading {
   /** Act on this (confidence ≥ auto threshold). */
   intent: Intent | null;
-  /** Offer this as a one-tap suggestion (between the thresholds). */
-  suggestion: (Intent & { label: string; confidence: number }) | null;
   confidence: number;
   scene: Record<string, boolean>;
   /** An encounter the latest exchange is breaking into (and who the opponent is, when it's someone present). */
@@ -219,7 +217,7 @@ export async function readTurn(opts: {
     if (t.whenScene && a?.type === "noul" && noulConfidence(a.noul) >= 0.3) scene[t.id] = a.noul >= 0.5;
   }
 
-  const out: Reading = { intent: null, suggestion: null, confidence: 0, scene };
+  const out: Reading = { intent: null, confidence: 0, scene };
   const enc = ans.encounter;
   if (enc?.type === "choice" && enc.choice.startsWith("enc:") && (enc.probabilities[enc.choice] ?? enc.confidence) >= ENCOUNTER_SURE) {
     const id = enc.choice.slice(4);
@@ -237,7 +235,6 @@ export async function readTurn(opts: {
   out.confidence = conf;
 
   let intent: Intent | null = null;
-  let label = id;
   if (id === ATTEMPT) {
     if (!improv) return out;
     const ap = ans.approach;
@@ -245,16 +242,13 @@ export async function readTurn(opts: {
     const level = ans.difficulty?.type === "score" ? ans.difficulty.score : 1;
     const difficulty = DIFFICULTIES[Math.max(0, Math.min(DIFFICULTIES.length - 1, Math.round(level)))];
     intent = { actionId: `${IMPROV}${stat}`, via: "adjudicator", params: { difficulty } };
-    label = `${stat ? r.stats[stat].label : "Luck"} check (${difficulty})`;
   } else if (id.startsWith(QUEST_PREFIX)) {
     if (!questMoves[id]) return out;
     intent = { actionId: id, via: "adjudicator" };
-    label = questMoves[id];
   } else {
     const c = actions.find((x) => x.id === id);
     const a = c?.a;
     if (!a) return out;
-    label = c!.label;
     const params: Record<string, string> = {};
     const level = ans.difficulty?.type === "score" ? ans.difficulty.score / (DIFFICULTY.length - 1) : null;
     for (const p of a.params) {
@@ -265,7 +259,6 @@ export async function readTurn(opts: {
     intent = { actionId: c!.id, via: "adjudicator", ...(a.params.length ? { params } : {}) };
   }
   if (conf >= settings.autoConfidence) out.intent = intent;
-  else if (conf >= settings.askConfidence) out.suggestion = { ...intent, label, confidence: conf };
   return out;
 }
 

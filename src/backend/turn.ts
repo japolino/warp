@@ -15,7 +15,7 @@ import { bookkeeping, odds, readTurn } from "./decisions.js";
 import { getTurnDecider } from "./deciders.js";
 import { extract, type ExtractPart } from "./helpers.js";
 import { host, logError, toast } from "./host.js";
-import { activeRecord, encounterLogOf, encounterSlots, foldPath, getMessages, patchMeta, patchWarpMeta, pathRevision, recordPath, warpMeta, writeRecord, type Msg, type Suggestion } from "./ledger.js";
+import { activeRecord, encounterLogOf, encounterSlots, foldPath, getMessages, patchMeta, patchWarpMeta, pathRevision, recordPath, warpMeta, writeRecord, type Msg } from "./ledger.js";
 import { writeLiveChoices } from "./live.js";
 import { getSettings } from "./settings.js";
 import { characterBrief, getRuleset } from "./source.js";
@@ -40,7 +40,7 @@ export interface Pending {
   ruleset: Ruleset;
   at: number;
   /** A fresh adjudicator verdict to save on the player's message once the reply lands. */
-  verdict?: { messageId: string; intent: Intent | null; suggestion: Suggestion | null };
+  verdict?: { messageId: string; intent: Intent | null };
   outcome: string | null;
   player: string;
   /** A quiet encounter round typed in the chat: Warp wrote the reply itself (when the host allows it). */
@@ -184,7 +184,6 @@ export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorCon
       let scene: Record<string, boolean> = {};
       let encounter: { id: string; foe?: string } | undefined;
       let confidence: number | undefined;
-      let pendingSuggestion = !!meta.suggest && !intent;
       const sceneText = [...history].reverse().find((m) => !m.is_user)?.content ?? "";
       const budget = () => Math.min(20000, (typeof ctx.interceptorDeadlineAt === "number" ? ctx.interceptorDeadlineAt : Date.now() + 20000) - Date.now() - 2000);
       const decider = info.isDryRun ? null : await getTurnDecider(settings, ctx.userId);
@@ -198,21 +197,20 @@ export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorCon
         if (readText !== null && lastUser) {
           intent = reading.intent;
           confidence = reading.confidence;
-          pendingSuggestion = !!reading.suggestion && !reading.intent;
-          verdict = { messageId: lastUser.id, intent, suggestion: reading.suggestion };
+          verdict = { messageId: lastUser.id, intent };
         }
       }
 
       // Rolled when the choice was clicked (and told in the player's message): that roll, on every swipe.
       const seed = intent?.seed ?? (settings.swipesReroll ? randomSeed() : `${lastUser?.id ?? "start"}:${intent?.actionId ?? "none"}`);
       const playerText = lastUser?.content ?? "";
-      let res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene, playerText, encounter, pendingSuggestion });
+      let res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene, playerText, encounter });
       if (decider && res.needs.length) {
         // Uncertain reactions: the model supplies odds, the same seed re-rolls the same dice with them.
         // Questions about who someone is (tastes, age) need the card, not just the scene.
         const card = res.needs.some((n) => n.id.startsWith("adult:")) ? await characterBrief(ctx.chatId, ctx.userId) : undefined;
         const o = await odds({ decider, r, s: before, specs: res.needs, playerText: lastUser?.content ?? "", sceneText, player, timeoutMs: budget(), card });
-        if (Object.keys(o).length) res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene, odds: o, playerText, encounter, pendingSuggestion });
+        if (Object.keys(o).length) res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene, odds: o, playerText, encounter });
       }
       rec = res.record;
       if (confidence !== undefined && rec.action) rec.confidence = confidence;
@@ -435,9 +433,9 @@ export async function onGenerationEnded(payload: { generationId: string; chatId:
     });
     if (!attached || !p.isCurrent()) return;
     if (p.verdict) {
-      const { messageId, intent, suggestion } = p.verdict;
+      const { messageId, intent } = p.verdict;
       await patchWarpMeta(payload.chatId, messageId, (w) => ({
-        ...w, judged: true, ...(intent ? { intent } : {}), ...(suggestion ? { suggest: suggestion } : {}),
+        ...w, judged: true, ...(intent ? { intent } : {}),
       })).catch((e) => logError("save verdict", e));
     }
     await pushState(payload.chatId, userId);

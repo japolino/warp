@@ -204,16 +204,6 @@ export interface RecordView {
   rerollFrom?: string | null;
 }
 
-export interface SuggestionView {
-  /** The player's message the suggestion belongs to. */
-  messageId: string;
-  actionId: string;
-  params?: Record<string, string>;
-  label: string;
-  confidence: number;
-  canRedo: boolean;
-}
-
 export interface IssueView { level: "error" | "warning"; where: string; message: string }
 
 export interface RulesetStatus {
@@ -256,8 +246,6 @@ export interface Settings {
   storyQuests: boolean;
   /** Read typed actions and roll automatically at or above this confidence. */
   autoConfidence: number;
-  /** Between this and autoConfidence, offer the action as a one-tap suggestion instead. */
-  askConfidence: number;
   /** A clicked move is rolled on the click, and the player's message says how it went, in their voice. */
   sayOutcome: boolean;
   /** Choice buttons under the reply (the CYOA). Off: none, and none are written — fights and endings keep theirs. */
@@ -283,7 +271,6 @@ export const DEFAULT_SETTINGS: Settings = {
   jevFormat: "typesafe",
   storyQuests: true,
   autoConfidence: 0.75,
-  askConfidence: 0.4,
   sayOutcome: true,
   showChoices: true,
   showChanges: true,
@@ -373,7 +360,6 @@ export type BackendToFrontend =
       hud: HudView | null;
       choices: ChoiceView[];
       records: RecordView[];
-      suggestions: SuggestionView[];
       latestMessageId: string | null;
       /** Latest message is from the assistant (choices are shown under it). */
       choicesAnchor: string | null;
@@ -403,7 +389,6 @@ export type FrontendToBackend =
   | { type: "reload"; chatId: string | null }
   /** Replace the reply to `userMessageId` and resend it with this intent (null = "not an action"). */
   | { type: "redo"; chatId: string; userMessageId: string; actionId: string | null; params?: Record<string, string> }
-  | { type: "dismiss_suggestion"; chatId: string; messageId: string }
   /** Roll a clicked move again: a new roll, a new line in the player's message, a new reply. */
   | { type: "reroll"; chatId: string; messageId: string }
   | { type: "adjust_rel"; chatId: string; who: string; stat: string; value: number }

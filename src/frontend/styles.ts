@@ -148,7 +148,6 @@ export const STYLES = `
 .warp-chips[data-why-open] .warp-why-detail { display: flex; }
 
 .warp-decision { border: 1px solid var(--warp-info); color: var(--warp-text); }
-.warp-suggest { background: color-mix(in srgb, var(--warp-accent) 14%, transparent); border: 1px solid var(--warp-accent); gap: 8px; padding: 3px 4px 3px 10px; }
 .warp-mini { padding: 1px 10px; font-size: 12px; }
 .warp-slider { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--warp-muted); }
 .warp-slider input { accent-color: var(--warp-accent); }

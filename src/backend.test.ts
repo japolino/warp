@@ -203,7 +203,7 @@ test("full loop: install → choose → roll → narrate → bookkeeping → swi
   await frontendHandler({ type: "adjust", chatId: "c1", stat: "money", value: 999 });
   expect(lastState().hud.money).toBe("£999");
 
-  // Medium confidence: no roll, but a one-tap suggestion on the player's message; "Roll it" redoes the turn.
+  // Medium confidence: no roll; the turn is plain roleplay. A redo with a move still rolls it.
   messages.push(mkMsg("m5", true, "I eye the tourist's bag again."));
   quietReplies.push('{"action": {"choice": "pickpocket", "confidence": 0.55}}');
   const out3 = await interceptor([{ role: "user", content: messages[5].content }], { chatId: "c1", generationId: "g4", generationType: "normal", isDryRun: false, interceptorDeadlineAt: Date.now() + 30000 });
@@ -213,7 +213,7 @@ test("full loop: install → choose → roll → narrate → bookkeeping → swi
   await emit("GENERATION_ENDED", { generationId: "g4", chatId: "c1", messageId: "m6", content: "The tourist wanders off.", generationType: "normal" });
   await settle();
   st = lastState();
-  expect(st.suggestions).toEqual([expect.objectContaining({ messageId: "m5", actionId: "pickpocket", label: "Pick a pocket", canRedo: true })]);
+  expect(st).not.toHaveProperty("suggestions");
   appended.length = 0;
   await frontendHandler({ type: "redo", chatId: "c1", userMessageId: "m5", actionId: "pickpocket" });
   expect(appended[0].msg.content).toBe("I eye the tourist's bag again.");

@@ -46,11 +46,10 @@ describe("reading typed roleplay", () => {
     }));
     const rd = await readTurn({ ...base, decider: d, r, s, playerText: "I talk the bouncer into letting us through the back." });
     expect(rd.intent).toMatchObject({ actionId: "try:charm", params: { difficulty: "hard" } });
-    // Unsure → offered as a one-tap roll instead.
+    // Unsure → plain roleplay, no roll.
     const unsure = new Scripted((q) => ({ action: choice("attempt", 0.5, keysOf(q, "action")), approach: choice("athletics", 0.7, keysOf(q, "approach")) }));
     const sug = await readTurn({ ...base, decider: unsure, r, s, playerText: "I vault the bar." });
     expect(sug.intent).toBeNull();
-    expect(sug.suggestion).toMatchObject({ actionId: "try:athletics", label: "Athletics check (fair)" });
   });
 
   test("a fight breaking out in the exchange is read, with who it's against", async () => {

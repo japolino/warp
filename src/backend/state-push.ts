@@ -1,7 +1,7 @@
 // Computing the full UI state for a chat and pushing it to the frontend.
 
 import { buildChoices, buildHud, buildRecordView } from "../engine/view.js";
-import type { EncounterLogView, RecordView, SuggestionView } from "../shared/protocol.js";
+import type { EncounterLogView, RecordView } from "../shared/protocol.js";
 import type { Ruleset } from "../engine/ruleset.js";
 import { getMessages, foldPath, liveChoicesOf, warpMeta, encounterLogOf, type Msg } from "./ledger.js";
 import { getSettings } from "./settings.js";
@@ -37,7 +37,7 @@ export async function pushState(chatId: string | null, userId?: string, force = 
     const loaded = await getRuleset(chatId, userId, force);
     const status = statusOf(loaded);
     if (!chatId || !loaded?.ruleset) {
-      if (current()) send({ type: "state", chatId, revision, status, hud: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false }, userId);
+      if (current()) send({ type: "state", chatId, revision, status, hud: null, choices: [], records: [], latestMessageId: null, choicesAnchor: null, busy: false }, userId);
       return;
     }
     const r = loaded.ruleset;
@@ -66,12 +66,6 @@ export async function pushState(chatId: string | null, userId?: string, force = 
       })
       .filter((v) => v.check || v.changes.length || v.action || v.decisions.length);
 
-    const suggestions: SuggestionView[] = [];
-    for (const m of msgs.slice(-6)) {
-      const w = warpMeta(m);
-      if (!m.is_user || !w.suggest || w.intent) continue;
-      suggestions.push({ messageId: m.id, actionId: w.suggest.actionId, params: w.suggest.params, label: w.suggest.label, confidence: w.suggest.confidence, canRedo: redoable(m.id) });
-    }
     const latest = msgs[msgs.length - 1] ?? null;
     const anchor = latest && !latest.is_user ? latest.id : null;
     // Rulesets name the player "{{user}}" (foe moves, hints, choices); show their persona's name.
@@ -84,7 +78,6 @@ export async function pushState(chatId: string | null, userId?: string, force = 
       hud: settings.enabled ? buildHud(r, state) : null,
       choices: settings.enabled && !conflict ? buildChoices(r, state, { ...settings, live: liveChoicesOf(latest) }) : [],
       records: settings.enabled ? records : [],
-      suggestions: settings.enabled ? suggestions.filter((s) => s.canRedo) : [],
       latestMessageId: latest?.id ?? null,
       choicesAnchor: anchor,
       busy: busyChats.has(chatId),

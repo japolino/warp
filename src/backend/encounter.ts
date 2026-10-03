@@ -77,12 +77,9 @@ export async function playRound(opts: { chatId: string; userId?: string; intent:
       const reading = await readTurn({ decider, r, s: before, settings, playerText: typed, sceneText: story, player, timeoutMs: 15000 });
       if (!operationCurrent(chatId, operation)) return true;
       if (!reading.intent) {
-        // Keep the player's words and reuse the normal inline confirmation UX.
-        // Ambiguous interpretation does not spend a round or let the foe act.
-        await host().chat.appendMessage(chatId, { role: "user", content: typed, metadata: {
-          warp: { judged: true, ...(reading.suggestion ? { suggest: reading.suggestion } : {}) },
-        } });
-        toast("info", reading.suggestion ? `Roll ${reading.suggestion.label}? Confirm it below your message.` : "Pick a move or rephrase; that line didn't spend a round.", userId);
+        // Keep the player's words. An unclear line does not spend a round or let the foe act.
+        await host().chat.appendMessage(chatId, { role: "user", content: typed, metadata: { warp: { judged: true } } });
+        toast("info", "Pick a move or rephrase; that line didn't spend a round.", userId);
         return true;
       }
       const read = reading.intent;

@@ -1,7 +1,7 @@
 // Pure view → HTML renderers. Every interpolated string goes through `esc`.
 
 import type {
-  ChoiceView, EncounterLogView, HudView, RoundCardView, RecordView, RulesetStatus, Settings, SuggestionView, TemplateInfo,
+  ChoiceView, EncounterLogView, HudView, RoundCardView, RecordView, RulesetStatus, Settings, TemplateInfo,
 } from "../shared/protocol.js";
 import { DEFAULT_SETTINGS } from "../shared/protocol.js";
 import { classifierIssue } from "../shared/classifier-config.js";
@@ -319,7 +319,7 @@ export function renderChips(rec: RecordView, opts: { showDice: boolean; showChan
     ? `<span class="warp-dim">· read from your message${rec.confidence !== null ? ` (${Math.round(rec.confidence * 100)}% sure)` : ""}</span>`
     : rec.via === "confirmed" ? `<span class="warp-dim">· you confirmed</span>` : "";
   const notAction = rec.redoFrom
-    ? `<button class="warp-btn warp-btn-ghost" data-redo="${esc(rec.redoFrom)}" data-redo-action="" title="Redo this turn without a roll">Not an action?</button>`
+    ? `<button class="warp-btn warp-btn-ghost" data-redo="${esc(rec.redoFrom)}" title="Redo this turn without a roll">Not an action?</button>`
     : "";
   if (rec.check && opts.showDice) {
     const c = rec.check;
@@ -349,13 +349,6 @@ export function renderChips(rec: RecordView, opts: { showDice: boolean; showChan
     out.push(`<div class="warp-why-detail">${whys.join("")}</div>`);
   }
   return out.join("");
-}
-
-/** Shown on the player's message when the referee was only fairly sure: one tap to roll it. */
-export function renderSuggestion(s: SuggestionView): string {
-  return `<span class="warp-chip warp-suggest">🎲 Roll <b>${esc(s.label)}</b>? <span class="warp-dim">${Math.round(s.confidence * 100)}% sure</span>
-    <button class="warp-btn warp-btn-primary warp-mini" data-redo="${esc(s.messageId)}" data-redo-action="${esc(s.actionId)}" data-redo-params="${esc(JSON.stringify(s.params ?? {}))}">Roll it</button>
-    <button class="warp-chip-undo" data-dismiss-suggest="${esc(s.messageId)}" title="Dismiss" aria-label="Dismiss">×</button></span>`;
 }
 
 // ───────────────────────── ruleset status & setup ─────────────────────────
@@ -410,7 +403,7 @@ function renderDecider(s: Settings, jevKeySet: boolean): string {
     <select class="warp-select" data-setting="decider">
       ${opt("llm", "Helper LLM (uses the helper model below)")}
       ${opt("jev", "Classifier endpoint — TypeSafe's Jev or any compatible model (fast, cheap)")}
-      ${opt("rules", "Rules only — no model calls (suggests, never acts)")}
+      ${opt("rules", "Rules only — no model calls (never rolls typed text)")}
     </select>
     <details data-section="advanced-classifier"${s.decider === "jev" ? " open" : ""}><summary>Advanced: classifier endpoint & confidence</summary>
     ${s.decider === "jev" ? (() => {
@@ -440,8 +433,6 @@ function renderDecider(s: Settings, jevKeySet: boolean): string {
     })() : ""}
     <label class="warp-slider"><span>Roll automatically when at least <b>${pct(s.autoConfidence)}%</b> sure</span>
       <input type="range" min="40" max="99" value="${pct(s.autoConfidence)}" data-setting-pct="autoConfidence"></label>
-    <label class="warp-slider"><span>Offer a one-tap “Roll it?” from <b>${pct(s.askConfidence)}%</b></span>
-      <input type="range" min="10" max="95" value="${pct(s.askConfidence)}" data-setting-pct="askConfidence"></label>
     </details>
     <div class="warp-row"><button class="warp-btn" data-test-decider>Test decision model</button></div>
   </div>`;

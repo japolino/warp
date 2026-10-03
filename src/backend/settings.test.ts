@@ -5,11 +5,10 @@ import { DEFAULT_SETTINGS } from "../shared/protocol.js";
 test("legacy or malformed settings normalize before any runtime consumer reads them", () => {
   expect(normalizeSettings(null)).toEqual(DEFAULT_SETTINGS);
   const s = normalizeSettings({ enabled: "false", lines: "wrong", veils: [null, 7, " Fear ", "fear"], drafts: Infinity,
-    prewrite: 999, autoConfidence: 0.2, askConfidence: 0.9, decider: "unknown", jevUrl: "file:///key" });
+    prewrite: 999, autoConfidence: 1.5, askConfidence: 0.9, decider: "unknown", jevUrl: "file:///key" });
   expect(s).toMatchObject({ enabled: false, lines: [], veils: ["fear"],
-    autoConfidence: 0.2, askConfidence: 0.2, decider: "llm", jevUrl: DEFAULT_SETTINGS.jevUrl });
-  expect(s).not.toHaveProperty("drafts");
-  expect(s).not.toHaveProperty("prewrite");
+    autoConfidence: 1, decider: "llm", jevUrl: DEFAULT_SETTINGS.jevUrl });
+  for (const gone of ["drafts", "prewrite", "askConfidence"]) expect(s).not.toHaveProperty(gone);
 });
 
 test("settings of removed parts (minigames, looks, sound, dating, drafts, consistency check) are dropped when read and on the next save", async () => {

@@ -58,12 +58,11 @@ Pick the provider in **Warp → Settings → Decision model**:
 |---|---|---|
 | **Helper LLM** (default) | Your helper connection imitates typed answers in one batched call | One small call per question batch |
 | **Jev** | [TypeSafe's](https://typesafe.ai) System-1 model: typed answers with calibrated probabilities in ~70–500 ms. Paste your API key (stored encrypted). Your roleplay text is sent to TypeSafe. | Very cheap, fast; bookkeeping becomes many atomic questions in parallel |
-| **Rules only** | Keyword matching, no network | Free; only ever *suggests* actions |
+| **Rules only** | Keyword matching, no network | Free; never rolls what you type |
 
 Confidence sets the friction when you type instead of clicking:
 
 - **≥ auto threshold** (default 75%) → rolled automatically. The dice chip says how sure it was, with a **Not an action?** button to redo the turn without a roll.
-- **between thresholds** (default 40–75%) → no roll; a **🎲 Roll *Pick a pocket*? [Roll it]** chip appears on your message. Rolling redoes that turn.
 - **below** → treated as plain roleplay.
 
 **Why?** — every change chip on a reply can be opened to see what caused it: the roll, the rule and its condition, the time that passed, or what was read from the story.

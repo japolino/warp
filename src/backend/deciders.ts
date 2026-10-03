@@ -194,7 +194,7 @@ export class LlmDecider implements Decider {
 const STOP = new Set("a an the to of and or in on at for with my i me you your it is be do try tries trying".split(" "));
 const words = (s: string) => new Set(s.toLowerCase().split(/[^a-z0-9']+/).filter((w) => w.length > 2 && !STOP.has(w)));
 
-/** Keyword overlap. Never confident enough to act on its own — at most it suggests. */
+/** Keyword overlap. Never confident enough to act on its own. */
 export class RulesDecider implements Decider {
   readonly id = "rules" as const;
   readonly canWrite = false;

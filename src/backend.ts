@@ -332,16 +332,6 @@ spindle.onFrontendMessage(async (raw, userId) => {
         break;
       }
 
-      case "dismiss_suggestion": {
-        await patchWarpMeta(msg.chatId, msg.messageId, (w) => {
-          const next = { ...w };
-          delete next.suggest;
-          return next;
-        });
-        await pushState(msg.chatId, userId);
-        break;
-      }
-
       case "redo": {
         const msgs = await getMessages(msg.chatId);
         const i = msgs.findIndex((m) => m.id === msg.userMessageId);
@@ -355,18 +345,13 @@ spindle.onFrontendMessage(async (raw, userId) => {
           const r = (await getRuleset(msg.chatId, userId))?.ruleset;
           if (r && isQuiet(r, foldPath(r, msgs, 0).state)) {
             const intent = { actionId: msg.actionId, params: msg.params, via: "confirmed" as const };
-            await patchWarpMeta(msg.chatId, user.id, (w) => {
-              const next = { ...w, judged: true, intent };
-              delete next.suggest;
-              return next;
-            });
+            await patchWarpMeta(msg.chatId, user.id, (w) => ({ ...w, judged: true, intent }));
             await playRound({ chatId: msg.chatId, userId, intent, typed: user.content });
             break;
           }
         }
         const meta = { ...((user.metadata as Record<string, unknown>) ?? {}) };
         const w = { ...warpMeta(user) };
-        delete w.suggest;
         delete w.intent;
         w.judged = true;
         if (msg.actionId) w.intent = { actionId: msg.actionId, params: msg.params, via: "confirmed" };

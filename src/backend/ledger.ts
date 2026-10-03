@@ -13,12 +13,8 @@ import { revision } from "../shared/revision.js";
 
 export type Msg = ChatMessageDTO & { role: "system" | "user" | "assistant"; metadata?: Record<string, unknown> };
 
-/** A medium-confidence reading offered to the player instead of rolled. */
-export type Suggestion = Intent & { label: string; confidence: number };
-
 export interface WarpMeta {
   intent?: Intent;
-  suggest?: Suggestion;
   /** The adjudicator already read this message (intent may be absent = "not an action"). Swipes reuse the verdict. */
   judged?: boolean;
   swipes?: Record<string, TurnRecord>;

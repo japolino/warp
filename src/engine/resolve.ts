@@ -1091,8 +1091,6 @@ export interface ResolveOptions {
   scene?: Record<string, boolean>;
   /** The scene says an encounter is breaking out (and who the opponent is, when it's someone from the story). */
   encounter?: { id: string; foe?: string; fresh?: boolean };
-  /** A medium-confidence action suggestion is awaiting player confirmation; do not spend a turn. */
-  pendingSuggestion?: boolean;
 }
 
 export interface Resolution { record: TurnRecord; needs: DecideSpec[] }
@@ -1113,8 +1111,6 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   const w = new Working(r, cloneState(before), seededRng(`${opts.seed}:fx`), opts.seed, opts.odds ?? {}, opts.scene ?? {});
   w.defer = false;
   const rec: TurnRecord = { v: 1, hints: [], events: [], at: Date.now() };
-  // A suggestion is not a committed move, nor dialogue for the active session.
-  if (!intent && opts.pendingSuggestion) return rec;
   if (intent && !intent.actionId.startsWith(QUEST_PREFIX)) {
     const valid = !!findAction(r, before, intent.actionId);
     if (!valid) return { ...rec, hints: ["The attempted action isn't available in the current state. It did not happen and spent no turn or resources."] };

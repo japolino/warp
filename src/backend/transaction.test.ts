@@ -315,20 +315,19 @@ test("state-only and trimmed replay match full replay through saves and branch e
   }
 });
 
-test("medium-confidence encounter text waits for the actual confirmation handler and never starts the narrator", async () => {
+test("medium-confidence encounter text spends no round and never starts the narrator; a redo with a move plays it", async () => {
   const f = fixture({ stats: { health: { start: 50 } }, encounters: { fight: { round_limit: 20,
     actions: { talk: { effects: { health: 1 } } }, foe_moves: { wait: { desc: "Waits", weight: 1 } }, end_when: { won: "round >= 10" },
   } } });
   f.add("assistant", "A confrontation starts.", { warp: { swipes: { "0": record([{ t: "enc", id: "fight", foe: {}, src: "trigger" }]) } } });
   f.quiet = async () => ({ content: '{"action":{"choice":"talk","confidence":0.55}}' });
   await playRound({ chatId: f.id, userId: f.id, intent: null, typed: "I pause and look around." });
-  const suggestion = f.messages.at(-1);
-  expect(suggestion.is_user).toBe(true); expect(warpMeta(suggestion).suggest?.actionId).toBe("talk");
+  const typed = f.messages.at(-1);
+  expect(typed.is_user).toBe(true); expect(warpMeta(typed)).toEqual({ judged: true });
   expect(foldPath(f.r, f.messages).state.encounter!.round).toBe(0);
-  await frontendMessage({ type: "redo", chatId: f.id, userMessageId: suggestion.id, actionId: "talk" }, f.id);
+  await frontendMessage({ type: "redo", chatId: f.id, userMessageId: typed.id, actionId: "talk" }, f.id);
   expect(foldPath(f.r, f.messages).state.encounter!.round).toBe(1);
   expect(f.narratorCalls ?? 0).toBe(0);
-  expect(warpMeta(suggestion).suggest).toBeUndefined();
 });
 
 test("registered sheet adjustments merge their newly computed deltas instead of overwriting", async () => {
