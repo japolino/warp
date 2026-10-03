@@ -8,7 +8,8 @@
 //   vn-panel-request-v1 / vn-panel-export-v1   live status cards ("Keep it updated")
 
 import type { BackendToFrontend, ChoiceView, HudView } from "../shared/protocol.js";
-import { esc } from "./render.js";
+import { esc } from "./html.js";
+import { gaugeLeft, roundText } from "./render-panel.js";
 
 type StateMsg = Extract<BackendToFrontend, { type: "state" }>;
 
@@ -51,6 +52,8 @@ const CARD_CSS = `
 .chip{padding:1px 8px;border-radius:99px;background:#2b2a36;font-size:12px}
 .sec{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#a9a6b8;margin-top:2px}
 .ppl{display:grid;gap:3px}
+.gauge{position:relative;height:8px;border-radius:4px;background:linear-gradient(90deg,#5fc58a,#2b2a36 45%,#2b2a36 55%,#e06a6a)}
+.mark{position:absolute;top:-3px;width:4px;height:14px;margin-left:-2px;border-radius:2px;background:#ecebf2}
 `;
 
 /** A self-contained status card (Cue renders it in a sandboxed frame with no scripts). */
@@ -66,10 +69,12 @@ export function renderCueCard(h: HudView): string {
     const feel = p.stats.filter((s) => s.text).map((s) => `<span class="t-${s.tone}">${esc(s.text!)}</span>`).join(" · ");
     return `<div>${esc(p.name)}${feel ? ` <span class="dim">—</span> ${feel}` : ""}</div>`;
   }).join("");
-  const enc = h.encounter
-    ? `<div class="sec">⚔ ${esc(h.encounter.name)} · round ${h.encounter.round}</div><div class="bars">${h.encounter.stats.map((s) => `<div class="bar"><span class="l">${esc(h.encounter!.foe)} ${esc(s.label)}</span><span class="v">${s.value}/${s.max}</span><div class="track"><div class="fill ${s.tone}" style="width:${Math.round(s.pct * 100)}%"></div></div></div>`).join("")}</div>`
+  // A contest: one line and the gauge (You on the left, the opponent on the right).
+  const c = h.conflict;
+  const contest = c
+    ? `<div class="sec">⚔ ${esc(c.label)} · ${esc(c.opponent)} · ${esc(roundText(c))}</div><div class="gauge"><div class="mark" style="left:${gaugeLeft(c.momentum).toFixed(1)}%"></div></div><div>${esc(c.words)}</div>`
     : "";
-  return `<style>${CARD_CSS}</style><div class="w"><div class="top">${top}</div>${enc}${bars ? `<div class="bars">${bars}</div>` : ""}${conds ? `<div class="chips">${conds}</div>` : ""}${here ? `<div class="sec">Here</div><div class="ppl">${here}</div>` : ""}</div>`;
+  return `<style>${CARD_CSS}</style><div class="w"><div class="top">${top}</div>${contest}${bars ? `<div class="bars">${bars}</div>` : ""}${conds ? `<div class="chips">${conds}</div>` : ""}${here ? `<div class="sec">Here</div><div class="ppl">${here}</div>` : ""}</div>`;
 }
 
 export interface CueBridge {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { attachedBox, edgeForDrop, PAD, PANEL_W, PILL, SIDE_W, STRIP_H } from "./overlay-layout.js";
+import { attachedBox, edgeForDrop, floatingBox, PAD, PANEL_W, panelWidth, PILL, SIDE_W, STRIP_H, type Box } from "./overlay-layout.js";
 
 const vp = { width: 1600, height: 900 };
 const panel = (x: number, y: number) => ({ x, y, w: PANEL_W, h: 400 });
@@ -38,5 +38,35 @@ describe("attached geometry", () => {
   test("collapsed, the pill stays on its edge", () => {
     expect(attachedBox("right", false, vp)).toMatchObject({ x: vp.width - PILL.w - PAD, y: PAD, w: PILL.w, h: PILL.h });
     expect(attachedBox("bottom", false, vp).y).toBe(vp.height - PILL.h - PAD);
+  });
+});
+
+describe("phones: the panel fits a 360px-wide screen", () => {
+  const phone = { width: 360, height: 740 };
+  const inside = (b: Box, vp = phone) => b.x >= PAD && b.y >= PAD && b.x + b.w <= vp.width - PAD && b.y + b.h <= vp.height - PAD;
+
+  test("floating, open or collapsed, it stays on screen at full panel width", () => {
+    expect(panelWidth(phone)).toBe(PANEL_W);
+    expect(inside(floatingBox(phone, true, 420))).toBe(true);
+    expect(inside(floatingBox(phone, false, 420))).toBe(true);
+    expect(inside(floatingBox(phone, true, 2000))).toBe(true);
+  });
+
+  test("docked to any edge it stays on screen", () => {
+    for (const e of ["left", "right", "top", "bottom"] as const) {
+      expect(inside(attachedBox(e, true, phone))).toBe(true);
+      expect(inside(attachedBox(e, false, phone))).toBe(true);
+    }
+  });
+
+  test("on a narrower screen the panel shrinks to fit", () => {
+    const tiny = { width: 300, height: 600 };
+    expect(panelWidth(tiny)).toBe(300 - 2 * PAD);
+    expect(inside(floatingBox(tiny, true, 420), tiny)).toBe(true);
+    expect(inside(attachedBox("right", true, tiny), tiny)).toBe(true);
+  });
+
+  test("on a desktop nothing changes", () => {
+    expect(floatingBox(vp, true, 420)).toEqual({ x: vp.width - PANEL_W - 20, y: 72, w: PANEL_W, h: 420 });
   });
 });

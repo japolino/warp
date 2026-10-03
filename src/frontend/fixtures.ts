@@ -12,6 +12,9 @@ export const choice = (o: Partial<ChoiceView> & { id: string; label: string }): 
   group: null, desc: null, odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [], difficulty: null, ...o,
 });
 
+/** Fields the contract still lists as deprecated; the UI never reads them (they can go without touching the tests). */
+const DEPRECATED_HUD = { quests: [], encounter: null } as unknown as Pick<HudView, never>;
+
 /** Day 2, 23:40 at a harbour bar, Mira here, Jo elsewhere. */
 export function hud(o: Partial<HudView> = {}): HudView {
   return {
@@ -39,9 +42,8 @@ export function hud(o: Partial<HudView> = {}): HudView {
       { id: "g0", text: "Find a room for the night", status: "done", from: null, stakes: null },
     ],
     conflict: null,
-    quests: [],
-    encounter: null,
     turn: 7,
+    ...DEPRECATED_HUD,
     ...o,
   };
 }

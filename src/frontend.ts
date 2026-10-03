@@ -1,14 +1,20 @@
 import type { SpindleFloatWidgetHandle, SpindleFrontendContext } from "lumiverse-spindle-types";
 import type {
-  BackendToFrontend, BuilderAnswer, BuilderSession, EncounterLogView, FrontendToBackend, RecordView, RulesetStatus, Settings, TemplateInfo,
+  BackendToFrontend, BuilderAnswer, BuilderSession, FixField, FrontendToBackend, RecordView, RulesetStatus, Settings, TemplateInfo,
 } from "./shared/protocol.js";
 import { DEFAULT_SETTINGS } from "./shared/protocol.js";
 import { OPENROUTER_JEV } from "./shared/classifier-config.js";
 import { STYLES } from "./frontend/styles.js";
-import { attachedBox, edgeForDrop, PAD, PANEL_W, PILL, type Box, type Edge, type Viewport } from "./frontend/overlay-layout.js";
+import { attachedBox, edgeForDrop, floatingBox, PAD, panelWidth, PILL, type Box, type Edge, type Viewport } from "./frontend/overlay-layout.js";
 import { emptyDraft, renderBuilder, renderBuilderCta, type BuilderDraft } from "./frontend/builder-ui.js";
 import { connectCue } from "./frontend/cue-bridge.js";
-import { esc, hudParts, renderChips, renderEncounterLog, renderWhyFold, renderChoices, renderHud, renderJournal, renderPart, renderRulesetCard, renderSettings, renderTemplatePicker } from "./frontend/render.js";
+import { esc } from "./frontend/html.js";
+import { hudParts, renderHud, renderPart } from "./frontend/render-panel.js";
+import { choiceOrder, renderChoices, renderReply } from "./frontend/render-chat.js";
+import { renderSettings, renderStyleSwitch } from "./frontend/render-settings.js";
+import { renderJournal, renderRulesetCard, renderTemplatePicker } from "./frontend/render.js";
+import { connectPublicEvents, toWarpState } from "./frontend/public-events.js";
+import { newRolls, playRoll, prefersReducedMotion } from "./frontend/roll-fx.js";
 import { acceptsResponse } from "./frontend/response-gate.js";
 import { logoSvg } from "./frontend/logo.js";
 
@@ -16,6 +22,8 @@ type StateMsg = Extract<BackendToFrontend, { type: "state" }>;
 
 const CLEANUP_KEY = "__warpCleanup";
 const ICON = logoSvg({ size: 20 });
+/** A click on a choice is not repeated until the backend answers (or this long passes). */
+const ACT_GUARD_MS = 4000;
 
 function store(key: string, value?: string): string | null {
   try {
@@ -41,19 +49,23 @@ export function setup(ctx: SpindleFrontendContext) {
   let exported: { name: string; text: string } | null = null;
   let bDraft: BuilderDraft = emptyDraft();
   let busy = { chatId: "", on: false, label: "" };
-  let editingBar: string | null = null;
+  /** The line open for a one-click fix (see HudOpts.editing), and what has been typed into it. */
+  let editing: string | null = null;
+  let drafts: Record<string, string> = {};
+  /** A choice just clicked: further clicks wait for the backend's answer (no lock after the reply). */
+  let pendingAct: { chatId: string; at: number } | null = null;
   let drawerView: "sheet" | "journal" | "rules" | "settings" = "sheet";
   const openSections = new Map<string, boolean>();
 
   const send = (m: FrontendToBackend) => ctx.sendToBackend(m);
   const chatId = () => { try { return ctx.getActiveChat().chatId ?? null; } catch { return null; } };
-  // ───────── surfaces: drawer tab (always) + left dock panel (when allowed) ─────────
+  // ───────── surfaces: drawer tab (always) + floating status panel (when allowed) ─────────
   const tab = ctx.ui.registerDrawerTab({
     id: "warp",
     title: "Warp — game state",
     shortName: "Warp",
     headerTitle: "Warp",
-    description: "Stats, dice, inventory, people and game settings",
+    description: "Scene, people, dice, goals and game settings",
     keywords: ["stats", "dice", "game", "ruleset", "rpg", "tracker"],
     iconSvg: ICON,
   });
@@ -88,9 +100,7 @@ export function setup(ctx: SpindleFrontendContext) {
   let cur: Box = { x: 0, y: 72, w: PILL.w, h: PILL.h };
   try {
     const vp = viewport();
-    const w = overlayOpen ? PANEL_W : PILL.w;
-    const h = overlayOpen ? 420 : PILL.h;
-    const start = edge ? attachedBox(edge, overlayOpen, vp) : { x: Math.max(PAD, vp.width - w - 20), y: 72, w, h };
+    const start = edge ? attachedBox(edge, overlayOpen, vp) : floatingBox(vp, overlayOpen, 420);
     overlay = ctx.ui.createFloatWidget({
       width: start.w,
       height: start.h,
@@ -139,7 +149,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const maxH = Math.max(240, vp.height - 140);
     overlayEl.style.setProperty("--warp-overlay-max", `${maxH - PILL.h}px`);
     // Measure the body's natural height so short HUDs don't leave empty space.
-    requestAnimationFrame(() => resizeFloating(PANEL_W, Math.min(maxH, PILL.h + dockRoot.scrollHeight + 2)));
+    requestAnimationFrame(() => resizeFloating(panelWidth(viewport()), Math.min(maxH, PILL.h + dockRoot.scrollHeight + 2)));
   }
 
   // Dragging an attached overlay detaches it straight away (back to floating size),
@@ -159,7 +169,7 @@ export function setup(ctx: SpindleFrontendContext) {
       edge = null;
       store("overlayEdge", "");
       overlayEl.dataset.edge = "";
-      const w = overlayOpen ? PANEL_W : PILL.w;
+      const w = overlayOpen ? panelWidth(viewport()) : PILL.w;
       const h = overlayOpen ? Math.min(420, cur.h) : PILL.h;
       overlay.setSize(w, h);
       cur = { ...cur, w, h };
@@ -199,11 +209,12 @@ export function setup(ctx: SpindleFrontendContext) {
   function renderHead() {
     const h = state?.hud;
     const clock = h?.clock ? `${h.clock.time}` : "";
+    const fight = h?.conflict ? `<span class="warp-tone-bad" title="${esc(`${h.conflict.label} with ${h.conflict.opponent}`)}">⚔</span> ` : "";
     const worst = h?.bars.find((b) => b.tone === "bad") ?? h?.bars.find((b) => b.tone === "warn");
     const dot = `<span class="warp-dot warp-bg-${worst?.tone ?? "good"}" title="${esc(worst ? `${worst.label}: ${worst.text ?? worst.display}` : "All good")}"></span>`;
     const where = overlayOpen && h?.location ? ` <span class="warp-dim">· ${esc(h.location.name)}</span>` : "";
     headEl.innerHTML = `
-      <span class="warp-overlay-title">🎲 ${clock ? `<b>${esc(clock)}</b>` : "Warp"}${where}</span>
+      <span class="warp-overlay-title">${fight}🎲 ${clock ? `<b>${esc(clock)}</b>` : "Warp"}${where}</span>
       ${dot}
       <span class="warp-overlay-actions">
         ${overlayOpen && edge ? `<button class="warp-btn warp-btn-ghost" data-detach title="Float" aria-label="Detach">⇱</button>` : ""}
@@ -219,7 +230,7 @@ export function setup(ctx: SpindleFrontendContext) {
       const vp = viewport();
       edge = null;
       store("overlayEdge", "");
-      place({ x: Math.max(PAD, vp.width - PANEL_W - 40), y: 72, w: PANEL_W, h: Math.min(420, cur.h) });
+      place(floatingBox(vp, true, Math.min(420, cur.h)));
       renderHead();
       fitOverlay();
       return;
@@ -253,22 +264,31 @@ export function setup(ctx: SpindleFrontendContext) {
     }
   }
 
+  /** Re-render a panel root, keeping open sections, scroll and the focused fix field. */
+  function paint(root: HTMLElement, html: string) {
+    rememberSections(root);
+    const kept = root.scrollTop;
+    const focused = document.activeElement instanceof HTMLInputElement && root.contains(document.activeElement) ? document.activeElement.dataset.fixInput ?? null : null;
+    root.innerHTML = html;
+    restoreSections(root);
+    root.scrollTop = kept;
+    if (focused) root.querySelector<HTMLInputElement>(`[data-fix-input="${CSS.escape(focused)}"]`)?.focus();
+    flashChangedBars(root);
+  }
+
+  const hudOpts = (compact: boolean) => ({ editing, compact, drafts, sceneHint: state?.sceneHint ?? null });
+
   function renderDock() {
     if (!overlay) return;
     renderHead();
-    rememberSections(dockRoot);
-    const kept = dockRoot.scrollTop;
+    let html = "";
     if (state?.hud) {
-      const { head, parts } = hudParts(state.hud, { editing: editingBar, compact: true });
-      dockRoot.innerHTML = historyNotice() + head + parts.map((p) => renderPart(p)).join("");
+      const { head, parts } = hudParts(state.hud, hudOpts(true));
+      html = historyNotice() + head + parts.map(renderPart).join("");
     } else if (state?.status.state === "broken") {
-      dockRoot.innerHTML = renderRulesetCard(state.status, true);
-    } else {
-      dockRoot.innerHTML = "";
+      html = renderRulesetCard(state.status, true);
     }
-    restoreSections(dockRoot);
-    dockRoot.scrollTop = kept;
-    flashChangedBars(dockRoot);
+    paint(dockRoot, html);
   }
 
   function historyNotice(): string {
@@ -285,7 +305,6 @@ export function setup(ctx: SpindleFrontendContext) {
   cleanups.push(() => drawerRoot.removeEventListener("click", reconcileClick));
 
   function renderDrawer() {
-    rememberSections(drawerRoot);
     const hasChat = !!state?.chatId;
     const status: RulesetStatus = state?.status ?? { state: "none", name: null, source: null, issues: [], characterName: null, cardKind: "character", tags: [] };
     const views: [typeof drawerView, string][] = [
@@ -300,23 +319,23 @@ export function setup(ctx: SpindleFrontendContext) {
     </div>`;
     let body = "";
     if (drawerView === "sheet") {
-      body = state?.hud ? renderHud(state.hud, { editing: editingBar, compact: false }) : renderRulesetCard(status, hasChat);
+      body = state?.hud ? renderHud(state.hud, hudOpts(false)) : renderRulesetCard(status, hasChat);
     } else if (drawerView === "journal") {
-      body = renderJournal(state?.hud ?? null, state?.records ?? []);
+      body = renderJournal(state?.hud ?? null, state?.records ?? [], editing);
     } else if (drawerView === "rules" && builder) {
       body = renderBuilder(builder, bDraft, templates, connections, status.state !== "none");
     } else if (drawerView === "rules") {
-      body = renderBuilderCta(status.state !== "none", hasChat, exported) + renderRulesetCard(status, hasChat) + `<div class="warp-card"><h3>Writing rules</h3><p>Rules live in entries titled <b>warp-ruleset · …</b> (or any lorebook named <b>warp-ruleset</b>). Each entry is YAML; entries merge together. Warp keeps them out of the prompt automatically.</p></div>`;
+      body = renderBuilderCta(status.state !== "none", hasChat, exported) + renderRulesetCard(status, hasChat)
+        + (hasChat ? `<div class="warp-card">${renderStyleSwitch(status, templates)}</div>` : "")
+        + `<div class="warp-card"><h3>Writing rules</h3><p>Rules live in entries titled <b>warp-ruleset · …</b> (or any lorebook named <b>warp-ruleset</b>). Each entry is YAML; entries merge together. Warp keeps them out of the prompt automatically.</p></div>`;
     } else {
-      body = renderSettings(settings, state?.status ?? null, connections, jevKeySet);
+      body = renderSettings(settings, state?.status ?? null, connections, jevKeySet, templates);
     }
-    drawerRoot.innerHTML = tabs + historyNotice() + body;
-    restoreSections(drawerRoot);
-    flashChangedBars(drawerRoot);
+    paint(drawerRoot, tabs + historyNotice() + body);
     tab.setBadge(status.issues.some((i) => i.level === "error") ? "!" : null);
   }
 
-  // ───────── in-chat: choices under the latest reply, chips on each message ─────────
+  // ───────── in-chat: one row under each reply, choices under the latest ─────────
   let choicesEl: Element | null = null;
   let choicesFor: string | null = null;
   let choicesHtml = "";
@@ -336,7 +355,7 @@ export function setup(ctx: SpindleFrontendContext) {
     return card ? { target: card, position: "afterend" } : { target: row, position: "beforeend" };
   }
 
-  /** Undo a replay that put our row in the wrong place, and keep choices under the chips. */
+  /** Undo a replay that put our row in the wrong place, and keep choices under the reply's row. */
   function healPlacement() {
     const fix = (el: Element | undefined | null, id: string | null) => {
       if (!el?.isConnected || !id) return;
@@ -357,23 +376,11 @@ export function setup(ctx: SpindleFrontendContext) {
     return true;
   }
 
-  /**
-   * The encounter that's on, when its log is the message the moves sit under:
-   * its rounds go in the panel above the moves rather than in a second box.
-   */
-  function liveLog(): EncounterLogView | null {
-    const anchor = state?.choicesAnchor;
-    if (!anchor || !state?.hud?.encounter) return null;
-    return (state.encounterLogs ?? []).find((l) => l.messageId === anchor && l.status !== "ended" && l.rounds.length) ?? null;
-  }
-
   function placeChoices(force = false) {
     const anchor = state?.choicesAnchor ?? null;
     const isBusy = busy.on && busy.chatId === state?.chatId;
-    const live = liveLog();
-    const recap = live ? { foe: live.foe, rounds: live.rounds, why: renderWhyFold(state?.records.find((r) => r.messageId === live.messageId)) } : null;
-    const html = settings.enabled && state?.hud && anchor
-      ? renderChoices(state.choices, { showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined, encounter: state.hud.encounter, recap })
+    const html = settings.enabled && settings.showChoices && state?.hud && anchor
+      ? renderChoices(state.choices, { showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined, conflict: state.hud.conflict })
       : "";
     if (!force && anchor === choicesFor && html === choicesHtml && choicesEl?.isConnected) return;
     if (choicesEl) { ctx.dom.uninject(choicesEl); choicesEl = null; }
@@ -382,8 +389,8 @@ export function setup(ctx: SpindleFrontendContext) {
     if (!anchor || !html) return;
     const slot = messageSlot(anchor);
     if (!slot) return;
-    choicesEl = ctx.dom.inject(slot.target, `<div class="warp-choices${isBusy ? " warp-busy" : ""}">${html}</div>`, slot.position);
-    // "afterend" puts it straight after the card — above the chips; move it below them.
+    choicesEl = ctx.dom.inject(slot.target, `<div class="warp-choices">${html}</div>`, slot.position);
+    // "afterend" puts it straight after the card — above the reply's row; move it below.
     healPlacement();
   }
 
@@ -391,19 +398,9 @@ export function setup(ctx: SpindleFrontendContext) {
     const records: RecordView[] = state?.records ?? [];
     wantChips.clear();
     if (settings.enabled) {
-      // A quiet encounter's message shows its rounds instead: the same facts, once.
-      const logs = new Map((state?.encounterLogs ?? []).map((l) => [l.messageId, l]));
       for (const r of records) {
-        if (logs.has(r.messageId)) continue;
-        const html = renderChips(r, { showDice: settings.showDiceChips, showChanges: settings.showChanges });
+        const html = renderReply(r, { showChanges: settings.showChanges, latest: r.messageId === state?.latestMessageId });
         if (html) wantChips.set(r.messageId, html);
-      }
-      // A quiet encounter's message carries its round cards (and every round behind "Show rounds").
-      const live = liveLog();
-      for (const log of state?.encounterLogs ?? []) {
-        if (log === live) continue;
-        const html = renderEncounterLog(log, renderWhyFold(records.find((r) => r.messageId === log.messageId)));
-        if (html) wantChips.set(log.messageId, (wantChips.get(log.messageId) ?? "") + html);
       }
     }
     let anchorTouched = false;
@@ -418,7 +415,6 @@ export function setup(ctx: SpindleFrontendContext) {
       if (chipEls.has(id)) continue;
       if (injectChips(id, html) && id === state?.choicesAnchor) anchorTouched = true;
     }
-    // Keep choices below the chips on the anchor message.
     placeChoices(anchorTouched);
   }
 
@@ -436,7 +432,7 @@ export function setup(ctx: SpindleFrontendContext) {
     mo = new MutationObserver(() => { if (!moTimer) moTimer = setTimeout(pendingCheck, 200); });
     mo.observe(document.body, { childList: true, subtree: true });
     cleanups.push(() => { mo?.disconnect(); if (moTimer) clearTimeout(moTimer); });
-  } catch { /* no observer: chips appear on the next state push */ }
+  } catch { /* no observer: rows appear on the next state push */ }
 
   // The visual-novel extension (Cue) covers the chat; hand it our choices and status card.
   const cue = connectCue({ act: (id) => act(id), chatId });
@@ -445,20 +441,37 @@ export function setup(ctx: SpindleFrontendContext) {
     cue.update({ state, enabled: settings.enabled, showOdds: settings.showOdds, busy: busy.on && busy.chatId === state?.chatId, busyLabel: busy.label });
   }
 
+  // Other extensions (LumiDoll…) read the scene from warp-state-v1.
+  const publicEvents = connectPublicEvents({ getState: () => toWarpState(state, { enabled: settings.enabled, chatId: chatId() }) });
+  cleanups.push(() => publicEvents.destroy());
+
   function renderAll() {
     renderDock();
     renderDrawer();
     reconcileMessages();
     syncDockVisibility();
     syncCue();
+    publicEvents.publish();
     if (state?.hud) lastBars = new Map(state.hud.bars.map((b) => [b.id, b.value]));
+  }
+
+  /** The one roll animation, on the rows of replies that just rolled. */
+  function playRolls(recs: RecordView[]) {
+    if (!recs.length) return;
+    const reduced = prefersReducedMotion();
+    requestAnimationFrame(() => {
+      for (const r of recs) {
+        const row = chipEls.get(r.messageId)?.el;
+        if (row instanceof HTMLElement && row.isConnected) playRoll(row, r, reduced);
+      }
+    });
   }
 
   // ───────── template picker ─────────
   function openPicker() {
     const id = chatId();
     if (!id) return;
-    const modal = ctx.ui.showModal({ title: "Add a Warp ruleset", width: 520, maxHeight: 640 });
+    const modal = ctx.ui.showModal({ title: "Add Warp rules", width: 560, maxHeight: 680 });
     modal.root.innerHTML = renderTemplatePicker(templates, state?.status.characterName ? { name: state.status.characterName, track: state.status.cardKind !== "scenario" } : null);
     modal.root.addEventListener("click", (e) => {
       const btn = (e.target as Element).closest<HTMLElement>("[data-template]");
@@ -483,7 +496,26 @@ export function setup(ctx: SpindleFrontendContext) {
     if (res.confirmed) openPicker();
   }
 
-  // ───────── events: HUD & drawer ─────────
+  /** Story / Adventure: install the template, or switch the installed one after a confirm (people are kept). */
+  async function chooseStyle(btn: HTMLElement) {
+    const cid = chatId();
+    const templateId = btn.dataset.template;
+    if (!cid || !templateId) return;
+    if (btn.dataset.styleMode === "switch") {
+      const story = btn.dataset.style === "story";
+      const res = await ctx.ui.showConfirm({
+        title: story ? "Switch to Story (no dice)?" : "Switch to Adventure (dice)?",
+        message: "The template's rules are replaced. Your people entries are kept, and the game state recorded in chats stays.",
+        confirmLabel: "Switch",
+        variant: "warning",
+      });
+      if (!res.confirmed) return;
+      send({ type: "install_template", chatId: cid, templateId, replace: true });
+    } else {
+      send({ type: "install_template", chatId: cid, templateId, ...(state?.status.characterName ? { trackCharacter: state.status.cardKind !== "scenario" } : {}) });
+    }
+  }
+
   // ───────── AI builder ─────────
   function builderAnswers(): Record<string, BuilderAnswer> {
     const out: Record<string, BuilderAnswer> = {};
@@ -608,6 +640,63 @@ export function setup(ctx: SpindleFrontendContext) {
     return false;
   }
 
+  // ───────── one-click fixes ─────────
+  function toggleEdit(key: string) {
+    editing = editing === key ? null : key;
+    drafts = {};
+    renderDock();
+    renderDrawer();
+  }
+
+  /** The value of an open fix row, as the `fix` message wants it. */
+  function fixValue(row: Element, field: string): string | number | boolean | null | undefined {
+    const input = (k: string) => row.querySelector<HTMLInputElement>(`[data-fix-input="${CSS.escape(k)}"]`);
+    if (field === "time") {
+      const day = Number(input("time:day")?.value);
+      const time = input("time")?.value ?? "";
+      if (!/^\d{1,2}:\d{2}$/.test(time)) return undefined;
+      return Number.isFinite(day) && day >= 1 ? `Day ${Math.floor(day)} ${time}` : time;
+    }
+    const el = row.querySelector<HTMLInputElement>("[data-fix-input]");
+    if (!el) return undefined;
+    if (field === "item" || field === "money") {
+      const n = Number(el.value);
+      return el.value.trim() !== "" && Number.isFinite(n) ? n : undefined;
+    }
+    const text = el.value.replace(/\s+/g, " ").trim();
+    return text ? text.slice(0, 160) : null;
+  }
+
+  function sendFix(field: FixField, who: string | undefined, value: string | number | boolean | null) {
+    const cid = chatId();
+    if (!cid) return;
+    send({ type: "fix", chatId: cid, field, ...(who ? { who } : {}), value });
+    editing = null;
+    drafts = {};
+    renderDock();
+    renderDrawer();
+  }
+
+  function onFixSet(btn: HTMLElement) {
+    const row = btn.closest("[data-fix-row]");
+    const field = btn.dataset.fix as FixField;
+    if (!row || !field) return;
+    const value = fixValue(row, field);
+    if (value === undefined) { row.querySelector<HTMLInputElement>("[data-fix-input]")?.focus(); return; }
+    sendFix(field, btn.dataset.who, value);
+  }
+
+  /** Two taps for anything that can't be taken back (giving in). */
+  function armed(btn: HTMLElement, label: string): boolean {
+    if (btn.dataset.armed) return true;
+    const was = btn.textContent ?? "";
+    btn.dataset.armed = "1";
+    btn.textContent = label;
+    btn.classList.add("warp-btn-danger");
+    setTimeout(() => { if (btn.isConnected) { delete btn.dataset.armed; btn.textContent = was; btn.classList.remove("warp-btn-danger"); } }, 4000);
+    return false;
+  }
+
   function onPanelClick(e: Event) {
     const t = e.target as Element;
     if (t.closest("[data-jev-openrouter]")) { send({ type: "settings", patch: { ...OPENROUTER_JEV } }); return; }
@@ -621,47 +710,62 @@ export function setup(ctx: SpindleFrontendContext) {
       else jump.setAttribute("title", "That message isn't loaded — scroll up in the chat to find it.");
       return;
     }
-    const use = t.closest<HTMLElement>("[data-use]");
-    if (use) { if (!(use as HTMLButtonElement).disabled) act(use.dataset.use!); return; }
-    // Two taps for anything that can't be taken back (giving up a quest).
-    const sure = t.closest<HTMLElement>("[data-confirm-use]");
-    if (sure) {
-      if (sure.dataset.armed) { act(sure.dataset.confirmUse!); return; }
-      sure.dataset.armed = "1";
-      sure.textContent = "Really? Tap again";
-      sure.classList.add("warp-btn-danger");
-      setTimeout(() => { if (sure.isConnected) { delete sure.dataset.armed; sure.textContent = "Give up"; sure.classList.remove("warp-btn-danger"); } }, 4000);
+    const cid = chatId();
+    const contest = t.closest<HTMLElement>("[data-contest]");
+    if (contest) {
+      const op = contest.dataset.contest === "give_in" ? "give_in" : "break_off";
+      if (op === "give_in" && !armed(contest, "Really give in?")) return;
+      if (cid) send({ type: "contest", chatId: cid, op });
       return;
     }
+    const use = t.closest<HTMLElement>("[data-use]");
+    if (use) { if (!(use as HTMLButtonElement).disabled) act(use.dataset.use!); return; }
     if (t.closest("[data-install]")) { void confirmReplace(); return; }
-    if (t.closest("[data-reload]")) { send({ type: "reload", chatId: chatId() }); return; }
-    const save = t.closest<HTMLElement>("[data-save]");
-    if (save) {
-      const id = save.dataset.save!;
-      const input = save.parentElement?.querySelector<HTMLInputElement>(`[data-num]`);
-      const v = Number(input?.value);
-      const cid = chatId();
-      if (cid && Number.isFinite(v)) send({ type: "adjust", chatId: cid, stat: id, value: v });
-      editingBar = null;
+    if (t.closest("[data-reload]")) { send({ type: "reload", chatId: cid }); return; }
+    const style = t.closest<HTMLElement>("[data-style-mode]");
+    if (style) { void chooseStyle(style); return; }
+    const seg = t.closest<HTMLElement>("[data-setting-bool]");
+    if (seg) { send({ type: "settings", patch: { [seg.dataset.settingBool!]: seg.dataset.v === "1" } as Partial<Settings> }); return; }
+
+    // Fixes: ✎ opens a line, Set sends it.
+    const fix = t.closest<HTMLElement>("[data-fix]");
+    if (fix) { onFixSet(fix); return; }
+    const present = t.closest<HTMLElement>("[data-fix-present]");
+    if (present) { sendFix("present", present.dataset.fixPresent, present.dataset.value === "true"); return; }
+    const goal = t.closest<HTMLElement>("[data-fix-goal]");
+    if (goal) { sendFix("goal", goal.dataset.fixGoal, goal.dataset.value ?? "done"); return; }
+    const saveBar = t.closest<HTMLElement>("[data-save-bar]");
+    if (saveBar) {
+      const v = Number(saveBar.parentElement?.querySelector<HTMLInputElement>("[data-num]")?.value);
+      if (cid && Number.isFinite(v)) send({ type: "adjust", chatId: cid, stat: saveBar.dataset.saveBar!, value: v });
+      editing = null;
+      return;
+    }
+    const saveSkill = t.closest<HTMLElement>("[data-save-skill]");
+    if (saveSkill) {
+      const v = Number(saveSkill.parentElement?.querySelector<HTMLInputElement>("[data-fix-input]")?.value);
+      if (cid && Number.isFinite(v)) send({ type: "adjust", chatId: cid, stat: saveSkill.dataset.saveSkill!, value: v });
+      editing = null;
+      drafts = {};
       return;
     }
     const saveRel = t.closest<HTMLElement>("[data-save-rel]");
     if (saveRel) {
       const [who, stat] = saveRel.dataset.saveRel!.split(":");
       const v = Number(saveRel.parentElement?.querySelector<HTMLInputElement>("[data-num]")?.value);
-      const cid = chatId();
       if (cid && Number.isFinite(v)) send({ type: "adjust_rel", chatId: cid, who, stat, value: v });
-      editingBar = null;
+      editing = null;
       return;
     }
-    if (t.closest(".warp-bar-edit")) return;
-    const bar = t.closest<HTMLElement>("[data-bar]");
-    if (bar) { editingBar = editingBar === bar.dataset.bar ? null : bar.dataset.bar!; renderDock(); renderDrawer(); return; }
-    const rel = t.closest<HTMLElement>("[data-rel]");
-    if (rel) { const k = `rel:${rel.dataset.rel}`; editingBar = editingBar === k ? null : k; renderDock(); renderDrawer(); return; }
+    // ✎, Cancel and Done buttons; then whole rows (bars, skills) that open on a tap, but not from inside their field.
+    const editBtn = t.closest<HTMLElement>("button[data-edit]");
+    if (editBtn) { toggleEdit(editBtn.dataset.edit!); return; }
+    if (t.closest(".warp-bar-edit, .warp-fix")) return;
+    const edit = t.closest<HTMLElement>("[data-edit]");
+    if (edit) { toggleEdit(edit.dataset.edit!); return; }
+
     const forget = t.closest<HTMLElement>("[data-forget]");
     if (forget) {
-      const cid = chatId();
       const who = forget.dataset.forget!;
       void ctx.ui.showConfirm({
         title: `Stop tracking ${forget.dataset.name}?`,
@@ -692,11 +796,13 @@ export function setup(ctx: SpindleFrontendContext) {
   function onPanelInput(e: Event) {
     const t = e.target as HTMLInputElement;
     if (onBuilderInput(t)) return;
+    // Typed into a fix: kept across pushes until Set or Cancel.
+    if (t.dataset.fixInput) { drafts[t.dataset.fixInput] = t.value; return; }
     // Slider and number box share the stat's real range; keep them in step both ways.
-    if (t.dataset.range) {
+    if (t.dataset.range !== undefined) {
       const num = t.parentElement?.querySelector<HTMLInputElement>("[data-num]");
       if (num) num.value = t.value;
-    } else if (t.dataset.num) {
+    } else if (t.dataset.num !== undefined) {
       const range = t.parentElement?.querySelector<HTMLInputElement>("[data-range]");
       if (range) range.value = t.value;
     }
@@ -704,6 +810,7 @@ export function setup(ctx: SpindleFrontendContext) {
   function onPanelChange(e: Event) {
     const t = e.target as HTMLInputElement | HTMLSelectElement;
     if (onBuilderInput(t as HTMLInputElement)) return;
+    if (t.dataset.fixInput !== undefined) return;
     // A rulebook file picked for import: its text goes into the box to check and preview.
     if ("importFile" in t.dataset) {
       const file = (t as HTMLInputElement).files?.[0];
@@ -713,11 +820,6 @@ export function setup(ctx: SpindleFrontendContext) {
       });
       return;
     }
-    const pctKey = t.dataset.settingPct as "autoConfidence" | undefined;
-    if (pctKey) {
-      send({ type: "settings", patch: { [pctKey]: Number(t.value) / 100 } });
-      return;
-    }
     const key = t.dataset.setting as keyof Settings | undefined;
     if (!key) return;
     const value = t instanceof HTMLInputElement && t.type === "checkbox" ? t.checked : t.value;
@@ -725,6 +827,11 @@ export function setup(ctx: SpindleFrontendContext) {
   }
   function onPanelKey(e: KeyboardEvent) {
     const t = e.target as HTMLInputElement;
+    if (t.dataset?.fixInput !== undefined) {
+      if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); const set = t.closest("[data-fix-row]")?.querySelector<HTMLElement>("[data-fix]"); if (set) onFixSet(set); }
+      else if (e.key === "Escape") { e.preventDefault(); toggleEdit(editing ?? ""); }
+      return;
+    }
     if (e.key === "Enter" && t.dataset.newtag !== undefined && t.value.trim()) {
       send({ type: "settings", patch: { veils: [...settings.veils, t.value.trim().toLowerCase()] } });
       t.value = "";
@@ -740,24 +847,16 @@ export function setup(ctx: SpindleFrontendContext) {
   for (const root of [drawerRoot, dockRoot]) wirePanel(root);
 
   // ───────── events: in-chat clicks (delegated; injected nodes are sanitized) ─────────
+  /**
+   * Pick a choice. Never refused because the backend is busy writing the next choices: the backend waits for
+   * that itself. Only a second click right after the first waits for the backend's answer.
+   */
   function act(actionId: string, params?: Record<string, string>) {
     const cid = chatId();
-    if (!cid || (busy.on && busy.chatId === cid)) return;
+    if (!cid) return;
+    if (pendingAct && pendingAct.chatId === cid && Date.now() - pendingAct.at < ACT_GUARD_MS) return;
+    pendingAct = { chatId: cid, at: Date.now() };
     send({ type: "act", chatId: cid, actionId, ...(params ? { params } : {}) });
-    lockUntilReply(cid);
-  }
-  /** Lock the choices while a turn starts; if nothing starts (rejected, network hiccup), unlock again. */
-  function lockUntilReply(cid: string) {
-    busy = { chatId: cid, on: true, label: "Rolling…" };
-    placeChoices(true);
-    syncCue();
-    setTimeout(() => {
-      if (busy.on && busy.label === "Rolling…" && busy.chatId === cid) {
-        busy = { chatId: "", on: false, label: "" };
-        placeChoices(true);
-        syncCue();
-      }
-    }, 15000);
   }
   async function confirmRedo(btn: HTMLElement) {
     const cid = chatId();
@@ -770,8 +869,6 @@ export function setup(ctx: SpindleFrontendContext) {
       variant: "info",
     });
     if (!res.confirmed) return;
-    busy = { chatId: cid, on: true, label: "Rolling…" };
-    placeChoices(true);
     send({ type: "redo", chatId: cid, userMessageId, actionId: null });
   }
 
@@ -779,29 +876,23 @@ export function setup(ctx: SpindleFrontendContext) {
     const t = e.target as Element | null;
     if (!t?.closest) return;
     const choice = t.closest<HTMLElement>(".warp-choices [data-act]");
-    if (choice) { e.preventDefault(); if (!(choice as HTMLButtonElement).disabled) act(choice.dataset.act!); return; }
-    if (t.closest(".warp-choices [data-enc-send]")) { e.preventDefault(); sendEncounterLine(t.closest(".warp-choices")?.querySelector<HTMLInputElement>("[data-enc-say]") ?? null); return; }
+    if (choice) {
+      e.preventDefault();
+      if ((choice as HTMLButtonElement).disabled) return;
+      choice.classList.add("warp-choice-picked");
+      act(choice.dataset.act!);
+      return;
+    }
     const dice = t.closest<HTMLElement>(".warp-chips [data-dice]");
     if (dice) {
       const row = dice.closest<HTMLElement>(".warp-chips")!;
       if (row.hasAttribute("data-open")) row.removeAttribute("data-open"); else row.setAttribute("data-open", "");
       return;
     }
-    const why = t.closest<HTMLElement>(".warp-chips [data-why]");
-    if (why) {
-      const row = why.closest<HTMLElement>(".warp-chips")!;
-      if (row.hasAttribute("data-why-open")) row.removeAttribute("data-why-open"); else row.setAttribute("data-why-open", "");
-      return;
-    }
+    const more = t.closest<HTMLElement>(".warp-chips [data-more]");
+    if (more) { more.closest(".warp-changed")?.setAttribute("data-more-open", ""); return; }
     const redo = t.closest<HTMLElement>(".warp-chips [data-redo]");
     if (redo) { e.preventDefault(); void confirmRedo(redo); return; }
-    const reroll = t.closest<HTMLElement>(".warp-chips [data-reroll]");
-    if (reroll) {
-      e.preventDefault();
-      const cid = chatId();
-      if (cid && reroll.dataset.reroll && !(busy.on && busy.chatId === cid)) { send({ type: "reroll", chatId: cid, messageId: reroll.dataset.reroll }); lockUntilReply(cid); }
-      return;
-    }
     const undo = t.closest<HTMLElement>(".warp-chips [data-undo]");
     if (undo) {
       const row = undo.closest<HTMLElement>("[data-warp-chips]");
@@ -814,33 +905,13 @@ export function setup(ctx: SpindleFrontendContext) {
   document.addEventListener("click", onDocClick, true);
   cleanups.push(() => document.removeEventListener("click", onDocClick, true));
 
-  /** A move typed into the encounter box: told as a round in the encounter's message, not sent to the narrator. */
-  function sendEncounterLine(input: HTMLInputElement | null) {
-    const text = input?.value.trim();
-    const cid = chatId();
-    if (!input || !text || !cid || (busy.on && busy.chatId === cid)) return;
-    send({ type: "say", chatId: cid, text });
-    input.value = "";
-    lockUntilReply(cid);
-  }
-  const onEncKey = (e: KeyboardEvent) => {
-    const t = e.target as HTMLElement | null;
-    if (!(t instanceof HTMLInputElement) || !t.matches(".warp-choices [data-enc-say]")) return;
-    // Typing here is ours: the host's shortcuts and our number hotkeys stay out of it.
-    e.stopPropagation();
-    if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); sendEncounterLine(t); }
-  };
-  document.addEventListener("keydown", onEncKey, true);
-  cleanups.push(() => document.removeEventListener("keydown", onEncKey, true));
-
   const onKey = (e: KeyboardEvent) => {
     if (!settings.hotkeys || e.ctrlKey || e.metaKey || e.altKey) return;
     const t = e.target as HTMLElement | null;
     if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
-    if (!/^[0-9]$/.test(e.key) || !state?.choices.length || !choicesEl?.isConnected) return;
-    const n = e.key === "0" ? 10 : Number(e.key);
-    const c = state.choices[n - 1];
-    if (!c) return;
+    if (!/^[1-9]$/.test(e.key) || !state?.choices.length || !choicesEl?.isConnected) return;
+    const c = choiceOrder(state.choices)[Number(e.key) - 1];
+    if (!c || c.locked) return;
     e.preventDefault();
     act(c.id);
   };
@@ -853,15 +924,19 @@ export function setup(ctx: SpindleFrontendContext) {
     if (!acceptsResponse(m, chatId(), state)) return;
     switch (m.type) {
       case "state": {
-        if (state?.chatId !== m.chatId) { editingBar = null; lastBars = new Map(); }
+        const rolls = newRolls(state, m);
+        if (state?.chatId !== m.chatId) { editing = null; drafts = {}; lastBars = new Map(); }
+        // The backend answered: a new click may go.
+        if (state?.latestMessageId !== m.latestMessageId || state?.choicesAnchor !== m.choicesAnchor) pendingAct = null;
         state = m;
-        if (m.chatId === busy.chatId && !m.busy && busy.label === "Rolling…") busy = { chatId: "", on: false, label: "" };
-        if (m.busy && m.chatId) busy = { chatId: m.chatId, on: true, label: busy.label };
+        if (m.chatId) busy = m.busy ? { chatId: m.chatId, on: true, label: busy.chatId === m.chatId ? busy.label : "" } : { chatId: "", on: false, label: "" };
         renderAll();
+        playRolls(rolls);
         break;
       }
       case "busy":
         busy = { chatId: m.chatId, on: m.busy, label: m.busy ? m.label ?? busy.label ?? "" : "" };
+        if (m.busy) pendingAct = null;
         placeChoices(true);
         syncCue();
         break;
@@ -906,7 +981,7 @@ export function setup(ctx: SpindleFrontendContext) {
   const poll = setInterval(() => {
     const now = chatId();
     if (now !== lastChat) {
-      lastChat = now; state = null; builder = null; busy = { chatId: "", on: false, label: "" };
+      lastChat = now; state = null; builder = null; busy = { chatId: "", on: false, label: "" }; pendingAct = null; editing = null; drafts = {};
       renderAll(); send({ type: "refresh", chatId: now });
     }
   }, 1000);

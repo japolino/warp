@@ -9,9 +9,9 @@
 
 A game engine under your roleplay. Warp owns stats, dice, time, inventory and relationships; the model only narrates outcomes the engine has already decided.
 
-- **Choices** appear under the latest reply (hotkeys 1–9, odds on each button). Each choice carries a difficulty word, so the odds follow the words. You can also just type: quoted dialogue is never rolled, and a quick read rolls only risky, contested attempts (on a listed action, or on your closest ability), and the dice decide.
-- **Status panel** floats over the chat (drag it to any screen edge to attach it as a sidebar or strip). Plus a **Warp** drawer tab: Sheet · Journal · Ruleset · Settings.
-- **Dice & change chips** on every reply. Changes read from the story are dashed and can be undone with ×.
+- **Choices** appear under the latest reply: three written for the moment, each with a difficulty word and its real odds (hotkeys 1–9), so the odds follow the words, plus a small **More** row for the ruleset's own actions. Clicks are never locked while Warp writes the next choices. You can also just type: quoted dialogue is never rolled, and a quick read rolls only risky, contested attempts (on a listed action, or on your closest ability), and the dice decide.
+- **Status panel** floats over the chat (drag it to any screen edge to attach it as a sidebar or strip; it fits a phone screen). Sections: **Conflict** (only during a fight, chase or argument: one momentum gauge, Break off, Give in), **Scene** (time, place, who is here), **You**, **People**, **Goals**. Tap ✎ on any line to fix it: time, place, who is here, looks, clothes, items, money, goals, any stat. Plus a **Warp** drawer tab: Sheet · Journal · Ruleset · Settings.
+- **Under each reply**: one dice chip when the turn rolled (tap it for the roll and its odds) and one "what changed" line (story lines first; the tooltip on each item says what caused it). On the latest reply, what was read from the story or set by you can be undone with ×.
 - **Swipes reroll** (Casual) by default, for typed and clicked moves alike; turn off for Ironman (the same roll on every swipe). State always follows the active swipe.
 - **The greeting sets the scene.** When a chat opens, Warp reads the greeting once for the start time, the place, who is there and what they look like, and writes the first three choices. If it can't, the Scene section asks you to set the time.
 
@@ -44,7 +44,16 @@ Most roleplay is typed, so the core systems follow the story rather than waiting
 
 ## Visual novel mode
 
-With the Cue visual-novel extension open, Warp's choices appear in Cue's view as buttons with their odds, a live status card can be pinned from **Panels**, and the moods Warp's rules decide are passed to Cue so its portraits match.
+With the Cue visual-novel extension open, Warp's choices appear in Cue's view as buttons with their odds, a live status card (scene, meters, who is here and the contest gauge) can be pinned from **Panels**, and the moods Warp's rules decide are passed to Cue so its portraits match.
+
+## For other extensions: `warp-state-v1`
+
+Warp publishes the scene of the open chat as a window event, so other extensions can follow it without reading the story themselves. [LumiDoll](https://github.com/japolino/LumiDoll) uses it to dress the doll.
+
+- `warp-state-v1` (Warp → any), sent whenever Warp's state for the open chat changes: `{ version: 1, provider: "warp", rulesetFormat, chatId, messageId, time?: { label, day, hour, minute }, place?, you: { name, appearance?, outfit?, items? }, people: [{ id, name, present, appearance?, outfit?, bands? }], meters?: [{ id, label, band }] }`. When Warp is off or the chat has no rules, an empty state (`people: []`) is sent so listeners can clear.
+- `warp-state-request-v1` (any → Warp), `detail: { version: 1 }`: Warp answers at once with `warp-state-v1`.
+
+Both are `window.dispatchEvent(new CustomEvent(name, { detail }))`. Listeners must work without Warp: then no event ever arrives.
 
 ## ✨ Build with AI
 
@@ -64,6 +73,8 @@ Pick the provider in **Warp → Settings → Decision model**:
 A typed message rolls only when the read is at least 75% sure it attempts something risky and contested (or a listed action with a check). The dice chip says how sure it was, with a **Not an action?** button to redo the turn without a roll. Everything else is plain roleplay. Plain-language triggers (`when_scene`) are judged in the same call after the reply and fire on the next turn.
 
 Every turn records what it cost (`calls` on the turn record), so the budget can be checked.
+
+**What caused it?** Hover or long-press an item of the "what changed" line under a reply: it names the roll, the rule, the time that passed, or what was read from the story.
 
 ## Where rules live
 

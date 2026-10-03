@@ -1,354 +1,37 @@
-// Pure view → HTML renderers. Every interpolated string goes through `esc`.
+// Pure view → HTML renderers for the drawer (journal, ruleset card, template picker), plus the shared exports.
+// The status panel is in render-panel.ts, the chat rows in render-chat.ts, Settings in render-settings.ts.
 
-import type {
-  ChoiceView, EncounterLogView, HudView, RoundCardView, RecordView, RulesetStatus, Settings, TemplateInfo,
-} from "../shared/protocol.js";
-import { DEFAULT_SETTINGS } from "../shared/protocol.js";
-import { classifierIssue } from "../shared/classifier-config.js";
+import type { HudView, RecordView, RulesetStatus, TemplateInfo } from "../shared/protocol.js";
+import { esc, TIER_TONE } from "./html.js";
+import { goalRow } from "./render-panel.js";
+import { changeItems } from "./render-chat.js";
+import { templateFor } from "./render-settings.js";
 
-export function esc(v: unknown): string {
-  return String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
-}
-
-const PHASE_ICON: Record<string, string> = { morning: "🌅", afternoon: "☀️", evening: "🌇", night: "🌙" };
-
-function pctTone(p: number): "good" | "warn" | "bad" {
-  return p >= 0.66 ? "good" : p >= 0.33 ? "warn" : "bad";
-}
-
-// ───────────────────────── HUD ─────────────────────────
-
-/** One of the HUD's sections. */
-export interface HudPart { id: string; title: string; count: number; body: string; open: boolean }
-
-export interface HudOpts { editing: string | null; compact: boolean }
-
-/** The HUD in full: the head (clock, place, bars) and every section, in order. */
-export function renderHud(h: HudView, opts: HudOpts): string {
-  const { head, parts } = hudParts(h, opts);
-  return head + parts.map((p) => renderPart(p)).join("");
-}
-
-/** A section of the HUD. */
-export const renderPart = (p: HudPart) => section(p.title, p.count, p.body, p.open, p.id);
-
-/** The HUD split into its fixed head and its sections. */
-export function hudParts(h: HudView, opts: HudOpts): { head: string; parts: HudPart[] } {
-  const top = [
-    `<div class="warp-eyebrow"><span>${esc(h.rulesetName)}</span><span title="Turn">T${h.turn}</span></div>`,
-    h.clock ? `<div class="warp-clock"><span class="warp-phase" aria-hidden="true">${PHASE_ICON[h.clock.phase] ?? ""}</span><span class="warp-clock-time">${esc(h.clock.time)}</span><span class="warp-clock-day">${esc(h.date ?? h.clock.day)}</span></div>` : "",
-    h.location || h.money ? `<div class="warp-where">${h.location ? `<span title="${esc(h.location.desc ?? "")}">📍 <b>${esc(h.location.name)}</b></span>` : ""}${h.money ? `<span class="warp-money">${esc(h.money)}</span>` : ""}</div>` : "",
-    h.conditions.length ? `<div class="warp-pills">${h.conditions.map((c) => `<span class="warp-pill warp-tone-${c.tone}" title="${esc(c.desc ?? "")}">${esc(c.label)}${c.remaining ? ` · ${esc(c.remaining)}` : ""}</span>`).join("")}</div>` : "",
-  ].join("");
-
-  const bars = h.bars.map((b) => {
-    const editing = opts.editing === b.id;
-    return `<div class="warp-bar" data-bar="${esc(b.id)}" title="${esc(`${b.label}: ${b.display}${b.desc ? ` — ${b.desc}` : ""}\nClick to adjust`)}">
-      <div class="warp-bar-head"><span class="warp-bar-label">${esc(b.label)}</span><span class="warp-bar-text warp-tone-${b.tone}">${esc(b.text ?? b.display)}</span></div>
-      <div class="warp-bar-track"><div class="warp-bar-fill warp-bg-${b.tone}" style="width:${(b.pct * 100).toFixed(1)}%${b.color ? `;background:${esc(b.color)}` : ""}"></div></div>
-      ${editing ? (() => {
-        const step = b.max - b.min > 200 ? 1 : b.max - b.min > 20 ? 0.5 : 0.1;
-        const v = Math.round(b.value * 10) / 10;
-        return `<div class="warp-bar-edit">
-          <input type="range" min="${b.min}" max="${b.max}" step="${step}" value="${v}" data-range="${esc(b.id)}" aria-label="${esc(b.label)}">
-          <input class="warp-input" type="number" min="${b.min}" max="${b.max}" step="${step}" value="${v}" data-num="${esc(b.id)}" aria-label="${esc(b.label)} value">
-          <span class="warp-dim warp-of">/ ${esc(b.max)}</span>
-          <button class="warp-btn warp-btn-primary" data-save="${esc(b.id)}">Set</button>
-        </div>`;
-      })() : ""}
-    </div>`;
-  }).join("");
-
-  // Rows filed under their headings (`group:`, else Attributes / Skills).
-  const skillRow = (s: HudView["skills"][number]) => `
-    <div class="warp-skill" title="${esc(`${s.label}: ${s.display}${s.text ? ` — ${s.text}` : ""}${s.practice !== null ? `\nPractice toward the next point: ${Math.round(s.practice * 100)}% — it grows every time you use it` : ""}`)}">
-      <span>${esc(s.label)}</span>
-      <span class="warp-grade ${s.grade ? `warp-tone-${pctTone(s.pct)}` : s.text ? `warp-tone-${s.tone}` : ""}">${esc(s.grade ?? s.text ?? s.display)}</span>
-      <div class="warp-skill-tracks">
-        <div class="warp-mini-track"><div class="warp-mini-fill" style="width:${(s.pct * 100).toFixed(1)}%"></div></div>
-        ${s.practice !== null ? `<div class="warp-practice-track"><div class="warp-practice-fill" style="width:${(s.practice * 100).toFixed(1)}%"></div></div>` : ""}
-      </div>
-    </div>`;
-  const skillGroups = [...new Set(h.skills.map((x) => x.group))];
-  const skillsBody = skillGroups.length < 2 ? h.skills.map(skillRow).join("") : skillGroups.map((g) => {
-    const rows = h.skills.filter((x) => x.group === g);
-    return `<div class="warp-group"><div class="warp-group-head">${esc(g)}</div>${rows.map(skillRow).join("")}</div>`;
-  }).join("");
-  const skills: HudPart | null = h.skills.length ? part("skills", "Skills & attributes", h.skills.length, skillsBody, !opts.compact) : null;
-
-  // Who's in the scene comes first; everyone else waits, folded, under "Elsewhere".
-  const here = h.people.filter((p) => p.present);
-  const away = h.people.filter((p) => !p.present);
-  const personRow = (p: HudView["people"][number]) => `
-    <div class="warp-person${p.present ? " warp-person-here" : ""}">
-      <div class="warp-person-name">${esc(p.name)}${p.present ? ` <span class="warp-here">here</span>` : ""}${opts.compact ? "" : ` <button class="warp-btn warp-btn-ghost warp-forget" data-forget="${esc(p.id)}" data-name="${esc(p.name)}" title="Stop tracking ${esc(p.name)}">Forget</button>`}</div>
-      ${p.conditions.length ? `<div class="warp-pills">${p.conditions.map((c) => `<span class="warp-pill warp-tone-${c.tone}">${esc(c.label)}${c.remaining ? ` · ${esc(c.remaining)}` : ""}</span>`).join("")}</div>` : ""}
-      ${p.memories.length ? `<details class="warp-memories"><summary>💭 Remembers · ${p.memories.length}</summary>${p.memories.map((m) => `<div class="warp-memory">${esc(m.text)}${m.when ? ` <span class="warp-dim">· ${esc(m.when)}</span>` : ""}</div>`).join("")}</details>` : ""}
-      <div class="warp-person-stats">${p.stats.map((s) => `<span class="warp-rel" data-rel="${esc(`${p.id}:${s.id}`)}" title="${esc(`${s.label}: ${s.display} (${s.min}–${s.max}) — click to set`)}">${esc(s.label)}: <span class="warp-tone-${s.tone}">${esc(s.text ?? s.display)}</span></span>`).join("")}</div>
-      ${p.stats.filter((s) => opts.editing === `rel:${p.id}:${s.id}`).map((s) => `<div class="warp-bar-edit">
-        <span class="warp-dim">${esc(s.label)}</span>
-        <input type="range" min="${s.min}" max="${s.max}" step="1" value="${Math.round(s.value)}" data-range="rel" aria-label="${esc(s.label)}">
-        <input class="warp-input" type="number" min="${s.min}" max="${s.max}" value="${Math.round(s.value)}" data-num="rel" aria-label="${esc(s.label)} value">
-        <button class="warp-btn warp-btn-primary" data-save-rel="${esc(`${p.id}:${s.id}`)}">Set</button>
-      </div>`).join("")}
-    </div>`;
-  const people = part("people", here.length ? "People here" : "People", here.length, h.people.length
-    ? `${here.length ? here.map(personRow).join("") : `<div class="warp-empty">No one you know is here.</div>`}${away.length
-      ? `<details class="warp-away" data-section="people-away"><summary>Elsewhere · ${away.length}</summary><div class="warp-section-body">${away.map(personRow).join("")}</div></details>`
-      : ""}`
-    : `<div class="warp-empty">No one yet.</div>`, !opts.compact || here.length > 0);
-
-  const loose = h.items;
-  const items = part("inventory", "Inventory", loose.length, loose.length
-    ? loose.map((i) => `<div class="warp-item${i.use ? " warp-item-usable" : ""}">
-        <span class="warp-item-name">${esc(i.name)}${i.uses ? ` <span class="warp-dim" title="Uses left in the one in hand">· ${esc(i.uses)}</span>` : ""}${i.bonus ? `<span class="warp-item-bonus" title="Gear: added to checks that use it">${esc(i.bonus)}</span>` : ""}</span>
-        <span class="warp-item-side">${i.count > 1 ? `<span class="warp-kbd">×${i.count}</span>` : ""}${i.use
-          ? i.use.locked
-            ? `<button class="warp-btn warp-mini" disabled title="${esc(i.use.locked)}">🔒 Use</button>`
-            : `<button class="warp-btn warp-mini" data-use="${esc(i.use.id)}" title="${esc(`${i.use.label}${i.use.drafted ? "\nWarp drafted what this does from its description — check it in the Ruleset tab" : ""}`)}">${i.use.drafted ? "✎ " : ""}Use</button>`
-          : ""}</span>
-      </div>`).join("")
-    : `<div class="warp-empty">Empty-handed.</div>`, !opts.compact);
-
-  return {
-    head: `${renderEncounter(h)}<div class="warp-hud-top">${top}</div><div class="warp-bars">${bars}</div>`,
-    parts: [skills, renderQuests(h, opts.compact), people, items].filter((p): p is HudPart => !!p),
-  };
-}
-
-function renderEncounter(h: HudView): string {
-  const e = h.encounter;
-  if (!e) return "";
-  return `<div class="warp-encounter">
-    <div class="warp-eyebrow"><span>⚔ ${esc(e.name)}</span><span>Round ${e.round + 1}</span></div>
-    <div class="warp-encounter-foe">${esc(e.foe)}${foeTags(e)}</div>
-    ${e.momentum !== null ? `<div class="warp-bar-head"><span>You</span><span class="warp-dim">Momentum</span><span>${esc(e.foe)}</span></div>
-      <div class="warp-momentum" title="Momentum ${Math.round(e.momentum)} — a full swing either way ends the fight"><div class="warp-momentum-mid"></div><div class="warp-momentum-mark" style="left:${((100 - e.momentum) / 2).toFixed(1)}%"></div></div>` : ""}
-    ${e.stats.map((s) => `<div class="warp-bar-head"><span>${esc(s.label)}</span><span class="warp-dim">${esc(Math.round(s.value))} / ${esc(s.max)}</span></div>
-      <div class="warp-bar-track"><div class="warp-bar-fill warp-bg-${s.tone}" style="width:${(s.pct * 100).toFixed(1)}%"></div></div>`).join("")}
-  </div>`;
-}
-
-/** Statuses on the opponent (a bad one is good news, so it reads green) and armor on both sides. */
-function foeTags(e: NonNullable<HudView["encounter"]>): string {
-  const flip = (t: string) => (t === "bad" ? "good" : t === "good" ? "bad" : t);
-  const tags = [
-    ...e.foeConds.map((c) => `<span class="warp-pill warp-tone-${flip(c.tone)}" title="${esc(c.desc ?? c.label)}">${esc(c.label)}${c.rounds ? ` · ${c.rounds}` : ""}</span>`),
-    ...(e.foeArmor ? [`<span class="warp-pill" title="Their armor: each blow to them is ${e.foeArmor} smaller — piercing moves ignore it">🛡 ${esc(e.foeArmor)}</span>`] : []),
-    ...(e.yourArmor ? [`<span class="warp-pill warp-tone-good" title="Your armor: each of their blows is ${e.yourArmor} smaller">You 🛡 ${esc(e.yourArmor)}</span>`] : []),
-  ];
-  return tags.length ? ` <span class="warp-foe-tags">${tags.join("")}</span>` : "";
-}
-
-const part = (id: string, title: string, count: number, body: string, open: boolean): HudPart => ({ id, title, count, body, open });
-
-/** One quest: what it is, who it's for, goals ticked off, time left, what it pays and what failing costs. */
-function questCard(q: HudView["quests"][number]): string {
-  const mark = q.status === "done" ? "✅" : q.status === "failed" ? "✗" : q.status === "ready" ? "📜" : q.status === "offered" ? "❔" : "📜";
-  const goals = q.goals.length && q.status !== "done" && q.status !== "failed"
-    ? `<ul class="warp-quest-goals">${q.goals.map((g) => `<li class="${g.done ? "done" : ""}${g.optional ? " optional" : ""}">${g.done ? "✓" : "☐"} ${esc(g.text)}${g.progress ? ` <span class="warp-dim">${esc(g.progress)}</span>` : ""}${g.optional ? ` <span class="warp-dim">(optional)</span>` : ""}</li>`).join("")}</ul>`
-    : "";
-  const buttons = [
-    q.take ? `<button class="warp-btn warp-mini warp-btn-primary" data-use="${esc(q.take)}">Take it on</button>` : "",
-    q.report ? `<button class="warp-btn warp-mini warp-btn-primary" data-use="${esc(q.report)}">Hand in</button>` : "",
-    q.status === "ready" && !q.report ? `<span class="warp-dim">${q.giver ? `Find ${esc(q.giver)} to hand it in` : "Hand it in at the board"}</span>` : "",
-    q.drop ? `<button class="warp-btn warp-mini warp-btn-ghost" data-confirm-use="${esc(q.drop)}" title="Giving up counts as failing">Give up</button>` : "",
-  ].filter(Boolean).join("");
-  return `<div class="warp-quest warp-quest-${q.status}">
-    <div class="warp-quest-head"><span>${mark} <b>${esc(q.name)}</b>${q.kind && q.kind !== "quest" ? ` <span class="warp-quest-kind">${esc(q.kind)}</span>` : ""}${q.story ? ` <span class="warp-quest-kind" title="Asked of you in the story; the story decides when it's done">story</span>` : ""}</span>${q.due ? `<span class="warp-tone-${q.dueTone}">${esc(q.due)}</span>` : ""}</div>
-    ${q.giver || q.from || q.desc ? `<div class="warp-dim">${q.from && q.status === "offered" ? `${esc(q.from)}${q.desc ? " · " : ""}` : q.giver ? `For ${esc(q.giver)}${q.desc ? " · " : ""}` : ""}${esc(q.desc ?? "")}</div>` : ""}
-    ${goals}
-    ${q.reward && q.status !== "failed" ? `<div class="warp-quest-reward">${q.status === "done" ? "Earned" : "Reward"}: ${esc(q.reward)}</div>` : ""}
-    ${q.stakes && q.status !== "done" ? `<div class="warp-quest-stakes">⚠ ${esc(q.stakes)}</div>` : ""}
-    ${buttons ? `<div class="warp-row warp-quest-actions">${buttons}</div>` : ""}
-  </div>`;
-}
-
-/** Quests: on offer here, under way (ready to hand in first), and the last few that ended, folded. */
-function renderQuests(h: HudView, compact: boolean): HudPart | null {
-  if (!h.quests.length) return null;
-  const offered = h.quests.filter((q) => q.status === "offered");
-  const open = h.quests.filter((q) => q.status === "active" || q.status === "ready").sort((a, b) => Number(b.status === "ready") - Number(a.status === "ready"));
-  const ended = h.quests.filter((q) => q.status === "done" || q.status === "failed");
-  const body = [
-    open.map(questCard).join(""),
-    offered.length ? `<div class="warp-choice-group-label">On offer here</div>${offered.map(questCard).join("")}` : "",
-    !open.length && !offered.length ? `<div class="warp-empty">No quests under way. Look for a notice board, or people who need a hand.</div>` : "",
-    ended.length ? `<details class="warp-away" data-section="quests-ended"><summary>Finished · ${ended.length}</summary><div class="warp-section-body">${ended.map(questCard).join("")}</div></details>` : "",
-  ].join("");
-  return part("quests", "Quests", open.length, body, !compact || open.some((q) => q.status === "ready") || offered.length > 0);
-}
+export { esc } from "./html.js";
+export { hudParts, renderHud, renderPart, type HudOpts, type HudPart } from "./render-panel.js";
+export { renderChoices, renderReply } from "./render-chat.js";
+export { renderSettings } from "./render-settings.js";
 
 // ───────────────────────── journal ─────────────────────────
 
-export function renderJournal(h: HudView | null, records: RecordView[]): string {
+/** Goals (open, done, failed), then the timeline: newest first, one row per reply. */
+export function renderJournal(h: HudView | null, records: RecordView[], editing: string | null = null): string {
   if (!h) return `<div class="warp-card"><p>No game running in this chat.</p></div>`;
-  const turns = records.filter((r) => r.action || r.check || r.changes.length).slice().reverse().slice(0, 40);
+  const goals = `<div class="warp-card"><h3>Goals</h3>${h.goals.length
+    ? (["open", "done", "failed"] as const).map((st) => h.goals.filter((g) => g.status === st).map((g) => goalRow(g, { editing })).join("")).join("")
+    : `<p>No goals yet. Promises, favours and plans from the story show up here.</p>`}</div>`;
+  const turns = records.filter((r) => r.check || r.lines.length || r.changes.length).slice().reverse().slice(0, 40);
   const timeline = `<div class="warp-card"><h3>Timeline</h3>
-    ${turns.length ? turns.map((r) => `<button class="warp-timeline-row" data-jump="${esc(r.messageId)}" title="Jump to this message">
+    ${turns.length ? turns.map((r) => {
+      const items = changeItems(r, false).map((i) => i.text);
+      return `<button class="warp-timeline-row" data-jump="${esc(r.messageId)}" title="Jump to this message">
         <span class="warp-dim">${esc(r.clock ?? "")}</span>
-        <span>${r.action ? esc(r.action) : "<span class='warp-dim'>Story</span>"}${r.check ? ` · <span class="warp-tone-${r.check.tier.includes("success") ? "good" : r.check.tier === "partial" ? "warn" : "bad"}">${esc(r.check.tierLabel)}</span>` : ""}</span>
-        <span class="warp-dim warp-timeline-changes">${esc(r.changes.slice(0, 4).map((c) => c.text).join(" · "))}</span>
-      </button>`).join("") : `<p>Nothing has happened yet.</p>`}
+        <span>${r.check ? `🎲 ${esc(r.check.label)} · <span class="warp-tone-${TIER_TONE[r.check.tier]}">${esc(r.check.tierLabel)}</span>` : r.action ? esc(r.action) : `<span class="warp-dim">Story</span>`}</span>
+        ${items.length ? `<span class="warp-dim warp-timeline-changes">${esc(items.slice(0, 6).join(" · "))}${items.length > 6 ? ` · +${items.length - 6} more` : ""}</span>` : ""}
+      </button>`;
+    }).join("") : `<p>Nothing has happened yet.</p>`}
   </div>`;
-  return timeline;
-}
-
-function section(title: string, count: number, body: string, open: boolean, key = title): string {
-  return `<details class="warp-section" data-section="${esc(key)}"${open ? " open" : ""}><summary><span>${esc(title)}${count ? ` · ${count}` : ""}</span></summary><div class="warp-section-body">${body}</div></details>`;
-}
-
-// ───────────────────────── choices ─────────────────────────
-
-export function renderChoices(choices: ChoiceView[], opts: { showOdds: boolean; hotkeys: boolean; busy: boolean; busyLabel?: string; encounter?: HudView["encounter"]; recap?: EncounterRecap | null }): string {
-  if (!choices.length && !opts.busy && !opts.encounter) return "";
-  const groups = new Map<string, { c: ChoiceView; n: number }[]>();
-  choices.forEach((c, i) => {
-    const g = c.group ?? "Actions";
-    if (!groups.has(g)) groups.set(g, []);
-    groups.get(g)!.push({ c, n: i + 1 });
-  });
-  const body = [...groups].map(([g, list]) => `
-    <div class="warp-choice-group">
-      ${groups.size > 1 ? `<div class="warp-choice-group-label">${esc(g)}</div>` : ""}
-      <div class="warp-choice-grid">${list.map(({ c, n }) => {
-        const key = opts.hotkeys && n <= 10 ? `<span class="warp-kbd">${n === 10 ? 0 : n}</span>` : "";
-        const odds = opts.showOdds && c.odds !== null
-          ? `<span class="warp-choice-odds warp-tone-${pctTone(c.odds + (c.partialOdds ?? 0) / 2)}" title="${esc(`${c.checkLabel ?? "Check"}: ${Math.round(c.odds * 100)}% success${c.partialOdds ? `, ${Math.round(c.partialOdds * 100)}% partial` : ""}`)}">${Math.round(c.odds * 100)}%</span>`
-          : "";
-        const forecastText = c.forecast ? `Goal: ${c.forecast.goal}
-Possible risk: ${c.forecast.risk}
-Possible payoff: ${c.forecast.payoff}
-Story forecast only — not guaranteed effects; tag-defined mechanics and odds are unchanged.` : null;
-        const forecast = forecastText ? `<span class="warp-choice-why">${esc(forecastText)}</span>` : "";
-        const tip = [forecastText, c.desc, c.why ? `Why now: ${c.why}` : null, c.checkLabel ? `Check: ${c.checkLabel} — the chance of this check, not of winning` : null, c.veiled ? "Veiled: happens off-screen" : null].filter(Boolean).join("\n");
-        if (c.locked) return `<button class="warp-choice warp-choice-locked" disabled title="${esc(`${c.desc ?? c.label}\nLocked: ${c.locked}`)}"><span class="warp-choice-label">${esc(c.label)}<span class="warp-choice-why">🔒 ${esc(c.locked)}</span></span></button>`;
-        return `<button class="warp-choice${c.id.startsWith("item:") ? " warp-choice-item" : ""}" data-act="${esc(c.id)}" title="${esc(tip)}">${key}<span class="warp-choice-label">${esc(c.label)}${forecast}${c.why ? `<span class="warp-choice-why">${esc(c.why)}</span>` : ""}</span>${c.veiled ? `<span class="warp-choice-veil" aria-label="veiled">◐</span>` : ""}${odds}</button>`;
-      }).join("")}</div>
-    </div>`).join("");
-  const status = opts.busy ? `<div class="warp-status-line"><span class="warp-spinner"></span>${esc(opts.busyLabel ?? "The story continues…")}</div>` : "";
-  return `${status}${opts.encounter ? renderEncounterGuide(opts.encounter, opts.busy, opts.recap) : ""}${body}`;
-}
-
-/** The latest round and every round behind it, for the encounter panel while it's on. */
-export interface EncounterRecap { foe: string; rounds: RoundCardView[]; why: string }
-
-/**
- * Above an encounter's moves, in one box: what you're after, how far along,
- * what could end it badly, how the last round went — and a box to try anything else.
- */
-export function renderEncounterGuide(e: NonNullable<HudView["encounter"]>, busy: boolean, recap?: EncounterRecap | null): string {
-  const meters = e.progress.map((p) => {
-    const span = Math.abs(p.max - p.target) || 1;
-    const done = Math.max(0, Math.min(1, 1 - Math.abs(p.value - p.target) / span));
-    return `<div class="warp-enc-meter" title="${esc(`${p.label}: ${Math.round(p.value)} — get it to ${p.target} (the bar is how close you are)`)}"><span>${esc(p.label)}</span><div class="warp-bar-track"><div class="warp-bar-fill warp-bg-good" style="width:${(done * 100).toFixed(1)}%"></div></div><span class="warp-dim">${esc(Math.round(p.value))} → ${esc(p.target)}</span></div>`;
-  });
-  if (e.momentum !== null) meters.push(`<div class="warp-enc-meter" title="Momentum: a full swing either way ends it"><span>Momentum</span><div class="warp-momentum"><div class="warp-momentum-mid"></div><div class="warp-momentum-mark" style="left:${((e.momentum + 100) / 2).toFixed(1)}%"></div></div><span class="warp-dim">${e.momentum > 0 ? "+" : ""}${esc(Math.round(e.momentum))}</span></div>`);
-  const danger = e.danger.slice(0, 2).map((d) => `<span class="warp-tone-${d.close ? "bad" : "warn"}">${esc(d.text)}</span>`).join(`<span class="warp-dim"> · </span>`);
-  const last = recap?.rounds[recap.rounds.length - 1];
-  return `<div class="warp-enc-guide" role="group" aria-label="${esc(e.name)}">
-    <div class="warp-enc-head"><span>⚔ ${esc(e.name)} <span class="warp-dim">vs ${esc(e.foe)}</span>${foeTags(e)}</span><span class="warp-dim">Round ${e.round + 1}</span></div>
-    ${e.goal ? `<div class="warp-enc-goal"><b>Goal</b> ${esc(e.goal)}</div>` : ""}
-    ${meters.length ? `<div class="warp-enc-meters">${meters.join("")}</div>` : ""}
-    ${danger ? `<div class="warp-enc-danger"${e.dangerText ? ` title="${esc(e.dangerText)}"` : ""}><b>Danger</b> ${danger}</div>` : ""}
-    ${last && recap ? `<div class="warp-enc-last"><div class="warp-enc-last-head"><b>Last round</b>${recap.rounds.length > 1 ? roundsList(recap.rounds, recap.foe) : ""}${recap.why}</div>${renderRoundCard(last, recap.foe, true)}</div>` : ""}
-    ${e.quiet ? `<div class="warp-enc-say"><input type="text" class="warp-input" data-enc-say placeholder="Or try something else…" aria-label="Try something else" maxlength="400"${busy ? " disabled" : ""}><button class="warp-btn" data-enc-send${busy ? " disabled" : ""}>Try</button></div>` : ""}
-  </div>`;
-}
-
-const TIER_MARK: Record<string, string> = { "great success": "✓✓", success: "✓", partial: "~", failed: "✕", "badly failed": "✕✕" };
-
-/** "Aggression +20": what a round moved, as a change (the panel shows where things stand). */
-function roundChange(c: RoundCardView["changes"][number]): string {
-  const d = Math.round(c.to - c.from);
-  if (!d) return "";
-  // The foe's stats come as "Foe: Stat"; mark them instead of repeating the name.
-  const i = c.label.indexOf(": ");
-  const label = i > 0 ? `⚔ ${c.label.slice(i + 2)}` : c.label;
-  return `<span class="warp-tone-${c.good ? "good" : "bad"}">${esc(label)} ${d > 0 ? "+" : "−"}${Math.abs(d)}</span>`;
-}
-
-/** One round, short: the move and how it went; the other side's answer; what it moved. */
-export function renderRoundCard(c: RoundCardView, foe = "", latest = false): string {
-  const tone = !c.check ? "neutral" : /success/.test(c.check.tier) ? "good" : c.check.tier === "partial" ? "warn" : "bad";
-  const chance = c.check && c.check.odds !== null ? `${Math.round(c.check.odds * 100)}%` : "";
-  const tip = c.check ? `${c.check.label}${chance ? `: ${chance} chance this check succeeds (not the chance of winning)` : ""}${c.check.gear.length ? `\nHelped by ${c.check.gear.join(", ")}` : ""}` : "";
-  const tier = c.check?.tier ?? "";
-  const changes = c.changes.map(roundChange).filter(Boolean);
-  return `<div class="warp-round${latest ? " warp-round-latest" : ""}">
-    <div class="warp-round-line"><span class="warp-round-n">${c.round}</span><b>${esc(c.move)}</b>${c.check ? ` <span class="warp-tone-${tone}" title="${esc(tip)}">${esc(TIER_MARK[tier] ?? "")} ${esc(tier.charAt(0).toUpperCase() + tier.slice(1))}</span>${chance ? ` <span class="warp-dim" title="${esc(tip)}">${esc(c.check.label)} ${chance}</span>` : ""}${c.check.gear.length ? ` <span class="warp-dim" title="${esc(c.check.gear.join(", "))}">🛠</span>` : ""}` : ""}</div>
-    ${c.foe ? `<div class="warp-round-foe"><span class="warp-dim">${esc(foe || "They")}:</span> ${esc(c.foe)}</div>` : ""}
-    ${changes.length ? `<div class="warp-round-changes">${changes.join("")}</div>` : ""}
-    ${c.ended ? `<div class="warp-round-end warp-tone-${c.ended.loss ? "bad" : "good"}">${c.ended.loss ? "✕" : "✓"} ${esc(c.ended.label)}</div>` : ""}
-  </div>`;
-}
-
-function roundsList(rounds: RoundCardView[], foe: string): string {
-  return `<details class="warp-rounds"><summary>${rounds.length === 1 ? "Show the round" : `All ${rounds.length} rounds`}</summary><div class="warp-rounds-list">${rounds.map((r) => renderRoundCard(r, foe)).join("")}</div></details>`;
-}
-
-/** "Why?" for a message: every cause behind each change, folded away. */
-export function renderWhyFold(rec: RecordView | undefined): string {
-  const whys = (rec?.changes ?? []).filter((ch) => ch.why?.length).map((ch) => `<div><b>${esc(ch.text)}</b> <span class="warp-dim">←</span> ${ch.why!.map(esc).join(" · ")}</div>`);
-  return whys.length ? `<details class="warp-enc-why"><summary title="Show what caused each change">Why?</summary><div class="warp-enc-why-body">${whys.join("")}</div></details>` : "";
-}
-
-/**
- * Under an encounter's message, in place of the usual chips: how it ended (or
- * the latest round), with every round and the "Why?" one click away. While
- * the encounter is on, the panel above the moves shows this instead.
- */
-export function renderEncounterLog(v: EncounterLogView, why = ""): string {
-  const mine = v.rounds.slice(v.from);
-  if (!mine.length && v.status !== "ended") return "";
-  const last = mine[mine.length - 1];
-  const head = v.status === "ended" && v.ended
-    ? `<div class="warp-round-final warp-tone-${v.ended.loss ? "bad" : "good"}"><b>⚔ ${esc(v.name)}: ${esc(v.ended.label)}</b> <span class="warp-dim">after ${v.rounds.length} round${v.rounds.length === 1 ? "" : "s"}</span></div>`
-    : last ? renderRoundCard(last, v.foe, true) : "";
-  const more = v.rounds.length > 1 || (v.status === "ended" && v.rounds.length) ? roundsList(v.rounds, v.foe) : "";
-  return `<div class="warp-enc-log">${head}${more || why ? `<div class="warp-enc-log-foot">${more}${why}</div>` : ""}</div>`;
-}
-
-// ───────────────────────── per-message chips ─────────────────────────
-
-const TIER_TONE: Record<string, string> = { crit_success: "good", success: "good", partial: "warn", fail: "bad", crit_fail: "bad" };
-
-export function renderChips(rec: RecordView, opts: { showDice: boolean; showChanges?: boolean }): string {
-  const out: string[] = [];
-  const read = rec.via === "adjudicator"
-    ? `<span class="warp-dim">· read from your message${rec.confidence !== null ? ` (${Math.round(rec.confidence * 100)}% sure)` : ""}</span>`
-    : rec.via === "confirmed" ? `<span class="warp-dim">· you confirmed</span>` : "";
-  const notAction = rec.redoFrom
-    ? `<button class="warp-btn warp-btn-ghost" data-redo="${esc(rec.redoFrom)}" title="Redo this turn without a roll">Not an action?</button>`
-    : "";
-  if (rec.check && opts.showDice) {
-    const c = rec.check;
-    out.push(`<button class="warp-chip warp-dice warp-tone-${TIER_TONE[c.tier]}" data-dice title="Show the roll">🎲 ${esc(c.label)} · ${esc(c.tierLabel)}</button>`);
-    if (rec.rerollFrom) out.push(`<button class="warp-chip warp-reroll" data-reroll="${esc(rec.rerollFrom)}" title="Roll again: a new result, a new line in your message, and a new reply">↻ Reroll</button>`);
-    out.push(`<div class="warp-dice-detail">${c.faces.map((f) => `<span class="warp-die" title="d${f.sides}"${f.kept ? "" : " data-dropped"}>${f.value}</span>`).join("")}<span>${esc(c.summary)}</span>${read}${notAction}</div>`);
-  } else if (rec.action && opts.showDice) {
-    out.push(`<span class="warp-chip">▸ ${esc(rec.action)}</span>${notAction ? `<span class="warp-chip">${notAction}</span>` : ""}`);
-  }
-  for (const d of rec.decisions) {
-    const odds = d.odds.map((o) => `${o.desc} ${Math.round(o.p * 100)}%`).join(" · ");
-    out.push(`<span class="warp-chip warp-decision" title="${esc(`${d.ask}\n${odds}\n${d.source === "model" ? "Odds from the decision model; the engine rolled." : "Odds from the ruleset's weights; the engine rolled."}`)}">🎭 ${esc(d.picked)} <span class="warp-dim">${Math.round(d.p * 100)}%</span></span>`);
-  }
-  const whys: string[] = [];
-  // Changes turned off: none under the message (they're still in the sheet's history, with undo).
-  for (const ch of opts.showChanges === false ? [] : rec.changes) {
-    const narr = ch.src === "narrator" || ch.src === "manual";
-    if (ch.why?.length) whys.push(`<div><b>${esc(ch.text)}</b> <span class="warp-dim">←</span> ${ch.why.map(esc).join(" · ")}</div>`);
-    const undo = narr && ch.undo?.length
-      ? `<button class="warp-chip-undo" data-undo="${esc(ch.undo.join(","))}" title="Undo this change" aria-label="Undo">×</button>`
-      : "";
-    out.push(`<span class="warp-chip warp-tone-${ch.tone}${narr ? " warp-chip-narr" : ""}" title="${esc(narr ? (ch.src === "manual" ? "You set this" : "Read from the story — click × to undo") : "Applied by the rules")}">${esc(ch.text)}${ch.band ? ` <span class="warp-band">${esc(ch.band)}</span>` : ""}${undo}</span>`);
-  }
-  if (rec.veiled) out.push(`<span class="warp-chip warp-tone-warn" title="Narrated off-screen by your Veils setting">◐ veiled</span>`);
-  if (whys.length) {
-    out.push(`<button class="warp-chip warp-why-btn" data-why title="Show what caused each change">Why?</button>`);
-    out.push(`<div class="warp-why-detail">${whys.join("")}</div>`);
-  }
-  return out.join("");
+  return goals + timeline;
 }
 
 // ───────────────────────── ruleset status & setup ─────────────────────────
@@ -360,14 +43,15 @@ export function renderRulesetCard(s: RulesetStatus, hasChat: boolean): string {
   if (s.state === "none") {
     return `<div class="warp-card">
       <h3>${esc(s.characterName ?? "This character")} has no game rules yet</h3>
-      <p>Add a ruleset to get stats, dice checks, time, inventory and relationships that the model can't fudge. It's stored in a <b>warp-ruleset</b> lorebook on the character, so it travels with the card.</p>
-      <div class="warp-row"><button class="warp-btn warp-btn-primary" data-install>Add a ruleset…</button></div>
+      <p>Add rules to keep score: time and place, who is here and how they feel about you, and dice the narrator can't fudge. They're stored in a <b>warp-ruleset</b> lorebook on the character, so they travel with the card.</p>
+      <div class="warp-row"><button class="warp-btn warp-btn-primary" data-install>Add rules…</button></div>
     </div>`;
   }
   const errors = s.issues.filter((i) => i.level === "error");
   const warns = s.issues.filter((i) => i.level === "warning");
+  const style = s.style ? ` · ${s.style === "story" ? "Story (no dice)" : "Adventure (dice)"}` : "";
   const head = s.state === "ok"
-    ? `<h3>✓ ${esc(s.name)}</h3><p>From ${esc(s.source)}${warns.length ? ` · ${warns.length} note${warns.length > 1 ? "s" : ""}` : ""}</p>`
+    ? `<h3>✓ ${esc(s.name)}</h3><p>From ${esc(s.source)}${esc(style)}${warns.length ? ` · ${warns.length} note${warns.length > 1 ? "s" : ""}` : ""}</p>`
     : `<h3 class="warp-tone-bad">Ruleset can't run</h3><p>Fix the problems below in the <b>warp-ruleset</b> lorebook, then reload.</p>`;
   const list = [...errors, ...warns].slice(0, 30).map((i) => `
     <div class="warp-issue"><span class="warp-tone-${i.level === "error" ? "bad" : "warn"}">${i.level === "error" ? "✕" : "!"}</span><span>${esc(i.message)}</span><span class="warp-issue-where">${esc(i.where)}</span></div>`).join("");
@@ -376,104 +60,24 @@ export function renderRulesetCard(s: RulesetStatus, hasChat: boolean): string {
   </div>`;
 }
 
+const STYLE_CARD = {
+  story: { title: "📖 Story (no dice)", blurb: "Time, place, who is here and how they feel about you, with slow-burn relationships. Nothing is rolled." },
+  adventure: { title: "🎲 Adventure (dice)", blurb: "Everything in Story, plus dice at risky moments and contests (fights, chases, arguments) on one momentum gauge." },
+};
+
+/** The first-install picker: Story and Adventure side by side (no default), then Build with AI. */
 export function renderTemplatePicker(templates: TemplateInfo[], card: { name: string; track: boolean } | null = null): string {
   const track = card
     ? `<label class="warp-toggle"><span>Track <b>${esc(card.name)}</b> as a character</span><small>${card.track ? "Their relationship with you is tracked from the start." : "This looks like a scenario or narrator card, so its name isn't added as a person. Tick if it really is one character."}</small><input type="checkbox" data-track${card.track ? " checked" : ""}></label>`
     : "";
+  const styled = (["story", "adventure"] as const).map((st) => ({ st, t: templateFor(st, templates) })).filter((x) => x.t);
+  const used = new Set(styled.map((x) => x.t!.id));
+  const cards = styled.map(({ st, t }) => `<button class="warp-card warp-template" data-template="${esc(t!.id)}"><h3>${esc(STYLE_CARD[st].title)}</h3><p>${esc(STYLE_CARD[st].blurb)}</p></button>`).join("")
+    + templates.filter((t) => !used.has(t.id)).map((t) => `<button class="warp-card warp-template" data-template="${esc(t.id)}"><h3>${esc(t.name)}</h3><p>${esc(t.blurb)}</p></button>`).join("");
   return `<div class="warp-modal">
-    <p style="margin:0;color:var(--warp-muted)">Pick a starting point. Warp creates a <b>warp-ruleset</b> lorebook on this character, split into readable entries (stats, people, world, actions, rules) that you can edit like any lorebook. It's never sent to the model.</p>
+    <p style="margin:0;color:var(--warp-muted)">Pick how this chat plays. Warp adds a <b>warp-ruleset</b> lorebook to this character that you can edit like any lorebook. It's never sent to the model.</p>
     ${track}
-    <button class="warp-card warp-template warp-builder-cta" data-template="__ai"><h3>✨ Build with AI</h3><p>Reads this character's card, asks you a few questions, and drafts a ruleset made for it — checked and previewed before anything is saved.</p></button>
-    ${templates.map((t) => `<button class="warp-card warp-template" data-template="${esc(t.id)}"><h3>${esc(t.name)}</h3><p>${esc(t.blurb)}</p></button>`).join("")}
-  </div>`;
-}
-
-// ───────────────────────── settings ─────────────────────────
-
-function toggle(key: keyof Settings, label: string, hint: string, on: boolean): string {
-  return `<label class="warp-toggle"><span>${esc(label)}</span><small>${esc(hint)}</small><input type="checkbox" data-setting="${esc(key)}"${on ? " checked" : ""}></label>`;
-}
-
-function renderDecider(s: Settings, jevKeySet: boolean): string {
-  const opt = (v: Settings["decider"], label: string) => `<option value="${v}"${s.decider === v ? " selected" : ""}>${label}</option>`;
-  const pct = (v: number) => Math.round(v * 100);
-  return `<div class="warp-card">
-    <h3>Decision model</h3>
-    <p>Answers Warp's quick typed questions: what your message attempts, NPC odds, plain-language triggers, bookkeeping. It never picks outcomes — it gives odds, and the dice roll on them.</p>
-    <select class="warp-select" data-setting="decider">
-      ${opt("llm", "Helper LLM (uses the helper model below)")}
-      ${opt("jev", "Classifier endpoint — TypeSafe's Jev or any compatible model (fast, cheap)")}
-      ${opt("rules", "Rules only — no model calls (never rolls typed text)")}
-    </select>
-    <details data-section="advanced-classifier"${s.decider === "jev" ? " open" : ""}><summary>Advanced: classifier endpoint & confidence</summary>
-    ${s.decider === "jev" ? (() => {
-      const typesafe = s.jevFormat !== "openai" && s.jevUrl === DEFAULT_SETTINGS.jevUrl;
-      const issue = classifierIssue(s.jevFormat, s.jevModel, s.jevUrl);
-      const host = (() => { try { return new URL(s.jevUrl).host; } catch { return s.jevUrl; } })();
-      return `
-      <label class="warp-slider">Endpoint
-        <input class="warp-input" data-setting="jevUrl" value="${esc(s.jevUrl)}" placeholder="${esc(DEFAULT_SETTINGS.jevUrl)}" spellcheck="false" autocomplete="off">
-        <small class="warp-dim">TypeSafe's Jev by default. Paste any URL that speaks the same typed-question API — or pick the OpenAI-compatible format below to use any chat model as the classifier (Groq, OpenRouter, a local llama.cpp, Ollama or vLLM server…).</small>
-      </label>
-      <div class="warp-row">
-        <select class="warp-select" data-setting="jevFormat" style="flex:1">
-          <option value="typesafe"${s.jevFormat !== "openai" ? " selected" : ""}>Typed questions (TypeSafe API)</option>
-          <option value="openai"${s.jevFormat === "openai" ? " selected" : ""}>OpenAI-compatible chat (/chat/completions)</option>
-        </select>
-        <input class="warp-input" data-setting="jevModel" value="${esc(s.jevModel)}" placeholder="${s.jevFormat === "openai" ? "Model name (e.g. llama-3.1-8b-instant)" : "jev-latest"}" title="Model" style="flex:1">
-      </div>
-      ${issue ? `<p class="warp-tone-warn" role="alert">${esc(issue)}</p>` : ""}
-      <div class="warp-row"><button class="warp-btn" data-jev-openrouter>Jev on OpenRouter</button><span class="warp-dim">Sets the typed format, endpoint and model. Uses an OpenRouter key.</span></div>
-      <div class="warp-row">
-        <input class="warp-input" type="password" data-jevkey placeholder="${jevKeySet ? "Key saved — paste to replace" : typesafe ? "TypeSafe API key (sk-…)" : "API key (leave empty for a local server)"}" autocomplete="off" style="flex:1">
-        <button class="warp-btn" data-save-jev>${jevKeySet ? "Replace" : "Save"}</button>
-        ${jevKeySet ? `<button class="warp-btn warp-btn-ghost" data-clear-jev>Remove</button>` : ""}
-      </div>
-      <p>${jevKeySet ? "✓ Key stored encrypted on the server." : typesafe ? "No key yet — until you add one, the helper LLM is used." : "No key saved — fine for a local server."} Your roleplay text is sent to <b>${esc(host)}</b> for these questions. Use <b>Test</b> below to check it answers.</p>`;
-    })() : ""}
-    <label class="warp-slider"><span>Roll automatically when at least <b>${pct(s.autoConfidence)}%</b> sure</span>
-      <input type="range" min="40" max="99" value="${pct(s.autoConfidence)}" data-setting-pct="autoConfidence"></label>
-    </details>
-    <div class="warp-row"><button class="warp-btn" data-test-decider>Test decision model</button></div>
-  </div>`;
-}
-
-export function renderSettings(s: Settings, status: RulesetStatus | null, connections: { id: string; name: string }[], jevKeySet = false): string {
-  const tags = new Set([...(status?.tags ?? []), ...s.lines, ...s.veils]);
-  const tagChips = [...tags].sort().map((t) => {
-    const mode = s.lines.includes(t) ? "line" : s.veils.includes(t) ? "veil" : "on";
-    return `<button class="warp-tag" data-tag="${esc(t)}" data-mode="${mode}" title="Click to cycle: on → veil (off-screen) → line (removed)">${esc(t)}</button>`;
-  }).join("");
-  return `<div class="warp-card">
-    <h3>Play</h3>
-    ${toggle("enabled", "Warp is on", "Turn the engine off without removing any rules.", s.enabled)}
-    ${toggle("freeTextChecks", "Read my typed messages for actions", "When you type something risky, a quick referee call picks the matching action and the dice decide.", s.freeTextChecks)}
-    ${toggle("narratorUpdates", "Keep state in sync with the story", "After each reply, small changes the story describes (time, mood, items, people) are recorded within the ruleset's limits. You can undo any of them.", s.narratorUpdates)}
-    ${toggle("storyQuests", "Quests from the story", "When someone in the story asks you for a favour or a job and you agree, it's tracked as a quest with stakes; the story decides when it's done or failed, and they remember how it went.", s.storyQuests)}
-    ${toggle("sayOutcome", "Say how my move went", "When you click a move with a roll, it's settled on the click and your message says how it went, in your character's voice (the helper writes it; a set line if it can't). Swipes keep that result; use ↻ Reroll to roll again.", s.sayOutcome !== false)}
-    ${toggle("swipesReroll", "Swiping rerolls the dice", "Casual: a new swipe is a new roll (for a move told in your message, ↻ Reroll does it). Turn off for Ironman: rolls stay fixed for the same move.", s.swipesReroll)}
-  </div>
-  <div class="warp-card">
-    <h3>Display</h3>
-    ${toggle("showChoices", "Choice buttons (CYOA)", "Buttons under each reply to pick what you do next. Off: you just type — no buttons, and none are written for you (that saves a helper call per reply). Fights and endings keep their buttons.", s.showChoices !== false)}
-    ${toggle("showOdds", "Show odds on choices", "Percent chance of success on each button.", s.showOdds)}
-    ${toggle("showDiceChips", "Show dice on messages", "The roll under each reply.", s.showDiceChips)}
-    ${toggle("showChanges", "Show changes on messages", "What changed under each reply (time, people met, feelings, items…), with × to undo. Off: they're still in the sheet's history.", s.showChanges !== false)}
-    ${toggle("hotkeys", "Number keys pick choices", "Press 1–9 (0 for 10) when you're not typing.", s.hotkeys)}
-  </div>
-  ${renderDecider(s, jevKeySet)}
-  <div class="warp-card">
-    <h3>Helper model</h3>
-    <p>Used for the referee and bookkeeping calls. A fast, cheap model works best.</p>
-    <select class="warp-select" data-setting="helperConnectionId">
-      <option value="">Same as the chat</option>
-      ${connections.map((c) => `<option value="${esc(c.id)}"${c.id === s.helperConnectionId ? " selected" : ""}>${esc(c.name)}</option>`).join("")}
-    </select>
-  </div>
-  <div class="warp-card">
-    <h3>Content: lines & veils</h3>
-    <p>Click a tag to cycle it: <b>on</b> → <span class="warp-tone-warn">veil</span> (still happens, narrated off-screen) → <span class="warp-tone-bad">line</span> (removed from the game).</p>
-    <div class="warp-tags">${tagChips || `<span class="warp-empty">This ruleset doesn't tag any actions.</span>`}</div>
-    <div class="warp-row"><input class="warp-input" data-newtag placeholder="Add a tag… (Enter)" style="flex:1"></div>
+    <div class="warp-template-pair">${cards}</div>
+    <button class="warp-card warp-template warp-builder-cta" data-template="__ai"><h3>✨ Build with AI</h3><p>Reads this character's card and fits Story or Adventure to it: checked and previewed before anything is saved.</p></button>
   </div>`;
 }

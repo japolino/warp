@@ -48,12 +48,27 @@ export function attachedBox(edge: Edge, open: boolean, vp: Viewport): Box {
       case "bottom": return { x: Math.round((vp.width - PILL.w) / 2), y: vp.height - PILL.h - PAD, ...wh(PILL) };
     }
   }
+  const side = Math.min(SIDE_W, vp.width - PAD * 2);
   switch (edge) {
-    case "left": return { x: PAD, y: PAD, w: SIDE_W, h: vp.height - PAD * 2 };
-    case "right": return { x: vp.width - SIDE_W - PAD, y: PAD, w: SIDE_W, h: vp.height - PAD * 2 };
+    case "left": return { x: PAD, y: PAD, w: side, h: vp.height - PAD * 2 };
+    case "right": return { x: vp.width - side - PAD, y: PAD, w: side, h: vp.height - PAD * 2 };
     case "top": return { x: PAD, y: PAD, w: vp.width - PAD * 2, h: STRIP_H };
     case "bottom": return { x: PAD, y: vp.height - STRIP_H - PAD, w: vp.width - PAD * 2, h: STRIP_H };
   }
+}
+
+/** The open floating panel's width: PANEL_W, or the screen inside the host's inset on a narrow phone. */
+export function panelWidth(vp: Viewport): number {
+  return Math.max(PILL.w, Math.min(PANEL_W, vp.width - PAD * 2));
+}
+
+/** A floating box near the right edge, `y` below the top, kept inside the screen (open panel or pill). */
+export function floatingBox(vp: Viewport, open: boolean, h: number, y = 72): Box {
+  const w = open ? panelWidth(vp) : PILL.w;
+  const x = Math.max(PAD, Math.min(vp.width - w - 20, vp.width - w - PAD));
+  const top = Math.max(PAD, Math.min(y, vp.height - PILL.h - PAD));
+  const height = open ? Math.max(PILL.h, Math.min(h, vp.height - top - PAD)) : PILL.h;
+  return { x, y: top, w, h: height };
 }
 
 function wh(s: { w: number; h: number }) {

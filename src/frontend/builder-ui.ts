@@ -22,8 +22,7 @@ const KINDS: BuilderAddition["kind"][] = ["skill", "meter", "item", "place", "pe
 const REFINE_CHIPS = [
   "Make it harder",
   "Make it more forgiving",
-  "Add more places to go",
-  "Add an encounter that fits the card",
+  "Make relationships move slower",
   "Add a skill for something the card mentions",
 ];
 
