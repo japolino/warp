@@ -269,6 +269,8 @@ export interface RulesetStatus {
   tags: string[];
   /** The installed ruleset's style (story = no dice), for the Story / Adventure switch. */
   style?: "story" | "adventure";
+  /** Id of the template the installed `warp-ruleset` book came from; null for builder or custom books. The Story / Adventure switch is enabled only for template installs. */
+  template?: string | null;
 }
 
 /**
@@ -429,6 +431,8 @@ export type BackendToFrontend =
       busy: boolean;
       /** The player's name (persona), for "You" lines and `warp-state-v1`. */
       player: string;
+      /** A short fix hint for the Scene section, e.g. when the greeting read failed: "Warp couldn't read the greeting — set the time." */
+      sceneHint?: string | null;
       /** @deprecated Quiet encounters are cut: every contest round is a narrated reply. */
       encounterLogs?: EncounterLogView[];
     }
@@ -450,7 +454,7 @@ export type FrontendToBackend =
   | { type: "undo"; chatId: string; messageId: string; swipe: number; events: number[] }
   | { type: "adjust"; chatId: string; stat: string; value: number }
   | { type: "settings"; patch: Partial<Settings> }
-  | { type: "install_template"; chatId: string | null; templateId: string; trackCharacter?: boolean }
+  | { type: "install_template"; chatId: string | null; templateId: string; trackCharacter?: boolean; /** Switch style: replace the template-installed book and keep its people entries (CORE-DESIGN §4.7 #2). */ replace?: boolean }
   | { type: "reload"; chatId: string | null }
   /** Replace the reply to `userMessageId` and resend it with this intent (null = "not an action"). */
   | { type: "redo"; chatId: string; userMessageId: string; actionId: string | null; params?: Record<string, string> }
