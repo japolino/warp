@@ -46,7 +46,9 @@ export function renderDoll(raw: Look, opts: { id?: string; width?: number; heigh
     const lw = o.lw ?? LW;
     const paths = (attrs = "") => ds.map((d) => `<path d="${d}"${attrs}/>`).join("");
     const parts: string[] = [];
-    if (!o.noOutline) parts.push(`<g fill="${lc}" stroke="${lc}" stroke-width="${f(lw * 2)}" stroke-linejoin="round"${o.sheer ? ' opacity=".55"' : ""}>${paths()}</g>`);
+    if (!o.noOutline) parts.push(o.sheer
+      ? `<g fill="none" stroke="${lc}" stroke-width="${f(lw)}" stroke-linejoin="round" opacity=".6">${paths()}</g>`
+      : `<g fill="${lc}" stroke="${lc}" stroke-width="${f(lw * 2)}" stroke-linejoin="round">${paths()}</g>`);
     if (!o.sheer) parts.push(`<g fill="${fill}">${paths()}</g>`);
     else parts.push(`<g fill="${fill}" opacity="${o.pattern ? 0.08 : 0.45}">${paths()}</g>`);
     if (o.pattern) parts.push(`<g fill="url(#${o.pattern})">${paths()}</g>`);
@@ -68,16 +70,29 @@ export function renderDoll(raw: Look, opts: { id?: string; width?: number; heigh
   const hairC = look.hair.colour;
 
   // Clothes first (as data), so we know what's covered.
-  const outfit = [...look.outfit].sort((a, c) => LAYER[a.kind] - LAYER[c.kind]);
+  const outfit = look.outfit;
   const covers = (k: string[]) => outfit.some((x) => k.includes(x.kind));
   const auto: Garment[] = [];
   if (look.modest !== false) {
     if (b.sex === "f" && !covers(["top", "dress", "robe", "bra", "armor"]) && !outfit.some((x) => x.kind === "outer" && x.open === false)) auto.push({ kind: "bra", colour: "#e9e4ef" });
     if (!covers(["bottom", "dress", "robe", "briefs"]) && !outfit.some((x) => x.kind === "legwear" && x.style === "tights" && x.material !== "sheer")) auto.push({ kind: "briefs", colour: "#e9e4ef" });
   }
-  // Boots go over trouser legs (tucked in); everything else by its kind.
-  const order = (x: Garment) => (x.kind === "shoes" && x.style === "boots" ? 33 : LAYER[x.kind]);
-  const all = [...auto, ...outfit].sort((a, c) => order(a) - order(c));
+  // Each kind has its usual place; the outfit's own order breaks ties and can move a
+  // layer up: armour, a belt or a sash listed after a robe or coat goes over it.
+  // Boots go over trouser legs (tucked in). Gloves go under sleeves that cover the hands.
+  const listed = [...auto, ...look.outfit];
+  const coverers = new Set(["top", "dress", "robe", "armor", "outer"]);
+  const handsCovered = listed.some((x) => (x.kind === "robe" && (x.sleeveFit ?? "wide") === "wide") || x.sleeveFit === "wide" || x.sleeveFit === "bell");
+  let topSoFar = 0;
+  const order = new Map<Garment, number>();
+  for (const x of listed) {
+    let o = x.kind === "shoes" && x.style === "boots" ? 33 : LAYER[x.kind];
+    if (["armor", "belt", "sash", "apron"].includes(x.kind) && topSoFar >= o) o = topSoFar + 0.5;
+    if (x.kind === "gloves" && handsCovered) o = 39;
+    if (coverers.has(x.kind)) topSoFar = Math.max(topSoFar, o);
+    order.set(x, o);
+  }
+  const all = listed.map((x, i) => ({ x, i })).sort((a, c) => order.get(a.x)! - order.get(c.x)! || a.i - c.i).map((e) => e.x);
   const built = all.map((x, i) => ({ g: x, bt: build(b, x), i }));
   const hatHidesHair = built.some((x) => x.bt.hairUnder);
 
@@ -127,8 +142,17 @@ export function renderDoll(raw: Look, opts: { id?: string; width?: number; heigh
       if (m) g.push(`<circle cx="${m[1]}" cy="${m[2]}" r="3.4" fill="${mix(hairC, "#e05a7e", 0.7)}" stroke="${ink(hairC)}" stroke-width="1"/>`);
     }
   }
-  for (const { g: x, bt } of built) if (x.kind === "hat") drawGarment(x, bt);
-  if (look.ears && look.ears !== "elf") {
+  // Ears poke through a beanie, cap or band; a brim or hood sits over them.
+  const hats = built.filter((x) => x.g.kind === "hat");
+  const overEars = hats.filter((x) => ["sunhat", "witch", "hood"].includes(x.g.style ?? ""));
+  for (const { g: x, bt } of hats) if (!overEars.some((o) => o.g === x)) drawGarment(x, bt);
+  if (look.ears && look.ears !== "elf" && overEars.length) drawEars();
+  for (const { g: x, bt } of overEars) drawGarment(x, bt);
+  if (look.ears && look.ears !== "elf" && !overEars.length) drawEars();
+  if (look.horns) paint(horns(b, look.horns), look.horns === "oni" ? "#d8c9a3" : "#3b3140", { shadeAmt: 0.3, gloss: true });
+
+  function drawEars() {
+    if (!look.ears || look.ears === "elf") return;
     const ec = look.earColour ?? hairC;
     const e = animalEars(b, look.ears, ec);
     if (e) {
@@ -137,7 +161,6 @@ export function renderDoll(raw: Look, opts: { id?: string; width?: number; heigh
       if (e.tipD.length) paint(e.tipD, shade(ec, 0.55), { shadeAmt: 0, noOutline: true });
     }
   }
-  if (look.horns) paint(horns(b, look.horns), look.horns === "oni" ? "#d8c9a3" : "#3b3140", { shadeAmt: 0.3, gloss: true });
 
   function drawGarment(x: Garment, bt: Built) {
     const base = x.colour;
@@ -159,7 +182,9 @@ export function renderDoll(raw: Look, opts: { id?: string; width?: number; heigh
     let fill = base;
     if (metal) {
       const gr = id("mt");
-      defs.push(`<linearGradient id="${gr}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${light(base, 0.45)}"/><stop offset=".45" stop-color="${base}"/><stop offset=".55" stop-color="${shade(base, 0.25)}"/><stop offset="1" stop-color="${light(base, 0.15)}"/></linearGradient>`);
+      const xs = bt.pieces.flat().map((p) => p.x), ys = bt.pieces.flat().map((p) => p.y);
+      // One sheen across the whole garment, not one per piece.
+      defs.push(`<linearGradient id="${gr}" gradientUnits="userSpaceOnUse" x1="${f(Math.min(...xs))}" y1="${f(Math.min(...ys))}" x2="${f(Math.max(...xs))}" y2="${f(Math.max(...ys))}"><stop offset="0" stop-color="${light(base, 0.45)}"/><stop offset=".45" stop-color="${base}"/><stop offset=".55" stop-color="${shade(base, 0.25)}"/><stop offset="1" stop-color="${light(base, 0.15)}"/></linearGradient>`);
       fill = `url(#${gr})`;
     }
     const lc = ink(base);
@@ -178,8 +203,10 @@ export function renderDoll(raw: Look, opts: { id?: string; width?: number; heigh
   }
 
   // Room above for tall ears and hats, and to the side for tails.
-  const tall = look.ears === "bunny" || built.some((x) => x.g.kind === "hat" && x.g.style === "witch") ? 26 : look.ears || look.horns ? 12 : 8;
-  const wide = look.tail ? 30 : 0;
+  // Room above the head for hair, ears, horns and hats (tall bodies reach higher), and to the side for tails.
+  const above = look.ears === "bunny" || built.some((x) => x.g.kind === "hat" && x.g.style === "witch") ? 3.05 : look.ears || look.horns || look.hair.style === "spiky" || look.hair.style === "bun" ? 1.9 : 1.35;
+  const tall = Math.max(8, Math.ceil(-(b.head.c.y - b.head.ry * above) + 4));
+  const wide = look.tail || look.hair.style === "twintails" ? 32 : 0;
   const vb = opts.crop === "bust"
     ? `${f(b.cx - 80)} ${f(b.head.c.y - b.head.ry * 2.1)} 160 ${f(b.waistY - (b.head.c.y - b.head.ry * 2.1) + 10)}`
     : `${-wide} ${-tall} ${240 + wide * 2} ${532 + tall}`;

@@ -5077,7 +5077,7 @@ var STYLES2 = {
   outer: ["jacket", "coat", "vest", "hoodie"]
 };
 var LAYER = {
-  cape: 5,
+  cape: 61,
   briefs: 8,
   bra: 9,
   legwear: 10,
@@ -5130,6 +5130,8 @@ function handPoly(b, side, grow = 0) {
   return closedSpline(k.map(([u, v]) => ({ x: c.x + u * side * (h.rx + grow), y: c.y + v * (h.ry * 0.62 + grow) })), 5);
 }
 function footPoly(b, side, grow = 0) {
+  if (side === -1)
+    return flipX(b, footPoly(b, 1, grow));
   const ft = b.foot, ank = b.leg[b.leg.length - 1];
   const cx = side === 1 ? ft.c.x : 2 * b.cx - ft.c.x, ax = side === 1 ? ank.x : 2 * b.cx - ank.x;
   const g = grow;
@@ -5168,9 +5170,11 @@ function skinShapes(b) {
 function neckline(b, kind, grow) {
   const cx = b.cx;
   const onSlope = (nw) => {
+    if (nw <= b.profile[0].x)
+      return b.profile[0].y;
     for (let i = 1;i < b.profile.length; i++)
       if (b.profile[i].x >= nw)
-        return lerp(b.profile[i - 1].y, b.profile[i].y, (nw - b.profile[i - 1].x) / (b.profile[i].x - b.profile[i - 1].x || 1));
+        return lerp(b.profile[i - 1].y, b.profile[i].y, clamp((nw - b.profile[i - 1].x) / (b.profile[i].x - b.profile[i - 1].x || 1), 0, 1));
     return b.shoulderY;
   };
   const mk = (nw, depth, sharp = false) => {
@@ -5217,7 +5221,7 @@ function hemY(b, hem) {
   return { crop: b.underY + 3, waist: b.waistY + 6, hip: b.hipY - 2, thigh: b.hipY + 4, knee: b.hipY + 4, ankle: b.hipY + 4 }[hem];
 }
 function skirtShape(b, y0, len, flare, grow) {
-  const y1 = Math.min(b.ground - 4, b.legY(LEG_T[len]) + (len === "floor" ? 30 : 0));
+  const y1 = Math.max(b.crotchY + 8, Math.min(b.ground - 4, b.legY(LEG_T[len]) + (len === "floor" ? 30 : 0)));
   const legOut = (y) => {
     let w = 0;
     for (let t = 0;t <= 1; t += 0.05) {
@@ -5234,7 +5238,7 @@ function skirtShape(b, y0, len, flare, grow) {
   const wAt = (y) => {
     const k = (y - y0) / Math.max(1, y1 - y0);
     const natural = Math.max(widthAt(b, Math.min(y, b.crotchY)) + grow, legOut(y) + grow + 2);
-    return natural + flare * 46 * k ** 1.2;
+    return natural + flare * Math.min(46, (y1 - y0) * 0.6) * k ** 1.2;
   };
   let maxSoFar = 0;
   const ws = ys.map((y) => maxSoFar = Math.max(maxSoFar, wAt(y)));
@@ -5274,7 +5278,7 @@ function sleevePolys(b, side, len, fit, grow, start = 0) {
       break;
     }
     case "puff": {
-      const top = along(arm, Math.max(start, 0.1));
+      const top = along(arm, start > 0 ? start + 0.06 : 0.1);
       polys.push(circ({ x: top.x + side * 2, y: top.y }, top.r * 1.75 + grow));
       polys.push(...limbPolys(seg, grow, { end: false }));
       lines.push({ d: cuff(end.r + grow), c: "ink" });
@@ -5319,10 +5323,8 @@ function trunkPiece(b, g, grow) {
       if (s === -1)
         c = flipX(b, c);
       c = clipAbove(c, nk.y0 + 1);
-      if (nk.cut) {
-        const cut = s === 1 ? nk.cut : { a: { x: 2 * b.cx - nk.cut.a.x, y: nk.cut.a.y }, b: nk.cut.b };
-        c = clipPoly(c, cut.a, cut.b, s === 1 ? 1 : -1);
-      }
+      if (nk.cut)
+        c = clipAbove(c, nk.cut.b.y);
       if (c.length > 2)
         pieces.push(c);
     }
@@ -5338,8 +5340,9 @@ function trunkPiece(b, g, grow) {
       handsOver ||= sl.handsOver;
     }
   }
+  const chin = b.head.c.y + b.head.ry * 0.97;
   if (g.neckline === "turtle")
-    pieces.push([{ x: b.cx - b.s.neck - 2, y: b.neckTop - 2 }, { x: b.cx + b.s.neck + 2, y: b.neckTop - 2 }, { x: b.cx + b.s.neck + 4, y: b.neckBot + 4 }, { x: b.cx - b.s.neck - 4, y: b.neckBot + 4 }]);
+    pieces.push([{ x: b.cx - b.s.neck - 2, y: chin }, { x: b.cx + b.s.neck + 2, y: chin }, { x: b.cx + b.s.neck + 4, y: b.neckBot + 4 }, { x: b.cx - b.s.neck - 4, y: b.neckBot + 4 }]);
   if (g.neckline === "collar") {
     for (const s of [1, -1])
       lines.push({ d: line([{ x: b.cx + s * (b.s.neck + 3), y: nk.y0 - 1 }, { x: b.cx + s * (b.s.neck + 9), y: nk.y0 + 12 }, { x: b.cx + s * 1, y: nk.y0 + 10 }]), w: 1.2 });
@@ -5361,6 +5364,8 @@ function build(b, g) {
       out.pieces.push(...t.pieces);
       out.lines.push(...t.lines);
       out.handsOver = t.handsOver;
+      if (g.hem === "knee" || g.hem === "ankle")
+        out.pieces.push(skirtShape(b, b.hipY - 6, g.hem, 0.12, grow).pts);
       if (g.kind === "armor") {
         for (const s of [1, -1]) {
           const j = s === 1 ? b.arm[0] : { ...b.arm[0], x: 2 * cx - b.arm[0].x };
@@ -5459,8 +5464,8 @@ function build(b, g) {
         const leg = s === 1 ? b.leg : mirrorChain(b, b.leg);
         let seg = segment(leg, 0, Math.min(1, t));
         if (loose) {
-          const R = Math.max(...seg.map((j) => j.r));
-          seg = seg.map((j, i) => ({ ...j, r: lerp(j.r, R * 0.92, i / (seg.length - 1)) }));
+          const R = Math.min(Math.max(...seg.map((j) => j.r)), Math.abs(leg[0].x - cx) - 1);
+          seg = seg.map((j, i) => ({ ...j, r: Math.max(j.r, lerp(R, R * 0.7, i / Math.max(1, seg.length - 1))) }));
         }
         for (const p of limbPolys(seg, grow, { end: false })) {
           const c = clipAbove(p, riseY);
@@ -5485,8 +5490,7 @@ function build(b, g) {
     }
     case "legwear": {
       const style = g.style ?? "socks";
-      const t0 = style === "tights" ? 0 : style === "stockings" ? LEG_T[g.length ?? "short"] + 0.02 : 1 - LEG_T[g.length ?? "mid"] * 0.6;
-      const t = clamp(style === "socks" ? Math.min(t0, 0.9) : t0, 0, 0.92);
+      const t = style === "tights" ? 0 : clamp(LEG_T[g.length ?? (style === "stockings" ? "short" : "calf")] + 0.02, 0.06, 0.9);
       for (const s of [1, -1]) {
         const leg = s === 1 ? b.leg : mirrorChain(b, b.leg);
         out.pieces.push(...limbPolys(segment(leg, t, 1), 0.7, { start: false }), footPoly(b, s, 0.7));
@@ -5513,9 +5517,9 @@ function build(b, g) {
         }
         out.pieces.push(foot);
         if (style === "boots") {
-          const t0 = 1 - LEG_T[g.length ?? "calf"] * 0.9;
-          out.pieces.push(...limbPolys(segment(leg, clamp(t0, 0.35, 0.9), 1), 2.2, { start: false }));
-          const top = along(leg, clamp(t0, 0.35, 0.9));
+          const t0 = clamp(LEG_T[g.length ?? "calf"], 0.3, 0.88);
+          out.pieces.push(...limbPolys(segment(leg, t0, 1), 2.2, { start: false }));
+          const top = along(leg, t0);
           out.trim.push([{ x: top.x - top.r - 3.2, y: top.y - 1 }, { x: top.x + top.r + 3.2, y: top.y - 1 }, { x: top.x + top.r + 3, y: top.y + 6 }, { x: top.x - top.r - 3, y: top.y + 6 }]);
         }
         const ft = s === 1 ? b.foot.c : { x: 2 * cx - b.foot.c.x, y: b.foot.c.y };
@@ -5525,7 +5529,7 @@ function build(b, g) {
             out.lines.push({ d: line([{ x: ft.x - 3, y: ft.y - 6 + i * 4 }, { x: ft.x + 3, y: ft.y - 6 + i * 4 }]), c: "light", w: 1 });
         }
         if (style === "heels")
-          out.lines.push({ d: line([{ x: ft.x - 4, y: ft.y - 2 }, { x: ft.x + 2, y: ft.y + 6 }]), c: "light", w: 1.2 });
+          out.lines.push({ d: line([{ x: ft.x - 4 * s, y: ft.y - 2 }, { x: ft.x + 2 * s, y: ft.y + 6 }]), c: "light", w: 1.2 });
       }
       break;
     }
@@ -5547,7 +5551,7 @@ function build(b, g) {
     }
     case "sleeves": {
       for (const s of [1, -1]) {
-        const sl = sleevePolys(b, s, SLEEVE_T[g.sleeves ?? "long"], g.sleeveFit ?? "bell", grow, 0.3);
+        const sl = sleevePolys(b, s, Math.max(0.6, SLEEVE_T[g.sleeves ?? "long"]), g.sleeveFit ?? "bell", grow, 0.3);
         out.pieces.push(...sl.polys);
         out.lines.push(...sl.lines);
         const arm = s === 1 ? b.arm : mirrorChain(b, b.arm);
@@ -5749,7 +5753,7 @@ var OUTFITS = {
       { kind: "robe", colour: "#8e2f4f", pattern: "floral", patternColour: "#f4c6d2", label: "Kimono" },
       { kind: "sash", colour: "#e9c46a", colour2: "#c0392b", label: "Obi" },
       { kind: "shoes", style: "geta", colour: "#a07850", colour2: "#c0392b", label: "Geta" },
-      { kind: "legwear", style: "socks", colour: "#f4f1ea", length: "short", label: "Tabi" }
+      { kind: "legwear", style: "socks", colour: "#f4f1ea", length: "ankle", label: "Tabi" }
     ],
     m: [
       { kind: "robe", colour: "#2c3e5a", pattern: "waves", patternColour: "#4f6b94", label: "Kimono" },
@@ -5764,7 +5768,8 @@ var OUTFITS = {
       { kind: "top", colour: "#f4f1ea", pattern: "cow", neckline: "halter", hem: "crop", fit: "tight", label: "Cow-print halter" },
       { kind: "sleeves", colour: "#f4f1ea", pattern: "cow", sleeves: "long", sleeveFit: "loose", label: "Detached sleeves" },
       { kind: "bottom", style: "shorts", colour: "#3a3a40", length: "micro", rise: "low", label: "Shorts" },
-      { kind: "shoes", style: "boots", colour: "#2a2a30", length: "short", colour2: "#f29ac0", label: "Boots" },
+      { kind: "legwear", style: "socks", colour: "#f29ac0", length: "calf", label: "Slouch socks" },
+      { kind: "shoes", style: "boots", colour: "#2a2a30", length: "ankle", label: "Boots" },
       { kind: "gloves", style: "fingerless", colour: "#2a2a30", sleeves: "cap", label: "Fingerless gloves" },
       { kind: "neck", style: "choker", colour: "#222", colour2: "#6fd0e8", label: "Choker" },
       { kind: "hat", style: "newsboy", colour: "#2a2a30", label: "Newsboy cap" }
@@ -6085,7 +6090,7 @@ function renderDoll(raw, opts = {}) {
     const paths = (attrs = "") => ds.map((d) => `<path d="${d}"${attrs}/>`).join("");
     const parts = [];
     if (!o.noOutline)
-      parts.push(`<g fill="${lc}" stroke="${lc}" stroke-width="${f(lw * 2)}" stroke-linejoin="round"${o.sheer ? ' opacity=".55"' : ""}>${paths()}</g>`);
+      parts.push(o.sheer ? `<g fill="none" stroke="${lc}" stroke-width="${f(lw)}" stroke-linejoin="round" opacity=".6">${paths()}</g>` : `<g fill="${lc}" stroke="${lc}" stroke-width="${f(lw * 2)}" stroke-linejoin="round">${paths()}</g>`);
     if (!o.sheer)
       parts.push(`<g fill="${fill}">${paths()}</g>`);
     else
@@ -6107,7 +6112,7 @@ function renderDoll(raw, opts = {}) {
   const stroke = (d, c, w = 1, extra = "") => g.push(`<path d="${d}" fill="none" stroke="${c}" stroke-width="${f(w)}" stroke-linecap="round" stroke-linejoin="round"${extra}/>`);
   const skin = look.skin, skinLine = ink(skin);
   const hairC = look.hair.colour;
-  const outfit = [...look.outfit].sort((a, c) => LAYER[a.kind] - LAYER[c.kind]);
+  const outfit = look.outfit;
   const covers = (k) => outfit.some((x) => k.includes(x.kind));
   const auto = [];
   if (look.modest !== false) {
@@ -6116,8 +6121,22 @@ function renderDoll(raw, opts = {}) {
     if (!covers(["bottom", "dress", "robe", "briefs"]) && !outfit.some((x) => x.kind === "legwear" && x.style === "tights" && x.material !== "sheer"))
       auto.push({ kind: "briefs", colour: "#e9e4ef" });
   }
-  const order = (x) => x.kind === "shoes" && x.style === "boots" ? 33 : LAYER[x.kind];
-  const all = [...auto, ...outfit].sort((a, c) => order(a) - order(c));
+  const listed = [...auto, ...look.outfit];
+  const coverers = new Set(["top", "dress", "robe", "armor", "outer"]);
+  const handsCovered = listed.some((x) => x.kind === "robe" && (x.sleeveFit ?? "wide") === "wide" || x.sleeveFit === "wide" || x.sleeveFit === "bell");
+  let topSoFar = 0;
+  const order = new Map;
+  for (const x of listed) {
+    let o = x.kind === "shoes" && x.style === "boots" ? 33 : LAYER[x.kind];
+    if (["armor", "belt", "sash", "apron"].includes(x.kind) && topSoFar >= o)
+      o = topSoFar + 0.5;
+    if (x.kind === "gloves" && handsCovered)
+      o = 39;
+    if (coverers.has(x.kind))
+      topSoFar = Math.max(topSoFar, o);
+    order.set(x, o);
+  }
+  const all = listed.map((x, i) => ({ x, i })).sort((a, c) => order.get(a.x) - order.get(c.x) || a.i - c.i).map((e) => e.x);
   const built = all.map((x, i) => ({ g: x, bt: build(b, x), i }));
   const hatHidesHair = built.some((x) => x.bt.hairUnder);
   if (look.tail) {
@@ -6171,10 +6190,22 @@ function renderDoll(raw, opts = {}) {
         g.push(`<circle cx="${m[1]}" cy="${m[2]}" r="3.4" fill="${mix(hairC, "#e05a7e", 0.7)}" stroke="${ink(hairC)}" stroke-width="1"/>`);
     }
   }
-  for (const { g: x, bt } of built)
-    if (x.kind === "hat")
+  const hats = built.filter((x) => x.g.kind === "hat");
+  const overEars = hats.filter((x) => ["sunhat", "witch", "hood"].includes(x.g.style ?? ""));
+  for (const { g: x, bt } of hats)
+    if (!overEars.some((o) => o.g === x))
       drawGarment(x, bt);
-  if (look.ears && look.ears !== "elf") {
+  if (look.ears && look.ears !== "elf" && overEars.length)
+    drawEars();
+  for (const { g: x, bt } of overEars)
+    drawGarment(x, bt);
+  if (look.ears && look.ears !== "elf" && !overEars.length)
+    drawEars();
+  if (look.horns)
+    paint(horns(b, look.horns), look.horns === "oni" ? "#d8c9a3" : "#3b3140", { shadeAmt: 0.3, gloss: true });
+  function drawEars() {
+    if (!look.ears || look.ears === "elf")
+      return;
     const ec = look.earColour ?? hairC;
     const e = animalEars(b, look.ears, ec);
     if (e) {
@@ -6184,8 +6215,6 @@ function renderDoll(raw, opts = {}) {
         paint(e.tipD, shade(ec, 0.55), { shadeAmt: 0, noOutline: true });
     }
   }
-  if (look.horns)
-    paint(horns(b, look.horns), look.horns === "oni" ? "#d8c9a3" : "#3b3140", { shadeAmt: 0.3, gloss: true });
   function drawGarment(x, bt) {
     const base = x.colour;
     let pat;
@@ -6205,7 +6234,8 @@ function renderDoll(raw, opts = {}) {
     let fill = base;
     if (metal) {
       const gr = id("mt");
-      defs.push(`<linearGradient id="${gr}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${light(base, 0.45)}"/><stop offset=".45" stop-color="${base}"/><stop offset=".55" stop-color="${shade(base, 0.25)}"/><stop offset="1" stop-color="${light(base, 0.15)}"/></linearGradient>`);
+      const xs = bt.pieces.flat().map((p) => p.x), ys = bt.pieces.flat().map((p) => p.y);
+      defs.push(`<linearGradient id="${gr}" gradientUnits="userSpaceOnUse" x1="${f(Math.min(...xs))}" y1="${f(Math.min(...ys))}" x2="${f(Math.max(...xs))}" y2="${f(Math.max(...ys))}"><stop offset="0" stop-color="${light(base, 0.45)}"/><stop offset=".45" stop-color="${base}"/><stop offset=".55" stop-color="${shade(base, 0.25)}"/><stop offset="1" stop-color="${light(base, 0.15)}"/></linearGradient>`);
       fill = `url(#${gr})`;
     }
     const lc = ink(base);
@@ -6224,8 +6254,9 @@ function renderDoll(raw, opts = {}) {
       stroke(l.d, c, l.w ?? 1, mask ? ` mask="url(#${mask})"` : "");
     }
   }
-  const tall = look.ears === "bunny" || built.some((x) => x.g.kind === "hat" && x.g.style === "witch") ? 26 : look.ears || look.horns ? 12 : 8;
-  const wide = look.tail ? 30 : 0;
+  const above = look.ears === "bunny" || built.some((x) => x.g.kind === "hat" && x.g.style === "witch") ? 3.05 : look.ears || look.horns || look.hair.style === "spiky" || look.hair.style === "bun" ? 1.9 : 1.35;
+  const tall = Math.max(8, Math.ceil(-(b.head.c.y - b.head.ry * above) + 4));
+  const wide = look.tail || look.hair.style === "twintails" ? 32 : 0;
   const vb = opts.crop === "bust" ? `${f(b.cx - 80)} ${f(b.head.c.y - b.head.ry * 2.1)} 160 ${f(b.waistY - (b.head.c.y - b.head.ry * 2.1) + 10)}` : `${-wide} ${-tall} ${240 + wide * 2} ${532 + tall}`;
   const px = (v) => typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.round(v) : null;
   const w = px(opts.width) ? ` width="${px(opts.width)}"` : "", h = px(opts.height) ? ` height="${px(opts.height)}"` : "";
@@ -6256,6 +6287,14 @@ function bodyMarks(b, skin, stroke) {
 }
 
 // src/frontend/doll/lab.ts
+function renderDoll2(look, opts = {}) {
+  try {
+    return renderDoll(look, opts);
+  } catch (e) {
+    console.error("[warp] doll", e);
+    return `<p class="warp-dim">This look couldn't be drawn. Change a garment, or pick a ready-made outfit.</p>`;
+  }
+}
 var KEY = "warp:doll";
 var esc3 = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 var cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -6333,7 +6372,7 @@ function createDollLab(o) {
       if (k === "flare")
         return row("Flare", range(`outfit.${i}.flare`, g.flare ?? 0.4, 0, 1, 0.05));
       if (k === "open")
-        return row("Open front", `<input type="checkbox" data-doll-set="outfit.${i}.open"${g.open ?? true ? " checked" : ""}>`);
+        return row("Open front", `<input type="checkbox" data-doll-set="outfit.${i}.open"${g.open ?? g.style !== "hoodie" ? " checked" : ""}>`);
       const opts = OPTIONS[k];
       return opts ? row(cap(k === "sleeveFit" ? "sleeve fit" : k), sel(`outfit.${i}.${k}`, String(g[k] ?? ""), opts, undefined, "default")) : "";
     }).join("");
@@ -6355,7 +6394,7 @@ function createDollLab(o) {
     const people = (o.hud()?.people ?? []).map((p) => p.name);
     const who = st.who;
     const isBusy = busy.has(who);
-    const doll = renderDoll(L, { id: `lab${who}` });
+    const doll = renderDoll2(L, { id: `lab${who}` });
     return `<div class="warp-doll-lab">
       <div class="warp-doll-who" role="tablist">
         <button class="warp-tab" data-doll-who="you" aria-selected="${who === "you"}">You</button>
@@ -6464,7 +6503,7 @@ function createDollLab(o) {
     }
     const stage = root.querySelector("[data-doll-stage]");
     if (stage)
-      stage.innerHTML = renderDoll(cur(), { id: `lab${st.who}` });
+      stage.innerHTML = renderDoll2(cur(), { id: `lab${st.who}` });
   }
   function ask(source) {
     const who = st.who;
@@ -6586,7 +6625,7 @@ function createDollLab(o) {
   function hudSection() {
     if (!st.hud)
       return null;
-    return { id: "doll", title: "Doll", count: 0, open: true, body: `<div class="warp-doll-hud">${renderDoll(st.you, { id: "hud" })}</div>` };
+    return { id: "doll", title: "Doll", count: 0, open: true, body: `<div class="warp-doll-hud">${renderDoll2(st.you, { id: "hud" })}</div>` };
   }
   return { html, handle, onLook, hudSection, current: cur };
 }

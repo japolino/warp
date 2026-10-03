@@ -28116,7 +28116,7 @@ var STYLES = {
   outer: ["jacket", "coat", "vest", "hoodie"]
 };
 var LAYER = {
-  cape: 5,
+  cape: 61,
   briefs: 8,
   bra: 9,
   legwear: 10,
@@ -28169,6 +28169,8 @@ function handPoly(b, side, grow = 0) {
   return closedSpline(k.map(([u, v]) => ({ x: c.x + u * side * (h.rx + grow), y: c.y + v * (h.ry * 0.62 + grow) })), 5);
 }
 function footPoly(b, side, grow = 0) {
+  if (side === -1)
+    return flipX(b, footPoly(b, 1, grow));
   const ft = b.foot, ank = b.leg[b.leg.length - 1];
   const cx = side === 1 ? ft.c.x : 2 * b.cx - ft.c.x, ax = side === 1 ? ank.x : 2 * b.cx - ank.x;
   const g = grow;
@@ -28207,9 +28209,11 @@ function skinShapes(b) {
 function neckline(b, kind, grow) {
   const cx = b.cx;
   const onSlope = (nw) => {
+    if (nw <= b.profile[0].x)
+      return b.profile[0].y;
     for (let i = 1;i < b.profile.length; i++)
       if (b.profile[i].x >= nw)
-        return lerp(b.profile[i - 1].y, b.profile[i].y, (nw - b.profile[i - 1].x) / (b.profile[i].x - b.profile[i - 1].x || 1));
+        return lerp(b.profile[i - 1].y, b.profile[i].y, clamp2((nw - b.profile[i - 1].x) / (b.profile[i].x - b.profile[i - 1].x || 1), 0, 1));
     return b.shoulderY;
   };
   const mk = (nw, depth, sharp = false) => {
@@ -28256,7 +28260,7 @@ function hemY(b, hem) {
   return { crop: b.underY + 3, waist: b.waistY + 6, hip: b.hipY - 2, thigh: b.hipY + 4, knee: b.hipY + 4, ankle: b.hipY + 4 }[hem];
 }
 function skirtShape(b, y0, len, flare, grow) {
-  const y1 = Math.min(b.ground - 4, b.legY(LEG_T[len]) + (len === "floor" ? 30 : 0));
+  const y1 = Math.max(b.crotchY + 8, Math.min(b.ground - 4, b.legY(LEG_T[len]) + (len === "floor" ? 30 : 0)));
   const legOut = (y) => {
     let w = 0;
     for (let t = 0;t <= 1; t += 0.05) {
@@ -28273,7 +28277,7 @@ function skirtShape(b, y0, len, flare, grow) {
   const wAt = (y) => {
     const k = (y - y0) / Math.max(1, y1 - y0);
     const natural = Math.max(widthAt(b, Math.min(y, b.crotchY)) + grow, legOut(y) + grow + 2);
-    return natural + flare * 46 * k ** 1.2;
+    return natural + flare * Math.min(46, (y1 - y0) * 0.6) * k ** 1.2;
   };
   let maxSoFar = 0;
   const ws = ys.map((y) => maxSoFar = Math.max(maxSoFar, wAt(y)));
@@ -28313,7 +28317,7 @@ function sleevePolys(b, side, len, fit, grow, start = 0) {
       break;
     }
     case "puff": {
-      const top = along(arm, Math.max(start, 0.1));
+      const top = along(arm, start > 0 ? start + 0.06 : 0.1);
       polys.push(circ({ x: top.x + side * 2, y: top.y }, top.r * 1.75 + grow));
       polys.push(...limbPolys(seg, grow, { end: false }));
       lines.push({ d: cuff(end.r + grow), c: "ink" });
@@ -28358,10 +28362,8 @@ function trunkPiece(b, g, grow) {
       if (s === -1)
         c = flipX(b, c);
       c = clipAbove(c, nk.y0 + 1);
-      if (nk.cut) {
-        const cut = s === 1 ? nk.cut : { a: { x: 2 * b.cx - nk.cut.a.x, y: nk.cut.a.y }, b: nk.cut.b };
-        c = clipPoly(c, cut.a, cut.b, s === 1 ? 1 : -1);
-      }
+      if (nk.cut)
+        c = clipAbove(c, nk.cut.b.y);
       if (c.length > 2)
         pieces.push(c);
     }
@@ -28377,8 +28379,9 @@ function trunkPiece(b, g, grow) {
       handsOver ||= sl.handsOver;
     }
   }
+  const chin = b.head.c.y + b.head.ry * 0.97;
   if (g.neckline === "turtle")
-    pieces.push([{ x: b.cx - b.s.neck - 2, y: b.neckTop - 2 }, { x: b.cx + b.s.neck + 2, y: b.neckTop - 2 }, { x: b.cx + b.s.neck + 4, y: b.neckBot + 4 }, { x: b.cx - b.s.neck - 4, y: b.neckBot + 4 }]);
+    pieces.push([{ x: b.cx - b.s.neck - 2, y: chin }, { x: b.cx + b.s.neck + 2, y: chin }, { x: b.cx + b.s.neck + 4, y: b.neckBot + 4 }, { x: b.cx - b.s.neck - 4, y: b.neckBot + 4 }]);
   if (g.neckline === "collar") {
     for (const s of [1, -1])
       lines.push({ d: line([{ x: b.cx + s * (b.s.neck + 3), y: nk.y0 - 1 }, { x: b.cx + s * (b.s.neck + 9), y: nk.y0 + 12 }, { x: b.cx + s * 1, y: nk.y0 + 10 }]), w: 1.2 });
@@ -28400,6 +28403,8 @@ function build(b, g) {
       out.pieces.push(...t.pieces);
       out.lines.push(...t.lines);
       out.handsOver = t.handsOver;
+      if (g.hem === "knee" || g.hem === "ankle")
+        out.pieces.push(skirtShape(b, b.hipY - 6, g.hem, 0.12, grow).pts);
       if (g.kind === "armor") {
         for (const s of [1, -1]) {
           const j = s === 1 ? b.arm[0] : { ...b.arm[0], x: 2 * cx - b.arm[0].x };
@@ -28498,8 +28503,8 @@ function build(b, g) {
         const leg = s === 1 ? b.leg : mirrorChain(b, b.leg);
         let seg = segment(leg, 0, Math.min(1, t));
         if (loose) {
-          const R = Math.max(...seg.map((j) => j.r));
-          seg = seg.map((j, i) => ({ ...j, r: lerp(j.r, R * 0.92, i / (seg.length - 1)) }));
+          const R = Math.min(Math.max(...seg.map((j) => j.r)), Math.abs(leg[0].x - cx) - 1);
+          seg = seg.map((j, i) => ({ ...j, r: Math.max(j.r, lerp(R, R * 0.7, i / Math.max(1, seg.length - 1))) }));
         }
         for (const p of limbPolys(seg, grow, { end: false })) {
           const c = clipAbove(p, riseY);
@@ -28524,8 +28529,7 @@ function build(b, g) {
     }
     case "legwear": {
       const style = g.style ?? "socks";
-      const t0 = style === "tights" ? 0 : style === "stockings" ? LEG_T[g.length ?? "short"] + 0.02 : 1 - LEG_T[g.length ?? "mid"] * 0.6;
-      const t = clamp2(style === "socks" ? Math.min(t0, 0.9) : t0, 0, 0.92);
+      const t = style === "tights" ? 0 : clamp2(LEG_T[g.length ?? (style === "stockings" ? "short" : "calf")] + 0.02, 0.06, 0.9);
       for (const s of [1, -1]) {
         const leg = s === 1 ? b.leg : mirrorChain(b, b.leg);
         out.pieces.push(...limbPolys(segment(leg, t, 1), 0.7, { start: false }), footPoly(b, s, 0.7));
@@ -28552,9 +28556,9 @@ function build(b, g) {
         }
         out.pieces.push(foot);
         if (style === "boots") {
-          const t0 = 1 - LEG_T[g.length ?? "calf"] * 0.9;
-          out.pieces.push(...limbPolys(segment(leg, clamp2(t0, 0.35, 0.9), 1), 2.2, { start: false }));
-          const top = along(leg, clamp2(t0, 0.35, 0.9));
+          const t0 = clamp2(LEG_T[g.length ?? "calf"], 0.3, 0.88);
+          out.pieces.push(...limbPolys(segment(leg, t0, 1), 2.2, { start: false }));
+          const top = along(leg, t0);
           out.trim.push([{ x: top.x - top.r - 3.2, y: top.y - 1 }, { x: top.x + top.r + 3.2, y: top.y - 1 }, { x: top.x + top.r + 3, y: top.y + 6 }, { x: top.x - top.r - 3, y: top.y + 6 }]);
         }
         const ft = s === 1 ? b.foot.c : { x: 2 * cx - b.foot.c.x, y: b.foot.c.y };
@@ -28564,7 +28568,7 @@ function build(b, g) {
             out.lines.push({ d: line([{ x: ft.x - 3, y: ft.y - 6 + i * 4 }, { x: ft.x + 3, y: ft.y - 6 + i * 4 }]), c: "light", w: 1 });
         }
         if (style === "heels")
-          out.lines.push({ d: line([{ x: ft.x - 4, y: ft.y - 2 }, { x: ft.x + 2, y: ft.y + 6 }]), c: "light", w: 1.2 });
+          out.lines.push({ d: line([{ x: ft.x - 4 * s, y: ft.y - 2 }, { x: ft.x + 2 * s, y: ft.y + 6 }]), c: "light", w: 1.2 });
       }
       break;
     }
@@ -28586,7 +28590,7 @@ function build(b, g) {
     }
     case "sleeves": {
       for (const s of [1, -1]) {
-        const sl = sleevePolys(b, s, SLEEVE_T[g.sleeves ?? "long"], g.sleeveFit ?? "bell", grow, 0.3);
+        const sl = sleevePolys(b, s, Math.max(0.6, SLEEVE_T[g.sleeves ?? "long"]), g.sleeveFit ?? "bell", grow, 0.3);
         out.pieces.push(...sl.polys);
         out.lines.push(...sl.lines);
         const arm = s === 1 ? b.arm : mirrorChain(b, b.arm);
@@ -28788,7 +28792,7 @@ var OUTFITS = {
       { kind: "robe", colour: "#8e2f4f", pattern: "floral", patternColour: "#f4c6d2", label: "Kimono" },
       { kind: "sash", colour: "#e9c46a", colour2: "#c0392b", label: "Obi" },
       { kind: "shoes", style: "geta", colour: "#a07850", colour2: "#c0392b", label: "Geta" },
-      { kind: "legwear", style: "socks", colour: "#f4f1ea", length: "short", label: "Tabi" }
+      { kind: "legwear", style: "socks", colour: "#f4f1ea", length: "ankle", label: "Tabi" }
     ],
     m: [
       { kind: "robe", colour: "#2c3e5a", pattern: "waves", patternColour: "#4f6b94", label: "Kimono" },
@@ -28803,7 +28807,8 @@ var OUTFITS = {
       { kind: "top", colour: "#f4f1ea", pattern: "cow", neckline: "halter", hem: "crop", fit: "tight", label: "Cow-print halter" },
       { kind: "sleeves", colour: "#f4f1ea", pattern: "cow", sleeves: "long", sleeveFit: "loose", label: "Detached sleeves" },
       { kind: "bottom", style: "shorts", colour: "#3a3a40", length: "micro", rise: "low", label: "Shorts" },
-      { kind: "shoes", style: "boots", colour: "#2a2a30", length: "short", colour2: "#f29ac0", label: "Boots" },
+      { kind: "legwear", style: "socks", colour: "#f29ac0", length: "calf", label: "Slouch socks" },
+      { kind: "shoes", style: "boots", colour: "#2a2a30", length: "ankle", label: "Boots" },
       { kind: "gloves", style: "fingerless", colour: "#2a2a30", sleeves: "cap", label: "Fingerless gloves" },
       { kind: "neck", style: "choker", colour: "#222", colour2: "#6fd0e8", label: "Choker" },
       { kind: "hat", style: "newsboy", colour: "#2a2a30", label: "Newsboy cap" }
@@ -29089,10 +29094,11 @@ look fields:
 - tail: ${list2(TAILS)} or null; tailColour. kitsune = several fox tails.
 - horns: ${list2(HORNS)} or null
 - outfit: a list of garments, innermost first. Each garment:
+  List garments innermost first: something listed later (armour over a robe, a belt over a coat) is drawn over earlier ones.
   {"kind": ${list2(KINDS)}, "label": "what it is, 1-3 words", "colour": hex, "colour2": trim hex (optional),
    "pattern": ${list2(PATTERNS)}, "patternColour": hex, "material": ${list2(MATERIALS)},
    "neckline": ${list2(NECKLINES)}, "sleeves": ${list2(SLEEVES)}, "sleeveFit": ${list2(SLEEVE_FITS)},
-   "hem": ${list2(HEMS)} (tops), "length": one word, ${list2(LENGTHS)} (how far legs, skirts, socks and boots reach), "fit": ${list2(FITS)},
+   "hem": ${list2(HEMS)} (tops), "length": one word, ${list2(LENGTHS)} — for trousers, skirts, dresses and robes how far DOWN they reach; for socks, stockings and boots where their TOP sits ("knee" socks, "ankle" boots, "short" = thigh-high), "fit": ${list2(FITS)},
    "rise": high | mid | low, "flare": 0..1 (skirts, coat tails), "open": true|false (jackets), "damage": 0..1 (torn or worn),
    "style": ${Object.entries(STYLES).map(([k, v]) => `${k}: ${list2(v)}`).join("; ")}}
 

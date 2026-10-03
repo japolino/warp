@@ -6,7 +6,15 @@ import { PRESETS, type Sex } from "./body.js";
 import { EARS, EXPRESSIONS, HAIR_STYLES, HORNS, TAILS } from "./features.js";
 import { FITS, type Garment, HEMS, type Kind, KINDS, LENGTHS, MATERIALS, NECKLINES, PATTERNS, SLEEVE_FITS, SLEEVES, STYLES } from "./garments.js";
 import { cleanLook, defaultLook, HAIR_COLOURS, MAX_GARMENTS, OUTFITS, outfitFor, SKINS } from "./outfits.js";
-import { type Look, renderDoll } from "./render.js";
+import { type Look, renderDoll as draw } from "./render.js";
+
+/** Never let one bad look take the panel down with it. */
+function renderDoll(look: Look, opts: { id?: string } = {}): string {
+  try { return draw(look, opts); } catch (e) {
+    console.error("[warp] doll", e);
+    return `<p class="warp-dim">This look couldn't be drawn. Change a garment, or pick a ready-made outfit.</p>`;
+  }
+}
 
 type Who = "you" | "them";
 interface Saved { you: Look; them: Look; themName: string; who: Who; notes: Record<Who, string>; hud: boolean }
@@ -89,7 +97,7 @@ export function createDollLab(o: { send(m: DollRequest): void; chatId(): string 
     const fields = FIELDS[g.kind].map((k) => {
       if (k === "style") return STYLES[g.kind] ? row("Style", sel(`outfit.${i}.style`, g.style ?? "", STYLES[g.kind]!, undefined, "default")) : "";
       if (k === "flare") return row("Flare", range(`outfit.${i}.flare`, g.flare ?? 0.4, 0, 1, 0.05));
-      if (k === "open") return row("Open front", `<input type="checkbox" data-doll-set="outfit.${i}.open"${g.open ?? true ? " checked" : ""}>`);
+      if (k === "open") return row("Open front", `<input type="checkbox" data-doll-set="outfit.${i}.open"${g.open ?? g.style !== "hoodie" ? " checked" : ""}>`);
       const opts = OPTIONS[k];
       return opts ? row(cap(k === "sleeveFit" ? "sleeve fit" : k), sel(`outfit.${i}.${k}`, String(g[k] ?? ""), opts, undefined, "default")) : "";
     }).join("");

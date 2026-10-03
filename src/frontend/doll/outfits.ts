@@ -23,7 +23,7 @@ export const OUTFITS: Record<string, { label: string; f: Garment[]; m?: Garment[
       { kind: "robe", colour: "#8e2f4f", pattern: "floral", patternColour: "#f4c6d2", label: "Kimono" },
       { kind: "sash", colour: "#e9c46a", colour2: "#c0392b", label: "Obi" },
       { kind: "shoes", style: "geta", colour: "#a07850", colour2: "#c0392b", label: "Geta" },
-      { kind: "legwear", style: "socks", colour: "#f4f1ea", length: "short", label: "Tabi" },
+      { kind: "legwear", style: "socks", colour: "#f4f1ea", length: "ankle", label: "Tabi" },
     ],
     m: [
       { kind: "robe", colour: "#2c3e5a", pattern: "waves", patternColour: "#4f6b94", label: "Kimono" },
@@ -38,7 +38,8 @@ export const OUTFITS: Record<string, { label: string; f: Garment[]; m?: Garment[
       { kind: "top", colour: "#f4f1ea", pattern: "cow", neckline: "halter", hem: "crop", fit: "tight", label: "Cow-print halter" },
       { kind: "sleeves", colour: "#f4f1ea", pattern: "cow", sleeves: "long", sleeveFit: "loose", label: "Detached sleeves" },
       { kind: "bottom", style: "shorts", colour: "#3a3a40", length: "micro", rise: "low", label: "Shorts" },
-      { kind: "shoes", style: "boots", colour: "#2a2a30", length: "short", colour2: "#f29ac0", label: "Boots" },
+      { kind: "legwear", style: "socks", colour: "#f29ac0", length: "calf", label: "Slouch socks" },
+      { kind: "shoes", style: "boots", colour: "#2a2a30", length: "ankle", label: "Boots" },
       { kind: "gloves", style: "fingerless", colour: "#2a2a30", sleeves: "cap", label: "Fingerless gloves" },
       { kind: "neck", style: "choker", colour: "#222", colour2: "#6fd0e8", label: "Choker" },
       { kind: "hat", style: "newsboy", colour: "#2a2a30", label: "Newsboy cap" },

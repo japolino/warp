@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { PRESETS } from "./body.js";
+import { buildBody, PRESETS } from "./body.js";
 import { EARS, HAIR_STYLES, HORNS, TAILS } from "./features.js";
-import { KINDS, NECKLINES, PATTERNS, SLEEVE_FITS, SLEEVES, STYLES, type Garment } from "./garments.js";
+import { build, FITS, KINDS, NECKLINES, PATTERNS, SLEEVE_FITS, SLEEVES, STYLES, type Garment } from "./garments.js";
 import { cleanLook, OUTFITS, outfitFor } from "./outfits.js";
 import { renderDoll, type Look } from "./render.js";
 
@@ -96,5 +96,42 @@ describe("loose looks are made drawable", () => {
   test("nothing at all still gives a whole doll", () => {
     sound(renderDoll(cleanLook(null)));
     sound(renderDoll(cleanLook({ body: { sex: "m" }, outfit: "lots" })));
+  });
+});
+
+describe("clothes stay where they belong (from the visual QA run)", () => {
+  const bodies = (["f", "m"] as const).flatMap((sex) => Object.keys(PRESETS[sex]).flatMap((preset) => [0.85, 1, 1.15].map((height) => buildBody({ sex, preset, height }))));
+
+  test("no neckline climbs over the face, whatever the fit, material or kind", () => {
+    for (const b of bodies) {
+      const chin = b.head.c.y + b.head.ry * 0.95;
+      for (const kind of ["top", "outer", "armor", "dress", "robe"] as const) for (const neckline of NECKLINES) for (const fit of FITS) for (const material of ["cloth", "metal"] as const) {
+        const top = Math.min(...build(b, { kind, colour: "#555", neckline, fit, material }).pieces.flat().map((p) => p.y));
+        if (top < chin) throw new Error(`${kind} ${neckline} ${fit} ${material} on ${b.sex}/${b.s.height.toFixed(2)} reaches y=${top.toFixed(1)}, above the chin (${chin.toFixed(1)})`);
+      }
+    }
+  });
+
+  test("the whole head fits in the picture at every height", () => {
+    for (const sex of ["f", "m"] as const) for (const preset of Object.keys(PRESETS[sex])) for (const height of [0.85, 1.15]) for (const extra of [{}, { ears: "bunny" }, { horns: "ram" }] as const) {
+      const look = { ...base(sex, preset), body: { sex, preset, height }, ...extra } as Look;
+      const b = buildBody(look.body);
+      const vbTop = Number(/viewBox="[-\d.]+ ([-\d.]+)/.exec(renderDoll(look))![1]);
+      expect(vbTop).toBeLessThanOrEqual(b.head.c.y - b.head.ry * 1.3);
+    }
+  });
+
+  test("socks and boots: the length word is where the top sits", () => {
+    const b = buildBody({ sex: "f", preset: "slim" });
+    const top = (g: Garment) => Math.min(...build(b, g).pieces.flat().map((p) => p.y));
+    expect(top({ kind: "legwear", style: "socks", colour: "#fff", length: "knee" })).toBeLessThan(top({ kind: "legwear", style: "socks", colour: "#fff", length: "ankle" }));
+    expect(top({ kind: "shoes", style: "boots", colour: "#333", length: "knee" })).toBeLessThan(top({ kind: "shoes", style: "boots", colour: "#333", length: "ankle" }));
+  });
+
+  test("the outfit's order moves armour over a robe and a belt over a coat", () => {
+    const svg = renderDoll(base("f", "slim", [{ kind: "robe", colour: "#aa0000" }, { kind: "armor", colour: "#00aa00" }]), { id: "o" });
+    expect(svg.lastIndexOf('fill="#aa0000"')).toBeLessThan(svg.lastIndexOf("#00aa00"));
+    const svg2 = renderDoll(base("f", "slim", [{ kind: "outer", style: "coat", colour: "#aa0000" }, { kind: "belt", colour: "#00aa00" }]), { id: "p" });
+    expect(svg2.lastIndexOf('fill="#aa0000"')).toBeLessThan(svg2.lastIndexOf('fill="#00aa00"'));
   });
 });

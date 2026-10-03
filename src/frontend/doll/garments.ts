@@ -61,7 +61,7 @@ export interface Garment {
 
 /** Back to front. */
 export const LAYER: Record<Kind, number> = {
-  cape: 5, briefs: 8, bra: 9, legwear: 10, shoes: 20, bottom: 30, skirt: 34, top: 40, dress: 41, armor: 44, robe: 45,
+  cape: 61, briefs: 8, bra: 9, legwear: 10, shoes: 20, bottom: 30, skirt: 34, top: 40, dress: 41, armor: 44, robe: 45,
   sash: 50, belt: 52, apron: 55, outer: 60, sleeves: 62, gloves: 65, neck: 70, hat: 90,
 };
 
@@ -119,6 +119,8 @@ function handPoly(b: Body, side: 1 | -1, grow = 0): Pt[] {
 }
 
 function footPoly(b: Body, side: 1 | -1, grow = 0): Pt[] {
+  // The left foot is the right one mirrored (built directly, its outline crossed itself).
+  if (side === -1) return flipX(b, footPoly(b, 1, grow));
   const ft = b.foot, ank = b.leg[b.leg.length - 1];
   const cx = side === 1 ? ft.c.x : 2 * b.cx - ft.c.x, ax = side === 1 ? ank.x : 2 * b.cx - ank.x;
   const g = grow;
@@ -154,7 +156,9 @@ function neckline(b: Body, kind: Neckline, grow: number): Neck {
   const cx = b.cx;
   const onSlope = (nw: number) => {
     // The height where the shoulder slope reaches this half-width.
-    for (let i = 1; i < b.profile.length; i++) if (b.profile[i].x >= nw) return lerp(b.profile[i - 1].y, b.profile[i].y, (nw - b.profile[i - 1].x) / (b.profile[i].x - b.profile[i - 1].x || 1));
+    // Narrower than the neck itself: the neckline starts at the neck's base (never up the face).
+    if (nw <= b.profile[0].x) return b.profile[0].y;
+    for (let i = 1; i < b.profile.length; i++) if (b.profile[i].x >= nw) return lerp(b.profile[i - 1].y, b.profile[i].y, clamp((nw - b.profile[i - 1].x) / (b.profile[i].x - b.profile[i - 1].x || 1), 0, 1));
     return b.shoulderY;
   };
   const mk = (nw: number, depth: number, sharp = false): Neck => {
@@ -197,7 +201,7 @@ function hemY(b: Body, hem: Hem): number {
 
 /** Below-the-waist part of a long garment (dress skirt, coat tails, robe). */
 function skirtShape(b: Body, y0: number, len: Length, flare: number, grow: number): { pts: Pt[]; y1: number } {
-  const y1 = Math.min(b.ground - 4, b.legY(LEG_T[len]) + (len === "floor" ? 30 : 0));
+  const y1 = Math.max(b.crotchY + 8, Math.min(b.ground - 4, b.legY(LEG_T[len]) + (len === "floor" ? 30 : 0)));
   // Wide enough to clear the legs at every height, then the flare on top.
   const legOut = (y: number) => {
     let w = 0;
@@ -210,7 +214,7 @@ function skirtShape(b: Body, y0: number, len: Length, flare: number, grow: numbe
   const wAt = (y: number) => {
     const k = (y - y0) / Math.max(1, y1 - y0);
     const natural = Math.max(widthAt(b, Math.min(y, b.crotchY)) + grow, legOut(y) + grow + 2);
-    return natural + flare * 46 * k ** 1.2;
+    return natural + flare * Math.min(46, (y1 - y0) * 0.6) * k ** 1.2;
   };
   let maxSoFar = 0;
   const ws = ys.map((y) => (maxSoFar = Math.max(maxSoFar, wAt(y))));
@@ -245,7 +249,7 @@ function sleevePolys(b: Body, side: 1 | -1, len: number, fit: SleeveFit, grow: n
       break;
     }
     case "puff": {
-      const top = along(arm, Math.max(start, 0.1));
+      const top = along(arm, start > 0 ? start + 0.06 : 0.1);
       polys.push(circ({ x: top.x + side * 2, y: top.y }, top.r * 1.75 + grow));
       polys.push(...limbPolys(seg, grow, { end: false }));
       lines.push({ d: cuff(end.r + grow), c: "ink" });
@@ -292,7 +296,8 @@ function trunkPiece(b: Body, g: Garment, grow: number): { pieces: Pt[][]; trunk:
       let c = circ({ x: b.breast.x, y: b.breast.y }, b.breast.r + grow * 0.7);
       if (s === -1) c = flipX(b, c);
       c = clipAbove(c, nk.y0 + 1);
-      if (nk.cut) { const cut = s === 1 ? nk.cut : { a: { x: 2 * b.cx - nk.cut.a.x, y: nk.cut.a.y }, b: nk.cut.b }; c = clipPoly(c, cut.a, cut.b, s === 1 ? 1 : -1); }
+      // Only the bust below the neckline's lowest point: nothing pokes into the opening.
+      if (nk.cut) c = clipAbove(c, nk.cut.b.y);
       if (c.length > 2) pieces.push(c);
     }
   }
@@ -308,7 +313,8 @@ function trunkPiece(b: Body, g: Garment, grow: number): { pieces: Pt[][]; trunk:
       handsOver ||= sl.handsOver;
     }
   }
-  if (g.neckline === "turtle") pieces.push([{ x: b.cx - b.s.neck - 2, y: b.neckTop - 2 }, { x: b.cx + b.s.neck + 2, y: b.neckTop - 2 }, { x: b.cx + b.s.neck + 4, y: b.neckBot + 4 }, { x: b.cx - b.s.neck - 4, y: b.neckBot + 4 }]);
+  const chin = b.head.c.y + b.head.ry * 0.97;
+  if (g.neckline === "turtle") pieces.push([{ x: b.cx - b.s.neck - 2, y: chin }, { x: b.cx + b.s.neck + 2, y: chin }, { x: b.cx + b.s.neck + 4, y: b.neckBot + 4 }, { x: b.cx - b.s.neck - 4, y: b.neckBot + 4 }]);
   if (g.neckline === "collar") {
     for (const s of [1, -1]) lines.push({ d: line([{ x: b.cx + s * (b.s.neck + 3), y: nk.y0 - 1 }, { x: b.cx + s * (b.s.neck + 9), y: nk.y0 + 12 }, { x: b.cx + s * 1, y: nk.y0 + 10 }]), w: 1.2 });
   }
@@ -329,6 +335,8 @@ export function build(b: Body, g: Garment): Built {
     case "top": case "armor": {
       const t = trunkPiece(b, { ...g, hem: g.hem ?? (g.kind === "armor" ? "waist" : "hip") }, grow);
       out.pieces.push(...t.pieces); out.lines.push(...t.lines); out.handsOver = t.handsOver;
+      // A tunic to the knee or ankle: a straight skirt below the hip.
+      if (g.hem === "knee" || g.hem === "ankle") out.pieces.push(skirtShape(b, b.hipY - 6, g.hem, 0.12, grow).pts);
       if (g.kind === "armor") {
         for (const s of [1, -1] as const) {
           const j = s === 1 ? b.arm[0] : { ...b.arm[0], x: 2 * cx - b.arm[0].x };
@@ -416,7 +424,11 @@ export function build(b: Body, g: Garment): Built {
       for (const s of [1, -1] as const) {
         const leg = s === 1 ? b.leg : mirrorChain(b, b.leg);
         let seg = segment(leg, 0, Math.min(1, t));
-        if (loose) { const R = Math.max(...seg.map((j) => j.r)); seg = seg.map((j, i) => ({ ...j, r: lerp(j.r, R * 0.92, i / (seg.length - 1)) })); }
+        if (loose) {
+          // Wide legs, but still two of them.
+          const R = Math.min(Math.max(...seg.map((j) => j.r)), Math.abs(leg[0].x - cx) - 1);
+          seg = seg.map((j, i) => ({ ...j, r: Math.max(j.r, lerp(R, R * 0.7, i / Math.max(1, seg.length - 1))) }));
+        }
         for (const p of limbPolys(seg, grow, { end: false })) { const c = clipAbove(p, riseY); if (c.length > 2) out.pieces.push(c); }
         const e = seg[seg.length - 1];
         if (!shorts) out.lines.push({ d: line([{ x: e.x - s * (e.r * 0.2), y: b.crotchY + 14 }, { x: e.x - s * (e.r * 0.15), y: e.y - 6 }]), c: "shade", w: 1 });
@@ -434,8 +446,8 @@ export function build(b: Body, g: Garment): Built {
     }
     case "legwear": {
       const style = g.style ?? "socks";
-      const t0 = style === "tights" ? 0 : style === "stockings" ? LEG_T[g.length ?? "short"] + 0.02 : 1 - LEG_T[g.length ?? "mid"] * 0.6;
-      const t = clamp(style === "socks" ? Math.min(t0, 0.9) : t0, 0, 0.92);
+      // Socks and stockings: `length` is where the top sits ("knee" socks, "short" = thigh-high).
+      const t = style === "tights" ? 0 : clamp(LEG_T[g.length ?? (style === "stockings" ? "short" : "calf")] + 0.02, 0.06, 0.9);
       for (const s of [1, -1] as const) {
         const leg = s === 1 ? b.leg : mirrorChain(b, b.leg);
         out.pieces.push(...limbPolys(segment(leg, t, 1), 0.7, { start: false }), footPoly(b, s, 0.7));
@@ -457,9 +469,10 @@ export function build(b: Body, g: Garment): Built {
         }
         out.pieces.push(foot);
         if (style === "boots") {
-          const t0 = 1 - LEG_T[g.length ?? "calf"] * 0.9;
-          out.pieces.push(...limbPolys(segment(leg, clamp(t0, 0.35, 0.9), 1), 2.2, { start: false }));
-          const top = along(leg, clamp(t0, 0.35, 0.9));
+          // Like socks: `length` is where the top of the boot sits ("ankle" boots, "knee" boots).
+          const t0 = clamp(LEG_T[g.length ?? "calf"], 0.3, 0.88);
+          out.pieces.push(...limbPolys(segment(leg, t0, 1), 2.2, { start: false }));
+          const top = along(leg, t0);
           out.trim.push([{ x: top.x - top.r - 3.2, y: top.y - 1 }, { x: top.x + top.r + 3.2, y: top.y - 1 }, { x: top.x + top.r + 3, y: top.y + 6 }, { x: top.x - top.r - 3, y: top.y + 6 }]);
         }
         const ft = s === 1 ? b.foot.c : { x: 2 * cx - b.foot.c.x, y: b.foot.c.y };
@@ -467,7 +480,7 @@ export function build(b: Body, g: Garment): Built {
           out.trim.push([{ x: ft.x - b.foot.rx - 1.5, y: b.ground - 4 }, { x: ft.x + b.foot.rx + 1.5, y: b.ground - 4 }, { x: ft.x + b.foot.rx * 0.5, y: b.ground + 1.5 }, { x: ft.x - b.foot.rx * 0.5, y: b.ground + 1.5 }]);
           for (let i = 0; i < 3; i++) out.lines.push({ d: line([{ x: ft.x - 3, y: ft.y - 6 + i * 4 }, { x: ft.x + 3, y: ft.y - 6 + i * 4 }]), c: "light", w: 1 });
         }
-        if (style === "heels") out.lines.push({ d: line([{ x: ft.x - 4, y: ft.y - 2 }, { x: ft.x + 2, y: ft.y + 6 }]), c: "light", w: 1.2 });
+        if (style === "heels") out.lines.push({ d: line([{ x: ft.x - 4 * s, y: ft.y - 2 }, { x: ft.x + 2 * s, y: ft.y + 6 }]), c: "light", w: 1.2 });
       }
       break;
     }
@@ -488,7 +501,7 @@ export function build(b: Body, g: Garment): Built {
     }
     case "sleeves": {
       for (const s of [1, -1] as const) {
-        const sl = sleevePolys(b, s, SLEEVE_T[g.sleeves ?? "long"], g.sleeveFit ?? "bell", grow, 0.3);
+        const sl = sleevePolys(b, s, Math.max(0.6, SLEEVE_T[g.sleeves ?? "long"]), g.sleeveFit ?? "bell", grow, 0.3);
         out.pieces.push(...sl.polys); out.lines.push(...sl.lines);
         const arm = s === 1 ? b.arm : mirrorChain(b, b.arm);
         const top = along(arm, 0.3);

@@ -29,10 +29,11 @@ look fields:
 - tail: ${list(TAILS)} or null; tailColour. kitsune = several fox tails.
 - horns: ${list(HORNS)} or null
 - outfit: a list of garments, innermost first. Each garment:
+  List garments innermost first: something listed later (armour over a robe, a belt over a coat) is drawn over earlier ones.
   {"kind": ${list(KINDS)}, "label": "what it is, 1-3 words", "colour": hex, "colour2": trim hex (optional),
    "pattern": ${list(PATTERNS)}, "patternColour": hex, "material": ${list(MATERIALS)},
    "neckline": ${list(NECKLINES)}, "sleeves": ${list(SLEEVES)}, "sleeveFit": ${list(SLEEVE_FITS)},
-   "hem": ${list(HEMS)} (tops), "length": one word, ${list(LENGTHS)} (how far legs, skirts, socks and boots reach), "fit": ${list(FITS)},
+   "hem": ${list(HEMS)} (tops), "length": one word, ${list(LENGTHS)} — for trousers, skirts, dresses and robes how far DOWN they reach; for socks, stockings and boots where their TOP sits ("knee" socks, "ankle" boots, "short" = thigh-high), "fit": ${list(FITS)},
    "rise": high | mid | low, "flare": 0..1 (skirts, coat tails), "open": true|false (jackets), "damage": 0..1 (torn or worn),
    "style": ${Object.entries(STYLES).map(([k, v]) => `${k}: ${list(v!)}`).join("; ")}}
 
