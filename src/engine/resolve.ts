@@ -3,15 +3,15 @@
 import type { ExprEnv, Value } from "./expr.js";
 import { evalBool, evalNumber, evaluate, identifiers } from "./expr.js";
 import { rollDice, seededRng, type Rng } from "./dice.js";
-import type { ActionDef, CheckDef, DecideSpec, Effect, NarratorGate, RandomEventDef, Requirement, Ruleset, SeenReaction, Tier } from "./ruleset.js";
-import { SEEN_REACTIONS, TIERS } from "./ruleset.js";
+import type { ActionDef, CheckDef, DecideSpec, Effect, NarratorGate, RandomEventDef, Requirement, Ruleset, Tier } from "./ruleset.js";
+import { TIERS } from "./ruleset.js";
 import { normalize, sample } from "./decide.js";
 import { emptyEffect, percentOf, slug } from "./ruleset.js";
 import { amountValue, bonusSources, applyEvent, cloneState, dayOf, encounterKey, foeMaxOf, foeName, formatClock, formatNumber, itemName, makeEnv, personName, statMax, timeKey, usesOf, type EventSource, type GameState, type WarpEvent } from "./state.js";
 import { isLoss, thresholds } from "./encounter-view.js";
 import { checkGains, checkStats, DIFFICULTY_WORD, hardnessFrom, IMPROV, IMPROV_DIRECTION, improvAction, isDifficulty, practise, trainingGain } from "./freeform.js";
 import { endingDirection } from "./chronicle.js";
-import { exposedSlots, isIndoors, presentPeople, revealOf, SCENE_HOLDS, sceneWord } from "./world.js";
+import { presentPeople, SCENE_HOLDS, sceneWord } from "./world.js";
 import { JOB_PREFIX, obligationLife, PAY_PREFIX, resolveWork } from "./work.js";
 import { QUEST_PREFIX, questHooks, questLife, questOp, questProgress, resolveQuest, storyQuestNews, type StoryQuestNews } from "./quests.js";
 
@@ -1209,112 +1209,6 @@ function tickWorld(w: Working, days: number, turns: number) {
   tickGauge(w, days, turns);
 }
 
-// ───────────────────────── being seen ─────────────────────────
-
-const SEEN_DESC: Record<SeenReaction, string> = {
-  unnoticed: "Doesn't notice", glance: "Notices, then looks away", interested: "Is interested — keeps looking",
-  disapproving: "Disapproves", predatory: "Pays the wrong kind of attention",
-};
-
-/** What others can see of {{user}} right now, in words. */
-function lookOf(r: Ruleset, s: GameState): string {
-  const exposed = exposedSlots(r, s);
-  const reveal = revealOf(r, s);
-  const parts = [
-    exposed.length ? `exposed: ${exposed.join(", ")}` : null,
-    reveal > 0 ? `revealing clothes (${reveal})` : null,
-  ].filter(Boolean);
-  return parts.length ? parts.join("; ") : "dressed ordinarily";
-}
-
-/**
- * Everyone present reacts to how {{user}} looks, one by one — the decision model
- * reads each person; the engine rolls. Only adults are ever asked; children and
- * anyone known to be under 18 are never part of it.
- */
-function beingSeen(w: Working) {
-  const r = w.r;
-  const ob = r.observers;
-  if (!ob.enabled || !w.s.location || !evalBool(ob.when, w.env(), false)) return;
-  const look = lookOf(r, w.s);
-  const here = new Set(presentPeople(r, w.s, makeEnv(r, w.s)));
-  const watchers = Object.keys(w.s.people).filter((id) => here.has(id) || (r.people[id] && !r.people[id].schedule.length));
-  const exposure = exposedSlots(r, w.s).length + revealOf(r, w.s) / 3;
-  const prior: Record<SeenReaction, number> = {
-    unnoticed: Math.max(0.5, 3 - exposure), glance: 2, interested: 0.6 + exposure * 0.4, disapproving: 0.5 + exposure * 0.3, predatory: 0.1 + exposure * 0.1,
-  };
-  const where = w.s.locationName ?? w.s.location;
-  const lines: string[] = [];
-  for (const who of watchers) {
-    if (!knownAdult(w, who)) continue;
-    const name = personName(r, w.s, who);
-    const spec: DecideSpec = {
-      id: `seen:${who}`,
-      ask: `${name} can see {{user}} (${look}). Given who ${name} is, and the moment, how do they react?`,
-      options: SEEN_REACTIONS.map((x) => ({ id: x, desc: SEEN_DESC[x], weight: prior[x], effect: ob.reactions[x] ?? emptyEffect() })),
-    };
-    const model = w.odds[spec.id];
-    if (!model && !w.needs.some((n) => n.id === spec.id)) w.needs.push(spec);
-    const p = normalize(model ? Object.fromEntries(SEEN_REACTIONS.map((x) => [x, Math.sqrt(prior[x]) * Math.max(model[x] ?? 0, 1e-6)])) : prior, SEEN_REACTIONS);
-    const picked = sample(p, seededRng(`${w.seed}:seen:${who}`)) as SeenReaction;
-    w.decisions.push({ id: spec.id, ask: `How does ${name} react to how {{user}} looks?`, picked, pickedDesc: SEEN_DESC[picked], p, source: model ? "model" : "weights", descs: SEEN_DESC });
-    if (picked === "unnoticed") continue;
-    w.push({ t: "seen", who, what: look, where, src: "world", why: `${name} saw {{user}} (${look})` });
-    const eff = ob.reactions[picked];
-    if (eff) because(w, `${name}: ${SEEN_DESC[picked].toLowerCase()}`, () => effectToEvents(w, eff, "world", { target: who }));
-    lines.push(`${name}: ${SEEN_DESC[picked].toLowerCase()}`);
-  }
-  if (ob.crowd > 0 && !isIndoors(r, w.s)) {
-    const rng = seededRng(`${w.seed}:crowd:${w.s.turn}`);
-    const crowd = Array.from({ length: ob.crowd }, () => {
-      const q = normalize(prior, SEEN_REACTIONS);
-      return sample(q, rng) as SeenReaction;
-    }).filter((x) => x !== "unnoticed");
-    if (crowd.length) lines.push(`passers-by: ${crowd.map((x) => SEEN_DESC[x].toLowerCase()).join("; ")}`);
-  }
-  if (lines.length) w.hints.push(`How people react to {{user}} (${look}) — show it, individually: ${lines.join(" · ")}.`);
-}
-
-/** Word spreads: once a day, witnesses tell the people they're close to. */
-function rumours(w: Working, before: GameState) {
-  const r = w.r;
-  if (!r.observers.enabled || !r.observers.rumours) return;
-  if (Math.floor(w.s.minutes / 1440) <= Math.floor(before.minutes / 1440)) return;
-  for (const [who, rec] of Object.entries(before.seen)) {
-    if (rec.heard) continue;
-    for (const [other, v] of Object.entries(w.s.bonds[who] ?? {})) {
-      if (v < 25 || w.s.seen[other] || !w.s.people[other]) continue;
-      w.push({ t: "seen", who: other, what: rec.what, where: rec.where, heard: true, src: "world", why: `${personName(r, w.s, who)} told ${personName(r, w.s, other)}` });
-      announce(w, `Word gets around: ${personName(r, w.s, who)} told ${personName(r, w.s, other)} about seeing {{user}} (${rec.what}) at ${rec.where}.`);
-    }
-  }
-}
-
-// ───────────────────────── adults ─────────────────────────
-
-/** Known to be an adult? Declared ages first; otherwise the decision model is asked once (unsure = no). */
-function knownAdult(w: Working, who: string): boolean {
-  if (who === "player") return w.r.player.age === undefined || w.r.player.age >= 18;
-  const age = w.r.people[who]?.age;
-  if (age !== undefined) return age >= 18;
-  const known = w.s.adults[who];
-  if (known !== undefined) return known;
-  const name = personName(w.r, w.s, who);
-  const id = `adult:${who}`;
-  const model = w.odds[id];
-  if (!model) {
-    if (!w.needs.some((n) => n.id === id)) w.needs.push({ id, ask: `Is ${name} an adult (18 or older), going by the story and the character card?`, options: [
-      { id: "adult", desc: "Clearly an adult", weight: 1, effect: emptyEffect() },
-      { id: "minor", desc: "Under 18", weight: 1, effect: emptyEffect() },
-      { id: "unclear", desc: "Can't tell", weight: 1, effect: emptyEffect() },
-    ] });
-    return false;
-  }
-  const adult = (model.adult ?? 0) >= 0.8;
-  w.push({ t: "adult", who, adult, src: "action" });
-  return adult;
-}
-
 // ───────────────────────── companions ─────────────────────────
 
 /** The relationship stat that means "how much they like you" (for jealousy). */
@@ -2009,8 +1903,6 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   if (w.events.length > worldBefore) runTriggers(w, false);
   companionLife(w, before);
   obligationLife(builderOf(w));
-  beingSeen(w);
-  rumours(w, before);
   // Only committed changes interrupt sessions. Inspect the final place and encounter
   // events (an encounter can start and finish within the same resolved action).
   const departed = w.s.location !== before.location;
@@ -2307,7 +2199,6 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
   }
   companionLife(w, before);
   obligationLife(builderOf(w));
-  rumours(w, before);
   checkRun(w, before);
   return w.events;
 }

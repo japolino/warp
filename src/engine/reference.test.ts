@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { DESIGN_GUIDE, REFERENCE } from "./reference.js";
 
 /** Aliases the normalizer accepts for older or alternative spellings. */
-const ALIASES = new Set(["being_seen", "debts", "events", "improvised", "inventory", "people", "practice", "rules"]);
+const ALIASES = new Set(["debts", "events", "improvised", "inventory", "people", "practice", "rules"]);
 
 describe("the builder's reference", () => {
   test("mentions every top-level field the engine reads", () => {

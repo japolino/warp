@@ -10,7 +10,7 @@ export const FUNCTIONS = [
   "has", "count", "flag", "cond", "at", "rel", "met", "between", "roll",
   "wearing", "worn", "trait", "present", "where", "codex", "feat", "perk",
   "eff", "gear", "integrity",
-  "secret", "front", "front_stage", "happened", "saved", "body", "transformed", "bond", "arc", "age", "owed", "missed", "days_until", "seen_by", "fame",
+  "secret", "front", "front_stage", "happened", "saved", "body", "transformed", "bond", "arc", "age", "owed", "missed", "days_until",
   "quest", "quest_active", "quest_done", "quest_failed", "goal", "quests_done", "memories", "cond_of", "foe_cond", "stat_max", "foe_max", "in_encounter",
   "min", "max", "clamp", "floor", "ceil", "round", "abs",
 ];
@@ -20,6 +20,7 @@ const REMOVED_NAMES: Record<string, string> = {
   in_dungeon: "dungeons", dungeon_depth: "dungeons", "deepest()": "dungeons",
   in_date: "dating", on_outing: "dating", "partner()": "dating", "dates()": "dating", "stage()": "dating",
   pregnant: "family and pregnancy", pregnancy_weeks: "family and pregnancy", "children()": "family and pregnancy",
+  "seen_by()": "being seen", "fame()": "being seen",
 };
 
 function distance(a: string, b: string): number {
@@ -359,10 +360,6 @@ export function lintRuleset(r: Ruleset): Issue[] {
   if (r.discovery.enabled) {
     check(r.discovery.chance, "Discovery › chance");
     for (const loc of r.discovery.at) if (!r.locations[loc]) issues.push({ level: "warning", where: "Discovery › at", message: `"${loc}" isn't a location${suggest(loc, Object.keys(r.locations))}` });
-  }
-  if (r.observers.enabled) {
-    check(r.observers.when, "Observers › when");
-    for (const [k, eff] of Object.entries(r.observers.reactions)) if (eff) checkEffect(eff, `Observers › reactions › ${k}`, { target: "someone" });
   }
   for (const o of Object.values(r.obligations)) {
     const w = `Obligations › ${o.id}`;

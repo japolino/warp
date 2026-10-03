@@ -694,20 +694,6 @@ export interface JobDef {
   styles: Record<string, string>;
 }
 
-/** Being seen: when this holds, everyone present reacts to how {{user}} looks, individually. */
-export interface ObserversDef {
-  enabled: boolean;
-  when: string;
-  /** Anonymous passers-by sampled when outdoors. */
-  crowd: number;
-  /** Effects per reaction, on the observer (`target`). */
-  reactions: Partial<Record<SeenReaction, Effect>>;
-  /** Witnesses tell the people they're close to, once a day. */
-  rumours: boolean;
-}
-export type SeenReaction = "unnoticed" | "glance" | "interested" | "disapproving" | "predatory";
-export const SEEN_REACTIONS: SeenReaction[] = ["unnoticed", "glance", "interested", "disapproving", "predatory"];
-
 /** Exploring can turn up places the ruleset never had; they're written into the ruleset for good. */
 export interface DiscoveryDef {
   enabled: boolean;
@@ -836,7 +822,6 @@ export interface Ruleset {
   bonds: Record<string, Record<string, number>>;
   obligations: Record<string, ObligationDef>;
   jobs: Record<string, JobDef>;
-  observers: ObserversDef;
   discovery: DiscoveryDef;
   improvise: ImproviseDef;
   growth: GrowthDef;
@@ -2523,21 +2508,6 @@ function normJobs(raw: unknown, c: Ctx, known: { stats: Set<string> }): Record<s
   return out;
 }
 
-function normObservers(raw: unknown, c: Ctx, known: { stats: Set<string> }): ObserversDef {
-  const def: ObserversDef = { enabled: false, when: "exposed > 0", crowd: 2, reactions: {}, rumours: true };
-  if (raw === undefined || raw === false) return def;
-  const r: Raw = isObj(raw) ? raw : {};
-  def.enabled = true;
-  if (r.when !== undefined) { const x = c.expr(r.when, "Observers › when"); if (x !== undefined) def.when = String(x); }
-  def.crowd = Math.max(0, Math.min(6, Math.round(c.num(r.crowd, "Observers › crowd", 2))));
-  def.rumours = r.rumours !== false;
-  for (const [k, v] of Object.entries(isObj(r.reactions) ? r.reactions : {})) {
-    if (!(SEEN_REACTIONS as string[]).includes(k)) { c.warn(`Observers › reactions › ${k}`, `reactions are ${SEEN_REACTIONS.join(", ")}`); continue; }
-    def.reactions[k as SeenReaction] = normEffect(v, `Observers › reactions › ${k}`, c, known);
-  }
-  return def;
-}
-
 function normImprovise(raw: unknown, c: Ctx, known: { stats: Set<string> }, stats: Record<string, StatDef>, order: string[]): ImproviseDef {
   const usable = order.filter((id) => stats[id].kind === "skill" || stats[id].kind === "attribute");
   const def: ImproviseDef = { enabled: true, dc: { easy: 8, fair: 12, hard: 16, extreme: 20 }, bonus: 10, partial: 3, stats: usable, outcomes: {} };
@@ -2628,6 +2598,7 @@ export const REMOVED_KEYS: Record<string, string> = {
   look: "the stage and minigame looks",
   minigames: "minigames",
   lineage: "family and pregnancy",
+  observers: "being seen", being_seen: "being seen",
 };
 
 const SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
@@ -2945,7 +2916,6 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const moneyId = typeof hudRaw.money === "string" ? hudRaw.money : statOrder.find((s) => stats[s].kind === "money");
   const obligations = normObligations(raw.obligations ?? raw.debts, c, known, moneyId);
   const jobs = normJobs(raw.jobs, c, known);
-  const observers = normObservers(raw.observers ?? raw.being_seen, c, known);
   const discovery = normDiscovery(raw.discovery, c);
   const improvise = normImprovise(raw.improvise ?? raw.improvised, c, known, stats, statOrder);
   const growth = normGrowth(raw.growth ?? raw.practice, c);
@@ -2979,7 +2949,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     weather, wardrobe, encounters, codex, feats, perks,
     ...(perkPoints && stats[perkPoints] ? { perkPoints } : {}),
     perkPick, abilities, quests, questOrder, storyQuests,
-    secrets, fronts, randomEvents, liveChoices, mind, checkpoints, endings, legacy, body, companions, bonds, obligations, jobs, observers, discovery, improvise, growth,
+    secrets, fronts, randomEvents, liveChoices, mind, checkpoints, endings, legacy, body, companions, bonds, obligations, jobs, discovery, improvise, growth,
   };
 
   // Cross-references that need everything loaded.

@@ -10,7 +10,7 @@ const PART_OF_KEY: Record<string, PartLabel> = {
   stats: "stats", growth: "stats", practice: "stats",
   relationships: "people", people: "people", companions: "people",
   weather: "world", locations: "world", locations_open: "world", items: "world", inventory: "world", item_uses: "world",
-  wardrobe: "world", body: "world", conditions: "world", flags: "world", discovery: "world", observers: "world", being_seen: "world",
+  wardrobe: "world", body: "world", conditions: "world", flags: "world", discovery: "world",
   actions: "actions", improvise: "actions", improvised: "actions", obligations: "actions", debts: "actions", jobs: "actions",
   encounters: "encounters",
   quests: "quests",

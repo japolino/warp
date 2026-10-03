@@ -235,11 +235,6 @@ discovery:        # exploring can turn up places the ruleset never had; each is 
   chance: 25                       # percent per try (formula); each fruitless try adds 10
   max: 12
   guide: "Small, grounded places: a back-alley bar, a hidden garden."
-observers:        # being seen: while \`when\` holds, each adult present reacts individually (the decision model reads them; children never take part)
-  when: "exposed > 0"
-  crowd: 2                         # anonymous passers-by when outdoors
-  reactions: { interested: { rel: { target: { lust: +4 } } }, disapproving: { rel: { target: { trust: -3 } } } }   # unnoticed | glance | interested | disapproving | predatory
-  rumours: true                    # witnesses tell people they're close to (bonds ≥ 25), once a day. FUNCTIONS seen_by(person), fame()
 obligations:      # bills on the calendar: "Pay…" choices appear while something is owed; a missed one lets the creditor decide
   rent: { amount: 120, every: 7, first: 7, grace: 1, creditor: landlord, at: [apartment], late: { ask: "The rent is late. What does {creditor} do?", options: { warn: { desc: A warning, weight: 3 }, fee: { desc: A late fee, weight: 1, money: -25 } } } }
   # arrears pile up; FUNCTIONS owed(id), missed(id), days_until(id)

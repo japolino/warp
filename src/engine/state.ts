@@ -108,8 +108,6 @@ export interface GameState {
   bonds: Record<string, Record<string, number>>;
   /** Obligations: when the next payment is due, what's owed now, how many were missed. */
   dues: Record<string, { due: number; owed: number; missed: number }>;
-  /** Who has seen {{user}} exposed (and what), and who only heard about it. */
-  seen: Record<string, { what: string; at: number; where: string; heard?: boolean }>;
   /** Fruitless explorations per place since the last find, and the places found. */
   explored: Record<string, number>;
   discovered: string[];
@@ -186,7 +184,6 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "news"; text: string }
   | { t: "due"; id: string; due?: number; owed?: number; missed?: number }
   | { t: "job"; job: GameState["job"] }
-  | { t: "seen"; who: string; what: string; where: string; heard?: boolean }
   | { t: "explored"; loc: string; found: boolean }
   | { t: "discovered"; id: string }
   | { t: "practice"; id: string; d: number }
@@ -253,7 +250,6 @@ export function initialState(r: Ruleset): GameState {
     bonds: structuredClone(r.bonds),
     dues: {},
     job: null,
-    seen: {},
     explored: {},
     discovered: [],
     practice: {},
@@ -636,9 +632,6 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       s.dues = { ...s.dues, [e.id]: { due: e.due ?? cur.due, owed: Math.max(0, e.owed ?? cur.owed), missed: e.missed ?? cur.missed } };
       break;
     }
-    case "seen":
-      if (!e.heard || !s.seen[e.who]) s.seen = { ...s.seen, [e.who]: { what: e.what, at: s.minutes, where: e.where, ...(e.heard ? { heard: true } : {}) } };
-      break;
     case "explored": s.explored = { ...s.explored, [e.loc]: e.found ? 0 : (s.explored[e.loc] ?? 0) + 1 }; break;
     case "discovered": if (!s.discovered.includes(e.id)) s.discovered = [...s.discovered, e.id]; break;
     case "job": s.job = e.job ? structuredClone(e.job) : null; break;
@@ -873,9 +866,6 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
         case "age": return r.people[a0]?.age ?? 0;
         // Obligations: what's owed, payments missed, whole days until the next is due (negative = overdue).
         case "owed": return s.dues[a0]?.owed ?? 0;
-        // Being seen: whether someone saw (or heard about) {{user}} exposed, and how many have.
-        case "seen_by": return !!s.seen[a0] && !s.seen[a0].heard;
-        case "fame": return Object.keys(s.seen).length;
         case "missed": return s.dues[a0]?.missed ?? 0;
         case "days_until": return s.dues[a0] ? Math.floor((s.dues[a0].due - s.minutes) / 1440) : 0;
         // Quests: '' (not taken), 'active', 'ready' (to hand in), 'done' or 'failed'; goal counts; how many are done.
