@@ -77,6 +77,13 @@ describe("T-C1 the shown % is the real %", () => {
     // The click rolls against the same target the button showed.
     const rec = resolveTurn(r, s, { actionId: "live:bold", params: { difficulty: "hard" }, via: "choice", label: "Vault the bar" }, { seed: "x" });
     expect(rec.check).toMatchObject({ target: 15, add: 3, difficulty: "hard" });
+    // The older idiom works too: a tag with its own difficulty param and `vs: difficulty` (fair = normal).
+    const { r: old } = load({ stats: { body: { kind: "attribute", max: 10, start: 3 } }, live_choices: { tags: {
+      bold: { desc: "Daring", params: { difficulty: { easy: 8, normal: 12, hard: 16, extreme: 20 } }, check: { vs: "difficulty", add: "body" } },
+    } } });
+    const o = buildChoices(old, initialState(old), { lines: [], veils: [], live: [{ label: "a", tag: "bold", difficulty: "fair" }, { label: "b", tag: "bold", difficulty: "hard" }] });
+    expect(o.map((c) => c.odds)).toEqual([0.6, 0.4]);
+    expect(resolveTurn(old, initialState(old), { actionId: "live:bold", params: { difficulty: "fair" }, via: "choice" }, { seed: "x" }).check?.target).toBe(12);
     // "none" = no roll: only the tag's always-on effects.
     expect(resolveTurn(r, s, { actionId: "live:bold", params: { difficulty: "none" }, via: "choice" }, { seed: "x" }).check).toBeUndefined();
   });

@@ -170,10 +170,15 @@ class Working {
 /** Per-person actions are addressed as "talk@robin". */
 export const TARGET_SEP = "@";
 
+/** Difficulty words that name the same option (`fair` and `normal`, `medium`). */
+const WORD_ALIASES: Record<string, string[]> = { fair: ["normal", "medium"], normal: ["fair", "medium"], medium: ["fair", "normal"] };
+
 export function paramValues(a: ActionDef, chosen?: Record<string, string>, target?: string): Record<string, Value> {
   const out: Record<string, Value> = {};
   for (const p of a.params) {
-    const key = chosen?.[p.id] && p.options[chosen[p.id]] !== undefined ? chosen[p.id] : p.default;
+    const want = chosen?.[p.id];
+    const key = want && p.options[want] !== undefined ? want
+      : want && WORD_ALIASES[want]?.find((k) => p.options[k] !== undefined) || p.default;
     out[p.id] = p.options[key];
   }
   if (target) out.target = target;
