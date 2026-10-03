@@ -7,7 +7,7 @@
 // an empty state is sent so they can clear.
 
 import type { BackendToFrontend } from "../shared/protocol.js";
-import { RULESET_FORMAT } from "../engine/ruleset.js";
+import { RULESET_FORMAT } from "../engine/format-version.js";
 import { revision } from "../shared/revision.js";
 
 type StateMsg = Extract<BackendToFrontend, { type: "state" }>;

@@ -13,11 +13,7 @@ export type ShowMode = "text" | "number" | "both" | "hidden";
 export type Tier = "crit_success" | "success" | "partial" | "fail" | "crit_fail";
 export const TIERS: Tier[] = ["crit_success", "success", "partial", "fail", "crit_fail"];
 
-/**
- * The ruleset format this engine reads. Legacy (before the core cut) = 1. Warp Studio checks it at build time
- * and through `warp-state-v1` at run time; raise it whenever a key's meaning changes.
- */
-export const RULESET_FORMAT = 2;
+export { RULESET_FORMAT } from "./format-version.js";
 
 /** `story` = no rolls anywhere; `adventure` = d20 checks on risky, contested moves and contests. */
 export type Style = "story" | "adventure";
