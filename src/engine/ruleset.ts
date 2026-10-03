@@ -1696,8 +1696,10 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const clockFallback = parseClockStart(fallbackRaw, weekdays);
   if (clockFallback === null) c.warn("Clock › fallback", `"${fallbackRaw}" should look like "Day 1 09:00"`);
   const dateRaw = clockRaw.date ?? clockRaw.start_date ?? startRaw.date;
-  const startDate = dateRaw === undefined ? null : parseDate(dateRaw);
-  if (dateRaw !== undefined && !startDate) c.warn("Clock › date", `"${dateRaw}" should look like "Sep 4"`);
+  // `date: greeting`: a calendar date only if the greeting gives one (the greeting read does not set one yet).
+  const dateFromGreeting = typeof dateRaw === "string" && dateRaw.trim().toLowerCase() === "greeting";
+  const startDate = dateRaw === undefined || dateFromGreeting ? null : parseDate(dateRaw);
+  if (dateRaw !== undefined && !dateFromGreeting && !startDate) c.warn("Clock › date", `"${dateRaw}" should look like "Sep 4" or greeting`);
 
   // Actions
   const actions: Record<string, ActionDef> = {};
