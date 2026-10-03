@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { DollRequest, HudView } from "../../shared/protocol.js";
-import { createDollLab } from "./lab.js";
+import { createDollLab, shownNote } from "./lab.js";
 import { defaultLook, outfitFor } from "./outfits.js";
 import { castKey, cleanChat, focusFrom, MAX_CAST, mentionScore, putCast, sceneFocus, touchChat } from "./scene.js";
 
@@ -114,6 +114,17 @@ describe("dolls follow the story", () => {
     lab.onLook({ who: asked.who, look: defaultLook("m"), note: "", name: asked.who, chatId: "c1", auto: true });
     expect(JSON.parse(store.getItem("warp:doll:chat:c1")!).cast[castKey(asked.who)]).toBeDefined();
     expect(JSON.parse(store.getItem("warp:doll:chat:c2") ?? "{}").cast?.[castKey(asked.who)]).toBeUndefined();
+  });
+
+  test("what the helper guessed or made up isn't shown; errors and changes are", () => {
+    expect(shownNote("Guessed: build; hairstyle.")).toBe("");
+    expect(shownNote("Made up: a scarf")).toBe("");
+    expect(shownNote("Changed: coat off.")).toBe("Changed: coat off.");
+    const lab = make();
+    text.m1 = "Marcus waved.";
+    lab.onState(stateOf("m1"));
+    lab.onLook({ who: "Marcus", name: "Marcus", look: defaultLook("m"), note: "Guessed: build; hairstyle.", chatId: "c1", auto: true });
+    expect(lab.sceneSection()!.body).not.toContain("Guessed");
   });
 
   test("nobody here: the section says so", () => {

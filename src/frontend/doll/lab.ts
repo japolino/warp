@@ -20,6 +20,8 @@ function renderDoll(look: Look, opts: { id?: string } = {}): string {
 const KEY = "warp:doll";
 const CHAT_KEY = (id: string) => `warp:doll:chat:${id}`;
 const CHATS_KEY = "warp:doll:chats";
+/** What the helper filled in on its own ("Guessed: …", "Made up: …") isn't worth showing; errors and changes are. */
+export const shownNote = (n: string | undefined) => (!n || /^(Guessed|Made up):/i.test(n.trim()) ? "" : n);
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -168,7 +170,7 @@ export function createDollLab(o: {
         <button class="warp-tab" data-doll-who="them" data-doll-them-tab aria-selected="${who === "them"}">${esc(st.themName.trim() || "Someone else")}</button>
       </div>
       <div class="warp-doll-stage" data-doll-stage>${doll}</div>
-      ${st.notes[who] ? `<p class="warp-dim warp-doll-note">${esc(st.notes[who])}</p>` : ""}
+      ${shownNote(st.notes[who]) ? `<p class="warp-dim warp-doll-note">${esc(shownNote(st.notes[who]))}</p>` : ""}
       <div class="warp-card warp-doll-helper">
         <h3>Dress with the helper</h3>
         ${who === "them" ? row("Who", `<input class="warp-input" list="warp-doll-people" data-doll-name value="${esc(st.themName)}" placeholder="A name from the story"><datalist id="warp-doll-people">${people.map((p) => `<option value="${esc(p)}">`).join("")}</datalist>`) : ""}
@@ -437,7 +439,7 @@ export function createDollLab(o: {
     const doll = entry
       ? `<div class="warp-doll-hud">${renderDoll(entry.look, { id: "scene" })}</div>`
       : `<p class="warp-dim">${isBusy ? `Dressing ${esc(who)}…` : `No look for ${esc(who)} yet.`}</p>${isBusy ? "" : `<button class="warp-btn" data-doll-scene-ask="${esc(who)}">Dress ${esc(who)}</button>`}`;
-    const foot = `<div class="warp-doll-scene-foot">${entry?.note ? `<span class="warp-dim">${esc(entry.note)}</span>` : "<span></span>"}<button class="warp-btn" data-view="doll" data-doll-edit="${esc(who)}" title="Open their doll on the Doll tab">Edit</button></div>`;
+    const foot = `<div class="warp-doll-scene-foot"><span></span><button class="warp-btn" data-view="doll" data-doll-edit="${esc(who)}" title="Open their doll on the Doll tab">Edit</button></div>`;
     return { id: "doll-scene", title: `With you · ${who}${pinned ? " 📌" : ""}`, count: 0, open: true, body: `<div class="warp-doll-scene">${chips}${doll}${foot}</div>` };
   }
 

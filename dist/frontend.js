@@ -6379,6 +6379,7 @@ function renderDoll2(look, opts = {}) {
 var KEY = "warp:doll";
 var CHAT_KEY = (id) => `warp:doll:chat:${id}`;
 var CHATS_KEY = "warp:doll:chats";
+var shownNote = (n) => !n || /^(Guessed|Made up):/i.test(n.trim()) ? "" : n;
 var esc3 = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 var cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 var FIELDS = {
@@ -6520,7 +6521,7 @@ function createDollLab(o) {
         <button class="warp-tab" data-doll-who="them" data-doll-them-tab aria-selected="${who === "them"}">${esc3(st.themName.trim() || "Someone else")}</button>
       </div>
       <div class="warp-doll-stage" data-doll-stage>${doll}</div>
-      ${st.notes[who] ? `<p class="warp-dim warp-doll-note">${esc3(st.notes[who])}</p>` : ""}
+      ${shownNote(st.notes[who]) ? `<p class="warp-dim warp-doll-note">${esc3(shownNote(st.notes[who]))}</p>` : ""}
       <div class="warp-card warp-doll-helper">
         <h3>Dress with the helper</h3>
         ${who === "them" ? row("Who", `<input class="warp-input" list="warp-doll-people" data-doll-name value="${esc3(st.themName)}" placeholder="A name from the story"><datalist id="warp-doll-people">${people.map((p) => `<option value="${esc3(p)}">`).join("")}</datalist>`) : ""}
@@ -6873,7 +6874,7 @@ function createDollLab(o) {
     const chips = people.length > 1 ? `<div class="warp-doll-scene-who">${people.map((n) => `<button class="warp-btn${castKey(n) === castKey(who) ? " warp-btn-primary" : ""}" data-doll-focus="${esc3(n)}" title="${castKey(st.pin) === castKey(n) ? "Pinned: click to follow the story again" : "Show them (pinned while they're here)"}">${esc3(n)}${castKey(st.pin) === castKey(n) ? " \uD83D\uDCCC" : ""}</button>`).join("")}</div>` : "";
     const isBusy = busy.has(busyKey(who));
     const doll = entry ? `<div class="warp-doll-hud">${renderDoll2(entry.look, { id: "scene" })}</div>` : `<p class="warp-dim">${isBusy ? `Dressing ${esc3(who)}…` : `No look for ${esc3(who)} yet.`}</p>${isBusy ? "" : `<button class="warp-btn" data-doll-scene-ask="${esc3(who)}">Dress ${esc3(who)}</button>`}`;
-    const foot = `<div class="warp-doll-scene-foot">${entry?.note ? `<span class="warp-dim">${esc3(entry.note)}</span>` : "<span></span>"}<button class="warp-btn" data-view="doll" data-doll-edit="${esc3(who)}" title="Open their doll on the Doll tab">Edit</button></div>`;
+    const foot = `<div class="warp-doll-scene-foot"><span></span><button class="warp-btn" data-view="doll" data-doll-edit="${esc3(who)}" title="Open their doll on the Doll tab">Edit</button></div>`;
     return { id: "doll-scene", title: `With you · ${who}${pinned ? " \uD83D\uDCCC" : ""}`, count: 0, open: true, body: `<div class="warp-doll-scene">${chips}${doll}${foot}</div>` };
   }
   function onState(m) {
