@@ -3,7 +3,8 @@
 
 import { describe, expect, test } from "bun:test";
 import { normalizeRuleset } from "./ruleset.js";
-import { foldEvents, initialState, type GameState } from "./state.js";
+import { foldEvents, initialState, makeEnv, type GameState } from "./state.js";
+import { evalBool } from "./expr.js";
 import { applyProposal, resolveTurn, type Proposal } from "./resolve.js";
 import { buildChoices, buildRecordView, narratorKnowledge, outcomePacket, stateDigest } from "./view.js";
 import { bandCrossings, crossingLines, recentTags, tagTaper, voiceLine } from "./people.js";
@@ -221,5 +222,25 @@ describe("a band crossing without say: (ADVENTURE-8, PRESSURE-3, LONG-8)", () =>
     expect(bandCrossings(m, a, b)).toHaveLength(1);
     expect(crossingLines(bandCrossings(m, a, b))).toEqual([]);
     expect(crossingLines(bandCrossings(m, b, a))).toEqual([]);
+  });
+});
+
+describe("met() (ADVENTURE-11)", () => {
+  const m = normalizeRuleset({
+    style: "story",
+    relationships: { open: true, stats: { trust: { start: 20, narrator: 5 } }, people: { bark: { name: "Bark" } } },
+    flags: { introduced: { start: false } },
+    triggers: { first_meeting: { when: "met('bark')", do: { flags: { introduced: true } } } },
+  }).ruleset!;
+  const read = (s: GameState, p: Proposal) => foldEvents(m, [applyProposal(m, s, p)], s);
+  test("a declared person is met once the story brings them into a scene", () => {
+    let s = read(initialState(m), { place: "The Square" });
+    expect(s.flags.introduced).toBe(false);
+    s = read(s, { scene: { Bark: true } });
+    expect(s.flags.introduced).toBe(true);
+  });
+  test("someone the story introduces is met at once", () => {
+    const s = read(initialState(m), { rel: { Selene: { trust: 2 } } });
+    expect(evalBool("met('selene')", makeEnv(m, s), false)).toBe(true);
   });
 });

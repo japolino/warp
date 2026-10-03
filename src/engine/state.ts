@@ -499,7 +499,9 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
         case "flag": return s.flags[a0] ?? false;
         case "cond": return a0 in s.conditions;
         case "rel": return s.rel[a0]?.[String(args[1] ?? "")] ?? r.relStats[String(args[1] ?? "")]?.start ?? 0;
-        case "met": return a0 in s.people;
+        // A declared person is met once they have been in a scene with {{user}} or remember something; someone the
+        // story introduced is met from then on (ADVENTURE-11).
+        case "met": return a0 in s.people && (!r.people[a0] || !!s.scene[a0] || (s.memories?.[a0]?.length ?? 0) > 0);
         case "between": {
           // between(hour, 20, 6) handles wrap-around ranges like night hours.
           const v = Number(args[0]); const lo = Number(args[1]); const hi = Number(args[2]);

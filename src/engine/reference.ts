@@ -218,7 +218,7 @@ EFFECTS (any effects / success / fail / cost / do / reward / won block):
 
 FORMULA NAMES: every stat id, every flag id, minutes, hour, minute, day, weekday, turn, place (the words), round, momentum, in_contest,
 target (the person of a per-person move), target.<rel stat>, <person>.<rel stat>, items.<id>, flags.<id>.
-FUNCTIONS: has(item[, n]), count(item), flag(x), cond(x), rel(person, stat), met(person), present(person) (in the scene now),
+FUNCTIONS: has(item[, n]), count(item), flag(x), cond(x), rel(person, stat), met(person) (has been in a scene with {{user}}), present(person) (in the scene now),
 between(v, lo, hi) (wraps: between(hour, 21, 5)), roll('2d6') (in effects), goal(id) ('' | 'open' | 'done' | 'failed'), secret(id) (stages known),
 in_contest() / in_contest('fight'), eff(stat) (with gear and conditions), gear(stat) (gear alone), min, max, clamp, floor, ceil, round, abs.
 Operators: + - * / % < <= > >= == != and or not, a ? b : c. Strings in single quotes.
