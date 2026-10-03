@@ -99,7 +99,8 @@ export interface ErrandsView {
   /** Bills that can be paid now. */
   bills: { id: string; label: string; amount: string; due: string; story: string }[];
   /** Practice: a check per session; `minutes` per session, `cost` per session. */
-  train: { id: string; label: string; desc: string | null; odds: number | null; minutes: number; cost: string | null; /** Sessions affordable now. */ max: number; why: string | null; story: string }[];
+  train: { id: string; label: string; desc: string | null; odds: number | null; minutes: number; cost: string | null; /** Sessions affordable now. */ max: number; why: string | null; story: string;
+    /** It has a minigame: the choice as the story buttons would show it, to play (one session) instead of rolling. */ choice?: ChoiceView }[];
   /** Rest, sleep, wait: time passes quietly. */
   rest: { id: string; label: string; desc: string | null; minutes: number; effects: string | null; why: string | null; story: string }[];
   /** "E160" — the player's money, for the shop. */
@@ -446,6 +447,8 @@ export interface RecordView {
   mind: { cause: string; kind: "fail" | "alter" | "redirect"; meant: string; chance: number } | null;
   /** The player's message this reply answers, when the turn can still be redone. */
   redoFrom: string | null;
+  /** The player's message told a roll made on the click: roll again from it (rewrites the line and the reply). */
+  rerollFrom?: string | null;
 }
 
 export interface SuggestionView {
@@ -536,6 +539,8 @@ export interface Settings {
   errands: boolean;
   /** Clicking a place on the map goes there off the page (no travel paragraph); the next reply starts the scene. */
   quietTravel: boolean;
+  /** A clicked move is rolled (or played) on the click, and the player's message says how it went, in their voice. */
+  sayOutcome: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -572,6 +577,7 @@ export const DEFAULT_SETTINGS: Settings = {
   imageConnectionId: "",
   errands: true,
   quietTravel: false,
+  sayOutcome: true,
 };
 
 export interface TemplateInfo { id: string; name: string; blurb: string }
@@ -755,8 +761,10 @@ export type FrontendToBackend =
   | { type: "buy_perk"; chatId: string; perk: string }
   /** Spend points on stats with `allocate:`, in steps: `{ str: 2, dex: 1 }`. */
   | { type: "allocate"; chatId: string; spend: Record<string, number> }
+  /** Roll a clicked move again: a new roll, a new line in the player's message, a new reply. */
+  | { type: "reroll"; chatId: string; messageId: string }
   /** Do something off the page (an errand, an item, travel): no narrator turn; `times` repeats it (buying 3, training 4 sessions). */
-  | { type: "quiet"; chatId: string; actionId: string; params?: Record<string, string>; times?: number }
+  | { type: "quiet"; chatId: string; actionId: string; params?: Record<string, string>; times?: number; /** Played as a minigame (one session): the score decides instead of the dice. */ game?: GameResult }
   | { type: "adjust_rel"; chatId: string; who: string; stat: string; value: number }
   | { type: "forget"; chatId: string; who: string }
   | { type: "builder_open"; chatId: string; mode: "build" | "refine" | "deepen" }

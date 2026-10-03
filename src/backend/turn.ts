@@ -207,7 +207,8 @@ export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorCon
         }
       }
 
-      const seed = settings.swipesReroll ? randomSeed() : `${lastUser?.id ?? "start"}:${intent?.actionId ?? "none"}`;
+      // Rolled when the choice was clicked (and told in the player's message): that roll, on every swipe.
+      const seed = intent?.seed ?? (settings.swipesReroll ? randomSeed() : `${lastUser?.id ?? "start"}:${intent?.actionId ?? "none"}`);
       const playerText = lastUser?.content ?? "";
       let res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene, playerText, encounter, pendingSuggestion });
       if (decider && res.needs.length) {

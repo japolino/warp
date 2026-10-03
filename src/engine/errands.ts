@@ -4,7 +4,7 @@
 
 import type { ErrandsView } from "../shared/protocol.js";
 import { questOffers, effectWords, QUEST_PREFIX } from "./quests.js";
-import { ITEM_PREFIX, TRAVEL_PREFIX, findAction, lockReason, odds, resolveTurnFull, travelTargets, usableItems } from "./resolve.js";
+import { ITEM_PREFIX, TRAVEL_PREFIX, findAction, lockReason, odds, resolveTurnFull, travelTargets, usableItems, type Intent } from "./resolve.js";
 import type { ActionDef, Effect, Ruleset } from "./ruleset.js";
 import { foldEvents, formatMoney, itemName, makeEnv, type GameState, type WarpEvent } from "./state.js";
 import { evalNumber } from "./expr.js";
@@ -56,13 +56,14 @@ export function errandKind(r: Ruleset, a: ActionDef): ErrandKind | null {
       && isEmpty(e.unlock) && isEmpty(e.learn) && isEmpty(e.items)) return "rest";
     return null;
   }
-  // Training: a check that raises a skill or attribute, with nothing to carry away — no loot, no pay,
-  // nothing hidden at stake (a pickpocket's take and the crime it adds are a story).
-  if (gives || takes || spends || earns || touches((id) => r.stats[id]?.kind === "hidden")) return null;
-  const raises = Object.values(a.outcomes).some((e) => e && Object.entries(e.stats).some(([id, v]) => {
-    const k = r.stats[id]?.kind;
-    return (k === "skill" || k === "attribute") && (typeof v === "number" ? v > 0 : !/^\s*-/.test(v));
-  }));
+  // Training: a check that works a skill or attribute (raises it, or reads it — checks that read a skill are
+  // practice), with nothing to carry away — no loot, no pay, nothing hidden at stake (a pickpocket's take and the
+  // crime it adds are a story). An entry fee is fine.
+  if (gives || takes || earns || touches((id) => r.stats[id]?.kind === "hidden")) return null;
+  const skill = (id: string) => r.stats[id]?.kind === "skill" || r.stats[id]?.kind === "attribute";
+  const raises = Object.values(a.outcomes).some((e) => e && Object.entries(e.stats).some(([id, v]) => skill(id) && (typeof v === "number" ? v > 0 : !/^\s*-/.test(v))))
+    // Only reading a skill: practice when nothing in it is for the story (a hint to reveal something, a rumour…).
+    || (r.growth?.enabled !== false && all.every((e) => !e?.hint) && r.statOrder.some((id) => skill(id) && new RegExp(`(^|[^\\w])${id}([^\\w]|$)`).test(JSON.stringify(a.check))));
   const quiet = Object.values(a.outcomes).every((e) => !e || (isEmpty(e.flags) && isEmpty(e.unlock)));
   return raises && quiet ? "train" : null;
 }
@@ -223,8 +224,9 @@ export interface QuietResult {
  * minus the story — world news that's waiting stays for the next reply. Stops early when it can't go on.
  * `changes(before, after, events)` words what changed (the view's change chips).
  */
-export function runQuiet(r: Ruleset, s: GameState, actionId: string, times: number, opts: { seed: () => string; params?: Record<string, string>; changes: (before: GameState, after: GameState, events: WarpEvent[]) => string[] }): QuietResult {
-  const n = Math.max(1, Math.min(MAX_TIMES, Math.floor(times) || 1));
+export function runQuiet(r: Ruleset, s: GameState, actionId: string, times: number, opts: { seed: () => string; params?: Record<string, string>; game?: Intent["game"]; changes: (before: GameState, after: GameState, events: WarpEvent[]) => string[] }): QuietResult {
+  // A played minigame is one session.
+  const n = opts.game ? 1 : Math.max(1, Math.min(MAX_TIMES, Math.floor(times) || 1));
   const blocked = quietBlocker(r, s, actionId);
   if (blocked) return { events: [], line: null, done: 0, error: blocked, after: s };
   const what = quietWhat(r, s, actionId);
@@ -233,7 +235,7 @@ export function runQuiet(r: Ruleset, s: GameState, actionId: string, times: numb
   let done = 0, rolled = 0, good = 0;
   for (let i = 0; i < n; i++) {
     if (i > 0 && quietBlocker(r, st, actionId)) break;
-    const rec = resolveTurnFull(r, st, { actionId, via: "choice", ...(opts.params ? { params: opts.params } : {}) }, { seed: opts.seed() }).record;
+    const rec = resolveTurnFull(r, st, { actionId, via: "choice", ...(opts.params ? { params: opts.params } : {}), ...(opts.game ? { game: opts.game } : {}) }, { seed: opts.seed() }).record;
     // Waiting world news stays waiting: the next reply tells it.
     const evs = rec.events.filter((e) => e.t !== "noticed");
     if (rec.check) { rolled++; if (["success", "crit_success"].includes(rec.check.tier)) good++; }

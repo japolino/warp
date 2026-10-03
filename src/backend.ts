@@ -10,6 +10,7 @@ import { foldPath, getMessages, patchWarpMeta, reconcilePath, shiftAfterSwipeDel
 import { getSettings, patchSettings } from "./backend/settings.js";
 import { dollLook } from "./backend/doll.js";
 import { doQuiet } from "./backend/quiet.js";
+import { settleClick } from "./backend/attempt.js";
 import { getRuleset, installTemplate, invalidateCharacter, invalidateChat, knownRulesetBookIds, knownRulesetEntryIds } from "./backend/source.js";
 import { busyChats, connectionsFor, getActiveChat, pushState, schedulePush, setActiveChat } from "./backend/state-push.js";
 import { afterReply, generationHistory, interceptor, onGenerationEnded, onGenerationStarted, onGenerationStopped, playerName } from "./backend/turn.js";
@@ -250,7 +251,8 @@ spindle.onFrontendMessage(async (raw, userId) => {
           await pushState(msg.chatId, userId);
           return;
         }
-        const { say, intent } = ci;
+        const { intent } = ci;
+        let say = ci.say;
         // Played as a minigame: the score (or the table's takings) rides on the intent, so swipes and replays keep it.
         const played = msg.game ? cleanResult(msg.game, []) : null;
         if (played) intent.game = played;
@@ -264,11 +266,14 @@ spindle.onFrontendMessage(async (raw, userId) => {
         }
         // Already written while the player read: post it at once, then catch up on the bookkeeping.
         const ready = played ? null : takePrewritten(msg.chatId, momentKey(msgs, state, { r, settings }), msg.actionId);
+        if (busyChats.has(msg.chatId)) { toast("info", "One moment — the story is still being written.", userId); await pushState(msg.chatId, userId); return; }
+        // Rolled (or played) on the click: the player's message tells how it went, in their voice.
+        say = await settleClick({ r, state, intent, say, msgs, chatId: msg.chatId, player: await playerName(msg.chatId, userId), settings, userId, ...(ready ? { ready: ready.rec } : {}) });
         if (ready) {
           const operation = takeOperation(msg.chatId);
           if (!operation) return;
           try {
-            await spindle.chat.appendMessage(msg.chatId, { role: "user", content: say, metadata: { warp: { intent, judged: true } } });
+            await spindle.chat.appendMessage(msg.chatId, { role: "user", content: say, metadata: { warp: { intent, judged: true, ...(intent.tier ? { said: ci.say } : {}) } } });
             const reply = await spindle.chat.appendMessage(msg.chatId, { role: "assistant", content: ready.text });
             await writeRecord(msg.chatId, reply.id, 0, ready.rec);
             await pushState(msg.chatId, userId);
@@ -289,8 +294,35 @@ spindle.onFrontendMessage(async (raw, userId) => {
         await spindle.chat.appendMessage(msg.chatId, {
           role: "user",
           content: say,
-          metadata: { warp: { intent } },
+          metadata: { warp: { intent, ...(intent.tier ? { said: ci.say } : {}) } },
         }, { triggerGeneration: true });
+        break;
+      }
+
+      case "reroll": {
+        // A clicked move whose result is told in the player's message: roll again, write the line again, new reply.
+        const msgs = await getMessages(msg.chatId);
+        const i = msgs.findIndex((m) => m.id === msg.messageId);
+        const user = msgs[i];
+        const w = user ? warpMeta(user) : {};
+        if (!user || !user.is_user || msgs.length - 1 - i > 1 || !w.intent?.tier || !w.said) { toast("warning", "Only the latest roll can be rerolled.", userId); return; }
+        if (busyChats.has(msg.chatId)) { toast("info", "One moment — the story is still being written.", userId); return; }
+        const r = (await getRuleset(msg.chatId, userId))?.ruleset;
+        if (!r) return;
+        const settings = await getSettings(userId);
+        const { state, conflict } = foldPath(r, msgs.slice(0, i), 0);
+        if (conflict) { toast("warning", "Earlier history changed — check the Warp sheet first.", userId); return; }
+        const intent = { ...w.intent };
+        delete intent.seed;
+        delete intent.tier;
+        // A played game's score is what it is: rolling again means rolling the dice instead.
+        delete intent.game;
+        const say = await settleClick({ r, state, intent, say: w.said, msgs: msgs.slice(0, i), chatId: msg.chatId, player: await playerName(msg.chatId, userId), settings, userId });
+        const reply = msgs[i + 1];
+        if (reply) await spindle.chat.deleteMessage(msg.chatId, reply.id);
+        await spindle.chat.deleteMessage(msg.chatId, user.id);
+        const meta = { ...((user.metadata as Record<string, unknown>) ?? {}), warp: { intent, said: w.said } };
+        await spindle.chat.appendMessage(msg.chatId, { role: "user", content: say, metadata: meta }, { triggerGeneration: true });
         break;
       }
 

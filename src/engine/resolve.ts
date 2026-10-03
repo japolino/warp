@@ -5,7 +5,7 @@ import type { ExprEnv, Value } from "./expr.js";
 import { evalBool, evalNumber, evaluate, identifiers } from "./expr.js";
 import { rollDice, seededRng, type Rng } from "./dice.js";
 import type { ActionDef, CheckDef, DecideSpec, Effect, NarratorGate, RandomEventDef, Requirement, Ruleset, SeenReaction, Tier } from "./ruleset.js";
-import { SEEN_REACTIONS } from "./ruleset.js";
+import { SEEN_REACTIONS, TIERS } from "./ruleset.js";
 import { normalize, sample } from "./decide.js";
 import { emptyEffect, percentOf, slug } from "./ruleset.js";
 import { amountValue, bonusSources, applyEvent, cloneState, dayOf, encounterKey, foeMaxOf, foeName, formatClock, formatNumber, itemName, kinAge, makeEnv, personName, statMax, timeKey, usesOf, type EventSource, type GameState, type WarpEvent } from "./state.js";
@@ -89,6 +89,9 @@ export interface Intent {
   forecast?: LiveChoice["forecast"];
   /** Played out as a minigame: the score (a check) or the money (a gambling table). */
   game?: GameResult;
+  /** Rolled when it was chosen (the seed), and the tier that came up — the player's message already tells it, so it stands. */
+  seed?: string;
+  tier?: Tier;
 }
 
 /** A choice written for the moment: the label is the writer's, the tag decides what happens. */
@@ -2045,6 +2048,9 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
           perkNote = `${so.name}: ${tier === "partial" ? "the failure only half-failed" : "the disaster was only a failure"}`;
         }
       }
+      // Rolled when the choice was clicked, and already told in the player's own message: that result stands
+      // (the same seed gives the same roll; this only covers a state that shifted in between).
+      if (intent?.tier && (TIERS as readonly string[]).includes(intent.tier)) tier = intent.tier;
       rec.check = {
         label: a.check.label ?? a.label,
         style: a.check.style,

@@ -5,7 +5,7 @@ import { buildChoices, buildHud, buildMap, buildRecordView } from "../engine/vie
 import { buildDungeonEntries, buildDungeonView } from "../engine/dungeon/view.js";
 import { buildDateView } from "../engine/date/view.js";
 import { sceneViewFor } from "./scene.js";
-import type { ChoiceView, EncounterLogView, HudView, RecordView, RulesetStatus, SuggestionView } from "../shared/protocol.js";
+import type { ChoiceView, EncounterLogView, HudView, RecordView, RulesetStatus, Settings, SuggestionView } from "../shared/protocol.js";
 import type { Ruleset } from "../engine/ruleset.js";
 import type { GameState } from "../engine/state.js";
 import { momentKey, readyChoices } from "./drafts.js";
@@ -67,6 +67,9 @@ export async function pushState(chatId: string | null, userId?: string, force = 
         const v = buildRecordView(r, st.message.id, st.message.swipe_id ?? 0, st.record, st.before, st.after);
         const prev = msgs[(indexOf.get(st.message.id) ?? 0) - 1];
         if (st.record.action?.via === "adjudicator" && prev?.is_user && redoable(prev.id)) v.redoFrom = prev.id;
+        // Rolled on the click and told in the player's message: in Casual, roll it again from there (not a played game).
+        const pw = prev?.is_user ? warpMeta(prev) : null;
+        if (settings.swipesReroll && pw?.intent?.tier && pw.said && !st.record.check?.game && redoable(prev!.id)) v.rerollFrom = prev!.id;
         return v;
       })
       .filter((v) => v.check || v.changes.length || v.action || v.decisions.length || (v.contradiction ?? 0) >= 0.6);
@@ -86,7 +89,7 @@ export async function pushState(chatId: string | null, userId?: string, force = 
       revision,
       historyConflict: conflict,
       status,
-      hud: settings.enabled ? withErrands(r, state, buildHud(r, state), settings.errands && !conflict) : null,
+      hud: settings.enabled ? withErrands(r, state, buildHud(r, state), settings.errands && !conflict, settings, liveChoicesOf(latest)) : null,
       map: settings.enabled ? buildMap(r, state) : null,
       choices: settings.enabled && !conflict ? markReady(buildChoices(r, state, { ...settings, live: liveChoicesOf(latest) }), readyChoices(chatId, momentKey(msgs, state, { r, settings }))) : [],
       records: settings.enabled ? records : [],
@@ -185,12 +188,18 @@ export async function connectionsFor(userId?: string): Promise<{ id: string; nam
 }
 
 /** The errand window's contents, and which items can be used off the page, when errands are on. */
-function withErrands(r: Ruleset, s: GameState, hud: HudView, on: boolean): HudView {
+function withErrands(r: Ruleset, s: GameState, hud: HudView, on: boolean, settings: Settings, live: ReturnType<typeof liveChoicesOf>): HudView {
   if (!on) return { ...hud, errands: null };
   const open = errandsOpen(s);
+  const errands = buildErrands(r, s);
+  // Training with a minigame keeps it: the row carries the choice as the story buttons would show it, to play.
+  if (errands?.train.length && settings.minigames !== "off") {
+    const playable = new Map(buildChoices(r, s, { ...settings, errands: false, live }).filter((c) => c.game).map((c) => [c.id, c]));
+    errands.train = errands.train.map((t) => (playable.has(t.id) ? { ...t, choice: playable.get(t.id)! } : t));
+  }
   return {
     ...hud,
-    errands: buildErrands(r, s),
+    errands,
     items: hud.items.map((i) => (i.use && open && !i.use.locked ? { ...i, use: { ...i.use, quiet: true } } : i)),
   };
 }

@@ -4712,6 +4712,7 @@ function tallyKinds(enc, outcomes) {
 }
 
 // src/engine/ruleset.ts
+var TIERS = ["crit_success", "success", "partial", "fail", "crit_fail"];
 var SEEN_REACTIONS = ["unnoticed", "glance", "interested", "disapproving", "predatory"];
 var DIFFICULTIES = ["easy", "fair", "hard", "extreme"];
 var DEFAULT_PRACTICE_REPEAT = { step: 0.5, floor: 0.1, recoverMinutes: 120, recoverTurns: 8 };
@@ -12840,6 +12841,8 @@ function resolveInner(r, before, intent, opts, needs) {
           perkNote = `${so.name}: ${tier === "partial" ? "the failure only half-failed" : "the disaster was only a failure"}`;
         }
       }
+      if (intent?.tier && TIERS.includes(intent.tier))
+        tier = intent.tier;
       rec.check = {
         label: a.check.label ?? a.label,
         style: a.check.style,
@@ -18850,12 +18853,10 @@ function errandKind(r, a) {
       return "rest";
     return null;
   }
-  if (gives || takes || spends || earns || touches((id) => r.stats[id]?.kind === "hidden"))
+  if (gives || takes || earns || touches((id) => r.stats[id]?.kind === "hidden"))
     return null;
-  const raises = Object.values(a.outcomes).some((e) => e && Object.entries(e.stats).some(([id, v]) => {
-    const k = r.stats[id]?.kind;
-    return (k === "skill" || k === "attribute") && (typeof v === "number" ? v > 0 : !/^\s*-/.test(v));
-  }));
+  const skill = (id) => r.stats[id]?.kind === "skill" || r.stats[id]?.kind === "attribute";
+  const raises = Object.values(a.outcomes).some((e) => e && Object.entries(e.stats).some(([id, v]) => skill(id) && (typeof v === "number" ? v > 0 : !/^\s*-/.test(v)))) || r.growth?.enabled !== false && all.every((e) => !e?.hint) && r.statOrder.some((id) => skill(id) && new RegExp(`(^|[^\\w])${id}([^\\w]|$)`).test(JSON.stringify(a.check)));
   const quiet = Object.values(a.outcomes).every((e) => !e || isEmpty(e.flags) && isEmpty(e.unlock));
   return raises && quiet ? "train" : null;
 }

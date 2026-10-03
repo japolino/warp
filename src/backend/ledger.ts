@@ -27,6 +27,8 @@ export interface WarpMeta {
   /** This message is a quiet encounter's log: its rounds, and how it ended. */
   encounter?: EncounterLog;
   encounters?: Record<string, EncounterLog>;
+  /** The move as clicked, before its result was written into the message (a reroll writes it again from this). */
+  said?: string;
 }
 
 export interface EncounterLog {

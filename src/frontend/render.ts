@@ -532,6 +532,7 @@ export function renderChips(rec: RecordView, opts: { showDice: boolean }): strin
   } else if (rec.check && opts.showDice) {
     const c = rec.check;
     out.push(`<button class="warp-chip warp-dice warp-tone-${TIER_TONE[c.tier]}" data-dice title="Show the roll">🎲 ${esc(c.label)} · ${esc(c.tierLabel)}</button>`);
+    if (rec.rerollFrom) out.push(`<button class="warp-chip warp-reroll" data-reroll="${esc(rec.rerollFrom)}" title="Roll again: a new result, a new line in your message, and a new reply">↻ Reroll</button>`);
     out.push(`<div class="warp-dice-detail">${c.faces.map((f) => `<span class="warp-die" title="d${f.sides}"${f.kept ? "" : " data-dropped"}>${f.value}</span>`).join("")}<span>${esc(c.summary)}</span>${read}${notAction}</div>`);
   } else if (rec.action && opts.showDice) {
     out.push(`<span class="warp-chip">▸ ${esc(rec.action)}</span>${notAction ? `<span class="warp-chip">${notAction}</span>` : ""}`);
@@ -704,7 +705,8 @@ export function renderSettings(s: Settings, status: RulesetStatus | null, connec
     ${toggle("storyQuests", "Quests from the story", "When someone in the story asks you for a favour or a job and you agree, it's tracked as a quest with stakes; the story decides when it's done or failed, and they remember how it went.", s.storyQuests)}
     ${toggle("errands", "Errands in a window", "Notice board, shops, bills, training and rest open a window and happen off the page, instead of each being a story reply.", s.errands !== false)}
     ${toggle("quietTravel", "Travel off the page", "Clicking a place on the map takes you there without a travel paragraph; your next message starts the scene.", s.quietTravel)}
-    ${toggle("swipesReroll", "Swiping rerolls the dice", "Casual: a new swipe is a new roll. Turn off for Ironman: rolls stay fixed for the same move.", s.swipesReroll)}
+    ${toggle("sayOutcome", "Say how my move went", "When you click a move with a roll or a minigame, it's settled on the click and your message says how it went, in your character's voice (the helper writes it; a set line if it can't). Swipes keep that result; use ↻ Reroll to roll again.", s.sayOutcome !== false)}
+    ${toggle("swipesReroll", "Swiping rerolls the dice", "Casual: a new swipe is a new roll (for a move told in your message, ↻ Reroll does it). Turn off for Ironman: rolls stay fixed for the same move.", s.swipesReroll)}
   </div>
   <div class="warp-card">
     <h3>Display</h3>

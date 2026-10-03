@@ -1,6 +1,6 @@
 import type { SpindleFloatWidgetHandle, SpindleFrontendContext } from "lumiverse-spindle-types";
 import type {
-  BackendToFrontend, BuilderAnswer, BuilderSession, EncounterLogView, FrontendToBackend, RecordView, RulesetStatus, Settings, TemplateInfo,
+  BackendToFrontend, BuilderAnswer, BuilderSession, ChoiceView, EncounterLogView, FrontendToBackend, GameResult, RecordView, RulesetStatus, Settings, TemplateInfo,
 } from "./shared/protocol.js";
 import { DEFAULT_SETTINGS } from "./shared/protocol.js";
 import { OPENROUTER_JEV } from "./shared/classifier-config.js";
@@ -927,6 +927,13 @@ export function setup(ctx: SpindleFrontendContext) {
       sendQuiet(quiet.dataset.errandQuiet!, times);
       return;
     }
+    const play = t.closest<HTMLButtonElement>("[data-errand-play]");
+    if (play) {
+      if (play.disabled || errandsBusy()) return;
+      const row = state?.hud?.errands?.train.find((x) => x.id === play.dataset.errandPlay);
+      if (row?.choice) void playErrand(row.choice, row.story);
+      return;
+    }
     const story = t.closest<HTMLButtonElement>("[data-errand-story]");
     if (story) {
       if (story.disabled || errandsBusy()) return;
@@ -935,11 +942,22 @@ export function setup(ctx: SpindleFrontendContext) {
       act(id);
     }
   }
+  /** A training session played as its minigame, off the page: the window steps aside for the game, then comes back. */
+  async function playErrand(choice: ChoiceView, actionId: string) {
+    const cid = chatId();
+    if (!cid || arcade.busy() || (busy.on && busy.chatId === cid)) return;
+    const tabWas = errands?.tab ?? "train";
+    closeErrands();
+    const out = await arcade.run(choice, false);
+    if (chatId() !== cid) return;
+    if (out.kind === "played") sendQuiet(actionId, 1, out.result);
+    openErrands(tabWas);
+  }
   /** Do something off the page: no narrator turn; the window waits for the next state. */
-  function sendQuiet(actionId: string, times = 1) {
+  function sendQuiet(actionId: string, times = 1, game?: GameResult) {
     const cid = chatId();
     if (!cid || (busy.on && busy.chatId === cid)) return;
-    send({ type: "quiet", chatId: cid, actionId, ...(times > 1 ? { times } : {}) });
+    send({ type: "quiet", chatId: cid, actionId, ...(times > 1 ? { times } : {}), ...(game ? { game } : {}) });
     if (errands && errands.chatId === cid) {
       const me = errands;
       me.busy = true;
@@ -1494,6 +1512,13 @@ export function setup(ctx: SpindleFrontendContext) {
     }
     const redo = t.closest<HTMLElement>(".warp-chips [data-redo]");
     if (redo) { e.preventDefault(); void confirmRedo(redo); return; }
+    const reroll = t.closest<HTMLElement>(".warp-chips [data-reroll]");
+    if (reroll) {
+      e.preventDefault();
+      const cid = chatId();
+      if (cid && reroll.dataset.reroll && !(busy.on && busy.chatId === cid)) { send({ type: "reroll", chatId: cid, messageId: reroll.dataset.reroll }); lockUntilReply(cid); }
+      return;
+    }
     const dismiss = t.closest<HTMLElement>(".warp-chips [data-dismiss-suggest]");
     if (dismiss) {
       const cid = chatId();

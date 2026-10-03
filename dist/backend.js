@@ -4513,7 +4513,7 @@ function normalizeRuleset(raw) {
   }
   return { ruleset, issues: c.issues };
 }
-var SEEN_REACTIONS, DIFFICULTIES, DEFAULT_PRACTICE_REPEAT, isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v), DEFAULT_WEEKDAYS, KIND_ALIASES, INFLICT_KEYS, QUEST_OPS, list = (v) => Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : [], TIER_KEYS, ACTION_KEYS, MONTHS, DEFAULT_WEATHER, DEFAULT_SLOTS, USE_KEYS, PERK_META, DEFAULT_KNOWN = "\x00default", ABILITY_META, SIM_KEYS, QUEST_META, KEEP_FLAGS, KEEP_LISTS, CHILD_NAMES, SEXUAL_TAGS;
+var TIERS, SEEN_REACTIONS, DIFFICULTIES, DEFAULT_PRACTICE_REPEAT, isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v), DEFAULT_WEEKDAYS, KIND_ALIASES, INFLICT_KEYS, QUEST_OPS, list = (v) => Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : [], TIER_KEYS, ACTION_KEYS, MONTHS, DEFAULT_WEATHER, DEFAULT_SLOTS, USE_KEYS, PERK_META, DEFAULT_KNOWN = "\x00default", ABILITY_META, SIM_KEYS, QUEST_META, KEEP_FLAGS, KEEP_LISTS, CHILD_NAMES, SEXUAL_TAGS;
 var init_ruleset = __esm(() => {
   init_game_ids();
   init_expr();
@@ -4521,6 +4521,7 @@ var init_ruleset = __esm(() => {
   init_defs();
   init_defs2();
   init_outcomes();
+  TIERS = ["crit_success", "success", "partial", "fail", "crit_fail"];
   SEEN_REACTIONS = ["unnoticed", "glance", "interested", "disapproving", "predatory"];
   DIFFICULTIES = ["easy", "fair", "hard", "extreme"];
   DEFAULT_PRACTICE_REPEAT = { step: 0.5, floor: 0.1, recoverMinutes: 120, recoverTurns: 8 };
@@ -9920,6 +9921,8 @@ function resolveInner(r, before, intent, opts, needs) {
           perkNote = `${so.name}: ${tier === "partial" ? "the failure only half-failed" : "the disaster was only a failure"}`;
         }
       }
+      if (intent?.tier && TIERS.includes(intent.tier))
+        tier = intent.tier;
       rec.check = {
         label: a.check.label ?? a.label,
         style: a.check.style,
@@ -18997,7 +19000,8 @@ var init_protocol = __esm(() => {
     dateImages: true,
     imageConnectionId: "",
     errands: true,
-    quietTravel: false
+    quietTravel: false,
+    sayOutcome: true
   };
 });
 
@@ -20592,12 +20596,10 @@ function errandKind(r, a) {
       return "rest";
     return null;
   }
-  if (gives || takes || spends || earns || touches((id) => r.stats[id]?.kind === "hidden"))
+  if (gives || takes || earns || touches((id) => r.stats[id]?.kind === "hidden"))
     return null;
-  const raises = Object.values(a.outcomes).some((e) => e && Object.entries(e.stats).some(([id, v]) => {
-    const k = r.stats[id]?.kind;
-    return (k === "skill" || k === "attribute") && (typeof v === "number" ? v > 0 : !/^\s*-/.test(v));
-  }));
+  const skill = (id) => r.stats[id]?.kind === "skill" || r.stats[id]?.kind === "attribute";
+  const raises = Object.values(a.outcomes).some((e) => e && Object.entries(e.stats).some(([id, v]) => skill(id) && (typeof v === "number" ? v > 0 : !/^\s*-/.test(v)))) || r.growth?.enabled !== false && all.every((e) => !e?.hint) && r.statOrder.some((id) => skill(id) && new RegExp(`(^|[^\\w])${id}([^\\w]|$)`).test(JSON.stringify(a.check)));
   const quiet = Object.values(a.outcomes).every((e) => !e || isEmpty(e.flags) && isEmpty(e.unlock));
   return raises && quiet ? "train" : null;
 }
@@ -20768,7 +20770,7 @@ function quietWhat(r, s, actionId) {
   return r.actions[actionId]?.label ?? actionId;
 }
 function runQuiet(r, s, actionId, times, opts) {
-  const n = Math.max(1, Math.min(MAX_TIMES, Math.floor(times) || 1));
+  const n = opts.game ? 1 : Math.max(1, Math.min(MAX_TIMES, Math.floor(times) || 1));
   const blocked = quietBlocker(r, s, actionId);
   if (blocked)
     return { events: [], line: null, done: 0, error: blocked, after: s };
@@ -20779,7 +20781,7 @@ function runQuiet(r, s, actionId, times, opts) {
   for (let i = 0;i < n; i++) {
     if (i > 0 && quietBlocker(r, st, actionId))
       break;
-    const rec = resolveTurnFull(r, st, { actionId, via: "choice", ...opts.params ? { params: opts.params } : {} }, { seed: opts.seed() }).record;
+    const rec = resolveTurnFull(r, st, { actionId, via: "choice", ...opts.params ? { params: opts.params } : {}, ...opts.game ? { game: opts.game } : {} }, { seed: opts.seed() }).record;
     const evs = rec.events.filter((e) => e.t !== "noticed");
     if (rec.check) {
       rolled++;
@@ -24675,7 +24677,7 @@ async function interceptor(messages, ctx) {
           verdict = { messageId: lastUser.id, intent, suggestion: reading.suggestion };
         }
       }
-      const seed = settings.swipesReroll ? randomSeed() : `${lastUser?.id ?? "start"}:${intent?.actionId ?? "none"}`;
+      const seed = intent?.seed ?? (settings.swipesReroll ? randomSeed() : `${lastUser?.id ?? "start"}:${intent?.actionId ?? "none"}`);
       const playerText = lastUser?.content ?? "";
       let res = resolveTurnFull(r, before, intent, { seed, veils: settings.veils, scene, playerText, encounter, pendingSuggestion });
       if (decider && res.needs.length) {
@@ -27891,6 +27893,9 @@ async function pushState(chatId, userId, force = false) {
       const prev = msgs[(indexOf.get(st.message.id) ?? 0) - 1];
       if (st.record.action?.via === "adjudicator" && prev?.is_user && redoable(prev.id))
         v.redoFrom = prev.id;
+      const pw = prev?.is_user ? warpMeta(prev) : null;
+      if (settings.swipesReroll && pw?.intent?.tier && pw.said && !st.record.check?.game && redoable(prev.id))
+        v.rerollFrom = prev.id;
       return v;
     }).filter((v) => v.check || v.changes.length || v.action || v.decisions.length || (v.contradiction ?? 0) >= 0.6);
     const suggestions = [];
@@ -27908,7 +27913,7 @@ async function pushState(chatId, userId, force = false) {
       revision,
       historyConflict: conflict,
       status,
-      hud: settings.enabled ? withErrands(r, state, buildHud(r, state), settings.errands && !conflict) : null,
+      hud: settings.enabled ? withErrands(r, state, buildHud(r, state), settings.errands && !conflict, settings, liveChoicesOf(latest)) : null,
       map: settings.enabled ? buildMap(r, state) : null,
       choices: settings.enabled && !conflict ? markReady(buildChoices(r, state, { ...settings, live: liveChoicesOf(latest) }), readyChoices(chatId, momentKey(msgs, state, { r, settings }))) : [],
       records: settings.enabled ? records : [],
@@ -28007,13 +28012,18 @@ async function connectionsFor(userId) {
     return [];
   }
 }
-function withErrands(r, s, hud, on) {
+function withErrands(r, s, hud, on, settings, live) {
   if (!on)
     return { ...hud, errands: null };
   const open = errandsOpen(s);
+  const errands = buildErrands(r, s);
+  if (errands?.train.length && settings.minigames !== "off") {
+    const playable = new Map(buildChoices(r, s, { ...settings, errands: false, live }).filter((c) => c.game).map((c) => [c.id, c]));
+    errands.train = errands.train.map((t) => playable.has(t.id) ? { ...t, choice: playable.get(t.id) } : t);
+  }
   return {
     ...hud,
-    errands: buildErrands(r, s),
+    errands,
     items: hud.items.map((i) => i.use && open && !i.use.locked ? { ...i, use: { ...i.use, quiet: true } } : i)
   };
 }
@@ -30058,6 +30068,7 @@ async function classify(d, m, who, context) {
 
 // src/backend/quiet.ts
 init_dice();
+init_games();
 init_errands();
 init_view();
 init_ledger();
@@ -30098,6 +30109,7 @@ async function doQuiet(msg, userId) {
     const res = runQuiet(r, folded.state, msg.actionId, wanted, {
       seed: randomSeed,
       params: msg.params,
+      ...msg.game ? { game: cleanResult(msg.game, []) ?? undefined } : {},
       changes: (b, a, evs) => summarizeEvents(r, b, a, evs).filter((c) => !/^⏱|^🕒|^⌛/u.test(c.text)).map((c) => plain2(c.text)).slice(0, 6)
     });
     if (res.error) {
@@ -30116,6 +30128,102 @@ async function doQuiet(msg, userId) {
     toast("success", `${line}${done < wanted ? ` — stopped after ${done}, can't go on` : ""}`, userId);
   await pushState(msg.chatId, userId);
   return !error;
+}
+
+// src/backend/attempt.ts
+init_dice();
+init_resolve();
+init_helpers();
+var TIER_WORDS = {
+  crit_success: "a triumph — it couldn't have gone better",
+  success: "it works, cleanly",
+  partial: "it half works: it gets done, but not cleanly, or at a cost",
+  fail: "it doesn't work",
+  crit_fail: "it goes badly wrong"
+};
+function scriptedAttempt(say, tier) {
+  const base = say.trim().replace(/^\*+|\*+$/g, "").replace(/[.!…\s]+$/, "") || "I give it a go";
+  const how = {
+    crit_success: "and it couldn't have gone better.",
+    success: "and it comes off well.",
+    partial: "and it mostly works, though not cleanly.",
+    fail: "but it doesn't come together.",
+    crit_fail: "and it goes badly wrong."
+  };
+  return `*${base} — ${how[tier]}*`;
+}
+var SYSTEM3 = `You write one short line for the PLAYER in a roleplay: what their character just did and how well it went, in their own voice.
+Rules:
+- First person, present tense, inside asterisks, like *I ...*. One or two sentences, at most 45 words.
+- Say how well THEY did, matching the result exactly (a triumph, a clean success, half working, a failure, a disaster). Show it through concrete detail of the attempt itself.
+- Only the player's own actions, body and feelings. Never write other characters' words, reactions or decisions, and never what happens next — the narrator writes that.
+- Fit the scene and the player's persona. No numbers, dice, scores or game terms.
+- Output only the line.`;
+async function describeAttempt(o) {
+  const fallback = scriptedAttempt(o.say, o.tier);
+  if (o.settings.sceneLines === "scripted")
+    return fallback;
+  const how = o.check?.game ? `played as a game (${o.check.game.summary.replace(/^\S+\s/, "")}); ${TIER_WORDS[o.tier]}` : TIER_WORDS[o.tier];
+  const user = [
+    `The player character: ${o.player}.${o.persona ? `
+Persona:
+${o.persona.slice(0, 1200)}` : ""}`,
+    o.scene ? `The scene so far (latest narration):
+${o.scene.slice(-1500)}` : "",
+    `What ${o.player} does: ${o.label}${o.check?.label && o.check.label !== o.label ? ` (${o.check.label})` : ""}. As clicked: ${o.say}`,
+    `How it went: ${how}.`,
+    `Write ${o.player}'s line.`
+  ].filter(Boolean).join(`
+
+`);
+  try {
+    const text = (await askProse(SYSTEM3, user, o.settings, o.userId, 12000, { temperature: 0.8 })).trim();
+    if (!text || text.length > 400)
+      return fallback;
+    const line = text.replace(/^["“]|["”]$/g, "").trim();
+    return /^\*/.test(line) ? line : `*${line.replace(/\*+$/, "")}*`;
+  } catch {
+    return fallback;
+  }
+}
+async function personaText2(chatId, userId) {
+  try {
+    const { text } = await host().macros.resolve("{{persona}}", { chatId, userId, commit: false });
+    return text && text !== "{{persona}}" ? text.trim() : "";
+  } catch {
+    return "";
+  }
+}
+function tellable(rec) {
+  return !!rec.check && !rec.mind && !rec.veiled && !rec.gamble;
+}
+async function settleClick(o) {
+  if (!o.settings.sayOutcome || o.intent.actionId.startsWith("date:"))
+    return o.say;
+  let rec;
+  if (o.ready)
+    rec = o.ready;
+  else {
+    const seed = randomSeed();
+    rec = resolveTurnFull(o.r, o.state, { ...o.intent, seed }, { seed, veils: o.settings.veils, playerText: o.say }).record;
+  }
+  if (!tellable(rec) || !rec.check)
+    return o.say;
+  o.intent.seed = rec.check.seed;
+  o.intent.tier = rec.check.tier;
+  send({ type: "busy", chatId: o.chatId, busy: true, label: `${rec.check.label}: ${rec.check.tier.replace("_", " ")}` }, o.userId);
+  const scene = [...o.msgs].reverse().find((m) => !m.is_user)?.content ?? "";
+  return describeAttempt({
+    say: o.say,
+    label: rec.action?.label ?? o.intent.actionId,
+    check: rec.check,
+    tier: rec.check.tier,
+    scene,
+    persona: await personaText2(o.chatId, o.userId),
+    player: o.player,
+    settings: o.settings,
+    userId: o.userId
+  });
 }
 
 // src/backend.ts
@@ -30474,7 +30582,8 @@ spindle.onFrontendMessage(async (raw, userId) => {
           await pushState(msg.chatId, userId);
           return;
         }
-        const { say, intent } = ci;
+        const { intent } = ci;
+        let say = ci.say;
         const played = msg.game ? cleanResult(msg.game, []) : null;
         if (played)
           intent.game = played;
@@ -30490,12 +30599,18 @@ spindle.onFrontendMessage(async (raw, userId) => {
           break;
         }
         const ready = played ? null : takePrewritten(msg.chatId, momentKey(msgs, state, { r, settings }), msg.actionId);
+        if (busyChats.has(msg.chatId)) {
+          toast("info", "One moment — the story is still being written.", userId);
+          await pushState(msg.chatId, userId);
+          return;
+        }
+        say = await settleClick({ r, state, intent, say, msgs, chatId: msg.chatId, player: await playerName(msg.chatId, userId), settings, userId, ...ready ? { ready: ready.rec } : {} });
         if (ready) {
           const operation = takeOperation(msg.chatId);
           if (!operation)
             return;
           try {
-            await spindle.chat.appendMessage(msg.chatId, { role: "user", content: say, metadata: { warp: { intent, judged: true } } });
+            await spindle.chat.appendMessage(msg.chatId, { role: "user", content: say, metadata: { warp: { intent, judged: true, ...intent.tier ? { said: ci.say } : {} } } });
             const reply = await spindle.chat.appendMessage(msg.chatId, { role: "assistant", content: ready.text });
             await writeRecord(msg.chatId, reply.id, 0, ready.rec);
             await pushState(msg.chatId, userId);
@@ -30525,8 +30640,43 @@ spindle.onFrontendMessage(async (raw, userId) => {
         await spindle.chat.appendMessage(msg.chatId, {
           role: "user",
           content: say,
-          metadata: { warp: { intent } }
+          metadata: { warp: { intent, ...intent.tier ? { said: ci.say } : {} } }
         }, { triggerGeneration: true });
+        break;
+      }
+      case "reroll": {
+        const msgs = await getMessages(msg.chatId);
+        const i = msgs.findIndex((m) => m.id === msg.messageId);
+        const user = msgs[i];
+        const w = user ? warpMeta(user) : {};
+        if (!user || !user.is_user || msgs.length - 1 - i > 1 || !w.intent?.tier || !w.said) {
+          toast("warning", "Only the latest roll can be rerolled.", userId);
+          return;
+        }
+        if (busyChats.has(msg.chatId)) {
+          toast("info", "One moment — the story is still being written.", userId);
+          return;
+        }
+        const r = (await getRuleset(msg.chatId, userId))?.ruleset;
+        if (!r)
+          return;
+        const settings = await getSettings(userId);
+        const { state, conflict } = foldPath(r, msgs.slice(0, i), 0);
+        if (conflict) {
+          toast("warning", "Earlier history changed — check the Warp sheet first.", userId);
+          return;
+        }
+        const intent = { ...w.intent };
+        delete intent.seed;
+        delete intent.tier;
+        delete intent.game;
+        const say = await settleClick({ r, state, intent, say: w.said, msgs: msgs.slice(0, i), chatId: msg.chatId, player: await playerName(msg.chatId, userId), settings, userId });
+        const reply = msgs[i + 1];
+        if (reply)
+          await spindle.chat.deleteMessage(msg.chatId, reply.id);
+        await spindle.chat.deleteMessage(msg.chatId, user.id);
+        const meta = { ...user.metadata ?? {}, warp: { intent, said: w.said } };
+        await spindle.chat.appendMessage(msg.chatId, { role: "user", content: say, metadata: meta }, { triggerGeneration: true });
         break;
       }
       case "undo": {

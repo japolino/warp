@@ -31,6 +31,8 @@ actions:
   sleep: { label: Sleep, at: [home], time: 480, effects: { energy: +100 }, }
   chat: { label: Chat with the shopkeeper, at: [shop], effects: { energy: -1 } }
   register: { label: Register, at: [square], time: 30, effects: { flags: { registered: true } } }
+  arcade_course: { label: Run the timing course, at: [shop], time: 25, cost: { coin: -10, energy: -8 }, check: { chance: "40 + herbalism", label: Herbalism, game: race }, success: { energy: +1 }, fail: { energy: -3 } }
+  look_around: { label: Look around, at: [shop], check: { chance: "40 + herbalism", label: Herbalism }, success: { hint: "Reveal something hidden." }, fail: { hint: "Nothing turns up." } }
   pickpocket: { label: Pick a pocket, at: [shop], check: { chance: 30, label: Herbalism }, success: { coin: +10, herbalism: +1 }, fail: { energy: -5 } }
   keep_story: { label: Buy a gift in the story, at: [shop], errand: false, effects: { coin: -5, give: potion } }
 `, order: 0 }]).ruleset!;
@@ -48,6 +50,9 @@ describe("errands: what goes in the window", () => {
     expect(errandKind(r, r.actions.sleep)).toBe("rest");
     expect(errandKind(r, r.actions.chat)).toBeNull();
     expect(errandKind(r, r.actions.pickpocket)).toBeNull(); // a check with a take is a story, not practice
+    // A check that reads a skill is practice (with an entry fee, too) — unless it's there to reveal something.
+    expect(errandKind(r, r.actions.arcade_course)).toBe("train");
+    expect(errandKind(r, r.actions.look_around)).toBeNull();
     expect(errandKind(r, r.actions.register)).toBe("rest"); // a flag alone doesn't make it a story moment…
     expect(errandKind(r, r.actions.keep_story)).toBeNull(); // …but the author can say so
   });
@@ -121,6 +126,14 @@ describe("errands: done off the page", () => {
     expect(res.after.minutes - s.minutes).toBeGreaterThanOrEqual(3 * 45);
     expect(res.line).toContain("×3");
     expect(res.line).toMatch(/\d of 3 went well/);
+  });
+
+  test("a training session played as its minigame: one session, the score decides", () => {
+    const s = at("shop");
+    const res = runQuiet(r, s, "arcade_course", 5, { seed, changes, game: { game: "race", score: 1, beats: [] } });
+    expect(res.done).toBe(1);
+    expect(res.line).toContain("it went well");
+    expect(res.after.stats.coin).toBe(50);
   });
 
   test("world news waiting for the story stays waiting", () => {
