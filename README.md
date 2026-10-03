@@ -11,7 +11,7 @@
 
 The model still writes every reply. Warp owns the numbers: before a reply it settles what happened, and after it, it reads what the story changed and keeps it within the rules.
 
-> The old, bigger Warp (dungeons, dating, minigames, maps, perks, quests, the Doll and more) is on the `legacy` branch.
+> The old, bigger Warp (dungeons, dating, minigames, maps, perks, quests, the Doll and more) is on the `legacy` branch. An old ruleset still loads here: each part that was taken out is ignored with one plain warning. An old chat asks once whether to keep its recorded results.
 
 ## How it plays
 
@@ -157,6 +157,8 @@ live_choices:
     bold: { desc: "A daring move", check: { add: body, label: Body }, success: { mood: +3 }, fail: { health: -5 } }
     charm: { desc: "Persuading someone here", per_person: true, check: { add: charm, label: Charm }, success: { rel: { target: { trust: +3 } } } }
     kind: { desc: "Something kind (no roll)", per_person: true, effects: { rel: { target: { trust: +2 } } } }
+    careful: { desc: "The cautious option (no roll)", effects: { mood: +1 } }
+    sly: { desc: "A sly trick", check: { add: charm, label: Charm }, success: { mood: +2 }, fail: { mood: -2 } }
 
 --- # conflict
 conflict:
@@ -166,7 +168,7 @@ conflict:
 
 **Effects:** stat shorthand (`mood: +5`), `set`, `flags`, `give` / `take`, `rel: { jo: { trust: +3 } }` (`target` / `opponent` too), `place: "The docks"`, `look: { you: { outfit: "..." } }`, `time`, `add_condition`, `remove_condition`, `hint`, `decide`, `remember`, `reveal`, `goal: { id: done }`, `contest: { kind: fight, with: "the guard", threat: hard }`, `swing: +20`.
 
-**Formulas** read stats, flags, `hour`, `day`, `weekday`, `turn`, `place`, `round`, `momentum`, `in_contest`, and `has()`, `count()`, `flag()`, `cond()`, `rel()`, `met()`, `present()`, `between()`, `goal()`, `secret()`, `eff()`, `gear()`, `min`, `max`, `clamp`, `floor`, `ceil`, `round`, `abs`.
+**Formulas** read stats, flags, `hour`, `day`, `weekday`, `turn`, `place`, `round`, `momentum`, `in_contest`, and `has()`, `count()`, `flag()`, `cond()`, `rel()`, `met()`, `present()`, `between()`, `goal()`, `secret()`, `eff()`, `gear()`, `roll()`, `min`, `max`, `clamp`, `floor`, `ceil`, `round`, `abs`.
 
 `player:` and `improvise:` are still read as `you:` and `checks:`. Keys of systems that were taken out (`encounters:`, `quests:`, `locations:`, `weather:`, `perks:`, `dungeons:`, `dating:` and the like) are ignored with one plain warning that says what to use instead.
 

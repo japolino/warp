@@ -10,6 +10,7 @@ import { splitRulebook } from "./rulebook.js";
 import { loadRuleset } from "./loader.js";
 import { lintRuleset } from "./lint.js";
 import { TEMPLATES } from "./templates/index.js";
+import { runLoopSim } from "./loop-sim.js";
 
 /** Aliases the normalizer accepts for older or alternative spellings (not taught). */
 const ALIASES = new Set(["improvise", "improvised", "people", "player", "practice", "rules"]);
@@ -85,5 +86,18 @@ describe("the format reference (format 2)", () => {
   test("the design guide covers the core, not removed systems", () => {
     for (const topic of ["the core loop", "stats", "people", "checks", "choices", "conflict", "goals", "secrets", "items", "conditions", "money"]) expect(DESIGN_GUIDE).toContain(`## ${topic}`);
     for (const gone of ["## encounters", "## quests", "## places", "notice board", "foe_moves"]) expect(DESIGN_GUIDE).not.toContain(gone);
+  });
+});
+
+describe("the README's example ruleset", () => {
+  test("loads with no issues and passes every loop-simulator gate", () => {
+    const readme = readFileSync(new URL("../../README.md", import.meta.url), "utf8");
+    const yaml = /```yaml\n([\s\S]*?)```/.exec(readme)![1];
+    const parts = splitRulebook(yaml);
+    expect(parts.map((p) => p.label)).toEqual(["core", "stats", "people", "world", "actions", "story", "conflict"]);
+    const { ruleset, issues } = loadRuleset(parts.map((p, i) => ({ label: p.label, content: p.yaml, order: i })));
+    expect([...issues, ...lintRuleset(ruleset!)]).toEqual([]);
+    const report = runLoopSim(ruleset!, { turns: 50, seeds: 20, contestRuns: 300 });
+    expect(report.gates.filter((g) => !g.pass).map((g) => `${g.id}: ${g.value}`)).toEqual([]);
   });
 });
