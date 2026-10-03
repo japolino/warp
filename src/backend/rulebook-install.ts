@@ -1,7 +1,7 @@
 // The lorebook protocol in one host-only file: which attached book holds the rules, and publishing a new
 // one. Build a complete immutable candidate, validate its persisted contents, then publish it with one
 // character attachment update. Old books remain a backup (or, on a style switch, are detached).
-import { isRulesetBookName, loadRuleset, type RulesetPart } from "../engine/loader.js";
+import { isRulesetBookName, isRulesetEntryTitle, loadRuleset, type RulesetPart } from "../engine/loader.js";
 import { host, logError } from "./host.js";
 
 export function isInstalledRulebook(book: { metadata?: unknown }): boolean {
@@ -21,6 +21,37 @@ export async function attachedRulebooks(character: { world_book_ids?: string[] }
     .filter((book): book is NonNullable<typeof book> => !!book);
   const active = [...books].reverse().find((book) => isRulesetBookName(book.name) && isInstalledRulebook(book));
   return { books, active };
+}
+
+/** One installed ruleset entry: its id, its book, its part label ("stats") and its YAML. */
+export interface RulesetEntry { id: string; bookId: string; label: string; content: string }
+
+/** An entry title's part label: "warp-ruleset · stats" → "stats" (no label → "core"). */
+export function labelOf(comment: string): string {
+  return comment.replace(/^\s*(?:\[[^\]]*\]\s*)?warp[-_ ]?ruleset\s*[·:\-–—|]?\s*/i, "").trim().toLowerCase() || "core";
+}
+
+/**
+ * The ruleset entries a character runs, read exactly as Warp reads them: the active installed book (or, before any
+ * install, every attached book named warp-ruleset and every entry titled "warp-ruleset …").
+ */
+export async function rulesetEntries(characterId: string, userId?: string): Promise<{ entries: RulesetEntry[]; rulesetBook: string | null; bookIds: string[] }> {
+  const c = await host().characters.get(characterId, userId);
+  const entries: RulesetEntry[] = [];
+  let rulesetBook: string | null = null;
+  const attached = await attachedRulebooks(c ?? {}, userId);
+  for (const book of attached.books) {
+    if (attached.active && attached.active.id !== book.id) continue;
+    const bookId = book.id;
+    const whole = isRulesetBookName(book.name);
+    if (whole && !rulesetBook) rulesetBook = bookId;
+    for (let offset = 0; offset < 2000; offset += 200) {
+      const page = await host().world_books.entries.list(bookId, { limit: 200, offset, userId });
+      for (const e of page.data) if (whole || isRulesetEntryTitle(e.comment)) entries.push({ id: e.id, bookId, label: labelOf(e.comment ?? ""), content: e.content });
+      if (page.data.length < 200) break;
+    }
+  }
+  return { entries, rulesetBook, bookIds: c?.world_book_ids ?? [] };
 }
 
 const installs = new Map<string, Promise<unknown>>();

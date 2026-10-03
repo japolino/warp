@@ -60,6 +60,15 @@ export function renderRulesetCard(s: RulesetStatus, hasChat: boolean): string {
   </div>`;
 }
 
+/** Where Warp Studio lives: the creator tools that moved out of Warp. */
+export const STUDIO_URL = "https://github.com/japolino/warp-studio";
+
+/** The Ruleset tab's note on writing rules by hand, and where the creator tools went. */
+export function renderWritingRules(): string {
+  return `<div class="warp-card"><h3>Writing rules</h3><p>Rules live in entries titled <b>warp-ruleset · …</b> (or any lorebook named <b>warp-ruleset</b>). Each entry is YAML; entries merge together. Warp keeps them out of the prompt automatically.</p>
+    <p class="warp-studio-line">Deep passes, checks, playtest and import/export: <a href="${STUDIO_URL}" target="_blank" rel="noopener">Warp Studio</a> (${STUDIO_URL})</p></div>`;
+}
+
 const STYLE_CARD = {
   story: { title: "📖 Story (no dice)", blurb: "Time, place, who is here and how they feel about you, with slow-burn relationships. Nothing is rolled." },
   adventure: { title: "🎲 Adventure (dice)", blurb: "Everything in Story, plus dice at risky moments and contests (fights, chases, arguments) on one momentum gauge." },

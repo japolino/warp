@@ -2,7 +2,8 @@
 
 import { describe, expect, test } from "bun:test";
 import { renderSettings, renderStyleSwitch, templateFor } from "./render-settings.js";
-import { renderTemplatePicker } from "./render.js";
+import { renderTemplatePicker, renderWritingRules } from "./render.js";
+import { renderBuilderCta } from "./builder-ui.js";
 import { TEMPLATES } from "../engine/templates/index.js";
 import { DEFAULT_SETTINGS, type RulesetStatus } from "../shared/protocol.js";
 
@@ -89,5 +90,18 @@ describe("Story / Adventure", () => {
     expect(html).toContain("Adventure (dice)");
     expect(html).not.toContain('aria-pressed="true"');
     expect(html).not.toMatch(/warp-template[^"]*(?:selected|primary)/);
+  });
+});
+
+describe("the Ruleset tab", () => {
+  test("Build and Refine with AI stay; whole-rulebook import and export moved to Warp Studio, and the tab says so", () => {
+    const cta = renderBuilderCta(true, true);
+    expect(cta).toContain('data-b="open-build"');
+    expect(cta).toContain('data-b="open-refine"');
+    for (const gone of ["data-import-text", "data-import-file", 'data-b="import"', 'data-b="export"', "Export this rulebook"]) expect(cta).not.toContain(gone);
+    const help = renderWritingRules();
+    expect(help).toContain("Deep passes, checks, playtest and import/export: ");
+    expect(help).toContain("Warp Studio");
+    expect(help).toContain("https://github.com/japolino/warp-studio");
   });
 });

@@ -287,8 +287,8 @@ export interface BuilderSession {
   schemaVersion?: number;
   characterId: string;
   characterName: string;
-  /** build = from the card; refine = change by request; import = a rulebook written elsewhere. */
-  mode: "build" | "refine" | "import";
+  /** build = from the card; refine = change the installed ruleset by request. */
+  mode: "build" | "refine";
   /** The player's persona (who {{user}} is), so their own powers and training become part of the rules. */
   persona?: string | null;
   step: "start" | "questions" | "review" | "done";
@@ -348,9 +348,7 @@ export type BackendToFrontend =
   | { type: "settings"; settings: Settings; templates: TemplateInfo[]; connections: { id: string; name: string }[]; jevKeySet: boolean }
   | { type: "toast"; level: "info" | "success" | "warning" | "error"; message: string }
   | { type: "command"; command: "open" | "install" }
-  | { type: "builder"; session: BuilderSession | null; chatId?: string | null }
-  /** The installed rulebook as one file, for editing elsewhere. */
-  | { type: "rulebook_export"; name: string; text: string };
+  | { type: "builder"; session: BuilderSession | null; chatId?: string | null };
 
 export type FrontendToBackend =
   | { type: "reconcile_history"; chatId: string; keep: boolean }
@@ -378,9 +376,6 @@ export type FrontendToBackend =
   | { type: "adjust_rel"; chatId: string; who: string; stat: string; value: number }
   | { type: "forget"; chatId: string; who: string }
   | { type: "builder_open"; chatId: string; mode: "build" | "refine" }
-  /** A rulebook written elsewhere: split, checked and previewed in the builder before anything is saved. */
-  | { type: "builder_import"; chatId: string; text: string }
-  | { type: "export_rulebook"; chatId: string }
   | { type: "builder_start"; chatId: string; connectionId: string; creative: boolean; base?: string }
   | { type: "builder_answer"; chatId: string; answers: Record<string, BuilderAnswer>; additions: BuilderAddition[]; more: boolean }
   | { type: "builder_redo"; chatId: string; part: string; note?: string }

@@ -28,11 +28,12 @@ export function restoreBuilderSession(raw: unknown, characterId: string): Builde
   const additions = array<BuilderAddition>(raw.additions, a => object(a) && typeof a.name === "string" && ["skill", "meter", "item", "place", "action", "rule", "person", "other"].includes(String(a.kind)), "additions").map(a => ({...a, note: string(a.note)}));
   const a = object(raw.analysis) ? raw.analysis : null;
   const sb = a && object(a.statusBlock) ? a.statusBlock : null;
-  // Drafts saved before the designer moved out of Warp: its fields are dropped, and a "deepen" draft reopens as a refine.
+  // Drafts saved before the designer and import moved to Warp Studio: their fields are dropped, and a "deepen" or
+  // "import" draft reopens as a refine (its sections are kept).
   const { effort: _effort, log: _log, waived: _waived, depth: _depth, designPass: _designPass, ...kept } = raw;
   return {
     ...kept, schemaVersion: BUILDER_SESSION_VERSION,
-    characterId, characterName: string(raw.characterName, "This character"), mode: (raw.mode === "deepen" ? "refine" : raw.mode) as BuilderSession["mode"], step: raw.step as BuilderSession["step"],
+    characterId, characterName: string(raw.characterName, "This character"), mode: (raw.mode === "build" ? "build" : "refine") as BuilderSession["mode"], step: raw.step as BuilderSession["step"],
     connectionId: string(raw.connectionId), creative: raw.creative === true, base: string(raw.base),
     analysis: a ? {
       summary: string(a.summary), suggestedTemplate: string(a.suggestedTemplate), reason: string(a.reason), cardType: a.cardType === "scenario" ? "scenario" : "character",

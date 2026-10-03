@@ -140,6 +140,13 @@ describe("saved builder draft recovery", () => {
     } finally {log.mockRestore();}
   });
 
+  test("an imported draft (import moved to Warp Studio) reopens as a refine and keeps its sections", () => {
+    stored.mode = "import";
+    const s = restoreBuilderSession(stored, characterId);
+    expect(s.mode).toBe("refine");
+    expect(s.parts.length).toBe(templateParts.length);
+  });
+
   test("a draft from before the designer moved out drops its fields; a deepen draft reopens as a refine", () => {
     Object.assign(stored, {mode: "deepen", effort: "quick", log: ["a step"], waived: {x: "why"}, depth: {before: 1, after: 2, open: 0}, designPass: {reason: "no_tools", steps: 3, changed: false, resolved: 0}});
     const s = restoreBuilderSession(stored, characterId) as unknown as Record<string, unknown>;

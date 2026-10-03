@@ -57,7 +57,9 @@ Both are `window.dispatchEvent(new CustomEvent(name, { detail }))`. Listeners mu
 
 ## ✨ Build with AI
 
-**Warp → Ruleset → Build with AI** reads the character card, asks a few questions (tone, which systems, difficulty, relationship depth, plus follow-ups about the card and anything you want to add in your own words), then drafts the ruleset section by section in one pass. It suggests only the systems that fit the card; quests stay optional. Every section passes Warp's checker — problems are sent back to the model and fixed automatically — and you get a review before anything is saved: a live preview of the sidebar and choices, a summary, and **Redo** per section. **Refine with AI** changes an existing ruleset from an instruction ("make it harder", "add a cooking skill"). A rulebook written elsewhere can be imported (checked and previewed first), and the installed one exported as one file.
+**Warp → Ruleset → Build with AI** reads the character card, asks a few questions (tone, which systems, difficulty, relationship depth, plus follow-ups about the card and anything you want to add in your own words), then drafts the ruleset section by section in one pass. It suggests only the systems that fit the card; quests stay optional. Every section passes Warp's checker — problems are sent back to the model and fixed automatically — and you get a review before anything is saved: a live preview of the sidebar and choices, a summary, and **Redo** per section. **Refine with AI** changes an existing ruleset from an instruction ("make it harder", "add a cooking skill").
+
+Deep passes, checks, playtest and import/export: Warp Studio (https://github.com/japolino/warp-studio).
 
 ## Decision model (System 1)
 

@@ -1,6 +1,7 @@
 // A whole rulebook as one file, for writing it with other tools: split into the
 // sections Warp keeps as lorebook entries, and joined back for export. Splitting
-// is textual, so comments and formatting survive the round trip.
+// is textual, so comments and formatting survive the round trip. Warp itself no
+// longer imports or exports whole rulebooks; Warp Studio does, with these functions.
 
 import { PART_LABELS, PART_OF_KEY } from "./reference.js";
 
@@ -90,7 +91,7 @@ export function joinRulebook(parts: RulebookPart[], title: string): string {
   const head = [
     `# Warp rulebook — ${title}`,
     "# Each document below is one section of the ruleset (a lorebook entry named \"warp-ruleset · <section>\").",
-    "# Edit it anywhere, then import it back: Warp → Ruleset → Import a rulebook.",
+    "# Edit it anywhere, then import it back with Warp Studio (https://github.com/japolino/warp-studio).",
   ].join("\n");
   return `${head}\n${parts.map((p) => `--- # ${p.label}\n${p.yaml.trim()}\n`).join("\n")}`;
 }

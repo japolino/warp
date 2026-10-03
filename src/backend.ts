@@ -15,7 +15,7 @@ import { generationHistory, interceptor, narratorWriting, onGenerationEnded, onG
 import { contestExit, intentFor, type ChoiceIntent } from "./backend/intents.js";
 import { isRulesetEntryTitle } from "./engine/loader.js";
 import { getDecider, JEV_KEY } from "./backend/deciders.js";
-import { builderAnswer, builderBack, builderImport, exportRulebook, builderClose, builderCurrent, builderInstall, builderOpen, builderRedo, builderRefine, builderStart } from "./backend/builder.js";
+import { builderAnswer, builderBack, builderClose, builderCurrent, builderInstall, builderOpen, builderRedo, builderRefine, builderStart } from "./backend/builder.js";
 
 declare const spindle: SpindleAPI;
 
@@ -181,7 +181,7 @@ async function sendSettings(userId?: string) {
 spindle.onFrontendMessage(async (raw, userId) => {
   const msg = raw as FrontendToBackend;
   try {
-    if ("chatId" in msg && msg.chatId && !["hello", "refresh", "reload", "reconcile_history", "undo"].includes(msg.type) && !msg.type.startsWith("builder") && msg.type !== "export_rulebook" && msg.type !== "install_template") {
+    if ("chatId" in msg && msg.chatId && !["hello", "refresh", "reload", "reconcile_history", "undo"].includes(msg.type) && !msg.type.startsWith("builder") && msg.type !== "install_template") {
       const r = (await getRuleset(msg.chatId, userId))?.ruleset;
       if (r && foldPath(r, await getMessages(msg.chatId), 0).conflict) {
         toast("warning", "Earlier history or rules changed. Review the recorded outcomes in the Warp sheet before continuing.", userId);
@@ -308,12 +308,6 @@ spindle.onFrontendMessage(async (raw, userId) => {
       }
 
       case "builder_open": await builderOpen(msg.chatId, msg.mode, userId); break;
-      case "builder_import": await builderImport(msg.chatId, msg.text, userId); break;
-      case "export_rulebook": {
-        const out = await exportRulebook(msg.chatId, userId);
-        send({ type: "rulebook_export", ...out }, userId);
-        break;
-      }
       case "builder_start": await builderStart(msg.chatId, { connectionId: msg.connectionId, creative: msg.creative, base: msg.base }, userId); break;
       case "builder_answer": await builderAnswer(msg.chatId, msg.answers, msg.additions, msg.more, userId); break;
       case "builder_redo": await builderRedo(msg.chatId, msg.part, msg.note, userId); break;

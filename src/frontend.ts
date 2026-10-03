@@ -12,7 +12,7 @@ import { esc } from "./frontend/html.js";
 import { hudParts, renderHud, renderPart } from "./frontend/render-panel.js";
 import { choiceOrder, renderChoices, renderReply } from "./frontend/render-chat.js";
 import { renderSettings, renderStyleSwitch } from "./frontend/render-settings.js";
-import { renderJournal, renderRulesetCard, renderTemplatePicker } from "./frontend/render.js";
+import { renderJournal, renderRulesetCard, renderTemplatePicker, renderWritingRules } from "./frontend/render.js";
 import { connectPublicEvents, toWarpState } from "./frontend/public-events.js";
 import { newRolls, playRoll, prefersReducedMotion } from "./frontend/roll-fx.js";
 import { acceptsResponse, mayAct } from "./frontend/response-gate.js";
@@ -43,8 +43,6 @@ export function setup(ctx: SpindleFrontendContext) {
   let connections: { id: string; name: string }[] = [];
   let jevKeySet = false;
   let builder: BuilderSession | null = null;
-  /** The installed rulebook, exported as one file (shown in the Ruleset tab until closed). */
-  let exported: { name: string; text: string } | null = null;
   let bDraft: BuilderDraft = emptyDraft();
   let busy = { chatId: "", on: false, label: "" };
   /** The line open for a one-click fix (see HudOpts.editing), and what has been typed into it. */
@@ -323,9 +321,9 @@ export function setup(ctx: SpindleFrontendContext) {
     } else if (drawerView === "rules" && builder) {
       body = renderBuilder(builder, bDraft, templates, connections, status.state !== "none");
     } else if (drawerView === "rules") {
-      body = renderBuilderCta(status.state !== "none", hasChat, exported) + renderRulesetCard(status, hasChat)
+      body = renderBuilderCta(status.state !== "none", hasChat) + renderRulesetCard(status, hasChat)
         + (hasChat ? `<div class="warp-card">${renderStyleSwitch(status, templates)}</div>` : "")
-        + `<div class="warp-card"><h3>Writing rules</h3><p>Rules live in entries titled <b>warp-ruleset · …</b> (or any lorebook named <b>warp-ruleset</b>). Each entry is YAML; entries merge together. Warp keeps them out of the prompt automatically.</p></div>`;
+        + renderWritingRules();
     } else {
       body = renderSettings(settings, state?.status ?? null, connections, jevKeySet, templates);
     }
@@ -553,34 +551,6 @@ export function setup(ctx: SpindleFrontendContext) {
     if (!cid) return true;
     switch (b.dataset.b) {
       case "open-build": drawerView = "rules"; send({ type: "builder_open", chatId: cid, mode: "build" }); break;
-      case "import": {
-        const text = drawerRoot.querySelector<HTMLTextAreaElement>("[data-import-text]")?.value ?? "";
-        if (!text.trim()) {
-          const ta = drawerRoot.querySelector<HTMLTextAreaElement>("[data-import-text]");
-          if (ta) { ta.placeholder = "Paste a rulebook (YAML) here, or choose a file first."; ta.focus(); }
-          break;
-        }
-        drawerView = "rules";
-        send({ type: "builder_import", chatId: cid, text });
-        break;
-      }
-      case "export": send({ type: "export_rulebook", chatId: cid }); break;
-      case "export-close": exported = null; renderDrawer(); break;
-      case "export-copy": {
-        const ta = drawerRoot.querySelector<HTMLTextAreaElement>("[data-export-text]");
-        if (!ta) break;
-        void navigator.clipboard?.writeText(ta.value).then(() => { b.textContent = "Copied ✓"; }, () => { ta.select(); b.textContent = "Press Ctrl+C"; });
-        break;
-      }
-      case "export-save": {
-        if (!exported) break;
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(new Blob([exported.text], { type: "text/yaml" }));
-        a.download = `${(b.dataset.name || "rulebook").replace(/[^\w -]+/g, "").trim() || "rulebook"}.warp.yaml`;
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-        break;
-      }
       case "open-refine": drawerView = "rules"; send({ type: "builder_open", chatId: cid, mode: "refine" }); break;
       case "start": send({ type: "builder_start", chatId: cid, connectionId: bDraft.connectionId, creative: bDraft.creative, base: bDraft.base || undefined }); break;
       case "more": case "build":
@@ -811,15 +781,6 @@ export function setup(ctx: SpindleFrontendContext) {
     const t = e.target as HTMLInputElement | HTMLSelectElement;
     if (onBuilderInput(t as HTMLInputElement)) return;
     if (t.dataset.fixInput !== undefined) return;
-    // A rulebook file picked for import: its text goes into the box to check and preview.
-    if ("importFile" in t.dataset) {
-      const file = (t as HTMLInputElement).files?.[0];
-      if (file) void file.text().then((text) => {
-        const ta = drawerRoot.querySelector<HTMLTextAreaElement>("[data-import-text]");
-        if (ta) ta.value = text;
-      });
-      return;
-    }
     const key = t.dataset.setting as keyof Settings | undefined;
     if (!key) return;
     const value = t instanceof HTMLInputElement && t.type === "checkbox" ? t.checked : t.value;
@@ -962,11 +923,6 @@ export function setup(ctx: SpindleFrontendContext) {
       case "command":
         if (m.command === "install") void confirmReplace();
         else { drawerView = "sheet"; tab.activate(); }
-        break;
-      case "rulebook_export":
-        exported = { name: m.name, text: m.text };
-        drawerView = "rules";
-        renderDrawer();
         break;
       case "toast":
         // Backend normally uses native toasts; this is a fallback.

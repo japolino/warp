@@ -1,8 +1,8 @@
 import { beforeAll, expect, test } from "bun:test";
 import { DEFAULT_SETTINGS } from "../shared/protocol.js";
-import { publishRulebook } from "./rulebook-install.js";
+import { labelOf, publishRulebook, rulesetEntries } from "./rulebook-install.js";
 import { getRuleset, knownRulesetEntryIds, statusOf } from "./source.js";
-import { builderImport, builderInstall, rulesetEntries } from "./builder.js";
+import { builderInstall } from "./builder.js";
 
 let seq = 0;
 const fixtures = new Map<string, any>();
@@ -101,6 +101,13 @@ test("publication supersedes old rules, preserves shared lore and keeps old book
   expect(knownRulesetEntryIds.has(`${f.id}-shared-rules`)).toBe(true);
   const editing = await rulesetEntries(f.id, f.id);
   expect(editing.entries.every((e) => e.bookId === id)).toBe(true);
+  expect(editing.entries.map((e) => e.label)).toEqual(["stats", "actions"]);
+});
+
+test("the read half is exported for Warp Studio: entry titles to part labels", () => {
+  expect(labelOf("warp-ruleset · stats")).toBe("stats");
+  expect(labelOf("[Game] warp_ruleset: People")).toBe("people");
+  expect(labelOf("warp-ruleset")).toBe("core");
 });
 
 test("a lost publication response does not delete the verified active snapshot", async () => {
@@ -127,7 +134,12 @@ test("overlapping installs serialize and publish complete snapshots", async () =
 
 test("error-level drafts are editable but cannot publish or run as a healthy partial game", async () => {
   const f = fixture();
-  await builderImport(f.id, "stats: { health: { start: 70 } }\nactions: { broken: { check: { dice: nope } } }", f.id);
+  // A saved draft with an error-level section (a check with other dice).
+  f.storage[`builder/${f.id}.json`] = {
+    characterId: f.id, characterName: "Robin", mode: "refine", step: "review", connectionId: "", creative: false, base: "", analysis: null,
+    rounds: [], additions: [], parts: [{ label: "stats", yaml: "stats: { health: { start: 70 } }" }, { label: "actions", yaml: "actions: { broken: { check: { dice: nope } } }" }],
+    preview: null, request: null, changeSummary: null, busy: null, error: null, updatedAt: 1,
+  };
   await builderInstall(f.id, f.id);
   expect(f.writes).toBe(0);
   const session = f.sent.filter((m: any) => m.type === "builder").at(-1).session;

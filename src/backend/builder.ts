@@ -10,7 +10,6 @@ import { DESIGN_GUIDE } from "../engine/reference.js";
 import { isRulesetBookName, isRulesetEntryTitle, loadRuleset, type RulesetPart } from "../engine/loader.js";
 import { lintRuleset } from "../engine/lint.js";
 import { PART_CONTENTS, PART_LABELS, partForIssue, REFERENCE, type PartLabel } from "../engine/reference.js";
-import { joinRulebook, splitRulebook } from "../engine/rulebook.js";
 import type { Issue, Ruleset } from "../engine/ruleset.js";
 import { initialState } from "../engine/state.js";
 import { getTemplate, TEMPLATES, withCharacter } from "../engine/templates/index.js";
@@ -18,8 +17,8 @@ import { buildChoices, buildHud } from "../engine/view.js";
 import type { BuilderAddition, BuilderAnswer, BuilderPart, BuilderQuestion, BuilderSession } from "../shared/protocol.js";
 import { host, logError, send } from "./host.js";
 import { BUILDER_SESSION_VERSION, restoreBuilderSession } from "./builder-session.js";
-import { attachedRulebooks, characterForChat, invalidateCharacter, knownRulesetBookIds } from "./source.js";
-import { publishRulebook } from "./rulebook-install.js";
+import { characterForChat, invalidateCharacter, knownRulesetBookIds } from "./source.js";
+import { publishRulebook, rulesetEntries } from "./rulebook-install.js";
 
 // ───────────────────────── sessions ─────────────────────────
 
@@ -545,31 +544,6 @@ export async function builderCurrent(chatId: string | null, userId?: string) {
 
 // ───────────────────────── lorebook I/O ─────────────────────────
 
-interface RulesetEntry { id: string; bookId: string; label: string; content: string }
-
-function labelOf(comment: string): string {
-  return comment.replace(/^\s*(?:\[[^\]]*\]\s*)?warp[-_ ]?ruleset\s*[·:\-–—|]?\s*/i, "").trim().toLowerCase() || "core";
-}
-
-export async function rulesetEntries(characterId: string, userId?: string): Promise<{ entries: RulesetEntry[]; rulesetBook: string | null; bookIds: string[] }> {
-  const c = await host().characters.get(characterId, userId);
-  const entries: RulesetEntry[] = [];
-  let rulesetBook: string | null = null;
-  const attached = await attachedRulebooks(c ?? {}, userId);
-  for (const book of attached.books) {
-    if (attached.active && attached.active.id !== book.id) continue;
-    const bookId = book.id;
-    const whole = isRulesetBookName(book.name);
-    if (whole && !rulesetBook) rulesetBook = bookId;
-    for (let offset = 0; offset < 2000; offset += 200) {
-      const page = await host().world_books.entries.list(bookId, { limit: 200, offset, userId });
-      for (const e of page.data) if (whole || isRulesetEntryTitle(e.comment)) entries.push({ id: e.id, bookId, label: labelOf(e.comment ?? ""), content: e.content });
-      if (page.data.length < 200) break;
-    }
-  }
-  return { entries, rulesetBook, bookIds: c?.world_book_ids ?? [] };
-}
-
 export async function currentParts(characterId: string, userId?: string): Promise<BuilderPart[]> {
   const { entries } = await rulesetEntries(characterId, userId);
   const parts: BuilderPart[] = entries.map((e) => ({ label: e.label, yaml: e.content, status: "ok", issues: [] }));
@@ -596,40 +570,6 @@ export async function builderInstall(chatId: string, userId?: string) {
     s.error = `Couldn't save: ${e instanceof Error ? e.message : String(e)}`;
   }
   await progress(s, null, userId);
-}
-
-// ───────────────────────── import & export ─────────────────────────
-
-/** A rulebook written elsewhere (another tool, an agent harness): split into sections, then checked and previewed like a draft. */
-export async function builderImport(chatId: string, text: string, userId?: string) {
-  const characterId = await characterForChat(chatId, userId);
-  if (!characterId) throw new Error("Open a chat with a character first.");
-  const split = splitRulebook(text);
-  if (!split.length) throw new Error("That doesn't look like a rulebook — it should be YAML with sections like stats:, actions:, encounters:.");
-  const card = await cardText(characterId, userId);
-  const previous = sessions.get(key(userId, characterId));
-  if (previous) retire(previous);
-  const s: BuilderSession = {
-    characterId, characterName: card.name, mode: "import", step: "review",
-    connectionId: "", creative: false, base: "", analysis: null, rounds: [], additions: [],
-    parts: split.map((p) => ({ label: p.label, yaml: p.yaml, status: "ok", issues: [] })), preview: null,
-    request: null, changeSummary: null, busy: null, error: null, updatedAt: Date.now(), plan: null,
-  };
-  sessionChats.set(s, chatId);
-  buildPreview(s);
-  s.changeSummary = `Imported ${s.parts.length} section${s.parts.length === 1 ? "" : "s"}: ${s.parts.map((p) => p.label).join(", ")}.${card.hasRuleset ? " Installing replaces the current ruleset." : ""}`;
-  await save(s, userId);
-  emit(s, userId);
-}
-
-/** The installed rulebook as one file, sections kept apart so importing it puts everything back. */
-export async function exportRulebook(chatId: string, userId?: string): Promise<{ name: string; text: string }> {
-  const characterId = await characterForChat(chatId, userId);
-  if (!characterId) throw new Error("Open a chat with a character first.");
-  const parts = await currentParts(characterId, userId);
-  if (!parts.length) throw new Error("This character has no ruleset to export yet.");
-  const card = await cardText(characterId, userId);
-  return { name: card.name, text: joinRulebook(parts.map((p) => ({ label: p.label, yaml: p.yaml })), card.name) };
 }
 
 export { SYSTEMS };
