@@ -602,8 +602,15 @@ const KIND_ALIASES: Record<string, StatKind> = {
   skill: "skill", money: "money", currency: "money", hidden: "hidden",
 };
 
+/** The keys a stat definition reads (ADVENTURE-4). */
+const STAT_KEYS = new Set(["kind", "type", "label", "desc", "description", "min", "max", "start", "value", "good", "show", "narrator", "narrator_when",
+  "narrator_words", "narrator_keywords", "narrator_actions", "per_hour", "perHour", "group", "bands", "color", "grades", "growth", "allocate"]);
+const PERSON_KEYS = new Set(["name", "age", "desc", "start", "appearance", "outfit", "schedule", "routine", "traits"]);
+const TRIGGER_KEYS = new Set(["id", "when", "if", "when_scene", "scene", "repeat", "every_turn", "do", "then", "effects", "hint"]);
+
 function normStat(id: string, raw: unknown, where: string, c: Ctx, forRel = false): StatDef | null {
   const r: Raw = isObj(raw) ? raw : typeof raw === "number" ? { start: raw } : {};
+  if (isObj(raw)) warnUnknownKeys(raw, STAT_KEYS, where, c);
   if (!isObj(raw) && typeof raw !== "number" && raw !== null && raw !== undefined) {
     c.warn(where, "expected a stat definition — using defaults");
   }
@@ -648,6 +655,8 @@ function normStat(id: string, raw: unknown, where: string, c: Ctx, forRel = fals
   // No start: on a meter with a max formula keeps its long-standing start (100, then clamped at game start) so existing
   // chats replay the same. Write start: full for a full pool.
   const start = c.num(startRaw, `${where} › start`, good === "low" ? min : k === "meter" ? max : min);
+  // A start outside the range is clamped into it; say so (CREW-3).
+  if (!maxExpr && startRaw !== undefined && (start < min || start > max)) c.warn(`${where} › start`, `${start} is outside ${min}–${max}, so it starts at ${Math.min(max, Math.max(min, start))}. Set min:/max: to fit (${k} stats default to ${min === 0 ? "0" : min}–${defaultMax === 1e12 ? "no limit" : defaultMax})`);
   const gate = narrator > 0 ? normGate(r, where, c) : undefined;
   const def: StatDef = {
     id,
@@ -1551,6 +1560,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const people: Record<string, PersonDef> = {};
   for (const [id, p] of Object.entries(isObj(relRaw.people) ? relRaw.people : {})) {
     const r: Raw = isObj(p) ? p : typeof p === "string" ? { name: p } : {};
+    if (isObj(p)) warnUnknownKeys(p, PERSON_KEYS, `Relationships › people › ${id}`, c);
     const start: Record<string, number> = {};
     if (isObj(r.start)) for (const [s, v] of Object.entries(r.start)) start[s] = c.num(v, `Relationships › people › ${id} › start › ${s}`, 0);
     // Schedules (who is where, when) and per-person traits were taken out.
@@ -1677,6 +1687,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   for (const [id, t] of trigList) {
     const w = `Triggers › ${id}`;
     if (!isObj(t)) { c.warn(w, "expected `when:` and `do:`"); continue; }
+    warnUnknownKeys(t, TRIGGER_KEYS, w, c);
     const when = t.when ?? t.if;
     const whenExpr = when !== undefined ? c.expr(when, `${w} › when`) : undefined;
     const whenScene = typeof t.when_scene === "string" ? t.when_scene : typeof t.scene === "string" ? t.scene : undefined;
