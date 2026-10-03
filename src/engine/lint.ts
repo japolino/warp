@@ -1,10 +1,11 @@
 // Author-facing checks that need the whole ruleset: unknown names in formulas,
 // with "did you mean" suggestions, and effects that point at things that don't exist.
 
-import { evaluate, type ExprEnv, type Value } from "./expr.js";
+import { evaluate, identifiers, type ExprEnv, type Value } from "./expr.js";
 import { difficultyOf, type ActionDef, type Effect, type Issue, type Ruleset } from "./ruleset.js";
 import { BUILTIN_NAMES, initialState, makeEnv } from "./state.js";
 import { costValue } from "./resolve.js";
+import { rollDice, seededRng } from "./dice.js";
 import { adultGated } from "./adults.js";
 
 /**
@@ -78,26 +79,83 @@ function suggest(name: string, pool: string[]): string {
   return best && bestD <= Math.max(2, Math.floor(name.length / 3)) ? ` — did you mean "${best}"?` : "";
 }
 
+/** Every effect block in the ruleset (actions, item uses, rules, live tags, contests, goals, typed outcomes, decide options). */
+function allEffects(r: Ruleset): Effect[] {
+  const out: Effect[] = [];
+  const add = (e: Effect | undefined) => { if (!e) return; out.push(e); for (const d of e.decide) for (const o of d.options) add(o.effect); };
+  const action = (a: ActionDef) => { add(a.cost); add(a.effects); for (const e of Object.values(a.outcomes)) add(e); };
+  for (const a of Object.values(r.actions)) action(a);
+  for (const it of Object.values(r.items)) if (it.use) action(it.use);
+  for (const a of Object.values(r.liveChoices.tags)) action(a);
+  for (const t of r.triggers) add(t.effects);
+  for (const k of Object.values(r.conflict.kinds)) { for (const e of Object.values(k.cost)) add(e); add(k.won); add(k.lost); add(k.escaped); }
+  for (const g of Object.values(r.goals.list)) add(g.reward);
+  for (const e of Object.values(r.checks.outcomes ?? {})) add(e as Effect);
+  return out;
+}
+
 export function lintRuleset(r: Ruleset): Issue[] {
   const issues: Issue[] = [];
   const s = initialState(r);
   const names = [...r.statOrder, ...Object.keys(r.flags), ...BUILTIN_NAMES];
   const people = Object.keys(r.people);
   const warn = (where: string, message: string) => issues.push({ level: "warning", where, message });
+  // Flags may be set by an effect without being declared: those count as known.
+  const knownFlags = new Set([...Object.keys(r.flags), ...allEffects(r).flatMap((e) => Object.keys(e.flags))]);
 
-  const check = (src: string | number | undefined, where: string, extra: Record<string, Value> = {}) => {
-    if (src === undefined || typeof src === "number") return;
-    if (difficultyOf(src)) return; // a difficulty word, not a formula
+  const check = (src: string | number | undefined, where: string, extra: Record<string, Value> = {}): boolean => {
+    if (src === undefined || typeof src === "number") return false;
+    if (difficultyOf(src)) return false; // a difficulty word, not a formula
     const base = makeEnv(r, s, extra);
     const badKind = new Set<string>();
-    const env: ExprEnv = { lookup: base.lookup, call: (n, a) => {
-      if (n === "in_contest" && a.length && !r.conflict.kinds[String(a[0])]) badKind.add(String(a[0]));
-      if (n === "goal" && a.length && !r.goals.list[String(a[0])] && !String(a[0]).startsWith("story_")) badGoal.add(String(a[0]));
-      return n === "roll" ? 1 : base.call?.(n, a);
-    } };
+    const named: string[] = [];
+    const name = (what: string, id: string, ok: boolean, pool: string[], open = false) => {
+      // An open list (people, items from the story) may hold ids the ruleset never declares: only a near miss is flagged.
+      if (ok) return;
+      const near = suggest(id, pool);
+      const kind = /^(flag|flags)\b/.test(what) ? "a flag (declared, or set by an effect)" : /^cond/.test(what) ? "a condition" : /^(has|count|items)\b/.test(what) ? "a declared item"
+        : /^rel\(…/.test(what) || what.includes(".") ? "a relationship stat" : "a declared person";
+      if (!open || near) named.push(`${what}: "${id}" isn't ${kind}${near}`);
+    };
+    const personOk = (id: string) => !!r.people[id] || id === "target" || id === "opponent" || (typeof extra.target === "string" && id === extra.target);
+    const env: ExprEnv = {
+      lookup: (path) => {
+        // jo.trust, target.trust, flags.x, items.x: the second part is checked too (LONG-2).
+        const [h, ...rest] = path;
+        if (rest.length === 1 && !r.stats[h] && !r.flags[h]) {
+          const k = rest[0];
+          if ((h === "target" || r.people[h]) && !r.relStats[k]) name(`${h}.${k}`, k, false, r.relStatOrder);
+          else if (h === "flags") name(`flags.${k}`, k, knownFlags.has(k), [...knownFlags]);
+          else if (h === "items") name(`items.${k}`, k, !!r.items[k], Object.keys(r.items), r.itemsOpen);
+        }
+        return base.lookup(path);
+      },
+      call: (n, a) => {
+        const a0 = String(a[0] ?? "");
+        if (n === "in_contest" && a.length && !r.conflict.kinds[a0]) badKind.add(a0);
+        if (n === "goal" && a.length && !r.goals.list[a0] && !a0.startsWith("story_")) badGoal.add(a0);
+        // Names inside functions (ADVENTURE-9, LONG-2).
+        if (n === "flag") name(`flag('${a0}')`, a0, knownFlags.has(a0), [...knownFlags]);
+        if (n === "cond") name(`cond('${a0}')`, a0, !!r.conditions[a0], Object.keys(r.conditions));
+        if ((n === "has" || n === "count") && a.length) name(`${n}('${a0}')`, a0, !!r.items[a0], Object.keys(r.items), r.itemsOpen);
+        if ((n === "met" || n === "present") && a.length) name(`${n}('${a0}')`, a0, personOk(a0), people, r.peopleOpen);
+        if (n === "rel" && a.length >= 2) {
+          name(`rel('${a0}', …)`, a0, personOk(a0), people, r.peopleOpen);
+          name(`rel(…, '${String(a[1])}')`, String(a[1]), !!r.relStats[String(a[1])], r.relStatOrder);
+        }
+        if (n === "roll") {
+          rolled = true;
+          // Bad dice read as 0 at play time (LIFE-4).
+          try { rollDice(a0 || "d6", seededRng("lint")); } catch (e) { named.push(`roll('${a0}'): ${e instanceof Error ? e.message : "not dice"}, so it always gives 0`); }
+          return 1;
+        }
+        return base.call?.(n, a);
+      },
+    };
+    let rolled = false;
     const badGoal = new Set<string>();
     const unknown = new Set<string>();
-    try { evaluate(src, env, { unknown }); } catch { return; }
+    try { evaluate(src, env, { unknown, all: true }); } catch { return false; }
     // eff('str') / gear('atk') name a stat.
     for (const m of String(src).matchAll(/\b(eff|gear)\(\s*['"]([^'"]+)['"]/g)) {
       const [, fn, id] = m;
@@ -112,6 +170,8 @@ export function lintRuleset(r: Ruleset): Issue[] {
     }
     for (const id of badKind) warn(where, `in_contest('${id}'): "${id}" isn't a contest kind${suggest(id, Object.keys(r.conflict.kinds))}`);
     for (const id of badGoal) warn(where, `goal('${id}'): "${id}" isn't a goal in goals.list${suggest(id, Object.keys(r.goals.list))}`);
+    for (const m of new Set(named)) warn(where, `${m}, so it reads as 0 / false`);
+    return rolled;
   };
 
   const checkEffect = (e: Effect, where: string, extra: Record<string, Value> = {}) => {
@@ -122,6 +182,21 @@ export function lintRuleset(r: Ruleset): Issue[] {
     for (const [id, v] of Object.entries(e.set)) {
       if (!r.stats[id]) warn(where, `sets "${id}", which isn't a stat${suggest(id, r.statOrder)}`);
       check(v, `${where} › set › ${id}`, extra);
+      // A turn stamp in a stat with a small max sticks at the max (CREW-3, LONG-3).
+      const def = r.stats[id];
+      const stamp = identifiers(String(v)).find((n) => n === "turn" || n === "minutes");
+      const room = stamp === "minutes" ? 1e7 : 1e4;
+      if (def && stamp && !def.maxExpr && def.max < room) warn(`${where} › set › ${id}`, `stores ${stamp}, but ${id} stops at ${def.max} (max), so it sticks there after ${stamp} ${def.max}. Give it max: ${room === 1e4 ? 100000 : 100000000}`);
+    }
+    for (const [k, v] of Object.entries(e.flags)) {
+      // A flag an effect sets that isn't declared, next to one that is: likely a typo (ADVENTURE-9).
+      if (!r.flags[k]) { const near = suggest(k, Object.keys(r.flags)); if (near) warn(`${where} › flags › ${k}`, `"${k}" isn't declared under flags:${near}`); }
+      // A flag formula with an unknown name is stored as its own text (PRESSURE-5).
+      if (typeof v === "string" && /[<>?(']|==|!=/.test(v)) {
+        const unknown = new Set<string>();
+        try { evaluate(v, makeEnv(r, s, extra), { unknown, all: true }); } catch { continue; }
+        for (const u of unknown) warn(`${where} › flags › ${k}`, `"${u}" isn't a stat, flag or clock value${suggest(u, [...names, ...Object.keys(extra)])}, so the flag is set to the formula's own text`);
+      }
     }
     for (const [who, m] of Object.entries(e.rel)) for (const [stat, v] of Object.entries(m)) {
       if (!r.relStats[stat]) warn(where, `"${stat}" isn't a relationship stat${suggest(stat, r.relStatOrder)}`);
@@ -164,6 +239,14 @@ export function lintRuleset(r: Ruleset): Issue[] {
     if (a.check) {
       check(a.check.target, `${w} › check`, extra);
       check(a.check.add, `${w} › check › add`, extra);
+      // A wide stat added as is: +45 on a d20 (F4). Typed attempts and contests scale by checks.bonus; add: doesn't.
+      if (typeof a.check.add === "string" && !/[*/]/.test(a.check.add)) for (const id of identifiers(a.check.add)) {
+        const d = r.stats[id];
+        const range = d ? (d.maxExpr ? 0 : d.max - d.min) : 0;
+        if (d && (d.kind === "skill" || d.kind === "attribute") && range > 2 * Math.max(10, r.checks.bonus)) {
+          warn(`${w} › check › add`, `adds ${id} (${d.min}–${d.max}) as it is, up to +${d.max} on a d20. Scale it like typed attempts do: add: "${id} * ${r.checks.bonus} / ${range}"`);
+        }
+      }
     }
     checkEffect(a.cost, `${w} › cost`, extra);
     checkCost(a, w, extra);
@@ -195,8 +278,18 @@ export function lintRuleset(r: Ruleset): Issue[] {
   for (const it of Object.values(r.items)) for (const [k, v] of Object.entries(it.bonus)) check(v, `Items › ${it.id} › bonus › ${k}`);
   for (const id of r.statOrder) if (r.stats[id].perHourExpr && !/%\s*$/.test(r.stats[id].perHourExpr!)) check(r.stats[id].perHourExpr, `Stats › ${id} › per_hour`);
   for (const t of r.triggers) {
-    check(t.when, `Triggers › ${t.id} › when`);
+    // Dice in a rule's condition roll again every time rules are checked, before and after each reply (ADVENTURE-12).
+    if (check(t.when, `Triggers › ${t.id} › when`)) warn(`Triggers › ${t.id} › when`, "roll() in when: rolls again before and after each reply, so the odds come out higher than written. Roll in a repeat rule and stamp the turn: do: { set: { rnd: \"roll('1d100')\", rnd_turn: \"turn\" } }, then when: \"rnd_turn == turn and rnd <= 30\"");
     checkEffect(t.effects, `Triggers › ${t.id}`);
+  }
+  // A stat or flag named like a built-in hides it in every formula (LIFE-3).
+  for (const id of [...r.statOrder, ...Object.keys(r.flags)]) if (BUILTIN_NAMES.includes(id)) warn(r.stats[id] ? `Stats › ${id}` : `Flags › ${id}`, `"${id}" is also a built-in formula name; in every formula it now reads this ${r.stats[id] ? "stat" : "flag"}, not the built-in ${id}. Rename it`);
+  // The post-reply read asks only true/false flags (PRESSURE-4, CREW-1, LIFE-1).
+  for (const f of Object.values(r.flags)) if (f.narrator && typeof f.start !== "boolean") warn(`Flags › ${f.id} › narrator`, `the story can only set true/false flags; "${f.id}" starts as ${JSON.stringify(f.start)}, so narrator: true does nothing. Use true/false flags (one per state) or a stat`);
+  // Every meter on the panel: hud.bars lists the bars, and a meter left out is shown nowhere (ADVENTURE-5).
+  for (const id of r.statOrder) {
+    const d = r.stats[id];
+    if (d.kind === "meter" && d.show !== "hidden" && !r.hud.bars.includes(id)) warn("HUD › bars", `meter "${id}" isn't in hud.bars, so the player never sees it on the panel. Add it, or make it kind: hidden`);
   }
   for (const id of r.hud.bars) if (!r.stats[id]) warn("HUD › bars", `"${id}" isn't a stat`);
 

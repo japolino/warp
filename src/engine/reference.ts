@@ -50,7 +50,7 @@ clock:
   narrator_max: 480                   # the most minutes the story may skip in one reply
   # weekdays: [Mon, Tue, …]; enabled: false turns the clock off
 start: { place: greeting, items: { phone: 1 }, money: 50, stats: { mood: 70 } }   # place: greeting or words ("The Rusty Anchor"); later places come from the story
-hud: { currency: "$", bars: [health, energy, mood] }   # currency: "$" (before), "{n}d" / "£{n}" (template) or { symbol: d, after: true }; bars: the meters on the panel
+hud: { currency: "$", bars: [health, energy, mood, stress] }   # currency: "$" (before), "{n}d" / "£{n}" (template) or { symbol: d, after: true }; bars: the meters on the panel (default: every meter; a meter left out is shown nowhere)
 narration: { notes: "Guidance for the narrator, in a line or two.", numbers: false }   # numbers: true shows numbers next to band words
 
 --- # stats
@@ -122,7 +122,9 @@ inventory: { open: true }             # open: false = the story can't hand out i
 conditions:
   exhausted: { label: Exhausted, tone: bad, desc: "-2 to every check.", bonus: { body: -2, mind: -2 }, lasts: 8h }   # tone: good | warn | bad | neutral; lasts: absent = until removed; narrator: true lets the story add or remove it
 flags:
-  met_boss: { start: false, narrator: true }   # narrator: true = the story may set it
+  met_boss: { start: false, narrator: true }   # narrator: true = the story may set it (true/false flags only)
+  sister_found: false                 # a flag only the rules set (flags: { sister_found: true } in an effect)
+  saw_photo: { start: false, narrator: true }
 
 --- # actions
 actions:                              # the small authored moves, shown in one "More" row and in a person's row

@@ -166,7 +166,7 @@ describe("show: in the sidebar and for the narrator", () => {
 
 describe("currency after the amount", () => {
   const money = (currency: unknown, extra: Record<string, unknown> = {}) => load({
-    stats: { pennies: { kind: "money", start: 18, ...extra } }, hud: { currency },
+    stats: { pennies: { kind: "money", start: 18, ...extra } }, hud: { currency }, conflict: false,
   });
 
   test("{n}d and { symbol, after } put the sign after; plain signs stay before", () => {

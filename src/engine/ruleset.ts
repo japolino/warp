@@ -1362,6 +1362,7 @@ function normConflict(raw: unknown, c: Ctx, known: { stats: Set<string> }, stats
   }
   const authored = isObj(r.kinds);
   const kinds: Record<string, unknown> = authored ? r.kinds : DEFAULT_KINDS;
+  let weak = false;
   for (const [id, kRaw] of Object.entries(kinds)) {
     const w = `Conflict › kinds › ${id}`;
     if (!isObj(kRaw)) { c.warn(w, "expected a kind (label, stats, cost, won, lost, escaped)"); continue; }
@@ -1377,6 +1378,11 @@ function normConflict(raw: unknown, c: Ctx, known: { stats: Set<string> }, stats
     if (!kStats.length) {
       if (authored) { c.err(w, "a contest kind needs `stats:` (the attributes or skills its moves lean on)"); continue; }
       kStats = checkStats.slice(0, 2);
+    }
+    // No conflict: block: the default kinds lean on body/mind/charm, else the first two check stats (PRESSURE-7).
+    if (!authored && raw === undefined && !weak && Object.keys(stats).length && (!kStats.length || kStats.some((s) => stats[s]?.kind !== "attribute" && stats[s]?.kind !== "skill"))) {
+      weak = true;
+      c.warn("Conflict", `there is no conflict: block, so the story may start a fight, chase or argument, and their moves lean on ${kStats.length ? kStats.map((s) => `"${s}"`).join(" and ") : "no stat (every move is luck)"}. Declare conflict: with kinds that fit this card, or conflict: false for no contests`);
     }
     const escRaw = typeof kRaw.escape === "string" ? kRaw.escape : undefined;
     if (escRaw && !stats[escRaw] && authored) c.warn(`${w} › escape`, `"${escRaw}" isn't a stat — using ${kStats[0] ?? "luck"}`);

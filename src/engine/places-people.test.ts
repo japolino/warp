@@ -11,6 +11,7 @@ import { presentPeople } from "./world.js";
 const BASE = {
   clock: { start: "Mon 08:00", date: "Jan 10" },
   start: { place: "Market" },
+  conflict: false,
   stats: {
     level: { kind: "attribute", start: 1, max: 99 },
     gold: { kind: "money", start: 0 },

@@ -219,6 +219,8 @@ function truthy(v: Value): boolean {
 export interface EvalOptions {
   /** Collects identifiers/functions that could not be resolved (used by the validator). */
   unknown?: Set<string>;
+  /** Run every branch of and / or / ?: (the validator: a name in a branch not taken is still checked). */
+  all?: boolean;
 }
 
 function run(n: Node, env: ExprEnv, opts: EvalOptions): Value {
@@ -241,8 +243,15 @@ function run(n: Node, env: ExprEnv, opts: EvalOptions): Value {
       const a = run(n.a, env, opts);
       return n.op === "-" ? -num(a) : !truthy(a);
     }
-    case "tern": return truthy(run(n.c, env, opts)) ? run(n.a, env, opts) : run(n.b, env, opts);
+    case "tern": {
+      if (opts.all) { const c = run(n.c, env, opts), a = run(n.a, env, opts), b = run(n.b, env, opts); return truthy(c) ? a : b; }
+      return truthy(run(n.c, env, opts)) ? run(n.a, env, opts) : run(n.b, env, opts);
+    }
     case "bin": {
+      if (opts.all && (n.op === "and" || n.op === "or")) {
+        const a = run(n.a, env, opts), b = run(n.b, env, opts);
+        return n.op === "and" ? (truthy(a) ? b : a) : (truthy(a) ? a : b);
+      }
       if (n.op === "and") { const a = run(n.a, env, opts); return truthy(a) ? run(n.b, env, opts) : a; }
       if (n.op === "or") { const a = run(n.a, env, opts); return truthy(a) ? a : run(n.b, env, opts); }
       const a = run(n.a, env, opts);
