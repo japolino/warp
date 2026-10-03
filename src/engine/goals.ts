@@ -4,6 +4,7 @@
 // Only the rules close a goal.
 
 import { evalBool } from "./expr.js";
+import { CJK } from "./mention.js";
 import type { TurnBuilder } from "./resolve.js";
 import { slug, type GoalOp, type Ruleset } from "./ruleset.js";
 import { personName, type EventSource, type GameState, type GoalState } from "./state.js";
@@ -90,7 +91,7 @@ export function goalInPlay(r: Ruleset, s: GameState, id: string, g: GoalState, h
   if (focus === null) return true;
   if (g.from && here.has(g.from)) return true;
   if (s.turn - (g.turn ?? -99) <= 3) return true;
-  const words = norm(g.text).split(" ").filter((w) => w.length >= 4);
+  const words = norm(g.text).split(" ").filter((w) => w.length >= 4 || (w.length >= 2 && CJK.test(w)));
   const f = norm(focus);
   if (words.length && words.filter((w) => f.includes(w)).length >= Math.min(2, words.length)) return true;
   return !!g.from && f.includes(personName(r, s, g.from).toLowerCase());

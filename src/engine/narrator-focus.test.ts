@@ -62,3 +62,22 @@ describe("the narrator's block names only what the turn is about", () => {
     expect(stateDigest(r, s, { text: "" })).toContain("Energy: Spent");
   });
 });
+
+describe("names in Korean and Japanese (CREW-2)", () => {
+  test("a Korean head noun names the item, with a particle stuck to it", () => {
+    expect(namesIt("예장검을 벼린다", "남작가의 예장검")).toBe(true);
+    expect(namesIt("유물에서는 빛이 난다", "이름 없는 유물")).toBe(true);
+    expect(namesIt("유물을 살핀다", "이름 없는 유물")).toBe(true);
+    expect(namesIt("검을 든다", "남작가의 예장검")).toBe(false);
+    expect(namesIt("예장검사가 온다", "남작가의 예장검")).toBe(false);
+  });
+  test("Japanese and Chinese names are found inside running text", () => {
+    expect(namesIt("男爵の剣を研ぐ", "男爵の剣")).toBe(true);
+    expect(namesIt("我拿起古老的宝剑", "古老 宝剑")).toBe(true);
+  });
+  test("English stays as it was", () => {
+    expect(namesIt("I forge the sword", "the baron's sword")).toBe(true);
+    expect(namesIt("I forge the swordsmith", "the baron's sword")).toBe(false);
+    expect(namesIt("I drink two potions", "Energy potion")).toBe(true);
+  });
+});
