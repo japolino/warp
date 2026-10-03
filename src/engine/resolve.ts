@@ -126,14 +126,14 @@ class Working {
     applyEvent(this.s, e, this.r);
     this.events.push(e);
   }
-  env(extra: Record<string, Value> = {}): ExprEnv {
+  env(extra: Record<string, Value> = {}, rng: Rng = this.rng): ExprEnv {
     const base = makeEnv(this.r, this.s, extra);
     return {
       lookup: base.lookup,
       call: (name, args) => {
         // roll('2d10') inside effects — results are stored as concrete deltas, so replay stays stable.
         if (name === "roll") {
-          try { return rollDice(String(args[0] ?? "d6"), this.rng).total; } catch { return 0; }
+          try { return rollDice(String(args[0] ?? "d6"), rng).total; } catch { return 0; }
         }
         return base.call?.(name, args);
       },
@@ -561,37 +561,49 @@ function advanceTime(w: Working, minutes: number, src: EventSource) {
   }
 }
 
+/**
+ * The rules, in declaration order, in passes until nothing changes. One rule for when they run:
+ * - Rules are checked in every batch of changes: the turn's own resolve (before the reply), the post-reply read
+ *   (`turn` is already the next turn there), the greeting read and a hand edit.
+ * - An edge rule fires each time its condition goes from false to true. Its state is read again right after its own
+ *   effect, so a rule whose effect makes it false fires again when a later rule makes it true.
+ * - A `repeat:` rule runs once per player turn, in the turn's own resolve, if its condition holds at any pass. It
+ *   never runs in the post-reply read, the greeting read or a hand edit.
+ * - `roll()` in a condition gives the same number for the whole batch, so dice can't flip a rule back and forth.
+ */
 function runTriggers(w: Working, includeRepeat: boolean) {
   const fired = new Set<string>();
+  const turn0 = w.s.turn;
+  const holds = (t: Ruleset["triggers"][number]) =>
+    (t.when === undefined || evalBool(t.when, w.env({}, seededRng(`${w.seed}:${turn0}:when:${t.id}`)), false)) && (!t.whenScene || w.scene[t.id] === true);
+  const skip = (t: Ruleset["triggers"][number]) => (t.whenScene && !(t.id in w.scene)) || (t.repeat && !includeRepeat);
   const limit = Math.max(5, Math.min(256, w.r.triggers.length * 2 + 1));
   for (let pass = 0; pass < limit; pass++) {
     let changed = false;
     for (const t of w.r.triggers) {
       // Scene triggers only move when the post-reply read judged them.
-      if (t.whenScene && !(t.id in w.scene)) continue;
-      const now = (t.when === undefined || evalBool(t.when, w.env(), false)) && (!t.whenScene || w.scene[t.id] === true);
+      if (skip(t)) continue;
+      const now = holds(t);
       const prev = w.s.triggers[t.id] ?? false;
       const why = `Rule "${t.id.replace(/_/g, " ")}"${t.when ? ` (${t.when})` : ""}${t.whenScene ? ` — judged: ${t.whenScene}` : ""}`;
-      if (now && !prev) {
+      if (t.repeat && now && !fired.has(t.id)) {
+        if (!prev) w.push({ t: "trig", id: t.id, v: true, src: "trigger" });
+        because(w, prev ? `${why}, every turn while true` : why, () => effectToEvents(w, t.effects, "trigger", {}));
+        fired.add(t.id);
+        changed = true;
+      } else if (!t.repeat && now && !prev) {
         w.push({ t: "trig", id: t.id, v: true, src: "trigger" });
         because(w, why, () => effectToEvents(w, t.effects, "trigger", {}));
         fired.add(t.id);
         changed = true;
-      } else if (now && t.repeat && includeRepeat && !fired.has(t.id)) {
-        because(w, `${why}, every turn while true`, () => effectToEvents(w, t.effects, "trigger", {}));
-        fired.add(t.id);
-        changed = true;
-      } else if (!now && prev) {
-        w.push({ t: "trig", id: t.id, v: false, src: "trigger" });
+        if (!holds(t)) w.push({ t: "trig", id: t.id, v: false, src: "trigger" });
+      } else if (now !== prev) {
+        w.push({ t: "trig", id: t.id, v: now, src: "trigger" });
         changed = true;
       }
     }
     if (!changed) break;
-    if (pass === limit - 1 && w.r.triggers.some((t) => {
-      if (t.whenScene && !(t.id in w.scene)) return false;
-      const now = (t.when === undefined || evalBool(t.when, w.env(), false)) && (!t.whenScene || w.scene[t.id] === true);
-      return now !== (w.s.triggers[t.id] ?? false);
-    })) {
+    if (pass === limit - 1 && w.r.triggers.some((t) => !skip(t) && holds(t) !== (w.s.triggers[t.id] ?? false))) {
       announce(w, "Rule processing reached its safety limit. Some rules still disagree with the state; check for a cycle in the ruleset.");
     }
   }

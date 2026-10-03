@@ -177,6 +177,11 @@ triggers:
   exhausted: { when: "energy <= 0", do: { add_condition: [exhausted], hint: "{{user}} is running on empty." } }   # fires once when it becomes true
   drain: { when: "stress >= 80", repeat: true, do: { energy: -2 } }   # every turn while true
   danger: { when_scene: "{{user}} is in immediate danger", do: { stress: +5 } }   # plain words, judged after the reply; fires on the next turn
+  # WHEN RULES RUN: in declaration order, in passes until nothing changes, in every batch of changes: the turn's own resolve (before
+  #   the reply), the post-reply read (turn is already the next turn there), the greeting read and a hand edit.
+  #   An edge rule fires each time its condition turns true (in any batch). A repeat: rule runs once per player turn, in the turn's own
+  #   resolve only. roll() in a when: is one number per batch, and rolls again in the next batch: for a random event, roll in a repeat
+  #   rule and stamp the turn (do: { set: { rnd: "roll('1d100')", rnd_turn: "turn" } }), then require "rnd_turn == turn and rnd <= 30".
 
 --- # conflict
 conflict:                             # adventure only: fights, chases and arguments on one momentum gauge (−100 … +100)
