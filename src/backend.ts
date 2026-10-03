@@ -308,8 +308,8 @@ spindle.onFrontendMessage(async (raw, userId) => {
       }
 
       case "builder_open": await builderOpen(msg.chatId, msg.mode, userId); break;
-      case "builder_start": await builderStart(msg.chatId, { connectionId: msg.connectionId, creative: msg.creative, base: msg.base }, userId); break;
-      case "builder_answer": await builderAnswer(msg.chatId, msg.answers, msg.additions, msg.more, userId); break;
+      case "builder_start": await builderStart(msg.chatId, { connectionId: msg.connectionId, base: msg.base }, userId); break;
+      case "builder_answer": await builderAnswer(msg.chatId, msg.answers, msg.additions, userId); break;
       case "builder_redo": await builderRedo(msg.chatId, msg.part, msg.note, userId); break;
       case "builder_refine": await builderRefine(msg.chatId, msg.request, userId); break;
       case "builder_back": await builderBack(msg.chatId, userId); break;

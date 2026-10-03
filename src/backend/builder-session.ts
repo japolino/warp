@@ -1,6 +1,8 @@
 import type { BuilderAddition, BuilderAnswer, BuilderQuestion, BuilderSession } from "../shared/protocol.js";
 
 export const BUILDER_SESSION_VERSION = 1;
+/** Template ids before the core cut, as a saved draft may still name them. */
+const OLD_BASE: Record<string, string> = { romance: "story", universal: "adventure" };
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const string = (v: unknown, fallback = "") => typeof v === "string" ? v : fallback;
 const strings = (v: unknown): string[] => Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
@@ -30,18 +32,21 @@ export function restoreBuilderSession(raw: unknown, characterId: string): Builde
   const sb = a && object(a.statusBlock) ? a.statusBlock : null;
   // Drafts saved before the designer and import moved to Warp Studio: their fields are dropped, and a "deepen" or
   // "import" draft reopens as a refine (its sections are kept).
-  const { effort: _effort, log: _log, waived: _waived, depth: _depth, designPass: _designPass, ...kept } = raw;
+  const { effort: _effort, log: _log, waived: _waived, depth: _depth, designPass: _designPass, plan: _plan, creative: _creative, persona: _persona, ...kept } = raw;
   return {
     ...kept, schemaVersion: BUILDER_SESSION_VERSION,
     characterId, characterName: string(raw.characterName, "This character"), mode: (raw.mode === "build" ? "build" : "refine") as BuilderSession["mode"], step: raw.step as BuilderSession["step"],
-    connectionId: string(raw.connectionId), creative: raw.creative === true, base: string(raw.base),
+    connectionId: string(raw.connectionId), base: OLD_BASE[string(raw.base)] ?? (["story", "adventure"].includes(string(raw.base)) ? string(raw.base) : ""),
     analysis: a ? {
       summary: string(a.summary), suggestedTemplate: string(a.suggestedTemplate), reason: string(a.reason), cardType: a.cardType === "scenario" ? "scenario" : "character",
-      cast: Array.isArray(a.cast) ? a.cast.filter(object).map(c => ({name: string(c.name), relation: string(c.relation)})) : [], statusBlock: sb ? {found: sb.found === true, fields: strings(sb.fields)} : null,
+      cast: Array.isArray(a.cast) ? a.cast.filter(object).map(c => ({
+        name: string(c.name), relation: string(c.relation),
+        ...(typeof c.age === "number" && Number.isFinite(c.age) ? {age: c.age} : {}), ...(typeof c.appearance === "string" ? {appearance: c.appearance} : {}), ...(typeof c.outfit === "string" ? {outfit: c.outfit} : {}),
+      })) : [], statusBlock: sb ? {found: sb.found === true, fields: strings(sb.fields)} : null,
+      ...(a.romance === true ? {romance: true} : {}),
     } : null,
     parts, rounds, additions, preview: null, busy: null,
     request: typeof raw.request === "string" ? raw.request : null, changeSummary: typeof raw.changeSummary === "string" ? raw.changeSummary : null, error: typeof raw.error === "string" ? raw.error : null,
     updatedAt: typeof raw.updatedAt === "number" && Number.isFinite(raw.updatedAt) ? raw.updatedAt : 0,
-    plan: typeof raw.plan === "string" ? raw.plan : null,
   };
 }

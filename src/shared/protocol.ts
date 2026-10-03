@@ -289,23 +289,23 @@ export interface BuilderSession {
   characterName: string;
   /** build = from the card; refine = change the installed ruleset by request. */
   mode: "build" | "refine";
-  /** The player's persona (who {{user}} is), so their own powers and training become part of the rules. */
-  persona?: string | null;
   step: "start" | "questions" | "review" | "done";
-  /** The design plan written before any YAML: the loop, the pressures, how the systems connect. */
-  plan?: string | null;
+  /** The builder's model connection ("" = the chat's own). */
   connectionId: string;
-  creative: boolean;
+  /** The template the draft starts from: "story" or "adventure" ("" before the card is read). */
   base: string;
   analysis: {
     summary: string;
+    /** The style the card read suggests: "story" or "adventure". */
     suggestedTemplate: string;
     reason: string;
     statusBlock: { found: boolean; fields: string[] } | null;
     /** "scenario" = a narrator/world card whose name isn't a person. */
     cardType: "character" | "scenario";
-    /** The main people in the story and how each starts out toward the player. */
-    cast: { name: string; relation: string }[];
+    /** The main people in the story, how each starts out toward the player, and what the card states about them. */
+    cast: { name: string; relation: string; age?: number; appearance?: string; outfit?: string }[];
+    /** Romance is a main theme: the draft tracks attraction. */
+    romance?: boolean;
   } | null;
   rounds: { questions: BuilderQuestion[]; answers: Record<string, BuilderAnswer> }[];
   additions: BuilderAddition[];
@@ -376,8 +376,8 @@ export type FrontendToBackend =
   | { type: "adjust_rel"; chatId: string; who: string; stat: string; value: number }
   | { type: "forget"; chatId: string; who: string }
   | { type: "builder_open"; chatId: string; mode: "build" | "refine" }
-  | { type: "builder_start"; chatId: string; connectionId: string; creative: boolean; base?: string }
-  | { type: "builder_answer"; chatId: string; answers: Record<string, BuilderAnswer>; additions: BuilderAddition[]; more: boolean }
+  | { type: "builder_start"; chatId: string; connectionId: string; base?: string }
+  | { type: "builder_answer"; chatId: string; answers: Record<string, BuilderAnswer>; additions: BuilderAddition[] }
   | { type: "builder_redo"; chatId: string; part: string; note?: string }
   | { type: "builder_refine"; chatId: string; request: string }
   | { type: "builder_install"; chatId: string }

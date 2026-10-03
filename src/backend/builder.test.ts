@@ -1,140 +1,269 @@
-// The AI builder end to end against a fake host and a scripted model.
+// The one-pass AI builder end to end against a fake host and a scripted model (CORE-DESIGN §5.3 step 4):
+// read the card (1 call; Jev classifies when set) → Story / Adventure → 3 questions + ≤ 3 about the card →
+// the template themed part by part → checker repair → preview → install. Refine = 1 call + repair.
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { TEMPLATES } from "../engine/templates/index.js";
-
-const ADVENTURE = TEMPLATES.find((t) => t.id === "adventure")!;
-const partYaml = (label: string) => ADVENTURE.parts.find((p) => p.label === label)?.yaml ?? "";
+import { getTemplate, withCharacter } from "../engine/templates/index.js";
+import { DEFAULT_SETTINGS } from "../shared/protocol.js";
+import { withAttraction, withDifficulty, withPace } from "./builder.js";
 
 const sent: any[] = [];
-const prompts: string[] = [];
-let repairCalls = 0;
-const books: Record<string, { id: string; name: string; entries: any[] }> = {};
-const character = { id: "ch1", name: "Chono Aina", description: "A catgirl roommate with a sharp tongue.", personality: "tsundere", scenario: "University dorm.", first_mes: "Hmph. You're late.\n[Status: Mood 5/10 | Affection 20]", creator_notes: "", world_book_ids: [] as string[], extensions: {} };
+const prompts: { user: string; system: string; userId?: string }[] = [];
+const jevCalls: any[] = [];
+const books: Record<string, { id: string; name: string; entries: any[]; metadata?: any }> = {};
+const character = { id: "ch1", name: "Chono Aina", description: "A catgirl roommate with a sharp tongue. She hides why she left home.", personality: "tsundere", scenario: "University dorm.", first_mes: "Hmph. You're late.\n[Status: Mood 5/10 | Affection 20]", creator_notes: "", world_book_ids: [] as string[], extensions: {} };
 const storage: Record<string, unknown> = {};
+const settings: Record<string, any> = {};
+const secrets: Record<string, string> = {};
+let jevFails = false;
+let brokenPeople = true;
 
-function reply(user: string): string {
-  if (user.includes('"suggestedTemplate"')) {
-    return JSON.stringify({
-      summary: "Chono Aina, a sharp-tongued catgirl roommate at university. Slice of life with romance.",
-      suggestedTemplate: "adventure", reason: "Light mechanics fit a slice-of-life card.",
-      systems: ["needs", "relationships", "money", "clothing"],
-      statusBlock: { found: true, fields: ["Mood", "Affection"] },
-      followUps: [{ text: "Aina gets jealous easily. Track jealousy?", kind: "single", options: ["Yes", "No"], why: "The card mentions it." }],
-    });
+const CARD_READ = {
+  summary: "Chono Aina, a sharp-tongued catgirl roommate at university. Slice of life with romance.",
+  style: "story", reason: "It is about living together and feelings, not danger.", cardType: "character", romance: true,
+  statusBlock: { found: true, fields: ["Mood", "Affection"] }, statusFields: ["Mood", "Affection"],
+  cast: [{ name: "Chono Aina", relation: "acts annoyed but secretly likes {{user}}", age: 20, outfit: "an oversized hoodie" }],
+  followUps: [
+    { text: "Aina hides why she left home. Make it a secret?", kind: "single", options: ["Yes", "No"], why: "The description hints at it" },
+    { text: "Q2?", kind: "text" }, { text: "Q3?", kind: "text" }, { text: "Q4 is one too many", kind: "text" },
+  ],
+};
+
+/** The starting point the builder sent for a part. */
+function baseIn(user: string): string {
+  const start = user.indexOf("The template part (the starting point):\n") + "The template part (the starting point):\n".length;
+  const ends = ["\n\nThe current version", "\n\nIds in the other parts", "\n\nThe player asked"].map((m) => user.indexOf(m, start)).filter((i) => i > 0);
+  return user.slice(start, ends.length ? Math.min(...ends) : undefined);
+}
+
+function reply(user: string, system: string): string {
+  if (system.startsWith("You answer typed questions")) {
+    // The helper standing in for Jev (Jev failed).
+    return JSON.stringify({ template: { choice: "story", confidence: 0.8 }, card_type: { choice: "character", confidence: 0.9 }, status_block: { p: 0.9 }, romance: { p: 0.2 } });
   }
-  if (user.includes("Ask up to 4 more")) return JSON.stringify({ followUps: [{ text: "Should she have a part-time job?", kind: "single", options: ["Yes", "No"] }] });
-  if (user.includes("has problems reported by the checker")) { repairCalls++; return "```yaml\n" + partYaml("people") + "```"; }
+  if (user.includes('"followUps"')) return JSON.stringify(CARD_READ);
+  const fix = /This "(\w+)" part has problems/.exec(user);
+  if (fix) return "```yaml\n" + withAttraction(withCharacter(getTemplate("story")!.parts.find((p) => p.label === fix[1])!.yaml, "Chono Aina")) + "```";
   if (user.includes("The player wants:")) {
-    return JSON.stringify({ summary: "Added a cooking skill.", parts: { stats: partYaml("stats").replace("stats:\n", "stats:\n  cooking: { kind: skill, max: 100, start: 5, grades: [F, D, C, B, A, S] }\n") } });
+    const people = getTemplate("story")!.parts.find((p) => p.label === "people")!.yaml.replace("narrator: 4            # at most 4", "narrator: 3            # at most 3");
+    return JSON.stringify({ summary: "Slowed the relationships down.", parts: { people: withCharacter(people, "Chono Aina") } });
   }
-  const m = /Write the "(\w+)" section/.exec(user);
+  const m = /Theme the "(\w+)" part/.exec(user);
   if (m) {
-    // The first draft of "people" is broken on purpose; the repair loop must fix it.
-    if (m[1] === "people") return "Here you go:\n```yaml\nrelationships:\n  stats: [\n```";
-    return "```yaml\n" + partYaml(m[1]) + "```";
+    if (m[1] === "people" && brokenPeople) return "Here you go:\n```yaml\nrelationships:\n  stats: [\n```";
+    const base = baseIn(user);
+    return "```yaml\n" + (m[1] === "core" ? base.replace(/^name: \w+/m, "name: Dorm Days") : base) + "```";
   }
   return "{}";
 }
 
 beforeAll(() => {
   (globalThis as any).spindle = {
-    sendToFrontend: (m: unknown) => sent.push(m),
+    sendToFrontend: (m: unknown) => sent.push(structuredClone(m)),
     log: { info: () => {}, error: () => {}, warn: () => {} },
     toast: { info: () => {}, success: () => {}, warning: () => {}, error: () => {} },
     userStorage: {
-      getJson: async (p: string, o: any) => (p in storage ? structuredClone(storage[p]) : o?.fallback),
+      getJson: async (p: string, o: any) => (p === "settings.json" ? settings[o?.userId ?? "_"] ?? {} : p in storage ? structuredClone(storage[p]) : o?.fallback),
       setJson: async (p: string, v: unknown) => { storage[p] = structuredClone(v); },
       delete: async (p: string) => { delete storage[p]; },
     },
+    enclave: { get: async (k: string) => secrets[k] ?? null, has: async (k: string) => k in secrets },
+    cors: async (url: string, init: any) => {
+      jevCalls.push({ url, body: JSON.parse(init.body) });
+      if (jevFails) return { status: 500, body: "down" };
+      return { status: 200, body: JSON.stringify({ answers: {
+        template: { type: "choice", choice: "adventure", confidence: 0.85, probabilities: { adventure: 0.85, story: 0.15 } },
+        card_type: { type: "choice", choice: "character", confidence: 0.9, probabilities: { character: 0.9, scenario: 0.1 } },
+        status_block: { type: "noul", noul: 0.95 },
+        romance: { type: "noul", noul: 0.8 },
+      } }) };
+    },
     chats: { get: async () => ({ id: "c1", character_id: "ch1" }) },
-    characters: { get: async () => character, update: async (_: string, i: any) => Object.assign(character, i) },
+    characters: { get: async () => structuredClone(character), update: async (_: string, i: any) => Object.assign(character, i) },
     world_books: {
       get: async (id: string) => books[id] ?? null,
-      create: async (input: any) => { const id = `wb${Object.keys(books).length + 1}`; books[id] = { id, name: input.name, entries: [] }; return { id, ...input }; },
+      create: async (input: any) => { const id = `wb${Object.keys(books).length + 1}`; books[id] = { id, name: input.name, entries: [], metadata: input.metadata }; return { id, ...input }; },
+      delete: async (id: string) => { delete books[id]; },
       entries: {
         list: async (bookId: string) => ({ data: books[bookId].entries, total: books[bookId].entries.length }),
         create: async (bookId: string, input: any) => { const e = { id: `e${Math.random()}`, world_book_id: bookId, key: [], ...input }; books[bookId].entries.push(e); return e; },
-        update: async (id: string, input: any) => { for (const b of Object.values(books)) for (const e of b.entries) if (e.id === id) Object.assign(e, input); },
       },
     },
     generate: {
       quiet: async (req: any) => {
-        const user = req.messages[1].content as string;
-        prompts.push(user);
-        return { content: reply(user) };
+        const system = req.messages[0].content as string, user = req.messages[1].content as string;
+        prompts.push({ user, system, userId: req.userId });
+        return { content: reply(user, system) };
       },
     },
   };
 });
 
 const lastSession = () => [...sent].reverse().find((m) => m.type === "builder")?.session;
+const reset = () => { prompts.length = 0; jevCalls.length = 0; };
+const kinds = () => prompts.map((p) => p.system.startsWith("You answer typed questions") ? "classify"
+  : p.user.includes('"followUps"') ? "read" : /Theme the "(\w+)" part/.exec(p.user)?.[1] ?? (p.user.includes("problems reported by the checker") ? "repair" : p.user.includes("The player wants:") ? "refine" : "other"));
 
-describe("AI builder", () => {
-  test("read → ask → more → build → repair → review → refine → install", async () => {
+describe("the template, adjusted before theming", () => {
+  const story = getTemplate("story")!.parts, adventure = getTemplate("adventure")!.parts;
+  const part = (parts: typeof story, l: string) => parts.find((p) => p.label === l)!.yaml;
+
+  test("a romance adds attraction as the last relationship stat, once", () => {
+    for (const parts of [story, adventure]) {
+      const y = withAttraction(part(parts, "people"));
+      expect(y).toMatch(/^ {4}attraction: \{/m);
+      expect(withAttraction(y)).toBe(y);
+      expect(y).not.toContain("# attraction:");
+      expect(y.indexOf("attraction:")).toBeLessThan(y.indexOf("  people:"));
+    }
+  });
+
+  test("difficulty moves every target by 2 per step; pace raises the caps per reply", () => {
+    expect(withDifficulty(part(adventure, "stats"), 5)).toContain("dc: { easy: 12, fair: 16, hard: 20, extreme: 24 }");
+    expect(withDifficulty(part(adventure, "stats"), 1)).toContain("dc: { easy: 4, fair: 8, hard: 12, extreme: 16 }");
+    expect(withDifficulty(part(adventure, "stats"), 3)).toBe(part(adventure, "stats"));
+    expect(withPace(part(story, "people"), "slow")).toBe(part(story, "people"));
+    expect([...withPace(part(story, "people"), "fast").matchAll(/^ +narrator: (\d+)/gm)].map((m) => m[1])).toEqual(["8", "8"]);
+    // Inline caps too (attraction), never comments.
+    expect(withPace(withAttraction(part(story, "people")), "steady")).toMatch(/attraction: \{ start: 0, narrator: 8,/);
+    expect(withPace(part(story, "people"), "steady")).toContain("# attraction: { start: 0, narrator: 6,");
+  });
+});
+
+describe("one-pass builder", () => {
+  test("read (1 call) → questions → the Story template themed → repair → preview → refine (1 call + repair) → install", async () => {
     const b = await import("./builder.js");
-
-    await b.builderOpen("c1", "build", undefined);
+    reset();
+    await b.builderOpen("c1", "build", "u1");
     expect(lastSession().step).toBe("start");
 
-    await b.builderStart("c1", { connectionId: "", creative: false }, undefined);
+    await b.builderStart("c1", { connectionId: "builder-model" }, "u1");
     let s = lastSession();
     expect(s.step).toBe("questions");
-    expect(s.base).toBe("adventure");
-    expect(s.analysis.statusBlock).toEqual({ found: true, fields: ["Mood", "Affection"] });
-    const ids = s.rounds[0].questions.map((q: any) => q.id);
-    expect(ids).toEqual(["tone", "systems", "difficulty", "relationship_depth", "f1_0"]);
-    // The card's text reached the model.
-    expect(prompts[0]).toContain("sharp tongue");
+    // One helper call read the card and classified it (no Jev set).
+    expect(kinds()).toEqual(["read"]);
+    expect(prompts[0].user).toContain("sharp tongue");
+    expect(prompts[0].user).toContain('"style"');
+    expect(s.base).toBe("story");
+    expect(s.analysis).toMatchObject({ suggestedTemplate: "story", cardType: "character", romance: true, statusBlock: { found: true, fields: ["Mood", "Affection"] } });
+    expect(s.analysis.cast[0]).toMatchObject({ name: "Chono Aina", age: 20, outfit: "an oversized hoodie" });
+    // The Story / Adventure switch, 3 questions, and at most 3 about the card.
+    expect(s.rounds.length).toBe(1);
+    expect(s.rounds[0].questions.map((q: any) => q.id)).toEqual(["style", "tone", "difficulty", "pace", "f1_0", "f1_1", "f1_2"]);
+    expect(s.rounds[0].questions[0].default).toBe("story");
+    // No designer leftovers.
+    for (const k of ["plan", "creative", "persona", "log", "depth", "designPass", "effort"]) expect(s[k]).toBeUndefined();
 
-    await b.builderAnswer("c1", { tone: "romantic", f1_0: "o0" }, [{ name: "Cooking", kind: "skill", note: "She's bad at it" }], true, undefined);
-    s = lastSession();
-    expect(s.rounds.length).toBe(2);
-    expect(s.rounds[0].answers.tone).toBe("romantic");
-
-    await b.builderAnswer("c1", { f2_0: "o1" }, [{ name: "Cooking", kind: "skill", note: "She's bad at it" }], false, undefined);
+    reset();
+    await b.builderAnswer("c1", { tone: "romantic", difficulty: 5, f1_0: "o0" }, [{ name: "Cooking", kind: "skill", note: "She's bad at it" }], "u1");
     s = lastSession();
     expect(s.error).toBeNull();
     expect(s.step).toBe("review");
-    // Encounters weren't picked, so there's no encounters section.
-    expect(s.parts.map((p: any) => p.label)).not.toContain("encounters");
-    expect(repairCalls).toBeGreaterThan(0);
-    expect(s.parts.every((p: any) => p.status !== "error")).toBe(true);
-    expect(s.preview.summary).toMatch(/Adventure: \d+ meters/);
-    expect(s.preview.hud.bars.length).toBeGreaterThan(0);
-    // One pass: no designer, depth audit or balance review in the draft.
-    for (const k of ["log", "depth", "designPass", "effort", "waived"]) expect(s[k]).toBeUndefined();
-    expect(s.preview.warnings).toBeUndefined();
-    // Drafting prompts carried the answers, the additions and the status block.
-    const draftPrompt = prompts.find((p) => p.includes('Write the "stats" section'))!;
-    expect(draftPrompt).toContain("Romantic");
-    expect(draftPrompt).toContain("Cooking");
-    expect(draftPrompt).toContain("status block");
+    expect(s.parts.map((p: any) => p.label)).toEqual(["core", "people", "story", "actions"]);
+    // One call per part (foundations first), then the repair of the part that came back broken.
+    expect(kinds()).toEqual(["core", "people", "story", "actions", "repair"]);
+    expect(prompts.every((p) => p.userId === "u1")).toBe(true);
+    const people = prompts.find((p) => p.user.includes('Theme the "people" part'))!.user;
+    expect(people).toContain("Romantic");
+    expect(people).toContain("Cooking");
+    expect(people).toContain("status block");
+    expect(people).toContain("oversized hoodie");
+    // The template was adjusted before theming: the card's character, attraction (a romance).
+    expect(baseIn(people)).toContain('chono_aina:\n      name: "Chono Aina"');
+    expect(baseIn(people)).toMatch(/^ {4}attraction:/m);
+    // Story never asks about dice: the difficulty answer stays out of the brief.
+    expect(people).not.toContain("How hard should risky moves be?");
+    // Parts drafted second know the relationship stats and their band names (for secrets).
+    expect(prompts.find((p) => p.user.includes('Theme the "story" part'))!.user).toContain("trust (bands: Guarded, Wary, Open, Trusting, Devoted)");
+    expect(s.parts.every((p: any) => p.status === "ok")).toBe(true);
+    expect(s.preview.summary).toMatch(/^Dorm Days \(Story, no dice\): 3 feelings, 1 person/);
+    expect(s.preview.hud.people.map((p: any) => p.name)).toEqual(["Chono Aina"]);
 
-    await b.builderRefine("c1", "Add a cooking skill", undefined);
+    reset();
+    await b.builderRefine("c1", "Make relationships move slower", "u1");
     s = lastSession();
-    expect(s.changeSummary).toBe("Added a cooking skill.");
-    expect(s.parts.find((p: any) => p.label === "stats").changed).toBe(true);
-    expect(s.preview.counts.skills).toBe(4); // body, mind, charm and the new cooking
+    expect(kinds()).toEqual(["refine"]);
+    expect(s.changeSummary).toBe("Slowed the relationships down.");
+    expect(s.parts.find((p: any) => p.label === "people").changed).toBe(true);
+    expect(s.parts.find((p: any) => p.label === "people").yaml).toContain("narrator: 3");
 
-    await b.builderInstall("c1", undefined);
+    await b.builderInstall("c1", "u1");
     s = lastSession();
     expect(s.step).toBe("done");
     const book = Object.values(books)[0];
     expect(book.name).toBe("warp-ruleset");
     expect(character.world_book_ids).toContain(book.id);
-    expect(book.entries.map((e) => e.comment).sort()).toEqual(s.parts.map((p: any) => `warp-ruleset · ${p.label}`).sort());
+    expect(book.entries.map((e) => e.comment)).toEqual(s.parts.map((p: any) => `warp-ruleset · ${p.label}`));
     expect(book.entries.every((e) => e.disabled)).toBe(true);
-    expect(book.entries.find((e) => e.comment.endsWith("stats")).content).toContain("cooking:");
+    // Written for the card: no template id, so the Story / Adventure switch leaves it alone.
+    expect(book.metadata.warp.template).toBeUndefined();
 
-    // Refine mode loads what's installed and saves back into the same entries.
-    await b.builderClose("c1", undefined);
-    await b.builderOpen("c1", "refine", undefined);
+    // Refine mode loads what's installed and saves a new snapshot of the same parts.
+    await b.builderClose("c1", "u1");
+    await b.builderOpen("c1", "refine", "u1");
     s = lastSession();
     expect(s.mode).toBe("refine");
     expect(s.step).toBe("review");
-    expect(s.parts.length).toBe(book.entries.length);
-    await b.builderInstall("c1", undefined);
-    expect(Object.values(books)[0].entries.length).toBe(s.parts.length); // updated in place, nothing duplicated
+    expect(s.parts.map((p: any) => p.label)).toEqual(["core", "people", "story", "actions"]);
+    await b.builderClose("c1", "u1");
+  });
+
+  test("switching to Adventure drafts the Adventure template, with the difficulty answer in its checks", async () => {
+    const b = await import("./builder.js");
+    brokenPeople = false;
+    await b.builderOpen("c1", "build", "u2");
+    await b.builderStart("c1", { connectionId: "" }, "u2");
+    reset();
+    await b.builderAnswer("c1", { style: "adventure", difficulty: 1, pace: "steady" }, [], "u2");
+    const s = lastSession();
+    expect(s.base).toBe("adventure");
+    expect(s.parts.map((p: any) => p.label)).toEqual(["core", "stats", "world", "people", "story", "actions", "conflict"]);
+    expect(kinds()).toEqual(["core", "stats", "people", "world", "story", "actions", "conflict"]);
+    expect(s.parts.find((p: any) => p.label === "stats").yaml).toContain("dc: { easy: 4, fair: 8, hard: 12, extreme: 16 }");
+    expect(s.parts.find((p: any) => p.label === "people").yaml).toContain("narrator: 7");
+    expect(prompts.find((p) => p.user.includes('Theme the "stats" part'))!.user).toContain("How hard should risky moves be?");
+    expect(s.preview.summary).toContain("(Adventure, dice)");
+    expect(s.preview.counts.contests).toBe(3);
+    await b.builderClose("c1", "u2");
+    brokenPeople = true;
+  });
+
+  test("with Jev set, Jev classifies the card and the helper only writes", async () => {
+    const b = await import("./builder.js");
+    settings.u3 = { ...DEFAULT_SETTINGS, decider: "jev" };
+    secrets.jev_api_key = "test-key";
+    await b.builderOpen("c1", "build", "u3");
+    reset();
+    await b.builderStart("c1", { connectionId: "" }, "u3");
+    const s = lastSession();
+    expect(kinds()).toEqual(["read"]);
+    expect(jevCalls.length).toBe(1);
+    expect(Object.keys(jevCalls[0].body.questions)).toEqual(["template", "card_type", "status_block", "romance"]);
+    expect(Object.keys(jevCalls[0].body.questions.template.criteria)[0]).toBe("adventure");
+    expect(jevCalls[0].body.state.card).toContain("sharp tongue");
+    // The helper wasn't asked to classify; Jev's picks win over anything it wrote.
+    expect(prompts[0].user).not.toContain('"style"');
+    expect(prompts[0].user).not.toContain('"cardType"');
+    expect(prompts[0].user).toContain('"statusFields"');
+    expect(s.base).toBe("adventure");
+    expect(s.analysis).toMatchObject({ suggestedTemplate: "adventure", romance: true, statusBlock: { found: true, fields: ["Mood", "Affection"] }, reason: "" });
+    await b.builderClose("c1", "u3");
+  });
+
+  test("a failing Jev falls back to the helper for the same questions (one more call, only then)", async () => {
+    const b = await import("./builder.js");
+    settings.u4 = { ...DEFAULT_SETTINGS, decider: "jev" };
+    jevFails = true;
+    await b.builderOpen("c1", "build", "u4");
+    reset();
+    await b.builderStart("c1", { connectionId: "" }, "u4");
+    const s = lastSession();
+    expect(jevCalls.length).toBeGreaterThan(0);
+    expect(kinds().sort()).toEqual(["classify", "read"]);
+    expect(s.error).toBeNull();
+    expect(s.base).toBe("story");
+    expect(s.analysis.romance).toBe(false);
+    jevFails = false;
+    await b.builderClose("c1", "u4");
   });
 });

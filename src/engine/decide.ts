@@ -1,7 +1,7 @@
 // Typed decisions ("System 1" questions).
 //
-// Mirrors TypeSafe's primitives so any provider — Jev, an LLM, or plain rules —
-// can answer them. Models only ever return probabilities; when the engine needs
+// Mirrors TypeSafe's primitives so either provider (Jev or the helper LLM) can
+// answer them. Models only ever return probabilities; when the engine needs
 // an actual pick it samples from them with its own seeded RNG.
 
 import type { Rng } from "./dice.js";
@@ -24,7 +24,7 @@ export interface DecideOptions {
 }
 
 export interface Decider {
-  readonly id: "jev" | "llm" | "rules";
+  readonly id: "jev" | "llm";
   /** Can this provider answer questions that need free text (names)? */
   readonly canWrite: boolean;
   ask(state: unknown, questions: Questions, opts?: DecideOptions): Promise<Answers>;

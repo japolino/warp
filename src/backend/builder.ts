@@ -1,24 +1,28 @@
-// The AI ruleset builder, in one pass: read the card → ask → draft section by
-// section → check & repair → review (preview) → install. Also "refine" for
-// editing an existing ruleset by instruction.
+// The AI ruleset builder, in one pass (CORE-DESIGN §5.3 step 4): read the card (one helper call; Jev classifies
+// when it is set) → Story or Adventure → three questions and up to three about the card → draft = that template
+// themed for the card, its parts in parallel → checker repair (at most two rounds) → preview → install.
+// Refine changes an installed ruleset by instruction: one call, then the same repair. Deep passes, checks and
+// playtests are Warp Studio's.
 //
-// The model only ever writes YAML sections; Warp's own checker decides whether
-// they're valid and feeds its messages back for repair.
+// The model only ever rewrites words in a template part; Warp's own checker decides whether the result is valid and
+// feeds its messages back for repair.
 
 import type { GenerationResponseDTO } from "lumiverse-spindle-types";
-import { DESIGN_GUIDE } from "../engine/reference.js";
+import { DESIGN_GUIDE, PART_CONTENTS, PART_LABELS, partForIssue, REFERENCE, type PartLabel } from "../engine/reference.js";
 import { isRulesetBookName, isRulesetEntryTitle, loadRuleset, type RulesetPart } from "../engine/loader.js";
 import { lintRuleset } from "../engine/lint.js";
-import { PART_CONTENTS, PART_LABELS, partForIssue, REFERENCE, type PartLabel } from "../engine/reference.js";
 import type { Issue, Ruleset } from "../engine/ruleset.js";
 import { initialState } from "../engine/state.js";
-import { getTemplate, TEMPLATES, withCharacter } from "../engine/templates/index.js";
+import { getTemplate, withCharacter } from "../engine/templates/index.js";
 import { buildChoices, buildHud } from "../engine/view.js";
 import type { BuilderAddition, BuilderAnswer, BuilderPart, BuilderQuestion, BuilderSession } from "../shared/protocol.js";
 import { host, logError, send } from "./host.js";
 import { BUILDER_SESSION_VERSION, restoreBuilderSession } from "./builder-session.js";
 import { characterForChat, invalidateCharacter, knownRulesetBookIds } from "./source.js";
 import { publishRulebook, rulesetEntries } from "./rulebook-install.js";
+import { getSettings } from "./settings.js";
+import { getDecider, JevDecider, LlmDecider } from "./deciders.js";
+import { cardPrompt, cardQuestions, cardVerdict, coreQuestions, readCard, type CardClass, type Style } from "./card-read.js";
 
 // ───────────────────────── sessions ─────────────────────────
 
@@ -78,7 +82,7 @@ async function llm(s: BuilderSession, system: string, user: string, userId: stri
     type: "quiet",
     messages: [{ role: "system", content: system }, { role: "user", content: user }],
     connection_id: s.connectionId || undefined,
-    parameters: { temperature: s.creative ? 0.8 : 0.4, max_tokens: maxTokens },
+    parameters: { temperature: 0.5, max_tokens: maxTokens },
     userId,
     signal: AbortSignal.any([sessionSignal(s), AbortSignal.timeout(180_000)]),
   })) as GenerationResponseDTO | string;
@@ -103,17 +107,6 @@ export function extractYaml(text: string): string {
 }
 
 // ───────────────────────── the card ─────────────────────────
-
-/** The active persona's description, through the {{persona}} macro (no extra permission needed). */
-async function personaText(chatId: string, userId?: string): Promise<string | null> {
-  try {
-    const { text } = await host().macros.resolve("{{persona}}", { chatId, userId, commit: false });
-    const t = (text ?? "").trim();
-    return t && t !== "{{persona}}" ? (t.length > 2500 ? `${t.slice(0, 2500)}…` : t) : null;
-  } catch {
-    return null;
-  }
-}
 
 async function cardText(characterId: string, userId?: string): Promise<{ name: string; text: string; hasRuleset: boolean }> {
   const c = await host().characters.get(characterId, userId);
@@ -143,50 +136,30 @@ async function cardText(characterId: string, userId?: string): Promise<{ name: s
   return { name: c.name, text: parts.join("\n\n"), hasRuleset };
 }
 
-// ───────────────────────── questions ─────────────────────────
-
-const SYSTEMS: { id: string; label: string }[] = [
-  { id: "needs", label: "Needs & condition (fatigue, stress…)" },
-  { id: "relationships", label: "Relationships" },
-  { id: "money", label: "Money" },
-  { id: "skills", label: "Skills that grow" },
-  { id: "encounters", label: "Encounters / combat" },
-  { id: "quests", label: "Quests (a notice board, favours people ask, bounties)" },
-  { id: "crime", label: "Crime & consequences" },
-  { id: "story", label: "Secrets & choices for the moment" },
-];
-
-function coreQuestions(defaultSystems: string[]): BuilderQuestion[] {
-  return [
-    { id: "tone", core: true, kind: "single", text: "What tone should the game have?", default: "dramatic",
-      options: ["cozy", "dramatic", "dark", "chaotic", "romantic", "gritty"].map((t) => ({ id: t, label: t[0].toUpperCase() + t.slice(1) })) },
-    { id: "systems", core: true, kind: "multi", text: "Which systems do you want?", default: defaultSystems, options: SYSTEMS },
-    { id: "difficulty", core: true, kind: "scale", text: "How hard should checks be?", default: 3,
-      options: [{ id: "1", label: "Forgiving" }, { id: "3", label: "Fair" }, { id: "5", label: "Punishing" }] },
-    { id: "relationship_depth", core: true, kind: "single", text: "How deep should relationship tracking go?", default: "simple",
-      options: [
-        { id: "simple", label: "Simple — affection & trust" },
-        { id: "deep", label: "Deep — love, lust, trust, dominance" },
-        { id: "custom", label: "Custom — I'll describe it below" },
-      ] },
-  ];
+/** Jev when it is set and usable, else null (the helper then classifies inside its card-read call). */
+async function classifier(userId?: string): Promise<JevDecider | null> {
+  try {
+    const settings = await getSettings(userId);
+    if (settings.decider !== "jev") return null;
+    const d = await getDecider(settings, userId);
+    return d instanceof JevDecider ? d : null;
+  } catch (e) {
+    logError("builder classifier", e);
+    return null;
+  }
 }
 
-function normQuestions(raw: unknown, prefix: string): BuilderQuestion[] {
-  if (!Array.isArray(raw)) return [];
-  const out: BuilderQuestion[] = [];
-  raw.slice(0, 5).forEach((q, i) => {
-    if (!q || typeof q !== "object") return;
-    const r = q as Record<string, unknown>;
-    const text = typeof r.text === "string" ? r.text : typeof r.question === "string" ? r.question : "";
-    if (!text) return;
-    const kind = (["single", "multi", "scale", "text"] as const).find((k) => k === r.kind) ?? (Array.isArray(r.options) ? "single" : "text");
-    const options = Array.isArray(r.options)
-      ? r.options.slice(0, 8).map((o, j) => (typeof o === "string" ? { id: `o${j}`, label: o } : { id: String((o as Record<string, unknown>).id ?? `o${j}`), label: String((o as Record<string, unknown>).label ?? (o as Record<string, unknown>).text ?? `Option ${j + 1}`) }))
-      : undefined;
-    out.push({ id: `${prefix}${i}`, text, kind, ...(options?.length ? { options } : {}), ...(typeof r.why === "string" ? { why: r.why } : {}) });
-  });
-  return out;
+// ───────────────────────── answers ─────────────────────────
+
+function answerOf(s: BuilderSession, id: string): BuilderAnswer | undefined {
+  for (const r of s.rounds) for (const q of r.questions) if (q.id === id) return r.answers[id] ?? q.default;
+  return undefined;
+}
+
+/** The style to draft: the player's switch, else what the read suggested, else Adventure. */
+function styleOf(s: BuilderSession): Style {
+  const a = answerOf(s, "style") ?? s.base;
+  return a === "story" ? "story" : "adventure";
 }
 
 function answerText(q: BuilderQuestion, a: BuilderAnswer | undefined): string {
@@ -197,30 +170,91 @@ function answerText(q: BuilderQuestion, a: BuilderAnswer | undefined): string {
   return typeof a === "string" ? label(a) : String(a);
 }
 
+/** What every themed part is written against: the card, the read, the answers and the player's own additions. */
 function brief(s: BuilderSession): string {
-  const qa = s.rounds.flatMap((r) => r.questions.map((q) => `- ${q.text} → ${answerText(q, r.answers[q.id] ?? q.default)}`));
-  const adds = s.additions.filter((a) => a.name.trim()).map((a) => `- ${a.kind}: ${a.name}${a.note ? ` — ${a.note}` : ""}`);
+  const a = s.analysis;
+  const style = styleOf(s);
+  const qa = s.rounds.flatMap((r) => r.questions.filter((q) => q.id !== "style" && !(q.id === "difficulty" && style === "story")).map((q) => `- ${q.text} → ${answerText(q, r.answers[q.id] ?? q.default)}`));
+  const adds = s.additions.filter((x) => x.name.trim()).map((x) => `- ${x.kind}: ${x.name}${x.note ? ` (${x.note})` : ""}`);
   return [
-    `Character: ${s.characterName}`,
-    s.analysis ? `Card summary: ${s.analysis.summary}` : "",
-    s.analysis?.statusBlock?.found ? `The card currently makes the model print a status block with: ${s.analysis.statusBlock.fields.join(", ")}. Cover these as proper stats; the narrator should no longer print status blocks.` : "",
-    s.analysis?.cardType === "scenario" ? `This is a scenario/narrator card: "${s.characterName}" is the setting, NOT a person — never add it to people.` : "",
-    s.persona ? `The player's persona — who {{user}} is:\n${s.persona}\nTheir own powers, training, signature moves and quirks belong to them, not the setting: build them in as skills and actions (a cost, a stat that scales them, what they do in a fight and outside one).` : "",
-    s.analysis?.cast?.length ? `Main cast — add each to relationships.people with a start: block that matches how they feel about {{user}} at the beginning (use the relationship stats' scales; strong feelings mean strong numbers):\n${s.analysis.cast.map((c) => `- ${c.name}: ${c.relation}`).join("\n")}` : "",
+    `Character card: ${s.characterName}`,
+    a ? `What the card is: ${a.summary}` : "",
+    `Template: ${style === "story" ? "Story (no dice: no check:, no conflict:)" : "Adventure (d20 checks at risky moments, contests)"}.`,
+    a?.cardType === "scenario" ? `This is a scenario/narrator card: "${s.characterName}" is the setting, NOT a person: never add it to people.` : "",
+    a?.statusBlock?.found ? `The card makes the model print a status block (${a.statusBlock.fields.join(", ") || "stats"}). Warp tracks it now: the narration notes must tell the narrator not to print status blocks.` : "",
+    a?.romance ? "Romance is a main theme: the people part tracks attraction." : "",
+    a?.cast?.length ? `Main cast and how each starts out toward {{user}}:\n${a.cast.map((c) => `- ${c.name}: ${c.relation}${c.age ? ` (age ${c.age})` : ""}${c.appearance ? `; looks: ${c.appearance}` : ""}${c.outfit ? `; wears: ${c.outfit}` : ""}`).join("\n")}` : "",
     qa.length ? `The player's answers:\n${qa.join("\n")}` : "",
-    adds.length ? `The player's own additions (build each in — the stat/item/place/etc., what changes it, and which actions check it):\n${adds.join("\n")}` : "",
-    s.plan ? `The design plan (build to it; every connection it promises must exist in the rules):\n${s.plan}` : "",
-    s.creative
-      ? "Style: be inventive — add fitting systems, places and actions beyond the starting point where they serve the card."
-      : "Style: stay close to the starting point — rename, retune, trim and extend it to fit the card, rather than inventing whole new systems.",
+    adds.length ? `The player's own additions (fit each in, inside the format and this part's contents):\n${adds.join("\n")}` : "",
   ].filter(Boolean).join("\n\n");
 }
 
-function chosenSystems(s: BuilderSession): Set<string> {
-  const q = s.rounds[0]?.questions.find((x) => x.id === "systems");
-  const a = s.rounds[0]?.answers.systems ?? q?.default;
-  return new Set(Array.isArray(a) ? a : SYSTEMS.map((x) => x.id));
+// ───────────────────────── the template, adjusted before theming ─────────────────────────
+
+const ATTRACTION = "    attraction: { start: 0, narrator: 6, good: none, bands: { 0: No spark, 15: Curious, 35: Drawn, 60: Wanting, 85: Consumed } }\n";
+
+/** Add attraction (a romance) as the last relationship stat, replacing the template's commented example. */
+export function withAttraction(yaml: string): string {
+  if (/^ {4}attraction:/m.test(yaml)) return yaml;
+  const y = yaml.replace(/^ {2}# For a romance[^\n]*\n {2}# attraction:[^\n]*\n/m, "");
+  const m = /^ {2}people:/m.exec(y);
+  return m ? y.slice(0, m.index) + ATTRACTION + y.slice(m.index) : y;
 }
+
+/** Difficulty 1–5 moves every target by 2 per step (3 = the template's 8 / 12 / 16 / 20). */
+export function withDifficulty(yaml: string, level: number): string {
+  const shift = (Math.max(1, Math.min(5, Math.round(level))) - 3) * 2;
+  if (!shift) return yaml;
+  return yaml.replace(/dc: \{ easy: (\d+), fair: (\d+), hard: (\d+), extreme: (\d+) \}/, (_, ...n: string[]) => {
+    const [e, f, h, x] = n.slice(0, 4).map((v) => Number(v) + shift);
+    return `dc: { easy: ${e}, fair: ${f}, hard: ${h}, extreme: ${x} }`;
+  });
+}
+
+/** Relationship pace: slow burn = the template's caps; steady and quick raise each cap per reply. */
+export function withPace(yaml: string, pace: string): string {
+  const add = pace === "fast" ? 4 : pace === "steady" ? 2 : 0;
+  if (!add) return yaml;
+  // Every relationship cap (block or inline form); comments stay as written.
+  return yaml.split("\n").map((l) => (/^\s*#/.test(l) ? l : l.replace(/\bnarrator: (\d+)/g, (_, n: string) => `narrator: ${Number(n) + add}`))).join("\n");
+}
+
+/** The chosen template's parts, adjusted for the card and the answers before the model themes them. */
+function baseParts(s: BuilderSession): { label: string; yaml: string }[] {
+  const t = getTemplate(styleOf(s))!;
+  const level = Number(answerOf(s, "difficulty") ?? 3);
+  const pace = String(answerOf(s, "pace") ?? "slow");
+  return t.parts.map((p) => {
+    let y = p.yaml;
+    if (p.label === "people") {
+      if (s.analysis?.romance) y = withAttraction(y);
+      y = withPace(y, pace);
+      if (s.analysis?.cardType !== "scenario") y = withCharacter(y, s.characterName);
+    }
+    if (p.label === "stats") y = withDifficulty(y, Number.isFinite(level) ? level : 3);
+    return { label: p.label, yaml: y };
+  });
+}
+
+/** What the model may change in each part (CORE-DESIGN §3.3). */
+const PART_JOBS: Record<PartLabel, string> = {
+  core: "Give the game a name: for this card and a one-line description:. Rewrite narration.notes in the card's tone, keeping their rules. Adventure: set hud.currency to fit the setting (gold, credits, ¥…). Keep style:, clock.start: greeting and start.place: greeting.",
+  stats: "Fit the meters and attributes to the setting: label:, desc:, band texts and say:/say_down: lines in the card's voice (an attribute may get a fitting label, e.g. Body → Grit). Keep every id, kind, max and the checks numbers as given.",
+  people: "Fit the relationship stats to the card: label: (e.g. trust shown as Loyalty), band texts, say:/say_down: lines and voice: lines in the card's voice; keep the ids, starts and narrator caps as given. Under people:, fill in the main cast: snake_case id, name, desc, age only if the card states it (adults only), appearance and outfit only if the card states them, and start: feelings that match how each feels about {{user}} at the beginning.",
+  world: "Fit the conditions to the setting (label, desc). Add at most 3 items the card makes important, each doing something (a use: or a bonus:). Keep the condition ids.",
+  actions: "Rewrite each action's label and say: line in the card's voice. Keep the ids, times and effects.",
+  story: "Rewrite the live-choice guide and every tag's desc: in the card's tone; keep the tag ids, checks and effects. Add 0–2 secrets for people who hide something (person:, tell: exists, a cue:, then 2 stages opened by band: on that person's relationship stats, using the band names listed below). Add 0–2 goals under goals.list only if the card promises them (text, stakes, done_when or judge). Keep the triggers.",
+  conflict: "Fit the contest kinds to the card: label (e.g. a duel, a debate), and the won/lost/escaped hints. Keep the kind ids, stats, escape stats and costs.",
+};
+
+const SYSTEM_PROMPT = `You fit one part of a Warp ruleset template to a roleplay character card. Warp is a game engine under the chat: it keeps score of time, place, people and risky moments.
+Output ONLY the YAML for the requested part: no prose, no explanations. Keep the part's structure and every id (stats, relationship stats, people, tags, actions, conditions, contest kinds).
+Change words (labels, band texts, say/say_down/voice lines, descriptions, hints, guides, notes) and add only what the job asks for. Never add a key or a system the format doesn't list.
+Write in-world text in a voice that suits the card. Refer to the player as {{user}}. Quote any formula that contains a comma.
+
+${DESIGN_GUIDE}
+
+${REFERENCE}`;
 
 // ───────────────────────── drafting & checking ─────────────────────────
 
@@ -228,55 +262,54 @@ function merged(parts: BuilderPart[]): RulesetPart[] {
   return parts.map((p, i) => ({ label: `warp-ruleset · ${p.label}`, content: p.yaml, order: i }));
 }
 
+/** The part an issue belongs to; an issue about a part the draft doesn't have goes to the part that holds its key, else the first. */
+function ownerOf(parts: BuilderPart[], where: string): BuilderPart | undefined {
+  const label = partForIssue(where);
+  const hit = parts.find((p) => p.label === label);
+  if (hit) return hit;
+  const key = where.replace(/^warp-ruleset\s*·\s*/i, "").split(/[›,]/)[0].trim().toLowerCase().replace(/\s+/g, "_");
+  return parts.find((p) => new RegExp(`^${key}:`, "m").test(p.yaml)) ?? parts[0];
+}
+
 function check(parts: BuilderPart[]): { ruleset: Ruleset | null; issues: Issue[] } {
   const { ruleset, issues } = loadRuleset(merged(parts));
   const all = ruleset ? [...issues, ...lintRuleset(ruleset)] : issues;
-  for (const p of parts) {
-    p.issues = all.filter((i) => partForIssue(i.where) === p.label);
-    p.status = p.issues.some((i) => i.level === "error") ? "error" : p.issues.length ? "warn" : "ok";
-  }
+  for (const p of parts) p.issues = [];
+  for (const i of all) ownerOf(parts, i.where)?.issues.push(i);
+  for (const p of parts) p.status = p.issues.some((i) => i.level === "error") ? "error" : p.issues.length ? "warn" : "ok";
   return { ruleset, issues: all };
 }
 
-/** Ids the other sections can refer to, so parallel drafts line up. */
+/** Ids the other parts can refer to, so parallel drafts line up (with relationship band names, for secrets). */
 function contextOf(parts: BuilderPart[]): string {
   const { ruleset: r } = loadRuleset(merged(parts.filter((p) => p.yaml.trim())));
   if (!r) return "";
   const list = (label: string, ids: string[]) => (ids.length ? `${label}: ${ids.join(", ")}` : "");
   return [
-    list("Stats", r.statOrder.map((id) => `${id} (${r.stats[id].kind}${r.stats[id].kind === "meter" ? ` ${r.stats[id].min}–${r.stats[id].max}` : ""})`)),
-    list("Relationship stats", r.relStatOrder),
-    list("People", Object.keys(r.people)),
+    list("Stats", r.statOrder.map((id) => `${id} (${r.stats[id].kind}${r.stats[id].label !== id ? `, shown as ${r.stats[id].label}` : ""})`)),
+    list("Relationship stats", r.relStatOrder.map((id) => `${id} (bands: ${r.relStats[id].bands.map((b) => b.text).join(", ")})`)),
+    list("People", Object.values(r.people).map((p) => `${p.id} (${p.name})`)),
     list("Items", Object.keys(r.items)),
     list("Conditions", Object.keys(r.conditions)),
     list("Flags", Object.keys(r.flags)),
-    list("Contest kinds", Object.keys(r.conflict.kinds)),
-    list("Goals", Object.keys(r.goals.list)),
   ].filter(Boolean).join("\n");
 }
 
-const SYSTEM_PROMPT = `You are the lead designer writing one section of a Warp ruleset: YAML that a game engine runs underneath a roleplay chat.
-The goal is a game worth playing, not merely valid YAML: wire every stat, item, condition and encounter into play (see the design guide).
-Output ONLY the YAML for the requested section — no prose, no explanations. Use only the formats below.
-Use snake_case ids. Keep numbers readable (meters 0–100). Quote any formula that contains a comma.
-Write in-world text (bands, hints, descriptions) in a voice that suits the card. Refer to the player as {{user}}.
-
-${DESIGN_GUIDE}
-
-${REFERENCE}`;
-
-async function draftPart(s: BuilderSession, label: PartLabel, base: string | null, context: string, userId?: string, note?: string, current?: string): Promise<string> {
+async function themePart(s: BuilderSession, label: string, base: string, context: string, userId?: string, note?: string, current?: string): Promise<string> {
+  const known = (PART_LABELS as readonly string[]).includes(label) ? label as PartLabel : null;
   const user = [
     brief(s),
-    `Write the "${label}" section. It may contain only: ${PART_CONTENTS[label]}.`,
-    base ? `Starting point for this section (adapt it):\n${base}` : "There's no starting point for this section — write it from scratch.",
-    current ? `The current version of this section:\n${current}` : "",
-    context ? `Ids defined in the other sections (reuse them exactly; don't redefine them here):\n${context}` : "",
+    `Theme the "${label}" part for this card.${known ? ` It may contain only: ${PART_CONTENTS[known]}.` : ""}`,
+    known ? `The job: ${PART_JOBS[known]}` : "",
+    `The template part (the starting point):\n${base}`,
+    current ? `The current version of this part:\n${current}` : "",
+    context ? `Ids in the other parts (reuse them exactly; don't define them here):\n${context}` : "",
     note ? `The player asked for this change: ${note}` : "",
   ].filter(Boolean).join("\n\n");
   return extractYaml(await llm(s, SYSTEM_PROMPT, user, userId, 3500));
 }
 
+/** Checker repair: at most two rounds, only the parts with problems (warnings too in the first round). */
 async function repair(s: BuilderSession, parts: BuilderPart[], userId?: string, includeWarnings = true) {
   for (let round = 0; round < 2; round++) {
     check(parts);
@@ -286,7 +319,7 @@ async function repair(s: BuilderSession, parts: BuilderPart[], userId?: string, 
     const context = contextOf(parts);
     await Promise.all(broken.map(async (p) => {
       const msgs = p.issues.map((i) => `- ${i.where}: ${i.message}`).join("\n");
-      const user = `This "${p.label}" section has problems reported by the checker. Return the corrected YAML for the whole section.\n\nProblems:\n${msgs}\n\nSection:\n${p.yaml}\n\nIds in the other sections:\n${context}`;
+      const user = `This "${p.label}" part has problems reported by the checker. Return the corrected YAML for the whole part.\n\nProblems:\n${msgs}\n\nPart:\n${p.yaml}\n\nIds in the other parts:\n${context}`;
       try { p.yaml = extractYaml(await llm(s, SYSTEM_PROMPT, user, userId, 3500)); } catch (e) { logError("builder repair", e); }
     }));
   }
@@ -300,21 +333,20 @@ function buildPreview(s: BuilderSession) {
   const counts: Record<string, number> = {
     meters: r.statOrder.filter((id) => r.stats[id].kind === "meter").length,
     skills: r.statOrder.filter((id) => ["skill", "attribute"].includes(r.stats[id].kind)).length,
+    feelings: r.relStatOrder.length,
     people: Object.keys(r.people).length,
     items: Object.keys(r.items).length,
     actions: Object.keys(r.actions).length,
-    contests: Object.keys(r.conflict.kinds).length,
+    choices: Object.keys(r.liveChoices.tags).length,
+    contests: r.style === "adventure" ? Object.keys(r.conflict.kinds).length : 0,
     goals: Object.keys(r.goals.list).length,
-    rules: r.triggers.length,
     secrets: Object.keys(r.secrets).length,
+    rules: r.triggers.length,
   };
-  const phrase = Object.entries(counts).filter(([, n]) => n).map(([k, n]) => `${n} ${n === 1 ? k.replace(/s$/, "").replace(/^people$/, "person") : k}`).join(", ");
-  const extras = [
-    r.clock.startDate ? "a calendar" : "",
-    r.liveChoices.enabled ? "choices written for the moment" : "",
-  ].filter(Boolean);
+  const word = (k: string, n: number) => (n === 1 ? ({ people: "person", feelings: "feeling", choices: "kind of choice" } as Record<string, string>)[k] ?? k.replace(/s$/, "") : k === "choices" ? "kinds of choice" : k);
+  const phrase = Object.entries(counts).filter(([, n]) => n).map(([k, n]) => `${n} ${word(k, n)}`).join(", ");
   s.preview = {
-    summary: `${r.name}: ${phrase}${extras.length ? `, plus ${extras.join(", ")}` : ""}.`,
+    summary: `${r.name} (${r.style === "story" ? "Story, no dice" : "Adventure, dice"}): ${phrase}.`,
     counts,
     hud: buildHud(r, st),
     choices: buildChoices(r, st, { lines: [], veils: [] }),
@@ -332,14 +364,14 @@ export async function builderOpen(chatId: string, mode: "build" | "refine", user
   const card = await cardText(characterId, userId);
   const s: BuilderSession = {
     characterId, characterName: card.name, mode, step: "start",
-    connectionId: existing?.connectionId ?? "", creative: existing?.creative ?? false,
+    connectionId: existing?.connectionId ?? "",
     base: "", analysis: null, rounds: [], additions: [], parts: [], preview: null,
-    request: null, changeSummary: null, busy: null, error: null, updatedAt: Date.now(), plan: null,
+    request: null, changeSummary: null, busy: null, error: null, updatedAt: Date.now(),
   };
   sessionChats.set(s, chatId);
   if (mode === "refine") {
     s.parts = await currentParts(characterId, userId);
-    if (!s.parts.length) throw new Error(`This character has no ruleset to ${mode} yet.`);
+    if (!s.parts.length) throw new Error("This character has no ruleset to refine yet.");
     s.step = "review";
     buildPreview(s);
   }
@@ -347,62 +379,38 @@ export async function builderOpen(chatId: string, mode: "build" | "refine", user
   emit(s, userId);
 }
 
-/** The design plan: written before any YAML, shown to the player, and held against the rules afterwards. */
-async function designPlan(s: BuilderSession, systems: string[], userId?: string): Promise<string | null> {
-  const card = await cardText(s.characterId, userId);
-  const text = await llm(s, `You are the lead designer of a game ruleset for a roleplay character card. Before anything is built, write the design plan.\n\n${DESIGN_GUIDE}`, [
-    card.text,
-    brief(s),
-    `Systems wanted: ${systems.join(", ")}.`,
-    "Write the plan in plain text with these headings, short bullet points under each:",
-    "LOOP — what {{user}} does most days, what pushes back, what they work toward.",
-    "PRESSURES — the 3–6 stats/needs that matter, each with what raises it, what lowers it, and what happens at the extremes.",
-    "CONNECTIONS — how systems feed each other (e.g. scent → visibility → encounters; the spray clears it; buns are bribes).",
-    "ENCOUNTERS — each one: the goal, two or three routes with their stats, the escape and its cost, the danger, which items matter.",
-    "ITEMS — every item and what it does (use, gear bonus, gift, or what needs it), and how the player gets it.",
-    "PLACES & PEOPLE — why go to each place; who matters and how they start out toward {{user}}.",
-    "Under 450 words. No YAML.",
-  ].join("\n\n"), userId, 1600);
-  const t = text.trim();
-  return t.length > 80 ? t.slice(0, 5000) : null;
-}
-
-export async function builderStart(chatId: string, opts: { connectionId: string; creative: boolean; base?: string }, userId?: string) {
+/** Read the card: one helper call writes the summary, cast and follow-ups; Jev (when set) classifies in parallel. */
+export async function builderStart(chatId: string, opts: { connectionId: string; base?: string }, userId?: string) {
   const s = await sessionFor(chatId, userId);
   if (!s) throw new Error("No builder open.");
   s.connectionId = opts.connectionId;
-  s.creative = opts.creative;
   await progress(s, "Reading the card…", userId);
   try {
     const card = await cardText(s.characterId, userId);
-    s.persona = await personaText(chatId, userId);
-    const templates = TEMPLATES.map((t) => `- ${t.id}: ${t.blurb}`).join("\n");
-    const system = `You help set up a game ruleset for a roleplay character card. Reply with JSON only.`;
-    const user = `${card.text}${s.persona ? `\n\nThe player's persona (who {{user}} is):\n${s.persona}` : ""}\n\nAvailable starting templates:\n${templates}\n- blank: nothing, build from scratch\n\nSystems the player can pick from: ${SYSTEMS.map((x) => x.id).join(", ")}.\n\nReply with JSON:
-{"summary": "2–3 sentences: who this is, the setting, the likely kind of story",
- "suggestedTemplate": "<template id>",
- "reason": "one sentence: why that template fits",
- "systems": ["<system ids that fit this card>"],
- "statusBlock": {"found": <does the card tell the model to print a status/stat block?>, "fields": ["<fields it tracks>"]},
- "cardType": "character" if the card IS one character, "scenario" if it is a narrator / world / multi-character card (its name is a setting or premise, not a person),
- "cast": [ the main named characters in the story (for a character card, the character first) with how each feels about the player at the start, e.g. {"name": "Aina", "relation": "secretly adores {{user}} but hides it behind insults"} ],
- "followUps": [ up to 5 questions specific to THIS card, e.g. {"text": "Aina gets jealous easily. Track jealousy as its own meter?", "kind": "single", "options": ["Yes", "No"], "why": "The description mentions jealousy"} — kinds: single, multi, text ]}`;
-    const out = parseJson(await llm(s, system, user, userId, 1500)) ?? {};
-    const suggested = typeof out.suggestedTemplate === "string" && (getTemplate(out.suggestedTemplate) || out.suggestedTemplate === "blank") ? out.suggestedTemplate : "universal";
-    const sb = out.statusBlock as { found?: unknown; fields?: unknown } | undefined;
+    const jev = await classifier(userId);
+    const prompt = cardPrompt(card.text, !jev);
+    const ask = (d: JevDecider | LlmDecider) => d.ask({ card: card.text }, cardQuestions(), { timeoutMs: 15_000, signal: sessionSignal(s) }).then(cardVerdict);
+    const [out, cls] = await Promise.all([
+      llm(s, prompt.system, prompt.user, userId, 1500).then((t) => parseJson(t) ?? {}),
+      jev ? ask(jev).catch(async (e): Promise<CardClass> => {
+        // Jev failed: the same questions go to the helper (one more call, only now).
+        logError("builder Jev classification", e);
+        return ask(new LlmDecider(await getSettings(userId), userId));
+      }) : Promise.resolve(null),
+    ]);
+    const read = readCard(out, cls, card.name);
+    const picked: Style | null = opts.base === "story" || opts.base === "adventure" ? opts.base : null;
     s.analysis = {
-      summary: typeof out.summary === "string" ? out.summary : `${card.name}.`,
-      suggestedTemplate: suggested,
-      reason: typeof out.reason === "string" ? out.reason : "",
-      statusBlock: sb && sb.found === true ? { found: true, fields: Array.isArray(sb.fields) ? sb.fields.map(String).slice(0, 12) : [] } : null,
-      cardType: out.cardType === "scenario" ? "scenario" : "character",
-      cast: Array.isArray(out.cast) ? out.cast.slice(0, 12).map((c) => ({ name: String((c as Record<string, unknown>)?.name ?? ""), relation: String((c as Record<string, unknown>)?.relation ?? "") })).filter((c) => c.name) : [],
+      summary: read.summary,
+      suggestedTemplate: read.style,
+      reason: read.reason,
+      statusBlock: read.statusBlock ? { found: true, fields: read.statusFields } : null,
+      cardType: read.cardType,
+      cast: read.cast,
+      romance: read.romance,
     };
-    s.base = opts.base || suggested;
-    // Suggest only systems that fit the card. Quests remain selectable.
-    const picked = Array.isArray(out.systems) ? out.systems.map(String).filter((x) => SYSTEMS.some((y) => y.id === x)) : ["needs", "relationships", "money", "skills", "story"];
-    const defaults = [...new Set(picked)];
-    s.rounds = [{ questions: [...coreQuestions(defaults), ...normQuestions(out.followUps, "f1_")], answers: {} }];
+    s.base = picked ?? read.style;
+    s.rounds = [{ questions: [...coreQuestions(s.base as Style, picked ? "" : read.reason), ...read.followUps], answers: {} }];
     s.step = "questions";
   } catch (e) {
     s.error = `Couldn't read the card: ${e instanceof Error ? e.message : String(e)}`;
@@ -410,58 +418,34 @@ export async function builderStart(chatId: string, opts: { connectionId: string;
   await progress(s, null, userId);
 }
 
-export async function builderAnswer(chatId: string, answers: Record<string, BuilderAnswer>, additions: BuilderAddition[], more: boolean, userId?: string) {
+export async function builderAnswer(chatId: string, answers: Record<string, BuilderAnswer>, additions: BuilderAddition[], userId?: string) {
   const s = await sessionFor(chatId, userId);
   if (!s || !s.rounds.length) throw new Error("No questions to answer.");
-  // Earlier rounds stay editable, so file each answer under the round that asked it.
   for (const r of s.rounds) for (const q of r.questions) if (q.id in answers) r.answers[q.id] = answers[q.id];
-  s.additions = additions.filter((a) => a.name.trim());
-  if (more && s.rounds.length < 3) {
-    await progress(s, "Thinking of more questions…", userId);
-    try {
-      const card = await cardText(s.characterId, userId);
-      const user = `${card.text}\n\n${brief(s)}\n\nAsk up to 4 more short questions that would change how the game ruleset is built — things still unclear or worth customising for this card. Don't repeat earlier questions. Reply with JSON: {"followUps": [{"text": "...", "kind": "single|multi|text", "options": ["..."], "why": "..."}]}`;
-      const out = parseJson(await llm(s, "You help set up a game ruleset for a roleplay character card. Reply with JSON only.", user, userId, 1000)) ?? {};
-      const qs = normQuestions(out.followUps, `f${s.rounds.length + 1}_`).slice(0, 4);
-      if (qs.length) s.rounds.push({ questions: qs, answers: {} });
-      else s.error = "No more questions — you can build it now.";
-    } catch (e) {
-      s.error = `Couldn't get more questions: ${e instanceof Error ? e.message : String(e)}`;
-    }
-    await progress(s, null, userId);
-    return;
-  }
+  s.additions = additions.filter((a) => a.name.trim()).slice(0, 8);
+  s.base = styleOf(s);
   await draftAll(s, userId);
 }
 
+/** The chosen template themed for the card: the foundations in parallel, then the parts that refer to them. */
 async function draftAll(s: BuilderSession, userId?: string) {
-  const t = getTemplate(s.base);
-  const systems = chosenSystems(s);
-  const want = (label: PartLabel) => {
-    if (label === "conflict") return systems.has("encounters");
-    if (label === "story") return systems.has("story");
-    return true;
-  };
-  const baseOf = (label: string) => {
-    const y = t?.parts.find((p) => p.label === label)?.yaml ?? null;
-    return y && label === "people" && s.analysis?.cardType !== "scenario" ? withCharacter(y, s.characterName) : y;
-  };
-  const labels = PART_LABELS.filter(want);
-  s.parts = labels.map((label) => ({ label, yaml: "", status: "ok", issues: [] }));
+  const base = baseParts(s);
+  s.parts = base.map((p) => ({ label: p.label, yaml: p.yaml, status: "ok", issues: [] }));
   const byLabel = (l: string) => s.parts.find((p) => p.label === l)!;
+  const baseOf = (l: string) => base.find((p) => p.label === l)!.yaml;
   try {
-    // A plan before any YAML: what the game is, and how its systems connect.
-    await progress(s, "Planning the game: the loop, the pressures, how it all connects…", userId);
-    s.plan = await designPlan(s, [...systems], userId).catch((e) => { logError("builder plan", e); return null; });
-    emit(s, userId);
-    // Foundations first (in parallel), then everything that refers to them.
-    const phaseA: PartLabel[] = ["core", "stats", "world"];
-    await progress(s, "Drafting the foundations: core, stats, world…", userId);
-    await Promise.all(phaseA.map(async (l) => { byLabel(l).yaml = await draftPart(s, l, baseOf(l), "", userId); }));
-    const phaseB = labels.filter((l) => !phaseA.includes(l));
-    await progress(s, `Drafting ${phaseB.join(", ")}…`, userId);
-    const ctx = contextOf(s.parts);
-    await Promise.all(phaseB.map(async (l) => { byLabel(l).yaml = await draftPart(s, l, baseOf(l), ctx, userId); }));
+    const first = s.parts.filter((p) => ["core", "stats", "people"].includes(p.label)).map((p) => p.label);
+    await progress(s, `Theming ${first.join(", ")}…`, userId);
+    await Promise.all(first.map(async (l) => { byLabel(l).yaml = await themePart(s, l, baseOf(l), "", userId); }));
+    const rest = s.parts.filter((p) => !first.includes(p.label)).map((p) => p.label);
+    if (rest.length) {
+      await progress(s, `Theming ${rest.join(", ")}…`, userId);
+      // A foundation that came back broken is read from the template for now (the repair fixes it later), so the
+      // other parts still see the right ids and band names.
+      const readable = (p: BuilderPart) => !loadRuleset([{ label: `warp-ruleset · ${p.label}`, content: p.yaml, order: 0 }]).issues.some((i) => i.level === "error");
+      const ctx = contextOf(s.parts.map((p) => (readable(p) ? p : { ...p, yaml: baseOf(p.label) })));
+      await Promise.all(rest.map(async (l) => { byLabel(l).yaml = await themePart(s, l, baseOf(l), ctx, userId); }));
+    }
     await repair(s, s.parts, userId);
     buildPreview(s);
     s.step = "review";
@@ -471,6 +455,7 @@ async function draftAll(s: BuilderSession, userId?: string) {
   await progress(s, null, userId);
 }
 
+/** Rewrite one part (with an optional note), then the same repair. */
 export async function builderRedo(chatId: string, label: string, note: string | undefined, userId?: string) {
   const s = await sessionFor(chatId, userId);
   const part = s?.parts.find((p) => p.label === label);
@@ -478,8 +463,8 @@ export async function builderRedo(chatId: string, label: string, note: string | 
   await progress(s, `Rewriting ${label}…`, userId);
   try {
     const ctx = contextOf(s.parts.filter((p) => p !== part));
-    const t = getTemplate(s.base);
-    part.yaml = await draftPart(s, label as PartLabel, t?.parts.find((p) => p.label === label)?.yaml ?? null, ctx, userId, note || "Write a fresh, better version.", part.yaml);
+    const base = s.mode === "build" ? baseParts(s).find((p) => p.label === label)?.yaml ?? part.yaml : part.yaml;
+    part.yaml = await themePart(s, label, base, ctx, userId, note || "Write a fresh, better version.", part.yaml);
     part.changed = true;
     await repair(s, s.parts, userId);
     buildPreview(s);
@@ -489,6 +474,7 @@ export async function builderRedo(chatId: string, label: string, note: string | 
   await progress(s, null, userId);
 }
 
+/** Refine: one call that returns the changed parts, then the checker repair. */
 export async function builderRefine(chatId: string, request: string, userId?: string) {
   const s = await sessionFor(chatId, userId);
   if (!s || !s.parts.length) throw new Error("Nothing to refine.");
@@ -496,7 +482,8 @@ export async function builderRefine(chatId: string, request: string, userId?: st
   await progress(s, "Working out what to change…", userId);
   try {
     const all = s.parts.map((p) => `### ${p.label}\n${p.yaml}`).join("\n\n");
-    const user = `${brief(s)}\n\nThe current ruleset, section by section:\n\n${all}\n\nThe player wants: ${request}\n\nChange only what's needed. Reply with JSON: {"summary": "one or two sentences on what you changed", "parts": {"<section label>": "<the whole new YAML for that section>"}} — include only sections you changed. Section labels: ${s.parts.map((p) => p.label).join(", ")}${s.parts.length < PART_LABELS.length ? ` (you may also add: ${PART_LABELS.filter((l) => !s.parts.some((p) => p.label === l)).join(", ")})` : ""}.`;
+    const missing = PART_LABELS.filter((l) => !s.parts.some((p) => p.label === l));
+    const user = `${s.analysis ? `${brief(s)}\n\n` : ""}The current ruleset, part by part:\n\n${all}\n\nThe player wants: ${request}\n\nChange only what's needed, inside the format. Reply with JSON: {"summary": "one or two sentences on what you changed", "parts": {"<part label>": "<the whole new YAML for that part>"}}. Include only the parts you changed. Part labels: ${s.parts.map((p) => p.label).join(", ")}${missing.length ? ` (you may also add: ${missing.join(", ")})` : ""}.`;
     const out = parseJson(await llm(s, SYSTEM_PROMPT, user, userId, 6000)) ?? {};
     const changed = (out.parts && typeof out.parts === "object" ? out.parts : {}) as Record<string, unknown>;
     for (const p of s.parts) p.changed = false;
@@ -506,7 +493,7 @@ export async function builderRefine(chatId: string, request: string, userId?: st
       if (existing) { existing.yaml = extractYaml(yaml); existing.changed = true; }
       else s.parts.push({ label, yaml: extractYaml(yaml), status: "ok", issues: [], changed: true });
     }
-    s.changeSummary = typeof out.summary === "string" ? out.summary : Object.keys(changed).length ? `Changed: ${Object.keys(changed).join(", ")}.` : "The model didn't change anything — try rephrasing.";
+    s.changeSummary = typeof out.summary === "string" ? out.summary : Object.keys(changed).length ? `Changed: ${Object.keys(changed).join(", ")}.` : "The model didn't change anything. Try rephrasing.";
     await repair(s, s.parts, userId);
     buildPreview(s);
   } catch (e) {
@@ -519,10 +506,7 @@ export async function builderBack(chatId: string, userId?: string) {
   const s = await sessionFor(chatId, userId);
   if (!s) return;
   if (s.step === "review" && s.mode === "build") s.step = "questions";
-  else if (s.step === "questions") {
-    if (s.rounds.length > 1) s.rounds.pop();
-    else s.step = "start";
-  }
+  else if (s.step === "questions") s.step = "start";
   s.error = null;
   await save(s, userId);
   emit(s, userId);
@@ -542,7 +526,7 @@ export async function builderCurrent(chatId: string | null, userId?: string) {
   emit(chatId ? await sessionFor(chatId, userId) : null, userId, chatId);
 }
 
-// ───────────────────────── lorebook I/O ─────────────────────────
+// ───────────────────────── the installed ruleset ─────────────────────────
 
 export async function currentParts(characterId: string, userId?: string): Promise<BuilderPart[]> {
   const { entries } = await rulesetEntries(characterId, userId);
@@ -556,7 +540,7 @@ export async function builderInstall(chatId: string, userId?: string) {
   if (!s || !s.parts.length) throw new Error("Nothing to install.");
   const { ruleset, issues } = check(s.parts);
   if (!ruleset || issues.some((i) => i.level === "error")) {
-    s.error = "Fix or redo the sections marked in red before installing.";
+    s.error = "Fix or redo the parts marked in red before installing.";
     await progress(s, null, userId);
     return;
   }
@@ -571,5 +555,3 @@ export async function builderInstall(chatId: string, userId?: string) {
   }
   await progress(s, null, userId);
 }
-
-export { SYSTEMS };

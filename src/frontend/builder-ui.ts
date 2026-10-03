@@ -9,16 +9,16 @@ export interface BuilderDraft {
   additions: BuilderAddition[];
   notes: Record<string, string>;
   refine: string;
+  /** Story or Adventure picked on the start screen ("" = let the card read pick). */
   base: string;
-  creative: boolean;
   connectionId: string;
 }
 
 export function emptyDraft(): BuilderDraft {
-  return { answers: {}, additions: [], notes: {}, refine: "", base: "", creative: false, connectionId: "" };
+  return { answers: {}, additions: [], notes: {}, refine: "", base: "", connectionId: "" };
 }
 
-const KINDS: BuilderAddition["kind"][] = ["skill", "meter", "item", "place", "person", "action", "rule", "other"];
+const KINDS: BuilderAddition["kind"][] = ["skill", "meter", "item", "person", "action", "rule", "other"];
 const REFINE_CHIPS = [
   "Make it harder",
   "Make it more forgiving",
@@ -31,7 +31,7 @@ export function renderBuilderCta(hasRuleset: boolean, hasChat: boolean): string 
   if (!hasChat) return "";
   return `<div class="warp-card warp-builder-cta">
     <h3>✨ Build with AI</h3>
-    <p>Warp reads the card, asks you a few questions, and drafts a ruleset that fits — checked and previewed before anything is saved.</p>
+    <p>Warp reads the card, picks Story or Adventure, asks you three questions, and fits that template to the card: checked and previewed before anything is saved.</p>
     <div class="warp-row">
       <button class="warp-btn warp-btn-primary" data-b="open-build">${hasRuleset ? "Rebuild with AI" : "Build with AI"}</button>
       ${hasRuleset ? `<button class="warp-btn" data-b="open-refine">Refine with AI</button>` : ""}
@@ -40,7 +40,7 @@ export function renderBuilderCta(hasRuleset: boolean, hasChat: boolean): string 
 }
 
 function steps(s: BuilderSession): string {
-  const list = s.mode === "refine" ? ["Describe", "Review", "Install"] : ["Read", "Ask", "Plan & build", "Review", "Install"];
+  const list = s.mode === "refine" ? ["Describe", "Review", "Install"] : ["Read", "Ask", "Draft & check", "Review", "Install"];
   const at = s.mode !== "build"
     ? (s.step === "done" ? 2 : 1)
     : s.step === "start" ? 0 : s.step === "questions" ? (s.busy ? 2 : 1) : s.step === "review" ? 3 : 4;
@@ -74,7 +74,7 @@ function additions(d: BuilderDraft): string {
     </div>`).join("");
   return `<div class="warp-card">
     <h3>Add your own</h3>
-    <p>Skills, meters, items, places, people, actions or rules you want in — in your own words. They'll be built in properly.</p>
+    <p>Skills, meters, items, people, actions or rules you want in, in your own words. They're fitted in where the format allows.</p>
     ${rows}
     <div class="warp-row"><button class="warp-btn" data-b="add-row">+ Add something</button></div>
   </div>`;
@@ -88,7 +88,7 @@ export function renderBuilder(s: BuilderSession, d: BuilderDraft, templates: Tem
   }
 }
 
-function builderHtml(s: BuilderSession, d: BuilderDraft, templates: TemplateInfo[], connections: { id: string; name: string }[], hasRuleset: boolean): string {
+function builderHtml(s: BuilderSession, d: BuilderDraft, _templates: TemplateInfo[], connections: { id: string; name: string }[], hasRuleset: boolean): string {
   const busy = !!s.busy;
   const dis = busy ? " disabled" : "";
   const head = `<div class="warp-builder-head">
@@ -98,48 +98,43 @@ function builderHtml(s: BuilderSession, d: BuilderDraft, templates: TemplateInfo
   const status = busy
     ? `<div class="warp-card warp-busy-card"><div class="warp-status-line"><span class="warp-spinner"></span>${esc(s.busy!)}</div><p>This can take a minute or two — you can keep chatting; the drawer updates as it works.</p></div>`
     : s.error ? `<div class="warp-card warp-error-card"><p class="warp-tone-bad">${esc(s.error)}</p></div>` : "";
-  const plan = s.plan ? `<details class="warp-card warp-plan"><summary><b>The design plan</b> <span class="warp-dim">— written before any rules, and held to</span></summary><pre class="warp-plan-text">${esc(s.plan)}</pre></details>` : "";
 
   let body = "";
   if (s.step === "start") {
+    const styles = [["", "Let Warp pick after reading the card"], ["story", "📖 Story (no dice)"], ["adventure", "🎲 Adventure (dice)"]];
     body = `<div class="warp-card">
       <h3>How should it build?</h3>
-      <label class="warp-field"><span>Starting point</span>
+      <label class="warp-field"><span>Template</span>
         <select class="warp-select" data-bset="base">
-          <option value=""${!d.base ? " selected" : ""}>Let the AI pick after reading the card</option>
-          ${templates.map((t) => `<option value="${esc(t.id)}"${d.base === t.id ? " selected" : ""}>${esc(t.name)}</option>`).join("")}
-          <option value="blank"${d.base === "blank" ? " selected" : ""}>Blank — from scratch</option>
+          ${styles.map(([v, label]) => `<option value="${v}"${d.base === v ? " selected" : ""}>${esc(label)}</option>`).join("")}
         </select></label>
-      <div class="warp-seg" role="radiogroup" aria-label="Style">
-        <button class="warp-seg-btn" data-bset="creative" data-v="0" aria-pressed="${!d.creative}">Stay close to the template</button>
-        <button class="warp-seg-btn" data-bset="creative" data-v="1" aria-pressed="${d.creative}">Get creative</button>
-      </div>
       <label class="warp-field"><span>Model</span>
         <select class="warp-select" data-bset="connectionId">
           <option value="">Same as the chat</option>
           ${connections.map((c) => `<option value="${esc(c.id)}"${d.connectionId === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("")}
         </select></label>
-      <p>A strong model gives better rulesets. It plans the game, drafts each section, and fixes whatever Warp's checker reports. Nothing is saved until you install it at the end.</p>
+      <p>It reads the card once, asks a few questions, then fits each part of the template to the card and fixes whatever Warp's checker reports. Nothing is saved until you install it at the end. For deeper passes, checks and playtests, use Warp Studio.</p>
       <div class="warp-row"><button class="warp-btn warp-btn-primary" data-b="start"${dis}>Read the card →</button></div>
     </div>`;
   } else if (s.step === "questions") {
     const a = s.analysis;
+    const styleName = (id: string) => (id === "story" ? "Story (no dice)" : id === "adventure" ? "Adventure (dice)" : id);
     const analysis = a ? `<div class="warp-card">
         <h3>What I read</h3>
         <p>${esc(a.summary)}</p>
-        <p><b>Starting from:</b> ${esc(templates.find((t) => t.id === s.base)?.name ?? (s.base === "blank" ? "Blank" : s.base))}${s.base === a.suggestedTemplate && a.reason ? ` — ${esc(a.reason)}` : ""}</p>
+        <p><b>Suggested:</b> ${esc(styleName(a.suggestedTemplate))}${a.reason ? ` — ${esc(a.reason)}` : ""}</p>
         ${a.cardType === "scenario" ? `<p>This reads as a <b>scenario card</b> — “${esc(s.characterName)}” is the setting, so it won't be tracked as a person.</p>` : ""}
+        ${a.romance ? `<p>Romance is a main theme, so <b>attraction</b> is tracked next to affection and trust.</p>` : ""}
         ${a.cast?.length ? `<p><b>Cast</b> (tracked from the start, with these starting feelings):</p><ul class="warp-cast">${a.cast.map((c) => `<li><b>${esc(c.name)}</b> — ${esc(c.relation)}</li>`).join("")}</ul>` : ""}
-        ${a.statusBlock?.found ? `<p class="warp-tone-warn">This card prints its own status block (${esc(a.statusBlock.fields.join(", ") || "stats")}). Warp will track those properly and tell the narrator to stop printing it.</p>` : ""}
+        ${a.statusBlock?.found ? `<p class="warp-tone-warn">This card prints its own status block (${esc(a.statusBlock.fields.join(", ") || "stats")}). Warp tracks the story now and tells the narrator to stop printing it.</p>` : ""}
       </div>` : "";
-    const rounds = s.rounds.map((r, i) => `<div class="warp-card">
-        <h3>${i === 0 ? "A few questions" : "A few more"}</h3>
+    const rounds = s.rounds.map((r) => `<div class="warp-card">
+        <h3>A few questions</h3>
         ${r.questions.map((q) => question(q, d.answers[q.id] ?? r.answers[q.id])).join("")}
       </div>`).join("");
     body = `${analysis}${rounds}${additions(d)}
       <div class="warp-row warp-builder-foot">
         <button class="warp-btn warp-btn-ghost" data-b="back"${dis}>← Back</button>
-        ${s.rounds.length < 3 ? `<button class="warp-btn" data-b="more"${dis}>Ask me more</button>` : ""}
         <button class="warp-btn warp-btn-primary" data-b="build"${dis}>Build it →</button>
       </div>`;
   } else if (s.step === "review") {
@@ -174,7 +169,7 @@ function builderHtml(s: BuilderSession, d: BuilderDraft, templates: TemplateInfo
         <textarea class="warp-input" rows="2" data-brefine placeholder="e.g. Add a cooking skill Aina is bad at, and a kitchen at home">${esc(d.refine)}</textarea>
         <div class="warp-row"><button class="warp-btn" data-b="refine"${dis}>Apply change</button></div>
       </div>`;
-    body = `${summary}${plan}${preview}${parts}${refine}
+    body = `${summary}${preview}${parts}${refine}
       <div class="warp-row warp-builder-foot">
         ${s.mode === "build" ? `<button class="warp-btn warp-btn-ghost" data-b="back"${dis}>← Back to questions</button>` : ""}
         <button class="warp-btn warp-btn-primary" data-b="install" data-replacing="${hasRuleset ? 1 : 0}"${errors || busy ? " disabled" : ""} title="${errors ? "Fix or redo the sections marked in red first" : ""}">${s.mode === "build" ? "Install to lorebook" : "Save changes"}</button>

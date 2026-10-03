@@ -543,8 +543,6 @@ export function setup(ctx: SpindleFrontendContext) {
       renderDrawer();
       return true;
     }
-    const seg = t.closest<HTMLElement>('[data-bset="creative"]');
-    if (seg) { bDraft.creative = seg.dataset.v === "1"; renderDrawer(); return true; }
     const b = t.closest<HTMLElement>("[data-b]");
     if (!b) return false;
     const cid = chatId();
@@ -552,9 +550,9 @@ export function setup(ctx: SpindleFrontendContext) {
     switch (b.dataset.b) {
       case "open-build": drawerView = "rules"; send({ type: "builder_open", chatId: cid, mode: "build" }); break;
       case "open-refine": drawerView = "rules"; send({ type: "builder_open", chatId: cid, mode: "refine" }); break;
-      case "start": send({ type: "builder_start", chatId: cid, connectionId: bDraft.connectionId, creative: bDraft.creative, base: bDraft.base || undefined }); break;
-      case "more": case "build":
-        send({ type: "builder_answer", chatId: cid, answers: builderAnswers(), additions: bDraft.additions, more: b.dataset.b === "more" });
+      case "start": send({ type: "builder_start", chatId: cid, connectionId: bDraft.connectionId, base: bDraft.base || undefined }); break;
+      case "build":
+        send({ type: "builder_answer", chatId: cid, answers: builderAnswers(), additions: bDraft.additions });
         break;
       case "back": send({ type: "builder_back", chatId: cid }); break;
       case "close":
@@ -906,7 +904,7 @@ export function setup(ctx: SpindleFrontendContext) {
         builder = m.session;
         // A different session (or none): start the drafts fresh.
         if (!builder || !prev || prev.characterId !== builder.characterId || prev.mode !== builder.mode || (prev.step !== builder.step && builder.step === "start")) {
-          const keep = { creative: bDraft.creative, connectionId: bDraft.connectionId };
+          const keep = { connectionId: bDraft.connectionId };
           bDraft = { ...emptyDraft(), ...keep, ...(builder ? { additions: builder.additions.map((a) => ({ ...a })) } : {}) };
         }
         if (builder && prev?.step !== builder.step) bDraft.notes = {};
