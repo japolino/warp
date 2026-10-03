@@ -87,9 +87,9 @@ live_choices:
   guide: "Three different moves in the story's own words: one warm, one honest or bold, one that gives space or moves on."
   tags:
     tender:   { desc: "Something warm, gentle or caring toward someone here", per_person: true }
-    playful:  { desc: "Teasing, joking or flirting with someone here", per_person: true }
+    playful:  { desc: "Teasing or joking with someone here", per_person: true }
     honest:   { desc: "Saying something true or vulnerable to someone here", per_person: true }
-    bold:     { desc: "A bold move with someone here (closer, a confession) only when the moment invites it", per_person: true }
+    bold:     { desc: "A bold romantic move with someone here (flirting, getting closer, a confession) only when the moment invites it", per_person: true, tags: [romance] }
     space:    { desc: "Giving room: pulling back, changing the subject, letting a silence sit" }
     onward:   { desc: "Moving the story along: leaving, suggesting somewhere else, ending the day" }
 `,
