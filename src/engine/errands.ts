@@ -4,7 +4,7 @@
 
 import type { ErrandsView } from "../shared/protocol.js";
 import { questOffers, effectWords, QUEST_PREFIX } from "./quests.js";
-import { ITEM_PREFIX, TRAVEL_PREFIX, findAction, lockReason, odds, resolveTurnFull, travelTargets, usableItems, type Intent } from "./resolve.js";
+import { ITEM_PREFIX, TRAVEL_PREFIX, findAction, lockReason, odds, resolveTurnFull, travelTargets, usableItems } from "./resolve.js";
 import type { ActionDef, Effect, Ruleset } from "./ruleset.js";
 import { foldEvents, formatMoney, itemName, makeEnv, type GameState, type WarpEvent } from "./state.js";
 import { evalNumber } from "./expr.js";
@@ -37,7 +37,7 @@ function amount(r: Ruleset, s: GameState, v: string | number): number {
 export function errandKind(r: Ruleset, a: ActionDef): ErrandKind | null {
   if (a.errand === false) return null;
   if (a.errand) return a.errand;
-  if (a.hidden || a.perPerson || a.params.length || a.gamble || a.perEncounter) return null;
+  if (a.hidden || a.perPerson || a.params.length || a.perEncounter) return null;
   const all = [a.effects, a.cost, ...Object.values(a.outcomes)];
   if (!all.every(offStage)) return null;
   const money = new Set(moneyIds(r));
@@ -108,9 +108,9 @@ function affordable(r: Ruleset, s: GameState, a: ActionDef): number {
   return Math.max(0, max);
 }
 
-/** Is an errand open right now? Not in a fight, a date, a dungeon, a shift, or after the end. */
+/** Is an errand open right now? Not in a fight, a shift, or after the end. */
 export function errandsOpen(s: GameState): boolean {
-  return !s.encounter && !s.dungeon && !s.date && !s.job && !s.ended;
+  return !s.encounter && !s.job && !s.ended;
 }
 
 /** The errand window's contents here and now, or null when there's nothing to do (or it isn't the time). */
@@ -224,9 +224,8 @@ export interface QuietResult {
  * minus the story — world news that's waiting stays for the next reply. Stops early when it can't go on.
  * `changes(before, after, events)` words what changed (the view's change chips).
  */
-export function runQuiet(r: Ruleset, s: GameState, actionId: string, times: number, opts: { seed: () => string; params?: Record<string, string>; game?: Intent["game"]; changes: (before: GameState, after: GameState, events: WarpEvent[]) => string[] }): QuietResult {
-  // A played minigame is one session.
-  const n = opts.game ? 1 : Math.max(1, Math.min(MAX_TIMES, Math.floor(times) || 1));
+export function runQuiet(r: Ruleset, s: GameState, actionId: string, times: number, opts: { seed: () => string; params?: Record<string, string>; changes: (before: GameState, after: GameState, events: WarpEvent[]) => string[] }): QuietResult {
+  const n = Math.max(1, Math.min(MAX_TIMES, Math.floor(times) || 1));
   const blocked = quietBlocker(r, s, actionId);
   if (blocked) return { events: [], line: null, done: 0, error: blocked, after: s };
   const what = quietWhat(r, s, actionId);
@@ -235,7 +234,7 @@ export function runQuiet(r: Ruleset, s: GameState, actionId: string, times: numb
   let done = 0, rolled = 0, good = 0;
   for (let i = 0; i < n; i++) {
     if (i > 0 && quietBlocker(r, st, actionId)) break;
-    const rec = resolveTurnFull(r, st, { actionId, via: "choice", ...(opts.params ? { params: opts.params } : {}), ...(opts.game ? { game: opts.game } : {}) }, { seed: opts.seed() }).record;
+    const rec = resolveTurnFull(r, st, { actionId, via: "choice", ...(opts.params ? { params: opts.params } : {}) }, { seed: opts.seed() }).record;
     // Waiting world news stays waiting: the next reply tells it.
     const evs = rec.events.filter((e) => e.t !== "noticed");
     if (rec.check) { rolled++; if (["success", "crit_success"].includes(rec.check.tier)) good++; }

@@ -170,11 +170,7 @@ export async function modelRound(o: RoundInput, settings: Settings, userId?: str
 }
 
 export async function writeRound(o: RoundInput, settings: Settings, userId?: string): Promise<string> {
-  if (settings.sceneLines === "model") {
-    const t = await modelRound(o, settings, userId);
-    if (t) return t;
-  }
-  return scriptedRound(o);
+  return (await modelRound(o, settings, userId)) ?? scriptedRound(o);
 }
 
 // ───────────────────────── the closing paragraph ─────────────────────────
@@ -202,7 +198,6 @@ export function scriptedSummary(o: SummaryInput): string {
 
 export async function encounterSummary(o: SummaryInput, settings: Settings, userId?: string): Promise<string> {
   const fallback = scriptedSummary(o);
-  if (settings.sceneLines !== "model") return fallback;
   const pov = storyPov(o.story, o.player);
   try {
     const text = (await askProse(

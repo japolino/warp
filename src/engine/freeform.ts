@@ -137,8 +137,7 @@ export function practiceKey(s: GameState, context: PracticeContext): string {
   const difficulty = context.actionId.startsWith(IMPROV)
     ? (isDifficulty(context.params?.difficulty) ? context.params!.difficulty : "fair") : null;
   return JSON.stringify([context.actionId, s.location, people, context.target ?? null, difficulty,
-    encounterKey(s) ?? null, s.encounter?.foeName ?? null,
-    s.dungeon ? [s.dungeon.id, s.dungeon.depth, ...s.dungeon.pos] : null]);
+    encounterKey(s) ?? null, s.encounter?.foeName ?? null]);
 }
 
 /** Repeated checks in the same context teach less, but failures still teach.

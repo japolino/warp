@@ -1,29 +1,18 @@
 import type { SpindleFloatWidgetHandle, SpindleFrontendContext } from "lumiverse-spindle-types";
 import type {
-  BackendToFrontend, BuilderAnswer, BuilderSession, ChoiceView, EncounterLogView, FrontendToBackend, GameResult, RecordView, RulesetStatus, Settings, TemplateInfo,
+  BackendToFrontend, BuilderAnswer, BuilderSession, EncounterLogView, FrontendToBackend, RecordView, RulesetStatus, Settings, TemplateInfo,
 } from "./shared/protocol.js";
 import { DEFAULT_SETTINGS } from "./shared/protocol.js";
 import { OPENROUTER_JEV } from "./shared/classifier-config.js";
 import { STYLES } from "./frontend/styles.js";
 import { attachedBox, edgeForDrop, PAD, PANEL_W, PILL, type Box, type Edge, type Viewport } from "./frontend/overlay-layout.js";
 import { emptyDraft, renderBuilder, renderBuilderCta, type BuilderDraft } from "./frontend/builder-ui.js";
-import { renderDungeon, type DungeonPick } from "./frontend/dungeon-ui.js";
 import { connectCue } from "./frontend/cue-bridge.js";
-import { renderDate } from "./frontend/date-ui.js";
-import { dressStage, formatStory, renderStage, replaceStageScene, stageModeOf, type StageMode } from "./frontend/stage.js";
-import { STAGE_STYLES } from "./frontend/stage-styles.js";
-import { FX_STYLES } from "./frontend/fx-styles.js";
 import { esc, hudParts, renderChips, renderDepthCard, renderEncounterLog, renderWhyFold, renderChoices, renderHud, renderJournal, renderPart, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
 import { createPanels, wireGrip } from "./frontend/panel-windows.js";
 import { createDollLab, DOLL_STYLES } from "./frontend/doll/lab.js";
-import { fxEvents } from "./frontend/fx-events.js";
-import { playFx, typewrite } from "./frontend/fx.js";
-import { armAudio, play, setVolume } from "./frontend/sfx.js";
 import { restoreMaps, wireMaps } from "./frontend/map-view.js";
 import { acceptsResponse } from "./frontend/response-gate.js";
-import { createArcade } from "./frontend/arcade/arcade.js";
-import { acceptsArcadeResult, automaticChallenge, playableChoice } from "./frontend/arcade/choice-flow.js";
-import { ARCADE_STYLES } from "./frontend/arcade/styles.js";
 import { logoSvg } from "./frontend/logo.js";
 import { ERRAND_STYLES, errandTabs, pickErrandTab, renderErrandEntries, renderErrands } from "./frontend/errands-ui.js";
 
@@ -45,18 +34,13 @@ export function setup(ctx: SpindleFrontendContext) {
 
   const cleanups: (() => void)[] = [];
   cleanups.push(ctx.dom.addStyle(STYLES));
-  cleanups.push(ctx.dom.addStyle(STAGE_STYLES));
-  cleanups.push(ctx.dom.addStyle(FX_STYLES));
-  cleanups.push(ctx.dom.addStyle(ARCADE_STYLES));
   cleanups.push(ctx.dom.addStyle(DOLL_STYLES));
   cleanups.push(ctx.dom.addStyle(ERRAND_STYLES));
-  cleanups.push(armAudio());
 
   let state: StateMsg | null = null;
   let settings: Settings = { ...DEFAULT_SETTINGS };
   let templates: TemplateInfo[] = [];
   let connections: { id: string; name: string }[] = [];
-  let imageConnections: { id: string; name: string }[] = [];
   let jevKeySet = false;
   let builder: BuilderSession | null = null;
   /** The installed rulebook, exported as one file (shown in the Ruleset tab until closed). */
@@ -66,10 +50,7 @@ export function setup(ctx: SpindleFrontendContext) {
   let editingBar: string | null = null;
   /** Steps placed with +/− on `allocate:` stats, not yet spent. */
   let allocDraft: Record<string, number> = {};
-  let drawerView: "sheet" | "journal" | "date" | "dungeon" | "doll" | "rules" | "settings" = "sheet";
-  let dateCat: string | null = null;
-  let dgPick: DungeonPick = null;
-  const dgMates = new Set<string>();
+  let drawerView: "sheet" | "journal" | "doll" | "rules" | "settings" = "sheet";
   const openSections = new Map<string, boolean>();
 
   const send = (m: FrontendToBackend) => ctx.sendToBackend(m);
@@ -149,119 +130,12 @@ export function setup(ctx: SpindleFrontendContext) {
     overlay = null; // ui_panels not granted — the drawer tab still has everything
   }
 
-  // The stage: a dungeon run or a date takes the whole screen, apart from the chat.
-  // The scene re-renders with the state; the story box and the line being typed persist.
-  const stageEl = document.createElement("div");
-  stageEl.className = "warp-stage";
-  stageEl.innerHTML = `<div class="warp-stage-scene"></div>
-    <section class="warp-stage-story" aria-label="The story">
-      <div class="warp-stage-story-head"><span class="warp-stage-speaker"></span><button class="warp-stage-fold" type="button" data-stage-fold title="Fold the story" aria-label="Fold the story">▾</button></div>
-      <div class="warp-stage-story-body"><div class="warp-stage-said"></div><div class="warp-stage-text" aria-live="polite"></div><div class="warp-stage-status"></div></div>
-      <form class="warp-stage-say"><textarea rows="1" placeholder="Say or do something…" aria-label="Your line" enterkeyhint="send"></textarea><button type="submit" class="warp-stage-btn primary">Send</button></form>
-    </section>`;
-  const sceneEl = stageEl.querySelector<HTMLElement>(".warp-stage-scene")!;
-  const storyEl = stageEl.querySelector<HTMLElement>(".warp-stage-story")!;
-  const storyBody = stageEl.querySelector<HTMLElement>(".warp-stage-story-body")!;
-  const speakerEl = stageEl.querySelector<HTMLElement>(".warp-stage-speaker")!;
-  const saidEl = stageEl.querySelector<HTMLElement>(".warp-stage-said")!;
-  const textEl = stageEl.querySelector<HTMLElement>(".warp-stage-text")!;
-  const statusEl = stageEl.querySelector<HTMLElement>(".warp-stage-status")!;
-  const sayForm = stageEl.querySelector<HTMLFormElement>(".warp-stage-say")!;
-  const sayInput = sayForm.querySelector<HTMLTextAreaElement>("textarea")!;
-  const sayButton = sayForm.querySelector<HTMLButtonElement>("button")!;
-  // Lumiverse gives an extension 4 floating windows. The main window keeps one; the stage and the arcade take theirs
-  // only while they're up, and the torn-off panels (hidden behind them then) hand theirs back meanwhile.
-  // Without floating surfaces (no main window either), the drawer's Dungeon and Dating tabs still work.
-  const canFloat = !!overlay;
-  let stage: SpindleFloatWidgetHandle | null = null;
-  /** The stage is wanted on screen: the panels step aside first so it has a window. */
-  let stageWanted = false;
-  function mountStage(): boolean {
-    if (stage) return true;
-    try {
-      stage = ctx.ui.createFloatWidget({ fullscreen: true, chromeless: true, snapToEdge: false });
-      stage.root.appendChild(stageEl);
-      return true;
-    } catch {
-      stage = null;
-      return false;
-    }
-  }
-  function unmountStage() {
-    if (!stage) return;
-    try { stage.destroy(); } catch { /* gone already */ }
-    stage = null;
-  }
-  cleanups.push(() => unmountStage());
-  // The host's widget menu ("hide widget") has no place on the stage.
-  stageEl.addEventListener("contextmenu", (e) => e.stopPropagation());
-
-  // The arcade: a check played as a minigame instead of rolled, or a seat at a table.
-  // Its own full-screen layer, above the stage, made the first time it's needed.
-  let arcadeWidget: SpindleFloatWidgetHandle | null = null;
-  let arcadeOn = false;
-  cleanups.push(() => { try { arcadeWidget?.destroy(); } catch { /* gone already */ } });
-  const arcadeEl = document.createElement("div");
-  arcadeEl.className = "warp-arcade-host";
-  arcadeEl.style.cssText = "position:absolute;inset:0";
-  arcadeEl.addEventListener("contextmenu", (e) => e.stopPropagation());
-  const arcade = createArcade({
-    surface: () => {
-      if (!canFloat) return null;
-      return {
-        root: arcadeEl,
-        show: (on) => {
-          if (!on) {
-            if (arcadeWidget) { try { arcadeWidget.destroy(); } catch { /* gone already */ } arcadeWidget = null; }
-            arcadeOn = false;
-            syncDockVisibility();
-            return;
-          }
-          arcadeOn = true;
-          panels.sync(); // the panels hand back their windows while the arcade is up
-          if (!arcadeWidget) {
-            try {
-              arcadeWidget = ctx.ui.createFloatWidget({ fullscreen: true, chromeless: true, snapToEdge: false });
-              arcadeWidget.root.appendChild(arcadeEl);
-            } catch { arcadeWidget = null; return; }
-          }
-          const w = arcadeWidget;
-          w.setVisible(true);
-          const raise = () => { const host = w.root.parentElement?.parentElement; if (host instanceof HTMLElement) host.style.zIndex = "9994"; };
-          raise(); requestAnimationFrame(() => requestAnimationFrame(raise));
-        },
-      };
-    },
-    volume: () => settings.sfxVolume,
-    sound: () => settings.sfx !== "off",
-    reduced: () => settings.fx !== "full" || matchMedia("(prefers-reduced-motion: reduce)").matches,
-    look: () => (settings.look === "rulebook" ? null : settings.look),
-  });
-  let stageOpen = false;
-  let stageWantGate = false;
-  let stageMode: StageMode | null = null;
-  let stageKey = "";
-  /** The run or date ended while the stage was up: it stays until the player heads back. */
-  let lingering = false;
-  /** Stages the player sent back to the chat (per chat and mode) don't reopen by themselves. */
-  const stageDismissed = new Set<string>();
-  let reactionKey: string | null = null;
-  let storyFolded = store("storyFolded") === "1";
-  storyEl.classList.toggle("folded", storyFolded);
-  /** The snippet on screen, which of its lines is showing, and a copy kept while a finished scene lingers. */
-  let shownScene: StateMsg["scene"] = null;
-  let sceneKey = "";
-  let lineAt = 0;
-  let shownLine = "";
-  let skipLine: () => boolean = () => false;
-  const stageVisible = () => !!stage?.isVisible();
-
   // Sections torn off the main window into panels of their own (see panel-windows.ts).
   const panels = createPanels({
     ctx,
     viewport,
     main: () => (overlay?.isVisible() ? { box: cur, el: overlayEl, open: overlayOpen } : null),
-    shown: () => !!overlay && (!!state?.hud || state?.status.state === "broken") && !stageVisible() && !stageWanted && !arcadeOn,
+    shown: () => !!overlay && (!!state?.hud || state?.status.state === "broken"),
     wire: (body) => wirePanel(body),
     rememberSections: (root) => rememberSections(root),
     restoreSections: (root) => restoreSections(root),
@@ -387,7 +261,7 @@ export function setup(ctx: SpindleFrontendContext) {
 
   function syncDockVisibility() {
     if (!overlay) return;
-    const show = (!!state?.hud || state?.status.state === "broken") && !stageVisible();
+    const show = !!state?.hud || state?.status.state === "broken";
     if (show !== overlay.isVisible()) overlay.setVisible(show);
     if (show) fitOverlay();
     panels.sync();
@@ -403,7 +277,6 @@ export function setup(ctx: SpindleFrontendContext) {
       <span class="warp-overlay-title">🎲 ${clock ? `<b>${esc(clock)}</b>` : "Warp"}${where}</span>
       ${dot}
       <span class="warp-overlay-actions">
-        ${stageMode && !stageVisible() ? `<button class="warp-btn warp-btn-ghost" data-open-stage title="Back to the ${stageMode === "date" ? "date" : "dungeon"}" aria-label="Back to the ${stageMode === "date" ? "date" : "dungeon"}">${stageMode === "date" ? "💬" : "⚔"}</button>` : ""}
         ${overlayOpen && edge ? `<button class="warp-btn warp-btn-ghost" data-detach title="Float" aria-label="Detach">⇱</button>` : ""}
         ${overlayOpen ? `<button class="warp-btn warp-btn-ghost" data-open-sheet title="Open full sheet" aria-label="Open full sheet">⤢</button>` : ""}
         <button class="warp-btn warp-btn-ghost" data-toggle-overlay title="${overlayOpen ? "Collapse" : "Expand"}" aria-label="${overlayOpen ? "Collapse" : "Expand"}">${overlayOpen ? "–" : "+"}</button>
@@ -413,7 +286,6 @@ export function setup(ctx: SpindleFrontendContext) {
   headEl.addEventListener("click", (e) => {
     const t = e.target as Element;
     if (t.closest("[data-open-sheet]")) { drawerView = "sheet"; tab.activate(); return; }
-    if (t.closest("[data-open-stage]")) { openStage(); return; }
     if (t.closest("[data-detach]")) {
       const vp = viewport();
       edge = null;
@@ -506,8 +378,6 @@ export function setup(ctx: SpindleFrontendContext) {
     const views: [typeof drawerView, string][] = [
       ["sheet", "Sheet"],
       ...(state?.hud ? [["journal", "Journal"] as [typeof drawerView, string]] : []),
-      ...(state?.date ? [["date", state.date.session ? "Dating 💬" : "Dating"] as [typeof drawerView, string]] : []),
-      ...(state?.dungeon || state?.dungeonEntries?.length ? [["dungeon", state?.dungeon ? "Dungeon ⚔" : "Dungeon"] as [typeof drawerView, string]] : []),
       ["doll", "Doll"],
       ["rules", `Ruleset${status.issues.some((i) => i.level === "error") ? " ⚠" : ""}`],
       ["settings", "Settings"],
@@ -519,11 +389,6 @@ export function setup(ctx: SpindleFrontendContext) {
     let body = "";
     if (drawerView === "sheet") {
       body = state?.hud ? renderHud(state.hud, { editing: editingBar, compact: false, map: state.map, alloc: allocDraft }) : renderRulesetCard(status, hasChat);
-    } else if (drawerView === "date") {
-      body = renderDate(state?.date ?? null, { cat: dateCat, busy: busy.on && busy.chatId === state?.chatId });
-    } else if (drawerView === "dungeon") {
-      const isBusy = busy.on && busy.chatId === state?.chatId;
-      body = renderDungeon(state?.dungeon ?? null, state?.dungeonEntries ?? [], { pick: dgPick, mates: dgMates, busy: isBusy });
     } else if (drawerView === "doll") {
       body = dollLab.html();
     } else if (drawerView === "journal") {
@@ -533,7 +398,7 @@ export function setup(ctx: SpindleFrontendContext) {
     } else if (drawerView === "rules") {
       body = renderBuilderCta(status.state !== "none", hasChat, exported) + renderRulesetCard(status, hasChat) + renderDepthCard(status) + `<div class="warp-card"><h3>Writing rules</h3><p>Rules live in entries titled <b>warp-ruleset · …</b> (or any lorebook named <b>warp-ruleset</b>). Each entry is YAML; entries merge together. Warp keeps them out of the prompt automatically.</p></div>`;
     } else {
-      body = renderSettings(settings, state?.status ?? null, connections, jevKeySet, imageConnections);
+      body = renderSettings(settings, state?.status ?? null, connections, jevKeySet);
     }
     drawerRoot.innerHTML = tabs + historyNotice() + body;
     restoreSections(drawerRoot);
@@ -599,7 +464,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const live = liveLog();
     const recap = live ? { foe: live.foe, rounds: live.rounds, why: renderWhyFold(state?.records.find((r) => r.messageId === live.messageId)) } : null;
     const html = settings.enabled && state?.hud && anchor
-      ? (settings.errands !== false && settings.showChoices !== false ? renderErrandEntries(state.hud.errands) : "") + renderChoices(state.choices, { minigames: settings.minigames, showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined, encounter: state.hud.encounter, recap })
+      ? (settings.errands !== false && settings.showChoices !== false ? renderErrandEntries(state.hud.errands) : "") + renderChoices(state.choices, { showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined, encounter: state.hud.encounter, recap })
       : "";
     if (!force && anchor === choicesFor && html === choicesHtml && choicesEl?.isConnected) return;
     if (choicesEl) { ctx.dom.uninject(choicesEl); choicesEl = null; }
@@ -667,211 +532,16 @@ export function setup(ctx: SpindleFrontendContext) {
   } catch { /* no observer: chips appear on the next state push */ }
 
   // The visual-novel extension (Cue) covers the chat; hand it our choices and status card.
-  const cue = connectCue({ act: (id) => act(id), chatId, imageResult: (result) => send({ type: "cue_image_result", chatId: result.chatId, result }),
-    imageFit: (id, fit) => send({ type: "cue_image_fit", chatId: id, fit }) });
+  const cue = connectCue({ act: (id) => act(id), chatId });
   cleanups.push(() => cue.destroy());
   function syncCue() {
-    cue.update({ state, enabled: settings.enabled, imagesEnabled: settings.dateImages, showOdds: settings.showOdds, busy: busy.on && busy.chatId === state?.chatId, busyLabel: busy.label });
-  }
-
-  // ───────── the stage ─────────
-  function raiseStage() {
-    // Above other full-screen layers (the visual-novel view), still below the host's dialogs.
-    const host = stage?.root.parentElement?.parentElement;
-    if (host instanceof HTMLElement) host.style.zIndex = "9992";
-  }
-
-  function syncStage() {
-    const mode = settings.enabled ? stageModeOf(state, stageWantGate) : null;
-    const key = mode ? `${state?.chatId}:${mode}` : "";
-    if (key !== stageKey) {
-      const sameChat = !!stageKey && stageKey.startsWith(`${state?.chatId}:`);
-      // A run or date that ended forgets being sent back to the chat, so the next one opens by itself.
-      if (stageKey) stageDismissed.delete(stageKey);
-      stageKey = key;
-      reactionKey = null;
-      if (mode) {
-        lingering = false;
-        stageMode = mode;
-        // A run or a date just began (or this chat is in the middle of one): take the screen, unless sent back to the chat.
-        if (!stageDismissed.has(key)) stageOpen = true;
-      } else if (sameChat && stageVisible() && stageMode && stageMode !== "gate") {
-        // It's over: keep the last scene up while the closing lines are written, until the player heads back.
-        lingering = true;
-        sceneEl.insertAdjacentHTML("beforeend", `<div class="warp-stage-ended"><div><div class="warp-stage-kicker">${stageMode === "date" ? "The date is over" : "Out of the dungeon"}</div><button class="warp-stage-btn primary" data-stage-close>Back to the chat</button></div></div>`);
-      } else {
-        stageOpen = false;
-        stageMode = null;
-        stageWantGate = false;
-        lingering = false;
-      }
-      stageEl.dataset.mode = stageMode === "date" ? "date" : stageMode ? "dungeon" : "";
-      stageEl.dataset.view = stageMode ?? "";
-    }
-    const show = canFloat && stageOpen && (!!mode || lingering);
-    if (show !== stageVisible()) {
-      if (show) {
-        // The panels hand back their windows first, so the stage has one.
-        stageWanted = true;
-        panels.sync();
-        if (mountStage()) {
-          stage!.setVisible(true);
-          // The host mounts the widget on the next frames; raise it once it's there.
-          raiseStage(); requestAnimationFrame(() => requestAnimationFrame(raiseStage));
-        } else stageWanted = false;
-      } else {
-        stageWanted = false;
-        unmountStage();
-      }
-    }
-    if (show) renderStageScene();
-  }
-
-  function openStage() {
-    if (!canFloat) { openDungeonDrawer(); return; }
-    if (stageKey) stageDismissed.delete(stageKey);
-    stageOpen = true;
-    syncStage();
-    syncDockVisibility();
-    renderHead();
-  }
-
-  function closeStage() {
-    if (stageKey) stageDismissed.add(stageKey);
-    stageOpen = false;
-    if (lingering) { lingering = false; stageMode = null; stageWantGate = false; stageKey = ""; }
-    if (stageMode === "gate") { stageWantGate = false; stageMode = null; stageKey = ""; }
-    stageWanted = false;
-    unmountStage();
-    syncDockVisibility();
-    renderHead();
-  }
-
-  function renderStageScene() {
-    if (!state || !stageMode || lingering || !stageVisible()) { renderStory(); return; }
-    const isBusy = busy.on && busy.chatId === state.chatId;
-    const sess = state.date?.session;
-    const rk = sess?.last ? `${sess.who}|${sess.last.label}|${sess.last.reaction}|${sess.fatigue}` : "";
-    const fresh = reactionKey !== null && rk !== "" && rk !== reactionKey;
-    reactionKey = rk;
-    dressStage(stageEl, settings.look === "rulebook" ? state.look ?? "modern" : settings.look);
-    replaceStageScene(sceneEl, renderStage(state, stageMode, { pick: dgPick, mates: dgMates, busy: isBusy, cat: dateCat, freshReaction: fresh }));
-    renderStory();
-  }
-
-  /** The dialogue box: one line of the snippet at a time, click (or Space / Enter) for the next. */
-  function renderStory() {
-    if (!stageVisible()) return;
-    if (state?.scene) shownScene = state.scene;
-    else if (!lingering) shownScene = null;
-    const sc = shownScene;
-    const key = sc ? `${sc.kind}:${sc.seq}` : "";
-    if (key !== sceneKey) { sceneKey = key; lineAt = 0; }
-    const lines = sc?.lines ?? [];
-    const line = lines[Math.min(lineAt, Math.max(0, lines.length - 1))];
-    const writing = !!sc?.writing || (busy.on && busy.chatId === state?.chatId);
-    speakerEl.textContent = line?.speaker ?? "";
-    storyEl.classList.toggle("narration", !!line && !line.speaker);
-    const said = sc?.said?.replace(/\*/g, "").trim();
-    saidEl.innerHTML = said && lineAt === 0 ? `<span>You</span>${esc(said.length > 280 ? `${said.slice(0, 280)}…` : said)}` : "";
-    const lineKey = `${sceneKey}:${lineAt}:${line?.text.length ?? 0}`;
-    if (lineKey !== shownLine) {
-      shownLine = lineKey;
-      skipLine();
-      textEl.innerHTML = line ? formatStory(line.text) : "";
-      // Visual-novel style: the line types itself out (a click shows it all).
-      skipLine = line && settings.fx === "full" ? typewrite(textEl) : () => false;
-    }
-    const more = lineAt < lines.length - 1;
-    storyEl.classList.toggle("more", more && !writing);
-    statusEl.innerHTML = writing
-      ? `<span class="warp-stage-dots" aria-hidden="true"><i></i><i></i><i></i></span>`
-      : more ? `<span class="warp-stage-next">${lineAt + 1} / ${lines.length} · click to continue ▸</span>` : "";
-    sayButton.disabled = writing;
-  }
-  function nextLine(): boolean {
-    // Still typing: the first click (or key) shows the whole line.
-    if (skipLine()) return true;
-    const n = shownScene?.lines.length ?? 0;
-    if (lineAt >= n - 1) return false;
-    lineAt += 1;
-    renderStory();
-    return true;
-  }
-  storyBody.addEventListener("click", () => { nextLine(); });
-  // The scene runs behind the dialogue box; keep its content clear of it.
-  try {
-    const ro = new ResizeObserver(() => stageEl.style.setProperty("--warp-story-h", `${storyEl.offsetHeight}px`));
-    ro.observe(storyEl);
-    cleanups.push(() => ro.disconnect());
-  } catch { /* no observer: the padding stays at its default */ }
-
-  function growSay() {
-    sayInput.style.height = "auto";
-    sayInput.style.height = `${Math.min(120, sayInput.scrollHeight)}px`;
-  }
-  function sendLine() {
-    const text = sayInput.value.trim();
-    const cid = chatId();
-    if (!text || !cid || (busy.on && busy.chatId === cid)) return;
-    send({ type: "say", chatId: cid, text });
-    sayInput.value = "";
-    growSay();
-    lockUntilReply(cid);
-  }
-  stageEl.addEventListener("click", (e) => {
-    if ((e.target as HTMLElement).closest("[data-date-image-retry]")) { const id = chatId(); if (id) send({ type: "retry_date_image", chatId: id }); return; }
-    const t = e.target as Element;
-    if (t.closest("[data-stage-close]")) { closeStage(); return; }
-    if (t.closest("[data-stage-fold]")) {
-      storyFolded = !storyFolded;
-      store("storyFolded", storyFolded ? "1" : "0");
-      storyEl.classList.toggle("folded", storyFolded);
-      return;
-    }
-    if (onDungeonClick(t)) return;
-    const dateCatEl = t.closest<HTMLElement>("[data-date-cat]");
-    if (dateCatEl) { dateCat = dateCatEl.dataset.dateCat!; renderPick(); return; }
-    const dateAct = t.closest<HTMLElement>("[data-date-act]");
-    if (dateAct && !(dateAct as HTMLButtonElement).disabled) act(dateAct.dataset.dateAct!);
-  });
-  stageEl.addEventListener("change", (e) => onPanelChange(e));
-  sayForm.addEventListener("submit", (e) => { e.preventDefault(); sendLine(); });
-  sayInput.addEventListener("input", growSay);
-  sayInput.addEventListener("keydown", (e) => {
-    // Typing here is ours: the host's typing shortcuts stay out of it.
-    e.stopPropagation();
-    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendLine(); }
-    else if (e.key === "Escape") { e.preventDefault(); closeStage(); }
-  });
-  const onStageKey = (e: KeyboardEvent) => {
-    if (!stageVisible() || e.ctrlKey || e.metaKey || e.altKey) return;
-    // Not while a host dialog has focus: its keys belong to it.
-    const a = document.activeElement;
-    if (a && a !== document.body && !stageEl.contains(a)) return;
-    if (a instanceof HTMLTextAreaElement || a instanceof HTMLInputElement) return;
-    if (e.key === "Escape") { e.preventDefault(); closeStage(); return; }
-    // Focused controls keep their native Enter / Space activation instead of advancing the story.
-    if ((e.key === " " || e.key === "Enter") && !(a instanceof HTMLButtonElement) && nextLine()) { e.preventDefault(); return; }
-    // Number keys pick from the open menu (categories, or a category's topics).
-    if (/^[1-9]$/.test(e.key)) {
-      const btn = sceneEl.querySelector<HTMLButtonElement>(`.warp-stage-menu-col [data-key="${e.key}"]`);
-      if (btn && !btn.disabled) { e.preventDefault(); btn.click(); }
-    }
-  };
-  document.addEventListener("keydown", onStageKey);
-  cleanups.push(() => document.removeEventListener("keydown", onStageKey));
-
-  function renderPick() {
-    renderDrawer();
-    renderStageScene();
+    cue.update({ state, enabled: settings.enabled, showOdds: settings.showOdds, busy: busy.on && busy.chatId === state?.chatId, busyLabel: busy.label });
   }
 
   function renderAll() {
     renderDock();
     renderDrawer();
     reconcileMessages();
-    syncStage();
     syncDockVisibility();
     syncCue();
     syncErrands();
@@ -933,13 +603,6 @@ export function setup(ctx: SpindleFrontendContext) {
       sendQuiet(quiet.dataset.errandQuiet!, times);
       return;
     }
-    const play = t.closest<HTMLButtonElement>("[data-errand-play]");
-    if (play) {
-      if (play.disabled || errandsBusy()) return;
-      const row = state?.hud?.errands?.train.find((x) => x.id === play.dataset.errandPlay);
-      if (row?.choice) void playErrand(row.choice, row.story);
-      return;
-    }
     const story = t.closest<HTMLButtonElement>("[data-errand-story]");
     if (story) {
       if (story.disabled || errandsBusy()) return;
@@ -948,22 +611,11 @@ export function setup(ctx: SpindleFrontendContext) {
       act(id);
     }
   }
-  /** A training session played as its minigame, off the page: the window steps aside for the game, then comes back. */
-  async function playErrand(choice: ChoiceView, actionId: string) {
-    const cid = chatId();
-    if (!cid || arcade.busy() || (busy.on && busy.chatId === cid)) return;
-    const tabWas = errands?.tab ?? "train";
-    closeErrands();
-    const out = await arcade.run(choice, false);
-    if (chatId() !== cid) return;
-    if (out.kind === "played") sendQuiet(actionId, 1, out.result);
-    openErrands(tabWas);
-  }
   /** Do something off the page: no narrator turn; the window waits for the next state. */
-  function sendQuiet(actionId: string, times = 1, game?: GameResult) {
+  function sendQuiet(actionId: string, times = 1) {
     const cid = chatId();
     if (!cid || (busy.on && busy.chatId === cid)) return;
-    send({ type: "quiet", chatId: cid, actionId, ...(times > 1 ? { times } : {}), ...(game ? { game } : {}) });
+    send({ type: "quiet", chatId: cid, actionId, ...(times > 1 ? { times } : {}) });
     if (errands && errands.chatId === cid) {
       const me = errands;
       me.busy = true;
@@ -1143,11 +795,6 @@ export function setup(ctx: SpindleFrontendContext) {
     const view = t.closest<HTMLElement>("[data-view]");
     if (view) { drawerView = view.dataset.view as typeof drawerView; renderDrawer(); return; }
     if (onBuilderClick(t)) return;
-    if (onDungeonClick(t)) return;
-    const dateCatEl = t.closest<HTMLElement>("[data-date-cat]");
-    if (dateCatEl) { dateCat = dateCatEl.dataset.dateCat!; renderDrawer(); return; }
-    const dateAct = t.closest<HTMLElement>("[data-date-act]");
-    if (dateAct) { if (!(dateAct as HTMLButtonElement).disabled) act(dateAct.dataset.dateAct!); return; }
     const runBtn = t.closest<HTMLElement>("[data-run]");
     if (runBtn) { act(runBtn.dataset.run!); return; }
     const go = t.closest<HTMLElement>("[data-go]");
@@ -1196,7 +843,6 @@ export function setup(ctx: SpindleFrontendContext) {
     const perk = t.closest<HTMLElement>("[data-buy-perk]");
     if (perk) { const cid = chatId(); if (cid) send({ type: "buy_perk", chatId: cid, perk: perk.dataset.buyPerk! }); return; }
     if (t.closest("[data-install]")) { void confirmReplace(); return; }
-    if (t.closest("[data-theme-dating]")) { const cid = chatId(); if (cid) send({ type: "theme_dating", chatId: cid }); return; }
     if (t.closest("[data-draft-items]")) { const cid = chatId(); if (cid) send({ type: "draft_item_uses", chatId: cid }); return; }
     if (t.closest("[data-reload]")) { send({ type: "reload", chatId: chatId() }); return; }
     const save = t.closest<HTMLElement>("[data-save]");
@@ -1253,75 +899,6 @@ export function setup(ctx: SpindleFrontendContext) {
       send({ type: "settings", patch: { lines, veils } });
     }
   }
-  function dg(op: import("./shared/protocol.js").DungeonOp) {
-    const cid = chatId();
-    if (!cid) return;
-    dgPick = null;
-    send({ type: "dungeon", chatId: cid, ...op } as FrontendToBackend);
-  }
-  function openDungeonDrawer() {
-    drawerView = state?.date?.session && !state.dungeon ? "date" : "dungeon";
-    tab.activate();
-    renderDrawer();
-  }
-  /** The dungeon on the stage (the entrance when no run is on), or in the drawer without a stage. */
-  function openDungeon() {
-    if (!canFloat) { openDungeonDrawer(); return; }
-    if (!state?.dungeon) stageWantGate = true;
-    openStage();
-  }
-  async function confirmLeave() {
-    const res = await ctx.ui.showConfirm({
-      title: "Leave the dungeon?",
-      message: "The party climbs back out and keeps everything found so far.",
-      confirmLabel: "Leave",
-      variant: "info",
-    });
-    if (res.confirmed) dg({ op: "leave" });
-  }
-  function onDungeonClick(t: Element): boolean {
-    const el = t.closest<HTMLElement>("[data-dg-move],[data-dg-choose],[data-dg-skill],[data-dg-item],[data-dg-target],[data-dg-escape],[data-dg-auto],[data-dg-descend],[data-dg-leave],[data-dg-buy],[data-dg-use],[data-dg-enter],[data-dg-cancel]");
-    if (!el || (el as HTMLButtonElement).disabled) return !!el;
-    const d = el.dataset;
-    const v = state?.dungeon;
-    if (d.dgMove) { const [x, y] = d.dgMove.split(",").map(Number); dg({ op: "move", x, y }); return true; }
-    if (d.dgChoose) { dg({ op: "choose", choice: d.dgChoose }); return true; }
-    if (d.dgCancel !== undefined) { dgPick = null; renderPick(); return true; }
-    if (d.dgSkill) {
-      const target = d.dgSkillTarget;
-      const foes = v?.battle?.fighters.filter((f) => f.side === "foe" && f.alive) ?? [];
-      if (target === "foe" && foes.length > 1) { dgPick = { kind: "skill", id: d.dgSkill, target: "foe" }; renderPick(); return true; }
-      if (target === "ally") { dgPick = { kind: "skill", id: d.dgSkill, target: "ally" }; renderPick(); return true; }
-      dg({ op: "battle", skill: d.dgSkill, target: foes[0]?.id });
-      return true;
-    }
-    if (d.dgItem) {
-      if (d.dgItem === "bomb") { dg({ op: "battle", item: "bomb" }); return true; }
-      dgPick = { kind: "item", id: d.dgItem, target: "ally" }; renderPick(); return true;
-    }
-    if (d.dgUse) { dgPick = { kind: "use", id: d.dgUse, target: "ally" }; renderPick(); return true; }
-    if (d.dgTarget && dgPick) {
-      const p = dgPick;
-      if (p.kind === "skill") dg({ op: "battle", skill: p.id, target: d.dgTarget });
-      else if (p.kind === "item") dg({ op: "battle", item: p.id as "potion" | "ether", target: d.dgTarget });
-      else dg({ op: "use", item: p.id, target: d.dgTarget });
-      return true;
-    }
-    if (d.dgEscape !== undefined) { dg({ op: "battle", escape: true }); return true; }
-    if (d.dgAuto) { dg({ op: "battle", auto: d.dgAuto as "round" | "battle" }); return true; }
-    if (d.dgDescend !== undefined) { dg({ op: "descend" }); return true; }
-    if (d.dgLeave !== undefined) { void confirmLeave(); return true; }
-    if (d.dgBuy) { dg({ op: "buy", item: d.dgBuy }); return true; }
-    if (d.dgEnter) {
-      const entry = state?.dungeonEntries.find((e) => e.id === d.dgEnter);
-      const mates = [...dgMates].filter((m) => entry?.companions.some((c) => c.id === m));
-      dg({ op: "enter", id: d.dgEnter, companions: mates });
-      dgMates.clear();
-      return true;
-    }
-    return true;
-  }
-
   function onPanelInput(e: Event) {
     if (dollLab.handle(e as Event, drawerRoot)) return;
     const t = e.target as HTMLInputElement;
@@ -1348,21 +925,9 @@ export function setup(ctx: SpindleFrontendContext) {
       });
       return;
     }
-    if (t.dataset.dgMate) {
-      if ((t as HTMLInputElement).checked) dgMates.add(t.dataset.dgMate); else dgMates.delete(t.dataset.dgMate);
-      renderPick();
-      return;
-    }
     if (t.dataset.wearSlot) {
       const cid = chatId();
       if (cid && t.value) send({ type: "wear", chatId: cid, slot: t.dataset.wearSlot, item: t.value === "__off" ? null : t.value });
-      return;
-    }
-    if (t.dataset.settingVolume !== undefined) {
-      const v = Number(t.value) / 100;
-      setVolume(v);
-      play("heart");
-      send({ type: "settings", patch: { sfxVolume: v } });
       return;
     }
     const pctKey = t.dataset.settingPct as "autoConfidence" | "askConfidence" | undefined;
@@ -1400,41 +965,11 @@ export function setup(ctx: SpindleFrontendContext) {
 
   // ───────── events: in-chat clicks (delegated; injected nodes are sanitized) ─────────
   function act(actionId: string, params?: Record<string, string>) {
-    // "More…" during a conversation opens the date on the stage (every topic is there).
-    if (actionId === "date:open") {
-      if (canFloat && state?.date?.session) openStage();
-      else { drawerView = "date"; tab.activate(); renderDrawer(); }
-      return;
-    }
     // Saving, loading and starting over change the game without a new reply.
     if (actionId.startsWith("run:") && actionId !== "run:epilogue") { void confirmRun(actionId); return; }
-    // Dungeon choices open the dungeon screen instead of sending a line.
-    if (actionId.startsWith("dungeon:")) {
-      if (actionId === "dungeon:leave") void confirmLeave();
-      else openDungeon();
-      return;
-    }
     const cid = chatId();
     if (!cid || (busy.on && busy.chatId === cid)) return;
-    if (arcade.busy()) return;
-    // Default ask rolls immediately. Only the explicit "always" preference auto-plays.
-    if (!params && automaticChallenge(settings.minigames, state?.choices.find((c) => c.id === actionId))) {
-      void playChoice(actionId, true);
-      return;
-    }
     send({ type: "act", chatId: cid, actionId, ...(params ? { params } : {}) });
-    lockUntilReply(cid);
-  }
-  async function playChoice(actionId: string, auto = false) {
-    const cid = chatId();
-    const snapshot = state;
-    const choice = snapshot && playableChoice(snapshot.choices, actionId);
-    if (!cid || snapshot?.chatId !== cid || !choice || settings.minigames === "off" || arcade.busy() || (busy.on && busy.chatId === cid)) return;
-    // Explicit Play opens stake/song selection; "always" keeps its direct-play preference.
-    const out = await arcade.run(choice, auto);
-    // Never submit a result into a new chat or a changed set of choices.
-    if (out.kind === "cancel" || !acceptsArcadeResult(snapshot, state, cid, chatId(), busy.on && busy.chatId === cid)) return;
-    send({ type: "act", chatId: cid, actionId: choice.id, ...(out.kind === "played" ? { game: out.result } : out.params ? { params: out.params } : {}) });
     lockUntilReply(cid);
   }
   /** Lock the choices while a turn starts; if nothing starts (rejected, network hiccup), unlock again. */
@@ -1442,13 +977,11 @@ export function setup(ctx: SpindleFrontendContext) {
     busy = { chatId: cid, on: true, label: "Rolling…" };
     placeChoices(true);
     syncCue();
-    renderStageScene();
     setTimeout(() => {
       if (busy.on && busy.label === "Rolling…" && busy.chatId === cid) {
         busy = { chatId: "", on: false, label: "" };
         placeChoices(true);
         syncCue();
-        renderStageScene();
       }
     }, 15000);
   }
@@ -1497,8 +1030,6 @@ export function setup(ctx: SpindleFrontendContext) {
     if (!t?.closest) return;
     const resistance = t.closest<HTMLButtonElement>(".warp-choices [data-resist-action]");
     if (resistance) { e.preventDefault(); if (!resistance.disabled) act(resistance.dataset.resistAction!, { mind_resist: resistance.dataset.resistId! }); return; }
-    const challenge = t.closest<HTMLButtonElement>(".warp-choices [data-play-challenge]");
-    if (challenge) { e.preventDefault(); if (!challenge.disabled) void playChoice(challenge.dataset.playChallenge!); return; }
     const errandOpen = t.closest<HTMLElement>(".warp-choices [data-errand-open]");
     if (errandOpen) { e.preventDefault(); openErrands(errandOpen.dataset.errandOpen!); return; }
     const choice = t.closest<HTMLElement>(".warp-choices [data-act]");
@@ -1563,7 +1094,7 @@ export function setup(ctx: SpindleFrontendContext) {
   cleanups.push(() => document.removeEventListener("keydown", onEncKey, true));
 
   const onKey = (e: KeyboardEvent) => {
-    if (!settings.hotkeys || e.ctrlKey || e.metaKey || e.altKey || stageVisible()) return;
+    if (!settings.hotkeys || e.ctrlKey || e.metaKey || e.altKey) return;
     const t = e.target as HTMLElement | null;
     if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
     if (!/^[0-9]$/.test(e.key) || !state?.choices.length || !choicesEl?.isConnected) return;
@@ -1583,26 +1114,19 @@ export function setup(ctx: SpindleFrontendContext) {
     switch (m.type) {
       case "state": {
         if (state?.chatId !== m.chatId) { editingBar = null; lastBars = new Map(); allocDraft = {}; }
-        const entered = !state?.dungeon && !!m.dungeon && state?.chatId === m.chatId;
-        if (!m.dungeon?.battle) dgPick = dgPick?.kind === "use" ? dgPick : null;
-        const fx = settings.enabled ? fxEvents(state, m) : [];
         state = m;
         // A quiet errand answered (or anything else changed): the window unlocks with the new stock and money.
         if (errands) { errands.busy = false; if (errands.timer) clearTimeout(errands.timer); errands.timer = null; }
-        if (entered) drawerView = "dungeon";
         if (settings.enabled) dollLab.onState(m);
         if (m.chatId === busy.chatId && !m.busy && busy.label === "Rolling…") busy = { chatId: "", on: false, label: "" };
         if (m.busy && m.chatId) busy = { chatId: m.chatId, on: true, label: busy.label };
         renderAll();
-        // Flourishes once the new state is on screen (and the chips are in their messages).
-        if (fx.length) requestAnimationFrame(() => playFx(fx, { fx: settings.fx, sfx: settings.sfx, stage: stageEl, message: (id) => ctx.dom.findMessageElement(id) }));
         break;
       }
       case "busy":
         busy = { chatId: m.chatId, on: m.busy, label: m.busy ? m.label ?? busy.label ?? "" : "" };
         placeChoices(true);
         syncCue();
-        renderStageScene();
         break;
       case "builder": {
         const prev = builder;
@@ -1621,16 +1145,13 @@ export function setup(ctx: SpindleFrontendContext) {
         break;
       case "settings":
         settings = m.settings;
-        setVolume(settings.sfxVolume);
         templates = m.templates;
         connections = m.connections;
-        imageConnections = m.imageConnections ?? [];
         jevKeySet = m.jevKeySet;
         renderAll();
         break;
       case "command":
         if (m.command === "install") void confirmReplace();
-        else if (m.command === "dungeon") openDungeon();
         else { drawerView = "sheet"; tab.activate(); }
         break;
       case "rulebook_export":

@@ -19,7 +19,7 @@ export interface PanelHost {
   viewport(): Viewport;
   /** The main window: where it is (layout px), its element, and whether it's open. Null when it's hidden. */
   main(): { box: Box; el: HTMLElement; open: boolean } | null;
-  /** Whether panels show at all right now (no game, or the stage is up: no). */
+  /** Whether panels show at all right now (no game: no). */
   shown(): boolean;
   /** Hook up the usual HUD clicks and inputs on a panel's body. */
   wire(body: HTMLElement): void;
@@ -145,7 +145,7 @@ export function createPanels(o: PanelHost) {
       // Attached panels fold away with the main window; a panel with nothing to show stays hidden.
       const visible = show && here.length > 0 && (!p.attach || (!!m && m.open));
       let w = wins.get(p.id);
-      // A hidden panel gives its window back (the stage and the arcade need one), and gets a new one when it shows again.
+      // A hidden panel gives its window back, and gets a new one when it shows again.
       if (!visible) { if (w) destroyWin(w); continue; }
       if (!w) {
         const made = makeWin(p);

@@ -3,7 +3,6 @@
 // the story when the player wants it narrated. Pure view → HTML; text goes through `esc`.
 
 import type { ErrandsView } from "../shared/protocol.js";
-import { GAMES } from "../engine/game-ids.js";
 import { esc } from "./render.js";
 
 export type ErrandTab = "board" | "shop" | "bills" | "train" | "rest";
@@ -122,16 +121,9 @@ function train(v: ErrandsView, draft: Record<string, number>, busy: boolean): st
       ${r.desc ? `<div class="warp-dim">${esc(r.desc)}</div>` : ""}
       <div class="warp-errand-facts">${facts}</div>
       ${r.max < 1 ? why(r.why ?? "Not now") : ""}
-      <div class="warp-row warp-quest-actions">${stepper(key, qty, r.max, busy, "Sessions")}<span class="warp-dim">session${qty === 1 ? "" : "s"}</span>${quietBtn(r.story, "Train", busy, qty, r.max < 1)}${playBtn(r, busy)}${storyBtn(r.story, busy)}</div>
+      <div class="warp-row warp-quest-actions">${stepper(key, qty, r.max, busy, "Sessions")}<span class="warp-dim">session${qty === 1 ? "" : "s"}</span>${quietBtn(r.story, "Train", busy, qty, r.max < 1)}${storyBtn(r.story, busy)}</div>
     </div>`;
   }).join("");
-}
-
-/** One session played as its minigame instead of rolled (still off the page). */
-function playBtn(r: ErrandsView["train"][number], busy: boolean): string {
-  const g = r.choice?.game ? GAMES[r.choice.game.game] : null;
-  if (!g) return "";
-  return `<button type="button" class="warp-btn warp-mini" data-errand-play="${esc(r.id)}" ${busy || r.max < 1 ? "disabled" : ""} title="Play one session as ${esc(g.name)} — your score decides instead of the dice">${g.icon} Play</button>`;
 }
 
 function rest(v: ErrandsView, busy: boolean): string {

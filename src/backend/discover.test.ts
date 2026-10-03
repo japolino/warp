@@ -8,7 +8,6 @@ import { buildChoices, buildMap } from "../engine/view.js";
 import { discoverPlace, inventPlace, placeYaml, residentFrom } from "./discover.js";
 import { presentPeople } from "../engine/world.js";
 import { makeEnv } from "../engine/state.js";
-import { romanceOk } from "../engine/date/talk.js";
 import type { Ruleset } from "../engine/ruleset.js";
 
 const YAML = `
@@ -130,7 +129,6 @@ relationships:
   stats: { affection: { start: 0 } }
   people:
     wren: { name: Wren Stone, schedule: [{ at: town }] }
-dating: { romance: true }
 discovery: { at: [docks], chance: 0, max: 2, people: true }
 `;
 const rp = loadRuleset([{ label: "t", content: PEOPLE_YAML, order: 0 }]).ruleset!;
@@ -165,9 +163,8 @@ describe("discovered residents", () => {
     const s = foldEvents(grown, [rec.events], initialState(rp));
     expect(s.location).toBe("quiet_cove");
     expect(presentPeople(grown, s, makeEnv(grown, s))).toEqual(["old_hessa"]);
-    // Unknown age: no romance until the story establishes an adult.
-    expect(grown.dating.enabled && grown.dating.romance).toBe(true);
-    expect(romanceOk(grown, s, "old_hessa")).toBe(false);
+    // Unknown age: not known to be an adult until the story establishes it.
+    expect(s.adults.old_hessa).toBeUndefined();
     expect(rec.hints.some((h) => h.includes("Old Hessa"))).toBe(true);
   });
 

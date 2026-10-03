@@ -1,6 +1,6 @@
 // The player's own message for a clicked move: how it went, in their voice. The
-// roll (or the minigame) is settled when the choice is clicked, so the message can
-// tell it; the narrator then picks up from there.
+// roll is settled when the choice is clicked, so the message can tell it; the
+// narrator then picks up from there.
 
 import { randomSeed } from "../engine/dice.js";
 import { resolveTurnFull, type CheckResult, type Intent, type TurnRecord } from "../engine/resolve.js";
@@ -47,8 +47,7 @@ export async function describeAttempt(o: {
   settings: Settings; userId?: string;
 }): Promise<string> {
   const fallback = scriptedAttempt(o.say, o.tier);
-  if (o.settings.sceneLines === "scripted") return fallback;
-  const how = o.check?.game ? `played as a game (${o.check.game.summary.replace(/^\S+\s/, "")}); ${TIER_WORDS[o.tier]}` : TIER_WORDS[o.tier];
+  const how = TIER_WORDS[o.tier];
   const user = [
     `The player character: ${o.player}.${o.persona ? `\nPersona:\n${o.persona.slice(0, 1200)}` : ""}`,
     o.scene ? `The scene so far (latest narration):\n${o.scene.slice(-1500)}` : "",
@@ -76,20 +75,20 @@ export async function personaText(chatId: string, userId?: string): Promise<stri
 
 /** Does this resolved turn have a result worth telling in the player's message? */
 export function tellable(rec: TurnRecord): boolean {
-  return !!rec.check && !rec.mind && !rec.veiled && !rec.gamble;
+  return !!rec.check && !rec.mind && !rec.veiled;
 }
 
 /**
- * Settle a clicked move now — roll it (or take the minigame's score) — and write the player's message from the
- * result. The seed and tier go on the intent, so the reply and every swipe keep that result. Returns the message
- * to post; the clicked line unchanged when there's nothing to tell (no check, a date, a gambling table…).
+ * Settle a clicked move now — roll it — and write the player's message from the result. The seed and tier go on
+ * the intent, so the reply and every swipe keep that result. Returns the message to post; the clicked line
+ * unchanged when there's nothing to tell (no check, a veiled move…).
  */
 export async function settleClick(o: {
   r: Ruleset; state: GameState; intent: Intent; say: string; msgs: Msg[]; chatId: string; player: string; settings: Settings; userId?: string;
   /** A reply already written for this move: its result is the one to tell. */
   ready?: TurnRecord;
 }): Promise<string> {
-  if (!o.settings.sayOutcome || o.intent.actionId.startsWith("date:")) return o.say;
+  if (!o.settings.sayOutcome) return o.say;
   let rec: TurnRecord;
   if (o.ready) rec = o.ready;
   else {

@@ -6,10 +6,7 @@ import { busyChats, lastStates } from "./state-push.js";
 import { appendDrafts, encounterLogOf, foldPath, liveChoicesOf, patchMeta, patchWarpMeta, reconcilePath, recordPath, shiftAfterSwipeDelete, warpMeta, withRecordPath, writeRecord } from "./ledger.js";
 import { interceptor, onGenerationEnded, onGenerationStarted, onGenerationStopped } from "./turn.js";
 import { foldEvents, initialState } from "../engine/state.js";
-import { enterDungeon, leaveDungeon } from "../engine/dungeon/run.js";
-import { playScene, sceneViewFor, dropScene } from "./scene.js";
 import { characterBrief, characterForChat, personProfile } from "./source.js";
-import { runDungeonOp } from "./dungeon.js";
 import { discoverPlace } from "./discover.js";
 import { playRound } from "./encounter.js";
 import { prewrite, momentKey, readyChoices, takePrewritten } from "./drafts.js";
@@ -26,7 +23,7 @@ const record = (events: any[] = []) => ({ v: 1 as const, hints: [], events, at: 
 function fixture(input: any = raw) {
   const id = `transaction-${++seq}`;
   const f: any = { id, messages: [], sent: [], calls: 0, failWrite: false, emitEdits: true,
-    settings: { ...DEFAULT_SETTINGS, decider: "llm", sceneLines: "scripted", draftItemUses: false, themeDating: false, dateImages: false },
+    settings: { ...DEFAULT_SETTINGS, decider: "llm", draftItemUses: false },
     raw: input, extraEntries: [], r: loadRuleset([{ label: "warp-ruleset", content: JSON.stringify(input), order: 0 }]).ruleset!,
     quiet: async () => ({ content: "{}" }),
   };
@@ -255,52 +252,6 @@ test("failed map writes preserve the current location; retry creates both routes
   expect(foldEvents(grown, [retried.events]).location).toBe("courtyard");
 });
 
-const dungeonRaw = { stats: { health: { start: 50, max: 100 }, money: { kind: "money", start: 0, max: 100 } },
-  conditions: { poison: { every: "turn", dot: 5, stat: "health" } },
-  start: { location: "town" }, locations: { town: "Town" }, dungeons: { mines: { name: "The Mines" } } };
-
-test("presenting a committed dungeon step cannot change mechanics or tick poison", async () => {
-  const f = fixture(dungeonRaw);
-  const entry = enterDungeon(f.r, initialState(f.r), "mines", [], "run");
-  f.add("assistant", "The story", { warp: { swipes: { "0": record([...entry.events, { t: "cond", id: "poison", on: true, src: "manual" }]) } } });
-  const before = foldPath(f.r, f.messages).state;
-  await playScene({ chatId: f.id, userId: f.id, kind: "dungeon", intent: null, said: entry.narrate!.say });
-  expect(foldPath(f.r, f.messages).state).toEqual(before);
-});
-
-test("dungeon presentation uses the already resolved leave result and reports capped retained gold", async () => {
-  const f = fixture(dungeonRaw);
-  const run = foldEvents(f.r, [enterDungeon(f.r, initialState(f.r), "mines", [], "run").events]).dungeon!;
-  run.gold = 37;
-  f.add("assistant", "In the mine", { warp: { swipes: { "0": record([
-    { t: "stat", id: "money", set: 90, src: "manual" }, { t: "dg_enter", run, src: "action" }, { t: "cond", id: "poison", on: true, src: "manual" },
-  ]) } } });
-  const before = foldPath(f.r, f.messages).state;
-  const expected = foldEvents(f.r, [leaveDungeon(f.r, before).events], before);
-  await runDungeonOp({ chatId: f.id, op: "leave" }, f.id);
-  expect(foldPath(f.r, f.messages).state).toEqual(expected);
-  expect(f.messages.at(-1).content).toContain("banking 10 gold");
-  expect(f.messages.at(-1).content).not.toContain("37 gold");
-});
-
-test("a forced dungeon defeat loses the haul and records a defeat summary", async () => {
-  const f = fixture(dungeonRaw);
-  const run = foldEvents(f.r, [enterDungeon(f.r, initialState(f.r), "mines", [], "run").events]).dungeon!;
-  run.gold = 37;
-  run.battle = { kind: "normal", at: "1,1", round: 1, active: "you", queue: ["you", "foe"], log: [], over: null,
-    fighters: [
-      { id: "you", side: "party", name: "Sam", hp: 1, mhp: 100, mp: 0, mmp: 0, tp: 0, atk: 1, def: 0, mat: 0, mdf: 0, agi: 0, skills: ["attack"], guard: false },
-      { id: "foe", side: "foe", name: "Guardian", hp: 10000, mhp: 10000, mp: 0, mmp: 0, tp: 0, atk: 1000, def: 1000, mat: 1000, mdf: 1000, agi: 100, skills: ["attack"], guard: false },
-    ] } as any;
-  f.add("assistant", "The party is fighting", { warp: { swipes: { "0": record([{ t: "dg_enter", run, src: "action" }]) } } });
-  await runDungeonOp({ chatId: f.id, op: "battle", skill: "attack" }, f.id);
-  const after = foldPath(f.r, f.messages).state;
-  expect(after.dungeon).toBeNull();
-  expect(after.stats.money).toBe(0);
-  expect(f.messages.at(-1).content).toContain("was defeated");
-  expect(f.messages.at(-1).content).toContain("losing the run's haul of 37 gold");
-});
-
 for (const change of ["edit", "delete", "swipe", "rules"] as const) {
   test(`dependent results pause after ${change}; explicit keep rebases without rerolling`, async () => {
     const f = fixture();
@@ -426,7 +377,6 @@ test("registered sheet adjustments merge their newly computed deltas instead of 
 
 test("a superseded quiet operation cannot commit its late round or unlock a host generation", async () => {
   const f = fixture({ stats: { health: { start: 50 } }, encounters: { fight: { actions: { wait: { effects: { health: -1 } } }, foe_moves: { wait: { desc: "Waits", weight: 1 } } } } });
-  f.settings.sceneLines = "model";
   const m = f.add("assistant", "Fight", { warp: { swipes: { "0": record([{ t: "enc", id: "fight", foe: {}, src: "trigger" }]) } } });
   const gate = deferExtraction(f);
   const round = playRound({ chatId: f.id, userId: f.id, intent: { actionId: "wait", via: "choice" } });
@@ -437,17 +387,6 @@ test("a superseded quiet operation cannot commit its late round or unlock a host
   expect(busyChats.has(f.id)).toBe(true);
   expect(foldPath(f.r, f.messages).state.encounter!.round).toBe(0);
   await onGenerationStopped({ chatId: f.id, generationId }, f.id);
-});
-
-test("the registered undo handler clears presentation history on a still-active dungeon", async () => {
-  const f = fixture({ dungeons: { mines: { name: "Mines" } } });
-  const entry = enterDungeon(f.r, initialState(f.r), "mines", [], "session");
-  const m = f.add("assistant", "Dungeon", { warp: { swipes: { "0": record(entry.events) } } });
-  await playScene({ chatId: f.id, userId: f.id, kind: "dungeon", intent: null, said: "You look around." });
-  const state = foldPath(f.r, f.messages).state;
-  expect(sceneViewFor(f.id, f.r, state)!.lines.length).toBeGreaterThan(0);
-  await frontendMessage({ type: "undo", chatId: f.id, messageId: m.id, swipe: 0, events: [] }, f.id);
-  expect(sceneViewFor(f.id, f.r, state)).toMatchObject({ seq: 0, lines: [], image: null, writing: false });
 });
 
 test("card edits invalidate profiles and CHAT_CHANGED rebinding uses the new character immediately", async () => {
@@ -489,129 +428,6 @@ test("the registered lore gate folds the selected generation path instead of the
   await onGenerationStarted({ chatId: f.id, generationId: `${generationId}-continue`, targetMessageId: m.id, generationType: "continue" }, f.id);
   expect((await worldInfo(ctx)).forced).toContain("spoiler");
   await onGenerationStopped({ chatId: f.id, generationId: `${generationId}-continue` }, f.id);
-});
-
-function dateFixture() {
-  const f = fixture({ start: { location: "home" }, locations: { home: { name: "Garden" } }, dating: true,
-    relationships: { people: { mira: { name: "Mira", age: 25, schedule: [{ at: "home" }] } } } });
-  f.settings.decider = "rules";
-  f.settings.dateImages = true;
-  f.add("assistant", "At the garden.");
-  return f;
-}
-
-for (const mode of ["scripted", "model"] as const) test(`host metadata edit events preserve ${mode} dating dialogue and its pending Cue picture`, async () => {
-  const f = dateFixture();
-  f.settings.sceneLines = mode;
-  f.quiet = async () => ({ content: JSON.stringify({ lines: [{ speaker: "Mira", text: `Helper reply ${f.calls}.` }] }) });
-  await frontendMessage({ type: "act", chatId: f.id, actionId: "date:talk@mira" }, f.id);
-  let state = foldPath(f.r, f.messages).state;
-  const first = sceneViewFor(f.id, f.r, state)!;
-  expect(first.lines.length).toBeGreaterThan(0);
-  expect(first.seq).toBe(1);
-  expect(first.imageRequest).toBeDefined();
-  await frontendMessage({ type: "act", chatId: f.id, actionId: "date:topic:music" }, f.id);
-  state = foldPath(f.r, f.messages).state;
-  const next = sceneViewFor(f.id, f.r, state)!;
-  expect(next.seq).toBe(2);
-  expect(next.lines.length).toBeGreaterThan(0);
-  if (mode === "model") expect(next.lines[0].text).toBe("Helper reply 2.");
-  expect(next.imageRequest?.requestId).toBe(first.imageRequest!.requestId);
-  // Cue or another extension may also update unrelated metadata while generating.
-  await patchMeta(f.id, f.messages[0].id, "vn_hints", { moods: { Mira: "happy" } });
-  expect(sceneViewFor(f.id, f.r, state)!.seq).toBe(2);
-  const request = next.imageRequest!;
-  await frontendMessage({ type: "cue_image_result", chatId: f.id, result: {
-    version: 1, provider: "warp", chatId: f.id, requestId: request.requestId,
-    status: "ready", imageUrl: "/api/v1/image-gen/results/date", fit: "contain",
-  } }, f.id);
-  expect(sceneViewFor(f.id, f.r, state)).toMatchObject({ seq: 2, image: "/api/v1/image-gen/results/date", writing: false });
-  expect(f.sent.filter((m: any) => m.type === "state").at(-1).scene.lines.length).toBeGreaterThan(0);
-  expect(f.calls).toBe(mode === "model" ? 2 : 0);
-  expect(f.narratorCalls ?? 0).toBe(0);
-  dropScene(f.id);
-});
-
-test("real narrative edits during a date discard late helper text and Cue results", async () => {
-  const f = dateFixture();
-  f.settings.sceneLines = "model";
-  await frontendMessage({ type: "act", chatId: f.id, actionId: "date:talk@mira" }, f.id);
-  const request = sceneViewFor(f.id, f.r, foldPath(f.r, f.messages).state)!.imageRequest!;
-  const gate = deferExtraction(f);
-  const move = frontendMessage({ type: "act", chatId: f.id, actionId: "date:topic:music" }, f.id);
-  await gate.waiting;
-  f.messages[0].content = "The scene was rewritten.";
-  await listeners.get("MESSAGE_EDITED")!({ chatId: f.id, message: f.messages[0] }, f.id);
-  gate.release(); await move;
-  await frontendMessage({ type: "cue_image_result", chatId: f.id, result: {
-    version: 1, provider: "warp", chatId: f.id, requestId: request.requestId,
-    status: "ready", imageUrl: "/api/v1/images/stale", fit: "cover",
-  } }, f.id);
-  const view = sceneViewFor(f.id, f.r, foldPath(f.r, f.messages).state)!;
-  expect(view).toMatchObject({ seq: 0, lines: [], image: null, writing: false });
-  expect(busyChats.has(f.id)).toBe(false);
-});
-
-test("date pictures request Cue by name only, apply fit, retry without a turn, and reject stale results", async () => {
-  const f = fixture({ start: { location: "home" }, locations: { home: { name: "Garden" } }, dating: true,
-    relationships: { people: { mira: { name: "Mira", desc: "TRAIT_MUST_NOT_LEAVE_WARP", schedule: [{ at: "home" }] } } } });
-  f.settings.dateImages = true;
-  const session = { who: "mira", kind: "talk", at: "home", venue: null, beat: 0, beats: 4, fatigue: 0,
-    mood: 1, combo: 0, enjoy: 0, used: {}, last: null, offer: [], closing: false, started: 0 };
-  f.add("assistant", "At the garden.", { warp: { swipes: { "0": record([{ t: "dt_start", session, src: "manual" }]) } } });
-  const before = foldPath(f.r, f.messages).state;
-  await frontendMessage({ type: "retry_date_image", chatId: f.id }, f.id);
-  const pending = sceneViewFor(f.id, f.r, before)!;
-  expect(pending.imageBusy).toBe(true);
-  expect(pending.imageRequest!.characterName).toBe("Mira");
-  expect(pending.imageRequest!.venue).toBe("Garden");
-  expect(Object.keys(pending.imageRequest!).sort()).toEqual(["version", "provider", "chatId", "requestId", "characterName", "venue", "timeOfDay", "mood"].sort());
-  expect(JSON.stringify(pending.imageRequest)).not.toContain("TRAIT_MUST_NOT");
-  expect(f.calls).toBe(0); // Warp's helper is never used for this picture.
-  const result = { ...pending.imageRequest, status: "ready", imageUrl: "/api/v1/images/date", fit: "fill" };
-  await frontendMessage({ type: "cue_image_result", chatId: f.id, result: { ...result, requestId: "wrong" } }, f.id);
-  expect(sceneViewFor(f.id, f.r, before)!.image).toBeNull();
-  await frontendMessage({ type: "cue_image_result", chatId: f.id, result }, "other-user");
-  expect(sceneViewFor(f.id, f.r, before)!.image).toBeNull();
-  await frontendMessage({ type: "cue_image_result", chatId: f.id, result }, f.id);
-  expect(sceneViewFor(f.id, f.r, before)).toMatchObject({ image: "/api/v1/images/date", imageFit: "fill", imageBusy: false });
-  await frontendMessage({ type: "cue_image_fit", chatId: f.id, fit: "scale-down" }, f.id);
-  expect(sceneViewFor(f.id, f.r, before)!.imageFit).toBe("scale-down");
-  await frontendMessage({ type: "retry_date_image", chatId: f.id }, f.id);
-  const next = sceneViewFor(f.id, f.r, before)!.imageRequest!;
-  expect(next.requestId).not.toBe(result.requestId);
-  expect(foldPath(f.r, f.messages).state).toEqual(before);
-  dropScene(f.id);
-  await frontendMessage({ type: "cue_image_result", chatId: f.id, result: { ...result, requestId: next.requestId } }, f.id);
-  expect(sceneViewFor(f.id, f.r, before)!.image).toBeNull();
-  expect(f.calls).toBe(0); expect(f.narratorCalls ?? 0).toBe(0);
-});
-
-test("a new date picture replaces the old one only when it arrives; another person starts blank", async () => {
-  const f = fixture({ start: { location: "home" }, locations: { home: { name: "Garden" }, park: { name: "Park" } }, dating: true,
-    relationships: { people: { mira: { name: "Mira", schedule: [{ at: "home" }] }, ash: { name: "Ash", schedule: [{ at: "home" }] } } } });
-  f.settings.dateImages = true;
-  const session = (who: string, started: number) => ({ who, kind: "talk", at: "home", venue: null, beat: 0, beats: 4, fatigue: 0,
-    mood: 1, combo: 0, enjoy: 0, used: {}, last: null, offer: [], closing: false, started });
-  f.add("assistant", "At the garden.", { warp: { swipes: { "0": record([{ t: "dt_start", session: session("mira", 0), src: "manual" }]) } } });
-  let state = foldPath(f.r, f.messages).state;
-  await frontendMessage({ type: "retry_date_image", chatId: f.id }, f.id);
-  const req = sceneViewFor(f.id, f.r, state)!.imageRequest!;
-  await frontendMessage({ type: "cue_image_result", chatId: f.id, result: { ...req, status: "ready", imageUrl: "/api/v1/images/one", fit: "cover" } }, f.id);
-  // The scene moves on with Mira: a new picture is asked for, the old one stays up meanwhile.
-  f.add("assistant", "Later.", { warp: { swipes: { "0": record([{ t: "dt_start", session: session("mira", 60), src: "manual" }]) } } });
-  state = foldPath(f.r, f.messages).state;
-  await frontendMessage({ type: "retry_date_image", chatId: f.id }, f.id);
-  expect(sceneViewFor(f.id, f.r, state)).toMatchObject({ image: "/api/v1/images/one", imageBusy: true });
-  // A failed new picture leaves the old one up too.
-  const req2 = sceneViewFor(f.id, f.r, state)!.imageRequest!;
-  await frontendMessage({ type: "cue_image_result", chatId: f.id, result: { ...req2, status: "error", error: "busy" } }, f.id);
-  expect(sceneViewFor(f.id, f.r, state)).toMatchObject({ image: "/api/v1/images/one", imageBusy: false, imageError: "busy" });
-  // Someone else: their date doesn't open on Mira's picture.
-  f.add("assistant", "Ash arrives.", { warp: { swipes: { "0": record([{ t: "dt_start", session: session("ash", 120), src: "manual" }]) } } });
-  state = foldPath(f.r, f.messages).state;
-  await frontendMessage({ type: "retry_date_image", chatId: f.id }, f.id);
-  expect(sceneViewFor(f.id, f.r, state)).toMatchObject({ image: null, imageBusy: true });
 });
 
 // Exercise the complete End pipeline, not only live-choice cleaning.

@@ -47,22 +47,22 @@ beforeEach(() => {
 afterEach(() => { (globalThis as any).spindle = oldHost; });
 const session = () => [...sent].reverse().find(m => m.type === "builder").session;
 
-test("builder does not blanket-add quests or games; both remain available", async () => {
+test("builder does not blanket-add quests; they remain available, and removed systems aren't offered", async () => {
   await builderOpen(id, "build", id);
   await builderStart(id, { connectionId: "", creative: false }, id);
   const systems = session().rounds[0].questions.find((q: any) => q.id === "systems");
   expect(systems.default).toEqual(["relationships"]);
   expect(systems.options.map((o: any) => o.id)).toContain("quests");
-  expect(systems.options.map((o: any) => o.id)).toContain("minigames");
-  await builderAnswer(id, { systems: ["quests", "minigames"] }, [], true, id);
-  expect(session().rounds[0].answers.systems).toEqual(["quests", "minigames"]);
+  for (const gone of ["minigames", "dungeon", "dating"]) expect(systems.options.map((o: any) => o.id)).not.toContain(gone);
+  await builderAnswer(id, { systems: ["quests"] }, [], true, id);
+  expect(session().rounds[0].answers.systems).toEqual(["quests"]);
 });
 
-test("builder preserves card-specific game and quest suggestions", async () => {
-  suggestions = ["quests", "minigames", "quests"];
+test("builder preserves card-specific quest suggestions and drops removed systems", async () => {
+  suggestions = ["quests", "minigames", "quests", "dating"];
   await builderOpen(id, "build", id);
   await builderStart(id, { connectionId: "", creative: false }, id);
-  expect(session().rounds[0].questions.find((q: any) => q.id === "systems").default).toEqual(["quests", "minigames"]);
+  expect(session().rounds[0].questions.find((q: any) => q.id === "systems").default).toEqual(["quests"]);
 });
 
 test("extra drafts never switch an already visible reply, including a nonzero swipe", async () => {
@@ -83,11 +83,10 @@ test("extra drafts never switch an already visible reply, including a nonzero sw
   expect(patches.every(p => p.swipe_id === undefined || p.swipe_id === 1)).toBe(true);
 });
 
-test("settings keep basics and every game, with advanced cost controls collapsed by default", () => {
+test("settings keep basics, with advanced cost controls collapsed by default and no removed parts", () => {
   const html = renderSettings(DEFAULT_SETTINGS, null, []);
   expect(html).toContain('data-setting="enabled"');
-  expect(html).toContain('data-setting="minigames"');
-  for (const name of ["Aim", "Keys", "Mines", "Stack", "Snake", "Pinball", "Blackjack", "Roulette", "Slots", "three-legged race"]) expect(html).toContain(name);
+  for (const gone of ['data-setting="minigames"', 'data-setting="look"', 'data-setting="sfx"', 'data-setting="fx"', "themeDating", "dateImages"]) expect(html).not.toContain(gone);
   expect(html).toContain('<details data-section="advanced-generation"><summary>');
   expect(html).toContain("even when you never choose them");
   expect(html).toContain("stays selected");

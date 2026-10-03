@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Answers, Decider, Questions } from "../engine/decide.js";
 import { loadRuleset } from "../engine/loader.js";
-import { resolveTurnFull, runOp, type Intent } from "../engine/resolve.js";
+import { resolveTurnFull, type Intent } from "../engine/resolve.js";
 import { foldEvents, initialState, type GameState } from "../engine/state.js";
 import { DEFAULT_SETTINGS } from "../shared/protocol.js";
 import { readTurn } from "./decisions.js";
@@ -19,10 +19,6 @@ stats:
 hud: { money: cash }
 relationships:
   people: { robin: { name: Robin, age: 25 } }
-dating:
-  enabled: true
-  venues:
-    walk: { name: Street walk, at: street, cost: 0 }
 improvise: { enabled: true }
 abilities:
   focus:
@@ -59,8 +55,8 @@ function turn(s: GameState, actionId: string | null, extra = {}) {
   const out = resolveTurnFull(r, s, intent, { seed: "agency", ...extra });
   return { ...out, s: foldEvents(r, [out.record.events], s) };
 }
-function session(kind: "date" | "job") {
-  return turn(initialState(r), kind === "date" ? "date:talk@robin" : "job:start:cafe").s;
+function session(_kind: "job") {
+  return turn(initialState(r), "job:start:cafe").s;
 }
 class Script implements Decider {
   id = "jev" as const;
@@ -76,50 +72,10 @@ async function read(s: GameState, d: Script) {
   return readTurn({ r, s, decider: d, settings: DEFAULT_SETTINGS, playerText: "My latest message", sceneText: "In the café", player: "Sam", timeoutMs: 1000 });
 }
 describe("typed action agency inside sessions", () => {
-  test("checkpoint recovery restores sessions after a world action interrupts them", () => {
-    const loopRules = loadRuleset([{ label: "loop", order: 0, content: `
-name: Session loop
-clock: { start: "Mon 10:00" }
-start: { location: cafe }
-locations: { cafe: { name: Café }, street: { name: Street } }
-relationships: { people: { robin: { name: Robin, age: 25 } } }
-dating: { enabled: true }
-flags: { rewind: false }
-checkpoints:
-  slots: 1
-  loop: { when: rewind, to: "1" }
-actions:
-  break_loop: { label: Leave and rewind, effects: { move: street, flags: { rewind: true } } }
-` }]).ruleset!;
-    let s = initialState(loopRules);
-    const begin = resolveTurnFull(loopRules, s, { actionId: "date:talk@robin", via: "choice" }, { seed: "loop" });
-    s = foldEvents(loopRules, [begin.record.events], s);
-    const savedDate = structuredClone(s.date);
-    const save = runOp(loopRules, s, { op: "save", slot: "1" });
-    if (typeof save === "string") throw new Error(save);
-    s = foldEvents(loopRules, [save], s);
-    const out = resolveTurnFull(loopRules, s, { actionId: "break_loop", via: "choice" }, { seed: "loop" });
-    const restored = foldEvents(loopRules, [out.record.events], s);
-    expect(out.record.events.some(e => e.t === "load")).toBe(true);
-    expect(restored.location).toBe("cafe");
-    expect(restored.date).toEqual(savedDate);
-    const loadIndex = out.record.events.findIndex(e => e.t === "load");
-    expect(out.record.events.slice(loadIndex + 1).some(e => e.t === "dt_end")).toBe(false);
-  });
-  test("a session-owned venue move preserves the newly started outing", () => {
-    let s = session("date");
-    s = foldEvents(r, [[{ t: "rel", who: "robin", stat: "love", set: 60, src: "manual" }]], s);
-    s = turn(s, "date:ask_out", { odds: { "date:ask_out": { yes: 1, later: 0, no: 0 } } }).s;
-    expect(s.date?.kind).toBe("plan");
-    const out = turn(s, "date:venue:walk");
-    expect(out.s.location).toBe("street");
-    expect(out.s.date?.kind).toBe("outing");
-    expect(out.record.events.some(e => e.t === "dt_end")).toBe(false);
-  });
-  for (const kind of ["date", "job"] as const) {
+  for (const kind of ["job"] as const) {
     test(`${kind}: classifier retains normal, travel, item, and improv candidates`, async () => {
       const s = session(kind);
-      expect(kind === "date" ? s.date : s.job).toBeTruthy();
+      expect(s.job).toBeTruthy();
       for (const id of ["stretch", "go:street", "item:tea", "ability:focus", "attempt"]) {
         const d = new Script(id);
         const result = await read(s, d);
@@ -161,7 +117,7 @@ actions:
         expect(out.s.location).toBe(s.location);
         expect(out.s[kind]).toEqual(s[kind]);
         expect(out.s.stats.cash).toBeLessThan(s.stats.cash);
-        expect(out.record.events.some(e => e.t === "job" || e.t === "dt_end")).toBe(false);
+        expect(out.record.events.some(e => e.t === "job")).toBe(false);
       }
     });
     test(`${kind}: travel and authored movement end session; invalid actions do nothing`, () => {

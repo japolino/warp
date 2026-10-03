@@ -5,16 +5,21 @@ import { evaluate, type ExprEnv, type Value } from "./expr.js";
 import { emptyEffect, type ActionDef, type Effect, type Issue, type Ruleset } from "./ruleset.js";
 import { BUILTIN_NAMES, initialState, makeEnv } from "./state.js";
 import { costValue } from "./resolve.js";
-import { SKILLS } from "./dungeon/content.js";
 
 export const FUNCTIONS = [
   "has", "count", "flag", "cond", "at", "rel", "met", "between", "roll",
   "wearing", "worn", "trait", "present", "where", "codex", "feat", "perk",
   "eff", "gear", "integrity",
-  "secret", "front", "front_stage", "happened", "deepest", "partner", "dates", "stage", "saved", "body", "transformed", "bond", "arc", "age", "children", "owed", "missed", "days_until", "seen_by", "fame",
+  "secret", "front", "front_stage", "happened", "saved", "body", "transformed", "bond", "arc", "age", "children", "owed", "missed", "days_until", "seen_by", "fame",
   "quest", "quest_active", "quest_done", "quest_failed", "goal", "quests_done", "memories", "cond_of", "foe_cond", "stat_max", "foe_max", "in_encounter",
   "min", "max", "clamp", "floor", "ceil", "round", "abs",
 ];
+
+/** Formula names of systems removed from Warp: an old ruleset that uses them gets a plain warning. */
+const REMOVED_NAMES: Record<string, string> = {
+  in_dungeon: "dungeons", dungeon_depth: "dungeons", "deepest()": "dungeons",
+  in_date: "dating", on_outing: "dating", "partner()": "dating", "dates()": "dating", "stage()": "dating",
+};
 
 function distance(a: string, b: string): number {
   const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
@@ -33,10 +38,6 @@ function suggest(name: string, pool: string[]): string {
     if (d < bestD) { bestD = d; best = p; }
   }
   return best && bestD <= Math.max(2, Math.floor(name.length / 3)) ? ` — did you mean "${best}"?` : "";
-}
-
-function venueCostsWithoutMoney(r: Ruleset): boolean {
-  return !r.hud.money && Object.values(r.dating.venues).some((v) => v.cost > 0);
 }
 
 /** Conditions something removes (an item's use, an action, a trigger…) and ones added for a set time somewhere. */
@@ -63,13 +64,12 @@ export function lintRuleset(r: Ruleset): Issue[] {
   const s = initialState(r);
   const names = [...r.statOrder, ...Object.keys(r.flags), ...BUILTIN_NAMES];
 
-  const check = (src: string | number | undefined, where: string, extra: Record<string, Value> = {}, dungeon = false) => {
+  const check = (src: string | number | undefined, where: string, extra: Record<string, Value> = {}) => {
     if (src === undefined || typeof src === "number") return;
     const base = makeEnv(r, s, extra);
-    // Dungeon formulas also know depth, bag('potion') and rel_bond(person).
     const env: ExprEnv = { lookup: base.lookup, call: (n, a) => {
       if (n === "in_encounter" && a.length && !r.encounters[String(a[0])]) badEncounter.add(String(a[0]));
-      return n === "roll" ? 1 : dungeon && (n === "bag" || n === "rel_bond") ? 0 : base.call?.(n, a);
+      return n === "roll" ? 1 : base.call?.(n, a);
     } };
     const badEncounter = new Set<string>();
     const unknown = new Set<string>();
@@ -83,7 +83,9 @@ export function lintRuleset(r: Ruleset): Issue[] {
     }
     for (const u of unknown) {
       const isCall = u.endsWith("()");
-      const msg = isCall
+      const gone = REMOVED_NAMES[u];
+      const msg = gone ? `"${u}" (${gone}) was removed from Warp, so it always reads as 0. The old version is on the \`legacy\` branch.`
+        : isCall
         ? `"${u}" isn't a known function (${FUNCTIONS.join(", ")})`
         : `"${u}" isn't a stat, flag or clock value${suggest(u, [...names, ...Object.keys(extra)])}`;
       issues.push({ level: "warning", where, message: msg });
@@ -206,12 +208,6 @@ export function lintRuleset(r: Ruleset): Issue[] {
     checkCost(a, w, extra);
     checkEffect(a.effects, `${w} › effects`, extra);
     for (const [tier, e] of Object.entries(a.outcomes)) if (e) checkEffect(e, `${w} › ${tier}`, extra);
-    if (a.gamble) {
-      const g = a.gamble;
-      if (!(g.stat ?? r.hud.money)) issues.push({ level: "warning", where: `${w} › gamble`, message: "there's no money to stake — add a stat with `kind: money`, or `stat:` on the table" });
-      check(g.luck, `${w} › gamble › luck`, extra);
-      for (const [k, e] of [["win", g.win], ["lose", g.lose], ["broke", g.broke]] as const) checkEffect(e, `${w} › gamble › ${k}`, extra);
-    }
   };
   for (const a of Object.values(r.actions)) checkAction(a, `Actions › ${a.id}`);
   // Spending points through a story action: every click is a player message and a narrator reply.
@@ -221,7 +217,7 @@ export function lintRuleset(r: Ruleset): Issue[] {
     return JSON.stringify(rest, (_k, v) => (v === undefined ? undefined : v)) === JSON.stringify(emptyEffect());
   };
   for (const a of Object.values(r.actions)) {
-    if (a.check || a.gamble || a.perPerson || Object.keys(a.outcomes).length || !statsOnly(a.effects) || !statsOnly(a.cost)) continue;
+    if (a.check || a.perPerson || Object.keys(a.outcomes).length || !statsOnly(a.effects) || !statsOnly(a.cost)) continue;
     const deltas = { ...a.cost.stats, ...a.effects.stats };
     const n = (v: string | number) => (typeof v === "number" ? v : Number(String(v).replace(/^\+/, "")));
     const ups = Object.entries(deltas).filter(([id, v]) => n(v) > 0 && ["attribute", "skill"].includes(r.stats[id]?.kind ?? ""));
@@ -345,34 +341,6 @@ export function lintRuleset(r: Ruleset): Issue[] {
     }
   }
   check(r.liveChoices.when, "Live choices › when");
-  for (const d of Object.values(r.dungeons)) {
-    const w = `Dungeons › ${d.id}`;
-    const dx = { depth: 1, target: Object.keys(r.people)[0] ?? "someone" };
-    check(d.when, `${w} › when`);
-    for (const q of d.requires ?? []) check(q.when, `${w} › requires`);
-    check(d.party.when, `${w} › party › when`, dx);
-    for (const [k, v] of Object.entries(d.player)) if (k !== "class" && k !== "sprite") check(v as string | number, `${w} › player › ${k}`);
-    for (const loc of d.at) if (Object.keys(r.locations).length && !r.locations[loc]) issues.push({ level: "warning", where: `${w} › at`, message: `"${loc}" isn't a declared location${suggest(loc, Object.keys(r.locations))}` });
-    for (const l of d.loot) if (!r.items[l.item] && !r.itemsOpen) issues.push({ level: "warning", where: `${w} › loot`, message: `"${l.item}" isn't a declared item` });
-    if (d.currency && !r.stats[d.currency]) issues.push({ level: "warning", where: `${w} › currency`, message: `"${d.currency}" isn't a stat` });
-    checkEffect(d.onLeave, `${w} › on_leave`);
-    checkEffect(d.onDefeat, `${w} › on_defeat`);
-    for (const [kind, list] of [["events", d.events], ["romance", d.romance]] as const) {
-      for (const ev of Object.values(list)) for (const c of ev.choices) {
-        const cw = `${w} › ${kind} › ${ev.id} › ${c.id}`;
-        check(c.chance, `${cw} › chance`, dx, true);
-        check(c.when, `${cw} › when`, dx, true);
-        for (const o of [c.success, c.fail]) {
-          if (!o) continue;
-          check(o.gold, `${cw} › gold`, dx, true);
-          check(o.xp, `${cw} › xp`, dx, true);
-          checkEffect(o.effect, cw, dx);
-          if (o.fight && o.fight !== "enemy" && o.fight !== "elite" && !d.monsters[o.fight]) issues.push({ level: "warning", where: cw, message: `fights "${o.fight}", which isn't a monster here` });
-        }
-      }
-    }
-    for (const m of Object.values(d.monsters)) for (const sk of m.skills) if (!SKILLS[sk]) issues.push({ level: "warning", where: `${w} › monsters › ${m.id}`, message: `"${sk}" isn't a skill` });
-  }
   for (const a of Object.values(r.liveChoices.tags)) checkAction(a, `Live choices › tags › ${a.id}`);
   if (r.checkpoints.loop) {
     check(r.checkpoints.loop.when, "Checkpoints › loop › when");
@@ -444,21 +412,5 @@ export function lintRuleset(r: Ruleset): Issue[] {
     ...Object.values(r.conditions).map((c) => [`Conditions › ${c.id} › narrator_when`, c.gate] as [string, { when?: string } | undefined]),
   ];
   for (const [where, g] of gates) check(g?.when, where);
-  if (r.dating.enabled) {
-    const dx = { target: Object.keys(r.people)[0] ?? "someone" };
-    check(r.dating.with, "Dating › with", dx);
-    for (const t of Object.values(r.dating.topics)) check(t.when, `Dating › topics › ${t.id} › when`, dx);
-    const tags = new Set(Object.values(r.dating.venues).flatMap((v) => v.activities.flatMap((a) => a.tags)));
-    for (const v of Object.values(r.dating.venues)) {
-      check(v.when, `Dating › venues › ${v.id} › when`, dx);
-      if (v.at && Object.keys(r.locations).length && !r.locations[v.at]) issues.push({ level: "warning", where: `Dating › venues › ${v.id} › at`, message: `"${v.at}" isn't a declared location${suggest(v.at, Object.keys(r.locations))}` });
-    }
-    if (venueCostsWithoutMoney(r)) issues.push({ level: "warning", where: "Dating › venues", message: "venues have a cost but the ruleset has no money stat — outings will be free" });
-    for (const [pid, tastes] of Object.entries(r.dating.people)) for (const key of Object.keys(tastes)) {
-      const bare = key.replace(/^(tag|item|act):/, "");
-      const known = r.dating.topics[key] || r.dating.categories.some((c) => c.id === key) || (key.startsWith("tag:") ? tags.has(bare) : key.startsWith("item:") ? !!r.items[bare] : tags.has(key) || Object.values(r.dating.venues).some((v) => v.activities.some((a) => a.id === bare)));
-      if (!known) issues.push({ level: "warning", where: `Dating › people › ${pid}`, message: `"${key}" isn't a topic, category, activity tag (tag:…) or item (item:…)${suggest(key, Object.keys(r.dating.topics))}` });
-    }
-  }
   return issues;
 }

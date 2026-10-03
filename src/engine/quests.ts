@@ -50,7 +50,7 @@ export interface QuestOffer { id: string; via: "giver" | "board" | "place"; from
 
 /** Quests that can be taken here and now: from someone who's with {{user}}, off a board, or at the place itself. */
 export function questOffers(r: Ruleset, s: GameState): QuestOffer[] {
-  if (!r.questOrder.length || s.encounter || s.dungeon || s.ended) return [];
+  if (!r.questOrder.length || s.encounter || s.ended) return [];
   const env = makeEnv(r, s);
   const here = new Set(presentPeople(r, s, env));
   const board = !!(s.location && r.locations[s.location]?.board);
@@ -69,7 +69,7 @@ export function questOffers(r: Ruleset, s: GameState): QuestOffer[] {
 /** Finished quests waiting to be handed in where {{user}} is now. */
 export function questsToReport(r: Ruleset, s: GameState): { id: string; to: string | null }[] {
   const out: { id: string; to: string | null }[] = [];
-  if (s.encounter || s.dungeon) return out;
+  if (s.encounter) return out;
   const here = new Set(presentPeople(r, s, makeEnv(r, s)));
   const board = !!(s.location && r.locations[s.location]?.board);
   for (const [id, st] of Object.entries(s.quests ?? {})) {

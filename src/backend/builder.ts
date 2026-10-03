@@ -184,9 +184,6 @@ const SYSTEMS: { id: string; label: string }[] = [
   { id: "schedules", label: "NPC schedules & places" },
   { id: "encounters", label: "Encounters / combat" },
   { id: "quests", label: "Quests (a notice board, favours people ask, bounties)" },
-  { id: "minigames", label: "Minigames & gambling (checks played as Aim, Keys, Mines, Stack, Snake, Pinball, a three-legged race or cards — game: on the check; a casino or card table with gamble:)" },
-  { id: "dungeon", label: "Dungeon diving (roguelike floors, party battles)" },
-  { id: "dating", label: "Dating (topics, hidden tastes, outings)" },
   { id: "crime", label: "Crime & consequences" },
   { id: "journal", label: "Codex & feats" },
   { id: "abilities", label: "Abilities & spells (your persona's own moves)" },
@@ -349,13 +346,11 @@ function buildPreview(s: BuilderSession) {
     actions: Object.keys(r.actions).length,
     encounters: Object.keys(r.encounters).length,
     quests: r.questOrder.length,
-    dungeons: Object.keys(r.dungeons).length,
     rules: r.triggers.length,
     codex: Object.keys(r.codex).length,
     feats: Object.keys(r.feats).length,
     perks: Object.keys(r.perks).length,
     secrets: Object.keys(r.secrets).length,
-    venues: r.dating.enabled ? Object.keys(r.dating.venues).length : 0,
     fronts: Object.keys(r.fronts).length,
     events: Object.keys(r.randomEvents.events).length,
   };
@@ -515,7 +510,7 @@ export async function builderStart(chatId: string, opts: { connectionId: string;
       cast: Array.isArray(out.cast) ? out.cast.slice(0, 12).map((c) => ({ name: String((c as Record<string, unknown>)?.name ?? ""), relation: String((c as Record<string, unknown>)?.relation ?? "") })).filter((c) => c.name) : [],
     };
     s.base = opts.base || suggested;
-    // Suggest only systems that fit the card. Quests and minigames remain selectable.
+    // Suggest only systems that fit the card. Quests remain selectable.
     const picked = Array.isArray(out.systems) ? out.systems.map(String).filter((x) => SYSTEMS.some((y) => y.id === x)) : ["needs", "relationships", "money", "skills", "story"];
     const defaults = [...new Set(picked)];
     s.rounds = [{ questions: [...coreQuestions(defaults), ...normQuestions(out.followUps, "f1_")], answers: {} }];
@@ -554,11 +549,10 @@ async function draftAll(s: BuilderSession, userId?: string) {
   const t = getTemplate(s.base);
   const systems = chosenSystems(s);
   const want = (label: PartLabel) => {
-    if (label === "encounters") return systems.has("encounters") || systems.has("dungeon");
+    if (label === "encounters") return systems.has("encounters");
     if (label === "quests") return systems.has("quests");
     if (label === "journal") return systems.has("journal") || systems.has("perks") || systems.has("abilities");
     if (label === "story") return systems.has("story");
-    if (label === "dating") return systems.has("dating");
     return true;
   };
   const baseOf = (label: string) => {

@@ -21,7 +21,7 @@ const turn = (r: R, s: GameState, actionId: string, params?: Record<string, stri
   const rec = resolveTurn(r, s, { actionId, via: "choice", ...(params ? { params } : {}) }, { seed });
   return { rec, s: fold(r, s, rec) };
 };
-const choices = (r: R, s: GameState) => buildChoices(r, s, { lines: [], veils: [], minigames: "off" });
+const choices = (r: R, s: GameState) => buildChoices(r, s, { lines: [], veils: [] });
 const warned = (issues: Issue[], where: RegExp) => issues.filter((i) => where.test(i.where));
 
 describe("percentage costs (bug: abilities crashed on `cost: { hp: \"-15%\" }`)", () => {

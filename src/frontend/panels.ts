@@ -23,8 +23,7 @@ export interface Layout { panels: Panel[] }
 
 /**
  * Lumiverse gives an extension 4 floating windows. The main window has one, so
- * up to 3 panels; the stage and the arcade borrow theirs while the panels are
- * hidden behind them.
+ * up to 3 panels.
  */
 export const MAX_PANELS = 3;
 

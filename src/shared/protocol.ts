@@ -1,10 +1,7 @@
 // Messages and view models shared by backend and frontend.
 
 import type { Tier } from "../engine/ruleset.js";
-import type { CueImageRequest, CueImageResult, ImageFit } from "./cue-images.js";
-import type { GambleOffer, GameOffer, GameResult } from "../engine/game-ids.js";
 
-export type { GambleOffer, GameOffer, GameResult };
 
 export type Tone = "good" | "warn" | "bad" | "neutral";
 
@@ -99,8 +96,7 @@ export interface ErrandsView {
   /** Bills that can be paid now. */
   bills: { id: string; label: string; amount: string; due: string; story: string }[];
   /** Practice: a check per session; `minutes` per session, `cost` per session. */
-  train: { id: string; label: string; desc: string | null; odds: number | null; minutes: number; cost: string | null; /** Sessions affordable now. */ max: number; why: string | null; story: string;
-    /** It has a minigame: the choice as the story buttons would show it, to play (one session) instead of rolling. */ choice?: ChoiceView }[];
+  train: { id: string; label: string; desc: string | null; odds: number | null; minutes: number; cost: string | null; /** Sessions affordable now. */ max: number; why: string | null; story: string }[];
   /** Rest, sleep, wait: time passes quietly. */
   rest: { id: string; label: string; desc: string | null; minutes: number; effects: string | null; why: string | null; story: string }[];
   /** "E160" — the player's money, for the shop. */
@@ -109,7 +105,7 @@ export interface ErrandsView {
 
 export interface HudView {
   rulesetName: string;
-  /** Errands available here and now (null: none, or not now — in an encounter, a date, a dungeon, a shift; or turned off). */
+  /** Errands available here and now (null: none, or not now — in an encounter or a shift; or turned off). */
   errands?: ErrandsView | null;
   clock: { label: string; time: string; day: string; phase: string } | null;
   /** "Sun 4th Sep" when the ruleset has a calendar. */
@@ -256,147 +252,7 @@ export interface ChoiceView {
   locked?: string;
   /** Why it's suggested now (items: "Clears Scented"). */
   why?: string;
-  /** It can be played as a minigame instead of rolled. */
-  game?: GameOffer;
-  /** A gambling table: the overlay deals the cards. */
-  gamble?: GambleOffer;
 }
-
-export interface FighterView {
-  id: string;
-  name: string;
-  side: "party" | "foe";
-  sprite: string;
-  hp: number; mhp: number; mp: number; mmp: number; tp: number;
-  alive: boolean;
-  /** Waiting for a command. */
-  active: boolean;
-  guard: boolean;
-  elite?: boolean;
-  boss?: boolean;
-}
-
-export interface DungeonView {
-  id: string;
-  name: string;
-  theme: string;
-  depth: number;
-  /** Deepest floor (0 = endless). */
-  floors: number;
-  size: number;
-  /** This floor has a guardian on the way down. */
-  boss: boolean;
-  tiles: { x: number; y: number; kind: string | null; state: "hidden" | "seen" | "here"; cleared: boolean; reachable: boolean }[];
-  here: {
-    kind: string;
-    canDescend: boolean;
-    bottom: boolean;
-    shop: { id: string; name: string; price: number; sprite: string; desc: string; affordable: boolean }[] | null;
-  };
-  event: { text: string; romance: boolean; choices: { id: string; label: string; ok: boolean; chance: number | null; cost: number | null }[] } | null;
-  battle: {
-    kind: string;
-    round: number;
-    active: string | null;
-    fighters: FighterView[];
-    skills: { id: string; name: string; cost: string; target: string; usable: boolean }[];
-    log: string[];
-    canEscape: boolean;
-    over: string | null;
-  } | null;
-  party: FighterView[];
-  level: number;
-  xp: number;
-  xpNext: number;
-  gold: number;
-  bag: { id: string; name: string; count: number; sprite: string }[];
-  loot: { name: string; count: number }[];
-  /** Newest first. */
-  log: string[];
-}
-
-export interface DungeonEntryView {
-  id: string;
-  name: string;
-  desc: string | null;
-  theme: string;
-  deepest: number;
-  floors: number;
-  max: number;
-  companions: { id: string; name: string; present: boolean; cls: string }[];
-}
-
-export interface DatePersonView {
-  id: string;
-  name: string;
-  /** Here now (or always around). */
-  here: boolean;
-  stage: string;
-  stageIndex: number;
-  hostile: boolean;
-  partner: boolean;
-  /** 0–1 of each stat's range. */
-  love: number;
-  fear: number;
-  loveText: string | null;
-  fearText: string | null;
-  dates: number;
-  /** Topic labels by how they reacted, as far as the player has seen. */
-  loves: string[];
-  likes: string[];
-  dislikes: string[];
-  romance: boolean;
-}
-
-export interface DateTopicView {
-  id: string;
-  label: string;
-  desc: string | null;
-  /** How they reacted last time (a reaction id), if the player has seen it. */
-  known: string | null;
-  knownLabel: string | null;
-  used: number;
-  /** Why it can't be raised now. */
-  lock: string | null;
-  odds: number | null;
-}
-
-export interface DateView {
-  session: {
-    who: string;
-    name: string;
-    kind: "talk" | "plan" | "outing";
-    venue: string | null;
-    beat: number;
-    beats: number;
-    fatigue: number;
-    mood: number;
-    moodLabel: string;
-    moodFace: string;
-    combo: number;
-    enjoy: number;
-    closing: boolean;
-    last: { label: string; reaction: string; text: string } | null;
-  } | null;
-  /** The person in the session. */
-  person: DatePersonView | null;
-  people: DatePersonView[];
-  categories: { id: string; label: string; icon: string; topics: DateTopicView[] }[];
-  /** Non-topic moves (asking out, venues, activities, gifts, goodbye). */
-  moves: { id: string; label: string; desc: string | null; odds: number | null; kind: string; group: string }[];
-  /** The relationship ladder, lowest first (stranger … partner). */
-  stages: string[];
-}
-
-export type DungeonOp =
-  | { op: "enter"; id: string; companions: string[] }
-  | { op: "move"; x: number; y: number }
-  | { op: "choose"; choice: string }
-  | { op: "battle"; skill?: string; item?: "potion" | "ether" | "bomb"; target?: string; escape?: boolean; auto?: "turn" | "round" | "battle" }
-  | { op: "descend" }
-  | { op: "leave" }
-  | { op: "use"; item: string; target: string }
-  | { op: "buy"; item: string };
 
 export interface ChangeView {
   text: string;
@@ -429,11 +285,7 @@ export interface RecordView {
     tier: Tier;
     tierLabel: string;
     summary: string;
-    /** Played instead of rolled: "◎ Aim 87% · needed 60%". */
-    game: { id: string; summary: string; score: number; needed: number } | null;
   } | null;
-  /** A gambling sitting: "♠ Blackjack · stake £50 · +£35". */
-  gamble: { game: string; text: string; net: number } | null;
   changes: ChangeView[];
   hints: string[];
   veiled: boolean;
@@ -513,35 +365,15 @@ export interface Settings {
   drafts: number;
   /** Pre-write replies for this many of the first choices, so clicking them is instant (0 = off). */
   prewrite: number;
-  /** Who writes the stage's snippets (dates, dungeon moments): the helper model, or scripted lines. */
-  sceneLines: "model" | "scripted";
   /** Items that do nothing get a use drafted from their description (saved as an editable lorebook entry). */
   draftItemUses: boolean;
-  /** Dating's built-in topics and outings are rewritten once to fit the card's setting. */
-  themeDating: boolean;
-  /** Visual flourishes: rolls stamped in the chat, hearts on dates, hits and tile flips in the dungeon. */
-  fx: "full" | "reduced" | "off";
-  /** Sound: everywhere, only in dates/dungeons/encounters, or none. */
-  sfx: "all" | "games" | "off";
-  /** 0–1. */
-  sfxVolume: number;
-  /** Minigames instead of dice: off, offered on the briefing (Play or Roll), or straight into the game. */
-  minigames: "off" | "ask" | "always";
-  /** Which checks: only the ones the rulebook names a game for, or every check (a fitting game is picked). */
-  minigameScope: "rulebook" | "all";
-  /** How dungeons, dates and the arcade look: the rulebook's choice, or always one look. */
-  look: "rulebook" | "medieval" | "modern" | "scifi";
-  /** Generate a picture for each date (the place, with them in the middle). */
-  dateImages: boolean;
-  /** Legacy setting retained for saved configurations; date pictures now use Cue's connection. */
-  imageConnectionId: string;
   /** Errands in a window (board, shop, bills, training, rest) instead of each being a story choice. */
   errands: boolean;
   /** Clicking a place on the map goes there off the page (no travel paragraph); the next reply starts the scene. */
   quietTravel: boolean;
-  /** A clicked move is rolled (or played) on the click, and the player's message says how it went, in their voice. */
+  /** A clicked move is rolled on the click, and the player's message says how it went, in their voice. */
   sayOutcome: boolean;
-  /** Choice buttons under the reply (the CYOA). Off: none, and none are written — fights, shifts, dungeons, dates and endings keep theirs. */
+  /** Choice buttons under the reply (the CYOA). Off: none, and none are written — fights, shifts and endings keep theirs. */
   showChoices: boolean;
   /** The chips under each reply that say what changed (time, feelings, items…). Off: only in the sheet's history. */
   showChanges: boolean;
@@ -568,17 +400,7 @@ export const DEFAULT_SETTINGS: Settings = {
   consistencyCheck: false,
   drafts: 1,
   prewrite: 0,
-  sceneLines: "model",
   draftItemUses: true,
-  themeDating: true,
-  fx: "full",
-  sfx: "games",
-  sfxVolume: 0.4,
-  minigames: "ask",
-  minigameScope: "rulebook",
-  look: "rulebook",
-  dateImages: true,
-  imageConnectionId: "",
   errands: true,
   quietTravel: false,
   sayOutcome: true,
@@ -671,26 +493,6 @@ export interface BuilderSession {
   updatedAt: number;
 }
 
-/** One line of a stage snippet: someone speaking, or narration (speaker null). */
-export interface SceneLine { speaker: string | null; text: string }
-
-export interface SceneView {
-  kind: "date" | "dungeon";
-  /** Bumps with every new snippet, so the stage starts it from its first line. */
-  seq: number;
-  lines: SceneLine[];
-  /** What the player just did or said, shown above the snippet. */
-  said: string | null;
-  /** The date's picture (the place, with them in the middle), once it's ready. */
-  image: string | null;
-  imageBusy: boolean;
-  imageRequest?: CueImageRequest;
-  imageError?: string;
-  imageFit?: ImageFit;
-  /** A snippet is being written. */
-  writing: boolean;
-}
-
 export type BackendToFrontend =
   | { type: "doll_look"; who: string; look: unknown | null; note: string; name?: string; error?: string; /** The chat it was asked for, and whether it was an automatic update. */ chatId?: string | null; auto?: boolean }
   | {
@@ -708,21 +510,13 @@ export type BackendToFrontend =
       /** Latest message is from the assistant (choices are shown under it). */
       choicesAnchor: string | null;
       busy: boolean;
-      dungeon: DungeonView | null;
-      dungeonEntries: DungeonEntryView[];
-      /** Dating: people, and the conversation or date in progress (null when the ruleset has no dating). */
-      date: DateView | null;
-      /** The rulebook's look for the stage and the arcade (the player's setting can override it). */
-      look?: "medieval" | "modern" | "scifi";
-      /** A date or dungeon run on the stage: its latest snippet of lines, and the date's picture. */
-      scene: SceneView | null;
       /** Quiet encounter logs among the recent messages, for their round cards. */
       encounterLogs?: EncounterLogView[];
     }
   | { type: "busy"; chatId: string; busy: boolean; label?: string }
-  | { type: "settings"; settings: Settings; templates: TemplateInfo[]; connections: { id: string; name: string }[]; imageConnections: { id: string; name: string }[]; jevKeySet: boolean }
+  | { type: "settings"; settings: Settings; templates: TemplateInfo[]; connections: { id: string; name: string }[]; jevKeySet: boolean }
   | { type: "toast"; level: "info" | "success" | "warning" | "error"; message: string }
-  | { type: "command"; command: "open" | "install" | "dungeon" }
+  | { type: "command"; command: "open" | "install" }
   | { type: "builder"; session: BuilderSession | null; chatId?: string | null }
   /** The installed rulebook as one file, for editing elsewhere. */
   | { type: "rulebook_export"; name: string; text: string };
@@ -745,14 +539,11 @@ export interface DollRequest {
 
 export type FrontendToBackend =
   | DollRequest
-  | { type: "cue_image_fit"; chatId: string; fit: ImageFit }
-  | { type: "cue_image_result"; chatId: string; result: CueImageResult }
-  | { type: "retry_date_image"; chatId: string }
   | { type: "reconcile_history"; chatId: string; keep: boolean }
   | { type: "hello"; chatId: string | null }
   | { type: "refresh"; chatId: string | null }
-  | { type: "act"; chatId: string; actionId: string; params?: Record<string, string>; game?: GameResult }
-  /** A line typed on the stage: said on the date or in the dungeon (off the chat), or posted to the chat otherwise. */
+  | { type: "act"; chatId: string; actionId: string; params?: Record<string, string> }
+  /** A line typed in Warp's own box (an encounter's move), or posted to the chat otherwise. */
   | { type: "say"; chatId: string; text: string }
   | { type: "undo"; chatId: string; messageId: string; swipe: number; events: number[] }
   | { type: "adjust"; chatId: string; stat: string; value: number }
@@ -770,7 +561,7 @@ export type FrontendToBackend =
   /** Roll a clicked move again: a new roll, a new line in the player's message, a new reply. */
   | { type: "reroll"; chatId: string; messageId: string }
   /** Do something off the page (an errand, an item, travel): no narrator turn; `times` repeats it (buying 3, training 4 sessions). */
-  | { type: "quiet"; chatId: string; actionId: string; params?: Record<string, string>; times?: number; /** Played as a minigame (one session): the score decides instead of the dice. */ game?: GameResult }
+  | { type: "quiet"; chatId: string; actionId: string; params?: Record<string, string>; times?: number }
   | { type: "adjust_rel"; chatId: string; who: string; stat: string; value: number }
   | { type: "forget"; chatId: string; who: string }
   | { type: "builder_open"; chatId: string; mode: "build" | "refine" | "deepen" }
@@ -782,8 +573,6 @@ export type FrontendToBackend =
   | { type: "builder_deepen"; chatId: string; connectionId?: string; effort?: "quick" | "thorough"; revisitWaivers?: boolean }
   /** Draft uses for items that do nothing, from their descriptions, into a "warp-ruleset · item uses" entry. */
   | { type: "draft_item_uses"; chatId: string }
-  /** Rewrite dating's topics and outings for this card's setting (again, if it was done before). */
-  | { type: "theme_dating"; chatId: string }
   | { type: "builder_answer"; chatId: string; answers: Record<string, BuilderAnswer>; additions: BuilderAddition[]; more: boolean }
   | { type: "builder_redo"; chatId: string; part: string; note?: string }
   | { type: "builder_fix"; chatId: string; warning: string }
@@ -791,7 +580,6 @@ export type FrontendToBackend =
   | { type: "builder_install"; chatId: string }
   | { type: "builder_back"; chatId: string }
   | { type: "builder_close"; chatId: string }
-  | ({ type: "dungeon"; chatId: string } & DungeonOp)
   | { type: "run"; chatId: string; op: "save" | "load" | "restart" | "continue"; slot?: string }
   | { type: "set_jev_key"; key: string }
   | { type: "test_decider" };

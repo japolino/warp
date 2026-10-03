@@ -23,7 +23,6 @@ start:
   location: inn
   items: { short_sword: 1, healing_draught: 2, rations: 3, torch: 1 }
 
-look: medieval   # how dungeons, dates and minigames look: medieval, modern or scifi
 hud:
   currency: "g"
   bars: [hp, stamina, mana, xp]
@@ -212,14 +211,6 @@ conditions:
     say: "*I pay for a room and sleep.*"
     time: 480
     effects: { gold: -5, hp: +40, stamina: +100, mana: +30, remove_condition: [exhausted] }
-  caravan_cards:
-    label: Cards with the caravan guards
-    group: Social
-    at: inn
-    when: hour >= 18 or hour < 2
-    say: "*I sit in on the guards' card game by the fire.*"
-    time: 60
-    gamble: { game: blackjack, stakes: [2, 5, 15], rounds: 5, win: { xp: +3 }, broke: { flags: { owes_the_guards: true } } }
   pay_guards:
     label: Settle up with the caravan guards (10g)
     group: Social
@@ -235,7 +226,7 @@ conditions:
     when: "weekday == 'Sat' and between(hour, 10, 16)"
     say: "*I tie my ankle to {target}'s for the fair's three-legged race.*"
     time: 30
-    check: { chance: "30 + agility * 4 + target.trust / 4", label: Agility, game: race }
+    check: { chance: "30 + agility * 4 + target.trust / 4", label: Agility }
     success: { gold: +5, xp: +5, rel: { target: { trust: +5 } }, hint: "{{user}} and {target} win the fair's ribbon and a purse of coppers." }
     fail: { stamina: -10, rel: { target: { trust: +1 } }, hint: "A tangle of legs in the mud, and the whole square laughing." }
   rumours:
@@ -337,7 +328,7 @@ conditions:
     say: "*I ask around for work — hauling, mending, minding stalls.*"
     time: 120
     cost: { stamina: -15 }
-    check: { chance: "45 + might * 3", label: Might, game: stack }
+    check: { chance: "45 + might * 3", label: Might }
     success: { gold: +8, xp: +5 }
     fail: { gold: +3 }
   notice_board:
@@ -356,7 +347,7 @@ conditions:
     say: "*I search the roadside for herbs and game.*"
     time: 45
     cost: { stamina: -10 }
-    check: { chance: "35 + survival / 2 + wits * 2", label: Survival, game: mines }
+    check: { chance: "35 + survival / 2 + wits * 2", label: Survival }
     success: { give: rations, xp: +5 }
     fail: { start_encounter: wolves }
   hunt_wolves:
@@ -420,7 +411,7 @@ encounters:
         label: Loose an arrow
         when: has('longbow')
         cost: { stamina: -4 }
-        check: { chance: "30 + archery / 2 + agility * 3", label: Archery, game: aim }
+        check: { chance: "30 + archery / 2 + agility * 3", label: Archery }
         success: { foe: { hp: "-(5 + agility * 2)" } }
         fail: { hint: "The arrow thuds into a tree." }
       brandish:
@@ -432,7 +423,7 @@ encounters:
       climb:
         label: Climb a tree
         cost: { stamina: -12 }
-        check: { chance: "10 + survival / 2 + agility * 2", label: Survival, game: snake }
+        check: { chance: "10 + survival / 2 + agility * 2", label: Survival }
         success: { end: escaped }
         fail: { hp: -6, hint: "A wolf catches {{user}}'s boot and drags them back down." }
     foe_moves:
@@ -494,7 +485,7 @@ encounters:
       sneak:
         label: Slip past in the reeds
         cost: { stamina: -6 }
-        check: { chance: "25 + stealth / 2 + agility * 3", label: Stealth, game: snake }
+        check: { chance: "25 + stealth / 2 + agility * 3", label: Stealth }
         success: { end: slipped_by }
         fail: { foe: { resolve: +3 }, hint: "A sentry spots {{user}} in the reeds." }
     foe_moves:
@@ -544,7 +535,7 @@ encounters:
       flee:
         label: Run for the treeline
         cost: { stamina: -15 }
-        check: { chance: "35 + agility * 4", label: Agility, game: snake }
+        check: { chance: "35 + agility * 4", label: Agility }
         success: { end: fled }
         fail: { hp: -6 }
     foe_moves:
@@ -561,20 +552,6 @@ encounters:
       released: { xp: +140, flags: { barrow_quiet: true }, rel: { aldous: { trust: +20 } } }
       fled: { stamina: -20 }
       beaten: { set: { hp: 1 }, add_condition: { exhausted: 480 }, hint: "{{user}} wakes at the temple; Brother Aldous found them at the barrow's edge." }
-
-dungeons:
-  barrow:
-    name: The Barrow Halls
-    desc: Burial halls under the mound, deeper than any barrow has a right to be.
-    at: [barrow_ruins]
-    theme: crypt
-    floors: 15
-    party: { max: 3 }
-    player: { class: adventurer, hp: "30 + might * 5 + level * 8", atk: "6 + might * 1.5 + blades / 10", def: "6 + might", mat: "6 + wits * 1.5 + arcana / 10", agi: "6 + agility * 1.2" }
-    currency: gold
-    loot: { healing_draught: 3, mana_tonic: 2, antidote: 1 }
-    on_leave: { stamina: -20 }
-    on_defeat: { hp: -20, gold: "-min(gold, 30)" }
 `,
     },
     {
@@ -653,7 +630,7 @@ abilities:
     where: encounter
     known: "arcana >= 30"
     cost: { mana: -6 }
-    check: { chance: "35 + arcana / 2 + wits * 3", label: Arcana, game: keys }
+    check: { chance: "35 + arcana / 2 + wits * 3", label: Arcana }
     success: { harm: "8 + arcana / 5" }
     fail: { hint: "The fire gutters out in {{user}}'s hand." }
   mend:
@@ -702,7 +679,7 @@ abilities:
     where: encounter
     requires: { has: holy_symbol }
     cost: { mana: -10 }
-    check: { chance: "30 + spirit * 5 + lore / 4", label: Spirit, game: aim }
+    check: { chance: "30 + spirit * 5 + lore / 4", label: Spirit }
     success: { harm: "25%", pierce: all }
     fail: { hint: "The light flickers and dies." }
     per_encounter: 1
@@ -732,7 +709,6 @@ perks:
     desc: Slow breath, steady arm — the arrow goes where it's looked at.
     tags: [archery]
     bonus: { archery: 5 }
-    rule: { game: { window: 25, size: 15, games: [aim] } }
   blade_dancer:
     name: Blade Dancer
     desc: Fights like a duelist while there's breath in them — and learns the Flurry.

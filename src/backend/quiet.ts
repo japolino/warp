@@ -2,8 +2,6 @@
 // keeps the events (like a sheet change), and the next reply is told in one line.
 
 import { randomSeed } from "../engine/dice.js";
-import { cleanResult } from "../engine/games.js";
-import type { GameResult } from "../shared/protocol.js";
 import { runQuiet } from "../engine/errands.js";
 import type { TurnRecord } from "../engine/resolve.js";
 import { summarizeEvents } from "../engine/view.js";
@@ -16,7 +14,7 @@ import { busyChats, pushState } from "./state-push.js";
 /** Chip text without its icon ("📈 Charm +1" → "Charm +1"). */
 const plain = (t: string) => t.replace(/^[^\p{L}\p{N}+−-]+/u, "").trim();
 
-export async function doQuiet(msg: { chatId: string; actionId: string; params?: Record<string, string>; times?: number; game?: GameResult }, userId?: string): Promise<boolean> {
+export async function doQuiet(msg: { chatId: string; actionId: string; params?: Record<string, string>; times?: number }, userId?: string): Promise<boolean> {
   if (busyChats.has(msg.chatId)) { toast("info", "One moment — the story is still being written.", userId); return false; }
   const settings = await getSettings(userId);
   const travel = msg.actionId.startsWith("go:");
@@ -33,7 +31,7 @@ export async function doQuiet(msg: { chatId: string; actionId: string; params?: 
     const folded = foldPath(r, now, 0);
     if (folded.conflict) { error = "Earlier history changed — check the Warp sheet first."; return w; }
     const res = runQuiet(r, folded.state, msg.actionId, wanted, {
-      seed: randomSeed, params: msg.params, ...(msg.game ? { game: cleanResult(msg.game, []) ?? undefined } : {}),
+      seed: randomSeed, params: msg.params,
       changes: (b, a, evs) => summarizeEvents(r, b, a, evs).filter((c) => !/^⏱|^🕒|^⌛/u.test(c.text)).map((c) => plain(c.text)).slice(0, 6),
     });
     if (res.error) { error = res.error; return w; }

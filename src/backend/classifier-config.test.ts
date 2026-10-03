@@ -72,11 +72,11 @@ describe("classifier protocol configuration", () => {
   });
 
   test("settings show incompatible choices and offer the OpenRouter preset", () => {
-    const bad = renderSettings({...DEFAULT_SETTINGS, ...OPENROUTER_JEV, jevFormat: "openai"}, null, [], false, []);
+    const bad = renderSettings({...DEFAULT_SETTINGS, ...OPENROUTER_JEV, jevFormat: "openai"}, null, [], false);
     expect(bad).toContain('role="alert"');
     expect(bad).toContain("Typed questions");
     expect(bad).toContain("data-jev-openrouter");
-    const good = renderSettings({...DEFAULT_SETTINGS, ...OPENROUTER_JEV}, null, [], false, []);
+    const good = renderSettings({...DEFAULT_SETTINGS, ...OPENROUTER_JEV}, null, [], false);
     expect(good).not.toContain('role="alert"');
   });
 });

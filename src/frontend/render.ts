@@ -1,6 +1,5 @@
 // Pure view → HTML renderers. Every interpolated string goes through `esc`.
 
-import { GAMES } from "../engine/game-ids.js";
 import type {
   ChoiceView, EncounterLogView, HudView, MapView, RoundCardView, RecordView, RulesetStatus, Settings, SuggestionView, TemplateInfo,
 } from "../shared/protocol.js";
@@ -401,7 +400,7 @@ function section(title: string, count: number, body: string, open: boolean, key 
 
 // ───────────────────────── choices ─────────────────────────
 
-export function renderChoices(choices: ChoiceView[], opts: { minigames?: Settings["minigames"]; showOdds: boolean; hotkeys: boolean; busy: boolean; busyLabel?: string; encounter?: HudView["encounter"]; recap?: EncounterRecap | null }): string {
+export function renderChoices(choices: ChoiceView[], opts: { showOdds: boolean; hotkeys: boolean; busy: boolean; busyLabel?: string; encounter?: HudView["encounter"]; recap?: EncounterRecap | null }): string {
   if (!choices.length && !opts.busy && !opts.encounter) return "";
   const groups = new Map<string, { c: ChoiceView; n: number }[]>();
   choices.forEach((c, i) => {
@@ -426,7 +425,7 @@ Story forecast only — not guaranteed effects; tag-defined mechanics and odds a
         const forecast = forecastText ? `<span class="warp-choice-why">${esc(forecastText)}</span>` : "";
         const tip = [forecastText, c.desc, c.why ? `Why now: ${c.why}` : null, c.checkLabel ? `Check: ${c.checkLabel} — the chance of this check, not of winning` : null, c.veiled ? "Veiled: happens off-screen" : null].filter(Boolean).join("\n");
         if (c.locked) return `<button class="warp-choice warp-choice-locked" disabled title="${esc(`${c.desc ?? c.label}\nLocked: ${c.locked}`)}"><span class="warp-choice-label">${esc(c.label)}<span class="warp-choice-why">🔒 ${esc(c.locked)}</span></span></button>`;
-        return `<button class="warp-choice${c.id.startsWith("item:") ? " warp-choice-item" : ""}" data-act="${esc(c.id)}" title="${esc(tip)}${c.ready ? "\nReady — this reply is already written" : ""}">${key}<span class="warp-choice-label">${esc(c.label)}${forecast}${c.why ? `<span class="warp-choice-why">${esc(c.why)}</span>` : ""}</span>${c.ready ? `<span class="warp-choice-ready" aria-label="instant">⚡</span>` : ""}${c.veiled ? `<span class="warp-choice-veil" aria-label="veiled">◐</span>` : ""}${odds}</button>${resistButtons}${opts.minigames !== "off" && (c.game || c.gamble) ? `<button type="button" class="warp-choice warp-choice-game" data-play-challenge="${esc(c.id)}" aria-label="${esc(`${c.gamble ? "Play table" : "Play challenge"}: ${GAMES[(c.game ?? c.gamble)!.game].name} for ${c.label}${c.gamble ? " — wagers use in-game money" : " instead of rolling"}`)}" ${opts.busy ? "disabled" : ""}>${GAMES[(c.game ?? c.gamble)!.game].icon} ${c.gamble ? "Play table" : "Play challenge"}: ${esc(GAMES[(c.game ?? c.gamble)!.game].name)}</button>` : ""}`;
+        return `<button class="warp-choice${c.id.startsWith("item:") ? " warp-choice-item" : ""}" data-act="${esc(c.id)}" title="${esc(tip)}${c.ready ? "\nReady — this reply is already written" : ""}">${key}<span class="warp-choice-label">${esc(c.label)}${forecast}${c.why ? `<span class="warp-choice-why">${esc(c.why)}</span>` : ""}</span>${c.ready ? `<span class="warp-choice-ready" aria-label="instant">⚡</span>` : ""}${c.veiled ? `<span class="warp-choice-veil" aria-label="veiled">◐</span>` : ""}${odds}</button>${resistButtons}`;
       }).join("")}</div>
     </div>`).join("");
   const status = opts.busy ? `<div class="warp-status-line"><span class="warp-spinner"></span>${esc(opts.busyLabel ?? "The story continues…")}</div>` : "";
@@ -524,12 +523,7 @@ export function renderChips(rec: RecordView, opts: { showDice: boolean; showChan
   const notAction = rec.redoFrom
     ? `<button class="warp-btn warp-btn-ghost" data-redo="${esc(rec.redoFrom)}" data-redo-action="" title="Redo this turn without a roll">Not an action?</button>`
     : "";
-  if (rec.check?.game && opts.showDice) {
-    // Played instead of rolled: the score against the bar.
-    const c = rec.check;
-    out.push(`<span class="warp-chip warp-tone-${TIER_TONE[c.tier]}" title="${esc(`Played instead of rolled: ${c.game!.summary}`)}">${esc(c.game!.summary.split(" ")[0])} ${esc(c.label)} · ${esc(c.tierLabel)} <span class="warp-dim">${Math.round(c.game!.score * 100)}% / ${Math.round(c.game!.needed * 100)}%</span></span>`);
-    if (read || notAction) out.push(`<span class="warp-chip">${read}${notAction}</span>`);
-  } else if (rec.check && opts.showDice) {
+  if (rec.check && opts.showDice) {
     const c = rec.check;
     out.push(`<button class="warp-chip warp-dice warp-tone-${TIER_TONE[c.tier]}" data-dice title="Show the roll">🎲 ${esc(c.label)} · ${esc(c.tierLabel)}</button>`);
     if (rec.rerollFrom) out.push(`<button class="warp-chip warp-reroll" data-reroll="${esc(rec.rerollFrom)}" title="Roll again: a new result, a new line in your message, and a new reply">↻ Reroll</button>`);
@@ -537,7 +531,6 @@ export function renderChips(rec: RecordView, opts: { showDice: boolean; showChan
   } else if (rec.action && opts.showDice) {
     out.push(`<span class="warp-chip">▸ ${esc(rec.action)}</span>${notAction ? `<span class="warp-chip">${notAction}</span>` : ""}`);
   }
-  if (rec.gamble) out.push(`<span class="warp-chip warp-tone-${rec.gamble.net > 0 ? "good" : rec.gamble.net < 0 ? "bad" : "neutral"}">${esc(rec.gamble.text)}</span>`);
   for (const d of rec.decisions) {
     const odds = d.odds.map((o) => `${o.desc} ${Math.round(o.p * 100)}%`).join(" · ");
     out.push(`<span class="warp-chip warp-decision" title="${esc(`${d.ask}\n${odds}\n${d.source === "model" ? "Odds from the decision model; the engine rolled." : "Odds from the ruleset's weights; the engine rolled."}`)}">🎭 ${esc(d.picked)} <span class="warp-dim">${Math.round(d.p * 100)}%</span></span>`);
@@ -692,7 +685,7 @@ function renderDecider(s: Settings, jevKeySet: boolean): string {
   </div>`;
 }
 
-export function renderSettings(s: Settings, status: RulesetStatus | null, connections: { id: string; name: string }[], jevKeySet = false, imageConnections: { id: string; name: string }[] = []): string {
+export function renderSettings(s: Settings, status: RulesetStatus | null, connections: { id: string; name: string }[], jevKeySet = false): string {
   const tags = new Set([...(status?.tags ?? []), ...s.lines, ...s.veils]);
   const tagChips = [...tags].sort().map((t) => {
     const mode = s.lines.includes(t) ? "line" : s.veils.includes(t) ? "veil" : "on";
@@ -706,14 +699,14 @@ export function renderSettings(s: Settings, status: RulesetStatus | null, connec
     ${toggle("storyQuests", "Quests from the story", "When someone in the story asks you for a favour or a job and you agree, it's tracked as a quest with stakes; the story decides when it's done or failed, and they remember how it went.", s.storyQuests)}
     ${toggle("errands", "Errands in a window", "Notice board, shops, bills, training and rest open a window and happen off the page, instead of each being a story reply.", s.errands !== false)}
     ${toggle("quietTravel", "Travel off the page", "Clicking a place on the map takes you there without a travel paragraph; your next message starts the scene.", s.quietTravel)}
-    ${toggle("sayOutcome", "Say how my move went", "When you click a move with a roll or a minigame, it's settled on the click and your message says how it went, in your character's voice (the helper writes it; a set line if it can't). Swipes keep that result; use ↻ Reroll to roll again.", s.sayOutcome !== false)}
+    ${toggle("sayOutcome", "Say how my move went", "When you click a move with a roll, it's settled on the click and your message says how it went, in your character's voice (the helper writes it; a set line if it can't). Swipes keep that result; use ↻ Reroll to roll again.", s.sayOutcome !== false)}
     ${toggle("swipesReroll", "Swiping rerolls the dice", "Casual: a new swipe is a new roll (for a move told in your message, ↻ Reroll does it). Turn off for Ironman: rolls stay fixed for the same move.", s.swipesReroll)}
   </div>
   <div class="warp-card">
     <h3>Display</h3>
-    ${toggle("showChoices", "Choice buttons (CYOA)", "Buttons under each reply to pick what you do next. Off: you just type — no buttons, and none are written for you (that saves a helper call per reply). Fights, shifts, dungeons, dates and endings keep their buttons; errands move to the status panel.", s.showChoices !== false)}
+    ${toggle("showChoices", "Choice buttons (CYOA)", "Buttons under each reply to pick what you do next. Off: you just type — no buttons, and none are written for you (that saves a helper call per reply). Fights, shifts and endings keep their buttons; errands move to the status panel.", s.showChoices !== false)}
     ${toggle("showOdds", "Show odds on choices", "Percent chance of success on each button.", s.showOdds)}
-    ${toggle("showDiceChips", "Show dice on messages", "The roll (or the game's score) under each reply.", s.showDiceChips)}
+    ${toggle("showDiceChips", "Show dice on messages", "The roll under each reply.", s.showDiceChips)}
     ${toggle("showChanges", "Show changes on messages", "What changed under each reply (time, people met, feelings, items…), with × to undo. Off: they're still in the sheet's history.", s.showChanges !== false)}
     ${toggle("hotkeys", "Number keys pick choices", "Press 1–9 (0 for 10) when you're not typing.", s.hotkeys)}
   </div>
@@ -727,62 +720,9 @@ export function renderSettings(s: Settings, status: RulesetStatus | null, connec
     </select>
   </div>
   <div class="warp-card">
-    <h3>Dates, dungeons & encounters</h3>
-    <p>Dates and dungeons play full screen as short snippets, off the chat. Encounters are told round by round in one message that grows, then summed up. One line goes into the story when each ends.</p>
-    <label class="warp-slider">Lines written by
-      <select class="warp-select" data-setting="sceneLines">
-        <option value="model"${s.sceneLines === "model" ? " selected" : ""}>The helper model (scripted if it's slow)</option>
-        <option value="scripted"${s.sceneLines === "scripted" ? " selected" : ""}>Scripted lines only — instant, free</option>
-      </select>
-    </label>
-    ${toggle("themeDating", "Dating that fits the card", "The built-in topics and outings (films, a café, an arcade…) are rewritten once for the card's setting — a medieval card gets tales and the harvest fair.", s.themeDating)}
-    ${status?.state === "ok" ? `<div class="warp-row"><button class="warp-btn warp-mini" data-theme-dating title="Rewrite dating's topics and outings for this card now">Re-theme dating now</button></div>` : ""}
+    <h3>Encounters & items</h3>
+    <p>Encounters are told round by round in one message that grows, then summed up. One line goes into the story when each ends.</p>
     ${toggle("draftItemUses", "Give useless items a purpose", "Items the rules never use get one drafted from their description (a use or a gear bonus), saved as an editable \"item uses\" lorebook entry.", s.draftItemUses)}
-    ${toggle("dateImages", "Illustrate dates through Cue", "Uses Cue's assistant, character consistency, image settings and image fit. Requires an updated Cue extension. Configure pictures in Cue.", s.dateImages)}
-  </div>
-  <div class="warp-card">
-    <h3>Minigames</h3>
-    <p class="warp-dim">Play a check instead of rolling it: Aim, Keys, Mines, Stack, Snake, a three-legged race, Pinball, Blackjack, Roulette or Slots. The dice's odds set the score to beat; your stats and perks make the game easier. Casino tables bet real in-game money.</p>
-    <label class="warp-slider">When a check can be played
-      <select class="warp-select" data-setting="minigames">
-        <option value="ask"${s.minigames === "ask" ? " selected" : ""}>Roll by default — offer a Play button</option>
-        <option value="always"${s.minigames === "always" ? " selected" : ""}>Straight into the game</option>
-        <option value="off"${s.minigames === "off" ? " selected" : ""}>Off — always dice</option>
-      </select>
-    </label>
-    <label class="warp-slider">Which checks
-      <select class="warp-select" data-setting="minigameScope">
-        <option value="rulebook"${s.minigameScope === "rulebook" ? " selected" : ""}>Only the ones the rulebook gives a game</option>
-        <option value="all"${s.minigameScope === "all" ? " selected" : ""}>Every check (a game that fits the skill is picked)</option>
-      </select>
-    </label>
-  </div>
-  <div class="warp-card">
-    <h3>Effects & sound</h3>
-    <label class="warp-slider">Look of dungeons, dates and minigames
-      <select class="warp-select" data-setting="look">
-        <option value="rulebook"${s.look === "rulebook" ? " selected" : ""}>The rulebook's (medieval, modern or sci-fi)</option>
-        <option value="medieval"${s.look === "medieval" ? " selected" : ""}>Always medieval — parchment, oak and gold</option>
-        <option value="modern"${s.look === "modern" ? " selected" : ""}>Always modern — paper and ink</option>
-        <option value="scifi"${s.look === "scifi" ? " selected" : ""}>Always sci-fi — an instrument panel</option>
-      </select>
-    </label>
-    <label class="warp-slider">Visual effects
-      <select class="warp-select" data-setting="fx">
-        <option value="full"${s.fx === "full" ? " selected" : ""}>Full — rolls stamped in the chat, hearts, hits, tile flips</option>
-        <option value="reduced"${s.fx === "reduced" ? " selected" : ""}>Reduced — colour and banners, no motion</option>
-        <option value="off"${s.fx === "off" ? " selected" : ""}>Off</option>
-      </select>
-    </label>
-    <label class="warp-slider">Sound
-      <select class="warp-select" data-setting="sfx">
-        <option value="games"${s.sfx === "games" ? " selected" : ""}>Dates, dungeons and encounters</option>
-        <option value="all"${s.sfx === "all" ? " selected" : ""}>Everywhere (dice in the chat too)</option>
-        <option value="off"${s.sfx === "off" ? " selected" : ""}>Off</option>
-      </select>
-    </label>
-    <label class="warp-slider">Volume <input type="range" min="0" max="100" step="5" value="${Math.round(s.sfxVolume * 100)}" data-setting-volume aria-label="Sound volume"> <span class="warp-dim">${Math.round(s.sfxVolume * 100)}%</span></label>
-    <p class="warp-dim">Sounds are made live in the browser and start after your first click. Your system's "reduce motion" setting is respected.</p>
   </div>
   <div class="warp-card">
     <h3>Content: lines & veils</h3>

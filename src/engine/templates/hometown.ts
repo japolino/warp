@@ -26,7 +26,6 @@ start:
   location: apartment
   items: { phone: 1, keys: 1 }
 
-look: modern   # how dungeons, dates and minigames look: medieval, modern or scifi
 hud:
   currency: "£"
   bars: [pain, arousal, fatigue, stress, trauma, control, allure]
@@ -314,7 +313,7 @@ conditions:
     at: campus
     say: "*I swim laps in the university pool.*"
     time: 45
-    check: { chance: 55 + swimming / 2 - fatigue / 3, label: Swimming, game: keys }
+    check: { chance: 55 + swimming / 2 - fatigue / 3, label: Swimming }
     success: { athletics: +0.4, fatigue: +12, stress: -4, hint: "Smooth, steady laps." }
     fail: { fatigue: +16, stress: +1, hint: "{{user}} swallows half the pool and climbs out spluttering." }
 
@@ -324,7 +323,7 @@ conditions:
     at: park
     say: "*I go for a jog around the park.*"
     time: 40
-    check: { chance: 60 + athletics / 2 - fatigue * 2 / 3, label: Athletics, game: snake }
+    check: { chance: 60 + athletics / 2 - fatigue * 2 / 3, label: Athletics }
     success: { athletics: +1, fatigue: +10, stress: -4 }
     fail: { athletics: +0.4, fatigue: +17, pain: +10, hint: "{{user}} pushes too hard and ends up aching and winded." }
 
@@ -335,7 +334,7 @@ conditions:
     when: between(hour, 7, 18)
     say: "*I put on an apron and work a shift at the café.*"
     time: 240
-    check: { chance: 55 + tending / 1.5, label: Tending, game: stack }
+    check: { chance: 55 + tending / 1.5, label: Tending }
     success: { money: 45 + tending / 2, tending: +1.2, fatigue: +20, flags: { worked: true }, hint: "A smooth shift — good tips." }
     fail: { money: 30, tending: +0.6, fatigue: +22, stress: +6, flags: { worked: true }, hint: "A rough shift: rude customers and a smashed tray." }
   buy_raincoat:
@@ -379,7 +378,7 @@ conditions:
     when: "(weekday == 'Sat' or weekday == 'Sun') and between(hour, 10, 17)"
     say: "*I talk {target} into the three-legged race at the weekend fun run.*"
     time: 45
-    check: { chance: 35 + athletics / 3 + target.trust / 3, label: Athletics, game: race }
+    check: { chance: 35 + athletics / 3 + target.trust / 3, label: Athletics }
     success: { stress: -6, fatigue: +8, rel: { target: { trust: +4, love: +2 } }, hint: "{{user}} and {target} cross the line in a tangle of laughter." }
     fail: { fatigue: +10, pain: +3, rel: { target: { trust: +1 } }, hint: "They go down in a heap — grass stains, and laughing anyway." }
 
@@ -401,7 +400,7 @@ conditions:
     requires: { quest: lost_ring }
     say: "*I comb the grass by the duck pond, looking for a glint of gold.*"
     time: 45
-    check: { chance: "30 + (between(hour, 8, 18) ? 15 : 0) - fatigue / 4", label: Luck, game: mines }
+    check: { chance: "30 + (between(hour, 8, 18) ? 15 : 0) - fatigue / 4", label: Luck }
     success: { progress: { lost_ring: 1 }, hint: "Something glints in the grass — the ring." }
     fail: { fatigue: +6, hint: "Bottle caps and a lot of mud." }
 
@@ -412,7 +411,7 @@ conditions:
     say: "*I pick out a distracted mark and go for their wallet.*"
     tags: [crime]
     time: 10
-    check: { chance: 15 + skulduggery / 1.2 - allure / 8, label: Skulduggery, game: mines }
+    check: { chance: 15 + skulduggery / 1.2 - allure / 8, label: Skulduggery }
     crit_success: { money: roll('4d10') + 20, skulduggery: +1.5, hint: "A fat wallet, and nobody noticed a thing." }
     success: { money: roll('2d10') + 5, skulduggery: +1, hint: "Clean lift. Nobody noticed." }
     fail: { crime: +6, stress: +8, skulduggery: +0.3, hint: "The mark catches {{user}}'s wrist and starts shouting." }
@@ -425,24 +424,9 @@ conditions:
     when: hour >= 20 or hour < 4
     say: "*I hit the dance floor.*"
     time: 60
-    check: { chance: 40 + dancing / 1.2, label: Dancing, game: keys }
+    check: { chance: 40 + dancing / 1.2, label: Dancing }
     success: { dancing: +1.2, stress: -6, allure: +3, fatigue: +10, hint: "{{user}} moves well and draws eyes." }
     fail: { dancing: +0.5, stress: +2, fatigue: +10, hint: "Awkward, off the beat, and a little embarrassing." }
-  back_room_cards:
-    label: Cards in the back room
-    group: Nightlife
-    at: the_strip
-    when: hour >= 21 or hour < 3
-    say: "*I pull up a chair at the card game in the back of the bar.*"
-    time: 60
-    gamble: { game: blackjack, stakes: [10, 40, 100], rounds: 5, win: { stress: -5 }, lose: { stress: +4 }, broke: { stress: +12, control: -5 } }
-  fruit_machine:
-    label: Play the fruit machine
-    group: Nightlife
-    at: the_strip
-    say: "*I feed coins into the fruit machine by the door.*"
-    time: 20
-    gamble: { game: slots, stakes: [2, 5, 10], rounds: 6, lose: { stress: +2 } }
   drink:
     label: Have a drink (£6)
     group: Nightlife
@@ -670,7 +654,7 @@ encounters:
     actions:
       fight_back:
         label: Fight back
-        check: { chance: 30 + athletics / 2 - fatigue / 3 - pain / 3, label: Athletics, game: pinball }
+        check: { chance: 30 + athletics / 2 - fatigue / 3 - pain / 3, label: Athletics }
         success: { foe: { nerve: -6 }, hint: "{{user}} lands a solid hit." }
         fail: { pain: +10, hint: "{{user}}'s swing misses and they take a blow." }
       shout:
@@ -683,7 +667,7 @@ encounters:
         effects: { money: "-min(money, 20)", end: robbed }
       run:
         label: Run
-        check: { chance: 35 + athletics / 2 - fatigue / 3 - pain / 2, label: Athletics, game: snake }
+        check: { chance: 35 + athletics / 2 - fatigue / 3 - pain / 2, label: Athletics }
         success: { fatigue: +5, end: escaped }
         fail: { pain: +5, hint: "{{user}} is caught before getting far." }
       jump_in:
@@ -705,20 +689,6 @@ encounters:
       robbed: { stress: +8, control: -8, hint: "They take the money and vanish." }
       escaped: { stress: +3, hint: "{{user}} gets clear." }
       beaten: { trauma: +5, money: "-min(money, 30)", hint: "{{user}} is left hurt on the pavement, pockets emptied." }
-
-# Roguelike diving: floors of face-down tiles with one way down. Leave whenever you
-# like and keep what you found; get wiped out and you lose it.
-dungeons:
-  old_mines:
-    name: The Old Mines
-    desc: Flooded tunnels under the docks, abandoned when the seam ran dry. People say things live down there now.
-    at: [docks]
-    theme: cave
-    floors: 15
-    party: { max: 3 }
-    player: { atk: "12 + athletics / 10", agi: "10 + athletics / 12" }
-    on_leave: { fatigue: +15 }
-    on_defeat: { pain: +40, trauma: +8, control: -10 }
 `,
     },
     {
@@ -920,7 +890,7 @@ live_choices:
 `,
     },
     {
-      label: "dating",
+      label: "life",
       yaml: `# When {{user}} is exposed, everyone present reacts in their own way, and word gets around.
 observers:
   when: "exposed > 0"
@@ -992,40 +962,6 @@ companions:
         job: { desc: Takes a job for the wrong people, weight: 2 }
         café: { desc: Hangs around Jo's café until closing, weight: 1, bond: { jo: +5 } }
     bonds: { jo: 25, professor_ward: -30 }
-
-# Date mode: talk topic by topic, learn what people like, ask them out.
-# Love is the "love" relationship stat; "fear" is added automatically.
-dating:
-  love: love
-  people:
-    jo: { loves: [food, their_day], likes: [music, tag:food, tag:calm], dislikes: [gossip, tease], hates: [fashion] }
-    professor_ward: { loves: [books_films, dreams], likes: [compliment_mind, tag:conversation], dislikes: [joke, flirt], hates: [gossip] }
-    dex: { loves: [local_news, gossip], likes: [games, tag:drink, tag:thrill], dislikes: [work, family], hates: [compliment_looks] }
-  topics:
-    the_docks: { label: "What goes on at the docks", category: small_talk, when: "hour >= 18 or hour < 4" }
-  venues:
-    park: { name: The park, at: park }
-    bar: { name: The Strip, at: the_strip }
-
-items:
-  flowers: { name: A bunch of flowers, tags: [gift] }
-  chocolates: { name: Box of chocolates, tags: [gift] }
-
-actions:
-  buy_flowers:
-    label: Buy flowers (£12)
-    group: Shops
-    at: [high_street]
-    when: money >= 12
-    time: 5
-    effects: { money: -12, give: flowers }
-  buy_chocolates:
-    label: Buy chocolates (£8)
-    group: Shops
-    at: [high_street]
-    when: money >= 8
-    time: 5
-    effects: { money: -8, give: chocolates }
 `,
     },
   ],

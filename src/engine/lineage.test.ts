@@ -3,7 +3,6 @@ import { loadRuleset } from "./loader.js";
 import { foldEvents, initialState, kinAge, type GameState } from "./state.js";
 import { resolveTurnFull } from "./resolve.js";
 import { buildChoices, buildHud, narratorKnowledge, stateDigest } from "./view.js";
-import { romanceOk, talkablePeople } from "./date/talk.js";
 import type { Ruleset } from "./ruleset.js";
 
 const YAML = (opts: { teen?: boolean; sexual?: boolean } = {}) => `
@@ -22,7 +21,6 @@ lineage:
     weeks: 4
     stages: [ { week: 2, text: "{carrier} has been sick every morning." } ]
   children: { speed: 52, inherit: [hair] }
-dating: true
 actions:
   night:
     label: A night together
@@ -58,18 +56,16 @@ describe("lineage", () => {
     expect(buildHud(r, s).family[0].name).toBe(kid.name);
   });
 
-  test("children are out of reach of every action until they come of age — and never a romance", () => {
+  test("children are out of reach of every action until they come of age", () => {
     let s = act(initialState(r), "night@robin").s;
     for (let i = 0; i < 4; i++) s = act(s, "week").s;
     const [id] = Object.keys(s.kin);
-    expect(talkablePeople(r, s)).not.toContain(id);
     expect(buildChoices(r, s, { lines: [], veils: [] }).some((c) => c.id.endsWith(`@${id}`))).toBe(false);
     expect(stateDigest(r, s)).toContain("They are minors");
     // Speed 52: a year per in-game week. At 18 they join the cast as an adult.
     for (let i = 0; i < 19; i++) s = act(s, "week").s;
     expect(kinAge(r, s, id)).toBeGreaterThanOrEqual(18);
     expect(s.people[id]).toBeDefined();
-    expect(romanceOk(r, s, id)).toBe(false);
   });
 
   test("conception needs two known adults", () => {
@@ -81,10 +77,19 @@ describe("lineage", () => {
     // Unknown age: the model is asked first, and "unsure" counts as no.
     const unknown = act(initialState(r), "night@sam");
     expect(unknown.s.pregnancy).toBeNull();
-    expect(unknown.needs.some((n) => n.id === "date:adult:sam")).toBe(true);
-    const unsure = act(initialState(r), "night@sam", { "date:adult:sam": { adult: 0.5, minor: 0.1, unclear: 0.4 } });
+    expect(unknown.needs.some((n) => n.id === "adult:sam")).toBe(true);
+    const unsure = act(initialState(r), "night@sam", { "adult:sam": { adult: 0.5, minor: 0.1, unclear: 0.4 } });
     expect(unsure.s.pregnancy).toBeNull();
-    const adult = act(initialState(r), "night@sam", { "date:adult:sam": { adult: 0.95, minor: 0, unclear: 0.05 } });
+    const adult = act(initialState(r), "night@sam", { "adult:sam": { adult: 0.95, minor: 0, unclear: 0.05 } });
     expect(adult.s.pregnancy?.with).toBe("sam");
+    expect(adult.s.adults.sam).toBe(true);
+  });
+
+  test("a chat from before dating was removed still knows who is an adult", () => {
+    const s = foldEvents(r, [[{ t: "dt_pref", who: "sam", key: "__adult", v: 1, src: "action" } as never, { t: "dg_enter", run: {} } as never]], initialState(r));
+    expect(s.adults.sam).toBe(true);
+    const night = act(s, "night@sam");
+    expect(night.needs.some((n) => n.id === "adult:sam")).toBe(false);
+    expect(night.s.pregnancy?.with).toBe("sam");
   });
 });

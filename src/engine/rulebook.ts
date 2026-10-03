@@ -6,18 +6,17 @@ import { PART_LABELS, type PartLabel } from "./reference.js";
 
 /** Which section each top-level key belongs in (anything else goes to core). */
 const PART_OF_KEY: Record<string, PartLabel> = {
-  name: "core", description: "core", player: "core", clock: "core", start: "core", hud: "core", narration: "core", minigames: "core", look: "core",
+  name: "core", description: "core", player: "core", clock: "core", start: "core", hud: "core", narration: "core",
   stats: "stats", growth: "stats", practice: "stats",
   relationships: "people", people: "people", companions: "people", lineage: "people",
   weather: "world", locations: "world", locations_open: "world", items: "world", inventory: "world", item_uses: "world",
   wardrobe: "world", body: "world", conditions: "world", flags: "world", discovery: "world", observers: "world", being_seen: "world",
   actions: "actions", improvise: "actions", improvised: "actions", obligations: "actions", debts: "actions", jobs: "actions",
-  encounters: "encounters", dungeons: "encounters",
+  encounters: "encounters",
   quests: "quests",
   codex: "journal", feats: "journal", perks: "journal", abilities: "journal", checkpoints: "journal", endings: "journal",
   triggers: "rules", rules: "rules", mind: "rules",
   secrets: "story", fronts: "story", random_events: "story", events: "story", live_choices: "story",
-  dating: "dating",
 };
 
 export interface RulebookPart { label: string; yaml: string }

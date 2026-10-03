@@ -16,7 +16,6 @@ import { itemName, makeEnv, personName, type GameState } from "../engine/state.j
 import { IMPROV, improvStats } from "../engine/freeform.js";
 import { presentPeople } from "../engine/world.js";
 import { stateDigest } from "../engine/view.js";
-import { activeSession } from "../engine/date/talk.js";
 import type { Settings } from "../shared/protocol.js";
 import { logError } from "./host.js";
 
@@ -137,7 +136,7 @@ export async function readTurn(opts: {
 }): Promise<Reading> {
   const { decider, r, s, settings, playerText, player } = opts;
   const q: Questions = {};
-  // Actions, items, abilities, travel, quests, and improv remain candidates during dating/work,
+  // Actions, items, abilities, travel, quests, and improv remain candidates during work,
   // while dialogue and thoughts are classified as NONE.
   const actions = playerText
     ? [
@@ -158,7 +157,7 @@ export async function readTurn(opts: {
     for (const x of questsToReport(r, s)) questMoves[`${QUEST_PREFIX}report:${x.id}`] = `Tell ${x.to ?? "them"} that "${questDef(r, s, x.id)?.name ?? x.id}" is done`;
   }
   // Anything risky the list doesn't cover is still an attempt: it rolls on the closest ability.
-  const improv = !!playerText && r.improvise.enabled && !s.dungeon;
+  const improv = !!playerText && r.improvise.enabled;
   const approach = improv ? improvStats(r) : [];
 
   if (playerText && (actions.length || travel.length || improv || Object.keys(questMoves).length)) {
@@ -169,7 +168,7 @@ export async function readTurn(opts: {
     for (const t of travel) criteria[`${TRAVEL_PREFIX}${t}`] = `Go to ${r.locations[t].name}`;
     Object.assign(criteria, questMoves);
     if (improv) criteria[ATTEMPT] = "Something else with a real chance of failing that matters to the story, not listed above (sneaking, persuading, lying, fighting, climbing, stealing, resisting, performing…)";
-    const session = s.job ? "They are serving a customer during a work shift." : activeSession(r, s) ? "They are in a conversation or outing." : "";
+    const session = s.job ? "They are serving a customer during a work shift." : "";
     q.action = { type: "choice", instructions: `Which of these does ${player}'s latest message actually attempt right now?${session ? ` ${session} Ordinary dialogue, thoughts, and discussion of a possible action are NONE; choose an action only when actually attempted now.` : ""}`, criteria };
     if (improv || actions.some((c) => c.a.params.length)) {
       q.difficulty = { type: "score", instructions: `How hard is what ${player} is attempting, given the scene?`, criteria: DIFFICULTY };
@@ -183,7 +182,7 @@ export async function readTurn(opts: {
     }
   }
   // Fights (and other encounters) can break out of the story itself.
-  const storyEnc = !s.encounter && !s.dungeon && !s.job && !s.ended ? Object.values(r.encounters).filter((x) => x.fromStory) : [];
+  const storyEnc = !s.encounter && !s.job && !s.ended ? Object.values(r.encounters).filter((x) => x.fromStory) : [];
   const here = storyEnc.length ? presentPeople(r, s, makeEnv(r, s)) : [];
   if (storyEnc.length) {
     q.encounter = {
@@ -462,7 +461,7 @@ export async function bookkeeping(opts: {
     };
   }
   // Fights the prose starts, or finishes.
-  const storyEnc = !s.encounter && !s.dungeon && !s.job ? Object.values(r.encounters).filter((x) => x.fromStory) : [];
+  const storyEnc = !s.encounter && !s.job ? Object.values(r.encounters).filter((x) => x.fromStory) : [];
   if (storyEnc.length) {
     q.encounter = {
       type: "choice",

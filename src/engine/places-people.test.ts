@@ -1,6 +1,6 @@
-// Places, people and world gates: locked places and dungeons, "away" schedules, per-person
-// targets, per-exit travel, optional dating fear, conditional front stages, always-offered
-// perks with their own points, and per-place indoor temperature.
+// Places, people and world gates: locked places, "away" schedules, per-person targets,
+// per-exit travel, conditional front stages, always-offered perks with their own points,
+// and per-place indoor temperature.
 
 import { describe, expect, test } from "bun:test";
 import { lintRuleset } from "./lint.js";
@@ -9,8 +9,6 @@ import { availableChoices, buyPerk, perkBlocker, perkOffers, resolveTurn, travel
 import { foldEvents, initialState, makeEnv, type GameState } from "./state.js";
 import { buildChoices, buildMap } from "./view.js";
 import { personLocation, temperatureAt } from "./world.js";
-import { enterDungeon } from "./dungeon/run.js";
-import { buildDungeonEntries } from "./dungeon/view.js";
 
 const BASE = {
   clock: { start: "Mon 08:00", date: "Jan 10" },
@@ -178,18 +176,6 @@ describe("people", () => {
     const { issues } = load({ actions: { train: { label: "Train", targets: ["maud", "nobody"] } } });
     expect(issues.some((i) => i.where === "Actions › train › targets" && i.message.includes("nobody"))).toBe(true);
   });
-
-  test("dating keeps a fear stat by default; fear: false leaves it out; fear: <stat> reuses one", () => {
-    expect(load({ dating: true }).r.relStats.fear).toBeDefined();
-    const off = load({ dating: { fear: false } }).r;
-    expect(off.relStats.fear).toBeUndefined();
-    expect(off.dating.fear).toBe("");
-    expect(off.relStatOrder).not.toContain("fear");
-    const reuse = load({ dating: { fear: "trust" } }).r;
-    expect(reuse.relStats.fear).toBeUndefined();
-    expect(reuse.dating.fear).toBe("trust");
-    expect(load({ dating: { fear: 3 } }).issues.some((i) => i.where === "Dating › fear")).toBe(true);
-  });
 });
 
 describe("fronts", () => {
@@ -263,21 +249,5 @@ describe("perks", () => {
     expect(bad.r.perks.x.points).toBeUndefined();
     const nopick = load({ perks: { points: "talent_points", x: { name: "X", offer: "always" } } });
     expect(nopick.issues.some((i) => i.where === "Perks › x › offer")).toBe(true);
-  });
-});
-
-describe("dungeons", () => {
-  test("requires: shows the entrance locked with the reason and refuses entry", () => {
-    const { r, issues } = load({ dungeons: { hollow: { name: "The Hollow", at: "market", requires: { level: 3 } } } });
-    expect(issues).toEqual([]);
-    const s = initialState(r);
-    const choice = buildChoices(r, s, { lines: [], veils: [] }).find((c) => c.id === "dungeon:enter:hollow");
-    expect(choice?.locked).toBe("Needs Level 3 (you have 1)");
-    expect(buildDungeonEntries(r, s)).toEqual([]);
-    expect(enterDungeon(r, s, "hollow", [], "seed").error).toContain("Needs Level 3");
-    s.stats.level = 3;
-    expect(buildChoices(r, s, { lines: [], veils: [] }).find((c) => c.id === "dungeon:enter:hollow")?.locked).toBeUndefined();
-    expect(buildDungeonEntries(r, s).map((d) => d.id)).toEqual(["hollow"]);
-    expect(enterDungeon(r, s, "hollow", [], "seed").error).toBeUndefined();
   });
 });

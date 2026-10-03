@@ -33,7 +33,7 @@ const live: LiveChoice[] = [
   { label: "Steady yourself", tag: "calm" },
 ];
 const msg = (l: unknown): Msg => ({ role: "assistant", is_user: false, swipe_id: 0, metadata: { warp: { live: { "0": l } } } } as unknown as Msg);
-const view = (r: ReturnType<typeof book>) => buildChoices(r, initialState(r), { lines: [], veils: [], live, minigames: "off" });
+const view = (r: ReturnType<typeof book>) => buildChoices(r, initialState(r), { lines: [], veils: [], live });
 const click = (r: ReturnType<typeof book>, id: string, params?: Record<string, string>) => {
   const ci = intentFor(r, initialState(r), DEFAULT_SETTINGS, [msg(live)], id, params);
   if (!("intent" in ci)) throw Error("no intent");
@@ -51,7 +51,7 @@ describe("live choices show mind warnings and explicit resistance", () => {
     const redirect = view(r).find((x) => x.id === "live:1")!;
     expect(redirect.desc).toContain("Fear: may replace your chosen action");
     expect(redirect.params.find((p) => p.id === "mind_resist")?.options).toEqual(["none", "urge"]);
-    const html = renderChoices(view(r), { minigames: "off", showOdds: true, hotkeys: false, busy: false });
+    const html = renderChoices(view(r), { showOdds: true, hotkeys: false, busy: false });
     expect(html).toContain('data-resist-action="live:0"');
     expect(html).toContain('data-resist-id="freeze"');
   });

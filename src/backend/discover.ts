@@ -99,7 +99,7 @@ export function residentFrom(r: Ruleset, s: GameState, raw: unknown): NewResiden
   if (!/[\p{L}\p{N}]/u.test(name)) return undefined;
   // slug() falls back to "x" for names with no Latin letters or digits; use a readable base instead.
   const base = slug(name) === "x" && lower !== "x" ? "resident" : slug(name);
-  // Engine sentinels: "player"/"you" mean {{user}} in lineage and dungeons; never hand them to a generated person.
+  // Engine sentinels: "player"/"you" mean {{user}} in lineage; never hand them to a generated person.
   const taken = (id: string) => RESERVED_IDS.has(id) || !!(r.people[id] || s.people[id] || s.forgotten[id] || s.kin[id] || r.companions[id] || r.bonds[id] || s.rel[id]);
   let id = base;
   for (let n = 2; taken(id); n++) id = `${base}_${n}`;

@@ -122,12 +122,4 @@ describe("errands window", () => {
     expect(errandDuration(480)).toBe("8h");
     expect(errandDuration(90)).toBe("1h 30 min");
   });
-
-  test("training with a minigame offers Play (one session, the score decides); without one, no Play", () => {
-    const choice = { id: "sword", label: "Sword drills", group: null, desc: null, odds: 0.62, partialOdds: null, checkLabel: null, veiled: false, params: [], game: { game: "tiles" } } as unknown as NonNullable<ErrandsView["train"][number]["choice"]>;
-    const withGame = renderErrands({ ...view, train: [{ ...view.train[0], choice }] }, "train", {}, false);
-    expect(withGame).toContain('data-errand-play="sword"');
-    expect(renderErrands(view, "train", {}, false)).not.toContain("data-errand-play");
-    expect(renderErrands({ ...view, train: [{ ...view.train[0], choice }] }, "train", {}, true)).toMatch(/data-errand-play="sword" disabled/);
-  });
 });

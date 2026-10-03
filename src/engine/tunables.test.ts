@@ -1,11 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { practise, practiceKey, practiceRepetition } from "./freeform.js";
 import { loadRuleset } from "./loader.js";
-import { resolveTurnFull, type TurnBuilder } from "./resolve.js";
+import type { TurnBuilder } from "./resolve.js";
 import { DEFAULT_PRACTICE_REPEAT, type Ruleset } from "./ruleset.js";
-import { applyEvent, foldEvents, initialState, type GameState, type WarpEvent } from "./state.js";
-import { recentCount, restedFatigue, SOCIAL_KEYS_KEPT, SOCIAL_RECOVERY_MINUTES } from "./date/memory.js";
-import { DEFAULT_SOCIAL_MEMORY } from "./date/types.js";
+import { applyEvent, initialState, type GameState, type WarpEvent } from "./state.js";
 
 const BASE = `
 name: Tunables
@@ -102,66 +100,5 @@ describe("growth.repeat", () => {
     const bad = load("growth: { repeat: often }\n");
     expect(bad.r.growth.repeat).toEqual(DEFAULT_PRACTICE_REPEAT);
     expect(bad.warnings.some((w) => w.where === "Growth › repeat")).toBe(true);
-  });
-});
-
-describe("dating.memory", () => {
-  const recent = (key: string, at: number, count = 1, fatigue = 0): WarpEvent => ({ t: "dt_recent", who: "robin", key, at, count, fatigue, src: "action" });
-
-  test("defaults equal the previous fixed constants", () => {
-    const { r, warnings } = load("dating: true\n");
-    expect(warnings).toEqual([]);
-    expect(r.dating.memory).toEqual({ recoveryMinutes: 240, keys: 64, restPerMinute: 1 });
-    expect(SOCIAL_RECOVERY_MINUTES).toBe(240);
-    expect(SOCIAL_KEYS_KEPT).toBe(64);
-    expect(DEFAULT_SOCIAL_MEMORY).toEqual({ recoveryMinutes: 240, keys: 64, restPerMinute: 1 });
-    let s = initialState(r);
-    s = foldEvents(r, [[recent("music", s.minutes, 1, 60)]], s);
-    s.minutes += 120;
-    expect(recentCount(s, "robin", "music", r.dating.memory)).toBeCloseTo(0.5);
-    expect(recentCount(s, "robin", "music")).toBeCloseTo(0.5);
-    expect(restedFatigue(s, "robin", r.dating.memory)).toBe(0);
-  });
-
-  test("custom recovery, rest rate and key cap apply to reads and the reducer", () => {
-    const { r, warnings } = load("dating: { memory: { recovery_minutes: 60, keys: 3, rest_per_minute: 0.25 } }\n");
-    expect(warnings).toEqual([]);
-    let s = initialState(r);
-    const t0 = s.minutes;
-    s = foldEvents(r, [[recent("a", t0), recent("b", t0), recent("c", t0), recent("d", t0, 1, 40)]], s);
-    expect(Object.keys(s.dating.recent!.robin.topics)).toEqual(["b", "c", "d"]);
-    s.minutes += 30;
-    expect(recentCount(s, "robin", "d", r.dating.memory)).toBeCloseTo(0.5);
-    expect(restedFatigue(s, "robin", r.dating.memory)).toBeCloseTo(32.5);
-    s = foldEvents(r, [[recent("e", t0 + 60)]], s);
-    expect(Object.keys(s.dating.recent!.robin.topics)).toEqual(["e"]);
-  });
-
-  test("out-of-range and malformed values warn readably", () => {
-    const { r, warnings } = load("dating: { memory: { recovery_minutes: 0, keys: 9999, rest_per_minute: -2, extra: 1 } }\n");
-    expect(r.dating.memory).toEqual({ recoveryMinutes: 1, keys: 512, restPerMinute: 0 });
-    const text = warnings.map((w) => `${w.where}: ${w.message}`).join("\n");
-    expect(text).toContain("Dating › memory › recovery_minutes: 0 is outside 1–525600");
-    expect(text).toContain("Dating › memory › keys: 9999 is outside 1–512");
-    expect(text).toContain("Dating › memory › rest_per_minute: -2 is outside 0–100");
-    expect(text).toContain("Dating › memory › extra: unknown setting");
-    const bad = load("dating: { memory: 5 }\n");
-    expect(bad.r.dating.memory).toEqual(DEFAULT_SOCIAL_MEMORY);
-    expect(bad.warnings.some((w) => w.where === "Dating › memory")).toBe(true);
-  });
-});
-
-describe("dating.memory through the talk path", () => {
-  test("reopening a talk uses the tuned rest rate and recovery", () => {
-    const yaml = `\ndating:\n  memory: { recovery_minutes: 1000, rest_per_minute: 0.1 }\n  people:\n    robin: { loves: [music] }\n`;
-    const out = loadRuleset([{ label: "t", content: BASE.replace("start: { location: room }", "start: { location: room }\nclock: { start: \"Mon 10:00\" }") + yaml, order: 0 }]);
-    const r = out.ruleset!;
-    const go = (s: GameState, actionId: string) => foldEvents(r, [resolveTurnFull(r, s, { actionId, via: "choice" }, { seed: "s1" }).record.events], s);
-    let s = initialState(r);
-    s = foldEvents(r, [[{ t: "dt_recent", who: "robin", key: "music", at: s.minutes, count: 1, fatigue: 70, src: "action" }, { t: "time", min: 240, src: "action" }]], s);
-    const reopened = go(s, "date:talk@robin");
-    expect(reopened.date?.who).toBe("robin");
-    expect(reopened.date!.fatigue).toBeCloseTo(46);
-    expect(recentCount(reopened, "robin", "music", r.dating.memory)).toBeGreaterThan(0.7);
   });
 });

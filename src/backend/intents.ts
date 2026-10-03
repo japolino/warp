@@ -4,8 +4,6 @@
 import { cleanLiveForecast, ABILITY_PREFIX, availableChoices, canExplore, EXPLORE, findAction, ITEM_PREFIX, LIVE_PREFIX, usableAbilities, usableItems, lockedExits, RUN_EPILOGUE, TARGET_SEP, TRAVEL_PREFIX, travelTargets, type Intent } from "../engine/resolve.js";
 import type { Ruleset } from "../engine/ruleset.js";
 import type { GameState } from "../engine/state.js";
-import { dateMoves } from "../engine/date/talk.js";
-import { DATE_PREFIX } from "../engine/date/types.js";
 import { JOB_PREFIX, PAY_PREFIX, workMoves } from "../engine/work.js";
 import { QUEST_PREFIX, questDef, questOffers, questsToReport } from "../engine/quests.js";
 import type { Settings } from "../shared/protocol.js";
@@ -35,11 +33,6 @@ export function intentFor(r: Ruleset, state: GameState, settings: Settings, msgs
   }
   if (actionId.startsWith(PAY_PREFIX) || actionId.startsWith(JOB_PREFIX)) {
     const m = workMoves(r, state).find((x) => x.id === actionId);
-    if (!m) return { error: "That isn't possible right now." };
-    return { say: m.say, intent: { actionId: m.id, via: "choice", label: m.label } };
-  }
-  if (actionId.startsWith(DATE_PREFIX)) {
-    const m = dateMoves(r, state, settings.lines).find((x) => x.id === actionId);
     if (!m) return { error: "That isn't possible right now." };
     return { say: m.say, intent: { actionId: m.id, via: "choice", label: m.label } };
   }

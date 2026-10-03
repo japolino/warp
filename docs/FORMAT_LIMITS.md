@@ -11,7 +11,7 @@ Follow-up to two stress-test rulebooks (a LitRPG and a low-fantasy game). They p
 - Check and simulate report the same categories: won / escaped / conceded / lost. The checker wants random play to win sometimes; escapes don't count as beating a fight.
 - A trigger can't restart the encounter that just ended in the same turn (no instant re-ambush after an escape).
 - Lint warns about writes to a foe stat that doesn't exist, unknown keys in action-shaped blocks (live-choice tags, encounter moves, item uses, abilities), and buttons that only spend points on a stat. It no longer claims a cured condition "never wears off". The audit counts armor-only clothing.
-- The narrator and date venues can't move the player into a locked or hidden place.
+- The narrator can't move the player into a locked or hidden place.
 - `eff()` inside a check formula doesn't count gear twice.
 
 ## New in the format
@@ -23,7 +23,7 @@ Follow-up to two stress-test rulebooks (a LitRPG and a low-fantasy game). They p
 - **Statuses:** `every: [round, hour]` ticks per round in a fight and hourly outside.
 - **Resources:** `per_encounter` / `per_day` on encounter moves; `effects:` next to a check always apply; signed `resist_cost`.
 - **Sheet, not story:** stat `allocate:` gives +/− in the sidebar with no story turn; perk `offer: always` and `points:` for class choices; `show:` controls words, numbers or both; currency templates (`"{n}d"`).
-- **World:** location `requires:` / `when:` / `temp:`; per-exit travel minutes; schedule `at: away`; action `targets:`; dungeon `requires:`; front stage `if:` / `else:`; `dating: { fear: false }`.
+- **World:** location `requires:` / `when:` / `temp:`; per-exit travel minutes; schedule `at: away`; action `targets:`; front stage `if:` / `else:`.
 
 ## Compatibility
 

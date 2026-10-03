@@ -2,6 +2,8 @@
 
 Second implementation pass after the product audit at `92f1557`. It builds on `SESSION_AGENCY_FIXES.md`. No minigame, table, song or dungeon grid was removed.
 
+> Later note: minigames, gambling, dungeons and dating were removed from Warp afterwards. The parts below about them describe the old version, which is on the `legacy` branch.
+
 ## Changed behavior
 
 - **Live-choice forecasts.** Contextual choices may carry `forecast: { goal, risk, payoff }`. These are short, nonbinding story stakes. The writer sees each tag's authored check, cost, effects and outcomes. The tag still decides mechanics. Forecasts never change odds or grant effects. Malformed forecasts are dropped; legacy records still work.

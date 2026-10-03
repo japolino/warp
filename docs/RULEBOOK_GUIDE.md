@@ -33,7 +33,7 @@ decision, applies pressure or rewards play — and it fits the character card or
 2. Start from the closest template (`warp-rulebook templates`, then `warp-rulebook template <id>`) or from scratch.
    Templates are complete, balanced games — rename, retune, trim and extend rather than copying blindly.
 3. Write ONE file. Either plain YAML with all top-level keys, or documents headed "--- # <section>" (that's what
-   Warp's export writes). Sections: core, stats, people, world, actions, encounters, quests, journal, rules, story, dating.
+   Warp's export writes). Sections: core, stats, people, world, actions, encounters, quests, journal, rules, story.
 4. Run the checker after every meaningful change: `warp-rulebook check rulebook.yaml`
    - Errors: the game can't run — fix all of them.
    - Lint warnings: names that don't resolve, effects pointing at nothing — fix them.
@@ -63,12 +63,11 @@ Warp refuses to run a rulebook that declares minors alongside sexual actions.
 - **people** — relationships (stats + people with schedules), companions, lineage
 - **world** — weather, locations, items (incl. clothing, uses and gear bonuses), item_uses, wardrobe, body, conditions, flags, start.items
 - **actions** — actions, improvise, obligations, jobs
-- **encounters** — encounters, dungeons
+- **encounters** — encounters
 - **quests** — quests (bounties on a notice board, favours people ask, story jobs: goals, deadline, reward, failure)
 - **journal** — codex, feats, perks, abilities, checkpoints, endings
 - **rules** — triggers, mind
 - **story** — secrets, fronts, random_events, live_choices
-- **dating** — dating (tastes, topics, venues), plus gift items and actions to get them
 
 ## Format reference
 
@@ -97,7 +96,7 @@ relationships:
   people:
     jo:
       name: Jo
-      age: 31                      # declare adult ages for anyone romance or lineage could involve (unknown ages get friendship only)
+      age: 31                      # declare adult ages for anyone lineage could involve (an unknown age never counts as adult)
       desc: Runs the café.
       schedule:                    # first matching entry wins; entry without when = default; no match = not around
         - { when: "between(hour, 7, 18) and weekday != 'Sun'", at: high_street }
@@ -123,7 +122,6 @@ EFFECT: conceive: { with: target, chance: 20, carrier: player }   # carrier: pla
 
 name: Harbour Town                 # the game's name (shown on the HUD); description: one line about it
 description: A fishing town where the tide brings secrets.
-look: modern                       # how dungeons, dates and minigames look: medieval (parchment, oak, gold), modern (paper and ink) or scifi (an instrument panel)
 clock: { start: "Mon 07:00", date: "Sep 4", minutes_per_action: 15, narrator_max: 240 }
 start: { location: home, items: { phone: 1 } }
 hud: { currency: "$", bars: [health, stress] }   # currency: "$" (before the amount), "{n}d" / "£{n}" (template), or { symbol: d, after: true }
@@ -177,11 +175,6 @@ actions:
     # check: { …, crit: "5 + luck / 4" }  — chance in % of a critical success (default 5%); the narrator is told Critical
     # or check: { vs: 12, add: "floor(dex / 2)", partial: 3 }          # d20 + add vs 12
     # or check: { style: pbta, add: cool }                             # 2d6: 10+ hit, 7–9 mixed
-    # check: { …, game: mines }  — can be PLAYED as a minigame instead of rolled (or game: [mines, snake]; game: false = dice only).
-    #   games: aim (circles to a song), keys (4-lane piano tiles), mines, stack (falling blocks), snake, race (three-legged, with
-    #   whoever is here), pinball, blackjack, roulette, slots. The dice's odds set the score to beat; the stat behind the check,
-    #   perks and a partner's trust become aids. Played or rolled, the same tiers and outcomes apply.
-    #   The arcade's look is the rulebook's: look: medieval (or modern, scifi) at the top level.
     success: { flags: { door_open: true }, skulduggery: +1 }
     fail: { stress: +5, hint: "The pick snaps." }
     # tiers: crit_success, success, partial, fail, crit_fail; without a check use effects:
@@ -208,13 +201,6 @@ actions:
     #   (time passes, the body recovers) are found from their shape and go in the Errands window, done off the page
     #   with no narrator turn (the next reply gets one line). errand: shop | train | rest sets it; errand: false keeps
     #   it a story choice. Quests with board: true at a board: place are taken there too.
-  blackjack_table:
-    label: Play blackjack
-    at: [casino]
-    gamble: { game: blackjack, stakes: [10, 50, 200], rounds: 5, win: { stress: -4 }, lose: { stress: +3 }, broke: { stress: +10, flags: { owes_the_house: true } } }
-    # a table that takes real money: blackjack | roulette | slots; stakes: buy-ins; rounds: hands/spins/pulls;
-    #   stat: what's staked (default the money stat); edge: house edge (default 2% / 2.7% / 8%); luck: a formula shaving the edge.
-    #   Played in the arcade, or dealt by the engine when minigames are off. No check — the cards decide.
   sneak:
     hidden: true                   # free-text only: the referee maps typed attempts to it
     desc: Staying unseen.
@@ -279,30 +265,6 @@ encounters:
     #   a fight that swings (−100…+100): each check moves it, foe moves can too (effect momentum: -15), and only a full swing ends it;
     #   each round reaches the narrator as ordered beats (a long typed move is kept as written). Formula name: momentum.
 
-dungeons:         # roguelike diving: floors of face-down tiles, one way down, quit any time (keep the loot; get wiped out and lose it)
-  old_mines:
-    name: The Old Mines
-    at: [docks]                    # entrance locations (empty = anywhere)
-    requires: { level: 3 }         # entrance shown LOCKED with what's missing (why_not: "…" optional); when: hides it instead
-    theme: cave                    # cave | crypt | ruins | hell | lair
-    floors: 10                     # 0 = endless; a guardian every boss_every floors (default 5)
-    tiles: { enemy: 6, elite: 1, treasure: 2.5, trap: 1.5, rest: 1, shop: 0.6, event: 2, surprise: 1.5, romance: 1.2, empty: 7 }
-    loot: { lockpick: 2 }          # ruleset items that can turn up in chests
-    party: { max: 3, when: "rel(target, 'trust') >= 30", classes: { jo: healer } }   # fighter | mage | healer | rogue | adventurer
-    player: { class: adventurer, atk: "10 + athletics / 10" }                       # battle stats from ruleset stats (optional)
-    # party.stats: { jo: { hp: "50 + rel(target, 'trust') / 2", atk: "8 + rel_bond(target) / 20" } }  # opt-in companion formulas; authored classes still choose skills
-    supplies: { potion: 2, ether: 0, bomb: 0 }   # optional starting loadout, whole counts 0..99; not pulled from inventory
-    # exit_rewards: { renown: { amount: "run_xp / 100", cap: 3 } }    # declared main-world stats only; bounded per earned exit
-    # exit_practice: { athletics: { amount: "run_xp / 200", cap: 1 } } # skill/attribute practice; per-exit cap, repeat checks taper
-    # boons: true                  # opt-in: each new party level offers 3 seeded run-only boons (+15% atk/def/magic/HP/agi, crit, potions, ethers, stair healing, or a skill from another class); choosing blocks moving like an event; gone when the run ends
-    # Rewards require earned run_xp > 0 and successful exit, never defeat. XP/levels remain run-local. Balance repeatable shallow runs explicitly.
-    on_leave: { fatigue: +15 }
-    on_defeat: { pain: +40, stress: +20 }
-    events:                        # added to the built-ins (builtin_events: false to drop them); romance: works the same with {target}
-      smugglers_cache: { text: "A smugglers' cache behind a loose stone.", choices: { take: { label: Take it, gold: "30 + depth * 10", crime: +5 }, leave: { label: Leave it } } }
-    # choice outcome keys: text, heal, hurt, mana (percent), gold, xp, bag { potion: 1 }, fight (enemy|elite|monster id), bond, desire, plus any effect; chance: "60" rolls d100
-    # monsters: { id: { name, like: goblin, tier: 1-4, hp, atk, def, mat, mdf, agi, skills: [attack, smash], xp, gold } }; bosses: [orc_warlord, hydra]
-
 body:             # the player character's body; the story may change it after a reply (narrator: false to stop that; open: false = only these parts)
   parts: { hair: { color: brown, length: shoulder-length }, eyes: { color: green }, ears: human, build: { height: average } }   # any parts, any traits
   hidden_by: { chest: [top, under_top] }       # wardrobe slots covering a part: others see it when any of them is empty
@@ -313,7 +275,7 @@ FUNCTIONS: body('hair', 'color') ('' when absent), transformed('feline_splice') 
 
 discovery:        # exploring can turn up places the ruleset never had; each is written into the ruleset lorebook and stays on the map
   at: [docks, park]                # where (empty = anywhere); found places can be explored too
-  people: true                     # optional (default false): a found place may come with one generated resident (name, short desc, always there). No age is set, so romance stays blocked until the story shows they are an adult. Only offered when the rulebook has relationship stats or no people yet.
+  people: true                     # optional (default false): a found place may come with one generated resident (name, short desc, always there). No age is set, so they don't count as an adult until the story shows it. Only offered when the rulebook has relationship stats or no people yet.
   chance: 25                       # percent per try (formula); each fruitless try adds 10
   max: 12
   guide: "Small, grounded places: a back-alley bar, a hidden garden."
@@ -365,7 +327,6 @@ perks:
   crowd_ghost: { name: Crowd Ghost, bonus: { stealth: 10 }, edge: { stealth: 15, when: "at('plaza')" }, tags: [stealth] }   # bonus: always counts in checks; edge: only while when holds
   silver_tongue: { name: Silver Tongue, rule: { reroll: { stats: [persuasion], per_day: 1 } } }   # rules: reroll / soften (a failure becomes partial) on these stats or tags; gains / losses: { scent: -30% } (rises or drops that much bigger/smaller)
   armor_breaker: { name: Armor Breaker, rule: { pierce: { amount: 3, tags: [melee] } } }   # pierce: your blows (from moves with these stats or tags; none = all) ignore that much armor
-  steady_hands: { name: Steady Hands, rule: { game: { window: 20, lives: 1, games: [aim, keys] } } }   # game: aids in minigames (games: which; none = all): window, size, slow, time, luck (percent) · lives, hint, peek, preview, hold, wrap, saver (counts)
   mage_blood: { name: Mage Blood, abilities: [firebolt], narrator: "Sparks dance on {{user}}'s fingertips when angry.", excludes: [iron_will] }   # teaches abilities; narrator: what the story should show; excludes: can't have both
   adrenaline: { name: Adrenaline Junkie, edge: { athletics: 20, when: "stress >= 60" }, drawback: { desc: "Stress builds faster", gains: { stress: +10% } }, weight: 1 }
   cold: { name: Cold, drawback: { desc: Hard to like, gains: { fondness: "-25%" } } }   # gains/losses may name relationship stats
@@ -373,7 +334,7 @@ perks:
 checkpoints:      # save slots in the journal; loading rewinds the game (the chat keeps its messages)
   slots: 3
   auto: day                        # autosave at the start of each in-game day (slot "auto")
-  keep: [codex, feats, { stats: [insight] }, { flags: [knows_the_truth] }]   # what survives a rewind: codex, feats, perks, secrets, people, dating, deepest, stats/flags/items/rel lists
+  keep: [codex, feats, { stats: [insight] }, { flags: [knows_the_truth] }]   # what survives a rewind: codex, feats, perks, secrets, people, stats/flags/items/rel lists
   loop: { when: "hour >= 23", to: auto, text: "Midnight. The day folds back on itself; only {{user}} remembers.", do: { stress: +5 } }   # a time loop
   hard: false                      # true = an ending is final (load or start over, never keep playing)
 endings:          # when one holds, the story ends: the narrator writes an epilogue from what happened; then start over, load, or keep playing
@@ -468,30 +429,11 @@ live_choices:     # a writer phrases options for the moment; each must carry one
     careful: { desc: "The cautious, safe option" }
 STORY EFFECTS: front: { harbour_gangs: -20 }, reveal: [ward_accident] (opens its next stage), gauge: +30 (brings the next event closer).
 
-DATING (the "dating" part):
-dating:           # talk topic by topic (tastes stay hidden until learned), ask people out, go on outings. `dating: true` = all built-ins
-  love: love                       # relationship stat used as love (created if missing); fear: fear likewise — fear: false = no fear stat (nobody turns hostile)
-  romance: true                    # false = friendship only. Romance is never offered with anyone under 18 or of unknown age
-  stages: { stranger: 0, acquaintance: 10, friend: 30, close: 55, partner: { at: 80, partner: true } }   # love (0–100 of its range) per rung; partner only through a returned confession
-  hostile: { at: 60, label: Hostile }        # fear (0–100) that turns someone hostile
-  people:                          # authored tastes; otherwise the decision model reads them from the card (or they're seeded)
-    jo: { loves: [food], likes: [music, tag:nature], dislikes: [gossip], hates: [tease] }   # topic ids, category ids, tag:<activity tag>, item:<item id>
-  topics:                          # merged over the built-ins; false removes one. Built-ins: weather, their_day, local_news, gossip, hobbies, music, books_films, games, sport, food, travel, nature, fashion, work, family, dreams, past, worries, secrets, compliment_looks, compliment_mind, joke, tease, flirt, ideal_partner, love_life, the_two_of_you
-    cooking: { label: Cooking, category: interests, stage: acquaintance, when: "at('kitchen')" }   # categories: small_talk, interests, personal, charm, romance
-  venues:                          # outings; built-ins: cafe, park, cinema, dinner, arcade, bar (builtin_venues: false drops them)
-    pier: { name: The pier, at: docks, cost: 10, activities: { fish: { label: Go fishing, tags: [nature, calm] }, sunset: { label: Watch the sunset together, tags: [romance], romantic: true } }, events: { gulls: { text: "Gulls steal the chips.", enjoy: -5 } } }
-  with: "not flag('grounded')"     # who can be talked to (target = the person)
-  pace: { minutes_per_topic: 5, fatigue_per_topic: 12, beats: 4, minutes_per_beat: 30 }
-  memory: { recovery_minutes: 240, keys: 64, rest_per_minute: 1 }   # optional: in-game minutes for one repeat of a topic/move to fade, recent keys kept per person, conversation fatigue restored per in-game minute away
-items: { flowers: { name: Flowers, tags: [gift] } }   # items tagged gift can be given during a conversation
-
 FORMULA NAMES: stats, flags, hour, minute, day, weekday, month, date, season, weather, temperature, indoors, outside,
 warmth, warmth_min, warmth_max, too_cold, too_hot, reveal, exposed, naked, in_encounter, round, encounter (current encounter id, '' if none), encounter_round, foe.<stat>, target.<relstat>, location.
 FUNCTIONS: has(item[, n]), count(item), flag(x), cond(x), at(loc), rel(person, stat), met(person), between(v, lo, hi), roll('2d6'),
 wearing(item), worn(slot), trait(t), present(person), where(person), codex(id), feat(id), perk(id),
 secret(id) (stages the narrator knows), front(id) (clock value), front_stage(id) (stages surfaced), happened(event),
-deepest(dungeon) (deepest floor reached), in_dungeon, dungeon_depth,
-stage(person) (relationship rung, −1 hostile), partner(person), dates(person), in_date, on_outing,
 quest(id) ('' | 'active' | 'ready' | 'done' | 'failed'), quest_active(id), quest_done(id), quest_failed(id), goal(quest, goal) (count so far), quests_done() / quests_done('bounty'),
 memories(person) (how many), cond_of(person, cond), foe_cond(cond), stat_max(stat), foe_max(stat), in_encounter(id) (that encounter is on),
 eff(stat) (stat + gear + perks + statuses), gear(stat) (gear alone), integrity(item or slot),
@@ -520,7 +462,7 @@ Every action the player clicks posts a line and gets a narrator reply. Use actio
 Sheet changes are not story turns: spending stat points (allocate: on the stats, +/− in the sidebar), buying perks and classes (perks:, their own panel), changing clothes (wardrobe). Never build a "Status Window" of +1 STR buttons.
 
 ### items
-Every item should DO something: a use: (an action with effects), a bonus: (gear that helps the checks that read a stat), a gift tag, or an action/encounter move that needs it (when: "has('x')").
+Every item should DO something: a use: (an action with effects), a bonus: (gear that helps the checks that read a stat), or an action/encounter move that needs it (when: "has('x')").
 Read the item's description and make it true mechanically: "neutralizes scent, lowering visibility" → use: { visibility: -25, remove_condition: [scented] }.
 Consumables get uses: (charges); tools get keep: true. Give the player a way to GET each item that matters (start.items, shops via an action that costs money and gives it, loot, rewards).
 Mistake: flavour items in the starting inventory that no option ever offers — the player will look for the button.
@@ -550,7 +492,7 @@ Statuses do the work themselves: dot: (damage each round, or every: hour for ble
 The same condition can sit on {{user}}, on the opponent (inflict:) or on someone in the story (inflict: on a per-person action — a sleeping draught, a love charm, a cold they caught).
 
 ### places
-Every place needs a reason to go there: actions at: it, people scheduled there, a job, a shop, a dungeon entrance, a venue, a quest board.
+Every place needs a reason to go there: actions at: it, people scheduled there, a job, a shop, a quest board.
 Connect them with exits so the map is walkable from the start.
 For quest-driven adventures, a central notice board (board: true) offers reliable work. Do not add one automatically to relationship drama, political intrigue, or a freeform sandbox; use people and scene-specific goals instead.
 Gate the best actions behind things the player can work toward, with requires: (a skill level, someone who has to come along, an item, a quest, trust) — a locked choice that says "Needs Lockpicking 30, Brann with you" is a goal, not a dead end.
@@ -571,10 +513,6 @@ Mix sizes: a few small repeatable jobs on the board (repeat: 1), favours from th
 Scale rewards to the economy: the king's 50,000 is a life-changing sum only if daily work pays tens.
 Mistake: a quest with no way to fail; goals nothing counts toward; rewards that are only flavour text.
 
-### dating
-Recent topics and social actions persist per person across reopened conversations. One use fades per four in-game hours; fatigue recovers one point per in-game minute. Repeats taper positive affection, including typed chat, kisses, invitations, apologies, goodbye and outing bonuses. New topics and activities retain first-use rewards. Small talk/general chat earns half normal affection; authored topic weight still controls significance. Fresh warm topics cost less fatigue. Empty hello/goodbye loops earn nothing. These rules use deterministic game time, not wall time; no promise parser is implied.
-The built-in topics and outings are modern (films, games, a café, an arcade). For any other setting, rewrite them under dating: — topics: { books_films: { label: Tales and songs, say: "*I ask {{target}} which ballads they know.*" }, games: false } and venues: for outings that exist there (fairs, taverns, tea houses, orbital gardens). Give people tastes (loves/likes/dislikes/hates) so conversations reward learning who they are.
-
 ### flags and story machinery
 Set a flag only if something reads it (an action's when, a trigger, a codex unlock, a secret's stage). Fronts, secrets and random events make the world move without the player — use them to put pressure on the core loop.
 
@@ -582,13 +520,7 @@ Set a flag only if something reads it (an action's when, a trigger, a codex unlo
 Odds should usually sit between 25% and 85% at the start and improve with skill; show the player what helps (skills, gear bonuses, conditions as penalties).
 Partial outcomes and costs make failures interesting: a fail should change something, not just waste a turn.
 
-### minigames and gambling
-Set the look to the setting with look: medieval | modern | scifi — parchment and oak for fantasy and history, paper and ink for the present day, an instrument panel for the future. It dresses the minigames, the dungeon and dates alike.
-Give the checks that feel like a feat of hands or nerve a game: (aim for shooting and throwing, keys for music and performance, mines for locks, traps and investigation, stack for building and repairs, snake for chases and sneaking, race for anything done side by side with someone, pinball for brawls, blackjack for bluffs and deals, slots or roulette for pure luck). Leave quiet everyday checks on dice.
-A perk or two with rule: { game: … } makes them feel different (+1 life, a wider timing window, a peek at the dealer's card).
-If the setting has a casino, a card den, dice at the inn or a fruit machine in the bar, make it a gamble: table, with win:/lose:/broke: effects so a bad night has consequences — a debt flag a quest can pick up, stress, someone who saw.
-
 ### finishing
-Prefer fewer systems with stronger interactions. Add a subsystem only when it serves the chosen experience; quests and minigames remain available but are not mandatory. Narrative-only meters can intentionally inform prose without changing checks.
+Prefer fewer systems with stronger interactions. Add a subsystem only when it serves the chosen experience; quests remain available but are not mandatory. Narrative-only meters can intentionally inform prose without changing checks.
 The audit measures static mechanical connections, not fun or completeness. Fix errors, review gaps, and accept deliberate thin spots rather than chasing 100. Check that different approaches have different risks or payoffs and that setbacks change the next decision.
 You're done when the intended experience is playable: run the audit and either fix each gap or say why it's deliberate. Simulate each encounter — no route should be pointless, none should be a guaranteed win, and the escape should cost something.

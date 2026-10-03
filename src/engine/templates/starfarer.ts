@@ -21,7 +21,6 @@ start:
   location: bridge
   items: { holdout_pistol: 1, medkit: 2, codex: 1 }
 
-look: scifi   # how dungeons, dates and minigames look: medieval, modern or scifi
 hud:
   currency: "₡"
   bars: [shields, hp, lust, energy, xp]
@@ -235,7 +234,7 @@ conditions:
     say: "*I sort through the cargo bay for anything worth selling.*"
     time: 60
     cost: { energy: -10 }
-    check: { vs: 11, add: floor(intelligence / 3) + floor(physique / 3), label: Tech, game: stack }
+    check: { vs: 11, add: floor(intelligence / 3) + floor(physique / 3), label: Tech }
     success: { credits: roll('2d20') }
     fail: { energy: -5 }
   rest_quarters:
@@ -250,7 +249,7 @@ conditions:
     group: Explore
     say: "*I sweep the area with my codex scanner.*"
     time: 5
-    check: { vs: 12, add: floor(intelligence / 2), label: Intelligence, game: mines }
+    check: { vs: 12, add: floor(intelligence / 2), label: Intelligence }
     success: { hint: "The scan reveals something valuable: a hidden route, loot, or a threat before it strikes." }
     fail: { hint: "Interference. Nothing useful." }
   explore:
@@ -259,7 +258,7 @@ conditions:
     at: [jungle_edge, jungle_deep]
     say: "*I push deeper into the jungle.*"
     time: 45
-    check: { vs: 11, add: floor(reflexes / 3), label: Reflexes, game: snake }
+    check: { vs: 11, add: floor(reflexes / 3), label: Reflexes }
     success: { xp: +15, credits: roll('3d20'), hint: "A discovery: salvage or something worth selling." }
     fail: { start_encounter: ambush }
   use_booster:
@@ -304,27 +303,6 @@ conditions:
     when: credits >= 150
     say: "*I buy a shield booster.*"
     effects: { credits: -150, give: shield_booster }
-  void_blackjack:
-    label: Void blackjack at the back tables
-    group: Social
-    at: bar
-    say: "*I buy in at the blackjack table under the neon.*"
-    time: 60
-    gamble: { game: blackjack, stakes: [50, 200, 500], rounds: 5, win: { xp: +5 }, broke: { energy: -20 } }
-  zero_g_roulette:
-    label: Zero-G roulette
-    group: Social
-    at: bar
-    say: "*I put chips down at the roulette wheel spinning in its zero-g bubble.*"
-    time: 30
-    gamble: { game: roulette, stakes: [50, 200, 500], rounds: 4, win: { xp: +5 }, broke: { energy: -20 } }
-  neon_slots:
-    label: Feed the neon slots
-    group: Social
-    at: bar
-    say: "*I feed credits into a slot machine that sings my name.*"
-    time: 20
-    gamble: { game: slots, stakes: [10, 25, 50], rounds: 6 }
   drink:
     label: Have a drink (₡20)
     group: Social
@@ -392,14 +370,14 @@ encounters:
       shoot:
         label: Shoot
         cost: { energy: -5 }
-        check: { vs: 12, add: floor(aim / 2), label: Aim, game: aim }
+        check: { vs: 12, add: floor(aim / 2), label: Aim }
         crit_success: { foe: { shields: -14, hp: "foe.shields <= 0 ? -12 : 0" }, hint: "A perfect shot." }
         success: { foe: { shields: -8, hp: "foe.shields <= 0 ? -9 : -2" }, hint: "The shot lands." }
         fail: { hint: "Missed." }
       burst:
         label: Burst fire
         cost: { energy: -8 }
-        check: { vs: 11, add: floor(aim / 2), label: Aim, game: aim }
+        check: { vs: 11, add: floor(aim / 2), label: Aim }
         success: { foe: { shields: -4 }, hits: 3, hint: "Three rounds rake their shields." }
         fail: { hint: "The burst goes wide." }
       melee:
@@ -419,7 +397,7 @@ encounters:
         effects: { take: medkit, hp: +25 }
       flee:
         label: Flee
-        check: { vs: 15, add: floor(reflexes / 2), label: Reflexes, game: snake }
+        check: { vs: 15, add: floor(reflexes / 2), label: Reflexes }
         success: { energy: -10, end: fled }
         fail: { hint: "Cut off — the fight goes on." }
     foe_moves:
@@ -437,22 +415,6 @@ encounters:
       fled: { hint: "{{user}} gets away." }
       downed: { set: { hp: 1 }, credits: -100, hint: "{{user}} is knocked out and wakes later, robbed." }
       overwhelmed: { set: { lust: 40 }, hint: "{{user}} is overwhelmed by lust and can't keep fighting — the scavenger has their way." }
-
-# Roguelike diving in the pre-colonial ruins. Leave whenever you like and keep the
-# salvage; get wiped out and you lose it.
-dungeons:
-  ruins:
-    name: The Deep Ruins
-    desc: Pre-colonial vaults under the jungle, still humming with power and full of things that don't like visitors.
-    at: [jungle_deep]
-    theme: ruins
-    floors: 20
-    party: { max: 3 }
-    player: { class: fighter, hp: "40 + physique * 6 + level * 8", atk: "6 + aim * 1.5", def: "6 + physique", mat: "6 + intelligence * 1.5", agi: "6 + reflexes * 1.2" }
-    currency: credits
-    loot: { shield_booster: 3, medkit: 2 }
-    on_leave: { energy: -20 }
-    on_defeat: { hp: -20, credits: "-min(credits, 150)" }
 `,
     },
     {
@@ -490,8 +452,7 @@ quests:
     when: "rel('vex', 'affinity') >= 20"
     desc: Vex wants something old from the ruins under the jungle, and pays in secrets.
     days: 6
-    goals:
-      - { text: Reach the third floor of the Deep Ruins, when: "deepest('ruins') >= 3" }
+    judge: { done: "{{user}} brings Vex a relic from the ruins under the jungle" }
     reward: { credits: 100, reveal: [vex_informant], rel: { vex: { affinity: 8 } } }
     failure: { rel: { vex: { affinity: -6 } } }
     stakes: Vex stops pouring for you — and stops talking.
@@ -538,7 +499,7 @@ abilities:
     where: encounter
     known: false
     cost: { energy: -12 }
-    check: { vs: 11, add: floor(aim / 2), label: Aim, game: aim }
+    check: { vs: 11, add: floor(aim / 2), label: Aim }
     success: { harm: 4, inflict: { burning: 3 } }
     fail: { hint: "The gel sputters onto the deck." }
     per_encounter: 1
@@ -556,11 +517,6 @@ abilities:
 perks:
   points: perk_points
   pick: 3
-  high_roller:
-    name: High Roller
-    desc: The house edge doesn't apply to you. Mostly.
-    rule: { game: { luck: 15, lives: 1, games: [blackjack, roulette, slots] } }
-    narrator: "{{user}} has the easy grin of someone the dice like."
   sharpshooter:
     name: Sharpshooter
     desc: Every shot counts — more so with a lock.
@@ -738,73 +694,6 @@ live_choices:
     careful:
       desc: "The cautious option: holding back, waiting, walking away"
       effects: { energy: +5 }
-`,
-    },
-    {
-      label: "dating",
-      yaml: `# Date mode: talk topic by topic, learn what people like, ask them out.
-# Affinity is love; a "fear" relationship stat is added automatically.
-dating:
-  love: affinity
-  stages: { stranger: 0, contact: 12, friend: 35, close: 65, partner: { at: 85, partner: true } }
-  people:
-    vex: { loves: [the_frontier, gossip], likes: [tag:drink, tag:music, joke], dislikes: [work], hates: [family] }
-    kade: { loves: [ships, work], likes: [tag:food, tag:competition], dislikes: [compliment_looks, weather], hates: [tease] }
-  topics:
-    ships: { label: "Ships and engines", category: interests }
-    the_frontier: { label: "Life on the frontier", category: small_talk }
-    old_wars: { label: "The old wars", category: personal, stage: close }
-    fashion: false
-    sport: false
-  builtin_venues: false
-  venues:
-    cantina:
-      name: The Dry Dock bar
-      at: bar
-      cost: 25
-      activities:
-        synth_shots: { label: "Do synth-shots", tags: [drink, thrill] }
-        holo_darts: { label: "Play holo-darts", tags: [games, competition] }
-        band: { label: "Dance to the house band", tags: [dance, music] }
-        booth: { label: "Share a back booth", tags: [conversation, romance], romantic: true }
-      events:
-        brawl: { text: "A brawl breaks out two tables over.", enjoy: -6 }
-        round: { text: "A stranger buys the table a round.", enjoy: 6 }
-    observation:
-      name: The observation deck
-      cost: 0
-      activities:
-        stars: { label: "Name the constellations", tags: [calm, observation] }
-        ships_pass: { label: "Watch the ships come in", tags: [observation, ships] }
-        close: { label: "Sit close in the starlight", tags: [romance, calm], romantic: true }
-        story: { label: "Trade stories", tags: [conversation, humor] }
-      events:
-        aurora: { text: "An ion storm lights up the dark outside.", enjoy: 10 }
-        patrol: { text: "Station security moves everyone along for a while.", enjoy: -5 }
-    market:
-      name: A stroll through the concourse market
-      at: concourse
-      cost: 10
-      activities:
-        street_food: { label: "Try alien street food", tags: [food, thrill] }
-        trinket: { label: "Buy them a trinket", tags: [gift, fun] }
-        haggle: { label: "Haggle together", tags: [competition, humor] }
-        fortune: { label: "Visit a fortune-reading drone", tags: [fun, observation] }
-      events:
-        pickpocket: { text: "Someone tries to lift a credit chip.", enjoy: -6 }
-        festival: { text: "A dockworkers' festival spills into the market.", enjoy: 8 }
-
-items:
-  star_lily: { name: A star lily, tags: [gift] }
-
-actions:
-  buy_star_lily:
-    label: Buy a star lily (30 cr)
-    group: Trade
-    at: [merchant]
-    when: credits >= 30
-    time: 5
-    effects: { credits: -30, give: star_lily }
 `,
     },
   ],

@@ -8,10 +8,6 @@
 import type { Value, ExprEnv } from "./expr.js";
 import { evalBool, evalNumber } from "./expr.js";
 import type { Ruleset, StatDef, Band, KeepSpec } from "./ruleset.js";
-import type { BattleState, BoonOffer, DungeonRun, PartyMember, Pending } from "./dungeon/types.js";
-import type { DateSession, DatingMemory, Reaction } from "./date/types.js";
-import { stageIndex } from "./date/stage.js";
-import { rememberSocial } from "./date/memory.js";
 import {
   dateAt, exposedSlots, hasTrait, isIndoors, personLocation, revealOf, seasonAt, temperatureAt,
   warmthNeeded, warmthOf, weatherAt,
@@ -96,14 +92,8 @@ export interface GameState {
   notices: string[];
   /** What has surfaced in the world, for the journal. */
   news: { text: string; at: number }[];
-  /** The dungeon run in progress, if any. */
-  dungeon: DungeonRun | null;
-  /** Deepest floor reached per dungeon. */
-  deepest: Record<string, number>;
-  /** The conversation or outing in progress, if any. */
-  date: DateSession | null;
-  /** What dating has taught the game about each person. */
-  dating: DatingMemory;
+  /** Who is known to be an adult (true) or not (false), when the ruleset gives no age: asked once, then remembered. */
+  adults: Record<string, boolean>;
   /** Save slots: a copy of the state at the moment of saving. */
   saves: Record<string, SaveSlot>;
   /** Which playthrough this is (starting over after an ending adds one). */
@@ -201,30 +191,7 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "happen"; id: string }
   | { t: "notice"; text: string }
   | { t: "noticed" }
-  | { t: "dg_enter"; run: DungeonRun }
-  | { t: "dg_step"; x: number; y: number }
-  | { t: "dg_clear"; key: string }
-  | { t: "dg_down"; pos: [number, number] }
-  | { t: "dg_party"; party: PartyMember[] }
-  | { t: "dg_xp"; d: number }
-  | { t: "dg_gold"; d: number }
-  | { t: "dg_bag"; item: string; d: number }
-  | { t: "dg_loot"; item: string; d: number }
-  | { t: "dg_battle"; battle: BattleState | null }
-  | { t: "dg_pending"; pending: Pending | null }
-  | { t: "dg_boon_offer"; offer: BoonOffer | null }
-  | { t: "dg_boon"; id: string }
-  | { t: "dg_log"; text: string }
-  | { t: "dg_told" }
-  | { t: "dg_exit"; outcome?: "left" | "lost" }
-  | { t: "dt_start"; session: DateSession }
-  | { t: "dt_patch"; patch: Partial<DateSession> }
-  | { t: "dt_end" }
-  | { t: "dt_pref"; who: string; key: string; v: number }
-  | { t: "dt_seen"; who: string; topic: string; reaction: Reaction }
-  | { t: "dt_recent"; who: string; key: string; at: number; count: number; fatigue: number }
-  | { t: "dt_partner"; who: string; on: boolean }
-  | { t: "dt_dated"; who: string; enjoy: number }
+  | { t: "adult"; who: string; adult: boolean }
   | { t: "body"; part: string; trait: string; v: string | null }
   | { t: "tf"; id: string; stage: number }
   | { t: "bond"; a: string; b: string; d: number }
@@ -250,8 +217,6 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "unend" }
   | { t: "end_rearm"; id: string }
 );
-
-const DG_LOG_KEPT = 12;
 
 const NEWS_KEPT = 30;
 
@@ -293,10 +258,7 @@ export function initialState(r: Ruleset): GameState {
     gauge: { v: 0, rest: 0, next: null, last: {} },
     notices: [],
     news: [],
-    dungeon: null,
-    deepest: {},
-    date: null,
-    dating: { prefs: {}, known: {}, partners: {}, dates: {}, recent: {} },
+    adults: {},
     saves: {},
     runs: 1,
     loops: 0,
@@ -445,6 +407,9 @@ function clamp(v: number, lo: number, hi: number) {
 }
 
 export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
+  // Chats from before dating was removed: "is an adult" was remembered as a dating taste.
+  const old = e as unknown as { t: string; who?: unknown; key?: unknown; v?: unknown };
+  if (old.t === "dt_pref" && old.key === "__adult" && typeof old.who === "string") { s.adults = { ...s.adults, [old.who]: Number(old.v) > 0 }; return; }
   switch (e.t) {
     case "stat": {
       const def = r.stats[e.id];
@@ -674,25 +639,7 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
     }
     case "notice": s.notices = [...s.notices, e.text]; break;
     case "noticed": s.notices = []; break;
-    case "dg_enter":
-      s.dungeon = structuredClone(e.run);
-      s.deepest[e.run.id] = Math.max(s.deepest[e.run.id] ?? 0, e.run.depth);
-      break;
-    case "dg_exit": s.dungeon = null; break;
-    case "dt_recent":
-      s.dating.recent = { ...(s.dating.recent ?? {}), [e.who]: rememberSocial(s.dating.recent?.[e.who], e.key, e.at, e.count, e.fatigue, r.dating?.memory) };
-      break;
-    case "dt_start": s.date = structuredClone(e.session); break;
-    case "dt_patch": if (s.date) s.date = { ...s.date, ...structuredClone(e.patch) }; break;
-    case "dt_end": s.date = null; break;
-    case "dt_pref": s.dating.prefs = { ...s.dating.prefs, [e.who]: { ...(s.dating.prefs[e.who] ?? {}), [e.key]: e.v } }; break;
-    case "dt_seen": s.dating.known = { ...s.dating.known, [e.who]: { ...(s.dating.known[e.who] ?? {}), [e.topic]: e.reaction } }; break;
-    case "dt_partner": {
-      const partners = { ...s.dating.partners };
-      if (e.on) partners[e.who] = true; else delete partners[e.who];
-      s.dating.partners = partners;
-      break;
-    }
+    case "adult": s.adults = { ...s.adults, [e.who]: e.adult }; break;
     case "body": {
       const part = { ...(s.body[e.part] ?? {}) };
       if (e.v === null) delete part[e.trait]; else part[e.trait] = e.v;
@@ -750,12 +697,8 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       s.ended = null;
       break;
     case "end_rearm": s.dismissedEndings = (s.dismissedEndings ?? []).filter((id) => id !== e.id); break;
-    case "dt_dated": {
-      const prev = s.dating.dates[e.who] ?? { count: 0, best: 0 };
-      s.dating.dates = { ...s.dating.dates, [e.who]: { count: prev.count + 1, best: Math.max(prev.best, e.enjoy) } };
-      break;
-    }
-    default: if (s.dungeon) applyDungeon(s, s.dungeon, e);
+    // Events of removed systems (dungeons, dates) in old chats are ignored.
+    default: break;
   }
 }
 
@@ -776,8 +719,6 @@ function rewind(r: Ruleset, s: GameState, base: GameState, keep: KeepSpec) {
   if (keep.feats) next.feats = { ...next.feats, ...from.feats };
   if (keep.perks) next.perks = { ...next.perks, ...from.perks };
   if (keep.secrets) for (const [id, st] of Object.entries(from.secrets)) next.secrets[id] = Math.max(next.secrets[id] ?? -1, st);
-  if (keep.deepest) for (const [id, d] of Object.entries(from.deepest)) next.deepest[id] = Math.max(next.deepest[id] ?? 0, d);
-  if (keep.dating) next.dating = from.dating;
   if (keep.people) {
     next.people = { ...next.people, ...from.people };
     for (const id of Object.keys(from.people)) next.rel[id] ??= from.rel[id];
@@ -800,51 +741,6 @@ function rewind(r: Ruleset, s: GameState, base: GameState, keep: KeepSpec) {
   Object.assign(s, next);
 }
 
-function applyDungeon(s: GameState, d: DungeonRun, e: WarpEvent) {
-  switch (e.t) {
-    case "dg_step": {
-      d.pos = [e.x, e.y];
-      const k = `${e.x},${e.y}`;
-      if (!d.seen.includes(k)) d.seen = [...d.seen, k];
-      break;
-    }
-    case "dg_clear": if (!d.cleared.includes(e.key)) d.cleared = [...d.cleared, e.key]; break;
-    case "dg_down":
-      d.depth += 1;
-      d.pos = e.pos;
-      d.seen = [`${e.pos[0]},${e.pos[1]}`];
-      d.cleared = [];
-      d.pending = null;
-      s.deepest[d.id] = Math.max(s.deepest[d.id] ?? 0, d.depth);
-      break;
-    case "dg_party": d.party = e.party.map((p) => ({ ...p })); break;
-    case "dg_xp": d.xp = Math.max(0, d.xp + e.d); break;
-    case "dg_gold": d.gold = Math.max(0, d.gold + e.d); break;
-    case "dg_bag": {
-      const n = (d.bag[e.item] ?? 0) + e.d;
-      d.bag = { ...d.bag, [e.item]: Math.max(0, n) };
-      break;
-    }
-    case "dg_loot": {
-      const n = (d.loot[e.item] ?? 0) + e.d;
-      const loot = { ...d.loot };
-      if (n > 0) loot[e.item] = n; else delete loot[e.item];
-      d.loot = loot;
-      break;
-    }
-    case "dg_battle": d.battle = e.battle ? structuredClone(e.battle) : null; break;
-    case "dg_pending": d.pending = e.pending ? { ...e.pending } : null; break;
-    case "dg_boon_offer": d.boonOffer = e.offer ? { level: e.offer.level, options: [...e.offer.options] } : null; break;
-    case "dg_boon": d.boons = [...(d.boons ?? []), e.id]; d.boonOffer = null; break;
-    case "dg_log":
-      d.log = [...d.log, e.text].slice(-DG_LOG_KEPT);
-      d.untold = [...(d.untold ?? []), e.text].slice(-DG_LOG_KEPT);
-      break;
-    case "dg_told": d.untold = []; break;
-  }
-}
-
-/** The in-game day number (uses per day reset with it). */
 export function dayOf(s: GameState): number { return Math.floor(s.minutes / 1440); }
 
 /** Tells this encounter from the next one with the same id. */
@@ -876,8 +772,8 @@ export const BUILTIN_NAMES = [
   "minutes", "hour", "minute", "day", "weekday", "turn", "location",
   "month", "date", "season", "weather", "temperature", "indoors", "outside",
   "warmth", "warmth_min", "warmth_max", "too_cold", "too_hot", "reveal", "exposed", "naked",
-  "in_encounter", "encounter", "encounter_round", "round", "momentum", "target", "in_dungeon", "dungeon_depth",
-  "in_date", "on_outing", "loops", "runs", "pregnant", "pregnancy_weeks", "at_work",
+  "in_encounter", "encounter", "encounter_round", "round", "momentum", "target",
+  "loops", "runs", "pregnant", "pregnancy_weeks", "at_work",
 ];
 
 export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> = {}): ExprEnv {
@@ -913,15 +809,11 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
       encounter: s.encounter?.id ?? "",
       encounter_round: s.encounter?.round ?? 0,
       momentum: s.encounter?.momentum ?? 0,
-      in_dungeon: !!s.dungeon,
-      dungeon_depth: s.dungeon?.depth ?? 0,
-      in_date: !!s.date,
       loops: s.loops,
       runs: s.runs,
       at_work: !!s.job,
       pregnant: !!s.pregnancy && s.pregnancy.carrier === "player",
       pregnancy_weeks: s.pregnancy ? Math.floor((s.minutes - s.pregnancy.since) / 1440 / 7) : 0,
-      on_outing: s.date?.kind === "outing",
       round: s.encounter?.round ?? 0,
       target: "",
     };
@@ -1000,12 +892,6 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
         case "front": return s.fronts[a0]?.v ?? r.fronts[a0]?.start ?? 0;
         case "front_stage": return (s.fronts[a0]?.stage ?? -1) + 1;
         case "happened": return a0 in s.gauge.last;
-        // Deepest floor reached in a dungeon (0 = never entered).
-        case "deepest": return s.deepest[a0] ?? 0;
-        // Dating: together with someone, and how many outings you've had.
-        case "partner": return a0 in s.dating.partners;
-        // Relationship stage index (0 = the first rung), −1 when hostile.
-        case "stage": return stageIndex(r, s, a0);
         // Checkpoints: whether a slot holds a save.
         case "saved": return a0 in s.saves;
         // Body: a trait's value ('' when absent), and how far a transformation has gone.
@@ -1024,7 +910,6 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
         case "fame": return Object.keys(s.seen).length;
         case "missed": return s.dues[a0]?.missed ?? 0;
         case "days_until": return s.dues[a0] ? Math.floor((s.dues[a0].due - s.minutes) / 1440) : 0;
-        case "dates": return s.dating.dates[a0]?.count ?? 0;
         // Quests: '' (not taken), 'active', 'ready' (to hand in), 'done' or 'failed'; goal counts; how many are done.
         case "quest": return s.quests?.[a0]?.st ?? "";
         case "quest_active": return s.quests?.[a0]?.st === "active" || s.quests?.[a0]?.st === "ready";

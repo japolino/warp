@@ -4,13 +4,8 @@
 // fills defaults, and collects friendly issues instead of throwing. A broken
 // section is skipped with a warning so the rest of the ruleset keeps working.
 
-import { AID_KINDS, GAMBLE_GAMES, GAME_IDS, gameAlias, type AidKind, type GambleGame, type GameId } from "./game-ids.js";
 import { compile, ExprError } from "./expr.js";
 import { parseDice, DiceError } from "./dice.js";
-import { normDungeons } from "./dungeon/defs.js";
-import type { DungeonDef } from "./dungeon/types.js";
-import { normDating } from "./date/defs.js";
-import type { DatingDef } from "./date/types.js";
 import { classifyOutcomes, encounterOutcomeIds, parseOutcomeKind, type OutcomeKind } from "./outcomes.js";
 import type { StatePatch } from "./simulate.js";
 
@@ -158,27 +153,6 @@ export interface CheckDef {
   crits: boolean;
   /** Chance in percent of a critical success (a formula, e.g. "5 + luk / 4"); unset = the usual 5% band. */
   crit?: string | number;
-  /** Minigames this check can be played as instead of rolled (the first is offered); false = always dice. */
-  game?: GameId[] | false;
-}
-
-/** A table that takes real money: `gamble: { game: blackjack, stakes: [10, 50, 200] }`. */
-export interface GambleDef {
-  game: GambleGame;
-  /** Buy-ins to choose from. */
-  stakes: number[];
-  /** Hands, spins or pulls per sitting. */
-  rounds: number;
-  /** The stat staked (default: the HUD's money). */
-  stat?: string;
-  /** House edge (0.05 = 5%); default per game. */
-  edge?: number;
-  /** A formula in points of edge shaved off for {{user}} (`luck / 10`). */
-  luck?: string | number;
-  /** Applied after a winning, losing or ruinous sitting. */
-  win: Effect;
-  lose: Effect;
-  broke: Effect;
 }
 
 export interface ParamDef {
@@ -214,8 +188,6 @@ export interface ActionDef {
   targets?: string[];
   /** Readable requirements (already folded into `when`): each says what's missing on the locked choice. */
   requires: Requirement[];
-  /** A gambling table: the stake and the game decide the money, not a check. */
-  gamble?: GambleDef;
   /** Show it locked, with what's missing, when the requirements aren't met (default when it has `requires:`). */
   showLocked: boolean;
   /** Encounter moves only: uses per encounter / per in-game day (0 or absent = unlimited), counted like abilities' charges. */
@@ -465,9 +437,7 @@ export type PerkRule =
   /** gains / losses: rises (or drops) in a stat are this much bigger or smaller (−0.3 = 30% smaller). */
   | { kind: "gains" | "losses"; stat: string; pct: number; /** a relationship stat (with everyone), not one of {{user}}'s */ rel?: true }
   /** pierce: blows from these moves (stats or tags; none = every move) ignore this much of the opponent's armor. */
-  | { kind: "pierce"; amount: number; stats: string[]; tags: string[] }
-  /** game: aids in minigames (these games; none = every game), e.g. +1 life, +20% timing window. */
-  | { kind: "game"; games: GameId[]; aids: Partial<Record<AidKind, number>> };
+  | { kind: "pierce"; amount: number; stats: string[]; tags: string[] };
 
 export interface PerkDef {
   id: string; name: string; desc: string; cost: number; requires?: string;
@@ -636,7 +606,7 @@ export interface MindDef {
 
 /** What survives rewinding to a save (or starting over after an ending). Everything else rewinds. */
 export interface KeepSpec {
-  codex: boolean; feats: boolean; perks: boolean; secrets: boolean; people: boolean; dating: boolean; deepest: boolean;
+  codex: boolean; feats: boolean; perks: boolean; secrets: boolean; people: boolean;
   stats: string[]; flags: string[]; items: string[];
   /** Relationship stats kept for everyone. */
   rel: string[];
@@ -874,14 +844,10 @@ export interface Ruleset {
   questOrder: string[];
   /** Quests the story hands out: someone asks {{user}} for something, and it's tracked with stakes. */
   storyQuests: { enabled: boolean; max: number };
-  /** How dungeons, dates and minigames look: medieval (parchment, oak, gold), modern (paper and ink) or sci-fi (an instrument panel). */
-  look: "medieval" | "modern" | "scifi";
   secrets: Record<string, SecretDef>;
   fronts: Record<string, FrontDef>;
   randomEvents: RandomEventsDef;
   liveChoices: LiveChoicesDef;
-  dungeons: Record<string, DungeonDef>;
-  dating: DatingDef;
   mind: MindDef;
   checkpoints: CheckpointsDef;
   endings: Record<string, EndingDef>;
@@ -947,6 +913,10 @@ export class Ctx {
   issues: Issue[] = [];
   err(where: string, message: string) { this.issues.push({ level: "error", where, message }); }
   warn(where: string, message: string) { this.issues.push({ level: "warning", where, message }); }
+  /** A key from a part of Warp that was taken out: say so plainly; the key is ignored. */
+  removed(where: string, key: string, what: string) {
+    this.warn(where, `\`${key}:\` (${what}) was removed from Warp, so it's ignored. The old version is on the \`legacy\` branch.`);
+  }
 
   num(v: unknown, where: string, fallback: number): number {
     if (v === undefined || v === null || v === "") return fallback;
@@ -1459,56 +1429,13 @@ function normCheck(raw: unknown, where: string, c: Ctx): CheckDef | undefined {
   try { parseDice(dice); } catch (e) { c.err(`${where} › dice`, e instanceof DiceError ? e.message : "bad dice"); return undefined; }
   const target = c.expr(style === "chance" ? (raw.chance ?? raw.under) : raw.vs ?? raw.dc, `${where} › ${style === "chance" ? "chance" : "vs"}`);
   const add = c.expr(raw.add ?? raw.bonus ?? raw.mod ?? (style === "pbta" ? raw.pbta : undefined), `${where} › add`);
+  for (const k of ["game", "games", "minigame"]) if (raw[k] !== undefined) c.removed(`${where} › ${k}`, k, "minigames");
   return {
     style, dice, target, add,
     partialMargin: c.num(raw.partial ?? raw.partial_margin, `${where} › partial`, 0),
     label: typeof raw.label === "string" ? raw.label : typeof raw.skill === "string" ? raw.skill : undefined,
     crits: raw.crits !== false,
     ...critOf(raw.crit ?? raw.crit_chance, `${where} › crit`, c, raw.crits === false),
-    ...(raw.game !== undefined || raw.games !== undefined || raw.minigame !== undefined ? { game: normGames(raw.game ?? raw.games ?? raw.minigame, `${where} › game`, c) } : {}),
-  };
-}
-
-/** `look: medieval` — how the stage and the arcade look (`minigames: { style }` says the same). */
-function normLook(raw: unknown, c: Ctx): Ruleset["look"] {
-  if (raw === undefined) return "modern";
-  const v = String((isObj(raw) ? raw.style ?? raw.look : raw) ?? "").toLowerCase().replace(/[^a-z]/g, "");
-  const map: Record<string, Ruleset["look"]> = { medieval: "medieval", fantasy: "medieval", modern: "modern", contemporary: "modern", scifi: "scifi", sf: "scifi", future: "scifi", space: "scifi", cyberpunk: "scifi" };
-  if (map[v]) return map[v];
-  c.warn("Look", "should be medieval, modern or scifi");
-  return "modern";
-}
-
-/** `game: aim`, `game: [mines, snake]`, `game: false` (dice only). */
-function normGames(raw: unknown, where: string, c: Ctx): GameId[] | false {
-  if (raw === false || raw === "none" || raw === "dice") return false;
-  const out: GameId[] = [];
-  for (const x of Array.isArray(raw) ? raw : [raw]) {
-    const g = gameAlias(String(x));
-    if (g) { if (!out.includes(g)) out.push(g); } else c.warn(where, `"${String(x)}" isn't a minigame — use ${GAME_IDS.join(", ")}`);
-  }
-  return out.length ? out : false;
-}
-
-function normGamble(raw: unknown, where: string, c: Ctx, known: { stats: Set<string> }): GambleDef | undefined {
-  const r: Raw = isObj(raw) ? raw : { game: raw };
-  const g = gameAlias(String(r.game ?? ""));
-  if (!g || !(GAMBLE_GAMES as string[]).includes(g)) { c.warn(where, `\`game:\` should be ${GAMBLE_GAMES.join(", ")}`); return undefined; }
-  const stakes = (Array.isArray(r.stakes ?? r.stake) ? (r.stakes ?? r.stake) as unknown[] : [r.stakes ?? r.stake ?? 10])
-    .map((x) => Math.round(c.num(x, `${where} › stakes`, 0))).filter((x) => x > 0).sort((a, b) => a - b);
-  const stat = typeof r.stat === "string" ? r.stat : typeof r.with === "string" ? r.with : undefined;
-  if (stat && !known.stats.has(stat)) c.warn(`${where} › stat`, `"${stat}" isn't a declared stat`);
-  const edge = r.edge !== undefined ? pct(r.edge, `${where} › edge`, c) : null;
-  return {
-    game: g as GambleGame,
-    stakes: stakes.length ? [...new Set(stakes)] : [10],
-    rounds: Math.max(1, Math.min(12, Math.round(c.num(r.rounds ?? r.hands ?? r.spins, `${where} › rounds`, g === "slots" ? 6 : 5)))),
-    ...(stat ? { stat } : {}),
-    ...(edge !== null ? { edge } : {}),
-    ...(r.luck !== undefined ? { luck: c.expr(r.luck, `${where} › luck`) } : {}),
-    win: normEffect(r.win ?? r.won, `${where} › win`, c, known),
-    lose: normEffect(r.lose ?? r.lost, `${where} › lose`, c, known),
-    broke: normEffect(r.broke ?? r.bust, `${where} › broke`, c, known),
   };
 }
 
@@ -1526,8 +1453,10 @@ const TIER_KEYS: Record<string, Tier> = {
  */
 export const ACTION_KEYS = new Set([
   "label", "say", "desc", "description", "group", "at", "when", "hidden", "why_not", "locked", "time", "cost", "costs", "check",
-  "outcomes", "effects", "effect", "params", "tags", "order", "per_person", "with", "targets", "requires", "needs", "show_locked", "gamble",
+  "outcomes", "effects", "effect", "params", "tags", "order", "per_person", "with", "targets", "requires", "needs", "show_locked",
   "per_day", "per_encounter", "errand",
+  // Removed from Warp: read only to say so.
+  "gamble",
 ]);
 
 function editDistance(a: string, b: string): number {
@@ -1578,10 +1507,7 @@ function normAction(id: string, raw: unknown, where: string, c: Ctx, known: { st
   }
   const check = raw.check !== undefined ? normCheck(raw.check, `${where} › check`, c) : undefined;
   if (!check && Object.keys(outcomes).length) c.warn(where, "has outcomes but no check — put always-on changes under `effects:`");
-  // A gambling table: pick the stake like any other option when it's rolled instead of played.
-  const gamble = raw.gamble !== undefined ? normGamble(raw.gamble, `${where} › gamble`, c, known) : undefined;
-  if (gamble && check) c.warn(where, "a gambling table doesn't take a check — the cards (or the wheel) decide");
-  if (gamble && !params.some((p) => p.id === "stake")) params.unshift({ id: "stake", label: "Stake", options: Object.fromEntries(gamble.stakes.map((x) => [String(x), x])), default: String(gamble.stakes[0]) });
+  if (raw.gamble !== undefined) c.removed(`${where} › gamble`, "gamble", "gambling tables");
   warnUnknownKeys(raw, ACTION_KEYS, where, c);
   const at = raw.at === undefined ? [] : Array.isArray(raw.at) ? raw.at.map(String) : [String(raw.at)];
   const own = raw.when !== undefined ? c.expr(raw.when, `${where} › when`) : undefined;
@@ -1611,7 +1537,6 @@ function normAction(id: string, raw: unknown, where: string, c: Ctx, known: { st
     ...(raw.targets !== undefined ? { targets: list(raw.targets) } : {}),
     requires,
     showLocked: raw.show_locked === true || (raw.show_locked !== false && requires.length > 0),
-    ...(gamble ? { gamble } : {}),
     ...(raw.errand === false || raw.errand === "none" ? { errand: false as const }
       : raw.errand === "shop" || raw.errand === "train" || raw.errand === "rest" ? { errand: raw.errand }
       : raw.errand !== undefined ? (c.warn(`${where} › errand`, `errand: shop, train, rest or false (got ${JSON.stringify(raw.errand)})`), {}) : {}),
@@ -1900,19 +1825,8 @@ function normPerkRules(v: unknown, where: string, c: Ctx, known: { stats: Set<st
       const amount = r.amount === true || r.amount === "all" ? 999 : c.num(r.amount ?? r.by, `${w} › amount`, 999);
       out.push({ kind: "pierce", amount, stats: list(r.stats ?? r.stat), tags: list(r.tags).map((t) => t.toLowerCase()) });
     } else if (k === "game" || k === "games" || k === "minigames") {
-      // game: { lives: 1, window: 20, games: [aim] } — aids in minigames.
-      const r: Raw = isObj(x) ? x : {};
-      const games = list(r.games ?? r.game ?? r.only).map((g) => gameAlias(g) ?? (c.warn(`${w} › games`, `"${g}" isn't a minigame`), null)).filter((g): g is GameId => !!g);
-      const aids: Partial<Record<AidKind, number>> = {};
-      for (const [ak, n] of Object.entries(r)) {
-        if (["games", "game", "only"].includes(ak)) continue;
-        if (!(AID_KINDS as string[]).includes(ak)) { c.warn(`${w} › ${ak}`, `isn't a minigame aid (${AID_KINDS.join(", ")})`); continue; }
-        const v = typeof n === "string" && n.trim().endsWith("%") ? parseFloat(n) : c.num(n === true ? 1 : n, `${w} › ${ak}`, 0);
-        if (v) aids[ak as AidKind] = v;
-      }
-      if (Object.keys(aids).length) out.push({ kind: "game", games, aids });
-      else c.warn(w, "names no aid — e.g. `game: { lives: 1, window: 20 }`");
-    } else c.warn(w, "isn't a perk rule (reroll, soften, gains, losses, pierce, game)");
+      c.removed(w, k, "minigame aids");
+    } else c.warn(w, "isn't a perk rule (reroll, soften, gains, losses, pierce)");
   }
   return out;
 }
@@ -2497,18 +2411,19 @@ function normMind(raw: unknown, c: Ctx, stats: Record<string, StatDef> = {}): Mi
   return def;
 }
 
-const KEEP_FLAGS = ["codex", "feats", "perks", "secrets", "people", "dating", "deepest"] as const;
+const KEEP_FLAGS = ["codex", "feats", "perks", "secrets", "people"] as const;
 const KEEP_LISTS = ["stats", "flags", "items", "rel"] as const;
 
 /** `keep: [codex, feats, { stats: [insight] }]` or `keep: { codex: true, stats: [insight] }`. */
 export function normKeep(raw: unknown, where: string, c: Ctx, dflt: Partial<KeepSpec> = {}): KeepSpec {
-  const k: KeepSpec = { codex: false, feats: false, perks: false, secrets: false, people: false, dating: false, deepest: false, stats: [], flags: [], items: [], rel: [], ...dflt };
+  const k: KeepSpec = { codex: false, feats: false, perks: false, secrets: false, people: false, stats: [], flags: [], items: [], rel: [], ...dflt };
   if (raw === undefined) return k;
   const entries: [string, unknown][] = Array.isArray(raw)
     ? raw.flatMap((x) => (isObj(x) ? Object.entries(x) : [[String(x), true] as [string, unknown]]))
     : isObj(raw) ? Object.entries(raw) : typeof raw === "string" ? [[raw, true]] : [];
   for (const [key, v] of entries) {
     if ((KEEP_FLAGS as readonly string[]).includes(key)) (k as unknown as Record<string, boolean>)[key] = v !== false;
+    else if (key === "dating" || key === "deepest") c.removed(`${where} › ${key}`, key, key === "dating" ? "dating" : "dungeons");
     else if ((KEEP_LISTS as readonly string[]).includes(key)) (k as unknown as Record<string, string[]>)[key] = list(v);
     else c.warn(`${where} › ${key}`, `can keep ${[...KEEP_FLAGS, ...KEEP_LISTS].join(", ")}`);
   }
@@ -2795,6 +2710,14 @@ function normDiscovery(raw: unknown, c: Ctx): DiscoveryDef {
   }
   return def;
 }
+
+/** Top-level keys of systems removed from Warp: an old ruleset that has them still loads, with a plain warning. */
+export const REMOVED_KEYS: Record<string, string> = {
+  dungeons: "dungeons",
+  dating: "dating",
+  look: "the stage and minigame looks",
+  minigames: "minigames",
+};
 
 const SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
 
@@ -3098,9 +3021,8 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const fronts = normFronts(raw.fronts, c, known);
   const randomEvents = normRandomEvents(raw.random_events ?? raw.events, c, known);
   const liveChoices = normLiveChoices(raw.live_choices, c, known);
-  const dungeons = normDungeons(raw.dungeons, c, known);
-  // Dating adds its love and fear relationship stats if the ruleset doesn't have them.
-  const dating = normDating(raw.dating, c, { stats: relStats, order: relStatOrder }, new Set(Object.keys(people)));
+  // Parts of Warp that were taken out (the old version is on the `legacy` branch).
+  for (const [k, what] of Object.entries(REMOVED_KEYS)) if (raw[k] !== undefined) c.removed(titleCase(k), k, what);
   const mind = normMind(raw.mind, c, stats);
   const endingsRaw: Raw = isObj(raw.endings) ? raw.endings : {};
   const endings = normEndings(Object.fromEntries(Object.entries(endingsRaw).filter(([k]) => k !== "legacy")), c);
@@ -3147,8 +3069,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     weather, wardrobe, encounters, codex, feats, perks,
     ...(perkPoints && stats[perkPoints] ? { perkPoints } : {}),
     perkPick, abilities, quests, questOrder, storyQuests,
-    look: normLook(raw.look ?? raw.minigames, c),
-    secrets, fronts, randomEvents, liveChoices, dungeons, dating, mind, checkpoints, endings, legacy, body, companions, bonds, lineage, obligations, jobs, observers, discovery, improvise, growth,
+    secrets, fronts, randomEvents, liveChoices, mind, checkpoints, endings, legacy, body, companions, bonds, lineage, obligations, jobs, observers, discovery, improvise, growth,
   };
 
   // Cross-references that need everything loaded.

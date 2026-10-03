@@ -1,4 +1,4 @@
-// Review fixes: reserved ids, macros, dungeon romance age floor, param-aware warnings.
+// Review fixes: reserved ids and macros in generated residents.
 import { expect, test } from "bun:test";
 import { loadRuleset } from "../engine/loader.js";
 import { initialState } from "../engine/state.js";

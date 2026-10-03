@@ -1,6 +1,5 @@
 // Turn resolution: the only place outcomes are decided.
 
-import { clampNet, gambleHint, gambleOffer, gameBar, gameHint, GAMES, gameSummary, gambleRng, shiftBar, simulateGamble, tierFromScore, type GambleGame, type GameBar, type GameId, type GameResult } from "./games.js";
 import type { ExprEnv, Value } from "./expr.js";
 import { evalBool, evalNumber, evaluate, identifiers } from "./expr.js";
 import { rollDice, seededRng, type Rng } from "./dice.js";
@@ -13,8 +12,6 @@ import { isLoss, thresholds } from "./encounter-view.js";
 import { checkGains, checkStats, DIFFICULTY_WORD, hardnessFrom, IMPROV, IMPROV_DIRECTION, improvAction, isDifficulty, practise, trainingGain } from "./freeform.js";
 import { endingDirection } from "./chronicle.js";
 import { exposedSlots, isIndoors, presentPeople, revealOf, SCENE_HOLDS, sceneWord } from "./world.js";
-import { DATE_PREFIX } from "./date/types.js";
-import { activeSession, ADULT_KEY, resolveDate } from "./date/talk.js";
 import { JOB_PREFIX, obligationLife, PAY_PREFIX, resolveWork } from "./work.js";
 import { QUEST_PREFIX, questHooks, questLife, questOp, questProgress, resolveQuest, storyQuestNews, type StoryQuestNews } from "./quests.js";
 
@@ -33,8 +30,6 @@ export interface CheckResult {
   gear?: string[];
   /** A perk stepped in after a failure ("Silver Tongue rerolled a failure"). */
   perk?: string;
-  /** Played as a minigame instead of rolled: the score against the bar. */
-  game?: { id: GameId; score: number; bar: GameBar; summary: string; beats: string[] };
 }
 
 export interface TurnRecord {
@@ -56,8 +51,6 @@ export interface TurnRecord {
   contradiction?: number;
   /** Exploring found somewhere new: the backend writes the place and moves the player there. */
   discover?: { from: string };
-  /** A sitting at a gambling table: the stake and what came of it. */
-  gamble?: { game: GambleGame; stake: number; net: number; played: boolean };
   /** The player character's mind overruled the player this turn. */
   mind?: { id: string; cause: string; kind: "fail" | "alter" | "redirect"; meant: string; chance: number };
   /** Done off the page (errands, quiet item use, quiet travel) after this message, one line each — told to the next reply. */
@@ -87,8 +80,6 @@ export interface Intent {
   label?: string;
   /** Nonbinding live-choice story intent and stakes, never mechanical effects. */
   forecast?: LiveChoice["forecast"];
-  /** Played out as a minigame: the score (a check) or the money (a gambling table). */
-  game?: GameResult;
   /** Rolled when it was chosen (the seed), and the tier that came up — the player's message already tells it, so it stands. */
   seed?: string;
   tier?: Tier;
@@ -188,7 +179,7 @@ export const EXPLORE = "explore:";
 /** Can the player explore here for somewhere new? */
 export function canExplore(r: Ruleset, s: GameState): boolean {
   const d = r.discovery;
-  if (!d.enabled || !s.location || s.encounter || s.dungeon || s.job || s.date || s.ended) return false;
+  if (!d.enabled || !s.location || s.encounter || s.job || s.ended) return false;
   if (s.discovered.length >= d.max) return false;
   return !d.at.length || d.at.includes(s.location) || s.discovered.includes(s.location);
 }
@@ -443,7 +434,7 @@ export function requirementText(r: Ruleset, s: GameState, q: Requirement): strin
 }
 
 /**
- * Why a gate (`requires:` on a place or a dungeon) is shut right now, or null when every
+ * Why a gate (`requires:` on a place) is shut right now, or null when every
  * requirement holds. `whyNot` replaces the generated words.
  */
 export function gateLock(r: Ruleset, s: GameState, requires: Requirement[], whyNot?: string): string | null {
@@ -635,34 +626,6 @@ function amountOf(w: Working, v: string | number, extra: Record<string, Value>, 
   const p = percentOf(v);
   const x = p !== null ? p * max : evalNumber(v, w.env(extra), 0);
   return Math.abs(x) >= 1 && p !== null ? Math.round(x) : x;
-}
-
-/**
- * A sitting at a gambling table. Played in the overlay, the net it reports stands
- * (clamped to what the table could pay or take); otherwise the sitting is simulated
- * at the table's odds. The money moves, then `win:`/`lose:`/`broke:` effects.
- */
-function gambleTurn(w: Working, a: ActionDef, intent: Intent, rec: TurnRecord, label: string, seed: string) {
-  const g = a.gamble!;
-  const r = w.r;
-  const offer = gambleOffer(r, w.s, a, seed);
-  if (!offer) { w.hints.push(`{{user}} can't play — there's nothing to stake.`); return; }
-  const asked = Number(intent.game?.stake ?? intent.params?.stake ?? g.stakes[0]);
-  const stake = Math.max(0, Math.min(offer.money.have, Number.isFinite(asked) && asked > 0 ? Math.round(asked) : g.stakes[0]));
-  if (stake <= 0) { w.hints.push(`{{user}} doesn't have the ${offer.money.currency}${g.stakes[0]} to sit down.`); return; }
-  const played = intent.game && intent.game.game === g.game && intent.game.net !== undefined ? intent.game : null;
-  const res = played
-    ? { net: clampNet(g.game, stake, played.net!, g.rounds), beats: played.beats, detail: played.detail }
-    : simulateGamble(g.game, stake, g.rounds, offer.edge, gambleRng(seed));
-  rec.gamble = { game: g.game, stake, net: res.net, played: !!played };
-  const name = GAMES[g.game].name.toLowerCase();
-  because(w, `"${label}": ${res.net >= 0 ? "won" : "lost"} ${offer.money.currency}${Math.abs(res.net)} at ${name}`, () => {
-    if (res.net) w.push({ t: "stat", id: offer.money.stat, d: res.net, src: "action" });
-    const after = res.net <= -stake && (w.s.stats[offer.money.stat] ?? 0) < (g.stakes[0] ?? 1) ? g.broke : res.net > 0 ? g.win : res.net < 0 ? g.lose : null;
-    if (after) effectToEvents(w, after, "action", {});
-  });
-  w.hints.push(gambleHint(name, { net: res.net, stake, beats: res.beats, detail: res.detail }, offer.money.currency));
-  questHooks(builderOf(w), { kind: "action", id: a.id, result: res.net > 0 ? "success" : res.net < 0 ? "fail" : "partial", good: res.net > 0 });
 }
 
 /** A perk that steps in when this check fails: a reroll or a softened result, if it has uses left today. */
@@ -1336,10 +1299,10 @@ function knownAdult(w: Working, who: string): boolean {
   if (w.s.kin[who]) return false;
   const age = w.r.people[who]?.age;
   if (age !== undefined) return age >= 18;
-  const known = w.s.dating.prefs[who]?.[ADULT_KEY];
-  if (known !== undefined) return known > 0;
+  const known = w.s.adults[who];
+  if (known !== undefined) return known;
   const name = personName(w.r, w.s, who);
-  const id = `date:adult:${who}`;
+  const id = `adult:${who}`;
   const model = w.odds[id];
   if (!model) {
     if (!w.needs.some((n) => n.id === id)) w.needs.push({ id, ask: `Is ${name} an adult (18 or older), going by the story and the character card?`, options: [
@@ -1350,7 +1313,7 @@ function knownAdult(w: Working, who: string): boolean {
     return false;
   }
   const adult = (model.adult ?? 0) >= 0.8;
-  w.push({ t: "dt_pref", who, key: ADULT_KEY, v: adult ? 1 : -1, src: "action" });
+  w.push({ t: "adult", who, adult, src: "action" });
   return adult;
 }
 
@@ -1406,7 +1369,6 @@ function lineageLife(w: Working) {
 
 /** The relationship stat that means "how much they like you" (for jealousy). */
 function loveStat(r: Ruleset): string | null {
-  if (r.dating.enabled) return r.dating.love;
   return r.relStatOrder.find((id) => r.relStats[id].good === "high") ?? null;
 }
 
@@ -1785,7 +1747,7 @@ export interface ResolveOptions {
   scene?: Record<string, boolean>;
   /** The scene says an encounter is breaking out (and who the opponent is, when it's someone from the story). */
   encounter?: { id: string; foe?: string; fresh?: boolean };
-  /** A medium-confidence action suggestion is awaiting player confirmation; do not spend turn or run date/job say. */
+  /** A medium-confidence action suggestion is awaiting player confirmation; do not spend turn or run job say. */
   pendingSuggestion?: boolean;
 }
 
@@ -1854,8 +1816,8 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   const rec: TurnRecord = { v: 1, hints: [], events: [], at: Date.now() };
   // A suggestion is not a committed move, nor dialogue for the active session.
   if (!intent && opts.pendingSuggestion) return rec;
-  if (intent && !before.ended && !intent.actionId.startsWith(DATE_PREFIX) && !intent.actionId.startsWith(PAY_PREFIX)
-    && !intent.actionId.startsWith(JOB_PREFIX) && !intent.actionId.startsWith(QUEST_PREFIX) && intent.actionId !== RUN_EPILOGUE && !(before.dungeon && intent.actionId === "dungeon")) {
+  if (intent && !before.ended && !intent.actionId.startsWith(PAY_PREFIX)
+    && !intent.actionId.startsWith(JOB_PREFIX) && !intent.actionId.startsWith(QUEST_PREFIX) && intent.actionId !== RUN_EPILOGUE) {
     const valid = intent.actionId === EXPLORE ? canExplore(r, before)
       : intent.actionId.startsWith(TRAVEL_PREFIX) ? travelTargets(r, before).includes(intent.actionId.slice(TRAVEL_PREFIX.length))
       : !!findAction(r, before, intent.actionId);
@@ -1883,14 +1845,14 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   }
   // A fight (or any encounter) the scene says is breaking out starts before the player's move lands.
   let encBase = before;
-  if (opts.encounter && !before.encounter && !before.dungeon && !before.job && !before.ended) {
+  if (opts.encounter && !before.encounter && !before.job && !before.ended) {
     const enc = r.encounters[opts.encounter.id];
     if (enc?.fromStory && !encounterJustEnded(before, enc.id, opts.encounter.fresh === true)) {
       because(w, `The scene: ${enc.name} breaks out`, () => startEncounter(w, enc.id, "trigger", opts.encounter!.foe));
       encBase = cloneState(w.s);
     }
   }
-  let found = intent && !intent.actionId.startsWith(TRAVEL_PREFIX) && !intent.actionId.startsWith(DATE_PREFIX) && !intent.actionId.startsWith(PAY_PREFIX) && !intent.actionId.startsWith(JOB_PREFIX) ? findAction(r, before, intent.actionId) : null;
+  let found = intent && !intent.actionId.startsWith(TRAVEL_PREFIX) && !intent.actionId.startsWith(PAY_PREFIX) && !intent.actionId.startsWith(JOB_PREFIX) ? findAction(r, before, intent.actionId) : null;
   // The character's mind may overrule the player: freeze, do something else, or colour the attempt.
   let mind = found ? mindOverride(r, before, found.a, found.target, opts.seed,
     intent?.via === "choice" || intent?.via === "command" || intent?.via === "confirmed" ? intent.params?.mind_resist : undefined, intent?.params) : null;
@@ -1903,13 +1865,8 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   const a = found?.a;
   const inEncounter = !!encBase.encounter;
   const improvised = !!a && a.id.startsWith(IMPROV);
-  // A conversation or outing takes every turn until it ends; a typed line is the player's words in it.
-  const dateIntent = intent?.actionId.startsWith(DATE_PREFIX) ? intent : activeSession(r, before) && !intent && !before.job ? { actionId: `${DATE_PREFIX}say`, via: "adjudicator" as const } : null;
   // Bills and work shifts; during a shift, a typed line is how {{user}} serves the customer.
   const workIntent = intent && (intent.actionId.startsWith(PAY_PREFIX) || intent.actionId.startsWith(JOB_PREFIX)) ? intent : before.job && !intent ? { actionId: `${JOB_PREFIX}say`, via: "adjudicator" as const } : null;
-
-  // A conversation the player walked away from is over.
-  if (before.date && !activeSession(r, before)) w.push({ t: "dt_end", src: "action" });
 
   let stunned: string | null = null;
   if (intent?.actionId.startsWith(QUEST_PREFIX)) {
@@ -1930,13 +1887,6 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   } else if (workIntent) {
     const label = because(w, "Work and bills", () => resolveWork(builderOf(w), workIntent));
     if (label) rec.action = { id: workIntent.actionId, label, via: workIntent.via };
-  } else if (dateIntent) {
-    const done = because(w, "Conversation", () => resolveDate(builderOf(w), dateIntent));
-    if (done) {
-      rec.action = { id: dateIntent.actionId, label: done.label, via: dateIntent.via };
-      const veils = new Set((opts.veils ?? []).map((v) => v.toLowerCase()));
-      if (done.tags.some((t) => veils.has(t))) rec.veiled = true;
-    }
   } else if (intent?.actionId.startsWith(TRAVEL_PREFIX)) {
     const to = intent.actionId.slice(TRAVEL_PREFIX.length);
     const dest = r.locations[to];
@@ -2010,28 +1960,14 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
     if (mind?.kind === "fail") {
       const fail = a.outcomes.fail ?? a.outcomes.crit_fail;
       if (fail) because(w, `"${meant}" — ${mind.cause} stopped it`, () => effectToEvents(w, fail, "check", extra));
-    } else if (a.gamble) {
-      gambleTurn(w, a, intent!, rec, label, opts.seed);
     } else if (a.check) {
       const rng: Rng = seededRng(opts.seed);
       const { add, target, crit } = checkNumbers(r, checkBefore, a, intent!.params, who);
       let roll = rollDice(a.check.dice, rng);
       let tier = tierFor(a.check, roll, add, target, crit);
-      // Played as a minigame: the score decides, against a bar set by the same odds the dice would have used.
-      const played = intent!.game && intent!.game.score !== undefined && a.check.game !== false ? intent!.game : null;
-      let game: CheckResult["game"];
-      if (played) {
-        const o = odds(r, checkBefore, a, intent!.params, who, false);
-        const bar = shiftBar(gameBar(o?.success ?? 0.5, { partial: o?.partial, crits: a.check.crits }), Math.max(-0.12, Math.min(0.08, played.ease ?? 0)));
-        tier = tierFromScore(bar, played.score!);
-        game = { id: played.game, score: played.score!, bar, summary: gameSummary(played, bar), beats: played.beats };
-        // Another go from a perk was already spent in the game: it counts as today's reroll.
-        const re = played.perk && played.livesUsed ? perkRuleFor(r, checkBefore, a, "reroll") : null;
-        if (re && re.name === played.perk) because(w, `★ ${re.name}`, () => w.push({ t: "charge", key: `perk:${re.perk}:reroll`, day: dayOf(checkBefore), src: "action" }));
-      }
       // A perk may step in after a failure: roll again, or let it partly work.
       let perkNote: string | undefined;
-      if (!played && (tier === "fail" || tier === "crit_fail")) {
+      if (tier === "fail" || tier === "crit_fail") {
         const re = perkRuleFor(r, checkBefore, a, "reroll");
         if (re) {
           because(w, `★ ${re.name}`, () => w.push({ t: "charge", key: `perk:${re.perk}:reroll`, day: dayOf(checkBefore), src: "action" }));
@@ -2066,15 +2002,11 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
       const gear = gearFor(r, checkBefore, a).notes;
       if (gear.length) rec.check.gear = gear;
       if (perkNote) rec.check.perk = perkNote;
-      if (game) {
-        rec.check.game = game;
-        w.hints.push(gameHint(rec.check.label, played!, tier, game.bar));
-      }
       questHooks(builderOf(w), { kind: "action", id: a.id, result: tier, good: tier === "success" || tier === "crit_success" });
       // `effects:` next to a check always happen, whatever the dice say (then the tier's own effects).
       if (hasEffect(a.effects)) because(w, `"${label}"`, () => effectToEvents(w, a.effects, "action", extra));
       const key = TIER_FALLBACK[tier].find((t) => a.outcomes[t]);
-      const how = game ? `played ${GAMES[game.id].name}, ${Math.round(game.score * 100)}% vs ${Math.round(game.bar.success * 100)}%` : `rolled ${rec.check.total}${target !== null ? ` vs ${target}` : ""}`;
+      const how = `rolled ${rec.check.total}${target !== null ? ` vs ${target}` : ""}`;
       if (key) because(w, `"${label}": ${rec.check.label} ${how} → ${TIER_LABEL[tier]}`, () => effectToEvents(w, a.outcomes[key]!, "check", extra));
       if (improvised) {
         // Typed freely: keep what the player wrote they do; the dice only decide how it turns out.
@@ -2134,11 +2066,7 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   // events (an encounter can start and finish within the same resolved action).
   const departed = w.s.location !== before.location;
   const encounterStarted = !!w.s.encounter || w.events.some((e) => e.t === "enc" && e.id !== null);
-  const worldAction = !dateIntent && !workIntent;
-  if (before.date && w.s.date && worldAction && (departed || encounterStarted || !activeSession(r, w.s))) {
-    w.push({ t: "dt_end", src: "action" });
-    w.hints.push("The conversation or outing ends as {{user}} leaves or is interrupted.");
-  }
+  const worldAction = !workIntent;
   // Exact authored tags, not guesses from labels or the player's prose.
   const disruptiveWork = !!rec.action && !!a && a.tags.some((tag) => ["combat", "fight", "violence", "disruptive"].includes(tag));
   if (before.job && w.s.job && worldAction && (departed || encounterStarted || disruptiveWork)) {
@@ -2152,7 +2080,7 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   rec.hints = w.hints;
   if (w.decisions.length) {
     rec.decisions = w.decisions;
-    // Date rolls speak through their own directions; decide blocks are summarised here.
+    // Rolls with their own option words speak through their own directions; decide blocks are summarised here.
     for (const d of w.decisions) if (!d.descs) rec.hints.push(`${d.ask} → ${d.pickedDesc}`);
   }
   needs.push(...w.needs);
@@ -2389,7 +2317,7 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
   }
 
   // Fights (and other encounters) the prose started or finished.
-  if (p.encounter && !w.s.encounter && !w.s.dungeon && !w.s.job) {
+  if (p.encounter && !w.s.encounter && !w.s.job) {
     const k = String(p.encounter).toLowerCase();
     const enc = r.encounters[k] ?? Object.values(r.encounters).find((x) => x.name.toLowerCase() === k);
     if (enc && encounterJustEnded(w.s, enc.id, p.encounterFresh === true)) { /* the prose is still describing the one that ended */ }
@@ -2436,7 +2364,7 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
   return w.events;
 }
 
-/** A handle for systems that make their own turns outside the action flow (the dungeon, dates). */
+/** A handle for systems that make their own turns outside the action flow (work, quests). */
 export interface TurnBuilder {
   readonly r: Ruleset;
   /** The live working state: every pushed event is already applied. */

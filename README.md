@@ -21,7 +21,7 @@ A game engine under your roleplay. Warp owns stats, dice, time, inventory and re
 |---|---|
 | Stats | Meters described in words (bands), graded skills, attributes, money, hidden stats, drift over time, caps by formula. Limit what the story may change after a reply: a cap per reply, and optionally only while a formula holds (`narrator_when`), only when the exchange mentions certain words (`narrator_words`), or only after certain actions (`narrator_actions`). The bookkeeper is told what the dice already applied, so nothing counts twice |
 | Checks | d100 chance, d20 vs difficulty, 2d6 PbtA; crits and partial successes; odds shown on buttons |
-| Time & world | Clock and calendar, seasons, weather, temperature (indoors vs out), a map of places with travel. With `discovery`, exploring can find places the ruleset never had: the helper model invents one that fits the card, it's written into the ruleset lorebook, and it stays on the map. Each found place comes with one safe thing to look at, and with `discovery: { people: true }` sometimes a resident (no age is assumed, so romance stays closed until the story shows they're an adult) |
+| Time & world | Clock and calendar, seasons, weather, temperature (indoors vs out), a map of places with travel. With `discovery`, exploring can find places the ruleset never had: the helper model invents one that fits the card, it's written into the ruleset lorebook, and it stays on the map. Each found place comes with one safe thing to look at, and with `discovery: { people: true }` sometimes a resident (no age is assumed, so they don't count as an adult until the story shows it) |
 | Body | Parts with any traits (hair, eyes, ears, tails, marks…), what clothing covers, and transformations in stages that each roll a chance. The story can change the body after a reply (new parts allowed unless closed), and the narrator always sees it — including what others can't see right now |
 | Family | Optional pregnancy (hidden until its first sign, in stages) and children who inherit body traits and grow up on the calendar (or faster). Only ever between two people known to be adults; children stay off-stage family, out of reach of every action and never part of romance, until they come of age and join the story |
 | Clothing | Slots, warmth vs the weather, damage, how revealing, traits like rainproof; change clothes from the sheet |
@@ -36,50 +36,17 @@ A game engine under your roleplay. Warp owns stats, dice, time, inventory and re
 | Living world | Hidden clocks (`fronts`) that fill with in-game time, show signs, and surface events; story beats judged by the decision model push them. Random events come from a hidden gauge per in-game day, with an omen before each |
 | Live choices | Choices written for the moment. The writer must tag each one from a fixed list, and the tag decides the check and effects; with Jev, the model weighs which kinds of move fit. Each choice can show its goal, risk and payoff in words — story stakes only; the tag still decides the odds and effects |
 | Checkpoints & endings | Save slots and a daily autosave; loading rewinds the game while the chat keeps its messages, and the ruleset decides what survives (the codex, secrets, chosen stats…). Time loops rewind by themselves when a condition holds. Endings fire by formula: the narrator writes an epilogue from what actually happened, then you start a new playthrough (carrying unlocks forward), load a save, or keep playing (unless hard mode) |
-| Your moves, told | A clicked move with a roll or a minigame is settled on the click, and your message says how it went in your character's voice ("*I find the beat on the second bar and ride it all the way…*") instead of "Play the rhythm game"; the narrator continues from there. Swipes keep that result; ↻ **Reroll** (Casual) rolls again and rewrites the line. Typed messages are left as you wrote them. Settings › **Say how my move went** |
-| Errands | Shopping (buying and selling), paying bills, practising a skill (an arcade game or course that works a skill counts; **Play** runs one session as its minigame), resting and taking work off a notice board open a window and happen off the page, with no narrator reply: the dice still roll, time still passes, and the next reply gets one line about it ("Buy Soothing potion ×2 (…)"). Each also has "In the story" for when you want it narrated. Which actions count is read from their shape (`errand: shop / train / rest / false` sets it). Items can be used quietly from the inventory, and **Travel off the page** makes a map click go there without a travel paragraph. Turn the window off in Settings to keep them all as story choices |
-| Romance only | The **Romance** template is just the love story: affection, trust and attraction that can only move a few points per reply (a slow burn the narrator can't rush), people who remember what you did, a clock and calendar, and choices written for each moment (tender, playful, honest, bold, give space) with no dice. No meters, money or skills, and typed messages are never rolled. Places come from the story, so it fits any card. Add dating (topics and outings) on top if you want it |
-| Dating | Talk topic by topic: each person has hidden tastes (authored, read from the card by the decision model, or seeded) that you discover as you go. Reactions move love and fear, which set the stage (stranger → acquaintance → friend → close → partner, or hostile) that unlocks more topics. Mood, conversation fatigue and a streak bonus shape every reaction; people remember recent topics across conversations, so repeating the same moves earns less until time passes, while new topics keep their full effect, and a line you type is judged on its own words. Ask people out, pick a venue, and play the outing moment by moment for an enjoyment score; confess, kiss, give gifts. Romance is only ever offered between adults |
-| Dungeons | Roguelike diving: floors of face-down tiles (monsters, elites, guardians, treasure, traps, springs, merchants, events, surprises, romance moments) with one way down. Party battles with HP/MP/TP, skills, items, escape and auto-battle; quit any time and keep the loot, or get wiped out and lose it. Story moments are written up by the narrator. Built-in bestiary, events and art. Optional: level-up boons (pick one of three for the run), companion stats from your relationship, a starting loadout, and capped main-world rewards for leaving with earned XP |
-
-## The stage
-
-A date and a dungeon run each play full screen as a little game of their own, off the chat:
-
-- **Dates** look like a visual novel. Cue illustrates the person and place using its own assistant, character identity, pose catalogue, image connection and cache. The picture follows Cue's cover/fit/stretch setting. Your stats and where you stand sit on the left and the topic menu on the right (number keys pick). The dialogue box shows short snippets you click through.
-- **Dungeons** keep their floor map and battle screen. Story moments (treasure, events, a new floor) play as snippets in the same box.
-- **Lines:** the rules decide what happens. Only the wording comes from the helper model, through a tiny prompt of its own (never your chat preset); scripted lines take over if it's slow or you pick them in Settings.
-- **The chat:** it isn't touched while you play. When the date or run ends, one narrator line goes into it so the story remembers.
-- **Typing and leaving:** you can type your own line in the box. **Chat ⤓** or Esc drops back to the chat, and the ⚔ / 💬 button on the status panel returns to the stage.
-- **Three looks**, shared with the minigames and set by the rulebook's `look:`:
-  - **Medieval:** torch-lit flagstones, parchment panels and an oak-and-gold frame around the map and the fight.
-  - **Modern:** warm paper and white cards, with one coral accent.
-  - **Sci-fi:** a dark instrument panel with hairlines and cut corners.
-  - Settings → Effects & sound can keep the rulebook's look or always use one.
-- **Needs:** date pictures require an updated [Cue extension](https://github.com/japolino/cue-living-novel), enabled with image generation or native card images. Configure pictures in Cue; Warp only has an **Illustrate dates through Cue** switch. Cue's reading view can stay closed. Missing or failed pictures offer a retry, and dates still work without them.
-
-## Minigames and gambling
-
-A check can be **played instead of rolled**. When a choice has a game (its icon shows on the button), clicking it opens the arcade, a full-screen overlay like the stage:
-
-- **The games:** Aim (osu-style circles and sliders to a song), Keys (four-lane piano tiles where every hit plays the melody), Mines, Stack (falling blocks, to Korobeiniki), Snake, a three-legged race (tied to whoever is with you), Pinball, Blackjack, Roulette and Slots.
-- **The dice's odds still decide how hard it is.** They set the score to beat and tune the game: speed, timing windows, mine density, the dealer's rules. An easy check passes on a sloppy run; a long shot needs nearly everything.
-- **Stats and perks become aids:** wider timing, bigger targets, slower pace, more time, extra lives, hints, a peek at the dealer's hidden card, a held reel. A perk that would reroll a failure gives you another go instead, and in the race, your partner's trust steadies their stride.
-- **Same outcomes:** the score lands on the same tiers a roll would (critical, success, partial, fail, disaster). The story hears how it went in its own terms ("a shaky start, cleared it with seconds left"), never the score.
-- **Songs:** eleven built-in pieces old enough to be free to use, from Twinkle Twinkle to Flight of the Bumblebee, in our own arrangements. Harder songs lower the bar. You can also import your own osu! beatmaps (`.osz`): standard maps play as Aim and mania maps as Keys. They're stored in your browser only.
-- **Gambling:** a `gamble:` table stakes real in-game money at blackjack, roulette or slots. Pick a buy-in, play, and cash out whenever you like. A bad night can set off the table's `broke:` effects.
-- **Three looks:** medieval (parchment, oak and gold leaf, a wax seal on the result), modern (paper, ink and one coral accent) and sci-fi (a quiet instrument panel), the same as the stage's. The rulebook picks with `look: medieval`; Questbound is medieval, Starfarer sci-fi, the rest modern.
-- **Settings → Minigames:**
-  - **Ask:** action buttons and hotkeys roll immediately; the separate **Play challenge** or **Play table** button opens the briefing. **Always:** action buttons go straight into the game. **Off:** use dice and hide Play buttons. All games remain available when enabled.
-  - Choose whether only the checks the rulebook names get a game, or every check.
+| Your moves, told | A clicked move with a roll is settled on the click, and your message says how it went in your character's voice ("*I slip the lock on the second try…*") instead of "Pick the lock"; the narrator continues from there. Swipes keep that result; ↻ **Reroll** (Casual) rolls again and rewrites the line. Typed messages are left as you wrote them. Settings › **Say how my move went** |
+| Errands | Shopping (buying and selling), paying bills, practising a skill (a course that works a skill counts), resting and taking work off a notice board open a window and happen off the page, with no narrator reply: the dice still roll, time still passes, and the next reply gets one line about it ("Buy Soothing potion ×2 (…)"). Each also has "In the story" for when you want it narrated. Which actions count is read from their shape (`errand: shop / train / rest / false` sets it). Items can be used quietly from the inventory, and **Travel off the page** makes a map click go there without a travel paragraph. Turn the window off in Settings to keep them all as story choices |
+| Romance only | The **Romance** template is just the love story: affection, trust and attraction that can only move a few points per reply (a slow burn the narrator can't rush), people who remember what you did, a clock and calendar, and choices written for each moment (tender, playful, honest, bold, give space) with no dice. No meters, money or skills, and typed messages are never rolled. Places come from the story, so it fits any card |
 
 ## Typing freely
 
 Most roleplay is typed, so the core systems follow the story rather than waiting for a button:
 
 - **Spend points on the sheet.** Stats with `allocate:` get + and − in the sidebar, so spending points never costs a story turn. See [docs/FORMAT_LIMITS.md](docs/FORMAT_LIMITS.md) for what the format gained after the stress tests.
-- **Fewer grind loops.** Repeating the same check, topic or social move gives diminishing rewards that recover with in-game time; new approaches keep full value. See [docs/DEPTH_PASS.md](docs/DEPTH_PASS.md).
-- **Actions while talking or working.** Typed actions can still use items, abilities, travel, quests, or improvised checks during a conversation or shift. Ordinary dialogue stays in the session. Leaving or starting an encounter ends the session; interrupting a shift gives no pay. An uncertain action waits for confirmation without spending a turn.
+- **Fewer grind loops.** Repeating the same check gives diminishing rewards that recover with in-game time; new approaches keep full value. See [docs/DEPTH_PASS.md](docs/DEPTH_PASS.md).
+- **Actions while working.** Typed actions can still use items, abilities, travel, quests, or improvised checks during a work shift. Ordinary dialogue stays in the shift. Leaving or starting an encounter ends it, and interrupting a shift gives no pay. An uncertain action waits for confirmation without spending a turn.
 - **Improvised attempts.** A risky thing you type that no action covers (talking your way past a bouncer, vaulting a bar, shoving someone) still rolls: d20 plus your closest skill or attribute's share of a bonus, against a difficulty the decision model reads from the scene. The narrator keeps what you wrote you do; the dice decide only how it turns out. In a fight it's a move like any other. Tune or turn off with `improvise:`.
 - **Skills grow with use.** Every check practises the skills and attributes it reads — harder checks teach more, failures teach a little less, and progress slows near the top. Training the story describes (an hour at the gym, a night of study) counts too. A thin green line under each skill shows progress to the next point. Tune with `growth:` or `growth: 0` on a stat.
 - **Who's in the scene.** After each reply the story is read for who is actually there — people it introduces, people who leave, who came along after a move. The sheet shows the people here and folds the rest under **Elsewhere**; the narrator only gets relationship details for the people here, so absent characters don't drift back in. Schedules still place people where the story hasn't said otherwise.
@@ -88,11 +55,11 @@ Most roleplay is typed, so the core systems follow the story rather than waiting
 
 ## Visual novel mode
 
-With the Cue visual-novel extension open, Warp's choices appear on the stage as buttons with their odds, a live status card (and one for the conversation or date in progress) can be pinned from **Panels**, and the moods Warp's rules decide are passed to Cue so its portraits match.
+With the Cue visual-novel extension open, Warp's choices appear in Cue's view as buttons with their odds, a live status card can be pinned from **Panels**, and the moods Warp's rules decide are passed to Cue so its portraits match.
 
 ## ✨ Build with AI
 
-**Warp → Ruleset → Build with AI** reads the character card, asks a few questions (tone, which systems, difficulty, relationship depth, plus follow-ups about the card and anything you want to add in your own words), then drafts the ruleset section by section. It suggests only the systems that fit the card; quests and minigames stay optional. Every section passes Warp's checker — problems are sent back to the model and fixed automatically — and you get a review before anything is saved: a live preview of the sidebar and choices, a summary, balance warnings with one-tap **Fix**, and **Redo** per section. **Refine with AI** changes an existing ruleset from an instruction ("make it harder", "add a cooking skill").
+**Warp → Ruleset → Build with AI** reads the character card, asks a few questions (tone, which systems, difficulty, relationship depth, plus follow-ups about the card and anything you want to add in your own words), then drafts the ruleset section by section. It suggests only the systems that fit the card; quests stay optional. Every section passes Warp's checker — problems are sent back to the model and fixed automatically — and you get a review before anything is saved: a live preview of the sidebar and choices, a summary, balance warnings with one-tap **Fix**, and **Redo** per section. **Refine with AI** changes an existing ruleset from an instruction ("make it harder", "add a cooking skill").
 
 ## Decision model (System 1)
 
@@ -227,13 +194,5 @@ The Ruleset tab lists problems in plain language, with "did you mean" suggestion
 bun install
 bun run verify   # tests + typecheck
 bun run build    # dist/backend.js, dist/frontend.js
-bun run bench    # every minigame at any odds and aids (http://localhost:5177), and the stage in all three looks (/stage.html)
+bun run bench    # the doll on its own page (http://localhost:5177)
 ```
-
-The [stage UI checks](docs/STAGE_LOOKS.md) cover dungeon entrances, exploration,
-battles, dates and outings, phone layouts, and local picture fixtures with Cue's
-image-fit options.
-
-## Credits
-
-Dungeon art: *Dungeon Crawl 32x32 tiles*, CC0 (public domain). The minigames' songs are public-domain compositions in Warp's own arrangements. See [CREDITS.md](CREDITS.md).

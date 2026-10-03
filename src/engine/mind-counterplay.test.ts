@@ -59,11 +59,11 @@ describe("opt-in mind counterplay", () => {
   });
   test("choices warn before commitment and expose an actual resistance button", () => {
     const r = book();
-    const choices = buildChoices(r, initialState(r), { lines: [], veils: [], minigames: "off" });
+    const choices = buildChoices(r, initialState(r), { lines: [], veils: [] });
     const punch = choices.find((c) => c.id === "punch")!;
     expect(punch.desc).toContain("may fail without a roll");
     expect(punch.params.find((p) => p.id === "mind_resist")?.options).toContain("freeze");
-    const html = renderChoices(choices, { minigames: "off", showOdds: true, hotkeys: false, busy: false });
+    const html = renderChoices(choices, { showOdds: true, hotkeys: false, busy: false });
     expect(html).toContain('data-resist-action="punch"');
     expect(html).toContain('data-resist-id="freeze"');
   });

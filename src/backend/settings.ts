@@ -20,17 +20,8 @@ export function normalizeSettings(value: unknown): Settings {
   s.prewrite = Math.max(0, Math.min(4, Math.round(s.prewrite)));
   s.autoConfidence = Math.max(0, Math.min(1, s.autoConfidence));
   s.askConfidence = Math.max(0, Math.min(s.autoConfidence, s.askConfidence));
-  s.sfxVolume = Math.max(0, Math.min(1, s.sfxVolume));
   s.decider = ["llm", "jev", "rules"].includes(s.decider) ? s.decider : DEFAULT_SETTINGS.decider;
-  s.sceneLines = s.sceneLines === "scripted" ? "scripted" : "model";
   s.jevFormat = s.jevFormat === "openai" ? "openai" : "typesafe";
-  s.fx = s.fx === "off" || s.fx === "reduced" ? s.fx : "full";
-  s.sfx = s.sfx === "off" || s.sfx === "all" ? s.sfx : "games";
-  s.minigames = s.minigames === "off" || s.minigames === "always" ? s.minigames : "ask";
-  s.minigameScope = s.minigameScope === "all" ? "all" : "rulebook";
-  // "minigameLook" was this setting's name when it only dressed the arcade.
-  const look = typeof raw.look === "string" ? s.look : typeof raw.minigameLook === "string" ? raw.minigameLook.trim() : undefined;
-  s.look = look === "medieval" || look === "modern" || look === "scifi" ? look : "rulebook";
   s.jevUrl = /^https?:\/\/\S+$/i.test(s.jevUrl) ? s.jevUrl : DEFAULT_SETTINGS.jevUrl;
   return s;
 }

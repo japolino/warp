@@ -7,7 +7,12 @@ import { evalBool, evalNumber } from "./expr.js";
 import type { Intent, TurnBuilder } from "./resolve.js";
 import { emptyEffect, type DecideSpec, type JobDef, type ObligationDef, type Ruleset } from "./ruleset.js";
 import { formatClock, makeEnv, personName, type GameState } from "./state.js";
-import { REACTION_LABEL, REACTION_VALUE, REACTIONS, type Reaction } from "./date/types.js";
+
+/** How a customer takes it. */
+type Reaction = "love" | "like" | "neutral" | "dislike" | "hate";
+const REACTIONS: Reaction[] = ["love", "like", "neutral", "dislike", "hate"];
+const REACTION_VALUE: Record<Reaction, number> = { love: 2, like: 1, neutral: 0, dislike: -1, hate: -2 };
+const REACTION_LABEL: Record<Reaction, string> = { love: "Loved it", like: "Liked it", neutral: "Indifferent", dislike: "Didn't like it", hate: "Hated it" };
 
 export const PAY_PREFIX = "pay:";
 export const JOB_PREFIX = "job:";

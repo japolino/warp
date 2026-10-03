@@ -103,9 +103,8 @@ export function auditRuleset(r: Ruleset): AuditReport {
     moneyUp: false, moneyDown: false,
   };
   walk(r, seen, money);
-  // Items given at the start, by shops, by dungeon chests.
+  // Items given at the start, or by shops.
   for (const id of Object.keys(r.startItems)) seen.itemsGiven.add(id);
-  for (const d of Object.values(r.dungeons)) for (const l of d.loot ?? []) seen.itemsGiven.add(l.item);
   for (const o of Object.values(r.obligations)) { void o; seen.moneyDown = true; }
   for (const j of Object.values(r.jobs)) { void j; seen.moneyUp = true; }
 
@@ -119,11 +118,10 @@ export function auditRuleset(r: Ruleset): AuditReport {
   // ── items ──
   for (const it of Object.values(r.items)) {
     const referenced = seen.calls.has(`has:${it.id}`) || seen.calls.has(`count:${it.id}`) || seen.calls.has(`wearing:${it.id}`) || seen.calls.has(`integrity:${it.id}`) || seen.itemsTaken.has(it.id);
-    const gift = it.tags.includes("gift") && r.dating.enabled;
     const bonus = Object.keys(it.bonus).length > 0;
     if (it.use) links.push(`${it.name}: ${it.use.label}`);
     if (bonus) links.push(`${it.name} helps ${Object.keys(it.bonus).map((s) => r.stats[s]?.label ?? s).join(", ")} checks`);
-    if (!it.use && !bonus && !referenced && !gift && !it.slot) {
+    if (!it.use && !bonus && !referenced && !it.slot) {
       gap({ id: `item-dead:${it.id}`, severity: "gap", part: "world", text: `${it.name} does nothing: no use, no bonus, and nothing needs it.`, fix: `Give it a use: (what using it does, in this game's stats and conditions${it.desc ? ` — its description says: "${it.desc}"` : ""}), a bonus: to the checks it would help, or an action/encounter move that needs it.` });
     } else if (it.slot && !bonus && !Object.keys(it.armor).length && !it.traits.length && it.warmth === 0 && it.reveal === 0 && !referenced) {
       gap({ id: `item-flat:${it.id}`, severity: "thin", part: "world", text: `${it.name} is clothing with no effect (no warmth, traits, armor or bonus).`, fix: "Give it warmth, a trait something checks, armor:, or a bonus: (sturdy boots → athletics)." });
@@ -131,7 +129,7 @@ export function auditRuleset(r: Ruleset): AuditReport {
     // Armor softens blows in encounters while it's carried (worn, for clothing): that's an effect.
     if (Object.keys(it.armor).length) links.push(`${it.name} is armor (${Object.keys(it.armor).map((s) => s === "_" ? "the main meter" : r.stats[s]?.label ?? s).join(", ")})`);
     if ((referenced || it.use) && !seen.itemsGiven.has(it.id) && !it.slot) {
-      gap({ id: `item-unobtainable:${it.id}`, severity: "gap", part: "world", text: `${it.name} matters, but nothing gives it to the player.`, fix: "Add it to start.items, a shop or job reward (give:), dungeon loot, or an action that finds it." });
+      gap({ id: `item-unobtainable:${it.id}`, severity: "gap", part: "world", text: `${it.name} matters, but nothing gives it to the player.`, fix: "Add it to start.items, a shop or job reward (give:), or an action that finds it." });
     }
   }
 
@@ -224,9 +222,8 @@ export function auditRuleset(r: Ruleset): AuditReport {
   for (const l of Object.values(r.locations)) {
     if (startLoc && !reachable.has(l.id)) gap({ id: `place-unreachable:${l.id}`, severity: "gap", part: "world", text: `${l.name} can't be reached from the start.`, fix: `Connect it with exits: (or a move: effect) from a place the player can get to.` });
     const things = Object.values(r.actions).some((a) => a.at.includes(l.id)) || Object.values(r.people).some((p) => p.schedule.some((s) => s.at === l.id))
-      || seen.calls.has(`at:${l.id}`) || Object.values(r.dungeons).some((d) => d.at.includes(l.id))
-      || Object.values(r.jobs).some((j) => j.at.includes(l.id)) || Object.values(r.dating.venues).some((v) => v.at === l.id);
-    if (!things) gap({ id: `place-empty:${l.id}`, severity: "thin", part: "actions", text: `There's nothing to do at ${l.name} and nobody there.`, fix: `Add an action at: [${l.id}], schedule someone there, or put a job, shop or dungeon entrance there.` });
+      || seen.calls.has(`at:${l.id}`) || Object.values(r.jobs).some((j) => j.at.includes(l.id));
+    if (!things) gap({ id: `place-empty:${l.id}`, severity: "thin", part: "actions", text: `There's nothing to do at ${l.name} and nobody there.`, fix: `Add an action at: [${l.id}], schedule someone there, or put a job or shop there.` });
   }
 
   // ── encounters ──

@@ -221,13 +221,5 @@ live_choices:
       effects: { energy: +2 }
 `,
     },
-    {
-      label: "dating",
-      yaml: `# Date mode: talk topic by topic, learn what people like, ask them out.
-# Affection is love; a "fear" relationship stat is added automatically.
-dating:
-  love: affection
-`,
-    },
   ],
 };

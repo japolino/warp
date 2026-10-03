@@ -1,6 +1,5 @@
 // View models for the UI and the text the narrator sees.
 
-import { aidWords, gambleOffer, gameOffer, GAMES, type AidKind, type GamesScope } from "./games.js";
 import type { ActionDef, KeepSpec, Ruleset, StatDef } from "./ruleset.js";
 import { percentOf, TIERS } from "./ruleset.js";
 import {
@@ -15,9 +14,6 @@ import {
   dateAt, exposedSlots, isIndoors, ordinal, personLocation, presentPeople, seasonAt, temperatureAt, warmthNeeded, warmthOf, weatherAt,
 } from "./world.js";
 import type { ChangeView, ChoiceView, ClothingView, HudView, MapView, QuestView, RecordView, Tone } from "../shared/protocol.js";
-import { dungeonLock, dungeonOf, dungeonsHere, levelOf, memberFighter } from "./dungeon/run.js";
-import { activeSession, dateDigest, dateMoves, moodOf, type DateMove } from "./date/talk.js";
-import { REACTION_LABEL } from "./date/types.js";
 import { PAY_PREFIX, workDigest, workMoves } from "./work.js";
 import { evalBool, evalNumber } from "./expr.js";
 import { namesIt, namesTitle } from "./mention.js";
@@ -452,17 +448,16 @@ function sceneCast(r: Ruleset, s: GameState): { here: Set<string>; names: Map<st
 /** "codex, feats and trust" — what a rewind keeps, in words. */
 export function keepWords(r: Ruleset, k: KeepSpec): string {
   const parts = [
-    k.codex && "the codex", k.feats && "feats", k.perks && "perks", k.secrets && "secrets learned", k.people && "people met", k.dating && "what you know of people's tastes", k.deepest && "dungeon progress",
+    k.codex && "the codex", k.feats && "feats", k.perks && "perks", k.secrets && "secrets learned", k.people && "people met",
     ...k.stats.map((id) => r.stats[id]?.label ?? id), ...k.flags.map((id) => r.flags[id]?.label ?? id.replace(/_/g, " ")),
     ...k.items.map((id) => itemName(r, initialState(r), id)), ...k.rel.map((id) => r.relStats[id]?.label ?? id),
   ].filter(Boolean) as string[];
   return parts.length ? parts.join(", ") : "nothing";
 }
 
-export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; veils: string[]; live?: LiveChoice[]; minigames?: "off" | "ask" | "always"; minigameScope?: GamesScope; errands?: boolean; showChoices?: boolean }): ChoiceView[] {
+export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; veils: string[]; live?: LiveChoice[]; errands?: boolean; showChoices?: boolean }): ChoiceView[] {
   const out = choiceList(r, s, opts);
   for (const c of out) withMindCounterplay(r, s, c, opts.live ?? []);
-  if (opts.minigames && opts.minigames !== "off") for (const c of out) withGame(r, s, c, opts.minigameScope ?? "rulebook", opts.live ?? []);
   return out;
 }
 
@@ -504,26 +499,6 @@ function liveAction(r: Ruleset, live: LiveChoice[], id: string): { a: ActionDef;
   return a ? { a, ...(l.target ? { target: l.target } : {}) } : null;
 }
 
-/** Checks that can be played instead of rolled get their game; gambling tables get theirs. */
-function withGame(r: Ruleset, s: GameState, c: ChoiceView, scope: GamesScope, live: LiveChoice[]) {
-  if (c.locked) return;
-  let found: { a: ActionDef; target?: string } | null = null;
-  if (c.id.startsWith(LIVE_PREFIX)) found = liveAction(r, live, c.id);
-  else found = findAction(r, s, c.id);
-  if (!found) return;
-  const seed = `${c.id}:${s.minutes}`;
-  if (found.a.gamble) {
-    const g = gambleOffer(r, s, found.a, seed);
-    if (g) c.gamble = { ...g, action: c.label };
-    return;
-  }
-  if (c.odds === null) return;
-  // Rerolls become extra lives in the game; they must not also ease its bar.
-  const base = odds(r, s, found.a, undefined, found.target, false);
-  const g = gameOffer(r, s, found.a, base?.success ?? c.odds, { scope, partial: base?.partial ?? 0, target: found.target, label: c.label, seed });
-  if (g) c.game = g;
-}
-
 function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: string[]; live?: LiveChoice[]; errands?: boolean; showChoices?: boolean }): ChoiceView[] {
   const veils = new Set(opts.veils.map((v) => v.toLowerCase()));
   const lines = new Set(opts.lines.map((v) => v.toLowerCase()));
@@ -542,39 +517,13 @@ function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: st
       ...(!r.checkpoints.hard ? [plain("run:continue", "Keep playing", group, "Carry on past the ending")] : []),
     ];
   }
-  // In a dungeon the map is where you act; the story only offers moments and the way out.
-  if (s.dungeon) {
-    const d = dungeonOf(r, s.dungeon);
-    return [
-      plain("dungeon:open", s.dungeon.battle ? "Back to the fight" : s.dungeon.pending ? "Decide what to do" : "Keep exploring", d?.name ?? "Dungeon", "Open the dungeon map"),
-      plain("dungeon:leave", "Leave the dungeon", d?.name ?? "Dungeon", "Climb back out with what you've found"),
-    ];
-  }
   // A work shift takes over the choices until it ends.
   // With the errands window on, shopping, training, resting, bills and the board's postings live there, not here.
   const quiet = opts.errands && errandsOpen(s) ? errandActionIds(r) : null;
   const work = s.encounter ? [] : workMoves(r, s).filter((m) => !(quiet && m.id.startsWith(PAY_PREFIX))).map((m) => plain(m.id, m.label, m.group, m.desc));
   if (s.job) return work;
-  // A conversation or date takes over the choices: featured topics and moves, plus the full list in the drawer.
-  const asChoice = (m: DateMove): ChoiceView => ({
-    id: m.id, label: m.label, group: m.group, desc: m.desc, odds: m.odds, partialOdds: null, checkLabel: null,
-    veiled: m.romantic && (veils.has("romance") || veils.has("romantic")), params: [],
-  });
-  const moves = s.encounter ? [] : dateMoves(r, s, opts.lines);
-  if (activeSession(r, s)) {
-    const featured = moves.filter((m) => m.featured).map(asChoice);
-    // "More…" sits last, with the moves, so hotkeys run in the order the buttons appear.
-    const lastGroup = featured[featured.length - 1]?.group ?? "Talk";
-    const more = moves.length > featured.length ? [plain("date:open", "More…", lastGroup, "Every topic, gift and move — and what you know about them")] : [];
-    return [...featured, ...more];
-  }
   // Choices turned off: the story is typed. Only the modes played with buttons (above, and an encounter's moves) keep them.
   if (opts.showChoices === false && !s.encounter) return [];
-  const talk = moves.filter((m) => m.featured).map(asChoice);
-  const dungeons = dungeonsHere(r, s).map((d) => {
-    const shut = dungeonLock(r, s, d);
-    return { ...plain(`dungeon:enter:${d.id}`, `Enter ${d.name}`, "Dungeon", d.desc ?? null), ...(shut ? { locked: shut } : {}) };
-  });
   if (!s.encounter) (opts.live ?? []).forEach((c, i) => {
     const a = r.liveChoices.tags[c.tag];
     if (!a || a.tags.some((t) => lines.has(t)) || !isAvailable(r, s, a, c.target)
@@ -634,12 +583,12 @@ function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: st
     if (isAvailable(r, s, a)) continue;
     locked.push({ ...plain(id, a.label, encName ?? a.group ?? null, a.desc ?? null), locked: spent ?? lockReason(r, s, a) });
   }
-  return [...live, ...actions, ...abilityChoices(r, s, lines), ...itemChoices(r, s, lines), ...locked, ...questChoices(r, s, !!quiet), ...talk, ...work, ...dungeons, ...travel, ...explore];
+  return [...live, ...actions, ...abilityChoices(r, s, lines), ...itemChoices(r, s, lines), ...locked, ...questChoices(r, s, !!quiet), ...work, ...travel, ...explore];
 }
 
 /** Quests to hand in here, and a few on offer (from whoever's here first, then the board). */
 function questChoices(r: Ruleset, s: GameState, boardInWindow = false): ChoiceView[] {
-  if (s.encounter || s.job || s.ended || s.dungeon) return [];
+  if (s.encounter || s.job || s.ended) return [];
   const plain = (id: string, label: string, desc: string | null, why?: string): ChoiceView =>
     ({ id, label, group: "Quests", desc, odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [], ...(why ? { why } : {}) });
   const out: ChoiceView[] = [];
@@ -670,7 +619,7 @@ function costText(r: Ruleset, s: GameState, a: ActionDef): string | null {
 
 /** The player's own abilities, offered with the other moves: usable ones, and in an encounter the ones out of reach, with why. */
 function abilityChoices(r: Ruleset, s: GameState, lines: Set<string>): ChoiceView[] {
-  if (s.job || s.ended || s.dungeon) return [];
+  if (s.job || s.ended) return [];
   const out: ChoiceView[] = [];
   for (const { id, a, status } of usableAbilities(r, s)) {
     if (a.hidden || a.tags.some((t) => lines.has(t))) continue;
@@ -750,7 +699,6 @@ function perkViews(r: Ruleset, s: GameState): HudView["perks"] {
       for (const e of p.edges) notes.push(`${plus(e.stats)}${e.when ? " (sometimes)" : ""}`);
       for (const rule of p.rules) {
         if (rule.kind === "pierce") notes.push(`Ignores ${rule.amount >= 999 ? "all" : rule.amount} armor${rule.stats.length || rule.tags.length ? ` (${[...rule.stats.map((x) => r.stats[x]?.label ?? x), ...rule.tags].join(", ")})` : ""}`);
-        else if (rule.kind === "game") notes.push(`Minigames${rule.games.length ? ` (${rule.games.map((g) => GAMES[g].name).join(", ")})` : ""}: ${Object.entries(rule.aids).map(([k, n]) => aidWords(k as AidKind, n!)).join(", ")}`);
         else if ("stat" in rule) notes.push(`${r.stats[rule.stat]?.label ?? rule.stat} ${rule.kind === "gains" ? "rises" : "drops"} ${Math.round(Math.abs(rule.pct) * 100)}% ${rule.pct > 0 ? "faster" : "slower"}`);
         else {
           const left = rule.perDay ? rule.perDay - usesOf(s, `perk:${p.id}:${rule.kind}`).today : null;
@@ -1033,13 +981,7 @@ export function buildRecordView(r: Ruleset, messageId: string, swipe: number, re
       style: rec.check.style,
       tier: rec.check.tier,
       tierLabel: TIER_LABEL[rec.check.tier],
-      summary: rec.check.game ? rec.check.game.summary : `${checkSummary(rec.check)}${rec.check.perk ? ` · ↻ ${rec.check.perk}` : ""}`,
-      game: rec.check.game ? { id: rec.check.game.id, summary: rec.check.game.summary, score: rec.check.game.score, needed: rec.check.game.bar.success } : null,
-    } : null,
-    gamble: rec.gamble ? {
-      game: rec.gamble.game,
-      net: rec.gamble.net,
-      text: `${GAMES[rec.gamble.game].icon} ${GAMES[rec.gamble.game].name} · stake ${r.hud.currency}${rec.gamble.stake} · ${rec.gamble.net > 0 ? "+" : rec.gamble.net < 0 ? "−" : "±"}${r.hud.currency}${Math.abs(rec.gamble.net)}${rec.gamble.played ? "" : " (dealt without you)"}`,
+      summary: `${checkSummary(rec.check)}${rec.check.perk ? ` · ↻ ${rec.check.perk}` : ""}`,
     } : null,
     changes: summarizeEvents(r, before, after, rec.events),
     hints: rec.hints,
@@ -1144,25 +1086,10 @@ export function stateDigest(r: Ruleset, s: GameState, focus?: DigestFocus): stri
   }
 
   const here = hud.people.filter((p) => p.present).map((p) => p.name);
-  if (s.dungeon) {
-    const run = s.dungeon;
-    const d = dungeonOf(r, run);
-    if (d) {
-      const party = run.party.map((m) => {
-        const f = memberFighter(r, s, d, run, m);
-        return `${f.name} ${f.hp <= 0 ? "down" : `HP ${f.hp}/${f.mhp}`}`;
-      });
-      lines.push(`IN A DUNGEON: ${d.name}, floor ${run.depth} (party level ${levelOf(run.xp)}). Party: ${party.join(", ")}. Carrying ${run.gold} gold from this run.`);
-      if (run.battle) lines.push(`Fighting: ${run.battle.fighters.filter((f) => f.side === "foe" && f.hp > 0).map((f) => f.name).join(", ")}.`);
-    }
-  } else {
-    if (here.length || Object.keys(s.people).length) lines.push(`Present here: ${here.length ? here.join(", ") : "none of the people {{user}} knows"}`);
-    // People who were with {{user}} before the last move: the story says whether they came along.
-    const was = Object.entries(s.scene).filter(([id, v]) => v.here && s.people[id] && v.loc !== s.location && v.loc === s.lastLocation && !here.includes(s.people[id].name)).map(([id]) => personName(r, s, id));
-    if (was.length) lines.push(`Were with {{user}} before arriving here (include them only if they came along): ${was.join(", ")}`);
-  }
-  const date = dateDigest(r, s);
-  if (date) lines.push(date);
+  if (here.length || Object.keys(s.people).length) lines.push(`Present here: ${here.length ? here.join(", ") : "none of the people {{user}} knows"}`);
+  // People who were with {{user}} before the last move: the story says whether they came along.
+  const was = Object.entries(s.scene).filter(([id, v]) => v.here && s.people[id] && v.loc !== s.location && v.loc === s.lastLocation && !here.includes(s.people[id].name)).map(([id]) => personName(r, s, id));
+  if (was.length) lines.push(`Were with {{user}} before arriving here (include them only if they came along): ${was.join(", ")}`);
   const body = bodyLine(r, s);
   if (body) lines.push(body);
   // Bills: only the pressing ones (due within a day, or overdue), unless the turn is about money.
@@ -1344,16 +1271,8 @@ export function sceneHints(r: Ruleset, s: GameState): { moods: Record<string, st
     }).filter(Boolean);
     if (parts.length) moods[personName(r, s, id)] = parts.join("; ");
   }
-  const sess = activeSession(r, s);
-  if (sess && s.people[sess.who]) {
-    const name = personName(r, s, sess.who);
-    const last = sess.last ? `, just reacted: ${REACTION_LABEL[sess.last.reaction].toLowerCase()}` : "";
-    moods[name] = `${moodOf(sess.mood).label.toLowerCase()}${last}${moods[name] ? `; ${moods[name]}` : ""}`;
-  }
   const notes: string[] = [];
-  if (sess?.kind === "outing") notes.push(`On a date at ${r.dating.venues[sess.venue ?? ""]?.name ?? "somewhere"}`);
   if (s.encounter) notes.push(`In a fight or tense encounter: ${r.encounters[s.encounter.id]?.name ?? s.encounter.id}`);
-  if (s.dungeon) notes.push("Exploring a dungeon");
   return Object.keys(moods).length || notes.length ? { moods, notes } : null;
 }
 
