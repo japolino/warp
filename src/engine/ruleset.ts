@@ -100,8 +100,6 @@ export interface Effect {
 }
 
 export type GoalOp = "start" | "done" | "fail";
-/** @deprecated Legacy quests (the backend's old reader still names the type). */
-export type QuestOp = "start" | "done" | "fail" | "drop" | "report";
 
 export interface DecideOption {
   id: string; desc: string; weight: number; effect: Effect;
@@ -109,9 +107,6 @@ export interface DecideOption {
   when?: string;
 }
 export interface DecideSpec { id: string; ask: string; options: DecideOption[] }
-
-/** @deprecated Every check is d20 + modifier vs a difficulty; kept for old saved records. */
-export type CheckStyle = "vs";
 
 /**
  * A check: d20 + `add` vs `target`. `target` is a difficulty word (easy, fair, hard, extreme), a number or a
@@ -159,8 +154,6 @@ export interface ActionDef {
   requires: Requirement[];
   /** Show it locked, with what's missing, when the requirements aren't met (default when it has `requires:`). */
   showLocked: boolean;
-  /** @deprecated Groups are gone (one compact "More" row); always undefined. */
-  group?: string;
 }
 
 /** One requirement of an action, kept readable so a locked choice can say exactly what's missing. */
@@ -188,9 +181,6 @@ export interface TriggerDef {
   effects: Effect;
 }
 
-/** @deprecated Places come from the story now (`Ruleset.locations` is always empty). */
-export interface LocationDef { id: string; name: string; desc?: string; indoors: boolean; board: boolean }
-
 export interface ItemDef {
   id: string; name: string; desc?: string; tags: string[];
   /** Uses per item (a spray with 5 sprays); each use spends one, and at 0 the item is gone. 0 = not used up by use. */
@@ -215,30 +205,6 @@ export interface PersonDef {
   appearance?: string; outfit?: string;
 }
 export interface FlagDef { id: string; label?: string; narrator: boolean; start: string | number | boolean | null; gate?: NarratorGate }
-
-// ───────── Legacy shapes: kept only while the backend and UI still name them (always empty at run time) ─────────
-
-/** @deprecated Legacy encounters (replaced by `conflict:`). */
-export interface FoeStatDef { id: string; label: string; start: number; max: number; good: "high" | "low" | "none"; startExpr?: string; maxExpr?: string; maxFromStart?: true }
-/** @deprecated Legacy quests (replaced by `goals:`). */
-export interface QuestGoal { id: string; text: string; when?: string; count?: number; optional: boolean; on?: { kind: "encounter" | "action"; id: string; outcomes: string[] } }
-/** @deprecated Legacy quests (replaced by `goals:`). */
-export interface QuestDef {
-  id: string; name: string; desc?: string; kind: string; giver?: string; board: boolean; at: string[]; when?: string; auto: boolean;
-  goals: QuestGoal[]; succeed?: string; fail?: string; judge: { done?: string; fail?: string }; days: number; report: boolean;
-  start: Effect; reward: Effect; failure: Effect; remember: { done?: string; failed?: string } | false; repeat: number | null;
-  hidden: boolean; stakes?: string; order: number;
-}
-/** @deprecated Legacy encounters (replaced by `conflict:`). */
-export interface EncounterDef {
-  id: string; name: string; desc?: string; tags: string[];
-  foe: { name: string; stats: FoeStatDef[]; armor: Record<string, number | string> };
-  actions: Record<string, ActionDef>; actionOrder: string[]; foeMoves: DecideSpec | null;
-  endWhen: { outcome: string; when: string }[]; roundLimit: number; timeoutOutcome: string;
-  outcomes: Record<string, Effect>; start: Effect;
-  momentum: { win: string; lose: string; start: number; swing: Record<Tier, number> } | null;
-  fromStory: boolean; narrate: boolean; goal?: string; danger?: string; labels: Record<string, string>;
-}
 
 /**
  * A secret is a ladder of stages. Only opened stages ever reach the narrator's
@@ -279,16 +245,6 @@ export const DIFFICULTIES: Difficulty[] = ["easy", "fair", "hard", "extreme"];
 export type DifficultyWord = Difficulty | "none";
 export const DIFFICULTY_WORDS: DifficultyWord[] = ["none", "easy", "fair", "hard", "extreme"];
 
-/** @deprecated Read `Ruleset.checks`; this mirrors it for the backend's old typed read. */
-export interface ImproviseDef {
-  enabled: boolean;
-  dc: Record<Difficulty, number>;
-  bonus: number;
-  partial: number;
-  stats: string[];
-  time?: number;
-  outcomes: Partial<Record<Tier, Effect>>;
-}
 /**
  * `checks:` — the one check style (d20 + modifier vs a difficulty) and typed attempts.
  * Replaces `improvise:` (read as an alias). Only used with `style: adventure`.
@@ -439,22 +395,6 @@ export interface Ruleset {
   /** A big moment (rescue, betrayal, confession) multiplies one person's caps for one reply; null = off. */
   relBigMoment: { factor: number; cooldown: number } | null;
   growth: GrowthDef;
-  /** @deprecated Mirrors `checks` for the backend's old typed read. */
-  improvise: ImproviseDef;
-  /** @deprecated Places come from the story: always empty. */
-  locations: Record<string, LocationDef>;
-  /** @deprecated Always true: the story names places. */
-  locationsOpen: boolean;
-  /** @deprecated Always null: use `startPlace`. */
-  startLocation: string | null;
-  /** @deprecated Replaced by `conflict`: always empty. */
-  encounters: Record<string, EncounterDef>;
-  /** @deprecated Replaced by `goals`: always empty. */
-  quests: Record<string, QuestDef>;
-  /** @deprecated Replaced by `goals`: always empty. */
-  questOrder: string[];
-  /** @deprecated Replaced by `goals.fromStory`. */
-  storyQuests: { enabled: boolean; max: number };
 }
 
 export interface Issue {
@@ -1779,9 +1719,6 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     hud: { bars, money: moneyStat && stats[moneyStat] ? moneyStat : undefined, ...normCurrency(hudRaw.currency, c) },
     narration: { notes: typeof narrRaw.notes === "string" ? narrRaw.notes : undefined, numbers: narrRaw.numbers === true },
     secrets, liveChoices, checks, conflict, goals, relBigMoment, growth,
-    improvise: { enabled: checks.typed, dc: checks.dc, bonus: checks.bonus, partial: checks.partial, stats: checks.stats, ...(checks.time !== undefined ? { time: checks.time } : {}), outcomes: checks.outcomes },
-    locations: {}, locationsOpen: true, startLocation: null,
-    encounters: {}, quests: {}, questOrder: [], storyQuests: { enabled: goals.fromStory, max: goals.max },
   };
 
   // Cross-references that need everything loaded.

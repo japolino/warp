@@ -14,7 +14,6 @@ for (const t of TEMPLATES) {
       const r = loadRuleset(t.parts.map((p, i) => ({ label: p.label, content: p.yaml, order: i }))).ruleset!;
       let s = initialState(r);
       const rng = seededRng(`fuzz:${t.id}`);
-      let encounters = 0;
       for (let turn = 0; turn < 300; turn++) {
         const choices = availableChoices(r, s).map((c) => c.id);
         const pick = choices.length && rng() < 0.9 ? choices[Math.floor(rng() * choices.length)] : null;
@@ -23,7 +22,6 @@ for (const t of TEMPLATES) {
         for (const e of record.events) applyEvent(next, e, r);
         // Occasionally the narrator nudges things.
         if (rng() < 0.3) for (const e of applyProposal(r, next, { minutes: Math.floor(rng() * 90), stats: { stress: 5 } })) applyEvent(next, e, r);
-        if (!s.encounter && next.encounter) encounters++;
         s = next;
 
         for (const id of r.statOrder) {
@@ -33,14 +31,13 @@ for (const t of TEMPLATES) {
           expect(v).toBeGreaterThanOrEqual(def.min - 1e-9);
           expect(v).toBeLessThanOrEqual(statMax(r, def, s) + 1e-9);
         }
-        if (s.encounter) expect(r.encounters[s.encounter.id]).toBeDefined();
+        if (s.contest) expect(r.conflict.kinds[s.contest.kind]).toBeDefined();
         // Views never throw.
         buildHud(r, s);
         buildChoices(r, s, { lines: [], veils: [] });
         expect(stateDigest(r, s).length).toBeGreaterThan(0);
       }
       expect(s.turn).toBe(300);
-      void encounters;
     });
   });
 }

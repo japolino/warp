@@ -40,13 +40,12 @@ describe("the Romance template", () => {
     expect(r!.statOrder).toEqual([]);
     expect(r!.relStatOrder).toEqual(["affection", "trust", "attraction"]);
     // Typed messages are never turned into checks, and no choice rolls.
-    expect(r!.improvise.enabled).toBe(false);
+    expect(r!.checks.typed).toBe(false);
     expect(Object.values(r!.liveChoices.tags).every((a) => !a.check)).toBe(true);
     expect(Object.values(r!.actions).every((a) => !a.check)).toBe(true);
     // Slow burn: no reply can move a feeling more than a few points.
     expect(Object.values(r!.relStats).every((d) => d.narrator <= 6)).toBe(true);
     // Places come from the story, and the card's character is tracked from the start.
-    expect(r!.locationsOpen).toBe(true);
     expect(initialState(r!).people.mira.name).toBe("Mira");
   });
 });

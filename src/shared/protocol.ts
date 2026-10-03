@@ -85,31 +85,6 @@ export interface GoalView {
   stakes: string | null;
 }
 
-/** A quest as the journal shows it: offered here, under way, waiting to be handed in, or over. */
-export interface QuestView {
-  id: string;
-  name: string;
-  kind: string;
-  status: "offered" | "active" | "ready" | "done" | "failed";
-  giver: string | null;
-  desc: string | null;
-  goals: { text: string; done: boolean; progress: string | null; optional: boolean }[];
-  /** "2 days left", "overdue". */
-  due: string | null;
-  dueTone: Tone;
-  reward: string | null;
-  /** What failing costs. */
-  stakes: string | null;
-  /** Handed out by the story rather than the ruleset. */
-  story: boolean;
-  /** Choice ids: take it (offered), hand it in (ready, where that's possible), give up (under way). */
-  take: string | null;
-  report: string | null;
-  drop: string | null;
-  /** Where it was offered: by whom, or on a board. */
-  from: string | null;
-}
-
 export interface HudView {
   rulesetName: string;
   /** `minutes` = the raw clock (day = floor(minutes / 1440) + 1). */
@@ -137,55 +112,7 @@ export interface HudView {
   goals: GoalView[];
   /** The contest running now, or null. */
   conflict: ConflictView | null;
-  /** @deprecated Replaced by `goals` (kept until the UI stops reading it). */
-  quests: QuestView[];
-  /** @deprecated Replaced by `conflict` (kept until the UI stops reading it). */
-  encounter: {
-    name: string;
-    foe: string;
-    round: number;
-    stats: { id: string; label: string; value: number; max: number; pct: number; tone: Tone }[];
-    /** −100 … +100 for fights that swing. */
-    momentum: number | null;
-    /** What the player is trying to do ("Bring their fervor to 0"). */
-    goal: string | null;
-    /** Progress toward it: foe stats with the value that ends it. */
-    progress: { label: string; value: number; target: number; max: number }[];
-    /** Player stats it can be lost on, nearest first. */
-    danger: { label: string; value: number; at: number; text: string; close: boolean }[];
-    dangerText: string | null;
-    /** Rounds play quietly in one growing message (false: each round is narrated in full). */
-    quiet: boolean;
-    /** Statuses on the opponent (rounds null = until the fight ends). */
-    foeConds: { id: string; label: string; tone: Tone; rounds: number | null; desc?: string }[];
-    /** Armor on the opponent's main meter, and {{user}}'s on what the fight is lost on (null = none). */
-    foeArmor: number | null;
-    yourArmor: number | null;
-  } | null;
   turn: number;
-}
-
-/** One encounter round, straight from the ledger: the check is the check, not the encounter. */
-export interface RoundCardView {
-  move: string;
-  check: { label: string; tier: string; odds: number | null; gear: string[] } | null;
-  foe: string | null;
-  changes: { label: string; from: number; to: number; of: number | null; good: boolean }[];
-  /** Set only when the rules ended it. */
-  ended: { outcome: string; label: string; loss: boolean } | null;
-  round: number;
-}
-
-/** A quiet encounter's log message, for the cards shown under it. */
-export interface EncounterLogView {
-  messageId: string;
-  name: string;
-  foe: string;
-  status: "on" | "ended";
-  rounds: RoundCardView[];
-  /** The first round this message shows. */
-  from: number;
-  ended: { label: string; loss: boolean } | null;
 }
 
 /**
@@ -194,8 +121,6 @@ export interface EncounterLogView {
  * (the compact "More" row).
  */
 export interface ChoiceView {
-  /** @deprecated Forecasts are dropped (CORE-DESIGN §2.0.6 point 3). */
-  forecast?: { goal: string; risk: string; payoff: string };
   id: string;
   label: string;
   group: string | null;
@@ -259,8 +184,6 @@ export interface RecordView {
   decisions: { ask: string; picked: string; p: number; source: "model" | "weights"; odds: { desc: string; p: number }[] }[];
   /** The player's message this reply answers, when the turn can still be redone. */
   redoFrom: string | null;
-  /** @deprecated Swipes reroll (Casual); there is no separate reroll. */
-  rerollFrom?: string | null;
 }
 
 export interface IssueView { level: "error" | "warning"; where: string; message: string }
@@ -291,7 +214,7 @@ export interface Settings {
   /** Connection used for the helper calls (the typed read without Jev, the post-reply call, the greeting read); empty = the chat's own connection. */
   helperConnectionId: string;
   /** Which model answers Warp's typed questions: the helper LLM, or Jev (TypeSafe's classifier, or any service with the same API). */
-  decider: "llm" | "jev" | DeprecatedDecider;
+  decider: "llm" | "jev";
   jevModel: string;
   /** The classifier endpoint: TypeSafe's by default, or any URL that speaks the same typed-question API. */
   jevUrl: string;
@@ -308,27 +231,7 @@ export interface Settings {
   lines: string[];
   /** Content tags that still happen but are narrated off-screen. */
   veils: string[];
-
-  // ── @deprecated: delete this block (and DeprecatedDecider) when ui-c's render.ts stops reading it. ──
-  // The backend never reads these; normalizeSettings pins them to their defaults.
-  /** @deprecated Follows the ruleset's `style:`. */
-  freeTextChecks: boolean;
-  /** @deprecated Always on. */
-  narratorUpdates: boolean;
-  /** @deprecated Story goals follow the ruleset's `goals.from_story`. */
-  storyQuests: boolean;
-  /** @deprecated Cut: clicks no longer roll early or write the player's line. */
-  sayOutcome: boolean;
-  /** @deprecated The dice chip always shows. */
-  showDiceChips: boolean;
-  /** @deprecated An internal threshold now. */
-  autoConfidence: number;
-  /** @deprecated Only the typed-question (TypeSafe) format remains. */
-  jevFormat: "typesafe" | "openai";
 }
-
-/** @deprecated "rules" is gone (read as "llm"); delete with the block above. */
-export type DeprecatedDecider = "rules";
 
 export const DEFAULT_SETTINGS: Settings = {
   enabled: true,
@@ -343,14 +246,6 @@ export const DEFAULT_SETTINGS: Settings = {
   hotkeys: true,
   lines: [],
   veils: [],
-  // @deprecated block (see Settings)
-  freeTextChecks: true,
-  narratorUpdates: true,
-  storyQuests: true,
-  sayOutcome: false,
-  showDiceChips: true,
-  autoConfidence: 0.75,
-  jevFormat: "typesafe",
 };
 
 export interface TemplateInfo { id: string; name: string; blurb: string }
@@ -448,8 +343,6 @@ export type BackendToFrontend =
       player: string;
       /** A short fix hint for the Scene section, e.g. when the greeting read failed: "Warp couldn't read the greeting — set the time." */
       sceneHint?: string | null;
-      /** @deprecated Quiet encounters are cut: every contest round is a narrated reply. */
-      encounterLogs?: EncounterLogView[];
     }
   | { type: "busy"; chatId: string; busy: boolean; label?: string }
   | { type: "settings"; settings: Settings; templates: TemplateInfo[]; connections: { id: string; name: string }[]; jevKeySet: boolean }
@@ -473,8 +366,6 @@ export type FrontendToBackend =
   | { type: "reload"; chatId: string | null }
   /** "Not an action?": replace the reply to `userMessageId` and resend the message without a roll. */
   | { type: "redo"; chatId: string; userMessageId: string; actionId: null }
-  /** @deprecated Swipes reroll (Casual); the backend ignores this. Delete when the UI stops sending it. */
-  | { type: "reroll"; chatId: string; messageId: string }
   /**
    * One-click fix of a state line (a manual event on the latest message). `value` by field: time = minutes or
    * "HH:MM" / "Day 2 08:00"; place = words (null clears); present = boolean (who = person id); appearance /

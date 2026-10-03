@@ -191,7 +191,7 @@ describe("contests from the story", () => {
 
   test("the prose can't end it: the old encounter end is ignored", () => {
     const s = read(initialState(r), { contest: { kind: "brawl", opponent: "Rosa" } }).s;
-    const over = read(s, { encounterEnd: "lost" }).s;
+    const over = read(s, { encounterEnd: "lost" } as Proposal).s;
     expect(over.contest).not.toBeNull();
     expect(over.stats.health).toBe(100);
   });

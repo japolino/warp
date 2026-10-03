@@ -248,10 +248,6 @@ spindle.onFrontendMessage(async (raw, userId) => {
         break;
       }
 
-      case "reroll":
-        // Swipes reroll (Casual); the separate reroll is gone.
-        break;
-
       case "undo": {
         await patchWarpMeta(msg.chatId, msg.messageId, (w) => {
           const rec = w.swipes?.[String(msg.swipe)];

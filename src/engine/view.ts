@@ -187,8 +187,6 @@ export function buildHud(r: Ruleset, s: GameState, opts: { lines?: string[]; vei
     conditions,
     goals: goalViews(r, s),
     conflict: conflictView(r, s),
-    quests: [],
-    encounter: null,
     turn: s.turn,
   };
 }

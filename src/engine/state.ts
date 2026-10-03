@@ -10,30 +10,6 @@ import { evalNumber } from "./expr.js";
 import type { Ruleset, StatDef, Band, Difficulty } from "./ruleset.js";
 import { presentPeople } from "./world.js";
 
-/** @deprecated Legacy encounters (replaced by `ContestState`). */
-export interface EncounterState {
-  id: string;
-  round: number;
-  foe: Record<string, number>;
-  /** −100 (the foe wins) … +100 (the player wins), for encounters that swing. */
-  momentum?: number;
-  /** Who the opponent is this time (someone from the story), when not the encounter's own foe. */
-  foeName?: string;
-  /** In-game minute it started: tells one encounter from the next (uses per encounter). */
-  at?: number;
-  /** Statuses on the opponent: rounds left (null = until the fight ends). */
-  conds?: Record<string, number | null>;
-  /** Foe stat maximums and armor worked out from formulas when it started (absent = the rulebook's numbers). */
-  max?: Record<string, number>;
-  armor?: Record<string, number>;
-}
-
-/** @deprecated Legacy quests (replaced by `GoalState`). */
-export type QuestStatus = "active" | "ready" | "done" | "failed";
-/** @deprecated Legacy quests. */
-export interface StoryQuest { name: string; giver?: string; goal: string; fail?: string; stakes?: string }
-/** @deprecated Legacy quests. */
-export interface QuestState { st: QuestStatus; at: number; due: number | null; prog: Record<string, number>; story?: StoryQuest; ended?: number }
 /** Something a person remembers about {{user}}. */
 export interface Memory { text: string; at: number }
 
@@ -70,12 +46,7 @@ export interface GoalState {
   ended?: number;
 }
 
-/** @deprecated Legacy move use limits. */
-export interface Charge { day: number; n: number; enc?: string; encN: number }
-
 export interface GameState {
-  /** @deprecated Legacy encounters; replaced by `contest` (always null once the old system is taken out). */
-  encounter: EncounterState | null;
   /** The contest running now (fight, chase, argument), or null. */
   contest: ContestState | null;
   /** The last contest that ended (the same opponent can't restart one within 15 in-game minutes). */
@@ -88,10 +59,6 @@ export interface GameState {
   goals: Record<string, GoalState>;
   /** The weekday is known (the ruleset's start or the greeting gave one): only then is it shown. */
   weekday?: boolean;
-  /** @deprecated Legacy encounters (always absent). */
-  lastEncounter?: { id: string; foeName?: string; outcome: string; at: number; loc: string | null } | null;
-  /** @deprecated Legacy move use limits (always empty). */
-  charges: Record<string, Charge>;
   /** People whose starting feelings have been set (by the author, the story or by hand). */
   calibrated: Record<string, true>;
   /** Ruleset people the player removed from tracking. */
@@ -108,10 +75,6 @@ export interface GameState {
   minutes: number;
   /** until: the minute it wears off (null = until removed). */
   conditions: Record<string, { until: number | null; rounds?: number }>;
-  /** @deprecated Conditions on other people were taken out (always empty). */
-  pconds: Record<string, Record<string, { until: number | null }>>;
-  /** @deprecated Quests taken, done or failed; replaced by `goals`. */
-  quests: Record<string, QuestState>;
   /** What people remember about {{user}}, oldest first. */
   memories: Record<string, Memory[]>;
   triggers: Record<string, boolean>;
@@ -154,10 +117,6 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "swing"; d: number }
   /** A contest round passes. */
   | { t: "round" }
-  /** @deprecated Legacy encounter events: old chats still fold; they are ignored. */
-  | { t: "enc"; id: string | null; foe?: Record<string, number>; outcome?: string; momentum?: number; foeName?: string; max?: Record<string, number>; armor?: Record<string, number> }
-  /** @deprecated Legacy encounter events: ignored. */
-  | { t: "foe"; stat: string; d?: number; set?: number }
   | { t: "calib"; who: string }
   | { t: "forget"; who: string }
   | { t: "secret"; id: string; stage: number }
@@ -186,14 +145,12 @@ const MEMORIES_KEPT = 12;
 
 export function initialState(r: Ruleset): GameState {
   const s: GameState = {
-    encounter: null,
     contest: null,
     lastContest: null,
     look: {},
     big: {},
     goals: {},
     weekday: !!r.clock.weekdayKnown,
-    charges: {},
     calibrated: {},
     forgotten: {},
     stats: {},
@@ -216,8 +173,6 @@ export function initialState(r: Ruleset): GameState {
     scene: {},
     lastLocation: null,
     uses: {},
-    pconds: {},
-    quests: {},
     memories: {},
   };
   for (const id of r.statOrder) s.stats[id] = r.stats[id].start;
@@ -265,11 +220,6 @@ export function startMinutes(r: Ruleset): number {
 /** A place's id from its words ("The Rusty Anchor" → "the_rusty_anchor"). */
 export function placeId(name: string): string {
   return String(name).trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "x";
-}
-
-/** @deprecated Who the opponent is (the running contest's, else "Opponent"). */
-export function foeName(_r: Ruleset, s: GameState): string {
-  return s.contest?.opponent ?? "Opponent";
 }
 
 export function statMax(r: Ruleset, def: StatDef, s: GameState): number {

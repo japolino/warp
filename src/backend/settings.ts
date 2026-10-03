@@ -5,9 +5,6 @@ const cache = new Map<string, Settings>();
 const writes = new Map<string, Promise<void>>();
 const key = (userId?: string) => userId ?? "_";
 
-/** Fields the UI no longer shows: always their defaults, whatever was saved (the backend never reads them). */
-const PINNED = ["freeTextChecks", "narratorUpdates", "storyQuests", "sayOutcome", "showDiceChips", "autoConfidence", "jevFormat"] as const;
-
 /** Treat persisted data and UI messages as untrusted input. Unknown and removed keys are dropped. */
 export function normalizeSettings(value: unknown): Settings {
   const raw = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -23,7 +20,6 @@ export function normalizeSettings(value: unknown): Settings {
   s.decider = s.decider === "jev" ? "jev" : "llm";
   s.jevUrl = /^https?:\/\/\S+$/i.test(s.jevUrl) ? s.jevUrl : DEFAULT_SETTINGS.jevUrl;
   if (!s.jevModel) s.jevModel = DEFAULT_SETTINGS.jevModel;
-  for (const k of PINNED) (s as unknown as Record<string, unknown>)[k] = DEFAULT_SETTINGS[k];
   return s;
 }
 

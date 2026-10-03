@@ -248,13 +248,11 @@ function contextOf(parts: BuilderPart[]): string {
     list("Stats", r.statOrder.map((id) => `${id} (${r.stats[id].kind}${r.stats[id].kind === "meter" ? ` ${r.stats[id].min}–${r.stats[id].max}` : ""})`)),
     list("Relationship stats", r.relStatOrder),
     list("People", Object.keys(r.people)),
-    list("Locations", Object.keys(r.locations)),
     list("Items", Object.keys(r.items)),
     list("Conditions", Object.keys(r.conditions)),
     list("Flags", Object.keys(r.flags)),
-    list("Encounters", Object.keys(r.encounters).map((id) => `${id} (outcomes: ${[...new Set([...Object.keys(r.encounters[id].outcomes), ...r.encounters[id].endWhen.map((e) => e.outcome)])].join(", ")})`)),
-    list("Quests", r.questOrder),
-    list("Notice boards", Object.values(r.locations).filter((l) => l.board).map((l) => l.id)),
+    list("Contest kinds", Object.keys(r.conflict.kinds)),
+    list("Goals", Object.keys(r.goals.list)),
   ].filter(Boolean).join("\n");
 }
 
@@ -304,11 +302,10 @@ function buildPreview(s: BuilderSession) {
     meters: r.statOrder.filter((id) => r.stats[id].kind === "meter").length,
     skills: r.statOrder.filter((id) => ["skill", "attribute"].includes(r.stats[id].kind)).length,
     people: Object.keys(r.people).length,
-    places: Object.keys(r.locations).length,
     items: Object.keys(r.items).length,
     actions: Object.keys(r.actions).length,
-    encounters: Object.keys(r.encounters).length,
-    quests: r.questOrder.length,
+    contests: Object.keys(r.conflict.kinds).length,
+    goals: Object.keys(r.goals.list).length,
     rules: r.triggers.length,
     secrets: Object.keys(r.secrets).length,
   };

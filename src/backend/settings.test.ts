@@ -15,9 +15,11 @@ test("two providers: Helper and Jev; the old rules provider reads as the helper"
   expect(normalizeSettings({ decider: "rules" }).decider).toBe("llm");
 });
 
-test("settings the UI no longer shows are pinned to their defaults (the backend never reads them)", () => {
-  const s = normalizeSettings({ freeTextChecks: false, narratorUpdates: false, storyQuests: false, sayOutcome: true, showDiceChips: false, autoConfidence: 0.4, jevFormat: "openai" });
-  for (const k of ["freeTextChecks", "narratorUpdates", "storyQuests", "sayOutcome", "showDiceChips", "autoConfidence", "jevFormat"] as const) expect(s[k]).toEqual(DEFAULT_SETTINGS[k]);
+test("settings the UI stopped showing are dropped from old saves", () => {
+  const s = normalizeSettings({ freeTextChecks: false, narratorUpdates: false, storyQuests: false, sayOutcome: true, showDiceChips: false, autoConfidence: 0.4, jevFormat: "openai", showOdds: false });
+  for (const k of ["freeTextChecks", "narratorUpdates", "storyQuests", "sayOutcome", "showDiceChips", "autoConfidence", "jevFormat"]) expect(s).not.toHaveProperty(k);
+  expect(s.showOdds).toBe(false);
+  expect(Object.keys(s).sort()).toEqual(Object.keys(DEFAULT_SETTINGS).sort());
 });
 
 test("settings of removed parts (minigames, looks, sound, dating, drafts, consistency check) are dropped when read and on the next save", async () => {

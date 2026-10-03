@@ -46,8 +46,6 @@ describe("the story moves between places (no travel graph)", () => {
     const s = initialState(r);
     expect(s.locationName).toBe("Hall");
     expect(applyProposal(r, s, { place: "The Vault" }).some((e: any) => e.t === "move" && e.to === "the_vault" && e.name === "The Vault")).toBe(true);
-    // The old alias still works.
-    expect(applyProposal(r, s, { move: "Vault" }).some((e: any) => e.t === "move" && e.name === "Vault")).toBe(true);
     // The same place again is no move.
     expect(applyProposal(r, s, { place: "hall" })).toEqual([]);
   });

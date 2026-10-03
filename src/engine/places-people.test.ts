@@ -50,7 +50,7 @@ describe("places", () => {
   test("locations were removed: one warning, and places come from the story as words", () => {
     const { r, issues } = load({ locations: { market: { name: "Market", exits: { garret: 2 } } }, locations_open: true });
     expect(issues.filter((i) => i.message.includes("was removed from Warp")).map((i) => i.where).sort()).toEqual(["Locations", "Locations Open"]);
-    expect(r.locations).toEqual({});
+    expect("locations" in r).toBe(false);
     expect(availableChoices(r, initialState(r)).some((c) => c.id.startsWith("go:"))).toBe(false);
   });
 

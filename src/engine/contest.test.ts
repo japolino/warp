@@ -4,7 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import { normalizeRuleset, DIFFICULTIES } from "./ruleset.js";
 import { foldEvents, initialState, type GameState } from "./state.js";
-import { applyProposal, availableChoices, resolveTurn, type Intent } from "./resolve.js";
+import { applyProposal, availableChoices, resolveTurn, type Intent, type Proposal } from "./resolve.js";
 import { rollD20, seededRng } from "./dice.js";
 import { buildChoices, buildHud, buildRecordView, outcomePacket, stateDigest } from "./view.js";
 import { BREAK_OFF, GIVE_IN, simulateContest, swingFor } from "./contest.js";
@@ -62,7 +62,8 @@ describe("T-K2 nobody can end it early", () => {
 
   test("the story saying the fight ended does not end it", () => {
     const s = start();
-    const after = foldEvents(r, [applyProposal(r, s, { encounterEnd: "won", minutes: 5 })], s);
+    // An old reader's "the encounter ended" field: unknown now, and ignored.
+    const after = foldEvents(r, [applyProposal(r, s, { encounterEnd: "won", minutes: 5 } as Proposal)], s);
     expect(after.contest).not.toBeNull();
     expect(stateDigest(r, after, { text: "" })).toContain("Not over until the rules end it.");
   });

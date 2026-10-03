@@ -37,7 +37,7 @@ beforeEach(() => {
     request: null, changeSummary: "Saved edit", busy: "Writing before restart", error: null, updatedAt: 1,
   };
   // Exact fields added since the previous release; persisted views are stale.
-  delete stored.preview.hud.quests;
+  delete stored.preview.hud.goals;
   for (const person of stored.preview.hud.people) {delete person.conditions; delete person.memories;}
   (globalThis as any).spindle = {
     chats: {get: async () => ({character_id: characterId})},
@@ -66,12 +66,12 @@ describe("saved builder draft recovery", () => {
     expect(s.rounds[0].answers).toEqual(answers);
     expect(s.additions).toEqual(additions);
     expect(s.connectionId).toBe("saved-builder-model");
-    expect(s.preview.hud.quests).toEqual([]);
+    expect(s.preview.hud.goals).toEqual([]);
     expect(s.preview.hud.people.length).toBeGreaterThan(0);
     for (const p of s.preview.hud.people) {expect(p.conditions).toEqual([]); expect(p.memories).toEqual([]);}
     expect(renderBuilder(s, emptyDraft(), [], [], false)).toContain("warp-preview");
     expect(writes).toBe(1);
-    expect(stored.preview.hud.quests).toEqual([]);
+    expect(stored.preview.hud.goals).toEqual([]);
     expect(modelCalls).toBe(0);
     await builderOpen(chatId, "build", "recovery");
     expect(renderBuilder(emitted(), emptyDraft(), [], [], false)).toContain("warp-preview");
@@ -81,7 +81,7 @@ describe("saved builder draft recovery", () => {
   test("discards stale derived views even when a saved format version exists", async () => {
     stored.schemaVersion = BUILDER_SESSION_VERSION;
     await builderCurrent(chatId, "recovery");
-    expect(emitted().preview.hud.quests).toEqual([]);
+    expect(emitted().preview.hud.goals).toEqual([]);
     expect(modelCalls).toBe(0);
   });
 

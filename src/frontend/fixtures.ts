@@ -12,12 +12,9 @@ export const choice = (o: Partial<ChoiceView> & { id: string; label: string }): 
   group: null, desc: null, odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [], difficulty: null, ...o,
 });
 
-/** Fields the contract still lists as deprecated; the UI never reads them (they can go without touching the tests). */
-const DEPRECATED_HUD = { quests: [], encounter: null };
-
 /** Day 2, 23:40 at a harbour bar, Mira here, Jo elsewhere. */
 export function hud(o: Partial<HudView> = {}): HudView {
-  const base: Omit<HudView, "quests" | "encounter"> = {
+  const base: HudView = {
     rulesetName: "Adventure",
     clock: { label: "Day 2 · 23:40", time: "23:40", day: "Day 2", phase: "night", minutes: 1440 + 23 * 60 + 40 },
     date: null,
@@ -45,7 +42,7 @@ export function hud(o: Partial<HudView> = {}): HudView {
     conflict: null,
     turn: 7,
   };
-  return { ...DEPRECATED_HUD, ...base, ...o } as HudView;
+  return { ...base, ...o };
 }
 
 export const record = (o: Partial<RecordView> & { messageId: string }): RecordView => ({

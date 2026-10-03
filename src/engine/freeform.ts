@@ -12,19 +12,11 @@ import { effectiveStat, makeEnv, statMax, type GameState } from "./state.js";
 /** An improvised attempt: `try:<stat>` (or `try:` with nothing to lean on). */
 export const IMPROV = "try:";
 
-/** @deprecated The difficulty word is used as is. */
-export const DIFFICULTY_WORD: Record<Difficulty, string> = { easy: "easy", fair: "fair", hard: "hard", extreme: "extreme" };
-
 /** How much a check of each difficulty teaches. */
 const HARDNESS: Record<Difficulty, number> = { easy: 0.5, fair: 1, hard: 1.5, extreme: 2 };
 
 /** Failing still teaches, a little less. */
 const LEARN: Record<Tier, number> = { crit_success: 1.2, success: 1, partial: 1, fail: 0.7, crit_fail: 0.5 };
-
-/** Stats a typed attempt can lean on. */
-export function improvStats(r: Ruleset): string[] {
-  return r.style === "story" ? [] : r.checks.stats.filter((id) => r.stats[id]);
-}
 
 export function isDifficulty(v: unknown): v is Difficulty {
   return typeof v === "string" && (DIFFICULTIES as string[]).includes(v);
@@ -49,9 +41,6 @@ export function statAdd(r: Ruleset, s: GameState, stat: string): number {
   const pos = max > def.min ? Math.max(0, Math.min(1, (v - def.min) / (max - def.min))) : 0;
   return Math.round(pos * r.checks.bonus);
 }
-
-/** @deprecated Use `statAdd`. */
-export const improvBonus = statAdd;
 
 /** The typed attempt as an action, so it runs through the same machinery as any listed one (odds, growth, contests). */
 export function improvAction(r: Ruleset, s: GameState, actionId: string): ActionDef | null {

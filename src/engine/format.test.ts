@@ -162,7 +162,7 @@ describe("removed systems", () => {
     // One warning per key.
     expect(new Set(where).size).toBe(where.length);
     expect(Object.keys(r!.items.shirt).sort()).toEqual(["bonus", "desc", "id", "keep", "name", "tags", "uses"]);
-    expect(r!.locations).toEqual({});
+    expect("locations" in r!).toBe(false);
     expect(JSON.stringify(r!.actions.night)).not.toContain("conceive");
   });
 
@@ -183,8 +183,8 @@ describe("removed systems", () => {
     expect(issues.find((i) => i.where === "Actions › pbta › check")?.level).toBe("error");
     for (const k of ["start_encounter", "foe", "quest"]) expect(issues.some((i) => i.where === `Actions › fight › effects › ${k}` && i.message.includes("removed"))).toBe(true);
     expect(r!.actions.old.check).toBeUndefined();
-    expect(r!.encounters).toEqual({});
-    expect(r!.quests).toEqual({});
+    expect("encounters" in r!).toBe(false);
+    expect("quests" in r!).toBe(false);
   });
 
   test("formula names of removed parts read as 0, and the lint says why", () => {
@@ -226,8 +226,8 @@ describe("removed systems", () => {
     ] as unknown as WarpEvent[];
     const s = foldEvents(r, [old]);
     expect(s.stats.coin).toBe(55);
-    expect(s.encounter).toBeNull();
-    expect(s.quests).toEqual({});
+    expect(s.contest).toBeNull();
+    expect(Object.keys(s.goals)).toEqual([]);
     expect(s.items.shirt).toBeUndefined();
     expect(buildHud(r, s)).toBeTruthy();
     expect(buildChoices(r, s, { lines: [], veils: [] }).length).toBeGreaterThan(0);
