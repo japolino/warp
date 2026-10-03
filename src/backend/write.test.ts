@@ -45,7 +45,8 @@ describe("the writer's prompt", () => {
     expect(p.system.length).toBeLessThanOrEqual(3000);
     expect(p.system).not.toMatch(/:\s*(\{\}|\[\])/);
     expect(p.system).toContain("- bold: A daring, physical or risky move (rolls Body)");
-    expect(p.system).toContain("- careful: The cautious option (no roll) (no roll)");
+    // The author's own "(no roll)" is said once.
+    expect(p.system).toContain("- careful: The cautious option (no roll)\n");
     expect(p.system).toContain("kind ×3");
     expect(p.system).toContain("At least one is none or easy, at least one is hard or extreme");
   });

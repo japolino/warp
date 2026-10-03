@@ -91,7 +91,8 @@ export function choiceLines(r: Ruleset, s: GameState, player: string, n: number,
   const here = presentPeople(r, s, makeEnv(r, s)).map((id) => personName(r, s, id));
   lines.push(`"choices": write ${n} short options for what ${player} could do right now. Each is 3–10 words, phrased as an action ${player} takes ("Ask Jo about the letter"), never how it turns out. Make them specific to this moment and different from each other.`);
   lines.push(kinds?.length ? `Write exactly one option for each of these tags, in this order: ${kinds.join(", ")}.` : "Tag each option with the kind of move it is, from this list only:");
-  for (const a of tags) lines.push(`- ${a.id}: ${a.desc ?? a.label} (${rolls(a)})${a.perPerson ? `; add "target": who it's aimed at${here.length ? ` (${here.join(" or ")})` : ""}` : ""}`);
+  // An author's "(no roll)" at the end of a desc is said once (the line adds it).
+  for (const a of tags) lines.push(`- ${a.id}: ${(a.desc ?? a.label).replace(/\s*\((?:no roll|rolls [^)]*)\)\s*$/i, "")} (${rolls(a)})${a.perPerson ? `; add "target": who it's aimed at${here.length ? ` (${here.join(" or ")})` : ""}` : ""}`);
   if (r.style === "story") lines.push("No difficulty words: this story has no dice. The options must be different kinds of move.");
   else lines.push(`Give each a "difficulty": none, easy, fair, hard or extreme (how hard it is for an ordinary person here; none = it can't fail). At least one is none or easy, at least one is hard or extreme, and no two share both tag and difficulty.`);
   const recent = Object.entries(recentUses ?? {}).filter(([, k]) => k > 0).map(([id, k]) => `${id} ×${k}`);
