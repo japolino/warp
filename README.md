@@ -10,8 +10,7 @@
 A game engine under your roleplay. Warp owns stats, dice, time, inventory and relationships; the model only narrates outcomes the engine has already decided.
 
 - **Choices** appear under the latest reply (hotkeys 1–9, odds on each button). You can also just type — a quick referee call maps risky attempts to an action (or, when nothing listed fits, rolls it on your closest ability), and the dice decide.
-- **Status panel** floats over the chat (drag it to any screen edge to attach it as a sidebar or strip). Drag a section's header out to give it a window of its own (up to 3); drop one window near another's side to sit beside it as a second column; resize any window from its corner grip (double-click the grip to fit again). Plus a **Warp** drawer tab: Sheet · Map · Journal · Ruleset · Settings.
-- **Doll** (testing): a drawn figure for you and the people in your story, in the **Doll** drawer tab and as two status-panel sections (each can be torn off into its own window): your doll, and **With you**, the person here with you (whoever the latest reply is about, or the one you pin). 4 builds per sex that blend, 9 hairstyles, animal ears, tails and horns, and an outfit made of described garments (kind, cut, colour, pattern, wear) that fit any build. The helper can dress it from your persona, a character's card and lorebook, a typed description, or the latest replies. With the classifier (Jev) set up, both dolls follow the story on their own: after each reply a quick check changes only what the story changed, and someone new is dressed the first time they're with you (set **Follow the story** to "always" to use the helper model instead, a call per doll per reply, or to "only when I ask"). Each chat keeps its own dolls. Try it outside Lumiverse with `bun run bench` and `/doll.html`.
+- **Status panel** floats over the chat (drag it to any screen edge to attach it as a sidebar or strip). Drag a section's header out to give it a window of its own (up to 3); drop one window near another's side to sit beside it as a second column; resize any window from its corner grip (double-click the grip to fit again). Plus a **Warp** drawer tab: Sheet · Journal · Ruleset · Settings.
 - **Dice & change chips** on every reply. Changes read from the story are dashed and can be undone with ×.
 - **Swipes reroll** (Casual) by default; turn off for Ironman. State always follows the active swipe.
 
@@ -194,5 +193,4 @@ The Ruleset tab lists problems in plain language, with "did you mean" suggestion
 bun install
 bun run verify   # tests + typecheck
 bun run build    # dist/backend.js, dist/frontend.js
-bun run bench    # the doll on its own page (http://localhost:5177)
 ```

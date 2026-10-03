@@ -12,8 +12,7 @@
     "verify": "bun run test && bun run typecheck",
     "build": "tsc --project tsconfig.build.json --noEmit && bun build ./src/backend.ts ./src/frontend.ts --outdir ./dist --target browser --format esm && bun run build:tools",
     "build:tools": "bun build ./src/tools/cli.ts --outfile ./dist/warp-rulebook.js --target node && bun run guide",
-    "guide": "bun ./src/tools/cli.ts guide --markdown --out docs/RULEBOOK_GUIDE.md",
-    "bench": "bun build ./src/frontend/doll/dev.ts --outfile ./dev/build/doll.js --target browser && bun ./dev/serve.ts"
+    "guide": "bun ./src/tools/cli.ts guide --markdown --out docs/RULEBOOK_GUIDE.md"
   },
   "dependencies": {
     "js-yaml": "^4.1.0"

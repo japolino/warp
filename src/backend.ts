@@ -7,7 +7,6 @@ import type { FrontendToBackend } from "./shared/protocol.js";
 import { logError, send, toast } from "./backend/host.js";
 import { foldPath, getMessages, patchWarpMeta, reconcilePath, shiftAfterSwipeDelete, warpMeta, writeRecord } from "./backend/ledger.js";
 import { getSettings, patchSettings } from "./backend/settings.js";
-import { dollLook } from "./backend/doll.js";
 import { doQuiet } from "./backend/quiet.js";
 import { settleClick } from "./backend/attempt.js";
 import { getRuleset, installTemplate, invalidateCharacter, invalidateChat, knownRulesetBookIds, knownRulesetEntryIds } from "./backend/source.js";
@@ -160,7 +159,7 @@ async function sendSettings(userId?: string) {
 spindle.onFrontendMessage(async (raw, userId) => {
   const msg = raw as FrontendToBackend;
   try {
-    if ("chatId" in msg && msg.chatId && !["hello", "refresh", "reload", "reconcile_history", "undo", "doll_look"].includes(msg.type) && !msg.type.startsWith("builder") && msg.type !== "export_rulebook" && msg.type !== "install_template") {
+    if ("chatId" in msg && msg.chatId && !["hello", "refresh", "reload", "reconcile_history", "undo"].includes(msg.type) && !msg.type.startsWith("builder") && msg.type !== "export_rulebook" && msg.type !== "install_template") {
       const r = (await getRuleset(msg.chatId, userId))?.ruleset;
       if (r && foldPath(r, await getMessages(msg.chatId), 0).conflict) {
         toast("warning", "Earlier history or rules changed. Review the recorded outcomes in the Warp sheet before continuing.", userId);
@@ -169,9 +168,6 @@ spindle.onFrontendMessage(async (raw, userId) => {
       }
     }
     switch (msg.type) {
-      case "doll_look":
-        await dollLook(msg, userId);
-        break;
       case "reconcile_history": {
         if (busyChats.has(msg.chatId)) { toast("info", "Wait for the current turn to finish first.", userId); break; }
         const r = (await getRuleset(msg.chatId, userId))?.ruleset;

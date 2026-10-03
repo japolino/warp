@@ -494,7 +494,6 @@ export interface BuilderSession {
 }
 
 export type BackendToFrontend =
-  | { type: "doll_look"; who: string; look: unknown | null; note: string; name?: string; error?: string; /** The chat it was asked for, and whether it was an automatic update. */ chatId?: string | null; auto?: boolean }
   | {
       type: "state";
       chatId: string | null;
@@ -521,24 +520,7 @@ export type BackendToFrontend =
   /** The installed rulebook as one file, for editing elsewhere. */
   | { type: "rulebook_export"; name: string; text: string };
 
-/** Ask the helper to dress a doll: from what's known about someone, a typed description, or the latest story. */
-export interface DollRequest {
-  type: "doll_look";
-  chatId: string | null;
-  /** "you" (the player) or a person's name. */
-  who: string;
-  source: "profile" | "text" | "story";
-  text?: string;
-  /** Their look now (for story updates). */
-  current?: unknown;
-  /** Clothing the rules say they're wearing ("Raincoat (torn)"). */
-  worn?: string[];
-  /** Sent on its own after a reply (no warnings when it fails). */
-  auto?: boolean;
-}
-
 export type FrontendToBackend =
-  | DollRequest
   | { type: "reconcile_history"; chatId: string; keep: boolean }
   | { type: "hello"; chatId: string | null }
   | { type: "refresh"; chatId: string | null }

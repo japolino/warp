@@ -242,7 +242,7 @@ export function aboutThem(text: string | undefined | null, re: RegExp, budget: n
 }
 
 /**
- * Who a person is, gathered for the doll and for encounter lines: the whole card when
+ * Who a person is, gathered for encounter lines: the whole card when
  * they are the card's character; otherwise what the card says about them, lorebook
  * entries keyed to their name, and how the recent story has shown them.
  */
