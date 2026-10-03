@@ -116,6 +116,20 @@ describe("the loop simulator's gate", () => {
     expect(report.gates.some((g) => g.id === "odds-spread")).toBe(false);
   });
 
+  test("time: effects of a tag, an outcome or a trigger move the clock by the rules (no clock miss)", () => {
+    const yaml = STORY
+      .replace('space: { desc: "Giving room" }', 'space: { desc: "Giving room", effects: { time: 30 } }')
+      .replace('onward: { desc: "Moving the story along" }', 'onward: { desc: "Moving the story along", time: 45, effects: { time: 15 } }')
+      + `
+triggers:
+  late: { when: "hour >= 22", do: { time: 5, hint: "It's late." } }`;
+    const report = runLoopSim(load(yaml), { turns: 40, seeds: 10 });
+    expect(report.gates.find((g) => g.id === "clock")).toMatchObject({ value: 0, pass: true });
+    const adventure = ADVENTURE.replace("success: { mood: +2 }, fail: { mood: -2 } }", "success: { mood: +2, time: 20 }, fail: { mood: -2 } }");
+    const rolled = runLoopSim(load(adventure), { turns: 40, seeds: 10, contestRuns: 100 });
+    expect(rolled.gates.find((g) => g.id === "clock")).toMatchObject({ value: 0, pass: true });
+  });
+
   test("the chunked form gives the same report, a step at a time, with progress", () => {
     const r = load(ADVENTURE);
     const whole = runLoopSim(r, { turns: 20, seeds: 3, contestRuns: 200, seed: "chunk" });

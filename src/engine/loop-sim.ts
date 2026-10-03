@@ -3,9 +3,9 @@
 // Its gates are the core's quality bar; Warp Studio shows them as Warp computes them.
 
 import { d20Odds, seededRng, type Rng } from "./dice.js";
-import { DIFFICULTIES, type ActionDef, type Difficulty, type DifficultyWord, type Ruleset, type Tier } from "./ruleset.js";
+import { DIFFICULTIES, type ActionDef, type Difficulty, type DifficultyWord, type Effect, type Ruleset, type Tier } from "./ruleset.js";
 import { foldEvents, initialState, type GameState, type WarpEvent } from "./state.js";
-import { applyProposal, resolveTurn, LIVE_PREFIX, TARGET_SEP, type Intent, type LiveChoice, type Proposal, type TurnRecord } from "./resolve.js";
+import { applyProposal, resolveTurn, LIVE_PREFIX, TARGET_SEP, TIER_FALLBACK, type Intent, type LiveChoice, type Proposal, type TurnRecord } from "./resolve.js";
 import { buildChoices, buildRecordView, outcomePacket } from "./view.js";
 import { bandCrossings, tagTaper } from "./people.js";
 import { applyGreeting } from "./scene.js";
@@ -184,14 +184,41 @@ function playerTurn(r: Ruleset, s: GameState, run: Run, rng: Rng, alwaysTag: str
   return { intent: { actionId: `try:${stat}`, params: { difficulty }, via: "adjudicator" }, typed: true, live, shown: null, tag: null };
 }
 
-/** The minutes a turn should take by the rules (the clock gate's own model). */
-function expectedMinutes(r: Ruleset, before: GameState, intent: Intent | null, story: number): number {
+const timeOf = (e: Effect | undefined) => e?.time ?? 0;
+
+/** Minutes the `time:` effects of a move add: its cost, its effects, and the outcome of the tier it rolled. */
+function effectMinutes(a: ActionDef | undefined, rec: TurnRecord, rolled: boolean): number {
+  if (!a) return 0;
+  const tier = rolled && a.check ? rec.check?.tier : undefined;
+  const key = tier ? TIER_FALLBACK[tier].find((t) => a.outcomes[t]) : undefined;
+  return timeOf(a.cost) + timeOf(a.effects) + (key ? timeOf(a.outcomes[key]) : 0);
+}
+
+/** Minutes the rules' `time:` effects add through triggers that fired this turn (on turning true, or every turn). */
+function triggerMinutes(r: Ruleset, rec: TurnRecord, told: WarpEvent[], mid: GameState): number {
+  let n = 0;
+  const turnedOn = new Set([...rec.events, ...told].filter((e): e is Extract<WarpEvent, { t: "trig" }> => e.t === "trig" && e.v).map((e) => e.id));
+  for (const t of r.triggers) {
+    if (!timeOf(t.effects)) continue;
+    if (turnedOn.has(t.id) || (t.repeat && mid.triggers[t.id] === true)) n += timeOf(t.effects);
+  }
+  return n;
+}
+
+/**
+ * The minutes a turn should take by the rules (the clock gate's own model): the move's time, the `time:` effects
+ * the rules applied (the move's and the triggers'), and the story's minutes up to the cap.
+ */
+function expectedMinutes(r: Ruleset, before: GameState, intent: Intent | null, story: number, rec: TurnRecord, told: WarpEvent[], mid: GameState): number {
   if (!r.clock.enabled) return 0;
   let action = 0;
   if (before.contest) action = 1;
-  else if (intent?.actionId.startsWith("try:")) action = r.checks.time ?? r.clock.minutesPerAction;
-  else if (intent?.actionId.startsWith(LIVE_PREFIX)) action = r.liveChoices.tags[intent.actionId.slice(LIVE_PREFIX.length).split(TARGET_SEP)[0]]?.time ?? r.clock.minutesPerAction;
-  return action + Math.min(story, r.clock.narratorMax);
+  else if (intent?.actionId.startsWith("try:")) action = (r.checks.time ?? r.clock.minutesPerAction) + timeOf(rec.check ? r.checks.outcomes[TIER_FALLBACK[rec.check.tier].find((t) => r.checks.outcomes[t]) ?? rec.check.tier] : undefined);
+  else if (intent?.actionId.startsWith(LIVE_PREFIX)) {
+    const a = r.liveChoices.tags[intent.actionId.slice(LIVE_PREFIX.length).split(TARGET_SEP)[0]];
+    action = (a?.time ?? r.clock.minutesPerAction) + effectMinutes(a, rec, intent.params?.difficulty !== "none");
+  }
+  return action + triggerMinutes(r, rec, told, mid) + Math.min(story, r.clock.narratorMax);
 }
 
 /**
@@ -239,7 +266,7 @@ export function createLoopSim(r: Ruleset, opts: LoopOptions = {}): { run(turns: 
     const whole: TurnRecord = { ...rec, events: [...rec.events, ...told] };
     c.turns++;
     // The clock: exactly the rules' minutes, no drift.
-    if (after.minutes - before.minutes !== expectedMinutes(r, before, move.intent, proposal.minutes ?? 0)) c.clockMisses++;
+    if (after.minutes - before.minutes !== expectedMinutes(r, before, move.intent, proposal.minutes ?? 0, rec, told, mid)) c.clockMisses++;
     // The scene holds unless the reader changed it (this reader never does).
     if (!sameScene(sceneOf(r, after), run.baseline)) c.sceneMisses++;
     // Typed messages: how many rolled.
@@ -313,7 +340,7 @@ export function createLoopSim(r: Ruleset, opts: LoopOptions = {}): { run(turns: 
         contests.push({ kind, add, threat, won: sim.won, meanRounds: sim.meanRounds, within: sim.within, brokenOff: sim.brokenOff });
       }
       const gates: LoopGate[] = [
-        { id: "clock", label: "The clock is the start plus every action's and the story's (capped) minutes", value: c.clockMisses, bar: "= 0 turns off", pass: c.clockMisses === 0 },
+        { id: "clock", label: "The clock is the start plus every move's minutes, the rules' time: effects and the story's (capped) minutes", value: c.clockMisses, bar: "= 0 turns off", pass: c.clockMisses === 0 },
         { id: "scene", label: "Place, who is here and looks change only when the story or a move changes them", value: c.sceneMisses, bar: "= 0 turns off", pass: c.sceneMisses === 0 },
         { id: "crossing-lines", label: "Band crossings without a line in the same record", value: c.crossingsWithoutLine, bar: "= 0", pass: c.crossingsWithoutLine === 0 },
         { id: "story-ends-contest", label: "Contests the story ended", value: c.contestsEndedByStory, bar: "= 0", pass: c.contestsEndedByStory === 0 },
