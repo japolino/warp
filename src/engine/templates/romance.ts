@@ -58,7 +58,7 @@ narration:
     },
     {
       label: "actions",
-      yaml: `# Passing time — done off the page from the Errands window (or as a story choice).
+      yaml: `# Passing time, as a story choice.
 actions:
   sleep:
     label: Sleep

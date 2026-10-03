@@ -82,31 +82,8 @@ export interface QuestView {
 
 export interface ClothingView { id: string; name: string; slot: string; warmth: number; reveal: number; traits: string[]; integrity: number | null; worn: boolean }
 
-/**
- * Errands: things done off the page, in a window — no narrator turn. Each is sent as
- * `{ type: "quiet", actionId, times }`; the next reply is told about it in one line
- * ("Since the last reply, Jay bought 2 Soothing potions…"). `story` is the same thing
- * as a normal story choice (send `act`), for when the player wants it narrated.
- */
-export interface ErrandsView {
-  /** Postings on the notice board here, to take on quietly. */
-  board: { id: string; name: string; desc: string | null; goals: string[]; reward: string | null; days: number | null; stakes: string | null; kind: string | null; take: string }[];
-  /** Things to buy here: one action each (repeat it `times` for more). */
-  shop: { id: string; label: string; item: string; itemDesc: string | null; price: string | null; /** How many the player can afford/carry right now (0 = not now). */ max: number; why: string | null; story: string; /** Selling, not buying: `price` is what it pays (button "Sell"). */ sell?: boolean }[];
-  /** Bills that can be paid now. */
-  bills: { id: string; label: string; amount: string; due: string; story: string }[];
-  /** Practice: a check per session; `minutes` per session, `cost` per session. */
-  train: { id: string; label: string; desc: string | null; odds: number | null; minutes: number; cost: string | null; /** Sessions affordable now. */ max: number; why: string | null; story: string }[];
-  /** Rest, sleep, wait: time passes quietly. */
-  rest: { id: string; label: string; desc: string | null; minutes: number; effects: string | null; why: string | null; story: string }[];
-  /** "E160" — the player's money, for the shop. */
-  money: string | null;
-}
-
 export interface HudView {
   rulesetName: string;
-  /** Errands available here and now (null: none, or not now — in an encounter or a shift; or turned off). */
-  errands?: ErrandsView | null;
   clock: { label: string; time: string; day: string; phase: string } | null;
   /** "Sun 4th Sep" when the ruleset has a calendar. */
   date: string | null;
@@ -119,7 +96,7 @@ export interface HudView {
   items: {
     id: string; name: string; count: number; worn: boolean; /** "3/5" uses left in the one in hand. */ uses: string | null;
     /** Using it: the choice id (`item:<id>`), its label, and why it's locked (null = usable now). */
-    use: { id: string; label: string; locked: string | null; drafted: boolean; /** Can be used off the page now (no narrator turn): send `quiet` with `use.id`. */ quiet?: boolean } | null;
+    use: { id: string; label: string; locked: string | null; drafted: boolean } | null;
     /** Gear: what it adds to checks ("+5 Athletics"). */
     bonus: string | null;
   }[];
@@ -359,10 +336,6 @@ export interface Settings {
   drafts: number;
   /** Pre-write replies for this many of the first choices, so clicking them is instant (0 = off). */
   prewrite: number;
-  /** Errands in a window (board, shop, bills, training, rest) instead of each being a story choice. */
-  errands: boolean;
-  /** Clicking a place on the map goes there off the page (no travel paragraph); the next reply starts the scene. */
-  quietTravel: boolean;
   /** A clicked move is rolled on the click, and the player's message says how it went, in their voice. */
   sayOutcome: boolean;
   /** Choice buttons under the reply (the CYOA). Off: none, and none are written — fights, shifts and endings keep theirs. */
@@ -392,8 +365,6 @@ export const DEFAULT_SETTINGS: Settings = {
   consistencyCheck: false,
   drafts: 1,
   prewrite: 0,
-  errands: true,
-  quietTravel: false,
   sayOutcome: true,
   showChoices: true,
   showChanges: true,
@@ -522,8 +493,6 @@ export type FrontendToBackend =
   | { type: "allocate"; chatId: string; spend: Record<string, number> }
   /** Roll a clicked move again: a new roll, a new line in the player's message, a new reply. */
   | { type: "reroll"; chatId: string; messageId: string }
-  /** Do something off the page (an errand, an item, travel): no narrator turn; `times` repeats it (buying 3, training 4 sessions). */
-  | { type: "quiet"; chatId: string; actionId: string; params?: Record<string, string>; times?: number }
   | { type: "adjust_rel"; chatId: string; who: string; stat: string; value: number }
   | { type: "forget"; chatId: string; who: string }
   | { type: "builder_open"; chatId: string; mode: "build" | "refine" }

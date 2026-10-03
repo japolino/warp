@@ -143,9 +143,7 @@ export function hudParts(h: HudView, opts: HudOpts): { head: string; parts: HudP
         <span class="warp-item-side">${i.count > 1 ? `<span class="warp-kbd">×${i.count}</span>` : ""}${i.use
           ? i.use.locked
             ? `<button class="warp-btn warp-mini" disabled title="${esc(i.use.locked)}">🔒 Use</button>`
-            : `<button class="warp-btn warp-mini" data-use="${esc(i.use.id)}" title="${esc(`${i.use.label}${i.use.drafted ? "\nWarp drafted what this does from its description — check it in the Ruleset tab" : ""}`)}">${i.use.drafted ? "✎ " : ""}Use</button>${i.use.quiet
-              ? `<button class="warp-btn warp-mini warp-btn-ghost" data-use-quiet="${esc(i.use.id)}" title="${esc(`${i.use.label} — off the page, no story reply`)}">Use quietly</button>`
-              : ""}`
+            : `<button class="warp-btn warp-mini" data-use="${esc(i.use.id)}" title="${esc(`${i.use.label}${i.use.drafted ? "\nWarp drafted what this does from its description — check it in the Ruleset tab" : ""}`)}">${i.use.drafted ? "✎ " : ""}Use</button>`
           : ""}</span>
       </div>`).join("")
     : `<div class="warp-empty">Empty-handed.</div>`, !opts.compact);
@@ -274,16 +272,14 @@ function questCard(q: HudView["quests"][number]): string {
 
 /** Quests: on offer here, under way (ready to hand in first), and the last few that ended, folded. */
 function renderQuests(h: HudView, compact: boolean): HudPart | null {
-  const posted = h.errands?.board.length ?? 0;
-  if (!h.quests.length && !posted) return null;
+  if (!h.quests.length) return null;
   const offered = h.quests.filter((q) => q.status === "offered");
   const open = h.quests.filter((q) => q.status === "active" || q.status === "ready").sort((a, b) => Number(b.status === "ready") - Number(a.status === "ready"));
   const ended = h.quests.filter((q) => q.status === "done" || q.status === "failed");
   const body = [
-    posted ? `<div class="warp-row warp-quests-board"><button class="warp-btn warp-mini" data-errand-open="board" title="Take on postings off the page, in a window">📋 Open the notice board · ${posted}</button></div>` : "",
     open.map(questCard).join(""),
     offered.length ? `<div class="warp-choice-group-label">On offer here</div>${offered.map(questCard).join("")}` : "",
-    !open.length && !offered.length ? `<div class="warp-empty">No quests under way. ${posted ? "There's a notice board here." : "Look for a notice board, or people who need a hand."}</div>` : "",
+    !open.length && !offered.length ? `<div class="warp-empty">No quests under way. Look for a notice board, or people who need a hand.</div>` : "",
     ended.length ? `<details class="warp-away" data-section="quests-ended"><summary>Finished · ${ended.length}</summary><div class="warp-section-body">${ended.map(questCard).join("")}</div></details>` : "",
   ].join("");
   return part("quests", "Quests", open.length, body, !compact || open.some((q) => q.status === "ready") || offered.length > 0);
@@ -673,14 +669,12 @@ export function renderSettings(s: Settings, status: RulesetStatus | null, connec
     ${toggle("freeTextChecks", "Read my typed messages for actions", "When you type something risky, a quick referee call picks the matching action and the dice decide.", s.freeTextChecks)}
     ${toggle("narratorUpdates", "Keep state in sync with the story", "After each reply, small changes the story describes (time, mood, items, people) are recorded within the ruleset's limits. You can undo any of them.", s.narratorUpdates)}
     ${toggle("storyQuests", "Quests from the story", "When someone in the story asks you for a favour or a job and you agree, it's tracked as a quest with stakes; the story decides when it's done or failed, and they remember how it went.", s.storyQuests)}
-    ${toggle("errands", "Errands in a window", "Notice board, shops, bills, training and rest open a window and happen off the page, instead of each being a story reply.", s.errands !== false)}
-    ${toggle("quietTravel", "Travel off the page", "Clicking a place on the map takes you there without a travel paragraph; your next message starts the scene.", s.quietTravel)}
     ${toggle("sayOutcome", "Say how my move went", "When you click a move with a roll, it's settled on the click and your message says how it went, in your character's voice (the helper writes it; a set line if it can't). Swipes keep that result; use ↻ Reroll to roll again.", s.sayOutcome !== false)}
     ${toggle("swipesReroll", "Swiping rerolls the dice", "Casual: a new swipe is a new roll (for a move told in your message, ↻ Reroll does it). Turn off for Ironman: rolls stay fixed for the same move.", s.swipesReroll)}
   </div>
   <div class="warp-card">
     <h3>Display</h3>
-    ${toggle("showChoices", "Choice buttons (CYOA)", "Buttons under each reply to pick what you do next. Off: you just type — no buttons, and none are written for you (that saves a helper call per reply). Fights, shifts and endings keep their buttons; errands move to the status panel.", s.showChoices !== false)}
+    ${toggle("showChoices", "Choice buttons (CYOA)", "Buttons under each reply to pick what you do next. Off: you just type — no buttons, and none are written for you (that saves a helper call per reply). Fights, shifts and endings keep their buttons.", s.showChoices !== false)}
     ${toggle("showOdds", "Show odds on choices", "Percent chance of success on each button.", s.showOdds)}
     ${toggle("showDiceChips", "Show dice on messages", "The roll under each reply.", s.showDiceChips)}
     ${toggle("showChanges", "Show changes on messages", "What changed under each reply (time, people met, feelings, items…), with × to undo. Off: they're still in the sheet's history.", s.showChanges !== false)}

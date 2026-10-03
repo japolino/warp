@@ -33,7 +33,6 @@ A game engine under your roleplay. Warp owns stats, dice, time, inventory and re
 | Live choices | Choices written for the moment. The writer must tag each one from a fixed list, and the tag decides the check and effects; with Jev, the model weighs which kinds of move fit. Each choice can show its goal, risk and payoff in words — story stakes only; the tag still decides the odds and effects |
 | Checkpoints & endings | Save slots and a daily autosave; loading rewinds the game while the chat keeps its messages, and the ruleset decides what survives (the codex, secrets, chosen stats…). Time loops rewind by themselves when a condition holds. Endings fire by formula: the narrator writes an epilogue from what actually happened, then you start a new playthrough (carrying unlocks forward), load a save, or keep playing (unless hard mode) |
 | Your moves, told | A clicked move with a roll is settled on the click, and your message says how it went in your character's voice ("*I slip the lock on the second try…*") instead of "Pick the lock"; the narrator continues from there. Swipes keep that result; ↻ **Reroll** (Casual) rolls again and rewrites the line. Typed messages are left as you wrote them. Settings › **Say how my move went** |
-| Errands | Shopping (buying and selling), paying bills, practising a skill (a course that works a skill counts), resting and taking work off a notice board open a window and happen off the page, with no narrator reply: the dice still roll, time still passes, and the next reply gets one line about it ("Buy Soothing potion ×2 (…)"). Each also has "In the story" for when you want it narrated. Which actions count is read from their shape (`errand: shop / train / rest / false` sets it). Items can be used quietly from the inventory, and **Travel off the page** makes a map click go there without a travel paragraph. Turn the window off in Settings to keep them all as story choices |
 | Romance only | The **Romance** template is just the love story: affection, trust and attraction that can only move a few points per reply (a slow burn the narrator can't rush), people who remember what you did, a clock and calendar, and choices written for each moment (tender, playful, honest, bold, give space) with no dice. No meters, money or skills, and typed messages are never rolled. Places come from the story, so it fits any card |
 
 ## Typing freely
@@ -182,7 +181,7 @@ triggers:
 
 **Formula names:** stats, flags, `hour`, `minute`, `day`, `weekday`, `turn`, `location`, and `has()`, `count()`, `flag()`, `cond()`, `at()`, `rel(person, stat)`, `met()`, `between(v, lo, hi)`, `min`, `max`, `clamp`, `floor`, `ceil`, `round`, `abs`.
 
-The Ruleset tab lists problems in plain language, with "did you mean" suggestions for typos. Keys of parts that were taken out of Warp (`dungeons:`, `dating:`, `look:`, minigame `game:` and `gamble:`, encounter `sim:`, `lineage:`, `observers:`, `mind:`) are ignored with a plain warning; the old version is on the `legacy` branch.
+The Ruleset tab lists problems in plain language, with "did you mean" suggestions for typos. Keys of parts that were taken out of Warp (`dungeons:`, `dating:`, `look:`, minigame `game:` and `gamble:`, encounter `sim:`, `lineage:`, `observers:`, `mind:`, action `errand:`) are ignored with a plain warning; the old version is on the `legacy` branch.
 
 ## Develop
 

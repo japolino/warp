@@ -51,8 +51,6 @@ export interface TurnRecord {
   contradiction?: number;
   /** Exploring found somewhere new: the backend writes the place and moves the player there. */
   discover?: { from: string };
-  /** Done off the page (errands, quiet item use, quiet travel) after this message, one line each — told to the next reply. */
-  quiet?: string[];
   at: number;
 }
 

@@ -1,10 +1,8 @@
 // Computing the full UI state for a chat and pushing it to the frontend.
 
-import { buildErrands, errandsOpen } from "../engine/errands.js";
 import { buildChoices, buildHud, buildMap, buildRecordView } from "../engine/view.js";
-import type { ChoiceView, EncounterLogView, HudView, RecordView, SuggestionView } from "../shared/protocol.js";
+import type { ChoiceView, EncounterLogView, RecordView, SuggestionView } from "../shared/protocol.js";
 import type { Ruleset } from "../engine/ruleset.js";
-import type { GameState } from "../engine/state.js";
 import { momentKey, readyChoices } from "./drafts.js";
 import { getMessages, foldPath, liveChoicesOf, warpMeta, encounterLogOf, type Msg } from "./ledger.js";
 import { getSettings } from "./settings.js";
@@ -84,7 +82,7 @@ export async function pushState(chatId: string | null, userId?: string, force = 
       revision,
       historyConflict: conflict,
       status,
-      hud: settings.enabled ? withErrands(r, state, buildHud(r, state), settings.errands && !conflict) : null,
+      hud: settings.enabled ? buildHud(r, state) : null,
       map: settings.enabled ? buildMap(r, state) : null,
       choices: settings.enabled && !conflict ? markReady(buildChoices(r, state, { ...settings, live: liveChoicesOf(latest) }), readyChoices(chatId, momentKey(msgs, state, { r, settings }))) : [],
       records: settings.enabled ? records : [],
@@ -148,16 +146,4 @@ export async function connectionsFor(userId?: string): Promise<{ id: string; nam
   } catch {
     return [];
   }
-}
-
-/** The errand window's contents, and which items can be used off the page, when errands are on. */
-function withErrands(r: Ruleset, s: GameState, hud: HudView, on: boolean): HudView {
-  if (!on) return { ...hud, errands: null };
-  const open = errandsOpen(s);
-  const errands = buildErrands(r, s);
-  return {
-    ...hud,
-    errands,
-    items: hud.items.map((i) => (i.use && open && !i.use.locked ? { ...i, use: { ...i.use, quiet: true } } : i)),
-  };
 }

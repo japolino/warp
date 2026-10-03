@@ -13,7 +13,6 @@ import { createPanels, wireGrip } from "./frontend/panel-windows.js";
 import { restoreMaps, wireMaps } from "./frontend/map-view.js";
 import { acceptsResponse } from "./frontend/response-gate.js";
 import { logoSvg } from "./frontend/logo.js";
-import { ERRAND_STYLES, errandTabs, pickErrandTab, renderErrandEntries, renderErrands } from "./frontend/errands-ui.js";
 
 type StateMsg = Extract<BackendToFrontend, { type: "state" }>;
 
@@ -33,7 +32,6 @@ export function setup(ctx: SpindleFrontendContext) {
 
   const cleanups: (() => void)[] = [];
   cleanups.push(ctx.dom.addStyle(STYLES));
-  cleanups.push(ctx.dom.addStyle(ERRAND_STYLES));
 
   let state: StateMsg | null = null;
   let settings: Settings = { ...DEFAULT_SETTINGS };
@@ -324,11 +322,6 @@ export function setup(ctx: SpindleFrontendContext) {
     if (state?.hud) {
       // The head always stays here; each section sits here unless it's been torn off into a panel.
       const { head, parts } = hudParts(state.hud, { editing: editingBar, compact: true, map: state.map, alloc: allocDraft });
-      // Choices hidden: the errand buttons that sat with them live here instead.
-      if (settings.showChoices === false && settings.errands !== false) {
-        const entries = renderErrandEntries(state.hud.errands);
-        if (entries) parts.push({ id: "errands", title: "Errands", count: 0, open: true, body: entries });
-      }
       const mine = parts.filter((p) => panels.inMain(p.id));
       dockRoot.innerHTML = historyNotice() + head + mine.map((p) => renderPart(p, true)).join("");
       panels.render(parts);
@@ -448,7 +441,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const live = liveLog();
     const recap = live ? { foe: live.foe, rounds: live.rounds, why: renderWhyFold(state?.records.find((r) => r.messageId === live.messageId)) } : null;
     const html = settings.enabled && state?.hud && anchor
-      ? (settings.errands !== false && settings.showChoices !== false ? renderErrandEntries(state.hud.errands) : "") + renderChoices(state.choices, { showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined, encounter: state.hud.encounter, recap })
+      ? renderChoices(state.choices, { showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined, encounter: state.hud.encounter, recap })
       : "";
     if (!force && anchor === choicesFor && html === choicesHtml && choicesEl?.isConnected) return;
     if (choicesEl) { ctx.dom.uninject(choicesEl); choicesEl = null; }
@@ -528,86 +521,7 @@ export function setup(ctx: SpindleFrontendContext) {
     reconcileMessages();
     syncDockVisibility();
     syncCue();
-    syncErrands();
     if (state?.hud) lastBars = new Map(state.hud.bars.map((b) => [b.id, b.value]));
-  }
-
-  // ───────── errands: a window for things done off the page ─────────
-  let errands: { modal: ReturnType<typeof ctx.ui.showModal>; chatId: string; tab: string; draft: Record<string, number>; busy: boolean; timer: ReturnType<typeof setTimeout> | null } | null = null;
-  const errandsBusy = () => !!errands && (errands.busy || (busy.on && busy.chatId === errands.chatId));
-  function closeErrands() {
-    const e = errands;
-    errands = null;
-    if (e?.timer) clearTimeout(e.timer);
-    try { e?.modal.dismiss(); } catch { /* already gone */ }
-  }
-  function renderErrandsWindow() {
-    const v = state?.hud?.errands;
-    if (!errands || !v) return;
-    errands.tab = pickErrandTab(v, errands.tab) ?? errands.tab;
-    errands.modal.root.innerHTML = renderErrands(v, errands.tab, errands.draft, errandsBusy());
-  }
-  /** Keep the window in step with the game: new stock, money and postings; gone when there's nothing to do or the chat changed. */
-  function syncErrands() {
-    if (!errands) return;
-    const v = state?.hud?.errands;
-    if (!settings.enabled || settings.errands === false || !v || !errandTabs(v).length || state?.chatId !== errands.chatId || chatId() !== errands.chatId) { closeErrands(); return; }
-    renderErrandsWindow();
-  }
-  function openErrands(tabId: string) {
-    const cid = chatId();
-    const v = state?.hud?.errands;
-    if (!cid || !v || state?.chatId !== cid || !errandTabs(v).length) return;
-    if (errands && errands.chatId === cid) { errands.tab = tabId; renderErrandsWindow(); return; }
-    closeErrands();
-    const modal = ctx.ui.showModal({ title: "Errands", width: 560, maxHeight: 680 });
-    const me = { modal, chatId: cid, tab: tabId, draft: {} as Record<string, number>, busy: false, timer: null as ReturnType<typeof setTimeout> | null };
-    errands = me;
-    modal.onDismiss(() => { if (errands === me) { if (me.timer) clearTimeout(me.timer); errands = null; } });
-    modal.root.addEventListener("click", (e) => onErrandsClick(e.target as Element));
-    renderErrandsWindow();
-  }
-  function onErrandsClick(t: Element) {
-    if (!errands) return;
-    const tabBtn = t.closest<HTMLElement>("[data-errand-tab]");
-    if (tabBtn) { errands.tab = tabBtn.dataset.errandTab!; renderErrandsWindow(); return; }
-    const step = t.closest<HTMLButtonElement>("[data-errand-qty]");
-    if (step) {
-      if (step.disabled) return;
-      const key = step.dataset.errandQty!;
-      const max = Math.max(1, Number(step.dataset.errandMax) || 1);
-      errands.draft[key] = Math.max(1, Math.min(max, (errands.draft[key] ?? 1) + (Number(step.dataset.errandStep) || 0)));
-      renderErrandsWindow();
-      return;
-    }
-    const quiet = t.closest<HTMLButtonElement>("[data-errand-quiet]");
-    if (quiet) {
-      if (quiet.disabled || errandsBusy()) return;
-      const times = Math.max(1, Math.floor(Number(quiet.dataset.errandTimes) || 1));
-      sendQuiet(quiet.dataset.errandQuiet!, times);
-      return;
-    }
-    const story = t.closest<HTMLButtonElement>("[data-errand-story]");
-    if (story) {
-      if (story.disabled || errandsBusy()) return;
-      const id = story.dataset.errandStory!;
-      closeErrands();
-      act(id);
-    }
-  }
-  /** Do something off the page: no narrator turn; the window waits for the next state. */
-  function sendQuiet(actionId: string, times = 1) {
-    const cid = chatId();
-    if (!cid || (busy.on && busy.chatId === cid)) return;
-    send({ type: "quiet", chatId: cid, actionId, ...(times > 1 ? { times } : {}) });
-    if (errands && errands.chatId === cid) {
-      const me = errands;
-      me.busy = true;
-      if (me.timer) clearTimeout(me.timer);
-      // If no state comes back (rejected, a hiccup), unlock again.
-      me.timer = setTimeout(() => { if (errands === me && me.busy) { me.busy = false; me.timer = null; renderErrandsWindow(); } }, 15000);
-      renderErrandsWindow();
-    }
   }
 
   // ───────── template picker ─────────
@@ -773,11 +687,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const runBtn = t.closest<HTMLElement>("[data-run]");
     if (runBtn) { act(runBtn.dataset.run!); return; }
     const go = t.closest<HTMLElement>("[data-go]");
-    if (go) { if (settings.quietTravel) sendQuiet(`go:${go.dataset.go}`); else act(`go:${go.dataset.go}`); return; }
-    const errandOpen = t.closest<HTMLElement>("[data-errand-open]");
-    if (errandOpen) { openErrands(errandOpen.dataset.errandOpen!); return; }
-    const useQuiet = t.closest<HTMLElement>("[data-use-quiet]");
-    if (useQuiet) { if (!(useQuiet as HTMLButtonElement).disabled) sendQuiet(useQuiet.dataset.useQuiet!); return; }
+    if (go) { act(`go:${go.dataset.go}`); return; }
     const jump = t.closest<HTMLElement>("[data-jump]");
     if (jump) {
       const el = ctx.dom.findMessageElement(jump.dataset.jump!);
@@ -1000,8 +910,6 @@ export function setup(ctx: SpindleFrontendContext) {
   const onDocClick = (e: MouseEvent) => {
     const t = e.target as Element | null;
     if (!t?.closest) return;
-    const errandOpen = t.closest<HTMLElement>(".warp-choices [data-errand-open]");
-    if (errandOpen) { e.preventDefault(); openErrands(errandOpen.dataset.errandOpen!); return; }
     const choice = t.closest<HTMLElement>(".warp-choices [data-act]");
     if (choice) { e.preventDefault(); if (!(choice as HTMLButtonElement).disabled) act(choice.dataset.act!); return; }
     if (t.closest(".warp-choices [data-enc-send]")) { e.preventDefault(); sendEncounterLine(t.closest(".warp-choices")?.querySelector<HTMLInputElement>("[data-enc-say]") ?? null); return; }
@@ -1085,8 +993,6 @@ export function setup(ctx: SpindleFrontendContext) {
       case "state": {
         if (state?.chatId !== m.chatId) { editingBar = null; lastBars = new Map(); allocDraft = {}; }
         state = m;
-        // A quiet errand answered (or anything else changed): the window unlocks with the new stock and money.
-        if (errands) { errands.busy = false; if (errands.timer) clearTimeout(errands.timer); errands.timer = null; }
         if (m.chatId === busy.chatId && !m.busy && busy.label === "Rolling…") busy = { chatId: "", on: false, label: "" };
         if (m.busy && m.chatId) busy = { chatId: m.chatId, on: true, label: busy.label };
         renderAll();
@@ -1147,7 +1053,6 @@ export function setup(ctx: SpindleFrontendContext) {
   const cleanup = () => {
     for (const { el } of chipEls.values()) ctx.dom.uninject(el);
     if (choicesEl) ctx.dom.uninject(choicesEl);
-    closeErrands();
     for (const c of cleanups.reverse()) { try { c(); } catch { /* keep going */ } }
   };
   (globalThis as Record<string, unknown>)[CLEANUP_KEY] = cleanup;

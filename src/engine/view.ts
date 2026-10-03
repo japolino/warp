@@ -17,7 +17,6 @@ import type { ChangeView, ChoiceView, ClothingView, HudView, MapView, QuestView,
 import { PAY_PREFIX, workDigest, workMoves } from "./work.js";
 import { evalBool, evalNumber } from "./expr.js";
 import { namesIt, namesTitle } from "./mention.js";
-import { errandActionIds, errandsOpen } from "./errands.js";
 
 function pct(v: number, min: number, max: number) {
   return max > min ? Math.max(0, Math.min(1, (v - min) / (max - min))) : 0;
@@ -451,11 +450,11 @@ export function keepWords(r: Ruleset, k: KeepSpec): string {
   return parts.length ? parts.join(", ") : "nothing";
 }
 
-export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; veils: string[]; live?: LiveChoice[]; errands?: boolean; showChoices?: boolean }): ChoiceView[] {
+export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; veils: string[]; live?: LiveChoice[]; showChoices?: boolean }): ChoiceView[] {
   return choiceList(r, s, opts);
 }
 
-function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: string[]; live?: LiveChoice[]; errands?: boolean; showChoices?: boolean }): ChoiceView[] {
+function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: string[]; live?: LiveChoice[]; showChoices?: boolean }): ChoiceView[] {
   const veils = new Set(opts.veils.map((v) => v.toLowerCase()));
   const lines = new Set(opts.lines.map((v) => v.toLowerCase()));
   // Choices written for this moment come first; their tag decides the check and the odds.
@@ -474,9 +473,7 @@ function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: st
     ];
   }
   // A work shift takes over the choices until it ends.
-  // With the errands window on, shopping, training, resting, bills and the board's postings live there, not here.
-  const quiet = opts.errands && errandsOpen(s) ? errandActionIds(r) : null;
-  const work = s.encounter ? [] : workMoves(r, s).filter((m) => !(quiet && m.id.startsWith(PAY_PREFIX))).map((m) => plain(m.id, m.label, m.group, m.desc));
+  const work = s.encounter ? [] : workMoves(r, s).map((m) => plain(m.id, m.label, m.group, m.desc));
   if (s.job) return work;
   // Choices turned off: the story is typed. Only the modes played with buttons (above, and an encounter's moves) keep them.
   if (opts.showChoices === false && !s.encounter) return [];
@@ -511,7 +508,7 @@ function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: st
   for (const x of lockedExits(r, s)) travel.push({ ...plain(`${TRAVEL_PREFIX}${x.id}`, `Go to ${r.locations[x.id].name}`, "Travel", r.locations[x.id].desc ?? null), locked: x.locked });
   const encName = s.encounter ? r.encounters[s.encounter.id]?.name ?? "Encounter" : null;
   const actions = availableChoices(r, s, opts.lines)
-    .filter(({ a, id }) => !a.hidden && !quiet?.has(id))
+    .filter(({ a }) => !a.hidden)
     .map(({ id, a, target, label }) => {
       const o = odds(r, s, a, undefined, target);
       return {
@@ -531,7 +528,7 @@ function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: st
   const pool = actionPool(r, s);
   for (const id of pool.order) {
     const a = pool.defs[id];
-    if (a.hidden || a.perPerson || a.tags.some((t) => lines.has(t)) || quiet?.has(id)) continue;
+    if (a.hidden || a.perPerson || a.tags.some((t) => lines.has(t))) continue;
     // Allowed here but out of uses or unaffordable: always shown locked, with why ("Needs 80 Mana").
     const spent = whenHolds(r, s, a) ? spentLock(r, s, a) : null;
     if (!spent && !s.encounter && (!a.showLocked || (a.at.length && !a.at.includes(s.location ?? "")))) continue;
@@ -539,11 +536,11 @@ function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: st
     if (isAvailable(r, s, a)) continue;
     locked.push({ ...plain(id, a.label, encName ?? a.group ?? null, a.desc ?? null), locked: spent ?? lockReason(r, s, a) });
   }
-  return [...live, ...actions, ...abilityChoices(r, s, lines), ...itemChoices(r, s, lines), ...locked, ...questChoices(r, s, !!quiet), ...work, ...travel, ...explore];
+  return [...live, ...actions, ...abilityChoices(r, s, lines), ...itemChoices(r, s, lines), ...locked, ...questChoices(r, s), ...work, ...travel, ...explore];
 }
 
 /** Quests to hand in here, and a few on offer (from whoever's here first, then the board). */
-function questChoices(r: Ruleset, s: GameState, boardInWindow = false): ChoiceView[] {
+function questChoices(r: Ruleset, s: GameState): ChoiceView[] {
   if (s.encounter || s.job || s.ended) return [];
   const plain = (id: string, label: string, desc: string | null, why?: string): ChoiceView =>
     ({ id, label, group: "Quests", desc, odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [], ...(why ? { why } : {}) });
@@ -554,7 +551,7 @@ function questChoices(r: Ruleset, s: GameState, boardInWindow = false): ChoiceVi
     const reward = effectWords(r, s, q.reward);
     out.push(plain(`${QUEST_PREFIX}report:${id}`, to ? `Tell ${to}: "${q.name}" is done` : `Hand in "${q.name}"`, q.desc ?? null, reward ? `Reward: ${reward}` : undefined));
   }
-  const offers = questOffers(r, s).filter((o) => !(boardInWindow && o.via === "board")).sort((a, b) => Number(b.via === "giver") - Number(a.via === "giver")).slice(0, 3);
+  const offers = questOffers(r, s).sort((a, b) => Number(b.via === "giver") - Number(a.via === "giver")).slice(0, 3);
   for (const o of offers) {
     const q = r.quests[o.id];
     const reward = effectWords(r, s, q.reward);

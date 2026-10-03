@@ -31,6 +31,11 @@ actions:
   night:
     label: A night with Robin
     effects: { conceive: { with: robin, chance: 100 }, mood: +1 }
+  nap:
+    label: Nap
+    errand: rest
+    time: 60
+    effects: { mood: +2 }
 triggers:
   family: { when: "pregnant or children() > 0 or pregnancy_weeks > 2", do: { coin: +1 } }
   famous: { when: "seen_by('robin') or fame() > 2", do: { coin: +1 } }
@@ -43,7 +48,7 @@ describe("removed in-chat systems", () => {
   test("each removed key or effect gets one plain warning and is ignored", () => {
     const { ruleset: r, issues } = load();
     expect(r).not.toBeNull();
-    expect(removedWhere()).toEqual(["Actions › night › effects › conceive", "Lineage", "Mind", "Observers"].sort());
+    expect(removedWhere()).toEqual(["Actions › nap › errand", "Actions › night › effects › conceive", "Lineage", "Mind", "Observers"].sort());
     for (const i of issues.filter((x) => x.message.includes("was removed from Warp"))) {
       expect(i.level).toBe("warning");
       expect(i.message).toContain("`legacy` branch");

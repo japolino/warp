@@ -155,10 +155,6 @@ actions:
     label: Buy a potion (25 E)
     at: [apothecary]
     effects: { eros: -25, give: potion }
-    # ERRANDS: buying/selling (money for things), practice (a check that raises a skill, nothing to carry away) and rest
-    #   (time passes, the body recovers) are found from their shape and go in the Errands window, done off the page
-    #   with no narrator turn (the next reply gets one line). errand: shop | train | rest sets it; errand: false keeps
-    #   it a story choice. Quests with board: true at a board: place are taken there too.
   sneak:
     hidden: true                   # free-text only: the referee maps typed attempts to it
     desc: Staying unseen.
