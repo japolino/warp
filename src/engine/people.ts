@@ -3,6 +3,8 @@
 
 import type { Band, Ruleset, StatDef } from "./ruleset.js";
 import { bandFor, personName, statMax, type GameState } from "./state.js";
+import { practiceRepetition } from "./freeform.js";
+import { tagKey, taperRule } from "./resolve.js";
 
 /** A stat entering a new band: whose (null = {{user}}'s own meter), which stat, and the line to show. */
 export interface BandCrossing {
@@ -82,12 +84,26 @@ export function voiceLine(r: Ruleset, s: GameState, who: string): string | null 
   return parts.length ? `How ${name} acts now: ${parts.join("; ")}.` : null;
 }
 
-/** How much a live tag's positive effects still count on this target (1 = full), from its recent use. */
-export function tagTaper(_r: Ruleset, _s: GameState, _tag: string, _target?: string): number {
-  return 1;
+/**
+ * How much a live tag's gains would still count on this target if it were used now (1 = full), from its recent
+ * use: × max(floor, 1 / (1 + step × n)), n = uses in the last 8 turns or 120 in-game minutes.
+ */
+export function tagTaper(r: Ruleset, s: GameState, tag: string, target?: string): number {
+  const rule = taperRule(r);
+  return rule ? practiceRepetition(s, tagKey(tag, target), rule).multiplier : 1;
 }
 
-/** Live tags used recently (tag → uses in the taper window), for the writer's "they give less now" note. */
-export function recentTags(_r: Ruleset, _s: GameState): Record<string, number> {
-  return {};
+/** Live tags used recently (tag → uses in the taper window, over all targets), for the writer's "they give less now" note. */
+export function recentTags(r: Ruleset, s: GameState): Record<string, number> {
+  const rule = taperRule(r);
+  const out: Record<string, number> = {};
+  if (!rule) return out;
+  for (const [key, use] of Object.entries(s.practiceUse ?? {})) {
+    if (!key.startsWith("tag:")) continue;
+    const recovered = (rule.recoverMinutes > 0 && s.minutes - use.minutes >= rule.recoverMinutes) || (rule.recoverTurns > 0 && s.turn - use.turn >= rule.recoverTurns);
+    if (recovered) continue;
+    const tag = key.slice(4, key.lastIndexOf(":"));
+    out[tag] = (out[tag] ?? 0) + use.n;
+  }
+  return out;
 }

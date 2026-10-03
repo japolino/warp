@@ -30,10 +30,11 @@ export function contestId(id: string): string | null {
 
 /** Where a contest stands, in words (the narrator's and the panel's). */
 export function momentumWords(m: number, opponent: string, you = "{{user}}"): string {
-  if (m >= 100) return `${you} has won`;
+  const second = you.toLowerCase() === "you";
+  if (m >= 100) return `${you} ${second ? "have" : "has"} won`;
   if (m <= -100) return `${opponent} has won`;
-  if (m >= 60) return `${you} is close to winning`;
-  if (m >= 20) return `${you} has the upper hand`;
+  if (m >= 60) return `${you} ${second ? "are" : "is"} close to winning`;
+  if (m >= 20) return `${you} ${second ? "have" : "has"} the upper hand`;
   if (m > -20) return "evenly matched";
   if (m > -60) return `${opponent} has the upper hand`;
   return `${opponent} is close to winning`;
