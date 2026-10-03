@@ -61,9 +61,16 @@ function personActions(r: Ruleset, s: GameState, pid: string, lines: Set<string>
     const a = r.actions[id];
     if (!a.perPerson || a.hidden || a.tags.some((t) => lines.has(t))) continue;
     if (adultGated(a.tags) && (isAdult(r, s, pid) !== true || isAdult(r, s, "you") === false)) continue;
-    if (!isAvailable(r, s, a, pid)) continue;
+    if (a.targets && !a.targets.includes(pid)) continue;
     const name = personName(r, s, pid);
     const label = /\{\{target\}\}|\{target\}/i.test(a.label) ? a.label.replace(/\{\{target\}\}|\{target\}/gi, name) : a.label;
+    if (!isAvailable(r, s, a, pid)) {
+      // Out of reach right now: shown locked with why when it can't be paid, or when the author asked (`why_not:`, `requires:`).
+      const spent = whenHolds(r, s, a, pid) ? spentLock(r, s, a, pid) : null;
+      if (!spent && !a.showLocked) continue;
+      out.push({ id: `${a.id}${TARGET_SEP}${pid}`, label, group: null, desc: a.desc ?? null, odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [], difficulty: null, locked: spent ?? lockReason(r, s, a) });
+      continue;
+    }
     const o = odds(r, s, a, undefined, pid);
     out.push({
       id: `${a.id}${TARGET_SEP}${pid}`, label, group: null, desc: a.desc ?? null,

@@ -991,7 +991,8 @@ function normAction(id: string, raw: unknown, where: string, c: Ctx, known: { st
     perPerson: raw.per_person === true || raw.with === "person" || raw.with === "people" || raw.targets !== undefined,
     ...(raw.targets !== undefined ? { targets: list(raw.targets) } : {}),
     requires,
-    showLocked: raw.show_locked === true || (raw.show_locked !== false && requires.length > 0),
+    // `why_not:` (or `requires:`) means "show it locked, with why" rather than hiding it; `show_locked: false` hides it anyway.
+    showLocked: raw.show_locked === true || (raw.show_locked !== false && (requires.length > 0 || typeof raw.why_not === "string" || typeof raw.locked === "string")),
   };
 }
 
