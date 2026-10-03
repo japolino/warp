@@ -8,7 +8,7 @@ import { builderCurrent, builderOpen } from "./builder.js";
 import { BUILDER_SESSION_VERSION, restoreBuilderSession } from "./builder-session.js";
 
 // The builder adds the card's character to the people section, so the preview has someone in it.
-const template = TEMPLATES.find(t => t.id === "universal")!;
+const template = TEMPLATES.find(t => t.id === "adventure")!;
 const templateParts = template.parts.map(p => ({...p, yaml: p.label === "people" ? withCharacter(p.yaml, "Aina") : p.yaml}));
 const r = loadRuleset(templateParts.map((p, order) => ({label: p.label, content: p.yaml, order}))).ruleset!;
 let sequence = 0;
@@ -28,7 +28,7 @@ beforeEach(() => {
   sent = [];
   stored = {
     characterId, characterName: "Aina", mode: "build", step: "review",
-    connectionId: "saved-builder-model", creative: true, base: "universal",
+    connectionId: "saved-builder-model", creative: true, base: "adventure",
     analysis: null,
     rounds: [{questions: [{id: "systems", text: "Systems?", kind: "multi", options: [{id: "skills", label: "Skills"}]}], answers: {systems: ["skills"], difficulty: 3}}],
     additions: [{name: "Cooking", kind: "skill", note: "Keep this custom skill"}],

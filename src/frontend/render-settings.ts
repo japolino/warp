@@ -20,12 +20,9 @@ function boolSeg(key: keyof Settings, label: string, on: boolean, yes: string, n
     </div><small class="warp-dim">${esc(hint)}</small></div>`;
 }
 
-// Until step 4 renames them, the two templates may still have their old ids.
-const LEGACY_ID: Record<Style, string> = { story: "romance", adventure: "universal" };
-
-/** The template that installs a style. */
+/** The template that installs a style (the template ids are the style names). */
 export function templateFor(style: Style, templates: TemplateInfo[]): TemplateInfo | null {
-  return templates.find((t) => t.id === style) ?? templates.find((t) => t.id === LEGACY_ID[style]) ?? null;
+  return templates.find((t) => t.id === style) ?? null;
 }
 
 /**

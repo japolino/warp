@@ -3,8 +3,8 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { TEMPLATES } from "../engine/templates/index.js";
 
-const UNIVERSAL = TEMPLATES.find((t) => t.id === "universal")!;
-const partYaml = (label: string) => UNIVERSAL.parts.find((p) => p.label === label)?.yaml ?? "";
+const ADVENTURE = TEMPLATES.find((t) => t.id === "adventure")!;
+const partYaml = (label: string) => ADVENTURE.parts.find((p) => p.label === label)?.yaml ?? "";
 
 const sent: any[] = [];
 const prompts: string[] = [];
@@ -17,7 +17,7 @@ function reply(user: string): string {
   if (user.includes('"suggestedTemplate"')) {
     return JSON.stringify({
       summary: "Chono Aina, a sharp-tongued catgirl roommate at university. Slice of life with romance.",
-      suggestedTemplate: "universal", reason: "Light mechanics fit a slice-of-life card.",
+      suggestedTemplate: "adventure", reason: "Light mechanics fit a slice-of-life card.",
       systems: ["needs", "relationships", "money", "clothing"],
       statusBlock: { found: true, fields: ["Mood", "Affection"] },
       followUps: [{ text: "Aina gets jealous easily. Track jealousy?", kind: "single", options: ["Yes", "No"], why: "The card mentions it." }],
@@ -26,7 +26,7 @@ function reply(user: string): string {
   if (user.includes("Ask up to 4 more")) return JSON.stringify({ followUps: [{ text: "Should she have a part-time job?", kind: "single", options: ["Yes", "No"] }] });
   if (user.includes("has problems reported by the checker")) { repairCalls++; return "```yaml\n" + partYaml("rules") + "```"; }
   if (user.includes("The player wants:")) {
-    return JSON.stringify({ summary: "Added a cooking skill.", parts: { stats: partYaml("stats") + "  cooking: { kind: skill, max: 100, start: 5, grades: [F, D, C, B, A, S] }\n" } });
+    return JSON.stringify({ summary: "Added a cooking skill.", parts: { stats: partYaml("stats").replace("stats:\n", "stats:\n  cooking: { kind: skill, max: 100, start: 5, grades: [F, D, C, B, A, S] }\n") } });
   }
   const m = /Write the "(\w+)" section/.exec(user);
   if (m) {
@@ -80,7 +80,7 @@ describe("AI builder", () => {
     await b.builderStart("c1", { connectionId: "", creative: false }, undefined);
     let s = lastSession();
     expect(s.step).toBe("questions");
-    expect(s.base).toBe("universal");
+    expect(s.base).toBe("adventure");
     expect(s.analysis.statusBlock).toEqual({ found: true, fields: ["Mood", "Affection"] });
     const ids = s.rounds[0].questions.map((q: any) => q.id);
     expect(ids).toEqual(["tone", "systems", "difficulty", "relationship_depth", "f1_0"]);
@@ -100,7 +100,7 @@ describe("AI builder", () => {
     expect(s.parts.map((p: any) => p.label)).not.toContain("encounters");
     expect(repairCalls).toBeGreaterThan(0);
     expect(s.parts.every((p: any) => p.status !== "error")).toBe(true);
-    expect(s.preview.summary).toMatch(/Universal: \d+ meters/);
+    expect(s.preview.summary).toMatch(/Adventure: \d+ meters/);
     expect(s.preview.hud.bars.length).toBeGreaterThan(0);
     // One pass: no designer, depth audit or balance review in the draft.
     for (const k of ["log", "depth", "designPass", "effort", "waived"]) expect(s[k]).toBeUndefined();

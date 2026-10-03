@@ -2,6 +2,8 @@
 
 import { describe, expect, test } from "bun:test";
 import { renderSettings, renderStyleSwitch, templateFor } from "./render-settings.js";
+import { renderTemplatePicker } from "./render.js";
+import { TEMPLATES } from "../engine/templates/index.js";
 import { DEFAULT_SETTINGS, type RulesetStatus } from "../shared/protocol.js";
 
 const templates = [{ id: "story", name: "Story", blurb: "" }, { id: "adventure", name: "Adventure", blurb: "" }];
@@ -74,10 +76,18 @@ describe("Story / Adventure", () => {
     expect(renderStyleSwitch(null, templates)).not.toContain("data-style-mode");
   });
 
-  test("until the templates are renamed, the old ids still install the right style", () => {
-    const old = [{ id: "universal", name: "Universal", blurb: "" }, { id: "romance", name: "Romance", blurb: "" }];
-    expect(templateFor("story", old)?.id).toBe("romance");
-    expect(templateFor("adventure", old)?.id).toBe("universal");
+  test("the template ids are the style names", () => {
     expect(templateFor("story", templates)?.id).toBe("story");
+    expect(templateFor("adventure", templates)?.id).toBe("adventure");
+    expect(TEMPLATES.map((t) => t.id)).toEqual(["story", "adventure"]);
+  });
+
+  test("first install: always the two cards Story and Adventure, none highlighted, then Build with AI", () => {
+    const html = renderTemplatePicker(TEMPLATES.map(({ id, name, blurb }) => ({ id, name, blurb })), { name: "Mira", track: true });
+    expect(all(html, /data-template="([\w_]+)"/g)).toEqual(["story", "adventure", "__ai"]);
+    expect(html).toContain("Story (no dice)");
+    expect(html).toContain("Adventure (dice)");
+    expect(html).not.toContain('aria-pressed="true"');
+    expect(html).not.toMatch(/warp-template[^"]*(?:selected|primary)/);
   });
 });

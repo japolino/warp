@@ -241,6 +241,8 @@ test("templates: install records the template id; switching style replaces that 
   const templates = [...h.sent].reverse().find((m) => m.type === "settings").templates as { id: string }[];
   expect(templates.length).toBeGreaterThanOrEqual(2);
   await h.frontend({ type: "install_template", chatId, templateId: templates[0].id });
+  // Both templates read the greeting after an install; its push comes last.
+  await settle();
   let st = h.lastState(chatId);
   expect(st.status.state).toBe("ok");
   expect(st.status.template).toBe(templates[0].id);
@@ -248,6 +250,7 @@ test("templates: install records the template id; switching style replaces that 
   // The player's game tracks someone else too (kept across the switch).
   h.books[firstBook].entries.push({ id: "extra", world_book_id: firstBook, comment: "warp-ruleset · people extra", content: "relationships:\n  people:\n    jo: { name: Jo }\n", disabled: true, key: [] });
   await h.frontend({ type: "install_template", chatId, templateId: templates[1].id, replace: true });
+  await settle();
   st = h.lastState(chatId);
   expect(st.status.template).toBe(templates[1].id);
   expect(h.characters[charId].world_book_ids).not.toContain(firstBook);

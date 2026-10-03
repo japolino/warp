@@ -65,15 +65,15 @@ const STYLE_CARD = {
   adventure: { title: "🎲 Adventure (dice)", blurb: "Everything in Story, plus dice at risky moments and contests (fights, chases, arguments) on one momentum gauge." },
 };
 
-/** The first-install picker: Story and Adventure side by side (no default), then Build with AI. */
+/** The first-install picker: always the two cards Story and Adventure side by side (no default), then Build with AI. */
 export function renderTemplatePicker(templates: TemplateInfo[], card: { name: string; track: boolean } | null = null): string {
   const track = card
     ? `<label class="warp-toggle"><span>Track <b>${esc(card.name)}</b> as a character</span><small>${card.track ? "Their relationship with you is tracked from the start." : "This looks like a scenario or narrator card, so its name isn't added as a person. Tick if it really is one character."}</small><input type="checkbox" data-track${card.track ? " checked" : ""}></label>`
     : "";
-  const styled = (["story", "adventure"] as const).map((st) => ({ st, t: templateFor(st, templates) })).filter((x) => x.t);
-  const used = new Set(styled.map((x) => x.t!.id));
-  const cards = styled.map(({ st, t }) => `<button class="warp-card warp-template" data-template="${esc(t!.id)}"><h3>${esc(STYLE_CARD[st].title)}</h3><p>${esc(STYLE_CARD[st].blurb)}</p></button>`).join("")
-    + templates.filter((t) => !used.has(t.id)).map((t) => `<button class="warp-card warp-template" data-template="${esc(t.id)}"><h3>${esc(t.name)}</h3><p>${esc(t.blurb)}</p></button>`).join("");
+  const cards = (["story", "adventure"] as const).map((st) => {
+    const t = templateFor(st, templates);
+    return `<button class="warp-card warp-template" data-template="${esc(t?.id ?? st)}" aria-pressed="false"><h3>${esc(STYLE_CARD[st].title)}</h3><p>${esc(STYLE_CARD[st].blurb)}</p></button>`;
+  }).join("");
   return `<div class="warp-modal">
     <p style="margin:0;color:var(--warp-muted)">Pick how this chat plays. Warp adds a <b>warp-ruleset</b> lorebook to this character that you can edit like any lorebook. It's never sent to the model.</p>
     ${track}

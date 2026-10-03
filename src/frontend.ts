@@ -489,9 +489,9 @@ export function setup(ctx: SpindleFrontendContext) {
   async function confirmReplace() {
     if (state?.status.state === "none") return openPicker();
     const res = await ctx.ui.showConfirm({
-      title: "Add another ruleset?",
-      message: "This character already has warp-ruleset entries. A new template is added as another lorebook and merged with the existing rules — remove the old lorebook if you want a clean start.",
-      confirmLabel: "Choose a template",
+      title: "Replace this ruleset?",
+      message: "The new rules replace the ones Warp runs now. The current warp-ruleset lorebook stays on the character as a backup; delete it if you don't need it.",
+      confirmLabel: "Choose Story or Adventure",
       variant: "warning",
     });
     if (res.confirmed) openPicker();

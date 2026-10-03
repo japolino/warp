@@ -1,5 +1,5 @@
-// The whole-loop simulator's gate (CORE-DESIGN §2.7) on an Adventure-like and a Story-like ruleset (inline: the
-// templates are rebuilt later and get the same gate then).
+// The whole-loop simulator's gate (CORE-DESIGN §2.7) on inline Adventure-like and Story-like rulesets. The real
+// templates get the same gate in templates/templates.test.ts.
 
 import { describe, expect, test } from "bun:test";
 import { loadRuleset } from "./loader.js";

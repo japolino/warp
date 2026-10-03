@@ -1,5 +1,5 @@
-import { universal } from "./universal.js";
-import { romance } from "./romance.js";
+import { story } from "./story.js";
+import { adventure } from "./adventure.js";
 
 export interface Template {
   id: string;
@@ -9,10 +9,14 @@ export interface Template {
   parts: { label: string; yaml: string }[];
 }
 
-export const TEMPLATES: Template[] = [universal, romance];
+/** The two templates: Story (no dice) and Adventure (dice). The builder themes one of them for a card. */
+export const TEMPLATES: Template[] = [story, adventure];
+
+/** Ids of templates before the core cut, still found in saved builder drafts and installed books. */
+const OLD_IDS: Record<string, string> = { romance: "story", universal: "adventure" };
 
 export function getTemplate(id: string): Template | undefined {
-  return TEMPLATES.find((t) => t.id === id);
+  return TEMPLATES.find((t) => t.id === (OLD_IDS[id] ?? id));
 }
 
 export interface CardLike {
@@ -53,6 +57,7 @@ export function withCharacter(yaml: string, name: string): string {
   if (new RegExp(`^    ${id}:`, "m").test(yaml)) return yaml;
   const entry = `    ${id}:\n      name: ${JSON.stringify(name)}\n`;
   const m = /^  people:[^\n]*\n/m.exec(yaml);
-  if (m) return yaml.slice(0, m.index + m[0].length) + entry + yaml.slice(m.index + m[0].length);
+  // An empty map (`people: {}`) becomes a plain key, so the entry can go under it.
+  if (m) return yaml.slice(0, m.index) + m[0].replace(/^(  people:)\s*\{\s*\}/, "$1") + entry + yaml.slice(m.index + m[0].length);
   return `${yaml.replace(/\n*$/, "\n")}  people:\n${entry}`;
 }
