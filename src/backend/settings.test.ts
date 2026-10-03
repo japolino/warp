@@ -32,9 +32,9 @@ test("settings of removed parts (minigames, looks, sound, dating, drafts, consis
     setJson: async (_: string, value: any) => { stored = structuredClone(value); },
   } };
   expect((await getSettings(id)).showOdds).toBe(false);
-  await patchSettings({ hotkeys: false }, id);
+  await patchSettings({ showChanges: false }, id);
   expect(Object.keys(stored).sort()).toEqual(Object.keys(DEFAULT_SETTINGS).sort());
-  expect(stored).toMatchObject({ showOdds: false, hotkeys: false });
+  expect(stored).toMatchObject({ showOdds: false, showChanges: false });
 });
 
 test("failed durable saves do not change runtime settings and concurrent patches merge", async () => {
@@ -46,7 +46,12 @@ test("failed durable saves do not change runtime settings and concurrent patches
   } };
   await expect(patchSettings({ showOdds: false }, id)).rejects.toThrow("disk unavailable");
   expect((await getSettings(id)).showOdds).toBe(true);
-  await Promise.all([patchSettings({ showOdds: false }, id), patchSettings({ hotkeys: false }, id)]);
-  expect(stored).toMatchObject({ showOdds: false, hotkeys: false });
+  await Promise.all([patchSettings({ showOdds: false }, id), patchSettings({ showChanges: false }, id)]);
+  expect(stored).toMatchObject({ showOdds: false, showChanges: false });
   expect(await getSettings(id)).toEqual(stored);
+});
+
+test("number keys can't be switched off any more: an old saved hotkeys: false reads as on", () => {
+  expect(normalizeSettings({ hotkeys: false }).hotkeys).toBe(true);
+  expect(normalizeSettings({ hotkeys: "false" }).hotkeys).toBe(true);
 });

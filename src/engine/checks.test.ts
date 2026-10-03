@@ -145,11 +145,12 @@ describe("T-C5 old styles are refused", () => {
         crit: { label: "Crit", check: { vs: 12, crit: 10 } },
       },
     });
-    for (const id of ["d100", "pbta"]) {
-      const issue = issues.find((i) => i.where === `Actions › ${id} › check`);
-      expect(issue?.level).toBe("warning");
-      expect(issue?.message).toContain("`legacy` branch");
-    }
+    // The same old-style warning is listed once, with how many more places have it.
+    const old = issues.find((i) => i.where === "Actions › d100 › check");
+    expect(old?.level).toBe("warning");
+    expect(old?.message).toContain("`legacy` branch");
+    expect(old?.message).toContain("(Also in 1 more place.)");
+    expect(issues.find((i) => i.where === "Actions › pbta › check")).toBeUndefined();
     expect(issues.filter((i) => i.level === "error").map((i) => i.where)).toEqual(["Actions › dice › check › dice"]);
     expect(issues.find((i) => i.where === "Actions › dice › check › dice")?.level).toBe("error");
     expect(issues.find((i) => i.where === "Actions › crit › check › crit")?.level).toBe("warning");

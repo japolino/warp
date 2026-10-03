@@ -20,6 +20,8 @@ export function normalizeSettings(value: unknown): Settings {
   s.decider = s.decider === "jev" ? "jev" : "llm";
   s.jevUrl = /^https?:\/\/\S+$/i.test(s.jevUrl) ? s.jevUrl : DEFAULT_SETTINGS.jevUrl;
   if (!s.jevModel) s.jevModel = DEFAULT_SETTINGS.jevModel;
+  // Number keys have no control in Settings any more, so an old saved `false` must not stick.
+  s.hotkeys = true;
   return s;
 }
 

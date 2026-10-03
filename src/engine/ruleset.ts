@@ -439,7 +439,19 @@ export function parseClockStart(v: unknown, weekdays: string[]): number | null {
 export class Ctx {
   issues: Issue[] = [];
   err(where: string, message: string) { this.issues.push({ level: "error", where, message }); }
-  warn(where: string, message: string) { this.issues.push({ level: "warning", where, message }); }
+  /** The same warning in many places (an old ruleset's removed keys) is listed once, with how many more places have it. */
+  private repeats = new Map<string, { issue: Issue; base: string; more: number }>();
+  warn(where: string, message: string) {
+    const seen = this.repeats.get(message);
+    if (seen) {
+      seen.more++;
+      seen.issue.message = `${seen.base} (Also in ${seen.more} more place${seen.more === 1 ? "" : "s"}.)`;
+      return;
+    }
+    const issue: Issue = { level: "warning", where, message };
+    this.repeats.set(message, { issue, base: message, more: 0 });
+    this.issues.push(issue);
+  }
   /** A key from a part of Warp that was taken out: say so plainly (with what to use instead); the key is ignored. */
   removed(where: string, key: string, what: string, hint?: string) {
     this.warn(where, `\`${key}:\` (${what}) was removed from Warp, so it's ignored. The old version is on the \`legacy\` branch.${hint ? ` ${hint}` : ""}`);
