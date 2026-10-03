@@ -843,7 +843,10 @@ export function normEffect(raw: unknown, where: string, c: Ctx, known: { stats: 
   return e;
 }
 
-/** Old check styles: a check that uses them is an error and is dropped (the action still runs its `effects:`). */
+/**
+ * Old check styles (legacy d100 `chance:` and PbtA): the check is dropped with one plain warning, and the action
+ * still runs its `effects:`. A warning, not an error, so a legacy ruleset keeps loading and playing.
+ */
 const OLD_CHECK_KEYS = ["chance", "under"];
 
 /** `check: { vs: hard, add: body, label: Body }` — d20 + add vs a difficulty word, a number or a formula. */
@@ -851,7 +854,7 @@ function normCheck(raw: unknown, where: string, c: Ctx, style: Style): CheckDef 
   if (!isObj(raw)) { c.err(where, "a check should be a map, e.g. `{ vs: fair, add: body, label: Body }`"); return undefined; }
   if (style === "story") { c.err(where, "Story rulesets don't roll; remove `check:` or use `style: adventure`. The action runs its `effects:` without a roll."); return undefined; }
   if (OLD_CHECK_KEYS.some((k) => raw[k] !== undefined) || raw.style === "pbta" || raw.bands === "pbta" || raw.pbta !== undefined) {
-    c.err(where, "d100 (`chance:`) and PbtA checks were removed from Warp: every check is `{ vs: fair, add: <stat> }` (d20 + the stat vs a difficulty). This check is dropped; the action runs its `effects:` without a roll.");
+    c.warn(where, "d100 (`chance:`) and PbtA checks were removed from Warp, so this check is ignored and the move runs its `effects:` without a roll. The old version is on the `legacy` branch. Use `check: { vs: fair, add: <stat> }` (d20 + the stat vs a difficulty).");
     return undefined;
   }
   const dice = raw.dice ?? raw.roll;

@@ -179,8 +179,8 @@ describe("removed systems", () => {
     });
     expect(issues.find((i) => i.where === "Encounters")?.message).toContain("Use `conflict:`");
     expect(issues.find((i) => i.where === "Quests")?.message).toContain("Use `goals:`");
-    expect(issues.find((i) => i.where === "Actions › old › check")?.level).toBe("error");
-    expect(issues.find((i) => i.where === "Actions › pbta › check")?.level).toBe("error");
+    expect(issues.find((i) => i.where === "Actions › old › check")?.level).toBe("warning");
+    expect(issues.find((i) => i.where === "Actions › pbta › check")?.level).toBe("warning");
     for (const k of ["start_encounter", "foe", "quest"]) expect(issues.some((i) => i.where === `Actions › fight › effects › ${k}` && i.message.includes("removed"))).toBe(true);
     expect(r!.actions.old.check).toBeUndefined();
     expect("encounters" in r!).toBe(false);

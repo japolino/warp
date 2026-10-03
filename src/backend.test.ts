@@ -294,3 +294,19 @@ test("with the engine: the odds on written choices follow their difficulty words
   // "Vault the bar" is bold/hard, "Study the lock" clever/fair, both on a stat of 3.
   expect(odds["Vault the bar for the keys"]).toBeLessThan(odds["Study the lock"]);
 });
+
+test("a legacy ruleset still plays: its d100 checks and removed keys are warnings, and the move runs without a roll", async () => {
+  const legacy = `${ADVENTURE_YAML}
+weather: { start: rain }
+locations: { docks: { name: The docks } }
+`.replace("actions:\n", "actions:\n  study: { label: Study, check: { chance: 50 + mind * 3, label: Mind }, time: 60, effects: { energy: -5 } }\n");
+  const chatId = await open(legacy);
+  const st = h.lastState(chatId);
+  expect(st.status.state).toBe("ok");
+  expect(st.status.issues.every((i: any) => i.level === "warning")).toBe(true);
+  expect(st.status.issues.find((i: any) => i.where === "Actions › study › check").message).toContain("`legacy` branch");
+  await h.frontend({ type: "act", chatId, actionId: "study" });
+  const { record } = await h.generate(chatId, "You read until your eyes ache.");
+  expect(record.action.id).toBe("study");
+  expect(record.check).toBeUndefined();
+});

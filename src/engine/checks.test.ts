@@ -135,7 +135,7 @@ describe("T-C3 every tier carries a direction", () => {
 });
 
 describe("T-C5 old styles are refused", () => {
-  test("chance:, PbtA and other dice are errors; the action still runs its effects without a roll", () => {
+  test("chance: and PbtA are warnings (a legacy ruleset still loads), other dice an error; the action runs its effects without a roll", () => {
     const { r, issues } = load({
       stats: { coin: { kind: "money", start: 0 } },
       actions: {
@@ -145,7 +145,12 @@ describe("T-C5 old styles are refused", () => {
         crit: { label: "Crit", check: { vs: 12, crit: 10 } },
       },
     });
-    for (const id of ["d100", "pbta"]) expect(issues.find((i) => i.where === `Actions › ${id} › check`)?.level).toBe("error");
+    for (const id of ["d100", "pbta"]) {
+      const issue = issues.find((i) => i.where === `Actions › ${id} › check`);
+      expect(issue?.level).toBe("warning");
+      expect(issue?.message).toContain("`legacy` branch");
+    }
+    expect(issues.filter((i) => i.level === "error").map((i) => i.where)).toEqual(["Actions › dice › check › dice"]);
     expect(issues.find((i) => i.where === "Actions › dice › check › dice")?.level).toBe("error");
     expect(issues.find((i) => i.where === "Actions › crit › check › crit")?.level).toBe("warning");
     expect(r.actions.d100.check).toBeUndefined();
