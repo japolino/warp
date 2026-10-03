@@ -1166,7 +1166,7 @@ function normAction(id, raw, where, c, known, style) {
     perPerson: raw.per_person === true || raw.with === "person" || raw.with === "people" || raw.targets !== undefined,
     ...raw.targets !== undefined ? { targets: list(raw.targets) } : {},
     requires,
-    showLocked: raw.show_locked === true || raw.show_locked !== false && requires.length > 0
+    showLocked: raw.show_locked === true || raw.show_locked !== false && (requires.length > 0 || typeof raw.why_not === "string" || typeof raw.locked === "string")
   };
 }
 function normRequires(raw, where, c, known) {
@@ -2975,7 +2975,8 @@ function bandCrossings(r, before, after) {
       if (!c)
         continue;
       const own = c.dir === "up" ? c.to.say : c.to.sayDown;
-      out.push({ who, stat: id, ...c, moved: Math.abs(a - b), line: fill(own ?? `${name}: ${def.label} — ${c.to.text}.`, name) });
+      const moved = Math.abs(a - b);
+      out.push({ who, stat: id, ...c, moved, share: moved / Math.max(0.000000001, def.max - def.min), authored: !!own, line: fill(own ?? `${name}: ${def.label} — ${c.to.text}.`, name) });
     }
   }
   for (const id of r.statOrder) {
@@ -2987,7 +2988,8 @@ function bandCrossings(r, before, after) {
     if (!c)
       continue;
     const own = c.dir === "up" ? c.to.say : c.to.sayDown;
-    out.push({ who: null, stat: id, ...c, moved: Math.abs(a - b), line: own ?? c.to.text });
+    const moved = Math.abs(a - b);
+    out.push({ who: null, stat: id, ...c, moved, share: moved / Math.max(0.000000001, statMax(r, def, after) - def.min), authored: !!own, line: own ?? c.to.text });
   }
   return out;
 }
@@ -2996,10 +2998,10 @@ function crossingLines(crossings, max = 3) {
   for (const c of crossings) {
     const key = c.who ?? `you:${c.stat}`;
     const cur = best.get(key);
-    if (!cur || c.moved > cur.moved)
+    if (!cur || better(c, cur) < 0)
       best.set(key, c);
   }
-  return [...best.values()].sort((a, b) => Number(a.who === null) - Number(b.who === null) || b.moved - a.moved).slice(0, max).map((c) => c.line);
+  return [...best.values()].sort((a, b) => Number(a.who === null) - Number(b.who === null) || better(a, b)).slice(0, max).map((c) => c.line);
 }
 function voiceLine(r, s, who) {
   const name = personName(r, s, who);
@@ -3036,7 +3038,7 @@ function recentTags(r, s) {
   }
   return out;
 }
-var fill = (text, name) => text.replace(/\{name\}/g, name);
+var fill = (text, name) => text.replace(/\{name\}/g, name), better = (a, b) => Number(b.authored) - Number(a.authored) || b.share - a.share || b.moved - a.moved;
 var init_people = __esm(() => {
   init_state();
   init_freeform();
@@ -4457,9 +4459,9 @@ live_choices:
   guide: "Three different moves in the story's own words: one warm, one honest or bold, one that gives space or moves on."
   tags:
     tender:   { desc: "Something warm, gentle or caring toward someone here", per_person: true }
-    playful:  { desc: "Teasing, joking or flirting with someone here", per_person: true }
+    playful:  { desc: "Teasing or joking with someone here", per_person: true }
     honest:   { desc: "Saying something true or vulnerable to someone here", per_person: true }
-    bold:     { desc: "A bold move with someone here (closer, a confession) only when the moment invites it", per_person: true }
+    bold:     { desc: "A bold romantic move with someone here (flirting, getting closer, a confession) only when the moment invites it", per_person: true, tags: [romance] }
     space:    { desc: "Giving room: pulling back, changing the subject, letting a silence sit" }
     onward:   { desc: "Moving the story along: leaving, suggesting somewhere else, ending the day" }
 `
@@ -7920,7 +7922,28 @@ var init_loader = __esm(() => {
   BOOK_RE = /^\s*warp[-_ ]?ruleset\b/i;
 });
 
+// src/engine/adults.ts
+function isAdult(r, s, who) {
+  const age = who === "you" ? r.you.age : r.people[who]?.age;
+  if (age !== undefined && Number.isFinite(age))
+    return age >= 18;
+  const known = s.adults?.[who];
+  return known === undefined ? null : known;
+}
+function adultGated(tags) {
+  return tags.some((t) => ADULT_TAGS.has(t.toLowerCase()));
+}
+var ADULT_TAGS;
+var init_adults = __esm(() => {
+  ADULT_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut", "romance", "romantic"]);
+});
+
 // src/engine/lint.ts
+function untaggedRomance(a) {
+  if (!a.perPerson || adultGated(a.tags))
+    return false;
+  return ROMANTIC_WORDS.test([a.label, a.desc ?? "", a.say ?? ""].join(" "));
+}
 function distance(a, b) {
   const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
   for (let j = 1;j <= b.length; j++)
@@ -8110,6 +8133,13 @@ function lintRuleset(r) {
   check(r.liveChoices.when, "Live choices › when");
   for (const a of Object.values(r.liveChoices.tags))
     checkAction(a, `Live choices › tags › ${a.id}`);
+  const romanceHint = "looks romantic. If it is, add `tags: [romance]` so Warp offers it only toward someone known to be an adult.";
+  for (const a of Object.values(r.actions))
+    if (untaggedRomance(a))
+      warn(`Actions › ${a.id}`, `"${a.label}" ${romanceHint}`);
+  for (const a of Object.values(r.liveChoices.tags))
+    if (untaggedRomance(a))
+      warn(`Live choices › tags › ${a.id}`, `"${a.id}" (${a.desc ?? a.label}) ${romanceHint}`);
   for (const id of r.checks.stats)
     if (r.stats[id] && r.stats[id].kind !== "attribute" && r.stats[id].kind !== "skill")
       warn("Checks › stats", `"${id}" is a ${r.stats[id].kind}: typed attempts lean on attributes and skills`);
@@ -8140,12 +8170,18 @@ function lintRuleset(r) {
     check(g?.when, where);
   return issues;
 }
-var FUNCTIONS, REMOVED_FORMULAS, REMOVED_FORMULA_NAMES;
+var ROMANTIC_WORDS, FUNCTIONS, REMOVED_FORMULAS, REMOVED_FORMULA_NAMES;
 var init_lint = __esm(() => {
   init_expr();
   init_ruleset();
   init_state();
   init_resolve();
+  init_adults();
+  ROMANTIC_WORDS = new RegExp([
+    String.raw`\b(?:confess\w*|kiss\w*|flirt\w*|seduc\w*|romanc\w*|romantic\w*|cuddl\w*|caress\w*|smooch\w*|make out|making out|ask (?:her|him|them|\{\{?target\}?\}) out|go on a date|first date|date night|sleep with|propos(?:e|al) (?:marriage|to))\b`,
+    "고백|키스|입맞춤|뽀뽀|플러팅|유혹|데이트|스킨십|애무|연애|청혼|프러포즈",
+    "告白|キス|口説|デート|イチャ"
+  ].join("|"), "i");
   FUNCTIONS = [
     "has",
     "count",
@@ -9235,22 +9271,6 @@ async function ask(system, user, settings, userId, timeoutMs, opts = {}) {
 }
 var init_helpers = () => {};
 
-// src/engine/adults.ts
-function isAdult(r, s, who) {
-  const age = who === "you" ? r.you.age : r.people[who]?.age;
-  if (age !== undefined && Number.isFinite(age))
-    return age >= 18;
-  const known = s.adults?.[who];
-  return known === undefined ? null : known;
-}
-function adultGated(tags) {
-  return tags.some((t) => ADULT_TAGS.has(t.toLowerCase()));
-}
-var ADULT_TAGS;
-var init_adults = __esm(() => {
-  ADULT_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut", "romance", "romantic"]);
-});
-
 // src/backend/live.ts
 function liveWanted(r, s) {
   const lc = r.liveChoices;
@@ -9445,10 +9465,17 @@ function personActions(r, s, pid, lines, veils) {
       continue;
     if (adultGated(a.tags) && (isAdult(r, s, pid) !== true || isAdult(r, s, "you") === false))
       continue;
-    if (!isAvailable(r, s, a, pid))
+    if (a.targets && !a.targets.includes(pid))
       continue;
     const name = personName(r, s, pid);
     const label = /\{\{target\}\}|\{target\}/i.test(a.label) ? a.label.replace(/\{\{target\}\}|\{target\}/gi, name) : a.label;
+    if (!isAvailable(r, s, a, pid)) {
+      const spent = whenHolds(r, s, a, pid) ? spentLock(r, s, a, pid) : null;
+      if (!spent && !a.showLocked)
+        continue;
+      out.push({ id: `${a.id}${TARGET_SEP}${pid}`, label, group: null, desc: a.desc ?? null, odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [], difficulty: null, locked: spent ?? lockReason(r, s, a) });
+      continue;
+    }
     const o = odds(r, s, a, undefined, pid);
     out.push({
       id: `${a.id}${TARGET_SEP}${pid}`,
@@ -12575,7 +12602,7 @@ actions:                              # the small authored moves, shown in one "
     fail: { hint: "The pick snaps; someone heard." }
     # tiers: crit_success, success, partial, fail, crit_fail (or outcomes: { … }); a natural 20 is a critical success, a natural 1 a critical failure
     # effects: next to a check always apply; without a check, effects: is what the action does
-    tags: [crime]                     # content tags for Lines & Veils
+    tags: [crime]                     # content tags for Lines & Veils; romance / romantic / sexual also mean adults only: such a move toward someone is offered only when they are known to be an adult (tag every romantic move)
   talk:
     label: Talk with {target}
     per_person: true                  # one button per person here, in their row; {target} / target = that person
