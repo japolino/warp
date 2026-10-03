@@ -1,6 +1,7 @@
-// Build a complete immutable candidate, validate its persisted contents, then
-// publish it with one character attachment update. Old books remain a backup.
-import { loadRuleset, type RulesetPart } from "../engine/loader.js";
+// The lorebook protocol in one host-only file: which attached book holds the rules, and publishing a new
+// one. Build a complete immutable candidate, validate its persisted contents, then publish it with one
+// character attachment update. Old books remain a backup (or, on a style switch, are detached).
+import { isRulesetBookName, loadRuleset, type RulesetPart } from "../engine/loader.js";
 import { host, logError } from "./host.js";
 
 export function isInstalledRulebook(book: { metadata?: unknown }): boolean {
@@ -8,9 +9,24 @@ export function isInstalledRulebook(book: { metadata?: unknown }): boolean {
   return meta?.warp?.installedRulebook === 1;
 }
 
+/** The template id an installed book came from (its metadata), or null for builder and custom books. */
+export function templateOf(book: { metadata?: unknown } | null | undefined): string | null {
+  const t = (book?.metadata as { warp?: { template?: unknown } } | undefined)?.warp?.template;
+  return isInstalledRulebook(book ?? {}) && typeof t === "string" && t ? t : null;
+}
+
+/** Legacy books merge; a published snapshot supersedes their rules without erasing them. */
+export async function attachedRulebooks(character: { world_book_ids?: string[] }, userId?: string) {
+  const books = (await Promise.all((character.world_book_ids ?? []).map((id) => host().world_books.get(id, userId))))
+    .filter((book): book is NonNullable<typeof book> => !!book);
+  const active = [...books].reverse().find((book) => isRulesetBookName(book.name) && isInstalledRulebook(book));
+  return { books, active };
+}
+
 const installs = new Map<string, Promise<unknown>>();
 
-export function publishRulebook(characterId: string, parts: RulesetPart[], userId?: string, metadata: Record<string, unknown> = {}): Promise<string> {
+/** `replace`: the id of a book this one replaces (detached from the character once the new one is attached). */
+export function publishRulebook(characterId: string, parts: RulesetPart[], userId?: string, metadata: Record<string, unknown> = {}, replace?: string): Promise<string> {
   const key = JSON.stringify([userId, characterId]);
   const result = (installs.get(key) ?? Promise.resolve()).catch(() => {}).then(async () => {
     const checked = loadRuleset(parts);
@@ -41,7 +57,7 @@ export function publishRulebook(characterId: string, parts: RulesetPart[], userI
       // Re-read attachments so another card edit made during staging survives.
       const latest = await host().characters.get(characterId, userId);
       if (!latest) throw new Error("Character not found");
-      await host().characters.update(characterId, { world_book_ids: [...(latest.world_book_ids ?? []), book.id] }, userId);
+      await host().characters.update(characterId, { world_book_ids: [...(latest.world_book_ids ?? []).filter((id) => !replace || id !== replace), book.id] }, userId);
       return book.id;
     } catch (error) {
       const latest = await host().characters.get(characterId, userId).catch(() => null);

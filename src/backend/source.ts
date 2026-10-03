@@ -2,13 +2,17 @@
 // installing templates.
 
 import type { WorldBookEntryDTO } from "lumiverse-spindle-types";
+import yaml from "js-yaml";
 import { isRulesetBookName, isRulesetEntryTitle, loadRuleset, type RulesetPart } from "../engine/loader.js";
 import { lintRuleset } from "../engine/lint.js";
 import type { Issue, Ruleset } from "../engine/ruleset.js";
 import { getTemplate, looksLikeScenario, withCharacter } from "../engine/templates/index.js";
 import type { RulesetStatus } from "../shared/protocol.js";
 import { host, logError } from "./host.js";
-import { isInstalledRulebook, publishRulebook } from "./rulebook-install.js";
+import { attachedRulebooks, publishRulebook, templateOf } from "./rulebook-install.js";
+
+/** Moved to rulebook-install.ts (the lorebook protocol, shared with Warp Studio); kept here for old imports. */
+export { attachedRulebooks };
 
 export interface Loaded {
   characterId: string | null;
@@ -20,6 +24,8 @@ export interface Loaded {
   source: string | null;
   entryIds: string[];
   bookIds: string[];
+  /** The template the installed book came from; null for builder or custom books. */
+  template: string | null;
   at: number;
 }
 
@@ -49,25 +55,18 @@ export async function characterForChat(chatId: string, userId?: string): Promise
   return id;
 }
 
-/** Legacy books merge; a published snapshot supersedes their rules without erasing them. */
-export async function attachedRulebooks(character: { world_book_ids?: string[] }, userId?: string) {
-  const books = (await Promise.all((character.world_book_ids ?? []).map((id) => host().world_books.get(id, userId))))
-    .filter((book): book is NonNullable<typeof book> => !!book);
-  const active = [...books].reverse().find((book) => isRulesetBookName(book.name) && isInstalledRulebook(book));
-  return { books, active };
-}
-
 async function loadForCharacter(characterId: string, userId?: string): Promise<Loaded> {
   const character = await host().characters.get(characterId, userId);
   const base: Loaded = {
     characterId, characterName: character?.name ?? null,
     cardKind: character && looksLikeScenario(character) ? "scenario" : "character",
-    ruleset: null, issues: [], source: null, entryIds: [], bookIds: [], at: Date.now(),
+    ruleset: null, issues: [], source: null, entryIds: [], bookIds: [], template: null, at: Date.now(),
   };
   if (!character) return base;
   const parts: RulesetPart[] = [];
   const books: string[] = [];
   const attached = await attachedRulebooks(character, userId);
+  base.template = templateOf(attached.active);
   for (const book of attached.books) {
     const bookId = book.id;
     const included = !attached.active || attached.active.id === bookId;
@@ -165,11 +164,16 @@ export function statusOf(l: Loaded | null): RulesetStatus {
     characterName: l.characterName,
     cardKind: l.cardKind,
     tags: [...tags].sort(),
+    ...(l.ruleset ? { style: l.ruleset.style } : {}),
+    template: l.template ?? null,
   };
 }
 
-/** Create a "warp-ruleset" lorebook from a template and attach it to the chat's character. */
-export async function installTemplate(chatId: string, templateId: string, userId?: string, trackCharacter?: boolean): Promise<string> {
+/**
+ * Create a "warp-ruleset" lorebook from a template and attach it to the chat's character. `replace` switches
+ * the style: the template-installed book is replaced (detached) and the people it tracks are kept.
+ */
+export async function installTemplate(chatId: string, templateId: string, userId?: string, trackCharacter?: boolean, replace = false): Promise<string> {
   const t = getTemplate(templateId);
   if (!t) throw new Error("Unknown template");
   const characterId = await characterForChat(chatId, userId);
@@ -177,17 +181,50 @@ export async function installTemplate(chatId: string, templateId: string, userId
   const character = await host().characters.get(characterId, userId);
   if (!character) throw new Error("Character not found");
 
+  let old: { id: string; people: Record<string, unknown> } | null = null;
+  if (replace) {
+    const { active } = await attachedRulebooks(character, userId);
+    if (!active || !templateOf(active)) throw new Error("This ruleset wasn't installed from a template. Set `style:` in the ruleset instead.");
+    old = { id: active.id, people: peopleOf(await listAllEntries(active.id, userId)) };
+  }
   const parts = t.parts.map((part, i) => {
     let content = part.yaml;
     // Seed the card's own character as a tracked person so relationships work from turn one.
     const track = trackCharacter ?? !looksLikeScenario(character);
     if (part.label === "people" && character.name && track) content = withCharacter(content, character.name);
+    if (part.label === "people" && old && Object.keys(old.people).length) content = withPeople(content, old.people);
     return { label: part.label, content, order: (i + 1) * 10 };
   });
-  const bookId = await publishRulebook(characterId, parts, userId, { template: t.id });
+  const bookId = await publishRulebook(characterId, parts, userId, { template: t.id }, old?.id);
   invalidateCharacter(characterId);
   knownRulesetBookIds.add(bookId);
   return t.name;
+}
+
+/** The people (`relationships.people`) an installed book tracks, from all its entries. */
+function peopleOf(entries: WorldBookEntryDTO[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const e of entries) {
+    try {
+      const doc = yaml.load(e.content) as { relationships?: { people?: Record<string, unknown> } } | null;
+      const people = doc?.relationships?.people;
+      if (people && typeof people === "object" && !Array.isArray(people)) Object.assign(out, people);
+    } catch { /* an entry that isn't YAML keeps nothing */ }
+  }
+  return out;
+}
+
+/** Put kept people into a template's people part (the template's own people stay; kept ones win). */
+export function withPeople(content: string, people: Record<string, unknown>): string {
+  try {
+    const doc = (yaml.load(content) ?? {}) as Record<string, unknown>;
+    const rel = (doc.relationships && typeof doc.relationships === "object" ? doc.relationships : {}) as Record<string, unknown>;
+    const mine = rel.people && typeof rel.people === "object" ? rel.people as Record<string, unknown> : {};
+    doc.relationships = { ...rel, people: { ...mine, ...people } };
+    return yaml.dump(doc, { lineWidth: 120 });
+  } catch {
+    return content;
+  }
 }
 
 // ───────────────────────── who someone is ─────────────────────────
