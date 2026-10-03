@@ -310,3 +310,20 @@ locations: { docks: { name: The docks } }
   expect(record.action.id).toBe("study");
   expect(record.check).toBeUndefined();
 });
+
+test("without Jev, the call that starts a contest from the story also writes its first moves (not the plain Press on)", async () => {
+  const chatId = await open();
+  h.helper = (c: HelperCall) => {
+    if (c.kind !== "writer" || !c.user.includes("pulls a knife")) return defaultHelper(c);
+    expect(c.system).toContain("contest:body (Body)");
+    return { answers: { "here:mira": { p: 0.9 }, contest: { choice: "fight", confidence: 0.9 }, threat: { level: 1 } }, choices: [{ label: "Grab the knife arm", tag: "contest:body" }, { label: "Talk him down while backing off", tag: "contest:mind" }], texts: { foe: "the drunk" } };
+  };
+  try {
+    await h.say(chatId, "\"Easy there,\" I say.");
+    const { injected } = await h.generate(chatId, "A drunk at the end of the bar pulls a knife and lunges.");
+    void injected;
+    const st = h.lastState(chatId);
+    expect(st.hud.conflict).toMatchObject({ opponent: "the drunk", round: 0 });
+    expect(live(st).map((c: any) => c.label)).toEqual(["Grab the knife arm", "Talk him down while backing off"]);
+  } finally { h.helper = defaultHelper; }
+});

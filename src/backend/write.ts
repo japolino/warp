@@ -101,6 +101,16 @@ export function choiceLines(r: Ruleset, s: GameState, player: string, n: number,
   return lines;
 }
 
+/**
+ * Without Jev the same call may start a contest (its "contest" answer). Then the choices it writes are checked
+ * against the contest, so it is told to write two moves instead; otherwise round 1 gets the plain "Press on" moves.
+ */
+function contestStartLine(r: Ruleset, s: GameState, o: WriteInput): string[] {
+  if (s.contest || o.mode !== "all" || !o.questions?.contest) return [];
+  const kinds = Object.values(r.conflict.kinds).map((k) => `${k.label.toLowerCase()}: ${k.stats.filter((id) => r.stats[id]).map((id) => `contest:${id} (${r.stats[id].label})`).join(" or ")}`);
+  return [`If your "contest" answer is one of the kinds (it broke out in this reply), write 2 moves in it instead (3–10 words, the move only), each tagged with the ability it leans on: ${kinds.join("; ")}. Otherwise use the tags above.`];
+}
+
 /** The writer's prompt (pure, so its size and content are testable). */
 export function writerPrompt(o: WriteInput): { system: string; user: string } {
   const { r, s, player } = o;
@@ -109,7 +119,7 @@ export function writerPrompt(o: WriteInput): { system: string; user: string } {
   if (o.mode === "all" && o.questions && Object.keys(o.questions).length) {
     parts.push(`"answers": answer the typed questions about the narrator's latest reply. ${SPARSE_RULE} One key per question id:\n${ANSWER_FORMAT}`);
   }
-  if (o.count > 0) parts.push(choiceLines(r, s, player, o.count, o.tags, o.kinds, o.recent).join("\n"));
+  if (o.count > 0) parts.push([...choiceLines(r, s, player, o.count, o.tags, o.kinds, o.recent), ...contestStartLine(r, s, o)].join("\n"));
   const textLines = o.mode === "all" && o.questions ? conditionalTexts(o.questions, player) : o.tasks.map((t) => taskLine(r, s, t, player));
   if (textLines.length) parts.push(`"texts": ${o.mode === "all" ? "only when an answer calls for one, write it:" : "write exactly these:"}\n${textLines.join("\n")}`);
   sys.push(...parts);
