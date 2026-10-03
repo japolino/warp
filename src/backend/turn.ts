@@ -1,6 +1,6 @@
 // The turn pipeline:
 //   interceptor  → read intent + scene triggers (decider) → roll → odds for decide blocks → inject
-//   generation end → attach the record to the new swipe → bookkeeping + consistency → push UI
+//   generation end → attach the record to the new swipe → bookkeeping → push UI
 
 import type { InterceptorContextDTO, InterceptorResultDTO, LlmMessageDTO } from "lumiverse-spindle-types";
 import type { Decider } from "../engine/decide.js";
@@ -11,7 +11,7 @@ import { applyEvent, cloneState, type GameState } from "../engine/state.js";
 import { outcomePacket, sceneHints, stateDigest } from "../engine/view.js";
 import { buildInjection, fillNames, injectInto } from "./inject.js";
 import type { Settings } from "../shared/protocol.js";
-import { bookkeeping, contradiction, odds, readTurn } from "./decisions.js";
+import { bookkeeping, odds, readTurn } from "./decisions.js";
 import { getTurnDecider } from "./deciders.js";
 import { extract, type ExtractPart } from "./helpers.js";
 import { host, logError, toast } from "./host.js";
@@ -293,8 +293,7 @@ async function proposeChanges(decider: Decider, r: Ruleset, p: Pending, reply: s
 }
 
 /**
- * Everything after a reply lands: reading the story's changes, the consistency
- * check, then live choices.
+ * Everything after a reply lands: reading the story's changes, then live choices.
  */
 export async function afterReply(p: Pending, msg: Msg, content: string, userId?: string): Promise<void> {
   const chatId = p.chatId;
@@ -320,14 +319,9 @@ export async function afterReply(p: Pending, msg: Msg, content: string, userId?:
   // Choices hidden: nobody would see them, so none are written.
   const wantLive = r.liveChoices.enabled && settings.showChoices;
   const appended = p.continueFrom !== undefined && content.startsWith(p.continueFrom) ? content.slice(p.continueFrom.length) : content;
-  if (settings.narratorUpdates || settings.consistencyCheck || wantLive) {
+  if (settings.narratorUpdates || wantLive) {
     host().sendToFrontend({ type: "busy", chatId, busy: true, label: "Updating state…" }, userId);
-    const [proposal, contra] = await Promise.all([
-      settings.narratorUpdates && appended.trim() ? proposeChanges(decider, r, p, appended, settings, userId) : Promise.resolve(null),
-      settings.consistencyCheck && decider.id !== "rules"
-        ? contradiction({ decider, r, s: p.after, reply: content, outcome: p.outcome })
-        : Promise.resolve(null),
-    ]);
+    const proposal = settings.narratorUpdates && appended.trim() ? await proposeChanges(decider, r, p, appended, settings, userId) : null;
     // Extraction extends the current record, preserving edits made while it ran.
     let committed = false;
     await patchWarpMeta(chatId, msg.id, async (w) => {
@@ -343,9 +337,7 @@ export async function afterReply(p: Pending, msg: Msg, content: string, userId?:
       const state = folded.state;
       const action = p.continueFrom === undefined && p.rec.action ? { id: p.rec.action.id, tags: actionTags(r, p.rec.action.id) } : undefined;
       const events = proposal ? applyProposal(r, state, proposal, { text: `${p.playerText}\n${appended}`, action }) : [];
-      const changed = existing.events.length !== p.rec.events.length || events.length > 0;
-      const rec = { ...existing, events: [...existing.events, ...events],
-        ...(!changed && contra !== null ? { contradiction: contra } : {}) };
+      const rec = { ...existing, events: [...existing.events, ...events] };
       committed = true;
       // Invalidate old choices before writing replacements, including failed/empty output.
       return { ...w, swipes: { ...w.swipes, [String(swipe)]: rec },

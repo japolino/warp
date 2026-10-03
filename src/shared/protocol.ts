@@ -198,8 +198,6 @@ export interface RecordView {
   confidence: number | null;
   /** NPC/world reactions the engine rolled on model odds. */
   decisions: { ask: string; picked: string; p: number; source: "model" | "weights"; odds: { desc: string; p: number }[] }[];
-  /** Probability the reply contradicts the state (shown when high). */
-  contradiction: number | null;
   /** The player's message this reply answers, when the turn can still be redone. */
   redoFrom: string | null;
   /** The player's message told a roll made on the click: roll again from it (rewrites the line and the reply). */
@@ -260,8 +258,6 @@ export interface Settings {
   autoConfidence: number;
   /** Between this and autoConfidence, offer the action as a one-tap suggestion instead. */
   askConfidence: number;
-  /** After each reply, check whether it contradicts the game state. */
-  consistencyCheck: boolean;
   /** A clicked move is rolled on the click, and the player's message says how it went, in their voice. */
   sayOutcome: boolean;
   /** Choice buttons under the reply (the CYOA). Off: none, and none are written — fights and endings keep theirs. */
@@ -288,7 +284,6 @@ export const DEFAULT_SETTINGS: Settings = {
   storyQuests: true,
   autoConfidence: 0.75,
   askConfidence: 0.4,
-  consistencyCheck: false,
   sayOutcome: true,
   showChoices: true,
   showChanges: true,

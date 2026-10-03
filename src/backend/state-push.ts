@@ -64,7 +64,7 @@ export async function pushState(chatId: string | null, userId?: string, force = 
         if (settings.swipesReroll && pw?.intent?.tier && pw.said && redoable(prev!.id)) v.rerollFrom = prev!.id;
         return v;
       })
-      .filter((v) => v.check || v.changes.length || v.action || v.decisions.length || (v.contradiction ?? 0) >= 0.6);
+      .filter((v) => v.check || v.changes.length || v.action || v.decisions.length);
 
     const suggestions: SuggestionView[] = [];
     for (const m of msgs.slice(-6)) {

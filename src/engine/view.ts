@@ -585,7 +585,6 @@ export function buildRecordView(r: Ruleset, messageId: string, swipe: number, re
         odds: Object.entries(d.p).map(([k, p]) => ({ desc: d.descs?.[k] ?? spec?.options.find((o) => o.id === k)?.desc ?? k, p })).sort((a, b) => b.p - a.p),
       };
     }),
-    contradiction: rec.contradiction ?? null,
     redoFrom: null,
   };
 }

@@ -333,9 +333,6 @@ export function renderChips(rec: RecordView, opts: { showDice: boolean; showChan
     const odds = d.odds.map((o) => `${o.desc} ${Math.round(o.p * 100)}%`).join(" · ");
     out.push(`<span class="warp-chip warp-decision" title="${esc(`${d.ask}\n${odds}\n${d.source === "model" ? "Odds from the decision model; the engine rolled." : "Odds from the ruleset's weights; the engine rolled."}`)}">🎭 ${esc(d.picked)} <span class="warp-dim">${Math.round(d.p * 100)}%</span></span>`);
   }
-  if ((rec.contradiction ?? 0) >= 0.6) {
-    out.push(`<span class="warp-chip warp-tone-warn" title="The decision model thinks this reply may contradict the game state (${Math.round(rec.contradiction! * 100)}%). Consider swiping.">⚠ may contradict the state</span>`);
-  }
   const whys: string[] = [];
   // Changes turned off: none under the message (they're still in the sheet's history, with undo).
   for (const ch of opts.showChanges === false ? [] : rec.changes) {
@@ -446,7 +443,6 @@ function renderDecider(s: Settings, jevKeySet: boolean): string {
     <label class="warp-slider"><span>Offer a one-tap “Roll it?” from <b>${pct(s.askConfidence)}%</b></span>
       <input type="range" min="10" max="95" value="${pct(s.askConfidence)}" data-setting-pct="askConfidence"></label>
     </details>
-    ${toggle("consistencyCheck", "Check replies against the state", "Flags replies that contradict the game (wrong place, items, injuries, dice result). One extra quick question per reply — cheap with Jev.", s.consistencyCheck)}
     <div class="warp-row"><button class="warp-btn" data-test-decider>Test decision model</button></div>
   </div>`;
 }

@@ -22,7 +22,7 @@ beforeEach(() => {
     macros: { resolve: async () => ({ text: "Sam" }) },
     userStorage: {
       getJson: async (path: string, opts: any) => path.startsWith("builder/") ? stored ?? opts.fallback : {
-        ...DEFAULT_SETTINGS, decider: "llm", narratorUpdates: false, consistencyCheck: false,
+        ...DEFAULT_SETTINGS, decider: "llm", narratorUpdates: false,
       },
       setJson: async (_: string, value: unknown) => { stored = structuredClone(value); },
     },
@@ -66,5 +66,5 @@ test("settings keep basics, with no removed parts", () => {
   const html = renderSettings(DEFAULT_SETTINGS, null, []);
   expect(html).toContain('data-setting="enabled"');
   for (const gone of ['data-setting="minigames"', 'data-setting="look"', 'data-setting="sfx"', 'data-setting="fx"', "themeDating", "dateImages",
-    'data-setting="drafts"', 'data-setting="prewrite"', "advanced-generation"]) expect(html).not.toContain(gone);
+    'data-setting="drafts"', 'data-setting="prewrite"', "advanced-generation", 'data-setting="consistencyCheck"']) expect(html).not.toContain(gone);
 });

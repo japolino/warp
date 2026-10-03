@@ -66,8 +66,6 @@ Confidence sets the friction when you type instead of clicking:
 - **between thresholds** (default 40–75%) → no roll; a **🎲 Roll *Pick a pocket*? [Roll it]** chip appears on your message. Rolling redoes that turn.
 - **below** → treated as plain roleplay.
 
-Optional **consistency check** flags replies that contradict the state (⚠ chip).
-
 **Why?** — every change chip on a reply can be opened to see what caused it: the roll, the rule and its condition, the time that passed, or what was read from the story.
 
 ## Where rules live

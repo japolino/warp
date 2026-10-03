@@ -12,8 +12,8 @@ test("legacy or malformed settings normalize before any runtime consumer reads t
   expect(s).not.toHaveProperty("prewrite");
 });
 
-test("settings of removed parts (minigames, looks, sound, dating, drafts) are dropped when read and on the next save", async () => {
-  const old = { minigames: "always", minigameLook: "scifi", look: "medieval", sfx: "all", sfxVolume: 0.2, fx: "off", themeDating: true, dateImages: true, sceneLines: "scripted", drafts: 3, prewrite: 2 };
+test("settings of removed parts (minigames, looks, sound, dating, drafts, consistency check) are dropped when read and on the next save", async () => {
+  const old = { minigames: "always", minigameLook: "scifi", look: "medieval", sfx: "all", sfxVolume: 0.2, fx: "off", themeDating: true, dateImages: true, sceneLines: "scripted", drafts: 3, prewrite: 2, consistencyCheck: true };
   expect(Object.keys(normalizeSettings(old)).sort()).toEqual(Object.keys(DEFAULT_SETTINGS).sort());
   const id = "removed-settings";
   let stored: any = { ...old, showOdds: false };

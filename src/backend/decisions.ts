@@ -3,7 +3,6 @@
 //   readTurn     — which action (if any) the player's text attempts, how hard, and scene triggers
 //   odds         — probabilities for `decide:` blocks (the engine rolls on them)
 //   bookkeeping  — atomic "what changed?" questions after a reply (System-1 path)
-//   consistency  — does the reply contradict the game state?
 
 import { mentions } from "../engine/mention.js";
 import type { Answer, Answers, Decider, Questions } from "../engine/decide.js";
@@ -624,21 +623,4 @@ export async function bookkeeping(opts: {
     needsWriting.add(g);
   }
   return { proposal: p, needsWriting };
-}
-
-// ───────────────────────── consistency ─────────────────────────
-
-export async function contradiction(opts: {
-  decider: Decider; r: Ruleset; s: GameState; reply: string; outcome: string | null;
-}): Promise<number | null> {
-  const q: Questions = {
-    contradicts: {
-      type: "noul",
-      instructions: "The narrator's reply contradicts the game state or the decided outcome (wrong location, items, injuries, relationships, time of day, or a different result than the dice gave)",
-    },
-  };
-  const state = { game_state: stateDigest(opts.r, opts.s), decided_outcome: opts.outcome ?? "(none)", narrator_reply: clip(opts.reply, 6000) };
-  const ans = await safeAsk(opts.decider, state, q, 8000, "consistency");
-  const a = ans.contradicts;
-  return a?.type === "noul" ? a.noul : null;
 }

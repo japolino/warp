@@ -43,8 +43,6 @@ export interface TurnRecord {
   decisions?: DecisionResult[];
   /** How sure the adjudicator was when it read the player's message (0–1). */
   confidence?: number;
-  /** Consistency check: probability the reply contradicts the state. */
-  contradiction?: number;
   at: number;
 }
 
