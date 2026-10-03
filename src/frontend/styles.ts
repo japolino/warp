@@ -285,14 +285,14 @@ export const STYLES = `
 .warp-momentum-mark { position: absolute; top: -3px; width: 4px; height: 14px; margin-left: -2px; border-radius: 2px; background: var(--warp-text); transition: left 400ms ease; }
 
 /* ───────── under each reply: one dice chip + one "what changed" line ───────── */
-.warp-changed { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; color: var(--warp-muted); font-size: 12px; }
+.warp-whatchanged { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; color: var(--warp-muted); font-size: 12px; }
 .warp-ch { display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; }
 .warp-ch-line { color: var(--warp-text); font-style: italic; white-space: normal; }
 .warp-ch-sep { color: var(--warp-dim); }
-.warp-changed:not([data-more-open]) .warp-ch-extra, .warp-changed:not([data-more-open]) .warp-ch-extra + .warp-ch-sep,
-.warp-changed:not([data-more-open]) .warp-ch-sep:has(+ .warp-ch-extra) { display: none; }
+.warp-whatchanged:not([data-more-open]) .warp-ch-extra, .warp-whatchanged:not([data-more-open]) .warp-ch-extra + .warp-ch-sep,
+.warp-whatchanged:not([data-more-open]) .warp-ch-sep:has(+ .warp-ch-extra) { display: none; }
 .warp-ch-more { font: inherit; font-size: 11.5px; background: none; border: 1px dashed var(--warp-border); border-radius: 999px; color: var(--warp-muted); padding: 0 8px; cursor: pointer; }
-.warp-changed[data-more-open] .warp-ch-more { display: none; }
+.warp-whatchanged[data-more-open] .warp-ch-more { display: none; }
 .warp-choice-why { display: block; font-size: 11px; color: var(--warp-dim); margin-top: 1px; }
 .warp-choice-locked { opacity: .55; cursor: not-allowed; }
 .warp-choice-item { border-style: dashed; }

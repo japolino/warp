@@ -6,3 +6,15 @@ export function acceptsResponse(message: BackendToFrontend, activeChat: string |
   if (message.type === "builder") return message.chatId === undefined || message.chatId === activeChat;
   return true;
 }
+
+/** A click on a choice is not repeated until the backend answers (or this long passes). */
+export const ACT_GUARD_MS = 4000;
+
+/**
+ * May a choice be sent now? Never refused because the backend is busy (writing the next choices, or the
+ * reply): the backend waits for its own commit. Only a second click right after the first, in the same chat,
+ * waits for the backend's answer.
+ */
+export function mayAct(pending: { chatId: string; at: number } | null, chatId: string, now: number): boolean {
+  return !pending || pending.chatId !== chatId || now - pending.at >= ACT_GUARD_MS;
+}

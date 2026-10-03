@@ -93,7 +93,7 @@ export function renderReply(rec: RecordView, opts: ReplyOpts): string {
       ? `<button class="warp-chip-undo" data-undo="${esc(it.undo.join(","))}" title="Undo this change" aria-label="Undo ${esc(it.text)}">×</button>`
       : ""}</span>`);
     const more = items.length > SHOWN_CHANGES ? `<button class="warp-ch-more" data-more>+${items.length - SHOWN_CHANGES} more</button>` : "";
-    out.push(`<div class="warp-changed">${shown.join(`<span class="warp-ch-sep" aria-hidden="true">·</span>`)}${more}</div>`);
+    out.push(`<div class="warp-whatchanged">${shown.join(`<span class="warp-ch-sep" aria-hidden="true">·</span>`)}${more}</div>`);
   }
   return out.join("");
 }

@@ -28,6 +28,10 @@ describe("sections", () => {
     for (const s of ["Health Fine", "💰 $50", "Looks: short, scar over one eye", "Wears: rain-soaked coat", "Carrying · 1", "Rope", "×2", "Skills & attributes · 1"]) expect(t).toContain(s);
   });
 
+  test("nothing carried: no Carrying fold", () => {
+    expect(text(panel(null, { items: [] }))).not.toContain("Carrying");
+  });
+
   test("People: here first, the rest under Elsewhere; looks, bands, memories and their own actions", () => {
     const html = panel();
     const t = text(html);

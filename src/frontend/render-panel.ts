@@ -171,7 +171,9 @@ function youSection(h: HudView, opts: HudOpts): HudPart {
         <span class="warp-item-side">${i.count > 1 ? `<span class="warp-kbd">×${i.count}</span>` : ""}${use}${editButton(key, `Fix how many ${i.name} you have`)}</span>
       </div>${opts.editing === key ? fixRow(key, "item", i.id, numberInput(key, i.count, `${i.name}: how many`, opts, ` min="0" step="1"`)) : ""}`;
   }).join("");
-  const carrying = `<details class="warp-sub" data-section="you-items"${!opts.compact || h.items.length <= 3 ? " open" : ""}><summary>Carrying${h.items.length ? ` · ${h.items.length}` : ""}</summary><div class="warp-sub-body">${items || `<div class="warp-empty">Empty-handed.</div>`}</div></details>`;
+  const carrying = h.items.length
+    ? `<details class="warp-sub" data-section="you-items"${!opts.compact || h.items.length <= 3 ? " open" : ""}><summary>Carrying · ${h.items.length}</summary><div class="warp-sub-body">${items}</div></details>`
+    : "";
 
   // Rows filed under their headings (`group:`, else Attributes / Skills).
   const skillRow = (s: HudView["skills"][number]) => {

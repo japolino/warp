@@ -15,15 +15,13 @@ import { renderSettings, renderStyleSwitch } from "./frontend/render-settings.js
 import { renderJournal, renderRulesetCard, renderTemplatePicker } from "./frontend/render.js";
 import { connectPublicEvents, toWarpState } from "./frontend/public-events.js";
 import { newRolls, playRoll, prefersReducedMotion } from "./frontend/roll-fx.js";
-import { acceptsResponse } from "./frontend/response-gate.js";
+import { acceptsResponse, mayAct } from "./frontend/response-gate.js";
 import { logoSvg } from "./frontend/logo.js";
 
 type StateMsg = Extract<BackendToFrontend, { type: "state" }>;
 
 const CLEANUP_KEY = "__warpCleanup";
 const ICON = logoSvg({ size: 20 });
-/** A click on a choice is not repeated until the backend answers (or this long passes). */
-const ACT_GUARD_MS = 4000;
 
 function store(key: string, value?: string): string | null {
   try {
@@ -461,8 +459,11 @@ export function setup(ctx: SpindleFrontendContext) {
     const reduced = prefersReducedMotion();
     requestAnimationFrame(() => {
       for (const r of recs) {
-        const row = chipEls.get(r.messageId)?.el;
-        if (row instanceof HTMLElement && row.isConnected) playRoll(row, r, reduced);
+        const sel = `.warp-chips[data-warp-chips="${CSS.escape(r.messageId)}"]`;
+        const el = chipEls.get(r.messageId)?.el;
+        const row = ctx.dom.findMessageElement(r.messageId)?.querySelector<HTMLElement>(sel)
+          ?? (el instanceof HTMLElement ? (el.matches(sel) ? el : el.querySelector<HTMLElement>(sel)) : null);
+        if (row?.isConnected) playRoll(row, r, reduced);
       }
     });
   }
@@ -854,7 +855,7 @@ export function setup(ctx: SpindleFrontendContext) {
   function act(actionId: string, params?: Record<string, string>) {
     const cid = chatId();
     if (!cid) return;
-    if (pendingAct && pendingAct.chatId === cid && Date.now() - pendingAct.at < ACT_GUARD_MS) return;
+    if (!mayAct(pendingAct, cid, Date.now())) return;
     pendingAct = { chatId: cid, at: Date.now() };
     send({ type: "act", chatId: cid, actionId, ...(params ? { params } : {}) });
   }
@@ -890,7 +891,7 @@ export function setup(ctx: SpindleFrontendContext) {
       return;
     }
     const more = t.closest<HTMLElement>(".warp-chips [data-more]");
-    if (more) { more.closest(".warp-changed")?.setAttribute("data-more-open", ""); return; }
+    if (more) { more.closest(".warp-whatchanged")?.setAttribute("data-more-open", ""); return; }
     const redo = t.closest<HTMLElement>(".warp-chips [data-redo]");
     if (redo) { e.preventDefault(); void confirmRedo(redo); return; }
     const undo = t.closest<HTMLElement>(".warp-chips [data-undo]");

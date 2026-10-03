@@ -92,7 +92,7 @@ describe('the "what changed" line', () => {
   test("Show what changed off: the dice chip still shows, the line doesn't", () => {
     const html = renderReply(record({ ...rec, check: check() }), { showChanges: false, latest: true });
     expect(html).toContain("warp-dice");
-    expect(html).not.toContain("warp-changed");
+    expect(html).not.toContain("warp-whatchanged");
     expect(renderReply(rec, { showChanges: false, latest: true })).toBe("");
   });
 
