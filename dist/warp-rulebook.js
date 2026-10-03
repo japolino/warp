@@ -19459,6 +19459,8 @@ function choiceList(r, s, opts) {
     const more = moves.length > featured.length ? [plain("date:open", "More…", lastGroup, "Every topic, gift and move — and what you know about them")] : [];
     return [...featured, ...more];
   }
+  if (opts.showChoices === false && !s.encounter)
+    return [];
   const talk = moves.filter((m) => m.featured).map(asChoice);
   const dungeons = dungeonsHere(r, s).map((d) => {
     const shut = dungeonLock(r, s, d);

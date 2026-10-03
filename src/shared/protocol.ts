@@ -541,6 +541,8 @@ export interface Settings {
   quietTravel: boolean;
   /** A clicked move is rolled (or played) on the click, and the player's message says how it went, in their voice. */
   sayOutcome: boolean;
+  /** Choice buttons under the reply (the CYOA). Off: none, and none are written — fights, shifts, dungeons, dates and endings keep theirs. */
+  showChoices: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -578,6 +580,7 @@ export const DEFAULT_SETTINGS: Settings = {
   errands: true,
   quietTravel: false,
   sayOutcome: true,
+  showChoices: true,
 };
 
 export interface TemplateInfo { id: string; name: string; blurb: string }

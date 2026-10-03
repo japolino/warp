@@ -177,3 +177,12 @@ describe("normalizer", () => {
     expect(issues[0].level).toBe("error");
   });
 });
+
+describe("choices turned off", () => {
+  test("no buttons under the story", () => {
+    const r = hometown();
+    const s = initialState(r);
+    expect(buildChoices(r, s, { lines: [], veils: [] }).length).toBeGreaterThan(0);
+    expect(buildChoices(r, s, { lines: [], veils: [], showChoices: false })).toEqual([]);
+  });
+});

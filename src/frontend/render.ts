@@ -710,6 +710,7 @@ export function renderSettings(s: Settings, status: RulesetStatus | null, connec
   </div>
   <div class="warp-card">
     <h3>Display</h3>
+    ${toggle("showChoices", "Choice buttons (CYOA)", "Buttons under each reply to pick what you do next. Off: you just type — no buttons, and none are written for you (that saves a helper call per reply). Fights, shifts, dungeons, dates and endings keep their buttons; errands move to the status panel.", s.showChoices !== false)}
     ${toggle("showOdds", "Show odds on choices", "Percent chance of success on each button.", s.showOdds)}
     ${toggle("showDiceChips", "Show dice & changes on messages", "The roll and what changed, under each reply.", s.showDiceChips)}
     ${toggle("hotkeys", "Number keys pick choices", "Press 1–9 (0 for 10) when you're not typing.", s.hotkeys)}

@@ -459,7 +459,7 @@ export function keepWords(r: Ruleset, k: KeepSpec): string {
   return parts.length ? parts.join(", ") : "nothing";
 }
 
-export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; veils: string[]; live?: LiveChoice[]; minigames?: "off" | "ask" | "always"; minigameScope?: GamesScope; errands?: boolean }): ChoiceView[] {
+export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; veils: string[]; live?: LiveChoice[]; minigames?: "off" | "ask" | "always"; minigameScope?: GamesScope; errands?: boolean; showChoices?: boolean }): ChoiceView[] {
   const out = choiceList(r, s, opts);
   for (const c of out) withMindCounterplay(r, s, c, opts.live ?? []);
   if (opts.minigames && opts.minigames !== "off") for (const c of out) withGame(r, s, c, opts.minigameScope ?? "rulebook", opts.live ?? []);
@@ -524,7 +524,7 @@ function withGame(r: Ruleset, s: GameState, c: ChoiceView, scope: GamesScope, li
   if (g) c.game = g;
 }
 
-function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: string[]; live?: LiveChoice[]; errands?: boolean }): ChoiceView[] {
+function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: string[]; live?: LiveChoice[]; errands?: boolean; showChoices?: boolean }): ChoiceView[] {
   const veils = new Set(opts.veils.map((v) => v.toLowerCase()));
   const lines = new Set(opts.lines.map((v) => v.toLowerCase()));
   // Choices written for this moment come first; their tag decides the check and the odds.
@@ -568,6 +568,8 @@ function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: st
     const more = moves.length > featured.length ? [plain("date:open", "More…", lastGroup, "Every topic, gift and move — and what you know about them")] : [];
     return [...featured, ...more];
   }
+  // Choices turned off: the story is typed. Only the modes played with buttons (above, and an encounter's moves) keep them.
+  if (opts.showChoices === false && !s.encounter) return [];
   const talk = moves.filter((m) => m.featured).map(asChoice);
   const dungeons = dungeonsHere(r, s).map((d) => {
     const shut = dungeonLock(r, s, d);

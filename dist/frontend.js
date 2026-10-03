@@ -47,7 +47,8 @@ var init_protocol = __esm(() => {
     imageConnectionId: "",
     errands: true,
     quietTravel: false,
-    sayOutcome: true
+    sayOutcome: true,
+    showChoices: true
   };
 });
 
@@ -1408,6 +1409,7 @@ function renderSettings(s, status, connections, jevKeySet = false, imageConnecti
   </div>
   <div class="warp-card">
     <h3>Display</h3>
+    ${toggle("showChoices", "Choice buttons (CYOA)", "Buttons under each reply to pick what you do next. Off: you just type — no buttons, and none are written for you (that saves a helper call per reply). Fights, shifts, dungeons, dates and endings keep their buttons; errands move to the status panel.", s.showChoices !== false)}
     ${toggle("showOdds", "Show odds on choices", "Percent chance of success on each button.", s.showOdds)}
     ${toggle("showDiceChips", "Show dice & changes on messages", "The roll and what changed, under each reply.", s.showDiceChips)}
     ${toggle("hotkeys", "Number keys pick choices", "Press 1–9 (0 for 10) when you're not typing.", s.hotkeys)}
@@ -15934,6 +15936,11 @@ function setup(ctx) {
       const withYou = dollLab.sceneSection();
       if (withYou)
         parts.push(withYou);
+      if (settings.showChoices === false && settings.errands !== false) {
+        const entries = renderErrandEntries(state.hud.errands);
+        if (entries)
+          parts.push({ id: "errands", title: "Errands", count: 0, open: true, body: entries });
+      }
       const mine = parts.filter((p) => panels.inMain(p.id));
       dockRoot.innerHTML = historyNotice() + head + mine.map((p) => renderPart(p, true)).join("");
       panels.render(parts);
@@ -16051,7 +16058,7 @@ function setup(ctx) {
     const isBusy = busy.on && busy.chatId === state?.chatId;
     const live = liveLog();
     const recap = live ? { foe: live.foe, rounds: live.rounds, why: renderWhyFold(state?.records.find((r) => r.messageId === live.messageId)) } : null;
-    const html = settings.enabled && state?.hud && anchor ? (settings.errands !== false ? renderErrandEntries(state.hud.errands) : "") + renderChoices(state.choices, { minigames: settings.minigames, showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined, encounter: state.hud.encounter, recap }) : "";
+    const html = settings.enabled && state?.hud && anchor ? (settings.errands !== false && settings.showChoices !== false ? renderErrandEntries(state.hud.errands) : "") + renderChoices(state.choices, { minigames: settings.minigames, showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined, encounter: state.hud.encounter, recap }) : "";
     if (!force && anchor === choicesFor && html === choicesHtml && choicesEl?.isConnected)
       return;
     if (choicesEl) {

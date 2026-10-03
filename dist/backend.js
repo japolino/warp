@@ -19102,7 +19102,8 @@ var init_protocol = __esm(() => {
     imageConnectionId: "",
     errands: true,
     quietTravel: false,
-    sayOutcome: true
+    sayOutcome: true,
+    showChoices: true
   };
 });
 
@@ -21484,6 +21485,8 @@ function choiceList(r, s, opts) {
     const more = moves.length > featured.length ? [plain("date:open", "More…", lastGroup, "Every topic, gift and move — and what you know about them")] : [];
     return [...featured, ...more];
   }
+  if (opts.showChoices === false && !s.encounter)
+    return [];
   const talk = moves.filter((m) => m.featured).map(asChoice);
   const dungeons = dungeonsHere(r, s).map((d) => {
     const shut = dungeonLock(r, s, d);
@@ -24925,7 +24928,7 @@ async function afterReply(p, msg, content, userId) {
       expectedContent = content;
     }
   }
-  const wantLive = r.liveChoices.enabled;
+  const wantLive = r.liveChoices.enabled && settings.showChoices;
   const appended = p.continueFrom !== undefined && content.startsWith(p.continueFrom) ? content.slice(p.continueFrom.length) : content;
   if (settings.narratorUpdates || settings.consistencyCheck || wantLive) {
     host().sendToFrontend({ type: "busy", chatId, busy: true, label: "Updating state…" }, userId);
@@ -24984,7 +24987,7 @@ ${appended}`, action }) : [];
       });
     }
   }
-  if (p.continueFrom === undefined && settings.prewrite > 0 && p.prompt && await currentMessages()) {
+  if (p.continueFrom === undefined && settings.prewrite > 0 && settings.showChoices && p.prompt && await currentMessages()) {
     await pushState(chatId, userId);
     host().sendToFrontend({ type: "busy", chatId, busy: false }, userId);
     prewrite({ chatId, userId, r, settings, decider, prompt: p.prompt, reply: content, player: p.player, onReady: () => schedulePush(chatId, userId, 100) }).catch((e) => logError("pre-write", e));

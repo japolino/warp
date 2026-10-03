@@ -343,7 +343,8 @@ export async function afterReply(p: Pending, msg: Msg, content: string, userId?:
     }
   }
 
-  const wantLive = r.liveChoices.enabled;
+  // Choices hidden: nobody would see them, so none are written (nor pre-written replies for them).
+  const wantLive = r.liveChoices.enabled && settings.showChoices;
   const appended = p.continueFrom !== undefined && content.startsWith(p.continueFrom) ? content.slice(p.continueFrom.length) : content;
   if (settings.narratorUpdates || settings.consistencyCheck || wantLive) {
     host().sendToFrontend({ type: "busy", chatId, busy: true, label: "Updating state…" }, userId);
@@ -396,7 +397,7 @@ export async function afterReply(p: Pending, msg: Msg, content: string, userId?:
   }
 
   // Pre-write the first few choices while the player reads.
-  if (p.continueFrom === undefined && settings.prewrite > 0 && p.prompt && await currentMessages()) {
+  if (p.continueFrom === undefined && settings.prewrite > 0 && settings.showChoices && p.prompt && await currentMessages()) {
     await pushState(chatId, userId);
     host().sendToFrontend({ type: "busy", chatId, busy: false }, userId);
     void prewrite({ chatId, userId, r, settings, decider, prompt: p.prompt, reply: content, player: p.player, onReady: () => schedulePush(chatId, userId, 100) })

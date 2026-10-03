@@ -464,6 +464,11 @@ export function setup(ctx: SpindleFrontendContext) {
       if (doll) parts.push(doll);
       const withYou = dollLab.sceneSection();
       if (withYou) parts.push(withYou);
+      // Choices hidden: the errand buttons that sat with them live here instead.
+      if (settings.showChoices === false && settings.errands !== false) {
+        const entries = renderErrandEntries(state.hud.errands);
+        if (entries) parts.push({ id: "errands", title: "Errands", count: 0, open: true, body: entries });
+      }
       const mine = parts.filter((p) => panels.inMain(p.id));
       dockRoot.innerHTML = historyNotice() + head + mine.map((p) => renderPart(p, true)).join("");
       panels.render(parts);
@@ -593,7 +598,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const live = liveLog();
     const recap = live ? { foe: live.foe, rounds: live.rounds, why: renderWhyFold(state?.records.find((r) => r.messageId === live.messageId)) } : null;
     const html = settings.enabled && state?.hud && anchor
-      ? (settings.errands !== false ? renderErrandEntries(state.hud.errands) : "") + renderChoices(state.choices, { minigames: settings.minigames, showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined, encounter: state.hud.encounter, recap })
+      ? (settings.errands !== false && settings.showChoices !== false ? renderErrandEntries(state.hud.errands) : "") + renderChoices(state.choices, { minigames: settings.minigames, showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined, encounter: state.hud.encounter, recap })
       : "";
     if (!force && anchor === choicesFor && html === choicesHtml && choicesEl?.isConnected) return;
     if (choicesEl) { ctx.dom.uninject(choicesEl); choicesEl = null; }
