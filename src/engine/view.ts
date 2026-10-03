@@ -681,7 +681,7 @@ function statLine(r: Ruleset, def: StatDef, s: GameState, forceNumbers: boolean)
 }
 
 /** Words that put money in play this turn. */
-const MONEY_WORDS = /\b(buy|buys|bought|pay|pays|paid|price|prices|cost|costs|afford|money|cash|coins?|tip|rent|shop|shopping|sell|sold|wallet|purse|spend|bill|debt|loan|bribe|wage|salary|change)\b/i;
+const MONEY_WORDS = /\b(buy|buys|bought|pay|pays|paid|price|prices|cost|costs|afford|money|cash|coins?|tip|rent|shop|shopping|sell|sold|wallet|purse|spend|bill|debt|loan|bribe|wage|salary|change)\b|돈|지갑|가격|값|계산|지불|결제|구매|구입|비용|월세|요금|빚|대출|월급|용돈|현금|잔돈|사 먹|사러|샀|팔았|팔아|판매|흥정/i;
 /** Words that put looks and clothes in play this turn. */
 const LOOK_WORDS = /\b(wear|wears|wearing|wore|dress|dressed|dresses|shirt|coat|jacket|hoodie|hair|eyes|naked|nude|change|changes|changed|clothes|clothing|outfit|skirt|jeans|shoes|boots|hat|look|looks|face|scar|tattoo|makeup|undress|strip)\b/i;
 

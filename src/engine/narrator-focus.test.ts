@@ -81,3 +81,20 @@ describe("names in Korean and Japanese (CREW-2)", () => {
     expect(namesIt("I drink two potions", "Energy potion")).toBe(true);
   });
 });
+
+describe("money talk in Korean (LIFE-9)", () => {
+  const m = loadRuleset([{ label: "t", content: `
+name: 일상
+clock: { start: "Day 1 09:00" }
+hud: { currency: "{n}원" }
+stats:
+  money: { kind: money, label: 소지금, start: 4000 }
+`, order: 0 }]).ruleset!;
+  const s = initialState(m);
+  test("a Korean message about money brings the money line in", () => {
+    expect(stateDigest(m, s, { text: "돈이 얼마나 남았지? 커피 한 잔 사 먹고 싶은데." })).toContain("소지금");
+    expect(stateDigest(m, s, { text: "지갑을 열어 계산한다." })).toContain("소지금");
+    expect(stateDigest(m, s, { text: "창밖을 본다." })).not.toContain("소지금");
+    expect(stateDigest(m, s, { text: "How much money do I have left?" })).toContain("소지금");
+  });
+});
