@@ -631,40 +631,6 @@ export interface CompanionDef {
   knowsFull: boolean;
 }
 
-/** Something owed on a schedule. Missing it lets the creditor decide what lateness costs. */
-export interface ObligationDef {
-  id: string;
-  label: string;
-  amount: string | number;
-  /** Days between payments; 0 = once. */
-  every: number;
-  /** Days from the start until the first payment is due. */
-  first: number;
-  payWith: string;
-  creditor?: string;
-  /** Days late before the creditor acts. */
-  grace: number;
-  /** Where it can be paid (empty = anywhere). */
-  at: string[];
-  late: DecideSpec | null;
-}
-
-/** A shift: a string of customers, each wanting something; your approach (or your words) is scored against it. */
-export interface JobDef {
-  id: string;
-  label: string;
-  at: string[];
-  when?: string;
-  customers: number;
-  pay: string | number;
-  tip: string | number;
-  /** A stat that helps (its 0–100% of range adds to every customer's mood). */
-  skill?: string;
-  gain: Effect;
-  minutes: number;
-  patrons: { who: string; want: string }[];
-  styles: Record<string, string>;
-}
 
 /** Exploring can turn up places the ruleset never had; they're written into the ruleset for good. */
 export interface DiscoveryDef {
@@ -791,8 +757,6 @@ export interface Ruleset {
   companions: Record<string, CompanionDef>;
   /** Starting feelings between people: a → b → −100…100. */
   bonds: Record<string, Record<string, number>>;
-  obligations: Record<string, ObligationDef>;
-  jobs: Record<string, JobDef>;
   discovery: DiscoveryDef;
   improvise: ImproviseDef;
   growth: GrowthDef;
@@ -2367,60 +2331,6 @@ function normCompanions(raw: unknown, c: Ctx, known: { stats: Set<string> }, fro
   return out;
 }
 
-function normObligations(raw: unknown, c: Ctx, known: { stats: Set<string> }, money: string | undefined): Record<string, ObligationDef> {
-  const out: Record<string, ObligationDef> = {};
-  for (const [id, o] of Object.entries(isObj(raw) ? raw : {})) {
-    const w = `Obligations › ${id}`;
-    if (!isObj(o)) { c.warn(w, "needs `amount:` and `every:`"); continue; }
-    const amount = c.expr(o.amount ?? 0, `${w} › amount`) ?? 0;
-    const payWith = typeof o.pay_with === "string" ? o.pay_with : money;
-    if (!payWith) { c.warn(w, "needs `pay_with:` (a stat) — the ruleset has no money stat"); continue; }
-    const every = Math.max(0, c.num(o.every, `${w} › every`, 7));
-    let late: DecideSpec | null = null;
-    if (isObj(o.late)) late = normDecide({ ask: o.late.ask ?? `${titleCase(id)} is overdue. What happens?`, options: o.late.options ?? o.late }, `${w} › late`, c, known)[0] ?? null;
-    out[id] = {
-      id, label: typeof o.label === "string" ? o.label : titleCase(id), amount, every,
-      first: Math.max(0, c.num(o.first, `${w} › first`, every || 7)),
-      payWith, grace: Math.max(0, c.num(o.grace, `${w} › grace`, 1)), at: list(o.at),
-      late: late ? { ...late, id: `due_${id}_late` } : null,
-      ...(typeof o.creditor === "string" ? { creditor: o.creditor } : {}),
-    };
-  }
-  return out;
-}
-
-function normJobs(raw: unknown, c: Ctx, known: { stats: Set<string> }): Record<string, JobDef> {
-  const out: Record<string, JobDef> = {};
-  for (const [id, j] of Object.entries(isObj(raw) ? raw : {})) {
-    const w = `Jobs › ${id}`;
-    if (!isObj(j)) { c.warn(w, "needs `patrons:` and `styles:`"); continue; }
-    const styles: Record<string, string> = {};
-    for (const [k, v] of Object.entries(isObj(j.styles) ? j.styles : {})) styles[k] = typeof v === "string" ? v : titleCase(k);
-    if (!Object.keys(styles).length) Object.assign(styles, { quick: "Serve them quickly", friendly: "Be warm and chatty", careful: "Take care to get it exactly right" });
-    const patrons: { who: string; want: string }[] = [];
-    (Array.isArray(j.patrons) ? j.patrons : []).forEach((p: unknown, i: number) => {
-      const pr: Raw = isObj(p) ? p : typeof p === "string" ? { who: p } : {};
-      if (typeof pr.who !== "string") { c.warn(`${w} › patrons #${i + 1}`, "needs `who:`"); return; }
-      const want = typeof pr.want === "string" ? pr.want : Object.keys(styles)[0];
-      if (!styles[want]) c.warn(`${w} › patrons #${i + 1}`, `wants "${want}", which isn't one of the styles (${Object.keys(styles).join(", ")})`);
-      patrons.push({ who: pr.who, want });
-    });
-    if (!patrons.length) { c.warn(w, "needs `patrons:` — who comes in, and what they want"); continue; }
-    const when = j.when !== undefined ? c.expr(j.when, `${w} › when`) : undefined;
-    out[id] = {
-      id, label: typeof j.label === "string" ? j.label : `Work: ${titleCase(id)}`,
-      at: list(j.at), customers: Math.max(1, Math.min(8, Math.round(c.num(j.customers, `${w} › customers`, 3)))),
-      pay: c.expr(j.pay ?? 0, `${w} › pay`) ?? 0, tip: c.expr(j.tip ?? 0, `${w} › tip`) ?? 0,
-      gain: normEffect(j.gain ?? j.effects, `${w} › gain`, c, known),
-      minutes: Math.max(0, c.num(j.minutes, `${w} › minutes`, 45)),
-      patrons, styles,
-      ...(typeof j.skill === "string" ? { skill: j.skill } : {}),
-      ...(when !== undefined ? { when: String(when) } : {}),
-    };
-  }
-  return out;
-}
-
 function normImprovise(raw: unknown, c: Ctx, known: { stats: Set<string> }, stats: Record<string, StatDef>, order: string[]): ImproviseDef {
   const usable = order.filter((id) => stats[id].kind === "skill" || stats[id].kind === "attribute");
   const def: ImproviseDef = { enabled: true, dc: { easy: 8, fair: 12, hard: 16, extreme: 20 }, bonus: 10, partial: 3, stats: usable, outcomes: {} };
@@ -2513,6 +2423,7 @@ export const REMOVED_KEYS: Record<string, string> = {
   lineage: "family and pregnancy",
   observers: "being seen", being_seen: "being seen",
   mind: "mind overrides and perception filters",
+  obligations: "bills and debts", debts: "bills and debts", jobs: "work shifts",
 };
 
 const SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
@@ -2826,9 +2737,6 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const body = normBody(raw.body, c);
   const bonds: Record<string, Record<string, number>> = {};
   const companions = normCompanions(raw.companions, c, known, fronts, bonds);
-  const moneyId = typeof hudRaw.money === "string" ? hudRaw.money : statOrder.find((s) => stats[s].kind === "money");
-  const obligations = normObligations(raw.obligations ?? raw.debts, c, known, moneyId);
-  const jobs = normJobs(raw.jobs, c, known);
   const discovery = normDiscovery(raw.discovery, c);
   const improvise = normImprovise(raw.improvise ?? raw.improvised, c, known, stats, statOrder);
   const growth = normGrowth(raw.growth ?? raw.practice, c);
@@ -2862,7 +2770,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     weather, wardrobe, encounters, codex, feats, perks,
     ...(perkPoints && stats[perkPoints] ? { perkPoints } : {}),
     perkPick, abilities, quests, questOrder, storyQuests,
-    secrets, fronts, randomEvents, liveChoices, checkpoints, endings, legacy, body, companions, bonds, obligations, jobs, discovery, improvise, growth,
+    secrets, fronts, randomEvents, liveChoices, checkpoints, endings, legacy, body, companions, bonds, discovery, improvise, growth,
   };
 
   // Cross-references that need everything loaded.

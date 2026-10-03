@@ -12,7 +12,6 @@ import { isLoss, thresholds } from "./encounter-view.js";
 import { checkGains, checkStats, DIFFICULTY_WORD, hardnessFrom, IMPROV, IMPROV_DIRECTION, improvAction, isDifficulty, practise, trainingGain } from "./freeform.js";
 import { endingDirection } from "./chronicle.js";
 import { presentPeople, SCENE_HOLDS, sceneWord } from "./world.js";
-import { JOB_PREFIX, obligationLife, PAY_PREFIX, resolveWork } from "./work.js";
 import { QUEST_PREFIX, questHooks, questLife, questOp, questProgress, resolveQuest, storyQuestNews, type StoryQuestNews } from "./quests.js";
 
 export interface CheckResult {
@@ -175,7 +174,7 @@ export const EXPLORE = "explore:";
 /** Can the player explore here for somewhere new? */
 export function canExplore(r: Ruleset, s: GameState): boolean {
   const d = r.discovery;
-  if (!d.enabled || !s.location || s.encounter || s.job || s.ended) return false;
+  if (!d.enabled || !s.location || s.encounter || s.ended) return false;
   if (s.discovered.length >= d.max) return false;
   return !d.at.length || d.at.includes(s.location) || s.discovered.includes(s.location);
 }
@@ -1587,7 +1586,7 @@ export interface ResolveOptions {
   scene?: Record<string, boolean>;
   /** The scene says an encounter is breaking out (and who the opponent is, when it's someone from the story). */
   encounter?: { id: string; foe?: string; fresh?: boolean };
-  /** A medium-confidence action suggestion is awaiting player confirmation; do not spend turn or run job say. */
+  /** A medium-confidence action suggestion is awaiting player confirmation; do not spend a turn. */
   pendingSuggestion?: boolean;
 }
 
@@ -1613,8 +1612,7 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   const rec: TurnRecord = { v: 1, hints: [], events: [], at: Date.now() };
   // A suggestion is not a committed move, nor dialogue for the active session.
   if (!intent && opts.pendingSuggestion) return rec;
-  if (intent && !before.ended && !intent.actionId.startsWith(PAY_PREFIX)
-    && !intent.actionId.startsWith(JOB_PREFIX) && !intent.actionId.startsWith(QUEST_PREFIX) && intent.actionId !== RUN_EPILOGUE) {
+  if (intent && !before.ended && !intent.actionId.startsWith(QUEST_PREFIX) && intent.actionId !== RUN_EPILOGUE) {
     const valid = intent.actionId === EXPLORE ? canExplore(r, before)
       : intent.actionId.startsWith(TRAVEL_PREFIX) ? travelTargets(r, before).includes(intent.actionId.slice(TRAVEL_PREFIX.length))
       : !!findAction(r, before, intent.actionId);
@@ -1642,19 +1640,17 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   }
   // A fight (or any encounter) the scene says is breaking out starts before the player's move lands.
   let encBase = before;
-  if (opts.encounter && !before.encounter && !before.job && !before.ended) {
+  if (opts.encounter && !before.encounter && !before.ended) {
     const enc = r.encounters[opts.encounter.id];
     if (enc?.fromStory && !encounterJustEnded(before, enc.id, opts.encounter.fresh === true)) {
       because(w, `The scene: ${enc.name} breaks out`, () => startEncounter(w, enc.id, "trigger", opts.encounter!.foe));
       encBase = cloneState(w.s);
     }
   }
-  const found = intent && !intent.actionId.startsWith(TRAVEL_PREFIX) && !intent.actionId.startsWith(PAY_PREFIX) && !intent.actionId.startsWith(JOB_PREFIX) ? findAction(r, before, intent.actionId) : null;
+  const found = intent && !intent.actionId.startsWith(TRAVEL_PREFIX) ? findAction(r, before, intent.actionId) : null;
   const a = found?.a;
   const inEncounter = !!encBase.encounter;
   const improvised = !!a && a.id.startsWith(IMPROV);
-  // Bills and work shifts; during a shift, a typed line is how {{user}} serves the customer.
-  const workIntent = intent && (intent.actionId.startsWith(PAY_PREFIX) || intent.actionId.startsWith(JOB_PREFIX)) ? intent : before.job && !intent ? { actionId: `${JOB_PREFIX}say`, via: "adjudicator" as const } : null;
 
   let stunned: string | null = null;
   if (intent?.actionId.startsWith(QUEST_PREFIX)) {
@@ -1672,9 +1668,6 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
       if (found) rec.discover = { from: loc };
       else w.hints.push(`{{user}} explores around ${name} but finds nothing new this time — though they're getting to know the area.`);
     }
-  } else if (workIntent) {
-    const label = because(w, "Work and bills", () => resolveWork(builderOf(w), workIntent));
-    if (label) rec.action = { id: workIntent.actionId, label, via: workIntent.via };
   } else if (intent?.actionId.startsWith(TRAVEL_PREFIX)) {
     const to = intent.actionId.slice(TRAVEL_PREFIX.length);
     const dest = r.locations[to];
@@ -1826,19 +1819,6 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   tickWorld(w, days, 1);
   if (w.events.length > worldBefore) runTriggers(w, false);
   companionLife(w, before);
-  obligationLife(builderOf(w));
-  // Only committed changes interrupt sessions. Inspect the final place and encounter
-  // events (an encounter can start and finish within the same resolved action).
-  const departed = w.s.location !== before.location;
-  const encounterStarted = !!w.s.encounter || w.events.some((e) => e.t === "enc" && e.id !== null);
-  const worldAction = !workIntent;
-  // Exact authored tags, not guesses from labels or the player's prose.
-  const disruptiveWork = !!rec.action && !!a && a.tags.some((tag) => ["combat", "fight", "violence", "disruptive"].includes(tag));
-  if (before.job && w.s.job && worldAction && (departed || encounterStarted || disruptiveWork)) {
-    w.push({ t: "job", job: null, src: "action" });
-    w.hints.push("{{user}} interrupts the shift — it ends with no pay.");
-  }
-  // Death/ending recovery owns the restored session state; do not clean it up afterwards.
   checkRun(w, before);
   w.push({ t: "turn", src: "action" });
   rec.events = w.events;
@@ -2082,7 +2062,7 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
   }
 
   // Fights (and other encounters) the prose started or finished.
-  if (p.encounter && !w.s.encounter && !w.s.job) {
+  if (p.encounter && !w.s.encounter) {
     const k = String(p.encounter).toLowerCase();
     const enc = r.encounters[k] ?? Object.values(r.encounters).find((x) => x.name.toLowerCase() === k);
     if (enc && encounterJustEnded(w.s, enc.id, p.encounterFresh === true)) { /* the prose is still describing the one that ended */ }
@@ -2122,7 +2102,6 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
     if (w.events.length > n) runTriggers(w, false);
   }
   companionLife(w, before);
-  obligationLife(builderOf(w));
   checkRun(w, before);
   return w.events;
 }
@@ -2181,7 +2160,6 @@ export function buildTurn(r: Ruleset, before: GameState, seed: string, fn: (t: T
     if (w.events.length > n) runTriggers(w, false);
   }
   companionLife(w, before);
-  obligationLife(builderOf(w));
   checkRun(w, before);
   return w.events;
 }

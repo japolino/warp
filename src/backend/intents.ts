@@ -4,7 +4,6 @@
 import { cleanLiveForecast, ABILITY_PREFIX, availableChoices, canExplore, EXPLORE, findAction, ITEM_PREFIX, LIVE_PREFIX, usableAbilities, usableItems, lockedExits, RUN_EPILOGUE, TARGET_SEP, TRAVEL_PREFIX, travelTargets, type Intent } from "../engine/resolve.js";
 import type { Ruleset } from "../engine/ruleset.js";
 import type { GameState } from "../engine/state.js";
-import { JOB_PREFIX, PAY_PREFIX, workMoves } from "../engine/work.js";
 import { QUEST_PREFIX, questDef, questOffers, questsToReport } from "../engine/quests.js";
 import type { Settings } from "../shared/protocol.js";
 import { liveChoicesOf, type Msg } from "./ledger.js";
@@ -30,11 +29,6 @@ export function intentFor(r: Ruleset, state: GameState, settings: Settings, msgs
     const known = new Set(found.a.params.map((p) => p.id));
     const explicit = Object.fromEntries(Object.entries(params ?? {}).filter(([k, v]) => known.has(k) && typeof v === "string"));
     return { say: `*${c.label}*`, intent: { ...(forecast ? { forecast } : {}), actionId: `${LIVE_PREFIX}${c.tag}${c.target ? `${TARGET_SEP}${c.target}` : ""}`, ...(Object.keys(explicit).length ? { params: explicit } : {}), via: "choice", label: c.label } };
-  }
-  if (actionId.startsWith(PAY_PREFIX) || actionId.startsWith(JOB_PREFIX)) {
-    const m = workMoves(r, state).find((x) => x.id === actionId);
-    if (!m) return { error: "That isn't possible right now." };
-    return { say: m.say, intent: { actionId: m.id, via: "choice", label: m.label } };
   }
   if (actionId.startsWith(TRAVEL_PREFIX)) {
     const to = actionId.slice(TRAVEL_PREFIX.length);

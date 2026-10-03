@@ -14,7 +14,6 @@ import {
   dateAt, exposedSlots, isIndoors, ordinal, personLocation, presentPeople, seasonAt, temperatureAt, warmthNeeded, warmthOf, weatherAt,
 } from "./world.js";
 import type { ChangeView, ChoiceView, ClothingView, HudView, MapView, QuestView, RecordView, Tone } from "../shared/protocol.js";
-import { PAY_PREFIX, workDigest, workMoves } from "./work.js";
 import { evalBool, evalNumber } from "./expr.js";
 import { namesIt, namesTitle } from "./mention.js";
 
@@ -243,17 +242,6 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
     body: r.body.enabled ? Object.entries(s.body).map(([part, traits]) => ({
       part, label: part.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()), text: traitText(traits) || "—", covered: bodyCovered(r, s, part),
     })) : null,
-    dues: Object.values(r.obligations).map((o) => {
-      const d = s.dues[o.id];
-      const days = d ? Math.floor((d.due - s.minutes) / 1440) : 0;
-      return {
-        label: o.label,
-        owed: d?.owed ?? 0,
-        owedText: formatMoney(r, d?.owed ?? 0),
-        text: !d || d.owed <= 0 ? `Paid · next ${r.clock.enabled && d ? formatClock(r, d.due).day : "later"}` : d.missed || days < 0 ? `Overdue · ${d.missed} missed` : days <= 0 ? "Due today" : `Due in ${days} day${days === 1 ? "" : "s"}`,
-        tone: (!d || d.owed <= 0 ? "good" : d.missed || days < 0 ? "bad" : days <= 1 ? "warn" : "neutral") as Tone,
-      };
-    }),
     transforms: Object.values(r.body.transforms).filter((t) => (s.tf[t.id] ?? 0) > 0).map((t) => ({ label: t.label, stage: s.tf[t.id], of: t.stages.length })),
     run: r.checkpoints.enabled ? {
       slots: Array.from({ length: r.checkpoints.slots }, (_, i) => ({ id: String(i + 1), label: s.saves[String(i + 1)]?.label ?? null })),
@@ -472,9 +460,6 @@ function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: st
       ...(!r.checkpoints.hard ? [plain("run:continue", "Keep playing", group, "Carry on past the ending")] : []),
     ];
   }
-  // A work shift takes over the choices until it ends.
-  const work = s.encounter ? [] : workMoves(r, s).map((m) => plain(m.id, m.label, m.group, m.desc));
-  if (s.job) return work;
   // Choices turned off: the story is typed. Only the modes played with buttons (above, and an encounter's moves) keep them.
   if (opts.showChoices === false && !s.encounter) return [];
   if (!s.encounter) (opts.live ?? []).forEach((c, i) => {
@@ -536,12 +521,12 @@ function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: st
     if (isAvailable(r, s, a)) continue;
     locked.push({ ...plain(id, a.label, encName ?? a.group ?? null, a.desc ?? null), locked: spent ?? lockReason(r, s, a) });
   }
-  return [...live, ...actions, ...abilityChoices(r, s, lines), ...itemChoices(r, s, lines), ...locked, ...questChoices(r, s), ...work, ...travel, ...explore];
+  return [...live, ...actions, ...abilityChoices(r, s, lines), ...itemChoices(r, s, lines), ...locked, ...questChoices(r, s), ...travel, ...explore];
 }
 
 /** Quests to hand in here, and a few on offer (from whoever's here first, then the board). */
 function questChoices(r: Ruleset, s: GameState): ChoiceView[] {
-  if (s.encounter || s.job || s.ended) return [];
+  if (s.encounter || s.ended) return [];
   const plain = (id: string, label: string, desc: string | null, why?: string): ChoiceView =>
     ({ id, label, group: "Quests", desc, odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [], ...(why ? { why } : {}) });
   const out: ChoiceView[] = [];
@@ -572,7 +557,7 @@ function costText(r: Ruleset, s: GameState, a: ActionDef): string | null {
 
 /** The player's own abilities, offered with the other moves: usable ones, and in an encounter the ones out of reach, with why. */
 function abilityChoices(r: Ruleset, s: GameState, lines: Set<string>): ChoiceView[] {
-  if (s.job || s.ended) return [];
+  if (s.ended) return [];
   const out: ChoiceView[] = [];
   for (const { id, a, status } of usableAbilities(r, s)) {
     if (a.hidden || a.tags.some((t) => lines.has(t))) continue;
@@ -675,7 +660,7 @@ function perkViews(r: Ruleset, s: GameState): HudView["perks"] {
 
 /** Held items worth using now: in an encounter, any that bear on it (up to 3); otherwise only clearly helpful ones (up to 2). */
 function itemChoices(r: Ruleset, s: GameState, lines: Set<string>): ChoiceView[] {
-  if (s.job || s.ended) return [];
+  if (s.ended) return [];
   const veils = new Set<string>();
   const ranked = usableItems(r, s)
     .filter((u) => !u.locked && !u.a.tags.some((t) => lines.has(t)))
@@ -1044,8 +1029,6 @@ export function stateDigest(r: Ruleset, s: GameState, focus?: DigestFocus): stri
   if (was.length) lines.push(`Were with {{user}} before arriving here (include them only if they came along): ${was.join(", ")}`);
   const body = bodyLine(r, s);
   if (body) lines.push(body);
-  // Bills: only the pressing ones (due within a day, or overdue), unless the turn is about money.
-  lines.push(...workDigest(r, s).filter((l) => moneyTalk || /^(OVERDUE|AT WORK)|due (today|in 1 day)/.test(l)));
 
   const meters = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "meter" || d.kind === "money");
   const other = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "attribute" || d.kind === "skill");

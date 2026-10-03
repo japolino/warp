@@ -163,8 +163,6 @@ export interface HudView {
   body: { part: string; label: string; text: string; covered: boolean }[] | null;
   /** Transformations under way. */
   transforms: { label: string; stage: number; of: number }[];
-  /** Bills and debts. */
-  dues: { label: string; owed: number; /** the amount with the currency sign, before or after */ owedText?: string; text: string; tone: Tone }[];
   /** Checkpoints and endings, when the ruleset has them. */
   run: {
     slots: { id: string; label: string | null }[];
@@ -338,7 +336,7 @@ export interface Settings {
   prewrite: number;
   /** A clicked move is rolled on the click, and the player's message says how it went, in their voice. */
   sayOutcome: boolean;
-  /** Choice buttons under the reply (the CYOA). Off: none, and none are written — fights, shifts and endings keep theirs. */
+  /** Choice buttons under the reply (the CYOA). Off: none, and none are written — fights and endings keep theirs. */
   showChoices: boolean;
   /** The chips under each reply that say what changed (time, feelings, items…). Off: only in the sheet's history. */
   showChanges: boolean;

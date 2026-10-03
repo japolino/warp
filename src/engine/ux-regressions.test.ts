@@ -189,11 +189,3 @@ test("winning on the last allowed round takes precedence over the timeout", () =
   expect(s.lastEncounter!.outcome).toBe("won");
 });
 
-test("billing catches up across a long jump exactly like equivalent daily advances", () => {
-  const r = rules({ clock: { start: "Mon 00:00" }, stats: { money: { kind: "money", start: 100 } }, obligations: {
-    rent: { amount: 10, every: 1, first: 1 }, fee: { amount: 3, every: 2, first: 2 },
-  }, actions: { day: { time: 1440 }, month: { time: 43200 } } });
-  const jump = step(r, initialState(r), "month").s;
-  let daily = initialState(r); for (let i = 0; i < 30; i++) daily = step(r, daily, "day").s;
-  expect(jump.dues).toEqual(daily.dues);
-});

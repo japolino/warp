@@ -168,8 +168,7 @@ export async function readTurn(opts: {
     for (const t of travel) criteria[`${TRAVEL_PREFIX}${t}`] = `Go to ${r.locations[t].name}`;
     Object.assign(criteria, questMoves);
     if (improv) criteria[ATTEMPT] = "Something else with a real chance of failing that matters to the story, not listed above (sneaking, persuading, lying, fighting, climbing, stealing, resisting, performing…)";
-    const session = s.job ? "They are serving a customer during a work shift." : "";
-    q.action = { type: "choice", instructions: `Which of these does ${player}'s latest message actually attempt right now?${session ? ` ${session} Ordinary dialogue, thoughts, and discussion of a possible action are NONE; choose an action only when actually attempted now.` : ""}`, criteria };
+    q.action = { type: "choice", instructions: `Which of these does ${player}'s latest message actually attempt right now?`, criteria };
     if (improv || actions.some((c) => c.a.params.length)) {
       q.difficulty = { type: "score", instructions: `How hard is what ${player} is attempting, given the scene?`, criteria: DIFFICULTY };
     }
@@ -182,7 +181,7 @@ export async function readTurn(opts: {
     }
   }
   // Fights (and other encounters) can break out of the story itself.
-  const storyEnc = !s.encounter && !s.job && !s.ended ? Object.values(r.encounters).filter((x) => x.fromStory) : [];
+  const storyEnc = !s.encounter && !s.ended ? Object.values(r.encounters).filter((x) => x.fromStory) : [];
   const here = storyEnc.length ? presentPeople(r, s, makeEnv(r, s)) : [];
   if (storyEnc.length) {
     q.encounter = {
@@ -461,7 +460,7 @@ export async function bookkeeping(opts: {
     };
   }
   // Fights the prose starts, or finishes.
-  const storyEnc = !s.encounter && !s.job ? Object.values(r.encounters).filter((x) => x.fromStory) : [];
+  const storyEnc = !s.encounter ? Object.values(r.encounters).filter((x) => x.fromStory) : [];
   if (storyEnc.length) {
     q.encounter = {
       type: "choice",

@@ -10,7 +10,7 @@ export const PART_CONTENTS: Record<PartLabel, string> = {
   stats: "stats, growth",
   people: "relationships (stats + people with schedules), companions",
   world: "weather, locations, items (incl. clothing, uses and gear bonuses), item_uses, wardrobe, body, conditions, flags, start.items",
-  actions: "actions, improvise, obligations, jobs",
+  actions: "actions, improvise",
   encounters: "encounters",
   quests: "quests (bounties on a notice board, favours people ask, story jobs: goals, deadline, reward, failure)",
   journal: "codex, feats, perks, abilities, checkpoints, endings",
@@ -26,7 +26,7 @@ export function partForIssue(where: string): PartLabel {
   if (head.startsWith("stats") || head.startsWith("growth")) return "stats";
   if (["relationships", "people", "companions"].some((k) => head.startsWith(k))) return "people";
   if (["locations", "items", "item uses", "wardrobe", "weather", "conditions", "flags", "body"].some((k) => head.startsWith(k))) return "world";
-  if (["actions", "improvise", "obligations", "jobs"].some((k) => head.startsWith(k))) return "actions";
+  if (["actions", "improvise"].some((k) => head.startsWith(k))) return "actions";
   if (head.startsWith("encounters")) return "encounters";
   if (head.startsWith("quests")) return "quests";
   if (["codex", "feats", "perks", "abilities", "checkpoints", "endings"].some((k) => head.startsWith(k))) return "journal";
@@ -231,21 +231,6 @@ discovery:        # exploring can turn up places the ruleset never had; each is 
   chance: 25                       # percent per try (formula); each fruitless try adds 10
   max: 12
   guide: "Small, grounded places: a back-alley bar, a hidden garden."
-obligations:      # bills on the calendar: "Pay…" choices appear while something is owed; a missed one lets the creditor decide
-  rent: { amount: 120, every: 7, first: 7, grace: 1, creditor: landlord, at: [apartment], late: { ask: "The rent is late. What does {creditor} do?", options: { warn: { desc: A warning, weight: 3 }, fee: { desc: A late fee, weight: 1, money: -25 } } } }
-  # arrears pile up; FUNCTIONS owed(id), missed(id), days_until(id)
-jobs:             # a shift of customers, each wanting a style; your pick (or your typed words, judged by the model) sets their mood and tip
-  lunch_rush:
-    label: Cover the lunch rush
-    at: [high_street]
-    customers: 3
-    pay: 25                        # for the shift (formula); tip: per customer, scaled by how happy they are
-    tip: 4
-    skill: tending                 # helps every customer's mood
-    gain: { tending: +1 }
-    styles: { quick: Get their order out fast, friendly: Be warm and chatty }
-    patrons: [ { who: "A nurse off a night shift", want: quick }, { who: "A lonely old man", want: friendly } ]
-
 codex: { docks: { title: The Docks, category: Places, text: "...", unlock: "location == 'docks'", lore: [Lorebook entry title] } }
 feats: { night_owl: { name: Night owl, desc: "...", unlock: "hour >= 2 and hour < 5", reward: { stress: -5 } } }
 abilities:        # the player's OWN moves (spells, techniques, tricks): offered as choices in encounters and the story, typed or clicked
@@ -441,7 +426,7 @@ Gate the best actions behind things the player can work toward, with requires: (
 Give each tracked person a schedule (where they are by hour and day) so the player can find them, starting feelings that match the card, and — for companions — a goal and a daily choice so they live on their own.
 
 ## money
-Money needs income (jobs, paid actions, loot) AND spending (shops, rent, bribes, fares). If either is missing it's just a number.
+Money needs income (paid actions, loot, rewards) AND spending (shops, bribes, fares). If either is missing it's just a number.
 
 ## quests
 Quests turn the loop into a story with goals: what someone wants done, what it pays, what failing costs — and who remembers.

@@ -134,7 +134,6 @@ export function hudParts(h: HudView, opts: HudOpts): { head: string; parts: HudP
 
   const body = h.body ? part("body", "Body", 0, `${h.body.map((b) => `<div class="warp-item"><span>${esc(b.label)}</span><span class="${b.covered ? "warp-dim" : ""}" title="${b.covered ? "Covered by clothing" : "Visible"}">${esc(b.text)}${b.covered ? " 👕" : ""}</span></div>`).join("")}${h.transforms.map((t) => `<div class="warp-item"><span>✦ ${esc(t.label)}</span><span class="warp-dim">stage ${t.stage} / ${t.of}</span></div>`).join("")}`, false) : null;
 
-  const dues = h.dues.length ? part("bills", "Bills", h.dues.filter((d) => d.tone === "bad").length, h.dues.map((d) => `<div class="warp-item"><span>${esc(d.label)}${d.owed > 0 ? ` <span class="warp-dim">${esc(d.owedText ?? d.owed)}</span>` : ""}</span><span class="warp-tone-${d.tone}">${esc(d.text)}</span></div>`).join(""), !opts.compact || h.dues.some((d) => d.tone === "bad")) : null;
 
   const loose = h.items.filter((i) => !i.worn);
   const items = part("inventory", "Inventory", loose.length, loose.length
@@ -151,7 +150,7 @@ export function hudParts(h: HudView, opts: HudOpts): { head: string; parts: HudP
   const map = opts.map ? part("map", "Map", 0, renderMapView(opts.map), !opts.compact) : null;
   return {
     head: `${renderEncounter(h)}<div class="warp-hud-top">${top}</div>${renderWarmth(h)}<div class="warp-bars">${bars}</div>`,
-    parts: [renderOutfit(h, opts.compact), skills, renderAbilities(h, opts.compact), renderQuests(h, opts.compact), dues, people, map, body, items, renderPerks(h, opts.compact)].filter((p): p is HudPart => !!p),
+    parts: [renderOutfit(h, opts.compact), skills, renderAbilities(h, opts.compact), renderQuests(h, opts.compact), people, map, body, items, renderPerks(h, opts.compact)].filter((p): p is HudPart => !!p),
   };
 }
 
@@ -674,7 +673,7 @@ export function renderSettings(s: Settings, status: RulesetStatus | null, connec
   </div>
   <div class="warp-card">
     <h3>Display</h3>
-    ${toggle("showChoices", "Choice buttons (CYOA)", "Buttons under each reply to pick what you do next. Off: you just type — no buttons, and none are written for you (that saves a helper call per reply). Fights, shifts and endings keep their buttons.", s.showChoices !== false)}
+    ${toggle("showChoices", "Choice buttons (CYOA)", "Buttons under each reply to pick what you do next. Off: you just type — no buttons, and none are written for you (that saves a helper call per reply). Fights and endings keep their buttons.", s.showChoices !== false)}
     ${toggle("showOdds", "Show odds on choices", "Percent chance of success on each button.", s.showOdds)}
     ${toggle("showDiceChips", "Show dice on messages", "The roll under each reply.", s.showDiceChips)}
     ${toggle("showChanges", "Show changes on messages", "What changed under each reply (time, people met, feelings, items…), with × to undo. Off: they're still in the sheet's history.", s.showChanges !== false)}

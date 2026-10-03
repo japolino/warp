@@ -133,7 +133,7 @@ export async function extract(
   const growable = r.growth.enabled && r.growth.train ? r.statOrder.filter((id) => (r.stats[id].kind === "skill" || r.stats[id].kind === "attribute") && r.stats[id].growth > 0) : [];
   if (want("train") && growable.length) allowed.push(`- "trained": ids of abilities the player spent real effort practising, training, studying or rehearsing during the reply: ${growable.join(", ")}`);
   if (want("encounter")) {
-    const storyEnc = !s.encounter && !s.job ? Object.values(r.encounters).filter((x) => x.fromStory) : [];
+    const storyEnc = !s.encounter ? Object.values(r.encounters).filter((x) => x.fromStory) : [];
     if (storyEnc.length) allowed.push(`- "encounter": the id of one of these if it actually broke out in the reply (not just threatened): ${storyEnc.map((x) => `${x.id} (${x.name})`).join(", ")}; with "foe": the opponent's name when it's a specific person`);
     else if (s.encounter) {
       const def = r.encounters[s.encounter.id];

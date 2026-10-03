@@ -23,6 +23,10 @@ lineage:
   pregnancy: { weeks: 36 }
 observers:
   when: "exposed > 0"
+obligations:
+  rent: { amount: 10, every: 7 }
+jobs:
+  cafe: { label: Café shift, patrons: [ { who: A regular } ] }
 mind:
   overrides: { freeze: { when: "mood < 99", chance: 100, cause: Panic, resist_cost: { mood: 5 } } }
   perception: [ { when: "mood < 99", text: "Everything looks grey." } ]
@@ -39,6 +43,7 @@ actions:
 triggers:
   family: { when: "pregnant or children() > 0 or pregnancy_weeks > 2", do: { coin: +1 } }
   famous: { when: "seen_by('robin') or fame() > 2", do: { coin: +1 } }
+  broke: { when: "owed('rent') > 0 or missed('rent') > 0 or days_until('rent') < 0 or at_work", do: { coin: +1 } }
 `;
 
 const load = () => loadRuleset([{ label: "t", content: OLD, order: 0 }]);
@@ -48,12 +53,12 @@ describe("removed in-chat systems", () => {
   test("each removed key or effect gets one plain warning and is ignored", () => {
     const { ruleset: r, issues } = load();
     expect(r).not.toBeNull();
-    expect(removedWhere()).toEqual(["Actions › nap › errand", "Actions › night › effects › conceive", "Lineage", "Mind", "Observers"].sort());
+    expect(removedWhere()).toEqual(["Actions › nap › errand", "Actions › night › effects › conceive", "Jobs", "Lineage", "Mind", "Obligations", "Observers"].sort());
     for (const i of issues.filter((x) => x.message.includes("was removed from Warp"))) {
       expect(i.level).toBe("warning");
       expect(i.message).toContain("`legacy` branch");
     }
-    for (const k of ["lineage", "observers", "mind"]) expect(Object.keys(r!)).not.toContain(k);
+    for (const k of ["lineage", "observers", "mind", "obligations", "jobs"]) expect(Object.keys(r!)).not.toContain(k);
     expect(JSON.stringify(r!.actions.night)).not.toContain("conceive");
   });
 
@@ -63,6 +68,8 @@ describe("removed in-chat systems", () => {
     const gone = (name: string, what: string) => msgs.some((m) => m.includes(`"${name}" (${what}) was removed from Warp`));
     for (const name of ["pregnant", "children()", "pregnancy_weeks"]) expect(gone(name, "family and pregnancy")).toBe(true);
     for (const name of ["seen_by()", "fame()"]) expect(gone(name, "being seen")).toBe(true);
+    for (const name of ["owed()", "missed()", "days_until()"]) expect(gone(name, "bills and debts")).toBe(true);
+    expect(gone("at_work", "work shifts")).toBe(true);
     const rec = resolveTurn(r, initialState(r), { actionId: "night", via: "choice" }, { seed: "x" });
     expect(rec.events.some((e) => (e.t as string) === "conceive")).toBe(false);
     expect(rec.events.some((e) => e.t === "stat" && e.id === "mood")).toBe(true);
@@ -79,12 +86,14 @@ describe("removed in-chat systems", () => {
       { t: "birth", id: "child_1", kin: { name: "Ada", sex: "girl", born: 0, parents: ["player", "robin"], body: {}, joined: false }, src: "world" },
       { t: "kin_join", id: "child_1", src: "world" },
       { t: "seen", who: "robin", what: "exposed: top", where: "Park", src: "world" },
+      { t: "due", id: "rent", due: 100, owed: 10, missed: 1, src: "world" },
+      { t: "job", job: { id: "cafe", n: 0, patron: 0, earned: 0, tips: 0, log: [] }, src: "action" },
       { t: "stat", id: "coin", d: 5, src: "action" },
     ] as unknown as WarpEvent[];
     const s = foldEvents(r, [old]);
     expect(s.stats.coin).toBe(55);
     expect(Object.keys(s)).not.toContain("pregnancy");
-    for (const k of ["kin", "seen"]) expect(Object.keys(s)).not.toContain(k);
+    for (const k of ["kin", "seen", "dues", "job"]) expect(Object.keys(s)).not.toContain(k);
     expect(s.people.child_1).toBeUndefined();
     expect(buildHud(r, s)).toBeTruthy();
     expect(buildChoices(r, s, { lines: [], veils: [] }).length).toBeGreaterThan(0);

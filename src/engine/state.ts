@@ -106,13 +106,9 @@ export interface GameState {
   tf: Record<string, number>;
   /** How people feel about each other: a → b → −100…100. */
   bonds: Record<string, Record<string, number>>;
-  /** Obligations: when the next payment is due, what's owed now, how many were missed. */
-  dues: Record<string, { due: number; owed: number; missed: number }>;
   /** Fruitless explorations per place since the last find, and the places found. */
   explored: Record<string, number>;
   discovered: string[];
-  /** A work shift in progress. */
-  job: { id: string; n: number; patron: number; earned: number; tips: number; log: { who: string; result: string }[] } | null;
   /** The story reached an ending (told = the narrator has written it). */
   ended: { id: string; at: number; told: boolean } | null;
   /** Continued past this ending; rearm only after its predicate becomes false. */
@@ -182,8 +178,6 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "tf"; id: string; stage: number }
   | { t: "bond"; a: string; b: string; d: number }
   | { t: "news"; text: string }
-  | { t: "due"; id: string; due?: number; owed?: number; missed?: number }
-  | { t: "job"; job: GameState["job"] }
   | { t: "explored"; loc: string; found: boolean }
   | { t: "discovered"; id: string }
   | { t: "practice"; id: string; d: number }
@@ -248,8 +242,6 @@ export function initialState(r: Ruleset): GameState {
     body: structuredClone(r.body.parts),
     tf: {},
     bonds: structuredClone(r.bonds),
-    dues: {},
-    job: null,
     explored: {},
     discovered: [],
     practice: {},
@@ -261,11 +253,6 @@ export function initialState(r: Ruleset): GameState {
     quests: {},
     memories: {},
   };
-  // Obligations: the first payment is due `first` days in; its amount is read now.
-  for (const o of Object.values(r.obligations)) {
-    const owed = typeof o.amount === "number" ? o.amount : evalNumber(o.amount, makeEnv(r, s), 0);
-    s.dues[o.id] = { due: r.clock.start + o.first * 1440, owed: Math.max(0, owed), missed: 0 };
-  }
   for (const id of r.statOrder) s.stats[id] = r.stats[id].start;
   // Starts that read other stats (`start: full` against a max formula, a start formula), and any stat with a max
   // formula, are worked out now that the plain starts are in — and clamped to the max they evaluate to.
@@ -627,14 +614,8 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       break;
     }
     case "tf": s.tf = { ...s.tf, [e.id]: Math.max(s.tf[e.id] ?? 0, e.stage) }; break;
-    case "due": {
-      const cur = s.dues[e.id] ?? { due: 0, owed: 0, missed: 0 };
-      s.dues = { ...s.dues, [e.id]: { due: e.due ?? cur.due, owed: Math.max(0, e.owed ?? cur.owed), missed: e.missed ?? cur.missed } };
-      break;
-    }
     case "explored": s.explored = { ...s.explored, [e.loc]: e.found ? 0 : (s.explored[e.loc] ?? 0) + 1 }; break;
     case "discovered": if (!s.discovered.includes(e.id)) s.discovered = [...s.discovered, e.id]; break;
-    case "job": s.job = e.job ? structuredClone(e.job) : null; break;
     case "news": s.news = [...s.news, { text: e.text, at: s.minutes }].slice(-NEWS_KEPT); break;
     case "bond": s.bonds = { ...s.bonds, [e.a]: { ...(s.bonds[e.a] ?? {}), [e.b]: clamp((s.bonds[e.a]?.[e.b] ?? 0) + e.d, -100, 100) } }; break;
     case "save":
@@ -737,7 +718,7 @@ export const BUILTIN_NAMES = [
   "month", "date", "season", "weather", "temperature", "indoors", "outside",
   "warmth", "warmth_min", "warmth_max", "too_cold", "too_hot", "reveal", "exposed", "naked",
   "in_encounter", "encounter", "encounter_round", "round", "momentum", "target",
-  "loops", "runs", "at_work",
+  "loops", "runs",
 ];
 
 export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> = {}): ExprEnv {
@@ -775,7 +756,6 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
       momentum: s.encounter?.momentum ?? 0,
       loops: s.loops,
       runs: s.runs,
-      at_work: !!s.job,
       round: s.encounter?.round ?? 0,
       target: "",
     };
@@ -864,10 +844,6 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
         case "arc": return s.fronts[`arc_${a0}`]?.v ?? 0;
         // A person's declared age (0 when not given).
         case "age": return r.people[a0]?.age ?? 0;
-        // Obligations: what's owed, payments missed, whole days until the next is due (negative = overdue).
-        case "owed": return s.dues[a0]?.owed ?? 0;
-        case "missed": return s.dues[a0]?.missed ?? 0;
-        case "days_until": return s.dues[a0] ? Math.floor((s.dues[a0].due - s.minutes) / 1440) : 0;
         // Quests: '' (not taken), 'active', 'ready' (to hand in), 'done' or 'failed'; goal counts; how many are done.
         case "quest": return s.quests?.[a0]?.st ?? "";
         case "quest_active": return s.quests?.[a0]?.st === "active" || s.quests?.[a0]?.st === "ready";

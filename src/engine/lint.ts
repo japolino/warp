@@ -10,7 +10,7 @@ export const FUNCTIONS = [
   "has", "count", "flag", "cond", "at", "rel", "met", "between", "roll",
   "wearing", "worn", "trait", "present", "where", "codex", "feat", "perk",
   "eff", "gear", "integrity",
-  "secret", "front", "front_stage", "happened", "saved", "body", "transformed", "bond", "arc", "age", "owed", "missed", "days_until",
+  "secret", "front", "front_stage", "happened", "saved", "body", "transformed", "bond", "arc", "age",
   "quest", "quest_active", "quest_done", "quest_failed", "goal", "quests_done", "memories", "cond_of", "foe_cond", "stat_max", "foe_max", "in_encounter",
   "min", "max", "clamp", "floor", "ceil", "round", "abs",
 ];
@@ -21,6 +21,7 @@ const REMOVED_NAMES: Record<string, string> = {
   in_date: "dating", on_outing: "dating", "partner()": "dating", "dates()": "dating", "stage()": "dating",
   pregnant: "family and pregnancy", pregnancy_weeks: "family and pregnancy", "children()": "family and pregnancy",
   "seen_by()": "being seen", "fame()": "being seen",
+  at_work: "work shifts", "owed()": "bills and debts", "missed()": "bills and debts", "days_until()": "bills and debts",
 };
 
 function distance(a: string, b: string): number {
@@ -360,23 +361,6 @@ export function lintRuleset(r: Ruleset): Issue[] {
   if (r.discovery.enabled) {
     check(r.discovery.chance, "Discovery › chance");
     for (const loc of r.discovery.at) if (!r.locations[loc]) issues.push({ level: "warning", where: "Discovery › at", message: `"${loc}" isn't a location${suggest(loc, Object.keys(r.locations))}` });
-  }
-  for (const o of Object.values(r.obligations)) {
-    const w = `Obligations › ${o.id}`;
-    check(o.amount, `${w} › amount`);
-    if (!r.stats[o.payWith]) issues.push({ level: "warning", where: `${w} › pay_with`, message: `"${o.payWith}" isn't a stat` });
-    if (o.creditor && !r.people[o.creditor]) issues.push({ level: "warning", where: `${w} › creditor`, message: `"${o.creditor}" isn't a person${suggest(o.creditor, people)}` });
-    for (const loc of o.at) if (!r.locations[loc]) issues.push({ level: "warning", where: `${w} › at`, message: `"${loc}" isn't a location` });
-    if (o.late) for (const opt of o.late.options) checkEffect(opt.effect, `${w} › late › ${opt.id}`);
-  }
-  for (const j of Object.values(r.jobs)) {
-    const w = `Jobs › ${j.id}`;
-    check(j.when, `${w} › when`);
-    check(j.pay, `${w} › pay`);
-    check(j.tip, `${w} › tip`);
-    if (j.skill && !r.stats[j.skill]) issues.push({ level: "warning", where: `${w} › skill`, message: `"${j.skill}" isn't a stat` });
-    for (const loc of j.at) if (!r.locations[loc]) issues.push({ level: "warning", where: `${w} › at`, message: `"${loc}" isn't a location` });
-    checkEffect(j.gain, `${w} › gain`);
   }
   for (const c of Object.values(r.companions)) {
     const w = `Companions › ${c.id}`;
