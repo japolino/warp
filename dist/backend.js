@@ -22333,6 +22333,43 @@ function newNames(text, known) {
   }
   return [...out];
 }
+function nameCandidates(text, known, max = 8) {
+  const knownWords = new Set(known.flatMap((n) => n.toLowerCase().split(/[^\p{L}\p{N}']+/u)).filter(Boolean));
+  const count = new Map;
+  const re = /\p{Lu}[\p{Ll}'’-]+(?:[ \t]+\p{Lu}[\p{Ll}'’-]+){0,3}/gu;
+  const add = (raw, at, starts) => {
+    const words = raw.filter((w) => !COMMON_CAPS.has(w.toLowerCase()));
+    while (words.length && knownWords.has(words[0].toLowerCase()))
+      words.shift();
+    const name = words.join(" ");
+    if (!name || name.length < 3 || words.every((w) => knownWords.has(w.toLowerCase())))
+      return;
+    const c = count.get(name);
+    if (c) {
+      c.n++;
+      c.mid ||= !starts;
+    } else
+      count.set(name, { n: 1, at, mid: !starts });
+  };
+  for (const m of text.matchAll(re)) {
+    const before = text.slice(0, m.index).trimEnd();
+    let starts = !before || /[.!?"“”*…:\n]$/.test(before);
+    let run = [];
+    for (const w of m[0].split(/[ \t]+/)) {
+      const poss = /['’]s$/.test(w);
+      run.push(w.replace(/['’]s$/, ""));
+      if (poss) {
+        add(run, m.index ?? 0, starts);
+        run = [];
+        starts = false;
+      }
+    }
+    if (run.length)
+      add(run, m.index ?? 0, starts);
+  }
+  const weak = ([n, c]) => n.includes(" ") || c.mid || c.n >= 2 ? 0 : 1;
+  return [...count.entries()].sort((a, b) => weak(a) - weak(b) || b[1].n - a[1].n || a[1].at - b[1].at).slice(0, max).map(([n]) => n);
+}
 function mentions(text, name) {
   const t = text.toLowerCase();
   const n = name.toLowerCase().trim();
@@ -22694,6 +22731,30 @@ async function bookkeeping(opts) {
     q["gate:body"] = { type: "noul", instructions: `${player}'s body changes during the reply (a transformation, new mark or tattoo, haircut or dye, a lasting injury…)` };
   if (r.peopleOpen)
     q["gate:people"] = { type: "noul", instructions: "The reply introduces a named character who wasn't in the game state before" };
+  const knownNames = [player, ...Object.values(s.people).map((x) => x.name), ...Object.keys(s.items).map((id) => itemName(r, s, id)), ...Object.values(r.locations).map((l) => l.name), ...s.locationName ? [s.locationName] : []];
+  const cands = r.peopleOpen || r.locationsOpen ? nameCandidates(opts.reply, knownNames, 10) : [];
+  if (r.peopleOpen)
+    cands.forEach((name, i) => {
+      q[`newp:${i}`] = { type: "noul", instructions: `"${name}" is the name of a person or creature who is in the scene in the reply — they speak, act or are spoken to there and then. Not someone only remembered, mentioned or talked about; not ${player}; not a place, a thing, a title, a group, or an ordinary word.` };
+      q[`newhere:${i}`] = { type: "noul", instructions: `At the end of the reply, ${name} is physically in the scene with ${player} (not just mentioned or remembered)` };
+      for (const rs of r.relStatOrder) {
+        const d = r.relStats[rs];
+        if (d.narrator > 0)
+          q[`newfeel:${i}:${rs}`] = { type: "score", instructions: `Right now, how does ${name} feel toward ${player} — ${d.label}?`, criteria: feelLevels(d).map((l) => l.text) };
+      }
+    });
+  if (r.locationsOpen) {
+    q.place = {
+      type: "choice",
+      instructions: `Where is ${player} at the end of the reply?`,
+      criteria: {
+        stay: `Still at ${s.locationName ?? "the same place"}`,
+        ...Object.fromEntries(Object.values(r.locations).filter((l) => l.id !== s.location).map((l) => [`loc:${l.id}`, l.name])),
+        ...Object.fromEntries(cands.map((n, i) => [`cand:${i}`, `A place called ${n}`])),
+        elsewhere: "Somewhere else, not named in this list"
+      }
+    };
+  }
   if (r.itemsOpen)
     q["gate:items"] = { type: "noul", instructions: `${player} gains, loses or uses up an item during the reply` };
   if (r.locationsOpen)
@@ -22804,10 +22865,48 @@ async function bookkeeping(opts) {
     needsWriting.add("memories");
   const known = [player, ...Object.values(s.people).map((x) => x.name), ...Object.values(r.locations).map((l) => l.name), s.locationName ?? "", ...Object.keys(s.items).map((id) => itemName(r, s, id))];
   const peopleBar = newNames(opts.reply, known).length ? 0.35 : 0.6;
+  const picked = [];
+  const isPerson = (i) => {
+    const a = ans[`newp:${i}`];
+    return a?.type === "noul" && a.noul >= 0.7;
+  };
+  const within = (a, b) => a !== b && ` ${b} `.includes(` ${a} `);
+  cands.forEach((name, i) => {
+    if (!isPerson(i) || cands.some((other, j) => isPerson(j) && within(name, other)))
+      return;
+    picked.push(name);
+    const feelings = {};
+    for (const rs of r.relStatOrder) {
+      const f = ans[`newfeel:${i}:${rs}`];
+      if (f?.type !== "score" || f.confidence < 0.3)
+        continue;
+      const levels = feelLevels(r.relStats[rs]);
+      feelings[rs] = levels[Math.max(0, Math.min(levels.length - 1, Math.round(f.score)))].value;
+    }
+    (p.people ??= []).push({ name, ...Object.keys(feelings).length ? { feelings } : {} });
+    const here = ans[`newhere:${i}`];
+    if (here?.type === "noul" && here.noul >= 0.5)
+      (p.scene ??= {})[name] = true;
+  });
+  const place = ans.place;
+  let placeOpen = false;
+  if (confident(place) && place.choice !== "stay") {
+    if (place.choice.startsWith("loc:"))
+      p.move = place.choice.slice(4);
+    else if (place.choice.startsWith("cand:"))
+      p.move = cands[Number(place.choice.slice(5))];
+    else
+      placeOpen = true;
+  }
   for (const g of ["people", "items", "move", "body"]) {
     const a = ans[`gate:${g}`];
-    if (a?.type === "noul" && a.noul >= (g === "people" ? peopleBar : 0.6))
-      needsWriting.add(g);
+    if (a?.type !== "noul" || a.noul < (g === "people" ? peopleBar : 0.6))
+      continue;
+    if (g === "people" && cands.length)
+      continue;
+    if (g === "move" && (p.move || confident(place) && !placeOpen))
+      continue;
+    needsWriting.add(g);
   }
   return { proposal: p, needsWriting };
 }

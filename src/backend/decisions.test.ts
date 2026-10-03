@@ -128,7 +128,7 @@ describe("decide blocks: model odds, engine dice", () => {
 });
 
 describe("System-1 bookkeeping", () => {
-  test("atomic answers become bounded deltas; gates request names from a writer", async () => {
+  test("atomic answers become bounded deltas; new names are picked from the reply", async () => {
     const r = hometown();
     const s = initialState(r);
     s.people.robin = { name: "Robin" };
@@ -143,6 +143,8 @@ describe("System-1 bookkeeping", () => {
         else if (k === "rel:robin:trust") a[k] = choice("down", 0.7, Object.keys((v as any).criteria));
         else if (k === "move") a[k] = choice("park", 0.8, Object.keys((v as any).criteria));
         else if (k === "gate:people") a[k] = { type: "noul", noul: 0.9 };
+        // The new name is picked from the reply, not written.
+        else if (k.startsWith("newp:")) a[k] = { type: "noul", noul: (v as any).instructions.startsWith('"Alex"') ? 0.9 : 0.1 };
         else if (v.type === "noul") a[k] = { type: "noul", noul: 0.1 };
       }
       return a;
@@ -152,7 +154,8 @@ describe("System-1 bookkeeping", () => {
     expect(out.proposal.stats).toEqual({ stress: r.stats.stress.narrator });
     expect(out.proposal.rel).toEqual({ Robin: { trust: -2 } });
     expect(out.proposal.move).toBe("park");
-    expect([...out.needsWriting]).toEqual(["people"]);
+    expect(out.proposal.people?.map((p) => p.name)).toEqual(["Alex"]);
+    expect([...out.needsWriting]).toEqual([]);
     // Only people the reply mentions are asked about.
     expect(Object.keys(d.asked[0]).filter((k) => k.startsWith("rel:")).every((k) => k.startsWith("rel:robin:"))).toBe(true);
   });

@@ -53,6 +53,43 @@ export function newNames(text: string, known: string[]): string[] {
   return [...out];
 }
 
+/**
+ * Possible new names in a reply, for a classifier to pick from (it can't write a
+ * name, but it can say which of these is one). Runs of capitalised words —
+ * "Captain Rhea Vos", "Rusty Anchor" — that aren't common words or anyone or
+ * anything the game already knows. Sentence starts count too; the classifier
+ * filters. Most frequent first.
+ */
+export function nameCandidates(text: string, known: string[], max = 8): string[] {
+  const knownWords = new Set(known.flatMap((n) => n.toLowerCase().split(/[^\p{L}\p{N}']+/u)).filter(Boolean));
+  const count = new Map<string, { n: number; at: number; mid: boolean }>();
+  const re = /\p{Lu}[\p{Ll}'’-]+(?:[ \t]+\p{Lu}[\p{Ll}'’-]+){0,3}/gu;
+  const add = (raw: string[], at: number, starts: boolean) => {
+    // Drop words that aren't name-like ("Then Rhea" → "Rhea").
+    const words = raw.filter((w) => !COMMON_CAPS.has(w.toLowerCase()));
+    while (words.length && knownWords.has(words[0].toLowerCase())) words.shift();
+    const name = words.join(" ");
+    if (!name || name.length < 3 || words.every((w) => knownWords.has(w.toLowerCase()))) return;
+    const c = count.get(name);
+    if (c) { c.n++; c.mid ||= !starts; } else count.set(name, { n: 1, at, mid: !starts });
+  };
+  for (const m of text.matchAll(re)) {
+    const before = text.slice(0, m.index).trimEnd();
+    let starts = !before || /[.!?"“”*…:\n]$/.test(before);
+    // A possessive ends a name ("Name's Rhea" is "Name" and "Rhea").
+    let run: string[] = [];
+    for (const w of m[0].split(/[ \t]+/)) {
+      const poss = /['’]s$/.test(w);
+      run.push(w.replace(/['’]s$/, ""));
+      if (poss) { add(run, m.index ?? 0, starts); run = []; starts = false; }
+    }
+    if (run.length) add(run, m.index ?? 0, starts);
+  }
+  // Lone words that only ever start a sentence ("Later", "Marcus,") come last: often not names, but sometimes are.
+  const weak = ([n, c]: [string, { n: number; mid: boolean }]) => (n.includes(" ") || c.mid || c.n >= 2 ? 0 : 1);
+  return [...count.entries()].sort((a, b) => weak(a) - weak(b) || b[1].n - a[1].n || a[1].at - b[1].at).slice(0, max).map(([n]) => n);
+}
+
 /** Does the text mention this item? Its full name, its head noun ("hoodie"), or most of its words. */
 export function mentions(text: string, name: string): boolean {
   const t = text.toLowerCase();
@@ -478,6 +515,30 @@ export async function bookkeeping(opts: {
   if (Object.keys(s.people).length) q["gate:memories"] = { type: "noul", instructions: `During the reply, something happened between ${player} and someone there that they'll remember for a long time: a real kindness, a betrayal, a promise made or broken, a humiliation, a first` };
   if (r.body.enabled && r.body.narrator) q["gate:body"] = { type: "noul", instructions: `${player}'s body changes during the reply (a transformation, new mark or tattoo, haircut or dye, a lasting injury…)` };
   if (r.peopleOpen) q["gate:people"] = { type: "noul", instructions: "The reply introduces a named character who wasn't in the game state before" };
+  // New names, picked rather than written: each candidate is asked about (as a person, and as where
+  // {{user}} ends up), with first feelings asked up front so no second call is needed.
+  const knownNames = [player, ...Object.values(s.people).map((x) => x.name), ...Object.keys(s.items).map((id) => itemName(r, s, id)), ...Object.values(r.locations).map((l) => l.name), ...(s.locationName ? [s.locationName] : [])];
+  const cands = (r.peopleOpen || r.locationsOpen) ? nameCandidates(opts.reply, knownNames, 10) : [];
+  if (r.peopleOpen) cands.forEach((name, i) => {
+    q[`newp:${i}`] = { type: "noul", instructions: `"${name}" is the name of a person or creature who is in the scene in the reply — they speak, act or are spoken to there and then. Not someone only remembered, mentioned or talked about; not ${player}; not a place, a thing, a title, a group, or an ordinary word.` };
+    q[`newhere:${i}`] = { type: "noul", instructions: `At the end of the reply, ${name} is physically in the scene with ${player} (not just mentioned or remembered)` };
+    for (const rs of r.relStatOrder) {
+      const d = r.relStats[rs];
+      if (d.narrator > 0) q[`newfeel:${i}:${rs}`] = { type: "score", instructions: `Right now, how does ${name} feel toward ${player} — ${d.label}?`, criteria: feelLevels(d).map((l) => l.text) };
+    }
+  });
+  if (r.locationsOpen) {
+    q.place = {
+      type: "choice",
+      instructions: `Where is ${player} at the end of the reply?`,
+      criteria: {
+        stay: `Still at ${s.locationName ?? "the same place"}`,
+        ...Object.fromEntries(Object.values(r.locations).filter((l) => l.id !== s.location).map((l) => [`loc:${l.id}`, l.name])),
+        ...Object.fromEntries(cands.map((n, i) => [`cand:${i}`, `A place called ${n}`])),
+        elsewhere: "Somewhere else, not named in this list",
+      },
+    };
+  }
   if (r.itemsOpen) q["gate:items"] = { type: "noul", instructions: `${player} gains, loses or uses up an item during the reply` };
   if (r.locationsOpen) q["gate:move"] = { type: "noul", instructions: `${player} ends the reply somewhere different from ${s.locationName ?? "where they started"}` };
 
@@ -567,9 +628,41 @@ export async function bookkeeping(opts: {
   // A name nobody knows in the middle of a sentence makes "someone new?" easier to say yes to.
   const known = [player, ...Object.values(s.people).map((x) => x.name), ...Object.values(r.locations).map((l) => l.name), s.locationName ?? "", ...Object.keys(s.items).map((id) => itemName(r, s, id))];
   const peopleBar = newNames(opts.reply, known).length ? 0.35 : 0.6;
+  // New people the classifier picked from the candidates: no writing needed.
+  const picked: string[] = [];
+  // "Captain Rhea Vos" and "Rhea" are one person: keep the fuller name.
+  const isPerson = (i: number) => { const a = ans[`newp:${i}`]; return a?.type === "noul" && a.noul >= 0.7; };
+  const within = (a: string, b: string) => a !== b && ` ${b} `.includes(` ${a} `);
+  cands.forEach((name, i) => {
+    if (!isPerson(i) || cands.some((other, j) => isPerson(j) && within(name, other))) return;
+    picked.push(name);
+    const feelings: Record<string, number> = {};
+    for (const rs of r.relStatOrder) {
+      const f = ans[`newfeel:${i}:${rs}`];
+      if (f?.type !== "score" || f.confidence < 0.3) continue;
+      const levels = feelLevels(r.relStats[rs]);
+      feelings[rs] = levels[Math.max(0, Math.min(levels.length - 1, Math.round(f.score)))].value;
+    }
+    (p.people ??= []).push({ name, ...(Object.keys(feelings).length ? { feelings } : {}) });
+    const here = ans[`newhere:${i}`];
+    if (here?.type === "noul" && here.noul >= 0.5) (p.scene ??= {})[name] = true;
+  });
+  // Where {{user}} went, when places are open: a known place or a named candidate is picked; only "somewhere unnamed" needs writing.
+  const place = ans.place;
+  let placeOpen = false;
+  if (confident(place) && place.choice !== "stay") {
+    if (place.choice.startsWith("loc:")) p.move = place.choice.slice(4);
+    else if (place.choice.startsWith("cand:")) p.move = cands[Number(place.choice.slice(5))];
+    else placeOpen = true;
+  }
   for (const g of ["people", "items", "move", "body"] as const) {
     const a = ans[`gate:${g}`];
-    if (a?.type === "noul" && a.noul >= (g === "people" ? peopleBar : 0.6)) needsWriting.add(g);
+    if (a?.type !== "noul" || a.noul < (g === "people" ? peopleBar : 0.6)) continue;
+    // The classifier already judged every name in the reply, one by one; that beats its general
+    // "someone new?" (which also says yes for unnamed crowds and people only remembered).
+    if (g === "people" && cands.length) continue;
+    if (g === "move" && (p.move || (confident(place) && !placeOpen))) continue;
+    needsWriting.add(g);
   }
   return { proposal: p, needsWriting };
 }

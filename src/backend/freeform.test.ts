@@ -4,7 +4,7 @@ import { loadRuleset } from "../engine/loader.js";
 import { applyProposal } from "../engine/resolve.js";
 import { foldEvents, initialState } from "../engine/state.js";
 import { DEFAULT_SETTINGS } from "../shared/protocol.js";
-import { bookkeeping, mentions, newNames, readTurn } from "./decisions.js";
+import { bookkeeping, mentions, nameCandidates, newNames, readTurn } from "./decisions.js";
 
 class Scripted implements Decider {
   readonly id = "jev" as const;
@@ -123,4 +123,67 @@ describe("text helpers", () => {
     const text = "The door opens. Miu looks up as Jonah walks in with Clarice. \"Hey,\" says Jonah.";
     expect(newNames(text, ["Miu", "Clarice"])).toEqual(["Jonah"]);
   });
+});
+
+describe("new names picked, not written (classifier)", () => {
+  test("candidates: runs of capitalised words the game doesn't know, most frequent first", () => {
+    const text = "Captain Rhea Vos stepped in. Then Rhea laughed. \"Welcome to the Rusty Anchor,\" she said to Sam. The Bar was loud. Later, Miu waved.";
+    const c = nameCandidates(text, ["Sam", "Miu", "The Bar"]);
+    expect(c).toContain("Captain Rhea Vos");
+    expect(c).toContain("Rusty Anchor");
+    expect(c).not.toContain("Miu");
+    // A lone word that only starts a sentence is kept (it can be a name: "Marcus, the barkeep, …") but asked last.
+    expect(c.indexOf("Later")).toBeGreaterThan(c.indexOf("Rusty Anchor"));
+    expect(c).not.toContain("Bar");
+  });
+
+  test("a new person the classifier picks is added with first feelings and presence; no writing call", async () => {
+    const s = initialState(r);
+    const reply = "A woman in a long coat sat beside Sam. \"Name's Rhea,\" she said, sliding over a drink. Rhea smiled warmly.";
+    const d = new Scripted((q) => {
+      const a: Answers = {};
+      for (const [k, v] of Object.entries(q)) {
+        if (k.startsWith("newp:")) a[k] = { type: "noul", noul: (v as { instructions: string }).instructions.startsWith('"Rhea"') ? 0.95 : 0.05 };
+        else if (k.startsWith("newhere:")) a[k] = { type: "noul", noul: 0.9 };
+        else if (k.startsWith("newfeel:")) a[k] = { type: "score", score: 3, confidence: 0.8, probabilities: {} };
+        else if (k === "gate:people") a[k] = { type: "noul", noul: 0.9 };
+        else if (v.type === "noul") a[k] = { type: "noul", noul: 0.05 };
+      }
+      return a;
+    });
+    const out = await bookkeeping({ decider: d, r, s, playerText: "…", reply, player: "Sam" });
+    expect(out.proposal.people?.map((p) => p.name)).toEqual(["Rhea"]);
+    expect(out.proposal.people?.[0].feelings?.trust).toBeDefined();
+    expect(out.proposal.scene).toMatchObject({ Rhea: true });
+    expect(out.needsWriting.has("people")).toBe(false);
+  });
+
+  test("someone new and unnamed, with no name in the reply to pick, still goes to the writer", async () => {
+    const s = initialState(r);
+    const d = new Scripted((q) => Object.fromEntries(Object.entries(q).map(([k, v]) => [k, k === "gate:people" ? { type: "noul", noul: 0.9 } : v.type === "noul" ? { type: "noul", noul: 0.05 } : { type: "score", score: 0, confidence: 0, probabilities: {} }])) as Answers);
+    const out = await bookkeeping({ decider: d, r, s, playerText: "…", reply: "the bartender nods at you.", player: "Sam" });
+    expect(out.needsWriting.has("people")).toBe(true);
+  });
+
+  test("open places: a named place in the reply is picked as where Sam ends up", async () => {
+    const open = loadRuleset([{ label: "t", content: "name: Open\nlocations_open: true\nrelationships: { stats: { trust: { start: 20, narrator: 5 } } }\n", order: 0 }]).ruleset!;
+    const s = initialState(open);
+    const reply = "Sam pushed through the doors of the Rusty Anchor, out of the rain.";
+    const d = new Scripted((q) => {
+      const keys = keysOf(q, "place");
+      const i = keys.findIndex((k) => k.startsWith("cand:") && (q.place as { criteria: Record<string, string> }).criteria[k].includes("Rusty Anchor"));
+      return { place: choice(keys[i], 0.9, keys), "gate:move": { type: "noul", noul: 0.95 } };
+    });
+    const out = await bookkeeping({ decider: d, r: open, s, playerText: "…", reply, player: "Sam" });
+    expect(out.proposal.move).toBe("Rusty Anchor");
+    expect(out.needsWriting.has("move")).toBe(false);
+  });
+});
+
+test("names were all judged and none is a person: no writing call for people", async () => {
+  const s = initialState(r);
+  const d = new Scripted((q) => Object.fromEntries(Object.entries(q).map(([k, v]) => [k, k === "gate:people" ? { type: "noul", noul: 0.9 } : v.type === "noul" ? { type: "noul", noul: 0.05 } : { type: "score", score: 0, confidence: 0, probabilities: {} }])) as Answers);
+  const out = await bookkeeping({ decider: d, r, s, playerText: "…", reply: "You remember what Old Tom said about the Duke of Harrow.", player: "Sam" });
+  expect(out.proposal.people).toBeUndefined();
+  expect(out.needsWriting.has("people")).toBe(false);
 });
