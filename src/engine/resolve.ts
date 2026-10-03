@@ -568,11 +568,14 @@ function advanceTime(w: Working, minutes: number, src: EventSource) {
  * - An edge rule fires each time its condition goes from false to true. Its state is read again right after its own
  *   effect, so a rule whose effect makes it false fires again when a later rule makes it true.
  * - A `repeat:` rule runs once per player turn, in the turn's own resolve, if its condition holds at any pass. It
- *   never runs in the post-reply read, the greeting read or a hand edit.
+ *   never runs in the post-reply read, the greeting read or a hand edit. Its hint: is dropped again when a later
+ *   rule makes its condition false, so a direction describes the state the turn settles on.
  * - `roll()` in a condition gives the same number for the whole batch, so dice can't flip a rule back and forth.
  */
 function runTriggers(w: Working, includeRepeat: boolean) {
   const fired = new Set<string>();
+  /** The directions each repeat rule gave, dropped again if a later rule makes it false (they describe the settled state). */
+  const said: { t: Ruleset["triggers"][number]; from: number; to: number }[] = [];
   const turn0 = w.s.turn;
   const holds = (t: Ruleset["triggers"][number]) =>
     (t.when === undefined || evalBool(t.when, w.env({}, seededRng(`${w.seed}:${turn0}:when:${t.id}`)), false)) && (!t.whenScene || w.scene[t.id] === true);
@@ -588,7 +591,9 @@ function runTriggers(w: Working, includeRepeat: boolean) {
       const why = `Rule "${t.id.replace(/_/g, " ")}"${t.when ? ` (${t.when})` : ""}${t.whenScene ? ` — judged: ${t.whenScene}` : ""}`;
       if (t.repeat && now && !fired.has(t.id)) {
         if (!prev) w.push({ t: "trig", id: t.id, v: true, src: "trigger" });
+        const from = w.hints.length;
         because(w, prev ? `${why}, every turn while true` : why, () => effectToEvents(w, t.effects, "trigger", {}));
+        if (w.hints.length > from) said.push({ t, from, to: w.hints.length });
         fired.add(t.id);
         changed = true;
       } else if (!t.repeat && now && !prev) {
@@ -607,6 +612,7 @@ function runTriggers(w: Working, includeRepeat: boolean) {
       announce(w, "Rule processing reached its safety limit. Some rules still disagree with the state; check for a cycle in the ruleset.");
     }
   }
+  for (const x of said.reverse()) if (!holds(x.t)) w.hints.splice(x.from, x.to - x.from);
   openSecrets(w);
   goalLife(builderOf(w));
 }

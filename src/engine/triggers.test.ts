@@ -80,4 +80,16 @@ describe("when rules run", () => {
     expect(turns / 2000).toBeGreaterThan(0.26);
     expect(turns / 2000).toBeLessThan(0.34);
   });
+
+  test("a repeat rule's direction is dropped when a later rule undoes its condition in the same turn (LONG-9)", () => {
+    const r = load({ style: "story", stats: { job: { kind: "hidden", start: 1, max: 9 } }, flags: { job_done: { start: false } },
+      actions: { perform: { label: "Perform", effects: { flags: { job_done: true }, hint: "The show went well." } } },
+      triggers: {
+        dday: { when: "job > 0", repeat: true, do: { hint: "Today is the job day." } },
+        clear: { when: "job_done", do: { set: { job: 0 }, flags: { job_done: false } } },
+      } });
+    const s = initialState(r);
+    expect(resolveTurn(r, s, null, { seed: "a" }).hints).toEqual(["Today is the job day."]);
+    expect(resolveTurn(r, s, { actionId: "perform", via: "choice" }, { seed: "b" }).hints).toEqual(["The show went well."]);
+  });
 });
