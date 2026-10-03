@@ -46,22 +46,22 @@ narration:
       narrator: 4            # at most 4 per reply: no "strangers to in love" in two messages
       bands:
         0:  { text: Cold,    say_down: "{name} has gone cold on you.", voice: "{name} is curt with {{user}}: short answers, no warmth." }
-        10: { text: Neutral, say_down: "{name} has cooled toward you." }
-        25: { text: Warm,    say: "{name} is warming to you.", voice: "{name} relaxes around {{user}}: small jokes, first names." }
-        45: { text: Fond,    say: "{name} is fond of you now.", voice: "{name} seeks {{user}} out and remembers small things they said." }
-        65: { text: Smitten, say: "{name} can't hide how much they like you.", voice: "{name} gets flustered near {{user}} and finds reasons to stay close." }
+        10: { text: Neutral, say: "{name} has thawed a little.", say_down: "{name} has cooled toward you.", voice: "{name} is polite with {{user}}, no more." }
+        25: { text: Warm,    say: "{name} is warming to you.", say_down: "{name} has pulled back a little.", voice: "{name} relaxes around {{user}}: small jokes, first names." }
+        45: { text: Fond,    say: "{name} is fond of you now.", say_down: "{name} is still fond of you, but more careful.", voice: "{name} seeks {{user}} out and remembers small things they said." }
+        65: { text: Smitten, say: "{name} can't hide how much they like you.", say_down: "{name}'s feelings for you have cooled a little.", voice: "{name} gets flustered near {{user}} and finds reasons to stay close." }
         85: { text: In love, say: "{name} has fallen for you.", voice: "{name} is openly tender with {{user}} and puts them first." }
     trust:
       start: 15
       narrator: 4
       bands:
         0:  { text: Guarded,  say_down: "{name} doesn't trust you any more.", voice: "{name} gives nothing personal away and watches {{user}} closely." }
-        20: { text: Wary,     say_down: "{name} is wary of you again." }
-        40: { text: Open,     say: "{name} is starting to open up.", voice: "{name} shares small personal things when asked." }
-        65: { text: Trusting, say: "{name} trusts you.", voice: "{name} asks {{user}} for help and tells the truth even when it costs." }
+        20: { text: Wary,     say: "{name} lets their guard down a little.", say_down: "{name} is wary of you again.", voice: "{name} answers {{user}} but keeps personal things back." }
+        40: { text: Open,     say: "{name} is starting to open up.", say_down: "{name} is more careful with you now.", voice: "{name} shares small personal things when asked." }
+        65: { text: Trusting, say: "{name} trusts you.", say_down: "{name}'s faith in you has been shaken.", voice: "{name} asks {{user}} for help and tells the truth even when it costs." }
         85: { text: Devoted,  say: "{name} would trust you with anything.", voice: "{name} confides fears and secrets without being asked." }
   # For a romance, the builder adds a third stat:
-  # attraction: { start: 0, narrator: 6, good: none, bands: { 0: No spark, 15: Curious, 35: Drawn, 60: Wanting, 85: Consumed } }
+  # attraction: { start: 0, narrator: 6, good: none, bands: { 0: { text: No spark, say_down: "The spark between you and {name} has gone out." }, 15: { text: Curious, say: "{name} is curious about you.", say_down: "{name}'s interest in you has cooled.", voice: "{name} notices {{user}} more than they let on." }, 35: { text: Drawn, say: "{name} is drawn to you.", say_down: "{name} is less drawn to you now.", voice: "{name} lingers near {{user}} and finds small reasons to touch." }, 60: { text: Wanting, say: "{name} wants you, and it shows.", say_down: "{name} has reined in what they feel for you.", voice: "{name} flirts openly with {{user}} when the moment allows." }, 85: { text: Consumed, say: "{name} can't stop thinking about you.", voice: "{name} can barely hide their desire for {{user}}." } } }
   people: {}                 # the card's character is added here on install (name, appearance, outfit)
 
 you: {}                      # name, appearance and outfit are read from the persona and the greeting

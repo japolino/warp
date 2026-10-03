@@ -4,6 +4,7 @@
 
 import { beforeAll, describe, expect, test } from "bun:test";
 import { getTemplate, withCharacter } from "../engine/templates/index.js";
+import { loadRuleset } from "../engine/loader.js";
 import { DEFAULT_SETTINGS } from "../shared/protocol.js";
 import { withAttraction, withDifficulty, withPace } from "./builder.js";
 import { emptyDraft, renderBuilder } from "../frontend/builder-ui.js";
@@ -116,6 +117,9 @@ describe("the template, adjusted before theming", () => {
       expect(withAttraction(y)).toBe(y);
       expect(y).not.toContain("# attraction:");
       expect(y.indexOf("attraction:")).toBeLessThan(y.indexOf("  people:"));
+      // Its bands speak both ways, like the template's own stats.
+      const bands = (loadRuleset([{ label: "people", content: y, order: 0 }]).ruleset!).relStats.attraction.bands;
+      expect(bands.map((b, i) => [i > 0 ? !!b.say : true, i < bands.length - 1 ? !!b.sayDown : true])).toEqual(bands.map(() => [true, true]));
     }
   });
 

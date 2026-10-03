@@ -37,7 +37,7 @@ The model still writes every reply. Warp owns the numbers: before a reply it set
 Every ruleset is one of two styles. The first install shows both cards side by side; pick one, or **Build with AI**.
 
 - **📖 Story (no dice).** Time, place, who is here and how they feel about you, with slow-burn relationships (affection and trust), secrets and goals. Nothing is rolled, and typed messages are never read for actions. For a romance card, the builder adds attraction.
-- **🎲 Adventure (dice).** Everything in Story, plus d20 checks at risky moments, health, energy and mood, attributes that grow with use, and contests (fights, chases, arguments) on one momentum gauge.
+- **🎲 Adventure (dice).** Everything in Story, plus d20 checks at risky moments, health, energy and mood (badly hurt, exhausted or low in spirits makes checks harder), attributes that grow with use, and contests (fights, chases, arguments) on one momentum gauge.
 
 Both templates fit any card: the time and place come from the greeting, and later places come from the story. After a template install you can switch between them in **Settings → Style** (your people are kept); a ruleset written for the card sets `style:` itself.
 

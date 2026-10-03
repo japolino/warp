@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { loadRuleset } from "../loader.js";
 import { lintRuleset } from "../lint.js";
 import { runLoopSim } from "../loop-sim.js";
-import { initialState } from "../state.js";
+import { foldEvents, initialState } from "../state.js";
+import { checkNumbers, resolveTurn } from "../resolve.js";
 import { getTemplate, looksLikeScenario, TEMPLATES, withCharacter, type Template } from "./index.js";
 
 /** A template as installed: one lorebook entry per part, the card's character added to the people part. */
@@ -115,4 +116,38 @@ describe("the loop simulator's gate on the real templates (CORE-DESIGN §2.7)", 
       expect(report.counts.crossings).toBeGreaterThan(0);
     });
   }
+});
+
+describe("people and meters that matter (Warp Studio's check)", () => {
+  test("every relationship band crossing has its own story line, both ways, and a voice", () => {
+    for (const t of TEMPLATES) {
+      const { r } = install(t);
+      for (const id of r.relStatOrder) {
+        r.relStats[id].bands.forEach((b, i, all) => {
+          const where = `${t.id} ${id} ${b.text}`;
+          if (i > 0) expect({ where, say: !!b.say }).toEqual({ where, say: true });
+          if (i < all.length - 1) expect({ where, sayDown: !!b.sayDown }).toEqual({ where, sayDown: true });
+          expect({ where, voice: !!b.voice }).toEqual({ where, voice: true });
+        });
+      }
+    }
+  });
+
+  test("Adventure: low health and low mood make checks harder, and wear off as they recover", () => {
+    const { r } = install(getTemplate("adventure")!);
+    const at = (health: number, mood: number, prev = initialState(r)) => {
+      const s = { ...prev, stats: { ...prev.stats, health, mood } };
+      return foldEvents(r, [resolveTurn(r, s, null, { seed: "x" }).events], s);
+    };
+    const bodyAdd = (s: ReturnType<typeof initialState>) => checkNumbers(r, s, r.liveChoices.tags.bold).add;
+    const charmAdd = (s: ReturnType<typeof initialState>) => checkNumbers(r, s, r.liveChoices.tags.charm).add;
+    const fine = at(100, 60);
+    const low = at(20, 20, fine);
+    expect(Object.keys(low.conditions).sort()).toEqual(["hurt", "low"]);
+    expect(bodyAdd(low)).toBe(bodyAdd(fine) - 2);
+    expect(charmAdd(low)).toBe(charmAdd(fine) - 1);
+    // Halfway back is not enough; at the middle band they wear off.
+    expect(Object.keys(at(40, 40, low).conditions).sort()).toEqual(["hurt", "low"]);
+    expect(Object.keys(at(55, 55, low).conditions)).toEqual([]);
+  });
 });

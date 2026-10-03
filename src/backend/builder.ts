@@ -191,7 +191,7 @@ function brief(s: BuilderSession): string {
 
 // ───────────────────────── the template, adjusted before theming ─────────────────────────
 
-const ATTRACTION = "    attraction: { start: 0, narrator: 6, good: none, bands: { 0: No spark, 15: Curious, 35: Drawn, 60: Wanting, 85: Consumed } }\n";
+const ATTRACTION = `    attraction: { start: 0, narrator: 6, good: none, bands: { 0: { text: No spark, say_down: "The spark between you and {name} has gone out." }, 15: { text: Curious, say: "{name} is curious about you.", say_down: "{name}'s interest in you has cooled.", voice: "{name} notices {{user}} more than they let on." }, 35: { text: Drawn, say: "{name} is drawn to you.", say_down: "{name} is less drawn to you now.", voice: "{name} lingers near {{user}} and finds small reasons to touch." }, 60: { text: Wanting, say: "{name} wants you, and it shows.", say_down: "{name} has reined in what they feel for you.", voice: "{name} flirts openly with {{user}} when the moment allows." }, 85: { text: Consumed, say: "{name} can't stop thinking about you.", voice: "{name} can barely hide their desire for {{user}}." } } }\n`;
 
 /** Add attraction (a romance) as the last relationship stat, replacing the template's commented example. */
 export function withAttraction(yaml: string): string {

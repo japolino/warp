@@ -86,7 +86,9 @@ checks:
     {
       label: "world",
       yaml: `conditions:
-  exhausted: { label: Exhausted, tone: bad, desc: "Running on empty: -2 to every check.", bonus: { body: -2, mind: -2, charm: -2 } }
+  exhausted: { label: Exhausted,   tone: bad, desc: "Running on empty: -2 to every check.", bonus: { body: -2, mind: -2, charm: -2 } }
+  hurt:      { label: Badly hurt,  tone: bad, desc: "Wounds slow you down: -2 to Body.", bonus: { body: -2 } }
+  low:       { label: Low spirits, tone: bad, desc: "Hard to put on a brave face: -1 to Charm.", bonus: { charm: -1 } }
 `,
     },
     {
@@ -100,17 +102,17 @@ checks:
       narrator: 5
       bands:
         0:  { text: Hostile,  say_down: "{name} has turned against you.", voice: "{name} is openly hostile to {{user}}." }
-        15: { text: Cool,     say_down: "{name} has cooled on you.", voice: "{name} is polite but distant with {{user}}." }
-        35: { text: Friendly, say: "{name} likes you.", voice: "{name} is easy and friendly with {{user}}." }
-        60: { text: Close,    say: "{name} counts you as a friend now.", voice: "{name} jokes with {{user}}, takes their side, shares plans." }
+        15: { text: Cool,     say: "{name} isn't hostile any more.", say_down: "{name} has cooled on you.", voice: "{name} is polite but distant with {{user}}." }
+        35: { text: Friendly, say: "{name} likes you.", say_down: "{name} has cooled a little, but still likes you.", voice: "{name} is easy and friendly with {{user}}." }
+        60: { text: Close,    say: "{name} counts you as a friend now.", say_down: "{name} is less sure of you than before.", voice: "{name} jokes with {{user}}, takes their side, shares plans." }
         85: { text: Devoted,  say: "{name} would do anything for you.", voice: "{name} puts {{user}} first, even at a cost." }
     trust:
       start: 20
       narrator: 5
       bands:
         0:  { text: Suspicious,  say_down: "{name} doesn't believe a word you say.", voice: "{name} doubts what {{user}} says and checks it." }
-        25: { text: Wary,        say_down: "{name} is wary of you again." }
-        50: { text: Trusting,    say: "{name} trusts you.", voice: "{name} tells {{user}} the truth and asks for help." }
+        25: { text: Wary,        say: "{name} is starting to give you the benefit of the doubt.", say_down: "{name} is wary of you again.", voice: "{name} listens to {{user}} but checks what matters." }
+        50: { text: Trusting,    say: "{name} trusts you.", say_down: "{name} trusts you, but not blindly any more.", voice: "{name} tells {{user}} the truth and asks for help." }
         80: { text: Unshakeable, say: "{name}'s trust in you is unshakeable.", voice: "{name} backs {{user}} without asking why." }
   people: {}                 # the card's character is added here on install
 
@@ -126,6 +128,10 @@ you: {}
 triggers:
   exhausted: { when: "energy <= 0", do: { add_condition: [exhausted], hint: "{{user}} is exhausted and struggling to stay upright." } }
   recovered: { when: "energy >= 30", do: { remove_condition: [exhausted] } }
+  hurt:      { when: "health < 25",  do: { add_condition: [hurt], hint: "{{user}} is badly hurt: every physical move costs." } }
+  mended:    { when: "health >= 50", do: { remove_condition: [hurt] } }
+  low:       { when: "mood < 25",    do: { add_condition: [low], hint: "{{user}} is in low spirits and it shows." } }
+  lifted:    { when: "mood >= 50",   do: { remove_condition: [low] } }
 
 live_choices:
   count: 3
