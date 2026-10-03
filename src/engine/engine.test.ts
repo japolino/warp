@@ -60,7 +60,8 @@ describe("templates", () => {
       expect(lintRuleset(ruleset!)).toEqual([]);
       const s = initialState(ruleset!);
       const hud = buildHud(ruleset!, s);
-      expect(hud.bars.length).toBeGreaterThan(0);
+      // Every template shows bars, except one with no stats on purpose (Romance: just feelings).
+      expect(hud.bars.length > 0 || ruleset!.statOrder.length === 0).toBe(true);
       expect(buildChoices(ruleset!, s, { lines: [], veils: [] }).length).toBeGreaterThan(0);
       expect(stateDigest(ruleset!, s).length).toBeGreaterThan(20);
     });

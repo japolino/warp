@@ -210,7 +210,8 @@ export function auditRuleset(r: Ruleset): AuditReport {
   }
 
   // ── people and places ──
-  for (const p of Object.values(r.people)) {
+  // With no places declared, the story says where everyone is: a schedule has nowhere to point.
+  if (Object.keys(r.locations).length) for (const p of Object.values(r.people)) {
     if (!p.schedule.length) gap({ id: `person-nowhere:${p.id}`, severity: "thin", part: "people", text: `${p.name} has no schedule, so they're only ever where the story says.`, fix: `Give ${p.name} a schedule (where they are by time and day) so the player can find them.` });
   }
   const startLoc = r.startLocation;
