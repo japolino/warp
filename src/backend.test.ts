@@ -262,3 +262,32 @@ test("templates: install records the template id; switching style replaces that 
   await h.frontend({ type: "install_template", chatId: custom, templateId: templates[1].id, replace: true });
   expect(h.characters[`char-${custom}`].world_book_ids).toHaveLength(count);
 });
+
+test("with the engine: a contest the story starts runs round by round; written moves are contest moves", async () => {
+  const chatId = await open();
+  h.helper = (c: HelperCall) => (c.kind === "writer" && c.user.includes("pulls a knife")
+    ? { answers: { "here:mira": { p: 0.9 }, contest: { choice: "fight", confidence: 0.9 }, threat: { level: 1 } }, choices: [], texts: { foe: "the drunk" } }
+    : defaultHelper(c));
+  try {
+    await h.say(chatId, "\"Easy there,\" I say.");
+    await h.generate(chatId, "A drunk at the end of the bar pulls a knife and lunges.");
+    let st = h.lastState(chatId);
+    expect(st.hud.conflict).toMatchObject({ opponent: "the drunk", round: 0 });
+    // The next message is round 1 (no read without Jev: the message is the move), and the writer writes contest moves.
+    await h.say(chatId, "I grab his wrist and twist.");
+    const { record } = await h.generate(chatId, "You twist; the knife clatters.");
+    st = h.lastState(chatId);
+    // Rounds 1–2 can never end it.
+    expect(st.hud.conflict.round).toBe(1);
+    expect(record.check).toBeDefined();
+    expect(live(st).map((c: any) => c.label)).toEqual(["Feint left and sweep his legs", "Bait him into over-reaching"]);
+    expect(st.choices.some((c: any) => c.id === "contest:break_off")).toBe(true);
+  } finally { h.helper = defaultHelper; }
+});
+
+test("with the engine: the odds on written choices follow their difficulty words", async () => {
+  const chatId = await open();
+  const odds = Object.fromEntries(live(h.lastState(chatId)).map((c: any) => [c.label, c.odds]));
+  // "Vault the bar" is bold/hard, "Study the lock" clever/fair, both on a stat of 3.
+  expect(odds["Vault the bar for the keys"]).toBeLessThan(odds["Study the lock"]);
+});
