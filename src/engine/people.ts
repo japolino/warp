@@ -13,8 +13,12 @@ export interface BandCrossing {
   from: Band | null;
   to: Band;
   dir: "up" | "down";
-  /** How far the value moved (for "the biggest move wins"). */
+  /** How far the value moved. */
   moved: number;
+  /** The move as a share of the stat's range, so stats on different scales compare fairly. */
+  share: number;
+  /** The band has its own line for this direction (`say:` / `say_down:`), not a generated one. */
+  authored: boolean;
   line: string;
 }
 
@@ -41,7 +45,8 @@ export function bandCrossings(r: Ruleset, before: GameState, after: GameState): 
       const c = crossing(def, b, a, def.max, def.max);
       if (!c) continue;
       const own = c.dir === "up" ? c.to.say : c.to.sayDown;
-      out.push({ who, stat: id, ...c, moved: Math.abs(a - b), line: fill(own ?? `${name}: ${def.label} — ${c.to.text}.`, name) });
+      const moved = Math.abs(a - b);
+      out.push({ who, stat: id, ...c, moved, share: moved / Math.max(1e-9, def.max - def.min), authored: !!own, line: fill(own ?? `${name}: ${def.label} — ${c.to.text}.`, name) });
     }
   }
   for (const id of r.statOrder) {
@@ -51,20 +56,24 @@ export function bandCrossings(r: Ruleset, before: GameState, after: GameState): 
     const c = crossing(def, b, a, statMax(r, def, after), statMax(r, def, before));
     if (!c) continue;
     const own = c.dir === "up" ? c.to.say : c.to.sayDown;
-    out.push({ who: null, stat: id, ...c, moved: Math.abs(a - b), line: own ?? c.to.text });
+    const moved = Math.abs(a - b);
+    out.push({ who: null, stat: id, ...c, moved, share: moved / Math.max(1e-9, statMax(r, def, after) - def.min), authored: !!own, line: own ?? c.to.text });
   }
   return out;
 }
 
-/** The lines to show: one per person (the biggest move wins), at most `max` in all. */
+/** Which of two crossings tells the turn better: the author's own line first, then the bigger move for its stat's range. */
+const better = (a: BandCrossing, b: BandCrossing) => Number(b.authored) - Number(a.authored) || b.share - a.share || b.moved - a.moved;
+
+/** The lines to show: one per person (an authored line first, then the biggest move for its range), at most `max` in all. */
 export function crossingLines(crossings: BandCrossing[], max = 3): string[] {
   const best = new Map<string, BandCrossing>();
   for (const c of crossings) {
     const key = c.who ?? `you:${c.stat}`;
     const cur = best.get(key);
-    if (!cur || c.moved > cur.moved) best.set(key, c);
+    if (!cur || better(c, cur) < 0) best.set(key, c);
   }
-  return [...best.values()].sort((a, b) => Number(a.who === null) - Number(b.who === null) || b.moved - a.moved).slice(0, max).map((c) => c.line);
+  return [...best.values()].sort((a, b) => Number(a.who === null) - Number(b.who === null) || better(a, b)).slice(0, max).map((c) => c.line);
 }
 
 /** "How Mira acts now: …" from the voices of her current bands (at most two parts), or null. */

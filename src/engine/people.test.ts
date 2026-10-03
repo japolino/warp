@@ -83,6 +83,35 @@ describe("T-P1 a crossing shows in the same reply; the next block says it and th
     expect(c.find((x) => x.stat === "trust")?.line).toBe("Mira: Trust — Wary.");
     expect(crossingLines(c)).toHaveLength(1);
   });
+
+  test("when one person crosses two bands at once, the author's own line wins over a bigger generated one", () => {
+    const s = here(initialState(r), "Mira");
+    s.rel.mira.affection = 20;
+    s.rel.mira.trust = 15;
+    // Rules move both at once: affection 20 -> 26 enters Warm (authored line); trust 15 -> 30 enters Wary (no line of its own), the bigger move.
+    const after = structuredClone(s);
+    after.rel.mira.affection = 26;
+    after.rel.mira.trust = 30;
+    expect(crossingLines(bandCrossings(r, s, after))).toEqual(["Mira is warming to you."]);
+  });
+
+  test("moves compare by their stat's range: a step on a 0-4 ladder beats a bigger number on a 0-100 meter", () => {
+    const rr = normalizeRuleset({
+      style: "story",
+      clock: { start: "Day 1 18:00" },
+      relationships: {
+        stats: {
+          stage: { start: 0, max: 4, narrator: 0, bands: { 0: "Strangers", 1: { text: "Friends", say: "{name} and you are friends now." } } },
+          tension: { start: 0, narrator: 20, bands: { 0: "Calm", 10: { text: "Charged", say: "The air between you and {name} is charged." } } },
+        },
+        people: { mira: { name: "Mira", age: 27 } },
+      },
+    }).ruleset!;
+    const s0 = foldEvents(rr, [applyProposal(rr, initialState(rr), { scene: { Mira: true } })], initialState(rr));
+    const s1 = foldEvents(rr, [applyProposal(rr, s0, { rel: { Mira: { tension: +20 } } })], s0);
+    s1.rel.mira.stage = 1;
+    expect(crossingLines(bandCrossings(rr, s0, s1))).toEqual(["Mira and you are friends now."]);
+  });
 });
 
 describe("T-P2 a crossing before the reply goes into the outcome packet", () => {
