@@ -36,7 +36,8 @@ export function partForIssue(where: string): PartLabel {
 }
 
 export const REFERENCE = `WARP RULESET FORMAT 2 (YAML). One file, or one lorebook entry per part ("warp-ruleset · core", "· stats", …).
-Ids are snake_case. Numbers may be formulas in quotes ("10 + body"). Quote any formula that contains a comma. {{user}} is the player.
+Ids are snake_case. Numbers may be formulas in quotes ("10 + body"), except time:, lasts:, uses: and clock: (a number, or "30m", "2h", "1d").
+Quote any formula that contains a comma. {{user}} is the player.
 
 --- # core
 name: Harbour Nights                  # shown on the panel; description: one line about it
@@ -71,6 +72,7 @@ stats:                                # kinds: meter (a bar) | attribute | skill
   charm: { kind: attribute, max: 10, start: 3 }
   cooking: { kind: skill, max: 100, start: 5, grades: [F, D, C, B, A, S], group: Skills }   # group: the panel heading
   # good: high | low | none (colours); min/max (max may be a formula, "20 + body * 5"); label:, desc:, color:
+  # min/max default to 0–100 (skill 0–1000, money no limit), hidden stats too: a turn stamp needs max: 100000; a start outside is clamped
   # narrator: the most the story may move it per reply (0 = only the rules move it); gates on what the story may change:
   #   narrator_when: "not in_contest", narrator_words: [panic] (the exchange must mention one), narrator_actions: [fight] (action ids or tags)
   # show: text | number | both | hidden; bands: { 0%: Down., 40%: Wounded. } compare against the current max
@@ -80,7 +82,7 @@ checks:                               # adventure only: the one check style, d20
   dc: { easy: 8, fair: 12, hard: 16, extreme: 20 }   # difficulty words → d20 target (normal = fair)
   partial: 3                          # missing by 3 or less is a partial success (it works, at a cost)
   typed: true                         # risky, contested things the player types are rolled (never quoted dialogue)
-  stats: [body, mind, charm]          # what a typed attempt may lean on (default: every attribute and skill)
+  stats: [body, mind, charm]          # what a typed attempt may lean on (default: every attribute and skill, except ids like level, xp, exp, points, skill_points)
   bonus: 10                           # what a maxed stat adds (body 3/10 adds +3)
   time: 10                            # minutes a typed attempt takes (default minutes_per_action)
   directions: { fail: "It doesn't work, and the situation changes." }   # the narrator's direction per tier (defaults exist: fail forward)
@@ -190,6 +192,7 @@ triggers:
 
 --- # conflict
 conflict:                             # adventure only: fights, chases and arguments on one momentum gauge (−100 … +100)
+  # left out: fight, chase and argument that lean on body/mind/charm (else the first two check stats) and cost health/energy/mood if those exist; conflict: false = no contests
   from_story: true                    # a fight, chase or argument in the story starts a contest (or the effect contest:)
   rounds: { min: 3, max: 8 }          # each check swings the gauge; only a full swing (or Break off / Give in) ends it
   escalate: 0.4                       # the stakes rise each round
@@ -206,6 +209,8 @@ conflict:                             # adventure only: fights, chases and argum
     argument: { label: Argument, stats: [charm, mind], escape: charm, cost: { fail: { mood: -4 } }, won: { hint: "{opponent} gives in." }, lost: { hint: "{{user}} has to give ground." }, escaped: { hint: "{{user}} walks away." } }
 
 EFFECTS (any effects / success / fail / cost / do / reward / won block):
+  ORDER: whatever the YAML order, one block applies stat changes, then set:, flags:, items, rel:, place, look, conditions, goal, remember,
+  reveal, swing, contest, time, hint, decide. Each part sees the ones before it ({ set: { x: 0 }, x: 5 } ends at 0). To sequence, use two rules.
   stat shorthand: energy: -5 (or a quoted formula: money: "-min(money, 20)"); stats: { energy: -5 }; set: { stress: 50 }
   flags: { door_open: true }; give: rope / take: rope; items: { rope: 2 }
   rel: { jo: { trust: +3 } } (rel: { target: … } in a per-person move; rel: { opponent: … } in a contest)
@@ -224,6 +229,12 @@ FUNCTIONS: has(item[, n]), count(item), flag(x), cond(x), rel(person, stat), met
 between(v, lo, hi) (wraps: between(hour, 21, 5)), roll('2d6') (in effects), goal(id) ('' | 'open' | 'done' | 'failed'), secret(id) (stages known),
 in_contest() / in_contest('fight'), eff(stat) (with gear and conditions), gear(stat) (gear alone), min, max, clamp, floor, ceil, round, abs.
 Operators: + - * / % < <= > >= == != and or not, a ? b : c. Strings in single quotes.
+A stat or flag named like a built-in (turn, day, hour …) hides the built-in in every formula.
+
+WHAT THE NARRATOR SEES each turn: the time and place, who is here, looks that matter now, a contest, meters with bands that are off their
+start band (or that the turn names), money when it is talked about, skills the turn names, conditions, items the turn names, and the
+feelings, voice and memories of the people HERE (someone absent reaches it only through a band line or a hint). Flags never reach it, and a
+meter without bands only when named: say what matters with bands, say: lines or hint:. For groups and factions, use meters, not people.
 
 NOT IN WARP ANY MORE (ignored with a warning; the old version is on the legacy branch): encounters (use conflict:), quests (use goals:),
 locations and travel (places come from the story), weather, wardrobe slots and body parts (use appearance / outfit text), perks, feats, codex,

@@ -177,3 +177,25 @@ stats: { body: { kind: attribute, max: 10 }, mind: { kind: attribute, max: 10 },
 `).filter((l) => l.startsWith("Conflict"))).toEqual([]);
   });
 });
+
+describe("the order inside one effect block (ADVENTURE-10, LONG-7)", () => {
+  test("a change and a set: of the same stat, or a change reading a stat the block sets, warn", () => {
+    const out = issuesOf(`style: story
+stats:
+  rnd: { kind: hidden }
+  sold: { kind: hidden, max: 1000 }
+  cash: { kind: money }
+  food: { kind: meter }
+  hp: { kind: meter }
+triggers:
+  a: { when: "rnd > 0", do: { set: { rnd: 0 }, rnd: 5 } }
+  b: { when: "rnd > 1", do: { set: { sold: 10 }, cash: "sold * 5" } }
+  c: { when: "rnd > 2", do: { set: { food: "max(food - 2, 0)" }, hp: "food <= 1 ? -10 : 5" } }
+  d: { when: "rnd > 3", do: { food: -3, hp: "food" } }
+`);
+    expect(has(out, "Triggers › a › rnd", /changed and set:/)).toBe(true);
+    expect(has(out, "Triggers › b › cash", /reads sold/)).toBe(true);
+    expect(has(out, "Triggers › c › hp", /reads food/)).toBe(true);
+    expect(out.some((l) => l.startsWith("Triggers › d"))).toBe(false);
+  });
+});

@@ -179,6 +179,12 @@ export function lintRuleset(r: Ruleset): Issue[] {
       if (!r.stats[id]) warn(where, `changes "${id}", which isn't a stat${suggest(id, r.statOrder)}`);
       check(v, `${where} › ${id}`, extra);
     }
+    // One block runs its changes before its set: (LONG-7): a change and a set: of the same stat, or a change that reads a
+    // stat the block sets, rarely do what the YAML order suggests.
+    for (const id of Object.keys(e.set)) {
+      if (id in e.stats) warn(`${where} › ${id}`, `is changed and set: in one block; changes run first, so set: wins. Use two rules to sequence them`);
+      for (const [k, v] of Object.entries(e.stats)) if (k !== id && identifiers(String(v)).includes(id)) warn(`${where} › ${k}`, `reads ${id}, which this block also sets; changes run before set:, so it reads the old ${id}. Use two rules to sequence them`);
+    }
     for (const [id, v] of Object.entries(e.set)) {
       if (!r.stats[id]) warn(where, `sets "${id}", which isn't a stat${suggest(id, r.statOrder)}`);
       check(v, `${where} › set › ${id}`, extra);
