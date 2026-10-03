@@ -13,19 +13,20 @@ export const choice = (o: Partial<ChoiceView> & { id: string; label: string }): 
 });
 
 /** Fields the contract still lists as deprecated; the UI never reads them (they can go without touching the tests). */
-const DEPRECATED_HUD = { quests: [], encounter: null } as unknown as Pick<HudView, never>;
+const DEPRECATED_HUD = { quests: [], encounter: null };
 
 /** Day 2, 23:40 at a harbour bar, Mira here, Jo elsewhere. */
 export function hud(o: Partial<HudView> = {}): HudView {
-  return {
+  const base: Omit<HudView, "quests" | "encounter"> = {
     rulesetName: "Adventure",
     clock: { label: "Day 2 · 23:40", time: "23:40", day: "Day 2", phase: "night", minutes: 1440 + 23 * 60 + 40 },
     date: null,
     location: { name: "The Rusty Anchor" },
     money: "$50",
     bars: [{ id: "health", label: "Health", value: 80, min: 0, max: 100, display: "80/100", pct: 0.8, text: "Fine", tone: "good", good: "high" }],
-    skills: [{ id: "body", label: "Body", display: "3", grade: null, pct: 0.3, kind: "attribute", text: null, tone: "neutral", practice: 0.4, group: "Attributes" }],
+    skills: [{ id: "body", label: "Body", value: 3, min: 0, max: 10, display: "3", grade: null, pct: 0.3, kind: "attribute", text: null, tone: "neutral", practice: 0.4, group: "Attributes" }],
     you: { appearance: "short, scar over one eye", outfit: "rain-soaked coat" },
+    wereWithYou: [],
     people: [
       person({
         id: "mira", name: "Mira", present: true, appearance: "tall, red braid, freckles", outfit: "green apron over a black shirt",
@@ -43,13 +44,12 @@ export function hud(o: Partial<HudView> = {}): HudView {
     ],
     conflict: null,
     turn: 7,
-    ...DEPRECATED_HUD,
-    ...o,
   };
+  return { ...DEPRECATED_HUD, ...base, ...o } as HudView;
 }
 
 export const record = (o: Partial<RecordView> & { messageId: string }): RecordView => ({
-  swipe: 0, clock: "Day 2 · 23:40", action: null, via: null, check: null, lines: [], changes: [], hints: [], veiled: false,
+  swipe: 0, clock: "Day 2 · 23:40", action: null, via: null, check: null, lines: [], contest: null, changes: [], hints: [], veiled: false,
   confidence: null, decisions: [], redoFrom: null, ...o,
 });
 

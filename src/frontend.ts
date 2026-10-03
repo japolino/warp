@@ -744,10 +744,9 @@ export function setup(ctx: SpindleFrontendContext) {
     }
     const saveSkill = t.closest<HTMLElement>("[data-save-skill]");
     if (saveSkill) {
-      const v = Number(saveSkill.parentElement?.querySelector<HTMLInputElement>("[data-fix-input]")?.value);
+      const v = Number(saveSkill.parentElement?.querySelector<HTMLInputElement>("[data-num]")?.value);
       if (cid && Number.isFinite(v)) send({ type: "adjust", chatId: cid, stat: saveSkill.dataset.saveSkill!, value: v });
       editing = null;
-      drafts = {};
       return;
     }
     const saveRel = t.closest<HTMLElement>("[data-save-rel]");

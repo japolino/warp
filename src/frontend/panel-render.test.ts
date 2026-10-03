@@ -60,6 +60,11 @@ describe("sections", () => {
     expect(html).not.toContain("<script>");
   });
 
+  test("after a move, Scene names who was with you", () => {
+    expect(text(panel(null, { wereWithYou: [{ id: "jo", name: "Jo" }] }))).toContain("Were with you: Jo");
+    expect(text(panel())).not.toContain("Were with you");
+  });
+
   test("a hint from the greeting read shows in Scene", () => {
     expect(text(renderHud(hud(), { editing: null, compact: true, sceneHint: "Warp couldn't read the greeting — set the time." }))).toContain("set the time");
   });
@@ -95,6 +100,7 @@ describe("one-click fixes", () => {
     expect(panel("item:rope")).toContain('data-fix="item" data-who="rope"');
     expect(panel("item:rope")).toMatch(/data-fix-input="item:rope" value="2"/);
     expect(panel("skill:body")).toContain('data-save-skill="body"');
+    expect(panel("skill:body")).toMatch(/type="range" min="0" max="10" step="1" value="3"/);
     expect(panel("bar:health")).toContain('data-save-bar="health"');
     expect(panel("rel:mira:trust")).toContain('data-save-rel="mira:trust"');
   });

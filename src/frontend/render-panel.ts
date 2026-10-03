@@ -110,6 +110,7 @@ function sceneSection(h: HudView, opts: HudOpts): HudPart {
   const here = h.people.filter((p) => p.present);
   if (h.people.length) {
     rows.push(`<div class="warp-line"><span>${here.length ? `Here: ${here.map((p) => `<b>${esc(p.name)}</b>`).join(", ")}` : `<span class="warp-dim">No one you know is here.</span>`}</span>${editButton("here", "Fix who is here")}</div>`);
+    if (h.wereWithYou.length) rows.push(`<div class="warp-line warp-dim"><span>Were with you: ${h.wereWithYou.map((p) => esc(p.name)).join(", ")}</span></div>`);
     if (opts.editing === "here") rows.push(`<div class="warp-fix warp-tags" data-fix-row="here">${h.people.map((p) => presentToggle(p, "name")).join("")}<button class="warp-btn warp-btn-ghost warp-mini" data-edit="here">Done</button></div>`);
   }
   return { id: "scene", title: "Scene", count: 0, body: rows.join(""), open: true };
@@ -185,7 +186,15 @@ function youSection(h: HudView, opts: HudOpts): HudPart {
         <div class="warp-mini-track"><div class="warp-mini-fill" style="width:${(s.pct * 100).toFixed(1)}%"></div></div>
         ${s.practice !== null ? `<div class="warp-practice-track"><div class="warp-practice-fill" style="width:${(s.practice * 100).toFixed(1)}%"></div></div>` : ""}
       </div>
-    </div>${opts.editing === key ? `<div class="warp-bar-edit">${numberInput(key, s.display, `${s.label} value`, opts, ` step="any"`)}<button class="warp-btn warp-btn-primary warp-mini" data-save-skill="${esc(s.id)}">Set</button></div>` : ""}`;
+    </div>${opts.editing === key ? (() => {
+      const step = s.max - s.min > 200 ? 1 : s.max - s.min > 20 ? 0.5 : s.max - s.min > 2 ? 1 : 0.1;
+      const v = Math.round(s.value * 10) / 10;
+      return `<div class="warp-bar-edit">
+          <input type="range" min="${s.min}" max="${s.max}" step="${step}" value="${v}" data-range aria-label="${esc(s.label)}">
+          <input class="warp-input warp-num" type="number" min="${s.min}" max="${s.max}" step="${step}" value="${v}" data-num aria-label="${esc(s.label)} value">
+          <button class="warp-btn warp-btn-primary warp-mini" data-save-skill="${esc(s.id)}">Set</button>
+        </div>`;
+    })() : ""}`;
   };
   const groups = [...new Set(h.skills.map((x) => x.group))];
   const skillsBody = groups.length < 2 ? h.skills.map(skillRow).join("") : groups.map((g) =>

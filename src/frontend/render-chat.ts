@@ -27,13 +27,10 @@ export function checkOdds(c: NonNullable<RecordView["check"]>): number | null {
   return d20Odds(c.add, c.target);
 }
 
-/** "Momentum +49" from the record's change line, for the dice chip of a contest round. */
+/** "Momentum +49" for the dice chip of a contest round (null when the round didn't move the gauge). */
 export function momentumOf(rec: RecordView): string | null {
-  for (const ch of rec.changes) {
-    const m = /^Momentum [+−-]\d+/.exec(ch.text);
-    if (m) return m[0];
-  }
-  return null;
+  const d = rec.contest?.swing ?? 0;
+  return d ? `Momentum ${d > 0 ? "+" : "−"}${Math.abs(Math.round(d))}` : null;
 }
 
 /** One item of the "what changed" line. */

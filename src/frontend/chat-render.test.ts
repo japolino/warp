@@ -28,8 +28,15 @@ describe("the dice chip", () => {
   });
 
   test("a contest round adds the swing; a typed roll says it was read and offers Not an action?", () => {
-    const round = record({ messageId: "m2", check: check(), changes: [ch("Momentum +49 · You have the upper hand", { tone: "good" })] });
+    const contest = { kind: "fight", label: "Fight", opponent: "the bouncer", round: 2, swing: 49, momentum: 49, outcome: null };
+    const round = record({ messageId: "m2", check: check(), contest, changes: [ch("Momentum +49 · You have the upper hand", { tone: "good" })] });
     expect(text(renderReply(round, { showChanges: true, latest: true }))).toContain("🎲 Body · Success · Momentum +49");
+    const lost = record({ messageId: "m2", check: check({ tier: "fail", tierLabel: "Failure" }), contest: { ...contest, swing: -63, momentum: -14 } });
+    expect(text(renderReply(lost, { showChanges: true, latest: true }))).toContain("🎲 Body · Failure · Momentum −63");
+    // The swing comes from the record's contest, not from the words of the line.
+    const chip = (html: string) => text(/<button class="warp-chip warp-dice[^>]*>(.*?)<\/button>/.exec(html)?.[1] ?? "");
+    expect(chip(renderReply(record({ messageId: "m2", check: check(), changes: [ch("Momentum +49")] }), { showChanges: true, latest: true }))).toBe("🎲 Body · Success");
+    expect(chip(renderReply(round, { showChanges: true, latest: true }))).toBe("🎲 Body · Success · Momentum +49");
     const typed = record({ messageId: "m2", check: check(), via: "adjudicator", confidence: 0.86, redoFrom: "m1" });
     const html = renderReply(typed, { showChanges: true, latest: true });
     expect(text(html)).toContain("read from your message (86% sure)");
