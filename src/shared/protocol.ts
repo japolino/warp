@@ -651,7 +651,7 @@ export interface SceneView {
 }
 
 export type BackendToFrontend =
-  | { type: "doll_look"; who: string; look: unknown | null; note: string; name?: string; error?: string }
+  | { type: "doll_look"; who: string; look: unknown | null; note: string; name?: string; error?: string; /** The chat it was asked for, and whether it was an automatic update. */ chatId?: string | null; auto?: boolean }
   | {
       type: "state";
       chatId: string | null;
@@ -698,6 +698,8 @@ export interface DollRequest {
   current?: unknown;
   /** Clothing the rules say they're wearing ("Raincoat (torn)"). */
   worn?: string[];
+  /** Sent on its own after a reply (no warnings when it fails). */
+  auto?: boolean;
 }
 
 export type FrontendToBackend =

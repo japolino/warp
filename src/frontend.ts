@@ -72,7 +72,11 @@ export function setup(ctx: SpindleFrontendContext) {
   const send = (m: FrontendToBackend) => ctx.sendToBackend(m);
   const chatId = () => { try { return ctx.getActiveChat().chatId ?? null; } catch { return null; } };
   // The doll: its tab in the drawer, and the player's doll as a status-panel section.
-  const dollLab = createDollLab({ send, chatId, hud: () => state?.hud ?? null, changed: () => renderAll() });
+  const dollLab = createDollLab({
+    send, chatId, hud: () => state?.hud ?? null, changed: () => renderAll(),
+    decider: () => settings.decider,
+    messageText: (id) => { try { return ctx.dom.findMessageElement(id)?.textContent ?? ""; } catch { return ""; } },
+  });
 
   // ───────── surfaces: drawer tab (always) + left dock panel (when allowed) ─────────
   const tab = ctx.ui.registerDrawerTab({
@@ -456,6 +460,8 @@ export function setup(ctx: SpindleFrontendContext) {
       const { head, parts } = hudParts(state.hud, { editing: editingBar, compact: true, map: state.map, alloc: allocDraft });
       const doll = dollLab.hudSection();
       if (doll) parts.push(doll);
+      const withYou = dollLab.sceneSection();
+      if (withYou) parts.push(withYou);
       const mine = parts.filter((p) => panels.inMain(p.id));
       dockRoot.innerHTML = historyNotice() + head + mine.map((p) => renderPart(p, true)).join("");
       panels.render(parts);
@@ -1026,6 +1032,8 @@ export function setup(ctx: SpindleFrontendContext) {
   function onPanelClick(e: Event) {
     if (dollLab.handle(e, drawerRoot)) return;
     const t = e.target as Element;
+    // "Edit" on the "With you" doll (in the status panel or a window): their doll on the Doll tab.
+    if (t.closest("[data-doll-edit]")) { drawerView = "doll"; tab.activate(); renderDrawer(); return; }
     if (t.closest("[data-jev-openrouter]")) { send({ type: "settings", patch: { ...OPENROUTER_JEV } }); return; }
     const view = t.closest<HTMLElement>("[data-view]");
     if (view) { drawerView = view.dataset.view as typeof drawerView; renderDrawer(); return; }
@@ -1462,6 +1470,7 @@ export function setup(ctx: SpindleFrontendContext) {
         const fx = settings.enabled ? fxEvents(state, m) : [];
         state = m;
         if (entered) drawerView = "dungeon";
+        if (settings.enabled) dollLab.onState(m);
         if (m.chatId === busy.chatId && !m.busy && busy.label === "Rolling…") busy = { chatId: "", on: false, label: "" };
         if (m.busy && m.chatId) busy = { chatId: m.chatId, on: true, label: busy.label };
         renderAll();

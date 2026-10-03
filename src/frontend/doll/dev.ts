@@ -26,6 +26,8 @@ const lab = createDollLab({
   chatId: () => null,
   hud: () => null,
   changed: () => draw(),
+  decider: () => "llm",
+  messageText: () => "",
 });
 
 function draw() {

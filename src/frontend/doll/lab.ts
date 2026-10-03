@@ -7,6 +7,7 @@ import { EARS, EXPRESSIONS, HAIR_STYLES, HORNS, TAILS } from "./features.js";
 import { FITS, type Garment, HEMS, type Kind, KINDS, LENGTHS, MATERIALS, NECKLINES, PATTERNS, SLEEVE_FITS, SLEEVES, STYLES } from "./garments.js";
 import { cleanLook, defaultLook, HAIR_COLOURS, MAX_GARMENTS, OUTFITS, outfitFor, SKINS } from "./outfits.js";
 import { type Look, renderDoll as draw } from "./render.js";
+import { type AutoMode, castKey, type ChatDolls, cleanChat, cleanPrefs, type DollPrefs, focusFrom, putCast, sceneFocus, touchChat, type Who } from "./scene.js";
 
 /** Never let one bad look take the panel down with it. */
 function renderDoll(look: Look, opts: { id?: string } = {}): string {
@@ -16,10 +17,9 @@ function renderDoll(look: Look, opts: { id?: string } = {}): string {
   }
 }
 
-type Who = "you" | "them";
-interface Saved { you: Look; them: Look; themName: string; who: Who; notes: Record<Who, string>; hud: boolean }
-
 const KEY = "warp:doll";
+const CHAT_KEY = (id: string) => `warp:doll:chat:${id}`;
+const CHATS_KEY = "warp:doll:chats";
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -49,40 +49,80 @@ const OPTIONS: Partial<Record<keyof Garment, readonly string[]>> = {
   neckline: NECKLINES, sleeves: SLEEVES, sleeveFit: SLEEVE_FITS, hem: HEMS, length: LENGTHS, fit: FITS, material: MATERIALS, rise: ["high", "mid", "low"],
 };
 
-function load(): Saved {
-  try {
-    const v = JSON.parse(localStorage.getItem(KEY) ?? "null");
-    if (v && typeof v === "object") return { you: cleanLook(v.you), them: cleanLook(v.them ?? { body: { sex: "f", preset: "curvy" } }), themName: String(v.themName ?? ""), who: v.who === "them" ? "them" : "you", notes: { you: String(v.notes?.you ?? ""), them: String(v.notes?.them ?? "") }, hud: v.hud !== false };
-  } catch { /* fresh */ }
+const read = (k: string): unknown => { try { return JSON.parse(localStorage.getItem(k) ?? "null"); } catch { return null; } };
+const write = (k: string, v: unknown) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* full */ } };
+
+/** The starting looks for a chat that has none: the last ones used anywhere (or the defaults). */
+function seed(): { you: Look; them: Look } {
+  const v = read(KEY) as Record<string, unknown> | null;
+  if (v && typeof v === "object" && v.you) return { you: cleanLook(v.you), them: cleanLook(v.them ?? { body: { sex: "f", preset: "curvy" } }) };
   const them = defaultLook("f");
   them.body.preset = "curvy"; them.hair = { style: "twintails", colour: "#e8c26a", length: 0.7 }; them.eyes = "#2f8f6f"; them.ears = "cat"; them.outfit = outfitFor("street", "f");
-  return { you: defaultLook("f"), them, themName: "", who: "you", notes: { you: "", them: "" }, hud: true };
+  return { you: defaultLook("f"), them };
 }
 
 export interface DollLab {
   html(): string;
   /** Handle an event in the drawer; true when it was ours. */
   handle(e: Event, root: HTMLElement): boolean;
-  onLook(m: { who: string; look: unknown | null; note: string; name?: string; error?: string }): void;
+  onLook(m: { who: string; look: unknown | null; note: string; name?: string; error?: string; auto?: boolean; chatId?: string | null }): void;
   /** The player's doll as a HUD section (null when turned off). */
   hudSection(): { id: string; title: string; count: number; body: string; open: boolean } | null;
+  /** The doll of whoever is with the player, as a HUD section (null when turned off). */
+  sceneSection(): { id: string; title: string; count: number; body: string; open: boolean } | null;
+  /** A new game state: follow the story (after each reply) and dress newcomers, when allowed. */
+  onState(m: { chatId: string | null; latestMessageId: string | null; choicesAnchor: string | null; busy?: boolean; hud: HudView | null }): void;
   /** The look being edited. */
   current(): Look;
 }
 
-export function createDollLab(o: { send(m: DollRequest): void; chatId(): string | null; hud(): HudView | null; changed(): void }): DollLab {
-  const st = load();
-  /** Who has a helper request out (both can at once). */
-  const busy = new Set<Who>();
+export function createDollLab(o: {
+  send(m: DollRequest): void; chatId(): string | null; hud(): HudView | null; changed(): void;
+  /** The decision model in Settings ("jev" = the classifier). */
+  decider(): string;
+  /** A chat message's text, for who the latest reply is about. */
+  messageText(id: string): string;
+}): DollLab {
+  const prefs: DollPrefs = cleanPrefs(read(KEY));
+  /** Whose dolls are loaded: each chat keeps its own. */
+  let loadedFor: string | null = null;
+  let st: ChatDolls = cleanChat(null, seed());
+  /** Requests out, by chat and person ("chat|you", "chat|rhea"). */
+  const busy = new Set<string>();
+  const busyKey = (who: string, chat = loadedFor) => `${chat ?? ""}|${who === "you" ? "you" : castKey(who)}`;
   let text = "";
   /** The "As data" box's text when it didn't parse, so a typo doesn't wipe it. */
   let jsonDraft: string | null = null;
-  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch { /* full */ } };
-  const cur = () => st[st.who];
 
-  const worn = (): string[] => {
+  /** Switch to the open chat's dolls. */
+  function ensure() {
+    const id = o.chatId();
+    if (id === loadedFor) return;
+    loadedFor = id;
+    st = cleanChat(id ? read(CHAT_KEY(id)) : null, seed());
+    jsonDraft = null;
+  }
+  function saveChat(id: string | null, c: ChatDolls) {
+    if (id) {
+      write(CHAT_KEY(id), c);
+      const { list, drop } = touchChat(Array.isArray(read(CHATS_KEY)) ? (read(CHATS_KEY) as unknown[]).filter((x): x is string => typeof x === "string") : [], id);
+      write(CHATS_KEY, list);
+      for (const d of drop) { try { localStorage.removeItem(CHAT_KEY(d)); } catch { /* gone */ } }
+    }
+    // The latest looks seed the next new chat; the preferences are global.
+    write(KEY, { ...prefs, you: c.you, them: c.them });
+  }
+  const save = () => {
+    // Whoever is on the second tab is part of the chat's cast, so the "With you" doll shows edits made there.
+    if (st.themName.trim()) putCast(st, st.themName, st.them, st.notes.them, Date.now());
+    saveChat(loadedFor, st);
+  };
+  const cur = () => (st.who === "you" ? st.you : st.them);
+  const autoOn = (mode: AutoMode = prefs.auto) => mode === "always" || (mode === "jev" && o.decider() === "jev");
+
+  const worn = (who: Who = st.who): string[] => {
     const h = o.hud();
-    if (!h?.outfit || st.who !== "you") return [];
+    if (!h?.outfit || who !== "you") return [];
     return h.outfit.filter((s) => s.item).map((s) => `${s.item!.name} (${s.label})${s.item!.integrity !== null && s.item!.integrity < 60 ? `, ${s.item!.integrity < 25 ? "in tatters" : "torn"}` : ""}`);
   };
 
@@ -114,12 +154,13 @@ export function createDollLab(o: { send(m: DollRequest): void; chatId(): string 
   }
 
   function html(): string {
+    ensure();
     const L = cur();
     const sex = L.body.sex;
     const presets = Object.entries(PRESETS[sex]);
     const people = (o.hud()?.people ?? []).map((p) => p.name);
     const who = st.who;
-    const isBusy = busy.has(who);
+    const isBusy = busy.has(busyKey(who === "you" ? "you" : st.themName.trim() || "them"));
     const doll = renderDoll(L, { id: `lab${who}` });
     return `<div class="warp-doll-lab">
       <div class="warp-doll-who" role="tablist">
@@ -171,7 +212,16 @@ export function createDollLab(o: { send(m: DollRequest): void; chatId(): string 
         <textarea class="warp-input warp-doll-json" data-doll-json rows="8">${esc(jsonDraft ?? JSON.stringify(L, null, 1))}</textarea>
         <button class="warp-btn" data-doll-json-apply>Apply</button>
       </details>
-      <label class="warp-doll-row"><span>Show my doll in the status panel</span><input type="checkbox" data-doll-hud${st.hud ? " checked" : ""}></label>
+      <details class="warp-section" data-section="doll-panel" open><summary>Status panel</summary>
+        <label class="warp-doll-row"><span>Show my doll</span><input type="checkbox" data-doll-hud${prefs.hud ? " checked" : ""}></label>
+        <label class="warp-doll-row"><span>Show who's with me</span><input type="checkbox" data-doll-scene${prefs.scene ? " checked" : ""}></label>
+        ${row("Follow the story", `<select class="warp-input" data-doll-auto>${([["jev", "After each reply, with the classifier"], ["always", "After each reply, always"], ["off", "Only when I ask"]] as const).map(([k, l]) => `<option value="${k}"${prefs.auto === k ? " selected" : ""}>${l}</option>`).join("")}</select>`)}
+        <p class="warp-dim">${prefs.auto === "jev" && o.decider() !== "jev"
+          ? "Off for now: set the decision model to the classifier (Jev) in Settings to turn this on."
+          : prefs.auto === "always" && o.decider() !== "jev"
+            ? "Each reply asks the helper model about both dolls: a call each, every reply."
+            : prefs.auto === "off" ? "The dolls change only when you press a button." : "After each reply, a quick check (about a quarter of a second) changes only what the story changed. Someone new is dressed the first time they're with you."}</p>
+      </details>
     </div>`;
   }
 
@@ -222,13 +272,50 @@ export function createDollLab(o: { send(m: DollRequest): void; chatId(): string 
   function ask(source: DollRequest["source"]) {
     const who = st.who;
     if (who === "them" && source === "profile" && !st.themName.trim()) { st.notes.them = "Type their name first."; o.changed(); return; }
-    busy.add(who);
-    o.send({ type: "doll_look", chatId: o.chatId(), who: who === "you" ? "you" : st.themName.trim() || "them", source, text: source === "text" ? text : undefined, current: source === "story" ? cur() : undefined, worn: worn() });
+    request(who === "you" ? "you" : st.themName.trim() || "them", source, cur(), false);
     o.changed();
+  }
+
+  /** Send one request (never two at once for the same person). */
+  function request(who: string, source: DollRequest["source"], current: Look | undefined, auto: boolean): boolean {
+    const k = busyKey(who);
+    if (busy.has(k)) return false;
+    busy.add(k);
+    o.send({ type: "doll_look", chatId: loadedFor, who, source, text: source === "text" ? text : undefined, current: source === "story" ? current : undefined, worn: who === "you" ? worn("you") : [], ...(auto ? { auto: true } : {}) });
+    return true;
   }
 
   function handle(e: Event, root: HTMLElement): boolean {
     const t = e.target as HTMLElement;
+    ensure();
+    // The "With you" section in the status panel (or a window torn off from it).
+    if (t.closest?.(".warp-doll-scene")) {
+      if (e.type !== "click") return false;
+      const b = t.closest<HTMLElement>("[data-doll-focus],[data-doll-edit],[data-doll-scene-ask]");
+      if (!b) return false;
+      if (b.dataset.dollFocus !== undefined) {
+        e.preventDefault();
+        const n = b.dataset.dollFocus;
+        st.pin = castKey(st.pin) === castKey(n) ? "" : n;
+        save(); o.changed(); return true;
+      }
+      if (b.dataset.dollSceneAsk) {
+        e.preventDefault();
+        const n = b.dataset.dollSceneAsk;
+        if (!st.asked.includes(castKey(n))) st.asked.push(castKey(n));
+        request(n, "profile", undefined, false); save(); o.changed(); return true;
+      }
+      // "Edit": open their doll on the Doll tab (the drawer switches views itself).
+      const n = b.dataset.dollEdit ?? "";
+      if (n) {
+        if (st.themName.trim()) putCast(st, st.themName, st.them, st.notes.them, Date.now());
+        const c = st.cast[castKey(n)];
+        st.who = "them"; st.themName = n; jsonDraft = null;
+        if (c) { st.them = c.look; st.notes.them = c.note; }
+        save();
+      }
+      return false;
+    }
     if (!t.closest?.(".warp-doll-lab")) return false;
     const L = cur();
     if (e.type === "click") {
@@ -250,14 +337,20 @@ export function createDollLab(o: { send(m: DollRequest): void; chatId(): string 
     }
     if (t.matches("[data-doll-text]")) { text = (t as HTMLTextAreaElement).value; return true; }
     if (t.matches("[data-doll-name]")) {
+      const prev = st.themName;
       st.themName = (t as HTMLInputElement).value.slice(0, 80);
-      save();
+      // Settled on someone this chat has already dressed: show theirs.
+      const known = st.cast[castKey(st.themName)];
+      if (e.type === "change" && known && castKey(prev) !== castKey(st.themName)) { st.them = known.look; st.notes.them = known.note; jsonDraft = null; refresh(root, true); return true; }
+      if (e.type === "change") save();
       const tab = root.querySelector<HTMLElement>("[data-doll-them-tab]");
       if (tab) tab.textContent = st.themName.trim() || "Someone else";
       return true;
     }
     if (t.matches("[data-doll-json]")) { jsonDraft = (t as HTMLTextAreaElement).value; return true; }
-    if (t.matches("[data-doll-hud]") && e.type === "change") { st.hud = (t as HTMLInputElement).checked; refresh(root, true); return true; }
+    if (t.matches("[data-doll-hud]") && e.type === "change") { prefs.hud = (t as HTMLInputElement).checked; refresh(root, true); return true; }
+    if (t.matches("[data-doll-scene]") && e.type === "change") { prefs.scene = (t as HTMLInputElement).checked; refresh(root, true); return true; }
+    if (t.matches("[data-doll-auto]") && e.type === "change") { prefs.auto = cleanPrefs({ auto: (t as HTMLSelectElement).value }).auto; refresh(root, true); return true; }
     if (t.matches("[data-doll-outfit]") && e.type === "change") {
       const k = (t as HTMLSelectElement).value;
       if (k && (k === "none" || OUTFITS[k])) { L.outfit = k === "none" ? [] : outfitFor(k, L.body.sex); refresh(root, true); }
@@ -281,24 +374,113 @@ export function createDollLab(o: { send(m: DollRequest): void; chatId(): string 
     return false;
   }
 
-  function onLook(m: { who: string; look: unknown | null; note: string; name?: string; error?: string }) {
-    const who: Who = m.who === "you" ? "you" : "them";
-    busy.delete(who);
-    if (m.look) { st[who] = cleanLook(m.look); st.notes[who] = m.note; if (who === "them" && m.name && m.name !== "them" && !st.themName.trim()) st.themName = m.name; }
-    else st.notes[who] = m.error ? `The helper couldn't do it: ${m.error}` : "";
-    save();
+  /** Put a look the helper sent where it belongs (in the chat it was asked for, even if another is open now). */
+  function apply(c: ChatDolls, m: { who: string; look: unknown | null; note: string; name?: string; error?: string; auto?: boolean }) {
+    const at = Date.now();
+    if (m.who === "you") {
+      if (m.look) {
+        const look = cleanLook(m.look);
+        const changed = JSON.stringify(look) !== JSON.stringify(c.you);
+        c.you = look;
+        if (!m.auto || changed) c.notes.you = m.note;
+      } else if (!m.auto) c.notes.you = m.error ? `The helper couldn't do it: ${m.error}` : "";
+      return;
+    }
+    if (m.who === "them") {
+      // Asked without a name: only the second tab's look.
+      if (m.look) { c.them = cleanLook(m.look); c.notes.them = m.note; }
+      else c.notes.them = m.error ? `The helper couldn't do it: ${m.error}` : "";
+      return;
+    }
+    const k = castKey(m.who);
+    const onTab = castKey(c.themName) === k || (!c.themName.trim() && !m.auto);
+    if (m.look) {
+      const look = cleanLook(m.look);
+      const before = c.cast[k];
+      const changed = !before || JSON.stringify(look) !== JSON.stringify(before.look);
+      const note = m.auto && !changed ? before?.note ?? "" : m.note;
+      putCast(c, m.name && m.name !== "them" ? m.name : m.who, look, note, at);
+      if (onTab) { c.them = look; c.notes.them = note; if (!c.themName.trim()) c.themName = m.name ?? m.who; }
+    } else if (onTab && !m.auto) c.notes.them = m.error ? `The helper couldn't do it: ${m.error}` : "";
+  }
+
+  function onLook(m: { who: string; look: unknown | null; note: string; name?: string; error?: string; auto?: boolean; chatId?: string | null }) {
+    ensure();
+    const chat = m.chatId === undefined ? loadedFor : m.chatId;
+    busy.delete(busyKey(m.who, chat));
+    if (chat === loadedFor) { apply(st, m); saveChat(loadedFor, st); }
+    else if (chat) { const c = cleanChat(read(CHAT_KEY(chat)), seed()); apply(c, m); write(CHAT_KEY(chat), c); }
     o.changed();
   }
 
   function hudSection() {
-    if (!st.hud) return null;
+    if (!prefs.hud) return null;
+    ensure();
     return { id: "doll", title: "Doll", count: 0, open: true, body: `<div class="warp-doll-hud">${renderDoll(st.you, { id: "hud" })}</div>` };
   }
 
-  return { html, handle, onLook, hudSection, current: cur };
+  /** The people here, by name. */
+  const here = () => (o.hud()?.people ?? []).filter((p) => p.present).map((p) => p.name);
+
+  function sceneSection() {
+    if (!prefs.scene) return null;
+    ensure();
+    const people = here();
+    const who = sceneFocus(people, st.pin, st.focus);
+    if (!who) return { id: "doll-scene", title: "With you", count: 0, open: true, body: `<div class="warp-doll-scene"><p class="warp-dim">No one's with you right now.</p></div>` };
+    const entry = st.cast[castKey(who)];
+    const pinned = castKey(st.pin) === castKey(who);
+    const chips = people.length > 1
+      ? `<div class="warp-doll-scene-who">${people.map((n) => `<button class="warp-btn${castKey(n) === castKey(who) ? " warp-btn-primary" : ""}" data-doll-focus="${esc(n)}" title="${castKey(st.pin) === castKey(n) ? "Pinned: click to follow the story again" : "Show them (pinned while they're here)"}">${esc(n)}${castKey(st.pin) === castKey(n) ? " 📌" : ""}</button>`).join("")}</div>`
+      : "";
+    const isBusy = busy.has(busyKey(who));
+    const doll = entry
+      ? `<div class="warp-doll-hud">${renderDoll(entry.look, { id: "scene" })}</div>`
+      : `<p class="warp-dim">${isBusy ? `Dressing ${esc(who)}…` : `No look for ${esc(who)} yet.`}</p>${isBusy ? "" : `<button class="warp-btn" data-doll-scene-ask="${esc(who)}">Dress ${esc(who)}</button>`}`;
+    const foot = `<div class="warp-doll-scene-foot">${entry?.note ? `<span class="warp-dim">${esc(entry.note)}</span>` : "<span></span>"}<button class="warp-btn" data-view="doll" data-doll-edit="${esc(who)}" title="Open their doll on the Doll tab">Edit</button></div>`;
+    return { id: "doll-scene", title: `With you · ${who}${pinned ? " 📌" : ""}`, count: 0, open: true, body: `<div class="warp-doll-scene">${chips}${doll}${foot}</div>` };
+  }
+
+  function onState(m: { chatId: string | null; latestMessageId: string | null; choicesAnchor: string | null; busy?: boolean; hud: HudView | null }) {
+    ensure();
+    if (!m.hud || m.busy || m.chatId !== loadedFor) return;
+    const people = (m.hud.people ?? []).filter((p) => p.present).map((p) => p.name);
+    let dirty = false;
+    // A new reply (the latest message is the narrator's): who it's about, and what it changed.
+    const reply = m.choicesAnchor;
+    if (reply && reply !== st.lastAuto) {
+      const first = !st.lastAuto;
+      st.lastAuto = reply;
+      const about = focusFrom(o.messageText(reply), people);
+      if (about) st.focus = about;
+      dirty = true;
+      // Opening a chat isn't a new reply: only replies from here on change the dolls.
+      if (!first && autoOn()) {
+        if (prefs.hud) request("you", "story", st.you, true);
+        const who = sceneFocus(people, st.pin, st.focus);
+        const entry = who ? st.cast[castKey(who)] : undefined;
+        if (prefs.scene && who && entry) request(who, "story", entry.look, true);
+      }
+    }
+    // Someone with the player who has no look yet: dress them once, from their card and the story.
+    const who = prefs.scene ? sceneFocus(people, st.pin, st.focus) : null;
+    if (who && !st.cast[castKey(who)] && !st.asked.includes(castKey(who)) && autoOn()) {
+      st.asked.push(castKey(who));
+      st.asked = st.asked.slice(-16);
+      request(who, "profile", undefined, true);
+      dirty = true;
+    }
+    if (dirty) saveChat(loadedFor, st);
+  }
+
+  return { html, handle, onLook, hudSection, sceneSection, onState, current: () => { ensure(); return cur(); } };
 }
 
 export const DOLL_STYLES = `
+.warp-doll-scene { display: flex; flex-direction: column; gap: 6px; }
+.warp-doll-scene-who { display: flex; flex-wrap: wrap; gap: 4px; }
+.warp-doll-scene-who .warp-btn, .warp-doll-scene-foot .warp-btn { padding: 2px 8px; font-size: 12px; }
+.warp-doll-scene-foot { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 12px; }
 .warp-doll-lab { display: flex; flex-direction: column; gap: 8px; }
 .warp-doll-who { display: flex; gap: 4px; }
 .warp-doll-stage { display: flex; justify-content: center; background: radial-gradient(ellipse at 50% 85%, rgba(255,255,255,.07), transparent 60%), color-mix(in srgb, var(--lumiverse-fill, #1c1a24) 70%, transparent); border-radius: 12px; padding: 6px 0; }

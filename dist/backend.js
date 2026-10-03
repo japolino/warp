@@ -29614,7 +29614,7 @@ ${tail}`);
     }
     const enough = m.source === "text" ? parts.length > 0 : m.source === "story" ? !!m.chatId : who === "you" ? parts.length > 1 : parts.length > 1;
     if (!enough) {
-      send({ type: "doll_look", who: m.who, look: null, note: "", error: m.source === "text" ? "Describe the look first." : "Nothing to go on yet: open a chat with them, or describe the look." }, userId);
+      send({ type: "doll_look", who: m.who, chatId: m.chatId, ...m.auto ? { auto: true } : {}, look: null, note: "", error: m.source === "text" ? "Describe the look first." : "Nothing to go on yet: open a chat with them, or describe the look." }, userId);
       return;
     }
     const decider = await getDecider(settings, userId).catch(() => null);
@@ -29624,7 +29624,7 @@ ${tail}`);
         return null;
       });
       if (done) {
-        send({ type: "doll_look", who: m.who, look: done.look, note: done.note, ...who !== "them" ? { name } : {} }, userId);
+        send({ type: "doll_look", who: m.who, chatId: m.chatId, ...m.auto ? { auto: true } : {}, look: done.look, note: done.note, ...who !== "them" ? { name } : {} }, userId);
         return;
       }
     }
@@ -29634,11 +29634,12 @@ ${tail}`);
     if (!got)
       throw new Error("the helper didn't send a look");
     const look = cleanLook(got.look);
-    send({ type: "doll_look", who: m.who, look, note: got.invented.length ? `Made up: ${got.invented.join("; ")}` : "", ...who !== "them" ? { name } : {} }, userId);
+    send({ type: "doll_look", who: m.who, chatId: m.chatId, ...m.auto ? { auto: true } : {}, look, note: got.invented.length ? `Made up: ${got.invented.join("; ")}` : "", ...who !== "them" ? { name } : {} }, userId);
   } catch (e) {
     logError("doll look", e);
-    toast("warning", "The helper couldn't dress the doll this time. Try again, or describe the look.", userId);
-    send({ type: "doll_look", who: m.who, look: null, note: "", error: String(e?.message ?? e).slice(0, 200) }, userId);
+    if (!m.auto)
+      toast("warning", "The helper couldn't dress the doll this time. Try again, or describe the look.", userId);
+    send({ type: "doll_look", who: m.who, chatId: m.chatId, ...m.auto ? { auto: true } : {}, look: null, note: "", error: String(e?.message ?? e).slice(0, 200) }, userId);
   }
 }
 async function classify(d, m, who, context) {
