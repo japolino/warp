@@ -37,7 +37,6 @@ export function hudParts(h: HudView, opts: HudOpts): { head: string; parts: HudP
   const top = [
     `<div class="warp-eyebrow"><span>${esc(h.rulesetName)}</span><span title="Turn">T${h.turn}</span></div>`,
     h.clock ? `<div class="warp-clock"><span class="warp-phase" aria-hidden="true">${PHASE_ICON[h.clock.phase] ?? ""}</span><span class="warp-clock-time">${esc(h.clock.time)}</span><span class="warp-clock-day">${esc(h.date ?? h.clock.day)}</span></div>` : "",
-    h.weather ? `<div class="warp-weather">${esc(h.weather.icon)} ${esc(h.weather.label)} · <b>${esc(h.weather.temp)}°C</b>${h.weather.season ? ` · ${esc(h.weather.season)}` : ""}</div>` : "",
     h.location || h.money ? `<div class="warp-where">${h.location ? `<span title="${esc(h.location.desc ?? "")}">📍 <b>${esc(h.location.name)}</b></span>` : ""}${h.money ? `<span class="warp-money">${esc(h.money)}</span>` : ""}</div>` : "",
     h.conditions.length ? `<div class="warp-pills">${h.conditions.map((c) => `<span class="warp-pill warp-tone-${c.tone}" title="${esc(c.desc ?? "")}">${esc(c.label)}${c.remaining ? ` · ${esc(c.remaining)}` : ""}</span>`).join("")}</div>` : "",
   ].join("");
@@ -99,10 +98,7 @@ export function hudParts(h: HudView, opts: HudOpts): { head: string; parts: HudP
       : ""}`
     : `<div class="warp-empty">No one yet.</div>`, !opts.compact || here.length > 0);
 
-  const body = h.body ? part("body", "Body", 0, `${h.body.map((b) => `<div class="warp-item"><span>${esc(b.label)}</span><span class="${b.covered ? "warp-dim" : ""}" title="${b.covered ? "Covered by clothing" : "Visible"}">${esc(b.text)}${b.covered ? " 👕" : ""}</span></div>`).join("")}${h.transforms.map((t) => `<div class="warp-item"><span>✦ ${esc(t.label)}</span><span class="warp-dim">stage ${t.stage} / ${t.of}</span></div>`).join("")}`, false) : null;
-
-
-  const loose = h.items.filter((i) => !i.worn);
+  const loose = h.items;
   const items = part("inventory", "Inventory", loose.length, loose.length
     ? loose.map((i) => `<div class="warp-item${i.use ? " warp-item-usable" : ""}">
         <span class="warp-item-name">${esc(i.name)}${i.uses ? ` <span class="warp-dim" title="Uses left in the one in hand">· ${esc(i.uses)}</span>` : ""}${i.bonus ? `<span class="warp-item-bonus" title="Gear: added to checks that use it">${esc(i.bonus)}</span>` : ""}</span>
@@ -115,8 +111,8 @@ export function hudParts(h: HudView, opts: HudOpts): { head: string; parts: HudP
     : `<div class="warp-empty">Empty-handed.</div>`, !opts.compact);
 
   return {
-    head: `${renderEncounter(h)}<div class="warp-hud-top">${top}</div>${renderWarmth(h)}<div class="warp-bars">${bars}</div>`,
-    parts: [renderOutfit(h, opts.compact), skills, renderQuests(h, opts.compact), people, body, items].filter((p): p is HudPart => !!p),
+    head: `${renderEncounter(h)}<div class="warp-hud-top">${top}</div><div class="warp-bars">${bars}</div>`,
+    parts: [skills, renderQuests(h, opts.compact), people, items].filter((p): p is HudPart => !!p),
   };
 }
 
@@ -144,42 +140,7 @@ function foeTags(e: NonNullable<HudView["encounter"]>): string {
   return tags.length ? ` <span class="warp-foe-tags">${tags.join("")}</span>` : "";
 }
 
-/** Warmth gauge: the comfortable range as a band, your warmth as a marker. */
-function renderWarmth(h: HudView): string {
-  const w = h.warmth;
-  if (!w) return "";
-  const scale = Math.max(30, w.max + 6, w.value + 4);
-  const at = (v: number) => `${Math.max(0, Math.min(100, (v / scale) * 100)).toFixed(1)}%`;
-  return `<div class="warp-warmth" title="${esc(`Clothing warmth ${w.value} · comfortable between ${w.min} and ${w.max}`)}">
-    <div class="warp-bar-head"><span class="warp-bar-label">Warmth</span><span class="warp-bar-text warp-tone-${w.tone}">${esc(w.text)}</span></div>
-    <div class="warp-warmth-track">
-      <div class="warp-warmth-band" style="left:${at(w.min)};width:calc(${at(w.max)} - ${at(w.min)})"></div>
-      <div class="warp-warmth-mark warp-bg-${w.tone}" style="left:${at(w.value)}"></div>
-    </div>
-  </div>`;
-}
-
 const part = (id: string, title: string, count: number, body: string, open: boolean): HudPart => ({ id, title, count, body, open });
-
-function renderOutfit(h: HudView, compact: boolean): HudPart | null {
-  if (!h.outfit) return null;
-  const rows = h.outfit.map((o) => {
-    const options = h.clothing.filter((c) => c.slot === o.slot && c.id !== o.item?.id);
-    const status = o.item
-      ? `${esc(o.item.name)}${o.item.integrity !== null ? ` <span class="warp-tone-${o.item.integrity < 40 ? "bad" : "warn"}">${o.item.integrity}%</span>` : ""}`
-      : `<span class="warp-dim">${h.exposed.includes(o.slot) ? "<span class='warp-tone-bad'>nothing</span>" : "—"}</span>`;
-    const picker = options.length || o.item
-      ? `<select class="warp-select warp-mini-select" data-wear-slot="${esc(o.slot)}" aria-label="Change ${esc(o.label)}">
-          <option value="" selected disabled>Change…</option>
-          ${options.map((c) => `<option value="${esc(c.id)}">${esc(c.name)} (warmth ${esc(c.warmth)}${c.traits.length ? `, ${esc(c.traits.join(", "))}` : ""})</option>`).join("")}
-          ${o.item ? `<option value="__off">Take off</option>` : ""}
-        </select>`
-      : "";
-    return `<div class="warp-outfit-row"><span class="warp-dim">${esc(o.label)}</span><span>${status}</span>${picker}</div>`;
-  }).join("");
-  const worn = h.outfit.filter((o) => o.item).length;
-  return part("outfit", "Outfit", worn, rows, !compact);
-}
 
 /** One quest: what it is, who it's for, goals ticked off, time left, what it pays and what failing costs. */
 function questCard(q: HudView["quests"][number]): string {

@@ -20,9 +20,7 @@ A game engine under your roleplay. Warp owns stats, dice, time, inventory and re
 |---|---|
 | Stats | Meters described in words (bands), graded skills, attributes, money, hidden stats, drift over time, caps by formula. Limit what the story may change after a reply: a cap per reply, and optionally only while a formula holds (`narrator_when`), only when the exchange mentions certain words (`narrator_words`), or only after certain actions (`narrator_actions`). The bookkeeper is told what the dice already applied, so nothing counts twice |
 | Checks | d100 chance, d20 vs difficulty, 2d6 PbtA; crits and partial successes; odds shown on buttons |
-| Time & world | Clock and calendar, seasons, weather, temperature (indoors vs out), and named places. The story says where {{user}} goes; there is no map or travel graph |
-| Body | Parts with any traits (hair, eyes, ears, tails, marks…), what clothing covers, and transformations in stages that each roll a chance. The story can change the body after a reply (new parts allowed unless closed), and the narrator always sees it — including what others can't see right now |
-| Clothing | Slots, warmth vs the weather, damage, how revealing, traits like rainproof; change clothes from the sheet |
+| Time & world | Clock and calendar, seasons, and named places. The story says where {{user}} goes; there is no map or travel graph |
 | People | Relationship stats, who is in the scene (read from the story), per-person actions ("Talk to Jo"), and what each person remembers about you |
 | Encounters | Turn-based scenes: foe stats, your moves, the foe's moves (weighted or model-weighed), win/lose/escape outcomes. Optional momentum: every check and foe move swings a tug-of-war gauge and only a full swing ends the fight; each round reaches the narrator as ordered beats, and a long move you typed is kept as written while only how it lands is rolled |
 | Rules | Triggers by formula or in plain language (`when_scene`), uncertain reactions (`decide`) rolled on model odds |
@@ -40,7 +38,7 @@ Most roleplay is typed, so the core systems follow the story rather than waiting
 - **Skills grow with use.** Every check practises the skills and attributes it reads — harder checks teach more, failures teach a little less, and progress slows near the top. Training the story describes (an hour at the gym, a night of study) counts too. A thin green line under each skill shows progress to the next point. Tune with `growth:` or `growth: 0` on a stat.
 - **Who's in the scene.** After each reply the story is read for who is actually there — people it introduces, people who leave, who came along after a move. The sheet shows the people here and folds the rest under **Elsewhere**; the narrator only gets relationship details for the people here, so absent characters don't drift back in.
 - **Fights from the story.** When a fight (or any encounter) breaks out in the prose or in what you type, it starts — against whoever it's with — and it ends when the story ends it. `from_story: false` keeps an encounter to the rules.
-- **Things you use.** Items can have uses (`uses: 5`): each use the story shows spends one, and the last spends the item. For anything the reply mentions, the bookkeeper asks what happened to it — used, used up, given away, or put on — and clothes in your bag are named to the narrator as *not worn*.
+- **Things you use.** Items can have uses (`uses: 5`): each use the story shows spends one, and the last spends the item. For anything the reply mentions, the bookkeeper asks what happened to it — used, used up, or given away.
 
 ## Visual novel mode
 
@@ -90,7 +88,7 @@ Each entry is YAML; entries merge. Warp keeps them out of the prompt automatical
 
 ## Ruleset reference
 
-The complete format — including weather, wardrobe, encounters and quests — is in [`src/engine/reference.ts`](src/engine/reference.ts) (the same reference the AI builder writes against). The starter templates in [`src/engine/templates/`](src/engine/templates/) are full worked examples. The basics:
+The complete format — including encounters and quests — is in [`src/engine/reference.ts`](src/engine/reference.ts) (the same reference the AI builder writes against). The starter templates in [`src/engine/templates/`](src/engine/templates/) are full worked examples. The basics:
 
 ```yaml
 name: My Game
@@ -175,7 +173,7 @@ triggers:
 
 **Formula names:** stats, flags, `hour`, `minute`, `day`, `weekday`, `turn`, `location`, and `has()`, `count()`, `flag()`, `cond()`, `at()`, `rel(person, stat)`, `met()`, `between(v, lo, hi)`, `min`, `max`, `clamp`, `floor`, `ceil`, `round`, `abs`.
 
-The Ruleset tab lists problems in plain language, with "did you mean" suggestions for typos. Keys of parts that were taken out of Warp (`dungeons:`, `dating:`, `look:`, minigame `game:` and `gamble:`, encounter `sim:`, `lineage:`, `observers:`, `mind:`, `obligations:`, `jobs:`, `discovery:`, `companions:`, `fronts:`, `random_events:`, `checkpoints:`, `endings:`, `perks:`, `feats:`, `codex:`, `abilities:`, stat `allocate:`, person `schedule:`/`traits:`, place `exits:`/`travel:`/`requires:`, action `errand:`, effects `unlock:`/`learn:`) are ignored with a plain warning; the old version is on the `legacy` branch.
+The Ruleset tab lists problems in plain language, with "did you mean" suggestions for typos. Keys of parts that were taken out of Warp (`dungeons:`, `dating:`, `look:`, minigame `game:` and `gamble:`, encounter `sim:`, `lineage:`, `observers:`, `mind:`, `obligations:`, `jobs:`, `discovery:`, `companions:`, `fronts:`, `random_events:`, `checkpoints:`, `endings:`, `perks:`, `feats:`, `codex:`, `abilities:`, `weather:`, `wardrobe:`, `body:`, stat `allocate:`, person `schedule:`/`traits:`, place `exits:`/`travel:`/`requires:`/`temp:`, item `slot:`/`warmth:`/`integrity:`/`reveal:`/`traits:`, action `errand:`, effects `unlock:`/`learn:`/`wear:`/`undress:`/`damage:`/`body:`/`transform:`) are ignored with a plain warning; the old version is on the `legacy` branch.
 
 ## Develop
 

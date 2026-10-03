@@ -22,9 +22,6 @@ clock:
   minutes_per_action: 15
   narrator_max: 720         # the story may skip up to half a day per reply (the next morning, after work…)
 
-weather:
-  temps: { spring: 14, summer: 23, autumn: 12, winter: 3 }
-
 # What you type is roleplay, never a dice roll.
 improvise: false
 

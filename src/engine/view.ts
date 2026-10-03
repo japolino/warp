@@ -11,9 +11,9 @@ import { encounterGuide, itemRelevance } from "./encounter-view.js";
 import { cleanLiveForecast, spentLock, whenHolds, paramValues, actionPool, availableChoices, dangerStats, findAction, foeArmor, isAvailable, LIVE_PREFIX, lockReason, mainMeter, odds, playerArmor, usableItems, TIER_LABEL, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
 import { dueWords, effectWords, goalDone, questDef, questDigest, questOffers, questsToReport, QUEST_PREFIX } from "./quests.js";
 import {
-  dateAt, exposedSlots, isIndoors, ordinal, presentPeople, seasonAt, temperatureAt, warmthNeeded, warmthOf, weatherAt,
+  dateAt, ordinal, presentPeople,
 } from "./world.js";
-import type { ChangeView, ChoiceView, ClothingView, HudView, QuestView, RecordView, Tone } from "../shared/protocol.js";
+import type { ChangeView, ChoiceView, HudView, QuestView, RecordView, Tone } from "../shared/protocol.js";
 import { namesIt, namesTitle } from "./mention.js";
 
 function pct(v: number, min: number, max: number) {
@@ -103,15 +103,6 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
     };
   }).sort((a, b) => Number(b.present) - Number(a.present));
 
-  const wornIds = new Set(Object.values(s.worn));
-  const clothingView = (id: string): ClothingView => {
-    const d = r.items[id];
-    return {
-      id, name: itemName(r, s, id), slot: d?.slot ?? "", warmth: d?.warmth ?? 0, reveal: d?.reveal ?? 0, traits: d?.traits ?? [],
-      integrity: d && s.integrity[id] !== undefined ? Math.round((s.integrity[id] / d.integrity) * 100) : null,
-      worn: wornIds.has(id),
-    };
-  };
   const usable_ = usableItems(r, s);
   let gearEnv_: ReturnType<typeof makeEnv> | null = null;
   const gearEnv = () => (gearEnv_ ??= makeEnv(r, s));
@@ -122,30 +113,12 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
     // Formula bonuses ("level / 2") show what they're worth right now.
     const bonus = def ? Object.entries(def.bonus).map(([st, b]) => [st, amountValue(b, gearEnv())] as const).filter(([, b]) => b).map(([st, b]) => `${b > 0 ? "+" : ""}${formatNumber(b)} ${r.stats[st]?.label ?? st}`).join(", ") : "";
     return {
-      id, name: itemName(r, s, id), count, worn: wornIds.has(id), uses: per > 1 ? `${s.uses[id] ?? per}/${per}` : null,
+      id, name: itemName(r, s, id), count, uses: per > 1 ? `${s.uses[id] ?? per}/${per}` : null,
       use: usable ? { id: usable.id, label: usable.a.label, locked: usable.locked, drafted: !!def?.drafted } : null,
-      bonus: bonus ? `${bonus}${def?.slot ? " while worn" : ""}` : null,
+      bonus: bonus || null,
     };
   });
-  const clothing = Object.keys(s.items).filter((id) => r.items[id]?.slot).map(clothingView);
-  const outfit = r.wardrobe.enabled
-    ? r.wardrobe.slots.map((sl) => ({ slot: sl.id, label: sl.label, item: s.worn[sl.id] ? clothingView(s.worn[sl.id]) : null }))
-    : null;
-
-  const temp = temperatureAt(r, s);
-  const wx = weatherAt(r, s);
   const date = dateAt(r, s.minutes);
-  let warmth: HudView["warmth"] = null;
-  if (r.wardrobe.enabled && temp !== null) {
-    const need = warmthNeeded(temp);
-    const value = warmthOf(r, s);
-    const cold = value < need.min, hot = value > need.max;
-    warmth = {
-      value, min: need.min, max: need.max,
-      tone: cold || hot ? (Math.min(Math.abs(value - need.min), Math.abs(value - need.max)) > 6 ? "bad" : "warn") : "good",
-      text: cold ? "You're underdressed for this." : hot ? "You're overdressed and sweltering." : "Dressed right for the weather.",
-    };
-  }
 
   let encounter: HudView["encounter"] = null;
   if (s.encounter) {
@@ -198,7 +171,6 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
     rulesetName: r.name,
     clock: r.clock.enabled ? formatClock(r, s.minutes) : null,
     date: date ? `${r.clock.weekdays[Math.floor(s.minutes / 1440) % r.clock.weekdays.length] ?? ""} ${ordinal(date.day)} ${date.monthName}`.trim() : null,
-    weather: temp !== null ? { icon: isIndoors(r, s) ? "🏠" : wx?.icon ?? "", label: isIndoors(r, s) ? "Indoors" : wx?.label ?? "", temp, season: seasonAt(r, s.minutes), indoors: isIndoors(r, s) } : null,
     location: s.locationName ? { name: s.locationName, desc: loc?.desc } : null,
     money,
     bars: bars.filter((b) => r.stats[b.id].kind !== "money"),
@@ -207,15 +179,7 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
     items,
     conditions,
     quests: questViews(r, s),
-    warmth,
-    outfit,
-    clothing,
-    exposed: exposedSlots(r, s),
     encounter,
-    body: r.body.enabled ? Object.entries(s.body).map(([part, traits]) => ({
-      part, label: part.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()), text: traitText(traits) || "—", covered: bodyCovered(r, s, part),
-    })) : null,
-    transforms: Object.values(r.body.transforms).filter((t) => (s.tf[t.id] ?? 0) > 0).map((t) => ({ label: t.label, stage: s.tf[t.id], of: t.stages.length })),
     turn: s.turn,
   };
 }
@@ -268,26 +232,6 @@ function questViews(r: Ruleset, s: GameState): QuestView[] {
     .sort((a, b) => (b[1].ended ?? 0) - (a[1].ended ?? 0)).slice(0, 6)
     .forEach(([id, st]) => out.push(view(id, st.st, null)));
   return out.filter((x): x is QuestView => !!x);
-}
-
-/** Is a body part covered by what's worn (so others can't see it)? */
-export function bodyCovered(r: Ruleset, s: GameState, part: string): boolean {
-  const slots = r.body.hiddenBy[part];
-  return !!slots?.length && r.wardrobe.enabled && slots.every((slot) => !!s.worn[slot]);
-}
-
-function traitText(traits: Record<string, string>): string {
-  const t = Object.entries(traits).filter(([, v]) => v && v !== "none");
-  return t.map(([k, v]) => (k === "type" ? v : `${k.replace(/_/g, " ")} ${v}`)).join(", ");
-}
-
-/** The body as the narrator sees it: every part, and which are covered right now. */
-export function bodyLine(r: Ruleset, s: GameState): string | null {
-  if (!r.body.enabled) return null;
-  const parts = Object.entries(s.body).map(([part, traits]) => [part, traitText(traits)] as const).filter(([, t]) => t);
-  if (!parts.length) return null;
-  const covered = parts.filter(([p]) => bodyCovered(r, s, p)).map(([p]) => p.replace(/_/g, " "));
-  return `Body: ${parts.map(([p, t]) => `${p.replace(/_/g, " ")} — ${t}`).join("; ")}${covered.length ? ` (covered, not visible to others: ${covered.join(", ")})` : ""}`;
 }
 
 /** Has {{user}} met them in the story (been in a scene together, or left a memory)? An authored cast exists from the start; that alone isn't meeting. */
@@ -527,17 +471,6 @@ export function summarizeEvents(r: Ruleset, before: GameState, after: GameState,
         out.push({ text: `📈 ${def.label} ${Math.round((after.practice[e.id] ?? 0) * 100)}%`, tone: "good", src: e.src });
         break;
       }
-      case "wear": {
-        const prev = before.worn[e.slot];
-        if (e.item) out.push({ text: `👕 Put on ${itemName(r, after, e.item)}`, tone: "neutral", src: e.src, undo: [i] });
-        else if (prev) out.push({ text: `👕 Took off ${itemName(r, before, prev)}`, tone: "neutral", src: e.src, undo: [i] });
-        break;
-      }
-      case "dmg": {
-        const gone = !(after.items[e.item] > 0);
-        out.push({ text: gone ? `💥 ${itemName(r, before, e.item)} destroyed` : `🧵 ${itemName(r, after, e.item)} damaged`, tone: "bad", src: e.src, undo: [i] });
-        break;
-      }
       case "enc":
         if (e.id) out.push({ text: `⚔ ${r.encounters[e.id]?.name ?? "Encounter"}${e.foeName ? ` vs ${e.foeName}` : ""}`, tone: "warn", src: e.src });
         else out.push({ text: `⚔ Over: ${(e.outcome ?? "ended").replace(/_/g, " ")}`, tone: "neutral", src: e.src });
@@ -719,8 +652,7 @@ export function stateDigest(r: Ruleset, s: GameState, focus?: DigestFocus): stri
     const c = formatClock(r, s.minutes);
     head.push(`${hud.date ?? c.day}, ${c.time} (${c.phase})`);
   }
-  if (s.locationName) head.push(`Location: ${s.locationName}${hud.weather?.indoors ? " (indoors)" : ""}`);
-  if (hud.weather) head.push(hud.weather.indoors ? `${hud.weather.temp}°C inside` : `${hud.weather.label}, ${hud.weather.temp}°C${hud.weather.season ? ` (${hud.weather.season})` : ""}`);
+  if (s.locationName) head.push(`Location: ${s.locationName}`);
   if (head.length) lines.push(head.join(" · "));
 
   if (hud.encounter) {
@@ -733,19 +665,11 @@ export function stateDigest(r: Ruleset, s: GameState, focus?: DigestFocus): stri
     if (on.length) lines.push(`${e.foe} is ${on.join(", ")}.`);
   }
 
-  if (hud.outfit) {
-    const worn = hud.outfit.filter((o) => o.item).map((o) => `${o.item!.name}${o.item!.integrity !== null && o.item!.integrity < 60 ? " (torn)" : ""}`);
-    const exposure = hud.exposed.length ? ` — exposed: ${hud.exposed.join(", ")}` : "";
-    lines.push(`Wearing: ${worn.length ? worn.join(", ") : "nothing"}${exposure}${hud.warmth && hud.warmth.tone !== "good" ? ` · ${hud.warmth.text}` : ""}`);
-  }
-
   const here = hud.people.filter((p) => p.present).map((p) => p.name);
   if (here.length || Object.keys(s.people).length) lines.push(`Present here: ${here.length ? here.join(", ") : "none of the people {{user}} knows"}`);
   // People who were with {{user}} before the last move: the story says whether they came along.
   const was = Object.entries(s.scene).filter(([id, v]) => v.here && s.people[id] && v.loc !== s.location && v.loc === s.lastLocation && !here.includes(s.people[id].name)).map(([id]) => personName(r, s, id));
   if (was.length) lines.push(`Were with {{user}} before arriving here (include them only if they came along): ${was.join(", ")}`);
-  const body = bodyLine(r, s);
-  if (body) lines.push(body);
 
   const meters = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "meter" || d.kind === "money");
   const other = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "attribute" || d.kind === "skill");
@@ -786,23 +710,18 @@ export function stateDigest(r: Ruleset, s: GameState, focus?: DigestFocus): stri
   const posted = offers.filter((o) => o.via === "board" && (workTalk || titled(r.quests[o.id].name))).map((o) => `"${r.quests[o.id].name}"`);
   if (posted.length) lines.push(`Posted on the notice board here: ${posted.join(", ")}`);
 
-  const wornSet = new Set(Object.values(s.worn));
-  const loose = Object.entries(s.items).filter(([id]) => !wornSet.has(id));
+  const bag = Object.entries(s.items);
   const uses = (id: string) => {
     const per = r.items[id]?.uses ?? 0;
     return per > 1 ? `, ${s.uses[id] ?? per} of ${per} uses left` : "";
   };
   // For the narrator, only what the turn names: a listed bag gets rummaged through. The rest is counted, so
   // {{user}} isn't written as empty-handed.
-  const bag = loose.filter(([id]) => !r.items[id]?.slot);
-  const bagNames = loose.map(([id]) => itemName(r, s, id));
+  const bagNames = bag.map(([id]) => itemName(r, s, id));
   const inv = bag.filter(([id]) => named(itemName(r, s, id), bagNames)).map(([id, n]) => `${itemName(r, s, id)}${n > 1 ? ` ×${n}` : ""}${uses(id) ? ` (${uses(id).slice(2)})` : ""}`);
   const rest = bag.length - inv.length;
   if (inv.length) lines.push(`Carrying: ${inv.join(", ")}${rest ? ` (and ${rest} other thing${rest === 1 ? "" : "s"} — not in play; don't bring them up unless {{user}} does)` : ""}`);
   else if (rest) lines.push(`Carrying ${rest} thing${rest === 1 ? "" : "s"}, none in play right now (don't bring them up unless {{user}} does).`);
-  // Clothes in the bag aren't on: say so, or the narrator dresses {{user}} in them.
-  const spare = loose.filter(([id]) => r.items[id]?.slot && named(itemName(r, s, id), bagNames)).map(([id]) => itemName(r, s, id));
-  if (spare.length) lines.push(`Carried but NOT being worn (packed away — {{user}} isn't wearing these): ${spare.join(", ")}`);
 
   const feel = (id: string, name: string) => {
     const parts = r.relStatOrder.map((rs) => {

@@ -10,7 +10,7 @@ import { checkStats, improvAction, practiceGain } from "./freeform.js";
 const YAML = `
 name: Freeform
 clock: { start: "Mon 12:00" }
-start: { location: bar, items: { spray: 2, hoodie: 1, cap: 1 } }
+start: { location: bar, items: { spray: 2 } }
 locations:
   bar: { name: The Bar }
   street: { name: The Street }
@@ -22,10 +22,6 @@ stats:
 items:
   spray: { name: Blocker Spray, uses: 3 }
   snack: { name: Snack, tags: [consumable] }
-  hoodie: { name: Oversized Hoodie, slot: top }
-  cap: { name: Low Cap, slot: head }
-  shirt: { name: Shirt, slot: top }
-wardrobe: { slots: [head, top], cover: [top], start: [shirt] }
 relationships:
   stats: { trust: { start: 20, narrator: 5 } }
   people:
@@ -185,14 +181,6 @@ describe("items the story uses", () => {
     expect(s.uses.spray).toBeUndefined();
     s = read(s, { used: { spray: 3 } }).s;
     expect(s.items.spray).toBeUndefined();
-  });
-
-  test("clothes in the bag are named as not worn, and the story can put them on", () => {
-    let s = initialState(r);
-    expect(stateDigest(r, s)).toMatch(/NOT being worn[^\n]*Oversized Hoodie[^\n]*Low Cap/);
-    s = read(s, { wear: ["hoodie"] }).s;
-    expect(s.worn.top).toBe("hoodie");
-    expect(stateDigest(r, s)).toMatch(/Wearing: [^\n]*Oversized Hoodie/);
   });
 });
 

@@ -33,7 +33,6 @@ for (const t of TEMPLATES) {
           expect(v).toBeGreaterThanOrEqual(def.min - 1e-9);
           expect(v).toBeLessThanOrEqual(statMax(r, def, s) + 1e-9);
         }
-        for (const id of Object.values(s.worn)) expect(s.items[id] ?? 0).toBeGreaterThan(0);
         if (s.encounter) expect(r.encounters[s.encounter.id]).toBeDefined();
         // Views never throw.
         buildHud(r, s);

@@ -8,9 +8,9 @@ import { costValue } from "./resolve.js";
 
 export const FUNCTIONS = [
   "has", "count", "flag", "cond", "at", "rel", "met", "between", "roll",
-  "wearing", "worn", "trait", "present",
-  "eff", "gear", "integrity",
-  "secret", "body", "transformed", "age",
+  "present",
+  "eff", "gear",
+  "secret", "age",
   "quest", "quest_active", "quest_done", "quest_failed", "goal", "quests_done", "memories", "cond_of", "foe_cond", "stat_max", "foe_max", "in_encounter",
   "min", "max", "clamp", "floor", "ceil", "round", "abs",
 ];
@@ -23,6 +23,11 @@ const REMOVED_NAMES: Record<string, string> = {
   "seen_by()": "being seen", "fame()": "being seen",
   "saved()": "checkpoints", loops: "checkpoints", runs: "endings and new playthroughs",
   "codex()": "the codex", "feat()": "feats", "perk()": "perks",
+  weather: "weather and temperature", temperature: "weather and temperature", warmth: "weather and temperature",
+  warmth_min: "weather and temperature", warmth_max: "weather and temperature", too_cold: "weather and temperature", too_hot: "weather and temperature",
+  reveal: "the wardrobe", exposed: "the wardrobe", naked: "the wardrobe",
+  "wearing()": "the wardrobe", "worn()": "the wardrobe", "integrity()": "the wardrobe", "trait()": "the wardrobe",
+  "body()": "the body and transformations", "transformed()": "the body and transformations",
   "front()": "hidden world clocks (fronts)", "front_stage()": "hidden world clocks (fronts)", "happened()": "random events",
   "bond()": "feelings between people", "arc()": "companion lives", "where()": "schedules",
   at_work: "work shifts", "owed()": "bills and debts", "missed()": "bills and debts", "days_until()": "bills and debts",
@@ -81,12 +86,10 @@ export function lintRuleset(r: Ruleset): Issue[] {
     const badEncounter = new Set<string>();
     const unknown = new Set<string>();
     try { evaluate(src, env, { unknown }); } catch { return; }
-    // eff('str') / gear('atk') name a stat; integrity('cloak') an item or a wardrobe slot.
-    for (const m of String(src).matchAll(/\b(eff|gear|integrity)\(\s*['"]([^'"]+)['"]/g)) {
+    // eff('str') / gear('atk') name a stat.
+    for (const m of String(src).matchAll(/\b(eff|gear)\(\s*['"]([^'"]+)['"]/g)) {
       const [, fn, id] = m;
-      if (fn === "integrity") {
-        if (!r.items[id] && !r.wardrobe.slots.some((x) => x.id === id)) issues.push({ level: "warning", where, message: `integrity('${id}'): "${id}" isn't an item or a wardrobe slot${suggest(id, [...Object.keys(r.items), ...r.wardrobe.slots.map((x) => x.id)])}` });
-      } else if (!r.stats[id]) issues.push({ level: "warning", where, message: `${fn}('${id}'): "${id}" isn't a stat${suggest(id, r.statOrder)}` });
+      if (!r.stats[id]) issues.push({ level: "warning", where, message: `${fn}('${id}'): "${id}" isn't a stat${suggest(id, r.statOrder)}` });
     }
     for (const u of unknown) {
       const isCall = u.endsWith("()");
@@ -119,22 +122,6 @@ export function lintRuleset(r: Ruleset): Issue[] {
     for (const d of e.decide) for (const o of d.options) { check(o.when, `${where} › decide › ${d.id} › ${o.id} › when`, extra); checkEffect(o.effect, `${where} › decide › ${d.id} › ${o.id}`, extra); }
     if (e.move && Object.keys(r.locations).length && !r.locations[e.move]) {
       issues.push({ level: "warning", where, message: `moves to "${e.move}", which isn't a declared location${suggest(e.move, Object.keys(r.locations))}` });
-    }
-    for (const id of e.wear) {
-      if (!r.items[id]?.slot) issues.push({ level: "warning", where, message: `wears "${id}", which isn't clothing (an item with a slot)${suggest(id, Object.keys(r.items))}` });
-    }
-    const slots = r.wardrobe.slots.map((s) => s.id);
-    for (const slot of [...e.undress, ...Object.keys(e.damage)]) {
-      if (!slots.includes(slot)) issues.push({ level: "warning", where, message: `"${slot}" isn't a wardrobe slot${suggest(slot, slots)}` });
-    }
-    for (const [slot, v] of Object.entries(e.damage)) check(v, `${where} › damage › ${slot}`, extra);
-    for (const [id, v] of Object.entries(e.transform)) {
-      if (!r.body.transforms[id]) issues.push({ level: "warning", where, message: `"${id}" isn't a transformation under body › transforms${suggest(id, Object.keys(r.body.transforms))}` });
-      check(v, `${where} › transform › ${id}`, extra);
-    }
-    if (Object.keys(e.body).length && !r.body.enabled) issues.push({ level: "warning", where, message: "changes the body, but the ruleset has no `body:` section" });
-    else if (!r.body.open) for (const part of Object.keys(e.body)) {
-      if (!r.body.parts[part]) issues.push({ level: "warning", where, message: `"${part}" isn't a body part (body › parts) and the body is closed (open: false)` });
     }
     if (e.startEncounter && !r.encounters[e.startEncounter]) {
       issues.push({ level: "warning", where, message: `starts encounter "${e.startEncounter}", which doesn't exist${suggest(e.startEncounter, Object.keys(r.encounters))}` });
@@ -288,11 +275,6 @@ export function lintRuleset(r: Ruleset): Issue[] {
   for (const sec of Object.values(r.secrets)) sec.stages.forEach((st, i) => check(st.when, `Secrets › ${sec.id} › stage ${i + 1} › when`));
   check(r.liveChoices.when, "Live choices › when");
   for (const a of Object.values(r.liveChoices.tags)) checkAction(a, `Live choices › tags › ${a.id}`);
-  const slotIds = r.wardrobe.slots.map((s) => s.id);
-  for (const [part, slots] of Object.entries(r.body.hiddenBy)) for (const slot of slots) {
-    if (!slotIds.includes(slot)) issues.push({ level: "warning", where: `Body › hidden_by › ${part}`, message: `"${slot}" isn't a wardrobe slot${suggest(slot, slotIds)}` });
-  }
-  for (const t of Object.values(r.body.transforms)) check(t.chance, `Body › transforms › ${t.id} › chance`);
   const gates: [string, { when?: string } | undefined][] = [
     ...r.statOrder.map((id) => [`Stats › ${id} › narrator_when`, r.stats[id].gate] as [string, { when?: string } | undefined]),
     ...r.relStatOrder.map((id) => [`Relationships › stats › ${id} › narrator_when`, r.relStats[id].gate] as [string, { when?: string } | undefined]),

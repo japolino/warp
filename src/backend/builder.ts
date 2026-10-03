@@ -151,7 +151,6 @@ const SYSTEMS: { id: string; label: string }[] = [
   { id: "relationships", label: "Relationships" },
   { id: "money", label: "Money" },
   { id: "skills", label: "Skills that grow" },
-  { id: "clothing", label: "Clothing, weather & temperature" },
   { id: "encounters", label: "Encounters / combat" },
   { id: "quests", label: "Quests (a notice board, favours people ask, bounties)" },
   { id: "crime", label: "Crime & consequences" },
@@ -250,8 +249,7 @@ function contextOf(parts: BuilderPart[]): string {
     list("Relationship stats", r.relStatOrder),
     list("People", Object.keys(r.people)),
     list("Locations", Object.keys(r.locations)),
-    list("Items", Object.keys(r.items).map((id) => (r.items[id].slot ? `${id} [${r.items[id].slot}]` : id))),
-    list("Wardrobe slots", r.wardrobe.enabled ? r.wardrobe.slots.map((x) => x.id) : []),
+    list("Items", Object.keys(r.items)),
     list("Conditions", Object.keys(r.conditions)),
     list("Flags", Object.keys(r.flags)),
     list("Encounters", Object.keys(r.encounters).map((id) => `${id} (outcomes: ${[...new Set([...Object.keys(r.encounters[id].outcomes), ...r.encounters[id].endWhen.map((e) => e.outcome)])].join(", ")})`)),
@@ -316,8 +314,6 @@ function buildPreview(s: BuilderSession) {
   };
   const phrase = Object.entries(counts).filter(([, n]) => n).map(([k, n]) => `${n} ${n === 1 ? k.replace(/s$/, "").replace(/^people$/, "person") : k}`).join(", ");
   const extras = [
-    r.weather.enabled ? "weather & temperature" : "",
-    r.wardrobe.enabled ? "a wardrobe" : "",
     r.clock.startDate ? "a calendar" : "",
     r.liveChoices.enabled ? "choices written for the moment" : "",
   ].filter(Boolean);

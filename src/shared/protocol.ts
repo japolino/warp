@@ -72,21 +72,18 @@ export interface QuestView {
   from: string | null;
 }
 
-export interface ClothingView { id: string; name: string; slot: string; warmth: number; reveal: number; traits: string[]; integrity: number | null; worn: boolean }
-
 export interface HudView {
   rulesetName: string;
   clock: { label: string; time: string; day: string; phase: string } | null;
   /** "Sun 4th Sep" when the ruleset has a calendar. */
   date: string | null;
-  weather: { icon: string; label: string; temp: number; season: string | null; indoors: boolean } | null;
   location: { name: string; desc?: string } | null;
   money: string | null;
   bars: BarView[];
   skills: SkillView[];
   people: PersonView[];
   items: {
-    id: string; name: string; count: number; worn: boolean; /** "3/5" uses left in the one in hand. */ uses: string | null;
+    id: string; name: string; count: number; /** "3/5" uses left in the one in hand. */ uses: string | null;
     /** Using it: the choice id (`item:<id>`), its label, and why it's locked (null = usable now). */
     use: { id: string; label: string; locked: string | null; drafted: boolean } | null;
     /** Gear: what it adds to checks ("+5 Athletics"). */
@@ -95,13 +92,6 @@ export interface HudView {
   conditions: { id: string; label: string; tone: Tone; desc?: string; remaining?: string }[];
   /** Quests: offered here, under way, waiting to be handed in, and the last few that ended. */
   quests: QuestView[];
-  /** Clothing warmth vs what the weather calls for. */
-  warmth: { value: number; min: number; max: number; tone: Tone; text: string } | null;
-  /** One row per wardrobe slot. */
-  outfit: { slot: string; label: string; item: ClothingView | null }[] | null;
-  /** Owned clothing (for the change-clothes panel). */
-  clothing: ClothingView[];
-  exposed: string[];
   encounter: {
     name: string;
     foe: string;
@@ -124,10 +114,6 @@ export interface HudView {
     foeArmor: number | null;
     yourArmor: number | null;
   } | null;
-  /** Body parts and their traits, when the ruleset has a body. */
-  body: { part: string; label: string; text: string; covered: boolean }[] | null;
-  /** Transformations under way. */
-  transforms: { label: string; stage: number; of: number }[];
   turn: number;
 }
 
@@ -431,8 +417,6 @@ export type FrontendToBackend =
   /** Replace the reply to `userMessageId` and resend it with this intent (null = "not an action"). */
   | { type: "redo"; chatId: string; userMessageId: string; actionId: string | null; params?: Record<string, string> }
   | { type: "dismiss_suggestion"; chatId: string; messageId: string }
-  /** Wardrobe: put on an item, or take off a slot (item null). */
-  | { type: "wear"; chatId: string; slot: string; item: string | null }
   /** Roll a clicked move again: a new roll, a new line in the player's message, a new reply. */
   | { type: "reroll"; chatId: string; messageId: string }
   | { type: "adjust_rel"; chatId: string; who: string; stat: string; value: number }

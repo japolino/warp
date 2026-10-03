@@ -2,10 +2,9 @@ import { describe, expect, test } from "bun:test";
 import yaml from "js-yaml";
 import { lintRuleset } from "./lint.js";
 import { normalizeRuleset } from "./ruleset.js";
-import { applyProposal, availableChoices, changeClothes, resolveTurn, resolveTurnFull } from "./resolve.js";
+import { applyProposal, availableChoices, resolveTurn, resolveTurnFull } from "./resolve.js";
 import { foldEvents, initialState, type GameState } from "./state.js";
 import { buildHud, stateDigest } from "./view.js";
-import { temperatureAt, warmthNeeded, weatherAt } from "./world.js";
 
 const RULES = yaml.load(`
 name: Test Town
@@ -15,15 +14,6 @@ stats:
   health: { kind: meter, start: 100 }
   stress: { kind: meter, good: low, start: 0 }
   charm: { kind: attribute, start: 3, max: 10 }
-weather: { temps: { autumn: 8 } }
-wardrobe:
-  slots: [top, bottom, outer, feet]
-  cover: [top, bottom]
-  start: [shirt, jeans]
-items:
-  shirt: { name: Shirt, slot: top, warmth: 3 }
-  jeans: { name: Jeans, slot: bottom, warmth: 4, integrity: 50 }
-  coat: { name: Rain coat, slot: outer, warmth: 8, traits: [rainproof] }
 locations:
   home: { name: Home, indoors: true }
   street: { name: Street }
@@ -76,47 +66,11 @@ describe("new systems", () => {
     expect(lintRuleset(load())).toEqual([]);
   });
 
-  test("calendar, weather and temperature", () => {
+  test("calendar", () => {
     const r = load();
     let s = initialState(r);
     s = step(r, s, null, "world-1");
-    expect(s.seed).toBe("world-1");
-    const hud = buildHud(r, s);
-    expect(hud.date).toBe("Sun 4th Sep");
-    expect(hud.weather?.indoors).toBe(true);
-    expect(hud.weather?.temp).toBe(20);
-    s = step(r, s, "to_street");
-    const out = temperatureAt(r, s)!;
-    expect(out).toBeLessThan(15);
-    expect(weatherAt(r, s)).not.toBeNull();
-    // Same seed and time → same weather (replays are stable).
-    expect(weatherAt(r, { ...s })!.id).toBe(weatherAt(r, s)!.id);
-  });
-
-  test("wardrobe: warmth, exposure, changing and damage", () => {
-    const r = load();
-    let s = initialState(r);
-    expect(s.worn).toEqual({ top: "shirt", bottom: "jeans" });
-    let hud = buildHud(r, s);
-    expect(hud.warmth!.value).toBe(7); // shirt 3 + jeans 4, judged against the indoor temperature
-    s = step(r, s, "to_street");
-    hud = buildHud(r, s);
-    expect(hud.warmth!.value).toBe(7);
-    const need = warmthNeeded(temperatureAt(r, s)!);
-    expect(hud.warmth!.min).toBe(need.min);
-    // Give and wear the coat.
-    s.items.coat = 1;
-    const ev = changeClothes(r, s, "outer", "coat");
-    expect(Array.isArray(ev)).toBe(true);
-    s = foldEvents(r, [ev as never], s);
-    expect(buildHud(r, s).warmth!.value).toBe(15);
-    // Take the shirt off → exposed top.
-    s = foldEvents(r, [changeClothes(r, s, "top", null) as never], s);
-    expect(buildHud(r, s).exposed).toEqual(["top"]);
-    expect(stateDigest(r, s)).toContain("exposed: top");
-    // Narrator bookkeeping can undress (wardrobe.narrator defaults to true).
-    s = foldEvents(r, [applyProposal(r, s, { undress: ["outer"] })], s);
-    expect(s.worn.outer).toBeUndefined();
+    expect(buildHud(r, s).date).toBe("Sun 4th Sep");
   });
 
   test("the story puts people in the scene; per-person actions target who's here", () => {

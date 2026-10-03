@@ -58,7 +58,6 @@ export function renderCueCard(h: HudView): string {
   const top = [
     h.clock ? `<b>${esc(h.clock.time)}</b> <span class="dim">${esc(h.date ?? h.clock.day)}</span>` : `<b>${esc(h.rulesetName)}</b>`,
     h.location ? `<span>📍 ${esc(h.location.name)}</span>` : "",
-    h.weather ? `<span class="dim">${esc(`${h.weather.icon} ${h.weather.label} ${h.weather.temp}°C`.trim())}</span>` : "",
     h.money ? `<span>💰 ${esc(h.money)}</span>` : "",
   ].filter(Boolean).join("");
   const bars = h.bars.map((b) => `<div class="bar"><span class="l">${esc(b.label)}</span><span class="v">${esc(b.text ?? b.display)}</span><div class="track"><div class="fill ${b.tone}" style="width:${Math.round(b.pct * 100)}%"></div></div></div>`).join("");

@@ -91,7 +91,7 @@ function clip(s: string, n: number) {
 
 // ───────────────────────── extractor ─────────────────────────
 
-export type ExtractPart = "minutes" | "stats" | "rel" | "people" | "items" | "move" | "conditions" | "flags" | "wardrobe" | "body" | "scene" | "used" | "train" | "encounter" | "quests" | "memories";
+export type ExtractPart = "minutes" | "stats" | "rel" | "people" | "items" | "move" | "conditions" | "flags" | "scene" | "used" | "train" | "encounter" | "quests" | "memories";
 
 const sameName = (a: string, b: string) => {
   const x = a.trim().toLowerCase(), y = b.trim().toLowerCase();
@@ -144,16 +144,6 @@ export async function extract(
   if (want("move") && (locs.length || r.locationsOpen)) allowed.push(`- "move": where the player character ends up, if they moved${locs.length && !r.locationsOpen ? ` (one of: ${locs.map((l) => l.name).join(", ")})` : ""}`);
   if (want("conditions") && conds.length) allowed.push(`- "conditions": {"add": [...], "remove": [...]} from: ${conds.map((c) => c.id).join(", ")}`);
   if (want("flags") && flags.length) allowed.push(`- "flags": set any of: ${flags.map((f) => f.id).join(", ")}`);
-  if (want("wardrobe") && r.wardrobe.enabled && r.wardrobe.narrator) {
-    const worn = Object.entries(s.worn).map(([slot, id]) => `${slot}: ${itemName(r, s, id)}`).join(", ") || "nothing";
-    const owned = Object.keys(s.items).filter((id) => r.items[id]?.slot && !Object.values(s.worn).includes(id));
-    allowed.push(`- "undress": slots whose clothing came off (currently worn — ${worn})`);
-    if (owned.length) allowed.push(`- "wear": ids of carried clothing put on, or that the reply shows the player wearing (${owned.join(", ")})`);
-  }
-  if (want("body") && r.body.enabled && r.body.narrator) {
-    const now = Object.entries(s.body).map(([p, t]) => `${p}: ${Object.entries(t).map(([k, v]) => `${k} ${v}`).join(", ")}`).join("; ") || "nothing recorded";
-    allowed.push(`- "body": lasting changes to the player's body as {"part": {"trait": "new value"}} (null removes a trait)${r.body.open ? "; new parts are allowed" : `; parts: ${Object.keys(r.body.parts).join(", ")}`}. Now: ${now}`);
-  }
   if (want("quests") && (judged.length || (r.storyQuests.enabled && settings.storyQuests))) {
     const open = judged.map((j) => `${j.id} (done: ${j.done}${j.fail ? `; failed: ${j.fail}` : ""})`).join("; ");
     allowed.push(`- "quests": {${r.storyQuests.enabled && settings.storyQuests ? `"new": [{"name": "short title", "giver": "who asked", "goal": "what counts as done", "fail": "what would count as failing (optional)", "stakes": "what's at stake (optional)", "hours": in-game hours until it's due (only if a time was set)}], ` : ""}"done": [ids], "failed": [ids]}${r.storyQuests.enabled && settings.storyQuests ? ` — new: ONLY when someone in the reply asked the player for a specific task or favour (or the player promised one) and it isn't one of these already` : ""}${open ? `; done/failed: only quests the reply clearly finished or failed. Open quests: ${open}` : ""}`);

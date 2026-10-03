@@ -76,20 +76,10 @@ export interface Effect {
   end?: string;
   /** Begin an encounter by id. */
   startEncounter?: string;
-  /** Put on items (slot is taken from the item) — `wear: [raincoat]`. */
-  wear: string[];
-  /** Take off whatever is worn in these slots. */
-  undress: string[];
-  /** Damage worn clothing by slot: `damage: { top: 30 }` (integrity points). */
-  damage: Record<string, string | number>;
   /** Open the next stage of these secrets, whatever their conditions say. */
   reveal: string[];
   /** Swing the encounter's momentum toward the player (+) or the foe (−). */
   momentum?: string | number;
-  /** Set body traits: `body: { hair: { color: red } }` (null removes a trait). */
-  body: Record<string, Record<string, string | null>>;
-  /** Advance transformations by this many stages: `transform: { fox_charm: 1 }`. */
-  transform: Record<string, string | number>;
   /** Wear down the current encounter's main meter (HP, resolve, composure…) by this much — portable across encounters. */
   harm?: string | number;
   /** Put conditions on the opponent (in an encounter) or the person an action is aimed at: `inflict: { poisoned: 3 }`. */
@@ -205,31 +195,20 @@ export interface TriggerDef {
 
 export interface LocationDef {
   id: string; name: string; desc?: string;
-  /** Indoors: temperature is the indoor temperature and weather doesn't touch you. */
+  /** A roofed place: formulas read it as `indoors` / `outside`. */
   indoors: boolean;
-  /** This place's own indoor temperature (°C), instead of the ruleset's `weather: { indoors }`. */
-  temp?: number;
   /** Has a quest board: quests with `board: true` are posted here. */
   board: boolean;
 }
 export interface ItemDef {
   id: string; name: string; desc?: string; tags: string[];
-  /** Clothing: the slot it's worn in. */
-  slot?: string;
-  warmth: number;
-  /** Max integrity (clothing); it's destroyed at 0. */
-  integrity: number;
-  /** How revealing it is (adds to `reveal`). */
-  reveal: number;
-  /** Clothing traits, e.g. rainproof, swimwear. */
-  traits: string[];
   /** Uses per item (a spray with 5 sprays); each use spends one, and at 0 the item is gone. 0 = not used up by use. */
   uses: number;
   /** What using it does: an action like any other (`item:<id>`), offered while it's held. */
   use?: ActionDef;
   /** A tool that isn't spent by using it (keys, a phone). */
   keep: boolean;
-  /** Gear: added to every check that reads these stats (and to `eff()`/`gear()`), while it's carried (or worn, for clothing). Numbers or formulas. */
+  /** Gear: added to every check that reads these stats (and to `eff()`/`gear()`), while it's carried. Numbers or formulas. */
   bonus: Record<string, Amount>;
   /** Armor: blows that would hurt these stats in an encounter are this much smaller ("_" = whatever the encounter beats you on). Numbers or formulas. */
   armor: Record<string, Amount>;
@@ -260,31 +239,6 @@ export interface PersonDef {
   id: string; name: string; age?: number; start: Record<string, number>; desc?: string;
 }
 export interface FlagDef { id: string; label?: string; narrator: boolean; start: string | number | boolean | null; gate?: NarratorGate }
-
-export interface WeatherKind { id: string; label: string; icon: string; weight: number; temp: number; seasons: string[] | null; tags: string[] }
-export interface WeatherDef {
-  enabled: boolean;
-  kinds: WeatherKind[];
-  /** Base outdoor °C per season. */
-  seasonTemps: Record<string, number>;
-  /** Month numbers (1–12) per season. */
-  seasons: Record<string, number[]>;
-  /** Daily swing: warmest mid-afternoon, coldest before dawn. */
-  swing: number;
-  /** Weather re-rolls every this many hours. */
-  changeHours: number;
-  indoorTemp: number;
-}
-
-export interface WardrobeDef {
-  enabled: boolean;
-  slots: { id: string; label: string }[];
-  /** Slots that count toward being exposed when empty. */
-  cover: string[];
-  startWorn: string[];
-  /** The narrator may undress/redress the player. */
-  narrator: boolean;
-}
 
 export interface FoeStatDef {
   id: string; label: string; start: number; max: number; good: "high" | "low" | "none";
@@ -420,31 +374,6 @@ export interface LiveChoicesDef {
   tags: Record<string, ActionDef>;
 }
 
-
-/** A transformation in stages; each step advances one stage with `chance` percent. */
-export interface TransformDef {
-  id: string;
-  label: string;
-  chance: string | number;
-  stages: { set: Record<string, Record<string, string | null>>; text?: string }[];
-}
-
-/** The player character's body: parts with free-form traits, what covers them, and transformations. */
-export interface BodyDef {
-  enabled: boolean;
-  /** The story may change the body after a reply. */
-  narrator: boolean;
-  /** The story may add parts the ruleset didn't list (horns, wings…). */
-  open: boolean;
-  parts: Record<string, Record<string, string>>;
-  /** Clothing slots that cover a part; it's visible when any of them is empty. */
-  hiddenBy: Record<string, string[]>;
-  transforms: Record<string, TransformDef>;
-}
-
-
-
-
 export type Difficulty = "easy" | "fair" | "hard" | "extreme";
 export const DIFFICULTIES: Difficulty[] = ["easy", "fair", "hard", "extreme"];
 
@@ -526,8 +455,6 @@ export interface Ruleset {
   /** currency: the sign; currencyAfter: written after the amount ("18d") instead of before ("$18"). */
   hud: { bars: string[]; money?: string; currency: string; currencyAfter?: boolean };
   narration: { notes?: string; numbers: boolean };
-  weather: WeatherDef;
-  wardrobe: WardrobeDef;
   encounters: Record<string, EncounterDef>;
   quests: Record<string, QuestDef>;
   questOrder: string[];
@@ -535,7 +462,6 @@ export interface Ruleset {
   storyQuests: { enabled: boolean; max: number };
   secrets: Record<string, SecretDef>;
   liveChoices: LiveChoicesDef;
-  body: BodyDef;
   improvise: ImproviseDef;
   growth: GrowthDef;
 }
@@ -825,7 +751,7 @@ function normStat(id: string, raw: unknown, where: string, c: Ctx, forRel = fals
 export function emptyEffect(): Effect {
   return {
     stats: {}, set: {}, flags: {}, items: {}, rel: {}, addConditions: {}, removeConditions: [], decide: [],
-    foe: {}, wear: [], undress: [], damage: {}, reveal: [], body: {}, transform: {},
+    foe: {}, reveal: [],
     inflict: {}, afflict: {}, cleanse: [], quest: {}, progress: {}, remember: {},
   };
 }
@@ -839,18 +765,6 @@ const QUEST_OPS: Record<string, QuestOp> = {
   drop: "drop", abandon: "drop", cancel: "drop",
   report: "report", turn_in: "report", hand_in: "report",
 };
-
-/** `{ hair: { color: red, length: null } }` → part → trait → value (null removes). */
-function normTraits(raw: unknown, where: string, c: Ctx): Record<string, Record<string, string | null>> {
-  const out: Record<string, Record<string, string | null>> = {};
-  if (!isObj(raw)) { c.warn(where, "expected parts with traits, like `hair: { color: red }`"); return out; }
-  for (const [part, traits] of Object.entries(raw)) {
-    if (typeof traits === "string") { out[part] = { type: traits }; continue; }
-    if (!isObj(traits)) { c.warn(`${where} › ${part}`, "expected traits, like `{ color: red }`"); continue; }
-    out[part] = Object.fromEntries(Object.entries(traits).map(([k, v]) => [k, v === null || v === false ? null : String(v)]));
-  }
-  return out;
-}
 
 export const list = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : []);
 
@@ -883,6 +797,8 @@ export const REMOVED_EFFECTS: Record<string, string> = {
   arc: "companion lives", bond: "feelings between people", bonds: "feelings between people",
   front: "hidden world clocks (fronts)", fronts: "hidden world clocks (fronts)", gauge: "random events", events_gauge: "random events",
   unlock: "the codex", codex: "the codex", learn: "abilities",
+  wear: "the wardrobe", put_on: "the wardrobe", undress: "the wardrobe", take_off: "the wardrobe", damage: "the wardrobe",
+  body: "the body and transformations", transform: "the body and transformations",
 };
 
 /** Effects accept both a structured form and a flat shorthand: `{ fatigue: +20, hint: "..." }`. */
@@ -949,16 +865,6 @@ export function normEffect(raw: unknown, where: string, c: Ctx, known: { stats: 
       case "start_encounter": case "encounter":
         e.startEncounter = String(v);
         break;
-      case "wear": case "put_on":
-        e.wear.push(...list(v));
-        break;
-      case "undress": case "take_off":
-        e.undress.push(...list(v));
-        break;
-      case "damage":
-        if (isObj(v)) for (const [slot, d] of Object.entries(v)) { const x = c.expr(d, `${w} › ${slot}`); if (x !== undefined) e.damage[slot] = x; }
-        else c.warn(w, "expected clothing damage by slot, like `top: 30`");
-        break;
       case "reveal":
         e.reveal.push(...list(v));
         break;
@@ -967,15 +873,6 @@ export function normEffect(raw: unknown, where: string, c: Ctx, known: { stats: 
         if (x !== undefined) e.momentum = x;
         break;
       }
-      case "body":
-        // A stat called "body" keeps its shorthand (`body: +1`); a map sets body traits.
-        if (known.stats.has(k) && !isObj(v)) { const x = c.expr(v, w); if (x !== undefined) e.stats[k] = x; }
-        else Object.assign(e.body, normTraits(v, w, c));
-        break;
-      case "transform":
-        if (isObj(v)) for (const [id, n] of Object.entries(v)) { const x = c.expr(n, `${w} › ${id}`); if (x !== undefined) e.transform[id] = x; }
-        else for (const id of list(v)) e.transform[id] = 1;
-        break;
       case "harm": {
         const x = c.expr(diceExpr(v), w);
         if (x !== undefined) e.harm = x;
@@ -1036,7 +933,7 @@ export function normEffect(raw: unknown, where: string, c: Ctx, known: { stats: 
       default:
         // Flat shorthand: a known stat name maps to a delta.
         if (known.stats.has(k)) { const x = c.expr(v, w); if (x !== undefined) e.stats[k] = x; }
-        else c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, wear, undress, damage, reveal, momentum, body, transform, harm, hits, pierce, inflict, cleanse, quest, progress, remember)`);
+        else c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, reveal, momentum, harm, hits, pierce, inflict, cleanse, quest, progress, remember)`);
     }
   }
   return e;
@@ -1261,74 +1158,6 @@ export function parseDate(v: unknown): { month: number; day: number } | null {
   const day = Number(a?.[2] ?? b?.[1]);
   const month = name ? MONTHS.indexOf(name.slice(0, 3)) + 1 : 0;
   return month >= 1 && day >= 1 && day <= 31 ? { month, day } : null;
-}
-
-const DEFAULT_WEATHER: WeatherKind[] = [
-  { id: "clear", label: "Clear", icon: "☀️", weight: 4, temp: 1, seasons: null, tags: [] },
-  { id: "cloudy", label: "Overcast", icon: "☁️", weight: 3, temp: -1, seasons: null, tags: [] },
-  { id: "rain", label: "Rain", icon: "🌧️", weight: 2, temp: -3, seasons: null, tags: ["wet"] },
-  { id: "storm", label: "Storm", icon: "⛈️", weight: 1, temp: -4, seasons: ["summer", "autumn"], tags: ["wet", "windy"] },
-  { id: "snow", label: "Snow", icon: "❄️", weight: 2, temp: -6, seasons: ["winter"], tags: ["wet", "cold"] },
-];
-
-function normWeather(raw: unknown, c: Ctx): WeatherDef {
-  const def: WeatherDef = {
-    enabled: false,
-    kinds: DEFAULT_WEATHER,
-    seasonTemps: { spring: 12, summer: 22, autumn: 11, winter: 3 },
-    seasons: { spring: [3, 4, 5], summer: [6, 7, 8], autumn: [9, 10, 11], winter: [12, 1, 2] },
-    swing: 5,
-    changeHours: 6,
-    indoorTemp: 20,
-  };
-  if (raw === undefined || raw === false) return def;
-  def.enabled = true;
-  if (!isObj(raw)) return def;
-  if (isObj(raw.kinds)) {
-    const kinds: WeatherKind[] = [];
-    for (const [id, k] of Object.entries(raw.kinds)) {
-      const r: Raw = isObj(k) ? k : {};
-      const w = `Weather › kinds › ${id}`;
-      kinds.push({
-        id,
-        label: typeof r.label === "string" ? r.label : titleCase(id),
-        icon: typeof r.icon === "string" ? r.icon : "",
-        weight: Math.max(0, c.num(r.weight, `${w} › weight`, 1)),
-        temp: c.num(r.temp, `${w} › temp`, 0),
-        seasons: r.seasons === undefined ? null : list(r.seasons),
-        tags: list(r.tags),
-      });
-    }
-    if (kinds.length) def.kinds = kinds;
-  }
-  if (isObj(raw.temps)) for (const [s, t] of Object.entries(raw.temps)) def.seasonTemps[s] = c.num(t, `Weather › temps › ${s}`, 10);
-  if (isObj(raw.seasons)) {
-    def.seasons = {};
-    for (const [s, m] of Object.entries(raw.seasons)) def.seasons[s] = (Array.isArray(m) ? m : [m]).map(Number).filter((n) => n >= 1 && n <= 12);
-  }
-  def.swing = c.num(raw.swing, "Weather › swing", def.swing);
-  def.changeHours = Math.max(1, c.num(raw.change_hours ?? raw.changes_every, "Weather › change_hours", def.changeHours));
-  def.indoorTemp = c.num(raw.indoors ?? raw.indoor_temp, "Weather › indoors", def.indoorTemp);
-  return def;
-}
-
-const DEFAULT_SLOTS = ["head", "outer", "top", "bottom", "under_top", "under_bottom", "legs", "feet"];
-
-function normWardrobe(raw: unknown, items: Record<string, ItemDef>, c: Ctx): WardrobeDef {
-  const clothing = Object.values(items).some((i) => i.slot);
-  const def: WardrobeDef = { enabled: clothing, slots: [], cover: ["top", "bottom"], startWorn: [], narrator: true };
-  const r: Raw = isObj(raw) ? raw : {};
-  if (raw === false) def.enabled = false;
-  if (isObj(raw)) def.enabled = true;
-  const slotIds = Array.isArray(r.slots) ? r.slots.map(String) : DEFAULT_SLOTS;
-  def.slots = slotIds.map((id: string) => ({ id, label: titleCase(id) }));
-  if (Array.isArray(r.cover)) def.cover = r.cover.map(String);
-  def.startWorn = list(r.start ?? r.worn);
-  def.narrator = r.narrator !== false;
-  for (const it of Object.values(items)) {
-    if (it.slot && !slotIds.includes(it.slot)) c.warn(`Items › ${it.id} › slot`, `"${it.slot}" isn't a wardrobe slot (${slotIds.join(", ")})`);
-  }
-  return def;
 }
 
 /** Keys of an item's `use:` that describe the action itself; everything else is its effect. */
@@ -1673,31 +1502,6 @@ function normLiveChoices(raw: unknown, c: Ctx, known: { stats: Set<string> }): L
 }
 
 
-function normBody(raw: unknown, c: Ctx): BodyDef {
-  const def: BodyDef = { enabled: false, narrator: true, open: true, parts: {}, hiddenBy: {}, transforms: {} };
-  if (raw === undefined || raw === false) return def;
-  if (!isObj(raw)) { c.warn("Body", "should be a map with `parts:`"); return def; }
-  def.enabled = true;
-  def.narrator = raw.narrator !== false;
-  def.open = raw.open !== false;
-  for (const [part, traits] of Object.entries(normTraits(raw.parts ?? {}, "Body › parts", c))) {
-    def.parts[part] = Object.fromEntries(Object.entries(traits).filter(([, v]) => v !== null)) as Record<string, string>;
-  }
-  if (isObj(raw.hidden_by)) for (const [part, slots] of Object.entries(raw.hidden_by)) def.hiddenBy[part] = list(slots);
-  for (const [id, t] of Object.entries(isObj(raw.transforms) ? raw.transforms : {})) {
-    const w = `Body › transforms › ${id}`;
-    if (!isObj(t) || !Array.isArray(t.stages) || !t.stages.length) { c.warn(w, "needs `stages:` — a list of `{ set: { part: { trait: value } }, text }`"); continue; }
-    const chance = c.expr(t.chance ?? 100, `${w} › chance`) ?? 100;
-    const stages = (t.stages as unknown[]).map((st, i) => {
-      const sr: Raw = isObj(st) ? st : {};
-      return { set: normTraits(sr.set ?? {}, `${w} › stage ${i + 1}`, c), ...(typeof sr.text === "string" ? { text: sr.text } : {}) };
-    });
-    def.transforms[id] = { id, label: typeof t.label === "string" ? t.label : titleCase(id), chance, stages };
-  }
-  return def;
-}
-
-
 function normImprovise(raw: unknown, c: Ctx, known: { stats: Set<string> }, stats: Record<string, StatDef>, order: string[]): ImproviseDef {
   const usable = order.filter((id) => stats[id].kind === "skill" || stats[id].kind === "attribute");
   const def: ImproviseDef = { enabled: true, dc: { easy: 8, fair: 12, hard: 16, extreme: 20 }, bonus: 10, partial: 3, stats: usable, outcomes: {} };
@@ -1779,6 +1583,7 @@ export const REMOVED_KEYS: Record<string, string> = {
   fronts: "hidden world clocks (fronts)", random_events: "random events", events: "random events",
   checkpoints: "checkpoints, save slots and time loops", endings: "endings and new playthroughs",
   perks: "perks", feats: "feats", codex: "the codex", abilities: "abilities",
+  weather: "weather and temperature", wardrobe: "the wardrobe", body: "the body and transformations",
 };
 
 const SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
@@ -1836,16 +1641,13 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   for (const [id, it] of Object.entries(isObj(raw.items) ? raw.items : isObj(invRaw.items) ? invRaw.items : {})) {
     const r: Raw = isObj(it) ? it : typeof it === "string" ? { name: it } : {};
     const w = `Items › ${id}`;
+    // Clothing (the wardrobe) was taken out: slots, warmth, wear and tear, how revealing, clothing traits.
+    for (const k of ["slot", "warmth", "integrity", "reveal", "traits"]) if (r[k] !== undefined) c.removed(`${w} › ${k}`, k, "the wardrobe");
     items[id] = {
       id,
       name: typeof r.name === "string" ? r.name : titleCase(id),
       desc: r.desc,
       tags: list(r.tags),
-      ...(typeof r.slot === "string" ? { slot: r.slot } : {}),
-      warmth: c.num(r.warmth, `${w} › warmth`, 0),
-      integrity: Math.max(1, c.num(r.integrity, `${w} › integrity`, 100)),
-      reveal: c.num(r.reveal, `${w} › reveal`, 0),
-      traits: list(r.traits).map((t) => t.toLowerCase()),
       // `uses: 5` — five uses per item; a `consumable` tag means one.
       uses: Math.max(0, Math.round(c.num(r.uses ?? r.charges, `${w} › uses`, list(r.tags).map((t) => t.toLowerCase()).includes("consumable") ? 1 : 0))),
       keep: r.keep === true,
@@ -1875,14 +1677,12 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     // The travel graph and the map were taken out: exits, travel times, gates and map positions are ignored.
     for (const k of ["exits", "travel", "when", "requires", "needs", "why_not", "locked", "pos"]) if (r[k] !== undefined) c.removed(`${lw} › ${k}`, k, "the map and travel between places");
     const indoors = r.indoors === true || r.inside === true;
-    const temp = r.temp ?? r.temperature;
-    if (temp !== undefined && !indoors) c.warn(`${lw} › temp`, "only indoor places take `temp:` — outdoors follows the weather (add `indoors: true`)");
+    for (const k of ["temp", "temperature"]) if (r[k] !== undefined) c.removed(`${lw} › ${k}`, k, "weather and temperature");
     locations[id] = {
       id,
       name: typeof r.name === "string" ? r.name : titleCase(id),
       desc: typeof r.desc === "string" ? r.desc : undefined,
       indoors,
-      ...(temp !== undefined && indoors ? { temp: c.num(temp, `${lw} › temp`, 20) } : {}),
       board: r.board === true || r.quest_board === true,
     };
   }
@@ -1936,10 +1736,6 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const dateRaw = clockRaw.date ?? clockRaw.start_date ?? startRaw.date;
   const startDate = dateRaw === undefined ? null : parseDate(dateRaw);
   if (dateRaw !== undefined && !startDate) c.warn("Clock › date", `"${dateRaw}" should look like "Sep 4"`);
-
-  const worldRaw = { weather: raw.weather, wardrobe: raw.wardrobe };
-  const weather = normWeather(worldRaw.weather, c);
-  const wardrobe = normWardrobe(worldRaw.wardrobe, items, c);
 
   // Actions
   const actions: Record<string, ActionDef> = {};
@@ -2005,7 +1801,6 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const liveChoices = normLiveChoices(raw.live_choices, c, known);
   // Parts of Warp that were taken out (the old version is on the `legacy` branch).
   for (const [k, what] of Object.entries(REMOVED_KEYS)) if (raw[k] !== undefined) c.removed(titleCase(k), k, what);
-  const body = normBody(raw.body, c);
   const improvise = normImprovise(raw.improvise ?? raw.improvised, c, known, stats, statOrder);
   const growth = normGrowth(raw.growth ?? raw.practice, c);
 
@@ -2035,8 +1830,8 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     },
     hud: { bars, money: moneyStat && stats[moneyStat] ? moneyStat : undefined, ...normCurrency(hudRaw.currency, c) },
     narration: { notes: typeof narrRaw.notes === "string" ? narrRaw.notes : undefined, numbers: narrRaw.numbers === true },
-    weather, wardrobe, encounters, quests, questOrder, storyQuests,
-    secrets, liveChoices, body, improvise, growth,
+    encounters, quests, questOrder, storyQuests,
+    secrets, liveChoices, improvise, growth,
   };
 
   // Cross-references that need everything loaded.
@@ -2044,10 +1839,6 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     if (!people[who]) c.warn(`Actions › ${a.id} › targets`, `"${who}" isn't a person in relationships › people`);
   }
   for (const a of Object.values(actions)) if (a.targets && !a.targets.length) c.warn(`Actions › ${a.id} › targets`, "names no one — list the people it can be aimed at");
-  for (const id of wardrobe.startWorn) {
-    if (!items[id]?.slot) c.warn("Wardrobe › start", `"${id}" isn't a declared clothing item (items need a \`slot:\`)`);
-    else if (!(startItems[id] > 0)) startItems[id] = 1; // wearing it means owning it
-  }
 
   // Hard floor: sexual content and minors never mix, whatever the tags or settings.
   const minors = [

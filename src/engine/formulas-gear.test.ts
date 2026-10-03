@@ -1,4 +1,4 @@
-// Formulas, conditions, gear and the sidebar: eff()/gear()/integrity(), formula armor, bonus and
+// Formulas, conditions, gear and the sidebar: eff()/gear(), formula armor, bonus and
 // per_hour, crit: on checks, [round, hour] statuses, show:, and currency after the amount.
 
 import { describe, expect, test } from "bun:test";
@@ -29,10 +29,8 @@ const gearRules = (extra: Record<string, unknown> = {}) => load({
   },
   items: {
     sword: { name: "Sword", bonus: { atk: "5 + level * 2", str: 1 } },
-    cloak: { name: "Cloak", slot: "outer", integrity: 40 },
     ring: { name: "Ring", bonus: { str: 2 } },
   },
-  wardrobe: { slots: ["outer"], cover: [], start: ["cloak"] },
   conditions: {
     mighty: { label: "Mighty", bonus: { str: "level" }, armor: { hp: "level * 2" } },
     shielded: { label: "Shielded", armor: 4 },
@@ -45,8 +43,8 @@ const gearRules = (extra: Record<string, unknown> = {}) => load({
   ...extra,
 });
 
-describe("eff(), gear() and integrity()", () => {
-  test("eff counts gear, perks and statuses; gear counts carried gear alone; formulas are worked out now", () => {
+describe("eff() and gear()", () => {
+  test("eff counts gear and statuses; gear counts carried gear alone; formulas are worked out now", () => {
     const { r, warns } = gearRules();
     expect(warns).toEqual([]);
     const s = initialState(r);
@@ -71,23 +69,10 @@ describe("eff(), gear() and integrity()", () => {
     expect(gearFor(r, s, lift).notes).toContain("Ring: +2 Str");
   });
 
-  test("integrity() reads a piece of clothing by item or slot; 0 when not held", () => {
-    const { r } = gearRules();
-    const s = initialState(r);
-    expect(num(r, s, "integrity('cloak')")).toBe(40);
-    expect(num(r, s, "integrity('outer')")).toBe(40);
-    applyEvent(s, { t: "dmg", item: "cloak", d: -15, src: "manual" } as never, r);
-    expect(num(r, s, "integrity('cloak')")).toBe(25);
-    expect(num(r, s, "integrity('sword')")).toBe(100); // not clothing, default integrity
-    const t = initialState(r); t.items = {};
-    expect(num(r, t, "integrity('cloak')")).toBe(0);
-  });
-
-  test("lint names a wrong stat, item or slot inside eff/gear/integrity", () => {
-    const { r } = gearRules({ triggers: { t1: { when: "eff('strr') > 3 and gear('atk') > 0 and integrity('cape') < 10", do: { hp: +1 } } } });
+  test("lint names a wrong stat inside eff/gear", () => {
+    const { r } = gearRules({ triggers: { t1: { when: "eff('strr') > 3 and gear('atk') > 0", do: { hp: +1 } } } });
     const msgs = lintRuleset(r).map((i) => i.message);
     expect(msgs.some((m) => m.includes("eff('strr')") && m.includes('did you mean "str"'))).toBe(true);
-    expect(msgs.some((m) => m.includes("integrity('cape')"))).toBe(true);
     expect(msgs.some((m) => m.includes("gear('atk')"))).toBe(false);
     expect(msgs.some((m) => m.includes("isn't a known function"))).toBe(false);
   });

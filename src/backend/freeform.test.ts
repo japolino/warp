@@ -28,9 +28,8 @@ stats:
   athletics: { kind: skill, max: 100, start: 10 }
 items:
   spray: { name: Pheromone Blocker Spray, uses: 3 }
-  hoodie: { name: Oversized Slouch Hoodie, slot: top }
+  hoodie: { name: Oversized Slouch Hoodie }
   phone: Phone
-wardrobe: { slots: [top], cover: [top] }
 relationships: { stats: { trust: { start: 20, narrator: 5 } } }
 encounters:
   brawl: { name: Brawl, foe: { name: Thug, stats: {} }, actions: { swing: { label: Swing } }, outcomes: { won: {}, lost: {} } }
@@ -80,7 +79,7 @@ describe("reading the reply", () => {
         if (k === "here:miu") a[k] = { type: "noul", noul: 0.1 };
         else if (k === "here:clarice") a[k] = { type: "noul", noul: 0.5 };
         else if (k === "item:spray") a[k] = choice("used", 0.8, keysOf(q, k));
-        else if (k === "item:hoodie") a[k] = choice("worn", 0.8, keysOf(q, k));
+        else if (k === "item:hoodie") a[k] = choice("same", 0.8, keysOf(q, k));
         else if (k === "train") a[k] = choice("athletics", 0.7, keysOf(q, k));
         else if (v.type === "noul") a[k] = { type: "noul", noul: 0.1 };
       }
@@ -88,17 +87,16 @@ describe("reading the reply", () => {
     });
     const out = await bookkeeping({ decider: d, r, s, playerText: "…", reply, player: "Sam" });
     const asked = Object.keys(d.asked[0]);
-    // Only items the reply mentions are asked about; putting it on is offered for carried clothes.
+    // Only items the reply mentions are asked about.
     expect(asked).toContain("item:spray");
     expect(asked).not.toContain("item:phone");
-    expect(keysOf(d.asked[0], "item:hoodie")).toContain("worn");
+    expect(keysOf(d.asked[0], "item:hoodie")).not.toContain("worn");
     expect(out.proposal.scene).toEqual({ miu: false }); // Clarice: too unsure either way → unchanged
     expect(out.proposal.used).toEqual({ spray: 1 });
-    expect(out.proposal.wear).toEqual(["hoodie"]);
     expect(out.proposal.train).toEqual(["athletics"]);
     const after = foldEvents(r, [applyProposal(r, s, out.proposal)], s);
     expect(after.uses.spray).toBe(2);
-    expect(after.worn.top).toBe("hoodie");
+    expect(after.items.hoodie).toBe(1);
   });
 
   test("an encounter in progress can be read as over", async () => {

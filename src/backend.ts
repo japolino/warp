@@ -1,5 +1,5 @@
 import type { SpindleAPI } from "lumiverse-spindle-types";
-import { changeClothes, forgetPerson, manualSet, manualSetRel, type TurnRecord } from "./engine/resolve.js";
+import { forgetPerson, manualSet, manualSetRel, type TurnRecord } from "./engine/resolve.js";
 import type { Ruleset } from "./engine/ruleset.js";
 import type { GameState, WarpEvent } from "./engine/state.js";
 import { TEMPLATES } from "./engine/templates/index.js";
@@ -113,7 +113,7 @@ spindle.commands.onInvoked((id, context) => {
 // ── Frontend messages ────────────────────────────────────────────
 
 /**
- * Player-made changes (HUD edits, clothes) are recorded on the latest
+ * Player-made changes (HUD edits) are recorded on the latest
  * message's active swipe, so they fold, swipe and undo like everything else.
  */
 async function applyManual(
@@ -296,11 +296,6 @@ spindle.onFrontendMessage(async (raw, userId) => {
 
       case "adjust": {
         await applyManual(msg.chatId, userId, (r, state) => (r.stats[msg.stat] ? manualSet(r, state, msg.stat, msg.value) : "Unknown stat."));
-        break;
-      }
-
-      case "wear": {
-        await applyManual(msg.chatId, userId, (r, state) => changeClothes(r, state, msg.slot, msg.item));
         break;
       }
 

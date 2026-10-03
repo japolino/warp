@@ -21,10 +21,9 @@ const rules = (extra: Record<string, unknown> = {}) => normalizeRuleset({
   items: {
     spray: { name: "Blocker Spray", uses: 3, use: { label: "Spray yourself", visibility: -25, remove_condition: ["scented"], hint: "{{user}} mists the spray." } },
     treat: { name: "Sweet Bun" },
-    sneakers: { name: "Running Shoes", slot: "feet", bonus: { athletics: 20 } },
+    sneakers: { name: "Running Shoes", bonus: { athletics: 20 } },
     keys: { name: "Keys", keep: true, use: { label: "Jangle the keys", stress: -1 } },
   },
-  wardrobe: { slots: ["feet"], start: ["sneakers"] },
   encounters: {
     cornered: {
       name: "Cornered",
@@ -81,9 +80,9 @@ describe("items that do things", () => {
     const r = rules();
     const s = begin(r);
     const bolt = r.encounters.cornered.actions.bolt;
-    const worn = odds(r, s, bolt)!.success;
-    const bare = cloneState(s); bare.worn = {};
-    expect(worn).toBeCloseTo(odds(r, bare, bolt)!.success + 0.1, 5);
+    const carried = odds(r, s, bolt)!.success;
+    const bare = cloneState(s); delete bare.items.sneakers;
+    expect(carried).toBeCloseTo(odds(r, bare, bolt)!.success + 0.1, 5);
     const rec = resolveTurn(r, s, { actionId: "bolt", via: "choice" }, { seed: "g" });
     expect(rec.check?.gear).toEqual(["Running Shoes: +20 Athletics"]);
   });
@@ -109,7 +108,7 @@ describe("items that do things", () => {
     const r = rules();
     const h = buildHud(r, begin(r));
     expect(h.items.find((i) => i.id === "spray")?.use).toEqual({ id: "item:spray", label: "Spray yourself", locked: null, drafted: false });
-    expect(h.items.find((i) => i.id === "sneakers")?.bonus).toBe("+20 Athletics while worn");
+    expect(h.items.find((i) => i.id === "sneakers")?.bonus).toBe("+20 Athletics");
   });
 
   test("item_uses gives uses to items declared elsewhere (drafted ones are marked), never over the item's own", () => {

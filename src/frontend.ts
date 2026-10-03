@@ -778,11 +778,6 @@ export function setup(ctx: SpindleFrontendContext) {
       });
       return;
     }
-    if (t.dataset.wearSlot) {
-      const cid = chatId();
-      if (cid && t.value) send({ type: "wear", chatId: cid, slot: t.dataset.wearSlot, item: t.value === "__off" ? null : t.value });
-      return;
-    }
     const pctKey = t.dataset.settingPct as "autoConfidence" | "askConfidence" | undefined;
     if (pctKey) {
       let v = Number(t.value) / 100;

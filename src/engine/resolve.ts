@@ -383,7 +383,7 @@ export function lockReason(r: Ruleset, s: GameState, a: ActionDef): string {
 }
 
 /**
- * What adds to the stats a check reads: carried gear (worn, for clothing)
+ * What adds to the stats a check reads: carried gear
  * and buffs or debuffs from conditions. Each counts as that much more of the stat, for this check only.
  */
 export function gearFor(r: Ruleset, s: GameState, a: ActionDef): { stats: Record<string, number>; notes: string[] } {
@@ -418,17 +418,16 @@ export function dangerStats(r: Ruleset, s: GameState): string[] {
   return [...new Set(thresholds(enc).filter((x) => !x.foe && isLoss(enc, x.outcome) && r.stats[x.stat]).map((x) => x.stat))];
 }
 
-/** {{user}}'s armor against blows to a stat: gear held (worn, for clothing) and conditions. "_" counts for what the fight beats you on. */
+/** {{user}}'s armor against blows to a stat: gear held and conditions. "_" counts for what the fight beats you on. */
 export function playerArmor(r: Ruleset, s: GameState, stat: string): number {
   const main = dangerStats(r, s).includes(stat);
   const env = makeEnv(r, s);
   // Gear and status armor may be formulas ("2 + level / 5"), worked out at the blow.
   const pick = (m: Record<string, number | string>) => amountValue(m[stat], env) + (main ? amountValue(m._, env) : 0);
-  const worn = new Set(Object.values(s.worn));
   let n = 0;
   for (const [id, have] of Object.entries(s.items)) {
     const it = r.items[id];
-    if (!it || have <= 0 || (it.slot && !worn.has(id))) continue;
+    if (!it || have <= 0) continue;
     n += pick(it.armor);
   }
   for (const id of Object.keys(s.conditions)) n += pick(r.conditions[id]?.armor ?? {});
@@ -661,18 +660,6 @@ function effectToEvents(w: Working, e: Effect, src: EventSource, extra: Record<s
     if (person !== "target") w.push({ t: "memory", who: person, text: fillTarget(w, text, extra), src });
   }
 
-  // Clothing
-  for (const id of e.wear) {
-    const slot = r.items[id]?.slot;
-    if (slot && w.s.worn[slot] !== id) w.push({ t: "wear", slot, item: id, src });
-  }
-  for (const slot of e.undress) if (w.s.worn[slot]) w.push({ t: "wear", slot, item: null, src });
-  for (const [slot, d] of Object.entries(e.damage)) {
-    const item = w.s.worn[slot];
-    const v = evalNumber(d, w.env(extra), 0);
-    if (item && v > 0) w.push({ t: "dmg", item, d: -v, src });
-  }
-
   // Encounters
   if (w.s.encounter) {
     const foeStats = r.encounters[w.s.encounter.id]?.foe.stats;
@@ -715,29 +702,6 @@ function effectToEvents(w: Working, e: Effect, src: EventSource, extra: Record<s
     const sec = r.secrets[id];
     const cur = w.s.secrets[id] ?? -1;
     if (sec && cur + 1 < sec.stages.length) w.push({ t: "secret", id, stage: cur + 1, src });
-  }
-  // Body: direct trait changes, then transformations stage by stage (each step rolls its chance).
-  for (const [part, traits] of Object.entries(e.body)) for (const [trait, v] of Object.entries(traits)) {
-    if ((w.s.body[part]?.[trait] ?? null) !== v) w.push({ t: "body", part, trait, v, src });
-  }
-  for (const [id, n] of Object.entries(e.transform)) {
-    const t = r.body.transforms[id];
-    if (!t) continue;
-    const steps = Math.round(evalNumber(n, w.env(extra), 0));
-    for (let i = 0; i < steps; i++) {
-      const stage = w.s.tf[id] ?? 0;
-      if (stage >= t.stages.length) break;
-      const chance = Math.max(0, Math.min(100, evalNumber(t.chance, w.env(extra), 100)));
-      if (seededRng(`${w.seed}:tf:${id}:${stage}:${w.s.turn}`)() * 100 >= chance) {
-        announce(w, `${t.label}: nothing changes this time.`);
-        break;
-      }
-      w.push({ t: "tf", id, stage: stage + 1, src });
-      for (const [part, traits] of Object.entries(t.stages[stage].set)) for (const [trait, v] of Object.entries(traits)) {
-        if ((w.s.body[part]?.[trait] ?? null) !== v) w.push({ t: "body", part, trait, v, src });
-      }
-      announce(w, t.stages[stage].text ?? `${t.label}: {{user}}'s body changes (stage ${stage + 1} of ${t.stages.length}).`);
-    }
   }
   if (e.momentum !== undefined && w.s.encounter?.momentum !== undefined) {
     const v = evalNumber(e.momentum, w.env(extra), 0);
@@ -1161,8 +1125,6 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
     const short = chosen && chosen.a.params.length ? spentLock(r, before, chosen.a, chosen.target, intent.params) : null;
     if (short) return { ...rec, hints: [`The attempted action can't be paid for with that choice (${short}). It did not happen and spent no turn or resources.`] };
   }
-  // First turn of a chat fixes its world seed (weather etc.).
-  if (!w.s.seed) w.push({ t: "seed", v: opts.seed, src: "start" });
   // World happenings that surfaced after the last reply are this turn's news.
   if (before.notices.length) {
     w.hints.push(...before.notices);
@@ -1320,12 +1282,6 @@ export interface Proposal {
   move?: string;
   conditions?: { add?: string[]; remove?: string[] };
   flags?: Record<string, Value>;
-  /** Slots the player's clothes came off from. */
-  undress?: string[];
-  /** Owned clothing the player put on. */
-  wear?: string[];
-  /** Body changes: part → trait → value (null removes). */
-  body?: Record<string, Record<string, string | null>>;
   /** Who is (true) or isn't (false) in the scene at the end of the reply, by name. */
   scene?: Record<string, boolean>;
   /** Items with uses that were used, by name → times. */
@@ -1489,31 +1445,6 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
     if (r.flags[key]?.narrator && gateOpen(r.flags[key].gate, w, ctx)) w.push({ t: "flag", key, v, src });
   }
 
-  if (r.wardrobe.enabled && r.wardrobe.narrator) {
-    for (const slot of p.undress ?? []) if (w.s.worn[slot]) w.push({ t: "wear", slot, item: null, src });
-    for (const id of p.wear ?? []) {
-      const slot = r.items[id]?.slot;
-      if (slot && w.s.items[id] > 0 && w.s.worn[slot] !== id) w.push({ t: "wear", slot, item: id, src });
-    }
-  }
-
-  if (r.body.enabled && r.body.narrator && p.body && typeof p.body === "object") {
-    let n = 0;
-    for (const [rawPart, traits] of Object.entries(p.body)) {
-      const part = slug(rawPart);
-      if (!traits || typeof traits !== "object") continue;
-      if (!r.body.open && !(part in r.body.parts) && !(part in w.s.body)) continue;
-      for (const [rawTrait, v] of Object.entries(traits)) {
-        if (n >= 8) break;
-        const trait = slug(rawTrait);
-        const value = v === null || v === undefined || v === "" ? null : String(v).slice(0, 60);
-        if ((w.s.body[part]?.[trait] ?? null) === value) continue;
-        w.push({ t: "body", part, trait, v: value, src });
-        n++;
-      }
-    }
-  }
-
   if (typeof p.minutes === "number" && Number.isFinite(p.minutes) && p.minutes > 0) {
     advanceTime(w, Math.round(Math.min(p.minutes, r.clock.narratorMax)), src);
   }
@@ -1624,23 +1555,6 @@ export function buildTurn(r: Ruleset, before: GameState, seed: string, fn: (t: T
 export function manualSet(r: Ruleset, before: GameState, stat: string, value: number): WarpEvent[] {
   const w = new Working(r, cloneState(before));
   if (r.stats[stat]) w.push({ t: "stat", id: stat, set: value, src: "manual" });
-  runTriggers(w, false);
-  return w.events;
-}
-
-/** Put on (item) or take off (null) clothing from the wardrobe panel. */
-export function changeClothes(r: Ruleset, before: GameState, slot: string, item: string | null): WarpEvent[] | string {
-  if (!r.wardrobe.enabled) return "This ruleset has no wardrobe.";
-  if (item) {
-    const def = r.items[item];
-    if (!def?.slot) return "That isn't clothing.";
-    if (!(before.items[item] > 0)) return "You don't have that.";
-    slot = def.slot;
-  } else if (!before.worn[slot]) {
-    return "Nothing is worn there.";
-  }
-  const w = new Working(r, cloneState(before));
-  w.push({ t: "wear", slot, item, src: "manual" });
   runTriggers(w, false);
   return w.events;
 }

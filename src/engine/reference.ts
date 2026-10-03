@@ -9,7 +9,7 @@ export const PART_CONTENTS: Record<PartLabel, string> = {
   core: "name, description, player, clock, start, hud, narration",
   stats: "stats, growth",
   people: "relationships (stats + people)",
-  world: "weather, locations, items (incl. clothing, uses and gear bonuses), item_uses, wardrobe, body, conditions, flags, start.items",
+  world: "locations, items (incl. uses and gear bonuses), item_uses, conditions, flags, start.items",
   actions: "actions, improvise",
   encounters: "encounters",
   quests: "quests (bounties on a notice board, favours people ask, story jobs: goals, deadline, reward, failure)",
@@ -24,7 +24,7 @@ export function partForIssue(where: string): PartLabel {
   if ((PART_LABELS as readonly string[]).includes(head)) return head as PartLabel;
   if (head.startsWith("stats") || head.startsWith("growth")) return "stats";
   if (["relationships", "people"].some((k) => head.startsWith(k))) return "people";
-  if (["locations", "items", "item uses", "wardrobe", "weather", "conditions", "flags", "body"].some((k) => head.startsWith(k))) return "world";
+  if (["locations", "items", "item uses", "conditions", "flags"].some((k) => head.startsWith(k))) return "world";
   if (["actions", "improvise"].some((k) => head.startsWith(k))) return "actions";
   if (head.startsWith("encounters")) return "encounters";
   if (head.startsWith("quests")) return "quests";
@@ -68,26 +68,22 @@ hud: { currency: "$", bars: [health, stress] }   # currency: "$" (before the amo
 narration: { notes: "Guidance for the narrator." }
 player: { age: 20 }
 
-weather: { temps: { spring: 12, summer: 22, autumn: 11, winter: 3 }, indoors: 20 }     # enables weather + temperature; indoors: °C inside (a place's temp: wins)
 locations:
-  home: { name: Home, desc: "...", indoors: true }   # places the story can name; the story (or a move: effect) takes {{user}} there
+  home: { name: Home, desc: "...", indoors: true }   # places the story can name; the story (or a move: effect) takes {{user}} there; indoors: formulas read indoors / outside
   tavern: { name: The Drowned Rat, board: true }   # board: a notice board — quests with board: true are posted here
-  garret: { name: Garret, indoors: true, temp: 8 }   # temp: this indoor place's °C
 locations_open: true             # the story may name places the ruleset doesn't list (on by default when there are none)
 items:
   phone: Phone
-  raincoat: { name: Raincoat, slot: outer, warmth: 5, reveal: 0, traits: [rainproof] }   # clothing = item with a slot
   pepper_spray:                    # an item that DOES something: use: is an action offered while it's held (in encounters too)
     name: Pepper Spray
     uses: 5                        # charges; each use spends one, the last spends the item (tags: [consumable] = 1 use)
     use: { label: Spray it, foe: { nerve: -6 }, hint: "{{user}} empties a burst into their face." }   # effects (or check/success/fail like any action); when:, why_not: "…" optional
-  lucky_boots: { name: Lucky Boots, slot: feet, bonus: { athletics: 10 } }   # gear: added to every check that reads athletics while worn (carried, for non-clothing)
+  lucky_boots: { name: Lucky Boots, bonus: { athletics: 10 } }   # gear: added to every check that reads athletics while carried
   sword: { name: Sword, bonus: { atk: "5 + level * 2" } }   # gear bonus/armor: numbers or formulas, worked out when used; eff('atk') reads it in effects
-  cloak: { name: Cloak, slot: outer, integrity: 40, armor: { hp: "1 + level / 5" } }   # integrity('cloak') or integrity('outer') = current integrity
+  cloak: { name: Cloak, armor: { hp: "1 + level / 5" } }
   house_keys: { name: Keys, keep: true, use: { label: Lock the door behind you, stress: -5, when: "at('home')" } }   # keep: true = using it doesn't spend it
-  chainmail: { name: Chainmail, slot: outer, armor: { hp: 3 } }   # armor: blows that would lower hp in a fight are 3 smaller (per hit); armor: 2 = whatever the fight beats you on
+  chainmail: { name: Chainmail, armor: { hp: 3 } }   # armor: blows that would lower hp in a fight are 3 smaller (per hit); armor: 2 = whatever the fight beats you on
 item_uses: { phone: { label: Call a friend for a lift, check: { chance: 60 }, success: { move: home }, fail: { stress: +3 } } }   # uses/bonuses for items declared elsewhere (Warp writes drafted ones here)
-wardrobe: { slots: [outer, top, bottom, under_top, under_bottom, feet], cover: [top, bottom], start: [t_shirt, jeans] }
 conditions: { cold: { label: Cold, tone: bad }, hasted: { label: Hasted, tone: good, bonus: { evasion: 20 } } }   # bonus: a buff (or debuff, negative) counted in checks while it lasts
 #   iron_skin: { label: Iron Skin, armor: { hp: "level / 2" }, bonus: { str: "level / 4" }, lasts: 1h }   # armor/bonus may be formulas
 #   bleeding: { label: Bleeding, every: [round, hour], dot: 2, stat: hp, lasts: 3h }   # each round in a fight (full dot), each hour outside (dot scaled by time; tick: once per clock hour, max 24 per jump); lasts: times it everywhere
@@ -152,7 +148,7 @@ improvise:        # optional (on by default): typed attempts no action covers st
 EFFECTS (any success/fail/effects/cost/do block):
   stat shorthand (fatigue: +5, may be a quoted formula), set: { stress: 50 }, flags: { x: true }, give: item / take: item,
   rel: { jo: { trust: +3 } }, move: location, time: 30, add_condition: [cold] or { cold: 120 }, remove_condition: [cold],
-  hint: "direction for the narrator", wear: [raincoat], undress: [top], damage: { top: 20 },
+  hint: "direction for the narrator",
   start_encounter: id, foe: { hp: -6 }, end: outcome_id,
   harm: "6 + arcana / 5" (wears down the current encounter's main meter — HP, resolve, composure — so one move works in any encounter),
   hits: 3 (the blow lands 3 times, each meeting armor — weak multi-hits lose to heavy armor; on a foe move it's aimed at {{user}}), pierce: 3 (ignores 3 armor; pierce: all),
@@ -195,14 +191,6 @@ encounters:
     # momentum: { win: won, lose: beaten, swing: { crit_success: 40, success: 25, partial: 10, fail: -20, crit_fail: -35 } }
     #   a fight that swings (−100…+100): each check moves it, foe moves can too (effect momentum: -15), and only a full swing ends it;
     #   each round reaches the narrator as ordered beats (a long typed move is kept as written). Formula name: momentum.
-
-body:             # the player character's body; the story may change it after a reply (narrator: false to stop that; open: false = only these parts)
-  parts: { hair: { color: brown, length: shoulder-length }, eyes: { color: green }, ears: human, build: { height: average } }   # any parts, any traits
-  hidden_by: { chest: [top, under_top] }       # wardrobe slots covering a part: others see it when any of them is empty
-  transforms:
-    feline_splice: { label: Feline splice, chance: 70, stages: [ { set: { ears: { type: cat } }, text: "Soft cat ears push up through {{user}}'s hair." }, { set: { tail: { type: cat } } } ] }
-EFFECTS for the body: body: { hair: { color: red } } (null removes a trait), transform: { feline_splice: 1 } (advance stages; each rolls its chance).
-FUNCTIONS: body('hair', 'color') ('' when absent), transformed('feline_splice') (stages so far).
 
 triggers:
   exhausted: { when: "fatigue >= 85", do: { add_condition: [exhausted], hint: "..." } }         # fires once when it becomes true
@@ -268,14 +256,14 @@ live_choices:     # a writer phrases options for the moment; each must carry one
     careful: { desc: "The cautious, safe option" }
 STORY EFFECTS: reveal: [ward_accident] (opens its next stage).
 
-FORMULA NAMES: stats, flags, hour, minute, day, weekday, month, date, season, weather, temperature, indoors, outside,
-warmth, warmth_min, warmth_max, too_cold, too_hot, reveal, exposed, naked, in_encounter, round, encounter (current encounter id, '' if none), encounter_round, foe.<stat>, target.<relstat>, location.
+FORMULA NAMES: stats, flags, hour, minute, day, weekday, month, date, season, indoors, outside,
+in_encounter, round, encounter (current encounter id, '' if none), encounter_round, foe.<stat>, target.<relstat>, location.
 FUNCTIONS: has(item[, n]), count(item), flag(x), cond(x), at(loc), rel(person, stat), met(person), between(v, lo, hi), roll('2d6'),
-wearing(item), worn(slot), trait(t), present(person) (in the scene now),
+present(person) (in the scene now),
 secret(id) (stages the narrator knows),
 quest(id) ('' | 'active' | 'ready' | 'done' | 'failed'), quest_active(id), quest_done(id), quest_failed(id), goal(quest, goal) (count so far), quests_done() / quests_done('bounty'),
 memories(person) (how many), cond_of(person, cond), foe_cond(cond), stat_max(stat), foe_max(stat), in_encounter(id) (that encounter is on),
-eff(stat) (stat + gear + statuses), gear(stat) (gear alone), integrity(item or slot),
+eff(stat) (stat + gear + statuses), gear(stat) (gear alone),
 min, max, clamp, floor, ceil, round, abs.
 Operators: + - * / % < <= > >= == != and or not, a ? b : c. Strings in single quotes.
 `;
@@ -300,7 +288,7 @@ Mistake: ten meters that only the narrator touches. Fewer stats, each wired into
 
 ## actions are story turns
 Every action the player clicks posts a line and gets a narrator reply. Use actions for things that happen in the story.
-Sheet changes are not story turns: changing clothes (wardrobe) happens in the sidebar. Never build a "Status Window" of +1 STR buttons: skills and attributes grow by use.
+Never build a "Status Window" of +1 STR buttons: skills and attributes grow by use.
 
 ## items
 Every item should DO something: a use: (an action with effects), a bonus: (gear that helps the checks that read a stat), or an action/encounter move that needs it (when: "has('x')").

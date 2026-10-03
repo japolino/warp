@@ -1,16 +1,16 @@
-// Places, people and world gates: per-person targets and per-place indoor temperature.
+// Places, people and world gates: per-person targets and indoor places.
 
 import { describe, expect, test } from "bun:test";
 import { lintRuleset } from "./lint.js";
 import { normalizeRuleset } from "./ruleset.js";
 import { availableChoices, resolveTurn } from "./resolve.js";
 import { foldEvents, initialState, makeEnv, type GameState } from "./state.js";
-import { presentPeople, temperatureAt } from "./world.js";
+import { evalBool } from "./expr.js";
+import { presentPeople } from "./world.js";
 
 const BASE = {
   clock: { start: "Mon 08:00", date: "Jan 10" },
   start: { location: "market" },
-  weather: { temps: { winter: 2 }, indoors: 18 },
   stats: {
     level: { kind: "attribute", start: 1, max: 99 },
     gold: { kind: "money", start: 0 },
@@ -19,7 +19,7 @@ const BASE = {
   locations: {
     market: { name: "Market" },
     north_road: { name: "North Road" },
-    garret: { name: "Garret", indoors: true, temp: 6 },
+    garret: { name: "Garret", indoors: true },
     tavern: { name: "Tavern", indoors: true },
   },
   relationships: {
@@ -61,15 +61,14 @@ describe("places", () => {
     expect(availableChoices(r, initialState(r)).some((c) => c.id.startsWith("go:"))).toBe(false);
   });
 
-  test("an indoor place can have its own temperature; others use weather: { indoors }", () => {
+  test("formulas read indoors / outside; a place's temp: was removed with the weather", () => {
     const { r } = load();
     let s = initialState(r);
+    expect(evalBool("outside", makeEnv(r, s), false)).toBe(true);
     s = step(r, s, "to_garret");
-    expect(temperatureAt(r, s)).toBe(6);
-    s = step(r, s, "to_tavern");
-    expect(temperatureAt(r, s)).toBe(18);
-    const { issues } = load({ locations: { ...BASE.locations, north_road: { name: "North Road", temp: -5 } } });
-    expect(issues.some((i) => i.where === "Locations › north_road › temp")).toBe(true);
+    expect(evalBool("indoors", makeEnv(r, s), false)).toBe(true);
+    const { issues } = load({ locations: { ...BASE.locations, garret: { name: "Garret", indoors: true, temp: 6 } } });
+    expect(issues.filter((i) => i.message.includes("was removed from Warp")).map((i) => i.where)).toEqual(["Locations › garret › temp"]);
   });
 });
 

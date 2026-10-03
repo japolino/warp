@@ -8,10 +8,7 @@
 import type { Value, ExprEnv } from "./expr.js";
 import { evalNumber } from "./expr.js";
 import type { Ruleset, StatDef, Band } from "./ruleset.js";
-import {
-  dateAt, exposedSlots, hasTrait, isIndoors, presentPeople, revealOf, seasonAt, temperatureAt,
-  warmthNeeded, warmthOf, weatherAt,
-} from "./world.js";
+import { dateAt, isIndoors, presentPeople, seasonAt } from "./world.js";
 
 export interface EncounterState {
   id: string;
@@ -42,12 +39,6 @@ export interface Memory { text: string; at: number }
 export interface Charge { day: number; n: number; enc?: string; encN: number }
 
 export interface GameState {
-  /** Per-chat world seed (weather etc.), set on the first turn. */
-  seed: string | null;
-  /** slot → item id currently worn. */
-  worn: Record<string, string>;
-  /** item id → current integrity, when damaged. */
-  integrity: Record<string, number>;
   encounter: EncounterState | null;
   /** The last encounter that ended: which, against whom, how, where and when (so the story can't simply restart it). */
   lastEncounter?: { id: string; foeName?: string; outcome: string; at: number; loc: string | null } | null;
@@ -83,10 +74,6 @@ export interface GameState {
   notices: string[];
   /** Who is known to be an adult (true) or not (false), when the ruleset gives no age: asked once, then remembered. */
   adults: Record<string, boolean>;
-  /** The player character's body: part → trait → value. */
-  body: Record<string, Record<string, string>>;
-  /** Transformation → stages applied. */
-  tf: Record<string, number>;
   /** Progress toward the next point, per stat (in the stat's own units; a point is gained at 1). */
   practice: Record<string, number>;
   /** Recent checked action/context uses. Optional for saves made before diminishing practice. */
@@ -122,9 +109,6 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "memory"; who: string; text: string }
   | { t: "trig"; id: string; v: boolean }
   | { t: "turn" }
-  | { t: "seed"; v: string }
-  | { t: "wear"; slot: string; item: string | null }
-  | { t: "dmg"; item: string; d: number }
   | { t: "enc"; id: string | null; foe?: Record<string, number>; outcome?: string; momentum?: number; foeName?: string; max?: Record<string, number>; armor?: Record<string, number> }
   | { t: "swing"; d: number }
   | { t: "foe"; stat: string; d?: number; set?: number }
@@ -136,8 +120,6 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "notice"; text: string }
   | { t: "noticed" }
   | { t: "adult"; who: string; adult: boolean }
-  | { t: "body"; part: string; trait: string; v: string | null }
-  | { t: "tf"; id: string; stage: number }
   | { t: "practice"; id: string; d: number }
   | { t: "practice_use"; key: string; n: number; turn: number; minutes: number }
   | { t: "scene"; who: string; here: boolean }
@@ -149,9 +131,6 @@ const MEMORIES_KEPT = 12;
 
 export function initialState(r: Ruleset): GameState {
   const s: GameState = {
-    seed: null,
-    worn: {},
-    integrity: {},
     encounter: null,
     charges: {},
     calibrated: {},
@@ -171,8 +150,6 @@ export function initialState(r: Ruleset): GameState {
     secrets: {},
     notices: [],
     adults: {},
-    body: structuredClone(r.body.parts),
-    tf: {},
     practice: {},
     practiceUse: {},
     scene: {},
@@ -205,10 +182,6 @@ export function initialState(r: Ruleset): GameState {
     // An author who wrote starting feelings has calibrated them; a bare entry gets read from the story on first appearance.
     if (Object.keys(p.start).length) s.calibrated[p.id] = true;
   }
-  for (const id of r.wardrobe.startWorn) {
-    const slot = r.items[id]?.slot;
-    if (slot) s.worn[slot] = id;
-  }
   return s;
 }
 
@@ -237,7 +210,7 @@ export function amountValue(v: number | string | undefined, env: ExprEnv, max?: 
   return Number.isFinite(n) ? n : 0;
 }
 
-/** One place a stat bonus comes from right now: carried gear (worn, for clothing) or a condition. */
+/** One place a stat bonus comes from right now: carried gear or a condition. */
 export interface BonusSource { from: string; kind: "gear" | "cond"; id: string; bonus: Record<string, number> }
 
 // Bonus formulas may read eff()/gear() themselves; past this depth they count as 0 (no endless loops).
@@ -255,10 +228,9 @@ export function bonusSources(r: Ruleset, s: GameState, env?: ExprEnv): BonusSour
       return out;
     };
     const out: BonusSource[] = [];
-    const worn = new Set(Object.values(s.worn));
     for (const [id, n] of Object.entries(s.items)) {
       const it = r.items[id];
-      if (!it || n <= 0 || (it.slot && !worn.has(id)) || !Object.keys(it.bonus).length) continue;
+      if (!it || n <= 0 || !Object.keys(it.bonus).length) continue;
       out.push({ from: it.name, kind: "gear", id, bonus: nums(it.bonus) });
     }
     for (const id of Object.keys(s.conditions)) {
@@ -269,21 +241,13 @@ export function bonusSources(r: Ruleset, s: GameState, env?: ExprEnv): BonusSour
   } finally { bonusDepth--; }
 }
 
-/** A stat plus everything that helps or hinders it right now (`eff('str')`); `gearOnly` counts carried and worn gear alone (`gear('atk')`). */
+/** A stat plus everything that helps or hinders it right now (`eff('str')`); `gearOnly` counts carried gear alone (`gear('atk')`). */
 export function effectiveStat(r: Ruleset, s: GameState, stat: string, env: ExprEnv, gearOnly = false): number {
   let n = 0;
   for (const src of bonusSources(r, s, env)) if (!gearOnly || src.kind === "gear") n += src.bonus[stat] ?? 0;
   if (gearOnly) return n;
   const base = s.stats[stat] ?? r.stats[stat]?.start ?? 0;
   return base + n;
-}
-
-/** Current integrity of a piece of clothing (by item id, or by the slot it's worn in); 0 when not held. */
-export function integrityOf(r: Ruleset, s: GameState, idOrSlot: string): number {
-  const id = r.items[idOrSlot] ? idOrSlot : s.worn[idOrSlot] ?? "";
-  const def = r.items[id];
-  if (!def || (s.items[id] ?? 0) <= 0) return 0;
-  return s.integrity[id] ?? def.integrity;
 }
 
 function clamp(v: number, lo: number, hi: number) {
@@ -307,36 +271,9 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       const n = (s.items[e.id] ?? 0) + e.d;
       if (n <= 0) {
         delete s.items[e.id];
-        // Can't keep wearing something you no longer have.
-        for (const [slot, id] of Object.entries(s.worn)) if (id === e.id) delete s.worn[slot];
-        delete s.integrity[e.id];
         if (s.uses[e.id] !== undefined) { const u = { ...s.uses }; delete u[e.id]; s.uses = u; }
       } else s.items[e.id] = n;
       if (e.name && !r.items[e.id]) s.itemNames[e.id] = e.name;
-      break;
-    }
-    case "seed": if (!s.seed) s.seed = e.v; break;
-    case "wear":
-      if (e.item) {
-        // Wearing implies owning; an item occupies one slot at a time.
-        if (!(s.items[e.item] > 0)) s.items[e.item] = 1;
-        for (const [slot, id] of Object.entries(s.worn)) if (id === e.item) delete s.worn[slot];
-        s.worn[e.slot] = e.item;
-      } else delete s.worn[e.slot];
-      break;
-    case "dmg": {
-      const def = r.items[e.item];
-      const max = def?.integrity ?? 100;
-      const next = Math.min(max, (s.integrity[e.item] ?? max) + e.d);
-      if (next <= 0) {
-        // Destroyed.
-        delete s.integrity[e.item];
-        for (const [slot, id] of Object.entries(s.worn)) if (id === e.item) delete s.worn[slot];
-        const n = (s.items[e.item] ?? 1) - 1;
-        if (n <= 0) delete s.items[e.item];
-        else s.items[e.item] = n;
-      } else if (next >= max) delete s.integrity[e.item];
-      else s.integrity[e.item] = next;
       break;
     }
     case "enc":
@@ -421,7 +358,6 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       const uses = { ...s.uses };
       if (have <= 0) {
         delete s.items[e.id];
-        for (const [slot, id] of Object.entries(s.worn)) if (id === e.id) delete s.worn[slot];
         delete uses[e.id];
       } else {
         s.items[e.id] = have;
@@ -491,15 +427,6 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
     case "notice": s.notices = [...s.notices, e.text]; break;
     case "noticed": s.notices = []; break;
     case "adult": s.adults = { ...s.adults, [e.who]: e.adult }; break;
-    case "body": {
-      const part = { ...(s.body[e.part] ?? {}) };
-      if (e.v === null) delete part[e.trait]; else part[e.trait] = e.v;
-      const next = { ...s.body };
-      if (Object.keys(part).length) next[e.part] = part; else delete next[e.part];
-      s.body = next;
-      break;
-    }
-    case "tf": s.tf = { ...s.tf, [e.id]: Math.max(s.tf[e.id] ?? 0, e.stage) }; break;
     // Events of removed systems (dungeons, dates, family…) in old chats are ignored.
     default: break;
   }
@@ -534,8 +461,7 @@ export function foldEvents(r: Ruleset, batches: Iterable<WarpEvent[]>, from?: Ga
 /** Every built-in name formulas can use (for the linter and the AI builder's reference). */
 export const BUILTIN_NAMES = [
   "minutes", "hour", "minute", "day", "weekday", "turn", "location",
-  "month", "date", "season", "weather", "temperature", "indoors", "outside",
-  "warmth", "warmth_min", "warmth_max", "too_cold", "too_hot", "reveal", "exposed", "naked",
+  "month", "date", "season", "indoors", "outside",
   "in_encounter", "encounter", "encounter_round", "round", "momentum", "target",
 ];
 
@@ -546,27 +472,13 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
   let world: Record<string, Value> | null = null;
   const worldVars = (): Record<string, Value> => {
     if (world) return world;
-    const temp = temperatureAt(r, s);
-    const need = temp === null ? null : warmthNeeded(temp);
-    const warmth = warmthOf(r, s);
-    const exposed = exposedSlots(r, s).length;
     const indoors = isIndoors(r, s);
     world = {
       month: date?.month ?? 0,
       date: date?.day ?? 0,
       season: seasonAt(r, s.minutes) ?? "",
-      weather: weatherAt(r, s)?.id ?? "",
-      temperature: temp ?? 20,
       indoors,
       outside: !indoors,
-      warmth,
-      warmth_min: need?.min ?? 0,
-      warmth_max: need?.max ?? 99,
-      too_cold: need ? warmth < need.min : false,
-      too_hot: need ? warmth > need.max : false,
-      reveal: revealOf(r, s),
-      exposed,
-      naked: r.wardrobe.enabled && exposed === r.wardrobe.cover.length && r.wardrobe.cover.length > 0,
       in_encounter: !!s.encounter,
       // Which encounter is on ('' = none), and its round (also plain `round`).
       encounter: s.encounter?.id ?? "",
@@ -630,20 +542,13 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
           const v = Number(args[0]); const lo = Number(args[1]); const hi = Number(args[2]);
           return lo <= hi ? v >= lo && v < hi : v >= lo || v < hi;
         }
-        case "wearing": return Object.values(s.worn).includes(a0);
-        case "worn": return s.worn[a0] ?? "";
-        // A stat with gear and statuses counted (as checks see it), gear alone, and a piece of clothing's integrity.
+        // A stat with gear and statuses counted (as checks see it), and gear alone.
         case "eff": return effectiveStat(r, s, a0, base);
         case "gear": return effectiveStat(r, s, a0, base, true);
-        case "integrity": return integrityOf(r, s, a0);
-        case "trait": return hasTrait(r, s, a0);
         // Whether someone is in the scene now (the story's word on who is here).
         case "present": return presentPeople(r, s).includes(a0);
         // How many stages of a secret the narrator knows (0 = none).
         case "secret": return (s.secrets[a0] ?? -1) + 1;
-        // Body: a trait's value ('' when absent), and how far a transformation has gone.
-        case "body": return s.body[a0]?.[String(args[1] ?? "type")] ?? "";
-        case "transformed": return s.tf[a0] ?? 0;
         // A person's declared age (0 when not given).
         case "age": return r.people[a0]?.age ?? 0;
         // Quests: '' (not taken), 'active', 'ready' (to hand in), 'done' or 'failed'; goal counts; how many are done.

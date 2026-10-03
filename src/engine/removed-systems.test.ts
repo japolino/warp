@@ -17,6 +17,14 @@ stats:
   coin: { kind: money, start: 50 }
   mood: { kind: meter, start: 50 }
   str: { kind: attribute, start: 5, allocate: { with: coin } }
+weather: { temps: { autumn: 8 } }
+wardrobe: { slots: [top], start: [shirt] }
+body: { parts: { hair: { color: brown } }, transforms: { fox: { stages: [ { set: { ears: { type: fox } } } ] } } }
+items:
+  shirt: { name: Shirt, slot: top, warmth: 3, integrity: 50, reveal: 1, traits: [cotton] }
+locations:
+  park: { name: Park }
+  attic: { name: Attic, indoors: true, temp: 8 }
 relationships:
   stats: { trust: { start: 10 } }
   people: { robin: { name: Robin, age: 30, schedule: [ { at: park } ], traits: [shy] } }
@@ -51,7 +59,8 @@ mind:
 actions:
   night:
     label: A night with Robin
-    effects: { conceive: { with: robin, chance: 100 }, mood: +1, arc: { robin: 5 }, bond: { robin: { sam: 5 } }, front: { gangs: 10 }, gauge: 20, unlock: [docks], learn: [haste] }
+    effects: { conceive: { with: robin, chance: 100 }, mood: +1, arc: { robin: 5 }, bond: { robin: { sam: 5 } }, front: { gangs: 10 }, gauge: 20, unlock: [docks], learn: [haste],
+      wear: [shirt], undress: [top], damage: { top: 10 }, body: { hair: { color: red } }, transform: { fox: 1 } }
   nap:
     label: Nap
     errand: rest
@@ -65,6 +74,7 @@ triggers:
   world: { when: "front('gangs') > 10 or front_stage('gangs') > 0 or happened('storm')", do: { coin: +1 } }
   close: { when: "bond('robin', 'sam') > 0 or arc('robin') > 0 or where('robin') == 'park'", do: { coin: +1 } }
   journal: { when: "codex('docks') or feat('owl') or perk('lucky')", do: { coin: +1 } }
+  dressed: { when: "too_cold or warmth > 3 or temperature > 40 or weather == 'rain' or naked or exposed > 0 or reveal > 1 or wearing('shirt') or worn('top') == 'shirt' or integrity('shirt') > 20 or trait('cotton') or body('hair', 'color') == 'red' or transformed('fox') > 0", do: { coin: +1 } }
   broke: { when: "owed('rent') > 0 or missed('rent') > 0 or days_until('rent') < 0 or at_work", do: { coin: +1 } }
 `;
 
@@ -79,8 +89,12 @@ describe("removed in-chat systems", () => {
       "Actions › nap › errand", "Actions › night › effects › arc", "Actions › night › effects › bond", "Actions › night › effects › conceive",
       "Actions › night › effects › front", "Actions › night › effects › gauge", "Actions › night › effects › learn", "Actions › night › effects › unlock",
       "Actions › nap › requires › perk", "Stats › str › allocate",
-      "Abilities", "Checkpoints", "Codex", "Companions", "Discovery", "Endings", "Feats", "Fronts", "Jobs", "Lineage", "Mind", "Obligations", "Observers", "Perks",
-      "Random Events",
+      "Actions › night › effects › body", "Actions › night › effects › damage", "Actions › night › effects › transform",
+      "Actions › night › effects › undress", "Actions › night › effects › wear",
+      "Items › shirt › integrity", "Items › shirt › reveal", "Items › shirt › slot", "Items › shirt › traits", "Items › shirt › warmth",
+      "Locations › attic › temp",
+      "Abilities", "Body", "Checkpoints", "Codex", "Companions", "Discovery", "Endings", "Feats", "Fronts", "Jobs", "Lineage", "Mind", "Obligations", "Observers", "Perks",
+      "Random Events", "Wardrobe", "Weather",
       "Relationships › people › robin › schedule", "Relationships › people › robin › traits",
     ].sort());
     for (const i of issues.filter((x) => x.message.includes("was removed from Warp"))) {
@@ -88,7 +102,9 @@ describe("removed in-chat systems", () => {
       expect(i.message).toContain("`legacy` branch");
     }
     for (const k of ["lineage", "observers", "mind", "obligations", "jobs", "discovery", "companions", "bonds", "fronts", "randomEvents", "checkpoints", "endings", "legacy",
-      "codex", "feats", "perks", "perkPoints", "perkPick", "abilities"]) expect(Object.keys(r!)).not.toContain(k);
+      "codex", "feats", "perks", "perkPoints", "perkPick", "abilities", "weather", "wardrobe", "body"]) expect(Object.keys(r!)).not.toContain(k);
+    expect(Object.keys(r!.items.shirt).sort()).toEqual(["armor", "bonus", "desc", "id", "keep", "name", "tags", "uses"]);
+    expect(Object.keys(r!.locations.attic).sort()).toEqual(["board", "desc", "id", "indoors", "name"]);
     expect(Object.keys(r!.stats.str)).not.toContain("allocate");
     expect(r!.actions.nap.requires).toEqual([]);
     expect(JSON.stringify(r!.actions.night)).not.toContain("conceive");
@@ -113,6 +129,9 @@ describe("removed in-chat systems", () => {
     expect(gone("codex()", "the codex")).toBe(true);
     expect(gone("feat()", "feats")).toBe(true);
     expect(gone("perk()", "perks")).toBe(true);
+    for (const name of ["weather", "temperature", "warmth", "too_cold"]) expect(gone(name, "weather and temperature")).toBe(true);
+    for (const name of ["naked", "exposed", "reveal", "wearing()", "worn()", "integrity()", "trait()"]) expect(gone(name, "the wardrobe")).toBe(true);
+    for (const name of ["body()", "transformed()"]) expect(gone(name, "the body and transformations")).toBe(true);
     const rec = resolveTurn(r, initialState(r), { actionId: "night", via: "choice" }, { seed: "x" });
     expect(rec.events.some((e) => (e.t as string) === "conceive")).toBe(false);
     expect(rec.events.some((e) => e.t === "stat" && e.id === "mood")).toBe(true);
@@ -150,12 +169,19 @@ describe("removed in-chat systems", () => {
       { t: "feat", id: "owl", src: "trigger" },
       { t: "perk", id: "lucky", src: "manual" },
       { t: "learn", id: "haste", src: "action" },
+      { t: "seed", v: "world-1", src: "start" },
+      { t: "wear", slot: "top", item: "shirt", src: "manual" },
+      { t: "dmg", item: "shirt", d: -10, src: "action" },
+      { t: "body", part: "hair", trait: "color", v: "red", src: "narrator" },
+      { t: "tf", id: "fox", stage: 1, src: "action" },
       { t: "stat", id: "coin", d: 5, src: "action" },
     ] as unknown as WarpEvent[];
     const s = foldEvents(r, [old]);
     expect(s.stats.coin).toBe(55);
     expect(Object.keys(s)).not.toContain("pregnancy");
-    for (const k of ["kin", "seen", "dues", "job", "explored", "discovered", "bonds", "fronts", "gauge", "news", "saves", "ended", "runs", "loops", "codex", "feats", "perks", "learned"]) expect(Object.keys(s)).not.toContain(k);
+    for (const k of ["kin", "seen", "dues", "job", "explored", "discovered", "bonds", "fronts", "gauge", "news", "saves", "ended", "runs", "loops", "codex", "feats", "perks", "learned",
+      "seed", "worn", "integrity", "body", "tf"]) expect(Object.keys(s)).not.toContain(k);
+    expect(s.items.shirt).toBeUndefined();
     expect(s.people.child_1).toBeUndefined();
     expect(buildHud(r, s)).toBeTruthy();
     expect(buildChoices(r, s, { lines: [], veils: [] }).length).toBeGreaterThan(0);

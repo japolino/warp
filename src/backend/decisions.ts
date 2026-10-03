@@ -351,7 +351,7 @@ function confident(a: Answer | undefined): a is Extract<Answer, { type: "choice"
 export interface Bookkeeping {
   proposal: Proposal;
   /** Open-ended things a writing model should fill in (names, new quests, what someone will remember). */
-  needsWriting: Set<"people" | "items" | "move" | "body" | "quests" | "memories">;
+  needsWriting: Set<"people" | "items" | "move" | "quests" | "memories">;
 }
 
 export async function bookkeeping(opts: {
@@ -400,11 +400,6 @@ export async function bookkeeping(opts: {
   for (const f of Object.values(r.flags)) {
     if (f.narrator && typeof f.start === "boolean") q[`flag:${f.id}`] = { type: "noul", instructions: `At the end of the reply, this is true: ${f.label ?? f.id.replace(/_/g, " ")}` };
   }
-  if (r.wardrobe.enabled && r.wardrobe.narrator) {
-    for (const [slot, id] of Object.entries(s.worn)) {
-      q[`cloth:${slot}`] = { type: "noul", instructions: `By the end of the reply, ${player} no longer has their ${r.items[id]?.name ?? id} on (taken off, removed or lost)` };
-    }
-  }
   // Who's in the scene: everyone here, anyone the reply mentions, and whoever was with {{user}} before a move.
   const hereBefore = presentPeople(r, s, makeEnv(r, s));
   const leftBehind = Object.entries(s.scene).filter(([id, v]) => v.here && s.people[id] && v.loc !== s.location && v.loc === s.lastLocation).map(([id]) => id);
@@ -413,7 +408,6 @@ export async function bookkeeping(opts: {
     q[`here:${pid}`] = { type: "noul", instructions: `At the end of the reply, ${personName(r, s, pid)} is physically in the scene with ${player} (in the same place — not just mentioned, remembered, on the phone, or left behind)` };
   }
   // What happened to the things {{user}} has that the reply mentions.
-  const wornIds = new Set(Object.values(s.worn));
   let itemQs = 0;
   for (const [id, n] of Object.entries(s.items)) {
     if (itemQs >= 8) break;
@@ -422,7 +416,7 @@ export async function bookkeeping(opts: {
     const def = r.items[id];
     const per = def?.uses ?? 0;
     const criteria: Record<string, string> = {
-      same: "Nothing happened to it — only mentioned, carried, held, or worn as before",
+      same: "Nothing happened to it — only mentioned, carried or held as before",
       used: def?.use
         ? `${player} used it as meant (${def.use.label})${per > 0 ? ` — once; it has ${s.uses[id] ?? per} of ${per} uses left` : def.keep ? "" : " — and it's used up"}`
         : per > 0 ? `Used once (it has ${s.uses[id] ?? per} of ${per} uses left)` : "Used, but not used up — it's still there afterwards",
@@ -430,7 +424,6 @@ export async function bookkeeping(opts: {
         ? `Not used — but broken, given away, dropped, lost or taken: ${player} has one fewer${n > 1 ? ` (has ${n} now)` : ""}`
         : `Used up, eaten, drunk, emptied, broken, given away, dropped, lost or taken — ${player} has one fewer${n > 1 ? ` (has ${n} now)` : ""}`,
     };
-    if (def?.slot && !wornIds.has(id)) criteria.worn = `Put on — ${player} is wearing it by the end of the reply`;
     q[`item:${id}`] = { type: "choice", instructions: `What happened to ${player}'s ${name} during the reply?`, criteria };
     itemQs++;
   }
@@ -485,7 +478,6 @@ export async function bookkeeping(opts: {
   const storyQuests = opts.storyQuests !== false && r.storyQuests.enabled;
   if (storyQuests) q["gate:quests"] = { type: "noul", instructions: `During the reply, someone asked ${player} to do a specific task or favour for them (or ${player} promised one) that ${player} agreed to and that isn't already one of ${player}'s quests` };
   if (Object.keys(s.people).length) q["gate:memories"] = { type: "noul", instructions: `During the reply, something happened between ${player} and someone there that they'll remember for a long time: a real kindness, a betrayal, a promise made or broken, a humiliation, a first` };
-  if (r.body.enabled && r.body.narrator) q["gate:body"] = { type: "noul", instructions: `${player}'s body changes during the reply (a transformation, new mark or tattoo, haircut or dye, a lasting injury…)` };
   if (r.peopleOpen) q["gate:people"] = { type: "noul", instructions: "The reply introduces a named character who wasn't in the game state before" };
   // New names, picked rather than written: each candidate is asked about (as a person, and as where
   // {{user}} ends up), with first feelings asked up front so no second call is needed.
@@ -561,7 +553,6 @@ export async function bookkeeping(opts: {
       if (def?.use && !def.keep && !(def.uses > 0)) (p.items ??= {})[id] = -1;
     }
     else if (a.choice === "gone") (p.items ??= {})[id] = -1;
-    else if (a.choice === "worn") (p.wear ??= []).push(id);
   }
   if (confident(ans.train) && ans.train.choice !== NONE && growable.includes(ans.train.choice)) p.train = [ans.train.choice];
   const enc = ans.encounter;
@@ -585,16 +576,12 @@ export async function bookkeeping(opts: {
     const a = ans[`flag:${f.id}`];
     if (a?.type === "noul" && noulConfidence(a.noul) >= 0.4) (p.flags ??= {})[f.id] = a.noul >= 0.5;
   }
-  for (const slot of Object.keys(s.worn)) {
-    const a = ans[`cloth:${slot}`];
-    if (a?.type === "noul" && a.noul >= 0.7) (p.undress ??= []).push(slot);
-  }
   for (const j of judged) {
     const a = ans[`quest:${j.id}`];
     if (a?.type !== "choice" || a.choice === "ongoing" || (a.probabilities[a.choice] ?? a.confidence) < 0.6) continue;
     ((p.quests ??= {})[a.choice === "done" ? "done" : "failed"] ??= []).push(j.id);
   }
-  const needsWriting = new Set<"people" | "items" | "move" | "body" | "quests" | "memories">();
+  const needsWriting = new Set<"people" | "items" | "move" | "quests" | "memories">();
   if (ans["gate:quests"]?.type === "noul" && (ans["gate:quests"] as { noul: number }).noul >= 0.65) needsWriting.add("quests");
   if (ans["gate:memories"]?.type === "noul" && (ans["gate:memories"] as { noul: number }).noul >= 0.7) needsWriting.add("memories");
   // A name nobody knows in the middle of a sentence makes "someone new?" easier to say yes to.
@@ -627,7 +614,7 @@ export async function bookkeeping(opts: {
     else if (place.choice.startsWith("cand:")) p.move = cands[Number(place.choice.slice(5))];
     else placeOpen = true;
   }
-  for (const g of ["people", "items", "move", "body"] as const) {
+  for (const g of ["people", "items", "move"] as const) {
     const a = ans[`gate:${g}`];
     if (a?.type !== "noul" || a.noul < (g === "people" ? peopleBar : 0.6)) continue;
     // The classifier already judged every name in the reply, one by one; that beats its general

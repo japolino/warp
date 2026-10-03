@@ -154,21 +154,10 @@ export const STYLES = `
 .warp-slider { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--warp-muted); }
 .warp-slider input { accent-color: var(--warp-accent); }
 
-/* ───────── world: weather, warmth, outfit, encounter ───────── */
-.warp-weather { color: var(--warp-muted); font-size: 12.5px; }
-.warp-warmth { padding: 2px 0 4px; }
-.warp-warmth-track { position: relative; height: 8px; border-radius: 6px; margin-top: 4px;
-  background: linear-gradient(90deg, #4f8cff 0%, #7fd1ff 25%, #f3e7b0 55%, #ffb347 78%, #e0505a 100%); opacity: .9; }
-.warp-warmth-band { position: absolute; top: -2px; bottom: -2px; border: 2px solid var(--warp-good); border-radius: 6px; box-sizing: border-box; }
-.warp-warmth-mark { position: absolute; top: -4px; width: 4px; height: 16px; margin-left: -2px; border-radius: 2px; box-shadow: 0 0 0 2px var(--warp-fill-strong, #16141d); }
-.warp-warmth-mark.warp-bg-good { background: var(--warp-good); }
-.warp-warmth-mark.warp-bg-warn { background: var(--warp-warn); }
-.warp-warmth-mark.warp-bg-bad { background: var(--warp-bad); }
+/* ───────── world: encounter ───────── */
 .warp-encounter { border: 1px solid var(--warp-bad); border-radius: var(--warp-radius); padding: 8px 10px; display: flex; flex-direction: column; gap: 4px;
   background: color-mix(in srgb, var(--warp-bad) 10%, transparent); }
 .warp-encounter-foe { font-weight: 700; font-size: 14px; }
-.warp-outfit-row { display: grid; grid-template-columns: 78px 1fr auto; gap: 6px; align-items: center; font-size: 12.5px; }
-.warp-mini-select { width: auto; max-width: 110px; padding: 2px 4px; font-size: 12px; }
 .warp-group + .warp-group { margin-top: 8px; }
 .warp-group-head { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--warp-muted); padding: 4px 0 2px; border-bottom: 1px solid var(--warp-border); margin-bottom: 4px; }
 .warp-quest { display: flex; flex-direction: column; gap: 3px; padding: 7px 8px; margin-bottom: 6px; border-radius: var(--warp-radius); border: 1px solid var(--warp-border); background: var(--warp-fill-subtle); font-size: 12.5px; }
