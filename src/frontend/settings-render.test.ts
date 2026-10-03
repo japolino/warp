@@ -90,6 +90,8 @@ describe("Story / Adventure", () => {
     expect(html).toContain("Adventure (dice)");
     expect(html).not.toContain('aria-pressed="true"');
     expect(html).not.toMatch(/warp-template[^"]*(?:selected|primary)/);
+    // The cost is said before the first turn, with where to make it cheap.
+    expect(html).toContain("Helper connection");
   });
 });
 

@@ -88,5 +88,6 @@ export function renderTemplatePicker(templates: TemplateInfo[], card: { name: st
     ${track}
     <div class="warp-template-pair">${cards}</div>
     <button class="warp-card warp-template warp-builder-cta" data-template="__ai"><h3>✨ Build with AI</h3><p>Reads this character's card and fits Story or Adventure to it: checked and previewed before anything is saved.</p></button>
+    <p class="warp-dim" style="margin:0">Warp makes one small model call per turn to keep score and write the choices (a typed risky move without Jev needs a second one). It uses the chat's own model unless you pick a fast, cheap <b>Helper connection</b> in Settings.</p>
   </div>`;
 }
