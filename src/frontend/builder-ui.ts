@@ -24,7 +24,6 @@ const REFINE_CHIPS = [
   "Make it more forgiving",
   "Add more places to go",
   "Add an encounter that fits the card",
-  "Give the main character a daily schedule",
   "Add a skill for something the card mentions",
 ];
 

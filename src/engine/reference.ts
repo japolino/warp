@@ -8,7 +8,7 @@ export type PartLabel = (typeof PART_LABELS)[number];
 export const PART_CONTENTS: Record<PartLabel, string> = {
   core: "name, description, player, clock, start, hud, narration",
   stats: "stats, growth",
-  people: "relationships (stats + people with schedules), companions",
+  people: "relationships (stats + people)",
   world: "weather, locations, items (incl. clothing, uses and gear bonuses), item_uses, wardrobe, body, conditions, flags, start.items",
   actions: "actions, improvise",
   encounters: "encounters",
@@ -24,7 +24,7 @@ export function partForIssue(where: string): PartLabel {
   const head = w.split(/[›,]/)[0].trim().toLowerCase();
   if ((PART_LABELS as readonly string[]).includes(head)) return head as PartLabel;
   if (head.startsWith("stats") || head.startsWith("growth")) return "stats";
-  if (["relationships", "people", "companions"].some((k) => head.startsWith(k))) return "people";
+  if (["relationships", "people"].some((k) => head.startsWith(k))) return "people";
   if (["locations", "items", "item uses", "wardrobe", "weather", "conditions", "flags", "body"].some((k) => head.startsWith(k))) return "world";
   if (["actions", "improvise"].some((k) => head.startsWith(k))) return "actions";
   if (head.startsWith("encounters")) return "encounters";
@@ -60,23 +60,7 @@ relationships:
     jo:
       name: Jo
       age: 31                      # declare adult ages (an unknown age never counts as adult)
-      desc: Runs the café.
-      schedule:                    # first matching entry wins; entry without when = default; no match = not around
-        - { when: "between(hour, 7, 18) and weekday != 'Sun'", at: high_street }
-        - { when: "flag('jo_left_town')", at: away }   # at: away (or ~) = not anywhere while when holds
-
-companions:       # people with lives of their own (ids from relationships.people)
-  jo:
-    goal: Buy the café outright              # shown on the sheet
-    arc: { per_day: 2, stages: [ { at: 40, hint: "Jo's doing sums at closing time.", surface: "Jo makes an offer on the café." } ], story: { "{{user}} helps Jo at the café": 10 } }   # a hidden clock, same shape as a front; runs once met
-    daily:                                   # a choice they make each in-game day; the decision model weighs it; arc/bond here mean Jo
-      ask: How does Jo spend her evening?
-      options: { shift: { desc: Works an extra shift, weight: 2, arc: +6 }, out: { desc: Goes drinking with Dex, weight: 1, bond: { dex: +5 } } }
-    jealous_of: [dex]                        # or [anyone]: cools toward {{user}} (and the rival) when {{user}} grows close to them
-    bonds: { dex: 30 }                       # how they feel about others, −100…100
-    knows: [ward_accident]                   # portrayal cue + opened stages only; unopened truths stay out of the narrator prompt
-    knows_full: false                       # explicit true exposes every stage to portray an informed NPC; weaker spoiler isolation
-EFFECTS for companions: arc: { jo: +5 }, bond: { jo: { dex: -10 } }. FUNCTIONS: arc(person), bond(a, b).
+      desc: Runs the café.         # who is in the scene comes from the story
 
 name: Harbour Town                 # the game's name (shown on the HUD); description: one line about it
 description: A fishing town where the tide brings secrets.
@@ -347,7 +331,7 @@ STORY EFFECTS: front: { harbour_gangs: -20 }, reveal: [ward_accident] (opens its
 FORMULA NAMES: stats, flags, hour, minute, day, weekday, month, date, season, weather, temperature, indoors, outside,
 warmth, warmth_min, warmth_max, too_cold, too_hot, reveal, exposed, naked, in_encounter, round, encounter (current encounter id, '' if none), encounter_round, foe.<stat>, target.<relstat>, location.
 FUNCTIONS: has(item[, n]), count(item), flag(x), cond(x), at(loc), rel(person, stat), met(person), between(v, lo, hi), roll('2d6'),
-wearing(item), worn(slot), trait(t), present(person), where(person), codex(id), feat(id), perk(id),
+wearing(item), worn(slot), trait(t), present(person) (in the scene now), codex(id), feat(id), perk(id),
 secret(id) (stages the narrator knows), front(id) (clock value), front_stage(id) (stages surfaced), happened(event),
 quest(id) ('' | 'active' | 'ready' | 'done' | 'failed'), quest_active(id), quest_done(id), quest_failed(id), goal(quest, goal) (count so far), quests_done() / quests_done('bounty'),
 memories(person) (how many), cond_of(person, cond), foe_cond(cond), stat_max(stat), foe_max(stat), in_encounter(id) (that encounter is on),
@@ -409,12 +393,12 @@ Statuses do the work themselves: dot: (damage each round, or every: hour for ble
 The same condition can sit on {{user}}, on the opponent (inflict:) or on someone in the story (inflict: on a per-person action — a sleeping draught, a love charm, a cold they caught).
 
 ## places
-Every place needs a reason to go there: actions at: it, people scheduled there, a shop, a quest board.
+Every place needs a reason to go there: actions at: it, a shop, a quest board.
 For quest-driven adventures, a central notice board (board: true) offers reliable work. Do not add one automatically to relationship drama, political intrigue, or a freeform sandbox; use people and scene-specific goals instead.
 Gate the best actions behind things the player can work toward, with requires: (a skill level, someone who has to come along, an item, a quest, trust) — a locked choice that says "Needs Lockpicking 30, Brann with you" is a goal, not a dead end.
 
 ## people
-Give each tracked person a schedule (where they are by hour and day) so the player can find them, starting feelings that match the card, and — for companions — a goal and a daily choice so they live on their own.
+Give each tracked person starting feelings that match the card. The story says who is in the scene.
 
 ## money
 Money needs income (paid actions, loot, rewards) AND spending (shops, bribes, fares). If either is missing it's just a number.

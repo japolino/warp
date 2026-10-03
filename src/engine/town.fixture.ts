@@ -126,24 +126,17 @@ relationships:
       good: none
       narrator: 5
       bands: { -100: Submissive, -30: Deferential, -10: Even, 10: Assertive, 40: Domineering }
-  # Townsfolk keep their own hours; they show up as "here" when you share a place.
+  # Townsfolk: the story says when they're in the scene.
   people:
     jo:
       name: Jo
       desc: Runs the café on the High Street. Brisk, fair, secretly kind.
-      schedule:
-        - { when: "between(hour, 7, 18) and weekday != 'Sun'", at: high_street }
-        - { when: "(weekday == 'Fri' or weekday == 'Sat') and (hour >= 21 or hour < 2)", at: the_strip }
     professor_ward:
       name: Professor Ward
       desc: Your tutor. Exacting, dry, notices everything.
-      schedule:
-        - { when: "between(hour, 9, 17) and weekday != 'Sat' and weekday != 'Sun'", at: campus }
     dex:
       name: Dex
       desc: Works the docks at night. Knows people who know people.
-      schedule:
-        - { when: "hour >= 19 or hour < 4", at: docks }
 
 locations:
   apartment:

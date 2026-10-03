@@ -35,9 +35,6 @@ relationships:
   people:
     ana:
       name: Ana
-      schedule:
-        - { when: "between(hour, 9, 17)", at: park }
-        - { at: home }
 actions:
   to_street: { label: Go out, effects: { move: street } }
   to_park: { label: Walk to the park, effects: { move: park } }
@@ -135,9 +132,11 @@ describe("new systems", () => {
     expect(s.worn.outer).toBeUndefined();
   });
 
-  test("schedules put people in places; per-person actions target who's here", () => {
+  test("the story puts people in the scene; per-person actions target who's here", () => {
     const r = load();
-    let s = initialState(r); // 07:00, at home — Ana's default is home
+    let s = initialState(r);
+    expect(buildHud(r, s).people.find((p) => p.id === "ana")?.present).toBe(false);
+    s = foldEvents(r, [applyProposal(r, s, { scene: { Ana: true } })], s);
     expect(buildHud(r, s).people.find((p) => p.id === "ana")?.present).toBe(true);
     const choices = availableChoices(r, s);
     const chat = choices.find((c) => c.id === "chat@ana");
@@ -145,10 +144,9 @@ describe("new systems", () => {
     s = step(r, s, "chat@ana");
     expect(s.rel.ana.trust).toBe(13);
     expect(stateDigest(r, s)).toContain("Present here: Ana");
-    // At 10:00 she's in the park.
-    s.minutes += 180;
+    // Leaving the place leaves her behind until the story brings her along.
+    s = step(r, s, "to_street");
     expect(buildHud(r, s).people.find((p) => p.id === "ana")?.present).toBe(false);
-    expect(buildHud(r, s).people.find((p) => p.id === "ana")?.whereabouts).toBe("Park");
   });
 
   test("encounters: start, rounds with foe moves, end conditions and outcomes", () => {

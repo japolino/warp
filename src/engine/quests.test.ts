@@ -21,16 +21,16 @@ const rules = (extra: Record<string, unknown> = {}) => {
     relationships: {
       stats: { trust: { start: 20, narrator: 5 }, mood: { start: 50, narrator: 5 } },
       people: {
-        hesk: { name: "Hesk", schedule: [{ at: "guild" }] },
-        mia: { name: "Mia", schedule: [{ at: "home" }] },
-        king: { name: "The King", schedule: [{ at: "castle" }] },
+        hesk: { name: "Hesk" },
+        mia: { name: "Mia" },
+        king: { name: "The King" },
       },
     },
     locations: {
-      home: { name: "Home", exits: ["square"] },
-      square: { name: "Village Square", board: true, exits: ["home", "guild", "castle"] },
-      guild: { name: "Guild Hall", exits: ["square"] },
-      castle: { name: "Castle", exits: ["square"] },
+      home: { name: "Home" },
+      square: { name: "Village Square", board: true },
+      guild: { name: "Guild Hall" },
+      castle: { name: "Castle" },
     },
     start: { location: "home" },
     items: { pelt: "Wolf pelt" },
@@ -74,7 +74,10 @@ const rules = (extra: Record<string, unknown> = {}) => {
 type R = ReturnType<typeof rules>["r"];
 const fold = (r: R, s: GameState, rec: TurnRecord) => { const n = cloneState(s); rec.events.forEach((e) => applyEvent(n, e, r)); return n; };
 const act = (r: R, s: GameState, actionId: string, seed = "a") => { const rec = resolveTurn(r, s, { actionId, via: "choice" }, { seed }); return { rec, s: fold(r, s, rec) }; };
-const at = (r: R, loc: string) => { const s = initialState(r); applyEvent(s, { t: "move", to: loc, src: "manual" }, r); return s; };
+/** Where each giver is found: the story puts them in the scene when {{user}} is there. */
+const HOMES: Record<string, string> = { hesk: "guild", mia: "home", king: "castle" };
+const meet = (r: R, s: GameState) => { for (const [who, place] of Object.entries(HOMES)) if (place === s.location) applyEvent(s, { t: "scene", who, here: true, src: "manual" }, r); return s; };
+const at = (r: R, loc: string) => { const s = initialState(r); applyEvent(s, { t: "move", to: loc, src: "manual" }, r); return meet(r, s); };
 const choices = (r: R, s: GameState) => buildChoices(r, s, { lines: [], veils: [] });
 
 describe("being offered work", () => {

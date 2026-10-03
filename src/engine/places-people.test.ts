@@ -1,12 +1,12 @@
-// Places, people and world gates: "away" schedules, per-person targets, conditional front
-// stages, always-offered perks with their own points, and per-place indoor temperature.
+// Places, people and world gates: per-person targets, conditional front stages,
+// always-offered perks with their own points, and per-place indoor temperature.
 
 import { describe, expect, test } from "bun:test";
 import { lintRuleset } from "./lint.js";
 import { normalizeRuleset } from "./ruleset.js";
 import { availableChoices, buyPerk, perkBlocker, perkOffers, resolveTurn } from "./resolve.js";
 import { foldEvents, initialState, makeEnv, type GameState } from "./state.js";
-import { personLocation, temperatureAt } from "./world.js";
+import { presentPeople, temperatureAt } from "./world.js";
 
 const BASE = {
   clock: { start: "Mon 08:00", date: "Jan 10" },
@@ -28,9 +28,9 @@ const BASE = {
   relationships: {
     stats: { trust: { start: 10 } },
     people: {
-      maud: { name: "Maud", schedule: [{ when: "flag('maud_gone')", at: "away" }, { at: "market" }] },
-      hesper: { name: "Mother Hesper", schedule: [{ when: "flag('maud_gone')", at: null }, { at: "market" }] },
-      kael: { name: "Kael", schedule: { market: true } },
+      maud: { name: "Maud" },
+      hesper: { name: "Mother Hesper" },
+      kael: { name: "Kael" },
     },
   },
   actions: {
@@ -45,6 +45,7 @@ const load = (extra: Record<string, unknown> = {}) => {
   const { ruleset, issues } = normalizeRuleset({ ...BASE, ...extra });
   return { r: ruleset!, issues };
 };
+const here = (r: ReturnType<typeof load>["r"], s: GameState) => presentPeople(r, s);
 const step = (r: ReturnType<typeof load>["r"], s: GameState, actionId: string, seed = "t") =>
   foldEvents(r, [resolveTurn(r, s, { actionId, via: "choice" }, { seed }).events], s);
 
@@ -76,27 +77,18 @@ describe("places", () => {
 });
 
 describe("people", () => {
-  test("an away schedule entry takes someone out of the world without lint warnings", () => {
-    const { r, issues } = load();
-    expect(issues).toEqual([]);
-    expect(r.people.maud.schedule[0].at).toBeNull();
-    expect(r.people.hesper.schedule[0].at).toBeNull();
-    const s = initialState(r);
-    expect(personLocation(r, s, "maud", makeEnv(r, s))).toBe("market");
-    s.flags.maud_gone = true;
-    expect(personLocation(r, s, "maud", makeEnv(r, s))).toBeNull();
-    expect(personLocation(r, s, "hesper", makeEnv(r, s))).toBeNull();
-    expect(personLocation(r, s, "kael", makeEnv(r, s))).toBe("market"); // later default still applies to others
-  });
-
-  test("a misspelt schedule place still warns and points at `away`", () => {
-    const { issues } = load({ relationships: { people: { maud: { schedule: [{ at: "nowhere" }] } } } });
-    expect(issues.find((i) => i.where.includes("maud › schedule"))?.message).toContain("at: away");
+  test("schedules and per-person traits were removed: they warn, and presence follows the story", () => {
+    const { r, issues } = load({ relationships: { people: { maud: { name: "Maud", schedule: [{ at: "market" }], traits: ["shy"] } } } });
+    const gone = issues.filter((i) => i.message.includes("was removed from Warp")).map((i) => i.where).sort();
+    expect(gone).toEqual(["Relationships › people › maud › schedule", "Relationships › people › maud › traits"]);
+    expect(Object.keys(r.people.maud).sort()).toEqual(["age", "desc", "id", "name", "start"]);
+    expect(here(r, initialState(r))).toEqual([]);
   });
 
   test("targets: limits a per-person action to those people; `target` works in when:", () => {
     const { r } = load();
     const s = initialState(r);
+    for (const id of ["maud", "hesper", "kael"]) s.scene[id] = { here: true, loc: s.location, at: s.minutes };
     const ids = availableChoices(r, s).map((c) => c.id);
     expect(ids).toContain("train@maud");
     expect(ids).toContain("train@kael");

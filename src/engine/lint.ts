@@ -8,9 +8,9 @@ import { costValue } from "./resolve.js";
 
 export const FUNCTIONS = [
   "has", "count", "flag", "cond", "at", "rel", "met", "between", "roll",
-  "wearing", "worn", "trait", "present", "where", "codex", "feat", "perk",
+  "wearing", "worn", "trait", "present", "codex", "feat", "perk",
   "eff", "gear", "integrity",
-  "secret", "front", "front_stage", "happened", "saved", "body", "transformed", "bond", "arc", "age",
+  "secret", "front", "front_stage", "happened", "saved", "body", "transformed", "age",
   "quest", "quest_active", "quest_done", "quest_failed", "goal", "quests_done", "memories", "cond_of", "foe_cond", "stat_max", "foe_max", "in_encounter",
   "min", "max", "clamp", "floor", "ceil", "round", "abs",
 ];
@@ -21,6 +21,7 @@ const REMOVED_NAMES: Record<string, string> = {
   in_date: "dating", on_outing: "dating", "partner()": "dating", "dates()": "dating", "stage()": "dating",
   pregnant: "family and pregnancy", pregnancy_weeks: "family and pregnancy", "children()": "family and pregnancy",
   "seen_by()": "being seen", "fame()": "being seen",
+  "bond()": "feelings between people", "arc()": "companion lives", "where()": "schedules",
   at_work: "work shifts", "owed()": "bills and debts", "missed()": "bills and debts", "days_until()": "bills and debts",
 };
 
@@ -132,7 +133,6 @@ export function lintRuleset(r: Ruleset): Issue[] {
     else if (!r.body.open) for (const part of Object.keys(e.body)) {
       if (!r.body.parts[part]) issues.push({ level: "warning", where, message: `"${part}" isn't a body part (body › parts) and the body is closed (open: false)` });
     }
-    for (const id of Object.keys(e.arc)) if (!r.companions[id]?.arc) issues.push({ level: "warning", where, message: `"${id}" isn't a companion with an arc` });
     if (e.startEncounter && !r.encounters[e.startEncounter]) {
       issues.push({ level: "warning", where, message: `starts encounter "${e.startEncounter}", which doesn't exist${suggest(e.startEncounter, Object.keys(r.encounters))}` });
     }
@@ -280,7 +280,6 @@ export function lintRuleset(r: Ruleset): Issue[] {
     check(t.when, `Triggers › ${t.id} › when`);
     checkEffect(t.effects, `Triggers › ${t.id}`);
   }
-  for (const p of Object.values(r.people)) p.schedule.forEach((e, i) => check(e.when, `People › ${p.id} › schedule #${i + 1}`));
   for (const c of Object.values(r.codex)) check(c.unlock, `Codex › ${c.id} › unlock`);
   for (const f of Object.values(r.feats)) { check(f.unlock, `Feats › ${f.id} › unlock`); checkEffect(f.reward, `Feats › ${f.id} › reward`); }
   for (const p of Object.values(r.perks)) { check(p.requires, `Perks › ${p.id} › requires`); checkEffect(p.effects, `Perks › ${p.id}`); }
@@ -354,16 +353,6 @@ export function lintRuleset(r: Ruleset): Issue[] {
     for (const id of k.flags) if (!r.flags[id]) issues.push({ level: "warning", where: "Checkpoints › keep", message: `"${id}" isn't a declared flag` });
   }
   for (const e of Object.values(r.endings)) check(e.when, `Endings › ${e.id} › when`);
-  for (const c of Object.values(r.companions)) {
-    const w = `Companions › ${c.id}`;
-    if (!r.people[c.id]) issues.push({ level: "warning", where: w, message: `"${c.id}" isn't a person in relationships › people${suggest(c.id, people)}` });
-    for (const id of c.jealousOf) if (id !== "anyone" && !r.people[id]) issues.push({ level: "warning", where: `${w} › jealous_of`, message: `"${id}" isn't a person${suggest(id, people)}` });
-    for (const id of c.knows) if (!r.secrets[id]) issues.push({ level: "warning", where: `${w} › knows`, message: `"${id}" isn't a secret${suggest(id, Object.keys(r.secrets))}` });
-    if (c.daily) for (const o of c.daily.options) checkEffect(o.effect, `${w} › daily › ${o.id}`);
-  }
-  for (const [a, m] of Object.entries(r.bonds)) for (const b of Object.keys(m)) {
-    if (!r.people[b]) issues.push({ level: "warning", where: `Companions › ${a} › bonds`, message: `"${b}" isn't a person${suggest(b, people)}` });
-  }
   const slotIds = r.wardrobe.slots.map((s) => s.id);
   for (const [part, slots] of Object.entries(r.body.hiddenBy)) for (const slot of slots) {
     if (!slotIds.includes(slot)) issues.push({ level: "warning", where: `Body › hidden_by › ${part}`, message: `"${slot}" isn't a wardrobe slot${suggest(slot, slotIds)}` });

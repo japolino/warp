@@ -149,10 +149,9 @@ async function cardText(characterId: string, userId?: string): Promise<{ name: s
 const SYSTEMS: { id: string; label: string }[] = [
   { id: "needs", label: "Needs & condition (fatigue, stress…)" },
   { id: "relationships", label: "Relationships" },
-  { id: "money", label: "Money & work" },
+  { id: "money", label: "Money" },
   { id: "skills", label: "Skills that grow" },
   { id: "clothing", label: "Clothing, weather & temperature" },
-  { id: "schedules", label: "NPC schedules & places" },
   { id: "encounters", label: "Encounters / combat" },
   { id: "quests", label: "Quests (a notice board, favours people ask, bounties)" },
   { id: "crime", label: "Crime & consequences" },
@@ -378,7 +377,7 @@ async function designPlan(s: BuilderSession, systems: string[], userId?: string)
     "CONNECTIONS — how systems feed each other (e.g. scent → visibility → encounters; the spray clears it; buns are bribes).",
     "ENCOUNTERS — each one: the goal, two or three routes with their stats, the escape and its cost, the danger, which items matter.",
     "ITEMS — every item and what it does (use, gear bonus, gift, or what needs it), and how the player gets it.",
-    "PLACES & PEOPLE — why go to each place; where people are and when.",
+    "PLACES & PEOPLE — why go to each place; who matters and how they start out toward {{user}}.",
     "Under 450 words. No YAML.",
   ].join("\n\n"), userId, 1600);
   const t = text.trim();

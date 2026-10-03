@@ -98,10 +98,6 @@ export interface Effect {
   body: Record<string, Record<string, string | null>>;
   /** Advance transformations by this many stages: `transform: { fox_charm: 1 }`. */
   transform: Record<string, string | number>;
-  /** Move companions' arcs: `arc: { jo: +5 }`. */
-  arc: Record<string, string | number>;
-  /** Change how people feel about each other: `bond: { jo: { dex: +3 } }`. */
-  bond: Record<string, Record<string, string | number>>;
   /** Wear down the current encounter's main meter (HP, resolve, composure…) by this much — portable across encounters. */
   harm?: string | number;
   /** Teach abilities: `learn: [haste]`. */
@@ -270,12 +266,8 @@ export interface ConditionDef {
   tick: Effect;
 }
 /** `at: null` (or `at: away`) = not anywhere the player can go while `when` holds. */
-export interface ScheduleEntry { when?: string; at: string | null }
 export interface PersonDef {
   id: string; name: string; age?: number; start: Record<string, number>; desc?: string;
-  /** First entry whose `when` holds decides where they are; an entry without `when` is the default. */
-  schedule: ScheduleEntry[];
-  traits: string[];
 }
 export interface FlagDef { id: string; label?: string; narrator: boolean; start: string | number | boolean | null; gate?: NarratorGate }
 
@@ -605,21 +597,6 @@ export interface BodyDef {
   transforms: Record<string, TransformDef>;
 }
 
-/** A companion with a life of their own: a goal, an arc they push by their own choices, feelings toward others. */
-export interface CompanionDef {
-  id: string;
-  goal?: string;
-  /** Their arc: a hidden clock (same shape as a front), registered as fronts[`arc_<id>`]. */
-  arc: string | null;
-  /** A choice they make on their own each in-game day; the decision model weighs it. */
-  daily: DecideSpec | null;
-  /** People they're jealous of ("anyone" = everyone else). */
-  jealousOf: string[];
-  /** Secrets only they know. */
-  knows: string[];
-  /** Explicit opt-in: expose all known secret stages to the narrator, including unopened truths. */
-  knowsFull: boolean;
-}
 
 
 
@@ -728,9 +705,6 @@ export interface Ruleset {
   /** What carries over to a new run after an ending. */
   legacy: KeepSpec;
   body: BodyDef;
-  companions: Record<string, CompanionDef>;
-  /** Starting feelings between people: a → b → −100…100. */
-  bonds: Record<string, Record<string, number>>;
   improvise: ImproviseDef;
   growth: GrowthDef;
 }
@@ -1038,7 +1012,7 @@ function normStat(id: string, raw: unknown, where: string, c: Ctx, forRel = fals
 export function emptyEffect(): Effect {
   return {
     stats: {}, set: {}, flags: {}, items: {}, rel: {}, addConditions: {}, removeConditions: [], decide: [],
-    foe: {}, unlock: [], wear: [], undress: [], damage: {}, front: {}, reveal: [], body: {}, transform: {}, arc: {}, bond: {}, learn: [],
+    foe: {}, unlock: [], wear: [], undress: [], damage: {}, front: {}, reveal: [], body: {}, transform: {}, learn: [],
     inflict: {}, afflict: {}, cleanse: [], quest: {}, progress: {}, remember: {},
   };
 }
@@ -1093,6 +1067,7 @@ function normDecide(raw: unknown, where: string, c: Ctx, known: { stats: Set<str
 /** Effect keys of systems removed from Warp: an old ruleset that uses them gets a plain warning. */
 export const REMOVED_EFFECTS: Record<string, string> = {
   conceive: "family and pregnancy", pregnancy: "family and pregnancy",
+  arc: "companion lives", bond: "feelings between people", bonds: "feelings between people",
 };
 
 /** Effects accept both a structured form and a flat shorthand: `{ fatigue: +20, hint: "..." }`. */
@@ -1198,10 +1173,6 @@ export function normEffect(raw: unknown, where: string, c: Ctx, known: { stats: 
         if (isObj(v)) for (const [id, n] of Object.entries(v)) { const x = c.expr(n, `${w} › ${id}`); if (x !== undefined) e.transform[id] = x; }
         else for (const id of list(v)) e.transform[id] = 1;
         break;
-      case "arc":
-        if (isObj(v)) for (const [id, n] of Object.entries(v)) { const x = c.expr(n, `${w} › ${id}`); if (x !== undefined) e.arc[id] = x; }
-        else c.warn(w, "expected arc changes by companion, like `jo: +5`");
-        break;
       case "harm": {
         const x = c.expr(diceExpr(v), w);
         if (x !== undefined) e.harm = x;
@@ -1262,17 +1233,10 @@ export function normEffect(raw: unknown, where: string, c: Ctx, known: { stats: 
         if (isObj(v)) for (const [who, text] of Object.entries(v)) { if (typeof text === "string" && text.trim()) e.remember[who] = text.trim(); }
         else c.warn(w, "expected who remembers what, like `mia: \"{{user}} burned her breakfast\"`");
         break;
-      case "bond": case "bonds":
-        if (isObj(v)) for (const [a, m] of Object.entries(v)) {
-          if (!isObj(m)) { c.warn(`${w} › ${a}`, "expected feelings toward others, like `dex: +3`"); continue; }
-          e.bond[a] = {};
-          for (const [b, n] of Object.entries(m)) { const x = c.expr(n, `${w} › ${a} › ${b}`); if (x !== undefined) e.bond[a][b] = x; }
-        }
-        break;
       default:
         // Flat shorthand: a known stat name maps to a delta.
         if (known.stats.has(k)) { const x = c.expr(v, w); if (x !== undefined) e.stats[k] = x; }
-        else c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, unlock, wear, undress, damage, front, reveal, gauge, momentum, body, transform, arc, bond, harm, hits, pierce, learn, inflict, cleanse, quest, progress, remember)`);
+        else c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, unlock, wear, undress, damage, front, reveal, gauge, momentum, body, transform, harm, hits, pierce, learn, inflict, cleanse, quest, progress, remember)`);
     }
   }
   return e;
@@ -2233,49 +2197,6 @@ function normBody(raw: unknown, c: Ctx): BodyDef {
   return def;
 }
 
-function normCompanions(raw: unknown, c: Ctx, known: { stats: Set<string> }, fronts: Record<string, FrontDef>, bonds: Record<string, Record<string, number>>): Record<string, CompanionDef> {
-  const out: Record<string, CompanionDef> = {};
-  for (const [id, cr] of Object.entries(isObj(raw) ? raw : {})) {
-    const w = `Companions › ${id}`;
-    if (!isObj(cr)) { c.warn(w, "expected `goal:`, `arc:`, `daily:`…"); continue; }
-    let arc: string | null = null;
-    if (isObj(cr.arc)) {
-      const f = normFronts({ [`arc_${id}`]: { label: `${titleCase(id)}'s arc`, ...cr.arc } }, c, known, () => `${w} › arc`);
-      const def = f[`arc_${id}`];
-      if (def) {
-        // An arc only runs once the player has met them.
-        def.when = def.when ? `met('${id}') and (${def.when})` : `met('${id}')`;
-        fronts[`arc_${id}`] = def;
-        arc = `arc_${id}`;
-      }
-    }
-    let daily: DecideSpec | null = null;
-    if (isObj(cr.daily)) {
-      // Inside a companion's own choice, `arc: +5` and `bond: { dex: +3 }` mean this companion.
-      const d: Raw = { ...cr.daily, options: Object.fromEntries(Object.entries(isObj(cr.daily.options) ? cr.daily.options : {}).map(([oid, o]) => {
-        if (!isObj(o)) return [oid, o];
-        const x: Raw = { ...o };
-        if (x.arc !== undefined && !isObj(x.arc)) x.arc = { [id]: x.arc };
-        if (isObj(x.bond) && !Object.values(x.bond).some(isObj)) x.bond = { [id]: x.bond };
-        return [oid, x];
-      })) };
-      daily = normDecide(d, `${w} › daily`, c, known)[0] ?? null;
-      if (daily) daily = { ...daily, id: `companion_${id}_daily` };
-    }
-    if (isObj(cr.bonds)) {
-      bonds[id] = {};
-      for (const [b, n] of Object.entries(cr.bonds)) bonds[id][b] = Math.max(-100, Math.min(100, c.num(n, `${w} › bonds › ${b}`, 0)));
-    }
-    out[id] = {
-      id, arc, daily,
-      ...(typeof cr.goal === "string" ? { goal: cr.goal } : {}),
-      jealousOf: list(cr.jealous_of ?? cr.jealous),
-      knows: list(cr.knows),
-      knowsFull: cr.knows_full === true,
-    };
-  }
-  return out;
-}
 
 function normImprovise(raw: unknown, c: Ctx, known: { stats: Set<string> }, stats: Record<string, StatDef>, order: string[]): ImproviseDef {
   const usable = order.filter((id) => stats[id].kind === "skill" || stats[id].kind === "attribute");
@@ -2354,6 +2275,7 @@ export const REMOVED_KEYS: Record<string, string> = {
   mind: "mind overrides and perception filters",
   obligations: "bills and debts", debts: "bills and debts", jobs: "work shifts",
   discovery: "discovering new places",
+  companions: "companion lives, jealousy and feelings between people",
 };
 
 const SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
@@ -2400,25 +2322,15 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     const r: Raw = isObj(p) ? p : typeof p === "string" ? { name: p } : {};
     const start: Record<string, number> = {};
     if (isObj(r.start)) for (const [s, v] of Object.entries(r.start)) start[s] = c.num(v, `Relationships › people › ${id} › start › ${s}`, 0);
-    const schedule: ScheduleEntry[] = [];
-    const sched = r.schedule ?? r.routine;
-    const schedList: unknown[] = Array.isArray(sched) ? sched : typeof sched === "string" ? [{ at: sched }] : isObj(sched) ? Object.entries(sched).map(([at, when]) => ({ at, when })) : [];
-    schedList.forEach((e, n) => {
-      const sw = `Relationships › people › ${id} › schedule #${n + 1}`;
-      // `at: null` / `at: away` (or `away: true`) — not anywhere the player can go while `when` holds.
-      const away = isObj(e) && (e.away === true || ("at" in e && (e.at === null || e.at === false)));
-      if (!isObj(e) || (!away && typeof e.at !== "string")) { c.warn(sw, "each schedule entry needs `at:` (a location, or `away`) and optionally `when:`"); return; }
-      const when = e.when === undefined || e.when === true ? undefined : c.expr(e.when, `${sw} › when`);
-      schedule.push({ at: away ? null : e.at, ...(when !== undefined ? { when: String(when) } : {}) });
-    });
+    // Schedules (who is where, when) and per-person traits were taken out.
+    for (const k of ["schedule", "routine"]) if (r[k] !== undefined) c.removed(`Relationships › people › ${id} › ${k}`, k, "schedules");
+    if (r.traits !== undefined) c.removed(`Relationships › people › ${id} › traits`, "traits", "per-person traits");
     people[id] = {
       id,
       name: typeof r.name === "string" ? r.name : titleCase(id),
       age: r.age !== undefined ? c.num(r.age, `Relationships › people › ${id} › age`, 0) : undefined,
       start,
       desc: typeof r.desc === "string" ? r.desc : undefined,
-      schedule,
-      traits: list(r.traits),
     };
   }
 
@@ -2652,8 +2564,6 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const legacy = normKeep(endingsRaw.legacy, "Endings › legacy", c, { codex: true, feats: true, perks: true });
   const checkpoints = normCheckpoints(raw.checkpoints, Object.keys(endings).length > 0, c, known);
   const body = normBody(raw.body, c);
-  const bonds: Record<string, Record<string, number>> = {};
-  const companions = normCompanions(raw.companions, c, known, fronts, bonds);
   const improvise = normImprovise(raw.improvise ?? raw.improvised, c, known, stats, statOrder);
   const growth = normGrowth(raw.growth ?? raw.practice, c);
 
@@ -2686,15 +2596,10 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     weather, wardrobe, encounters, codex, feats, perks,
     ...(perkPoints && stats[perkPoints] ? { perkPoints } : {}),
     perkPick, abilities, quests, questOrder, storyQuests,
-    secrets, fronts, randomEvents, liveChoices, checkpoints, endings, legacy, body, companions, bonds, improvise, growth,
+    secrets, fronts, randomEvents, liveChoices, checkpoints, endings, legacy, body, improvise, growth,
   };
 
   // Cross-references that need everything loaded.
-  for (const p of Object.values(people)) for (const e of p.schedule) {
-    if (e.at === "away" && !locations.away) e.at = null; // `at: away` — not anywhere, unless a place is called that
-    if (e.at === null) continue;
-    if (Object.keys(locations).length && !locations[e.at]) c.warn(`Relationships › people › ${p.id} › schedule`, `"${e.at}" isn't a declared location (use \`at: away\` for "not around")`);
-  }
   for (const a of Object.values(actions)) for (const who of a.targets ?? []) {
     if (!people[who]) c.warn(`Actions › ${a.id} › targets`, `"${who}" isn't a person in relationships › people`);
   }

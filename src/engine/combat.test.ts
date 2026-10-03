@@ -19,8 +19,8 @@ const rules = (extra: Record<string, unknown> = {}) => {
       lockpicking: { kind: "skill", max: 100, start: 10 },
       perk_points: { kind: "attribute", start: 0, max: 5 },
     },
-    relationships: { stats: { trust: { start: 10 } }, people: { brann: { name: "Brann", schedule: [{ at: "vault_door" }] }, mia: { name: "Mia", schedule: [{ at: "home" }] } } },
-    locations: { home: { name: "Home", exits: ["vault_door"] }, vault_door: { name: "Vault Door", exits: ["home"] } },
+    relationships: { stats: { trust: { start: 10 } }, people: { brann: { name: "Brann" }, mia: { name: "Mia" } } },
+    locations: { home: { name: "Home" }, vault_door: { name: "Vault Door" } },
     start: { location: "home" },
     items: { shield: { name: "Shield", armor: 2 }, sleeping_draught: { name: "Sleeping Draught" } },
     conditions: {
@@ -167,6 +167,7 @@ describe("statuses that bite, cost turns and wear off", () => {
     const { r } = rules();
     let s = initialState(r);
     applyEvent(s, { t: "move", to: "home", src: "manual" }, r);
+    applyEvent(s, { t: "scene", who: "mia", here: true, src: "manual" }, r);
     ({ s } = turn(r, s, "drug@mia"));
     expect(s.pconds.mia.drowsy.until).toBe(s.minutes - 10 + 90);
     expect(buildHud(r, s).people.find((p) => p.id === "mia")!.conditions[0].label).toBe("Drowsy");
@@ -179,6 +180,7 @@ describe("gated moves say what's missing", () => {
     const { r } = rules();
     const s = initialState(r);
     applyEvent(s, { t: "move", to: "vault_door", src: "manual" }, r);
+    applyEvent(s, { t: "scene", who: "brann", here: true, src: "manual" }, r);
     const c = buildChoices(r, s, { lines: [], veils: [] }).find((x) => x.id === "vault")!;
     expect(c.locked).toBe("Needs Lockpicking 30 (you have 10), Shield");
     s.stats.lockpicking = 30;
@@ -187,7 +189,7 @@ describe("gated moves say what's missing", () => {
   });
 
   test("someone has to be there: Brann away keeps it locked", () => {
-    const { r } = rules({ relationships: { stats: { trust: { start: 10 } }, people: { brann: { name: "Brann", schedule: [{ at: "home" }] } } } });
+    const { r } = rules();
     const s = initialState(r);
     applyEvent(s, { t: "move", to: "vault_door", src: "manual" }, r);
     s.stats.lockpicking = 30;

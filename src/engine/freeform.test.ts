@@ -29,7 +29,7 @@ wardrobe: { slots: [head, top], cover: [top], start: [shirt] }
 relationships:
   stats: { trust: { start: 20, narrator: 5 } }
   people:
-    bartender: { name: Rosa, schedule: [ { at: bar } ] }
+    bartender: { name: Rosa }
 encounters:
   brawl:
     name: Brawl
@@ -135,7 +135,7 @@ describe("growth by use", () => {
 describe("who's in the scene", () => {
   test("people the story introduces are here, until the story says they left", () => {
     let s = initialState(r);
-    s = read(s, { people: [{ name: "Miu" }, { name: "Clarice" }] }).s;
+    s = read(s, { people: [{ name: "Miu" }, { name: "Clarice" }], scene: { Rosa: true } }).s;
     const here = () => presentPeople(r, s, makeEnv(r, s)).map((id) => s.people[id].name);
     expect(here()).toEqual(expect.arrayContaining(["Miu", "Clarice", "Rosa"]));
     const left = read(s, { scene: { Clarice: false } });
@@ -157,15 +157,16 @@ describe("who's in the scene", () => {
     expect(presentPeople(r, s, makeEnv(r, s)).includes("miu_tanaka")).toBe(false);
   });
 
-  test("moving leaves people behind until the story brings them along; schedules fill in the rest", () => {
+  test("moving leaves people behind until the story brings them along", () => {
     let s = read(initialState(r), { people: [{ name: "Miu" }] }).s;
     s = turn(s, { actionId: "to_street", via: "choice" }).s;
     expect(presentPeople(r, s, makeEnv(r, s))).toEqual([]);
     expect(stateDigest(r, s)).toContain("Were with {{user}} before arriving here");
     s = read(s, { scene: { Miu: true } }).s;
     expect(presentPeople(r, s, makeEnv(r, s))).toEqual(["miu"]);
-    // Rosa's schedule keeps her at the bar; the story can still say she stepped out.
+    // Back at the bar, the story says Rosa is there, then that she stepped out.
     s = turn(s, { actionId: "to_bar", via: "choice" }).s;
+    s = read(s, { scene: { Rosa: true } }).s;
     expect(presentPeople(r, s, makeEnv(r, s))).toContain("bartender");
     s = read(s, { scene: { Rosa: false } }).s;
     expect(presentPeople(r, s, makeEnv(r, s))).not.toContain("bartender");

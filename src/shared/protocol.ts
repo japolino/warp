@@ -43,12 +43,6 @@ export interface PersonView {
   stats: { id: string; label: string; value: number; min: number; max: number; display: string; pct: number; text: string | null; tone: Tone }[];
   /** Here with the player right now. */
   present: boolean;
-  /** Where their schedule puts them, when they have one. */
-  whereabouts: string | null;
-  /** A companion's goal. */
-  goal: string | null;
-  /** How they feel about other people ("fond of Dex"). */
-  bonds: string[];
   /** Conditions they're under (drugged, sick, charmed…). */
   conditions: { label: string; tone: Tone; remaining: string | null }[];
   /** What they remember about {{user}}, newest first. */

@@ -11,7 +11,7 @@ import { encounterGuide, itemRelevance } from "./encounter-view.js";
 import { cleanLiveForecast, costValue, spentLock, whenHolds, paramValues, ABILITY_PREFIX, abilityStatus, actionPool, availableChoices, dangerStats, findAction, foeArmor, isAvailable, knowsAbility, LIVE_PREFIX, lockReason, mainMeter, odds, perkOffers, playerArmor, usableAbilities, usableItems, perkBlocker, RUN_EPILOGUE, TIER_LABEL, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
 import { dueWords, effectWords, goalDone, questDef, questDigest, questOffers, questsToReport, QUEST_PREFIX } from "./quests.js";
 import {
-  dateAt, exposedSlots, isIndoors, ordinal, personLocation, presentPeople, seasonAt, temperatureAt, warmthNeeded, warmthOf, weatherAt,
+  dateAt, exposedSlots, isIndoors, ordinal, presentPeople, seasonAt, temperatureAt, warmthNeeded, warmthOf, weatherAt,
 } from "./world.js";
 import type { ChangeView, ChoiceView, ClothingView, HudView, QuestView, RecordView, Tone } from "../shared/protocol.js";
 import { evalBool, evalNumber } from "./expr.js";
@@ -95,7 +95,6 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
   const env = makeEnv(r, s);
   const here = new Set(presentPeople(r, s, env));
   const people = Object.entries(s.people).map(([id, p]) => {
-    const where = r.people[id]?.schedule.length ? personLocation(r, s, id, env) : null;
     return {
       id, name: p.name,
       stats: r.relStatOrder.map((rs) => {
@@ -106,9 +105,6 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
         return { id: rs, label: def.label, value: v, min: def.min, max: def.max, display: formatNumber(v), pct: pp, text: shownText(def, band, formatNumber(v)), tone: band?.tone ?? toneFromPct(pp, def.good) };
       }),
       present: here.has(id),
-      whereabouts: where ? r.locations[where]?.name ?? where : null,
-      goal: r.companions[id]?.goal ?? null,
-      bonds: Object.entries(s.bonds[id] ?? {}).filter(([b, v]) => s.people[b] && Math.abs(v) >= 25).map(([b, v]) => `${bondWord(v)} ${personName(r, s, b)}`),
       conditions: Object.entries(s.pconds?.[id] ?? {}).map(([cid, c]) => ({
         label: r.conditions[cid]?.label ?? cid, tone: r.conditions[cid]?.tone ?? "warn" as Tone, remaining: c.until !== null ? minutesLeft(c.until - s.minutes) : null,
       })),
@@ -325,24 +321,6 @@ export function bodyLine(r: Ruleset, s: GameState): string | null {
   if (!parts.length) return null;
   const covered = parts.filter(([p]) => bodyCovered(r, s, p)).map(([p]) => p.replace(/_/g, " "));
   return `Body: ${parts.map(([p, t]) => `${p.replace(/_/g, " ")} — ${t}`).join("; ")}${covered.length ? ` (covered, not visible to others: ${covered.join(", ")})` : ""}`;
-}
-
-export function bondWord(v: number): string {
-  return v >= 60 ? "devoted to" : v >= 25 ? "fond of" : v > -25 ? "neutral toward" : v > -60 ? "cool toward" : "hostile toward";
-}
-
-/** How the people the player knows feel about each other (only the notable ones). */
-/** How people feel about each other — only where it touches the scene: someone in it is part of the pair. */
-function bondLines(r: Ruleset, s: GameState, here: Set<string>): string[] {
-  const out: string[] = [];
-  for (const [a, m] of Object.entries(s.bonds)) {
-    if (!s.people[a]) continue;
-    for (const [b, v] of Object.entries(m)) {
-      if (!s.people[b] || Math.abs(v) < 25 || !(here.has(a) || here.has(b))) continue;
-      out.push(`${personName(r, s, a)} is ${bondWord(v)} ${personName(r, s, b)}`);
-    }
-  }
-  return out;
 }
 
 /** Has {{user}} met them in the story (been in a scene together, or left a memory)? An authored cast exists from the start; that alone isn't meeting. */
@@ -1016,8 +994,6 @@ export function stateDigest(r: Ruleset, s: GameState, focus?: DigestFocus): stri
   const spare = loose.filter(([id]) => r.items[id]?.slot && named(itemName(r, s, id), bagNames)).map(([id]) => itemName(r, s, id));
   if (spare.length) lines.push(`Carried but NOT being worn (packed away — {{user}} isn't wearing these): ${spare.join(", ")}`);
 
-  const between = bondLines(r, s, new Set(hud.people.filter((p) => p.present).map((p) => p.id)));
-  if (between.length) lines.push(`Between people: ${between.join("; ")}`);
   const feel = (id: string, name: string) => {
     const parts = r.relStatOrder.map((rs) => {
       const def = r.relStats[rs];
@@ -1050,8 +1026,7 @@ export function stateDigest(r: Ruleset, s: GameState, focus?: DigestFocus): stri
 
 /**
  * What only the narrator knows: opened secret stages, what's happened behind the
- * scenes, and signs of what's coming. Unopened stage text stays out of the
- * prompt unless an author explicitly opts a companion into full knowledge.
+ * scenes, and signs of what's coming. Unopened stage text stays out of the prompt.
  */
 export function narratorKnowledge(r: Ruleset, s: GameState): string | null {
   const lines: string[] = [];
@@ -1059,20 +1034,6 @@ export function narratorKnowledge(r: Ruleset, s: GameState): string | null {
   // secrets would otherwise all ride along every turn. (Secrets about a place or a thing always come.)
   const { here, names } = sceneCast(r, s);
   const offstage = (about: string) => { const id = names.get(about.trim().toLowerCase()); return !!id && !here.has(id); };
-  // What only one companion knows: the narrator plays them with it, and no one else can bring it up.
-  for (const c of Object.values(r.companions)) {
-    if (!s.people[c.id] || !here.has(c.id)) continue;
-    for (const id of c.knows) {
-      const sec = r.secrets[id];
-      if (!sec) continue;
-      const name = personName(r, s, c.id);
-      if (c.knowsFull) {
-        lines.push(`Only ${name} knows this (author opted in to full narrator knowledge; no one else can mention it): ${sec.about} — ${sec.stages.map((st) => st.text).join(" ")}`);
-      } else {
-        lines.push(`${name} knows more about ${sec.about} than {{user}} does. Portray them as knowledgeable, but do not invent or reveal unopened details. Only the opened stages below may be stated.`);
-      }
-    }
-  }
   for (const sec of Object.values(r.secrets)) {
     if (offstage(sec.about)) continue;
     const open = s.secrets[sec.id] ?? -1;

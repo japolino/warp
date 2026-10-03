@@ -8,7 +8,7 @@ import { PART_LABELS, type PartLabel } from "./reference.js";
 const PART_OF_KEY: Record<string, PartLabel> = {
   name: "core", description: "core", player: "core", clock: "core", start: "core", hud: "core", narration: "core",
   stats: "stats", growth: "stats", practice: "stats",
-  relationships: "people", people: "people", companions: "people",
+  relationships: "people", people: "people",
   weather: "world", locations: "world", locations_open: "world", items: "world", inventory: "world", item_uses: "world",
   wardrobe: "world", body: "world", conditions: "world", flags: "world", discovery: "world",
   actions: "actions", improvise: "actions", improvised: "actions",

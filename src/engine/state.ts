@@ -9,7 +9,7 @@ import type { Value, ExprEnv } from "./expr.js";
 import { evalBool, evalNumber } from "./expr.js";
 import type { Ruleset, StatDef, Band, KeepSpec } from "./ruleset.js";
 import {
-  dateAt, exposedSlots, hasTrait, isIndoors, personLocation, revealOf, seasonAt, temperatureAt,
+  dateAt, exposedSlots, hasTrait, isIndoors, presentPeople, revealOf, seasonAt, temperatureAt,
   warmthNeeded, warmthOf, weatherAt,
 } from "./world.js";
 
@@ -104,8 +104,6 @@ export interface GameState {
   body: Record<string, Record<string, string>>;
   /** Transformation → stages applied. */
   tf: Record<string, number>;
-  /** How people feel about each other: a → b → −100…100. */
-  bonds: Record<string, Record<string, number>>;
   /** The story reached an ending (told = the narrator has written it). */
   ended: { id: string; at: number; told: boolean } | null;
   /** Continued past this ending; rearm only after its predicate becomes false. */
@@ -173,7 +171,6 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "adult"; who: string; adult: boolean }
   | { t: "body"; part: string; trait: string; v: string | null }
   | { t: "tf"; id: string; stage: number }
-  | { t: "bond"; a: string; b: string; d: number }
   | { t: "news"; text: string }
   | { t: "practice"; id: string; d: number }
   | { t: "practice_use"; key: string; n: number; turn: number; minutes: number }
@@ -236,7 +233,6 @@ export function initialState(r: Ruleset): GameState {
     dismissedEndings: [],
     body: structuredClone(r.body.parts),
     tf: {},
-    bonds: structuredClone(r.bonds),
     practice: {},
     practiceUse: {},
     scene: {},
@@ -608,7 +604,6 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
     }
     case "tf": s.tf = { ...s.tf, [e.id]: Math.max(s.tf[e.id] ?? 0, e.stage) }; break;
     case "news": s.news = [...s.news, { text: e.text, at: s.minutes }].slice(-NEWS_KEPT); break;
-    case "bond": s.bonds = { ...s.bonds, [e.a]: { ...(s.bonds[e.a] ?? {}), [e.b]: clamp((s.bonds[e.a]?.[e.b] ?? 0) + e.d, -100, 100) } }; break;
     case "save":
       s.saves = { ...s.saves, [e.slot]: { at: s.minutes, turn: s.turn, label: e.label, snap: snapshotOf(s) } };
       break;
@@ -761,8 +756,6 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
     turn: s.turn,
     location: s.location ?? "",
   };
-  // Schedules are evaluated with an env that can't ask about presence (no recursion).
-  const scheduleEnv = (): ExprEnv => ({ lookup: base.lookup, call: (n, a) => (n === "present" || n === "where" ? undefined : base.call!(n, a)) });
   const base: ExprEnv = {
     lookup(path) {
       const [head, ...rest] = path;
@@ -814,8 +807,8 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
         case "gear": return effectiveStat(r, s, a0, base, true);
         case "integrity": return integrityOf(r, s, a0);
         case "trait": return hasTrait(r, s, a0);
-        case "present": return personLocation(r, s, a0, scheduleEnv()) === s.location && !!s.location;
-        case "where": return personLocation(r, s, a0, scheduleEnv()) ?? "";
+        // Whether someone is in the scene now (the story's word on who is here).
+        case "present": return presentPeople(r, s).includes(a0);
         case "codex": return a0 in s.codex;
         case "feat": return a0 in s.feats;
         case "perk": return a0 in s.perks;
@@ -830,9 +823,6 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
         // Body: a trait's value ('' when absent), and how far a transformation has gone.
         case "body": return s.body[a0]?.[String(args[1] ?? "type")] ?? "";
         case "transformed": return s.tf[a0] ?? 0;
-        // How one person feels about another (−100…100), and how far a companion's arc has gone.
-        case "bond": return s.bonds[a0]?.[String(args[1] ?? "")] ?? 0;
-        case "arc": return s.fronts[`arc_${a0}`]?.v ?? 0;
         // A person's declared age (0 when not given).
         case "age": return r.people[a0]?.age ?? 0;
         // Quests: '' (not taken), 'active', 'ready' (to hand in), 'done' or 'failed'; goal counts; how many are done.

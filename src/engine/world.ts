@@ -4,7 +4,7 @@
 // seed and the state, so they replay identically and cost nothing to keep.
 
 import { seededRng } from "./dice.js";
-import { evalBool, type ExprEnv } from "./expr.js";
+import type { ExprEnv } from "./expr.js";
 import type { Ruleset, WeatherKind } from "./ruleset.js";
 import type { GameState } from "./state.js";
 
@@ -105,14 +105,6 @@ export function hasTrait(r: Ruleset, s: GameState, trait: string): boolean {
   return wornItems(r, s).some((id) => r.items[id]?.traits.includes(t));
 }
 
-/** Where a scheduled person is right now (null = no schedule applies, or an `at: away` entry does). */
-export function personLocation(r: Ruleset, s: GameState, id: string, env: ExprEnv): string | null {
-  const p = r.people[id];
-  if (!p?.schedule.length) return null;
-  for (const e of p.schedule) if (e.when === undefined || evalBool(e.when, env, false)) return e.at;
-  return null;
-}
-
 /** How long the story's word on who's in the scene holds without being read again (minutes). */
 export const SCENE_HOLDS = 6 * 60;
 
@@ -123,16 +115,15 @@ export function sceneWord(s: GameState, id: string): boolean | null {
 }
 
 /**
- * People here now. What the story last said wins (someone judged here, or gone, at this
- * place); otherwise a scheduled person is here when their schedule puts them here.
+ * People here now: whoever the story last said is here (at this place). The ruleset and
+ * formula environment are no longer needed (schedules were taken out); they stay in the
+ * signature so callers don't change.
  */
-export function presentPeople(r: Ruleset, s: GameState, env: ExprEnv): string[] {
+export function presentPeople(_r: Ruleset, s: GameState, _env?: ExprEnv): string[] {
   const out: string[] = [];
   for (const id of Object.keys(s.people)) {
     if (s.forgotten[id]) continue;
-    const word = sceneWord(s, id);
-    if (word !== null) { if (word) out.push(id); continue; }
-    if (s.location && personLocation(r, s, id, env) === s.location) out.push(id);
+    if (sceneWord(s, id)) out.push(id);
   }
   return out;
 }

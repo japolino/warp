@@ -51,7 +51,7 @@ describe("removed parts of Warp", () => {
     const where = removed.map((i) => i.where).sort();
     expect(where).toEqual([
       "Actions › cards › gamble", "Actions › dance › check › game", "Checkpoints › keep › dating", "Checkpoints › keep › deepest",
-      "Dating", "Dungeons", "Look", "Minigames", "Perks › lucky › rule › game",
+      "Dating", "Dungeons", "Look", "Minigames", "Perks › lucky › rule › game", "Relationships › people › robin › schedule",
     ].sort());
     for (const i of removed) {
       expect(i.level).toBe("warning");
