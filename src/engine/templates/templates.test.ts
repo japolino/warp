@@ -3,7 +3,8 @@ import { loadRuleset } from "../loader.js";
 import { lintRuleset } from "../lint.js";
 import { runLoopSim } from "../loop-sim.js";
 import { foldEvents, initialState } from "../state.js";
-import { checkNumbers, resolveTurn } from "../resolve.js";
+import { applyProposal, checkNumbers, resolveTurn } from "../resolve.js";
+import { buildRecordView } from "../view.js";
 import { getTemplate, looksLikeScenario, TEMPLATES, withCharacter, type Template } from "./index.js";
 
 /** A template as installed: one lorebook entry per part, the card's character added to the people part. */
@@ -149,5 +150,22 @@ describe("people and meters that matter (Warp Studio's check)", () => {
     // Halfway back is not enough; at the middle band they wear off.
     expect(Object.keys(at(40, 40, low).conditions).sort()).toEqual(["hurt", "low"]);
     expect(Object.keys(at(55, 55, low).conditions)).toEqual([]);
+  });
+});
+
+describe("the what-changed line", () => {
+  test("a band crossing shows once: its story line, not again in brackets on each change", () => {
+    const { r } = install(getTemplate("adventure")!);
+    const before = { ...initialState(r), stats: { ...initialState(r).stats, energy: 63 } };
+    // The rules give +2 (careful), the story takes 8: two changes to Energy, one crossing into Tired.
+    const rec = resolveTurn(r, before, { actionId: "live:careful", via: "choice" }, { seed: "x" });
+    const mid = foldEvents(r, [rec.events], before);
+    const told = applyProposal(r, mid, { stats: { energy: -8 } });
+    const after = foldEvents(r, [told], mid);
+    const view = buildRecordView(r, "m", 0, { ...rec, events: [...rec.events, ...told] }, before, after);
+    expect(view.lines).toEqual(["Tired."]);
+    const energy = view.changes.filter((c) => c.text.startsWith("Energy"));
+    expect(energy.map((c) => c.text)).toEqual(["Energy +2", "Energy -8"]);
+    expect(energy.every((c) => !c.band)).toBe(true);
   });
 });

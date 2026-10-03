@@ -398,7 +398,11 @@ function signed(n: number) {
  * place, who came and went; then stats, relationships, items, looks, goals and memories. Band-crossing story
  * lines are separate (`RecordView.lines`) and come first. Drift and trigger bookkeeping fold away.
  */
-export function summarizeEvents(r: Ruleset, before: GameState, after: GameState, events: WarpEvent[]): ChangeView[] {
+/**
+ * The changes of a record, aggregated per stat, person and item. `lined`: stats whose band crossing already has its
+ * own story line on this record, so their changes don't repeat the band in brackets.
+ */
+export function summarizeEvents(r: Ruleset, before: GameState, after: GameState, events: WarpEvent[], lined: Set<string> = new Set()): ChangeView[] {
   const contest: ChangeView[] = [];
   const scene: ChangeView[] = [];
   const rest: ChangeView[] = [];
@@ -521,6 +525,7 @@ export function summarizeEvents(r: Ruleset, before: GameState, after: GameState,
     scene.unshift({ text: m >= 60 ? `⏱ +${formatNumber(m / 60)}h` : `⏱ +${Math.round(m)}m`, tone: "neutral", src: timeAgg.narrIdx.length === timeAgg.idx.length ? "narrator" : "action", ...(timeAgg.narrIdx.length ? { undo: timeAgg.narrIdx } : {}) });
   }
   const deltas: ChangeView[] = [];
+  const banded = new Set<string>(lined);
   for (const [key, a] of statAgg) {
     const id = key.split("|")[0];
     const def = r.stats[id];
@@ -530,11 +535,14 @@ export function summarizeEvents(r: Ruleset, before: GameState, after: GameState,
     const bBefore = bandFor(def, before.stats[id] ?? def.start, statMax(r, def, before));
     const bAfter = bandFor(def, after.stats[id] ?? def.start, statMax(r, def, after));
     const good = def.good === "none" ? null : (d > 0) === (def.good === "high");
+    // The new band once per stat (a rules part and a story part move the same stat), never next to its own line.
+    const band = bAfter && bBefore !== bAfter && !banded.has(id) ? bAfter.text : undefined;
+    if (band) banded.add(id);
     deltas.push({
       text: def.kind === "money" ? `${d > 0 ? "+" : "−"}${formatMoney(r, Math.abs(d))}` : `${def.label} ${signed(d)}`,
       tone: good === null ? "neutral" : good ? "good" : "bad",
       src: a.src,
-      band: bAfter && bBefore !== bAfter ? bAfter.text : undefined,
+      band,
       undo: a.idx,
     });
   }
@@ -572,6 +580,8 @@ export function checkSummary(c: CheckResult): string {
 }
 
 export function buildRecordView(r: Ruleset, messageId: string, swipe: number, rec: TurnRecord, before: GameState, after: GameState): RecordView {
+  const crossings = bandCrossings(r, before, after);
+  const lines = crossingLines(crossings);
   return {
     messageId,
     swipe,
@@ -592,9 +602,9 @@ export function buildRecordView(r: Ruleset, messageId: string, swipe: number, re
       summary: checkSummary(rec.check),
     } : null,
     // Band crossings of this whole record: the dice before the reply and the story's read after it.
-    lines: crossingLines(bandCrossings(r, before, after)),
+    lines,
     contest: contestOfRecord(r, rec, before, after),
-    changes: summarizeEvents(r, before, after, rec.events),
+    changes: summarizeEvents(r, before, after, rec.events, new Set(crossings.filter((c) => c.who === null && lines.includes(c.line)).map((c) => c.stat))),
     hints: rec.hints,
     veiled: !!rec.veiled,
     confidence: rec.confidence ?? null,
