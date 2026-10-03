@@ -257,7 +257,11 @@ export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorCon
     });
     // What the turn is about: the player's message and the reply before it (and, continuing, the reply so far).
     const focus = [...history.slice(-2).map((m) => m.content), ctx.generationType === "continue" && target ? target.content : ""].join("\n");
-    const text = buildInjection(r, rec, before, after, player, focus);
+    // Whatever was done off the page since the last reply (errands, quiet item use, quiet travel), told once.
+    let lastReply = history.length - 1;
+    while (lastReply > 0 && history[lastReply].is_user) lastReply--;
+    const since = history.slice(Math.max(0, lastReply)).flatMap((m) => activeRecord(m)?.quiet ?? []);
+    const text = buildInjection(r, rec, before, after, player, focus, since);
     const { messages: out, index } = injectInto(shrunk, text);
     const waiting = pending.get(info.generationId ?? ctx.chatId);
     if (waiting && !info.isDryRun) waiting.prompt = out;

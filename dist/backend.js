@@ -2585,7 +2585,8 @@ function normAction(id, raw, where, c, known, order) {
     ...raw.targets !== undefined ? { targets: list(raw.targets) } : {},
     requires,
     showLocked: raw.show_locked === true || raw.show_locked !== false && requires.length > 0,
-    ...gamble ? { gamble } : {}
+    ...gamble ? { gamble } : {},
+    ...raw.errand === false || raw.errand === "none" ? { errand: false } : raw.errand === "shop" || raw.errand === "train" || raw.errand === "rest" ? { errand: raw.errand } : raw.errand !== undefined ? (c.warn(`${where} › errand`, `errand: shop, train, rest or false (got ${JSON.stringify(raw.errand)})`), {}) : {}
   };
 }
 function normRequires(raw, where, c, known) {
@@ -4605,7 +4606,8 @@ var init_ruleset = __esm(() => {
     "show_locked",
     "gamble",
     "per_day",
-    "per_encounter"
+    "per_encounter",
+    "errand"
   ]);
   MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
   DEFAULT_WEATHER = [
@@ -18993,7 +18995,9 @@ var init_protocol = __esm(() => {
     minigameScope: "rulebook",
     look: "rulebook",
     dateImages: true,
-    imageConnectionId: ""
+    imageConnectionId: "",
+    errands: true,
+    quietTravel: false
   };
 });
 
@@ -20549,6 +20553,258 @@ var init_mention = __esm(() => {
   STOP2 = new Set(["the", "and", "with", "for", "of", "a", "an", "to", "in", "on", "at", "from", "into", "across", "your", "my", "his", "her", "their"]);
 });
 
+// src/engine/errands.ts
+function offStage(e) {
+  if (!e)
+    return true;
+  return isEmpty(e.rel) && !e.move && !e.startEncounter && !e.end && isEmpty(e.decide) && isEmpty(e.foe) && isEmpty(e.bond) && isEmpty(e.afflict) && isEmpty(e.inflict) && !e.conceive && isEmpty(e.reveal) && isEmpty(e.front) && isEmpty(e.body) && isEmpty(e.transform) && isEmpty(e.arc) && isEmpty(e.wear) && isEmpty(e.undress) && isEmpty(e.damage) && !e.harm && !e.momentum;
+}
+function amount2(r, s, v) {
+  if (typeof v === "number")
+    return v;
+  try {
+    return evalNumber(v, makeEnv(r, s), Number.NaN);
+  } catch {
+    return Number.NaN;
+  }
+}
+function errandKind(r, a) {
+  if (a.errand === false)
+    return null;
+  if (a.errand)
+    return a.errand;
+  if (a.hidden || a.perPerson || a.params.length || a.gamble || a.perEncounter)
+    return null;
+  const all = [a.effects, a.cost, ...Object.values(a.outcomes)];
+  if (!all.every(offStage))
+    return null;
+  const money = new Set(moneyIds(r));
+  const touches = (pred) => all.some((e) => e && [...Object.keys(e.stats), ...Object.keys(e.set)].some(pred));
+  const gives = all.some((e) => e && Object.values(e.items).some((n) => n > 0));
+  const takes = all.some((e) => e && Object.values(e.items).some((n) => n < 0));
+  const spends = all.some((e) => e && Object.entries(e.stats).some(([id, v]) => money.has(id) && (typeof v === "number" ? v < 0 : /^\s*-/.test(v))));
+  const earns = all.some((e) => e && Object.entries(e.stats).some(([id, v]) => money.has(id) && (typeof v === "number" ? v > 0 : !/^\s*-/.test(v))));
+  if (!a.check) {
+    if ((gives && spends || takes && earns && !gives) && !touches((id) => !money.has(id)))
+      return "shop";
+    const e = a.effects;
+    if ((a.time ?? 0) >= 30 && !gives && !takes && !touches((id) => money.has(id) || r.stats[id]?.kind === "skill" || r.stats[id]?.kind === "attribute") && isEmpty(e.unlock) && isEmpty(e.learn) && isEmpty(e.items))
+      return "rest";
+    return null;
+  }
+  if (gives || takes || spends || earns || touches((id) => r.stats[id]?.kind === "hidden"))
+    return null;
+  const raises = Object.values(a.outcomes).some((e) => e && Object.entries(e.stats).some(([id, v]) => {
+    const k = r.stats[id]?.kind;
+    return (k === "skill" || k === "attribute") && (typeof v === "number" ? v > 0 : !/^\s*-/.test(v));
+  }));
+  const quiet = Object.values(a.outcomes).every((e) => !e || isEmpty(e.flags) && isEmpty(e.unlock));
+  return raises && quiet ? "train" : null;
+}
+function priceOf(r, s, a) {
+  for (const id of moneyIds(r)) {
+    const n = -[a.effects.stats[id], a.cost.stats[id]].filter((v) => v !== undefined).reduce((t, v) => t + amount2(r, s, v), 0);
+    if (n !== 0 && Number.isFinite(n))
+      return { stat: id, n };
+  }
+  return null;
+}
+function costWords(r, s, a) {
+  const parts = Object.entries(a.cost.stats).map(([id, v]) => [id, amount2(r, s, v)]).filter(([, v]) => Number.isFinite(v) && v !== 0).map(([id, v]) => `${v > 0 ? "+" : ""}${Math.abs(v)} ${r.stats[id]?.label ?? id}`);
+  return parts.length ? parts.join(", ") : null;
+}
+function affordable(r, s, a) {
+  let max = MAX_TIMES;
+  const per = (id) => {
+    const v = [a.effects.stats[id], a.cost.stats[id]].filter((x) => x !== undefined).reduce((t, x) => t + amount2(r, s, x), 0);
+    return v;
+  };
+  for (const id of new Set([...Object.keys(a.cost.stats), ...moneyIds(r).filter((m) => a.effects.stats[m] !== undefined)])) {
+    const d = per(id);
+    const def = r.stats[id];
+    if (!def || !(d < 0) || def.good === "low")
+      continue;
+    const room = (s.stats[id] ?? def.start) - def.min;
+    max = Math.min(max, Math.floor(room / -d + 0.000000001));
+  }
+  return Math.max(0, max);
+}
+function errandsOpen(s) {
+  return !s.encounter && !s.dungeon && !s.date && !s.job && !s.ended;
+}
+function buildErrands(r, s) {
+  if (!errandsOpen(s))
+    return null;
+  const v = { board: [], shop: [], bills: [], train: [], rest: [], money: null };
+  const money = moneyIds(r)[0];
+  if (money)
+    v.money = formatMoney(r, s.stats[money] ?? r.stats[money].start);
+  for (const o of questOffers(r, s)) {
+    if (o.via !== "board")
+      continue;
+    const q = r.quests[o.id];
+    v.board.push({
+      id: o.id,
+      name: q.name,
+      desc: q.desc ?? null,
+      goals: q.goals.filter((g) => !g.optional).map((g) => g.text),
+      reward: effectWords(r, s, q.reward) || null,
+      days: q.days > 0 ? q.days : null,
+      stakes: q.stakes ?? null,
+      kind: q.kind && q.kind !== "quest" ? q.kind : null,
+      take: `${QUEST_PREFIX}take:${o.id}`
+    });
+  }
+  for (const m of workMoves(r, s)) {
+    if (!m.id.startsWith(PAY_PREFIX))
+      continue;
+    const amt = /\(([^)]*)\)/.exec(m.label)?.[1] ?? "";
+    v.bills.push({ id: m.id.slice(PAY_PREFIX.length), label: m.label.replace(/\s*\([^)]*\)\s*$/, ""), amount: amt, due: m.desc ?? "", story: m.id });
+  }
+  for (const id of r.actionOrder) {
+    const a = r.actions[id];
+    const kind = errandKind(r, a);
+    if (!kind)
+      continue;
+    const here = !a.at.length || a.at.includes(s.location ?? "");
+    if (!here)
+      continue;
+    const ok = !!findAction(r, s, id);
+    if (!ok && !a.showLocked && !lockReason(r, s, a))
+      continue;
+    const why = ok ? null : lockReason(r, s, a) || "Not now";
+    if (!ok && !a.showLocked && a.when && !a.requires.length)
+      continue;
+    if (kind === "shop") {
+      const price = priceOf(r, s, a);
+      const sell = !!price && price.n < 0;
+      const thing = Object.entries(a.effects.items).find(([, n]) => sell ? n < 0 : n > 0)?.[0] ?? "";
+      const max = !ok ? 0 : sell ? Math.min(MAX_TIMES, Math.floor((s.items[thing] ?? 0) / Math.max(1, -(a.effects.items[thing] ?? -1)))) : affordable(r, s, a);
+      v.shop.push({
+        id,
+        label: a.label.replace(/\s*\([^)]*\d[^)]*\)\s*$/, ""),
+        item: thing ? itemName(r, s, thing) : a.label,
+        itemDesc: thing && r.items[thing]?.desc || a.desc || null,
+        price: price ? formatMoney(r, Math.abs(price.n)) : null,
+        max,
+        why: why ?? (max ? null : sell ? "You have none to sell" : "Can't afford it"),
+        story: id,
+        ...sell ? { sell: true } : {}
+      });
+    } else if (kind === "train") {
+      const o = ok ? odds(r, s, a) : null;
+      const max = ok ? affordable(r, s, a) : 0;
+      v.train.push({
+        id,
+        label: a.label,
+        desc: a.desc ?? null,
+        odds: o ? o.success : null,
+        minutes: a.time ?? r.clock.minutesPerAction,
+        cost: costWords(r, s, a),
+        max,
+        why: why ?? (max ? null : "Not enough left in you"),
+        story: id
+      });
+    } else {
+      const sets = Object.entries(a.effects.set).map(([sid, val]) => {
+        const def = r.stats[sid];
+        if (!def || def.show === "hidden")
+          return "";
+        const n = amount2(r, s, val);
+        return !Number.isFinite(n) ? "" : n >= def.max ? `${def.label} full` : n <= def.min ? `${def.label} cleared` : `${def.label} to ${n}`;
+      }).filter(Boolean);
+      const words = [effectWords(r, s, a.effects), ...sets].filter(Boolean).join(", ");
+      v.rest.push({ id, label: a.label, desc: a.desc ?? null, minutes: a.time ?? r.clock.minutesPerAction, effects: words || null, why, story: id });
+    }
+  }
+  return v.board.length || v.shop.length || v.bills.length || v.train.length || v.rest.length ? v : null;
+}
+function quietBlocker(r, s, actionId) {
+  if (!errandsOpen(s))
+    return "Not now — finish what's happening first.";
+  if (actionId.startsWith(`${QUEST_PREFIX}take:`)) {
+    const id = actionId.slice(`${QUEST_PREFIX}take:`.length);
+    return questOffers(r, s).some((o) => o.id === id) ? null : "That isn't on offer here.";
+  }
+  if (actionId.startsWith(PAY_PREFIX))
+    return workMoves(r, s).some((m) => m.id === actionId) ? null : "Nothing to pay there right now.";
+  if (actionId.startsWith(TRAVEL_PREFIX))
+    return travelTargets(r, s).includes(actionId.slice(TRAVEL_PREFIX.length)) ? null : "You can't get there from here.";
+  if (actionId.startsWith(ITEM_PREFIX))
+    return usableItems(r, s).some((u) => u.id === actionId && !u.locked) ? null : "You can't use that now.";
+  const a = r.actions[actionId];
+  const kind = a ? errandKind(r, a) : null;
+  if (!a || !kind)
+    return "That happens in the story — choose it there.";
+  if (!findAction(r, s, actionId))
+    return lockReason(r, s, a) || "Not now.";
+  if (kind !== "rest" && affordable(r, s, a) < 1)
+    return kind === "shop" ? "Can't afford it." : "Not enough left in you.";
+  for (const [id, d] of Object.entries(a.effects.items))
+    if (d < 0 && (s.items[id] ?? 0) < -d)
+      return `You have no ${itemName(r, s, id)} left.`;
+  return null;
+}
+function errandActionIds(r) {
+  return new Set(r.actionOrder.filter((id) => errandKind(r, r.actions[id])));
+}
+function quietWhat(r, s, actionId) {
+  if (actionId.startsWith(`${QUEST_PREFIX}take:`)) {
+    const q = r.quests[actionId.slice(`${QUEST_PREFIX}take:`.length)];
+    return `Took on "${q?.name ?? "a job"}" from the notice board`;
+  }
+  if (actionId.startsWith(PAY_PREFIX)) {
+    const m = workMoves(r, s).find((x) => x.id === actionId);
+    return m ? m.label.replace(/^Pay /, "Paid ") : "Paid a bill";
+  }
+  if (actionId.startsWith(TRAVEL_PREFIX)) {
+    const id = actionId.slice(TRAVEL_PREFIX.length);
+    return `Went to ${r.locations[id]?.name ?? id}`;
+  }
+  if (actionId.startsWith(ITEM_PREFIX)) {
+    const id = actionId.slice(ITEM_PREFIX.length);
+    return `Used ${itemName(r, s, id)}`;
+  }
+  return r.actions[actionId]?.label ?? actionId;
+}
+function runQuiet(r, s, actionId, times, opts) {
+  const n = Math.max(1, Math.min(MAX_TIMES, Math.floor(times) || 1));
+  const blocked = quietBlocker(r, s, actionId);
+  if (blocked)
+    return { events: [], line: null, done: 0, error: blocked, after: s };
+  const what = quietWhat(r, s, actionId);
+  let st = s;
+  const events = [];
+  let done = 0, rolled = 0, good = 0;
+  for (let i = 0;i < n; i++) {
+    if (i > 0 && quietBlocker(r, st, actionId))
+      break;
+    const rec = resolveTurnFull(r, st, { actionId, via: "choice", ...opts.params ? { params: opts.params } : {} }, { seed: opts.seed() }).record;
+    const evs = rec.events.filter((e) => e.t !== "noticed");
+    if (rec.check) {
+      rolled++;
+      if (["success", "crit_success"].includes(rec.check.tier))
+        good++;
+    }
+    events.push(...evs);
+    st = foldEvents(r, [evs], st);
+    done++;
+    if (!errandsOpen(st))
+      break;
+  }
+  const changes = [...rolled > 1 ? [`${good} of ${rolled} went well`] : rolled === 1 ? [good ? "it went well" : "it didn't go well"] : [], ...opts.changes(s, st, events).filter(Boolean)];
+  const line = `${what}${done > 1 ? ` ×${done}` : ""}${changes.length ? ` (${changes.join(", ")})` : ""}`;
+  return { events, line, done, after: st };
+}
+var MAX_TIMES = 20, isEmpty = (o) => !o || Object.keys(o).length === 0, moneyIds = (r) => r.statOrder.filter((id) => r.stats[id].kind === "money");
+var init_errands = __esm(() => {
+  init_quests();
+  init_resolve();
+  init_state();
+  init_expr();
+  init_work();
+});
+
 // src/engine/view.ts
 function pct2(v, min, max) {
   return max > min ? Math.max(0, Math.min(1, (v - min) / (max - min))) : 0;
@@ -21103,7 +21359,8 @@ function choiceList(r, s, opts) {
       plain("dungeon:leave", "Leave the dungeon", d?.name ?? "Dungeon", "Climb back out with what you've found")
     ];
   }
-  const work = s.encounter ? [] : workMoves(r, s).map((m) => plain(m.id, m.label, m.group, m.desc));
+  const quiet = opts.errands && errandsOpen(s) ? errandActionIds(r) : null;
+  const work = s.encounter ? [] : workMoves(r, s).filter((m) => !(quiet && m.id.startsWith(PAY_PREFIX))).map((m) => plain(m.id, m.label, m.group, m.desc));
   if (s.job)
     return work;
   const asChoice = (m) => ({
@@ -21164,7 +21421,7 @@ function choiceList(r, s, opts) {
   for (const x of lockedExits(r, s))
     travel.push({ ...plain(`${TRAVEL_PREFIX}${x.id}`, `Go to ${r.locations[x.id].name}`, "Travel", r.locations[x.id].desc ?? null), locked: x.locked });
   const encName = s.encounter ? r.encounters[s.encounter.id]?.name ?? "Encounter" : null;
-  const actions = availableChoices(r, s, opts.lines).filter(({ a }) => !a.hidden).map(({ id, a, target, label }) => {
+  const actions = availableChoices(r, s, opts.lines).filter(({ a, id }) => !a.hidden && !quiet?.has(id)).map(({ id, a, target, label }) => {
     const o = odds(r, s, a, undefined, target);
     return {
       id,
@@ -21182,7 +21439,7 @@ function choiceList(r, s, opts) {
   const pool = actionPool(r, s);
   for (const id of pool.order) {
     const a = pool.defs[id];
-    if (a.hidden || a.perPerson || a.tags.some((t) => lines.has(t)))
+    if (a.hidden || a.perPerson || a.tags.some((t) => lines.has(t)) || quiet?.has(id))
       continue;
     const spent = whenHolds(r, s, a) ? spentLock(r, s, a) : null;
     if (!spent && !s.encounter && (!a.showLocked || a.at.length && !a.at.includes(s.location ?? "")))
@@ -21193,9 +21450,9 @@ function choiceList(r, s, opts) {
       continue;
     locked.push({ ...plain(id, a.label, encName ?? a.group ?? null, a.desc ?? null), locked: spent ?? lockReason(r, s, a) });
   }
-  return [...live, ...actions, ...abilityChoices(r, s, lines), ...itemChoices(r, s, lines), ...locked, ...questChoices(r, s), ...talk, ...work, ...dungeons, ...travel, ...explore];
+  return [...live, ...actions, ...abilityChoices(r, s, lines), ...itemChoices(r, s, lines), ...locked, ...questChoices(r, s, !!quiet), ...talk, ...work, ...dungeons, ...travel, ...explore];
 }
-function questChoices(r, s) {
+function questChoices(r, s, boardInWindow = false) {
   if (s.encounter || s.job || s.ended || s.dungeon)
     return [];
   const plain = (id, label, desc, why) => ({ id, label, group: "Quests", desc, odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [], ...why ? { why } : {} });
@@ -21207,7 +21464,7 @@ function questChoices(r, s) {
     const reward = effectWords(r, s, q.reward);
     out.push(plain(`${QUEST_PREFIX}report:${id}`, to ? `Tell ${to}: "${q.name}" is done` : `Hand in "${q.name}"`, q.desc ?? null, reward ? `Reward: ${reward}` : undefined));
   }
-  const offers = questOffers(r, s).sort((a, b) => Number(b.via === "giver") - Number(a.via === "giver")).slice(0, 3);
+  const offers = questOffers(r, s).filter((o) => !(boardInWindow && o.via === "board")).sort((a, b) => Number(b.via === "giver") - Number(a.via === "giver")).slice(0, 3);
   for (const o of offers) {
     const q = r.quests[o.id];
     const reward = effectWords(r, s, q.reward);
@@ -21969,6 +22226,7 @@ var init_view = __esm(() => {
   init_work();
   init_expr();
   init_mention();
+  init_errands();
   MONEY_WORDS = /\b(buy|buys|bought|pay|pays|paid|price|prices|cost|costs|afford|money|cash|coins?|tip|rent|shop|shopping|sell|sold|wallet|purse|spend|bill|debt|loan|bribe|wage|salary|change)\b/i;
   WORK_WORDS = /\b(board|notices?|postings?|jobs?|work|quests?|bount(?:y|ies)|errands?|tasks?|favou?rs?|hire|hiring|contracts?|assignments?|gigs?|requests?|help (?:you|me|with))\b/i;
 });
@@ -23144,16 +23402,21 @@ var init_operations = __esm(() => {
 function fillNames(text, player) {
   return text.replace(/\{\{user\}\}/gi, player);
 }
-function buildInjection(r, rec, before, after, player, focus) {
+function buildInjection(r, rec, before, after, player, focus, since = []) {
   const parts = [];
   const turnText = focus === undefined ? undefined : fillNames([
     focus,
+    ...since,
     rec?.action?.label ?? "",
     ...rec?.hints ?? []
   ].join(`
 `), player);
   parts.push(`[Warp — current game state. The rules engine owns these facts; keep narration consistent with them.]
 ${stateDigest(r, after, turnText === undefined ? undefined : { text: turnText })}`);
+  if (since.length)
+    parts.push(`[Warp — what {{user}} did since the last reply, off the page. Already done: keep the story consistent with it, but don't narrate it as happening now or repeat it back.]
+${since.slice(-8).map((l) => `- ${l}`).join(`
+`)}`);
   if (r.narration.notes)
     parts.push(`[Warp — narrator notes]
 ${r.narration.notes}`);
@@ -24467,7 +24730,11 @@ async function interceptor(messages, ctx) {
     });
     const focus = [...history.slice(-2).map((m) => m.content), ctx.generationType === "continue" && target ? target.content : ""].join(`
 `);
-    const text = buildInjection(r, rec, before, after, player, focus);
+    let lastReply = history.length - 1;
+    while (lastReply > 0 && history[lastReply].is_user)
+      lastReply--;
+    const since = history.slice(Math.max(0, lastReply)).flatMap((m) => activeRecord(m)?.quiet ?? []);
+    const text = buildInjection(r, rec, before, after, player, focus, since);
     const { messages: out, index } = injectInto(shrunk, text);
     const waiting = pending.get(info.generationId ?? ctx.chatId);
     if (waiting && !info.isDryRun)
@@ -25193,6 +25460,14 @@ actions:
     # requires: shown LOCKED at its place with what's missing ("Needs Lockpicking 30 (you have 18), Brann with you · After closing");
     #   a stat name = at least that much; with: someone here; has: items; quest: id (taken) or { id: done }; folds into when:. show_locked: false hides it instead
     effects: { give: bearer_bonds }
+  buy_potion:
+    label: Buy a potion (25 E)
+    at: [apothecary]
+    effects: { eros: -25, give: potion }
+    # ERRANDS: buying/selling (money for things), practice (a check that raises a skill, nothing to carry away) and rest
+    #   (time passes, the body recovers) are found from their shape and go in the Errands window, done off the page
+    #   with no narrator turn (the next reply gets one line). errand: shop | train | rest sets it; errand: false keeps
+    #   it a story choice. Quests with board: true at a board: place are taken there too.
   blackjack_table:
     label: Play blackjack
     at: [casino]
@@ -27633,7 +27908,7 @@ async function pushState(chatId, userId, force = false) {
       revision,
       historyConflict: conflict,
       status,
-      hud: settings.enabled ? buildHud(r, state) : null,
+      hud: settings.enabled ? withErrands(r, state, buildHud(r, state), settings.errands && !conflict) : null,
       map: settings.enabled ? buildMap(r, state) : null,
       choices: settings.enabled && !conflict ? markReady(buildChoices(r, state, { ...settings, live: liveChoicesOf(latest) }), readyChoices(chatId, momentKey(msgs, state, { r, settings }))) : [],
       records: settings.enabled ? records : [],
@@ -27732,8 +28007,19 @@ async function connectionsFor(userId) {
     return [];
   }
 }
+function withErrands(r, s, hud, on) {
+  if (!on)
+    return { ...hud, errands: null };
+  const open = errandsOpen(s);
+  return {
+    ...hud,
+    errands: buildErrands(r, s),
+    items: hud.items.map((i) => i.use && open && !i.use.locked ? { ...i, use: { ...i.use, quiet: true } } : i)
+  };
+}
 var lastStates, busyChats, activeChat, timers, revisions, key4 = (userId) => userId ?? "_", MAX_RECORDS = 60, drafted, themed;
 var init_state_push = __esm(() => {
+  init_errands();
   init_view();
   init_view2();
   init_view3();
@@ -29770,6 +30056,68 @@ async function classify(d, m, who, context) {
   return { look, note: guessed.length ? `Guessed: ${guessed.join("; ")}.` : "" };
 }
 
+// src/backend/quiet.ts
+init_dice();
+init_errands();
+init_view();
+init_ledger();
+init_settings();
+init_source();
+init_state_push();
+var plain2 = (t) => t.replace(/^[^\p{L}\p{N}+−-]+/u, "").trim();
+async function doQuiet(msg, userId) {
+  if (busyChats.has(msg.chatId)) {
+    toast("info", "One moment — the story is still being written.", userId);
+    return false;
+  }
+  const settings = await getSettings(userId);
+  const travel = msg.actionId.startsWith("go:");
+  if (!settings.enabled || (travel ? !settings.quietTravel : !settings.errands))
+    return false;
+  const r = (await getRuleset(msg.chatId, userId))?.ruleset;
+  if (!r)
+    return false;
+  const msgs = await getMessages(msg.chatId);
+  const last = msgs[msgs.length - 1];
+  if (!last) {
+    toast("warning", "Send a message first — what you do attaches to the latest message.", userId);
+    return false;
+  }
+  let line = null, error, done = 0, wanted = Math.max(1, Math.floor(msg.times ?? 1));
+  await patchWarpMeta(msg.chatId, last.id, async (w, current) => {
+    const now = await getMessages(msg.chatId);
+    if (now.at(-1)?.id !== last.id || current.swipe_id !== last.swipe_id) {
+      error = "The chat moved on — try again.";
+      return w;
+    }
+    const folded = foldPath(r, now, 0);
+    if (folded.conflict) {
+      error = "Earlier history changed — check the Warp sheet first.";
+      return w;
+    }
+    const res = runQuiet(r, folded.state, msg.actionId, wanted, {
+      seed: randomSeed,
+      params: msg.params,
+      changes: (b, a, evs) => summarizeEvents(r, b, a, evs).filter((c) => !/^⏱|^🕒|^⌛/u.test(c.text)).map((c) => plain2(c.text)).slice(0, 6)
+    });
+    if (res.error) {
+      error = res.error;
+      return w;
+    }
+    line = res.line;
+    done = res.done;
+    const slot = String(current.swipe_id ?? 0), existing = w.swipes?.[slot];
+    const rec = existing ? { ...existing, events: [...existing.events, ...res.events], quiet: [...existing.quiet ?? [], ...line ? [line] : []] } : { v: 1, hints: [], events: res.events, at: Date.now(), ...line ? { quiet: [line] } : {} };
+    return { ...w, swipes: { ...w.swipes, [slot]: rec } };
+  });
+  if (error)
+    toast("warning", error, userId);
+  else if (line)
+    toast("success", `${line}${done < wanted ? ` — stopped after ${done}, can't go on` : ""}`, userId);
+  await pushState(msg.chatId, userId);
+  return !error;
+}
+
 // src/backend.ts
 init_source();
 init_state_push();
@@ -30227,6 +30575,10 @@ spindle.onFrontendMessage(async (raw, userId) => {
         const ok = await applyManual(msg.chatId, userId, (r, state) => allocateStats(r, state, msg.spend));
         if (ok)
           toast("success", "Points spent.", userId);
+        break;
+      }
+      case "quiet": {
+        await doQuiet(msg, userId);
         break;
       }
       case "buy_perk": {

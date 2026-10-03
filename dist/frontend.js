@@ -44,7 +44,9 @@ var init_protocol = __esm(() => {
     minigameScope: "rulebook",
     look: "rulebook",
     dateImages: true,
-    imageConnectionId: ""
+    imageConnectionId: "",
+    errands: true,
+    quietTravel: false
   };
 });
 
@@ -909,7 +911,7 @@ Practice toward the next point: ${Math.round(s.practice * 100)}% — it grows ev
   const items = part("inventory", "Inventory", loose.length, loose.length ? loose.map((i) => `<div class="warp-item${i.use ? " warp-item-usable" : ""}">
         <span class="warp-item-name">${esc(i.name)}${i.uses ? ` <span class="warp-dim" title="Uses left in the one in hand">· ${esc(i.uses)}</span>` : ""}${i.bonus ? `<span class="warp-item-bonus" title="Gear: added to checks that use it">${esc(i.bonus)}</span>` : ""}</span>
         <span class="warp-item-side">${i.count > 1 ? `<span class="warp-kbd">×${i.count}</span>` : ""}${i.use ? i.use.locked ? `<button class="warp-btn warp-mini" disabled title="${esc(i.use.locked)}">\uD83D\uDD12 Use</button>` : `<button class="warp-btn warp-mini" data-use="${esc(i.use.id)}" title="${esc(`${i.use.label}${i.use.drafted ? `
-Warp drafted what this does from its description — check it in the Ruleset tab` : ""}`)}">${i.use.drafted ? "✎ " : ""}Use</button>` : ""}</span>
+Warp drafted what this does from its description — check it in the Ruleset tab` : ""}`)}">${i.use.drafted ? "✎ " : ""}Use</button>${i.use.quiet ? `<button class="warp-btn warp-mini warp-btn-ghost" data-use-quiet="${esc(i.use.id)}" title="${esc(`${i.use.label} — off the page, no story reply`)}">Use quietly</button>` : ""}` : ""}</span>
       </div>`).join("") : `<div class="warp-empty">Empty-handed.</div>`, !opts.compact);
   const map = opts.map ? part("map", "Map", 0, renderMapView(opts.map), !opts.compact) : null;
   return {
@@ -1019,15 +1021,17 @@ function questCard(q) {
   </div>`;
 }
 function renderQuests(h, compact) {
-  if (!h.quests.length)
+  const posted = h.errands?.board.length ?? 0;
+  if (!h.quests.length && !posted)
     return null;
   const offered = h.quests.filter((q) => q.status === "offered");
   const open = h.quests.filter((q) => q.status === "active" || q.status === "ready").sort((a, b) => Number(b.status === "ready") - Number(a.status === "ready"));
   const ended = h.quests.filter((q) => q.status === "done" || q.status === "failed");
   const body = [
+    posted ? `<div class="warp-row warp-quests-board"><button class="warp-btn warp-mini" data-errand-open="board" title="Take on postings off the page, in a window">\uD83D\uDCCB Open the notice board · ${posted}</button></div>` : "",
     open.map(questCard).join(""),
     offered.length ? `<div class="warp-choice-group-label">On offer here</div>${offered.map(questCard).join("")}` : "",
-    !open.length && !offered.length ? `<div class="warp-empty">No quests under way. Look for a notice board, or people who need a hand.</div>` : "",
+    !open.length && !offered.length ? `<div class="warp-empty">No quests under way. ${posted ? "There's a notice board here." : "Look for a notice board, or people who need a hand."}</div>` : "",
     ended.length ? `<details class="warp-away" data-section="quests-ended"><summary>Finished · ${ended.length}</summary><div class="warp-section-body">${ended.map(questCard).join("")}</div></details>` : ""
   ].join("");
   return part("quests", "Quests", open.length, body, !compact || open.some((q) => q.status === "ready") || offered.length > 0);
@@ -1394,6 +1398,8 @@ function renderSettings(s, status, connections, jevKeySet = false, imageConnecti
     ${toggle("freeTextChecks", "Read my typed messages for actions", "When you type something risky, a quick referee call picks the matching action and the dice decide.", s.freeTextChecks)}
     ${toggle("narratorUpdates", "Keep state in sync with the story", "After each reply, small changes the story describes (time, mood, items, people) are recorded within the ruleset's limits. You can undo any of them.", s.narratorUpdates)}
     ${toggle("storyQuests", "Quests from the story", "When someone in the story asks you for a favour or a job and you agree, it's tracked as a quest with stakes; the story decides when it's done or failed, and they remember how it went.", s.storyQuests)}
+    ${toggle("errands", "Errands in a window", "Notice board, shops, bills, training and rest open a window and happen off the page, instead of each being a story reply.", s.errands !== false)}
+    ${toggle("quietTravel", "Travel off the page", "Clicking a place on the map takes you there without a travel paragraph; your next message starts the scene.", s.quietTravel)}
     ${toggle("swipesReroll", "Swiping rerolls the dice", "Casual: a new swipe is a new roll. Turn off for Ironman: rolls stay fixed for the same move.", s.swipesReroll)}
   </div>
   <div class="warp-card">
@@ -15272,6 +15278,158 @@ var ARCADE_STYLES = `
 }
 `;
 
+// src/frontend/errands-ui.ts
+var ERRAND_TABS = [
+  { id: "board", label: "Board", icon: "\uD83D\uDCCB", entry: "Notice board" },
+  { id: "shop", label: "Shop", icon: "\uD83D\uDECD", entry: "Shop" },
+  { id: "bills", label: "Bills", icon: "\uD83E\uDDFE", entry: "Bills" },
+  { id: "train", label: "Training", icon: "\uD83C\uDFCB", entry: "Training" },
+  { id: "rest", label: "Rest", icon: "\uD83D\uDCA4", entry: "Rest" }
+];
+function errandTabs(v) {
+  if (!v)
+    return [];
+  return ERRAND_TABS.filter((t) => (v[t.id]?.length ?? 0) > 0).map((t) => t.id);
+}
+function pickErrandTab(v, tab) {
+  const tabs = errandTabs(v);
+  return tabs.includes(tab) ? tab : tabs[0] ?? null;
+}
+var errandKey = (tab, id) => `${tab}:${id}`;
+function errandDuration(minutes) {
+  const m = Math.max(0, Math.round(minutes));
+  if (m < 60)
+    return `${m} min`;
+  const h = Math.floor(m / 60), r = m % 60;
+  return r ? `${h}h ${r} min` : `${h}h`;
+}
+function pct2(odds) {
+  return Math.round(odds <= 1 ? odds * 100 : odds);
+}
+function qtyOf(draft, key, max) {
+  const n = Math.floor(draft[key] ?? 1);
+  return Math.max(1, Math.min(Math.max(1, max), Number.isFinite(n) ? n : 1));
+}
+var dis = (off) => off ? " disabled" : "";
+function stepper(key, qty, max, busy, label) {
+  const off = max < 1;
+  return `<span class="warp-errand-qty" role="group" aria-label="${esc(label)}">
+    <button class="warp-btn warp-btn-mini" data-errand-qty="${esc(key)}" data-errand-step="-1" data-errand-max="${esc(max)}" aria-label="Fewer"${dis(off || busy || qty <= 1)}>−</button>
+    <b class="warp-errand-n">${off ? 0 : qty}</b>
+    <button class="warp-btn warp-btn-mini" data-errand-qty="${esc(key)}" data-errand-step="1" data-errand-max="${esc(max)}" aria-label="More"${dis(off || busy || qty >= max)}>+</button>
+  </span>`;
+}
+var quietBtn = (actionId, label, busy, times = 1, off = false, title = "Done off the page — no story reply") => `<button class="warp-btn warp-mini warp-btn-primary" data-errand-quiet="${esc(actionId)}" data-errand-times="${esc(times)}" title="${esc(title)}"${dis(busy || off)}>${esc(label)}</button>`;
+var storyBtn = (actionId, busy) => `<button class="warp-btn warp-mini warp-btn-ghost" data-errand-story="${esc(actionId)}" title="Do it as a story choice instead: the narrator writes it"${dis(busy)}>In the story</button>`;
+var why = (text) => text ? `<div class="warp-errand-why">\uD83D\uDD12 ${esc(text)}</div>` : "";
+function board2(v, busy) {
+  return v.board.map((r) => `<div class="warp-quest warp-quest-offered warp-errand" data-errand-row="${esc(r.id)}">
+    <div class="warp-quest-head"><span>\uD83D\uDCDC <b>${esc(r.name)}</b>${r.kind ? ` <span class="warp-quest-kind">${esc(r.kind)}</span>` : ""}</span>${r.days !== null ? `<span class="warp-dim">${esc(r.days)} day${r.days === 1 ? "" : "s"} to do it</span>` : ""}</div>
+    ${r.desc ? `<div class="warp-dim">${esc(r.desc)}</div>` : ""}
+    ${r.goals.length ? `<ul class="warp-quest-goals">${r.goals.map((g) => `<li>☐ ${esc(g)}</li>`).join("")}</ul>` : ""}
+    ${r.reward ? `<div class="warp-quest-reward">Reward: ${esc(r.reward)}</div>` : ""}
+    ${r.stakes ? `<div class="warp-quest-stakes">⚠ ${esc(r.stakes)}</div>` : ""}
+    <div class="warp-row warp-quest-actions">${quietBtn(r.take, "Take it on", busy, 1, false, "Take it on off the page — it's added to your quests")}</div>
+  </div>`).join("");
+}
+function shop(v, draft, busy) {
+  const row = (r) => {
+    const sell = !!r.sell;
+    const key = sell ? `sell:${r.id}` : errandKey("shop", r.id);
+    const qty = qtyOf(draft, key, r.max);
+    const name = r.item && !(r.label ?? "").toLowerCase().includes(r.item.toLowerCase()) ? `${esc(r.label)} <span class="warp-dim">· ${esc(r.item)}</span>` : esc(r.label || r.item);
+    return `<div class="warp-quest warp-errand${sell ? " warp-errand-sell" : ""}${r.max < 1 ? " warp-errand-off" : ""}" data-errand-row="${esc(r.id)}">
+      <div class="warp-quest-head"><span><b>${name}</b>${sell ? ` <span class="warp-dim">· you have ${esc(r.max)}</span>` : ""}</span>${r.price ? `<span class="warp-errand-price" title="${sell ? "Paid for each one sold" : "Price of each"}">${sell ? "+" : ""}${esc(r.price)}</span>` : ""}</div>
+      ${r.itemDesc ? `<div class="warp-dim">${esc(r.itemDesc)}</div>` : ""}
+      ${r.max < 1 ? why(r.why ?? "Not now") : ""}
+      <div class="warp-row warp-quest-actions">${stepper(key, qty, r.max, busy, `How many ${r.item || r.label}`)}${quietBtn(r.story, sell ? "Sell" : "Buy", busy, qty, r.max < 1)}${storyBtn(r.story, busy)}</div>
+    </div>`;
+  };
+  const buy = v.shop.filter((r) => !r.sell);
+  const sell = v.shop.filter((r) => r.sell);
+  return buy.map(row).join("") + (sell.length ? `<div class="warp-choice-group-label warp-errand-sell-head">Sell</div>${sell.map(row).join("")}` : "");
+}
+function bills(v, busy) {
+  return v.bills.map((r) => `<div class="warp-quest warp-errand" data-errand-row="${esc(r.id)}">
+    <div class="warp-quest-head"><span><b>${esc(r.label)}</b></span><span class="warp-errand-price">${esc(r.amount)}</span></div>
+    <div class="warp-dim">Due ${esc(r.due)}</div>
+    <div class="warp-row warp-quest-actions">${quietBtn(r.story, "Pay", busy)}${storyBtn(r.story, busy)}</div>
+  </div>`).join("");
+}
+function train(v, draft, busy) {
+  return v.train.map((r) => {
+    const key = errandKey("train", r.id);
+    const qty = qtyOf(draft, key, r.max);
+    const facts = [
+      r.odds !== null ? `${pct2(r.odds)}% a session` : null,
+      `${errandDuration(r.minutes)} each`,
+      r.cost ? `${r.cost} each` : null
+    ].filter(Boolean).map((x) => esc(x)).join(" · ");
+    return `<div class="warp-quest warp-errand${r.max < 1 ? " warp-errand-off" : ""}" data-errand-row="${esc(r.id)}">
+      <div class="warp-quest-head"><span><b>${esc(r.label)}</b></span>${r.odds !== null ? `<span class="warp-errand-odds" title="Chance each session pays off">${pct2(r.odds)}%</span>` : ""}</div>
+      ${r.desc ? `<div class="warp-dim">${esc(r.desc)}</div>` : ""}
+      <div class="warp-errand-facts">${facts}</div>
+      ${r.max < 1 ? why(r.why ?? "Not now") : ""}
+      <div class="warp-row warp-quest-actions">${stepper(key, qty, r.max, busy, "Sessions")}<span class="warp-dim">session${qty === 1 ? "" : "s"}</span>${quietBtn(r.story, "Train", busy, qty, r.max < 1)}${storyBtn(r.story, busy)}</div>
+    </div>`;
+  }).join("");
+}
+function rest(v, busy) {
+  return v.rest.map((r) => `<div class="warp-quest warp-errand${r.why ? " warp-errand-off" : ""}" data-errand-row="${esc(r.id)}">
+    <div class="warp-quest-head"><span><b>${esc(r.label)}</b></span><span class="warp-dim">${esc(errandDuration(r.minutes))}</span></div>
+    ${r.desc ? `<div class="warp-dim">${esc(r.desc)}</div>` : ""}
+    ${r.effects ? `<div class="warp-errand-facts">${esc(r.effects)}</div>` : ""}
+    ${why(r.why)}
+    <div class="warp-row warp-quest-actions">${quietBtn(r.story, "Do it", busy, 1, !!r.why)}${storyBtn(r.story, busy)}</div>
+  </div>`).join("");
+}
+function renderErrands(v, tab, draft, busy) {
+  const tabs = errandTabs(v);
+  const cur = pickErrandTab(v, tab);
+  if (!cur)
+    return `<div class="warp-modal warp-errands"><div class="warp-empty">Nothing to do here right now.</div></div>`;
+  const head = `<div class="warp-tabs warp-errand-tabs" role="tablist">${tabs.map((id) => {
+    const t = ERRAND_TABS.find((x) => x.id === id);
+    return `<button class="warp-tab" role="tab" data-errand-tab="${id}" aria-selected="${id === cur}">${t.icon} ${esc(t.label)} <span class="warp-dim">${v[id].length}</span></button>`;
+  }).join("")}</div>`;
+  const money = v.money && (cur === "shop" || cur === "bills" || cur === "train") ? `<div class="warp-errand-money">You have <span class="warp-money">${esc(v.money)}</span></div>` : "";
+  const body = cur === "board" ? board2(v, busy) : cur === "shop" ? shop(v, draft, busy) : cur === "bills" ? bills(v, busy) : cur === "train" ? train(v, draft, busy) : rest(v, busy);
+  const note = `<div class="warp-errand-note warp-dim">${busy ? `<span class="warp-spinner"></span> Doing it…` : "Done off the page: no story reply. The next reply mentions it in a line."}</div>`;
+  return `<div class="warp-modal warp-errands${busy ? " warp-busy" : ""}" data-errand-view="${cur}">${head}${money}<div class="warp-errand-list">${body}</div>${note}</div>`;
+}
+function renderErrandEntries(v) {
+  const tabs = errandTabs(v);
+  if (!v || !tabs.length)
+    return "";
+  const btns = tabs.map((id) => {
+    const t = ERRAND_TABS.find((x) => x.id === id);
+    const n = id === "board" || id === "shop" || id === "bills" ? ` · ${v[id].length}` : "";
+    return `<button type="button" class="warp-btn warp-mini warp-errand-entry" data-errand-open="${id}" title="Opens a window: done off the page, no story reply">${t.icon} ${esc(t.entry)}${n}</button>`;
+  }).join("");
+  return `<div class="warp-errand-entries" role="group" aria-label="Errands">${btns}</div>`;
+}
+var ERRAND_STYLES = `
+.warp-errands { gap: 8px; }
+.warp-errands .warp-errand-tabs { margin: 0 0 2px; padding: 0; flex-wrap: wrap; position: static; }
+.warp-errands .warp-tab { padding: 6px 8px; }
+.warp-errand-list { display: flex; flex-direction: column; }
+.warp-errand { gap: 4px; }
+.warp-errand-off { opacity: .8; }
+.warp-errand-price { font-weight: 600; font-variant-numeric: tabular-nums; color: var(--warp-warn); white-space: nowrap; }
+.warp-errand-odds { font-weight: 600; font-variant-numeric: tabular-nums; color: var(--warp-muted); }
+.warp-errand-facts { color: var(--warp-muted); font-size: 12px; }
+.warp-errand-why { color: var(--warp-warn); font-size: 11.5px; }
+.warp-errand-money { color: var(--warp-muted); font-size: 12.5px; }
+.warp-errand-qty { display: inline-flex; align-items: center; gap: 4px; }
+.warp-errand-n { min-width: 1.6em; text-align: center; font-variant-numeric: tabular-nums; }
+.warp-errand-note { font-size: 11.5px; display: flex; align-items: center; gap: 6px; }
+.warp-errands.warp-busy .warp-errand-list { opacity: .7; }
+.warp-errand-entries { display: flex; flex-wrap: wrap; gap: 5px; }
+.warp-errand-entry { border-style: dashed; }
+.warp-quests-board { margin-bottom: 6px; }
+.warp-errand-sell-head { margin: 4px 0; }
+`;
+
 // src/frontend.ts
 var CLEANUP_KEY = "__warpCleanup";
 var ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><circle cx="8.5" cy="8.5" r="1.3" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/></svg>`;
@@ -15294,6 +15452,7 @@ function setup(ctx) {
   cleanups.push(ctx.dom.addStyle(FX_STYLES));
   cleanups.push(ctx.dom.addStyle(ARCADE_STYLES));
   cleanups.push(ctx.dom.addStyle(DOLL_STYLES));
+  cleanups.push(ctx.dom.addStyle(ERRAND_STYLES));
   cleanups.push(armAudio());
   let state = null;
   let settings = { ...DEFAULT_SETTINGS };
@@ -15880,7 +16039,7 @@ function setup(ctx) {
     const isBusy = busy.on && busy.chatId === state?.chatId;
     const live = liveLog();
     const recap = live ? { foe: live.foe, rounds: live.rounds, why: renderWhyFold(state?.records.find((r) => r.messageId === live.messageId)) } : null;
-    const html = settings.enabled && state?.hud && anchor ? renderChoices(state.choices, { minigames: settings.minigames, showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined, encounter: state.hud.encounter, recap }) : "";
+    const html = settings.enabled && state?.hud && anchor ? (settings.errands !== false ? renderErrandEntries(state.hud.errands) : "") + renderChoices(state.choices, { minigames: settings.minigames, showOdds: settings.showOdds, hotkeys: settings.hotkeys, busy: isBusy, busyLabel: busy.label || undefined, encounter: state.hud.encounter, recap }) : "";
     if (!force && anchor === choicesFor && html === choicesHtml && choicesEl?.isConnected)
       return;
     if (choicesEl) {
@@ -16215,8 +16374,117 @@ function setup(ctx) {
     syncStage();
     syncDockVisibility();
     syncCue();
+    syncErrands();
     if (state?.hud)
       lastBars = new Map(state.hud.bars.map((b) => [b.id, b.value]));
+  }
+  let errands = null;
+  const errandsBusy = () => !!errands && (errands.busy || busy.on && busy.chatId === errands.chatId);
+  function closeErrands() {
+    const e = errands;
+    errands = null;
+    if (e?.timer)
+      clearTimeout(e.timer);
+    try {
+      e?.modal.dismiss();
+    } catch {}
+  }
+  function renderErrandsWindow() {
+    const v = state?.hud?.errands;
+    if (!errands || !v)
+      return;
+    errands.tab = pickErrandTab(v, errands.tab) ?? errands.tab;
+    errands.modal.root.innerHTML = renderErrands(v, errands.tab, errands.draft, errandsBusy());
+  }
+  function syncErrands() {
+    if (!errands)
+      return;
+    const v = state?.hud?.errands;
+    if (!settings.enabled || settings.errands === false || !v || !errandTabs(v).length || state?.chatId !== errands.chatId || chatId() !== errands.chatId) {
+      closeErrands();
+      return;
+    }
+    renderErrandsWindow();
+  }
+  function openErrands(tabId) {
+    const cid = chatId();
+    const v = state?.hud?.errands;
+    if (!cid || !v || state?.chatId !== cid || !errandTabs(v).length)
+      return;
+    if (errands && errands.chatId === cid) {
+      errands.tab = tabId;
+      renderErrandsWindow();
+      return;
+    }
+    closeErrands();
+    const modal = ctx.ui.showModal({ title: "Errands", width: 560, maxHeight: 680 });
+    const me = { modal, chatId: cid, tab: tabId, draft: {}, busy: false, timer: null };
+    errands = me;
+    modal.onDismiss(() => {
+      if (errands === me) {
+        if (me.timer)
+          clearTimeout(me.timer);
+        errands = null;
+      }
+    });
+    modal.root.addEventListener("click", (e) => onErrandsClick(e.target));
+    renderErrandsWindow();
+  }
+  function onErrandsClick(t) {
+    if (!errands)
+      return;
+    const tabBtn = t.closest("[data-errand-tab]");
+    if (tabBtn) {
+      errands.tab = tabBtn.dataset.errandTab;
+      renderErrandsWindow();
+      return;
+    }
+    const step = t.closest("[data-errand-qty]");
+    if (step) {
+      if (step.disabled)
+        return;
+      const key = step.dataset.errandQty;
+      const max = Math.max(1, Number(step.dataset.errandMax) || 1);
+      errands.draft[key] = Math.max(1, Math.min(max, (errands.draft[key] ?? 1) + (Number(step.dataset.errandStep) || 0)));
+      renderErrandsWindow();
+      return;
+    }
+    const quiet = t.closest("[data-errand-quiet]");
+    if (quiet) {
+      if (quiet.disabled || errandsBusy())
+        return;
+      const times = Math.max(1, Math.floor(Number(quiet.dataset.errandTimes) || 1));
+      sendQuiet(quiet.dataset.errandQuiet, times);
+      return;
+    }
+    const story = t.closest("[data-errand-story]");
+    if (story) {
+      if (story.disabled || errandsBusy())
+        return;
+      const id = story.dataset.errandStory;
+      closeErrands();
+      act(id);
+    }
+  }
+  function sendQuiet(actionId, times = 1) {
+    const cid = chatId();
+    if (!cid || busy.on && busy.chatId === cid)
+      return;
+    send({ type: "quiet", chatId: cid, actionId, ...times > 1 ? { times } : {} });
+    if (errands && errands.chatId === cid) {
+      const me = errands;
+      me.busy = true;
+      if (me.timer)
+        clearTimeout(me.timer);
+      me.timer = setTimeout(() => {
+        if (errands === me && me.busy) {
+          me.busy = false;
+          me.timer = null;
+          renderErrandsWindow();
+        }
+      }, 15000);
+      renderErrandsWindow();
+    }
   }
   function openPicker() {
     const id = chatId();
@@ -16501,7 +16769,21 @@ function setup(ctx) {
     }
     const go = t.closest("[data-go]");
     if (go) {
-      act(`go:${go.dataset.go}`);
+      if (settings.quietTravel)
+        sendQuiet(`go:${go.dataset.go}`);
+      else
+        act(`go:${go.dataset.go}`);
+      return;
+    }
+    const errandOpen = t.closest("[data-errand-open]");
+    if (errandOpen) {
+      openErrands(errandOpen.dataset.errandOpen);
+      return;
+    }
+    const useQuiet = t.closest("[data-use-quiet]");
+    if (useQuiet) {
+      if (!useQuiet.disabled)
+        sendQuiet(useQuiet.dataset.useQuiet);
       return;
     }
     const jump = t.closest("[data-jump]");
@@ -16998,6 +17280,12 @@ function setup(ctx) {
         playChoice(challenge.dataset.playChallenge);
       return;
     }
+    const errandOpen = t.closest(".warp-choices [data-errand-open]");
+    if (errandOpen) {
+      e.preventDefault();
+      openErrands(errandOpen.dataset.errandOpen);
+      return;
+    }
     const choice = t.closest(".warp-choices [data-act]");
     if (choice) {
       e.preventDefault();
@@ -17107,6 +17395,12 @@ function setup(ctx) {
           dgPick = dgPick?.kind === "use" ? dgPick : null;
         const fx = settings.enabled ? fxEvents(state, m) : [];
         state = m;
+        if (errands) {
+          errands.busy = false;
+          if (errands.timer)
+            clearTimeout(errands.timer);
+          errands.timer = null;
+        }
         if (entered)
           drawerView = "dungeon";
         if (settings.enabled)
@@ -17189,6 +17483,7 @@ function setup(ctx) {
       ctx.dom.uninject(el);
     if (choicesEl)
       ctx.dom.uninject(choicesEl);
+    closeErrands();
     for (const c of cleanups.reverse()) {
       try {
         c();

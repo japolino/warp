@@ -221,6 +221,8 @@ export interface ActionDef {
   /** Encounter moves only: uses per encounter / per in-game day (0 or absent = unlimited), counted like abilities' charges. */
   perEncounter?: number;
   perDay?: number;
+  /** Off-the-page errand window: shop, train or rest (found from the action's shape when not set); false keeps it a story choice. */
+  errand?: "shop" | "train" | "rest" | false;
 }
 
 /** One requirement of an action, kept readable so a locked choice can say exactly what's missing. */
@@ -1525,7 +1527,7 @@ const TIER_KEYS: Record<string, Tier> = {
 export const ACTION_KEYS = new Set([
   "label", "say", "desc", "description", "group", "at", "when", "hidden", "why_not", "locked", "time", "cost", "costs", "check",
   "outcomes", "effects", "effect", "params", "tags", "order", "per_person", "with", "targets", "requires", "needs", "show_locked", "gamble",
-  "per_day", "per_encounter",
+  "per_day", "per_encounter", "errand",
 ]);
 
 function editDistance(a: string, b: string): number {
@@ -1610,6 +1612,9 @@ function normAction(id: string, raw: unknown, where: string, c: Ctx, known: { st
     requires,
     showLocked: raw.show_locked === true || (raw.show_locked !== false && requires.length > 0),
     ...(gamble ? { gamble } : {}),
+    ...(raw.errand === false || raw.errand === "none" ? { errand: false as const }
+      : raw.errand === "shop" || raw.errand === "train" || raw.errand === "rest" ? { errand: raw.errand }
+      : raw.errand !== undefined ? (c.warn(`${where} › errand`, `errand: shop, train, rest or false (got ${JSON.stringify(raw.errand)})`), {}) : {}),
   };
 }
 

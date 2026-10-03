@@ -60,6 +60,8 @@ export interface TurnRecord {
   gamble?: { game: GambleGame; stake: number; net: number; played: boolean };
   /** The player character's mind overruled the player this turn. */
   mind?: { id: string; cause: string; kind: "fail" | "alter" | "redirect"; meant: string; chance: number };
+  /** Done off the page (errands, quiet item use, quiet travel) after this message, one line each — told to the next reply. */
+  quiet?: string[];
   at: number;
 }
 

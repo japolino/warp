@@ -9,6 +9,7 @@ import { logError, send, toast } from "./backend/host.js";
 import { foldPath, getMessages, patchWarpMeta, reconcilePath, shiftAfterSwipeDelete, warpMeta, writeRecord } from "./backend/ledger.js";
 import { getSettings, patchSettings } from "./backend/settings.js";
 import { dollLook } from "./backend/doll.js";
+import { doQuiet } from "./backend/quiet.js";
 import { getRuleset, installTemplate, invalidateCharacter, invalidateChat, knownRulesetBookIds, knownRulesetEntryIds } from "./backend/source.js";
 import { busyChats, connectionsFor, getActiveChat, pushState, schedulePush, setActiveChat } from "./backend/state-push.js";
 import { afterReply, generationHistory, interceptor, onGenerationEnded, onGenerationStarted, onGenerationStopped, playerName } from "./backend/turn.js";
@@ -342,6 +343,11 @@ spindle.onFrontendMessage(async (raw, userId) => {
       case "allocate": {
         const ok = await applyManual(msg.chatId, userId, (r, state) => allocateStats(r, state, msg.spend));
         if (ok) toast("success", "Points spent.", userId);
+        break;
+      }
+
+      case "quiet": {
+        await doQuiet(msg, userId);
         break;
       }
 

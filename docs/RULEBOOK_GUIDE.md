@@ -200,6 +200,14 @@ actions:
     # requires: shown LOCKED at its place with what's missing ("Needs Lockpicking 30 (you have 18), Brann with you · After closing");
     #   a stat name = at least that much; with: someone here; has: items; quest: id (taken) or { id: done }; folds into when:. show_locked: false hides it instead
     effects: { give: bearer_bonds }
+  buy_potion:
+    label: Buy a potion (25 E)
+    at: [apothecary]
+    effects: { eros: -25, give: potion }
+    # ERRANDS: buying/selling (money for things), practice (a check that raises a skill, nothing to carry away) and rest
+    #   (time passes, the body recovers) are found from their shape and go in the Errands window, done off the page
+    #   with no narrator turn (the next reply gets one line). errand: shop | train | rest sets it; errand: false keeps
+    #   it a story choice. Quests with board: true at a board: place are taken there too.
   blackjack_table:
     label: Play blackjack
     at: [casino]

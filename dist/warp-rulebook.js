@@ -5662,7 +5662,8 @@ var ACTION_KEYS = new Set([
   "show_locked",
   "gamble",
   "per_day",
-  "per_encounter"
+  "per_encounter",
+  "errand"
 ]);
 function editDistance(a, b) {
   let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
@@ -5759,7 +5760,8 @@ function normAction(id, raw, where, c, known, order) {
     ...raw.targets !== undefined ? { targets: list(raw.targets) } : {},
     requires,
     showLocked: raw.show_locked === true || raw.show_locked !== false && requires.length > 0,
-    ...gamble ? { gamble } : {}
+    ...gamble ? { gamble } : {},
+    ...raw.errand === false || raw.errand === "none" ? { errand: false } : raw.errand === "shop" || raw.errand === "train" || raw.errand === "rest" ? { errand: raw.errand } : raw.errand !== undefined ? (c.warn(`${where} › errand`, `errand: shop, train, rest or false (got ${JSON.stringify(raw.errand)})`), {}) : {}
   };
 }
 function normRequires(raw, where, c, known) {
@@ -14552,6 +14554,14 @@ actions:
     # requires: shown LOCKED at its place with what's missing ("Needs Lockpicking 30 (you have 18), Brann with you · After closing");
     #   a stat name = at least that much; with: someone here; has: items; quest: id (taken) or { id: done }; folds into when:. show_locked: false hides it instead
     effects: { give: bearer_bonds }
+  buy_potion:
+    label: Buy a potion (25 E)
+    at: [apothecary]
+    effects: { eros: -25, give: potion }
+    # ERRANDS: buying/selling (money for things), practice (a check that raises a skill, nothing to carry away) and rest
+    #   (time passes, the body recovers) are found from their shape and go in the Errands window, done off the page
+    #   with no narrator turn (the next reply gets one line). errand: shop | train | rest sets it; errand: false keeps
+    #   it a story choice. Quests with board: true at a board: place are taken there too.
   blackjack_table:
     label: Play blackjack
     at: [casino]
@@ -18808,6 +18818,54 @@ function namesTitle(text, title) {
   return hits >= (words.length <= 2 ? words.length : words.length - 1);
 }
 
+// src/engine/errands.ts
+var isEmpty = (o) => !o || Object.keys(o).length === 0;
+function offStage(e) {
+  if (!e)
+    return true;
+  return isEmpty(e.rel) && !e.move && !e.startEncounter && !e.end && isEmpty(e.decide) && isEmpty(e.foe) && isEmpty(e.bond) && isEmpty(e.afflict) && isEmpty(e.inflict) && !e.conceive && isEmpty(e.reveal) && isEmpty(e.front) && isEmpty(e.body) && isEmpty(e.transform) && isEmpty(e.arc) && isEmpty(e.wear) && isEmpty(e.undress) && isEmpty(e.damage) && !e.harm && !e.momentum;
+}
+var moneyIds = (r) => r.statOrder.filter((id) => r.stats[id].kind === "money");
+function errandKind(r, a) {
+  if (a.errand === false)
+    return null;
+  if (a.errand)
+    return a.errand;
+  if (a.hidden || a.perPerson || a.params.length || a.gamble || a.perEncounter)
+    return null;
+  const all = [a.effects, a.cost, ...Object.values(a.outcomes)];
+  if (!all.every(offStage))
+    return null;
+  const money = new Set(moneyIds(r));
+  const touches = (pred) => all.some((e) => e && [...Object.keys(e.stats), ...Object.keys(e.set)].some(pred));
+  const gives = all.some((e) => e && Object.values(e.items).some((n) => n > 0));
+  const takes = all.some((e) => e && Object.values(e.items).some((n) => n < 0));
+  const spends = all.some((e) => e && Object.entries(e.stats).some(([id, v]) => money.has(id) && (typeof v === "number" ? v < 0 : /^\s*-/.test(v))));
+  const earns = all.some((e) => e && Object.entries(e.stats).some(([id, v]) => money.has(id) && (typeof v === "number" ? v > 0 : !/^\s*-/.test(v))));
+  if (!a.check) {
+    if ((gives && spends || takes && earns && !gives) && !touches((id) => !money.has(id)))
+      return "shop";
+    const e = a.effects;
+    if ((a.time ?? 0) >= 30 && !gives && !takes && !touches((id) => money.has(id) || r.stats[id]?.kind === "skill" || r.stats[id]?.kind === "attribute") && isEmpty(e.unlock) && isEmpty(e.learn) && isEmpty(e.items))
+      return "rest";
+    return null;
+  }
+  if (gives || takes || spends || earns || touches((id) => r.stats[id]?.kind === "hidden"))
+    return null;
+  const raises = Object.values(a.outcomes).some((e) => e && Object.entries(e.stats).some(([id, v]) => {
+    const k = r.stats[id]?.kind;
+    return (k === "skill" || k === "attribute") && (typeof v === "number" ? v > 0 : !/^\s*-/.test(v));
+  }));
+  const quiet = Object.values(a.outcomes).every((e) => !e || isEmpty(e.flags) && isEmpty(e.unlock));
+  return raises && quiet ? "train" : null;
+}
+function errandsOpen(s) {
+  return !s.encounter && !s.dungeon && !s.date && !s.job && !s.ended;
+}
+function errandActionIds(r) {
+  return new Set(r.actionOrder.filter((id) => errandKind(r, r.actions[id])));
+}
+
 // src/engine/view.ts
 function pct2(v, min, max) {
   return max > min ? Math.max(0, Math.min(1, (v - min) / (max - min))) : 0;
@@ -19281,7 +19339,8 @@ function choiceList(r, s, opts) {
       plain("dungeon:leave", "Leave the dungeon", d?.name ?? "Dungeon", "Climb back out with what you've found")
     ];
   }
-  const work = s.encounter ? [] : workMoves(r, s).map((m) => plain(m.id, m.label, m.group, m.desc));
+  const quiet = opts.errands && errandsOpen(s) ? errandActionIds(r) : null;
+  const work = s.encounter ? [] : workMoves(r, s).filter((m) => !(quiet && m.id.startsWith(PAY_PREFIX))).map((m) => plain(m.id, m.label, m.group, m.desc));
   if (s.job)
     return work;
   const asChoice = (m) => ({
@@ -19342,7 +19401,7 @@ function choiceList(r, s, opts) {
   for (const x of lockedExits(r, s))
     travel.push({ ...plain(`${TRAVEL_PREFIX}${x.id}`, `Go to ${r.locations[x.id].name}`, "Travel", r.locations[x.id].desc ?? null), locked: x.locked });
   const encName = s.encounter ? r.encounters[s.encounter.id]?.name ?? "Encounter" : null;
-  const actions = availableChoices(r, s, opts.lines).filter(({ a }) => !a.hidden).map(({ id, a, target, label }) => {
+  const actions = availableChoices(r, s, opts.lines).filter(({ a, id }) => !a.hidden && !quiet?.has(id)).map(({ id, a, target, label }) => {
     const o = odds(r, s, a, undefined, target);
     return {
       id,
@@ -19360,7 +19419,7 @@ function choiceList(r, s, opts) {
   const pool = actionPool(r, s);
   for (const id of pool.order) {
     const a = pool.defs[id];
-    if (a.hidden || a.perPerson || a.tags.some((t) => lines.has(t)))
+    if (a.hidden || a.perPerson || a.tags.some((t) => lines.has(t)) || quiet?.has(id))
       continue;
     const spent = whenHolds(r, s, a) ? spentLock(r, s, a) : null;
     if (!spent && !s.encounter && (!a.showLocked || a.at.length && !a.at.includes(s.location ?? "")))
@@ -19371,9 +19430,9 @@ function choiceList(r, s, opts) {
       continue;
     locked.push({ ...plain(id, a.label, encName ?? a.group ?? null, a.desc ?? null), locked: spent ?? lockReason(r, s, a) });
   }
-  return [...live, ...actions, ...abilityChoices(r, s, lines), ...itemChoices(r, s, lines), ...locked, ...questChoices(r, s), ...talk, ...work, ...dungeons, ...travel, ...explore];
+  return [...live, ...actions, ...abilityChoices(r, s, lines), ...itemChoices(r, s, lines), ...locked, ...questChoices(r, s, !!quiet), ...talk, ...work, ...dungeons, ...travel, ...explore];
 }
-function questChoices(r, s) {
+function questChoices(r, s, boardInWindow = false) {
   if (s.encounter || s.job || s.ended || s.dungeon)
     return [];
   const plain = (id, label, desc, why) => ({ id, label, group: "Quests", desc, odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [], ...why ? { why } : {} });
@@ -19385,7 +19444,7 @@ function questChoices(r, s) {
     const reward = effectWords(r, s, q.reward);
     out.push(plain(`${QUEST_PREFIX}report:${id}`, to ? `Tell ${to}: "${q.name}" is done` : `Hand in "${q.name}"`, q.desc ?? null, reward ? `Reward: ${reward}` : undefined));
   }
-  const offers = questOffers(r, s).sort((a, b) => Number(b.via === "giver") - Number(a.via === "giver")).slice(0, 3);
+  const offers = questOffers(r, s).filter((o) => !(boardInWindow && o.via === "board")).sort((a, b) => Number(b.via === "giver") - Number(a.via === "giver")).slice(0, 3);
   for (const o of offers) {
     const q = r.quests[o.id];
     const reward = effectWords(r, s, q.reward);

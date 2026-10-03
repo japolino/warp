@@ -16,15 +16,18 @@ export function fillNames(text: string, player: string) {
  * what's in play — a bag, a board or a skill sheet in the prompt is something the narrator will reach for.
  * Without it, the whole state goes in.
  */
-export function buildInjection(r: Ruleset, rec: TurnRecord | null, before: GameState, after: GameState, player: string, focus?: string): string {
+export function buildInjection(r: Ruleset, rec: TurnRecord | null, before: GameState, after: GameState, player: string, focus?: string, since: string[] = []): string {
   const parts: string[] = [];
-  // The chosen action and the rules' hints are part of what's in play (an item it uses, a quest it advances).
+  // The chosen action and the rules' hints are part of what's in play (an item it uses, a quest it advances),
+  // and so is whatever {{user}} just did off the page.
   const turnText = focus === undefined ? undefined : fillNames([
     focus,
+    ...since,
     rec?.action?.label ?? "",
     ...(rec?.hints ?? []),
   ].join("\n"), player);
   parts.push(`[Warp — current game state. The rules engine owns these facts; keep narration consistent with them.]\n${stateDigest(r, after, turnText === undefined ? undefined : { text: turnText })}`);
+  if (since.length) parts.push(`[Warp — what {{user}} did since the last reply, off the page. Already done: keep the story consistent with it, but don't narrate it as happening now or repeat it back.]\n${since.slice(-8).map((l) => `- ${l}`).join("\n")}`);
   if (r.narration.notes) parts.push(`[Warp — narrator notes]\n${r.narration.notes}`);
   const felt = perception(r, after);
   if (felt) parts.push(`[Warp — how {{user}} experiences things right now. Filter the narration through this.]\n${felt}`);
