@@ -18,7 +18,7 @@ function pctTone(p: number): "good" | "warn" | "bad" {
 
 // ───────────────────────── HUD ─────────────────────────
 
-/** One of the HUD's sections: it can sit in the main window or be torn off into a panel of its own. */
+/** One of the HUD's sections. */
 export interface HudPart { id: string; title: string; count: number; body: string; open: boolean }
 
 export interface HudOpts { editing: string | null; compact: boolean }
@@ -29,10 +29,10 @@ export function renderHud(h: HudView, opts: HudOpts): string {
   return head + parts.map((p) => renderPart(p)).join("");
 }
 
-/** A section; `movable` ones can be dragged out into a window of their own. */
-export const renderPart = (p: HudPart, movable = false) => section(p.title, p.count, p.body, p.open, p.id, movable);
+/** A section of the HUD. */
+export const renderPart = (p: HudPart) => section(p.title, p.count, p.body, p.open, p.id);
 
-/** The HUD split into its fixed head and its movable sections. */
+/** The HUD split into its fixed head and its sections. */
 export function hudParts(h: HudView, opts: HudOpts): { head: string; parts: HudPart[] } {
   const top = [
     `<div class="warp-eyebrow"><span>${esc(h.rulesetName)}</span><span title="Turn">T${h.turn}</span></div>`,
@@ -194,8 +194,8 @@ export function renderJournal(h: HudView | null, records: RecordView[]): string 
   return timeline;
 }
 
-function section(title: string, count: number, body: string, open: boolean, key = title, movable = false): string {
-  return `<details class="warp-section" data-section="${esc(key)}"${open ? " open" : ""}><summary${movable ? ` data-part="${esc(key)}" title="Hold and drag out to give it a window of its own"` : ""}><span>${esc(title)}${count ? ` · ${count}` : ""}</span></summary><div class="warp-section-body">${body}</div></details>`;
+function section(title: string, count: number, body: string, open: boolean, key = title): string {
+  return `<details class="warp-section" data-section="${esc(key)}"${open ? " open" : ""}><summary><span>${esc(title)}${count ? ` · ${count}` : ""}</span></summary><div class="warp-section-body">${body}</div></details>`;
 }
 
 // ───────────────────────── choices ─────────────────────────

@@ -9,7 +9,6 @@ import { attachedBox, edgeForDrop, PAD, PANEL_W, PILL, type Box, type Edge, type
 import { emptyDraft, renderBuilder, renderBuilderCta, type BuilderDraft } from "./frontend/builder-ui.js";
 import { connectCue } from "./frontend/cue-bridge.js";
 import { esc, hudParts, renderChips, renderEncounterLog, renderWhyFold, renderChoices, renderHud, renderJournal, renderPart, renderRulesetCard, renderSettings, renderTemplatePicker } from "./frontend/render.js";
-import { createPanels, wireGrip } from "./frontend/panel-windows.js";
 import { acceptsResponse } from "./frontend/response-gate.js";
 import { logoSvg } from "./frontend/logo.js";
 
@@ -78,26 +77,18 @@ export function setup(ctx: SpindleFrontendContext) {
   let overlay: SpindleFloatWidgetHandle | null = null;
   const overlayEl = document.createElement("div");
   overlayEl.className = "warp-overlay";
-  overlayEl.innerHTML = `<div class="warp-overlay-head" title="Drag to move · drop on a screen edge to attach"></div><div class="warp-overlay-body warp-root"></div><div class="warp-resize" data-spindle-float-resize-handle title="Drag to resize · double-click to fit" aria-hidden="true"></div>`;
+  overlayEl.innerHTML = `<div class="warp-overlay-head" title="Drag to move · drop on a screen edge to attach"></div><div class="warp-overlay-body warp-root"></div>`;
   const headEl = overlayEl.firstElementChild as HTMLElement;
   const dockRoot = overlayEl.children[1] as HTMLElement;
-  const gripEl = overlayEl.lastElementChild as HTMLElement;
-  /** The main window's size set by hand with its corner grip (floating, open); null = fit the HUD. */
-  let mainSize: { w: number; h: number } | null = (() => {
-    try { const v = JSON.parse(store("overlaySize") ?? "null"); return v && v.w > 0 && v.h > 0 ? { w: Math.round(v.w), h: Math.round(v.h) } : null; } catch { return null; }
-  })();
-  const mainW = () => mainSize?.w ?? PANEL_W;
   // Presses inside the body scroll and click; they must not start a widget drag.
   // (Form controls are already exempt from dragging, and need their default to take focus.)
   dockRoot.addEventListener("pointerdown", (e) => {
     if (!(e.target as Element).closest?.("input, select, textarea")) e.preventDefault();
-    // Holding a section's header and dragging tears it out into a panel of its own.
-    panels.startSectionDrag(e, null);
   });
   let cur: Box = { x: 0, y: 72, w: PILL.w, h: PILL.h };
   try {
     const vp = viewport();
-    const w = overlayOpen ? mainW() : PILL.w;
+    const w = overlayOpen ? PANEL_W : PILL.w;
     const h = overlayOpen ? 420 : PILL.h;
     const start = edge ? attachedBox(edge, overlayOpen, vp) : { x: Math.max(PAD, vp.width - w - 20), y: 72, w, h };
     overlay = ctx.ui.createFloatWidget({
@@ -116,38 +107,12 @@ export function setup(ctx: SpindleFrontendContext) {
     overlay = null; // ui_panels not granted — the drawer tab still has everything
   }
 
-  // Sections torn off the main window into panels of their own (see panel-windows.ts).
-  const panels = createPanels({
-    ctx,
-    viewport,
-    main: () => (overlay?.isVisible() ? { box: cur, el: overlayEl, open: overlayOpen } : null),
-    shown: () => !!overlay && (!!state?.hud || state?.status.state === "broken"),
-    wire: (body) => wirePanel(body),
-    rememberSections: (root) => rememberSections(root),
-    restoreSections: (root) => restoreSections(root),
-    changed: () => { renderDock(); fitOverlay(); },
-    load: () => store("panels"),
-    save: (v) => { store("panels", v); },
-  });
-  cleanups.push(() => panels.destroy());
-
-  // The main window's corner grip (only while it floats open; attached to an edge it takes that edge's size).
-  cleanups.push(wireGrip(gripEl, {
-    start: () => ({ w: cur.w, h: cur.h }),
-    scale: () => { try { return ctx.ui.geometry?.getUiScale() || 1; } catch { return 1; } },
-    max: () => { const vp = viewport(); return { w: vp.width - 24, h: vp.height - 24 }; },
-    live: (s) => { overlayEl.style.setProperty("--warp-overlay-max", `${s.h - PILL.h}px`); place({ ...cur, w: s.w, h: s.h }); },
-    done: (s) => { mainSize = s; store("overlaySize", JSON.stringify(s)); fitOverlay(); },
-    reset: () => { mainSize = null; store("overlaySize", ""); fitOverlay(); },
-  }));
-
   function place(b: Box) {
     if (!overlay) return;
     if (b.w !== cur.w || b.h !== cur.h) overlay.setSize(b.w, b.h);
     const p = overlay.getPosition();
     if (p.x !== b.x || p.y !== b.y) overlay.moveTo(b.x, b.y);
     cur = b;
-    panels.follow();
   }
 
   /** Floating resize that keeps whichever side is nearer the screen edge fixed, so it doesn't jump. */
@@ -172,16 +137,9 @@ export function setup(ctx: SpindleFrontendContext) {
     }
     if (!overlayOpen) { resizeFloating(PILL.w, PILL.h); return; }
     const maxH = Math.max(240, vp.height - 140);
-    if (mainSize) {
-      // A size set by hand: kept, the HUD scrolling inside it.
-      const h = Math.min(mainSize.h, vp.height - 24);
-      overlayEl.style.setProperty("--warp-overlay-max", `${h - PILL.h}px`);
-      resizeFloating(Math.min(mainSize.w, vp.width - 24), h);
-      return;
-    }
     overlayEl.style.setProperty("--warp-overlay-max", `${maxH - PILL.h}px`);
     // Measure the body's natural height so short HUDs don't leave empty space.
-    requestAnimationFrame(() => { if (!mainSize) resizeFloating(PANEL_W, Math.min(maxH, PILL.h + dockRoot.scrollHeight + 2)); });
+    requestAnimationFrame(() => resizeFloating(PANEL_W, Math.min(maxH, PILL.h + dockRoot.scrollHeight + 2)));
   }
 
   // Dragging an attached overlay detaches it straight away (back to floating size),
@@ -192,21 +150,8 @@ export function setup(ctx: SpindleFrontendContext) {
     if (!overlay || e.button !== 0) return;
     pressAt = { x: e.clientX, y: e.clientY };
     dragStart = overlay.getPosition();
-    mainDrag = true;
   });
-  let mainDrag = false;
-  let followFrame = 0;
   const onPointerMove = (e: PointerEvent) => {
-    // Panels attached to the main window come along while it's dragged.
-    if (mainDrag && overlay && !followFrame && panels.hasPanels()) {
-      followFrame = requestAnimationFrame(() => {
-        followFrame = 0;
-        if (!overlay || !mainDrag) return;
-        const p = overlay.getPosition();
-        cur = { ...cur, x: p.x, y: p.y };
-        panels.follow();
-      });
-    }
     if (!pressAt || !overlay) return;
     if (Math.hypot(e.clientX - pressAt.x, e.clientY - pressAt.y) < 4) return;
     pressAt = null;
@@ -214,13 +159,13 @@ export function setup(ctx: SpindleFrontendContext) {
       edge = null;
       store("overlayEdge", "");
       overlayEl.dataset.edge = "";
-      const w = overlayOpen ? mainW() : PILL.w;
-      const h = overlayOpen ? Math.min(mainSize?.h ?? 420, cur.h) : PILL.h;
+      const w = overlayOpen ? PANEL_W : PILL.w;
+      const h = overlayOpen ? Math.min(420, cur.h) : PILL.h;
       overlay.setSize(w, h);
       cur = { ...cur, w, h };
     }
   };
-  const onPointerUp = () => { pressAt = null; mainDrag = false; };
+  const onPointerUp = () => { pressAt = null; };
   window.addEventListener("pointermove", onPointerMove);
   window.addEventListener("pointerup", onPointerUp);
   cleanups.push(() => {
@@ -232,7 +177,6 @@ export function setup(ctx: SpindleFrontendContext) {
     cleanups.push(overlay.onDragEnd((pos) => {
       const from = dragStart ?? pos;
       dragStart = null;
-      mainDrag = false;
       cur = { ...cur, x: pos.x, y: pos.y };
       edge = edgeForDrop(from, cur, viewport());
       store("overlayEdge", edge ?? "");
@@ -250,7 +194,6 @@ export function setup(ctx: SpindleFrontendContext) {
     const show = !!state?.hud || state?.status.state === "broken";
     if (show !== overlay.isVisible()) overlay.setVisible(show);
     if (show) fitOverlay();
-    panels.sync();
   }
 
   function renderHead() {
@@ -276,7 +219,7 @@ export function setup(ctx: SpindleFrontendContext) {
       const vp = viewport();
       edge = null;
       store("overlayEdge", "");
-      place({ x: Math.max(PAD, vp.width - mainW() - 40), y: 72, w: mainW(), h: Math.min(mainSize?.h ?? 420, cur.h) });
+      place({ x: Math.max(PAD, vp.width - PANEL_W - 40), y: 72, w: PANEL_W, h: Math.min(420, cur.h) });
       renderHead();
       fitOverlay();
       return;
@@ -287,7 +230,6 @@ export function setup(ctx: SpindleFrontendContext) {
       store("overlayOpen", overlayOpen ? "1" : "0");
       renderHead();
       fitOverlay();
-      panels.sync();
     }
   });
 
@@ -317,17 +259,12 @@ export function setup(ctx: SpindleFrontendContext) {
     rememberSections(dockRoot);
     const kept = dockRoot.scrollTop;
     if (state?.hud) {
-      // The head always stays here; each section sits here unless it's been torn off into a panel.
       const { head, parts } = hudParts(state.hud, { editing: editingBar, compact: true });
-      const mine = parts.filter((p) => panels.inMain(p.id));
-      dockRoot.innerHTML = historyNotice() + head + mine.map((p) => renderPart(p, true)).join("");
-      panels.render(parts);
+      dockRoot.innerHTML = historyNotice() + head + parts.map((p) => renderPart(p)).join("");
     } else if (state?.status.state === "broken") {
       dockRoot.innerHTML = renderRulesetCard(state.status, true);
-      panels.render([]);
     } else {
       dockRoot.innerHTML = "";
-      panels.render([]);
     }
     restoreSections(dockRoot);
     dockRoot.scrollTop = kept;
