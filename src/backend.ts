@@ -1,5 +1,5 @@
 import type { SpindleAPI } from "lumiverse-spindle-types";
-import { allocateStats, buyPerk, changeClothes, forgetPerson, manualSet, manualSetRel, type TurnRecord } from "./engine/resolve.js";
+import { changeClothes, forgetPerson, manualSet, manualSetRel, type TurnRecord } from "./engine/resolve.js";
 import type { Ruleset } from "./engine/ruleset.js";
 import type { GameState, WarpEvent } from "./engine/state.js";
 import { TEMPLATES } from "./engine/templates/index.js";
@@ -30,7 +30,7 @@ spindle.registerWorldInfoInterceptor(async (ctx) => {
     .filter((e) => knownRulesetEntryIds.has(e.id) || knownRulesetBookIds.has(e.world_book_id) || isRulesetEntryTitle(e.comment))
     .map((e) => e.id);
 
-  // Gated lore: entries named in a codex entry's `lore:` (or a secret stage's) stay off until it's
+  // Gated lore: entries named in a secret stage's `lore:` stay off until it's
   // unlocked, then they're forced on — so a secret's long text can live in the lorebook and still never leak early.
   const forced: string[] = [];
   try {
@@ -38,7 +38,6 @@ spindle.registerWorldInfoInterceptor(async (ctx) => {
     const r = loaded?.ruleset;
     const gates: { lore: string[]; open: (s: GameState) => boolean }[] = [];
     if (r) {
-      for (const c of Object.values(r.codex)) if (c.lore.length) gates.push({ lore: c.lore, open: (s) => !!s.codex[c.id] });
       for (const sec of Object.values(r.secrets)) sec.stages.forEach((st, i) => {
         if (st.lore.length) gates.push({ lore: st.lore, open: (s) => (s.secrets[sec.id] ?? -1) >= i });
       });
@@ -57,7 +56,7 @@ spindle.registerWorldInfoInterceptor(async (ctx) => {
       }
     }
   } catch (e) {
-    logError("codex lore gate", e);
+    logError("lore gate", e);
   }
   return disabled.length || forced.length ? { ...(disabled.length ? { disabled } : {}), ...(forced.length ? { forced } : {}) } : undefined;
 }, 10);
@@ -114,7 +113,7 @@ spindle.commands.onInvoked((id, context) => {
 // ── Frontend messages ────────────────────────────────────────────
 
 /**
- * Player-made changes (HUD edits, clothes, perks) are recorded on the latest
+ * Player-made changes (HUD edits, clothes) are recorded on the latest
  * message's active swipe, so they fold, swipe and undo like everything else.
  */
 async function applyManual(
@@ -312,18 +311,6 @@ spindle.onFrontendMessage(async (raw, userId) => {
 
       case "forget": {
         await applyManual(msg.chatId, userId, (r, state) => forgetPerson(r, state, msg.who));
-        break;
-      }
-
-      case "allocate": {
-        const ok = await applyManual(msg.chatId, userId, (r, state) => allocateStats(r, state, msg.spend));
-        if (ok) toast("success", "Points spent.", userId);
-        break;
-      }
-
-      case "buy_perk": {
-        const ok = await applyManual(msg.chatId, userId, (r, state) => buyPerk(r, state, msg.perk));
-        if (ok) toast("success", "Perk taken.", userId);
         break;
       }
 

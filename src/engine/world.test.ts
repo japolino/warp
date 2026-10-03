@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import yaml from "js-yaml";
 import { lintRuleset } from "./lint.js";
 import { normalizeRuleset } from "./ruleset.js";
-import { applyProposal, availableChoices, buyPerk, changeClothes, resolveTurn, resolveTurnFull } from "./resolve.js";
+import { applyProposal, availableChoices, changeClothes, resolveTurn, resolveTurnFull } from "./resolve.js";
 import { foldEvents, initialState, type GameState } from "./state.js";
 import { buildHud, stateDigest } from "./view.js";
 import { temperatureAt, warmthNeeded, weatherAt } from "./world.js";
@@ -14,7 +14,6 @@ start: { location: home }
 stats:
   health: { kind: meter, start: 100 }
   stress: { kind: meter, good: low, start: 0 }
-  points: { kind: attribute, start: 2, max: 10 }
   charm: { kind: attribute, start: 3, max: 10 }
 weather: { temps: { autumn: 8 } }
 wardrobe:
@@ -59,20 +58,8 @@ encounters:
       won: "foe.hp <= 0"
       lost: "health <= 0"
     outcomes:
-      won: { unlock: [brawler], hint: "You win." }
+      won: { hint: "You win." }
       fled: { stress: +5 }
-codex:
-  brawler: { title: "Street Fighting", text: "You learned to fight." }
-  park_lore: { title: "The Park", text: "Old trees.", unlock: "location == 'park'", lore: ["Park history"] }
-feats:
-  survivor: { name: Survivor, desc: "Win a fight", unlock: "codex('brawler')", reward: { points: +1 } }
-perks:
-  points: points
-  smooth:
-    name: Smooth Talker
-    cost: 2
-    requires: "charm >= 3"
-    effects: { charm: +2 }
 `);
 
 const load = () => {
@@ -163,9 +150,6 @@ describe("new systems", () => {
     expect(s.stats.health).toBe(90); // the thug hit back
     s = step(r, s, "punch", "p2");
     expect(s.encounter).toBeNull();
-    expect(s.codex.brawler).toBe(true);
-    expect(s.feats.survivor).toBe(true);
-    expect(s.stats.points).toBe(3);
   });
 
   test("running away ends with its own outcome", () => {
@@ -174,19 +158,6 @@ describe("new systems", () => {
     s = step(r, s, "run");
     expect(s.encounter).toBeNull();
     expect(s.stats.stress).toBe(5);
-  });
-
-  test("codex unlocks by formula; perks cost points and check requirements", () => {
-    const r = load();
-    let s = step(r, step(r, initialState(r), "to_street"), "to_park");
-    expect(s.codex.park_lore).toBe(true);
-    const bought = buyPerk(r, s, "smooth");
-    expect(Array.isArray(bought)).toBe(true);
-    s = foldEvents(r, [bought as never], s);
-    expect(s.perks.smooth).toBe(true);
-    expect(s.stats.points).toBe(0);
-    expect(s.stats.charm).toBe(5);
-    expect(buyPerk(r, s, "smooth")).toBe("Already taken.");
   });
 
 });

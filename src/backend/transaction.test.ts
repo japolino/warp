@@ -392,8 +392,8 @@ test("draft alternatives retain adjustments made after the original roll and unr
 });
 
 test("the registered lore gate folds the selected generation path instead of the stale HUD cache", async () => {
-  const f = fixture({ stats: { health: { start: 50 } }, codex: { secret: { title: "Secret", text: "Hidden", lore: ["Secret Lore"] } } });
-  const m = f.add("assistant", "Revealed", { warp: { swipes: { "0": record([{ t: "codex", id: "secret", src: "world" }]) } } });
+  const f = fixture({ stats: { health: { start: 50 } }, secrets: { secret: { stages: [{ text: "Hidden", when: "health > 100", lore: ["Secret Lore"] }] } } });
+  const m = f.add("assistant", "Revealed", { warp: { swipes: { "0": record([{ t: "secret", id: "secret", stage: 0, src: "world" }]) } } });
   lastStates.set(f.id, foldPath(f.r, f.messages).state);
   const ctx = { chatId: f.id, userId: f.id, entries: [{ id: "spoiler", world_book_id: "story", comment: "Secret Lore" }] };
   m.swipe_id = 1;

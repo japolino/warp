@@ -1,20 +1,19 @@
 // View models for the UI and the text the narrator sees.
 
-import type { ActionDef, Ruleset, StatDef } from "./ruleset.js";
+import type { Ruleset, StatDef } from "./ruleset.js";
 import { percentOf, TIERS } from "./ruleset.js";
 import {
   amountValue, bandFor, foeName, formatClock, formatMoney, formatNumber, gradeFor, initialState, itemName, makeEnv, personName, statMax,
-  usesOf, type GameState, type WarpEvent,
+  type GameState, type WarpEvent,
 } from "./state.js";
 import { practiceProgress } from "./freeform.js";
 import { encounterGuide, itemRelevance } from "./encounter-view.js";
-import { cleanLiveForecast, costValue, spentLock, whenHolds, paramValues, ABILITY_PREFIX, abilityStatus, actionPool, availableChoices, dangerStats, findAction, foeArmor, isAvailable, knowsAbility, LIVE_PREFIX, lockReason, mainMeter, odds, perkOffers, playerArmor, usableAbilities, usableItems, perkBlocker, TIER_LABEL, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
+import { cleanLiveForecast, spentLock, whenHolds, paramValues, actionPool, availableChoices, dangerStats, findAction, foeArmor, isAvailable, LIVE_PREFIX, lockReason, mainMeter, odds, playerArmor, usableItems, TIER_LABEL, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
 import { dueWords, effectWords, goalDone, questDef, questDigest, questOffers, questsToReport, QUEST_PREFIX } from "./quests.js";
 import {
   dateAt, exposedSlots, isIndoors, ordinal, presentPeople, seasonAt, temperatureAt, warmthNeeded, warmthOf, weatherAt,
 } from "./world.js";
 import type { ChangeView, ChoiceView, ClothingView, HudView, QuestView, RecordView, Tone } from "../shared/protocol.js";
-import { evalBool, evalNumber } from "./expr.js";
 import { namesIt, namesTitle } from "./mention.js";
 
 function pct(v: number, min: number, max: number) {
@@ -62,11 +61,8 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
     };
   });
 
-  // Point pools already shown elsewhere (the +/− bar, the perks heading) don't take a row of their own unless the author filed them.
-  const pools = new Set([...Object.values(r.stats).flatMap((d) => (d.allocate ? [d.allocate.with] : [])), ...(r.perkPoints ? [r.perkPoints] : [])]);
   const skills = r.statOrder
     .filter((id) => (r.stats[id].kind === "attribute" || r.stats[id].kind === "skill") && !r.hud.bars.includes(id) && r.stats[id].show !== "hidden")
-    .filter((id) => !pools.has(id) || r.stats[id].group !== undefined)
     .map((id) => {
       const def = r.stats[id];
       const v = s.stats[id] ?? def.start;
@@ -79,16 +75,11 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
         pct: pct(v, def.min, max),
         kind: def.kind as "attribute" | "skill",
         // `show:` decides, as for the narrator: the band's words (default when there are bands), the number, or both.
-        // Unset show: on a banded skill keeps the number beside the words in the sidebar (you need it to spend points).
+        // Unset show: on a banded skill keeps the number beside the words in the sidebar.
         text: shownText(def.showSet ? def : { ...def, show: "both" }, band, formatNumber(v)),
         tone: band?.tone ?? "neutral" as Tone,
         practice: practiceProgress(r, s, id),
         group: def.group ?? (def.kind === "skill" ? "Skills" : "Attributes"),
-        ...(def.allocate ? { allocate: {
-          pool: def.allocate.with, poolLabel: r.stats[def.allocate.with]?.label ?? def.allocate.with,
-          left: s.stats[def.allocate.with] ?? r.stats[def.allocate.with]?.start ?? 0,
-          cost: def.allocate.cost, step: def.allocate.step, room: Math.max(0, Math.floor((max - v) / def.allocate.step + 1e-9)),
-        } } : {}),
       };
     });
 
@@ -221,19 +212,6 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
     clothing,
     exposed: exposedSlots(r, s),
     encounter,
-    codex: Object.values(r.codex).filter((c) => s.codex[c.id]).map((c) => ({ id: c.id, title: c.title, text: c.text, category: c.category ?? null })),
-    codexTotal: Object.keys(r.codex).length,
-    feats: Object.values(r.feats).filter((f) => !f.hidden || s.feats[f.id]).map((f) => ({ id: f.id, name: f.name, desc: f.desc, unlocked: !!s.feats[f.id] })),
-    perks: perkViews(r, s),
-    perkPoints: r.perkPoints ? s.stats[r.perkPoints] ?? 0 : null,
-    perkPick: r.perkPick,
-    abilities: Object.values(r.abilities).filter((ab) => knowsAbility(r, s, ab.id)).map((ab) => {
-      const st = abilityStatus(r, s, ab.id);
-      return {
-        id: ab.id, name: ab.name, desc: ab.desc ?? ab.action.desc ?? null, cost: costText(r, s, ab.action), left: st.left,
-        locked: st.locked ?? (st.here ? null : ab.where === "encounter" ? "Only in an encounter" : "Not during an encounter"), choice: `${ABILITY_PREFIX}${ab.id}`,
-      };
-    }),
     body: r.body.enabled ? Object.entries(s.body).map(([part, traits]) => ({
       part, label: part.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()), text: traitText(traits) || "—", covered: bodyCovered(r, s, part),
     })) : null,
@@ -390,7 +368,7 @@ function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: st
     if (isAvailable(r, s, a)) continue;
     locked.push({ ...plain(id, a.label, encName ?? a.group ?? null, a.desc ?? null), locked: spent ?? lockReason(r, s, a) });
   }
-  return [...live, ...actions, ...abilityChoices(r, s, lines), ...itemChoices(r, s, lines), ...locked, ...questChoices(r, s)];
+  return [...live, ...actions, ...itemChoices(r, s, lines), ...locked, ...questChoices(r, s)];
 }
 
 /** Quests to hand in here, and a few on offer (from whoever's here first, then the board). */
@@ -413,117 +391,6 @@ function questChoices(r: Ruleset, s: GameState): ChoiceView[] {
     out.push(plain(`${QUEST_PREFIX}take:${o.id}`, label, q.desc ?? null, [reward ? `Reward: ${reward}` : "", q.days ? `${q.days}d` : ""].filter(Boolean).join(" · ") || undefined));
   }
   return out;
-}
-
-/** "8 Mana, 5 Stamina": what using something costs, from its `cost:`. */
-function costText(r: Ruleset, s: GameState, a: ActionDef): string | null {
-  const env = makeEnv(r, s);
-  // Percent costs ("-15%") read as the amount they'll take now. Positive costs (+3 Suspicion) are prices too.
-  const parts = Object.entries(a.cost.stats).map(([stat, d]) => [stat, costValue(r, s, stat, d, env)] as const).filter(([, v]) => v !== 0)
-    .map(([stat, v]) => `${v > 0 ? "+" : ""}${formatNumber(Math.abs(v))} ${r.stats[stat]?.label ?? stat}`);
-  return parts.length ? parts.join(", ") : null;
-}
-
-/** The player's own abilities, offered with the other moves: usable ones, and in an encounter the ones out of reach, with why. */
-function abilityChoices(r: Ruleset, s: GameState, lines: Set<string>): ChoiceView[] {
-  const out: ChoiceView[] = [];
-  for (const { id, a, status } of usableAbilities(r, s)) {
-    if (a.hidden || a.tags.some((t) => lines.has(t))) continue;
-    const cost = costText(r, s, a);
-    const left = status.left !== null ? `${status.left} left${r.abilities[id.slice(ABILITY_PREFIX.length)]?.perEncounter && s.encounter ? " this fight" : " today"}` : null;
-    const why = [cost, left].filter(Boolean).join(" · ") || undefined;
-    if (status.locked) {
-      if (s.encounter) out.push({ id, label: a.label, group: "Abilities", desc: a.desc ?? null, odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [], locked: status.locked });
-      continue;
-    }
-    const o = odds(r, s, a);
-    out.push({
-      id, label: a.label, group: "Abilities", desc: a.desc ?? null,
-      odds: o ? o.success : null, partialOdds: o && o.partial > 0 ? o.partial : null, checkLabel: a.check?.label ?? null,
-      veiled: false, params: [], ...(why ? { why } : {}),
-    });
-  }
-  // Usable first; in a story scene, only a few.
-  out.sort((x, y) => Number(!!x.locked) - Number(!!y.locked));
-  return out.slice(0, s.encounter ? 6 : 3);
-}
-
-/** Every perk as the HUD shows it: owned, on offer, or blocked — and what it does in short. */
-/** Clashes with a perk already taken (`excludes:`, either way round): a road not taken. */
-function perkClashes(r: Ruleset, s: GameState, id: string): boolean {
-  return Object.keys(s.perks).some((o) => o !== id && (r.perks[id]?.excludes.includes(o) || r.perks[o]?.excludes.includes(id)));
-}
-
-/** Can never be taken now: it clashes with a perk you have, or it builds on one that does (Assassin once you're a Warrior). */
-function perkClosed(r: Ruleset, s: GameState, id: string): boolean {
-  const p = r.perks[id];
-  if (!p || s.perks[id]) return false;
-  if (perkClashes(r, s, id)) return true;
-  if (!p.requires || /\bor\b|\|\|/.test(p.requires)) return false;
-  for (const m of p.requires.matchAll(/(\bnot\s+|!\s*)?\bperk\(\s*['"]([\w-]+)['"]\s*\)/g)) {
-    if (!m[1] && !s.perks[m[2]] && perkClashes(r, s, m[2])) return true;
-  }
-  return false;
-}
-
-/** A requirement in words, listing only the parts that don't hold yet ("Level 10+, Rogue"). Null when it can't be put simply. */
-export function requiresWords(r: Ruleset, s: GameState, expr: string): string | null {
-  if (/\bor\b|\|\|/.test(expr)) return null;
-  const env = makeEnv(r, s);
-  const out: string[] = [];
-  let unknown = 0;
-  for (const raw of expr.split(/\s+and\s+|\s*&&\s*/i)) {
-    const part = raw.trim().replace(/^\((.*)\)$/, "$1").trim();
-    if (!part || evalBool(part, env, false)) continue;
-    let m: RegExpMatchArray | null;
-    if ((m = part.match(/^perk\(\s*['"]([\w-]+)['"]\s*\)$/))) out.push(r.perks[m[1]]?.name ?? m[1]);
-    // A hidden quest isn't named until it has turned up.
-    else if ((m = part.match(/^quest_done\(\s*['"]([\w-]+)['"]\s*\)$/)) && r.quests[m[1]] && (!r.quests[m[1]].hidden || s.quests?.[m[1]])) out.push(`${r.quests[m[1]].name} done`);
-    else if ((m = part.match(/^([a-z_][\w]*)\s*(>=|>|==)\s*(-?\d+(?:\.\d+)?)$/i)) && r.stats[m[1]]) {
-      const def = r.stats[m[1]];
-      const n = Number(m[3]) + (m[2] === ">" ? (Number.isInteger(Number(m[3])) ? 1 : 0) : 0);
-      const band = def.bands.length && !def.pctBands && def.bands.some((b) => b.at === n) ? bandFor(def, n, def.max) : null;
-      out.push(band ? `${def.label}: ${band.text}` : `${def.label} ${formatNumber(n)}${m[2] === "==" ? "" : "+"}`);
-    } else unknown++;
-  }
-  if (unknown) out.push(out.length ? "and more" : "something you haven't found yet");
-  return out.length ? out.join(", ") : null;
-}
-
-function perkViews(r: Ruleset, s: GameState): HudView["perks"] {
-  const offers = new Set(perkOffers(r, s));
-  return Object.values(r.perks)
-    // Picking from a few: show what's owned and what's on offer, not the whole deck.
-    .filter((p) => !r.perkPick || s.perks[p.id] || offers.has(p.id))
-    // Roads not taken stay out of the way; a hidden perk turns up once it can be had.
-    .filter((p) => !perkClosed(r, s, p.id))
-    .filter((p) => !p.hidden || s.perks[p.id] || !p.requires || evalBool(p.requires, makeEnv(r, s), false))
-    .map((p) => {
-      const notes: string[] = [];
-      const plus = (stats: Record<string, number>) => Object.entries(stats).map(([k, v]) => `${v > 0 ? "+" : ""}${v} ${r.stats[k]?.label ?? k}`).join(", ");
-      if (Object.keys(p.bonus).length) notes.push(plus(p.bonus));
-      for (const e of p.edges) notes.push(`${plus(e.stats)}${e.when ? " (sometimes)" : ""}`);
-      for (const rule of p.rules) {
-        if (rule.kind === "pierce") notes.push(`Ignores ${rule.amount >= 999 ? "all" : rule.amount} armor${rule.stats.length || rule.tags.length ? ` (${[...rule.stats.map((x) => r.stats[x]?.label ?? x), ...rule.tags].join(", ")})` : ""}`);
-        else if ("stat" in rule) notes.push(`${r.stats[rule.stat]?.label ?? rule.stat} ${rule.kind === "gains" ? "rises" : "drops"} ${Math.round(Math.abs(rule.pct) * 100)}% ${rule.pct > 0 ? "faster" : "slower"}`);
-        else {
-          const left = rule.perDay ? rule.perDay - usesOf(s, `perk:${p.id}:${rule.kind}`).today : null;
-          notes.push(`${rule.kind === "reroll" ? "Rerolls a failure" : "Softens a failure"}${rule.perDay ? ` ${rule.perDay}×/day${s.perks[p.id] ? ` (${Math.max(0, left!)} left)` : ""}` : ""}`);
-        }
-      }
-      for (const a of p.abilities) if (r.abilities[a]) notes.push(`Teaches ${r.abilities[a].name}`);
-      return {
-        id: p.id, name: p.name, desc: p.desc, cost: p.cost, owned: !!s.perks[p.id], blocker: s.perks[p.id] ? null : perkBlocker(r, s, p.id),
-        offered: offers.has(p.id), drawback: p.drawback ?? null, notes,
-        // A perk paid from its own pool (points: class_points) names that pool on its price.
-        ...(p.points && p.points !== r.perkPoints ? { pointsLabel: r.stats[p.points]?.label ?? p.points } : {}),
-        group: p.group ?? null,
-        ...(() => {
-          const locked = !s.perks[p.id] && !!p.requires && !evalBool(p.requires, makeEnv(r, s), false);
-          return { locked, needs: locked ? requiresWords(r, s, p.requires!) : null };
-        })(),
-      };
-    });
 }
 
 /** Held items worth using now: in an encounter, any that bear on it (up to 3); otherwise only clearly helpful ones (up to 2). */
@@ -683,23 +550,6 @@ export function summarizeEvents(r: Ruleset, before: GameState, after: GameState,
         foeAgg.set(e.stat, a);
         break;
       }
-      case "codex":
-        out.push({ text: `📖 ${r.codex[e.id]?.title ?? e.id}`, tone: "good", src: e.src });
-        break;
-      case "feat":
-        out.push({ text: `🏆 ${r.feats[e.id]?.name ?? e.id}`, tone: "good", src: e.src });
-        break;
-      case "perk":
-        out.push({ text: `★ ${r.perks[e.id]?.name ?? e.id}`, tone: "good", src: e.src });
-        break;
-      case "learn":
-        out.push({ text: `✦ Learned ${r.abilities[e.id]?.name ?? e.id}`, tone: "good", src: e.src });
-        break;
-      case "charge": {
-        if (e.key.startsWith(ABILITY_PREFIX)) out.push({ text: `✦ ${r.abilities[e.key.slice(ABILITY_PREFIX.length)]?.name ?? e.key}`, tone: "neutral", src: e.src });
-        else if (e.key.startsWith("perk:")) out.push({ text: `↻ ${r.perks[e.key.split(":")[1]]?.name ?? "Perk"}`, tone: "good", src: e.src });
-        break;
-      }
     }
   });
 
@@ -786,7 +636,7 @@ export function buildRecordView(r: Ruleset, messageId: string, swipe: number, re
       style: rec.check.style,
       tier: rec.check.tier,
       tierLabel: TIER_LABEL[rec.check.tier],
-      summary: `${checkSummary(rec.check)}${rec.check.perk ? ` · ↻ ${rec.check.perk}` : ""}`,
+      summary: checkSummary(rec.check),
     } : null,
     changes: summarizeEvents(r, before, after, rec.events),
     hints: rec.hints,
@@ -915,12 +765,6 @@ export function stateDigest(r: Ruleset, s: GameState, focus?: DigestFocus): stri
 
   const conds = Object.entries(s.conditions).map(([id, c]) => `${r.conditions[id]?.label ?? id}${c.rounds !== undefined ? ` (${c.rounds} round${c.rounds === 1 ? "" : "s"})` : ""}`);
   if (conds.length) lines.push(`Conditions: ${conds.join(", ")}`);
-  // What's true of {{user}} because of their perks, and what they can do: the story should show both.
-  // Perks the author wrote narrator text for always show (that's what the text is for); bare names only when named.
-  const perks = Object.keys(s.perks).map((id) => r.perks[id]).filter((p) => p && (p.narrator || named(p.name)));
-  if (perks.length) lines.push(`Perks: ${perks.map((p) => (p.narrator ? `${p.name} — ${p.narrator}` : p.name)).join("; ")}`);
-  const known = Object.values(r.abilities).filter((ab) => knowsAbility(r, s, ab.id) && named(ab.name));
-  if (known.length) lines.push(`{{user}}'s own abilities (they work as the rules say; only the rules decide when one is used): ${known.map((ab) => `${ab.name}${ab.desc ? ` (${ab.desc})` : ""}`).join("; ")}`);
   // Quests: what {{user}} is working on, and work on offer from the people here (they may bring it up).
   // For the narrator, a quest is in play when the turn names it or its giver, its giver is here, it's due
   // within a day, or it's ready to hand in. The rest wait in the journal; naming them invites the model to push them.

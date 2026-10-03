@@ -1,13 +1,13 @@
 // Costs and resources: every cost path reads the same value grammar as effects ("-15%" of the current max),
 // meters whose max is a formula can start full, unaffordable action costs lock the choice everywhere,
 // resist costs move a stat in its bad direction, encounter moves can be limited per encounter or per day,
-// and abilities that roll can still have effects that always apply.
+// and actions that roll can still have effects that always apply.
 
 import { describe, expect, test } from "bun:test";
 import { normalizeRuleset, type Issue } from "./ruleset.js";
 import { applyEvent, cloneState, initialState, type GameState } from "./state.js";
-import { abilityStatus, availableChoices, findAction, isAvailable, lockReason, resolveTurn, usableItems, type TurnRecord } from "./resolve.js";
-import { buildChoices, buildHud } from "./view.js";
+import { availableChoices, findAction, isAvailable, lockReason, resolveTurn, usableItems, type TurnRecord } from "./resolve.js";
+import { buildChoices } from "./view.js";
 import { lintRuleset } from "./lint.js";
 
 const load = (raw: Record<string, unknown>) => {
@@ -24,26 +24,24 @@ const turn = (r: R, s: GameState, actionId: string, params?: Record<string, stri
 const choices = (r: R, s: GameState) => buildChoices(r, s, { lines: [], veils: [] });
 const warned = (issues: Issue[], where: RegExp) => issues.filter((i) => where.test(i.where));
 
-describe("percentage costs (bug: abilities crashed on `cost: { hp: \"-15%\" }`)", () => {
+describe("percentage costs (`cost: { hp: \"-15%\" }`)", () => {
   const book = () => load({
     stats: { hp: { kind: "meter", label: "HP", start: 50, max: 200 }, mp: { kind: "meter", start: 50 } },
-    actions: { rest: { label: "Rest", effects: { hp: +5 } }, bleed: { label: "Bleed for it", cost: { hp: "-10%" }, effects: { mp: +1 } } },
-    abilities: { rage: { name: "Rage", cost: { hp: "-15%" }, mp: +5 } },
+    actions: { rest: { label: "Rest", effects: { hp: +5 } }, bleed: { label: "Bleed for it", cost: { hp: "-10%" }, effects: { mp: +1 } }, rage: { label: "Rage", cost: { hp: "-15%" }, effects: { mp: +5 } } },
   }).r;
 
-  test("the ability's status, sidebar and choices work it out as a share of the current max", () => {
+  test("the choices work it out as a share of the current max", () => {
     const r = book();
     const s = initialState(r);
-    expect(abilityStatus(r, s, "rage").locked).toBeNull();
-    expect(buildHud(r, s).abilities[0].cost).toBe("30 HP");
-    expect(choices(r, s).some((c) => c.id === "ability:rage")).toBe(true);
+    expect(isAvailable(r, s, r.actions.rage)).toBe(true);
+    expect(choices(r, s).some((c) => c.id === "rage")).toBe(true);
     s.stats.hp = 29;
-    expect(abilityStatus(r, s, "rage").locked).toBe("Needs 30 HP");
+    expect(lockReason(r, s, r.actions.rage)).toBe("Needs 30 HP");
   });
 
-  test("using it charges the same amount the choice showed; actions take percentage costs too", () => {
+  test("using it charges the same amount the choice showed", () => {
     const r = book();
-    const used = turn(r, initialState(r), "ability:rage").s;
+    const used = turn(r, initialState(r), "rage").s;
     expect(used.stats.hp).toBe(20);
     expect(used.stats.mp).toBe(55);
     const s = initialState(r);
@@ -55,12 +53,11 @@ describe("percentage costs (bug: abilities crashed on `cost: { hp: \"-15%\" }`)"
   test("the checker catches a cost that can't be worked out instead of reporting clean", () => {
     const { r } = load({
       stats: { hp: { kind: "meter", start: 50 } },
-      actions: { rest: { label: "Rest", effects: { hp: +5 } } },
-      abilities: { odd: { name: "Odd", known: false, cost: { hp: "min()" }, hp: +1 }, fine: { name: "Fine", known: false, cost: { hp: "-15%" }, hp: +1 } },
+      actions: { rest: { label: "Rest", effects: { hp: +5 } }, odd: { label: "Odd", cost: { hp: "min()" }, effects: { hp: +1 } }, fine: { label: "Fine", cost: { hp: "-15%" }, effects: { hp: +1 } } },
     });
     const lint = lintRuleset(r);
-    expect(warned(lint, /Abilities › odd › cost › hp/)).toHaveLength(1);
-    expect(warned(lint, /Abilities › fine/)).toHaveLength(0);
+    expect(warned(lint, /Actions › odd › cost › hp/)).toHaveLength(1);
+    expect(warned(lint, /Actions › fine/)).toHaveLength(0);
   });
 });
 
@@ -203,19 +200,18 @@ describe("per_encounter / per_day on encounter moves", () => {
 });
 
 describe("effects next to a check always apply", () => {
-  test("an ability with a check keeps its explicit effects whatever the roll, plus the tier's own", () => {
+  test("an action with a check keeps its explicit effects whatever the roll, plus the tier's own", () => {
     const { r, issues } = load({
       stats: { nerve: { kind: "meter", start: 50 }, suspicion: { kind: "meter", start: 0, good: "low" }, coin: { kind: "money", start: 0 } },
-      abilities: {
-        pick: { name: "Pick a pocket", check: { chance: 0 }, effects: { suspicion: +3 }, success: { coin: +5 }, fail: { nerve: -2 } },
-        lift: { name: "Lift", check: { chance: 100 }, cost: { nerve: -5, suspicion: +3 }, success: { coin: +5 } },
+      actions: {
+        pick: { label: "Pick a pocket", check: { chance: 0 }, effects: { suspicion: +3 }, success: { coin: +5 }, fail: { nerve: -2 } },
+        lift: { label: "Lift", check: { chance: 100 }, cost: { nerve: -5, suspicion: +3 }, success: { coin: +5 } },
       },
     });
     expect(issues.filter((i) => /pick|lift/.test(i.where))).toEqual([]);
-    const fail = turn(r, initialState(r), "ability:pick").s;
+    const fail = turn(r, initialState(r), "pick").s;
     expect([fail.stats.suspicion, fail.stats.nerve, fail.stats.coin]).toEqual([3, 48, 0]);
-    const ok = turn(r, initialState(r), "ability:lift").s;
+    const ok = turn(r, initialState(r), "lift").s;
     expect([ok.stats.suspicion, ok.stats.nerve, ok.stats.coin]).toEqual([3, 45, 5]);
-    expect(buildHud(r, initialState(r)).abilities.find((a) => a.id === "lift")!.cost).toBe("5 Nerve, +3 Suspicion");
   });
 });

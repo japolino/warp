@@ -17,7 +17,6 @@ const rules = (extra: Record<string, unknown> = {}) => {
       mana: { kind: "meter", start: 20, max: 20, good: "high" },
       blades: { kind: "skill", max: 100, start: 30 },
       lockpicking: { kind: "skill", max: 100, start: 10 },
-      perk_points: { kind: "attribute", start: 0, max: 5 },
     },
     relationships: { stats: { trust: { start: 10 } }, people: { brann: { name: "Brann" }, mia: { name: "Mia" } } },
     locations: { home: { name: "Home" }, vault_door: { name: "Vault Door" } },
@@ -31,7 +30,6 @@ const rules = (extra: Record<string, unknown> = {}) => {
       drowsy: { label: "Drowsy", tone: "warn", lasts: "2h" },
       bleeding: { label: "Bleeding", tone: "bad", every: "hour", dot: 2, stat: "hp", lasts: 180 },
     },
-    perks: { points: "perk_points", armor_breaker: { name: "Armor Breaker", rule: { pierce: { amount: 3, tags: ["melee"] } } } },
     actions: {
       vault: { label: "Crack the vault", at: ["vault_door"], requires: { lockpicking: 30, with: "brann", has: "shield" }, effects: { hint: "It opens." } },
       drug: { label: "Slip {target} a draught", per_person: true, effects: { inflict: { drowsy: 90 } } },
@@ -75,12 +73,9 @@ describe("armor and what gets through it", () => {
     expect(f.rec.hints.join(" ")).toMatch(/armor blunts each of 3 hits/);
   });
 
-  test("piercing ignores it, from the move or from a perk on matching moves; sundering opens it up", () => {
+  test("piercing ignores it; sundering opens it up", () => {
     const { r } = rules();
     expect(turn(r, fight(r), "pierce").s.encounter!.foe.hp).toBe(24);
-    const s = fight(r);
-    applyEvent(s, { t: "perk", id: "armor_breaker", src: "manual" }, r);
-    expect(turn(r, s, "slash").s.encounter!.foe.hp).toBe(25); // armor 4 − 3 pierced = 1
     const opened = turn(r, fight(r), "sunder").s;
     expect(turn(r, opened, "slash", "b").s.encounter!.foe.hp).toBe(25); // sundered: armor 4 − 3 = 1, so 6 − 1
   });

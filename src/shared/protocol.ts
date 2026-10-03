@@ -31,8 +31,6 @@ export interface SkillView {
   tone: Tone;
   /** Progress toward the next point from use and practice, 0–1 (null = doesn't grow, or maxed). */
   practice: number | null;
-  /** Raised by hand with points (`allocate:`): the pool, its points left, what a step costs and adds, and steps of room under the max. */
-  allocate?: { pool: string; poolLabel: string; left: number; cost: number; step: number; room: number };
   /** The heading it's filed under (`group:`, else Attributes or Skills by kind). */
   group: string;
 }
@@ -126,31 +124,6 @@ export interface HudView {
     foeArmor: number | null;
     yourArmor: number | null;
   } | null;
-  codex: { id: string; title: string; text: string; category: string | null }[];
-  codexTotal: number;
-  feats: { id: string; name: string; desc: string; unlocked: boolean }[];
-  perks: {
-    id: string; name: string; desc: string; cost: number; owned: boolean; blocker: string | null;
-    /** On offer right now (when perks are picked from a few rather than bought from the list). */
-    offered: boolean;
-    /** The downside, if it has one. */
-    drawback: string | null;
-    /** What it does, in short ("+15 Stealth on the promenade", "1 reroll left today"). */
-    notes: string[];
-    /** The pool it's paid from when that isn't the main perk points (points: class_points). */
-    pointsLabel?: string;
-    /** The heading it's filed under (`group:`), if any. */
-    group: string | null;
-    /** Its requirements don't hold yet: listed folded, by name and what it needs. */
-    locked: boolean;
-    /** What it still needs, in words ("Level 10, Rogue"), when locked. */
-    needs: string | null;
-  }[];
-  perkPoints: number | null;
-  /** How many perks are offered at a time (0: the whole list, like a shop). */
-  perkPick: number;
-  /** The player's own abilities (spells, techniques): what they cost, uses left, and whether they can be used now. */
-  abilities: { id: string; name: string; desc: string | null; cost: string | null; left: number | null; locked: string | null; choice: string }[];
   /** Body parts and their traits, when the ruleset has a body. */
   body: { part: string; label: string; text: string; covered: boolean }[] | null;
   /** Transformations under way. */
@@ -381,7 +354,7 @@ export interface BuilderSession {
   characterName: string;
   /** build = from the card; refine = change by request; import = a rulebook written elsewhere. */
   mode: "build" | "refine" | "import";
-  /** The player's persona (who {{user}} is), so their own powers and training become abilities. */
+  /** The player's persona (who {{user}} is), so their own powers and training become part of the rules. */
   persona?: string | null;
   step: "start" | "questions" | "review" | "done";
   /** The design plan written before any YAML: the loop, the pressures, how the systems connect. */
@@ -460,9 +433,6 @@ export type FrontendToBackend =
   | { type: "dismiss_suggestion"; chatId: string; messageId: string }
   /** Wardrobe: put on an item, or take off a slot (item null). */
   | { type: "wear"; chatId: string; slot: string; item: string | null }
-  | { type: "buy_perk"; chatId: string; perk: string }
-  /** Spend points on stats with `allocate:`, in steps: `{ str: 2, dex: 1 }`. */
-  | { type: "allocate"; chatId: string; spend: Record<string, number> }
   /** Roll a clicked move again: a new roll, a new line in the player's message, a new reply. */
   | { type: "reroll"; chatId: string; messageId: string }
   | { type: "adjust_rel"; chatId: string; who: string; stat: string; value: number }

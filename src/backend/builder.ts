@@ -155,9 +155,6 @@ const SYSTEMS: { id: string; label: string }[] = [
   { id: "encounters", label: "Encounters / combat" },
   { id: "quests", label: "Quests (a notice board, favours people ask, bounties)" },
   { id: "crime", label: "Crime & consequences" },
-  { id: "journal", label: "Codex & feats" },
-  { id: "abilities", label: "Abilities & spells (your persona's own moves)" },
-  { id: "perks", label: "Levels & perks (pick one of a few)" },
   { id: "story", label: "Secrets & choices for the moment" },
 ];
 
@@ -210,7 +207,7 @@ function brief(s: BuilderSession): string {
     s.analysis ? `Card summary: ${s.analysis.summary}` : "",
     s.analysis?.statusBlock?.found ? `The card currently makes the model print a status block with: ${s.analysis.statusBlock.fields.join(", ")}. Cover these as proper stats; the narrator should no longer print status blocks.` : "",
     s.analysis?.cardType === "scenario" ? `This is a scenario/narrator card: "${s.characterName}" is the setting, NOT a person — never add it to people.` : "",
-    s.persona ? `The player's persona — who {{user}} is:\n${s.persona}\nTheir own powers, training, signature moves and quirks belong to them, not the setting: make each an ability (cost, limit, a stat it scales with, what it does in a fight and outside one) and let perks build on them.` : "",
+    s.persona ? `The player's persona — who {{user}} is:\n${s.persona}\nTheir own powers, training, signature moves and quirks belong to them, not the setting: build them in as skills and actions (a cost, a stat that scales them, what they do in a fight and outside one).` : "",
     s.analysis?.cast?.length ? `Main cast — add each to relationships.people with a start: block that matches how they feel about {{user}} at the beginning (use the relationship stats' scales; strong feelings mean strong numbers):\n${s.analysis.cast.map((c) => `- ${c.name}: ${c.relation}`).join("\n")}` : "",
     qa.length ? `The player's answers:\n${qa.join("\n")}` : "",
     adds.length ? `The player's own additions (build each in — the stat/item/place/etc., what changes it, and which actions check it):\n${adds.join("\n")}` : "",
@@ -260,7 +257,6 @@ function contextOf(parts: BuilderPart[]): string {
     list("Encounters", Object.keys(r.encounters).map((id) => `${id} (outcomes: ${[...new Set([...Object.keys(r.encounters[id].outcomes), ...r.encounters[id].endWhen.map((e) => e.outcome)])].join(", ")})`)),
     list("Quests", r.questOrder),
     list("Notice boards", Object.values(r.locations).filter((l) => l.board).map((l) => l.id)),
-    list("Codex", Object.keys(r.codex)),
   ].filter(Boolean).join("\n");
 }
 
@@ -316,12 +312,9 @@ function buildPreview(s: BuilderSession) {
     encounters: Object.keys(r.encounters).length,
     quests: r.questOrder.length,
     rules: r.triggers.length,
-    codex: Object.keys(r.codex).length,
-    feats: Object.keys(r.feats).length,
-    perks: Object.keys(r.perks).length,
     secrets: Object.keys(r.secrets).length,
   };
-  const phrase = Object.entries(counts).filter(([, n]) => n).map(([k, n]) => `${n} ${n === 1 ? k.replace(/s$/, "").replace(/^people$/, "person").replace(/^codex$/, "codex entry") : k}`).join(", ");
+  const phrase = Object.entries(counts).filter(([, n]) => n).map(([k, n]) => `${n} ${n === 1 ? k.replace(/s$/, "").replace(/^people$/, "person") : k}`).join(", ");
   const extras = [
     r.weather.enabled ? "weather & temperature" : "",
     r.wardrobe.enabled ? "a wardrobe" : "",
@@ -455,7 +448,6 @@ async function draftAll(s: BuilderSession, userId?: string) {
   const want = (label: PartLabel) => {
     if (label === "encounters") return systems.has("encounters");
     if (label === "quests") return systems.has("quests");
-    if (label === "journal") return systems.has("journal") || systems.has("perks") || systems.has("abilities");
     if (label === "story") return systems.has("story");
     return true;
   };

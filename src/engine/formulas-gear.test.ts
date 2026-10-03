@@ -1,11 +1,10 @@
 // Formulas, conditions, gear and the sidebar: eff()/gear()/integrity(), formula armor, bonus and
-// per_hour, crit: on checks, perk gains on relationship stats, [round, hour] statuses, show:, currency
-// after the amount, and points spent by hand (allocate:).
+// per_hour, crit: on checks, [round, hour] statuses, show:, and currency after the amount.
 
 import { describe, expect, test } from "bun:test";
 import { normalizeRuleset } from "./ruleset.js";
 import { applyEvent, cloneState, initialState, makeEnv, type GameState } from "./state.js";
-import { allocateStats, gearFor, playerArmor, resolveTurn, type TurnRecord } from "./resolve.js";
+import { gearFor, playerArmor, resolveTurn, type TurnRecord } from "./resolve.js";
 import { evalNumber } from "./expr.js";
 import { lintRuleset } from "./lint.js";
 import { buildHud, stateDigest } from "./view.js";
@@ -171,28 +170,6 @@ describe("crit: on a check", () => {
   });
 });
 
-describe("perk gains and losses on relationship stats", () => {
-  test("a drawback can slow how fast anyone warms to {{user}}", () => {
-    const { r, warns } = load({
-      stats: { tp: { kind: "attribute", start: 1, growth: 0 } },
-      relationships: { stats: { fondness: { start: 0, min: -100, max: 100 } }, people: { maud: { name: "Maud" } } },
-      perks: { points: "tp", cold: { name: "Cold", drawback: { desc: "Hard to like", gains: { fondness: "-50%" } } } },
-      actions: { charm: { label: "Charm", effects: { rel: { maud: { fondness: +10 } } } } },
-    });
-    expect(warns).toEqual([]);
-    const s = initialState(r);
-    s.people.maud = { name: "Maud" };
-    expect(play(r, s, "charm").rel.maud.fondness).toBe(10);
-    applyEvent(s, { t: "perk", id: "cold", src: "manual" }, r);
-    expect(play(r, s, "charm").rel.maud.fondness).toBe(5);
-  });
-
-  test("names that are neither still warn", () => {
-    const { warns } = load({ stats: { tp: { kind: "attribute" } }, perks: { points: "tp", x: { name: "X", rule: { gains: { nonsense: "10%" } } } } });
-    expect(warns.some((w) => w.includes('"nonsense" isn\'t a declared stat or relationship stat'))).toBe(true);
-  });
-});
-
 describe("statuses that tick each round in a fight and each hour outside", () => {
   const bleed = (extra: Record<string, unknown> = {}) => load({
     stats: { hp: { kind: "meter", start: 100, max: 100 } },
@@ -327,48 +304,3 @@ describe("currency after the amount", () => {
   });
 });
 
-describe("allocate: points spent by hand", () => {
-  const alloc = (extra: Record<string, unknown> = {}) => load({
-    stats: {
-      stat_points: { kind: "attribute", start: 3, max: 99, growth: 0 },
-      str: { kind: "attribute", start: 5, max: 7, growth: 0, allocate: { with: "stat_points", step: 1 } },
-      dex: { kind: "attribute", start: 5, max: 99, growth: 0, allocate: "stat_points" },
-      ...extra,
-    },
-  });
-
-  test("normalized, shown with +/- in the sidebar, spent all at once", () => {
-    const { r, warns } = alloc();
-    expect(warns).toEqual([]);
-    expect(r.stats.str.allocate).toEqual({ with: "stat_points", step: 1, cost: 1 });
-    const s = initialState(r);
-    const hud = buildHud(r, s);
-    expect(hud.skills.find((x) => x.id === "str")!.allocate).toMatchObject({ pool: "stat_points", left: 3, room: 2 });
-    const html = renderHud(hud, { editing: null, compact: false, alloc: { str: 1 } });
-    expect(html).toContain('data-alloc-add="dex"');
-    expect(html).toContain('data-alloc-sub="str"');
-    expect(html).toContain("data-alloc-confirm");
-    const ev = allocateStats(r, s, { str: 2, dex: 1 });
-    expect(Array.isArray(ev)).toBe(true);
-    const after = cloneState(s); (ev as never[]).forEach((e) => applyEvent(after, e, r));
-    expect(after.stats).toMatchObject({ stat_points: 0, str: 7, dex: 6 });
-    expect(renderHud(buildHud(r, after), { editing: null, compact: false })).not.toContain("data-alloc-add");
-  });
-
-  test("refuses what it can't do, as a whole", () => {
-    const { r } = alloc();
-    const s = initialState(r);
-    expect(allocateStats(r, s, { str: 3 })).toContain("can't go above");
-    expect(allocateStats(r, s, { dex: 4 })).toContain("Not enough");
-    expect(allocateStats(r, s, { stat_points: 1 })).toContain("can't be raised");
-    expect(allocateStats(r, s, { dex: -1 })).toContain("whole steps");
-    expect(allocateStats(r, s, { dex: 0.5 })).toContain("whole steps");
-    expect(allocateStats(r, s, {})).toBe("Nothing to spend.");
-  });
-
-  test("bad settings warn", () => {
-    expect(alloc({ luk: { kind: "attribute", allocate: { with: "nope" } } }).warns.some((w) => w.includes('"nope" isn\'t a declared stat'))).toBe(true);
-    expect(alloc({ luk: { kind: "attribute", allocate: { with: "stat_points", step: -1, colour: 1 } } }).warns.length).toBe(2);
-    expect(alloc({ luk: { kind: "attribute", allocate: 5 } }).warns.some((w) => w.includes("expected `{ with: stat_points"))).toBe(true);
-  });
-});

@@ -24,10 +24,8 @@ export interface CheckResult {
   target: number | null;
   tier: Tier;
   seed: string;
-  /** Gear, perks and buffs that helped ("Running Sneakers: +5 Athletics"). */
+  /** Gear and buffs that helped ("Running Sneakers: +5 Athletics"). */
   gear?: string[];
-  /** A perk stepped in after a failure ("Silver Tongue rerolled a failure"). */
-  perk?: string;
 }
 
 export interface TurnRecord {
@@ -130,23 +128,12 @@ class Working {
   ) {}
   /** The cause stamped on events pushed right now (the "Why?" trace). */
   cause: string | null = null;
-  /** The move being resolved (perks that pierce armor look at it). */
-  action: ActionDef | null = null;
   /** Whose turn it is in an encounter: blows on the foe's turn land on {{user}} (and their armor). */
   turnOf: "player" | "foe" | null = null;
   /** Statuses put on during their holder's own turn don't tick down until the next one. */
   fresh = { player: new Set<string>(), foe: new Set<string>() };
   push(e: WarpEvent) {
     if (this.cause && !e.why) e = { ...e, why: this.cause };
-    if (e.t === "stat" && e.d && e.set === undefined && e.src !== "manual" && e.src !== "start") {
-      const m = statRate(this.r, this.s, e.id, e.d);
-      if (m !== 1) e = { ...e, d: e.d * m };
-    }
-    // Perk gains/losses on a relationship stat scale changes in how anyone feels.
-    if (e.t === "rel" && e.d && e.set === undefined && e.src !== "manual" && e.src !== "start") {
-      const m = statRate(this.r, this.s, e.stat, e.d, true);
-      if (m !== 1) e = { ...e, d: e.d * m };
-    }
     applyEvent(this.s, e, this.r);
     this.events.push(e);
   }
@@ -371,7 +358,6 @@ export function requirementText(r: Ruleset, s: GameState, q: Requirement): strin
       return q.state === "active" ? `the quest "${name}"` : q.state === "done" ? `"${name}" done` : `"${name}" ${q.state}`;
     }
     case "flag": return `${q.state === "off" ? "not " : ""}${r.flags[id]?.label ?? id.replace(/_/g, " ")}`;
-    case "perk": return `★ ${r.perks[id]?.name ?? id}`;
     default: return q.text ?? "the right moment";
   }
 }
@@ -397,9 +383,8 @@ export function lockReason(r: Ruleset, s: GameState, a: ActionDef): string {
 }
 
 /**
- * What adds to the stats a check reads: carried gear (worn, for clothing),
- * perks (always, or while their edge holds), and buffs or debuffs from
- * conditions. Each counts as that much more of the stat, for this check only.
+ * What adds to the stats a check reads: carried gear (worn, for clothing)
+ * and buffs or debuffs from conditions. Each counts as that much more of the stat, for this check only.
  */
 export function gearFor(r: Ruleset, s: GameState, a: ActionDef): { stats: Record<string, number>; notes: string[] } {
   const stats: Record<string, number> = {};
@@ -413,70 +398,9 @@ export function gearFor(r: Ruleset, s: GameState, a: ActionDef): { stats: Record
       notes.push(`${from}: ${b > 0 ? "+" : ""}${formatNumber(b)} ${r.stats[stat]?.label ?? stat}`);
     }
   };
-  // The same sources `eff()` counts: gear, perks (and edges that hold), statuses — formulas worked out now.
+  // The same sources `eff()` counts: gear and statuses — formulas worked out now.
   for (const src of bonusSources(r, s)) add(src.from, src.bonus);
   return { stats, notes };
-}
-
-/** How much bigger (or smaller) a rise or drop in a stat is, from the perks held. */
-export function statRate(r: Ruleset, s: GameState, stat: string, d: number, rel = false): number {
-  let pct = 0;
-  for (const id of Object.keys(s.perks)) {
-    for (const rule of r.perks[id]?.rules ?? []) {
-      if ((rule.kind === "gains" && d > 0) || (rule.kind === "losses" && d < 0)) if (rule.stat === stat && !!rule.rel === rel) pct += rule.pct;
-    }
-  }
-  return Math.max(0, 1 + pct);
-}
-
-export const ABILITY_PREFIX = "ability:";
-
-export interface AbilityStatus {
-  id: string;
-  known: boolean;
-  /** Uses left (today or this encounter, whichever is fewer); null when unlimited. */
-  left: number | null;
-  /** Offered here (encounter-only abilities aren't, outside one). */
-  here: boolean;
-  /** Why it can't be used right now. */
-  locked: string | null;
-}
-
-/** Whether the player has this ability: from the start, from a perk, taught by the story, or while its formula holds. */
-export function knowsAbility(r: Ruleset, s: GameState, id: string): boolean {
-  const ab = r.abilities[id];
-  if (!ab) return false;
-  if (ab.known === true || s.learned?.[id]) return true;
-  if (Object.keys(s.perks).some((p) => r.perks[p]?.abilities.includes(id))) return true;
-  return typeof ab.known === "string" && evalBool(ab.known, makeEnv(r, s), false);
-}
-
-export function abilityStatus(r: Ruleset, s: GameState, id: string): AbilityStatus {
-  const ab = r.abilities[id];
-  const known = knowsAbility(r, s, id);
-  if (!ab || !known) return { id, known, left: null, here: false, locked: "Not learned" };
-  const used = usesOf(s, `${ABILITY_PREFIX}${id}`);
-  const lefts: number[] = [];
-  if (ab.perDay) lefts.push(ab.perDay - used.today);
-  if (ab.perEncounter && s.encounter) lefts.push(ab.perEncounter - used.here);
-  const left = lefts.length ? Math.max(0, Math.min(...lefts)) : null;
-  const here = ab.where === "any" || (ab.where === "encounter") === !!s.encounter;
-  let locked: string | null = null;
-  if (left === 0) locked = ab.perEncounter && s.encounter && ab.perEncounter - used.here <= 0 ? "Used up for this encounter" : "Used up for today";
-  else if (!whenHolds(r, s, ab.action)) locked = ab.action.whyNot ?? lockReason(r, s, ab.action);
-  // A cost it can't pay (8 Mana with 5 left, or "-15%" of a pool too low) locks it, with the reason.
-  else locked = costShortfall(r, s, ab.action);
-  return { id, known, left, here, locked };
-}
-
-/** Abilities the player knows that belong here (in an encounter or out of one), each with whether it can be used now. */
-export function usableAbilities(r: Ruleset, s: GameState): { id: string; a: ActionDef; status: AbilityStatus }[] {
-  const out: { id: string; a: ActionDef; status: AbilityStatus }[] = [];
-  for (const ab of Object.values(r.abilities)) {
-    const status = abilityStatus(r, s, ab.id);
-    if (status.known && status.here) out.push({ id: `${ABILITY_PREFIX}${ab.id}`, a: ab.action, status });
-  }
-  return out;
 }
 
 /** The encounter's main meter (what a `harm:` wears down): the first foe stat whose threshold wins it. */
@@ -525,19 +449,6 @@ export function foeArmor(r: Ruleset, s: GameState, stat: string): number {
   return n;
 }
 
-/** Armor a move ignores, from the perks held (a pierce rule matching its stats or tags). */
-function perkPierce(r: Ruleset, s: GameState, a: ActionDef | null): number {
-  if (!a) return 0;
-  const used = new Set(checkStats(r, a));
-  let n = 0;
-  for (const id of Object.keys(s.perks)) for (const rule of r.perks[id]?.rules ?? []) {
-    if (rule.kind !== "pierce") continue;
-    const fits = (!rule.stats.length && !rule.tags.length) || rule.stats.some((x) => used.has(x)) || rule.tags.some((t) => a.tags.includes(t));
-    if (fits) n += rule.amount;
-  }
-  return n;
-}
-
 /** Is this change to a foe stat a blow (toward what's good for the player)? */
 function hurtsFoe(def: { good: "high" | "low" | "none" } | undefined, d: number): boolean {
   return def?.good === "high" ? d > 0 : def?.good === "none" ? false : d < 0;
@@ -556,22 +467,6 @@ function amountOf(w: Working, v: string | number, extra: Record<string, Value>, 
   return Math.abs(x) >= 1 && p !== null ? Math.round(x) : x;
 }
 
-/** A perk that steps in when this check fails: a reroll or a softened result, if it has uses left today. */
-function perkRuleFor(r: Ruleset, s: GameState, a: ActionDef, kind: "reroll" | "soften"): { perk: string; name: string } | null {
-  const used = new Set(checkStats(r, a));
-  for (const id of Object.keys(s.perks)) {
-    const p = r.perks[id];
-    for (const rule of p?.rules ?? []) {
-      if (rule.kind !== kind) continue;
-      const fits = (!rule.stats.length && !rule.tags.length) || rule.stats.some((x) => used.has(x)) || rule.tags.some((t) => a.tags.includes(t));
-      if (!fits) continue;
-      if (rule.perDay && usesOf(s, `perk:${id}:${kind}`).today >= rule.perDay) continue;
-      return { perk: id, name: p.name };
-    }
-  }
-  return null;
-}
-
 /** Look up an intent's action (and target) in whatever pool is live. */
 export function findAction(r: Ruleset, s: GameState, actionId: string): { a: ActionDef; target?: string } | null {
   const [base, target] = actionId.split(TARGET_SEP);
@@ -584,12 +479,6 @@ export function findAction(r: Ruleset, s: GameState, actionId: string): { a: Act
     const a = item?.use;
     return a && (s.items[id] ?? 0) > 0 && !(item.uses > 0 && (s.uses[id] ?? item.uses) <= 0) && allowed(a)
       ? { a, ...(target ? { target } : {}) } : null;
-  }
-  if (base.startsWith(ABILITY_PREFIX)) {
-    const id = base.slice(ABILITY_PREFIX.length);
-    const st = abilityStatus(r, s, id);
-    const a = r.abilities[id]?.action;
-    return a && st.known && st.here && !st.locked && allowed(a) ? { a, ...(target ? { target } : {}) } : null;
   }
   if (base.startsWith(IMPROV)) {
     const a = improvAction(r, s, base);
@@ -689,29 +578,18 @@ function checkNumbers(r: Ruleset, s: GameState, a: ActionDef, params?: Record<st
 export interface Odds { success: number; partial: number }
 
 /** Probability of success-or-better (and of partial) for the UI. Deterministic. */
-export function odds(r: Ruleset, s: GameState, a: ActionDef, params?: Record<string, string>, who?: string, includePerks = true): Odds | null {
+export function odds(r: Ruleset, s: GameState, a: ActionDef, params?: Record<string, string>, who?: string): Odds | null {
   const check = a.check;
   if (!check) return null;
   const { add, target, crit } = checkNumbers(r, s, a, params, who);
   if (check.style === "chance" && check.dice === "d100" && target !== null) {
-    const success = Math.max(0, Math.min(100, target - add)) / 100;
-    // A reroll happens only after failure. Soften converts ordinary failures to
-    // partials, but only converts critical failures to ordinary failures.
-    const reroll = includePerks && !!perkRuleFor(r, s, a, "reroll");
-    const soften = includePerks && !!perkRuleFor(r, s, a, "soften");
-    const failed = 1 - success;
-    const critical = check.crits ? Math.min(failed, 0.05) : 0;
-    return { success: reroll ? success + failed * success : success,
-      partial: soften ? (reroll ? failed : 1) * (failed - critical) : 0 };
+    return { success: Math.max(0, Math.min(100, target - add)) / 100, partial: 0 };
   }
   const rng = seededRng(`odds:${a.id}`);
-  const reroll = includePerks && !!perkRuleFor(r, s, a, "reroll"), soften = includePerks && !!perkRuleFor(r, s, a, "soften");
   const N = 2000;
   let ok = 0, part = 0;
   for (let i = 0; i < N; i++) {
-    let t = tierFor(check, rollDice(check.dice, rng), add, target, crit);
-    if ((t === "fail" || t === "crit_fail") && reroll) t = tierFor(check, rollDice(check.dice, rng), add, target, crit);
-    if ((t === "fail" || t === "crit_fail") && soften) t = t === "crit_fail" ? "fail" : "partial";
+    const t = tierFor(check, rollDice(check.dice, rng), add, target, crit);
     if (t === "success" || t === "crit_success") ok++;
     else if (t === "partial") part++;
   }
@@ -800,7 +678,7 @@ function effectToEvents(w: Working, e: Effect, src: EventSource, extra: Record<s
     const foeStats = r.encounters[w.s.encounter.id]?.foe.stats;
     const blows: { stat: string; v: number }[] = [];
     for (const [stat, d] of Object.entries(e.foe)) {
-      // An ability written for one kind of foe ("hp") simply misses one that doesn't have it.
+      // A move written for one kind of foe ("hp") simply misses one that doesn't have it.
       if (foeStats?.length && !foeStats.some((x) => x.id === stat)) continue;
       const v = amountOf(w, d, extra, foeStats?.some((x) => x.id === stat) ? foeMaxOf(r, w.s, stat) : 100);
       if (v !== 0) blows.push({ stat, v });
@@ -811,7 +689,7 @@ function effectToEvents(w: Working, e: Effect, src: EventSource, extra: Record<s
       if (v && m) blows.push({ stat: m.stat, v: m.down ? -v : v });
       else if (v && w.s.encounter.momentum !== undefined) w.push({ t: "swing", d: v, src });
     }
-    const pierce = Math.max(0, (e.pierce !== undefined ? evalNumber(e.pierce, w.env(extra), 0) : 0) + (foeTurn ? 0 : perkPierce(r, w.s, w.action)));
+    const pierce = Math.max(0, e.pierce !== undefined ? evalNumber(e.pierce, w.env(extra), 0) : 0);
     for (const { stat, v } of blows) {
       const fs = foeStats?.find((x) => x.id === stat);
       // Healing, rallying and the like land once and ignore armor.
@@ -829,11 +707,8 @@ function effectToEvents(w: Working, e: Effect, src: EventSource, extra: Record<s
     }
     if (e.end) w.pendingEnd = e.end;
   }
-  for (const id of e.learn) if (r.abilities[id] && !w.s.learned?.[id]) w.push({ t: "learn", id, src });
   // A rule can't restart the encounter that just ended (an edge trigger on `not in_encounter` turns true again the moment it ends).
   if (e.startEncounter && !w.s.encounter && !(src === "trigger" && encounterJustEnded(w.s, e.startEncounter, false))) startEncounter(w, e.startEncounter, src);
-
-  for (const id of e.unlock) if (w.r.codex[id] && !w.s.codex[id]) w.push({ t: "codex", id, src });
 
   // Secrets.
   for (const id of e.reveal) {
@@ -1221,16 +1096,6 @@ function runTriggers(w: Working, includeRepeat: boolean) {
       announce(w, warning);
     }
   }
-  // Codex entries and feats unlock themselves when their formula first holds.
-  for (const c of Object.values(w.r.codex)) {
-    if (c.unlock && !w.s.codex[c.id] && evalBool(c.unlock, w.env(), false)) w.push({ t: "codex", id: c.id, src: "trigger" });
-  }
-  for (const f of Object.values(w.r.feats)) {
-    if (!w.s.feats[f.id] && evalBool(f.unlock, w.env(), false)) {
-      w.push({ t: "feat", id: f.id, src: "trigger" });
-      because(w, `Feat: ${f.name}`, () => effectToEvents(w, f.reward, "trigger", {}));
-    }
-  }
   openSecrets(w);
   questLife(builderOf(w));
 }
@@ -1332,7 +1197,6 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
     beatSheet(w, encBase, rec, opts.playerText);
   } else if (a) {
     const who = found?.target;
-    w.action = a;
     w.turnOf = inEncounter ? "player" : null;
     const extra = paramValues(a, intent!.params, who);
     const difficulty = improvised && isDifficulty(intent!.params?.difficulty) ? intent!.params!.difficulty : "fair";
@@ -1358,35 +1222,12 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
       const it = r.items[itemId];
       if (it && !it.keep && (w.s.items[itemId] ?? 0) > 0) because(w, `Used ${it.name}`, () => w.push(it.uses > 0 ? { t: "use", id: itemId, n: 1, src: "action" } : { t: "item", id: itemId, d: -1, src: "action" }));
     }
-    if (a.id.startsWith(ABILITY_PREFIX)) {
-      const enc = encounterKey(checkBefore);
-      because(w, `Used ${r.abilities[a.id.slice(ABILITY_PREFIX.length)]?.name ?? a.label}`, () => w.push({ t: "charge", key: a.id, day: dayOf(checkBefore), ...(enc ? { enc } : {}), src: "action" }));
-    }
 
     if (a.check) {
       const rng: Rng = seededRng(opts.seed);
       const { add, target, crit } = checkNumbers(r, checkBefore, a, intent!.params, who);
-      let roll = rollDice(a.check.dice, rng);
+      const roll = rollDice(a.check.dice, rng);
       let tier = tierFor(a.check, roll, add, target, crit);
-      // A perk may step in after a failure: roll again, or let it partly work.
-      let perkNote: string | undefined;
-      if (tier === "fail" || tier === "crit_fail") {
-        const re = perkRuleFor(r, checkBefore, a, "reroll");
-        if (re) {
-          because(w, `★ ${re.name}`, () => w.push({ t: "charge", key: `perk:${re.perk}:reroll`, day: dayOf(checkBefore), src: "action" }));
-          roll = rollDice(a.check.dice, seededRng(`${opts.seed}:reroll`));
-          tier = tierFor(a.check, roll, add, target, crit);
-          perkNote = `${re.name} rerolled a failure`;
-        }
-      }
-      if (tier === "fail" || tier === "crit_fail") {
-        const so = perkRuleFor(r, checkBefore, a, "soften");
-        if (so) {
-          because(w, `★ ${so.name}`, () => w.push({ t: "charge", key: `perk:${so.perk}:soften`, day: dayOf(checkBefore), src: "action" }));
-          tier = tier === "crit_fail" ? "fail" : "partial";
-          perkNote = `${so.name}: ${tier === "partial" ? "the failure only half-failed" : "the disaster was only a failure"}`;
-        }
-      }
       // Rolled when the choice was clicked, and already told in the player's own message: that result stands
       // (the same seed gives the same roll; this only covers a state that shifted in between).
       if (intent?.tier && (TIERS as readonly string[]).includes(intent.tier)) tier = intent.tier;
@@ -1404,7 +1245,6 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
       };
       const gear = gearFor(r, checkBefore, a).notes;
       if (gear.length) rec.check.gear = gear;
-      if (perkNote) rec.check.perk = perkNote;
       questHooks(builderOf(w), { kind: "action", id: a.id, result: tier, good: tier === "success" || tier === "crit_success" });
       // `effects:` next to a check always happen, whatever the dice say (then the tier's own effects).
       if (hasEffect(a.effects)) because(w, `"${label}"`, () => effectToEvents(w, a.effects, "action", extra));
@@ -1441,7 +1281,6 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
       encounterRound(w, "action");
       beatSheet(w, encBase, rec, opts.playerText);
     }
-    w.action = null;
     w.turnOf = null;
   } else if (inEncounter && w.s.encounter) {
     // Typed a non-move during an encounter: the opponent still gets their turn.
@@ -1802,111 +1641,6 @@ export function changeClothes(r: Ruleset, before: GameState, slot: string, item:
   }
   const w = new Working(r, cloneState(before));
   w.push({ t: "wear", slot, item, src: "manual" });
-  runTriggers(w, false);
-  return w.events;
-}
-
-/** Why a perk can't be bought right now, or null if it can. */
-export function perkBlocker(r: Ruleset, s: GameState, id: string, offered = true): string | null {
-  const p = r.perks[id];
-  if (!p) return "Unknown perk.";
-  if (s.perks[id]) return "Already taken.";
-  const clash = Object.keys(s.perks).find((o) => p.excludes.includes(o) || r.perks[o]?.excludes.includes(id));
-  if (clash) return `Can't go with ${r.perks[clash]?.name ?? clash}.`;
-  if (p.requires && !evalBool(p.requires, makeEnv(r, s), false)) return "Requirements not met.";
-  const pool = p.points ?? r.perkPoints;
-  if (pool && (s.stats[pool] ?? 0) < p.cost) return `Needs ${p.cost} ${p.points ? r.stats[p.points]?.label ?? p.points : `point${p.cost === 1 ? "" : "s"}`}.`;
-  if (offered && r.perkPick && !perkOffers(r, s).includes(id)) return "Not on offer right now.";
-  return null;
-}
-
-/** The stats a perk is about: what it boosts, what its rules touch, what its abilities roll. */
-function perkStats(r: Ruleset, id: string): string[] {
-  const p = r.perks[id];
-  if (!p) return [];
-  return [...new Set([
-    ...Object.keys(p.bonus), ...p.edges.flatMap((e) => Object.keys(e.stats)),
-    ...p.rules.flatMap((x) => ("stat" in x ? [x.stat] : "stats" in x ? x.stats : [])),
-    ...p.abilities.flatMap((a) => (r.abilities[a] ? checkStats(r, r.abilities[a].action) : [])),
-  ])];
-}
-
-/** How much a perk builds on how this character has been played: growth in the stats it's about. */
-function perkAffinity(r: Ruleset, s: GameState, id: string): number {
-  let score = 0;
-  for (const stat of perkStats(r, id)) {
-    const def = r.stats[stat];
-    if (!def) continue;
-    const span = Math.max(1, def.max - def.min);
-    score += Math.max(0, ((s.stats[stat] ?? def.start) - def.start) / span) + (s.practice?.[stat] ?? 0) * 0.25;
-  }
-  return score;
-}
-
-/**
- * When perks are picked rather than bought (`perks: { pick: 3 }`): what's on
- * offer while there's a point to spend. One builds on how you've played, one
- * takes you somewhere new, the rest are drawn by weight. Fixed until you
- * take one, so the offer doesn't shuffle under you.
- */
-export function perkOffers(r: Ruleset, s: GameState): string[] {
-  if (!r.perkPick) return [];
-  // `offer: always` perks (a class choice) sit beside the drawn ones whenever they can be taken.
-  const always = Object.values(r.perks).filter((p) => p.always && !perkBlocker(r, s, p.id, false)).map((p) => p.id);
-  const open = Object.values(r.perks).filter((p) => !p.always && p.weight > 0 && !perkBlocker(r, s, p.id, false));
-  if (!open.length) return always;
-  const rng = seededRng(`${s.seed ?? "warp"}:perks:${Object.keys(s.perks).sort().join(",")}`);
-  const score = new Map(open.map((p) => [p.id, perkAffinity(r, s, p.id) + rng() * 0.01]));
-  const left = [...open];
-  const out: string[] = [];
-  const take = (p: (typeof open)[number] | undefined) => { if (!p) return; out.push(p.id); left.splice(left.indexOf(p), 1); };
-  if (left.length) take([...left].sort((a, b) => score.get(b.id)! - score.get(a.id)!)[0]);
-  if (out.length < r.perkPick && left.length) take([...left].sort((a, b) => score.get(a.id)! - score.get(b.id)!)[0]);
-  while (out.length < r.perkPick && left.length) {
-    const total = left.reduce((n, p) => n + p.weight, 0);
-    let x = rng() * total;
-    take(left.find((p) => (x -= p.weight) <= 0) ?? left[left.length - 1]);
-  }
-  return [...out, ...always];
-}
-
-export function buyPerk(r: Ruleset, before: GameState, id: string): WarpEvent[] | string {
-  const blocked = perkBlocker(r, before, id);
-  if (blocked) return blocked;
-  const p = r.perks[id];
-  const w = new Working(r, cloneState(before));
-  w.push({ t: "perk", id, src: "manual" });
-  const pool = p.points ?? r.perkPoints;
-  if (pool && p.cost) w.push({ t: "stat", id: pool, d: -p.cost, src: "manual" });
-  effectToEvents(w, p.effects, "manual", {});
-  runTriggers(w, false);
-  return w.events;
-}
-
-/**
- * Spend points on stats that declare `allocate:` — `{ str: 2, dex: 1 }` is two steps of STR and one of DEX.
- * Checked as a whole (stats allocatable, whole positive steps, room under the max, points enough): all of it happens, or none.
- */
-export function allocateStats(r: Ruleset, before: GameState, spend: Record<string, number>): WarpEvent[] | string {
-  const steps = Object.entries(spend ?? {}).filter(([, n]) => n !== 0);
-  if (!steps.length) return "Nothing to spend.";
-  const cost: Record<string, number> = {};
-  for (const [id, n] of steps) {
-    const def = r.stats[id];
-    if (!def?.allocate) return `${def?.label ?? id} can't be raised with points.`;
-    if (!Number.isInteger(n) || n < 0 || n > 1000) return "Points go on in whole steps, one way.";
-    const v = before.stats[id] ?? def.start;
-    const max = statMax(r, def, before);
-    if (v + n * def.allocate.step > max + 1e-9) return `${def.label} can't go above ${formatNumber(max)}.`;
-    cost[def.allocate.with] = (cost[def.allocate.with] ?? 0) + n * def.allocate.cost;
-  }
-  for (const [pool, c] of Object.entries(cost)) {
-    const have = before.stats[pool] ?? r.stats[pool]?.start ?? 0;
-    if (have < c - 1e-9) return `Not enough ${r.stats[pool]?.label ?? pool}: needs ${formatNumber(c)}, have ${formatNumber(have)}.`;
-  }
-  const w = new Working(r, cloneState(before));
-  for (const [pool, c] of Object.entries(cost)) w.push({ t: "stat", id: pool, d: -c, src: "manual", why: "Points spent" });
-  for (const [id, n] of steps) w.push({ t: "stat", id, d: n * r.stats[id].allocate!.step, src: "manual", why: `Points spent on ${r.stats[id].label}` });
   runTriggers(w, false);
   return w.events;
 }

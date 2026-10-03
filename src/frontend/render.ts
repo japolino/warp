@@ -21,35 +21,7 @@ function pctTone(p: number): "good" | "warn" | "bad" {
 /** One of the HUD's sections: it can sit in the main window or be torn off into a panel of its own. */
 export interface HudPart { id: string; title: string; count: number; body: string; open: boolean }
 
-export interface HudOpts { editing: string | null; compact: boolean; /** Points placed with +/− but not yet spent: stat → steps. */ alloc?: Record<string, number> }
-
-/** Points left in a pool once the +/− placed so far are counted. */
-function allocLeft(h: HudView, pool: string, draft: Record<string, number>): number {
-  const sk = h.skills.find((x) => x.allocate?.pool === pool);
-  if (!sk?.allocate) return 0;
-  let left = sk.allocate.left;
-  for (const x of h.skills) if (x.allocate?.pool === pool) left -= (draft[x.id] ?? 0) * x.allocate.cost;
-  return left;
-}
-
-/** +/− beside a stat that's raised with points (`allocate:`); shown while there are points (or steps placed). */
-function renderAllocButtons(h: HudView, s: HudView["skills"][number], draft: Record<string, number>): string {
-  const al = s.allocate;
-  if (!al) return "";
-  const placed = draft[s.id] ?? 0;
-  const canAdd = allocLeft(h, al.pool, draft) >= al.cost && placed < al.room;
-  if (!placed && !canAdd) return "";
-  return ` <span class="warp-alloc">${placed ? `<button class="warp-btn warp-btn-mini" data-alloc-sub="${esc(s.id)}" title="Take back a step" aria-label="Lower ${esc(s.label)}">−</button><b class="warp-tone-good">+${esc(placed * al.step)}</b>` : ""}${canAdd ? `<button class="warp-btn warp-btn-mini" data-alloc-add="${esc(s.id)}" title="${esc(`+${al.step} ${s.label} for ${al.cost} ${al.poolLabel}`)}" aria-label="Raise ${esc(s.label)}">+</button>` : ""}</span>`;
-}
-
-/** Points to spend and the steps placed: confirm or clear. `only`: just these pools (the ones a group of stats draws on). */
-function renderAllocBar(h: HudView, draft: Record<string, number>, only?: Set<string>): string {
-  const pools = [...new Map(h.skills.filter((x) => x.allocate && (!only || only.has(x.allocate.pool))).map((x) => [x.allocate!.pool, x.allocate!])).values()];
-  const shown = pools.filter((p) => p.left > 0 || h.skills.some((x) => x.allocate?.pool === p.pool && draft[x.id]));
-  if (!shown.length) return "";
-  const placed = h.skills.some((x) => x.allocate && shown.some((p) => p.pool === x.allocate!.pool) && (draft[x.id] ?? 0) > 0);
-  return `<div class="warp-alloc-bar">${shown.map((p) => `<span>${esc(p.poolLabel)}: <b>${esc(allocLeft(h, p.pool, draft))}</b> to spend</span>`).join(" ")}${placed ? ` <button class="warp-btn warp-btn-primary warp-btn-mini" data-alloc-confirm>Spend</button> <button class="warp-btn warp-btn-mini" data-alloc-clear>Clear</button>` : ""}</div>`;
-}
+export interface HudOpts { editing: string | null; compact: boolean }
 
 /** The HUD in full: the head (clock, place, bars) and every section, in order. */
 export function renderHud(h: HudView, opts: HudOpts): string {
@@ -88,26 +60,22 @@ export function hudParts(h: HudView, opts: HudOpts): { head: string; parts: HudP
     </div>`;
   }).join("");
 
-  // Rows filed under their headings (`group:`, else Attributes / Skills); each heading carries the points its stats draw on.
+  // Rows filed under their headings (`group:`, else Attributes / Skills).
   const skillRow = (s: HudView["skills"][number]) => `
     <div class="warp-skill" title="${esc(`${s.label}: ${s.display}${s.text ? ` — ${s.text}` : ""}${s.practice !== null ? `\nPractice toward the next point: ${Math.round(s.practice * 100)}% — it grows every time you use it` : ""}`)}">
-      <span>${esc(s.label)}${renderAllocButtons(h, s, opts.alloc ?? {})}</span>
+      <span>${esc(s.label)}</span>
       <span class="warp-grade ${s.grade ? `warp-tone-${pctTone(s.pct)}` : s.text ? `warp-tone-${s.tone}` : ""}">${esc(s.grade ?? s.text ?? s.display)}</span>
       <div class="warp-skill-tracks">
         <div class="warp-mini-track"><div class="warp-mini-fill" style="width:${(s.pct * 100).toFixed(1)}%"></div></div>
         ${s.practice !== null ? `<div class="warp-practice-track"><div class="warp-practice-fill" style="width:${(s.practice * 100).toFixed(1)}%"></div></div>` : ""}
       </div>
     </div>`;
-  const draft = opts.alloc ?? {};
   const skillGroups = [...new Set(h.skills.map((x) => x.group))];
-  const pooled = new Set<string>();
-  const skillsBody = skillGroups.length < 2 ? renderAllocBar(h, draft) + h.skills.map(skillRow).join("") : skillGroups.map((g) => {
+  const skillsBody = skillGroups.length < 2 ? h.skills.map(skillRow).join("") : skillGroups.map((g) => {
     const rows = h.skills.filter((x) => x.group === g);
-    const mine = new Set(rows.flatMap((x) => (x.allocate && !pooled.has(x.allocate.pool) ? [x.allocate.pool] : [])));
-    for (const p of mine) pooled.add(p);
-    return `<div class="warp-group"><div class="warp-group-head">${esc(g)}</div>${mine.size ? renderAllocBar(h, draft, mine) : ""}${rows.map(skillRow).join("")}</div>`;
+    return `<div class="warp-group"><div class="warp-group-head">${esc(g)}</div>${rows.map(skillRow).join("")}</div>`;
   }).join("");
-  const skills: HudPart | null = h.skills.length ? part("skills", "Skills & attributes", h.skills.length, skillsBody, !opts.compact || h.skills.some((x) => (x.allocate?.left ?? 0) > 0)) : null;
+  const skills: HudPart | null = h.skills.length ? part("skills", "Skills & attributes", h.skills.length, skillsBody, !opts.compact) : null;
 
   // Who's in the scene comes first; everyone else waits, folded, under "Elsewhere".
   const here = h.people.filter((p) => p.present);
@@ -148,7 +116,7 @@ export function hudParts(h: HudView, opts: HudOpts): { head: string; parts: HudP
 
   return {
     head: `${renderEncounter(h)}<div class="warp-hud-top">${top}</div>${renderWarmth(h)}<div class="warp-bars">${bars}</div>`,
-    parts: [renderOutfit(h, opts.compact), skills, renderAbilities(h, opts.compact), renderQuests(h, opts.compact), people, body, items, renderPerks(h, opts.compact)].filter((p): p is HudPart => !!p),
+    parts: [renderOutfit(h, opts.compact), skills, renderQuests(h, opts.compact), people, body, items].filter((p): p is HudPart => !!p),
   };
 }
 
@@ -213,38 +181,6 @@ function renderOutfit(h: HudView, compact: boolean): HudPart | null {
   return part("outfit", "Outfit", worn, rows, !compact);
 }
 
-function perkCard(p: HudView["perks"][number], take: boolean): string {
-  return `<div class="warp-perk${p.owned ? " warp-perk-owned" : ""}${p.offered ? " warp-perk-offer" : ""}">
-      <div class="warp-perk-text"><b>${esc(p.name)}</b>${p.desc ? ` <span class="warp-dim">${esc(p.desc)}</span>` : ""}
-        ${p.notes.length ? `<div class="warp-perk-notes">${p.notes.map((n) => `<span>${esc(n)}</span>`).join("")}</div>` : ""}
-        ${p.drawback ? `<div class="warp-perk-drawback">⚠ ${esc(p.drawback)}</div>` : ""}
-      </div>
-      ${p.owned ? `<span class="warp-tone-good" aria-label="taken">✓</span>` : take && !p.blocker ? `<button class="warp-btn warp-mini${p.offered ? " warp-btn-primary" : ""}" data-buy-perk="${esc(p.id)}">${p.offered ? "Choose" : `Take · ${esc(p.cost)} ${esc(p.pointsLabel ?? "pt")}`}</button>` : `<span class="warp-dim" title="${esc(p.blocker ?? "")}">${esc(p.cost)} ${esc(p.pointsLabel ?? "pt")}</span>`}
-    </div>`;
-}
-
-/** Perks: picked from a few on offer (or bought from the list), then what you have and what each does. */
-function renderPerks(h: HudView, compact: boolean): HudPart | null {
-  if (!h.perks.length) return null;
-  const offer = h.perks.filter((p) => p.offered && !p.owned);
-  const owned = h.perks.filter((p) => p.owned);
-  const rest = h.perks.filter((p) => !p.owned && !p.offered);
-  const open = h.perkPick ? owned : [...owned, ...rest.filter((p) => !p.locked)];
-  const later = h.perkPick ? [] : rest.filter((p) => p.locked);
-  // Under their headings (`group:`) when the book files them; yours first within each.
-  const grouped = (list: HudView["perks"], card: (p: HudView["perks"][number]) => string) => {
-    const gs = [...new Set(list.map((p) => p.group ?? ""))];
-    if (gs.length < 2 && !gs[0]) return list.map(card).join("");
-    return gs.map((g) => `${g ? `<div class="warp-group-head">${esc(g)}</div>` : ""}${list.filter((p) => (p.group ?? "") === g).map(card).join("")}`).join("");
-  };
-  const laterRow = (p: HudView["perks"][number]) => `<div class="warp-perk-later" title="${esc(p.desc)}"><b>${esc(p.name)}</b> <span class="warp-dim">${esc(p.needs ? `Needs ${p.needs}` : "Not yet")}</span></div>`;
-  const pick = offer.length ? `<div class="warp-perk-pick"><div class="warp-perk-pick-head">✦ Pick ${h.perkPick > 1 ? "one" : "it"}</div>${offer.map((p) => perkCard(p, true)).join("")}</div>` : "";
-  const folded = later.length ? `<details class="warp-away"><summary>Not yet · ${later.length}</summary><div class="warp-section-body">${grouped(later, laterRow)}</div></details>` : "";
-  const body = `${pick}${grouped(open, (p) => perkCard(p, !p.owned))}${folded}${!pick && !owned.length && h.perkPick ? `<div class="warp-empty">Earn a point to choose your first perk.</div>` : ""}`;
-  const label = h.perkPoints !== null ? `Perks · ${h.perkPoints} point${h.perkPoints === 1 ? "" : "s"}` : "Perks";
-  return part("perks", label, offer.length, body, !compact && ((h.perkPoints ?? 0) > 0 || offer.length > 0));
-}
-
 /** One quest: what it is, who it's for, goals ticked off, time left, what it pays and what failing costs. */
 function questCard(q: HudView["quests"][number]): string {
   const mark = q.status === "done" ? "✅" : q.status === "failed" ? "✗" : q.status === "ready" ? "📜" : q.status === "offered" ? "❔" : "📜";
@@ -282,34 +218,10 @@ function renderQuests(h: HudView, compact: boolean): HudPart | null {
   return part("quests", "Quests", open.length, body, !compact || open.some((q) => q.status === "ready") || offered.length > 0);
 }
 
-/** The player's own abilities: cost, uses left, and a button when it can be used now. */
-function renderAbilities(h: HudView, compact: boolean): HudPart | null {
-  if (!h.abilities.length) return null;
-  const rows = h.abilities.map((a) => `<div class="warp-item warp-item-usable warp-ability">
-      <span class="warp-item-name" title="${esc(a.desc ?? "")}">✦ ${esc(a.name)}${a.cost ? ` <span class="warp-dim">· ${esc(a.cost)}</span>` : ""}${a.left !== null ? ` <span class="warp-dim">· ${esc(a.left)} left</span>` : ""}</span>
-      <span class="warp-item-side">${a.locked
-        ? `<button class="warp-btn warp-mini" disabled title="${esc(a.locked)}">🔒 Use</button>`
-        : `<button class="warp-btn warp-mini" data-use="${esc(a.choice)}" title="${esc(a.desc ?? a.name)}">Use</button>`}</span>
-    </div>`).join("");
-  return part("abilities", "Abilities", h.abilities.filter((a) => !a.locked).length, rows, !compact);
-}
-
 // ───────────────────────── journal ─────────────────────────
 
 export function renderJournal(h: HudView | null, records: RecordView[]): string {
   if (!h) return `<div class="warp-card"><p>No game running in this chat.</p></div>`;
-  const byCat = new Map<string, HudView["codex"]>();
-  for (const c of h.codex) byCat.set(c.category ?? "Notes", [...(byCat.get(c.category ?? "Notes") ?? []), c]);
-  const codex = h.codexTotal
-    ? `<div class="warp-card"><h3>Codex <span class="warp-dim">${h.codex.length} / ${h.codexTotal}</span></h3>
-        ${h.codex.length ? [...byCat].map(([cat, list]) => `<div class="warp-choice-group-label">${esc(cat)}</div>${list.map((c) => `<details class="warp-codex"><summary>${esc(c.title)}</summary><p>${esc(c.text)}</p></details>`).join("")}`).join("") : `<p>Nothing discovered yet.</p>`}
-      </div>`
-    : "";
-  const feats = h.feats.length
-    ? `<div class="warp-card"><h3>Feats <span class="warp-dim">${h.feats.filter((f) => f.unlocked).length} / ${h.feats.length}</span></h3>
-        ${h.feats.map((f) => `<div class="warp-feat${f.unlocked ? " unlocked" : ""}"><span>${f.unlocked ? "🏆" : "🔒"}</span><div><b>${esc(f.name)}</b><div class="warp-dim">${esc(f.desc)}</div></div></div>`).join("")}
-      </div>`
-    : "";
   const turns = records.filter((r) => r.action || r.check || r.changes.length).slice().reverse().slice(0, 40);
   const timeline = `<div class="warp-card"><h3>Timeline</h3>
     ${turns.length ? turns.map((r) => `<button class="warp-timeline-row" data-jump="${esc(r.messageId)}" title="Jump to this message">
@@ -318,7 +230,7 @@ export function renderJournal(h: HudView | null, records: RecordView[]): string 
         <span class="warp-dim warp-timeline-changes">${esc(r.changes.slice(0, 4).map((c) => c.text).join(" · "))}</span>
       </button>`).join("") : `<p>Nothing has happened yet.</p>`}
   </div>`;
-  return codex + feats + timeline;
+  return timeline;
 }
 
 function section(title: string, count: number, body: string, open: boolean, key = title, movable = false): string {

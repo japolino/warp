@@ -98,7 +98,7 @@ export function dropPrewritten(chatId: string) {
 }
 
 /** Choices that open a screen or change the game without a reply can't be pre-written. */
-const writable = (id: string) => !id.startsWith("item:") && !id.startsWith("ability:");
+const writable = (id: string) => !id.startsWith("item:");
 
 export async function prewrite(opts: {
   chatId: string; userId?: string; r: Ruleset; settings: Settings; decider: Decider;

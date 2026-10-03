@@ -14,7 +14,6 @@ const PART_OF_KEY: Record<string, PartLabel> = {
   actions: "actions", improvise: "actions", improvised: "actions",
   encounters: "encounters",
   quests: "quests",
-  codex: "journal", feats: "journal", perks: "journal", abilities: "journal",
   triggers: "rules", rules: "rules",
   secrets: "story", live_choices: "story",
 };

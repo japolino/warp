@@ -1,10 +1,9 @@
-// Places, people and world gates: per-person targets, always-offered perks with
-// their own points, and per-place indoor temperature.
+// Places, people and world gates: per-person targets and per-place indoor temperature.
 
 import { describe, expect, test } from "bun:test";
 import { lintRuleset } from "./lint.js";
 import { normalizeRuleset } from "./ruleset.js";
-import { availableChoices, buyPerk, perkBlocker, perkOffers, resolveTurn } from "./resolve.js";
+import { availableChoices, resolveTurn } from "./resolve.js";
 import { foldEvents, initialState, makeEnv, type GameState } from "./state.js";
 import { presentPeople, temperatureAt } from "./world.js";
 
@@ -15,8 +14,6 @@ const BASE = {
   stats: {
     level: { kind: "attribute", start: 1, max: 99 },
     gold: { kind: "money", start: 0 },
-    talent_points: { kind: "attribute", start: 0, max: 10 },
-    class_points: { kind: "attribute", start: 0, max: 10 },
   },
   flags: { gate_found: false, maud_gone: false },
   locations: {
@@ -106,41 +103,3 @@ describe("people", () => {
   });
 });
 
-describe("perks", () => {
-  const perks = {
-    points: "talent_points",
-    pick: 2,
-    knight: { name: "Knight", offer: "always", points: "class_points" },
-    mage: { name: "Mage", offer: "always", points: "class_points", excludes: ["knight"] },
-    a: { name: "A" }, b: { name: "B" }, c: { name: "C" }, d: { name: "D" },
-  };
-
-  test("offer: always perks sit beside the random pick and draw from their own points", () => {
-    const { r, issues } = load({ perks });
-    expect(issues).toEqual([]);
-    let s = initialState(r);
-    expect(perkOffers(r, s)).toEqual([]);
-    s.stats.class_points = 1;
-    expect(perkOffers(r, s)).toEqual(["knight", "mage"]); // no talent points: only the class choice
-    s.stats.talent_points = 1;
-    const offers = perkOffers(r, s);
-    expect(offers.filter((x) => ["a", "b", "c", "d"].includes(x)).length).toBe(2);
-    expect(offers.slice(-2)).toEqual(["knight", "mage"]);
-    const ev = buyPerk(r, s, "knight");
-    expect(Array.isArray(ev)).toBe(true);
-    s = foldEvents(r, [ev as never], s);
-    expect(s.stats.class_points).toBe(0);
-    expect(s.stats.talent_points).toBe(1); // the talent pool is untouched
-    expect(perkOffers(r, s)).not.toContain("mage"); // excluded now
-    expect(perkBlocker(r, s, "mage")).toContain("Can't go with");
-  });
-
-  test("a perk's own pool must be a stat; offer: always without pick warns", () => {
-    const bad = load({ perks: { points: "talent_points", x: { name: "X", points: "nope", offer: "sometimes" } } });
-    expect(bad.issues.some((i) => i.where === "Perks › x › points")).toBe(true);
-    expect(bad.issues.some((i) => i.where === "Perks › x › offer")).toBe(true);
-    expect(bad.r.perks.x.points).toBeUndefined();
-    const nopick = load({ perks: { points: "talent_points", x: { name: "X", offer: "always" } } });
-    expect(nopick.issues.some((i) => i.where === "Perks › x › offer")).toBe(true);
-  });
-});

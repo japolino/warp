@@ -1,7 +1,7 @@
 // The ruleset format, condensed for a model to write against. Kept in code so
 // the AI builder and the engine can't drift apart.
 
-export const PART_LABELS = ["core", "stats", "people", "world", "actions", "encounters", "quests", "journal", "rules", "story"] as const;
+export const PART_LABELS = ["core", "stats", "people", "world", "actions", "encounters", "quests", "rules", "story"] as const;
 export type PartLabel = (typeof PART_LABELS)[number];
 
 /** What each lorebook entry ("part") holds. */
@@ -13,7 +13,6 @@ export const PART_CONTENTS: Record<PartLabel, string> = {
   actions: "actions, improvise",
   encounters: "encounters",
   quests: "quests (bounties on a notice board, favours people ask, story jobs: goals, deadline, reward, failure)",
-  journal: "codex, feats, perks, abilities",
   rules: "triggers",
   story: "secrets, live_choices",
 };
@@ -29,7 +28,6 @@ export function partForIssue(where: string): PartLabel {
   if (["actions", "improvise"].some((k) => head.startsWith(k))) return "actions";
   if (head.startsWith("encounters")) return "encounters";
   if (head.startsWith("quests")) return "quests";
-  if (["codex", "feats", "perks", "abilities"].some((k) => head.startsWith(k))) return "journal";
   if (head.startsWith("triggers") || head.startsWith("rules")) return "rules";
   if (["secrets", "live choices"].some((k) => head.startsWith(k))) return "story";
   return "core";
@@ -42,7 +40,7 @@ stats:            # kinds: meter (bar) | attribute | skill | money | hidden
   hp: { kind: meter, max: "20 + level * 8", bands: { 0%: Down., 40%: Wounded., 75%: Hale. } }   # bands in % of the current max, for stats whose max grows
   mana: { kind: meter, max: "20 + wits * 5", start: full, per_hour: "+2%" }   # start: a number, full, "50%" (of the max) or a formula (without start:, a meter with a max formula begins at 100 — write start: full for a full pool); per_hour: a number, a formula ("wits / 10") or a % of the current max
   tier: { kind: attribute, start: 1, bands: { 0: Iron, 3: Bronze }, show: both }   # show: text | number | both | hidden. Unset with bands: the narrator gets the words, the sidebar words plus the number
-  str: { kind: attribute, start: 5, max: 99, allocate: { with: stat_points, step: 1, cost: 1 }, group: Attributes }   # +/− in the sidebar spend points from stat_points (or allocate: stat_points); group: the sidebar heading (default Attributes / Skills by kind; the pool shows on the heading, not as a row)
+  str: { kind: attribute, start: 5, max: 99, group: Attributes }   # group: the sidebar heading (default Attributes / Skills by kind)
   athletics: { kind: skill, max: 100, start: 10, grades: [F, D, C, B, A, S] }
   money: { kind: money, start: 50, narrator: 50 }
   # good: high|low|none (colours); per_hour: drift; narrator: max change the story may make per reply (0 = rules only); max may be a formula ("level * 5")
@@ -129,7 +127,7 @@ actions:
   crack_vault:
     label: Crack the vault
     at: [bank]
-    requires: { lockpicking: 30, with: brann, has: drill, rel: { brann: { trust: 40 } }, quest: heist, flag: alarm_cut, perk: safecracker, when: { "hour >= 22": "After closing" } }
+    requires: { lockpicking: 30, with: brann, has: drill, rel: { brann: { trust: 40 } }, quest: heist, flag: alarm_cut, when: { "hour >= 22": "After closing" } }
     # requires: shown LOCKED at its place with what's missing ("Needs Lockpicking 30 (you have 18), Brann with you · After closing");
     #   a stat name = at least that much; with: someone here; has: items; quest: id (taken) or { id: done }; folds into when:. show_locked: false hides it instead
     effects: { give: bearer_bonds }
@@ -155,15 +153,14 @@ EFFECTS (any success/fail/effects/cost/do block):
   stat shorthand (fatigue: +5, may be a quoted formula), set: { stress: 50 }, flags: { x: true }, give: item / take: item,
   rel: { jo: { trust: +3 } }, move: location, time: 30, add_condition: [cold] or { cold: 120 }, remove_condition: [cold],
   hint: "direction for the narrator", wear: [raincoat], undress: [top], damage: { top: 20 },
-  start_encounter: id, foe: { hp: -6 }, end: outcome_id, unlock: [codex_id],
-  harm: "6 + arcana / 5" (wears down the current encounter's main meter — HP, resolve, composure — so one ability works in any encounter),
+  start_encounter: id, foe: { hp: -6 }, end: outcome_id,
+  harm: "6 + arcana / 5" (wears down the current encounter's main meter — HP, resolve, composure — so one move works in any encounter),
   hits: 3 (the blow lands 3 times, each meeting armor — weak multi-hits lose to heavy armor; on a foe move it's aimed at {{user}}), pierce: 3 (ignores 3 armor; pierce: all),
   percentages: hp: "+30%" heals 30% of max hp; harm: "25%" takes a quarter of the opponent's max; foe: { hp: "-10%" }. Of what's LEFT: foe: { hp: "-foe.hp / 2" },
   inflict: { poisoned: 3 } or [stunned] or { stunned: { rounds: 1, chance: "30 + might * 2" } } (a status on the opponent; on a per-person action outside a fight, on the target, for that many minutes),
   inflict: { mia: { drowsy: 120 } } (on named people), cleanse: [poisoned] (lift it off the opponent / target),
   quest: { wolves: start } (start | done | fail | drop | report), progress: { wolves: +1 } or { "wolves.pelts": +1 } (count toward a goal),
   remember: { mia: "{{user}} burned her birthday breakfast." } (something a person remembers; the narrator sees it whenever they're around),
-  learn: [ability_id] (teaches an ability),
   decide: { ask: "How does Jo react?", options: { yes: { desc: "Agrees", weight: 2, rel: { jo: { trust: +2 } } }, no: { desc: "Refuses", weight: 1 } } }
   Formulas with commas MUST be quoted: money: "-min(money, 20)".
 
@@ -193,7 +190,7 @@ encounters:
     # narrate: true = every round goes to the narrator as a full reply (old style). Default: rounds are told briefly
     #   in one encounter message that grows, then replaced by a summary — far fewer tokens, no repetitive loops.
     # an action out of reach can say why: when: "has('bat')", why_not: "You'd need something to swing"
-    # per_encounter: 1 / per_day: 2 on a move = limited uses, like abilities ("Used up for this encounter"). If every move is priced out of reach, they stay open and the cost takes what's left
+    # per_encounter: 1 / per_day: 2 on a move = limited uses ("Used up for this encounter"). If every move is priced out of reach, they stay open and the cost takes what's left
     # from_story: false = only actions/effects start it (by default the story can: a fight breaking out in the prose starts it, against whoever it's with)
     # momentum: { win: won, lose: beaten, swing: { crit_success: 40, success: 25, partial: 10, fail: -20, crit_fail: -35 } }
     #   a fight that swings (−100…+100): each check moves it, foe moves can too (effect momentum: -15), and only a full swing ends it;
@@ -206,38 +203,6 @@ body:             # the player character's body; the story may change it after a
     feline_splice: { label: Feline splice, chance: 70, stages: [ { set: { ears: { type: cat } }, text: "Soft cat ears push up through {{user}}'s hair." }, { set: { tail: { type: cat } } } ] }
 EFFECTS for the body: body: { hair: { color: red } } (null removes a trait), transform: { feline_splice: 1 } (advance stages; each rolls its chance).
 FUNCTIONS: body('hair', 'color') ('' when absent), transformed('feline_splice') (stages so far).
-
-codex: { docks: { title: The Docks, category: Places, text: "...", unlock: "location == 'docks'", lore: [Lorebook entry title] } }
-feats: { night_owl: { name: Night owl, desc: "...", unlock: "hour >= 2 and hour < 5", reward: { stress: -5 } } }
-abilities:        # the player's OWN moves (spells, techniques, tricks): offered as choices in encounters and the story, typed or clicked
-  haste:
-    name: Haste
-    desc: Quicken body and mind
-    cost: { mana: -8 }               # can't be used without enough (the choice says "Needs 8 Mana"); "-15%" = a share of the current max; positive costs (suspicion: +3) are allowed
-    add_condition: { hasted: 3 }     # minutes — an encounter round is one minute; the condition's bonus: does the rest
-    per_day: 2                       # and/or per_encounter: 1 (0 = unlimited)
-  firebolt:
-    name: Firebolt
-    where: encounter                 # encounter | story | any (default)
-    cost: { mana: -4 }
-    check: { chance: "40 + arcana" } # scales with the stats its formulas read
-    success: { harm: "6 + arcana / 5" }
-    fail: { hint: "The bolt fizzles." }
-    # effects: { suspicion: +3 }     # with a check: always applies, as well as success:/fail:
-    known: false                     # true (default unless a perk teaches it) | false (taught by a perk or learn:) | a formula ("arcana >= 40")
-
-perks:
-  points: perk_points               # the stat that pays for them; something must raise it (level-ups, feats, milestones)
-  pick: 3                           # offer 3 to choose from when there's a point (one that builds on how they've played, one new direction, one random); 0/omitted = buy from the whole list
-  knight: { name: Knight, offer: always, points: class_points, excludes: [mage], group: Classes }   # offer: always = on offer beside the pick (a class choice); points: paid from this stat instead of perks: points; group: sidebar heading
-  lich: { name: Lich, requires: "flag('dark_pact')", hidden: true }   # hidden: not listed until requires holds. Perks whose requires don't hold yet fold under "Not yet" with what they need; ones that clash with a perk you took (or build on one that does) drop out
-  sharp: { name: Sharpshooter, desc: "+2 Aim", cost: 1, requires: "level >= 2", effects: { aim: +2 } }   # effects: once, when taken
-  crowd_ghost: { name: Crowd Ghost, bonus: { stealth: 10 }, edge: { stealth: 15, when: "at('plaza')" }, tags: [stealth] }   # bonus: always counts in checks; edge: only while when holds
-  silver_tongue: { name: Silver Tongue, rule: { reroll: { stats: [persuasion], per_day: 1 } } }   # rules: reroll / soften (a failure becomes partial) on these stats or tags; gains / losses: { scent: -30% } (rises or drops that much bigger/smaller)
-  armor_breaker: { name: Armor Breaker, rule: { pierce: { amount: 3, tags: [melee] } } }   # pierce: your blows (from moves with these stats or tags; none = all) ignore that much armor
-  mage_blood: { name: Mage Blood, abilities: [firebolt], narrator: "Sparks dance on {{user}}'s fingertips when angry.", excludes: [iron_will] }   # teaches abilities; narrator: what the story should show; excludes: can't have both
-  adrenaline: { name: Adrenaline Junkie, edge: { athletics: 20, when: "stress >= 60" }, drawback: { desc: "Stress builds faster", gains: { stress: +10% } }, weight: 1 }
-  cold: { name: Cold, drawback: { desc: Hard to like, gains: { fondness: "-25%" } } }   # gains/losses may name relationship stats
 
 triggers:
   exhausted: { when: "fatigue >= 85", do: { add_condition: [exhausted], hint: "..." } }         # fires once when it becomes true
@@ -259,7 +224,7 @@ quests:
       - { id: kills, text: Kill wolves, count: 3, on: wolves }        # on: an encounter (counts each time it ends well) or an action (each success); or outcome: [won]
       - { text: Bring back a pelt, when: "has('wolf_pelt')" }          # a formula goal: done while it holds
       - { text: Find their den, count: 1, optional: true }             # ticked off by progress: { "wolves.goal_3": +1 } or the story
-    reward: { gold: +30, xp: +40, rel: { hesk: { trust: +5 } } }      # any effect; it's read out on the quest card before it's taken
+    reward: { gold: +30, renown: +5, rel: { hesk: { trust: +5 } } }   # any effect; it's read out on the quest card before it's taken
     failure: { renown: -5, rel: { hesk: { trust: -10 } } }            # the price of failing (time running out, fail:, a quest: fail effect, giving up)
     stakes: Hesk stops trusting you with work.                         # what's at stake, in a line (shown, and told to the narrator)
     remember: { done: "{{user}} cleared the wolves when nobody else would.", failed: "{{user}} took the wolf bounty and vanished." }   # default lines otherwise; false = forget it
@@ -306,11 +271,11 @@ STORY EFFECTS: reveal: [ward_accident] (opens its next stage).
 FORMULA NAMES: stats, flags, hour, minute, day, weekday, month, date, season, weather, temperature, indoors, outside,
 warmth, warmth_min, warmth_max, too_cold, too_hot, reveal, exposed, naked, in_encounter, round, encounter (current encounter id, '' if none), encounter_round, foe.<stat>, target.<relstat>, location.
 FUNCTIONS: has(item[, n]), count(item), flag(x), cond(x), at(loc), rel(person, stat), met(person), between(v, lo, hi), roll('2d6'),
-wearing(item), worn(slot), trait(t), present(person) (in the scene now), codex(id), feat(id), perk(id),
+wearing(item), worn(slot), trait(t), present(person) (in the scene now),
 secret(id) (stages the narrator knows),
 quest(id) ('' | 'active' | 'ready' | 'done' | 'failed'), quest_active(id), quest_done(id), quest_failed(id), goal(quest, goal) (count so far), quests_done() / quests_done('bounty'),
 memories(person) (how many), cond_of(person, cond), foe_cond(cond), stat_max(stat), foe_max(stat), in_encounter(id) (that encounter is on),
-eff(stat) (stat + gear + perks + statuses), gear(stat) (gear alone), integrity(item or slot),
+eff(stat) (stat + gear + statuses), gear(stat) (gear alone), integrity(item or slot),
 min, max, clamp, floor, ceil, round, abs.
 Operators: + - * / % < <= > >= == != and or not, a ? b : c. Strings in single quotes.
 `;
@@ -335,7 +300,7 @@ Mistake: ten meters that only the narrator touches. Fewer stats, each wired into
 
 ## actions are story turns
 Every action the player clicks posts a line and gets a narrator reply. Use actions for things that happen in the story.
-Sheet changes are not story turns: spending stat points (allocate: on the stats, +/− in the sidebar), buying perks and classes (perks:, their own panel), changing clothes (wardrobe). Never build a "Status Window" of +1 STR buttons.
+Sheet changes are not story turns: changing clothes (wardrobe) happens in the sidebar. Never build a "Status Window" of +1 STR buttons: skills and attributes grow by use.
 
 ## items
 Every item should DO something: a use: (an action with effects), a bonus: (gear that helps the checks that read a stat), or an action/encounter move that needs it (when: "has('x')").
@@ -355,11 +320,6 @@ Make moves DIFFER, not just in which stat they roll: armor on a tough foe (foe: 
 a status (inflict: poisoned — damage each round; stunned — it loses its turn; sundered — negative armor) pays off over the next rounds; a heal or a shield (a condition with armor:) buys time;
 percent damage (harm: "25%") cuts down big foes; a blood-price move costs hp: -5 for a big effect. The foe's moves should use the same tools on {{user}} (add_condition: [stunned], hits: 2).
 Mistake: three moves that all lower the same stat by the same amount; a defeat threshold above the stat's max; no way out.
-
-## abilities and perks
-Abilities are the player's own moves — spells, techniques, tricks — not the place's. Give each a cost (mana, stamina, money), a limit (per_day / per_encounter) and a reason to use it now rather than a plain move: a buff (add_condition with a bonus:), harm: in a fight, a heal, a way out. Make power scale with a stat (check: "40 + arcana", harm: "6 + arcana / 5") so growth shows.
-Perks change how the player plays, not just a number: an edge in a situation the card has (night, crowds, a weapon), a rule bent (reroll, soften), a stat that rises slower or faster, an ability taught, something true the narrator shows (narrator:). The best ones trade off (drawback:). Use pick: 3 so every point is a choice between directions, give perk_points a source, and use excludes: for exclusive paths.
-Mistake: perks that are only "+2 stat" — that's a level-up, not a choice.
 
 ## conditions
 A condition should change play: penalise a check (- 10 when cond('x')), open or close actions, feed an encounter, drive a trigger.
@@ -382,14 +342,14 @@ Money needs income (paid actions, loot, rewards) AND spending (shops, bribes, fa
 Quests turn the loop into a story with goals: what someone wants done, what it pays, what failing costs — and who remembers.
 They fit any setting: slaying three goblins, the dragon of the plains, a delivery across town, cooking the best breakfast for someone, finding a lost cat, a case to crack, a contract to fulfil.
 Give each a clear way to WIN (goals the rules can see: count + on: an encounter or action, a when: formula, or judge: for what only the story can tell) and a clear way to FAIL (days:, fail:, quest: { id: fail } on a bad roll, judge: fail).
-Make both matter: reward: (money, items, xp, renown, trust, a codex entry, learn: an ability, the next quest) and failure: (money, standing, someone's mood, a door that closes), plus stakes: in a line.
+Make both matter: reward: (money, items, renown, trust, the next quest) and failure: (money, standing, someone's mood, a door that closes), plus stakes: in a line.
 Givers remember: a quest from someone leaves a memory either way (remember: for your own words). A failed favour should come back later — a colder greeting, a trigger on quest_failed('x').
 Mix sizes: a few small repeatable jobs on the board (repeat: 1), favours from the people the player cares about, and one or two big quests that start by themselves when the time comes (auto: true).
 Scale rewards to the economy: the king's 50,000 is a life-changing sum only if daily work pays tens.
 Mistake: a quest with no way to fail; goals nothing counts toward; rewards that are only flavour text.
 
 ## flags and story machinery
-Set a flag only if something reads it (an action's when, a trigger, a codex unlock, a secret's stage).
+Set a flag only if something reads it (an action's when, a trigger, a secret's stage).
 
 ## checks
 Odds should usually sit between 25% and 85% at the start and improve with skill; show the player what helps (skills, gear bonuses, conditions as penalties).

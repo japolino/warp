@@ -51,7 +51,7 @@ describe("removed parts of Warp", () => {
     const where = removed.map((i) => i.where).sort();
     expect(where).toEqual([
       "Actions › cards › gamble", "Actions › dance › check › game", "Checkpoints",
-      "Dating", "Dungeons", "Look", "Minigames", "Perks › lucky › rule › game", "Relationships › people › robin › schedule",
+      "Dating", "Dungeons", "Look", "Minigames", "Perks", "Relationships › people › robin › schedule",
     ].sort());
     for (const i of removed) {
       expect(i.level).toBe("warning");
@@ -65,7 +65,7 @@ describe("removed parts of Warp", () => {
     expect(r!.actions.cards).toBeDefined();
     expect(JSON.stringify(r!.actions)).not.toContain("blackjack");
     expect(JSON.stringify(r!.actions.dance.check)).not.toContain("keys");
-    expect(r!.perks.lucky.rules).toEqual([]);
+    expect(Object.keys(r!)).not.toContain("perks");
   });
 
   test("formulas naming removed parts read as 0, and the lint says why", () => {

@@ -2,13 +2,13 @@
 // with "did you mean" suggestions, and effects that point at things that don't exist.
 
 import { evaluate, type ExprEnv, type Value } from "./expr.js";
-import { emptyEffect, type ActionDef, type Effect, type Issue, type Ruleset } from "./ruleset.js";
+import type { ActionDef, Effect, Issue, Ruleset } from "./ruleset.js";
 import { BUILTIN_NAMES, initialState, makeEnv } from "./state.js";
 import { costValue } from "./resolve.js";
 
 export const FUNCTIONS = [
   "has", "count", "flag", "cond", "at", "rel", "met", "between", "roll",
-  "wearing", "worn", "trait", "present", "codex", "feat", "perk",
+  "wearing", "worn", "trait", "present",
   "eff", "gear", "integrity",
   "secret", "body", "transformed", "age",
   "quest", "quest_active", "quest_done", "quest_failed", "goal", "quests_done", "memories", "cond_of", "foe_cond", "stat_max", "foe_max", "in_encounter",
@@ -22,6 +22,7 @@ const REMOVED_NAMES: Record<string, string> = {
   pregnant: "family and pregnancy", pregnancy_weeks: "family and pregnancy", "children()": "family and pregnancy",
   "seen_by()": "being seen", "fame()": "being seen",
   "saved()": "checkpoints", loops: "checkpoints", runs: "endings and new playthroughs",
+  "codex()": "the codex", "feat()": "feats", "perk()": "perks",
   "front()": "hidden world clocks (fronts)", "front_stage()": "hidden world clocks (fronts)", "happened()": "random events",
   "bond()": "feelings between people", "arc()": "companion lives", "where()": "schedules",
   at_work: "work shifts", "owed()": "bills and debts", "missed()": "bills and debts", "days_until()": "bills and debts",
@@ -138,9 +139,6 @@ export function lintRuleset(r: Ruleset): Issue[] {
     if (e.startEncounter && !r.encounters[e.startEncounter]) {
       issues.push({ level: "warning", where, message: `starts encounter "${e.startEncounter}", which doesn't exist${suggest(e.startEncounter, Object.keys(r.encounters))}` });
     }
-    for (const id of e.unlock) {
-      if (!r.codex[id]) issues.push({ level: "warning", where, message: `unlocks codex "${id}", which doesn't exist${suggest(id, Object.keys(r.codex))}` });
-    }
     for (const [stat, v] of Object.entries(e.foe)) {
       const known = Object.values(r.encounters).some((enc) => enc.foe.stats.some((s) => s.id === stat));
       if (!known) issues.push({ level: "warning", where, message: `changes foe stat "${stat}", which no encounter declares` });
@@ -206,25 +204,7 @@ export function lintRuleset(r: Ruleset): Issue[] {
     for (const [tier, e] of Object.entries(a.outcomes)) if (e) checkEffect(e, `${w} › ${tier}`, extra);
   };
   for (const a of Object.values(r.actions)) checkAction(a, `Actions › ${a.id}`);
-  // Spending points through a story action: every click is a player message and a narrator reply.
-  // A button that only turns one stat into an attribute or skill is what `allocate:` is for.
-  const statsOnly = (e: Effect) => {
-    const rest = { ...e, stats: {}, hint: undefined } as Record<string, unknown>;
-    return JSON.stringify(rest, (_k, v) => (v === undefined ? undefined : v)) === JSON.stringify(emptyEffect());
-  };
-  for (const a of Object.values(r.actions)) {
-    if (a.check || a.perPerson || Object.keys(a.outcomes).length || !statsOnly(a.effects) || !statsOnly(a.cost)) continue;
-    const deltas = { ...a.cost.stats, ...a.effects.stats };
-    const n = (v: string | number) => (typeof v === "number" ? v : Number(String(v).replace(/^\+/, "")));
-    const ups = Object.entries(deltas).filter(([id, v]) => n(v) > 0 && ["attribute", "skill"].includes(r.stats[id]?.kind ?? ""));
-    const downs = Object.entries(deltas).filter(([, v]) => n(v) < 0);
-    if (ups.length !== 1 || downs.length !== 1 || Object.keys(deltas).length !== 2) continue;
-    const [pool] = downs[0], [target] = ups[0];
-    if (r.stats[target]?.allocate) continue;
-    issues.push({ level: "warning", where: `Actions › ${a.id}`, message: `only turns ${r.stats[pool]?.label ?? pool} into ${r.stats[target]?.label ?? target}. If this is spending points, each click is a story turn (a player message and a narrator reply) — put allocate: ${pool} on ${target} instead for +/− in the sidebar, with no turn.` });
-  }
-  // Abilities and item uses are actions too: their formulas and costs get the same checks.
-  for (const ab of Object.values(r.abilities)) checkAction(ab.action, `Abilities › ${ab.id}`);
+  // Item uses are actions too: their formulas and costs get the same checks.
   for (const it of Object.values(r.items)) if (it.use) checkAction(it.use, `Items › ${it.id} › use`);
   const checkRequires = (a: ActionDef, w: string) => {
     for (const q of a.requires) {
@@ -234,7 +214,6 @@ export function lintRuleset(r: Ruleset): Issue[] {
       if (q.kind === "has" && !r.items[id] && !r.itemsOpen) miss("an item", Object.keys(r.items));
       if (q.kind === "quest" && !r.quests[id]) miss("a quest", r.questOrder);
       if (q.kind === "flag" && !r.flags[id]) miss("a flag", Object.keys(r.flags));
-      if (q.kind === "perk" && !r.perks[id]) miss("a perk", Object.keys(r.perks));
       if (q.kind === "rel" && !r.relStats[q.stat ?? ""]) issues.push({ level: "warning", where: `${w} › requires`, message: `"${q.stat}" isn't a relationship stat${suggest(q.stat ?? "", r.relStatOrder)}` });
     }
   };
@@ -274,9 +253,6 @@ export function lintRuleset(r: Ruleset): Issue[] {
     check(t.when, `Triggers › ${t.id} › when`);
     checkEffect(t.effects, `Triggers › ${t.id}`);
   }
-  for (const c of Object.values(r.codex)) check(c.unlock, `Codex › ${c.id} › unlock`);
-  for (const f of Object.values(r.feats)) { check(f.unlock, `Feats › ${f.id} › unlock`); checkEffect(f.reward, `Feats › ${f.id} › reward`); }
-  for (const p of Object.values(r.perks)) { check(p.requires, `Perks › ${p.id} › requires`); checkEffect(p.effects, `Perks › ${p.id}`); }
   for (const enc of Object.values(r.encounters)) {
     const w = `Encounters › ${enc.id}`;
     for (const a of Object.values(enc.actions)) checkAction(a, `${w} › actions › ${a.id}`);

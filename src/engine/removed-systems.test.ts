@@ -16,6 +16,7 @@ name: Old life sim
 stats:
   coin: { kind: money, start: 50 }
   mood: { kind: meter, start: 50 }
+  str: { kind: attribute, start: 5, allocate: { with: coin } }
 relationships:
   stats: { trust: { start: 10 } }
   people: { robin: { name: Robin, age: 30, schedule: [ { at: park } ], traits: [shy] } }
@@ -31,6 +32,12 @@ fronts:
 random_events:
   events: { storm: { text: "A storm hits." } }
 checkpoints: { slots: 3, auto: day, loop: { when: "hour >= 23" } }
+codex: { docks: { title: The Docks, unlock: "mood > 10" } }
+feats: { owl: { name: Night owl, unlock: "hour >= 2" } }
+abilities: { haste: { name: Haste, cost: { mood: -5 } } }
+perks:
+  points: coin
+  lucky: { name: Lucky, rule: { reroll: { stats: [str] } } }
 endings:
   broke: { when: "coin <= 0", text: "{{user}} leaves town." }
 obligations:
@@ -44,10 +51,11 @@ mind:
 actions:
   night:
     label: A night with Robin
-    effects: { conceive: { with: robin, chance: 100 }, mood: +1, arc: { robin: 5 }, bond: { robin: { sam: 5 } }, front: { gangs: 10 }, gauge: 20 }
+    effects: { conceive: { with: robin, chance: 100 }, mood: +1, arc: { robin: 5 }, bond: { robin: { sam: 5 } }, front: { gangs: 10 }, gauge: 20, unlock: [docks], learn: [haste] }
   nap:
     label: Nap
     errand: rest
+    requires: { perk: lucky }
     time: 60
     effects: { mood: +2 }
 triggers:
@@ -56,6 +64,7 @@ triggers:
   replay: { when: "saved('1') or loops > 0 or runs > 1", do: { coin: +1 } }
   world: { when: "front('gangs') > 10 or front_stage('gangs') > 0 or happened('storm')", do: { coin: +1 } }
   close: { when: "bond('robin', 'sam') > 0 or arc('robin') > 0 or where('robin') == 'park'", do: { coin: +1 } }
+  journal: { when: "codex('docks') or feat('owl') or perk('lucky')", do: { coin: +1 } }
   broke: { when: "owed('rent') > 0 or missed('rent') > 0 or days_until('rent') < 0 or at_work", do: { coin: +1 } }
 `;
 
@@ -68,15 +77,20 @@ describe("removed in-chat systems", () => {
     expect(r).not.toBeNull();
     expect(removedWhere()).toEqual([
       "Actions › nap › errand", "Actions › night › effects › arc", "Actions › night › effects › bond", "Actions › night › effects › conceive",
-      "Actions › night › effects › front", "Actions › night › effects › gauge",
-      "Checkpoints", "Companions", "Discovery", "Endings", "Fronts", "Jobs", "Lineage", "Mind", "Obligations", "Observers", "Random Events",
+      "Actions › night › effects › front", "Actions › night › effects › gauge", "Actions › night › effects › learn", "Actions › night › effects › unlock",
+      "Actions › nap › requires › perk", "Stats › str › allocate",
+      "Abilities", "Checkpoints", "Codex", "Companions", "Discovery", "Endings", "Feats", "Fronts", "Jobs", "Lineage", "Mind", "Obligations", "Observers", "Perks",
+      "Random Events",
       "Relationships › people › robin › schedule", "Relationships › people › robin › traits",
     ].sort());
     for (const i of issues.filter((x) => x.message.includes("was removed from Warp"))) {
       expect(i.level).toBe("warning");
       expect(i.message).toContain("`legacy` branch");
     }
-    for (const k of ["lineage", "observers", "mind", "obligations", "jobs", "discovery", "companions", "bonds", "fronts", "randomEvents", "checkpoints", "endings", "legacy"]) expect(Object.keys(r!)).not.toContain(k);
+    for (const k of ["lineage", "observers", "mind", "obligations", "jobs", "discovery", "companions", "bonds", "fronts", "randomEvents", "checkpoints", "endings", "legacy",
+      "codex", "feats", "perks", "perkPoints", "perkPick", "abilities"]) expect(Object.keys(r!)).not.toContain(k);
+    expect(Object.keys(r!.stats.str)).not.toContain("allocate");
+    expect(r!.actions.nap.requires).toEqual([]);
     expect(JSON.stringify(r!.actions.night)).not.toContain("conceive");
   });
 
@@ -96,6 +110,9 @@ describe("removed in-chat systems", () => {
     expect(gone("saved()", "checkpoints")).toBe(true);
     expect(gone("loops", "checkpoints")).toBe(true);
     expect(gone("runs", "endings and new playthroughs")).toBe(true);
+    expect(gone("codex()", "the codex")).toBe(true);
+    expect(gone("feat()", "feats")).toBe(true);
+    expect(gone("perk()", "perks")).toBe(true);
     const rec = resolveTurn(r, initialState(r), { actionId: "night", via: "choice" }, { seed: "x" });
     expect(rec.events.some((e) => (e.t as string) === "conceive")).toBe(false);
     expect(rec.events.some((e) => e.t === "stat" && e.id === "mood")).toBe(true);
@@ -129,12 +146,16 @@ describe("removed in-chat systems", () => {
       { t: "end_told", src: "world" },
       { t: "load", slot: "1", src: "manual" },
       { t: "restart", src: "manual" },
+      { t: "codex", id: "docks", src: "trigger" },
+      { t: "feat", id: "owl", src: "trigger" },
+      { t: "perk", id: "lucky", src: "manual" },
+      { t: "learn", id: "haste", src: "action" },
       { t: "stat", id: "coin", d: 5, src: "action" },
     ] as unknown as WarpEvent[];
     const s = foldEvents(r, [old]);
     expect(s.stats.coin).toBe(55);
     expect(Object.keys(s)).not.toContain("pregnancy");
-    for (const k of ["kin", "seen", "dues", "job", "explored", "discovered", "bonds", "fronts", "gauge", "news", "saves", "ended", "runs", "loops"]) expect(Object.keys(s)).not.toContain(k);
+    for (const k of ["kin", "seen", "dues", "job", "explored", "discovered", "bonds", "fronts", "gauge", "news", "saves", "ended", "runs", "loops", "codex", "feats", "perks", "learned"]) expect(Object.keys(s)).not.toContain(k);
     expect(s.people.child_1).toBeUndefined();
     expect(buildHud(r, s)).toBeTruthy();
     expect(buildChoices(r, s, { lines: [], veils: [] }).length).toBeGreaterThan(0);

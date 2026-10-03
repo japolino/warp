@@ -99,8 +99,6 @@ export function effectWords(r: Ruleset, s: GameState, e: Effect): string {
     const n = num(v);
     if (n) parts.push(`${n > 0 ? "+" : "−"}${Math.abs(n)} ${r.relStats[stat]?.label ?? stat} with ${who === "target" ? "them" : personName(r, s, who)}`);
   }
-  for (const id of e.learn) if (r.abilities[id]) parts.push(`learns ${r.abilities[id].name}`);
-  for (const id of e.unlock) if (r.codex[id]) parts.push(`codex: ${r.codex[id].title}`);
   for (const [id, op] of Object.entries(e.quest)) if (op === "start" && r.quests[id]) parts.push(`leads to "${r.quests[id].name}"`);
   return parts.join(", ");
 }

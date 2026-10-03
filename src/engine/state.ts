@@ -6,7 +6,7 @@
 // only clamping follows the current ruleset.
 
 import type { Value, ExprEnv } from "./expr.js";
-import { evalBool, evalNumber } from "./expr.js";
+import { evalNumber } from "./expr.js";
 import type { Ruleset, StatDef, Band } from "./ruleset.js";
 import {
   dateAt, exposedSlots, hasTrait, isIndoors, presentPeople, revealOf, seasonAt, temperatureAt,
@@ -38,7 +38,7 @@ export interface QuestState { st: QuestStatus; at: number; due: number | null; p
 /** Something a person remembers about {{user}}. */
 export interface Memory { text: string; at: number }
 
-/** Uses of something limited (an ability, a perk's reroll): today's count, and this encounter's. */
+/** Uses of something limited (an encounter move with `per_day:` / `per_encounter:`): today's count, and this encounter's. */
 export interface Charge { day: number; n: number; enc?: string; encN: number }
 
 export interface GameState {
@@ -51,12 +51,7 @@ export interface GameState {
   encounter: EncounterState | null;
   /** The last encounter that ended: which, against whom, how, where and when (so the story can't simply restart it). */
   lastEncounter?: { id: string; foeName?: string; outcome: string; at: number; loc: string | null } | null;
-  codex: Record<string, true>;
-  feats: Record<string, true>;
-  perks: Record<string, true>;
-  /** Abilities taught by the story (`learn:`), beyond those known from the start or from perks. */
-  learned: Record<string, true>;
-  /** "ability:haste" / "perk:silver_tongue" → how much it has been used. */
+  /** A limited move's key → how much it has been used. */
   charges: Record<string, Charge>;
   /** People whose starting feelings have been set (by the author, the story or by hand). */
   calibrated: Record<string, true>;
@@ -134,10 +129,6 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "swing"; d: number }
   | { t: "foe"; stat: string; d?: number; set?: number }
   | { t: "round" }
-  | { t: "codex"; id: string }
-  | { t: "feat"; id: string }
-  | { t: "perk"; id: string }
-  | { t: "learn"; id: string }
   | { t: "charge"; key: string; day: number; enc?: string }
   | { t: "calib"; who: string }
   | { t: "forget"; who: string }
@@ -162,10 +153,6 @@ export function initialState(r: Ruleset): GameState {
     worn: {},
     integrity: {},
     encounter: null,
-    codex: {},
-    feats: {},
-    perks: {},
-    learned: {},
     charges: {},
     calibrated: {},
     forgotten: {},
@@ -250,8 +237,8 @@ export function amountValue(v: number | string | undefined, env: ExprEnv, max?: 
   return Number.isFinite(n) ? n : 0;
 }
 
-/** One place a stat bonus comes from right now: carried gear (worn, for clothing), a perk (or its edge that holds), a condition. */
-export interface BonusSource { from: string; kind: "gear" | "perk" | "cond"; id: string; bonus: Record<string, number> }
+/** One place a stat bonus comes from right now: carried gear (worn, for clothing) or a condition. */
+export interface BonusSource { from: string; kind: "gear" | "cond"; id: string; bonus: Record<string, number> }
 
 // Bonus formulas may read eff()/gear() themselves; past this depth they count as 0 (no endless loops).
 let bonusDepth = 0;
@@ -273,15 +260,6 @@ export function bonusSources(r: Ruleset, s: GameState, env?: ExprEnv): BonusSour
       const it = r.items[id];
       if (!it || n <= 0 || (it.slot && !worn.has(id)) || !Object.keys(it.bonus).length) continue;
       out.push({ from: it.name, kind: "gear", id, bonus: nums(it.bonus) });
-    }
-    for (const id of Object.keys(s.perks)) {
-      const p = r.perks[id];
-      if (!p) continue;
-      if (Object.keys(p.bonus).length) out.push({ from: `★ ${p.name}`, kind: "perk", id, bonus: nums(p.bonus) });
-      for (const ed of p.edges) {
-        if (ed.when && !evalBool(ed.when, e, false)) continue;
-        out.push({ from: `★ ${p.name}`, kind: "perk", id, bonus: nums(ed.stats) });
-      }
     }
     for (const id of Object.keys(s.conditions)) {
       const c = r.conditions[id];
@@ -381,10 +359,6 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       break;
     }
     case "round": if (s.encounter) s.encounter.round += 1; break;
-    case "codex": s.codex[e.id] = true; break;
-    case "feat": s.feats[e.id] = true; break;
-    case "perk": s.perks[e.id] = true; break;
-    case "learn": (s.learned ??= {})[e.id] = true; break;
     case "charge": {
       const charges = (s.charges ??= {});
       const c = charges[e.key];
@@ -658,16 +632,13 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
         }
         case "wearing": return Object.values(s.worn).includes(a0);
         case "worn": return s.worn[a0] ?? "";
-        // A stat with gear, perks and statuses counted (as checks see it), gear alone, and a piece of clothing's integrity.
+        // A stat with gear and statuses counted (as checks see it), gear alone, and a piece of clothing's integrity.
         case "eff": return effectiveStat(r, s, a0, base);
         case "gear": return effectiveStat(r, s, a0, base, true);
         case "integrity": return integrityOf(r, s, a0);
         case "trait": return hasTrait(r, s, a0);
         // Whether someone is in the scene now (the story's word on who is here).
         case "present": return presentPeople(r, s).includes(a0);
-        case "codex": return a0 in s.codex;
-        case "feat": return a0 in s.feats;
-        case "perk": return a0 in s.perks;
         // How many stages of a secret the narrator knows (0 = none).
         case "secret": return (s.secrets[a0] ?? -1) + 1;
         // Body: a trait's value ('' when absent), and how far a transformation has gone.

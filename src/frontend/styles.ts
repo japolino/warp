@@ -69,9 +69,6 @@ export const STYLES = `
 
 .warp-skill { display: grid; grid-template-columns: 1fr auto 44px; align-items: center; gap: 8px; }
 .warp-grade { font-weight: 700; min-width: 22px; text-align: center; }
-.warp-alloc { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; }
-.warp-btn-mini { padding: 0 6px; min-width: 20px; line-height: 18px; font-size: 12px; }
-.warp-alloc-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12px; }
 .warp-mini-track { height: 3px; background: var(--warp-fill); border-radius: 3px; overflow: hidden; }
 .warp-mini-fill { height: 100%; background: var(--warp-accent); }
 .warp-skill-tracks { display: flex; flex-direction: column; gap: 2px; }
@@ -157,7 +154,7 @@ export const STYLES = `
 .warp-slider { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--warp-muted); }
 .warp-slider input { accent-color: var(--warp-accent); }
 
-/* ───────── world: weather, warmth, outfit, encounter, perks ───────── */
+/* ───────── world: weather, warmth, outfit, encounter ───────── */
 .warp-weather { color: var(--warp-muted); font-size: 12.5px; }
 .warp-warmth { padding: 2px 0 4px; }
 .warp-warmth-track { position: relative; height: 8px; border-radius: 6px; margin-top: 4px;
@@ -172,16 +169,8 @@ export const STYLES = `
 .warp-encounter-foe { font-weight: 700; font-size: 14px; }
 .warp-outfit-row { display: grid; grid-template-columns: 78px 1fr auto; gap: 6px; align-items: center; font-size: 12.5px; }
 .warp-mini-select { width: auto; max-width: 110px; padding: 2px 4px; font-size: 12px; }
-.warp-perk { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12.5px; }
-.warp-perk-owned { opacity: .8; }
 .warp-group + .warp-group { margin-top: 8px; }
 .warp-group-head { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--warp-muted); padding: 4px 0 2px; border-bottom: 1px solid var(--warp-border); margin-bottom: 4px; }
-.warp-perk-later { font-size: 12px; display: flex; flex-wrap: wrap; gap: 0 6px; }
-.warp-perk-text { min-width: 0; }
-.warp-perk-notes { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 11.5px; color: var(--warp-good); }
-.warp-perk-drawback { font-size: 11.5px; color: var(--warp-warn); }
-.warp-perk-pick { display: flex; flex-direction: column; gap: 6px; padding: 8px; margin-bottom: 6px; border-radius: var(--warp-radius); border: 1px solid color-mix(in srgb, var(--warp-accent) 55%, var(--warp-border)); background: color-mix(in srgb, var(--warp-accent) 7%, transparent); }
-.warp-perk-pick-head { font-weight: 700; font-size: 12px; color: var(--warp-accent); }
 .warp-quest { display: flex; flex-direction: column; gap: 3px; padding: 7px 8px; margin-bottom: 6px; border-radius: var(--warp-radius); border: 1px solid var(--warp-border); background: var(--warp-fill-subtle); font-size: 12.5px; }
 .warp-quest-ready { border-color: color-mix(in srgb, var(--warp-good) 60%, var(--warp-border)); background: color-mix(in srgb, var(--warp-good) 7%, transparent); }
 .warp-quest-offered { border-style: dashed; }
@@ -201,7 +190,6 @@ export const STYLES = `
 .warp-memories { margin-top: 3px; font-size: 11.5px; }
 .warp-memories > summary { cursor: pointer; color: var(--warp-muted); }
 .warp-memory { padding: 2px 0 2px 10px; border-left: 2px solid var(--warp-border); margin-top: 2px; color: var(--warp-muted); }
-.warp-perk-offer + .warp-perk-offer { border-top: 1px dashed var(--warp-border); padding-top: 6px; }
 .warp-person-here { border: 1px solid color-mix(in srgb, var(--warp-good) 55%, transparent); }
 .warp-rel { cursor: pointer; border-radius: 4px; }
 .warp-rel:hover { background: var(--warp-fill); }
@@ -209,10 +197,6 @@ export const STYLES = `
 .warp-here { font-size: 10.5px; color: var(--warp-good); border: 1px solid currentColor; border-radius: 999px; padding: 0 6px; margin-left: 4px; font-weight: 500; }
 
 /* ───────── journal ───────── */
-.warp-codex summary { cursor: pointer; padding: 3px 0; }
-.warp-codex p { margin: 2px 0 6px 14px; }
-.warp-feat { display: flex; gap: 8px; align-items: flex-start; opacity: .55; font-size: 12.5px; }
-.warp-feat.unlocked { opacity: 1; }
 .warp-timeline-row { font: inherit; color: inherit; text-align: left; background: none; border: none; border-top: 1px solid var(--warp-border); padding: 6px 2px; display: grid; grid-template-columns: 1fr; gap: 1px; cursor: pointer; }
 .warp-timeline-row:hover { background: var(--warp-fill-subtle); }
 .warp-timeline-changes { font-size: 11.5px; }

@@ -43,8 +43,6 @@ export function setup(ctx: SpindleFrontendContext) {
   let bDraft: BuilderDraft = emptyDraft();
   let busy = { chatId: "", on: false, label: "" };
   let editingBar: string | null = null;
-  /** Steps placed with +/− on `allocate:` stats, not yet spent. */
-  let allocDraft: Record<string, number> = {};
   let drawerView: "sheet" | "journal" | "rules" | "settings" = "sheet";
   const openSections = new Map<string, boolean>();
 
@@ -320,7 +318,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const kept = dockRoot.scrollTop;
     if (state?.hud) {
       // The head always stays here; each section sits here unless it's been torn off into a panel.
-      const { head, parts } = hudParts(state.hud, { editing: editingBar, compact: true, alloc: allocDraft });
+      const { head, parts } = hudParts(state.hud, { editing: editingBar, compact: true });
       const mine = parts.filter((p) => panels.inMain(p.id));
       dockRoot.innerHTML = historyNotice() + head + mine.map((p) => renderPart(p, true)).join("");
       panels.render(parts);
@@ -365,7 +363,7 @@ export function setup(ctx: SpindleFrontendContext) {
     </div>`;
     let body = "";
     if (drawerView === "sheet") {
-      body = state?.hud ? renderHud(state.hud, { editing: editingBar, compact: false, alloc: allocDraft }) : renderRulesetCard(status, hasChat);
+      body = state?.hud ? renderHud(state.hud, { editing: editingBar, compact: false }) : renderRulesetCard(status, hasChat);
     } else if (drawerView === "journal") {
       body = renderJournal(state?.hud ?? null, state?.records ?? []);
     } else if (drawerView === "rules" && builder) {
@@ -700,26 +698,6 @@ export function setup(ctx: SpindleFrontendContext) {
       setTimeout(() => { if (sure.isConnected) { delete sure.dataset.armed; sure.textContent = "Give up"; sure.classList.remove("warp-btn-danger"); } }, 4000);
       return;
     }
-    // Attribute points: place steps with +/−, then spend them all at once.
-    const allocAdd = t.closest<HTMLElement>("[data-alloc-add]");
-    const allocSub = t.closest<HTMLElement>("[data-alloc-sub]");
-    if (allocAdd || allocSub) {
-      const id = (allocAdd ?? allocSub)!.dataset[allocAdd ? "allocAdd" : "allocSub"]!;
-      const n = Math.max(0, (allocDraft[id] ?? 0) + (allocAdd ? 1 : -1));
-      allocDraft = { ...allocDraft, [id]: n };
-      if (!n) delete allocDraft[id];
-      renderDock(); renderDrawer();
-      return;
-    }
-    if (t.closest("[data-alloc-clear]")) { allocDraft = {}; renderDock(); renderDrawer(); return; }
-    if (t.closest("[data-alloc-confirm]")) {
-      const cid = chatId();
-      if (cid && Object.keys(allocDraft).length) send({ type: "allocate", chatId: cid, spend: allocDraft });
-      allocDraft = {};
-      return;
-    }
-    const perk = t.closest<HTMLElement>("[data-buy-perk]");
-    if (perk) { const cid = chatId(); if (cid) send({ type: "buy_perk", chatId: cid, perk: perk.dataset.buyPerk! }); return; }
     if (t.closest("[data-install]")) { void confirmReplace(); return; }
     if (t.closest("[data-reload]")) { send({ type: "reload", chatId: chatId() }); return; }
     const save = t.closest<HTMLElement>("[data-save]");
@@ -960,7 +938,7 @@ export function setup(ctx: SpindleFrontendContext) {
     if (!acceptsResponse(m, chatId(), state)) return;
     switch (m.type) {
       case "state": {
-        if (state?.chatId !== m.chatId) { editingBar = null; lastBars = new Map(); allocDraft = {}; }
+        if (state?.chatId !== m.chatId) { editingBar = null; lastBars = new Map(); }
         state = m;
         if (m.chatId === busy.chatId && !m.busy && busy.label === "Rolling…") busy = { chatId: "", on: false, label: "" };
         if (m.busy && m.chatId) busy = { chatId: m.chatId, on: true, label: busy.label };

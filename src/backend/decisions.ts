@@ -8,7 +8,7 @@
 import { mentions } from "../engine/mention.js";
 import type { Answer, Answers, Decider, Questions } from "../engine/decide.js";
 import { normalize, noulConfidence } from "../engine/decide.js";
-import { usableAbilities, usableItems, availableChoices, type Intent, type Proposal } from "../engine/resolve.js";
+import { usableItems, availableChoices, type Intent, type Proposal } from "../engine/resolve.js";
 import { QUEST_PREFIX, questDef, questOffers, questsToReport } from "../engine/quests.js";
 import { judgedQuests } from "./helpers.js";
 import { DIFFICULTIES, type DecideSpec, type Ruleset, type StatDef } from "../engine/ruleset.js";
@@ -136,13 +136,12 @@ export async function readTurn(opts: {
 }): Promise<Reading> {
   const { decider, r, s, settings, playerText, player } = opts;
   const q: Questions = {};
-  // Actions, items, abilities, travel, quests, and improv remain candidates during work,
+  // Actions, items, travel, quests, and improv remain candidates during work,
   // while dialogue and thoughts are classified as NONE.
   const actions = playerText
     ? [
         ...availableChoices(r, s, settings.lines),
         ...usableItems(r, s).filter((u) => !u.locked).map((u) => ({ id: u.id, a: u.a, label: u.a.label })),
-        ...usableAbilities(r, s).filter((u) => !u.status.locked).map((u) => ({ id: u.id, a: u.a, label: u.a.label })),
       ]
     : [];
   // Saying yes to someone's request, or telling them it's done, takes or hands in the quest.

@@ -1,7 +1,7 @@
 // What a clicked choice means: the line posted as the player's message and the
 // intent the turn resolves. Shared by clicking and by pre-writing replies.
 
-import { cleanLiveForecast, ABILITY_PREFIX, availableChoices, findAction, ITEM_PREFIX, LIVE_PREFIX, usableAbilities, usableItems, TARGET_SEP, type Intent } from "../engine/resolve.js";
+import { cleanLiveForecast, availableChoices, findAction, ITEM_PREFIX, LIVE_PREFIX, usableItems, TARGET_SEP, type Intent } from "../engine/resolve.js";
 import type { Ruleset } from "../engine/ruleset.js";
 import type { GameState } from "../engine/state.js";
 import { QUEST_PREFIX, questDef, questOffers, questsToReport } from "../engine/quests.js";
@@ -51,12 +51,6 @@ export function intentFor(r: Ruleset, state: GameState, settings: Settings, msgs
       return { say: `*I give up on ${q.name.toLowerCase()}.*`, intent: { actionId, via: "choice", label: `Give up on "${q.name}"` } };
     }
     return { error: "That isn't possible right now." };
-  }
-  if (actionId.startsWith(ABILITY_PREFIX)) {
-    const u = usableAbilities(r, state).find((x) => x.id === actionId);
-    if (!u) return { error: "You can't use that here." };
-    if (u.status.locked) return { error: u.status.locked };
-    return { say: u.a.say ?? `*${u.a.label}.*`, intent: { actionId, params, via: "choice", label: u.a.label } };
   }
   const c = availableChoices(r, state, settings.lines).find((x) => x.id === actionId);
   if (!c) return { error: "That choice isn't available anymore." };
