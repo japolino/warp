@@ -6,6 +6,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { getTemplate, withCharacter } from "../engine/templates/index.js";
 import { DEFAULT_SETTINGS } from "../shared/protocol.js";
 import { withAttraction, withDifficulty, withPace } from "./builder.js";
+import { emptyDraft, renderBuilder } from "../frontend/builder-ui.js";
 
 const sent: any[] = [];
 const prompts: { user: string; system: string; userId?: string }[] = [];
@@ -153,6 +154,10 @@ describe("one-pass builder", () => {
     expect(s.rounds[0].questions[0].default).toBe("story");
     // No designer leftovers.
     for (const k of ["plan", "creative", "persona", "log", "depth", "designPass", "effort"]) expect(s[k]).toBeUndefined();
+    const askHtml = renderBuilder(s, emptyDraft(), [], [], false);
+    expect(askHtml).toContain('data-bq="style" data-bq-kind="single" data-bq-opt="story" aria-pressed="true"');
+    expect(askHtml).toContain("attraction");
+    for (const gone of ['data-b="more"', "Ask me more", "Get creative", "design plan"]) expect(askHtml).not.toContain(gone);
 
     reset();
     await b.builderAnswer("c1", { tone: "romantic", difficulty: 5, f1_0: "o0" }, [{ name: "Cooking", kind: "skill", note: "She's bad at it" }], "u1");
@@ -178,6 +183,10 @@ describe("one-pass builder", () => {
     expect(s.parts.every((p: any) => p.status === "ok")).toBe(true);
     expect(s.preview.summary).toMatch(/^Dorm Days \(Story, no dice\): 3 feelings, 1 person/);
     expect(s.preview.hud.people.map((p: any) => p.name)).toEqual(["Chono Aina"]);
+    const reviewHtml = renderBuilder(s, emptyDraft(), [], [], false);
+    expect(reviewHtml).toContain("warp-preview");
+    expect(reviewHtml).toContain("Draft &amp; check");
+    expect(reviewHtml).not.toContain("design plan");
 
     reset();
     await b.builderRefine("c1", "Make relationships move slower", "u1");
