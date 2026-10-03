@@ -5,7 +5,10 @@ const cache = new Map<string, Settings>();
 const writes = new Map<string, Promise<void>>();
 const key = (userId?: string) => userId ?? "_";
 
-/** Treat persisted data and UI messages as untrusted input. */
+/** Fields the UI no longer shows: always their defaults, whatever was saved (the backend never reads them). */
+const PINNED = ["freeTextChecks", "narratorUpdates", "storyQuests", "sayOutcome", "showDiceChips", "autoConfidence", "jevFormat"] as const;
+
+/** Treat persisted data and UI messages as untrusted input. Unknown and removed keys are dropped. */
 export function normalizeSettings(value: unknown): Settings {
   const raw = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
   const s: Settings = { ...DEFAULT_SETTINGS, lines: [], veils: [] };
@@ -16,10 +19,11 @@ export function normalizeSettings(value: unknown): Settings {
     else if (typeof def === "number" && (typeof v === "number" || typeof v === "string") && v !== "" && Number.isFinite(Number(v))) (s as unknown as Record<string, unknown>)[k] = Number(v);
   }
   for (const k of ["lines", "veils"] as const) s[k] = Array.isArray(raw[k]) ? [...new Set((raw[k] as unknown[]).filter((v): v is string => typeof v === "string").map((v) => v.trim().toLowerCase()).filter(Boolean))] : [];
-  s.autoConfidence = Math.max(0, Math.min(1, s.autoConfidence));
-  s.decider = ["llm", "jev", "rules"].includes(s.decider) ? s.decider : DEFAULT_SETTINGS.decider;
-  s.jevFormat = s.jevFormat === "openai" ? "openai" : "typesafe";
+  // Two providers: the helper LLM and Jev. The old "rules" provider (and anything unknown) reads as the helper.
+  s.decider = s.decider === "jev" ? "jev" : "llm";
   s.jevUrl = /^https?:\/\/\S+$/i.test(s.jevUrl) ? s.jevUrl : DEFAULT_SETTINGS.jevUrl;
+  if (!s.jevModel) s.jevModel = DEFAULT_SETTINGS.jevModel;
+  for (const k of PINNED) (s as unknown as Record<string, unknown>)[k] = DEFAULT_SETTINGS[k];
   return s;
 }
 

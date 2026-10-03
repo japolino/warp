@@ -3,11 +3,9 @@ import { beforeAll, expect, test } from "bun:test";
 import { loadRuleset } from "../engine/loader.js";
 import { DEFAULT_SETTINGS } from "../shared/protocol.js";
 import { busyChats, lastStates } from "./state-push.js";
-import { encounterLogOf, foldPath, liveChoicesOf, patchMeta, patchWarpMeta, reconcilePath, recordPath, shiftAfterSwipeDelete, warpMeta, withRecordPath, writeRecord } from "./ledger.js";
+import { foldPath, liveChoicesOf, patchMeta, patchWarpMeta, reconcilePath, recordPath, shiftAfterSwipeDelete, warpMeta, withRecordPath, writeRecord } from "./ledger.js";
 import { interceptor, onGenerationEnded, onGenerationStarted, onGenerationStopped } from "./turn.js";
 import { characterBrief, characterForChat, personProfile } from "./source.js";
-import { playRound } from "./encounter.js";
-import { takeOperation, releaseOperation } from "./operations.js";
 
 let seq = 0;
 let frontendMessage!: (message: any, userId?: string) => Promise<void>;
@@ -16,6 +14,13 @@ const listeners = new Map<string, (payload: any, userId?: string) => unknown>();
 const fixtures = new Map<string, any>();
 const raw = { stats: { health: { start: 50, max: 100, narrator: 20 } }, actions: { touch: { effects: { health: -10 } } } };
 const record = (events: any[] = []) => ({ v: 1 as const, hints: [], events, at: 0 });
+/** The greeting was already read (these tests start after it). */
+const greeted = { warp: { greeted: { "0": { at: 0 } } } };
+/** The one post-reply helper call: answers to the typed questions, choices, texts. */
+const written = (o: { health?: string; choices?: any[]; answers?: Record<string, unknown> } = {}) => ({ content: JSON.stringify({
+  answers: { ...(o.health ? { "stat:health": { choice: o.health, confidence: 0.9 } } : {}), ...(o.answers ?? {}) },
+  ...(o.choices ? { choices: o.choices } : {}),
+}) });
 function fixture(input: any = raw) {
   const id = `transaction-${++seq}`;
   const f: any = { id, messages: [], sent: [], calls: 0, failWrite: false, emitEdits: true,
@@ -71,24 +76,25 @@ beforeAll(async () => {
   await import("../backend.ts" + "?transaction-harness");
 });
 
-const start = async (f: any, generationId = f.id) => {
+const start = async (f: any, generationId = f.id, reply = "You touch it.") => {
   if (!f.messages.length) {
-    f.add("assistant", "The story.");
+    f.add("assistant", "The story.", structuredClone(greeted));
   }
   f.add("user", "Touch", { warp: { intent: { actionId: "touch", via: "choice" } } });
   const target = f.add("assistant", "");
   await onGenerationStarted({ generationId, chatId: f.id, targetMessageId: target.id }, f.id);
   await interceptor([{ role: "user", content: "Touch" }], { chatId: f.id, userId: f.id, generationType: "normal", generationId } as any);
-  target.content = "You touch it.";
+  target.content = reply;
   return { target, payload: { generationId, chatId: f.id, messageId: target.id, content: target.content } };
 };
 
+/** Hold the post-reply call until released (health: the step the answers report). */
 function deferExtraction(f: any) {
   let release!: (value: any) => void;
   let entered!: () => void;
   const waiting = new Promise<void>((resolve) => { entered = resolve; });
   f.quiet = () => { entered(); return new Promise((resolve) => { release = resolve; }); };
-  return { waiting, release: (health = 5) => release({ content: JSON.stringify({ stats: { health } }) }) };
+  return { waiting, release: (health = "up") => release(written({ health })) };
 }
 
 test("metadata patches retain simultaneous swipe records, hints and unrelated keys", async () => {
@@ -150,19 +156,6 @@ test("late Stop and End from a superseded generation do not unlock or book the n
   expect(busyChats.has(f.id)).toBe(false);
 });
 
-test("a duplicate host Stop cannot unlock a subsequent local operation", async () => {
-  const f = fixture(); const old = await start(f);
-  await onGenerationStopped({ chatId: f.id, generationId: old.payload.generationId }, f.id);
-  const token = takeOperation(f.id)!;
-  expect(token).not.toBeNull();
-  await onGenerationStopped({ chatId: f.id, generationId: old.payload.generationId }, f.id);
-  await onGenerationStopped({ chatId: f.id }, f.id);
-  expect(busyChats.has(f.id)).toBe(true);
-  expect(takeOperation(f.id)).toBeNull();
-  expect(releaseOperation(f.id, token)).toBe(true);
-  expect(busyChats.has(f.id)).toBe(false);
-});
-
 test("postprocessing stays busy and preserves a manual adjustment made during extraction", async () => {
   const f = fixture(); const { target, payload } = await start(f);
   const gate = deferExtraction(f);
@@ -173,8 +166,8 @@ test("postprocessing stays busy and preserves a manual adjustment made during ex
     const rec = w.swipes!["0"];
     return { ...w, swipes: { ...w.swipes, "0": { ...rec, events: [...rec.events, { t: "stat", id: "health", set: 80, src: "manual" }] } } };
   });
-  gate.release(-5); await ending;
-  expect(foldPath(f.r, f.messages).state.stats.health).toBe(75);
+  gate.release("down"); await ending;
+  expect(foldPath(f.r, f.messages).state.stats.health).toBe(70);
   expect(busyChats.has(f.id)).toBe(false);
 });
 
@@ -203,12 +196,12 @@ test("Stop during extraction prevents its late commit and duplicate End never re
   expect(warpMeta(target).swipes!["0"].events.some((e) => e.src === "narrator")).toBe(false);
 });
 
-test("Stop during interpretation cannot create a pending action when the model returns late", async () => {
-  const f = fixture(); f.add("assistant", "The story."); f.add("user", "Touch");
+test("Stop during the typed read cannot create a pending action when the model returns late", async () => {
+  const f = fixture(); f.add("assistant", "The story.", structuredClone(greeted)); f.add("user", "I try to grab the rope and climb the wall.");
   const target = f.add("assistant", "");
   await onGenerationStarted({ generationId: f.id, chatId: f.id, targetMessageId: target.id }, f.id);
   const gate = deferExtraction(f);
-  const reading = interceptor([{ role: "user", content: "Touch" }], { chatId: f.id, userId: f.id, generationType: "normal" } as any);
+  const reading = interceptor([{ role: "user", content: "I try to grab the rope and climb the wall." }], { chatId: f.id, userId: f.id, generationType: "normal" } as any);
   await gate.waiting;
   await onGenerationStopped({ chatId: f.id, generationId: f.id }, f.id);
   gate.release(); await reading;
@@ -220,11 +213,11 @@ test("Stop during interpretation cannot create a pending action when the model r
 
 test("duplicate successful End extracts and commits exactly once", async () => {
   const f = fixture(); const { payload } = await start(f);
-  f.quiet = async () => ({ content: '{"stats":{"health":5}}' });
+  f.quiet = async () => written({ health: "up" });
   await Promise.all([onGenerationEnded(payload, f.id), onGenerationEnded(payload, f.id)]);
   await onGenerationEnded(payload, f.id);
   expect(f.calls).toBe(1);
-  expect(foldPath(f.r, f.messages).state.stats.health).toBe(45);
+  expect(foldPath(f.r, f.messages).state.stats.health).toBe(50);
 });
 
 for (const change of ["edit", "delete", "swipe", "rules"] as const) {
@@ -262,11 +255,8 @@ test("discard clears affected active results and choices, preserving chat and in
   expect(foldPath(f.r, f.messages).conflict).toBeNull();
 });
 
-test("quiet logs belong to their swipe and revisions remain bounded for long paths", async () => {
-  const f = fixture(); const log: any = { enc: "e", foe: "Foe", status: "on", rounds: [] };
-  const m = f.add("assistant", "Log", { warp: { encounters: { "0": log } } });
-  expect(encounterLogOf(m)).toEqual(log);
-  m.swipe_id = 1; expect(encounterLogOf(m)).toBeUndefined();
+test("revisions remain bounded for long paths", async () => {
+  const f = fixture();
   for (let i = 0; i < 1000; i++) f.add("assistant", "Long prose ".repeat(50));
   expect(recordPath(f.r, f.messages).length).toBeLessThan(20);
 });
@@ -276,7 +266,7 @@ test("Continue books only appended prose, keeps the original action, and duplica
   await onGenerationEnded(payload, f.id);
   const original = target.content, action = structuredClone(warpMeta(target).swipes!["0"].action);
   let seen = "";
-  f.quiet = async (req: any) => { seen = req.messages[1].content; return { content: JSON.stringify({ stats: { health: 5 } }) }; };
+  f.quiet = async (req: any) => { seen = req.messages[1].content; return written({ health: "up" }); };
   const generationId = `${f.id}-continue`;
   await onGenerationStarted({ chatId: f.id, generationId, targetMessageId: target.id, generationType: "continue" }, f.id);
   await interceptor([{ role: "assistant", content: original }], { chatId: f.id, userId: f.id, generationType: "continue", generationId } as any);
@@ -284,18 +274,19 @@ test("Continue books only appended prose, keeps the original action, and duplica
   const done = { chatId: f.id, generationId, messageId: target.id, content: target.content };
   await onGenerationEnded(done, f.id); await onGenerationEnded(done, f.id);
   expect(seen.split("Narrator's reply:\n")[1].split("Already applied")[0].trim()).toBe("The medic heals you.");
-  expect(foldPath(f.r, f.messages).state.stats.health).toBe(45);
+  expect(foldPath(f.r, f.messages).state.stats.health).toBe(50);
   expect(warpMeta(target).swipes!["0"].action).toEqual(action);
   expect(f.calls).toBe(2);
 });
 
-test("a broken interpreter configuration still resolves a clicked action with visible rules fallback", async () => {
-  const f = fixture(); f.settings.decider = "jev"; f.settings.jevFormat = "openai";
+test("a broken Jev configuration still resolves a clicked action, with the helper as the fallback", async () => {
+  const f = fixture(); f.settings.decider = "jev"; f.settings.jevUrl = "https://openrouter.ai/api/v1/chat/completions";
   const { target, payload } = await start(f);
   await onGenerationEnded(payload, f.id);
   expect(warpMeta(target).swipes!["0"].action?.id).toBe("touch");
   expect(foldPath(f.r, f.messages).state.stats.health).toBe(40);
-  expect(f.calls).toBe(0);
+  expect(f.calls).toBe(1);
+  expect(warpMeta(target).swipes!["0"].calls).toEqual({ helper: 1, jev: 0 });
 });
 
 test("state-only and trimmed replay match full replay through saves and branch edits", () => {
@@ -314,14 +305,12 @@ test("state-only and trimmed replay match full replay through saves and branch e
   }
 });
 
-
 test("registered sheet adjustments merge their newly computed deltas instead of overwriting", async () => {
   const f = fixture(); f.add("assistant", "Story");
   await Promise.all([60, 70].map((value) => frontendMessage({ type: "adjust", chatId: f.id, stat: "health", value }, f.id)));
   expect(foldPath(f.r, f.messages).state.stats.health).toBe(70);
   expect(warpMeta(f.messages[0]).swipes!["0"].events.filter((e) => e.src === "manual")).toHaveLength(2);
 });
-
 
 test("card edits invalidate profiles and CHAT_CHANGED rebinding uses the new character immediately", async () => {
   const f = fixture(), next = fixture();
@@ -364,39 +353,37 @@ function liveFixture() {
     } },
   });
 }
-const isLiveRequest = (req: any) => req.messages[0].content.includes("clickable choices");
-const liveResponse = { content: '{"choices":[{"label":"Try again","tag":"bold"}]}' };
+const liveResponse = written({ choices: [{ label: "Try again", tag: "bold" }] });
 
-for (const changed of [true, false]) test(`live choices use the committed ${changed ? "changed" : "unchanged"} state`, async () => {
-  const f = liveFixture(); const { target, payload } = await start(f);
-  let prompt = "", sawCommitted = false;
+for (const changed of [true, false]) test(`live choices are checked against the committed ${changed ? "changed" : "unchanged"} state`, async () => {
+  const f = liveFixture(); const { target, payload } = await start(f, f.id, "Mira steps in as you touch it.");
+  let prompt = "";
   f.quiet = async (req: any) => {
-    if (!isLiveRequest(req)) return { content: JSON.stringify(changed
-      ? { stats: { health: 5 }, people: [{ name: "Mira" }], present: ["Mira"] } : {}) };
-    prompt = req.messages[1].content;
-    sawCommitted = foldPath(f.r, f.messages).state.stats.health === (changed ? 45 : 40);
-    return { content: JSON.stringify({ choices: [{ label: "Try again", tag: "bold" },
-      ...(changed ? [{ label: "Talk to Mira", tag: "kind", target: "Mira" }] : [])] }) };
+    prompt = req.messages[0].content;
+    return written({
+      health: changed ? "up" : undefined,
+      answers: changed ? { "newp:0": { p: 0.95 }, "newhere:0": { p: 0.9 } } : {},
+      choices: [{ label: "Try again", tag: "bold" }, { label: "Talk to Mira", tag: "kind", target: "Mira" }],
+    });
   };
   await onGenerationEnded(payload, f.id);
-  expect(sawCommitted).toBe(true);
-  expect(prompt).toContain(changed ? "45" : "40");
+  // One call wrote the answers and the choices.
+  expect(f.calls).toBe(1);
+  expect(prompt).toContain('"choices"');
+  expect(foldPath(f.r, f.messages).state.stats.health).toBe(changed ? 50 : 40);
   expect(liveChoicesOf(target)).toHaveLength(changed ? 2 : 1);
-  if (changed) { expect(prompt).toContain("Mira"); expect(liveChoicesOf(target)[1].target).toBe("mira"); }
+  if (changed) expect(liveChoicesOf(target)[1].target).toBe("mira");
 });
 
 function deferLive(f: any) {
   let release!: (value: any) => void;
   let entered!: () => void;
   const waiting = new Promise<void>((resolve) => { entered = resolve; });
-  f.quiet = async (req: any) => {
-    if (!isLiveRequest(req)) return { content: "{}" };
-    entered(); return new Promise((resolve) => { release = resolve; });
-  };
+  f.quiet = async () => { entered(); return new Promise((resolve) => { release = resolve; }); };
   return { waiting, release: () => release(liveResponse) };
 }
 
-for (const change of ["stop", "content", "swipe", "history", "target-event", "target-hint"]) test(`late live choices reject ${change} changes`, async () => {
+for (const change of ["stop", "content", "swipe", "history"]) test(`a late post-reply call is rejected after a ${change} change`, async () => {
   const f = liveFixture(); const { target, payload } = await start(f);
   target.metadata.warp = { live: { "0": [{ label: "Stale", tag: "bold" }] } };
   const gate = deferLive(f); const ending = onGenerationEnded(payload, f.id);
@@ -406,15 +393,25 @@ for (const change of ["stop", "content", "swipe", "history", "target-event", "ta
   if (change === "content") target.content = "Edited reply";
   if (change === "swipe") target.swipe_id = 1;
   if (change === "history") f.messages[0].content = "Edited history";
-  if (change === "target-event" || change === "target-hint") await patchWarpMeta(f.id, target.id, (w) => {
+  gate.release(); await ending;
+  // The stale choices went when the reply landed; the late ones never arrive.
+  expect(warpMeta(target).live?.["0"]).toEqual([]);
+});
+
+for (const change of ["target-event", "target-hint"]) test(`a ${change} edit during the post-reply call is kept, and the call still commits on top of it`, async () => {
+  const f = liveFixture(); const { target, payload } = await start(f);
+  const gate = deferLive(f); const ending = onGenerationEnded(payload, f.id);
+  await gate.waiting;
+  await patchWarpMeta(f.id, target.id, (w) => {
     const rec = w.swipes!["0"];
     return { ...w, swipes: { ...w.swipes, "0": change === "target-event"
       ? { ...rec, events: [...rec.events, { t: "stat", id: "health", set: 80, src: "manual" }] }
       : { ...rec, hints: [...rec.hints, "Manual annotation"] } } };
   });
   gate.release(); await ending;
-  expect(warpMeta(target).live?.["0"]).toEqual([]);
-  if (change === "target-event") expect(foldPath(f.r, f.messages).state.stats.health).toBe(80);
+  expect(liveChoicesOf(target).map((c) => c.label)).toEqual(["Try again"]);
+  expect(foldPath(f.r, f.messages).state.stats.health).toBe(change === "target-event" ? 80 : 40);
+  if (change === "target-hint") expect(warpMeta(target).swipes!["0"].hints).toContain("Manual annotation");
 });
 
 for (const result of ["empty", "failure"]) test(`${result} live output clears stale active choices and preserves inactive slots`, async () => {
@@ -422,10 +419,9 @@ for (const result of ["empty", "failure"]) test(`${result} live output clears st
   target.metadata.warp = { live: {
     "0": [{ label: "Stale", tag: "bold" }], "1": [{ label: "Other swipe", tag: "bold" }],
   } };
-  f.quiet = async (req: any) => {
-    if (!isLiveRequest(req)) return { content: "{}" };
-    if (result === "failure") throw new Error("scripted live writer failure");
-    return { content: '{"choices":[]}' };
+  f.quiet = async () => {
+    if (result === "failure") throw new Error("scripted post-reply failure");
+    return written({ choices: [] });
   };
   await onGenerationEnded(payload, f.id);
   expect(liveChoicesOf(target)).toEqual([]);
@@ -433,13 +429,12 @@ for (const result of ["empty", "failure"]) test(`${result} live output clears st
 });
 
 
-test("Stop during the final live-choice host read rejects its late snapshot", async () => {
+test("Stop during the final commit's host read rejects its late snapshot", async () => {
   const f = liveFixture(); const { target, payload } = await start(f);
   let entered!: () => void, release!: () => void;
   const waiting = new Promise<void>((resolve) => { entered = resolve; });
   const blocked = new Promise<void>((resolve) => { release = resolve; });
-  f.quiet = async (req: any) => {
-    if (!isLiveRequest(req)) return { content: "{}" };
+  f.quiet = async () => {
     // patchWarpMeta first reads its queue snapshot; currentMessages then reads
     // the validation snapshot. Stop lands while that second read is in flight.
     let reads = 0;
@@ -468,7 +463,7 @@ test("postprocessing rejects a conflicting target record instead of folding a pa
   await patchWarpMeta(f.id, target.id, (w) => ({ ...w, swipes: { ...w.swipes,
     "0": { ...w.swipes!["0"], path: "invalid-target-path" },
   } }));
-  gate.release(5); await ending;
+  gate.release("up"); await ending;
   expect(warpMeta(target).swipes!["0"].events).toEqual(originalEvents);
   expect(foldPath(f.r, f.messages).conflict).toBe(target.id);
   expect(f.calls).toBe(1);

@@ -177,8 +177,8 @@ describe("live choices", () => {
       { label: "Leap the fence", tag: "bold" },
     ], 5);
     expect(out).toEqual([
-      { label: "Leap the fence", tag: "bold" },
-      { label: "Hug Ward", tag: "kind", target: "ward" },
+      { label: "Leap the fence", tag: "bold", difficulty: "fair" },
+      { label: "Hug Ward", tag: "kind", target: "ward", difficulty: "none" },
     ]);
   });
 

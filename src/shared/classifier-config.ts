@@ -1,13 +1,17 @@
 import type { Settings } from "./protocol.js";
 
-export const OPENROUTER_JEV: Pick<Settings, "decider" | "jevFormat" | "jevModel" | "jevUrl"> = {
-  decider: "jev", jevFormat: "typesafe", jevModel: "typesafe/jev-1.13", jevUrl: "https://openrouter.ai/api/alpha/decisions",
+/** Jev through OpenRouter's decisions endpoint (an OpenRouter key goes in the Jev key field). */
+export const OPENROUTER_JEV: Pick<Settings, "decider" | "jevModel" | "jevUrl"> = {
+  decider: "jev", jevModel: "typesafe/jev-1.13", jevUrl: "https://openrouter.ai/api/alpha/decisions",
 };
 
-export function classifierIssue(format: Settings["jevFormat"], model: string, url: string): string | null {
+/**
+ * Why a classifier setting cannot work, or null. Jev speaks TypeSafe's typed-question API only, so a pasted
+ * chat endpoint is refused before anything is sent. `_format` is ignored (the old OpenAI-chat format is cut);
+ * it stays in the signature until the settings UI stops passing it.
+ */
+export function classifierIssue(_format: string | undefined, _model: string, url: string): string | null {
   const path = (() => { try { return new URL(url).pathname.replace(/\/+$/, ""); } catch { return ""; } })();
-  const jev = /^(?:~?typesafe\/)?jev(?:[-./]|$)/i.test(model.trim());
-  if (format === "openai" && (jev || /\/(?:alpha\/decisions|systemone)(?:\/chat\/completions)?$/.test(path))) return `Jev and decisions endpoints require Typed questions (TypeSafe API). For Jev on OpenRouter, use ${OPENROUTER_JEV.jevUrl} with model ${OPENROUTER_JEV.jevModel}, or choose the Jev on OpenRouter preset.`;
-  if (format === "typesafe" && /\/chat\/completions$/.test(path)) return `This URL is a chat endpoint. For Jev on OpenRouter, use ${OPENROUTER_JEV.jevUrl} with Typed questions (TypeSafe API). For a text model, select OpenAI-compatible chat.`;
+  if (/\/chat\/completions$/.test(path)) return `This URL is a chat endpoint. Jev needs a typed-question endpoint: TypeSafe's (the default), or for Jev on OpenRouter ${OPENROUTER_JEV.jevUrl} with model ${OPENROUTER_JEV.jevModel}. To use a chat model, pick Helper and set the helper connection.`;
   return null;
 }

@@ -282,68 +282,75 @@ export interface RulesetStatus {
 }
 
 /**
- * Settings. Target after the core cut (CORE-DESIGN §4.7; the pipeline owns this section): visible = enabled,
- * helperConnectionId, decider (llm | jev), showChoices, showOdds, swipesReroll, showChanges, lines, veils;
- * hidden with fixed defaults = narratorUpdates, storyQuests (→ story goals), hotkeys, autoConfidence, jevUrl,
- * jevModel, jevFormat. Fields marked deprecated go.
+ * Settings (CORE-DESIGN §4.7). Visible: enabled, helperConnectionId, decider (Helper / Jev; Jev's key lives in
+ * the enclave, not here) with jevUrl and jevModel in an Advanced fold, swipesReroll, showChoices, showOdds,
+ * showChanges, lines, veils. Read but not shown: hotkeys. Everything else is fixed inside the backend.
  */
 export interface Settings {
   enabled: boolean;
-  /** @deprecated Follows the ruleset's `style:` (CORE-DESIGN §4.7). */
-  freeTextChecks: boolean;
-  /** Let a model read each reply and suggest bounded state changes. */
-  narratorUpdates: boolean;
-  /** Swiping a reply rerolls its dice (Casual). Off = dice fixed per player message (Ironman). */
-  swipesReroll: boolean;
-  /** Connection used for the adjudicator and extractor; empty = the chat's own connection. */
+  /** Connection used for the helper calls (the typed read without Jev, the post-reply call, the greeting read); empty = the chat's own connection. */
   helperConnectionId: string;
+  /** Which model answers Warp's typed questions: the helper LLM, or Jev (TypeSafe's classifier, or any service with the same API). */
+  decider: "llm" | "jev" | DeprecatedDecider;
+  jevModel: string;
+  /** The classifier endpoint: TypeSafe's by default, or any URL that speaks the same typed-question API. */
+  jevUrl: string;
+  /** Swiping a reply rerolls its dice (Casual), for typed and clicked moves. Off = the same roll on every swipe (Ironman). */
+  swipesReroll: boolean;
+  /** Choice buttons under the reply. Off: none are shown, and none are written. */
+  showChoices: boolean;
   showOdds: boolean;
-  /** @deprecated The dice chip always shows (CORE-DESIGN §4.7). */
-  showDiceChips: boolean;
+  /** The "what changed" line under each reply (the dice chip always shows). */
+  showChanges: boolean;
+  /** Number keys pick choices (read, not shown). */
   hotkeys: boolean;
   /** Content tags removed from the game entirely. */
   lines: string[];
   /** Content tags that still happen but are narrated off-screen. */
   veils: string[];
-  /** Which model answers Warp's typed questions (reading actions, bookkeeping, NPC odds, scene triggers). `rules` is going. */
-  decider: "llm" | "jev" | "rules";
-  jevModel: string;
-  /** The classifier endpoint: TypeSafe's by default, or any compatible URL (or an OpenAI-style chat endpoint). */
-  jevUrl: string;
-  /** How to talk to it: TypeSafe's typed-questions API, or an OpenAI-compatible /chat/completions endpoint. */
-  jevFormat: "typesafe" | "openai";
-  /** Track the favours and jobs people ask {{user}} for in the story as quests. */
+
+  // ── @deprecated: delete this block (and DeprecatedDecider) when ui-c's render.ts stops reading it. ──
+  // The backend never reads these; normalizeSettings pins them to their defaults.
+  /** @deprecated Follows the ruleset's `style:`. */
+  freeTextChecks: boolean;
+  /** @deprecated Always on. */
+  narratorUpdates: boolean;
+  /** @deprecated Story goals follow the ruleset's `goals.from_story`. */
   storyQuests: boolean;
-  /** Read typed actions and roll automatically at or above this confidence. */
-  autoConfidence: number;
-  /** @deprecated `sayOutcome` is cut (CORE-CUT): clicks no longer roll early or write the player's line. */
+  /** @deprecated Cut: clicks no longer roll early or write the player's line. */
   sayOutcome: boolean;
-  /** Choice buttons under the reply (the CYOA). Off: none, and none are written — fights and endings keep theirs. */
-  showChoices: boolean;
-  /** The chips under each reply that say what changed (time, feelings, items…). Off: only in the sheet's history. */
-  showChanges: boolean;
+  /** @deprecated The dice chip always shows. */
+  showDiceChips: boolean;
+  /** @deprecated An internal threshold now. */
+  autoConfidence: number;
+  /** @deprecated Only the typed-question (TypeSafe) format remains. */
+  jevFormat: "typesafe" | "openai";
 }
+
+/** @deprecated "rules" is gone (read as "llm"); delete with the block above. */
+export type DeprecatedDecider = "rules";
 
 export const DEFAULT_SETTINGS: Settings = {
   enabled: true,
-  freeTextChecks: true,
-  narratorUpdates: true,
-  swipesReroll: true,
   helperConnectionId: "",
-  showOdds: true,
-  showDiceChips: true,
-  hotkeys: true,
-  lines: [],
-  veils: [],
   decider: "llm",
   jevModel: "jev-latest",
   jevUrl: "https://api.typesafe.ai/v1/systemone",
-  jevFormat: "typesafe",
-  storyQuests: true,
-  autoConfidence: 0.75,
-  sayOutcome: true,
+  swipesReroll: true,
   showChoices: true,
+  showOdds: true,
   showChanges: true,
+  hotkeys: true,
+  lines: [],
+  veils: [],
+  // @deprecated block (see Settings)
+  freeTextChecks: true,
+  narratorUpdates: true,
+  storyQuests: true,
+  sayOutcome: false,
+  showDiceChips: true,
+  autoConfidence: 0.75,
+  jevFormat: "typesafe",
 };
 
 export interface TemplateInfo { id: string; name: string; blurb: string }
@@ -457,16 +464,16 @@ export type FrontendToBackend =
   | { type: "hello"; chatId: string | null }
   | { type: "refresh"; chatId: string | null }
   | { type: "act"; chatId: string; actionId: string; params?: Record<string, string> }
-  /** A line typed in Warp's own box (an encounter's move), or posted to the chat otherwise. */
+  /** A line typed in Warp's own box: posted to the chat as the player's message. */
   | { type: "say"; chatId: string; text: string }
   | { type: "undo"; chatId: string; messageId: string; swipe: number; events: number[] }
   | { type: "adjust"; chatId: string; stat: string; value: number }
   | { type: "settings"; patch: Partial<Settings> }
   | { type: "install_template"; chatId: string | null; templateId: string; trackCharacter?: boolean; /** Switch style: replace the template-installed book and keep its people entries (CORE-DESIGN §4.7 #2). */ replace?: boolean }
   | { type: "reload"; chatId: string | null }
-  /** Replace the reply to `userMessageId` and resend it with this intent (null = "not an action"). */
-  | { type: "redo"; chatId: string; userMessageId: string; actionId: string | null; params?: Record<string, string> }
-  /** @deprecated Swipes reroll (Casual); the separate reroll goes. */
+  /** "Not an action?": replace the reply to `userMessageId` and resend the message without a roll. */
+  | { type: "redo"; chatId: string; userMessageId: string; actionId: null }
+  /** @deprecated Swipes reroll (Casual); the backend ignores this. Delete when the UI stops sending it. */
   | { type: "reroll"; chatId: string; messageId: string }
   /**
    * One-click fix of a state line (a manual event on the latest message). `value` by field: time = minutes or

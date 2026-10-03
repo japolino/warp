@@ -3,10 +3,11 @@
 // Each message carries `metadata.warp = { intent?, swipes: { [swipeIndex]: TurnRecord } }`.
 // State for any point in the chat is the fold of the active swipe's record on
 // every message before it. Provenance checks pause results whose earlier causes changed.
+// Turn records also carry the turn's call meter (`calls`) and the post-reply read's `when_scene` answers (`sceneRead`).
 
 import type { ChatMessageDTO } from "lumiverse-spindle-types";
 import type { Intent, LiveChoice, TurnRecord } from "../engine/resolve.js";
-import type { Ruleset } from "../engine/ruleset.js";
+import type { Difficulty, Ruleset } from "../engine/ruleset.js";
 import { applyEvent, cloneState, initialState, type GameState } from "../engine/state.js";
 import { host } from "./host.js";
 import { revision } from "../shared/revision.js";
@@ -15,29 +16,22 @@ export type Msg = ChatMessageDTO & { role: "system" | "user" | "assistant"; meta
 
 export interface WarpMeta {
   intent?: Intent;
-  /** The adjudicator already read this message (intent may be absent = "not an action"). Swipes reuse the verdict. */
+  /** The typed read already judged this message (intent may be absent = "not an action"). Swipes reuse the verdict. */
   judged?: boolean;
+  /** What else the typed read decided, saved with the verdict so swipes never ask again. */
+  verdict?: {
+    /** The message starts a contest (it begins before the move lands). */
+    contest?: { kind: string; opponent: string; threat?: Difficulty };
+    /** `decide:` odds Jev gave for this message. */
+    odds?: Record<string, Record<string, number>>;
+    /** How sure the read was. */
+    confidence?: number;
+  };
   swipes?: Record<string, TurnRecord>;
   /** Choices written for the moment after this reply, per swipe. */
   live?: Record<string, LiveChoice[]>;
-  /** This message is a quiet encounter's log: its rounds, and how it ended. */
-  encounter?: EncounterLog;
-  encounters?: Record<string, EncounterLog>;
-  /** The move as clicked, before its result was written into the message (a reroll writes it again from this). */
-  said?: string;
-}
-
-export interface EncounterLog {
-  /** The encounter's id. */
-  enc: string;
-  foe: string;
-  status: "on" | "ended";
-  rounds: { text: string; card: import("../engine/encounter-view.js").RoundCard }[];
-  /** The first round shown in this message (earlier ones are in an earlier message, before a typed turn). */
-  from?: number;
-  /** When it ended: the closing paragraph that replaced the log, and how it ended. */
-  summary?: string;
-  ended?: { label: string; loss: boolean };
+  /** The greeting read ran on this swipe (the greeting message only): when, and whether it failed. */
+  greeted?: Record<string, { at: number; failed?: boolean }>;
 }
 
 /** The live choices offered under a reply (its active swipe). */
@@ -53,14 +47,6 @@ export function warpMeta(m: Msg): WarpMeta {
 
 export function activeRecord(m: Msg): TurnRecord | null {
   return warpMeta(m).swipes?.[String(m.swipe_id ?? 0)] ?? null;
-}
-
-export function encounterLogOf(m: Msg): EncounterLog | undefined {
-  const w = warpMeta(m);
-  return w.encounters?.[String(m.swipe_id ?? 0)] ?? (m.swipe_id ? undefined : w.encounter);
-}
-export function encounterSlots(w: WarpMeta): Record<string, EncounterLog> {
-  return { ...(w.encounter ? { "0": w.encounter } : {}), ...w.encounters };
 }
 
 export async function getMessages(chatId: string): Promise<Msg[]> {
@@ -81,7 +67,7 @@ function rulesRevision(r: Ruleset): string {
 }
 function nextPath(path: string, m: Msg): string {
   const rec = activeRecord(m);
-  return revision([path, m.id, m.swipe_id ?? 0, encounterLogOf(m) ? "quiet log" : m.content, rec ? { ...rec, path: undefined } : null]);
+  return revision([path, m.id, m.swipe_id ?? 0, m.content, rec ? { ...rec, path: undefined } : null]);
 }
 export function recordPath(r: Ruleset, msgs: Msg[]): string {
   let path = rulesRevision(r);
@@ -182,8 +168,7 @@ export async function shiftAfterSwipeDelete(chatId: string, messageId: string, d
       Object.entries(slots ?? {}).filter(([k]) => Number(k) !== deleted)
         .map(([k, v]) => [String(Number(k) > deleted ? Number(k) - 1 : Number(k)), v]),
     );
-    const encounters = w.encounters || w.encounter ? encounterSlots(w) : undefined;
-    return { ...w, encounter: undefined, swipes: shift(w.swipes), ...(w.live ? { live: shift(w.live) } : {}), ...(encounters ? { encounters: shift(encounters) } : {}) };
+    return { ...w, swipes: shift(w.swipes), ...(w.live ? { live: shift(w.live) } : {}), ...(w.greeted ? { greeted: shift(w.greeted) } : {}) };
   });
 }
 
@@ -205,8 +190,7 @@ export async function reconcilePath(chatId: string, r: Ruleset, keep: boolean): 
         swipes[slot] = withRecordPath(rec, r, now.filter((x) => x.index_in_chat < current.index_in_chat));
       } else delete swipes[slot];
       const live = { ...w.live }; delete live[slot];
-      const encounters = { ...w.encounters }; delete encounters[slot];
-      return { ...w, swipes, live, encounters, encounter: undefined };
+      return { ...w, swipes, live };
     });
   }
 }

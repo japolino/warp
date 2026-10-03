@@ -1,269 +1,261 @@
-// End-to-end test of the backend against a fake Spindle host.
+// End-to-end tests of the backend against a fake Spindle host: the greeting read, one-click fixes, the contest
+// buttons, the one reroll rule, no button lock, "Not an action?", template installs. Inline rulesets only.
 
 import { beforeAll, expect, test } from "bun:test";
-import { TEMPLATES } from "./engine/templates/index.js";
-import { TOWN_YAML } from "./engine/town.fixture.js";
+import { ADVENTURE_YAML, defaultHelper, defaultJev, GREETING, makeHost, settle, STORY_YAML, type FakeHost, type HelperCall } from "./backend/test-host.js";
+import { GREETING_HINT } from "./backend/greeting.js";
 
-type Fn = (...a: any[]) => any;
-interface Msg {
-  id: string; chat_id: string; index_in_chat: number; is_user: boolean; name: string; content: string;
-  swipe_id: number; swipes: string[]; swipe_dates: number[]; extra: Record<string, unknown>;
-  parent_message_id: null; branch_id: null; created_at: number; send_date: number;
-}
-
-const handlers = new Map<string, Fn[]>();
-let interceptor: Fn;
-let wiInterceptor: Fn;
-let frontendHandler: Fn;
-const sent: any[] = [];
-const quietReplies: string[] = [];
-const appended: any[] = [];
-const books: Record<string, { id: string; name: string; entries: any[] }> = {};
-const character = { id: "ch1", name: "Robin", world_book_ids: [] as string[], extensions: {} };
-const messages: Msg[] = [];
-let storage: Record<string, unknown> = {};
-
-function mkMsg(id: string, isUser: boolean, content: string, metadata?: Record<string, unknown>): Msg {
-  return {
-    id, chat_id: "c1", index_in_chat: messages.length, is_user: isUser, name: isUser ? "Sam" : "Robin", content,
-    swipe_id: 0, swipes: [content], swipe_dates: [0], extra: metadata ? { spindle_metadata: metadata } : {},
-    parent_message_id: null, branch_id: null, created_at: 0, send_date: 0,
-  };
-}
-
-const view = (m: Msg) => {
-  const { spindle_metadata, ...extra } = m.extra as any;
-  return { ...m, role: m.is_user ? "user" : "assistant", extra, metadata: spindle_metadata };
-};
-
-const fake: any = {
-  on: (ev: string, fn: Fn) => { handlers.set(ev, [...(handlers.get(ev) ?? []), fn]); return () => {}; },
-  registerInterceptor: (fn: Fn) => { interceptor = fn; return () => {}; },
-  registerWorldInfoInterceptor: (fn: Fn) => { wiInterceptor = fn; },
-  onFrontendMessage: (fn: Fn) => { frontendHandler = fn; return () => {}; },
-  sendToFrontend: (m: unknown) => { sent.push(m); },
-  commands: { register: () => {}, onInvoked: () => () => {} },
-  log: { info: () => {}, error: (m: string) => console.error(m), warn: () => {} },
-  toast: { info: () => {}, success: () => {}, warning: () => {}, error: (m: string) => console.error("toast", m) },
-  userStorage: {
-    getJson: async (p: string, o: any) => (p in storage ? storage[p] : o?.fallback),
-    setJson: async (p: string, v: unknown) => { storage[p] = v; },
-  },
-  connections: { list: async () => [] },
-  macros: { resolve: async () => ({ text: "Sam" }) },
-  chats: { get: async (id: string) => (id === "c1" ? { id: "c1", character_id: "ch1" } : null) },
-  characters: {
-    get: async () => character,
-    update: async (_id: string, input: any) => { Object.assign(character, input); return character; },
-  },
-  world_books: {
-    get: async (id: string) => books[id] ?? null,
-    create: async (input: any) => { const id = `wb${Object.keys(books).length + 1}`; books[id] = { id, name: input.name, entries: [] }; return { id, ...input }; },
-    entries: {
-      list: async (bookId: string) => ({ data: books[bookId].entries, total: books[bookId].entries.length }),
-      create: async (bookId: string, input: any) => { const e = { id: `e${Math.random()}`, world_book_id: bookId, ...input }; books[bookId].entries.push(e); return e; },
-    },
-  },
-  chat: {
-    getMessages: async () => messages.map(view),
-    updateMessage: async (_c: string, id: string, patch: any) => {
-      const m = messages.find((x) => x.id === id)!;
-      if (patch.metadata !== undefined) m.extra = { ...m.extra, spindle_metadata: patch.metadata };
-    },
-    deleteMessage: async (_c: string, id: string) => {
-      const i = messages.findIndex((x) => x.id === id);
-      if (i >= 0) messages.splice(i, 1);
-      messages.forEach((m, j) => { m.index_in_chat = j; });
-    },
-    appendMessage: async (_c: string, msg: any, opts: any) => {
-      appended.push({ msg, opts });
-      const m = mkMsg(`a${appended.length}`, msg.role === "user", msg.content, msg.metadata);
-      messages.push(m);
-      return { id: m.id };
-    },
-  },
-  generate: { quiet: async () => ({ content: quietReplies.shift() ?? "{}" }) },
-};
-
-const lastState = () => [...sent].reverse().find((m) => m.type === "state");
-const emit = async (ev: string, payload: unknown) => { for (const fn of handlers.get(ev) ?? []) await fn(payload, undefined); };
-const settle = () => new Promise((r) => setTimeout(r, 30));
+const h: FakeHost = makeHost("backend-user");
+let n = 0;
 
 beforeAll(async () => {
-  (globalThis as any).spindle = fake;
-  messages.push(mkMsg("m0", false, "You wake up in your cramped apartment."));
+  (globalThis as any).spindle = h.fake;
+  h.helper = defaultHelper;
+  h.jev = defaultJev;
   await import("./backend.js");
 });
 
-test("full loop: install → choose → roll → narrate → bookkeeping → swipe → free text", async () => {
-  // No ruleset yet: the UI offers setup.
-  await frontendHandler({ type: "hello", chatId: "c1" });
-  expect(lastState().status.state).toBe("none");
-
-  // Install the Universal template.
-  await frontendHandler({ type: "install_template", chatId: "c1", templateId: "universal" });
-  const book = Object.values(books)[0];
-  expect(book.name).toBe("warp-ruleset");
-  expect(book.entries.length).toBe(TEMPLATES.find((t) => t.id === "universal")!.parts.length);
-  expect(book.entries.every((e) => e.disabled === true && e.comment.startsWith("warp-ruleset"))).toBe(true);
-  expect(character.world_book_ids).toContain(book.id);
-  let st = lastState();
-  expect(st.status.state).toBe("ok");
-  expect(st.status.issues).toEqual([]);
-  // The card's own character is tracked from the start.
-  expect(st.hud.people.map((p: any) => p.name)).toContain("Robin");
-
-  // The author swaps in a rulebook of their own (a small town with places to go) and reloads.
-  book.entries.splice(0, book.entries.length, { id: "town", world_book_id: book.id, comment: "warp-ruleset · town", content: TOWN_YAML, disabled: true, key: [] });
-  await frontendHandler({ type: "reload", chatId: "c1" });
-  st = lastState();
-  expect(st.status.issues).toEqual([]);
-  expect(st.hud.location.name).toBe("Your Apartment");
-  expect(st.choices.map((c: any) => c.id)).toContain("head_out");
-  expect(st.choicesAnchor).toBe("m0");
-
-  // Click "Head out to the High Street".
-  await frontendHandler({ type: "act", chatId: "c1", actionId: "head_out" });
-  expect(appended[0].opts).toEqual({ triggerGeneration: true });
-  expect(appended[0].msg.metadata.warp.intent.actionId).toBe("head_out");
-
-  const prompt = [{ role: "system", content: "sys" }, { role: "user", content: appended[0].msg.content }];
-  const out = await interceptor(prompt, { userId: undefined, chatId: "c1", generationId: "g1", generationType: "normal", isDryRun: false, interceptorDeadlineAt: Date.now() + 30000 });
-  const injected = out.messages[out.breakdown[0].messageIndex].content as string;
-  expect(injected).toContain("<warp>");
-  expect(injected).toContain("Sam chose: Head out to the High Street");
-  expect(injected).toContain("· High Street");
-
-  // The narrator replies; the extractor reports 20 minutes and a stress bump (clamped by the ruleset).
-  messages.push(mkMsg("m2", false, "You step out into the bustle of the High Street. A man jostles you roughly."));
-  quietReplies.push('{"minutes": 20, "stats": {"stress": 999999, "skulduggery": 50}}');
-  await emit("GENERATION_ENDED", { generationId: "g1", chatId: "c1", messageId: "m2", content: messages[2].content, generationType: "normal" });
+/** A fresh chat on a fixture, opened (the greeting read runs in the background). */
+async function open(yaml = ADVENTURE_YAML, greeting: string | null = GREETING) {
+  const chatId = `be-${++n}`;
+  h.chat(chatId, yaml, greeting);
+  await h.frontend({ type: "hello", chatId });
   await settle();
-  const rec = (messages[2].extra.spindle_metadata as any).warp.swipes["0"];
-  expect(rec.action.id).toBe("head_out");
-  const narr = rec.events.filter((e: any) => e.src === "narrator");
-  expect(narr.find((e: any) => e.t === "stat" && e.id === "stress").d).toBe(15);
-  expect(narr.some((e: any) => e.id === "skulduggery")).toBe(false);
-  st = lastState();
-  expect(st.hud.location.name).toBe("High Street");
-  expect(st.choicesAnchor).toBe("m2");
-  const chips = st.records.find((r: any) => r.messageId === "m2");
-  expect(chips.changes.some((c: any) => c.text.startsWith("Stress") && c.src === "narrator")).toBe(true);
+  return chatId;
+}
+const live = (st: any) => st.choices.filter((c: any) => c.id.startsWith("live:"));
 
-  // Undo the narrator's stress change from its chip.
-  const stressChip = chips.changes.find((c: any) => c.text.startsWith("Stress"));
-  await frontendHandler({ type: "undo", chatId: "c1", messageId: "m2", swipe: 0, events: stressChip.undo });
-  st = lastState();
-  expect(st.records.find((r: any) => r.messageId === "m2").changes.some((c: any) => c.text.startsWith("Stress"))).toBe(false);
-
-  // Free text: a pickpocket attempt, read by the adjudicator and rolled by the engine.
-  messages.push(mkMsg("m3", true, "I try to slip my hand into the tourist's bag and lift their wallet."));
-  quietReplies.push('{"action": {"choice": "pickpocket", "confidence": 0.9}}');
-  const out2 = await interceptor([{ role: "user", content: messages[3].content }], { chatId: "c1", generationId: "g2", generationType: "normal", isDryRun: false, interceptorDeadlineAt: Date.now() + 30000 });
-  const text2 = out2.messages[out2.breakdown[0].messageIndex].content as string;
-  expect(text2).toContain("Sam chose: Pick a pocket");
-  expect(text2).toMatch(/Check: Skulduggery — d20 \d+/);
-
-  messages.push(mkMsg("m4", false, "Your fingers close around leather..."));
-  quietReplies.push("{}");
-  await emit("GENERATION_ENDED", { generationId: "g2", chatId: "c1", messageId: "m4", content: "Your fingers close around leather...", generationType: "normal" });
+test("T-S1, T-CH5: the turn-0 time, place, people and choices come from the greeting", async () => {
+  const chatId = await open();
+  const st = h.lastState(chatId);
+  expect(st.hud.clock.minutes).toBe(23 * 60 + 40);
+  expect(st.hud.location.name).toBe("The Rusty Anchor");
+  expect(st.hud.people.find((p: any) => p.name === "Mira").present).toBe(true);
+  expect(st.sceneHint).toBeNull();
+  expect(live(st)).toHaveLength(3);
+  const g = h.messages(chatId)[0];
+  expect(h.record(g).events.every((e: any) => e.src === "start")).toBe(true);
+  expect(h.record(g).calls).toEqual({ helper: 1, jev: 0 });
+  // The first <warp> block opens with the greeting's time, and Mira is here.
+  await h.say(chatId, "\"Evening,\" I say.");
+  const { injected } = await h.generate(chatId, "Mira nods.");
+  expect(injected.split("\n").find((l) => /\d\d:\d\d/.test(l))).toMatch(/23:4\d/);
+  expect(injected).toContain("Mira");
+  // The read runs once: another hello does not read again.
+  h.resetCounts();
+  await h.frontend({ type: "hello", chatId });
   await settle();
-  const rec4 = (messages[4].extra.spindle_metadata as any).warp.swipes["0"];
-  expect(rec4.check.label).toBe("Skulduggery");
-  expect(rec4.action.via).toBe("adjudicator");
-
-  // Swipe (Casual): a new roll for the new swipe, and state follows the active swipe.
-  const m4 = messages[4];
-  m4.swipes.push("(swipe)"); m4.swipe_dates.push(0); m4.swipe_id = 1;
-  const seeds = new Set<string>([rec4.check.seed]);
-  await interceptor([{ role: "user", content: messages[3].content }], { chatId: "c1", generationId: "g3", generationType: "swipe", excludeMessageId: "m4", isDryRun: false, interceptorDeadlineAt: Date.now() + 30000 });
-  quietReplies.push("{}");
-  await emit("GENERATION_ENDED", { generationId: "g3", chatId: "c1", messageId: "m4", content: "(swipe)", generationType: "swipe" });
-  await settle();
-  const swipes = (messages[4].extra.spindle_metadata as any).warp.swipes;
-  expect(Object.keys(swipes).sort()).toEqual(["0", "1"]);
-  seeds.add(swipes["1"].check.seed);
-  expect(seeds.size).toBe(2);
-  // The verdict was saved on the player's message, so the swipe rerolled the same action without asking again.
-  expect((messages[3].extra.spindle_metadata as any).warp).toMatchObject({ judged: true, intent: { actionId: "pickpocket" } });
-  expect(swipes["1"].action.id).toBe("pickpocket");
-  // Deleting swipe 0 shifts records so swipe 1 becomes 0.
-  const kept = swipes["1"];
-  m4.swipes.splice(0, 1); m4.swipe_dates.splice(0, 1); m4.swipe_id = 0;
-  await emit("MESSAGE_SWIPED", { chatId: "c1", message: view(m4), action: "deleted", swipeId: 0, previousSwipeId: 1 });
-  await settle();
-  expect((messages[4].extra.spindle_metadata as any).warp.swipes["0"]).toEqual(kept);
-
-  // Ruleset entries never reach the prompt.
-  const wi = await wiInterceptor({ entries: book.entries.map((e) => ({ ...e })).concat([{ id: "lore1", world_book_id: "other", comment: "Town lore" }]) });
-  expect(wi.disabled.length).toBe(book.entries.length);
-  expect(wi.disabled).not.toContain("lore1");
-
-  // Manual adjust from the HUD.
-  await frontendHandler({ type: "adjust", chatId: "c1", stat: "money", value: 999 });
-  expect(lastState().hud.money).toBe("£999");
-
-  // Medium confidence: no roll; the turn is plain roleplay. A redo with a move still rolls it.
-  messages.push(mkMsg("m5", true, "I eye the tourist's bag again."));
-  quietReplies.push('{"action": {"choice": "pickpocket", "confidence": 0.55}}');
-  const out3 = await interceptor([{ role: "user", content: messages[5].content }], { chatId: "c1", generationId: "g4", generationType: "normal", isDryRun: false, interceptorDeadlineAt: Date.now() + 30000 });
-  expect(out3.messages[0].content).not.toContain("chose:");
-  messages.push(mkMsg("m6", false, "The tourist wanders off."));
-  quietReplies.push("{}");
-  await emit("GENERATION_ENDED", { generationId: "g4", chatId: "c1", messageId: "m6", content: "The tourist wanders off.", generationType: "normal" });
-  await settle();
-  st = lastState();
-  expect(st).not.toHaveProperty("suggestions");
-  appended.length = 0;
-  await frontendHandler({ type: "redo", chatId: "c1", userMessageId: "m5", actionId: "pickpocket" });
-  expect(appended[0].msg.content).toBe("I eye the tourist's bag again.");
-  expect(appended[0].msg.metadata.warp).toMatchObject({ judged: true, intent: { actionId: "pickpocket", via: "confirmed" } });
-  expect(appended[0].opts).toEqual({ triggerGeneration: true });
-
-  // Dry runs (Prompt Breakdown previews) never call the adjudicator or store rolls.
-  const before = quietReplies.length;
-  messages.push(mkMsg("m5", true, "I try to climb the fence."));
-  const dry = await interceptor([{ role: "user", content: "I try to climb the fence." }], { chatId: "c1", generationId: "gdry", generationType: "normal", isDryRun: true, interceptorDeadlineAt: Date.now() + 30000 });
-  expect(quietReplies.length).toBe(before);
-  expect(dry.messages[0].content).toContain("<warp>");
+  expect(h.counts.helper).toBe(0);
 });
 
-test("real host shape: no generationId in the interceptor context, reply pre-staged before assembly", async () => {
-  // Fresh chat state: greeting only, ruleset already installed on the character by the previous test.
-  messages.length = 0;
-  messages.push(mkMsg("g0", false, "You wake up in your cramped apartment."));
-  await frontendHandler({ type: "refresh", chatId: "c1" });
-  expect(lastState().hud.location.name).toBe("Your Apartment");
+test("T-CH5: a story gets its three turn-0 choices too", async () => {
+  const chatId = await open(STORY_YAML);
+  expect(live(h.lastState(chatId))).toHaveLength(3);
+});
 
-  // Click "Go to High Street" → Lumiverse appends the user message, fires GENERATION_STARTED,
-  // stages an empty assistant reply, THEN runs interceptors with a context lacking generationId.
-  appended.length = 0;
-  await frontendHandler({ type: "act", chatId: "c1", actionId: "head_out" });
-  const staged = mkMsg("staged1", false, "");
-  messages.push(staged);
-  await emit("GENERATION_STARTED", { generationId: "real-1", chatId: "c1", targetMessageId: "staged1", generationType: "normal" });
-  const hostCtx = { chatId: "c1", generationType: "normal", dryRun: false, userId: undefined };
-  const out = await interceptor([{ role: "user", content: appended[0].msg.content }], hostCtx);
-  const injected = out.messages[out.breakdown[0].messageIndex].content as string;
-  expect(injected).toContain("chose: Head out to the High Street");
-  expect(injected).toContain("· High Street");
+test("T-S2: the greeting read fails → the fallback clock and a fix hint; a time fix clears the hint", async () => {
+  h.helper = (c: HelperCall) => (c.kind === "greeting" ? "sorry, I can't" : defaultHelper(c));
+  try {
+    const chatId = await open();
+    let st = h.lastState(chatId);
+    expect(st.hud.clock.minutes).toBe(9 * 60);
+    expect(st.sceneHint).toBe(GREETING_HINT);
+    // Not retried on every open.
+    h.resetCounts();
+    await h.frontend({ type: "refresh", chatId });
+    await settle();
+    expect(h.counts.helper).toBe(0);
+    await h.frontend({ type: "fix", chatId, field: "time", value: "21:30" });
+    st = h.lastState(chatId);
+    expect(st.hud.clock.minutes).toBe(21 * 60 + 30);
+    expect(st.sceneHint).toBeNull();
+  } finally { h.helper = defaultHelper; }
+});
 
-  // The reply lands in the staged message.
-  staged.content = "You step out onto the High Street.";
-  staged.swipes = [staged.content];
-  quietReplies.push("{}");
-  await emit("GENERATION_ENDED", { generationId: "real-1", chatId: "c1", messageId: "staged1", content: staged.content, generationType: "normal" });
+test("T-S6: each greeting swipe gets its own time and place", async () => {
+  const chatId = await open();
+  const g = h.messages(chatId)[0];
+  g.swipes.push("Dawn breaks over the harbour wall; gulls cry overhead."); g.swipe_dates.push(0); g.swipe_id = 1; g.content = g.swipes[1];
+  await h.emit("MESSAGE_SWIPED", { chatId, message: g, action: "right", swipeId: 1, previousSwipeId: 0 });
   await settle();
-  expect((staged.extra.spindle_metadata as any).warp.swipes["0"].action.id).toBe("head_out");
-  const st = lastState();
-  expect(st.hud.location.name).toBe("High Street");
-  const ids = st.choices.map((c: any) => c.id);
-  expect(ids).toContain("cafe_shift");
-  expect(ids).not.toContain("sleep");
+  await h.frontend({ type: "refresh", chatId });
+  let st = h.lastState(chatId);
+  expect(st.hud.clock.minutes).toBe(6 * 60);
+  expect(st.hud.location.name).toBe("The harbour wall");
+  g.swipe_id = 0; g.content = g.swipes[0];
+  await h.frontend({ type: "refresh", chatId });
+  st = h.lastState(chatId);
+  expect(st.hud.clock.minutes).toBe(23 * 60 + 40);
+});
 
-  // A Prompt Breakdown preview (host flag `dryRun`) never asks the decision model.
-  const q = quietReplies.length;
-  messages.push(mkMsg("u9", true, "I try to pick a pocket."));
-  await interceptor([{ role: "user", content: "I try to pick a pocket." }], { chatId: "c1", generationType: "normal", dryRun: true });
-  expect(quietReplies.length).toBe(q);
+test("the greeting read with Jev: Jev classifies, the helper writes only texts and choices", async () => {
+  await h.settings({ decider: "jev", jevUrl: "https://jev.test/v1/systemone" });
+  try {
+    h.resetCounts();
+    const chatId = await open();
+    expect(h.counts).toEqual({ helper: 1, jev: 1 });
+    expect(Object.keys(h.jevBatches[0].questions)).toEqual(expect.arrayContaining(["start_phase", "here:mira", "place"]));
+    expect(h.helperCalls[0].kind).toBe("writer");
+    const st = h.lastState(chatId);
+    expect(st.hud.clock.minutes).toBe(22 * 60);
+    expect(st.hud.location.name).toBe("Rusty Anchor");
+    expect(live(st)).toHaveLength(3);
+  } finally { await h.settings({ decider: "llm" }); }
+});
+
+test("T-S4: one-click fixes write manual events on the latest message, and the next <warp> block uses them", async () => {
+  const chatId = await open();
+  await h.frontend({ type: "fix", chatId, field: "place", value: "The fish market" });
+  await h.frontend({ type: "fix", chatId, field: "outfit", who: "mira", value: "a yellow oilskin" });
+  await h.frontend({ type: "fix", chatId, field: "present", who: "mira", value: false });
+  const st = h.lastState(chatId);
+  expect(st.hud.location.name).toBe("The fish market");
+  expect(st.hud.people.find((p: any) => p.name === "Mira").present).toBe(false);
+  const rec = h.record(h.messages(chatId)[0]);
+  expect(rec.events.filter((e: any) => e.src === "manual").map((e: any) => e.t)).toEqual(["move", "look", "scene"]);
+  await h.say(chatId, "I look around.");
+  const { injected } = await h.generate(chatId, "Fish scales glitter on the stones.");
+  expect(injected).toContain("The fish market");
+  // A bad value says why and changes nothing.
+  await h.frontend({ type: "fix", chatId, field: "time", value: "soon" });
+  expect(h.lastState(chatId).hud.location.name).toBe("The fish market");
+});
+
+test("contest buttons post a move to the chat (Give in / Break off); without a contest nothing is posted", async () => {
+  const chatId = await open();
+  const before = h.appended.length;
+  await h.frontend({ type: "contest", chatId, op: "give_in" });
+  expect(h.appended.length).toBe(before);
+  h.record(h.messages(chatId)[0]).events.push({ t: "contest", kind: "fight", opponent: "the bouncer", threat: "hard", dc: 16, src: "narrator" });
+  await h.frontend({ type: "contest", chatId, op: "give_in" });
+  expect(h.appended.at(-1).msg.metadata.warp.intent).toMatchObject({ actionId: "contest:give_in", via: "choice" });
+  expect(h.appended.at(-1).opts).toEqual({ triggerGeneration: true });
+  await h.generate(chatId, "You raise your hands.");
+  await h.frontend({ type: "contest", chatId, op: "break_off" });
+  expect(h.appended.at(-1).msg.metadata.warp.intent.actionId).toBe("contest:break_off");
+});
+
+test("T-C4: one reroll rule — Casual swipes reroll clicked and typed moves; Ironman keeps the roll", async () => {
+  for (const casual of [true, false]) {
+    await h.settings({ swipesReroll: casual });
+    const chatId = await open();
+    await h.frontend({ type: "act", chatId, actionId: "live:0" }); // "Vault the bar for the keys" (bold, hard)
+    expect(h.appended.at(-1).msg.metadata.warp.intent).toMatchObject({ actionId: "live:bold", params: { difficulty: "hard" } });
+    const first = await h.generate(chatId, "You go for it.");
+    const second = await h.generate(chatId, "You try again.", "swipe");
+    expect(first.record.check).toBeDefined();
+    if (casual) expect(second.record.check.seed).not.toBe(first.record.check.seed);
+    else { expect(second.record.check.seed).toBe(first.record.check.seed); expect(second.record.check.tier).toBe(first.record.check.tier); }
+    // A typed attempt follows the same rule.
+    await h.say(chatId, "I try to climb onto the roof.");
+    const t1 = await h.generate(chatId, "You reach for the gutter.");
+    const t2 = await h.generate(chatId, "You reach again.", "swipe");
+    expect(t1.record.check).toBeDefined();
+    if (casual) expect(t2.record.check.seed).not.toBe(t1.record.check.seed);
+    else expect(t2.record.check.seed).toBe(t1.record.check.seed);
+  }
+  await h.settings({ swipesReroll: true });
+});
+
+test("T-C2: quoted dialogue is never read or rolled", async () => {
+  const chatId = await open();
+  for (const line of ["\"Hello there.\"", "\"Can I get a drink?\" I ask quietly.", "*smiles* \"Hi, Mira.\"", "“Do you trust me?”"]) {
+    h.resetCounts();
+    await h.say(chatId, line);
+    const { record } = await h.generate(chatId, "Mira answers.");
+    expect(h.helperCalls.map((c) => c.kind)).toEqual(["writer"]);
+    expect(record.check).toBeUndefined();
+  }
+});
+
+test("T-CH3: no button lock — a click while the choices are written is posted; the next turn waits for the commit", async () => {
+  const chatId = await open();
+  await h.say(chatId, "\"Evening,\" I say.");
+  let release!: () => void;
+  let entered!: () => void;
+  const waiting = new Promise<void>((r) => { entered = r; });
+  const gate = new Promise<void>((r) => { release = r; });
+  h.helper = (c: HelperCall) => {
+    if (c.kind !== "writer") return defaultHelper(c);
+    entered();
+    return gate.then(() => ({ answers: { "stat:health": { choice: "down", confidence: 0.9 } }, choices: [{ label: "Rest by the fire", tag: "careful", difficulty: "none" }] }));
+  };
+  // Turn 1: the reply lands; its post-reply call hangs.
+  const list = h.messages(chatId);
+  const t1 = h.msg(chatId, `${chatId}-t1`, false, "");
+  await h.emit("GENERATION_STARTED", { generationId: "g1", chatId, targetMessageId: t1.id, generationType: "normal" });
+  await h.interceptor([{ role: "user", content: "x" }], { chatId, userId: h.userId, generationType: "normal" });
+  t1.content = "Mira pours you a drink.";
+  const ending1 = h.emit("GENERATION_ENDED", { generationId: "g1", chatId, messageId: t1.id, content: t1.content, generationType: "normal" });
+  await waiting;
+  // The player clicks "Rest a while" now: it is posted, not refused.
+  const before = h.appended.length;
+  await h.frontend({ type: "act", chatId, actionId: "rest" });
+  expect(h.appended.length).toBe(before + 1);
+  // Turn 2 starts while turn 1 still writes: its interceptor waits for turn 1's commit.
+  const t2 = h.msg(chatId, `${chatId}-t2`, false, "");
+  await h.emit("GENERATION_STARTED", { generationId: "g2", chatId, targetMessageId: t2.id, generationType: "normal" });
+  const intercept2 = h.interceptor([{ role: "user", content: "x" }], { chatId, userId: h.userId, generationType: "normal" });
+  await settle();
+  release();
+  await ending1;
+  const out2 = await intercept2;
+  // Turn 1 committed its changes (health down) before turn 2 was decided.
+  expect(h.record(t1).events.some((e: any) => e.src === "narrator" && e.id === "health")).toBe(true);
+  expect(String(out2.messages[out2.breakdown[0].messageIndex].content)).toContain("chose: Rest a while");
+  h.helper = defaultHelper;
+  t2.content = "You rest.";
+  await h.emit("GENERATION_ENDED", { generationId: "g2", chatId, messageId: t2.id, content: t2.content, generationType: "normal" });
+  expect(h.record(t2).action.id).toBe("rest");
+  expect(h.lastState(chatId).historyConflict).toBeNull();
+  void list;
+});
+
+test("Not an action?: the latest typed roll is resent as plain roleplay (no roll, never read again)", async () => {
+  const chatId = await open();
+  await h.say(chatId, "I try to climb the mast.");
+  await h.generate(chatId, "You climb.");
+  const user = h.messages(chatId).find((m) => m.is_user)!;
+  expect(h.meta(user).intent.actionId).toBe("try:body");
+  expect(h.lastState(chatId).records.find((r: any) => r.redoFrom === user.id)).toBeDefined();
+  await h.frontend({ type: "redo", chatId, userMessageId: user.id, actionId: null });
+  const again = h.appended.at(-1);
+  expect(again.msg.content).toBe("I try to climb the mast.");
+  expect(again.msg.metadata.warp.intent).toBeUndefined();
+  expect(again.msg.metadata.warp.judged).toBe(true);
+  h.resetCounts();
+  const { record } = await h.generate(chatId, "You stay on deck.");
+  expect(record.check).toBeUndefined();
+  expect(h.helperCalls.map((c) => c.kind)).toEqual(["writer"]);
+});
+
+test("templates: install records the template id; switching style replaces that book and keeps its people", async () => {
+  const chatId = `be-${++n}`;
+  h.chat(chatId, ADVENTURE_YAML, GREETING);
+  const charId = `char-${chatId}`;
+  h.characters[charId].world_book_ids = [];
+  await h.frontend({ type: "hello", chatId });
+  const templates = [...h.sent].reverse().find((m) => m.type === "settings").templates as { id: string }[];
+  expect(templates.length).toBeGreaterThanOrEqual(2);
+  await h.frontend({ type: "install_template", chatId, templateId: templates[0].id });
+  let st = h.lastState(chatId);
+  expect(st.status.state).toBe("ok");
+  expect(st.status.template).toBe(templates[0].id);
+  const firstBook = h.characters[charId].world_book_ids[0];
+  // The player's game tracks someone else too (kept across the switch).
+  h.books[firstBook].entries.push({ id: "extra", world_book_id: firstBook, comment: "warp-ruleset · people extra", content: "relationships:\n  people:\n    jo: { name: Jo }\n", disabled: true, key: [] });
+  await h.frontend({ type: "install_template", chatId, templateId: templates[1].id, replace: true });
+  st = h.lastState(chatId);
+  expect(st.status.template).toBe(templates[1].id);
+  expect(h.characters[charId].world_book_ids).not.toContain(firstBook);
+  expect(h.characters[charId].world_book_ids).toHaveLength(1);
+  expect(st.hud.people.map((p: any) => p.name)).toContain("Jo");
+  // A custom book is not a template install: no switch.
+  const custom = `be-${++n}`;
+  h.chat(custom, ADVENTURE_YAML, GREETING);
+  await h.frontend({ type: "hello", chatId: custom });
+  expect(h.lastState(custom).status.template).toBeNull();
+  const count = h.characters[`char-${custom}`].world_book_ids.length;
+  await h.frontend({ type: "install_template", chatId: custom, templateId: templates[1].id, replace: true });
+  expect(h.characters[`char-${custom}`].world_book_ids).toHaveLength(count);
 });

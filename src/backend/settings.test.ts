@@ -5,10 +5,19 @@ import { DEFAULT_SETTINGS } from "../shared/protocol.js";
 test("legacy or malformed settings normalize before any runtime consumer reads them", () => {
   expect(normalizeSettings(null)).toEqual(DEFAULT_SETTINGS);
   const s = normalizeSettings({ enabled: "false", lines: "wrong", veils: [null, 7, " Fear ", "fear"], drafts: Infinity,
-    prewrite: 999, autoConfidence: 1.5, askConfidence: 0.9, decider: "unknown", jevUrl: "file:///key" });
-  expect(s).toMatchObject({ enabled: false, lines: [], veils: ["fear"],
-    autoConfidence: 1, decider: "llm", jevUrl: DEFAULT_SETTINGS.jevUrl });
+    prewrite: 999, autoConfidence: 1.5, askConfidence: 0.9, decider: "unknown", jevUrl: "file:///key", jevModel: "  " });
+  expect(s).toMatchObject({ enabled: false, lines: [], veils: ["fear"], decider: "llm", jevUrl: DEFAULT_SETTINGS.jevUrl, jevModel: DEFAULT_SETTINGS.jevModel });
   for (const gone of ["drafts", "prewrite", "askConfidence"]) expect(s).not.toHaveProperty(gone);
+});
+
+test("two providers: Helper and Jev; the old rules provider reads as the helper", () => {
+  expect(normalizeSettings({ decider: "jev" }).decider).toBe("jev");
+  expect(normalizeSettings({ decider: "rules" }).decider).toBe("llm");
+});
+
+test("settings the UI no longer shows are pinned to their defaults (the backend never reads them)", () => {
+  const s = normalizeSettings({ freeTextChecks: false, narratorUpdates: false, storyQuests: false, sayOutcome: true, showDiceChips: false, autoConfidence: 0.4, jevFormat: "openai" });
+  for (const k of ["freeTextChecks", "narratorUpdates", "storyQuests", "sayOutcome", "showDiceChips", "autoConfidence", "jevFormat"] as const) expect(s[k]).toEqual(DEFAULT_SETTINGS[k]);
 });
 
 test("settings of removed parts (minigames, looks, sound, dating, drafts, consistency check) are dropped when read and on the next save", async () => {
