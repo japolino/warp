@@ -19,13 +19,15 @@ A game engine under your roleplay. Warp owns stats, dice, time, inventory and re
 | System | |
 |---|---|
 | Stats | Meters described in words (bands), graded skills, attributes, money, hidden stats, drift over time, caps by formula. Limit what the story may change after a reply: a cap per reply, and optionally only while a formula holds (`narrator_when`), only when the exchange mentions certain words (`narrator_words`), or only after certain actions (`narrator_actions`). The bookkeeper is told what the dice already applied, so nothing counts twice |
-| Checks | d100 chance, d20 vs difficulty, 2d6 PbtA; crits and partial successes; odds shown on buttons |
-| Time & world | Clock and calendar, seasons, and named places. The story says where {{user}} goes; there is no map or travel graph |
-| People | Relationship stats, who is in the scene (read from the story), per-person actions ("Talk to Jo"), and what each person remembers about you |
-| Encounters | Turn-based scenes: foe stats, your moves, the foe's moves (weighted or model-weighed), win/lose/escape outcomes. Optional momentum: every check and foe move swings a tug-of-war gauge and only a full swing ends the fight; each round reaches the narrator as ordered beats, and a long move you typed is kept as written while only how it lands is rolled |
+| Style | `style: story` (no dice anywhere) or `style: adventure` (d20 checks, typed attempts, contests) |
+| Checks | One style: d20 + a modifier vs a difficulty word (easy 8, fair 12, hard 16, extreme 20), a number or a formula. A natural 20 is a critical success, a natural 1 a critical failure, missing by 3 or less a partial success. The odds on a button are the real odds, exactly. Every result gives the narrator a direction ("fail forward") |
+| Scene | Time and date (the start time is read from the greeting), the place in words (from the story; no map or travel graph), who is here (the story's word holds until the story or a move changes it), and looks and clothes as one line of text per person. Every line can be fixed with one click |
+| People | Two or three relationship stats with bands. A slow-burn cap per reply, with a big-moment exception (a rescue, a betrayal: up to 3× the cap, one band at most, then a cooldown). Entering a band gives one story line (`say:` / `say_down:`) and a `voice:` that changes how the person acts. Per-person actions ("Talk to Jo"), what each person remembers, and one adults-only check |
+| Conflict | One contest for fights, chases and arguments: a momentum gauge from −100 to +100. Every message is a round; the check swings the gauge, the stakes rise each round, nothing ends before round 3 and round 8 is the last. Only a full swing, Break off or Give in ends it — never the narrator. Each round reaches the narrator as ordered beats |
+| Goals | Up to 3 open story goals: promises, favours and plans the story makes, plus the author's own (`done_when:`, `judge:`, `stakes:`, `reward:`). Only the rules close a goal |
 | Rules | Triggers by formula or in plain language (`when_scene`), uncertain reactions (`decide`) rolled on model odds |
 | Secrets | Ladders of stages that open by condition. Only opened stages ever reach the narrator's prompt, so they can't leak; a stage-0 cue lets it play someone hiding something without knowing what |
-| Live choices | Choices written for the moment. The writer must tag each one from a fixed list, and the tag decides the check and effects; with Jev, the model weighs which kinds of move fit. Each choice can show its goal, risk and payoff in words — story stakes only; the tag still decides the odds and effects |
+| Live choices | Choices written for the moment. The writer must tag each one from a fixed list, and the tag decides the check and effects; each choice carries a difficulty word, so the odds follow the words. The same tag on the same person soon again gives less (taper) |
 | Your moves, told | A clicked move with a roll is settled on the click, and your message says how it went in your character's voice ("*I slip the lock on the second try…*") instead of "Pick the lock"; the narrator continues from there. Swipes keep that result; ↻ **Reroll** (Casual) rolls again and rewrites the line. Typed messages are left as you wrote them. Settings › **Say how my move went** |
 | Romance only | The **Romance** template is just the love story: affection, trust and attraction that can only move a few points per reply (a slow burn the narrator can't rush), people who remember what you did, a clock and calendar, and choices written for each moment (tender, playful, honest, bold, give space) with no dice. No meters, money or skills, and typed messages are never rolled. Places come from the story, so it fits any card |
 
@@ -34,10 +36,10 @@ A game engine under your roleplay. Warp owns stats, dice, time, inventory and re
 Most roleplay is typed, so the core systems follow the story rather than waiting for a button:
 
 - **Fewer grind loops.** Repeating the same check gives diminishing rewards that recover with in-game time; new approaches keep full value. See [docs/DEPTH_PASS.md](docs/DEPTH_PASS.md).
-- **Improvised attempts.** A risky thing you type that no action covers (talking your way past a bouncer, vaulting a bar, shoving someone) still rolls: d20 plus your closest skill or attribute's share of a bonus, against a difficulty the decision model reads from the scene. The narrator keeps what you wrote you do; the dice decide only how it turns out. In a fight it's a move like any other. Tune or turn off with `improvise:`.
+- **Typed attempts.** A risky thing you type that no action covers (talking your way past a bouncer, vaulting a bar, shoving someone) still rolls: d20 plus your closest skill or attribute's share of a bonus, against a difficulty the decision model reads from the scene. The narrator keeps what you wrote you do; the dice decide only how it turns out. In a contest it's a move like any other. Tune or turn off with `checks:`.
 - **Skills grow with use.** Every check practises the skills and attributes it reads — harder checks teach more, failures teach a little less, and progress slows near the top. Training the story describes (an hour at the gym, a night of study) counts too. A thin green line under each skill shows progress to the next point. Tune with `growth:` or `growth: 0` on a stat.
 - **Who's in the scene.** After each reply the story is read for who is actually there — people it introduces, people who leave, who came along after a move. The sheet shows the people here and folds the rest under **Elsewhere**; the narrator only gets relationship details for the people here, so absent characters don't drift back in.
-- **Fights from the story.** When a fight (or any encounter) breaks out in the prose or in what you type, it starts — against whoever it's with — and it ends when the story ends it. `from_story: false` keeps an encounter to the rules.
+- **Contests from the story.** When a fight, chase or argument breaks out in the prose or in what you type, a contest starts — against whoever it's with. Only the rules end it. `conflict: { from_story: false }` keeps contests to the rules.
 - **Things you use.** Items can have uses (`uses: 5`): each use the story shows spends one, and the last spends the item. For anything the reply mentions, the bookkeeper asks what happened to it — used, used up, or given away.
 
 ## Visual novel mode
@@ -78,64 +80,65 @@ Each entry is YAML; entries merge. Warp keeps them out of the prompt automatical
 
 ## Ruleset reference
 
-The complete format — including encounters and quests — is in [`src/engine/reference.ts`](src/engine/reference.ts) (the same reference the AI builder writes against). The starter templates in [`src/engine/templates/`](src/engine/templates/) are full worked examples. The basics:
+The complete format (ruleset format 2) is in [`src/engine/reference.ts`](src/engine/reference.ts) (the same reference the AI builder writes against). The starter templates in [`src/engine/templates/`](src/engine/templates/) are full worked examples. The basics:
 
 ```yaml
 name: My Game
-clock: { start: "Mon 07:00", minutes_per_action: 10, narrator_max: 480 }
-start: { location: home, items: { phone: 1 } }
+style: adventure           # story = no dice anywhere
+clock: { start: greeting, fallback: "Day 1 09:00", minutes_per_action: 10, narrator_max: 480 }
+start: { place: greeting, items: { phone: 1 } }
 hud: { currency: "£", bars: [health, stress] }
 narration: { notes: "Extra guidance for the narrator." }
+you: { appearance: "tall, freckles", outfit: "grey hoodie" }   # or empty: read from the persona and the greeting
 
 stats:
   stress:
     kind: meter            # meter | attribute | skill | money | hidden
-    max: 10000             # numbers or formulas ("level * 5")
     good: low              # high | low | none — colours bars and chips
-    per_hour: -40          # drift over in-game time
-    narrator: 1500         # max change the story may make per reply (0 = engine only)
-    bands: { 0: You are calm., 3000: You are stressed., 8000: You are distressed. }
-  athletics: { kind: skill, max: 1000, grades: [F, D, C, B, A, S] }
+    per_hour: -4           # drift over in-game time
+    narrator: 15           # max change the story may make per reply (0 = engine only)
+    bands: { 0: You are calm., 30: { text: You are stressed., say: "Your shoulders tighten." }, 80: You are distressed. }
+  dex: { kind: attribute, max: 10, start: 3 }
+
+checks: { partial: 3, stats: [dex], bonus: 10, outcomes: { fail: { stress: +5 } } }   # typed attempts
 
 relationships:
   open: true               # track new people the story introduces
+  big_moment: { factor: 3, cooldown: 10 }
   stats:
-    trust: { start: 10, narrator: 5, bands: { 0: Wary, 45: Trusting } }
+    trust: { start: 10, narrator: 4, bands: { 0: Wary, 45: { text: Trusting, say: "{name} trusts you.", voice: "{name} tells {{user}} the truth." } } }
   people:
-    robin: { name: Robin, start: { trust: 30 } }
+    robin: { name: Robin, age: 30, outfit: "a paint-stained apron" }
 
-locations:
-  home: { name: Your Flat, desc: "..." }   # the story (or a move: effect) takes {{user}} to a place
 items: { lockpick: Lockpick }
-conditions: { exhausted: { label: Exhausted, tone: bad } }
+conditions: { exhausted: { label: Exhausted, tone: bad, bonus: { dex: -2 }, lasts: 4h } }
 flags: { door_open: { start: false, narrator: true } }
 
 actions:
   pick_lock:
     label: Pick the lock
-    group: Explore
     say: "*I kneel and work the lock.*"     # posted as your message
-    at: [street]
     when: has('lockpick') and between(hour, 20, 6)
     time: 10
-    cost: { fatigue: +20 }
+    cost: { stress: +2 }
     tags: [crime]                            # for Lines & Veils
-    check: { chance: 20 + skulduggery / 12, label: Skulduggery }
-    # or  { vs: 15, add: floor(dex / 2), partial: 3 }   d20 + add vs 15
-    # or  { style: pbta, add: cool }                      2d6: 10+ hit, 7–9 mixed
-    success: { flags: { door_open: true }, skulduggery: +5 }
-    fail: { suspicion: +15, hint: "The pick snaps. Someone may have heard." }
+    check: { vs: hard, add: dex, label: Dex } # d20 + dex vs 16; or vs: 15, or a formula
+    success: { flags: { door_open: true } }
+    fail: { stress: +15, hint: "The pick snaps. Someone may have heard." }
     # also: crit_success, partial, crit_fail (fall back to success/fail)
-  sneak:
-    hidden: true                              # free-text only — the referee picks it
-    desc: Staying unseen, anything sly.
-    params: { difficulty: { easy: 70, normal: 45, hard: 25 } }
-    check: { chance: difficulty + skulduggery / 15 }
+
+goals:
+  list:
+    find_sister: { text: Find out what happened to your sister, done_when: "flag('sister_found')", stakes: "She may not survive the winter" }
+
+conflict:
+  kinds:
+    fight: { label: Fight, stats: [dex], cost: { fail: { stress: +8 } }, won: { hint: "{opponent} backs off." }, lost: { stress: +20 } }
 
 triggers:
   breakdown:
-    when: stress >= 10000                     # fires once when it becomes true (repeat: true = every turn)
-    do: { set: { stress: 6000 }, trauma: +600, add_condition: { shaken: 240 }, hint: "They break down." }
+    when: stress >= 100                       # fires once when it becomes true (repeat: true = every turn)
+    do: { set: { stress: 60 }, add_condition: [exhausted], hint: "They break down." }
 ```
 
 **Uncertain reactions — `decide:`** (usable in any effect). The decision model supplies odds from the scene; without one, `weight`s are used. The engine rolls either way.
@@ -150,7 +153,7 @@ effects:
       no:     { desc: "Turns them down", weight: 2, rel: { robin: { love: -2 } } }
 ```
 
-**Plain-language triggers — `when_scene:`** (alone or combined with `when:`), judged each turn:
+**Plain-language triggers — `when_scene:`** (alone or combined with `when:`), judged after each reply (it fires on the next turn):
 
 ```yaml
 triggers:
@@ -159,11 +162,11 @@ triggers:
     do: { flags: { in_combat: true } }
 ```
 
-**Effects:** stat shorthand (`fatigue: +20`), `set`, `flags`, `give`/`take`, `rel: { robin: { trust: +5 } }`, `move`, `time`, `add_condition`, `remove_condition`, `hint`. Values can be formulas, including `roll('2d10')`.
+**Effects:** stat shorthand (`fatigue: +20`), `set`, `flags`, `give`/`take`, `rel: { robin: { trust: +5 } }` (`target` / `opponent` too), `place: "The docks"`, `look: { you: { outfit: "..." } }`, `time`, `add_condition`, `remove_condition`, `hint`, `decide`, `remember`, `reveal`, `goal: { id: done }`, `contest: { kind: fight, with: "the guard", threat: hard }`, `swing: +20`. Values can be formulas, including `roll('2d10')`.
 
-**Formula names:** stats, flags, `hour`, `minute`, `day`, `weekday`, `turn`, `location`, and `has()`, `count()`, `flag()`, `cond()`, `at()`, `rel(person, stat)`, `met()`, `between(v, lo, hi)`, `min`, `max`, `clamp`, `floor`, `ceil`, `round`, `abs`.
+**Formula names:** stats, flags, `hour`, `minute`, `day`, `weekday`, `turn`, `place` (the words), `round` and `momentum` (0 without a contest), `in_contest`, and `has()`, `count()`, `flag()`, `cond()`, `rel(person, stat)`, `met()`, `present()`, `between(v, lo, hi)`, `goal(id)` ('' / open / done / failed), `secret(id)`, `eff()`, `gear()`, `min`, `max`, `clamp`, `floor`, `ceil`, `round`, `abs`.
 
-The Ruleset tab lists problems in plain language, with "did you mean" suggestions for typos. Keys of parts that were taken out of Warp (`dungeons:`, `dating:`, `look:`, minigame `game:` and `gamble:`, encounter `sim:`, `lineage:`, `observers:`, `mind:`, `obligations:`, `jobs:`, `discovery:`, `companions:`, `fronts:`, `random_events:`, `checkpoints:`, `endings:`, `perks:`, `feats:`, `codex:`, `abilities:`, `weather:`, `wardrobe:`, `body:`, stat `allocate:`, person `schedule:`/`traits:`, place `exits:`/`travel:`/`requires:`/`temp:`, item `slot:`/`warmth:`/`integrity:`/`reveal:`/`traits:`, action `errand:`, effects `unlock:`/`learn:`/`wear:`/`undress:`/`damage:`/`body:`/`transform:`) are ignored with a plain warning; the old version is on the `legacy` branch.
+The Ruleset tab lists problems in plain language, with "did you mean" suggestions for typos (also for an unknown top-level key). `player:` and `improvise:` are read as `you:` and `checks:`. Old check styles (`chance:`, PbtA, other dice) are errors: the check is dropped and the action runs its effects. Keys of parts that were taken out of Warp (`encounters:` → `conflict:`, `quests:` → `goals:`, `locations:` → `start.place`, `item_uses:`, item `armor:`, ticking condition fields, `dungeons:`, `dating:`, `look:`, minigame `game:` and `gamble:`, `lineage:`, `observers:`, `mind:`, `obligations:`, `jobs:`, `discovery:`, `companions:`, `fronts:`, `random_events:`, `checkpoints:`, `endings:`, `perks:`, `feats:`, `codex:`, `abilities:`, `weather:`, `wardrobe:`, `body:`, stat `allocate:`, person `schedule:`/`traits:`, place `exits:`/`travel:`/`requires:`/`temp:`, item `slot:`/`warmth:`/`integrity:`/`reveal:`/`traits:`, action `errand:`/`at:`/`per_day:`, effects `foe:`/`end:`/`start_encounter:`/`harm:`/`inflict:`/`quest:`/`progress:`/`unlock:`/`learn:`/`wear:`/`undress:`/`damage:`/`body:`/`transform:`) are ignored with a plain warning that says what to use instead; the old version is on the `legacy` branch. The whole-loop simulator (`src/engine/loop-sim.ts`) plays a ruleset with a scripted player and checks the quality bar.
 
 ## Develop
 
