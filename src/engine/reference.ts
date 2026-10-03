@@ -394,7 +394,7 @@ CHECK ACTIONS against quests: success: { quest: { breakfast: done } }, fail: { q
 STORY MACHINERY (the "story" part):
 secrets:          # only opened stages ever reach the narrator — what isn't in the prompt can't leak
   ward_accident:
-    about: Professor Ward
+    about: Professor Ward          # a person's name (or id): told to the narrator only while they're in the scene; a place or thing: always
     cue: "Ward goes quiet whenever the old observatory comes up."    # known from the start: behaviour, never the reason
     tell: exists                   # narrator is told there's more it doesn't know, so it deflects instead of inventing
     stages:                        # a ladder: each opens when its when holds, in order, and never closes

@@ -34,6 +34,9 @@ actions:
   charm_dex: { label: Charm Dex, effects: { rel: { dex: { love: +10 } } } }
 `, order: 0 }]).ruleset!;
 
+/** Put people in the scene with {{user}}. */
+const withHere = (s: GameState, ...ids: string[]) => { for (const id of ids) s.scene[id] = { here: true, loc: s.location, at: s.minutes }; return s; };
+
 const act = (s: GameState, id: string, odds?: Record<string, Record<string, number>>) => {
   const res = resolveTurnFull(r, s, { actionId: id, via: "choice" }, { seed: "c", odds });
   return { s: foldEvents(r, [res.record.events], s), rec: res.record, needs: res.needs };
@@ -64,17 +67,35 @@ describe("companions with lives of their own", () => {
 
   test("authors can explicitly restore a companion's full narrator knowledge", () => {
     const full = { ...r, companions: { ...r.companions, dex: { ...r.companions.dex, knowsFull: true } } };
-    const s = initialState(full);
+    const s = withHere(initialState(full), "dex");
     expect(narratorKnowledge(full, s)).toContain("Only Dex knows this");
     expect(narratorKnowledge(full, s)).toContain("Dex robbed the warehouse.");
   });
 
   test("the narrator knows who knows what, and how people feel about each other", () => {
-    const s = initialState(r);
+    const s = withHere(initialState(r), "dex");
     expect(narratorKnowledge(r, s)).toContain("Dex knows more about The warehouse job");
     expect(narratorKnowledge(r, s)).not.toContain("Dex robbed the warehouse.");
     expect(stateDigest(r, s)).toContain("Jo is fond of Dex");
     expect(buildHud(r, s).people.find((p) => p.id === "jo")?.goal).toBe("Buy the café outright");
     expect(resolveTurn(r, s, null, { seed: "x" }).events.some((e) => e.t === "clock")).toBe(false);
+  });
+
+  test("with nobody here, none of it rides along: no one's secrets, no one's feelings for each other", () => {
+    const s = initialState(r);
+    expect(narratorKnowledge(r, s) ?? "").not.toContain("Dex");
+    expect(stateDigest(r, s)).not.toContain("fond of");
+    // Never met: not named as someone who just left, either.
+    expect(stateDigest(r, s)).not.toContain("Not in this scene");
+  });
+
+  test("someone who just left is named (no feelings); someone last seen days ago isn't", () => {
+    const s = initialState(r);
+    s.scene.jo = { here: false, loc: s.location, at: s.minutes - 60 };
+    s.scene.dex = { here: false, loc: s.location, at: s.minutes - 3 * 1440 };
+    const line = stateDigest(r, s).split("\n").find((l) => l.startsWith("Not in this scene")) ?? "";
+    expect(line).toContain("Jo");
+    expect(line).not.toContain("Dex");
+    expect(line).not.toContain("Love");
   });
 });

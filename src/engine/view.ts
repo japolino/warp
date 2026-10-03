@@ -418,13 +418,33 @@ export function bondWord(v: number): string {
 }
 
 /** How the people the player knows feel about each other (only the notable ones). */
-function bondLines(r: Ruleset, s: GameState): string[] {
+/** How people feel about each other — only where it touches the scene: someone in it is part of the pair. */
+function bondLines(r: Ruleset, s: GameState, here: Set<string>): string[] {
   const out: string[] = [];
   for (const [a, m] of Object.entries(s.bonds)) {
     if (!s.people[a]) continue;
-    for (const [b, v] of Object.entries(m)) if (s.people[b] && Math.abs(v) >= 25) out.push(`${personName(r, s, a)} is ${bondWord(v)} ${personName(r, s, b)}`);
+    for (const [b, v] of Object.entries(m)) {
+      if (!s.people[b] || Math.abs(v) < 25 || !(here.has(a) || here.has(b))) continue;
+      out.push(`${personName(r, s, a)} is ${bondWord(v)} ${personName(r, s, b)}`);
+    }
   }
   return out;
+}
+
+/** Has {{user}} met them in the story (been in a scene together, or left a memory)? An authored cast exists from the start; that alone isn't meeting. */
+function hasMet(s: GameState, id: string): boolean {
+  return !!s.scene[id] || (s.memories?.[id]?.length ?? 0) > 0;
+}
+
+/** Whose people are in play for the narrator: everyone here (by id), and the names to match secrets against. */
+function sceneCast(r: Ruleset, s: GameState): { here: Set<string>; names: Map<string, string> } {
+  const here = new Set(presentPeople(r, s, makeEnv(r, s)));
+  const names = new Map<string, string>();
+  for (const id of Object.keys(s.people)) {
+    names.set(personName(r, s, id).toLowerCase(), id);
+    names.set(id.toLowerCase(), id);
+  }
+  return { here, names };
 }
 
 /** "codex, feats and trust" — what a rewind keeps, in words. */
@@ -1171,7 +1191,7 @@ export function stateDigest(r: Ruleset, s: GameState): string {
   }
   const kids = Object.entries(s.kin).filter(([, k]) => !k.joined).map(([id, k]) => `${k.name} (${k.sex === "girl" ? "daughter" : "son"}, age ${kinAge(r, s, id)})`);
   if (kids.length) lines.push(`Family — {{user}}'s children: ${kids.join(", ")}. They are minors: never part of anything romantic or sexual, and kept out of any sexual scene.`);
-  const between = bondLines(r, s);
+  const between = bondLines(r, s, new Set(hud.people.filter((p) => p.present).map((p) => p.id)));
   if (between.length) lines.push(`Between people: ${between.join("; ")}`);
   const feel = (id: string, name: string) => {
     const parts = r.relStatOrder.map((rs) => {
@@ -1193,10 +1213,12 @@ export function stateDigest(r: Ruleset, s: GameState): string {
     const mem = (s.memories?.[p.id] ?? []).slice(-3).map((m) => `${m.text}${r.clock.enabled ? ` (${agoWords(s.minutes - m.at)})` : ""}`);
     if (mem.length) lines.push(`${p.name} remembers: ${mem.join("; ")}`);
   }
-  const away = hud.people.filter((p) => !p.present)
+  // Who was around lately and isn't now, by name only, so the narrator doesn't write them back in. Never someone
+  // {{user}} hasn't met (a big authored cast would hand the narrator every name in the city), and only the last day's.
+  const away = hud.people.filter((p) => !p.present && hasMet(s, p.id) && s.scene[p.id] && s.minutes - s.scene[p.id].at <= 1440)
     .sort((a, b) => (s.scene[b.id]?.at ?? -1) - (s.scene[a.id]?.at ?? -1))
-    .slice(0, 8);
-  if (away.length) lines.push(`Not in this scene (bring them in only if the story calls for it): ${away.map((p) => feel(p.id, p.name)).join("; ")}`);
+    .slice(0, 4);
+  if (away.length) lines.push(`Not in this scene (seen lately; bring them in only if the story calls for it): ${away.map((p) => p.name).join(", ")}`);
 
   return lines.join("\n");
 }
@@ -1212,9 +1234,13 @@ export function narratorKnowledge(r: Ruleset, s: GameState): string | null {
     const who = s.pregnancy.carrier === "player" ? "{{user}}" : personName(r, s, s.pregnancy.carrier);
     lines.push(`Behind the scenes: ${who} is pregnant. Nobody knows yet — show no signs until the rules say so.`);
   }
+  // Only what touches the scene: a secret about someone who isn't here is no use as subtext, and a big cast's
+  // secrets would otherwise all ride along every turn. (Secrets about a place or a thing always come.)
+  const { here, names } = sceneCast(r, s);
+  const offstage = (about: string) => { const id = names.get(about.trim().toLowerCase()); return !!id && !here.has(id); };
   // What only one companion knows: the narrator plays them with it, and no one else can bring it up.
   for (const c of Object.values(r.companions)) {
-    if (!s.people[c.id]) continue;
+    if (!s.people[c.id] || !here.has(c.id)) continue;
     for (const id of c.knows) {
       const sec = r.secrets[id];
       if (!sec) continue;
@@ -1227,6 +1253,7 @@ export function narratorKnowledge(r: Ruleset, s: GameState): string | null {
     }
   }
   for (const sec of Object.values(r.secrets)) {
+    if (offstage(sec.about)) continue;
     const open = s.secrets[sec.id] ?? -1;
     for (let i = 0; i <= open && i < sec.stages.length; i++) lines.push(`${sec.about}: ${sec.stages[i].text}`);
     if (sec.tell === "exists" && open < sec.stages.length - 1) {

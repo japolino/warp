@@ -14780,7 +14780,7 @@ CHECK ACTIONS against quests: success: { quest: { breakfast: done } }, fail: { q
 STORY MACHINERY (the "story" part):
 secrets:          # only opened stages ever reach the narrator — what isn't in the prompt can't leak
   ward_accident:
-    about: Professor Ward
+    about: Professor Ward          # a person's name (or id): told to the narrator only while they're in the scene; a place or thing: always
     cue: "Ward goes quiet whenever the old observatory comes up."    # known from the start: behaviour, never the reason
     tell: exists                   # narrator is told there's more it doesn't know, so it deflects instead of inventing
     stages:                        # a ladder: each opens when its when holds, in order, and never closes
@@ -19119,16 +19119,21 @@ function bodyLine(r, s) {
 function bondWord(v) {
   return v >= 60 ? "devoted to" : v >= 25 ? "fond of" : v > -25 ? "neutral toward" : v > -60 ? "cool toward" : "hostile toward";
 }
-function bondLines(r, s) {
+function bondLines(r, s, here) {
   const out = [];
   for (const [a, m] of Object.entries(s.bonds)) {
     if (!s.people[a])
       continue;
-    for (const [b, v] of Object.entries(m))
-      if (s.people[b] && Math.abs(v) >= 25)
-        out.push(`${personName(r, s, a)} is ${bondWord(v)} ${personName(r, s, b)}`);
+    for (const [b, v] of Object.entries(m)) {
+      if (!s.people[b] || Math.abs(v) < 25 || !(here.has(a) || here.has(b)))
+        continue;
+      out.push(`${personName(r, s, a)} is ${bondWord(v)} ${personName(r, s, b)}`);
+    }
   }
   return out;
+}
+function hasMet(s, id) {
+  return !!s.scene[id] || (s.memories?.[id]?.length ?? 0) > 0;
 }
 function keepWords(r, k) {
   const parts = [
@@ -19624,7 +19629,7 @@ function stateDigest(r, s) {
   const kids = Object.entries(s.kin).filter(([, k]) => !k.joined).map(([id, k]) => `${k.name} (${k.sex === "girl" ? "daughter" : "son"}, age ${kinAge(r, s, id)})`);
   if (kids.length)
     lines.push(`Family — {{user}}'s children: ${kids.join(", ")}. They are minors: never part of anything romantic or sexual, and kept out of any sexual scene.`);
-  const between = bondLines(r, s);
+  const between = bondLines(r, s, new Set(hud.people.filter((p) => p.present).map((p) => p.id)));
   if (between.length)
     lines.push(`Between people: ${between.join("; ")}`);
   const feel = (id, name) => {
@@ -19649,9 +19654,9 @@ function stateDigest(r, s) {
     if (mem.length)
       lines.push(`${p.name} remembers: ${mem.join("; ")}`);
   }
-  const away = hud.people.filter((p) => !p.present).sort((a, b) => (s.scene[b.id]?.at ?? -1) - (s.scene[a.id]?.at ?? -1)).slice(0, 8);
+  const away = hud.people.filter((p) => !p.present && hasMet(s, p.id) && s.scene[p.id] && s.minutes - s.scene[p.id].at <= 1440).sort((a, b) => (s.scene[b.id]?.at ?? -1) - (s.scene[a.id]?.at ?? -1)).slice(0, 4);
   if (away.length)
-    lines.push(`Not in this scene (bring them in only if the story calls for it): ${away.map((p) => feel(p.id, p.name)).join("; ")}`);
+    lines.push(`Not in this scene (seen lately; bring them in only if the story calls for it): ${away.map((p) => p.name).join(", ")}`);
   return lines.join(`
 `);
 }

@@ -78,11 +78,18 @@ function play(r: Ruleset, s: GameState, ids: (string | Intent)[], seed = "t") {
   return { s: st, recs };
 }
 
+/** What the narrator knows with Ward in the scene (a person's secret only rides along while they're here). */
+function knownWithWard(r: Ruleset, s: GameState) {
+  const here = structuredClone(s);
+  here.scene.ward = { here: true, loc: here.location, at: here.minutes };
+  return narratorKnowledge(r, here);
+}
+
 describe("secrets", () => {
   test("the cue is known from the start; later stages stay out of the prompt until they open", () => {
     const r = rules();
     const s = initialState(r);
-    const known = narratorKnowledge(r, s)!;
+    const known = knownWithWard(r, s)!;
     expect(known).toContain("Ward flinches at the observatory.");
     expect(known).toContain("keeping something you don't know");
     expect(known).not.toContain("student died");
@@ -95,24 +102,31 @@ describe("secrets", () => {
     let s = initialState(r);
     // The clue alone can't skip the ladder: stage 1 (trust) must open first.
     s = play(r, s, ["find_clue"]).s;
-    expect(narratorKnowledge(r, s)).not.toContain("safety report");
+    expect(knownWithWard(r, s)).not.toContain("safety report");
     s = foldEvents(r, [[{ t: "rel", who: "ward", stat: "trust", set: 60, src: "manual" }]], s);
     s = play(r, s, ["wait"]).s;
-    const known = narratorKnowledge(r, s)!;
+    const known = knownWithWard(r, s)!;
     expect(known).toContain("student died");
     expect(known).toContain("safety report");
     expect(known).not.toContain("keeping something"); // fully told
     // Trust falling again doesn't un-tell it.
     s = foldEvents(r, [[{ t: "rel", who: "ward", stat: "trust", set: 0, src: "manual" }]], s);
     s = play(r, s, ["wait"]).s;
-    expect(narratorKnowledge(r, s)).toContain("student died");
+    expect(knownWithWard(r, s)).toContain("student died");
   });
 
   test("reveal opens the next stage whatever its condition", () => {
     const r = rules();
     const s = play(r, initialState(r), ["confront"]).s;
     expect(s.secrets.ward).toBe(1);
-    expect(narratorKnowledge(r, s)).toContain("student died");
+    expect(knownWithWard(r, s)).toContain("student died");
+  });
+
+  test("a person's secret stays out while they aren't here", () => {
+    const r = rules();
+    const s = initialState(r);
+    s.scene.ward = { here: false, loc: s.location, at: s.minutes };
+    expect(narratorKnowledge(r, s) ?? "").not.toContain("Ward");
   });
 });
 

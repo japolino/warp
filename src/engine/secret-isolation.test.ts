@@ -13,6 +13,8 @@ function fixture(full: unknown = false) {
   }) }]).ruleset!;
   const s = initialState(r);
   s.people.sage = { name: "Sage" } as typeof s.people[string];
+  // Sage is in the scene: what a companion knows only rides along while they're here.
+  s.scene.sage = { here: true, loc: s.location, at: s.minutes };
   return { r, s };
 }
 
@@ -35,6 +37,12 @@ describe("secret prompt isolation", () => {
     expect(narratorKnowledge(r, s)).toContain("author opted in");
     const strict = fixture("true"); strict.s.secrets.vault = -1;
     expect(narratorKnowledge(strict.r, strict.s)).not.toContain("HIDDEN_TOKEN");
+  });
+  test("a companion who isn't here brings none of it", () => {
+    const { r, s } = fixture(true); s.scene.sage = { here: false, loc: s.location, at: s.minutes }; s.secrets.vault = -1;
+    const known = narratorKnowledge(r, s) ?? "";
+    expect(known).not.toContain("HIDDEN_TOKEN");
+    expect(known).not.toContain("Sage knows more");
   });
   test("missing companion does not leak full knowledge", () => {
     const { r, s } = fixture(true); delete s.people.sage; s.secrets.vault = -1;
