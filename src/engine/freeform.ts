@@ -31,14 +31,15 @@ function position(r: Ruleset, s: GameState, stat: string): number {
 
 /**
  * What a stat adds to the d20 (typed attempts and contest moves): its share of `checks.bonus`, with gear and
- * conditions counted (a maxed stat adds the whole bonus; Body 3/10 with bonus 10 adds +3).
+ * conditions counted (a maxed stat adds the whole bonus; Body 3/10 with bonus 10 adds +3; a +3 charm on Body 10/10 adds +13).
  */
 export function statAdd(r: Ruleset, s: GameState, stat: string): number {
   const def = r.stats[stat];
   if (!def) return 0;
   const max = statMax(r, def, s);
   const v = effectiveStat(r, s, stat, makeEnv(r, s));
-  const pos = max > def.min ? Math.max(0, Math.min(1, (v - def.min) / (max - def.min))) : 0;
+  // Not clamped to the stat's range: gear past the max and conditions below the min still count (ADVENTURE-2).
+  const pos = max > def.min ? (v - def.min) / (max - def.min) : 0;
   return Math.round(pos * r.checks.bonus);
 }
 

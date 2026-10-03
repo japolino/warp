@@ -7,6 +7,7 @@ import { applyEvent, cloneState, initialState, makeEnv, type GameState } from ".
 import { gearFor, resolveTurn, type TurnRecord } from "./resolve.js";
 import { evalNumber } from "./expr.js";
 import { lintRuleset } from "./lint.js";
+import { statAdd } from "./freeform.js";
 import { buildHud, stateDigest } from "./view.js";
 import { renderHud } from "../frontend/render.js";
 
@@ -190,3 +191,13 @@ describe("currency after the amount", () => {
   });
 });
 
+describe("gear on a stat at its max (ADVENTURE-2)", () => {
+  test("a typed attempt and a contest move count the charm past the max", () => {
+    const { r } = load({ style: "adventure", stats: { body: { kind: "attribute", max: 10, start: 10 } }, checks: { bonus: 10 },
+      items: { charm: { name: "Lucky Charm", bonus: { body: 3 } } }, start: { items: { charm: 1 } } });
+    const s = initialState(r);
+    expect(statAdd(r, s, "body")).toBe(13);
+    expect(statAdd(r, { ...s, items: {} }, "body")).toBe(10);
+    expect(statAdd(r, { ...s, stats: { ...s.stats, body: 8 } }, "body")).toBe(11);
+  });
+});
