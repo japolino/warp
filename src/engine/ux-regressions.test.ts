@@ -4,8 +4,6 @@ import { applyEvent, foldEvents, initialState, type GameState } from "./state.js
 import { applyProposal, encounterStartEvents, odds, resolveTurn, runOp } from "./resolve.js";
 import { buildChoices } from "./view.js";
 import { encounterGuide } from "./encounter-view.js";
-import { simulateEncounter } from "./simulate.js";
-import { simulateEncounter as previewSimulation } from "./balance.js";
 import { intentFor } from "../backend/intents.js";
 import { DEFAULT_SETTINGS } from "../shared/protocol.js";
 
@@ -156,7 +154,7 @@ test("automatic recurring quests restart after cooldown without a duplicate rewa
   expect(s.stats.gold).toBe(20);
 });
 
-test("both simulations initialize start effects and momentum through the live transition", () => {
+test("an encounter started directly initializes start effects and momentum like the live transition", () => {
   const r = rules({ flags: { ready: false }, encounters: { contest: { momentum: true,
     start: { flags: { ready: true } }, actions: { advance: { when: "flag('ready')", check: { chance: 100, crits: false } } },
     foe_moves: { wait: { desc: "Waits", weight: 1 } },
@@ -166,9 +164,6 @@ test("both simulations initialize start effects and momentum through the live tr
   const simulated = foldEvents(r, [encounterStartEvents(r, initial, "contest", "entry")], initial);
   expect(simulated.flags).toEqual(real.flags);
   expect(simulated.encounter).toEqual(real.encounter);
-  const sim = simulateEncounter(r, "contest", { runs: 4, maxRounds: 10 })!;
-  expect(sim.policies.every((p) => p.outcomes.won === 4 && p.unfinished === 0)).toBe(true);
-  expect(previewSimulation(r, initial, "contest", 4)!.outcomes).toEqual(sim.policies.at(-1)!.outcomes);
 });
 
 test("unproductive encounters end at a visible budget with the configured consequence", () => {
@@ -183,7 +178,6 @@ test("unproductive encounters end at a visible budget with the configured conseq
   s = step(r, s, "wait").s;
   expect(s.encounter).toBeNull(); expect(s.lastEncounter!.outcome).toBe("lost");
   expect(s.stats.gold).toBe(40);
-  expect(simulateEncounter(r, "loop", { runs: 2, maxRounds: 5 })!.policies.every((p) => p.unfinished === 0)).toBe(true);
 });
 
 test("winning on the last allowed round takes precedence over the timeout", () => {

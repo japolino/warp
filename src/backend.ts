@@ -18,7 +18,7 @@ import { operationCurrent, releaseOperation, takeOperation } from "./backend/ope
 import { dropPrewritten, momentKey, takePrewritten } from "./backend/drafts.js";
 import { isRulesetEntryTitle } from "./engine/loader.js";
 import { getDecider, JEV_KEY } from "./backend/deciders.js";
-import { builderAnswer, builderBack, builderDeepen, builderImport, exportRulebook, draftItemUses, builderClose, builderCurrent, builderFix, builderInstall, builderOpen, builderRedo, builderRefine, builderStart } from "./backend/builder.js";
+import { builderAnswer, builderBack, builderImport, exportRulebook, builderClose, builderCurrent, builderInstall, builderOpen, builderRedo, builderRefine, builderStart } from "./backend/builder.js";
 
 declare const spindle: SpindleAPI;
 
@@ -371,29 +371,16 @@ spindle.onFrontendMessage(async (raw, userId) => {
         break;
       }
 
-      case "builder_open": {
-        await builderOpen(msg.chatId, msg.mode, userId);
-        // Deepening starts working straight away on the installed rules.
-        if (msg.mode === "deepen") await builderDeepen(msg.chatId, {}, userId);
-        break;
-      }
-      case "builder_deepen": await builderDeepen(msg.chatId, { connectionId: msg.connectionId, effort: msg.effort, revisitWaivers: msg.revisitWaivers }, userId); break;
+      case "builder_open": await builderOpen(msg.chatId, msg.mode, userId); break;
       case "builder_import": await builderImport(msg.chatId, msg.text, userId); break;
       case "export_rulebook": {
         const out = await exportRulebook(msg.chatId, userId);
         send({ type: "rulebook_export", ...out }, userId);
         break;
       }
-      case "draft_item_uses": {
-        const names = await draftItemUses(msg.chatId, userId);
-        toast(names.length ? "success" : "info", names.length ? `Drafted uses for ${names.join(", ")} — see the Ruleset tab.` : "No items needed a use, or the draft didn't check out.", userId);
-        await pushState(msg.chatId, userId, true);
-        break;
-      }
-      case "builder_start": await builderStart(msg.chatId, { connectionId: msg.connectionId, creative: msg.creative, base: msg.base, effort: msg.effort }, userId); break;
+      case "builder_start": await builderStart(msg.chatId, { connectionId: msg.connectionId, creative: msg.creative, base: msg.base }, userId); break;
       case "builder_answer": await builderAnswer(msg.chatId, msg.answers, msg.additions, msg.more, userId); break;
       case "builder_redo": await builderRedo(msg.chatId, msg.part, msg.note, userId); break;
-      case "builder_fix": await builderFix(msg.chatId, msg.warning, userId); break;
       case "builder_refine": await builderRefine(msg.chatId, msg.request, userId); break;
       case "builder_back": await builderBack(msg.chatId, userId); break;
       case "builder_close": await builderClose(msg.chatId, userId); break;

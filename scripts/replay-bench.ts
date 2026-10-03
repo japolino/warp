@@ -1,7 +1,7 @@
-// Offline: bun src/tools/replay-bench.ts. No model, host, credentials or production data.
-import { foldPath, recordPath, type Msg } from "../backend/ledger.js";
-import { normalizeRuleset } from "../engine/ruleset.js";
-import { revision } from "../shared/revision.js";
+// Offline: bun scripts/replay-bench.ts. No model, host, credentials or production data.
+import { foldPath, recordPath, type Msg } from "../src/backend/ledger.js";
+import { normalizeRuleset } from "../src/engine/ruleset.js";
+import { revision } from "../src/shared/revision.js";
 const r = normalizeRuleset({ stats: Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`s${i}`, { start: 50 }])),
   relationships: { stats: { trust: { start: 50 } }, people: Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`p${i}`, { name: `Person ${i}` }])) },
   items: Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`item${i}`, { name: `Item ${i}` }])),

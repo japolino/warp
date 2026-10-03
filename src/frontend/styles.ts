@@ -260,7 +260,6 @@ export const STYLES = `
 .warp-seg { display: flex; border: 1px solid var(--warp-border); border-radius: var(--warp-radius); overflow: hidden; }
 .warp-seg-btn { flex: 1; font: inherit; font-size: 12.5px; padding: 7px 8px; background: transparent; border: none; color: var(--warp-muted); cursor: pointer; }
 .warp-seg-btn[aria-pressed=true] { background: var(--warp-accent); color: var(--warp-accent-fg); }
-.warp-warning-row { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; font-size: 12.5px; }
 .warp-preview-grid { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .warp-preview-hud { border: 1px solid var(--warp-border); border-radius: var(--warp-radius); max-height: 320px; overflow: auto; }
 .warp-preview .warp-choices { margin-top: 0; border-top: none; padding-top: 0; }
@@ -313,21 +312,8 @@ export const STYLES = `
 .warp-overlay[data-edge=bottom] .warp-section { grid-column: 1 / -1; }.warp-overlay-collapsed .warp-overlay-head { cursor: pointer; }
 .warp-overlay-collapsed .warp-overlay-body { display: none; }
 
-/* ───────── the designer ───────── */
-.warp-designer-log { margin-top: 8px; font-size: 12px; }
-.warp-designer-log > summary { cursor: pointer; color: var(--warp-dim); }
-.warp-designer-log ol { margin: 6px 0 0; padding-left: 20px; max-height: 220px; overflow: auto; display: flex; flex-direction: column; gap: 2px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+/* ───────── the design plan ───────── */
 .warp-plan-text { white-space: pre-wrap; font: inherit; font-size: 12.5px; line-height: 1.5; margin: 8px 0 0; }
-.warp-depth-line { font-variant-numeric: tabular-nums; }
-
-/* ───────── depth audit ───────── */
-.warp-depth-row > summary { cursor: pointer; padding: 3px 0; }
-.warp-depth-row > p { margin: 2px 0 6px 14px; font-size: 12px; }
-.warp-depth-row .warp-warning-row { grid-template-columns: auto minmax(0, 1fr); align-items: start; margin: 6px 0; overflow-wrap: anywhere; }
-.warp-depth-gap > summary::marker { color: var(--warp-bad); }
-.warp-depth-thin > summary::marker { color: var(--warp-warn); }
-.warp-issues-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 4px; font-size: 12.5px; }
-.warp-depth-drafted { font-size: 12px; border-left: 3px solid var(--warp-accent); padding-left: 8px; }
 
 /* ───────── encounters: goal, danger, rounds ───────── */
 .warp-enc-guide { border: 1px solid color-mix(in srgb, var(--warp-bad) 45%, var(--warp-border)); border-radius: var(--warp-radius); padding: 8px 10px; display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px; background: color-mix(in srgb, var(--warp-bad) 5%, transparent); font-size: 12.5px; }

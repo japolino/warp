@@ -28,14 +28,11 @@ export function restoreBuilderSession(raw: unknown, characterId: string): Builde
   const additions = array<BuilderAddition>(raw.additions, a => object(a) && typeof a.name === "string" && ["skill", "meter", "item", "place", "action", "rule", "person", "other"].includes(String(a.kind)), "additions").map(a => ({...a, note: string(a.note)}));
   const a = object(raw.analysis) ? raw.analysis : null;
   const sb = a && object(a.statusBlock) ? a.statusBlock : null;
-  const depth = object(raw.depth) ? raw.depth : null;
-  const pass = object(raw.designPass) ? raw.designPass : null;
-  const designPass = pass && ["finished", "no_tools", "budget", "error"].includes(String(pass.reason))
-    && [pass.steps, pass.resolved].every(v => typeof v === "number" && Number.isSafeInteger(v) && v >= 0)
-    && typeof pass.changed === "boolean" ? pass as unknown as BuilderSession["designPass"] : null;
+  // Drafts saved before the designer moved out of Warp: its fields are dropped, and a "deepen" draft reopens as a refine.
+  const { effort: _effort, log: _log, waived: _waived, depth: _depth, designPass: _designPass, ...kept } = raw;
   return {
-    ...raw, schemaVersion: BUILDER_SESSION_VERSION,
-    characterId, characterName: string(raw.characterName, "This character"), mode: raw.mode as BuilderSession["mode"], step: raw.step as BuilderSession["step"],
+    ...kept, schemaVersion: BUILDER_SESSION_VERSION,
+    characterId, characterName: string(raw.characterName, "This character"), mode: (raw.mode === "deepen" ? "refine" : raw.mode) as BuilderSession["mode"], step: raw.step as BuilderSession["step"],
     connectionId: string(raw.connectionId), creative: raw.creative === true, base: string(raw.base),
     analysis: a ? {
       summary: string(a.summary), suggestedTemplate: string(a.suggestedTemplate), reason: string(a.reason), cardType: a.cardType === "scenario" ? "scenario" : "character",
@@ -44,10 +41,6 @@ export function restoreBuilderSession(raw: unknown, characterId: string): Builde
     parts, rounds, additions, preview: null, busy: null,
     request: typeof raw.request === "string" ? raw.request : null, changeSummary: typeof raw.changeSummary === "string" ? raw.changeSummary : null, error: typeof raw.error === "string" ? raw.error : null,
     updatedAt: typeof raw.updatedAt === "number" && Number.isFinite(raw.updatedAt) ? raw.updatedAt : 0,
-    effort: raw.effort === "quick" ? "quick" : "thorough", plan: typeof raw.plan === "string" ? raw.plan : null, log: strings(raw.log),
-    waived: object(raw.waived) ? Object.fromEntries(Object.entries(raw.waived).filter(([, v]) => typeof v === "string")) as Record<string, string> : {},
-    // Counts and findings are derived again when the draft opens; retain only the comparison's starting score.
-    depth: depth && [depth.before, depth.after, depth.open].every(v => typeof v === "number" && Number.isFinite(v)) ? { before: Number(depth.before), after: Number(depth.after), open: Number(depth.open) } : null,
-    designPass,
+    plan: typeof raw.plan === "string" ? raw.plan : null,
   };
 }

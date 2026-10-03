@@ -8,7 +8,7 @@ import { STYLES } from "./frontend/styles.js";
 import { attachedBox, edgeForDrop, PAD, PANEL_W, PILL, type Box, type Edge, type Viewport } from "./frontend/overlay-layout.js";
 import { emptyDraft, renderBuilder, renderBuilderCta, type BuilderDraft } from "./frontend/builder-ui.js";
 import { connectCue } from "./frontend/cue-bridge.js";
-import { esc, hudParts, renderChips, renderDepthCard, renderEncounterLog, renderWhyFold, renderChoices, renderHud, renderJournal, renderPart, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
+import { esc, hudParts, renderChips, renderEncounterLog, renderWhyFold, renderChoices, renderHud, renderJournal, renderPart, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
 import { createPanels, wireGrip } from "./frontend/panel-windows.js";
 import { restoreMaps, wireMaps } from "./frontend/map-view.js";
 import { acceptsResponse } from "./frontend/response-gate.js";
@@ -380,7 +380,7 @@ export function setup(ctx: SpindleFrontendContext) {
     } else if (drawerView === "rules" && builder) {
       body = renderBuilder(builder, bDraft, templates, connections, status.state !== "none");
     } else if (drawerView === "rules") {
-      body = renderBuilderCta(status.state !== "none", hasChat, exported) + renderRulesetCard(status, hasChat) + renderDepthCard(status) + `<div class="warp-card"><h3>Writing rules</h3><p>Rules live in entries titled <b>warp-ruleset · …</b> (or any lorebook named <b>warp-ruleset</b>). Each entry is YAML; entries merge together. Warp keeps them out of the prompt automatically.</p></div>`;
+      body = renderBuilderCta(status.state !== "none", hasChat, exported) + renderRulesetCard(status, hasChat) + `<div class="warp-card"><h3>Writing rules</h3><p>Rules live in entries titled <b>warp-ruleset · …</b> (or any lorebook named <b>warp-ruleset</b>). Each entry is YAML; entries merge together. Warp keeps them out of the prompt automatically.</p></div>`;
     } else {
       body = renderSettings(settings, state?.status ?? null, connections, jevKeySet);
     }
@@ -670,8 +670,6 @@ export function setup(ctx: SpindleFrontendContext) {
     }
     const seg = t.closest<HTMLElement>('[data-bset="creative"]');
     if (seg) { bDraft.creative = seg.dataset.v === "1"; renderDrawer(); return true; }
-    const eff = t.closest<HTMLElement>('[data-bset="effort"]');
-    if (eff) { bDraft.effort = eff.dataset.v === "quick" ? "quick" : "thorough"; renderDrawer(); return true; }
     const b = t.closest<HTMLElement>("[data-b]");
     if (!b) return false;
     const cid = chatId();
@@ -707,10 +705,7 @@ export function setup(ctx: SpindleFrontendContext) {
         break;
       }
       case "open-refine": drawerView = "rules"; send({ type: "builder_open", chatId: cid, mode: "refine" }); break;
-      case "open-deepen": drawerView = "rules"; tab.activate(); send({ type: "builder_open", chatId: cid, mode: "deepen" }); break;
-      case "deepen": send({ type: "builder_deepen", chatId: cid }); break;
-      case "revisit-waivers": send({ type: "builder_deepen", chatId: cid, revisitWaivers: true }); break;
-      case "start": send({ type: "builder_start", chatId: cid, connectionId: bDraft.connectionId, creative: bDraft.creative, base: bDraft.base || undefined, effort: bDraft.effort }); break;
+      case "start": send({ type: "builder_start", chatId: cid, connectionId: bDraft.connectionId, creative: bDraft.creative, base: bDraft.base || undefined }); break;
       case "more": case "build":
         send({ type: "builder_answer", chatId: cid, answers: builderAnswers(), additions: bDraft.additions, more: b.dataset.b === "more" });
         break;
@@ -737,7 +732,6 @@ export function setup(ctx: SpindleFrontendContext) {
         if (bDraft.refine.trim()) { send({ type: "builder_refine", chatId: cid, request: bDraft.refine.trim() }); bDraft.refine = ""; }
         break;
       case "chip": bDraft.refine = b.dataset.text ?? ""; renderDrawer(); break;
-      case "fix": send({ type: "builder_fix", chatId: cid, warning: b.dataset.w! }); break;
       case "redo": {
         const part = b.dataset.part!;
         send({ type: "builder_redo", chatId: cid, part, note: bDraft.notes[part] || undefined });
@@ -824,7 +818,6 @@ export function setup(ctx: SpindleFrontendContext) {
     const perk = t.closest<HTMLElement>("[data-buy-perk]");
     if (perk) { const cid = chatId(); if (cid) send({ type: "buy_perk", chatId: cid, perk: perk.dataset.buyPerk! }); return; }
     if (t.closest("[data-install]")) { void confirmReplace(); return; }
-    if (t.closest("[data-draft-items]")) { const cid = chatId(); if (cid) send({ type: "draft_item_uses", chatId: cid }); return; }
     if (t.closest("[data-reload]")) { send({ type: "reload", chatId: chatId() }); return; }
     const save = t.closest<HTMLElement>("[data-save]");
     if (save) {
@@ -1111,7 +1104,7 @@ export function setup(ctx: SpindleFrontendContext) {
         builder = m.session;
         // A different session (or none): start the drafts fresh.
         if (!builder || !prev || prev.characterId !== builder.characterId || prev.mode !== builder.mode || (prev.step !== builder.step && builder.step === "start")) {
-          const keep = { creative: bDraft.creative, connectionId: bDraft.connectionId, effort: bDraft.effort };
+          const keep = { creative: bDraft.creative, connectionId: bDraft.connectionId };
           bDraft = { ...emptyDraft(), ...keep, ...(builder ? { additions: builder.additions.map((a) => ({ ...a })) } : {}) };
         }
         if (builder && prev?.step !== builder.step) bDraft.notes = {};

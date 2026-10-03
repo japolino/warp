@@ -8,7 +8,6 @@ import { applyEvent, cloneState, initialState, makeEnv, type GameState } from ".
 import { allocateStats, gearFor, playerArmor, resolveTurn, type TurnRecord } from "./resolve.js";
 import { evalNumber } from "./expr.js";
 import { lintRuleset } from "./lint.js";
-import { auditRuleset } from "./audit.js";
 import { buildHud, stateDigest } from "./view.js";
 import { renderHud } from "../frontend/render.js";
 
@@ -134,8 +133,6 @@ describe("formula armor, bonus and per_hour", () => {
     expect(s.stats.hp).toBeCloseTo(50 + 2 * 10);
     expect(s.stats.mp).toBeCloseTo(10 + 2 * 2);
     expect(s.stats.hunger).toBeCloseTo(4);
-    const audit = auditRuleset(r);
-    expect(audit.gaps.some((g) => g.id === "stat-static:mp")).toBe(false);
   });
 });
 
@@ -237,7 +234,7 @@ describe("statuses that tick each round in a fight and each hour outside", () =>
   });
 });
 
-describe("lint and audit fixes", () => {
+describe("lint fixes", () => {
   test("an hourly hurt that an item cures isn't 'never wears off'; one nothing cures still is", () => {
     const base = {
       stats: { health: { kind: "meter", start: 100 } },
@@ -249,17 +246,6 @@ describe("lint and audit fixes", () => {
     expect(lintRuleset(timed).some((i) => i.message.includes("never wears off"))).toBe(false);
     const stuck = load({ ...base, actions: { fall: { label: "Fall", effects: { add_condition: ["festering"] } } } }).r;
     expect(lintRuleset(stuck).some((i) => i.message.includes("never wears off"))).toBe(true);
-  });
-
-  test("armor-only clothing isn't 'clothing with no effect'", () => {
-    const { r } = load({
-      stats: { hp: { kind: "meter", start: 50 } },
-      items: { jerkin: { name: "Jerkin", slot: "armor", armor: { hp: 2 } }, rag: { name: "Rag", slot: "armor" } },
-      wardrobe: { slots: ["armor"], cover: [], start: ["jerkin"] },
-    });
-    const ids = auditRuleset(r).gaps.map((g) => g.id);
-    expect(ids).not.toContain("item-flat:jerkin");
-    expect(ids).toContain("item-flat:rag");
   });
 
   test("unknown keys in live-choice tags and actions warn; known ones don't", () => {

@@ -138,12 +138,11 @@ describe("saved builder draft recovery", () => {
     } finally {log.mockRestore();}
   });
 
-  test("restores a valid pass result but rejects malformed counters", () => {
-    stored.designPass = {reason: "no_tools", steps: 3, changed: false, resolved: 0};
-    expect(restoreBuilderSession(stored, characterId).designPass).toEqual(stored.designPass);
-    stored.designPass.steps = -1;
-    expect(restoreBuilderSession(stored, characterId).designPass).toBeNull();
-    stored.designPass.steps = Infinity;
-    expect(restoreBuilderSession(stored, characterId).designPass).toBeNull();
+  test("a draft from before the designer moved out drops its fields; a deepen draft reopens as a refine", () => {
+    Object.assign(stored, {mode: "deepen", effort: "quick", log: ["a step"], waived: {x: "why"}, depth: {before: 1, after: 2, open: 0}, designPass: {reason: "no_tools", steps: 3, changed: false, resolved: 0}});
+    const s = restoreBuilderSession(stored, characterId) as unknown as Record<string, unknown>;
+    expect(s.mode).toBe("refine");
+    for (const k of ["effort", "log", "waived", "depth", "designPass"]) expect(k in s).toBe(false);
+    expect(renderBuilder(s as never, emptyDraft(), [], [], false)).toContain("Refine with AI");
   });
 });

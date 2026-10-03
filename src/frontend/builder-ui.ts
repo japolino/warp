@@ -12,11 +12,10 @@ export interface BuilderDraft {
   base: string;
   creative: boolean;
   connectionId: string;
-  effort: "quick" | "thorough";
 }
 
 export function emptyDraft(): BuilderDraft {
-  return { answers: {}, additions: [], notes: {}, refine: "", base: "", creative: false, connectionId: "", effort: "thorough" };
+  return { answers: {}, additions: [], notes: {}, refine: "", base: "", creative: false, connectionId: "" };
 }
 
 const KINDS: BuilderAddition["kind"][] = ["skill", "meter", "item", "place", "person", "action", "rule", "other"];
@@ -34,10 +33,10 @@ export function renderBuilderCta(hasRuleset: boolean, hasChat: boolean, exported
   if (!hasChat) return "";
   return `${renderRulebookIo(hasRuleset, exported)}<div class="warp-card warp-builder-cta">
     <h3>✨ Build with AI</h3>
-    <p>Warp reads the card, asks you a few questions, and drafts a ruleset that fits — checked, balance-reviewed and previewed before anything is saved.</p>
+    <p>Warp reads the card, asks you a few questions, and drafts a ruleset that fits — checked and previewed before anything is saved.</p>
     <div class="warp-row">
       <button class="warp-btn warp-btn-primary" data-b="open-build">${hasRuleset ? "Rebuild with AI" : "Build with AI"}</button>
-      ${hasRuleset ? `<button class="warp-btn" data-b="open-refine">Refine with AI</button><button class="warp-btn" data-b="open-deepen" title="The designer audits these rules and wires in what doesn't connect yet — you review before anything is saved">Deepen with AI</button>` : ""}
+      ${hasRuleset ? `<button class="warp-btn" data-b="open-refine">Refine with AI</button>` : ""}
     </div>
   </div>`;
 }
@@ -57,7 +56,7 @@ function renderRulebookIo(hasRuleset: boolean, exported: { name: string; text: s
     </div>` : "";
   return `<details class="warp-card warp-rulebook-io"${exported ? " open" : ""}>
     <summary><b>📥 Import or export a rulebook</b> <span class="warp-dim">— write it with another tool</span></summary>
-    <p>Rulebooks can be written outside Lumiverse — by hand, or with an agent harness (Claude Code, Codex, Cursor…) using <b>docs/RULEBOOK_GUIDE.md</b> from the Warp repository and its checker. Paste the YAML or pick the file; it's checked, balance-reviewed and previewed before anything is saved.</p>
+    <p>Rulebooks can be written outside Lumiverse, by hand or with another tool. Paste the YAML or pick the file; it's checked and previewed before anything is saved.</p>
     <textarea class="warp-input warp-yaml-input" rows="5" data-import-text spellcheck="false" placeholder="name: My game&#10;stats:&#10;  hp: { kind: meter, … }&#10;…"></textarea>
     <div class="warp-row">
       <button class="warp-btn warp-btn-primary" data-b="import">Check & preview</button>
@@ -69,7 +68,7 @@ function renderRulebookIo(hasRuleset: boolean, exported: { name: string; text: s
 }
 
 function steps(s: BuilderSession): string {
-  const list = s.mode === "refine" ? ["Describe", "Review", "Install"] : s.mode === "deepen" ? ["Audit", "Review", "Install"] : s.mode === "import" ? ["Import", "Review", "Install"] : ["Read", "Ask", "Plan & build", "Review", "Install"];
+  const list = s.mode === "refine" ? ["Describe", "Review", "Install"] : s.mode === "import" ? ["Import", "Review", "Install"] : ["Read", "Ask", "Plan & build", "Review", "Install"];
   const at = s.mode !== "build"
     ? (s.step === "done" ? 2 : 1)
     : s.step === "start" ? 0 : s.step === "questions" ? (s.busy ? 2 : 1) : s.step === "review" ? 3 : 4;
@@ -117,48 +116,15 @@ export function renderBuilder(s: BuilderSession, d: BuilderDraft, templates: Tem
   }
 }
 
-function depthReview(s: BuilderSession, dis: string, errors: number): string {
-  const depth = s.depth;
-  if (!depth) return "";
-  const findings = depth.findings;
-  const open = findings?.filter(g => !g.reason) ?? [];
-  const exceptions = findings?.filter(g => g.reason) ?? [];
-  const gaps = open.filter(g => g.severity === "gap").length;
-  const thin = open.length - gaps;
-  const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
-  const counts = findings ? `${count(gaps, "gap")} · ${count(thin, "thin spot")} · ${count(exceptions.length, "deliberate exception")}` : "Audit details need refreshing.";
-  const status = errors ? "Fix the checker errors before finishing."
-    : !findings ? "Run Deepen to refresh the findings."
-      : open.length ? "Findings remain. Thin spots are optional, but still lower depth."
-        : exceptions.length ? "The remaining findings were left as deliberate exceptions. They still lower depth."
-          : "No audit findings remain.";
-  const actions = `${open.length || errors || !findings ? `<button class="warp-btn warp-mini" data-b="deepen"${dis}>Keep deepening</button>` : ""}${exceptions.length ? `<button class="warp-btn warp-mini" data-b="revisit-waivers"${dis} title="Reopen these findings and ask the designer to fix them without waiving them again">Fix exceptions</button>` : ""}`;
-  const pass = s.designPass;
-  const stop = pass ? pass.reason === "no_tools" ? `The helper stopped making tool calls after ${pass.steps} designer calls.`
-    : pass.reason === "budget" ? `The designer reached its ${pass.steps}-call limit.`
-      : pass.reason === "error" ? "The helper stopped with an error. Your draft is kept."
-        : "The design pass finished." : "";
-  const progress = pass && findings?.length && pass.resolved === 0 ? ` ${pass.changed ? "" : "No rules changed. "}No audit findings were resolved.` : "";
-  const rows = open.map(g => `<div class="warp-warning-row"><span class="warp-tone-warn">${g.severity === "gap" ? "Gap" : "Thin spot"}</span><span>${esc(g.text)}<br><span class="warp-dim">${esc(g.fix)}</span></span></div>`).join("");
-  const waived = exceptions.map(g => `<p>${esc(g.text)}<br><span class="warp-dim">Reason: ${esc(g.reason!)}</span></p>`).join("");
-  return `<p class="warp-depth-line">Depth <b>${depth.before}</b> → <b class="warp-tone-${depth.after >= depth.before ? "good" : "warn"}">${depth.after}</b> / 100</p>
-    <p>${counts}</p><p class="warp-tone-${errors || open.length || !findings ? "warn" : "good"}">${status}</p>
-    ${stop ? `<p class="warp-dim">${esc(stop + progress)}</p>` : ""}
-    ${actions ? `<div class="warp-row">${actions}</div>` : ""}
-    ${rows ? `<details class="warp-depth-row"><summary>What still needs work · ${open.length}</summary>${rows}</details>` : ""}
-    ${waived ? `<details class="warp-depth-row"><summary>Deliberate exceptions · ${exceptions.length}</summary>${waived}</details>` : ""}`;
-}
-
 function builderHtml(s: BuilderSession, d: BuilderDraft, templates: TemplateInfo[], connections: { id: string; name: string }[], hasRuleset: boolean): string {
   const busy = !!s.busy;
   const dis = busy ? " disabled" : "";
   const head = `<div class="warp-builder-head">
-      <div><div class="warp-eyebrow"><span>${s.mode === "import" ? "📥 Imported rulebook" : `✨ ${s.mode === "refine" ? "Refine" : s.mode === "deepen" ? "Deepen" : "Build"} with AI`}</span></div><b>${esc(s.characterName)}</b></div>
+      <div><div class="warp-eyebrow"><span>${s.mode === "import" ? "📥 Imported rulebook" : `✨ ${s.mode === "refine" ? "Refine" : "Build"} with AI`}</span></div><b>${esc(s.characterName)}</b></div>
       <button class="warp-btn warp-btn-ghost" data-b="close" title="Close the builder (discards the draft)" aria-label="Close">×</button>
     </div>${steps(s)}`;
-  const log = s.log?.length ? `<details class="warp-designer-log"${busy ? " open" : ""}><summary>What the designer did · ${s.log.length}</summary><ol>${s.log.slice(-40).map((l) => `<li>${esc(l)}</li>`).join("")}</ol></details>` : "";
   const status = busy
-    ? `<div class="warp-card warp-busy-card"><div class="warp-status-line"><span class="warp-spinner"></span>${esc(s.busy!)}</div><p>This can take a few minutes with a thorough pass — you can keep chatting; the drawer updates as it works.</p>${log}</div>`
+    ? `<div class="warp-card warp-busy-card"><div class="warp-status-line"><span class="warp-spinner"></span>${esc(s.busy!)}</div><p>This can take a minute or two — you can keep chatting; the drawer updates as it works.</p></div>`
     : s.error ? `<div class="warp-card warp-error-card"><p class="warp-tone-bad">${esc(s.error)}</p></div>` : "";
   const plan = s.plan ? `<details class="warp-card warp-plan"><summary><b>The design plan</b> <span class="warp-dim">— written before any rules, and held to</span></summary><pre class="warp-plan-text">${esc(s.plan)}</pre></details>` : "";
 
@@ -176,16 +142,12 @@ function builderHtml(s: BuilderSession, d: BuilderDraft, templates: TemplateInfo
         <button class="warp-seg-btn" data-bset="creative" data-v="0" aria-pressed="${!d.creative}">Stay close to the template</button>
         <button class="warp-seg-btn" data-bset="creative" data-v="1" aria-pressed="${d.creative}">Get creative</button>
       </div>
-      <div class="warp-seg" role="radiogroup" aria-label="Effort">
-        <button class="warp-seg-btn" data-bset="effort" data-v="thorough" aria-pressed="${d.effort === "thorough"}" title="Plans the game, then works with tools — checker, depth audit, encounter simulations — until every piece connects">Thorough</button>
-        <button class="warp-seg-btn" data-bset="effort" data-v="quick" aria-pressed="${d.effort === "quick"}" title="Plans, drafts, repairs and takes one short pass at the audit">Quick</button>
-      </div>
       <label class="warp-field"><span>Model</span>
         <select class="warp-select" data-bset="connectionId">
           <option value="">Same as the chat</option>
           ${connections.map((c) => `<option value="${esc(c.id)}"${d.connectionId === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("")}
         </select></label>
-      <p>A strong model gives better rulesets — Thorough lets it plan the game, then test and fix its own work (simulating encounters, closing every gap the depth audit finds) instead of stopping once the rules parse. Nothing is saved until you install it at the end.</p>
+      <p>A strong model gives better rulesets. It plans the game, drafts each section, and fixes whatever Warp's checker reports. Nothing is saved until you install it at the end.</p>
       <div class="warp-row"><button class="warp-btn warp-btn-primary" data-b="start"${dis}>Read the card →</button></div>
     </div>`;
   } else if (s.step === "questions") {
@@ -211,17 +173,11 @@ function builderHtml(s: BuilderSession, d: BuilderDraft, templates: TemplateInfo
   } else if (s.step === "review") {
     const p = s.preview;
     const errors = s.parts.filter((x) => x.status === "error").length;
-    const depth = depthReview(s, dis, errors);
     const summary = `<div class="warp-card">
         <h3>${s.mode !== "build" && s.changeSummary ? "What changed" : "The draft"}</h3>
-        ${depth}
         ${s.changeSummary ? `<p>${esc(s.changeSummary)}</p>` : ""}
         <p>${esc(p?.summary ?? "The draft doesn't run yet — see the sections marked in red.")}</p>
         ${errors ? `<p class="warp-tone-bad"><b>Must fix:</b> ${errors} section${errors === 1 ? "" : "s"} below ${errors === 1 ? "doesn't" : "don't"} match the format Warp reads (marked in red). They block installing — use Redo on ${errors === 1 ? "it" : "them"}.</p>` : ""}
-        ${p?.warnings.length ? `<div class="warp-issues">
-          <div class="warp-issues-head"><span><b>Could go deeper</b> <span class="warp-dim">— optional. The game runs without these; they're parts of it nothing uses yet.</span></span><button class="warp-btn warp-mini" data-b="deepen"${dis} title="The designer works through every one of these, changing whichever sections each needs">Fix all</button></div>
-          ${p.warnings.map((w) => `<div class="warp-warning-row"><span class="warp-tone-warn">!</span><span>${esc(w.text)}</span><button class="warp-btn warp-mini" data-b="fix" data-w="${esc(w.id)}"${dis} title="Changes whichever sections this needs">Fix</button></div>`).join("")}
-        </div>` : p ? `<p class="warp-tone-good">No balance problems found.</p>` : ""}
       </div>`;
     const preview = p?.hud ? `<details class="warp-card warp-preview" open><summary><b>Preview</b> <span class="warp-dim">— the sidebar and choices at the start</span></summary>
         <div class="warp-preview-grid"><div class="warp-preview-hud">${renderHud(p.hud, { editing: null, compact: true })}</div>
@@ -246,10 +202,9 @@ function builderHtml(s: BuilderSession, d: BuilderDraft, templates: TemplateInfo
         <textarea class="warp-input" rows="2" data-brefine placeholder="e.g. Add a cooking skill Aina is bad at, and a kitchen at home">${esc(d.refine)}</textarea>
         <div class="warp-row"><button class="warp-btn" data-b="refine"${dis}>Apply change</button></div>
       </div>`;
-    body = `${summary}${plan}${log}${preview}${parts}${refine}
+    body = `${summary}${plan}${preview}${parts}${refine}
       <div class="warp-row warp-builder-foot">
         ${s.mode === "build" ? `<button class="warp-btn warp-btn-ghost" data-b="back"${dis}>← Back to questions</button>` : ""}
-        ${!s.depth ? `<button class="warp-btn" data-b="deepen"${dis} title="Audit these rules and wire in what doesn't connect yet">Deepen</button>` : ""}
         <button class="warp-btn warp-btn-primary" data-b="install" data-replacing="${hasRuleset ? 1 : 0}"${errors || busy ? " disabled" : ""} title="${errors ? "Fix or redo the sections marked in red first" : ""}">${s.mode === "build" || s.mode === "import" ? "Install to lorebook" : "Save changes"}</button>
       </div>`;
   } else {

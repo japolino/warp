@@ -1,19 +1,12 @@
-// The AI ruleset builder: read the card → ask → draft section by section →
-// check & repair → review (preview + balance) → install. Also "refine" for
+// The AI ruleset builder, in one pass: read the card → ask → draft section by
+// section → check & repair → review (preview) → install. Also "refine" for
 // editing an existing ruleset by instruction.
 //
 // The model only ever writes YAML sections; Warp's own checker decides whether
 // they're valid and feeds its messages back for repair.
 
-import jsyaml from "js-yaml";
-import type { GenerationResponseDTO, LlmMessageDTO, ToolSchemaDTO } from "lumiverse-spindle-types";
-import { evaluate, runAgent, updateDepth, type AgentCall } from "./builder-agent.js";
-import { auditRuleset } from "../engine/audit.js";
+import type { GenerationResponseDTO } from "lumiverse-spindle-types";
 import { DESIGN_GUIDE } from "../engine/reference.js";
-import { getRuleset } from "./source.js";
-import { getSettings } from "./settings.js";
-import { ask } from "./helpers.js";
-import { reviewBalance } from "../engine/balance.js";
 import { isRulesetBookName, isRulesetEntryTitle, loadRuleset, type RulesetPart } from "../engine/loader.js";
 import { lintRuleset } from "../engine/lint.js";
 import { PART_CONTENTS, PART_LABELS, partForIssue, REFERENCE, type PartLabel } from "../engine/reference.js";
@@ -91,28 +84,6 @@ async function llm(s: BuilderSession, system: string, user: string, userId: stri
     signal: AbortSignal.any([sessionSignal(s), AbortSignal.timeout(180_000)]),
   })) as GenerationResponseDTO | string;
   return typeof res === "string" ? res : res?.content ?? "";
-}
-
-/** A model call with tools offered; tool calls come back parsed (models without them answer in text). */
-async function llmTools(s: BuilderSession, messages: LlmMessageDTO[], tools: ToolSchemaDTO[], userId: string | undefined): Promise<AgentCall> {
-  const res = (await host().generate.quiet({
-    type: "quiet",
-    messages,
-    tools,
-    connection_id: s.connectionId || undefined,
-    parameters: { temperature: s.creative ? 0.7 : 0.4, max_tokens: 8000 },
-    userId,
-    signal: AbortSignal.any([sessionSignal(s), AbortSignal.timeout(240_000)]),
-  })) as GenerationResponseDTO | string;
-  if (typeof res === "string") return { content: res, calls: [] };
-  return { content: res?.content ?? "", calls: (res?.tool_calls ?? []).map((c) => ({ name: c.name, args: c.args ?? {} })) };
-}
-
-/** A line in the designer's live log (kept short), and the spinner label. */
-async function logStep(s: BuilderSession, label: string, line: string | undefined, userId?: string) {
-  if (line) s.log = [...(s.log ?? []), line].slice(-60);
-  s.busy = label;
-  emit(s, userId);
 }
 
 function parseJson(text: string): Record<string, unknown> | null {
@@ -334,8 +305,7 @@ async function repair(s: BuilderSession, parts: BuilderPart[], userId?: string, 
 
 function buildPreview(s: BuilderSession) {
   const { ruleset: r } = check(s.parts);
-  if (!r) { s.preview = null; s.depth = null; return; }
-  updateDepth(s, auditRuleset(r));
+  if (!r) { s.preview = null; return; }
   const st = initialState(r);
   const counts: Record<string, number> = {
     meters: r.statOrder.filter((id) => r.stats[id].kind === "meter").length,
@@ -366,13 +336,12 @@ function buildPreview(s: BuilderSession) {
     counts,
     hud: buildHud(r, st),
     choices: buildChoices(r, st, { lines: [], veils: [] }),
-    warnings: reviewBalance(r).map((w) => ({ id: w.id, part: w.part, text: w.text })),
   };
 }
 
 // ───────────────────────── steps ─────────────────────────
 
-export async function builderOpen(chatId: string, mode: "build" | "refine" | "deepen", userId?: string) {
+export async function builderOpen(chatId: string, mode: "build" | "refine", userId?: string) {
   const characterId = await characterForChat(chatId, userId);
   if (!characterId) throw new Error("Open a chat with a character first.");
   const existing = await sessionFor(chatId, userId);
@@ -383,11 +352,10 @@ export async function builderOpen(chatId: string, mode: "build" | "refine" | "de
     characterId, characterName: card.name, mode, step: "start",
     connectionId: existing?.connectionId ?? "", creative: existing?.creative ?? false,
     base: "", analysis: null, rounds: [], additions: [], parts: [], preview: null,
-    request: null, changeSummary: null, busy: null, error: null, updatedAt: Date.now(),
-    effort: existing?.effort ?? "thorough", plan: null, log: [], waived: {}, depth: null,
+    request: null, changeSummary: null, busy: null, error: null, updatedAt: Date.now(), plan: null,
   };
   sessionChats.set(s, chatId);
-  if (mode === "refine" || mode === "deepen") {
+  if (mode === "refine") {
     s.parts = await currentParts(characterId, userId);
     if (!s.parts.length) throw new Error(`This character has no ruleset to ${mode} yet.`);
     s.step = "review";
@@ -417,72 +385,11 @@ async function designPlan(s: BuilderSession, systems: string[], userId?: string)
   return t.length > 80 ? t.slice(0, 5000) : null;
 }
 
-/** The designer's pass: work with the tools until the checker and the audit are clean (or the budget runs out). */
-async function deepen(s: BuilderSession, task: string, userId?: string, revisit: readonly string[] = []) {
-  const before = evaluate(s.parts);
-  const thorough = s.effort === "thorough";
-  s.designPass = null;
-  s.changeSummary = null;
-  let steps = 0;
-  let reason: NonNullable<BuilderSession["designPass"]>["reason"] = "error";
-  s.log = [...(s.log ?? []), `— ${thorough ? "Thorough" : "Quick"} design pass —`];
-  const card = await cardText(s.characterId, userId).catch(() => ({ text: "", name: s.characterName, hasRuleset: false }));
-  try {
-    const res = await runAgent(s, {
-      brief: [card.text.slice(0, 5000), brief(s)].filter(Boolean).join("\n\n"),
-      task,
-      maxSteps: thorough ? 40 : 14,
-      strict: thorough || revisit.length > 0,
-      revisit,
-      hooks: {
-        llm: (messages, tools) => { steps++; return llmTools(s, messages, tools, userId); },
-        progress: (label, line) => logStep(s, label, line, userId),
-      },
-    });
-    reason = res.reason;
-    if (res.finished) { s.changeSummary = res.summary; s.log = [...(s.log ?? []), `Finished: ${res.summary}`]; }
-    else s.log = [...(s.log ?? []), res.reason === "no_tools"
-      ? `Stopped after ${res.steps} designer calls: the helper returned no tools three times. Your draft is kept.`
-      : `Stopped at the ${res.steps}-call design limit. Your draft is kept.`];
-  } catch (e) {
-    logError("builder agent", e);
-    s.log = [...(s.log ?? []), `The designer stopped: ${e instanceof Error ? e.message : String(e)}`];
-  }
-  await repair(s, s.parts, userId, false);
-  const after = evaluate(s.parts);
-  updateDepth(s, after, before.depth);
-  const remaining = new Set(after.gaps.map(g => g.id));
-  s.designPass = { reason, steps, changed: JSON.stringify(before.ruleset) !== JSON.stringify(after.ruleset), resolved: before.gaps.filter(g => !remaining.has(g.id)).length };
-  if (after.gaps.length && s.designPass.resolved === 0) s.log = [...(s.log ?? []), `No audit findings were resolved. Depth ${before.depth} → ${after.depth}/100.`];
-}
-
-/** "Deepen this ruleset" (or keep going on a draft): the designer works the audit with tools. */
-export async function builderDeepen(chatId: string, opts: { connectionId?: string; effort?: "quick" | "thorough"; revisitWaivers?: boolean }, userId?: string) {
-  const s = await sessionFor(chatId, userId);
-  if (!s || !s.parts.length) throw new Error("Open the builder on a ruleset first.");
-  if (opts.connectionId !== undefined) s.connectionId = opts.connectionId;
-  if (opts.effort) s.effort = opts.effort;
-  const revisit = opts.revisitWaivers === true ? evaluate(s.parts).gaps.filter(g => s.waived?.[g.id]).map(g => g.id) : [];
-  for (const id of revisit) delete s.waived![id];
-  await progress(s, "Auditing what connects…", userId);
-  try {
-    await deepen(s, s.mode === "deepen"
-      ? "Deepen this installed ruleset without breaking what works: close every audit gap — items that do nothing get a use: or bonus: true to their description, stats and conditions get sources, sinks and consequences, encounters get readable goals, more than one route, an escape and items that matter (simulate them), places get reasons to visit. Keep names, tone and existing ids."
-      : "Keep going: close the remaining audit gaps and tune the encounters by simulation.", userId, revisit);
-    for (const p of s.parts) if (p.changed) p.status = p.status ?? "ok";
-    buildPreview(s);
-  } catch (e) {
-    s.error = `Couldn't deepen: ${e instanceof Error ? e.message : String(e)}`;
-  }
-  await progress(s, null, userId);
-}
-
-export async function builderStart(chatId: string, opts: { connectionId: string; creative: boolean; base?: string; effort?: "quick" | "thorough" }, userId?: string) {
+export async function builderStart(chatId: string, opts: { connectionId: string; creative: boolean; base?: string }, userId?: string) {
   const s = await sessionFor(chatId, userId);
   if (!s) throw new Error("No builder open.");
   s.connectionId = opts.connectionId;
   s.creative = opts.creative;
-  if (opts.effort) s.effort = opts.effort;
   await progress(s, "Reading the card…", userId);
   try {
     const card = await cardText(s.characterId, userId);
@@ -576,8 +483,6 @@ async function draftAll(s: BuilderSession, userId?: string) {
     const ctx = contextOf(s.parts);
     await Promise.all(phaseB.map(async (l) => { byLabel(l).yaml = await draftPart(s, l, baseOf(l), ctx, userId); }));
     await repair(s, s.parts, userId);
-    // Valid isn't done: the designer works the audit until every piece connects.
-    await deepen(s, "Finish this draft: fix every checker error and close the depth audit — make every item do what its description says, wire every stat and condition into play, give each encounter readable routes, an escape and items that matter, then simulate each encounter and tune it.", userId);
     buildPreview(s);
     s.step = "review";
   } catch (e) {
@@ -590,7 +495,6 @@ export async function builderRedo(chatId: string, label: string, note: string | 
   const s = await sessionFor(chatId, userId);
   const part = s?.parts.find((p) => p.label === label);
   if (!s || !part) throw new Error("Nothing to redo.");
-  s.designPass = null;
   await progress(s, `Rewriting ${label}…`, userId);
   try {
     const ctx = contextOf(s.parts.filter((p) => p !== part));
@@ -605,21 +509,9 @@ export async function builderRedo(chatId: string, label: string, note: string | 
   await progress(s, null, userId);
 }
 
-export async function builderFix(chatId: string, warningId: string, userId?: string) {
-  const s = await sessionFor(chatId, userId);
-  if (!s) throw new Error("No builder open.");
-  const { ruleset } = check(s.parts);
-  const w = ruleset ? reviewBalance(ruleset).find((x) => x.id === warningId) : undefined;
-  if (!w) { buildPreview(s); emit(s, userId); return; }
-  // Not a rewrite of the section the warning is filed under: "Charm never
-  // changes" lives in stats, but the cure is an action or event that moves it.
-  await builderRefine(chatId, `Fix this, changing whichever sections it takes (usually not just ${w.part}): ${w.text} ${w.fix}`, userId);
-}
-
 export async function builderRefine(chatId: string, request: string, userId?: string) {
   const s = await sessionFor(chatId, userId);
   if (!s || !s.parts.length) throw new Error("Nothing to refine.");
-  s.designPass = null;
   s.request = request;
   await progress(s, "Working out what to change…", userId);
   try {
@@ -740,8 +632,7 @@ export async function builderImport(chatId: string, text: string, userId?: strin
     characterId, characterName: card.name, mode: "import", step: "review",
     connectionId: "", creative: false, base: "", analysis: null, rounds: [], additions: [],
     parts: split.map((p) => ({ label: p.label, yaml: p.yaml, status: "ok", issues: [] })), preview: null,
-    request: null, changeSummary: null, busy: null, error: null, updatedAt: Date.now(),
-    effort: "thorough", plan: null, log: [], waived: {}, depth: null,
+    request: null, changeSummary: null, busy: null, error: null, updatedAt: Date.now(), plan: null,
   };
   sessionChats.set(s, chatId);
   buildPreview(s);
@@ -758,76 +649,6 @@ export async function exportRulebook(chatId: string, userId?: string): Promise<{
   if (!parts.length) throw new Error("This character has no ruleset to export yet.");
   const card = await cardText(characterId, userId);
   return { name: card.name, text: joinRulebook(parts.map((p) => ({ label: p.label, yaml: p.yaml })), card.name) };
-}
-
-// ───────────────────────── item uses, drafted ─────────────────────────
-
-const DRAFT_LABEL = "item uses";
-
-/**
- * Items that do nothing get a drafted use: or bonus: from their description, in the
- * game's own stats and conditions, size-capped and checked. Saved as an editable
- * "warp-ruleset · item uses" entry; the item's own definition always wins.
- */
-export async function draftItemUses(chatId: string, userId?: string): Promise<string[]> {
-  const loaded = await getRuleset(chatId, userId, true);
-  const r = loaded?.ruleset;
-  if (!r || !loaded?.characterId) return [];
-  const dead = auditRuleset(r).gaps.filter((g) => g.id.startsWith("item-dead:")).map((g) => r.items[g.id.slice(10)]).filter(Boolean);
-  if (!dead.length) return [];
-  const settings = await getSettings(userId);
-  const stats = r.statOrder.filter((id) => r.stats[id].kind !== "hidden").map((id) => `${id} (${r.stats[id].label}, ${r.stats[id].min}–${r.stats[id].max}, good: ${r.stats[id].good})`);
-  const reads = Object.values(r.encounters).map((e) => `${e.id}: checks read ${[...new Set(Object.values(e.actions).flatMap((a) => a.check ? [String(a.check.add ?? ""), String(a.check.target ?? "")] : []))].join("; ")}`);
-  const text = await ask(
-    `You give items in a game ruleset something to DO, true to their descriptions, using only the game's own stats and conditions. Reply with YAML only: an item_uses: map.\nFormat per item: <id>: { label: "<button text>", <stat>: <+/-n>, add_condition: [...], remove_condition: [...], hint: "<one line for the narrator>" } — or { bonus: { <stat>: <n> } } for gear that helps checks, or keep: true for tools that aren't used up. Keep changes modest (at most a quarter of a stat's range). No moving the player, no ending or starting encounters, no money.`,
-    [
-      `Stats: ${stats.join(", ")}`,
-      `Conditions: ${Object.values(r.conditions).map((c) => `${c.id} (${c.label})`).join(", ") || "none"}`,
-      reads.length ? `Encounters (what their checks read):\n${reads.join("\n")}` : "",
-      `Items to give a purpose:\n${dead.map((it) => `- ${it.id}: ${it.name}${it.desc ? ` — ${it.desc}` : ""}`).join("\n")}`,
-    ].filter(Boolean).join("\n\n"),
-    settings, userId, 45000, { temperature: 0.4, maxTokens: 1500 },
-  );
-  const yaml = extractYaml(text);
-  // Load it next to the real rules: anything that doesn't check out, or reaches too far, is dropped.
-  const parsed = loadRuleset([{ label: "warp-ruleset · probe", content: yaml, order: 0 }]);
-  const raw = (parsed.ruleset ? yaml : "").trim();
-  if (!raw) return [];
-  const doc = jsyaml.load(raw) as { item_uses?: Record<string, Record<string, unknown>> } | null;
-  const uses = doc?.item_uses ?? (doc as Record<string, Record<string, unknown>> | null) ?? {};
-  const kept: Record<string, Record<string, unknown>> = {};
-  for (const it of dead) {
-    const u = uses[it.id];
-    if (!u || typeof u !== "object") continue;
-    const clean: Record<string, unknown> = { drafted: true };
-    for (const [k, v] of Object.entries(u)) {
-      if (["move", "end", "start_encounter", "give", "take", "set", "flags", "rel", "decide", "time"].includes(k)) continue;
-      const def = r.stats[k];
-      if (def) {
-        if (def.kind === "money") continue;
-        const cap = Math.max(1, Math.round((def.max - def.min) / 4));
-        const n = Number(v);
-        if (Number.isFinite(n) && n !== 0) clean[k] = Math.max(-cap, Math.min(cap, Math.round(n)));
-        continue;
-      }
-      clean[k] = v;
-    }
-    if (Object.keys(clean).length > 1) kept[it.id] = clean;
-  }
-  if (!Object.keys(kept).length) return [];
-  const body = `# Drafted by Warp from the items' descriptions. Edit or delete freely — an item's own use: always wins.\n${jsyaml.dump({ item_uses: kept }, { lineWidth: 140 })}`;
-  const check = loadRuleset([...(await currentParts(loaded.characterId, userId)).map((p, i) => ({ label: `warp-ruleset · ${p.label}`, content: p.label === DRAFT_LABEL ? "" : p.yaml, order: i })), { label: `warp-ruleset · ${DRAFT_LABEL}`, content: body, order: 999 }]);
-  if (!check.ruleset || check.issues.some((i) => i.level === "error" && /item uses/i.test(i.where))) return [];
-  const { entries, rulesetBook } = await rulesetEntries(loaded.characterId, userId);
-  const existing = entries.find((e) => e.label === DRAFT_LABEL);
-  if (existing) await host().world_books.entries.update(existing.id, { content: body, disabled: true }, userId);
-  else {
-    const bookId = rulesetBook ?? loaded.bookIds[0];
-    if (!bookId) return [];
-    await host().world_books.entries.create(bookId, { comment: `warp-ruleset · ${DRAFT_LABEL}`, content: body, key: [], disabled: true, constant: false, order_value: 990 }, userId);
-  }
-  invalidateCharacter(loaded.characterId);
-  return Object.keys(kept).map((id) => r.items[id]?.name ?? id);
 }
 
 export { SYSTEMS };

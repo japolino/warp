@@ -7,7 +7,6 @@
 import { compile, ExprError } from "./expr.js";
 import { parseDice, DiceError } from "./dice.js";
 import { classifyOutcomes, encounterOutcomeIds, parseOutcomeKind, type OutcomeKind } from "./outcomes.js";
-import type { StatePatch } from "./simulate.js";
 
 export type Tone = "good" | "warn" | "bad" | "neutral";
 export type StatKind = "meter" | "attribute" | "skill" | "money" | "hidden";
@@ -421,8 +420,6 @@ export interface EncounterDef {
   outcomeKinds?: Record<string, OutcomeKind>;
   /** The author's own `losses:` / `outcome_kinds:` (part of the rules revision; outcomeKinds itself is derived and hidden from JSON). */
   authoredKinds?: Record<string, OutcomeKind>;
-  /** `sim:` — the state the checker and simulator judge it from (a late boss at its intended level). */
-  sim?: StatePatch;
 }
 
 export interface CodexEntry { id: string; title: string; text: string; category?: string; unlock?: string; lore: string[] }
@@ -2010,53 +2007,8 @@ function normEncounter(id: string, raw: unknown, c: Ctx, known: { stats: Set<str
   const authored = normOutcomeKinds(raw, def, w, c);
   Object.defineProperty(def, "outcomeKinds", { value: classifyOutcomes(def, statDefs, authored), enumerable: false, writable: true, configurable: true });
   if (Object.keys(authored).length) def.authoredKinds = authored;
-  const sim = normSimPatch(raw.sim, `${w} › sim`, c, known);
-  if (sim) def.sim = sim;
+  if (raw.sim !== undefined) c.removed(`${w} › sim`, "sim", "the encounter simulator");
   return def;
-}
-
-const SIM_KEYS = new Set(["stats", "flags", "items", "location", "conditions", "rel", "perks", "wear", "triggers"]);
-
-/**
- * `sim: { stats: { level: 12, hp: max }, flags: {…}, items: {…}, location, conditions, rel, perks, wear }` —
- * the shape `warp_simulate`'s `set` takes. Stats are checked here; other names when the checker uses it.
- */
-function normSimPatch(raw: unknown, w: string, c: Ctx, known: { stats: Set<string> }): StatePatch | undefined {
-  if (raw === undefined || raw === null) return undefined;
-  if (!isObj(raw)) { c.warn(w, "expected a map like { stats: { level: 12, hp: max }, flags: { met_kael: true } }"); return undefined; }
-  const out: StatePatch = {};
-  for (const [k, v] of Object.entries(raw)) {
-    if (!SIM_KEYS.has(k)) { c.warn(`${w} › ${k}`, `isn't a sim: key (${[...SIM_KEYS].join(", ")})`); continue; }
-    if (k === "location") { if (typeof v === "string" && v.trim()) out.location = v.trim(); else c.warn(`${w} › location`, "expected a place id"); continue; }
-    if (k === "triggers") { out.triggers = v !== false; continue; }
-    if (k === "perks") { out.perks = list(v); continue; }
-    if (k === "conditions" || k === "wear") {
-      if (Array.isArray(v)) out[k] = v.map(String);
-      else if (isObj(v)) (out as Record<string, unknown>)[k] = v;
-      else c.warn(`${w} › ${k}`, "expected a list or a map");
-      continue;
-    }
-    if (!isObj(v)) { c.warn(`${w} › ${k}`, "expected a map"); continue; }
-    if (k === "stats") {
-      const stats: Record<string, number | string> = {};
-      for (const [id, x] of Object.entries(v)) {
-        if (!known.stats.has(id)) { c.warn(`${w} › stats › ${id}`, `"${id}" isn't a declared stat`); continue; }
-        if (typeof x === "string" && /^(max|min)$/i.test(x.trim())) stats[id] = x.trim().toLowerCase();
-        else if (Number.isFinite(Number(x)) && x !== null && x !== "") stats[id] = Number(x);
-        else c.warn(`${w} › stats › ${id}`, `${JSON.stringify(x)} — use a number, max or min`);
-      }
-      out.stats = stats;
-    } else if (k === "items") {
-      const items: Record<string, number> = {};
-      for (const [id, x] of Object.entries(v)) {
-        const n = Number(x);
-        if (Number.isFinite(n)) items[id] = Math.round(n); else c.warn(`${w} › items › ${id}`, "expected a count");
-      }
-      out.items = items;
-    } else if (k === "flags") out.flags = v as StatePatch["flags"];
-    else if (k === "rel") out.rel = v as StatePatch["rel"];
-  }
-  return out;
 }
 
 /** `losses: [ids]` and `outcome_kinds: { id: won|escaped|conceded|lost }`: the author says how each ending counts. */

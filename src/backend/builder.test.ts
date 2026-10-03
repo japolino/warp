@@ -1,9 +1,6 @@
 // The AI builder end to end against a fake host and a scripted model.
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { reviewBalance } from "../engine/balance.js";
-import { loadRuleset } from "../engine/loader.js";
-import { normalizeRuleset } from "../engine/ruleset.js";
 import { TEMPLATES } from "../engine/templates/index.js";
 
 const HOMETOWN = TEMPLATES.find((t) => t.id === "hometown")!;
@@ -105,6 +102,9 @@ describe("AI builder", () => {
     expect(s.parts.every((p: any) => p.status !== "error")).toBe(true);
     expect(s.preview.summary).toMatch(/Hometown: \d+ meters/);
     expect(s.preview.hud.bars.length).toBeGreaterThan(0);
+    // One pass: no designer, depth audit or balance review in the draft.
+    for (const k of ["log", "depth", "designPass", "effort", "waived"]) expect(s[k]).toBeUndefined();
+    expect(s.preview.warnings).toBeUndefined();
     // Drafting prompts carried the answers, the additions and the status block.
     const draftPrompt = prompts.find((p) => p.includes('Write the "stats" section'))!;
     expect(draftPrompt).toContain("Romantic");
@@ -137,37 +137,4 @@ describe("AI builder", () => {
     await b.builderInstall("c1", undefined);
     expect(Object.values(books)[0].entries.length).toBe(s.parts.length); // updated in place, nothing duplicated
   });
-});
-
-describe("balance review", () => {
-  test("flags impossible checks, runaway meters, instant rules, dead stats and unwinnable fights", () => {
-    const { ruleset } = normalizeRuleset({
-      stats: {
-        hunger: { kind: "meter", good: "low", start: 0, per_hour: 50 },
-        luck: { kind: "attribute", start: 1, max: 10 },
-        health: { kind: "meter", start: 100 },
-      },
-      actions: { heist: { label: "Rob the bank", check: { chance: 2 } } },
-      triggers: { starving: { when: "hunger < 50", do: { hint: "hungry" } } },
-      encounters: {
-        dragon: {
-          name: "Dragon",
-          foe: { name: "Dragon", stats: { hp: { start: 100, max: 100 } } },
-          actions: { poke: { label: "Poke", effects: { foe: { hp: -1 } } } },
-          foe_moves: { burn: { desc: "breathes fire", weight: 1, health: -40 } },
-          end_when: { won: "foe.hp <= 0", lost: "health <= 0" },
-          outcomes: { won: {}, lost: {} },
-        },
-      },
-    });
-    const ids = reviewBalance(ruleset!).map((w) => w.id).sort();
-    expect(ids).toEqual(["dead:luck", "drift:hunger", "enc-hard:dragon", "odds:heist", "trig:starving"]);
-  });
-
-  test("the shipped templates are free of balance problems", () => {
-    for (const t of TEMPLATES) {
-      const { ruleset } = loadRuleset(t.parts.map((p, i) => ({ label: p.label, content: p.yaml, order: i })));
-      expect({ template: t.id, warnings: reviewBalance(ruleset!).map((w) => w.text) }).toEqual({ template: t.id, warnings: [] });
-    }
-  }, 30000);
 });

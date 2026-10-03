@@ -2,6 +2,8 @@
 
 Follow-up to two stress-test rulebooks (a LitRPG and a low-fantasy game). They pushed the rulebook format until it resisted. This pass fixes the bugs they hit and adds what they couldn't express. Rulebooks without the new keys behave as before; deliberate exceptions are listed under Compatibility.
 
+> Later note: the checker and simulator tools (`warp_check`, `warp_simulate`, encounter `sim:`) and the balance review were moved out of Warp, to a separate Warp Studio. The old version is on the `legacy` branch.
+
 ## Bugs fixed
 
 - A percentage cost on an ability (`cost: { hp: "-15%" }`) no longer crashes. Every cost path reads costs the way effects do. `warp_check` now evaluates costs instead of reporting a broken book as clean.

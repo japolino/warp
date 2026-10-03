@@ -2,7 +2,7 @@
 
 Second implementation pass after the product audit at `92f1557`. It builds on `SESSION_AGENCY_FIXES.md`. No minigame, table, song or dungeon grid was removed.
 
-> Later note: minigames, gambling, dungeons and dating were removed from Warp afterwards. The parts below about them describe the old version, which is on the `legacy` branch.
+> Later note: minigames, gambling, dungeons and dating were removed from Warp afterwards, and the builder's Deepen pass and connectivity audit moved to a separate Warp Studio. The parts below about them describe the old version, which is on the `legacy` branch.
 
 ## Changed behavior
 

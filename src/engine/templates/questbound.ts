@@ -510,7 +510,6 @@ encounters:
     desc: Something in old armour climbs out of the barrow, cold light where its eyes should be.
     tags: [violence, horror]
     goal: Destroy it, or break the oath that binds it with a dawn-blessing
-    sim: { stats: { level: 5, might: 6, blades: 40, lore: 30 }, items: { holy_symbol: 1 } }   # judged where it's meant to be met: a seasoned adventurer with Aldous's symbol
     foe:
       name: Barrow-Wight
       armor: { hp: 3 }            # rusted plate: steel bites less, the rite doesn't care

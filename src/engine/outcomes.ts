@@ -1,5 +1,5 @@
 // How an encounter ending reads for the player: won, escaped, conceded or lost.
-// One classifier for the simulator, the balance review, quest hooks and the encounter view.
+// One classifier for quest hooks and the encounter view.
 // Order: the author's word (`losses:` / `outcome_kinds:`), momentum's win/lose, the shape of
 // the rules (an end_when on foe stats heading the player's way is a win; one on a player stat
 // heading toward its bad end is a loss; an ending only a failed move can reach is a loss, one

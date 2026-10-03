@@ -2,8 +2,7 @@ import { expect, test } from "bun:test";
 import { loadRuleset } from "./loader.js";
 import { lintRuleset } from "./lint.js";
 import { initialState } from "./state.js";
-import { buildChoices } from "./view.js";
-import { previewText } from "../tools/rulebook-tools.js";
+import { buildChoices, buildHud } from "./view.js";
 
 const BASE = `stats:
   stat_points: { kind: attribute, start: 5, max: 99 }
@@ -33,7 +32,7 @@ items: { hammer: Hammer }
   expect(lintRuleset(r).filter((i) => i.where.startsWith("Actions ›"))).toEqual([]);
 });
 
-test("allocate: replaces the buttons — no choices, a sidebar pool, and the preview says so", () => {
+test("allocate: replaces the buttons — no choices, and a sidebar pool", () => {
   const yaml = `stats:
   stat_points: { kind: attribute, label: Stat Points, start: 5, max: 99 }
   str: { kind: attribute, label: STR, start: 5, max: 99, allocate: stat_points }
@@ -43,5 +42,6 @@ actions: { rest: { label: Rest, effects: { str: +0 } } }
   const r = loadRuleset([{ label: "t", order: 0, content: yaml }]).ruleset!;
   expect(lintRuleset(r).filter((i) => i.message.includes("allocate:"))).toEqual([]);
   expect(buildChoices(r, initialState(r), { lines: [], veils: [] }).some((c) => /STR|AGI/.test(c.label))).toBe(false);
-  expect(previewText([yaml])).toContain("Spend Stat Points (5 now) with + beside: STR, AGI");
+  const hud = JSON.stringify(buildHud(r, initialState(r)));
+  expect(hud).toContain("Stat Points");
 });

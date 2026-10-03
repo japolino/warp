@@ -215,9 +215,7 @@ encounters:
     # outcome_kinds: { won: won, escaped: escaped, paid_off: conceded }   # won | escaped | conceded | lost
     #   Without these, Warp infers: an end_when on a foe stat heading your way is a win (slain: "foe.hp <= 0"), one on your stat
     #   heading toward its bad end is a loss; an ending only a failed move reaches is a loss; then the name (beaten, captured… = lost;
-    #   escaped, fled… = escaped; paid, bribe, surrender… = conceded). "Ends well" = anything but lost. The checker wants random play to WIN sometimes — escapes don't count.
-    # sim: { stats: { level: 12, hp: max }, flags: { met_kael: true }, items: { sword: 1 }, location: gate }
-    #   the state warp_check and warp_simulate judge it from (a late boss at its intended level); also takes conditions, rel: { maud: { trust: 60 } }, perks, wear. Triggers run after it.
+    #   escaped, fled… = escaped; paid, bribe, surrender… = conceded). "Ends well" = anything but lost.
     danger: "Pain at 80 and you're overpowered"   # optional; otherwise derived
     # narrate: true = every round goes to the narrator as a full reply (old style). Default: rounds are told briefly
     #   in one encounter message that grows, then replaced by a summary — far fewer tokens, no repetitive loops.
@@ -487,6 +485,6 @@ Partial outcomes and costs make failures interesting: a fail should change somet
 
 ## finishing
 Prefer fewer systems with stronger interactions. Add a subsystem only when it serves the chosen experience; quests remain available but are not mandatory. Narrative-only meters can intentionally inform prose without changing checks.
-The audit measures static mechanical connections, not fun or completeness. Fix errors, review gaps, and accept deliberate thin spots rather than chasing 100. Check that different approaches have different risks or payoffs and that setbacks change the next decision.
-You're done when the intended experience is playable: run the audit and either fix each gap or say why it's deliberate. Simulate each encounter — no route should be pointless, none should be a guaranteed win, and the escape should cost something.
+Check that different approaches have different risks or payoffs and that setbacks change the next decision.
+You're done when the intended experience is playable: every stat, item and condition does something, and in each encounter no route is pointless, none is a guaranteed win, and the escape costs something.
 `;

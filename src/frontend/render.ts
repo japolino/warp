@@ -570,22 +570,6 @@ export function renderSuggestion(s: SuggestionView): string {
 
 // ───────────────────────── ruleset status & setup ─────────────────────────
 
-/** The depth audit, for the Ruleset tab: what doesn't connect yet, and what a fix looks like. */
-export function renderDepthCard(s: RulesetStatus): string {
-  const d = s.depth;
-  if (!d || s.state !== "ok") return "";
-  const gaps = d.gaps.filter((g) => g.severity === "gap"), thin = d.gaps.filter((g) => g.severity === "thin");
-  const row = (g: NonNullable<RulesetStatus["depth"]>["gaps"][number]) => `<details class="warp-depth-row warp-depth-${g.severity}"><summary>${esc(g.text)}</summary><p class="warp-dim">${esc(g.fix)}</p></details>`;
-  return `<div class="warp-card warp-depth">
-    <h3>Rules connectivity <span class="warp-dim">${d.score} / 100</span></h3>
-    <p class="warp-dim">A static check of how rules connect: item uses, stat references and encounter routes. This is not a rating of fun or story quality. A small, focused ruleset can be ready to play without reaching 100.${d.gaps.length ? "" : " No connectivity findings."}</p>
-    ${d.drafted.length ? `<p class="warp-depth-drafted">✎ Warp drafted what these items do, from their descriptions: <b>${esc(d.drafted.join(", "))}</b>. They're in the <i>warp-ruleset · item uses</i> entry — edit or delete it freely.</p>` : ""}
-    ${gaps.length ? `<div class="warp-choice-group-label">Connections to review · ${gaps.length}</div>${gaps.map(row).join("")}` : ""}
-    ${thin.length ? `<div class="warp-choice-group-label">Optional expansion ideas · ${thin.length}</div>${thin.slice(0, 12).map(row).join("")}${thin.length > 12 ? `<p class="warp-dim">…and ${thin.length - 12} more.</p>` : ""}` : ""}
-    ${d.gaps.length ? `<div class="warp-row"><button class="warp-btn warp-btn-primary" data-b="open-deepen">Review connections with the builder</button>${gaps.some((g) => g.id.startsWith("item-dead:")) ? `<button class="warp-btn" data-draft-items>Draft item uses</button>` : ""}</div>` : ""}
-  </div>`;
-}
-
 export function renderRulesetCard(s: RulesetStatus, hasChat: boolean): string {
   if (!hasChat) {
     return `<div class="warp-card"><h3>Open a chat</h3><p>Warp runs inside a chat whose character has a <b>warp-ruleset</b> lorebook.</p></div>`;
@@ -718,11 +702,6 @@ export function renderSettings(s: Settings, status: RulesetStatus | null, connec
       <option value="">Same as the chat</option>
       ${connections.map((c) => `<option value="${esc(c.id)}"${c.id === s.helperConnectionId ? " selected" : ""}>${esc(c.name)}</option>`).join("")}
     </select>
-  </div>
-  <div class="warp-card">
-    <h3>Encounters & items</h3>
-    <p>Encounters are told round by round in one message that grows, then summed up. One line goes into the story when each ends.</p>
-    ${toggle("draftItemUses", "Give useless items a purpose", "Items the rules never use get one drafted from their description (a use or a gear bonus), saved as an editable \"item uses\" lorebook entry.", s.draftItemUses)}
   </div>
   <div class="warp-card">
     <h3>Content: lines & veils</h3>

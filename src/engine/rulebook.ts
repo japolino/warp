@@ -103,7 +103,6 @@ export function joinRulebook(parts: RulebookPart[], title: string): string {
     `# Warp rulebook — ${title}`,
     "# Each document below is one section of the ruleset (a lorebook entry named \"warp-ruleset · <section>\").",
     "# Edit it anywhere, then import it back: Warp → Ruleset → Import a rulebook.",
-    "# Format reference and design guide: docs/RULEBOOK_GUIDE.md in the Warp repository.",
   ].join("\n");
   return `${head}\n${parts.map((p) => `--- # ${p.label}\n${p.yaml.trim()}\n`).join("\n")}`;
 }

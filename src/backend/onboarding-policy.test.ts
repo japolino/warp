@@ -4,7 +4,7 @@ import { afterReply } from "./turn.js";
 import { initialState } from "../engine/state.js";
 import { loadRuleset } from "../engine/loader.js";
 import { DEFAULT_SETTINGS } from "../shared/protocol.js";
-import { renderDepthCard, renderSettings } from "../frontend/render.js";
+import { renderSettings } from "../frontend/render.js";
 
 let oldHost: unknown;
 let seq = 0;
@@ -90,11 +90,4 @@ test("settings keep basics, with advanced cost controls collapsed by default and
   expect(html).toContain('<details data-section="advanced-generation"><summary>');
   expect(html).toContain("even when you never choose them");
   expect(html).toContain("stays selected");
-});
-
-test("connectivity is not presented as a fun score or perfection requirement", () => {
-  const html = renderDepthCard({ state: "ok", depth: { score: 70, gaps: [], drafted: [] } } as any);
-  expect(html).toContain("Rules connectivity");
-  expect(html).toContain("not a rating of fun");
-  expect(html).toContain("without reaching 100");
 });
