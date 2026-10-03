@@ -9,10 +9,11 @@
 
 A game engine under your roleplay. Warp owns stats, dice, time, inventory and relationships; the model only narrates outcomes the engine has already decided.
 
-- **Choices** appear under the latest reply (hotkeys 1–9, odds on each button). You can also just type — a quick referee call maps risky attempts to an action (or, when nothing listed fits, rolls it on your closest ability), and the dice decide.
+- **Choices** appear under the latest reply (hotkeys 1–9, odds on each button). Each choice carries a difficulty word, so the odds follow the words. You can also just type: quoted dialogue is never rolled, and a quick read rolls only risky, contested attempts (on a listed action, or on your closest ability), and the dice decide.
 - **Status panel** floats over the chat (drag it to any screen edge to attach it as a sidebar or strip). Plus a **Warp** drawer tab: Sheet · Journal · Ruleset · Settings.
 - **Dice & change chips** on every reply. Changes read from the story are dashed and can be undone with ×.
-- **Swipes reroll** (Casual) by default; turn off for Ironman. State always follows the active swipe.
+- **Swipes reroll** (Casual) by default, for typed and clicked moves alike; turn off for Ironman (the same roll on every swipe). State always follows the active swipe.
+- **The greeting sets the scene.** When a chat opens, Warp reads the greeting once for the start time, the place, who is there and what they look like, and writes the first three choices. If it can't, the Scene section asks you to set the time.
 
 ## What a ruleset can do
 
@@ -27,8 +28,7 @@ A game engine under your roleplay. Warp owns stats, dice, time, inventory and re
 | Goals | Up to 3 open story goals: promises, favours and plans the story makes, plus the author's own (`done_when:`, `judge:`, `stakes:`, `reward:`). Only the rules close a goal |
 | Rules | Triggers by formula or in plain language (`when_scene`), uncertain reactions (`decide`) rolled on model odds |
 | Secrets | Ladders of stages that open by condition. Only opened stages ever reach the narrator's prompt, so they can't leak; a stage-0 cue lets it play someone hiding something without knowing what |
-| Live choices | Choices written for the moment. The writer must tag each one from a fixed list, and the tag decides the check and effects; each choice carries a difficulty word, so the odds follow the words. The same tag on the same person soon again gives less (taper) |
-| Your moves, told | A clicked move with a roll is settled on the click, and your message says how it went in your character's voice ("*I slip the lock on the second try…*") instead of "Pick the lock"; the narrator continues from there. Swipes keep that result; ↻ **Reroll** (Casual) rolls again and rewrites the line. Typed messages are left as you wrote them. Settings › **Say how my move went** |
+| Live choices | Three choices written for the moment, in the same call as the bookkeeping. The writer must tag each one from a fixed list, and the tag decides the check and effects; each choice also gets a difficulty word (none, easy, fair, hard, extreme) that sets its target, so "vault the bar" and "shove past him" show different odds. The same tag on the same person soon again gives less (taper). With Jev, Jev weighs which kinds of move fit and rates each written choice's difficulty |
 | Romance only | The **Romance** template is just the love story: affection, trust and attraction that can only move a few points per reply (a slow burn the narrator can't rush), people who remember what you did, a clock and calendar, and choices written for each moment (tender, playful, honest, bold, give space) with no dice. No meters, money or skills, and typed messages are never rolled. Places come from the story, so it fits any card |
 
 ## Typing freely
@@ -36,10 +36,10 @@ A game engine under your roleplay. Warp owns stats, dice, time, inventory and re
 Most roleplay is typed, so the core systems follow the story rather than waiting for a button:
 
 - **Fewer grind loops.** Repeating the same check gives diminishing rewards that recover with in-game time; new approaches keep full value. See [docs/DEPTH_PASS.md](docs/DEPTH_PASS.md).
-- **Typed attempts.** A risky thing you type that no action covers (talking your way past a bouncer, vaulting a bar, shoving someone) still rolls: d20 plus your closest skill or attribute's share of a bonus, against a difficulty the decision model reads from the scene. The narrator keeps what you wrote you do; the dice decide only how it turns out. In a contest it's a move like any other. Tune or turn off with `checks:`.
+- **Typed attempts.** A risky thing you type that no action covers (talking your way past a bouncer, vaulting a bar, shoving someone) still rolls, but only when it can fail and someone or something works against it: d20 plus your closest skill or attribute's share of a bonus, against a difficulty the decision model reads from the scene. Quoted dialogue and everyday acts are never rolled. The narrator keeps what you wrote you do; the dice decide only how it turns out. In a contest every message is a move. Tune or turn off with `checks:` (Story rulesets never roll).
 - **Skills grow with use.** Every check practises the skills and attributes it reads — harder checks teach more, failures teach a little less, and progress slows near the top. Training the story describes (an hour at the gym, a night of study) counts too. A thin green line under each skill shows progress to the next point. Tune with `growth:` or `growth: 0` on a stat.
 - **Who's in the scene.** After each reply the story is read for who is actually there — people it introduces, people who leave, who came along after a move. The sheet shows the people here and folds the rest under **Elsewhere**; the narrator only gets relationship details for the people here, so absent characters don't drift back in.
-- **Contests from the story.** When a fight, chase or argument breaks out in the prose or in what you type, a contest starts — against whoever it's with. Only the rules end it. `conflict: { from_story: false }` keeps contests to the rules.
+- **Contests from the story.** When a fight, chase or argument breaks out in the prose or in what you type, a contest starts against whoever it's with. The story can start one but never end it: only the rules do (a full swing of the momentum gauge), or Break off / Give in. `conflict: { from_story: false }` keeps contests to the rules.
 - **Things you use.** Items can have uses (`uses: 5`): each use the story shows spends one, and the last spends the item. For anything the reply mentions, the bookkeeper asks what happened to it — used, used up, or given away.
 
 ## Visual novel mode
@@ -52,22 +52,18 @@ With the Cue visual-novel extension open, Warp's choices appear in Cue's view as
 
 ## Decision model (System 1)
 
-Warp asks small, typed questions — *which action does this message attempt?*, *how does Robin react?*, *is {{user}} in danger?*, *did trust go up?* — and gets back **probabilities**, never outcomes. When something is uncertain the engine rolls on those odds with its own seeded dice, so swipes and Ironman stay honest.
+Warp asks small, typed questions — *which action does this message attempt?*, *is it risky?*, *is Mira still here?*, *did trust go up?* — and gets back **probabilities**, never outcomes. When something is uncertain the engine rolls on those odds with its own seeded dice, so swipes and Ironman stay honest. Both providers get exactly the same questions.
 
 Pick the provider in **Warp → Settings → Decision model**:
 
-| Provider | What it is | Cost / speed |
+| Provider | What it does | Calls per turn |
 |---|---|---|
-| **Helper LLM** (default) | Your helper connection imitates typed answers in one batched call | One small call per question batch |
-| **Jev** | [TypeSafe's](https://typesafe.ai) System-1 model: typed answers with calibrated probabilities in ~70–500 ms. Paste your API key (stored encrypted). Your roleplay text is sent to TypeSafe. | Very cheap, fast; bookkeeping becomes many atomic questions in parallel |
-| **Rules only** | Keyword matching, no network | Free; never rolls what you type |
+| **Helper** (default) | Your helper connection answers the questions inside its one call after the reply, together with the choices and any new text (a new outfit line, a memory, a newcomer's name) | 1 helper call per turn. A typed risky attempt in an Adventure ruleset costs 1 more, before the reply (the read must come before the dice) |
+| **Jev** | [TypeSafe's](https://typesafe.ai) System-1 classifier (or any service with the same API, e.g. Jev on OpenRouter) answers every question, with calibrated probabilities in ~70–500 ms. Paste your API key (stored encrypted). Your roleplay text is sent to TypeSafe. The helper only writes the choices and new text | Always 1 helper call per turn, plus 1–3 fast, cheap Jev calls. **Jev makes typed play faster and cheaper** |
 
-Confidence sets the friction when you type instead of clicking:
+A typed message rolls only when the read is at least 75% sure it attempts something risky and contested (or a listed action with a check). The dice chip says how sure it was, with a **Not an action?** button to redo the turn without a roll. Everything else is plain roleplay. Plain-language triggers (`when_scene`) are judged in the same call after the reply and fire on the next turn.
 
-- **≥ auto threshold** (default 75%) → rolled automatically. The dice chip says how sure it was, with a **Not an action?** button to redo the turn without a roll.
-- **below** → treated as plain roleplay.
-
-**Why?** — every change chip on a reply can be opened to see what caused it: the roll, the rule and its condition, the time that passed, or what was read from the story.
+Every turn records what it cost (`calls` on the turn record), so the budget can be checked.
 
 ## Where rules live
 
