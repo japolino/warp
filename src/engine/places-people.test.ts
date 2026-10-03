@@ -1,5 +1,5 @@
-// Places, people and world gates: per-person targets, conditional front stages,
-// always-offered perks with their own points, and per-place indoor temperature.
+// Places, people and world gates: per-person targets, always-offered perks with
+// their own points, and per-place indoor temperature.
 
 import { describe, expect, test } from "bun:test";
 import { lintRuleset } from "./lint.js";
@@ -103,41 +103,6 @@ describe("people", () => {
   test("targets: naming someone unknown warns", () => {
     const { issues } = load({ actions: { train: { label: "Train", targets: ["maud", "nobody"] } } });
     expect(issues.some((i) => i.where === "Actions › train › targets" && i.message.includes("nobody"))).toBe(true);
-  });
-});
-
-describe("fronts", () => {
-  const front = (stage: Record<string, unknown>) => load({
-    flags: { ...BASE.flags, seized: false, spared: false },
-    actions: { wait: { label: "Wait", effects: {} } },
-    fronts: { purge: { per_turn: 50, stages: [{ at: 40, surface: "The purge comes.", ...stage }] } },
-  });
-
-  test("a stage's do: only happens when its if: holds; else: happens otherwise", () => {
-    const st = { if: "not flag('maud_gone')", do: { flags: { seized: true } }, else: { flags: { spared: true } } };
-    const { r, issues } = front(st);
-    expect(issues).toEqual([]);
-    let s = step(r, initialState(r), "wait");
-    expect(s.fronts.purge.stage).toBe(0);
-    expect(s.flags.seized).toBe(true);
-    expect(s.flags.spared).toBe(false);
-    let g = initialState(r);
-    g.flags.maud_gone = true;
-    g = step(r, g, "wait");
-    expect(g.fronts.purge.stage).toBe(0);
-    expect(g.flags.seized).toBe(false);
-    expect(g.flags.spared).toBe(true);
-  });
-
-  test("when: is an alias for if:; else: without a condition warns", () => {
-    const { r } = front({ when: "flag('maud_gone')", do: { flags: { seized: true } } });
-    expect(step(r, initialState(r), "wait").flags.seized).toBe(false);
-    expect(front({ else: { flags: { spared: true } } }).issues.some((i) => i.where.endsWith("› else"))).toBe(true);
-  });
-
-  test("a stage without if: behaves as before", () => {
-    const { r } = front({ do: { flags: { seized: true } } });
-    expect(step(r, initialState(r), "wait").flags.seized).toBe(true);
   });
 });
 

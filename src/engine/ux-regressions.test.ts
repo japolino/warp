@@ -96,7 +96,6 @@ test("reverse-ordered trigger chains settle beyond five passes and report a capp
     } else {
       expect(result.s.flags.f300).toBe(false);
       expect(result.rec.hints.join(" ")).toContain("safety limit");
-      expect(result.rec.events.some((e) => e.t === "news" && e.text.includes("safety limit"))).toBe(true);
     }
   }
 });

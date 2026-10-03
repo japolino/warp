@@ -10,7 +10,7 @@ export const FUNCTIONS = [
   "has", "count", "flag", "cond", "at", "rel", "met", "between", "roll",
   "wearing", "worn", "trait", "present", "codex", "feat", "perk",
   "eff", "gear", "integrity",
-  "secret", "front", "front_stage", "happened", "saved", "body", "transformed", "age",
+  "secret", "saved", "body", "transformed", "age",
   "quest", "quest_active", "quest_done", "quest_failed", "goal", "quests_done", "memories", "cond_of", "foe_cond", "stat_max", "foe_max", "in_encounter",
   "min", "max", "clamp", "floor", "ceil", "round", "abs",
 ];
@@ -21,6 +21,7 @@ const REMOVED_NAMES: Record<string, string> = {
   in_date: "dating", on_outing: "dating", "partner()": "dating", "dates()": "dating", "stage()": "dating",
   pregnant: "family and pregnancy", pregnancy_weeks: "family and pregnancy", "children()": "family and pregnancy",
   "seen_by()": "being seen", "fame()": "being seen",
+  "front()": "hidden world clocks (fronts)", "front_stage()": "hidden world clocks (fronts)", "happened()": "random events",
   "bond()": "feelings between people", "arc()": "companion lives", "where()": "schedules",
   at_work: "work shifts", "owed()": "bills and debts", "missed()": "bills and debts", "days_until()": "bills and debts",
 };
@@ -144,16 +145,8 @@ export function lintRuleset(r: Ruleset): Issue[] {
       if (!known) issues.push({ level: "warning", where, message: `changes foe stat "${stat}", which no encounter declares` });
       check(v, `${where} › foe › ${stat}`, extra);
     }
-    for (const [id, v] of Object.entries(e.front)) {
-      if (!r.fronts[id]) issues.push({ level: "warning", where, message: `moves front "${id}", which doesn't exist${suggest(id, Object.keys(r.fronts))}` });
-      check(v, `${where} › front › ${id}`, extra);
-    }
     for (const id of e.reveal) {
       if (!r.secrets[id]) issues.push({ level: "warning", where, message: `reveals secret "${id}", which doesn't exist${suggest(id, Object.keys(r.secrets))}` });
-    }
-    if (e.gauge !== undefined) {
-      if (!r.randomEvents.enabled) issues.push({ level: "warning", where, message: "moves the event gauge, but there are no random events" });
-      check(e.gauge, `${where} › gauge`, extra);
     }
     const conds = Object.keys(r.conditions);
     for (const [id, spec] of Object.entries(e.inflict)) {
@@ -316,27 +309,6 @@ export function lintRuleset(r: Ruleset): Issue[] {
   for (const id of r.hud.bars) if (!r.stats[id]) issues.push({ level: "warning", where: "HUD › bars", message: `"${id}" isn't a stat` });
 
   for (const sec of Object.values(r.secrets)) sec.stages.forEach((st, i) => check(st.when, `Secrets › ${sec.id} › stage ${i + 1} › when`));
-  for (const f of Object.values(r.fronts)) {
-    const w = `Fronts › ${f.id}`;
-    check(f.rate, `${w} › per_day`);
-    check(f.perTurn, `${w} › per_turn`);
-    check(f.when, `${w} › when`);
-    f.stages.forEach((st, i) => {
-      checkEffect(st.effects, `${w} › stage ${i + 1}`);
-      check(st.if, `${w} › stage ${i + 1} › if`);
-      if (st.else) checkEffect(st.else, `${w} › stage ${i + 1} › else`);
-    });
-    const moved = f.pushes.length > 0 || f.rate !== 0 || f.perTurn !== 0;
-    if (!moved) issues.push({ level: "warning", where: w, message: "never moves on its own — give it `per_day:`, `per_turn:` or `story:` pushes (or move it with `front:` effects)" });
-  }
-  if (r.randomEvents.enabled) {
-    check(r.randomEvents.perDay, "Random events › per_day");
-    check(r.randomEvents.perTurn, "Random events › per_turn");
-    for (const e of Object.values(r.randomEvents.events)) {
-      check(e.when, `Random events › ${e.id} › when`);
-      checkEffect(e.effects, `Random events › ${e.id}`);
-    }
-  }
   check(r.liveChoices.when, "Live choices › when");
   for (const a of Object.values(r.liveChoices.tags)) checkAction(a, `Live choices › tags › ${a.id}`);
   if (r.checkpoints.loop) {

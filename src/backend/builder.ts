@@ -158,7 +158,7 @@ const SYSTEMS: { id: string; label: string }[] = [
   { id: "journal", label: "Codex & feats" },
   { id: "abilities", label: "Abilities & spells (your persona's own moves)" },
   { id: "perks", label: "Levels & perks (pick one of a few)" },
-  { id: "story", label: "Secrets, a living world & choices for the moment" },
+  { id: "story", label: "Secrets & choices for the moment" },
 ];
 
 function coreQuestions(defaultSystems: string[]): BuilderQuestion[] {
@@ -320,8 +320,6 @@ function buildPreview(s: BuilderSession) {
     feats: Object.keys(r.feats).length,
     perks: Object.keys(r.perks).length,
     secrets: Object.keys(r.secrets).length,
-    fronts: Object.keys(r.fronts).length,
-    events: Object.keys(r.randomEvents.events).length,
   };
   const phrase = Object.entries(counts).filter(([, n]) => n).map(([k, n]) => `${n} ${n === 1 ? k.replace(/s$/, "").replace(/^people$/, "person").replace(/^codex$/, "codex entry") : k}`).join(", ");
   const extras = [

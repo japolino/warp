@@ -16,7 +16,7 @@ const PART_OF_KEY: Record<string, PartLabel> = {
   quests: "quests",
   codex: "journal", feats: "journal", perks: "journal", abilities: "journal", checkpoints: "journal", endings: "journal",
   triggers: "rules", rules: "rules",
-  secrets: "story", fronts: "story", random_events: "story", events: "story", live_choices: "story",
+  secrets: "story", live_choices: "story",
 };
 
 export interface RulebookPart { label: string; yaml: string }

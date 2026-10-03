@@ -151,8 +151,6 @@ export interface HudView {
   perkPick: number;
   /** The player's own abilities (spells, techniques): what they cost, uses left, and whether they can be used now. */
   abilities: { id: string; name: string; desc: string | null; cost: string | null; left: number | null; locked: string | null; choice: string }[];
-  /** What has surfaced in the world (newest first). */
-  news: { text: string; when: string | null }[];
   /** Body parts and their traits, when the ruleset has a body. */
   body: { part: string; label: string; text: string; covered: boolean }[] | null;
   /** Transformations under way. */

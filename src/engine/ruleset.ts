@@ -86,12 +86,8 @@ export interface Effect {
   undress: string[];
   /** Damage worn clothing by slot: `damage: { top: 30 }` (integrity points). */
   damage: Record<string, string | number>;
-  /** Move hidden world clocks: `front: { gangs: -20 }`. */
-  front: Record<string, string | number>;
   /** Open the next stage of these secrets, whatever their conditions say. */
   reveal: string[];
-  /** Push the random-event gauge up (+) or back (−). */
-  gauge?: string | number;
   /** Swing the encounter's momentum toward the player (+) or the foe (−). */
   momentum?: string | number;
   /** Set body traits: `body: { hair: { color: red } }` (null removes a trait). */
@@ -479,67 +475,6 @@ export interface SecretDef {
 }
 
 /** A hidden world clock. It fills with in-game time; each stage it crosses surfaces in the story. */
-export interface FrontStage {
-  at: number;
-  /** Clock value from which the hint shows (default: halfway from the previous stage). */
-  hintAt: number;
-  /** A sign shown to the narrator without a reason, until this stage surfaces. */
-  hint?: string;
-  /** What happened off-screen; kept from the narrator until this stage surfaces. */
-  backstage?: string;
-  /** The event that breaks the surface (narrated once). */
-  surface?: string;
-  /** Journal line (defaults to the surface text). */
-  news?: string;
-  effects: Effect;
-  /** `do:` only happens if this holds when the stage surfaces; `else:` happens instead. */
-  if?: string;
-  else?: Effect;
-}
-export interface FrontDef {
-  id: string;
-  label: string;
-  /** Clock points per in-game day (formula). */
-  rate: string | number;
-  /** Clock points per turn (formula). */
-  perTurn: string | number;
-  max: number;
-  start: number;
-  /** The clock only runs while this holds. */
-  when?: string;
-  stages: FrontStage[];
-  /** Plain-language story beats the decision model watches for; each moves the clock. */
-  pushes: { scene: string; add: number }[];
-}
-
-export interface RandomEventDef {
-  id: string;
-  label: string;
-  when?: string;
-  weight: number;
-  /** In-game days (turns without a clock) before it can happen again. */
-  cooldownDays: number;
-  /** A sign shown to the narrator before it happens. */
-  omen?: string;
-  /** Direction for the narrator when it happens. */
-  text: string;
-  news?: string;
-  effects: Effect;
-}
-/** Random events come from a hidden gauge that fills with in-game time — not a roll per reply. */
-export interface RandomEventsDef {
-  enabled: boolean;
-  perDay: string | number;
-  perTurn: string | number;
-  /** ±fraction of randomness on each fill. */
-  jitter: number;
-  /** Days of quiet after an event. */
-  restDays: number;
-  /** Gauge level (0–100) at which the next event is picked and its omen shows. 0 = no omens. */
-  omenAt: number;
-  events: Record<string, RandomEventDef>;
-}
-
 /**
  * Choices written for the moment. A model writes each label, but it must pick a
  * tag from this fixed list — the tag, not the model, decides the check and effects.
@@ -697,8 +632,6 @@ export interface Ruleset {
   /** Quests the story hands out: someone asks {{user}} for something, and it's tracked with stakes. */
   storyQuests: { enabled: boolean; max: number };
   secrets: Record<string, SecretDef>;
-  fronts: Record<string, FrontDef>;
-  randomEvents: RandomEventsDef;
   liveChoices: LiveChoicesDef;
   checkpoints: CheckpointsDef;
   endings: Record<string, EndingDef>;
@@ -1012,7 +945,7 @@ function normStat(id: string, raw: unknown, where: string, c: Ctx, forRel = fals
 export function emptyEffect(): Effect {
   return {
     stats: {}, set: {}, flags: {}, items: {}, rel: {}, addConditions: {}, removeConditions: [], decide: [],
-    foe: {}, unlock: [], wear: [], undress: [], damage: {}, front: {}, reveal: [], body: {}, transform: {}, learn: [],
+    foe: {}, unlock: [], wear: [], undress: [], damage: {}, reveal: [], body: {}, transform: {}, learn: [],
     inflict: {}, afflict: {}, cleanse: [], quest: {}, progress: {}, remember: {},
   };
 }
@@ -1068,6 +1001,7 @@ function normDecide(raw: unknown, where: string, c: Ctx, known: { stats: Set<str
 export const REMOVED_EFFECTS: Record<string, string> = {
   conceive: "family and pregnancy", pregnancy: "family and pregnancy",
   arc: "companion lives", bond: "feelings between people", bonds: "feelings between people",
+  front: "hidden world clocks (fronts)", fronts: "hidden world clocks (fronts)", gauge: "random events", events_gauge: "random events",
 };
 
 /** Effects accept both a structured form and a flat shorthand: `{ fatigue: +20, hint: "..." }`. */
@@ -1147,18 +1081,9 @@ export function normEffect(raw: unknown, where: string, c: Ctx, known: { stats: 
         if (isObj(v)) for (const [slot, d] of Object.entries(v)) { const x = c.expr(d, `${w} › ${slot}`); if (x !== undefined) e.damage[slot] = x; }
         else c.warn(w, "expected clothing damage by slot, like `top: 30`");
         break;
-      case "front": case "fronts":
-        if (isObj(v)) for (const [id, d] of Object.entries(v)) { const x = c.expr(d, `${w} › ${id}`); if (x !== undefined) e.front[id] = x; }
-        else c.warn(w, "expected clock changes like `gangs: -20`");
-        break;
       case "reveal":
         e.reveal.push(...list(v));
         break;
-      case "gauge": case "events_gauge": {
-        const x = c.expr(v, w);
-        if (x !== undefined) e.gauge = x;
-        break;
-      }
       case "momentum": case "swing": {
         const x = c.expr(v, w);
         if (x !== undefined) e.momentum = x;
@@ -1236,7 +1161,7 @@ export function normEffect(raw: unknown, where: string, c: Ctx, known: { stats: 
       default:
         // Flat shorthand: a known stat name maps to a delta.
         if (known.stats.has(k)) { const x = c.expr(v, w); if (x !== undefined) e.stats[k] = x; }
-        else c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, unlock, wear, undress, damage, front, reveal, gauge, momentum, body, transform, harm, hits, pierce, learn, inflict, cleanse, quest, progress, remember)`);
+        else c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, unlock, wear, undress, damage, reveal, momentum, body, transform, harm, hits, pierce, learn, inflict, cleanse, quest, progress, remember)`);
     }
   }
   return e;
@@ -2001,99 +1926,6 @@ function normSecrets(raw: unknown, c: Ctx): Record<string, SecretDef> {
   return out;
 }
 
-/** A stage's `if:` (alias `when:`) decides whether its `do:` happens; `else:` happens when it doesn't. */
-function stageIf(st: Raw, sw: string, c: Ctx, known: { stats: Set<string> }): Pick<FrontStage, "if" | "else"> {
-  const raw = st.if ?? st.when;
-  const cond = raw !== undefined ? c.expr(raw, `${sw} › if`) : undefined;
-  if (st.else !== undefined && cond === undefined) c.warn(`${sw} › else`, "only happens when the stage's `if:` doesn't hold — add `if:`");
-  if (cond === undefined) return {};
-  return { if: String(cond), ...(st.else !== undefined ? { else: normEffect(st.else, `${sw} › else`, c, known) } : {}) };
-}
-
-function normFronts(raw: unknown, c: Ctx, known: { stats: Set<string> }, where: (id: string) => string = (id) => `Fronts › ${id}`): Record<string, FrontDef> {
-  const out: Record<string, FrontDef> = {};
-  if (raw === undefined) return out;
-  if (!isObj(raw)) { c.warn("Fronts", "should be a map of front names to definitions"); return out; }
-  for (const [id, fRaw] of Object.entries(raw)) {
-    const w = where(id);
-    if (!isObj(fRaw)) { c.warn(w, "expected a front definition with `per_day:` and `stages:`"); continue; }
-    const max = Math.max(1, c.num(fRaw.max, `${w} › max`, 100));
-    const start = Math.max(0, Math.min(max, c.num(fRaw.start, `${w} › start`, 0)));
-    const rate = c.expr(fRaw.per_day ?? fRaw.rate ?? 0, `${w} › per_day`) ?? 0;
-    const perTurn = c.expr(fRaw.per_turn ?? 0, `${w} › per_turn`) ?? 0;
-    const when = fRaw.when !== undefined ? c.expr(fRaw.when, `${w} › when`) : undefined;
-    const raws: Raw[] = [];
-    (Array.isArray(fRaw.stages) ? fRaw.stages : []).forEach((st: unknown, i: number) => {
-      if (!isObj(st)) { c.warn(`${w} › stage ${i + 1}`, "each stage needs `at:` and a `surface:`"); return; }
-      raws.push(st);
-    });
-    raws.sort((a, b) => Number(a.at) - Number(b.at));
-    const stages: FrontStage[] = [];
-    let prev = start;
-    raws.forEach((st, i) => {
-      const sw = `${w} › stage ${i + 1}`;
-      const at = c.num(st.at, `${sw} › at`, NaN);
-      if (!Number.isFinite(at)) { c.warn(sw, "needs a numeric `at:` (the clock value where it surfaces)"); return; }
-      if (at > max) c.warn(sw, `at ${at} is above the clock's max (${max}) — it can never surface`);
-      const str = (k: string) => (typeof st[k] === "string" && st[k].trim() ? (st[k] as string) : undefined);
-      stages.push({
-        at,
-        hintAt: st.hint_at !== undefined ? c.num(st.hint_at, `${sw} › hint_at`, at) : prev + (at - prev) / 2,
-        hint: str("hint"), backstage: str("backstage"), surface: str("surface"), news: str("news"),
-        effects: normEffect(st.do ?? st.effects, `${sw} › do`, c, known),
-        ...stageIf(st, sw, c, known),
-      });
-      prev = at;
-    });
-    if (!stages.length) c.warn(w, "has no stages — nothing will ever surface");
-    const pushes: FrontDef["pushes"] = [];
-    const story = fRaw.story ?? fRaw.pushed_by;
-    if (isObj(story)) for (const [scene, n] of Object.entries(story)) pushes.push({ scene, add: c.num(n, `${w} › story › ${scene}`, 0) });
-    else if (Array.isArray(story)) story.forEach((p: unknown, i: number) => {
-      if (isObj(p) && typeof (p.if ?? p.when_scene) === "string") pushes.push({ scene: String(p.if ?? p.when_scene), add: c.num(p.add, `${w} › story #${i + 1}`, 0) });
-      else c.warn(`${w} › story #${i + 1}`, "expected `{ if: \"plain-language event\", add: 10 }`");
-    });
-    out[id] = {
-      id, label: typeof fRaw.label === "string" ? fRaw.label : titleCase(id),
-      rate, perTurn, max, start, stages, pushes,
-      ...(when !== undefined ? { when: String(when) } : {}),
-    };
-  }
-  return out;
-}
-
-function normRandomEvents(raw: unknown, c: Ctx, known: { stats: Set<string> }): RandomEventsDef {
-  const def: RandomEventsDef = { enabled: false, perDay: 25, perTurn: 0, jitter: 0.3, restDays: 1, omenAt: 80, events: {} };
-  if (raw === undefined || raw === false) return def;
-  if (!isObj(raw)) { c.warn("Random events", "should be a map with `events:`"); return def; }
-  const pace: Raw = isObj(raw.pace) ? raw.pace : raw;
-  def.perDay = c.expr(pace.per_day ?? def.perDay, "Random events › per_day") ?? def.perDay;
-  def.perTurn = c.expr(pace.per_turn ?? 0, "Random events › per_turn") ?? 0;
-  def.jitter = Math.max(0, Math.min(0.9, c.num(pace.jitter, "Random events › jitter", def.jitter)));
-  def.restDays = Math.max(0, c.num(pace.rest_days ?? pace.cooldown, "Random events › rest_days", def.restDays));
-  def.omenAt = Math.max(0, Math.min(99, c.num(pace.omen_at, "Random events › omen_at", def.omenAt)));
-  const evRaw = isObj(raw.events) ? raw.events : isObj(raw.list) ? raw.list : {};
-  for (const [id, e] of Object.entries(evRaw)) {
-    const w = `Random events › ${id}`;
-    const r: Raw = isObj(e) ? e : typeof e === "string" ? { text: e } : {};
-    if (typeof r.text !== "string" || !r.text.trim()) { c.warn(w, "needs `text:` — what happens, for the narrator"); continue; }
-    const when = r.when !== undefined ? c.expr(r.when, `${w} › when`) : undefined;
-    def.events[id] = {
-      id,
-      label: typeof r.label === "string" ? r.label : titleCase(id),
-      weight: Math.max(0, c.num(r.weight, `${w} › weight`, 1)),
-      cooldownDays: Math.max(0, c.num(r.cooldown, `${w} › cooldown`, 3)),
-      text: r.text,
-      ...(typeof r.omen === "string" && r.omen.trim() ? { omen: r.omen } : {}),
-      ...(typeof r.news === "string" ? { news: r.news } : {}),
-      ...(when !== undefined ? { when: String(when) } : {}),
-      effects: normEffect(r.do ?? r.effects, `${w} › do`, c, known),
-    };
-  }
-  def.enabled = Object.keys(def.events).length > 0;
-  if (!def.enabled) c.warn("Random events", "has no events — add some under `events:`");
-  return def;
-}
 
 function normLiveChoices(raw: unknown, c: Ctx, known: { stats: Set<string> }): LiveChoicesDef {
   const def: LiveChoicesDef = { enabled: false, label: "Right now", count: 3, tags: {} };
@@ -2276,6 +2108,7 @@ export const REMOVED_KEYS: Record<string, string> = {
   obligations: "bills and debts", debts: "bills and debts", jobs: "work shifts",
   discovery: "discovering new places",
   companions: "companion lives, jealousy and feelings between people",
+  fronts: "hidden world clocks (fronts)", random_events: "random events", events: "random events",
 };
 
 const SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
@@ -2552,10 +2385,8 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     if (q.board && !Object.values(locations).some((l) => l.board)) c.warn(`${w} › board`, "is posted on a board, but no location has `board: true`");
   }
 
-  // Story machinery: secrets, hidden world clocks, random events, choices written for the moment.
+  // Story machinery: secrets and choices written for the moment.
   const secrets = normSecrets(raw.secrets, c);
-  const fronts = normFronts(raw.fronts, c, known);
-  const randomEvents = normRandomEvents(raw.random_events ?? raw.events, c, known);
   const liveChoices = normLiveChoices(raw.live_choices, c, known);
   // Parts of Warp that were taken out (the old version is on the `legacy` branch).
   for (const [k, what] of Object.entries(REMOVED_KEYS)) if (raw[k] !== undefined) c.removed(titleCase(k), k, what);
@@ -2596,7 +2427,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     weather, wardrobe, encounters, codex, feats, perks,
     ...(perkPoints && stats[perkPoints] ? { perkPoints } : {}),
     perkPick, abilities, quests, questOrder, storyQuests,
-    secrets, fronts, randomEvents, liveChoices, checkpoints, endings, legacy, body, improvise, growth,
+    secrets, liveChoices, checkpoints, endings, legacy, body, improvise, growth,
   };
 
   // Cross-references that need everything loaded.

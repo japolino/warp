@@ -28,7 +28,6 @@ A game engine under your roleplay. Warp owns stats, dice, time, inventory and re
 | Progress | Codex entries that unlock (and can switch lorebook entries on), feats, perks bought with points |
 | Rules | Triggers by formula or in plain language (`when_scene`), uncertain reactions (`decide`) rolled on model odds |
 | Secrets | Ladders of stages that open by condition. Only opened stages ever reach the narrator's prompt, so they can't leak; a stage-0 cue lets it play someone hiding something without knowing what |
-| Living world | Hidden clocks (`fronts`) that fill with in-game time, show signs, and surface events; story beats judged by the decision model push them. Random events come from a hidden gauge per in-game day, with an omen before each |
 | Live choices | Choices written for the moment. The writer must tag each one from a fixed list, and the tag decides the check and effects; with Jev, the model weighs which kinds of move fit. Each choice can show its goal, risk and payoff in words — story stakes only; the tag still decides the odds and effects |
 | Checkpoints & endings | Save slots and a daily autosave; loading rewinds the game while the chat keeps its messages, and the ruleset decides what survives (the codex, secrets, chosen stats…). Time loops rewind by themselves when a condition holds. Endings fire by formula: the narrator writes an epilogue from what actually happened, then you start a new playthrough (carrying unlocks forward), load a save, or keep playing (unless hard mode) |
 | Your moves, told | A clicked move with a roll is settled on the click, and your message says how it went in your character's voice ("*I slip the lock on the second try…*") instead of "Pick the lock"; the narrator continues from there. Swipes keep that result; ↻ **Reroll** (Casual) rolls again and rewrites the line. Typed messages are left as you wrote them. Settings › **Say how my move went** |
@@ -179,7 +178,7 @@ triggers:
 
 **Formula names:** stats, flags, `hour`, `minute`, `day`, `weekday`, `turn`, `location`, and `has()`, `count()`, `flag()`, `cond()`, `at()`, `rel(person, stat)`, `met()`, `between(v, lo, hi)`, `min`, `max`, `clamp`, `floor`, `ceil`, `round`, `abs`.
 
-The Ruleset tab lists problems in plain language, with "did you mean" suggestions for typos. Keys of parts that were taken out of Warp (`dungeons:`, `dating:`, `look:`, minigame `game:` and `gamble:`, encounter `sim:`, `lineage:`, `observers:`, `mind:`, `obligations:`, `jobs:`, `discovery:`, `companions:`, person `schedule:`/`traits:`, place `exits:`/`travel:`/`requires:`, action `errand:`) are ignored with a plain warning; the old version is on the `legacy` branch.
+The Ruleset tab lists problems in plain language, with "did you mean" suggestions for typos. Keys of parts that were taken out of Warp (`dungeons:`, `dating:`, `look:`, minigame `game:` and `gamble:`, encounter `sim:`, `lineage:`, `observers:`, `mind:`, `obligations:`, `jobs:`, `discovery:`, `companions:`, `fronts:`, `random_events:`, person `schedule:`/`traits:`, place `exits:`/`travel:`/`requires:`, action `errand:`) are ignored with a plain warning; the old version is on the `legacy` branch.
 
 ## Develop
 

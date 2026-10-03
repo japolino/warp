@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import yaml from "js-yaml";
 import { lintRuleset } from "./lint.js";
 import { normalizeRuleset, type Ruleset } from "./ruleset.js";
-import { applyProposal, findAction, NEXT_EVENT, resolveTurn, resolveTurnFull, type Intent } from "./resolve.js";
+import { applyProposal, findAction, resolveTurn, type Intent } from "./resolve.js";
 import { applyEvent, cloneState, foldEvents, initialState, type GameState, type WarpEvent } from "./state.js";
 import { buildChoices, buildHud, narratorKnowledge, stateDigest } from "./view.js";
 import { cleanChoices, repairTag, usableTags } from "../backend/live.js";
@@ -27,7 +27,6 @@ actions:
   wait: { label: Wait, time: 60 }
   sleep: { label: Sleep, time: 1440 }
   find_clue: { label: Search, effects: { flags: { clue: true } } }
-  calm_town: { label: Calm the town, effects: { front: { gangs: -40 }, gauge: -50 } }
   confront: { label: Confront Ward, effects: { reveal: [ward] } }
 secrets:
   ward:
@@ -37,18 +36,8 @@ secrets:
     stages:
       - { when: "rel('ward', 'trust') >= 50", text: "A student died on Ward's watch." }
       - { when: "flag('clue')", text: "Ward faked the safety report." }
-fronts:
-  gangs:
-    label: The gangs
-    per_day: 20
-    story: { "{{user}} angers the gangs": 30 }
-    stages:
-      - { at: 40, hint: "Broken windows.", backstage: "The gangs took the market.", surface: "A shop burns.", do: { stress: +5 } }
-      - { at: 90, surface: "The gangs rule the streets." }
-random_events:
-  pace: { per_day: 50, jitter: 0, rest_days: 1, omen_at: 60 }
-  events:
-    storm: { omen: "Gulls fly inland.", text: "A storm hits.", cooldown: 5, do: { stress: +3 } }
+triggers:
+  new_day: { when: "day >= 2", do: { hint: "A new day dawns over the town." } }
 live_choices:
   count: 2
   tags:
@@ -130,103 +119,17 @@ describe("secrets", () => {
   });
 });
 
-describe("fronts", () => {
-  test("clocks fill with in-game time, not replies", () => {
-    const r = rules(["random_events"]);
-    const quick = play(r, initialState(r), ["wait", "wait"]).s; // 2 hours
-    const long = play(r, initialState(r), ["sleep"]).s; // a whole day
-    expect(quick.fronts.gangs.v).toBeCloseTo(20 * (2 / 24), 5);
-    expect(long.fronts.gangs.v).toBeCloseTo(20, 5);
-  });
-
-  test("the hint shows from halfway; the backstage stays hidden until the stage surfaces", () => {
-    const r = rules(["random_events"]);
-    let s = play(r, initialState(r), ["sleep"]).s; // clock 20 = halfway to 40
-    expect(narratorKnowledge(r, s)).toContain("Broken windows.");
-    expect(narratorKnowledge(r, s)).not.toContain("took the market");
-    const { s: after, recs } = play(r, s, ["sleep"]);
-    s = after;
-    expect(s.fronts.gangs.stage).toBe(0);
-    expect(recs[0].hints.join("\n")).toContain("A shop burns.");
-    expect(s.stats.stress).toBe(5);
-    const known = narratorKnowledge(r, s)!;
-    expect(known).toContain("took the market");
-    expect(known).not.toContain("Broken windows."); // that sign has played out
-    expect(buildHud(r, s).news[0].text).toBe("A shop burns.");
-  });
-
-  test("story beats judged by the decision model push the clock", () => {
-    const r = rules(["random_events"]);
-    const rec = resolveTurn(r, initialState(r), { actionId: "wait", via: "choice" }, { seed: "x", scene: { "front:gangs:0": true } });
-    const s = foldEvents(r, [rec.events], initialState(r));
-    expect(s.fronts.gangs.v).toBeCloseTo(30 + 20 / 24, 5);
-  });
-
-  test("effects can push a clock back", () => {
-    const r = rules(["random_events"]);
-    let s = play(r, initialState(r), ["sleep"]).s;
-    s = play(r, s, ["calm_town"]).s;
-    expect(s.fronts.gangs.v).toBeLessThan(5);
-  });
-
-  test("time the story covers after a reply moves the world too, and what surfaces is told next turn", () => {
-    const r = rules(["random_events"]);
-    let s = play(r, initialState(r), ["sleep"]).s; // clock 20
-    const events = applyProposal(r, s, { minutes: 26 * 60 });
-    s = foldEvents(r, [events], s);
-    expect(s.fronts.gangs.stage).toBe(0);
-    expect(s.notices.join(" ")).toContain("A shop burns.");
-    const next = resolveTurn(r, s, { actionId: "wait", via: "choice" }, { seed: "n" });
-    expect(next.hints.join("\n")).toContain("A shop burns.");
-    s = foldEvents(r, [next.events], s);
-    expect(s.notices).toEqual([]);
-  });
-});
-
-describe("random events", () => {
-  test("the gauge fills per day, shows an omen, then fires and rests", () => {
-    const r = rules();
-    let s = play(r, initialState(r), ["sleep"]).s; // 50
-    expect(s.gauge.v).toBeCloseTo(50, 5);
-    expect(s.gauge.next).toBeNull();
-    s = play(r, s, [{ actionId: "wait", via: "choice" }, "wait", "wait", "wait", "wait"]).s; // +~10 → omen line
-    expect(s.gauge.next).toBe("storm");
-    expect(narratorKnowledge(r, s)).toContain("Gulls fly inland.");
-    expect(narratorKnowledge(r, s)).not.toContain("storm");
-    const { s: after, recs } = play(r, s, ["sleep"]);
-    s = after;
-    expect(recs[0].hints).toContain("A storm hits.");
-    expect(s.gauge.v).toBe(0);
-    expect(s.gauge.next).toBeNull();
-    expect(s.gauge.rest).toBe(1);
-    expect(buildHud(r, s).news[0].text).toBe("A storm hits.");
-  });
-
-  test("events on cooldown don't bank a full gauge", () => {
+describe("notices", () => {
+  test("time the story covers after a reply runs the rules too, and what they say is told next turn", () => {
     const r = rules();
     let s = initialState(r);
-    s = foldEvents(r, [[{ t: "happen", id: "storm", src: "world" } as WarpEvent]], s);
-    s = play(r, s, ["sleep", "sleep"]).s;
-    expect(s.gauge.v).toBe(0);
-  });
-
-  test("the decision model's sense of the story is asked for, and then weighs the pick", () => {
-    const r = rules();
-    let s = play(r, initialState(r), ["sleep"]).s;
-    s = foldEvents(r, [[{ t: "gauge", set: 99, src: "manual" } as WarpEvent]], s);
-    const first = resolveTurnFull(r, s, { actionId: "wait", via: "choice" }, { seed: "m" });
-    expect(first.needs.some((n) => n.id === NEXT_EVENT)).toBe(true);
-    const second = resolveTurnFull(r, s, { actionId: "wait", via: "choice" }, { seed: "m", odds: { [NEXT_EVENT]: { storm: 1 } } });
-    expect(second.record.events.some((e) => e.t === "happen" && e.id === "storm")).toBe(true);
-  });
-
-  test("the gauge effect brings events closer or pushes them back", () => {
-    const r = rules();
-    let s = play(r, initialState(r), ["sleep"]).s;
-    s = foldEvents(r, [[{ t: "gauge", set: 70, src: "manual" } as WarpEvent, { t: "omen", id: "storm", src: "manual" } as WarpEvent]], s);
-    s = play(r, s, ["calm_town"]).s;
-    expect(s.gauge.v).toBeLessThan(60);
-    expect(s.gauge.next).toBeNull(); // below the omen line: the sign fades
+    const events = applyProposal(r, s, { minutes: 26 * 60 });
+    s = foldEvents(r, [events], s);
+    expect(s.notices.join(" ")).toContain("A new day dawns");
+    const next = resolveTurn(r, s, { actionId: "wait", via: "choice" }, { seed: "n" });
+    expect(next.hints.join("\n")).toContain("A new day dawns");
+    s = foldEvents(r, [next.events], s);
+    expect(s.notices).toEqual([]);
   });
 });
 
@@ -279,11 +182,9 @@ describe("live choices", () => {
     ]);
   });
 
-  test("lint knows the new sections", () => {
-    const bad = normalizeRuleset({ ...(RULES as object), actions: { x: { label: "X", effects: { front: { gangz: 1 }, reveal: ["nope"] } } } } as never);
+  test("lint knows the story sections", () => {
+    const bad = normalizeRuleset({ ...(RULES as object), actions: { x: { label: "X", effects: { reveal: ["nope"] } } } } as never);
     const issues = lintRuleset(bad.ruleset!).map((i) => i.message).join("\n");
-    expect(issues).toContain('front "gangz"');
-    expect(issues).toContain('did you mean "gangs"');
     expect(issues).toContain('secret "nope"');
   });
 });

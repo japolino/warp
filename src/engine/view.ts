@@ -234,7 +234,6 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
         locked: st.locked ?? (st.here ? null : ab.where === "encounter" ? "Only in an encounter" : "Not during an encounter"), choice: `${ABILITY_PREFIX}${ab.id}`,
       };
     }),
-    news: s.news.slice().reverse().slice(0, 12).map((n) => ({ text: n.text, when: r.clock.enabled ? formatClock(r, n.at).day : null })),
     body: r.body.enabled ? Object.entries(s.body).map(([part, traits]) => ({
       part, label: part.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()), text: traitText(traits) || "—", covered: bodyCovered(r, s, part),
     })) : null,
@@ -1025,8 +1024,7 @@ export function stateDigest(r: Ruleset, s: GameState, focus?: DigestFocus): stri
 }
 
 /**
- * What only the narrator knows: opened secret stages, what's happened behind the
- * scenes, and signs of what's coming. Unopened stage text stays out of the prompt.
+ * What only the narrator knows: opened secret stages. Unopened stage text stays out of the prompt.
  */
 export function narratorKnowledge(r: Ruleset, s: GameState): string | null {
   const lines: string[] = [];
@@ -1042,16 +1040,6 @@ export function narratorKnowledge(r: Ruleset, s: GameState): string | null {
       lines.push(`${sec.about} is keeping something you don't know. If pressed, they deflect or change the subject — don't invent what it is.`);
     }
   }
-  for (const f of Object.values(r.fronts)) {
-    const st = s.fronts[f.id] ?? { v: f.start, stage: -1 };
-    for (let i = 0; i <= st.stage && i < f.stages.length; i++) {
-      if (f.stages[i].backstage) lines.push(`Behind the scenes (${f.label}): ${f.stages[i].backstage}`);
-    }
-    const next = f.stages[st.stage + 1];
-    if (next?.hint && st.v >= next.hintAt) lines.push(`In the background: ${next.hint} (a sign only — don't explain it or make anything happen)`);
-  }
-  const omen = s.gauge.next ? r.randomEvents.events[s.gauge.next]?.omen : undefined;
-  if (omen) lines.push(`In the background: ${omen} (you don't know what it means — don't explain it or make anything happen)`);
   return lines.length ? lines.join("\n") : null;
 }
 

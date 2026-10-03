@@ -215,8 +215,6 @@ export const STYLES = `
 .warp-feat.unlocked { opacity: 1; }
 .warp-timeline-row { font: inherit; color: inherit; text-align: left; background: none; border: none; border-top: 1px solid var(--warp-border); padding: 6px 2px; display: grid; grid-template-columns: 1fr; gap: 1px; cursor: pointer; }
 .warp-timeline-row:hover { background: var(--warp-fill-subtle); }
-.warp-news-row { border-top: 1px solid var(--warp-border); padding: 6px 2px; display: grid; gap: 1px; font-size: 12.5px; }
-.warp-news-row:first-of-type { border-top: none; }
 .warp-timeline-changes { font-size: 11.5px; }
 
 /* ───────── AI builder ───────── */

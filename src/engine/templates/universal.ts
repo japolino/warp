@@ -190,7 +190,7 @@ conditions:
       label: "story",
       yaml: `# Choices written for each moment. A writer phrases them from the story; each must
 # carry one of these tags, and the tag decides the roll — the writer can't.
-# Add secrets:, fronts: and random_events: here for a card-specific living world.
+# Add secrets: here for what people hide.
 live_choices:
   label: Right now
   count: 3

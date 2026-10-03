@@ -3,11 +3,11 @@
 import type { ExprEnv, Value } from "./expr.js";
 import { evalBool, evalNumber, evaluate, identifiers } from "./expr.js";
 import { rollDice, seededRng, type Rng } from "./dice.js";
-import type { ActionDef, CheckDef, DecideSpec, Effect, NarratorGate, RandomEventDef, Requirement, Ruleset, Tier } from "./ruleset.js";
+import type { ActionDef, CheckDef, DecideSpec, Effect, NarratorGate, Requirement, Ruleset, Tier } from "./ruleset.js";
 import { TIERS } from "./ruleset.js";
 import { normalize, sample } from "./decide.js";
 import { emptyEffect, percentOf, slug } from "./ruleset.js";
-import { amountValue, bonusSources, applyEvent, cloneState, dayOf, encounterKey, foeMaxOf, foeName, formatClock, formatNumber, itemName, makeEnv, personName, statMax, timeKey, usesOf, type EventSource, type GameState, type WarpEvent } from "./state.js";
+import { amountValue, bonusSources, applyEvent, cloneState, dayOf, encounterKey, foeMaxOf, foeName, formatClock, formatNumber, itemName, makeEnv, personName, statMax, usesOf, type EventSource, type GameState, type WarpEvent } from "./state.js";
 import { isLoss, thresholds } from "./encounter-view.js";
 import { checkGains, checkStats, DIFFICULTY_WORD, hardnessFrom, IMPROV, IMPROV_DIRECTION, improvAction, isDifficulty, practise, trainingGain } from "./freeform.js";
 import { endingDirection } from "./chronicle.js";
@@ -836,20 +836,11 @@ function effectToEvents(w: Working, e: Effect, src: EventSource, extra: Record<s
 
   for (const id of e.unlock) if (w.r.codex[id] && !w.s.codex[id]) w.push({ t: "codex", id, src });
 
-  // World clocks, secrets and the event gauge.
-  for (const [id, d] of Object.entries(e.front)) {
-    if (!r.fronts[id]) continue;
-    const v = evalNumber(d, w.env(extra), 0);
-    if (v !== 0) w.push({ t: "clock", id, d: v, src });
-  }
+  // Secrets.
   for (const id of e.reveal) {
     const sec = r.secrets[id];
     const cur = w.s.secrets[id] ?? -1;
     if (sec && cur + 1 < sec.stages.length) w.push({ t: "secret", id, stage: cur + 1, src });
-  }
-  if (e.gauge !== undefined && r.randomEvents.enabled) {
-    const v = evalNumber(e.gauge, w.env(extra), 0);
-    if (v !== 0) w.push({ t: "gauge", d: v, src });
   }
   // Body: direct trait changes, then transformations stage by stage (each step rolls its chance).
   for (const [part, traits] of Object.entries(e.body)) for (const [trait, v] of Object.entries(traits)) {
@@ -1003,7 +994,7 @@ function tickSide(w: Working, side: "player" | "foe") {
   }
 }
 
-// ───────────────────────── the living world ─────────────────────────
+// ───────────────────────── notices and secrets ─────────────────────────
 
 /** Something happened in the world: tell the narrator now, or on the next turn if the reply is already written. */
 function announce(w: Working, text: string) {
@@ -1022,110 +1013,6 @@ function openSecrets(w: Working) {
       w.push({ t: "secret", id: sec.id, stage: cur, src: "trigger" });
     }
   }
-}
-
-/** Surface every front stage the clock has reached. */
-function openFrontStages(w: Working) {
-  for (const f of Object.values(w.r.fronts)) {
-    for (let n = (w.s.fronts[f.id]?.stage ?? -1) + 1; n < f.stages.length; n++) {
-      const st = f.stages[n];
-      if ((w.s.fronts[f.id]?.v ?? f.start) < st.at) break;
-      because(w, `World: ${f.label} reached stage ${n + 1}`, () => {
-        w.push({ t: "stage", id: f.id, n, src: "world" });
-        // `if:` is judged as the stage surfaces (after the stage itself counts, so front_stage() sees it).
-        const fx = st.if === undefined || evalBool(st.if, w.env(), false) ? st.effects : st.else;
-        if (fx) effectToEvents(w, fx, "world", {});
-      });
-      if (st.surface) announce(w, `In the wider world: ${st.surface}`);
-    }
-  }
-}
-
-function eligibleEvents(w: Working): RandomEventDef[] {
-  const now = timeKey(w.r, w.s);
-  const unit = w.r.clock.enabled ? 1440 : 1;
-  return Object.values(w.r.randomEvents.events).filter((e) => {
-    if (e.weight <= 0) return false;
-    const last = w.s.gauge.last[e.id];
-    if (last !== undefined && (now - last) / unit < e.cooldownDays) return false;
-    return !e.when || evalBool(e.when, w.env(), false);
-  });
-}
-
-export const NEXT_EVENT = "world:next_event";
-
-/** Which event comes next: the author's weights, sharpened by the decision model's sense of the story when it has one. */
-function pickEvent(w: Working, candidates: RandomEventDef[]): string {
-  const keys = candidates.map((e) => e.id);
-  const model = w.odds[NEXT_EVENT];
-  if (!model && !w.needs.some((n) => n.id === NEXT_EVENT)) {
-    w.needs.push({
-      id: NEXT_EVENT,
-      ask: "Which of these would the story most plausibly bring next, given everything so far?",
-      options: candidates.map((e) => ({ id: e.id, desc: e.text, weight: e.weight, effect: emptyEffect() })),
-    });
-  }
-  const p = model
-    ? normalize(Object.fromEntries(candidates.map((e) => [e.id, (model[e.id] ?? 0) * e.weight])), keys)
-    : normalize(Object.fromEntries(candidates.map((e) => [e.id, e.weight])), keys);
-  return sample(p, seededRng(`${w.seed}:event:${w.s.turn}:${Math.floor(w.s.minutes)}`));
-}
-
-/** The event gauge: fills with in-game time, shows an omen near the top, and fires at 100. */
-function tickGauge(w: Working, days: number, turns: number) {
-  const ev = w.r.randomEvents;
-  if (!ev.enabled) return;
-  let fillDays = days;
-  if (w.s.gauge.rest > 0 && days > 0) {
-    const used = Math.min(w.s.gauge.rest, days);
-    w.push({ t: "rest", days: w.s.gauge.rest - used, src: "world" });
-    fillDays -= used;
-  }
-  const candidates = eligibleEvents(w);
-  // Nothing can happen right now: don't bank a full gauge to fire the moment something can.
-  if (!candidates.length) {
-    if (w.s.gauge.next) w.push({ t: "omen", id: null, src: "world" });
-    return;
-  }
-  if (w.s.gauge.rest <= 0) {
-    const env = w.env();
-    const base = evalNumber(ev.perDay, env, 0) * Math.max(0, fillDays) + evalNumber(ev.perTurn, env, 0) * turns;
-    if (base > 0) {
-      const rng = seededRng(`${w.seed}:gauge:${w.s.turn}:${Math.floor(w.s.minutes)}`);
-      const fill = base * (1 + ev.jitter * (rng() * 2 - 1));
-      if (fill > 0) w.push({ t: "gauge", d: fill, src: "world" });
-    }
-  }
-  const g = w.s.gauge;
-  if (g.v >= 100) {
-    const id = g.next && candidates.some((c) => c.id === g.next) ? g.next : pickEvent(w, candidates);
-    const e = ev.events[id];
-    w.push({ t: "happen", id, src: "world" });
-    w.push({ t: "gauge", set: 0, src: "world" });
-    if (w.s.gauge.next) w.push({ t: "omen", id: null, src: "world" });
-    if (ev.restDays > 0) w.push({ t: "rest", days: ev.restDays, src: "world" });
-    because(w, `Random event: ${e.label}`, () => effectToEvents(w, e.effects, "world", {}));
-    announce(w, e.text);
-  } else if (ev.omenAt > 0 && g.v >= ev.omenAt && !g.next) {
-    w.push({ t: "omen", id: pickEvent(w, candidates), src: "world" });
-  } else if (g.next && (ev.omenAt <= 0 || g.v < ev.omenAt)) {
-    // Pushed back below the line by the story: the sign fades.
-    w.push({ t: "omen", id: null, src: "world" });
-  }
-}
-
-/** Time passed: world clocks run, stages surface, the event gauge fills. */
-function tickWorld(w: Working, days: number, turns: number) {
-  for (const f of Object.values(w.r.fronts)) {
-    if (f.when && !evalBool(f.when, w.env(), false)) continue;
-    let add = 0;
-    if (days > 0) add += evalNumber(f.rate, w.env(), 0) * days;
-    if (turns > 0) add += evalNumber(f.perTurn, w.env(), 0) * turns;
-    f.pushes.forEach((p, i) => { if (w.scene[`front:${f.id}:${i}`] === true) add += p.add; });
-    if (Math.abs(add) > 1e-9) w.push({ t: "clock", id: f.id, d: add, src: "world" });
-  }
-  openFrontStages(w);
-  tickGauge(w, days, turns);
 }
 
 // ───────────────────────── checkpoints, loops and endings ─────────────────────────
@@ -1408,8 +1295,7 @@ function runTriggers(w: Working, includeRepeat: boolean) {
       return now !== (w.s.triggers[t.id] ?? false);
     })) {
       const warning = "Rule processing reached its safety limit. Some rules still disagree with the state; check for a cycle in the ruleset.";
-      w.hints.push(warning);
-      w.push({ t: "news", text: warning, src: "trigger" });
+      announce(w, warning);
     }
   }
   // Codex entries and feats unlock themselves when their formula first holds.
@@ -1423,7 +1309,6 @@ function runTriggers(w: Working, includeRepeat: boolean) {
     }
   }
   openSecrets(w);
-  openFrontStages(w);
   questLife(builderOf(w));
 }
 
@@ -1656,11 +1541,6 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   if (!inEncounter) for (const id of Object.keys(w.s.conditions)) if (r.conditions[id]?.every === "turn") tickPlayer(w, id);
 
   runTriggers(w, true);
-  // The world moves with in-game time (without a clock, each turn counts as a day).
-  const days = r.clock.enabled ? (w.s.minutes - before.minutes) / 1440 : 1;
-  const worldBefore = w.events.length;
-  tickWorld(w, days, 1);
-  if (w.events.length > worldBefore) runTriggers(w, false);
   checkRun(w, before);
   w.push({ t: "turn", src: "action" });
   rec.events = w.events;
@@ -1934,12 +1814,6 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
 
   w.cause = null;
   runTriggers(w, false);
-  // Time the story itself covered moves the world too; whatever surfaces is told next turn.
-  if (r.clock.enabled && w.s.minutes > before.minutes) {
-    const n = w.events.length;
-    tickWorld(w, (w.s.minutes - before.minutes) / 1440, 0);
-    if (w.events.length > n) runTriggers(w, false);
-  }
   checkRun(w, before);
   return w.events;
 }
@@ -1992,11 +1866,6 @@ export function buildTurn(r: Ruleset, before: GameState, seed: string, fn: (t: T
   const w = new Working(r, cloneState(before), seededRng(`${seed}:fx`), seed);
   fn(builderOf(w));
   runTriggers(w, false);
-  if (r.clock.enabled && w.s.minutes > before.minutes) {
-    const n = w.events.length;
-    tickWorld(w, (w.s.minutes - before.minutes) / 1440, 0);
-    if (w.events.length > n) runTriggers(w, false);
-  }
   checkRun(w, before);
   return w.events;
 }

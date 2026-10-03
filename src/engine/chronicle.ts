@@ -22,8 +22,6 @@ export function runSummary(r: Ruleset, s: GameState): string {
   if (feats.length) lines.push(`Feats: ${feats.join(", ")}.`);
   const codex = Object.keys(s.codex).length;
   if (codex) lines.push(`Discovered ${codex} codex entr${codex === 1 ? "y" : "ies"}.`);
-  const news = s.news.slice(-5).map((n) => n.text);
-  if (news.length) lines.push(`What happened in the world: ${news.join(" ")}`);
   return lines.join(" ");
 }
 

@@ -84,14 +84,8 @@ export interface GameState {
   turn: number;
   /** Secret id → index of the highest stage the narrator has been told (−1 = none). */
   secrets: Record<string, number>;
-  /** Hidden world clocks: value, and the highest stage that has surfaced (−1 = none). */
-  fronts: Record<string, { v: number; stage: number }>;
-  /** The random-event gauge (0–100), quiet days left, the event already picked (omen showing), and when each last happened. */
-  gauge: { v: number; rest: number; next: string | null; last: Record<string, number> };
-  /** World happenings that surfaced after a reply — told to the narrator on the next turn. */
+  /** What happened after a reply (a rule fired, a condition wore off) — told to the narrator on the next turn. */
   notices: string[];
-  /** What has surfaced in the world, for the journal. */
-  news: { text: string; at: number }[];
   /** Who is known to be an adult (true) or not (false), when the ruleset gives no age: asked once, then remembered. */
   adults: Record<string, boolean>;
   /** Save slots: a copy of the state at the moment of saving. */
@@ -160,18 +154,11 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "calib"; who: string }
   | { t: "forget"; who: string }
   | { t: "secret"; id: string; stage: number }
-  | { t: "clock"; id: string; d: number }
-  | { t: "stage"; id: string; n: number }
-  | { t: "gauge"; d?: number; set?: number }
-  | { t: "rest"; days: number }
-  | { t: "omen"; id: string | null }
-  | { t: "happen"; id: string }
   | { t: "notice"; text: string }
   | { t: "noticed" }
   | { t: "adult"; who: string; adult: boolean }
   | { t: "body"; part: string; trait: string; v: string | null }
   | { t: "tf"; id: string; stage: number }
-  | { t: "news"; text: string }
   | { t: "practice"; id: string; d: number }
   | { t: "practice_use"; key: string; n: number; turn: number; minutes: number }
   | { t: "scene"; who: string; here: boolean }
@@ -185,15 +172,8 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "end_rearm"; id: string }
 );
 
-const NEWS_KEPT = 30;
-
 /** Memories kept per person (the oldest fade first). */
 const MEMORIES_KEPT = 12;
-
-/** The unit random-event cooldowns are measured in: minutes with a clock, turns without. */
-export function timeKey(r: Ruleset, s: GameState): number {
-  return r.clock.enabled ? s.minutes : s.turn;
-}
 
 export function initialState(r: Ruleset): GameState {
   const s: GameState = {
@@ -221,10 +201,7 @@ export function initialState(r: Ruleset): GameState {
     triggers: {},
     turn: 0,
     secrets: {},
-    fronts: {},
-    gauge: { v: 0, rest: 0, next: null, last: {} },
     notices: [],
-    news: [],
     adults: {},
     saves: {},
     runs: 1,
@@ -257,7 +234,6 @@ export function initialState(r: Ruleset): GameState {
     while (open + 1 < sec.stages.length && !sec.stages[open + 1].when) open++;
     s.secrets[sec.id] = open;
   }
-  for (const f of Object.values(r.fronts)) s.fronts[f.id] = { v: f.start, stage: -1 };
   for (const f of Object.values(r.flags)) s.flags[f.id] = f.start;
   for (const p of Object.values(r.people)) {
     s.people[p.id] = { name: p.name };
@@ -562,35 +538,6 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
     case "trig": s.triggers[e.id] = e.v; break;
     case "turn": s.turn += 1; break;
     case "secret": s.secrets[e.id] = Math.max(s.secrets[e.id] ?? -1, e.stage); break;
-    case "clock": {
-      const def = r.fronts[e.id];
-      const f = s.fronts[e.id] ?? { v: def?.start ?? 0, stage: -1 };
-      f.v = clamp(f.v + e.d, 0, def?.max ?? 100);
-      s.fronts[e.id] = f;
-      break;
-    }
-    case "stage": {
-      const def = r.fronts[e.id];
-      const f = s.fronts[e.id] ?? { v: def?.start ?? 0, stage: -1 };
-      if (e.n > f.stage) {
-        f.stage = e.n;
-        const st = def?.stages[e.n];
-        const line = st?.news ?? st?.surface;
-        if (line) s.news = [...s.news, { text: line, at: s.minutes }].slice(-NEWS_KEPT);
-      }
-      s.fronts[e.id] = f;
-      break;
-    }
-    case "gauge": s.gauge.v = clamp(e.set !== undefined ? e.set : s.gauge.v + (e.d ?? 0), 0, 100); break;
-    case "rest": s.gauge.rest = Math.max(0, e.days); break;
-    case "omen": s.gauge.next = e.id; break;
-    case "happen": {
-      s.gauge.last[e.id] = timeKey(r, s);
-      const def = r.randomEvents.events[e.id];
-      const line = def?.news ?? def?.text;
-      if (line) s.news = [...s.news, { text: line, at: s.minutes }].slice(-NEWS_KEPT);
-      break;
-    }
     case "notice": s.notices = [...s.notices, e.text]; break;
     case "noticed": s.notices = []; break;
     case "adult": s.adults = { ...s.adults, [e.who]: e.adult }; break;
@@ -603,7 +550,6 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       break;
     }
     case "tf": s.tf = { ...s.tf, [e.id]: Math.max(s.tf[e.id] ?? 0, e.stage) }; break;
-    case "news": s.news = [...s.news, { text: e.text, at: s.minutes }].slice(-NEWS_KEPT); break;
     case "save":
       s.saves = { ...s.saves, [e.slot]: { at: s.minutes, turn: s.turn, label: e.label, snap: snapshotOf(s) } };
       break;
@@ -814,10 +760,6 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
         case "perk": return a0 in s.perks;
         // How many stages of a secret the narrator knows (0 = none).
         case "secret": return (s.secrets[a0] ?? -1) + 1;
-        // A world clock's value, and how many of its stages have surfaced.
-        case "front": return s.fronts[a0]?.v ?? r.fronts[a0]?.start ?? 0;
-        case "front_stage": return (s.fronts[a0]?.stage ?? -1) + 1;
-        case "happened": return a0 in s.gauge.last;
         // Checkpoints: whether a slot holds a save.
         case "saved": return a0 in s.saves;
         // Body: a trait's value ('' when absent), and how far a transformation has gone.

@@ -310,11 +310,6 @@ export function renderJournal(h: HudView | null, records: RecordView[]): string 
         ${h.feats.map((f) => `<div class="warp-feat${f.unlocked ? " unlocked" : ""}"><span>${f.unlocked ? "🏆" : "🔒"}</span><div><b>${esc(f.name)}</b><div class="warp-dim">${esc(f.desc)}</div></div></div>`).join("")}
       </div>`
     : "";
-  const news = h.news.length
-    ? `<div class="warp-card"><h3>News</h3>
-        ${h.news.map((n) => `<div class="warp-news-row">${n.when ? `<span class="warp-dim">${esc(n.when)}</span>` : ""}<span>${esc(n.text)}</span></div>`).join("")}
-      </div>`
-    : "";
   const turns = records.filter((r) => r.action || r.check || r.changes.length).slice().reverse().slice(0, 40);
   const timeline = `<div class="warp-card"><h3>Timeline</h3>
     ${turns.length ? turns.map((r) => `<button class="warp-timeline-row" data-jump="${esc(r.messageId)}" title="Jump to this message">
@@ -323,7 +318,7 @@ export function renderJournal(h: HudView | null, records: RecordView[]): string 
         <span class="warp-dim warp-timeline-changes">${esc(r.changes.slice(0, 4).map((c) => c.text).join(" · "))}</span>
       </button>`).join("") : `<p>Nothing has happened yet.</p>`}
   </div>`;
-  return checkpoints(h) + news + codex + feats + timeline;
+  return checkpoints(h) + codex + feats + timeline;
 }
 
 function checkpoints(h: HudView): string {
