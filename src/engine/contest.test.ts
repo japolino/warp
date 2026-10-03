@@ -75,6 +75,9 @@ describe("T-K3 every round is in the chat, as ordered beats", () => {
     const { rec, s: next } = step(s, { actionId: "contest:body", via: "choice", label: "Feint left and sweep his legs" }, seedFor(14));
     const packet = outcomePacket(r, rec, s, next, "Sam")!;
     expect(packet).toContain("Contest: fight with the bouncer — round 1 of at most 8.");
+    // The state line in the same block counts the same round (it is built after the move).
+    expect(stateDigest(r, next, { text: "" })).toContain("Contest: fight with the bouncer — after round 1,");
+    expect(stateDigest(r, s, { text: "" })).toContain("Contest: fight with the bouncer — just started,");
     expect(packet).toContain("Check: Body — d20 14 + 3 = 17 vs 16 (hard) → SUCCESS");
     expect(packet).toContain("1. {{user}}: Feint left and sweep his legs, and it lands well.");
     expect(packet).toContain("2. The bouncer gives ground.");

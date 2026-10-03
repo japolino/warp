@@ -715,7 +715,8 @@ export function stateDigest(r: Ruleset, s: GameState, focus?: DigestFocus): stri
   if (s.contest) {
     const c = s.contest;
     const kind = kindOf(r, c.kind);
-    lines.push(`Contest: ${kind.label.toLowerCase()} with ${c.opponent} — round ${c.round + 1}, ${momentumWords(c.momentum, c.opponent)}. Not over until the rules end it.`);
+    // Rounds played so far (the narrator block is built after this turn's move, so "round N" would be off by one).
+    lines.push(`Contest: ${kind.label.toLowerCase()} with ${c.opponent} — ${c.round ? `after round ${c.round}` : "just started"}, ${momentumWords(c.momentum, c.opponent)}. Not over until the rules end it.`);
   }
 
   // 4. Looks and clothes of whoever matters now.
