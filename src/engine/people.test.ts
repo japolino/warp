@@ -44,6 +44,20 @@ const r = normalizeRuleset(STORY).ruleset!;
 const here = (s: GameState, ...who: string[]) => foldEvents(r, [applyProposal(r, s, { scene: Object.fromEntries(who.map((w) => [w, true])) })], s);
 const read = (s: GameState, p: Proposal) => { const events = applyProposal(r, s, p); return { events, s: foldEvents(r, [events], s) }; };
 
+describe("first feelings", () => {
+  test("feelings nobody has read yet stay out of the narrator block; the first read (or any change) brings them in", () => {
+    const s = here(initialState(r), "Mira");
+    expect(s.calibrated.mira).toBeUndefined();
+    const first = stateDigest(r, s, { text: "" });
+    expect(first).toContain("Here: Mira.");
+    expect(first).not.toContain("Relationships (here)");
+    expect(first).not.toContain("acts now");
+    const known = foldEvents(r, [applyProposal(r, s, { people: [{ name: "Mira", feelings: { trust: 5 } }] })], s);
+    expect(known.calibrated.mira).toBe(true);
+    expect(stateDigest(r, known, { text: "" })).toContain("How Mira acts now: gives nothing personal away.");
+  });
+});
+
 describe("T-P1 a crossing shows in the same reply; the next block says it and the voice", () => {
   test("a post-reply crossing: first in that reply's lines, opening the next narrator block", () => {
     let s = here(initialState(r), "Mira");

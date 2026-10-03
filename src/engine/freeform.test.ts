@@ -126,7 +126,7 @@ describe("growth by use", () => {
 describe("who's in the scene", () => {
   test("people the story introduces are here, until the story says they left", () => {
     let s = initialState(r);
-    s = read(s, { people: [{ name: "Miu" }, { name: "Clarice" }], scene: { Rosa: true } }).s;
+    s = read(s, { people: [{ name: "Miu", feelings: { trust: 30 } }, { name: "Clarice" }], scene: { Rosa: true } }).s;
     const here = () => presentPeople(r, s, makeEnv(r, s)).map((id) => s.people[id].name);
     expect(here()).toEqual(expect.arrayContaining(["Miu", "Clarice", "Rosa"]));
     const left = read(s, { scene: { Clarice: false } });
@@ -136,6 +136,8 @@ describe("who's in the scene", () => {
     // The narrator only gets relationships for people here; the rest are named apart.
     const digest = stateDigest(r, s);
     expect(digest).toMatch(/Relationships \(here\):[^\n]*Miu/);
+    // Rosa's feelings were never read (the ruleset's default): left out, so the narrator follows the story.
+    expect(digest).not.toMatch(/Relationships \(here\):[^\n]*Rosa/);
     expect(digest).toMatch(/Not in this scene[^\n]*Clarice/);
     expect(buildHud(r, s).people.find((p) => p.name === "Clarice")?.present).toBe(false);
   });

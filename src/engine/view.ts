@@ -767,11 +767,16 @@ export function stateDigest(r: Ruleset, s: GameState, focus?: DigestFocus): stri
     const name = personName(r, s, id);
     return parts.length ? `${name} (${parts.join(", ")})` : name;
   };
-  if (hereIds.length) lines.push(`Relationships (here): ${hereIds.map(feel).join("; ")}.`);
+  // Feelings nobody has read yet (no authored start, no read from the story, nothing moved them) are the ruleset's
+  // default, not this card's: left out, so the first reply follows the card and the greeting. The first read after
+  // a reply sets them.
+  const unread = (id: string) => !s.calibrated[id] && r.relStatOrder.every((rs) => (s.rel[id]?.[rs] ?? r.relStats[rs].start) === r.relStats[rs].start);
+  const felt = hereIds.filter((id) => !unread(id));
+  if (felt.length) lines.push(`Relationships (here): ${felt.map(feel).join("; ")}.`);
   const gated = anyAdultGated(r);
   for (const id of hereIds) {
     const name = personName(r, s, id);
-    const voice = voiceLine(r, s, id);
+    const voice = unread(id) ? null : voiceLine(r, s, id);
     if (voice) lines.push(voice);
     const mem = (s.memories?.[id] ?? []).slice(-3).map((m) => `${m.text}${r.clock.enabled ? ` (${agoWords(s.minutes - m.at)})` : ""}`);
     if (mem.length) lines.push(`${name} remembers: ${mem.join("; ")}`);
