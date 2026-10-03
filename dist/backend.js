@@ -19103,7 +19103,8 @@ var init_protocol = __esm(() => {
     errands: true,
     quietTravel: false,
     sayOutcome: true,
-    showChoices: true
+    showChoices: true,
+    showChanges: true
   };
 });
 

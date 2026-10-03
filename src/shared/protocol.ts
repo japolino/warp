@@ -543,6 +543,8 @@ export interface Settings {
   sayOutcome: boolean;
   /** Choice buttons under the reply (the CYOA). Off: none, and none are written — fights, shifts, dungeons, dates and endings keep theirs. */
   showChoices: boolean;
+  /** The chips under each reply that say what changed (time, feelings, items…). Off: only in the sheet's history. */
+  showChanges: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -581,6 +583,7 @@ export const DEFAULT_SETTINGS: Settings = {
   quietTravel: false,
   sayOutcome: true,
   showChoices: true,
+  showChanges: true,
 };
 
 export interface TemplateInfo { id: string; name: string; blurb: string }

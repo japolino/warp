@@ -516,7 +516,7 @@ export function renderEncounterLog(v: EncounterLogView, why = ""): string {
 
 const TIER_TONE: Record<string, string> = { crit_success: "good", success: "good", partial: "warn", fail: "bad", crit_fail: "bad" };
 
-export function renderChips(rec: RecordView, opts: { showDice: boolean }): string {
+export function renderChips(rec: RecordView, opts: { showDice: boolean; showChanges?: boolean }): string {
   const out: string[] = [];
   const read = rec.via === "adjudicator"
     ? `<span class="warp-dim">· read from your message${rec.confidence !== null ? ` (${Math.round(rec.confidence * 100)}% sure)` : ""}</span>`
@@ -551,7 +551,8 @@ export function renderChips(rec: RecordView, opts: { showDice: boolean }): strin
     out.push(`<span class="warp-chip warp-tone-warn" title="The decision model thinks this reply may contradict the game state (${Math.round(rec.contradiction! * 100)}%). Consider swiping.">⚠ may contradict the state</span>`);
   }
   const whys: string[] = [];
-  for (const ch of rec.changes) {
+  // Changes turned off: none under the message (they're still in the sheet's history, with undo).
+  for (const ch of opts.showChanges === false ? [] : rec.changes) {
     const narr = ch.src === "narrator" || ch.src === "manual";
     if (ch.why?.length) whys.push(`<div><b>${esc(ch.text)}</b> <span class="warp-dim">←</span> ${ch.why.map(esc).join(" · ")}</div>`);
     const undo = narr && ch.undo?.length
@@ -712,7 +713,8 @@ export function renderSettings(s: Settings, status: RulesetStatus | null, connec
     <h3>Display</h3>
     ${toggle("showChoices", "Choice buttons (CYOA)", "Buttons under each reply to pick what you do next. Off: you just type — no buttons, and none are written for you (that saves a helper call per reply). Fights, shifts, dungeons, dates and endings keep their buttons; errands move to the status panel.", s.showChoices !== false)}
     ${toggle("showOdds", "Show odds on choices", "Percent chance of success on each button.", s.showOdds)}
-    ${toggle("showDiceChips", "Show dice & changes on messages", "The roll and what changed, under each reply.", s.showDiceChips)}
+    ${toggle("showDiceChips", "Show dice on messages", "The roll (or the game's score) under each reply.", s.showDiceChips)}
+    ${toggle("showChanges", "Show changes on messages", "What changed under each reply (time, people met, feelings, items…), with × to undo. Off: they're still in the sheet's history.", s.showChanges !== false)}
     ${toggle("hotkeys", "Number keys pick choices", "Press 1–9 (0 for 10) when you're not typing.", s.hotkeys)}
   </div>
   ${renderDecider(s, jevKeySet)}

@@ -24,12 +24,13 @@ import { acceptsResponse } from "./frontend/response-gate.js";
 import { createArcade } from "./frontend/arcade/arcade.js";
 import { acceptsArcadeResult, automaticChallenge, playableChoice } from "./frontend/arcade/choice-flow.js";
 import { ARCADE_STYLES } from "./frontend/arcade/styles.js";
+import { logoSvg } from "./frontend/logo.js";
 import { ERRAND_STYLES, errandTabs, pickErrandTab, renderErrandEntries, renderErrands } from "./frontend/errands-ui.js";
 
 type StateMsg = Extract<BackendToFrontend, { type: "state" }>;
 
 const CLEANUP_KEY = "__warpCleanup";
-const ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><circle cx="8.5" cy="8.5" r="1.3" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/></svg>`;
+const ICON = logoSvg({ size: 20 });
 
 function store(key: string, value?: string): string | null {
   try {
@@ -620,7 +621,7 @@ export function setup(ctx: SpindleFrontendContext) {
       const logs = new Map((state?.encounterLogs ?? []).map((l) => [l.messageId, l]));
       for (const r of records) {
         if (logs.has(r.messageId)) continue;
-        const html = renderChips(r, { showDice: settings.showDiceChips });
+        const html = renderChips(r, { showDice: settings.showDiceChips, showChanges: settings.showChanges });
         if (html) wantChips.set(r.messageId, html);
       }
       // Suggestions sit on the player's own message.

@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-white.svg">
+    <img src="docs/logo-dark.svg" alt="Warp logo" width="160">
+  </picture>
+</p>
+
 # Warp
 
 A game engine under your roleplay. Warp owns stats, dice, time, inventory and relationships; the model only narrates outcomes the engine has already decided.
