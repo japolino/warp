@@ -940,7 +940,7 @@ function renderTemplatePicker(templates, card = null) {
     <p style="margin:0;color:var(--warp-muted)">Pick how this chat plays. Warp adds a <b>warp-ruleset</b> lorebook to this character that you can edit like any lorebook. It's never sent to the model.</p>
     ${track}
     <div class="warp-template-pair">${cards}</div>
-    <button class="warp-card warp-template warp-builder-cta" data-template="__ai"><h3>✨ Build with AI</h3><p>Reads this character's card and fits Story or Adventure to it: checked and previewed before anything is saved.</p></button>
+    <button class="warp-card warp-template" data-template="__ai"><h3>✨ Build with AI</h3><p>Reads this character's card and fits Story or Adventure to it: checked and previewed before anything is saved.</p></button>
     <p class="warp-dim" style="margin:0">Warp makes one small model call per turn to keep score and write the choices (a typed risky move without Jev needs a second one). It uses the chat's own model unless you pick a fast, cheap <b>Helper connection</b> in Settings.</p>
   </div>`;
 }
