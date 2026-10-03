@@ -16,8 +16,6 @@ export function normalizeSettings(value: unknown): Settings {
     else if (typeof def === "number" && (typeof v === "number" || typeof v === "string") && v !== "" && Number.isFinite(Number(v))) (s as unknown as Record<string, unknown>)[k] = Number(v);
   }
   for (const k of ["lines", "veils"] as const) s[k] = Array.isArray(raw[k]) ? [...new Set((raw[k] as unknown[]).filter((v): v is string => typeof v === "string").map((v) => v.trim().toLowerCase()).filter(Boolean))] : [];
-  s.drafts = Math.max(1, Math.min(4, Math.round(s.drafts)));
-  s.prewrite = Math.max(0, Math.min(4, Math.round(s.prewrite)));
   s.autoConfidence = Math.max(0, Math.min(1, s.autoConfidence));
   s.askConfidence = Math.max(0, Math.min(s.autoConfidence, s.askConfidence));
   s.decider = ["llm", "jev", "rules"].includes(s.decider) ? s.decider : DEFAULT_SETTINGS.decider;

@@ -35,7 +35,7 @@ describe("bounded, nonbinding live-choice forecasts", () => {
     const clicked = intentFor(r, s, DEFAULT_SETTINGS, [msg(old)], "live:0");
     expect(clicked).toMatchObject({ intent: { actionId: "live:bold", label: "Ask Jo" } });
   });
-  test("click and prewrite intent carry bounded context; exact tagged rolls/effects unchanged", () => {
+  test("click intent carries bounded context; exact tagged rolls/effects unchanged", () => {
     const live = cleanChoices(r, s, tags, [{ label: "Ask Jo", tag: "bold", forecast }], 3);
     const view = buildChoices(r, s, { ...opts, live });
     expect(view[0].forecast).toEqual(forecast);

@@ -1,9 +1,8 @@
 // Computing the full UI state for a chat and pushing it to the frontend.
 
 import { buildChoices, buildHud, buildRecordView } from "../engine/view.js";
-import type { ChoiceView, EncounterLogView, RecordView, SuggestionView } from "../shared/protocol.js";
+import type { EncounterLogView, RecordView, SuggestionView } from "../shared/protocol.js";
 import type { Ruleset } from "../engine/ruleset.js";
-import { momentKey, readyChoices } from "./drafts.js";
 import { getMessages, foldPath, liveChoicesOf, warpMeta, encounterLogOf, type Msg } from "./ledger.js";
 import { getSettings } from "./settings.js";
 import { getRuleset, statusOf } from "./source.js";
@@ -83,7 +82,7 @@ export async function pushState(chatId: string | null, userId?: string, force = 
       historyConflict: conflict,
       status,
       hud: settings.enabled ? buildHud(r, state) : null,
-      choices: settings.enabled && !conflict ? markReady(buildChoices(r, state, { ...settings, live: liveChoicesOf(latest) }), readyChoices(chatId, momentKey(msgs, state, { r, settings }))) : [],
+      choices: settings.enabled && !conflict ? buildChoices(r, state, { ...settings, live: liveChoicesOf(latest) }) : [],
       records: settings.enabled ? records : [],
       suggestions: settings.enabled ? suggestions.filter((s) => s.canRedo) : [],
       latestMessageId: latest?.id ?? null,
@@ -109,10 +108,6 @@ function encounterLogsOf(r: Ruleset, msgs: Msg[]): EncounterLogView[] {
     });
   }
   return out;
-}
-
-function markReady(choices: ChoiceView[], ready: Set<string>): ChoiceView[] {
-  return ready.size ? choices.map((c) => (ready.has(c.id) ? { ...c, ready: true } : c)) : choices;
 }
 
 /** Swap "{{user}}" for the player's persona name throughout a view. */

@@ -179,30 +179,6 @@ export async function writeRecord(chatId: string, messageId: string, swipe: numb
   await patchWarpMeta(chatId, messageId, (w) => ({ ...w, swipes: { ...(w.swipes ?? {}), [String(swipe)]: rec } }));
 }
 
-/** Append alternatives and their latest mechanics in one queued host mutation. */
-export async function appendDrafts(chatId: string, messageId: string, extra: string[], pick: number, expected: TurnRecord,
-  current: () => Promise<boolean>,
-): Promise<{ swipe: number; content: string } | null> {
-  let result: { swipe: number; content: string } | null = null;
-  await serializeMetadata(chatId, messageId, async () => {
-    if (!await current()) return;
-    const m = (await getMessages(chatId)).find((x) => x.id === messageId);
-    if (!m) return;
-    const rec = activeRecord(m);
-    if (!rec || JSON.stringify(rec.action) !== JSON.stringify(expected.action) || JSON.stringify(rec.events.slice(0, expected.events.length)) !== JSON.stringify(expected.events)) return;
-    const swipes = [...(m.swipes?.length ? m.swipes : [m.content]), ...extra];
-    const base = swipes.length - extra.length, slot = pick > 0 ? base + pick - 1 : m.swipe_id ?? 0;
-    const w = warpMeta(m), records = { ...w.swipes };
-    for (let i = 0; i < extra.length; i++) records[String(base + i)] = structuredClone(rec);
-    await host().chat.updateMessage(chatId, messageId, {
-      swipes, swipe_dates: [...(m.swipe_dates ?? []), ...extra.map(() => Math.floor(Date.now() / 1000))],
-      swipe_id: slot, content: swipes[slot], metadata: { ...m.metadata, warp: { ...w, swipes: records } },
-    });
-    result = { swipe: slot, content: swipes[slot] };
-  });
-  return result;
-}
-
 /** Keep records aligned with swipe slots when one is deleted. */
 export async function shiftAfterSwipeDelete(chatId: string, messageId: string, deleted: number): Promise<void> {
   await patchWarpMeta(chatId, messageId, (w) => {

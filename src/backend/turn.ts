@@ -10,17 +10,16 @@ import type { Ruleset } from "../engine/ruleset.js";
 import { applyEvent, cloneState, type GameState } from "../engine/state.js";
 import { outcomePacket, sceneHints, stateDigest } from "../engine/view.js";
 import { buildInjection, fillNames, injectInto } from "./inject.js";
-import { dropPrewritten, prewrite, writeDrafts } from "./drafts.js";
 import type { Settings } from "../shared/protocol.js";
 import { bookkeeping, contradiction, odds, readTurn } from "./decisions.js";
 import { getTurnDecider } from "./deciders.js";
 import { extract, type ExtractPart } from "./helpers.js";
 import { host, logError, toast } from "./host.js";
-import { activeRecord, appendDrafts, encounterLogOf, encounterSlots, foldPath, getMessages, patchMeta, patchWarpMeta, pathRevision, recordPath, warpMeta, writeRecord, type Msg, type Suggestion } from "./ledger.js";
+import { activeRecord, encounterLogOf, encounterSlots, foldPath, getMessages, patchMeta, patchWarpMeta, pathRevision, recordPath, warpMeta, writeRecord, type Msg, type Suggestion } from "./ledger.js";
 import { writeLiveChoices } from "./live.js";
 import { getSettings } from "./settings.js";
 import { characterBrief, getRuleset } from "./source.js";
-import { busyChats, pushState, schedulePush } from "./state-push.js";
+import { busyChats, pushState } from "./state-push.js";
 import { compactLog, isQuiet, quietReply, type QuietRound } from "./encounter.js";
 import { hasOperation, supersedeOperation } from "./operations.js";
 
@@ -44,8 +43,6 @@ export interface Pending {
   verdict?: { messageId: string; intent: Intent | null; suggestion: Suggestion | null };
   outcome: string | null;
   player: string;
-  /** The prompt this reply was written from (with Warp's block), for drafts and pre-writing. */
-  prompt?: LlmMessageDTO[];
   /** A quiet encounter round typed in the chat: Warp wrote the reply itself (when the host allows it). */
   quiet?: QuietRound;
 }
@@ -257,7 +254,6 @@ export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorCon
     const text = buildInjection(r, rec, before, after, player, focus);
     const { messages: out, index } = injectInto(shrunk, text);
     const waiting = pending.get(info.generationId ?? ctx.chatId);
-    if (waiting && !info.isDryRun) waiting.prompt = out;
     // Typed in the chat during a quiet encounter: the round is told briefly by Warp, not by the narrator.
     if (waiting && rec && !info.isDryRun && ctx.generationType !== "continue" && isQuiet(r, before)) {
       const quiet = await quietReply({ chatId: ctx.chatId, userId: ctx.userId, r, before, after, rec, history, player, settings }).catch((e) => { logError("quiet round", e); return null; });
@@ -297,15 +293,15 @@ async function proposeChanges(decider: Decider, r: Ruleset, p: Pending, reply: s
 }
 
 /**
- * Everything after a reply lands: best-of-several drafts, reading the story's
- * changes, the consistency check, live choices, then pre-writing the next replies.
+ * Everything after a reply lands: reading the story's changes, the consistency
+ * check, then live choices.
  */
 export async function afterReply(p: Pending, msg: Msg, content: string, userId?: string): Promise<void> {
   const chatId = p.chatId;
   const settings = await getSettings(userId);
   const r = p.ruleset;
-  let swipe = msg.swipe_id ?? 0;
-  let expectedContent = msg.content;
+  const swipe = msg.swipe_id ?? 0;
+  const expectedContent = msg.content;
   const initialMessages = await getMessages(chatId);
   const surroundings = pathRevision(initialMessages.filter((m) => m.id !== msg.id));
   const currentMessages = async (): Promise<Msg[] | null> => {
@@ -320,21 +316,8 @@ export async function afterReply(p: Pending, msg: Msg, content: string, userId?:
   };
   if (!await currentMessages()) return;
   const decider = await getTurnDecider(settings, userId);
-  dropPrewritten(chatId);
 
-  // Extra drafts are optional swipes. Never replace a reply the player already saw.
-  if (p.continueFrom === undefined && settings.drafts > 1 && p.prompt && decider.id !== "rules") {
-    host().sendToFrontend({ type: "busy", chatId, busy: true, label: `Writing ${settings.drafts - 1} more draft${settings.drafts > 2 ? "s" : ""}…` }, userId);
-    const extra = await writeDrafts(p.prompt, settings.drafts - 1, userId, chatId);
-    if (extra.length) {
-      if (!await currentMessages()) return;
-      const added = await appendDrafts(chatId, msg.id, extra, 0, p.rec, async () => !!await currentMessages());
-      if (!added) return;
-      swipe = added.swipe; content = added.content; expectedContent = content;
-    }
-  }
-
-  // Choices hidden: nobody would see them, so none are written (nor pre-written replies for them).
+  // Choices hidden: nobody would see them, so none are written.
   const wantLive = r.liveChoices.enabled && settings.showChoices;
   const appended = p.continueFrom !== undefined && content.startsWith(p.continueFrom) ? content.slice(p.continueFrom.length) : content;
   if (settings.narratorUpdates || settings.consistencyCheck || wantLive) {
@@ -386,14 +369,6 @@ export async function afterReply(p: Pending, msg: Msg, content: string, userId?:
       });
     }
   }
-
-  // Pre-write the first few choices while the player reads.
-  if (p.continueFrom === undefined && settings.prewrite > 0 && settings.showChoices && p.prompt && await currentMessages()) {
-    await pushState(chatId, userId);
-    host().sendToFrontend({ type: "busy", chatId, busy: false }, userId);
-    void prewrite({ chatId, userId, r, settings, decider, prompt: p.prompt, reply: content, player: p.player, onReady: () => schedulePush(chatId, userId, 100) })
-      .catch((e) => logError("pre-write", e));
-  }
 }
 
 export async function onGenerationStarted(payload: { generationId: string; chatId: string; targetMessageId?: string; generationType?: string }, userId?: string) {
@@ -426,7 +401,6 @@ export async function onGenerationStopped(payload: { chatId: string; generationI
   if (!current && hasOperation(chatId)) return;
   started.delete(chatId);
   busyChats.delete(chatId);
-  dropPrewritten(chatId);
   host().sendToFrontend({ type: "busy", chatId, busy: false }, userId);
   await pushState(chatId, userId);
 }

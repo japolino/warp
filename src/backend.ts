@@ -5,16 +5,14 @@ import type { GameState, WarpEvent } from "./engine/state.js";
 import { TEMPLATES } from "./engine/templates/index.js";
 import type { FrontendToBackend } from "./shared/protocol.js";
 import { logError, send, toast } from "./backend/host.js";
-import { foldPath, getMessages, patchWarpMeta, reconcilePath, shiftAfterSwipeDelete, warpMeta, writeRecord } from "./backend/ledger.js";
+import { foldPath, getMessages, patchWarpMeta, reconcilePath, shiftAfterSwipeDelete, warpMeta } from "./backend/ledger.js";
 import { getSettings, patchSettings } from "./backend/settings.js";
 import { settleClick } from "./backend/attempt.js";
 import { getRuleset, installTemplate, invalidateCharacter, invalidateChat, knownRulesetBookIds, knownRulesetEntryIds } from "./backend/source.js";
 import { busyChats, connectionsFor, getActiveChat, pushState, schedulePush, setActiveChat } from "./backend/state-push.js";
-import { afterReply, generationHistory, interceptor, onGenerationEnded, onGenerationStarted, onGenerationStopped, playerName } from "./backend/turn.js";
+import { generationHistory, interceptor, onGenerationEnded, onGenerationStarted, onGenerationStopped, playerName } from "./backend/turn.js";
 import { intentFor } from "./backend/intents.js";
 import { isQuiet, playRound } from "./backend/encounter.js";
-import { operationCurrent, releaseOperation, takeOperation } from "./backend/operations.js";
-import { dropPrewritten, momentKey, takePrewritten } from "./backend/drafts.js";
 import { isRulesetEntryTitle } from "./engine/loader.js";
 import { getDecider, JEV_KEY } from "./backend/deciders.js";
 import { builderAnswer, builderBack, builderImport, exportRulebook, builderClose, builderCurrent, builderInstall, builderOpen, builderRedo, builderRefine, builderStart } from "./backend/builder.js";
@@ -76,7 +74,6 @@ spindle.on("GENERATION_STARTED", (p, userId) => onGenerationStarted(p, userId));
 spindle.on("GENERATION_ENDED", (p, userId) => onGenerationEnded(p, userId));
 spindle.on("GENERATION_STOPPED", (p, userId) => onGenerationStopped(p, userId));
 spindle.on("MESSAGE_SWIPED", (p, userId) => {
-  dropPrewritten(p.chatId);
   if (p.action === "deleted") {
     void shiftAfterSwipeDelete(p.chatId, p.message.id, p.swipeId).catch((e) => logError("swipe delete", e)).finally(() => schedulePush(p.chatId, userId));
     return;
@@ -86,7 +83,7 @@ spindle.on("MESSAGE_SWIPED", (p, userId) => {
 for (const ev of ["MESSAGE_SENT", "MESSAGE_DELETED", "MESSAGE_EDITED", "SWIPE_EDITED", "CHAT_CHANGED"]) {
   spindle.on(ev, (p, userId) => {
     const chatId = chatIdOf(p);
-    if (chatId) { invalidateChat(chatId); dropPrewritten(chatId); }
+    if (chatId) invalidateChat(chatId);
     schedulePush(chatId, userId, 250);
   });
 }
@@ -170,7 +167,6 @@ spindle.onFrontendMessage(async (raw, userId) => {
         if (busyChats.has(msg.chatId)) { toast("info", "Wait for the current turn to finish first.", userId); break; }
         const r = (await getRuleset(msg.chatId, userId))?.ruleset;
         if (r) await reconcilePath(msg.chatId, r, msg.keep);
-        dropPrewritten(msg.chatId);
         await pushState(msg.chatId, userId);
         break;
       }
@@ -222,33 +218,9 @@ spindle.onFrontendMessage(async (raw, userId) => {
         let say = ci.say;
         // A quiet encounter: the round is resolved and told briefly in the encounter's own message.
         if (isQuiet(r, state) && await playRound({ chatId: msg.chatId, userId, intent })) break;
-        // Already written while the player read: post it at once, then catch up on the bookkeeping.
-        const ready = takePrewritten(msg.chatId, momentKey(msgs, state, { r, settings }), msg.actionId);
         if (busyChats.has(msg.chatId)) { toast("info", "One moment — the story is still being written.", userId); await pushState(msg.chatId, userId); return; }
         // Rolled on the click: the player's message tells how it went, in their voice.
-        say = await settleClick({ r, state, intent, say, msgs, chatId: msg.chatId, player: await playerName(msg.chatId, userId), settings, userId, ...(ready ? { ready: ready.rec } : {}) });
-        if (ready) {
-          const operation = takeOperation(msg.chatId);
-          if (!operation) return;
-          try {
-            await spindle.chat.appendMessage(msg.chatId, { role: "user", content: say, metadata: { warp: { intent, judged: true, ...(intent.tier ? { said: ci.say } : {}) } } });
-            const reply = await spindle.chat.appendMessage(msg.chatId, { role: "assistant", content: ready.text });
-            await writeRecord(msg.chatId, reply.id, 0, ready.rec);
-            await pushState(msg.chatId, userId);
-            const fresh = (await getMessages(msg.chatId)).find((m) => m.id === reply.id);
-            if (fresh) {
-              await afterReply({
-                chatId: msg.chatId, userId, rec: ready.rec, after: ready.after, playerText: say, ruleset: r, at: Date.now(),
-                outcome: ready.outcome, player: await playerName(msg.chatId, userId), prompt: ready.prompt,
-                isCurrent: () => operationCurrent(msg.chatId, operation),
-              }, fresh, ready.text, userId);
-            }
-          } finally {
-            if (releaseOperation(msg.chatId, operation)) send({ type: "busy", chatId: msg.chatId, busy: false }, userId);
-            schedulePush(msg.chatId, userId, 0);
-          }
-          break;
-        }
+        say = await settleClick({ r, state, intent, say, msgs, chatId: msg.chatId, player: await playerName(msg.chatId, userId), settings, userId });
         await spindle.chat.appendMessage(msg.chatId, {
           role: "user",
           content: say,

@@ -35,8 +35,6 @@ export function buildInjection(r: Ruleset, rec: TurnRecord | null, before: GameS
   return fillNames(parts.join("\n\n"), player);
 }
 
-export const WARP_BLOCK = /\n*<warp>[\s\S]*?<\/warp>/g;
-
 export function injectInto(messages: LlmMessageDTO[], text: string): { messages: LlmMessageDTO[]; index: number } {
   const out = [...messages];
   let idx = -1;
@@ -51,20 +49,4 @@ export function injectInto(messages: LlmMessageDTO[], text: string): { messages:
   }
   out.push({ role: "user", content: block.trim() });
   return { messages: out, index: out.length - 1 };
-}
-
-/**
- * The prompt for the turn after `reply`: last turn's prompt without its Warp block,
- * then the reply, then the player's next message carrying the new block. Anything
- * the preset put after the last player message (post-history instructions) stays last.
- */
-export function nextPrompt(prompt: LlmMessageDTO[], reply: string, say: string, injection: string): LlmMessageDTO[] {
-  const clean = prompt.map((m) => (typeof m.content === "string" && m.role === "user" ? { ...m, content: m.content.replace(WARP_BLOCK, "") } : m));
-  let idx = -1;
-  for (let i = clean.length - 1; i >= 0; i--) if (clean[i].role === "user") { idx = i; break; }
-  const turn: LlmMessageDTO[] = [
-    { role: "assistant", content: reply },
-    { role: "user", content: `${say}\n\n<warp>\n${injection}\n</warp>` },
-  ];
-  return idx >= 0 ? [...clean.slice(0, idx + 1), ...turn, ...clean.slice(idx + 1)] : [...clean, ...turn];
 }

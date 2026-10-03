@@ -3,13 +3,11 @@ import { beforeAll, expect, test } from "bun:test";
 import { loadRuleset } from "../engine/loader.js";
 import { DEFAULT_SETTINGS } from "../shared/protocol.js";
 import { busyChats, lastStates } from "./state-push.js";
-import { appendDrafts, encounterLogOf, foldPath, liveChoicesOf, patchMeta, patchWarpMeta, reconcilePath, recordPath, shiftAfterSwipeDelete, warpMeta, withRecordPath, writeRecord } from "./ledger.js";
+import { encounterLogOf, foldPath, liveChoicesOf, patchMeta, patchWarpMeta, reconcilePath, recordPath, shiftAfterSwipeDelete, warpMeta, withRecordPath, writeRecord } from "./ledger.js";
 import { interceptor, onGenerationEnded, onGenerationStarted, onGenerationStopped } from "./turn.js";
 import { foldEvents, initialState } from "../engine/state.js";
 import { characterBrief, characterForChat, personProfile } from "./source.js";
 import { playRound } from "./encounter.js";
-import { prewrite, momentKey, readyChoices, takePrewritten } from "./drafts.js";
-import { RulesDecider } from "./deciders.js";
 import { takeOperation, releaseOperation } from "./operations.js";
 
 let seq = 0;
@@ -333,19 +331,6 @@ test("medium-confidence encounter text waits for the actual confirmation handler
   expect(warpMeta(suggestion).suggest).toBeUndefined();
 });
 
-test("a genuinely prepared reply becomes unavailable after a prose edit", async () => {
-  const f = fixture(); f.settings.prewrite = 1;
-  const reply = f.add("assistant", "A closed door."); f.quiet = async () => ({ content: "You touch the closed door." });
-  const settings = f.settings, state = foldPath(f.r, f.messages).state;
-  await prewrite({ chatId: f.id, userId: f.id, r: f.r, settings, decider: new RulesDecider(), prompt: [], reply: reply.content, player: "Sam", onReady() {} });
-  const before = momentKey(f.messages, state, { r: f.r, settings });
-  expect(readyChoices(f.id, before).has("touch")).toBe(true);
-  reply.content = "An open door.";
-  const after = momentKey(f.messages, state, { r: f.r, settings });
-  expect(takePrewritten(f.id, after, "touch")).toBeNull();
-  expect(readyChoices(f.id, after).size).toBe(0);
-});
-
 test("registered sheet adjustments merge their newly computed deltas instead of overwriting", async () => {
   const f = fixture(); f.add("assistant", "Story");
   await Promise.all([60, 70].map((value) => frontendMessage({ type: "adjust", chatId: f.id, stat: "health", value }, f.id)));
@@ -379,16 +364,6 @@ test("card edits invalidate profiles and CHAT_CHANGED rebinding uses the new cha
   f.characterId = next.id;
   listeners.get("CHAT_CHANGED")!({ chat: { id: f.id } }, f.id);
   expect(await characterForChat(f.id, f.id)).toBe(next.id);
-});
-
-test("draft alternatives retain adjustments made after the original roll and unrelated metadata", async () => {
-  const f = fixture(); const rec = record([{ t: "stat", id: "health", d: -10, src: "action" }]);
-  const m = f.add("assistant", "Original", { companion: { value: 3 }, warp: { swipes: { "0": rec } } });
-  await patchWarpMeta(f.id, m.id, (w) => ({ ...w, swipes: { ...w.swipes, "0": { ...w.swipes!["0"], events: [...w.swipes!["0"].events, { t: "stat", id: "health", d: 30, src: "manual" }] } } }));
-  await appendDrafts(f.id, m.id, ["Alternative"], 1, rec, async () => true);
-  expect(m.swipe_id).toBe(1); expect(m.content).toBe("Alternative");
-  expect(foldPath(f.r, f.messages).state.stats.health).toBe(70);
-  expect(m.metadata.companion).toEqual({ value: 3 });
 });
 
 test("the registered lore gate folds the selected generation path instead of the stale HUD cache", async () => {

@@ -223,7 +223,7 @@ Story forecast only — not guaranteed effects; tag-defined mechanics and odds a
         const forecast = forecastText ? `<span class="warp-choice-why">${esc(forecastText)}</span>` : "";
         const tip = [forecastText, c.desc, c.why ? `Why now: ${c.why}` : null, c.checkLabel ? `Check: ${c.checkLabel} — the chance of this check, not of winning` : null, c.veiled ? "Veiled: happens off-screen" : null].filter(Boolean).join("\n");
         if (c.locked) return `<button class="warp-choice warp-choice-locked" disabled title="${esc(`${c.desc ?? c.label}\nLocked: ${c.locked}`)}"><span class="warp-choice-label">${esc(c.label)}<span class="warp-choice-why">🔒 ${esc(c.locked)}</span></span></button>`;
-        return `<button class="warp-choice${c.id.startsWith("item:") ? " warp-choice-item" : ""}" data-act="${esc(c.id)}" title="${esc(tip)}${c.ready ? "\nReady — this reply is already written" : ""}">${key}<span class="warp-choice-label">${esc(c.label)}${forecast}${c.why ? `<span class="warp-choice-why">${esc(c.why)}</span>` : ""}</span>${c.ready ? `<span class="warp-choice-ready" aria-label="instant">⚡</span>` : ""}${c.veiled ? `<span class="warp-choice-veil" aria-label="veiled">◐</span>` : ""}${odds}</button>`;
+        return `<button class="warp-choice${c.id.startsWith("item:") ? " warp-choice-item" : ""}" data-act="${esc(c.id)}" title="${esc(tip)}">${key}<span class="warp-choice-label">${esc(c.label)}${forecast}${c.why ? `<span class="warp-choice-why">${esc(c.why)}</span>` : ""}</span>${c.veiled ? `<span class="warp-choice-veil" aria-label="veiled">◐</span>` : ""}${odds}</button>`;
       }).join("")}</div>
     </div>`).join("");
   const status = opts.busy ? `<div class="warp-status-line"><span class="warp-spinner"></span>${esc(opts.busyLabel ?? "The story continues…")}</div>` : "";
@@ -447,17 +447,6 @@ function renderDecider(s: Settings, jevKeySet: boolean): string {
       <input type="range" min="10" max="95" value="${pct(s.askConfidence)}" data-setting-pct="askConfidence"></label>
     </details>
     ${toggle("consistencyCheck", "Check replies against the state", "Flags replies that contradict the game (wrong place, items, injuries, dice result). One extra quick question per reply — cheap with Jev.", s.consistencyCheck)}
-    <details data-section="advanced-generation"${s.drafts > 1 || s.prewrite > 0 ? " open" : ""}><summary>Optional: extra drafts & pre-written replies</summary>
-    <p class="warp-tone-warn">These options spend extra generations on your chat's connection. Pre-written replies can cost money even when you never choose them.</p>
-    <label class="warp-slider">Drafts per reply
-      <select class="warp-select" data-setting="drafts">${[1, 2, 3, 4].map((n) => `<option value="${n}"${s.drafts === n ? " selected" : ""}>${n === 1 ? "1 (off)" : `${n} — optional swipes`}</option>`).join("")}</select>
-      <small class="warp-dim">Extra drafts are written with your chat's connection after each reply and saved as swipes. The reply you are reading stays selected; choose an alternative yourself. Costs one generation per extra draft.</small>
-    </label>
-    <label class="warp-slider">Pre-write replies
-      <select class="warp-select" data-setting="prewrite">${[0, 1, 2, 3, 4].map((n) => `<option value="${n}"${s.prewrite === n ? " selected" : ""}>${n === 0 ? "Off" : `First ${n} choice${n === 1 ? "" : "s"}`}</option>`).join("")}</select>
-      <small class="warp-dim">While you read, the first choices are rolled and written ahead, so clicking one (⚡) is instant. Costs one generation per prepared choice each turn, including choices you do not use. Only available when swipe rerolls are enabled.</small>
-    </label>
-    </details>
     <div class="warp-row"><button class="warp-btn" data-test-decider>Test decision model</button></div>
   </div>`;
 }

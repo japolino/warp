@@ -1,8 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { builderAnswer, builderOpen, builderStart } from "./builder.js";
-import { afterReply } from "./turn.js";
-import { initialState } from "../engine/state.js";
-import { loadRuleset } from "../engine/loader.js";
 import { DEFAULT_SETTINGS } from "../shared/protocol.js";
 import { renderSettings } from "../frontend/render.js";
 
@@ -25,7 +22,7 @@ beforeEach(() => {
     macros: { resolve: async () => ({ text: "Sam" }) },
     userStorage: {
       getJson: async (path: string, opts: any) => path.startsWith("builder/") ? stored ?? opts.fallback : {
-        ...DEFAULT_SETTINGS, drafts: 3, prewrite: 0, decider: "llm", narratorUpdates: false, consistencyCheck: false,
+        ...DEFAULT_SETTINGS, decider: "llm", narratorUpdates: false, consistencyCheck: false,
       },
       setJson: async (_: string, value: unknown) => { stored = structuredClone(value); },
     },
@@ -65,29 +62,9 @@ test("builder preserves card-specific quest suggestions and drops removed system
   expect(session().rounds[0].questions.find((q: any) => q.id === "systems").default).toEqual(["quests"]);
 });
 
-test("extra drafts never switch an already visible reply, including a nonzero swipe", async () => {
-  const r = loadRuleset([{ label: "t", content: "name: Test\nstats: { health: { start: 50 } }", order: 0 }]).ruleset!;
-  const rec = { v: 1 as const, hints: [], events: [], at: 0 };
-  const reply = "The reply the player is reading.";
-  const m = { id: "reply", index_in_chat: 0, role: "assistant", is_user: false, content: reply,
-    swipe_id: 1, swipes: ["Older swipe", reply], metadata: { warp: { swipes: { "1": rec } } } };
-  messages = [m];
-  await afterReply({ chatId: id, rec, ruleset: r, after: initialState(r), playerText: "Hello", at: 0,
-    outcome: null, player: "Sam", prompt: [{ role: "user", content: "Hello" }] }, structuredClone(m) as any, reply, id);
-  expect(m.swipe_id).toBe(1);
-  expect(m.content).toBe(reply);
-  expect(m.swipes).toEqual(["Older swipe", reply, "Alternative 1", "Alternative 2"]);
-  expect(m.metadata.warp.swipes).toHaveProperty("2");
-  expect(m.metadata.warp.swipes).toHaveProperty("3");
-  expect(calls).toBe(2); // No hidden judge call to select another reply.
-  expect(patches.every(p => p.swipe_id === undefined || p.swipe_id === 1)).toBe(true);
-});
-
-test("settings keep basics, with advanced cost controls collapsed by default and no removed parts", () => {
+test("settings keep basics, with no removed parts", () => {
   const html = renderSettings(DEFAULT_SETTINGS, null, []);
   expect(html).toContain('data-setting="enabled"');
-  for (const gone of ['data-setting="minigames"', 'data-setting="look"', 'data-setting="sfx"', 'data-setting="fx"', "themeDating", "dateImages"]) expect(html).not.toContain(gone);
-  expect(html).toContain('<details data-section="advanced-generation"><summary>');
-  expect(html).toContain("even when you never choose them");
-  expect(html).toContain("stays selected");
+  for (const gone of ['data-setting="minigames"', 'data-setting="look"', 'data-setting="sfx"', 'data-setting="fx"', "themeDating", "dateImages",
+    'data-setting="drafts"', 'data-setting="prewrite"', "advanced-generation"]) expect(html).not.toContain(gone);
 });
