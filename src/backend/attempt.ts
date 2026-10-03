@@ -75,7 +75,7 @@ export async function personaText(chatId: string, userId?: string): Promise<stri
 
 /** Does this resolved turn have a result worth telling in the player's message? */
 export function tellable(rec: TurnRecord): boolean {
-  return !!rec.check && !rec.mind && !rec.veiled;
+  return !!rec.check && !rec.veiled;
 }
 
 /**

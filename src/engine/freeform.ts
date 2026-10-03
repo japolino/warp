@@ -133,7 +133,7 @@ export interface PracticeContext {
 export function practiceKey(s: GameState, context: PracticeContext): string {
   const people = Object.entries(s.scene ?? {}).filter(([, v]) => v.here && v.loc === s.location).map(([id]) => id).sort();
   // Only improvised difficulty is a known mechanical opportunity here. Cosmetic
-  // labels, mind_resist and arbitrary intent params must not reset repetition.
+  // labels and arbitrary intent params must not reset repetition.
   const difficulty = context.actionId.startsWith(IMPROV)
     ? (isDifficulty(context.params?.difficulty) ? context.params!.difficulty : "fair") : null;
   return JSON.stringify([context.actionId, s.location, people, context.target ?? null, difficulty,

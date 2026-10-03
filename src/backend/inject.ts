@@ -5,7 +5,7 @@ import type { LlmMessageDTO } from "lumiverse-spindle-types";
 import type { TurnRecord } from "../engine/resolve.js";
 import type { Ruleset } from "../engine/ruleset.js";
 import type { GameState } from "../engine/state.js";
-import { narratorKnowledge, outcomePacket, perception, stateDigest } from "../engine/view.js";
+import { narratorKnowledge, outcomePacket, stateDigest } from "../engine/view.js";
 
 export function fillNames(text: string, player: string) {
   return text.replace(/\{\{user\}\}/gi, player);
@@ -29,8 +29,6 @@ export function buildInjection(r: Ruleset, rec: TurnRecord | null, before: GameS
   parts.push(`[Warp — current game state. The rules engine owns these facts; keep narration consistent with them.]\n${stateDigest(r, after, turnText === undefined ? undefined : { text: turnText })}`);
   if (since.length) parts.push(`[Warp — what {{user}} did since the last reply, off the page. Already done: keep the story consistent with it, but don't narrate it as happening now or repeat it back.]\n${since.slice(-8).map((l) => `- ${l}`).join("\n")}`);
   if (r.narration.notes) parts.push(`[Warp — narrator notes]\n${r.narration.notes}`);
-  const felt = perception(r, after);
-  if (felt) parts.push(`[Warp — how {{user}} experiences things right now. Filter the narration through this.]\n${felt}`);
   const known = narratorKnowledge(r, after);
   if (known) parts.push(`[Warp — background only you know. The player hasn't seen it. Play it as subtext: never explain it, and reveal no more than the scene earns.]\n${known}`);
   const packet = rec ? outcomePacket(r, rec, before, after, player) : null;

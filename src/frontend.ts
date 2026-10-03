@@ -1000,8 +1000,6 @@ export function setup(ctx: SpindleFrontendContext) {
   const onDocClick = (e: MouseEvent) => {
     const t = e.target as Element | null;
     if (!t?.closest) return;
-    const resistance = t.closest<HTMLButtonElement>(".warp-choices [data-resist-action]");
-    if (resistance) { e.preventDefault(); if (!resistance.disabled) act(resistance.dataset.resistAction!, { mind_resist: resistance.dataset.resistId! }); return; }
     const errandOpen = t.closest<HTMLElement>(".warp-choices [data-errand-open]");
     if (errandOpen) { e.preventDefault(); openErrands(errandOpen.dataset.errandOpen!); return; }
     const choice = t.closest<HTMLElement>(".warp-choices [data-act]");

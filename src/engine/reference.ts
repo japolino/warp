@@ -14,7 +14,7 @@ export const PART_CONTENTS: Record<PartLabel, string> = {
   encounters: "encounters",
   quests: "quests (bounties on a notice board, favours people ask, story jobs: goals, deadline, reward, failure)",
   journal: "codex, feats, perks, abilities, checkpoints, endings",
-  rules: "triggers, mind",
+  rules: "triggers",
   story: "secrets, fronts, random_events, live_choices",
 };
 
@@ -30,7 +30,7 @@ export function partForIssue(where: string): PartLabel {
   if (head.startsWith("encounters")) return "encounters";
   if (head.startsWith("quests")) return "quests";
   if (["codex", "feats", "perks", "abilities", "checkpoints", "endings"].some((k) => head.startsWith(k))) return "journal";
-  if (head.startsWith("triggers") || head.startsWith("rules") || head.startsWith("mind")) return "rules";
+  if (head.startsWith("triggers") || head.startsWith("rules")) return "rules";
   if (["secrets", "fronts", "random events", "live choices"].some((k) => head.startsWith(k))) return "story";
   return "core";
 }
@@ -298,15 +298,6 @@ triggers:
   drain: { when: "fatigue >= 85", repeat: true, do: { stress: +2 } }                           # every turn while true
   danger: { when_scene: "{{user}} is in immediate danger", do: { stress: +5 } }                # judged in plain language
 # A rule can't restart the encounter that just ended: start_encounter from a rule is skipped for 15 min after it ends (60 min in the same place); the rule stays fired until its condition goes false again.
-
-mind:             # the character's mind can overrule the player (in the "rules" part)
-  overrides_mode: hard   # legacy default; soft keeps the chosen action and treats fail/redirect as narrative pressure
-  overrides:      # first one that holds and rolls under its chance wins; a 🧠 chip says why
-    freeze: { when: "control < 25", chance: "60 - control * 2", on: [violence], cause: Panic, text: "their body won't obey.", resist_cost: { control: 10 } }   # do: fail (default) = fails with no roll
-    urge: { when: "lust >= 70", chance: 30, on: [talk], do: flirt, cause: Desire }      # do: <action id> = that happens instead
-    nerves: { when: "control < 50", chance: 50, do: alter, cause: Nerves }               # do: alter = goes ahead, coloured by the cause; on: [] = any action with a check
-    # resist_cost: { control: 10 } offers an explicit Resist button (paid only if the override triggers; must be affordable with the action's own cost). Amounts are paid in the stat's bad direction: { dread: 8 } RAISES a good: low meter (must stay under its max); quoted "+8"/"-8" say the direction outright. Meters only. Applies to contextual live choices too, via their authored tag.
-  perception: [ { when: "awareness < 20", text: "{{user}} is naive: describe only what they understand." } ]   # filters the narration while true
 
 QUESTS (the "quests" part): things to do for someone or for yourself — a bounty, a favour, cooking the best breakfast, slaying the dragon.
 quests:

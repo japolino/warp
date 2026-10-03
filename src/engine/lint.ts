@@ -393,13 +393,6 @@ export function lintRuleset(r: Ruleset): Issue[] {
     if (!slotIds.includes(slot)) issues.push({ level: "warning", where: `Body › hidden_by › ${part}`, message: `"${slot}" isn't a wardrobe slot${suggest(slot, slotIds)}` });
   }
   for (const t of Object.values(r.body.transforms)) check(t.chance, `Body › transforms › ${t.id} › chance`);
-  for (const o of r.mind.overrides) {
-    const w = `Mind › overrides › ${o.id}`;
-    check(o.when, `${w} › when`, { target: "someone" });
-    check(o.chance, `${w} › chance`, { target: "someone" });
-    if (o.do !== "fail" && o.do !== "alter" && !r.actions[o.do]) issues.push({ level: "warning", where: `${w} › do`, message: `"${o.do}" isn't fail, alter or an action${suggest(o.do, Object.keys(r.actions))}` });
-  }
-  r.mind.perception.forEach((p, i) => check(p.when, `Mind › perception #${i + 1} › when`));
   const gates: [string, { when?: string } | undefined][] = [
     ...r.statOrder.map((id) => [`Stats › ${id} › narrator_when`, r.stats[id].gate] as [string, { when?: string } | undefined]),
     ...r.relStatOrder.map((id) => [`Relationships › stats › ${id} › narrator_when`, r.relStats[id].gate] as [string, { when?: string } | undefined]),

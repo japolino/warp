@@ -573,32 +573,6 @@ export interface LiveChoicesDef {
   tags: Record<string, ActionDef>;
 }
 
-/**
- * The player character's mind can overrule the player: at low control a typed or
- * clicked action may freeze, turn into something else, or be coloured by a cause.
- */
-export interface MindOverride {
-  id: string;
-  when: string;
-  /** Percent chance per action it applies to (formula). */
-  chance: string | number;
-  /** Action ids or tags it applies to; empty = any action with a check. */
-  on: string[];
-  /** fail = it fails without a roll; alter = it goes ahead, coloured by the cause; or an action id done instead. */
-  do: string;
-  cause: string;
-  text?: string;
-  /** Explicit player counterplay: intent.params.mind_resist = this override's id. Signed meter changes, each in the stat's bad direction. */
-  resistCost?: Record<string, number>;
-}
-export interface MindDef {
-  /** hard (legacy default) permits fail/redirect; soft keeps the chosen action as narration pressure. */
-  overridesMode?: "hard" | "soft";
-  overrides: MindOverride[];
-  /** How the narrator should describe things to the player character while a condition holds. */
-  perception: { when: string; text: string }[];
-}
-
 /** What survives rewinding to a save (or starting over after an ending). Everything else rewinds. */
 export interface KeepSpec {
   codex: boolean; feats: boolean; perks: boolean; secrets: boolean; people: boolean;
@@ -811,7 +785,6 @@ export interface Ruleset {
   fronts: Record<string, FrontDef>;
   randomEvents: RandomEventsDef;
   liveChoices: LiveChoicesDef;
-  mind: MindDef;
   checkpoints: CheckpointsDef;
   endings: Record<string, EndingDef>;
   /** What carries over to a new run after an ending. */
@@ -2272,62 +2245,6 @@ function normLiveChoices(raw: unknown, c: Ctx, known: { stats: Set<string> }): L
   return def;
 }
 
-/**
- * `resist_cost:` → signed changes to meters. A plain amount is paid in the stat's bad direction: `{ control: 10 }`
- * lowers Control (better high), `{ dread: 8 }` raises Dread (better low). A quoted sign says it outright ("+8", "-10"),
- * but must still hurt. Anything else disables resistance, with a warning.
- */
-function normResistCost(raw: unknown, where: string, c: Ctx, stats: Record<string, StatDef>): Record<string, number> | undefined {
-  const fail = (why: string) => { c.warn(where, `${why}; resistance disabled`); return undefined; };
-  if (!isObj(raw) || !Object.keys(raw).length) return fail("expected a map of meter costs, e.g. `{ control: 10 }` (or `{ dread: 8 }` to raise a stat that's better low)");
-  const out: Record<string, number> = {};
-  for (const [id, v] of Object.entries(raw)) {
-    const def = stats[id];
-    if (!def) return fail(`"${id}" isn't a declared stat`);
-    if (def.kind !== "meter") return fail(`"${id}" is a ${def.kind}; resist costs are paid from meters`);
-    const signed = typeof v === "string" ? /^\s*([+-])\s*(\d+(?:\.\d+)?)\s*$/.exec(v) : null;
-    const n = signed ? Number(signed[2]) : typeof v === "number" ? v : NaN;
-    if (!Number.isFinite(n) || n <= 0) return fail(`${id}: ${JSON.stringify(v)} — use a positive amount (paid in the stat's bad direction) or a quoted "+N"/"-N"`);
-    const d = signed ? (signed[1] === "-" ? -n : n) : def.good === "low" ? n : -n;
-    if ((d > 0 && def.good === "high") || (d < 0 && def.good === "low")) {
-      return fail(`${id}: ${JSON.stringify(v)} would help (${def.label} is better ${def.good}), not cost`);
-    }
-    out[id] = d;
-  }
-  return out;
-}
-
-function normMind(raw: unknown, c: Ctx, stats: Record<string, StatDef> = {}): MindDef {
-  const def: MindDef = { overrides: [], perception: [] };
-  if (raw === undefined) return def;
-  if (!isObj(raw)) { c.warn("Mind", "should be a map with `overrides:` and/or `perception:`"); return def; }
-  if (raw.overrides_mode === "soft" || raw.overrides_mode === "hard") def.overridesMode = raw.overrides_mode;
-  else if (raw.overrides_mode !== undefined) c.warn("Mind › overrides_mode", "expected hard or soft; using legacy hard overrides");
-  for (const [id, o] of Object.entries(isObj(raw.overrides) ? raw.overrides : {})) {
-    const w = `Mind › overrides › ${id}`;
-    if (!isObj(o)) { c.warn(w, "expected `when:`, `chance:` and `do:`"); continue; }
-    const when = c.expr(o.when ?? true, `${w} › when`);
-    const chance = c.expr(o.chance ?? 100, `${w} › chance`);
-    if (when === undefined || chance === undefined) continue;
-    const act = typeof o.do === "string" ? o.do : "fail";
-    const resistCost = o.resist_cost !== undefined ? normResistCost(o.resist_cost, `${w} › resist_cost`, c, stats) : undefined;
-    def.overrides.push({
-      id, when: String(when), chance, on: list(o.on).map((x) => x.toLowerCase()), do: act,
-      cause: typeof o.cause === "string" ? o.cause : titleCase(id),
-      ...(resistCost ? { resistCost } : {}),
-      ...(typeof o.text === "string" ? { text: o.text } : {}),
-    });
-  }
-  const per = Array.isArray(raw.perception) ? raw.perception : [];
-  per.forEach((p: unknown, i: number) => {
-    const w = `Mind › perception #${i + 1}`;
-    if (!isObj(p) || typeof p.text !== "string") { c.warn(w, "expected `{ when: ..., text: ... }`"); return; }
-    const when = c.expr(p.when ?? true, `${w} › when`);
-    if (when !== undefined) def.perception.push({ when: String(when), text: p.text });
-  });
-  return def;
-}
-
 const KEEP_FLAGS = ["codex", "feats", "perks", "secrets", "people"] as const;
 const KEEP_LISTS = ["stats", "flags", "items", "rel"] as const;
 
@@ -2599,6 +2516,7 @@ export const REMOVED_KEYS: Record<string, string> = {
   minigames: "minigames",
   lineage: "family and pregnancy",
   observers: "being seen", being_seen: "being seen",
+  mind: "mind overrides and perception filters",
 };
 
 const SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
@@ -2905,7 +2823,6 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const liveChoices = normLiveChoices(raw.live_choices, c, known);
   // Parts of Warp that were taken out (the old version is on the `legacy` branch).
   for (const [k, what] of Object.entries(REMOVED_KEYS)) if (raw[k] !== undefined) c.removed(titleCase(k), k, what);
-  const mind = normMind(raw.mind, c, stats);
   const endingsRaw: Raw = isObj(raw.endings) ? raw.endings : {};
   const endings = normEndings(Object.fromEntries(Object.entries(endingsRaw).filter(([k]) => k !== "legacy")), c);
   const legacy = normKeep(endingsRaw.legacy, "Endings › legacy", c, { codex: true, feats: true, perks: true });
@@ -2949,7 +2866,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     weather, wardrobe, encounters, codex, feats, perks,
     ...(perkPoints && stats[perkPoints] ? { perkPoints } : {}),
     perkPick, abilities, quests, questOrder, storyQuests,
-    secrets, fronts, randomEvents, liveChoices, mind, checkpoints, endings, legacy, body, companions, bonds, obligations, jobs, discovery, improvise, growth,
+    secrets, fronts, randomEvents, liveChoices, checkpoints, endings, legacy, body, companions, bonds, obligations, jobs, discovery, improvise, growth,
   };
 
   // Cross-references that need everything loaded.

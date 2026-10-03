@@ -415,8 +415,6 @@ export function renderChoices(choices: ChoiceView[], opts: { showOdds: boolean; 
         const odds = opts.showOdds && c.odds !== null
           ? `<span class="warp-choice-odds warp-tone-${pctTone(c.odds + (c.partialOdds ?? 0) / 2)}" title="${esc(`${c.checkLabel ?? "Check"}: ${Math.round(c.odds * 100)}% success${c.partialOdds ? `, ${Math.round(c.partialOdds * 100)}% partial` : ""}`)}">${Math.round(c.odds * 100)}%</span>`
           : "";
-        const resistance = c.params.find((p) => p.id === "mind_resist");
-        const resistButtons = resistance ? resistance.options.filter((id) => id !== "none").map((id) => `<button type="button" class="warp-choice" data-resist-action="${esc(c.id)}" data-resist-id="${esc(id)}" title="${esc(c.desc ?? "Explicitly resist this override if it triggers")}" ${opts.busy ? "disabled" : ""}>Resist ${esc(id)}: ${esc(c.label)}</button>`).join("") : "";
         const forecastText = c.forecast ? `Goal: ${c.forecast.goal}
 Possible risk: ${c.forecast.risk}
 Possible payoff: ${c.forecast.payoff}
@@ -424,7 +422,7 @@ Story forecast only — not guaranteed effects; tag-defined mechanics and odds a
         const forecast = forecastText ? `<span class="warp-choice-why">${esc(forecastText)}</span>` : "";
         const tip = [forecastText, c.desc, c.why ? `Why now: ${c.why}` : null, c.checkLabel ? `Check: ${c.checkLabel} — the chance of this check, not of winning` : null, c.veiled ? "Veiled: happens off-screen" : null].filter(Boolean).join("\n");
         if (c.locked) return `<button class="warp-choice warp-choice-locked" disabled title="${esc(`${c.desc ?? c.label}\nLocked: ${c.locked}`)}"><span class="warp-choice-label">${esc(c.label)}<span class="warp-choice-why">🔒 ${esc(c.locked)}</span></span></button>`;
-        return `<button class="warp-choice${c.id.startsWith("item:") ? " warp-choice-item" : ""}" data-act="${esc(c.id)}" title="${esc(tip)}${c.ready ? "\nReady — this reply is already written" : ""}">${key}<span class="warp-choice-label">${esc(c.label)}${forecast}${c.why ? `<span class="warp-choice-why">${esc(c.why)}</span>` : ""}</span>${c.ready ? `<span class="warp-choice-ready" aria-label="instant">⚡</span>` : ""}${c.veiled ? `<span class="warp-choice-veil" aria-label="veiled">◐</span>` : ""}${odds}</button>${resistButtons}`;
+        return `<button class="warp-choice${c.id.startsWith("item:") ? " warp-choice-item" : ""}" data-act="${esc(c.id)}" title="${esc(tip)}${c.ready ? "\nReady — this reply is already written" : ""}">${key}<span class="warp-choice-label">${esc(c.label)}${forecast}${c.why ? `<span class="warp-choice-why">${esc(c.why)}</span>` : ""}</span>${c.ready ? `<span class="warp-choice-ready" aria-label="instant">⚡</span>` : ""}${c.veiled ? `<span class="warp-choice-veil" aria-label="veiled">◐</span>` : ""}${odds}</button>`;
       }).join("")}</div>
     </div>`).join("");
   const status = opts.busy ? `<div class="warp-status-line"><span class="warp-spinner"></span>${esc(opts.busyLabel ?? "The story continues…")}</div>` : "";
@@ -533,11 +531,6 @@ export function renderChips(rec: RecordView, opts: { showDice: boolean; showChan
   for (const d of rec.decisions) {
     const odds = d.odds.map((o) => `${o.desc} ${Math.round(o.p * 100)}%`).join(" · ");
     out.push(`<span class="warp-chip warp-decision" title="${esc(`${d.ask}\n${odds}\n${d.source === "model" ? "Odds from the decision model; the engine rolled." : "Odds from the ruleset's weights; the engine rolled."}`)}">🎭 ${esc(d.picked)} <span class="warp-dim">${Math.round(d.p * 100)}%</span></span>`);
-  }
-  if (rec.mind) {
-    const m = rec.mind;
-    const what = m.kind === "fail" ? "couldn't go through with it" : m.kind === "redirect" ? "did something else" : "it took over";
-    out.push(`<span class="warp-chip warp-tone-warn" title="${esc(`You chose: ${m.meant}\n${m.cause}: ${what} (${Math.round(m.chance)}% chance at the time)`)}">🧠 ${esc(m.cause)} — ${esc(what)}</span>`);
   }
   if ((rec.contradiction ?? 0) >= 0.6) {
     out.push(`<span class="warp-chip warp-tone-warn" title="The decision model thinks this reply may contradict the game state (${Math.round(rec.contradiction! * 100)}%). Consider swiping.">⚠ may contradict the state</span>`);

@@ -26,8 +26,8 @@ export function intentFor(r: Ruleset, state: GameState, settings: Settings, msgs
     const found = c ? findAction(r, state, `${LIVE_PREFIX}${c.tag}${c.target ? `${TARGET_SEP}${c.target}` : ""}`) : null;
     if (!c || !found) return { error: "That choice isn't available anymore." };
     const forecast = cleanLiveForecast(c.forecast);
-    // Explicit choices (the tag's own params, a chosen mind resistance) ride on the intent; the engine validates them.
-    const known = new Set(["mind_resist", ...found.a.params.map((p) => p.id)]);
+    // Explicit choices (the tag's own params) ride on the intent; the engine validates them.
+    const known = new Set(found.a.params.map((p) => p.id));
     const explicit = Object.fromEntries(Object.entries(params ?? {}).filter(([k, v]) => known.has(k) && typeof v === "string"));
     return { say: `*${c.label}*`, intent: { ...(forecast ? { forecast } : {}), actionId: `${LIVE_PREFIX}${c.tag}${c.target ? `${TARGET_SEP}${c.target}` : ""}`, ...(Object.keys(explicit).length ? { params: explicit } : {}), via: "choice", label: c.label } };
   }

@@ -23,6 +23,9 @@ lineage:
   pregnancy: { weeks: 36 }
 observers:
   when: "exposed > 0"
+mind:
+  overrides: { freeze: { when: "mood < 99", chance: 100, cause: Panic, resist_cost: { mood: 5 } } }
+  perception: [ { when: "mood < 99", text: "Everything looks grey." } ]
   reactions: { interested: { rel: { target: { trust: +4 } } } }
 actions:
   night:
@@ -40,12 +43,12 @@ describe("removed in-chat systems", () => {
   test("each removed key or effect gets one plain warning and is ignored", () => {
     const { ruleset: r, issues } = load();
     expect(r).not.toBeNull();
-    expect(removedWhere()).toEqual(["Actions › night › effects › conceive", "Lineage", "Observers"].sort());
+    expect(removedWhere()).toEqual(["Actions › night › effects › conceive", "Lineage", "Mind", "Observers"].sort());
     for (const i of issues.filter((x) => x.message.includes("was removed from Warp"))) {
       expect(i.level).toBe("warning");
       expect(i.message).toContain("`legacy` branch");
     }
-    for (const k of ["lineage", "observers"]) expect(Object.keys(r!)).not.toContain(k);
+    for (const k of ["lineage", "observers", "mind"]) expect(Object.keys(r!)).not.toContain(k);
     expect(JSON.stringify(r!.actions.night)).not.toContain("conceive");
   });
 
@@ -58,6 +61,9 @@ describe("removed in-chat systems", () => {
     const rec = resolveTurn(r, initialState(r), { actionId: "night", via: "choice" }, { seed: "x" });
     expect(rec.events.some((e) => (e.t as string) === "conceive")).toBe(false);
     expect(rec.events.some((e) => e.t === "stat" && e.id === "mood")).toBe(true);
+    // No mind override takes the wheel, and nothing filters the narration.
+    expect(JSON.stringify(rec)).not.toContain("Panic");
+    expect(stateDigest(r, initialState(r))).not.toContain("grey");
   });
 
   test("an old chat with events of removed systems still folds", () => {

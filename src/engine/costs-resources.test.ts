@@ -154,36 +154,6 @@ describe("action costs gate (bug: an unaffordable cost could be repeated forever
   });
 });
 
-describe("resist_cost in the stat's bad direction", () => {
-  const book = (resist: unknown, start = 10) => load({
-    stats: { dread: { kind: "meter", start, good: "low" }, control: { kind: "meter", start: 20 }, bruises: { kind: "attribute", start: 0 } },
-    actions: { punch: { label: "Punch", tags: ["violence"], check: { chance: 100 }, success: { bruises: +1 }, fail: { bruises: +5 } } },
-    mind: { overrides: { freeze: { on: ["violence"], do: "fail", cause: "Panic", resist_cost: resist } } },
-  });
-
-  test("a plain amount on a good-low meter raises it; affordability is against the max", () => {
-    const { r, issues } = book({ dread: 8 });
-    expect(warned(issues, /resist_cost/)).toEqual([]);
-    const rec = turn(r, initialState(r), "punch", { mind_resist: "freeze" });
-    expect(rec.rec.mind?.kind).toBe("alter");
-    expect(rec.s.stats.dread).toBe(18);
-    expect(rec.rec.hints.join(" ")).toContain("Resistance costs +8 Dread");
-    const full = book({ dread: 8 }, 95).r;
-    expect(turn(full, initialState(full), "punch", { mind_resist: "freeze" }).rec.mind?.kind).toBe("fail");
-    expect(choices(full, initialState(full)).find((c) => c.id === "punch")!.desc).toContain("Not enough resources to resist.");
-  });
-
-  test("quoted signs are explicit; costs that would help or name non-meters are refused with a warning", () => {
-    expect(book({ dread: "+8", control: "-5" }).r.mind.overrides[0].resistCost).toEqual({ dread: 8, control: -5 });
-    expect(book({ control: 10 }).r.mind.overrides[0].resistCost).toEqual({ control: -10 });
-    for (const bad of [{ dread: "-8" }, { control: "+5" }, { control: -1 }, { bruises: 3 }, { nope: 3 }, {}]) {
-      const { r, issues } = book(bad);
-      expect(r.mind.overrides[0].resistCost).toBeUndefined();
-      expect(warned(issues, /resist_cost/)).toHaveLength(1);
-    }
-  });
-});
-
 describe("per_encounter / per_day on encounter moves", () => {
   const book = () => load({
     clock: { start: "Mon 12:00" },

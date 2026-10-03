@@ -8,7 +8,7 @@ import {
 } from "./state.js";
 import { practiceProgress } from "./freeform.js";
 import { encounterGuide, itemRelevance } from "./encounter-view.js";
-import { cleanLiveForecast, costValue, resistAffordable, resistCostText, spentLock, whenHolds, paramValues, ABILITY_PREFIX, abilityStatus, actionPool, availableChoices, canExplore, dangerStats, EXPLORE, findAction, foeArmor, isAvailable, knowsAbility, lockedExits, placeKnown, placeLock, LIVE_PREFIX, lockReason, mainMeter, odds, perkOffers, playerArmor, usableAbilities, usableItems, perkBlocker, RUN_EPILOGUE, TIER_LABEL, TRAVEL_PREFIX, travelTargets, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
+import { cleanLiveForecast, costValue, spentLock, whenHolds, paramValues, ABILITY_PREFIX, abilityStatus, actionPool, availableChoices, canExplore, dangerStats, EXPLORE, findAction, foeArmor, isAvailable, knowsAbility, lockedExits, placeKnown, placeLock, LIVE_PREFIX, lockReason, mainMeter, odds, perkOffers, playerArmor, usableAbilities, usableItems, perkBlocker, RUN_EPILOGUE, TIER_LABEL, TRAVEL_PREFIX, travelTargets, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
 import { dueWords, effectWords, goalDone, questDef, questDigest, questOffers, questsToReport, QUEST_PREFIX } from "./quests.js";
 import {
   dateAt, exposedSlots, isIndoors, ordinal, personLocation, presentPeople, seasonAt, temperatureAt, warmthNeeded, warmthOf, weatherAt,
@@ -452,47 +452,7 @@ export function keepWords(r: Ruleset, k: KeepSpec): string {
 }
 
 export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; veils: string[]; live?: LiveChoice[]; errands?: boolean; showChoices?: boolean }): ChoiceView[] {
-  const out = choiceList(r, s, opts);
-  for (const c of out) withMindCounterplay(r, s, c, opts.live ?? []);
-  return out;
-}
-
-/** Expose authored vetoes and explicit resistance before the player commits. */
-function withMindCounterplay(r: Ruleset, s: GameState, c: ChoiceView, live: LiveChoice[]) {
-  if (c.locked) return;
-  // A live choice is decided by its authored tag, so the tag's overrides apply to it.
-  const found = c.id.startsWith(LIVE_PREFIX) ? liveAction(r, live, c.id) : findAction(r, s, c.id);
-  if (!found) return;
-  // Same context as resolve.ts mindOverride (param defaults + target), so a firing override is never hidden.
-  const env = makeEnv(r, s, paramValues(found.a, undefined, found.target));
-  const applicable = r.mind.overrides.filter((o) => o.do !== found.a.id
-    && (o.on.length ? o.on.some((id) => id === found.a.id || found.a.tags.includes(id)) : !!found.a.check)
-    && evalBool(o.when, env, false) && evalNumber(o.chance, env, 0) > 0);
-  const warnings: string[] = [];
-  const resist: string[] = [];
-  for (const o of applicable) {
-    const hard = r.mind.overridesMode !== "soft" && o.do !== "alter";
-    warnings.push(`${o.cause}: ${hard ? o.do === "fail" ? "may fail without a roll" : "may replace your chosen action" : "narration pressure only; your action stays chosen"}.`);
-    if (!hard || !o.resistCost || !Object.keys(o.resistCost).length) continue;
-    const valid = Object.entries(o.resistCost).every(([id, n]) => r.stats[id]?.kind === "meter" && Number.isFinite(n) && n !== 0);
-    if (!valid) continue;
-    const cost = resistCostText(r, o.resistCost);
-    // The same test resolve.ts applies when the override fires.
-    const affordable = resistAffordable(r, s, found.a, o.resistCost, env);
-    warnings.push(`Resist ${o.id}: ${cost}, paid only if this override triggers. ${affordable ? "Choose resistance below to keep your action." : "Not enough resources to resist."}`);
-    if (affordable) resist.push(o.id);
-  }
-  if (warnings.length) c.desc = [c.desc, ...warnings].filter(Boolean).join(" ");
-  if (resist.length && !c.params.some((p) => p.id === "mind_resist")) c.params.push({
-    id: "mind_resist", label: "Resist mind override", options: ["none", ...resist], default: "none",
-  });
-}
-
-/** The authored tag action behind a shown live choice ("live:<index>"). */
-function liveAction(r: Ruleset, live: LiveChoice[], id: string): { a: ActionDef; target?: string } | null {
-  const l = live[Number(id.slice(LIVE_PREFIX.length))];
-  const a = l ? r.liveChoices.tags[l.tag] : undefined;
-  return a ? { a, ...(l.target ? { target: l.target } : {}) } : null;
+  return choiceList(r, s, opts);
 }
 
 function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: string[]; live?: LiveChoice[]; errands?: boolean; showChoices?: boolean }): ChoiceView[] {
@@ -994,7 +954,6 @@ export function buildRecordView(r: Ruleset, messageId: string, swipe: number, re
       };
     }),
     contradiction: rec.contradiction ?? null,
-    mind: rec.mind ? { cause: rec.mind.cause, kind: rec.mind.kind, meant: rec.mind.meant, chance: rec.mind.chance } : null,
     redoFrom: null,
   };
 }
@@ -1252,13 +1211,6 @@ export function sceneHints(r: Ruleset, s: GameState): { moods: Record<string, st
   const notes: string[] = [];
   if (s.encounter) notes.push(`In a fight or tense encounter: ${r.encounters[s.encounter.id]?.name ?? s.encounter.id}`);
   return Object.keys(moods).length || notes.length ? { moods, notes } : null;
-}
-
-/** How the player character experiences things right now (the mind's perception filters). */
-export function perception(r: Ruleset, s: GameState): string | null {
-  const env = makeEnv(r, s);
-  const lines = r.mind.perception.filter((p) => evalBool(p.when, env, false)).map((p) => p.text);
-  return lines.length ? lines.join("\n") : null;
 }
 
 /** The outcome block for a turn with an action. */

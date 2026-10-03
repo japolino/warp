@@ -293,8 +293,6 @@ export interface RecordView {
   decisions: { ask: string; picked: string; p: number; source: "model" | "weights"; odds: { desc: string; p: number }[] }[];
   /** Probability the reply contradicts the state (shown when high). */
   contradiction: number | null;
-  /** The character's mind overruled the player (freeze, compulsion…). */
-  mind: { cause: string; kind: "fail" | "alter" | "redirect"; meant: string; chance: number } | null;
   /** The player's message this reply answers, when the turn can still be redone. */
   redoFrom: string | null;
   /** The player's message told a roll made on the click: roll again from it (rewrites the line and the reply). */

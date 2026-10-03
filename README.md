@@ -28,7 +28,6 @@ A game engine under your roleplay. Warp owns stats, dice, time, inventory and re
 | Encounters | Turn-based scenes: foe stats, your moves, the foe's moves (weighted or model-weighed), win/lose/escape outcomes. Optional momentum: every check and foe move swings a tug-of-war gauge and only a full swing ends the fight; each round reaches the narrator as ordered beats, and a long move you typed is kept as written while only how it lands is rolled |
 | Progress | Codex entries that unlock (and can switch lorebook entries on), feats, perks bought with points |
 | Rules | Triggers by formula or in plain language (`when_scene`), uncertain reactions (`decide`) rolled on model odds |
-| Mind | Your character's mind can overrule you: at low control an action may freeze (fails, no roll), turn into something else, or be coloured by a cause — each with a chance and a 🧠 chip saying why. Perception filters change how the narrator describes the world to your character while a condition holds. Authors can make overrides soft (they colour the action instead of replacing it) or give a hard one a `resist_cost`: the choice then shows a warning and a **Resist** button, and you pay only if the override fires |
 | Secrets | Ladders of stages that open by condition. Only opened stages ever reach the narrator's prompt, so they can't leak; a stage-0 cue lets it play someone hiding something without knowing what. A companion who `knows` a secret plays knowing more than you, but only opened stages are spelled out to the narrator (`knows_full: true` shares every stage) |
 | Living world | Hidden clocks (`fronts`) that fill with in-game time, show signs, and surface events; story beats judged by the decision model push them. Random events come from a hidden gauge per in-game day, with an omen before each |
 | Live choices | Choices written for the moment. The writer must tag each one from a fixed list, and the tag decides the check and effects; with Jev, the model weighs which kinds of move fit. Each choice can show its goal, risk and payoff in words — story stakes only; the tag still decides the odds and effects |
@@ -183,7 +182,7 @@ triggers:
 
 **Formula names:** stats, flags, `hour`, `minute`, `day`, `weekday`, `turn`, `location`, and `has()`, `count()`, `flag()`, `cond()`, `at()`, `rel(person, stat)`, `met()`, `between(v, lo, hi)`, `min`, `max`, `clamp`, `floor`, `ceil`, `round`, `abs`.
 
-The Ruleset tab lists problems in plain language, with "did you mean" suggestions for typos. Keys of parts that were taken out of Warp (`dungeons:`, `dating:`, `look:`, minigame `game:` and `gamble:`, encounter `sim:`, `lineage:`, `observers:`) are ignored with a plain warning; the old version is on the `legacy` branch.
+The Ruleset tab lists problems in plain language, with "did you mean" suggestions for typos. Keys of parts that were taken out of Warp (`dungeons:`, `dating:`, `look:`, minigame `game:` and `gamble:`, encounter `sim:`, `lineage:`, `observers:`, `mind:`) are ignored with a plain warning; the old version is on the `legacy` branch.
 
 ## Develop
 
