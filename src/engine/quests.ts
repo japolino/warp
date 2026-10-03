@@ -311,10 +311,11 @@ export function storyQuestNews(t: TurnBuilder, news: StoryQuestNews, findPerson:
 }
 
 /** Open quests, for the narrator: what's being worked on, what's due, and what failing would cost. */
-export function questDigest(r: Ruleset, s: GameState): string[] {
+export function questDigest(r: Ruleset, s: GameState, only?: (id: string) => boolean): string[] {
   const out: string[] = [];
   for (const [id, st] of Object.entries(s.quests ?? {})) {
     if (st.st !== "active" && st.st !== "ready") continue;
+    if (only && !only(id)) continue;
     const q = questDef(r, s, id);
     if (!q) continue;
     const giver = q.giver ? personName(r, s, q.giver) : null;

@@ -316,6 +316,6 @@ export function previewText(texts: string[]): string {
   for (const c of buildChoices(r, s, { lines: [], veils: [] })) {
     out.push(`  [${c.group ?? "Actions"}] ${c.label}${c.odds !== null ? ` — ${Math.round(c.odds * 100)}%${c.checkLabel ? ` ${c.checkLabel}` : ""}` : ""}${c.locked ? ` — 🔒 ${c.locked}` : ""}${c.why ? ` — ${c.why}` : ""}`);
   }
-  out.push("", "WHAT THE NARRATOR IS TOLD", ...stateDigest(r, s).split("\n").map((l) => `  ${l}`));
+  out.push("", "WHAT THE NARRATOR IS TOLD (a turn that names nothing in particular; items, skills, quests and the board join only when a turn brings them up)", ...stateDigest(r, s, { text: "" }).split("\n").map((l) => `  ${l}`));
   return out.join("\n");
 }

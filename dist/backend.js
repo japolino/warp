@@ -7968,10 +7968,12 @@ function storyQuestNews(t, news, findPerson) {
     open++;
   }
 }
-function questDigest(r, s) {
+function questDigest(r, s, only) {
   const out = [];
   for (const [id, st] of Object.entries(s.quests ?? {})) {
     if (st.st !== "active" && st.st !== "ready")
+      continue;
+    if (only && !only(id))
       continue;
     const q = questDef(r, s, id);
     if (!q)
@@ -20497,6 +20499,56 @@ var init_run = __esm(() => {
   init_boons();
 });
 
+// src/engine/mention.ts
+function mentions(text, name) {
+  const t = text.toLowerCase();
+  const n = name.toLowerCase().trim();
+  if (!n)
+    return false;
+  if (t.includes(n))
+    return true;
+  const words = n.split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 3 && !["the", "and", "with", "for", "of"].includes(w));
+  if (!words.length)
+    return false;
+  const has = (w) => new RegExp(`(^|[^\\p{L}])${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(s|es)?([^\\p{L}]|$)`, "u").test(t);
+  if (has(words[words.length - 1]))
+    return true;
+  return words.filter(has).length * 2 >= words.length && words.length > 1;
+}
+function namesIt(text, name, others = []) {
+  const t = text.toLowerCase();
+  const n = name.toLowerCase().trim();
+  if (!n)
+    return false;
+  if (t.includes(n))
+    return true;
+  const words = sig(n);
+  if (!words.length)
+    return false;
+  const hits = words.filter((w) => hasWord(t, w)).length;
+  if (words.length === 1)
+    return hits === 1;
+  const head = words[words.length - 1];
+  const shared = others.some((o) => o.toLowerCase() !== n && sig(o).slice(-1)[0] === head);
+  if (hasWord(t, head) && (!shared || hits >= 2))
+    return true;
+  return hits >= Math.max(2, words.length - 1);
+}
+function namesTitle(text, title) {
+  const t = text.toLowerCase();
+  if (t.includes(title.toLowerCase().trim()))
+    return true;
+  const words = sig(title);
+  if (!words.length)
+    return false;
+  const hits = words.filter((w) => hasWord(t, w)).length;
+  return hits >= (words.length <= 2 ? words.length : words.length - 1);
+}
+var STOP2, sig = (name) => name.toLowerCase().split(/[^\p{L}\p{N}']+/u).filter((w) => w.length >= 3 && !STOP2.has(w)), hasWord = (t, w) => new RegExp(`(^|[^\\p{L}])${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(s|es)?([^\\p{L}]|$)`, "u").test(t);
+var init_mention = __esm(() => {
+  STOP2 = new Set(["the", "and", "with", "for", "of", "a", "an", "to", "in", "on", "at", "from", "into", "across", "your", "my", "his", "her", "their"]);
+});
+
 // src/engine/view.ts
 function pct2(v, min, max) {
   return max > min ? Math.max(0, Math.min(1, (v - min) / (max - min))) : 0;
@@ -21620,7 +21672,13 @@ function statLine(r, def, s, forceNumbers) {
     return `${def.label}: ${band.text}`;
   return `${def.label}: ${num}`;
 }
-function stateDigest(r, s) {
+function stateDigest(r, s, focus) {
+  const nar = focus !== undefined;
+  const ft = focus?.text ?? "";
+  const named = (name, others = []) => !nar || namesIt(ft, name, others);
+  const titled = (title) => !nar || namesTitle(ft, title);
+  const moneyTalk = !nar || MONEY_WORDS.test(ft);
+  const workTalk = !nar || WORK_WORDS.test(ft);
   const lines = [];
   const head = [];
   const hud = buildHud(r, s);
@@ -21675,7 +21733,7 @@ function stateDigest(r, s) {
   const body = bodyLine(r, s);
   if (body)
     lines.push(body);
-  lines.push(...workDigest(r, s));
+  lines.push(...workDigest(r, s).filter((l) => moneyTalk || /^(OVERDUE|AT WORK)|due (today|in 1 day)/.test(l)));
   const saw = Object.entries(s.seen).filter(([id]) => s.people[id]);
   if (saw.length) {
     const eyes = saw.filter(([, v]) => !v.heard).map(([id]) => personName(r, s, id));
@@ -21684,29 +21742,51 @@ function stateDigest(r, s) {
   }
   const meters = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "meter" || d.kind === "money");
   const other = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "attribute" || d.kind === "skill");
-  const ml = meters.map((d) => statLine(r, d, s, r.narration.numbers)).filter(Boolean);
+  const unusual = (d) => {
+    if (named(d.label))
+      return true;
+    if (d.kind === "money")
+      return moneyTalk;
+    if (!d.bands.length)
+      return false;
+    const max = statMax(r, d, s);
+    return bandFor(d, s.stats[d.id] ?? d.start, max)?.text !== bandFor(d, d.start, max)?.text;
+  };
+  const ml = meters.filter((d) => !nar || unusual(d)).map((d) => statLine(r, d, s, r.narration.numbers)).filter(Boolean);
   if (ml.length)
     lines.push(ml.join(" · "));
-  const ol = other.map((d) => statLine(r, d, s, r.narration.numbers)).filter(Boolean);
+  const ol = other.filter((d) => named(d.label)).map((d) => statLine(r, d, s, r.narration.numbers)).filter(Boolean);
   if (ol.length)
     lines.push(`Skills: ${ol.join(" · ")}`);
   const conds = Object.entries(s.conditions).map(([id, c]) => `${r.conditions[id]?.label ?? id}${c.rounds !== undefined ? ` (${c.rounds} round${c.rounds === 1 ? "" : "s"})` : ""}`);
   if (conds.length)
     lines.push(`Conditions: ${conds.join(", ")}`);
-  const perks = Object.keys(s.perks).map((id) => r.perks[id]).filter((p) => p);
+  const perks = Object.keys(s.perks).map((id) => r.perks[id]).filter((p) => p && (p.narrator || named(p.name)));
   if (perks.length)
     lines.push(`Perks: ${perks.map((p) => p.narrator ? `${p.name} — ${p.narrator}` : p.name).join("; ")}`);
-  const known = Object.values(r.abilities).filter((ab) => knowsAbility(r, s, ab.id));
+  const known = Object.values(r.abilities).filter((ab) => knowsAbility(r, s, ab.id) && named(ab.name));
   if (known.length)
     lines.push(`{{user}}'s own abilities (they work as the rules say; only the rules decide when one is used): ${known.map((ab) => `${ab.name}${ab.desc ? ` (${ab.desc})` : ""}`).join("; ")}`);
-  const quests = questDigest(r, s);
+  const hereIds = new Set(hud.people.filter((p) => p.present).map((p) => p.id));
+  const inPlay = (id) => {
+    if (!nar)
+      return true;
+    const q = questDef(r, s, id);
+    const st = s.quests?.[id];
+    if (!q || !st)
+      return false;
+    if (st.st === "ready" || titled(q.name) || q.giver && (hereIds.has(q.giver) || named(personName(r, s, q.giver))))
+      return true;
+    return st.due !== null && st.due - s.minutes <= 1440;
+  };
+  const quests = questDigest(r, s, inPlay);
   if (quests.length)
     lines.push(`Quests under way (only the rules decide when one is done or failed): ${quests.join(" | ")}`);
   const offers = questOffers(r, s);
-  const asks = offers.filter((o) => o.via === "giver").map((o) => `${o.from} ("${r.quests[o.id].name}"${r.quests[o.id].desc ? ` — ${r.quests[o.id].desc}` : ""})`);
+  const asks = offers.filter((o) => o.via === "giver" && (workTalk || titled(r.quests[o.id].name))).map((o) => `${o.from} ("${r.quests[o.id].name}"${r.quests[o.id].desc ? ` — ${r.quests[o.id].desc}` : ""})`);
   if (asks.length)
     lines.push(`Has something to ask of {{user}} (may bring it up when it fits; {{user}} decides whether to take it on): ${asks.join("; ")}`);
-  const posted = offers.filter((o) => o.via === "board").map((o) => `"${r.quests[o.id].name}"`);
+  const posted = offers.filter((o) => o.via === "board" && (workTalk || titled(r.quests[o.id].name))).map((o) => `"${r.quests[o.id].name}"`);
   if (posted.length)
     lines.push(`Posted on the notice board here: ${posted.join(", ")}`);
   const wornSet = new Set(Object.values(s.worn));
@@ -21715,10 +21795,15 @@ function stateDigest(r, s) {
     const per = r.items[id]?.uses ?? 0;
     return per > 1 ? `, ${s.uses[id] ?? per} of ${per} uses left` : "";
   };
-  const inv = loose.filter(([id]) => !r.items[id]?.slot).map(([id, n]) => `${itemName(r, s, id)}${n > 1 ? ` ×${n}` : ""}${uses(id) ? ` (${uses(id).slice(2)})` : ""}`);
+  const bag = loose.filter(([id]) => !r.items[id]?.slot);
+  const bagNames = loose.map(([id]) => itemName(r, s, id));
+  const inv = bag.filter(([id]) => named(itemName(r, s, id), bagNames)).map(([id, n]) => `${itemName(r, s, id)}${n > 1 ? ` ×${n}` : ""}${uses(id) ? ` (${uses(id).slice(2)})` : ""}`);
+  const rest = bag.length - inv.length;
   if (inv.length)
-    lines.push(`Carrying: ${inv.join(", ")}`);
-  const spare = loose.filter(([id]) => r.items[id]?.slot).map(([id]) => itemName(r, s, id));
+    lines.push(`Carrying: ${inv.join(", ")}${rest ? ` (and ${rest} other thing${rest === 1 ? "" : "s"} — not in play; don't bring them up unless {{user}} does)` : ""}`);
+  else if (rest)
+    lines.push(`Carrying ${rest} thing${rest === 1 ? "" : "s"}, none in play right now (don't bring them up unless {{user}} does).`);
+  const spare = loose.filter(([id]) => r.items[id]?.slot && named(itemName(r, s, id), bagNames)).map(([id]) => itemName(r, s, id));
   if (spare.length)
     lines.push(`Carried but NOT being worn (packed away — {{user}} isn't wearing these): ${spare.join(", ")}`);
   if (s.pregnancy && s.pregnancy.told > 0) {
@@ -21868,6 +21953,7 @@ function outcomePacket(r, rec, before, after, playerName) {
   return lines.join(`
 `);
 }
+var MONEY_WORDS, WORK_WORDS;
 var init_view = __esm(() => {
   init_games();
   init_ruleset();
@@ -21882,6 +21968,9 @@ var init_view = __esm(() => {
   init_types2();
   init_work();
   init_expr();
+  init_mention();
+  MONEY_WORDS = /\b(buy|buys|bought|pay|pays|paid|price|prices|cost|costs|afford|money|cash|coins?|tip|rent|shop|shopping|sell|sold|wallet|purse|spend|bill|debt|loan|bribe|wage|salary|change)\b/i;
+  WORK_WORDS = /\b(board|notices?|postings?|jobs?|work|quests?|bount(?:y|ies)|errands?|tasks?|favou?rs?|hire|hiring|contracts?|assignments?|gigs?|requests?|help (?:you|me|with))\b/i;
 });
 
 // src/backend/helpers.ts
@@ -22390,21 +22479,6 @@ function nameCandidates(text, known, max = 8) {
   }
   const weak = ([n, c]) => n.includes(" ") || c.mid || c.n >= 2 ? 0 : 1;
   return [...count.entries()].sort((a, b) => weak(a) - weak(b) || b[1].n - a[1].n || a[1].at - b[1].at).slice(0, max).map(([n]) => n);
-}
-function mentions(text, name) {
-  const t = text.toLowerCase();
-  const n = name.toLowerCase().trim();
-  if (!n)
-    return false;
-  if (t.includes(n))
-    return true;
-  const words = n.split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 3 && !["the", "and", "with", "for", "of"].includes(w));
-  if (!words.length)
-    return false;
-  const has = (w) => new RegExp(`(^|[^\\p{L}])${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(s|es)?([^\\p{L}]|$)`, "u").test(t);
-  if (has(words[words.length - 1]))
-    return true;
-  return words.filter(has).length * 2 >= words.length && words.length > 1;
 }
 function clip2(s, n) {
   return s.length > n ? `…${s.slice(-n)}` : s;
@@ -22945,6 +23019,7 @@ async function contradiction(opts) {
 }
 var NONE = "none", ATTEMPT = "attempt", ENCOUNTER_SURE = 0.6, ENCOUNTER_OVER = 0.7, COMMON_CAPS, DIFFICULTY, STEP_FACTOR, TIME_LEVELS, TIME_MINUTES;
 var init_decisions = __esm(() => {
+  init_mention();
   init_resolve();
   init_quests();
   init_helpers();
@@ -23069,10 +23144,16 @@ var init_operations = __esm(() => {
 function fillNames(text, player) {
   return text.replace(/\{\{user\}\}/gi, player);
 }
-function buildInjection(r, rec, before, after, player) {
+function buildInjection(r, rec, before, after, player, focus) {
   const parts = [];
+  const turnText = focus === undefined ? undefined : fillNames([
+    focus,
+    rec?.action?.label ?? "",
+    ...rec?.hints ?? []
+  ].join(`
+`), player);
   parts.push(`[Warp — current game state. The rules engine owns these facts; keep narration consistent with them.]
-${stateDigest(r, after)}`);
+${stateDigest(r, after, turnText === undefined ? undefined : { text: turnText })}`);
   if (r.narration.notes)
     parts.push(`[Warp — narrator notes]
 ${r.narration.notes}`);
@@ -23479,7 +23560,8 @@ async function prewrite(opts) {
     const after = cloneState(state);
     for (const e of rec.events)
       applyEvent(after, e, r);
-    const prompt = nextPrompt(opts.prompt, opts.reply, ci.say, buildInjection(r, rec, state, after, opts.player));
+    const prompt = nextPrompt(opts.prompt, opts.reply, ci.say, buildInjection(r, rec, state, after, opts.player, `${opts.reply}
+${ci.say}`));
     const text = await writeReply(prompt, userId, 120000, chatId);
     if (!text || cache3.get(chatId)?.replies !== replies)
       return;
@@ -24383,7 +24465,9 @@ async function interceptor(messages, ctx) {
       const short = m ? compactLog(m) : null;
       return short ? { ...lm, content: short } : lm;
     });
-    const text = buildInjection(r, rec, before, after, player);
+    const focus = [...history.slice(-2).map((m) => m.content), ctx.generationType === "continue" && target ? target.content : ""].join(`
+`);
+    const text = buildInjection(r, rec, before, after, player, focus);
     const { messages: out, index } = injectInto(shrunk, text);
     const waiting = pending.get(info.generationId ?? ctx.chatId);
     if (waiting && !info.isDryRun)

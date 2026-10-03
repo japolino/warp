@@ -20,6 +20,7 @@ import { activeSession, dateDigest, dateMoves, moodOf, type DateMove } from "./d
 import { REACTION_LABEL } from "./date/types.js";
 import { workDigest, workMoves } from "./work.js";
 import { evalBool, evalNumber } from "./expr.js";
+import { namesIt, namesTitle } from "./mention.js";
 
 function pct(v: number, min: number, max: number) {
   return max > min ? Math.max(0, Math.min(1, (v - min) / (max - min))) : 0;
@@ -1089,8 +1090,27 @@ function statLine(r: Ruleset, def: StatDef, s: GameState, forceNumbers: boolean)
   return `${def.label}: ${num}`;
 }
 
+/** Words that put money in play this turn. */
+const MONEY_WORDS = /\b(buy|buys|bought|pay|pays|paid|price|prices|cost|costs|afford|money|cash|coins?|tip|rent|shop|shopping|sell|sold|wallet|purse|spend|bill|debt|loan|bribe|wage|salary|change)\b/i;
+/** Words that put work, quests and the notice board in play this turn. */
+const WORK_WORDS = /\b(board|notices?|postings?|jobs?|work|quests?|bount(?:y|ies)|errands?|tasks?|favou?rs?|hire|hiring|contracts?|assignments?|gigs?|requests?|help (?:you|me|with))\b/i;
+
+/**
+ * What the turn is about, for the narrator's block: the player's message, the chosen action and the reply
+ * before it. With it, the block names only what's in play — everything named in a prompt is something the
+ * model will reach for (a bag's contents, a board of twelve postings). Without it, the block is complete
+ * (the helpers that judge the state need all of it).
+ */
+export interface DigestFocus { text: string }
+
 /** Compact state block injected every turn. */
-export function stateDigest(r: Ruleset, s: GameState): string {
+export function stateDigest(r: Ruleset, s: GameState, focus?: DigestFocus): string {
+  const nar = focus !== undefined;
+  const ft = focus?.text ?? "";
+  const named = (name: string, others: string[] = []) => !nar || namesIt(ft, name, others);
+  const titled = (title: string) => !nar || namesTitle(ft, title);
+  const moneyTalk = !nar || MONEY_WORDS.test(ft);
+  const workTalk = !nar || WORK_WORDS.test(ft);
   const lines: string[] = [];
   const head: string[] = [];
   const hud = buildHud(r, s);
@@ -1140,7 +1160,8 @@ export function stateDigest(r: Ruleset, s: GameState): string {
   if (date) lines.push(date);
   const body = bodyLine(r, s);
   if (body) lines.push(body);
-  lines.push(...workDigest(r, s));
+  // Bills: only the pressing ones (due within a day, or overdue), unless the turn is about money.
+  lines.push(...workDigest(r, s).filter((l) => moneyTalk || /^(OVERDUE|AT WORK)|due (today|in 1 day)/.test(l)));
   const saw = Object.entries(s.seen).filter(([id]) => s.people[id]);
   if (saw.length) {
     const eyes = saw.filter(([, v]) => !v.heard).map(([id]) => personName(r, s, id));
@@ -1150,25 +1171,47 @@ export function stateDigest(r: Ruleset, s: GameState): string {
 
   const meters = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "meter" || d.kind === "money");
   const other = r.statOrder.map((id) => r.stats[id]).filter((d) => d.kind === "attribute" || d.kind === "skill");
-  const ml = meters.map((d) => statLine(r, d, s, r.narration.numbers)).filter(Boolean);
+  // For the narrator: a meter only when it's away from where it started (tired, aroused, broke — not "fresh"),
+  // money when money's in play, a skill when the turn names it. The rest is the ordinary state of things.
+  const unusual = (d: StatDef) => {
+    if (named(d.label)) return true;
+    if (d.kind === "money") return moneyTalk;
+    if (!d.bands.length) return false;
+    const max = statMax(r, d, s);
+    return bandFor(d, s.stats[d.id] ?? d.start, max)?.text !== bandFor(d, d.start, max)?.text;
+  };
+  const ml = meters.filter((d) => !nar || unusual(d)).map((d) => statLine(r, d, s, r.narration.numbers)).filter(Boolean);
   if (ml.length) lines.push(ml.join(" · "));
-  const ol = other.map((d) => statLine(r, d, s, r.narration.numbers)).filter(Boolean);
+  const ol = other.filter((d) => named(d.label)).map((d) => statLine(r, d, s, r.narration.numbers)).filter(Boolean);
   if (ol.length) lines.push(`Skills: ${ol.join(" · ")}`);
 
   const conds = Object.entries(s.conditions).map(([id, c]) => `${r.conditions[id]?.label ?? id}${c.rounds !== undefined ? ` (${c.rounds} round${c.rounds === 1 ? "" : "s"})` : ""}`);
   if (conds.length) lines.push(`Conditions: ${conds.join(", ")}`);
   // What's true of {{user}} because of their perks, and what they can do: the story should show both.
-  const perks = Object.keys(s.perks).map((id) => r.perks[id]).filter((p) => p);
+  // Perks the author wrote narrator text for always show (that's what the text is for); bare names only when named.
+  const perks = Object.keys(s.perks).map((id) => r.perks[id]).filter((p) => p && (p.narrator || named(p.name)));
   if (perks.length) lines.push(`Perks: ${perks.map((p) => (p.narrator ? `${p.name} — ${p.narrator}` : p.name)).join("; ")}`);
-  const known = Object.values(r.abilities).filter((ab) => knowsAbility(r, s, ab.id));
+  const known = Object.values(r.abilities).filter((ab) => knowsAbility(r, s, ab.id) && named(ab.name));
   if (known.length) lines.push(`{{user}}'s own abilities (they work as the rules say; only the rules decide when one is used): ${known.map((ab) => `${ab.name}${ab.desc ? ` (${ab.desc})` : ""}`).join("; ")}`);
   // Quests: what {{user}} is working on, and work on offer from the people here (they may bring it up).
-  const quests = questDigest(r, s);
+  // For the narrator, a quest is in play when the turn names it or its giver, its giver is here, it's due
+  // within a day, or it's ready to hand in. The rest wait in the journal; naming them invites the model to push them.
+  const hereIds = new Set(hud.people.filter((p) => p.present).map((p) => p.id));
+  const inPlay = (id: string) => {
+    if (!nar) return true;
+    const q = questDef(r, s, id);
+    const st = s.quests?.[id];
+    if (!q || !st) return false;
+    if (st.st === "ready" || titled(q.name) || (q.giver && (hereIds.has(q.giver) || named(personName(r, s, q.giver))))) return true;
+    return st.due !== null && st.due - s.minutes <= 1440;
+  };
+  const quests = questDigest(r, s, inPlay);
   if (quests.length) lines.push(`Quests under way (only the rules decide when one is done or failed): ${quests.join(" | ")}`);
   const offers = questOffers(r, s);
-  const asks = offers.filter((o) => o.via === "giver").map((o) => `${o.from} ("${r.quests[o.id].name}"${r.quests[o.id].desc ? ` — ${r.quests[o.id].desc}` : ""})`);
+  // Someone here with a favour to ask, or the board's postings: only once the turn turns to work (or names them).
+  const asks = offers.filter((o) => o.via === "giver" && (workTalk || titled(r.quests[o.id].name))).map((o) => `${o.from} ("${r.quests[o.id].name}"${r.quests[o.id].desc ? ` — ${r.quests[o.id].desc}` : ""})`);
   if (asks.length) lines.push(`Has something to ask of {{user}} (may bring it up when it fits; {{user}} decides whether to take it on): ${asks.join("; ")}`);
-  const posted = offers.filter((o) => o.via === "board").map((o) => `"${r.quests[o.id].name}"`);
+  const posted = offers.filter((o) => o.via === "board" && (workTalk || titled(r.quests[o.id].name))).map((o) => `"${r.quests[o.id].name}"`);
   if (posted.length) lines.push(`Posted on the notice board here: ${posted.join(", ")}`);
 
   const wornSet = new Set(Object.values(s.worn));
@@ -1177,10 +1220,16 @@ export function stateDigest(r: Ruleset, s: GameState): string {
     const per = r.items[id]?.uses ?? 0;
     return per > 1 ? `, ${s.uses[id] ?? per} of ${per} uses left` : "";
   };
-  const inv = loose.filter(([id]) => !r.items[id]?.slot).map(([id, n]) => `${itemName(r, s, id)}${n > 1 ? ` ×${n}` : ""}${uses(id) ? ` (${uses(id).slice(2)})` : ""}`);
-  if (inv.length) lines.push(`Carrying: ${inv.join(", ")}`);
+  // For the narrator, only what the turn names: a listed bag gets rummaged through. The rest is counted, so
+  // {{user}} isn't written as empty-handed.
+  const bag = loose.filter(([id]) => !r.items[id]?.slot);
+  const bagNames = loose.map(([id]) => itemName(r, s, id));
+  const inv = bag.filter(([id]) => named(itemName(r, s, id), bagNames)).map(([id, n]) => `${itemName(r, s, id)}${n > 1 ? ` ×${n}` : ""}${uses(id) ? ` (${uses(id).slice(2)})` : ""}`);
+  const rest = bag.length - inv.length;
+  if (inv.length) lines.push(`Carrying: ${inv.join(", ")}${rest ? ` (and ${rest} other thing${rest === 1 ? "" : "s"} — not in play; don't bring them up unless {{user}} does)` : ""}`);
+  else if (rest) lines.push(`Carrying ${rest} thing${rest === 1 ? "" : "s"}, none in play right now (don't bring them up unless {{user}} does).`);
   // Clothes in the bag aren't on: say so, or the narrator dresses {{user}} in them.
-  const spare = loose.filter(([id]) => r.items[id]?.slot).map(([id]) => itemName(r, s, id));
+  const spare = loose.filter(([id]) => r.items[id]?.slot && named(itemName(r, s, id), bagNames)).map(([id]) => itemName(r, s, id));
   if (spare.length) lines.push(`Carried but NOT being worn (packed away — {{user}} isn't wearing these): ${spare.join(", ")}`);
 
   if (s.pregnancy && s.pregnancy.told > 0) {

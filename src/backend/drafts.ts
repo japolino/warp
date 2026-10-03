@@ -132,7 +132,7 @@ export async function prewrite(opts: {
     if (rec.discover) return;
     const after = cloneState(state);
     for (const e of rec.events) applyEvent(after, e, r);
-    const prompt = nextPrompt(opts.prompt, opts.reply, ci.say, buildInjection(r, rec, state, after, opts.player));
+    const prompt = nextPrompt(opts.prompt, opts.reply, ci.say, buildInjection(r, rec, state, after, opts.player, `${opts.reply}\n${ci.say}`));
     const text = await writeReply(prompt, userId, 120_000, chatId);
     if (!text || cache.get(chatId)?.replies !== replies) return;
     replies.set(c.id, { say: ci.say, intent: ci.intent, rec, text, prompt, outcome: outcomePacket(r, rec, state, after, opts.player), after });

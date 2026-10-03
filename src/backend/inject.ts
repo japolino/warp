@@ -11,9 +11,20 @@ export function fillNames(text: string, player: string) {
   return text.replace(/\{\{user\}\}/gi, player);
 }
 
-export function buildInjection(r: Ruleset, rec: TurnRecord | null, before: GameState, after: GameState, player: string): string {
+/**
+ * `focus`: what the turn is about (the player's message, the reply before it). With it, the state names only
+ * what's in play — a bag, a board or a skill sheet in the prompt is something the narrator will reach for.
+ * Without it, the whole state goes in.
+ */
+export function buildInjection(r: Ruleset, rec: TurnRecord | null, before: GameState, after: GameState, player: string, focus?: string): string {
   const parts: string[] = [];
-  parts.push(`[Warp — current game state. The rules engine owns these facts; keep narration consistent with them.]\n${stateDigest(r, after)}`);
+  // The chosen action and the rules' hints are part of what's in play (an item it uses, a quest it advances).
+  const turnText = focus === undefined ? undefined : fillNames([
+    focus,
+    rec?.action?.label ?? "",
+    ...(rec?.hints ?? []),
+  ].join("\n"), player);
+  parts.push(`[Warp — current game state. The rules engine owns these facts; keep narration consistent with them.]\n${stateDigest(r, after, turnText === undefined ? undefined : { text: turnText })}`);
   if (r.narration.notes) parts.push(`[Warp — narrator notes]\n${r.narration.notes}`);
   const felt = perception(r, after);
   if (felt) parts.push(`[Warp — how {{user}} experiences things right now. Filter the narration through this.]\n${felt}`);

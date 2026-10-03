@@ -255,7 +255,9 @@ export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorCon
       const short = m ? compactLog(m) : null;
       return short ? { ...lm, content: short } : lm;
     });
-    const text = buildInjection(r, rec, before, after, player);
+    // What the turn is about: the player's message and the reply before it (and, continuing, the reply so far).
+    const focus = [...history.slice(-2).map((m) => m.content), ctx.generationType === "continue" && target ? target.content : ""].join("\n");
+    const text = buildInjection(r, rec, before, after, player, focus);
     const { messages: out, index } = injectInto(shrunk, text);
     const waiting = pending.get(info.generationId ?? ctx.chatId);
     if (waiting && !info.isDryRun) waiting.prompt = out;

@@ -5,6 +5,7 @@
 //   bookkeeping  — atomic "what changed?" questions after a reply (System-1 path)
 //   consistency  — does the reply contradict the game state?
 
+import { mentions } from "../engine/mention.js";
 import type { Answer, Answers, Decider, Questions } from "../engine/decide.js";
 import { normalize, noulConfidence } from "../engine/decide.js";
 import { usableAbilities, usableItems, availableChoices, TRAVEL_PREFIX, travelTargets, type Intent, type Proposal } from "../engine/resolve.js";
@@ -90,18 +91,7 @@ export function nameCandidates(text: string, known: string[], max = 8): string[]
   return [...count.entries()].sort((a, b) => weak(a) - weak(b) || b[1].n - a[1].n || a[1].at - b[1].at).slice(0, max).map(([n]) => n);
 }
 
-/** Does the text mention this item? Its full name, its head noun ("hoodie"), or most of its words. */
-export function mentions(text: string, name: string): boolean {
-  const t = text.toLowerCase();
-  const n = name.toLowerCase().trim();
-  if (!n) return false;
-  if (t.includes(n)) return true;
-  const words = n.split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 3 && !["the", "and", "with", "for", "of"].includes(w));
-  if (!words.length) return false;
-  const has = (w: string) => new RegExp(`(^|[^\\p{L}])${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(s|es)?([^\\p{L}]|$)`, "u").test(t);
-  if (has(words[words.length - 1])) return true;
-  return words.filter(has).length * 2 >= words.length && words.length > 1;
-}
+export { mentions };
 
 function clip(s: string, n: number) {
   return s.length > n ? `…${s.slice(-n)}` : s;
