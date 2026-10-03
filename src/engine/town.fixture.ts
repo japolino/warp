@@ -1,15 +1,15 @@
-// A small town for tests that need a ready-made ruleset: a few places, meters, skills,
-// relationships, a shift, a pickpocket, a hidden escape and a breakdown rule. It was cut
-// down from the old Hometown template (kept on the `legacy` branch); it isn't offered to players.
+// A small town for tests that need a ready-made ruleset (format 2): meters, skills, relationships,
+// a shift, a pickpocket, a hidden escape and a breakdown rule. Places are words the story (or an effect)
+// gives. It was cut down from the old Hometown template (kept on the `legacy` branch); it isn't offered to players.
 
 import { loadRuleset } from "./loader.js";
 import type { Ruleset } from "./ruleset.js";
 
 export const TOWN_YAML = `name: Town
 description: A small coastal university town.
-player: { age: 20 }
+you: { age: 20 }
 clock: { start: Mon 07:00, minutes_per_action: 15, narrator_max: 240 }
-start: { location: apartment, items: { phone: 1, keys: 1 } }
+start: { place: Your Apartment, items: { phone: 1, keys: 1 } }
 hud: { currency: "£", bars: [pain, arousal, fatigue, stress, trauma, control, allure] }
 
 stats:
@@ -138,37 +138,15 @@ relationships:
       name: Dex
       desc: Works the docks at night. Knows people who know people.
 
-locations:
-  apartment:
-    name: Your Apartment
-    desc: A cramped one-bedroom above a chip shop. Thin walls, a lock that sticks.
-    indoors: true
-  high_street:
-    name: High Street
-    desc: Shops, a café with a corkboard of odd jobs in the window, a busy bus stop. Crowded by day, emptier at night.
-  campus:
-    name: University Campus
-    desc: Lecture halls, a library, a gym with a pool.
-    indoors: true
-  park:
-    name: Seaview Park
-    desc: Lawns, a duck pond, dense woods at the far end.
-  docks:
-    name: The Docks
-    desc: Warehouses and cargo ships. Rough, and rougher after dark.
-  the_strip:
-    name: The Strip
-    desc: Bars and clubs, neon and noise until dawn.
-
 items:
   phone:
     name: Phone
     keep: true
-    use: { label: Call a cab home (£12), when: "money >= 12 and not at('apartment')", time: 20, money: -12, stress: -3, move: apartment, hint: "{{user}} calls a cab and rides home." }
+    use: { label: Call a cab home (£12), when: "money >= 12 and place != 'Your Apartment'", time: 20, money: -12, stress: -3, place: Your Apartment, hint: "{{user}} calls a cab and rides home." }
   keys:
     name: Apartment keys
     keep: true
-    use: { label: Lock yourself in, when: "at('apartment')", time: 5, stress: -4, hint: "The sticky lock finally catches. {{user}} feels a little safer." }
+    use: { label: Lock yourself in, when: "place == 'Your Apartment'", time: 5, stress: -4, hint: "The sticky lock finally catches. {{user}} feels a little safer." }
   coffee:
     name: Coffee
     tags: [consumable]
@@ -180,36 +158,31 @@ conditions:
 actions:
   head_out:
     label: Head out to the High Street
-    group: Travel
-    at: apartment
+    when: "place == 'Your Apartment'"
     say: "*I head out to the High Street.*"
     time: 10
-    effects: { move: high_street }
+    effects: { place: High Street }
   shower:
     label: Shower
-    group: Home
-    at: apartment
+    when: "place == 'Your Apartment'"
     say: "*I take a long shower.*"
     time: 20
     effects: { stress: -3, arousal: -5 }
   cafe_shift:
     label: Work a café shift
-    group: Work
-    at: high_street
-    when: between(hour, 7, 18)
+    when: "place == 'High Street' and between(hour, 7, 18)"
     say: "*I put on an apron and work a shift at the café.*"
     time: 240
-    check: { chance: 55 + tending / 1.5, label: Tending }
+    check: { vs: fair, add: "tending / 10", label: Tending }
     success: { money: 45 + tending / 2, tending: +1.2, fatigue: +20, flags: { worked: true }, hint: "A smooth shift — good tips." }
     fail: { money: 30, tending: +0.6, fatigue: +22, stress: +6, flags: { worked: true }, hint: "A rough shift: rude customers and a smashed tray." }
   pickpocket:
     label: Pick a pocket
-    group: Crime
-    at: [high_street, the_strip]
+    when: "place == 'High Street' or place == 'The Strip'"
     say: "*I pick out a distracted mark and go for their wallet.*"
     tags: [crime]
     time: 10
-    check: { chance: 15 + skulduggery / 1.2 - allure / 8, label: Skulduggery }
+    check: { vs: hard, add: "skulduggery / 10 - allure / 20", label: Skulduggery }
     crit_success: { money: roll('4d10') + 20, skulduggery: +1.5, hint: "A fat wallet, and nobody noticed a thing." }
     success: { money: roll('2d10') + 5, skulduggery: +1, hint: "Clean lift. Nobody noticed." }
     fail: { crime: +6, stress: +8, skulduggery: +0.3, hint: "The mark catches {{user}}'s wrist and starts shouting." }
@@ -219,8 +192,8 @@ actions:
     hidden: true
     desc: Running away, struggling free, slipping out of a bad situation.
     params:
-      difficulty: { easy: 75, normal: 50, hard: 30, extreme: 15 }
-    check: { chance: difficulty + athletics / 2.5 - fatigue / 3 - pain * 0.8, label: Athletics }
+      difficulty: { easy: 8, normal: 12, hard: 16, extreme: 20 }
+    check: { vs: difficulty, add: "athletics / 10 - fatigue / 30 - pain / 20", label: Athletics }
     success: { fatigue: +7, hint: "{{user}} gets away." }
     fail: { fatigue: +10, pain: +10, hint: "{{user}} doesn't get away." }
 

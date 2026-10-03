@@ -57,7 +57,8 @@ export function applyGreeting(r: Ruleset, before: GameState, read: GreetingRead)
     const src = "start" as const;
     if (r.clock.start === "greeting" && r.clock.enabled) {
       const m = greetingMinutes(r, read.time);
-      if (m !== null && m !== t.s.minutes) t.push({ t: "set_time", minutes: m, src });
+      const weekday = typeof read.time?.weekday === "string" && r.clock.weekdays.some((x) => x.toLowerCase().startsWith(read.time!.weekday!.trim().toLowerCase().slice(0, 3)));
+      if (m !== null && (m !== t.s.minutes || weekday !== !!t.s.weekday)) t.push({ t: "set_time", minutes: m, ...(weekday ? { weekday: true } : {}), src });
     }
     const place = typeof read.place === "string" ? read.place.trim().slice(0, 120) : "";
     if (place && (r.startPlace === "greeting" || !t.s.locationName)) t.push({ t: "move", to: placeId(place), name: place, src });
@@ -116,7 +117,9 @@ export function manualFix(r: Ruleset, before: GameState, fix: FixRequest): WarpE
     case "time": {
       const m = fixMinutes(r, before, fix.value);
       if (m === null) return "Write a time like 23:40 or Day 2 08:00.";
-      return buildTurn(r, before, "fix", (t) => t.push({ t: "set_time", minutes: m, src }));
+      // "Mon 07:00" names the weekday: from now on it shows.
+      const weekday = typeof fix.value === "string" && /^\s*[a-z]{3,}/i.test(fix.value) && !/^\s*day\b/i.test(fix.value);
+      return buildTurn(r, before, "fix", (t) => t.push({ t: "set_time", minutes: m, ...(weekday ? { weekday: true } : {}), src }));
     }
     case "place": {
       const words = typeof fix.value === "string" ? fix.value.trim().slice(0, 120) : "";

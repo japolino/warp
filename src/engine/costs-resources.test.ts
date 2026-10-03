@@ -1,6 +1,5 @@
 // Costs and resources: every cost path reads the same value grammar as effects ("-15%" of the current max),
 // meters whose max is a formula can start full, unaffordable action costs lock the choice everywhere,
-// resist costs move a stat in its bad direction, encounter moves can be limited per encounter or per day,
 // and actions that roll can still have effects that always apply.
 
 import { describe, expect, test } from "bun:test";
@@ -128,74 +127,16 @@ describe("action costs gate (bug: an unaffordable cost could be repeated forever
     expect(choices(r, s).find((c) => c.id === "risky")!.locked).toBeUndefined();
   });
 
-  test("in a fight with every move priced out, only the cheapest stay open and take what's left", () => {
-    const { r } = load({
-      stats: { hp: { kind: "meter", start: 30 }, stamina: { kind: "meter", start: 5 } },
-      encounters: { wight: { name: "Wight", foe: { name: "W", stats: { hp: { start: 20, max: 20 } } },
-        actions: { strike: { label: "Strike", cost: { stamina: -8 }, effects: { foe: { hp: -5 } } }, flee: { label: "Flee", cost: { stamina: -15 }, effects: { end: "escaped" } }, shove: { label: "Shove", cost: { stamina: -3 }, effects: { foe: { hp: -1 } } } },
-        end_when: { won: "foe.hp <= 0", beaten: "hp <= 0" } } },
-    });
-    const s = initialState(r);
-    applyEvent(s, { t: "enc", id: "wight", foe: { hp: 20 }, src: "manual" }, r);
-    const open = choices(r, s);
-    expect(open.find((c) => c.id === "shove")!.locked).toBeUndefined();
-    expect(open.find((c) => c.id === "strike")!.locked).toBe("Needs 8 Stamina");
-    s.stats.stamina = 2;
-    // Being broke never makes the expensive moves free: only the cheapest priced-out move stays open.
-    expect(availableChoices(r, s).map((c) => c.id).sort()).toEqual(["shove"]);
-    expect(choices(r, s).find((c) => c.id === "strike")!.locked).toBe("Needs 8 Stamina");
-    expect(turn(r, s, "strike").rec.events.some((e) => e.t === "foe")).toBe(false);
-    const after = turn(r, s, "shove").s;
-    expect(after.stats.stamina).toBe(0);
-    expect(after.encounter!.foe.hp).toBe(19);
-  });
 });
 
-describe("per_encounter / per_day on encounter moves", () => {
-  const book = () => load({
-    clock: { start: "Mon 12:00" },
-    stats: { hp: { kind: "meter", start: 30 } },
-    actions: { rest: { label: "Rest", per_day: 1, effects: { hp: +1 } } },
-    encounters: { vault: { name: "Vault", foe: { name: "Guard", stats: { hp: { start: 20, max: 20 } } },
-      actions: {
-        snatch: { label: "Snatch the reliquary", per_encounter: 1, effects: { foe: { hp: -1 } } },
-        signal: { label: "Signal", per_day: 2, effects: { foe: { hp: -1 } } },
-        wait: { label: "Wait", per_encounter: "lots", effects: {} },
-      },
-      end_when: { won: "foe.hp <= 0", beaten: "hp <= 0" } } },
-  });
-  const fight = (r: R, s = initialState(r)) => { applyEvent(s, { t: "enc", id: "vault", foe: { hp: 20 }, src: "manual" }, r); return s; };
-
-  test("bad values and use limits outside encounters warn", () => {
-    const { issues } = book();
-    expect(warned(issues, /wait › per_encounter/)).toHaveLength(1);
+describe("use limits were removed", () => {
+  test("per_day and per_encounter on an action warn and are ignored", () => {
+    const { r, issues } = load({ stats: { hp: { kind: "meter", start: 30 } }, actions: { rest: { label: "Rest", per_day: 1, per_encounter: 2, effects: { hp: +1 } } } });
     expect(warned(issues, /Actions › rest › per_day/)).toHaveLength(1);
-  });
-
-  test("a once-per-encounter move locks after use, with why, and comes back next encounter", () => {
-    const { r } = book();
-    const s1 = turn(r, fight(r), "snatch").s;
-    expect(s1.encounter!.foe.hp).toBe(19);
-    expect(choices(r, s1).find((c) => c.id === "snatch")!.locked).toBe("Used up for this encounter");
-    expect(findAction(r, s1, "snatch")).toBeNull();
-    expect(turn(r, s1, "snatch").s.encounter!.foe.hp).toBe(19);
-    const later = cloneState(s1);
-    later.encounter = null;
-    later.minutes += 30;
-    expect(findAction(r, fight(r, later), "snatch")).not.toBeNull();
-  });
-
-  test("per_day counts across encounters until the day turns", () => {
-    const { r } = book();
-    let s = turn(r, fight(r), "signal").s;
-    s = turn(r, s, "signal").s;
-    expect(lockReason(r, s, r.encounters.vault.actions.signal)).toBe("Used up for today");
-    const next = cloneState(s);
-    next.encounter = null;
-    next.minutes += 5;
-    expect(findAction(r, fight(r, next), "signal")).toBeNull();
-    next.minutes += 1440;
-    expect(findAction(r, fight(r, next), "signal")).not.toBeNull();
+    expect(warned(issues, /Actions › rest › per_encounter/)).toHaveLength(1);
+    let s = initialState(r);
+    for (let i = 0; i < 3; i++) s = turn(r, s, "rest").s;
+    expect(s.stats.hp).toBe(33);
   });
 });
 
@@ -204,14 +145,17 @@ describe("effects next to a check always apply", () => {
     const { r, issues } = load({
       stats: { nerve: { kind: "meter", start: 50 }, suspicion: { kind: "meter", start: 0, good: "low" }, coin: { kind: "money", start: 0 } },
       actions: {
-        pick: { label: "Pick a pocket", check: { chance: 0 }, effects: { suspicion: +3 }, success: { coin: +5 }, fail: { nerve: -2 } },
-        lift: { label: "Lift", check: { chance: 100 }, cost: { nerve: -5, suspicion: +3 }, success: { coin: +5 } },
+        pick: { label: "Pick a pocket", check: { vs: 30 }, effects: { suspicion: +3 }, success: { coin: +5 }, fail: { nerve: -2 } },
+        lift: { label: "Lift", check: { vs: -10 }, cost: { nerve: -5, suspicion: +3 }, success: { coin: +5 } },
       },
     });
     expect(issues.filter((i) => /pick|lift/.test(i.where))).toEqual([]);
-    const fail = turn(r, initialState(r), "pick").s;
+    // A seed that doesn't come up 20 (a natural 20 always succeeds; a natural 1 always fails).
+    const seed = Array.from({ length: 50 }, (_, i) => `c${i}`).find((x) => { const t = turn(r, initialState(r), "pick", undefined, x).rec.check!.tier; return t === "fail"; })!;
+    const fail = turn(r, initialState(r), "pick", undefined, seed).s;
     expect([fail.stats.suspicion, fail.stats.nerve, fail.stats.coin]).toEqual([3, 48, 0]);
-    const ok = turn(r, initialState(r), "lift").s;
+    const seed2 = Array.from({ length: 50 }, (_, i) => `c${i}`).find((x) => turn(r, initialState(r), "lift", undefined, x).rec.check!.tier === "success")!;
+    const ok = turn(r, initialState(r), "lift", undefined, seed2).s;
     expect([ok.stats.suspicion, ok.stats.nerve, ok.stats.coin]).toEqual([3, 45, 5]);
   });
 });

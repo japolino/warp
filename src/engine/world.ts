@@ -1,4 +1,4 @@
-// Derived world facts: calendar, seasons, presence.
+// Derived world facts: the calendar and who is here.
 //
 // None of these are stored — they're computed from the clock and the state,
 // so they replay identically and cost nothing to keep.
@@ -30,27 +30,13 @@ export function dateAt(r: Ruleset, minutes: number): CalendarDate | null {
   return { month: month + 1, day: day + 1, monthName: MONTH_NAMES[month] };
 }
 
-/** Month numbers (1–12) per season. */
-const SEASONS: Record<string, number[]> = { spring: [3, 4, 5], summer: [6, 7, 8], autumn: [9, 10, 11], winter: [12, 1, 2] };
-
-export function seasonAt(r: Ruleset, minutes: number): string | null {
-  const d = dateAt(r, minutes);
-  if (!d) return null;
-  for (const [season, months] of Object.entries(SEASONS)) if (months.includes(d.month)) return season;
-  return null;
-}
-
-export function isIndoors(r: Ruleset, s: GameState): boolean {
-  return !!(s.location && r.locations[s.location]?.indoors);
-}
-
-/** How long the story's word on who's in the scene holds without being read again (minutes). */
-export const SCENE_HOLDS = 6 * 60;
-
-/** What the story last said about someone being in the scene, if it still holds here and now. */
+/**
+ * What the story last said about someone being in the scene, if it holds here: the word holds until the story,
+ * the player or a move changes it (no expiry, so nobody drifts out of the scene with time).
+ */
 export function sceneWord(s: GameState, id: string): boolean | null {
   const w = s.scene?.[id];
-  return w && w.loc === s.location && s.minutes - w.at <= SCENE_HOLDS ? w.here : null;
+  return w && w.loc === s.location ? w.here : null;
 }
 
 /**

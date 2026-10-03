@@ -6,18 +6,15 @@ import { applyEvent, foldEvents, initialState, type GameState, type WarpEvent } 
 
 const r = loadRuleset([{ label: "practice", order: 0, content: `
 name: Practice
-start: { location: room }
-locations:
-  room: { name: Room }
-  garden: { name: Garden }
+start: { place: Room }
 stats:
   perception: { kind: skill, start: 0, max: 100 }
   focus: { kind: attribute, start: 0, max: 10 }
 actions:
   look_around:
-    check: { chance: "50 + perception / 10" }
+    check: { vs: 11, add: "perception / 10" }
   listen:
-    check: { chance: "50 + perception / 10" }
+    check: { vs: 11, add: "perception / 10" }
 ` }]).ruleset!;
 
 function practice(s: GameState, actionId = "look_around", gain = 0.2) {
@@ -42,14 +39,14 @@ describe("checked practice repetition", () => {
     expect(repeated.n).toBe(100);
   });
 
-  test("different action, location, participants and encounter are fresh opportunities", () => {
+  test("different action, location, participants and contest are fresh opportunities", () => {
     const s = initialState(r);
     practice(s);
     for (const change of [
       () => practice(s, "listen"),
       () => { s.location = "garden"; practice(s); },
       () => { s.scene.friend = { here: true, loc: "garden", at: 0 }; practice(s); },
-      () => { s.encounter = { id: "duel", round: 0, foe: {}, at: 1 }; practice(s); },
+      () => { s.contest = { kind: "fight", opponent: "Duelist", threat: "fair", dc: 12, round: 0, momentum: 0, at: 1 }; practice(s); },
     ]) {
       const before = progress(s);
       change();

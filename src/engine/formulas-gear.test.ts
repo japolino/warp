@@ -1,10 +1,10 @@
-// Formulas, conditions, gear and the sidebar: eff()/gear(), formula armor, bonus and
-// per_hour, crit: on checks, [round, hour] statuses, show:, and currency after the amount.
+// Formulas, conditions, gear and the sidebar: eff()/gear(), formula bonus and per_hour, show:,
+// and currency after the amount.
 
 import { describe, expect, test } from "bun:test";
 import { normalizeRuleset } from "./ruleset.js";
 import { applyEvent, cloneState, initialState, makeEnv, type GameState } from "./state.js";
-import { gearFor, playerArmor, resolveTurn, type TurnRecord } from "./resolve.js";
+import { gearFor, resolveTurn, type TurnRecord } from "./resolve.js";
 import { evalNumber } from "./expr.js";
 import { lintRuleset } from "./lint.js";
 import { buildHud, stateDigest } from "./view.js";
@@ -32,13 +32,12 @@ const gearRules = (extra: Record<string, unknown> = {}) => load({
     ring: { name: "Ring", bonus: { str: 2 } },
   },
   conditions: {
-    mighty: { label: "Mighty", bonus: { str: "level" }, armor: { hp: "level * 2" } },
-    shielded: { label: "Shielded", armor: 4 },
+    mighty: { label: "Mighty", bonus: { str: "level" } },
   },
   start: { items: { sword: 1, ring: 1 } },
   actions: {
     swing: { label: "Swing", effects: { hp: "-eff('atk')" } },
-    lift: { label: "Lift", check: { chance: "str" }, success: { hp: +1 } },
+    lift: { label: "Lift", check: { vs: 10, add: "str / 10" }, success: { hp: +1 } },
   },
   ...extra,
 });
@@ -78,26 +77,17 @@ describe("eff() and gear()", () => {
   });
 });
 
-describe("formula armor, bonus and per_hour", () => {
-  test("condition and item armor accept formulas, worked out when the blow lands; numbers still work", () => {
-    const { r } = gearRules({ items: { plate: { name: "Plate", armor: { hp: "level + 1" } } }, start: { items: { plate: 1 } } });
-    const s = initialState(r);
-    expect(playerArmor(r, s, "hp")).toBe(4);
-    applyEvent(s, { t: "cond", id: "mighty", on: true, until: null, src: "manual" }, r);
-    expect(playerArmor(r, s, "hp")).toBe(4 + 6);
-    expect(r.conditions.shielded.armor).toEqual({ _: 4 });
-  });
-
-  test("bad formulas are errors; percentages in armor warn", () => {
+describe("formula bonus and per_hour", () => {
+  test("bad bonus formulas are errors; armor was removed with a warning", () => {
     const { issues } = normalizeRuleset({
       stats: { hp: { kind: "meter" } },
-      conditions: { x: { bonus: { hp: "level +" }, armor: { hp: "5%" } } },
-      items: { y: { armor: "2 *" } },
+      conditions: { x: { bonus: { hp: "level +" }, armor: { hp: 5 } } },
+      items: { y: { armor: 2 } },
     });
     const text = issues.map((i) => `${i.level} ${i.where}: ${i.message}`);
     expect(text.some((t) => t.startsWith("error Conditions › x › bonus › hp"))).toBe(true);
-    expect(text.some((t) => t.startsWith("warning Conditions › x › armor › hp"))).toBe(true);
-    expect(text.some((t) => t.startsWith("error Items › y › armor"))).toBe(true);
+    expect(text.some((t) => t.startsWith("warning Conditions › x › armor") && t.includes("removed"))).toBe(true);
+    expect(text.some((t) => t.startsWith("warning Items › y › armor") && t.includes("removed"))).toBe(true);
   });
 
   test("per_hour takes a formula or a share of the maximum", () => {
@@ -120,101 +110,12 @@ describe("formula armor, bonus and per_hour", () => {
   });
 });
 
-describe("crit: on a check", () => {
-  const crit = (c: unknown) => load({
-    stats: { luk: { kind: "attribute", start: 40, growth: 0 }, hp: { kind: "meter", start: 50 } },
-    actions: { go: { label: "Go", check: { chance: 100, crit: c }, success: { hp: +1 }, crit_success: { hp: +10 } } },
-  });
-  const tiers = (r: R, n = 40) => Array.from({ length: n }, (_, i) => resolveTurn(r, initialState(r), { actionId: "go", via: "choice" }, { seed: `s${i}` }).check!.tier);
-
-  test("a formula chance replaces the fixed 5% band", () => {
-    const { r, warns } = crit("luk + 60"); // 100%
-    expect(warns).toEqual([]);
-    expect(new Set(tiers(r))).toEqual(new Set(["crit_success"]));
-    const none = crit(0).r;
-    expect(tiers(none).includes("crit_success")).toBe(false);
-  });
-
-  test("without crit: checks behave as before", () => {
-    const { r } = load({ stats: { hp: { kind: "meter", start: 50 } }, actions: { go: { label: "Go", check: { chance: 100 }, success: { hp: +1 } } } });
-    const t = tiers(r, 200);
-    const share = t.filter((x) => x === "crit_success").length / t.length;
-    expect(share).toBeGreaterThan(0.01);
-    expect(share).toBeLessThan(0.12);
-  });
-
-  test("vs checks: crit widens the top band; out-of-range values warn", () => {
-    const { r } = load({ stats: { hp: { kind: "meter", start: 50 } }, actions: { go: { label: "Go", check: { vs: 2, crit: "50%" }, success: { hp: +1 } } } });
-    const t = tiers(r, 200);
-    const share = t.filter((x) => x === "crit_success").length / t.length;
-    expect(share).toBeGreaterThan(0.35);
-    expect(share).toBeLessThan(0.65);
-    expect(crit(150).warns.some((w) => w.includes("crit is a chance in percent"))).toBe(true);
-    const off = load({ stats: { hp: { kind: "meter" } }, actions: { go: { label: "Go", check: { chance: 50, crits: false, crit: 20 } } } });
-    expect(off.warns.some((w) => w.includes("crits: false"))).toBe(true);
-  });
-});
-
-describe("statuses that tick each round in a fight and each hour outside", () => {
-  const bleed = (extra: Record<string, unknown> = {}) => load({
-    stats: { hp: { kind: "meter", start: 100, max: 100 } },
-    conditions: { bleeding: { label: "Bleeding", every: ["round", "hour"], dot: 2, stat: "hp", lasts: "3h", ...extra } },
-    actions: { wait: { label: "Wait", time: 60, effects: {} }, cut: { label: "Cut", effects: { add_condition: ["bleeding"] } } },
-    encounters: {
-      fight: {
-        name: "Fight", foe: { name: "F", stats: { hp: { start: 50, max: 50 } } },
-        actions: { poke: { label: "Poke", effects: { foe: { hp: -1 } } }, cut: { label: "Cut", effects: { add_condition: ["bleeding"] } } },
-        end_when: { won: "foe.hp <= 0", beaten: "hp <= 0" },
-      },
-    },
-  });
-
-  test("ticks per round in an encounter, and keeps going (by lasts:) after it", () => {
-    const { r, warns } = bleed();
-    expect(warns).toEqual([]);
-    expect(r.conditions.bleeding.every).toBe("both");
-    let s = initialState(r);
-    applyEvent(s, { t: "enc", id: "fight", foe: { hp: 50 }, src: "manual" }, r);
-    s = play(r, s, "cut");
-    expect(s.conditions.bleeding.rounds).toBeUndefined();
-    const hp0 = s.stats.hp;
-    s = play(r, s, "poke", "p1");
-    s = play(r, s, "poke", "p2");
-    expect(hp0 - s.stats.hp).toBeCloseTo(4, 0); // 2 a round, not scaled by fight minutes
-    applyEvent(s, { t: "enc", id: null, src: "manual" } as never, r);
-    expect(s.conditions.bleeding).toBeDefined();
-    const before = s.stats.hp;
-    s = play(r, s, "wait");
-    expect(before - s.stats.hp).toBeCloseTo(2);
-  });
-
-  test("rounds: is ignored with a warning; plain hour statuses are unchanged", () => {
-    expect(bleed({ rounds: 3 }).warns.some((w) => w.includes("`rounds:` is ignored"))).toBe(true);
-    expect(bleed({ every: "sometimes" }).warns.some((w) => w.includes("use round, turn, hour"))).toBe(true);
-    expect(bleed({ every: "hour" }).r.conditions.bleeding.every).toBe("hour");
-    expect(bleed({ every: "round and hour" }).r.conditions.bleeding.every).toBe("both");
-  });
-});
-
 describe("lint fixes", () => {
-  test("an hourly hurt that an item cures isn't 'never wears off'; one nothing cures still is", () => {
-    const base = {
-      stats: { health: { kind: "meter", start: 100 } },
-      conditions: { festering: { label: "F", every: "hour", dot: 1, stat: "health" } },
-    };
-    const cured = load({ ...base, items: { salve: { name: "Salve", use: { remove_condition: ["festering"] } } } }).r;
-    expect(lintRuleset(cured).some((i) => i.message.includes("never wears off"))).toBe(false);
-    const timed = load({ ...base, actions: { fall: { label: "Fall", effects: { add_condition: { festering: 120 } } } } }).r;
-    expect(lintRuleset(timed).some((i) => i.message.includes("never wears off"))).toBe(false);
-    const stuck = load({ ...base, actions: { fall: { label: "Fall", effects: { add_condition: ["festering"] } } } }).r;
-    expect(lintRuleset(stuck).some((i) => i.message.includes("never wears off"))).toBe(true);
-  });
-
   test("unknown keys in live-choice tags and actions warn; known ones don't", () => {
     const { warns } = load({
       stats: { hp: { kind: "meter" } },
       live_choices: { tags: { hard_hand: { desc: "Violence", bogus_key: 3, effects: { hp: -1 } } } },
-      actions: { rest: { label: "Rest", effect: { hp: +1 }, efects: { hp: 2 }, success: { hp: 1 }, check: { chance: 50 } } },
+      actions: { rest: { label: "Rest", effect: { hp: +1 }, efects: { hp: 2 }, success: { hp: 1 }, check: { vs: 12 } } },
     });
     expect(warns.some((w) => w.startsWith("Live choices › tags › hard_hand › bogus_key"))).toBe(true);
     expect(warns.some((w) => w.startsWith("Actions › rest › efects") && w.includes('did you mean "effects"'))).toBe(true);

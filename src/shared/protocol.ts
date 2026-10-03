@@ -26,6 +26,10 @@ export interface BarView {
 export interface SkillView {
   id: string;
   label: string;
+  /** The raw value and its bounds (for a bounded ✎ control). */
+  value: number;
+  min: number;
+  max: number;
   display: string;
   grade: string | null;
   pct: number;
@@ -118,6 +122,8 @@ export interface HudView {
   skills: SkillView[];
   /** {{user}}'s looks and clothes as text (null = not known yet). */
   you: { appearance: string | null; outfit: string | null };
+  /** People who were with {{user}} before the last move and aren't marked here yet ("Were with you"). */
+  wereWithYou: { id: string; name: string }[];
   people: PersonView[];
   items: {
     id: string; name: string; count: number; /** "3/5" uses left in the one in hand. */ uses: string | null;
@@ -242,6 +248,8 @@ export interface RecordView {
   } | null;
   /** Band-crossing story lines ("Mira is warming to you."), shown first, before `changes`. */
   lines: string[];
+  /** A contest round on this record: the gauge's swing, where it stands after, and how it ended (null = still on). */
+  contest: { kind: string; label: string; opponent: string; round: number; swing: number; momentum: number; outcome: "won" | "lost" | "escaped" | "gave_in" | "broken_off" | null } | null;
   changes: ChangeView[];
   hints: string[];
   veiled: boolean;

@@ -1,9 +1,8 @@
 import { expect, test } from "bun:test";
 import { normalizeRuleset } from "./ruleset.js";
 import { applyEvent, foldEvents, initialState, type GameState } from "./state.js";
-import { applyProposal, encounterStartEvents, odds, resolveTurn } from "./resolve.js";
+import { applyProposal, odds, resolveTurn } from "./resolve.js";
 import { buildChoices } from "./view.js";
-import { encounterGuide } from "./encounter-view.js";
 import { intentFor } from "../backend/intents.js";
 import { DEFAULT_SETTINGS } from "../shared/protocol.js";
 
@@ -25,13 +24,10 @@ test("an unowned item or gated saved action produces no effects or turn consumpt
   }
 });
 
-test("travel choices are gone: a go: move does nothing, in or out of an encounter", () => {
-  const r = rules({ start: { location: "home" }, locations: { home: {}, town: {} },
-    encounters: { test: { actions: { wait: { effects: {} } } } } });
+test("travel choices are gone: a go: move does nothing, in or out of a contest", () => {
+  const r = rules({ start: { place: "Home" }, conflict: { kinds: { fight: { stats: [] } } } });
   const s = initialState(r);
   expect(step(r, s, "go:town").rec.events).toEqual([]);
-  const fight = foldEvents(r, [encounterStartEvents(r, s, "test", "fight")], s);
-  expect(step(r, fight, "go:town").rec.events).toEqual([]);
 });
 
 test("live choice gates hold in display, click interpretation and execution", () => {
@@ -75,7 +71,7 @@ test("additional narrated uses respect stack capacity and apply each non-check e
 test("reusable items keep their stock and checked uses do not invent a successful effect", () => {
   const r = rules({ stats: { health: { start: 0, max: 100 } }, start: { items: { tool: 1, kit: 1 } }, items: {
     tool: { keep: true, use: { health: 2 } },
-    kit: { uses: 5, use: { check: { chance: 0, crits: false }, success: { health: 10 } } },
+    kit: { uses: 5, use: { check: { vs: 99 }, success: { health: 10 } } },
   } });
   const before = initialState(r);
   const after = foldEvents(r, [applyProposal(r, before, { used: { tool: 3, kit: 2 } })], before);
@@ -100,75 +96,23 @@ test("reverse-ordered trigger chains settle beyond five passes and report a capp
   }
 });
 
-test("d100 odds include additive modifiers and match deterministic check outcomes", () => {
-  for (const [chance, add, expected] of [[100, 100, 0], [50, 25, 0.25], [50, -25, 0.75], [100, -100, 1]]) {
-    const r = rules({ actions: { attempt: { check: { chance, add, crits: false } } } });
+test("d20 odds include additive modifiers and match deterministic check outcomes", () => {
+  for (const [vs, add, expected] of [[12, 0, 0.45], [12, 5, 0.7], [30, 0, 0.05], [2, 0, 0.95]]) {
+    const r = rules({ actions: { attempt: { check: { vs, add, partial: 0 } } } });
     const s = initialState(r);
-    expect(odds(r, s, r.actions.attempt)!.success).toBe(expected);
+    expect(odds(r, s, r.actions.attempt)!.success).toBeCloseTo(expected, 10);
     let successes = 0;
-    for (let i = 0; i < 3000; i++) if (step(r, s, "attempt", `sample:${i}`).rec.check!.tier === "success") successes++;
+    for (let i = 0; i < 3000; i++) if (/success/.test(step(r, s, "attempt", `sample:${i}`).rec.check!.tier)) successes++;
     expect(Math.abs(successes / 3000 - expected)).toBeLessThan(0.035);
   }
 });
 
 test("check numbers use the visible pre-cost context; the cost still applies", () => {
   const r = rules({ stats: { stamina: { start: 100, max: 100 } }, actions: { sprint: {
-    cost: { stamina: -100 }, check: { chance: "stamina", crits: false },
+    cost: { stamina: -100 }, check: { vs: "22 - stamina / 10" },
   } } });
   const s = initialState(r); const result = step(r, s, "sprint");
-  expect(odds(r, s, r.actions.sprint)!.success).toBe(1);
-  expect(result.rec.check!.target).toBe(100);
-  expect(result.rec.check!.tier).toBe("success");
+  expect(odds(r, s, r.actions.sprint)!.success).toBe(0.45);
+  expect(result.rec.check!.target).toBe(12);
   expect(result.s.stats.stamina).toBe(0);
 });
-
-test("automatic recurring quests restart after cooldown without a duplicate reward", () => {
-  const r = rules({ clock: { start: "Mon 08:00" }, stats: { gold: { kind: "money" } },
-    quests: { daily: { auto: true, repeat: 1, goals: [{ count: 1 }], reward: { gold: 10 } } },
-    actions: { finish: { effects: { progress: { daily: 1 } } }, wait: { time: 1440, effects: {} } } });
-  let s = step(r, initialState(r), null).s;
-  s = step(r, s, "finish").s;
-  expect(s.quests.daily.st).toBe("done"); expect(s.stats.gold).toBe(10);
-  s = step(r, s, null).s;
-  expect(s.quests.daily.st).toBe("done"); expect(s.stats.gold).toBe(10);
-  s = step(r, s, "wait").s;
-  expect(s.quests.daily.st).toBe("active"); expect(s.stats.gold).toBe(10);
-  s = step(r, s, "finish").s;
-  expect(s.stats.gold).toBe(20);
-});
-
-test("an encounter started directly initializes start effects and momentum like the live transition", () => {
-  const r = rules({ flags: { ready: false }, encounters: { contest: { momentum: true,
-    start: { flags: { ready: true } }, actions: { advance: { when: "flag('ready')", check: { chance: 100, crits: false } } },
-    foe_moves: { wait: { desc: "Waits", weight: 1 } },
-  } }, actions: { enter: { effects: { encounter: "contest" } } } });
-  const initial = initialState(r);
-  const real = step(r, initial, "enter").s;
-  const simulated = foldEvents(r, [encounterStartEvents(r, initial, "contest", "entry")], initial);
-  expect(simulated.flags).toEqual(real.flags);
-  expect(simulated.encounter).toEqual(real.encounter);
-});
-
-test("unproductive encounters end at a visible budget with the configured consequence", () => {
-  const r = rules({ stats: { gold: { kind: "money", start: 50 } }, encounters: { loop: {
-    round_limit: 3, timeout_outcome: "lost", actions: { wait: { effects: {} } },
-    foe_moves: { wait: { desc: "Waits", weight: 1 } }, end_when: { won: "round >= 1000000" }, outcomes: { lost: { gold: -10 } },
-  } } });
-  let s = foldEvents(r, [encounterStartEvents(r, initialState(r), "loop", "entry")]);
-  expect(encounterGuide(r, s)!.dangerText).toContain("3 rounds left");
-  s = step(r, s, "wait").s; s = step(r, s, "wait").s;
-  expect(s.encounter!.round).toBe(2);
-  s = step(r, s, "wait").s;
-  expect(s.encounter).toBeNull(); expect(s.lastEncounter!.outcome).toBe("lost");
-  expect(s.stats.gold).toBe(40);
-});
-
-test("winning on the last allowed round takes precedence over the timeout", () => {
-  const r = rules({ encounters: { contest: { round_limit: 3, actions: { wait: { effects: {} } },
-    end_when: { won: "round >= 3" }, foe_moves: { wait: { desc: "Waits", weight: 1 } },
-  } } });
-  let s = foldEvents(r, [encounterStartEvents(r, initialState(r), "contest", "entry")]);
-  for (let i = 0; i < 3; i++) s = step(r, s, "wait").s;
-  expect(s.lastEncounter!.outcome).toBe("won");
-});
-

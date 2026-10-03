@@ -7,7 +7,6 @@ import { normalizeRuleset } from "./ruleset.js";
 import { applyProposal, odds, resolveTurn } from "./resolve.js";
 import { foldEvents, initialState } from "./state.js";
 import { buildChoices, buildHud, outcomePacket, stateDigest } from "./view.js";
-import { TEMPLATES } from "./templates/index.js";
 import { town, TOWN_YAML } from "./town.fixture.js";
 
 const env = (vars: Record<string, number | string | boolean>): ExprEnv => ({
@@ -52,25 +51,15 @@ describe("dice", () => {
   });
 });
 
-describe("templates", () => {
-  for (const t of TEMPLATES) {
-    test(`${t.id} loads with no issues and lints clean`, () => {
-      const { ruleset, issues } = loadRuleset(t.parts.map((p, i) => ({ label: `warp-ruleset · ${p.label}`, content: p.yaml, order: i })));
-      expect(issues).toEqual([]);
-      expect(ruleset).not.toBeNull();
-      expect(lintRuleset(ruleset!)).toEqual([]);
-      const s = initialState(ruleset!);
-      const hud = buildHud(ruleset!, s);
-      // Every template shows bars, except one with no stats on purpose (Romance: just feelings).
-      expect(hud.bars.length > 0 || ruleset!.statOrder.length === 0).toBe(true);
-      expect(buildChoices(ruleset!, s, { lines: [], veils: [] }).length).toBeGreaterThan(0);
-      expect(stateDigest(ruleset!, s).length).toBeGreaterThan(20);
-    });
-  }
-  test("the test town (for the tests below) loads clean too", () => {
+describe("the test town", () => {
+  test("loads clean and lints clean", () => {
     const { ruleset, issues } = loadRuleset([{ label: "warp-ruleset · town", content: TOWN_YAML, order: 0 }]);
     expect(issues).toEqual([]);
     expect(lintRuleset(ruleset!)).toEqual([]);
+    const s = initialState(ruleset!);
+    expect(buildHud(ruleset!, s).bars.length).toBeGreaterThan(0);
+    expect(buildChoices(ruleset!, s, { lines: [], veils: [] }).length).toBeGreaterThan(0);
+    expect(stateDigest(ruleset!, s).length).toBeGreaterThan(20);
   });
 });
 
@@ -79,7 +68,7 @@ describe("turn resolution", () => {
     const r = town();
     let s = initialState(r);
     s = foldEvents(r, [resolveTurn(r, s, { actionId: "head_out", via: "choice" }, { seed: "a" }).events], s);
-    expect(s.location).toBe("high_street");
+    expect(s.locationName).toBe("High Street");
     const rec1 = resolveTurn(r, s, { actionId: "cafe_shift", via: "choice" }, { seed: "seed-1" });
     const rec2 = resolveTurn(r, s, { actionId: "cafe_shift", via: "choice" }, { seed: "seed-1" });
     expect(rec1.check!.roll).toBe(rec2.check!.roll);
@@ -98,19 +87,20 @@ describe("turn resolution", () => {
     expect(tiers.size).toBeGreaterThan(1);
   });
 
-  test("odds match the chance formula for d100 roll-under", () => {
+  test("odds are the d20's exact odds against the difficulty word", () => {
     const r = town();
     const s = initialState(r);
-    s.location = "high_street";
+    s.locationName = "High Street";
+    // tending 5 → +0.5, rounded to +1 (add is rounded), vs fair (12): faces 11-19 and a natural 20.
     const o = odds(r, s, r.actions.cafe_shift)!;
-    expect(o.success).toBeCloseTo(Math.round(55 + 5 / 1.5) / 100, 2);
+    expect(o.success).toBeCloseTo(10 / 20, 10);
+    expect(o.partial).toBeCloseTo(3 / 20, 10);
   });
 
   test("triggers fire on the rising edge only", () => {
     const r = town();
     const s = initialState(r);
     s.stats.stress = 99;
-    s.location = "apartment";
     const rec = resolveTurn(r, s, { actionId: "shower", via: "choice" }, { seed: "x" });
     // shower lowers stress, so no breakdown
     expect(rec.events.some((e) => e.t === "trig" && e.id === "breakdown")).toBe(false);
@@ -127,7 +117,7 @@ describe("turn resolution", () => {
   test("veiled tags are flagged; lined tags disappear from choices", () => {
     const r = town();
     const s = initialState(r);
-    s.location = "high_street";
+    s.locationName = "High Street";
     expect(buildChoices(r, s, { lines: ["crime"], veils: [] }).some((c) => c.id === "pickpocket")).toBe(false);
     expect(buildChoices(r, s, { lines: [], veils: ["crime"] }).find((c) => c.id === "pickpocket")?.veiled).toBe(true);
     expect(resolveTurn(r, s, { actionId: "pickpocket", via: "choice" }, { seed: "v", veils: ["crime"] }).veiled).toBe(true);
@@ -168,7 +158,7 @@ describe("normalizer", () => {
   });
 
   test("lint suggests close names", () => {
-    const { ruleset } = normalizeRuleset({ stats: { athletics: {} }, actions: { run: { check: { chance: "athletcis / 10" } } } });
+    const { ruleset } = normalizeRuleset({ stats: { athletics: {} }, actions: { run: { check: { vs: 12, add: "athletcis / 10" } } } });
     expect(lintRuleset(ruleset!)[0].message).toContain('did you mean "athletics"');
   });
 

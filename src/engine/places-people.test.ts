@@ -1,4 +1,4 @@
-// Places, people and world gates: per-person targets and indoor places.
+// Places as words, people, and per-person targets.
 
 import { describe, expect, test } from "bun:test";
 import { lintRuleset } from "./lint.js";
@@ -10,18 +10,12 @@ import { presentPeople } from "./world.js";
 
 const BASE = {
   clock: { start: "Mon 08:00", date: "Jan 10" },
-  start: { location: "market" },
+  start: { place: "Market" },
   stats: {
     level: { kind: "attribute", start: 1, max: 99 },
     gold: { kind: "money", start: 0 },
   },
   flags: { gate_found: false, maud_gone: false },
-  locations: {
-    market: { name: "Market" },
-    north_road: { name: "North Road" },
-    garret: { name: "Garret", indoors: true },
-    tavern: { name: "Tavern", indoors: true },
-  },
   relationships: {
     stats: { trust: { start: 10 } },
     people: {
@@ -33,8 +27,8 @@ const BASE = {
   actions: {
     train: { label: "Train with {target}", targets: ["maud", "kael"], effects: { rel: { target: { trust: 2 } } } },
     chat: { label: "Chat with {target}", per_person: true, when: "target != 'hesper'", effects: { rel: { target: { trust: 1 } } } },
-    to_garret: { label: "Go up to the garret", effects: { move: "garret" } },
-    to_tavern: { label: "Go to the tavern", effects: { move: "tavern" } },
+    to_garret: { label: "Go up to the garret", effects: { place: "The Garret" } },
+    to_tavern: { label: "Go to the tavern", effects: { place: "Tavern" } },
   },
 };
 
@@ -53,22 +47,22 @@ describe("places", () => {
     expect(lintRuleset(r)).toEqual([]);
   });
 
-  test("the travel graph and the map were removed: their keys warn and are ignored", () => {
-    const { r, issues } = load({ locations: { ...BASE.locations, market: { name: "Market", exits: { garret: 2 }, travel: 5, requires: { level: 5 }, why_not: "x", when: "true", pos: [1, 2] } } });
-    const gone = issues.filter((i) => i.message.includes("was removed from Warp")).map((i) => i.where).sort();
-    expect(gone).toEqual(["exits", "pos", "requires", "travel", "when", "why_not"].map((k) => `Locations › market › ${k}`).sort());
-    expect(Object.keys(r.locations.market).sort()).toEqual(["board", "desc", "id", "indoors", "name"]);
+  test("locations were removed: one warning, and places come from the story as words", () => {
+    const { r, issues } = load({ locations: { market: { name: "Market", exits: { garret: 2 } } }, locations_open: true });
+    expect(issues.filter((i) => i.message.includes("was removed from Warp")).map((i) => i.where).sort()).toEqual(["Locations", "Locations Open"]);
+    expect(r.locations).toEqual({});
     expect(availableChoices(r, initialState(r)).some((c) => c.id.startsWith("go:"))).toBe(false);
   });
 
-  test("formulas read indoors / outside; a place's temp: was removed with the weather", () => {
+  test("formulas read the place in words; indoors / outside were removed and read as 0", () => {
     const { r } = load();
     let s = initialState(r);
-    expect(evalBool("outside", makeEnv(r, s), false)).toBe(true);
+    expect(evalBool("place == 'Market'", makeEnv(r, s), false)).toBe(true);
     s = step(r, s, "to_garret");
-    expect(evalBool("indoors", makeEnv(r, s), false)).toBe(true);
-    const { issues } = load({ locations: { ...BASE.locations, garret: { name: "Garret", indoors: true, temp: 6 } } });
-    expect(issues.filter((i) => i.message.includes("was removed from Warp")).map((i) => i.where)).toEqual(["Locations › garret › temp"]);
+    expect(s.locationName).toBe("The Garret");
+    expect(evalBool("place == 'The Garret'", makeEnv(r, s), false)).toBe(true);
+    const warned = lintRuleset(load({ triggers: { cold: { when: "outside or season == 'winter'", do: { hint: "Cold." } } } }).r).map((i) => i.message);
+    expect(warned.filter((m) => m.includes("was removed from Warp"))).toHaveLength(2);
   });
 });
 
@@ -78,6 +72,7 @@ describe("people", () => {
     const gone = issues.filter((i) => i.message.includes("was removed from Warp")).map((i) => i.where).sort();
     expect(gone).toEqual(["Relationships › people › maud › schedule", "Relationships › people › maud › traits"]);
     expect(Object.keys(r.people.maud).sort()).toEqual(["age", "desc", "id", "name", "start"]);
+    expect(r.people.maud.age).toBeUndefined();
     expect(here(r, initialState(r))).toEqual([]);
   });
 

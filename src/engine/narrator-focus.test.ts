@@ -7,8 +7,7 @@ import { stateDigest } from "./view.js";
 const r = loadRuleset([{ label: "t", content: `
 name: City
 clock: { start: "Mon 09:00" }
-start: { location: square, items: { phone: 1, grimoire: 1, soothing: 2, energy: 2 } }
-locations: { square: { name: City square, board: true } }
+start: { place: City square, items: { phone: 1, grimoire: 1, soothing: 2, energy: 2 } }
 items:
   phone: Phone
   grimoire: City grimoire
@@ -18,9 +17,10 @@ stats:
   energy_m: { kind: meter, label: Energy, start: 80, bands: { 0: Spent, 50: Fresh } }
   money: { kind: money, start: 100 }
   allure: { kind: attribute, max: 10, start: 3 }
-quests:
-  parcel: { name: A parcel across the city, board: true, goals: [ { text: Deliver it } ] }
-  nectar: { name: Nectar for Tsukiko, board: true, goals: [ { text: Bring nectar } ] }
+goals:
+  list:
+    parcel: { text: Deliver a parcel across the city, done_when: "flag('delivered')" }
+    nectar: { text: Bring nectar for Tsukiko, done_when: "flag('nectar')" }
 `, order: 0 }]).ruleset!;
 
 describe("the narrator's block names only what the turn is about", () => {
@@ -33,11 +33,12 @@ describe("the narrator's block names only what the turn is about", () => {
     expect(namesTitle("I ask Tsukiko about the nectar", "Nectar for Tsukiko")).toBe(true);
   });
 
-  test("a plain turn: no bag contents, no board, no skill sheet, no ordinary meters", () => {
+  test("a plain turn: no bag contents, no goals out of play, no skill sheet, no ordinary meters", () => {
     const s = initialState(r);
-    const d = stateDigest(r, s, { text: "I take the tram to the city square and look around." });
+    s.turn = 10; // authored goals are new on the first turns
+    const d = stateDigest(r, s, { text: "I take the tram to the plaza and look around." });
     expect(d).toContain("City square");
-    expect(d).not.toContain("Posted on the notice board");
+    expect(d).not.toContain("Goals in play");
     expect(d).not.toMatch(/Soothing|Grimoire|Phone/i);
     expect(d).toContain("Carrying 4 things, none in play");
     expect(d).not.toContain("Energy:");
@@ -45,13 +46,14 @@ describe("the narrator's block names only what the turn is about", () => {
     expect(d).not.toContain("Money");
     // The helpers still get everything.
     const full = stateDigest(r, s);
-    expect(full).toContain("Posted on the notice board");
+    expect(full).toContain("Goals in play");
     expect(full).toContain("Soothing potion");
   });
 
-  test("what the turn brings up comes in: the board, the item, money, a skill, a meter that changed", () => {
+  test("what the turn brings up comes in: a goal, the item, money, a skill, a meter that changed", () => {
     const s = initialState(r);
-    expect(stateDigest(r, s, { text: "I read the notice board." })).toContain('"Nectar for Tsukiko"');
+    s.turn = 10;
+    expect(stateDigest(r, s, { text: "Where would I find nectar for Tsukiko?" })).toContain('"Bring nectar for Tsukiko"');
     const potion = stateDigest(r, s, { text: "I sniff the soothing potion." });
     expect(potion).toContain("Carrying: Soothing potion ×2 (and 3 other things");
     expect(stateDigest(r, s, { text: "How much does it cost?" })).toContain("Money");

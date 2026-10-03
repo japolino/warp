@@ -1,18 +1,19 @@
 // Freeform play: what typed roleplay does when it matches nothing the ruleset lists.
-//   • improvised attempts — d20 plus the stat's share of a bonus, against a difficulty
-//     class the decision model picks, run through the same machinery as any action;
+//   • typed attempts — d20 plus the stat's share of `checks.bonus`, against the difficulty
+//     the read picks, run through the same machinery as any action;
 //   • growth by use — every check (listed or improvised), and practice the story
 //     describes, moves the stats it leaned on toward their next point.
 
 import { identifiers } from "./expr.js";
 import type { TurnBuilder } from "./resolve.js";
 import { DEFAULT_PRACTICE_REPEAT, DIFFICULTIES, emptyEffect, type ActionDef, type Difficulty, type PracticeRepeatDef, type Ruleset, type Tier } from "./ruleset.js";
-import { encounterKey, statMax, type GameState } from "./state.js";
+import { effectiveStat, makeEnv, statMax, type GameState } from "./state.js";
 
 /** An improvised attempt: `try:<stat>` (or `try:` with nothing to lean on). */
 export const IMPROV = "try:";
 
-export const DIFFICULTY_WORD: Record<Difficulty, string> = { easy: "easy", fair: "a fair challenge", hard: "hard", extreme: "extreme" };
+/** @deprecated The difficulty word is used as is. */
+export const DIFFICULTY_WORD: Record<Difficulty, string> = { easy: "easy", fair: "fair", hard: "hard", extreme: "extreme" };
 
 /** How much a check of each difficulty teaches. */
 const HARDNESS: Record<Difficulty, number> = { easy: 0.5, fair: 1, hard: 1.5, extreme: 2 };
@@ -20,17 +21,9 @@ const HARDNESS: Record<Difficulty, number> = { easy: 0.5, fair: 1, hard: 1.5, ex
 /** Failing still teaches, a little less. */
 const LEARN: Record<Tier, number> = { crit_success: 1.2, success: 1, partial: 1, fail: 0.7, crit_fail: 0.5 };
 
-export const IMPROV_DIRECTION: Record<Tier, string> = {
-  crit_success: "It goes better than {{user}} could have hoped — a clean success with something extra.",
-  success: "It works.",
-  partial: "It works, but not cleanly — add a cost, a complication or a price.",
-  fail: "It doesn't work. Show a concrete consequence, lost opportunity, or changed situation that makes the next choice different; do not resolve it as an identical retry. Do not grant the intended success.",
-  crit_fail: "It goes badly wrong — a failure that costs {{user}} something real.",
-};
-
-/** Stats an attempt can lean on. */
+/** Stats a typed attempt can lean on. */
 export function improvStats(r: Ruleset): string[] {
-  return r.improvise.stats.filter((id) => r.stats[id]);
+  return r.style === "story" ? [] : r.checks.stats.filter((id) => r.stats[id]);
 }
 
 export function isDifficulty(v: unknown): v is Difficulty {
@@ -44,30 +37,40 @@ function position(r: Ruleset, s: GameState, stat: string): number {
   return max > def.min ? Math.max(0, Math.min(1, (v - def.min) / (max - def.min))) : 0;
 }
 
-/** What a stat adds to an attempt: its share of the ruleset's bonus. */
-export function improvBonus(r: Ruleset, s: GameState, stat: string): number {
-  return r.stats[stat] ? Math.round(position(r, s, stat) * r.improvise.bonus) : 0;
+/**
+ * What a stat adds to the d20 (typed attempts and contest moves): its share of `checks.bonus`, with gear and
+ * conditions counted (a maxed stat adds the whole bonus; Body 3/10 with bonus 10 adds +3).
+ */
+export function statAdd(r: Ruleset, s: GameState, stat: string): number {
+  const def = r.stats[stat];
+  if (!def) return 0;
+  const max = statMax(r, def, s);
+  const v = effectiveStat(r, s, stat, makeEnv(r, s));
+  const pos = max > def.min ? Math.max(0, Math.min(1, (v - def.min) / (max - def.min))) : 0;
+  return Math.round(pos * r.checks.bonus);
 }
 
-/** The attempt as an action, so it runs through the same machinery as any listed one (odds, the mind, fights). */
+/** @deprecated Use `statAdd`. */
+export const improvBonus = statAdd;
+
+/** The typed attempt as an action, so it runs through the same machinery as any listed one (odds, growth, contests). */
 export function improvAction(r: Ruleset, s: GameState, actionId: string): ActionDef | null {
-  if (!r.improvise.enabled || !actionId.startsWith(IMPROV)) return null;
+  if (r.style === "story" || !r.checks.typed || !actionId.startsWith(IMPROV)) return null;
   const stat = actionId.slice(IMPROV.length);
   if (stat && !r.stats[stat]) return null;
   const label = stat ? r.stats[stat].label : "Luck";
   return {
     id: actionId,
     label: `Attempt (${label})`,
-    at: [],
     hidden: true,
-    ...(r.improvise.time !== undefined ? { time: r.improvise.time } : {}),
+    ...(r.checks.time !== undefined ? { time: r.checks.time } : {}),
     cost: emptyEffect(),
-    check: { style: "vs", dice: "d20", target: "difficulty", add: stat ? improvBonus(r, s, stat) : 0, partialMargin: r.improvise.partial, label, crits: true },
-    outcomes: r.improvise.outcomes,
+    // No target: the read's difficulty word (params.difficulty) sets it.
+    check: { add: stat ? statAdd(r, s, stat) : 0, partialMargin: r.checks.partial, label },
+    outcomes: r.checks.outcomes,
     effects: emptyEffect(),
-    params: [{ id: "difficulty", label: "Difficulty", options: Object.fromEntries(DIFFICULTIES.map((d) => [d, r.improvise.dc[d]])), default: "fair" }],
+    params: [],
     tags: ["improvised"],
-    order: 0,
     perPerson: false,
     requires: [],
     showLocked: false,
@@ -132,12 +135,13 @@ export interface PracticeContext {
 /** A stable key: changing actions, opponents, places or scene participants is fresh practice. */
 export function practiceKey(s: GameState, context: PracticeContext): string {
   const people = Object.entries(s.scene ?? {}).filter(([, v]) => v.here && v.loc === s.location).map(([id]) => id).sort();
-  // Only improvised difficulty is a known mechanical opportunity here. Cosmetic
+  // Only a typed attempt's difficulty is a known mechanical opportunity here. Cosmetic
   // labels and arbitrary intent params must not reset repetition.
   const difficulty = context.actionId.startsWith(IMPROV)
     ? (isDifficulty(context.params?.difficulty) ? context.params!.difficulty : "fair") : null;
-  return JSON.stringify([context.actionId, s.location, people, context.target ?? null, difficulty,
-    encounterKey(s) ?? null, s.encounter?.foeName ?? null]);
+  // A contest is its own opportunity: a new opponent (or a new contest) is fresh practice.
+  const contest = s.contest ? `${s.contest.kind}@${s.contest.at}` : null;
+  return JSON.stringify([context.actionId, s.location, people, context.target ?? null, difficulty, contest, s.contest?.opponent ?? null]);
 }
 
 /** Repeated checks in the same context teach less, but failures still teach.

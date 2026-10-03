@@ -7,9 +7,7 @@ import { applyEvent, initialState, type GameState, type WarpEvent } from "./stat
 
 const BASE = `
 name: Tunables
-start: { location: room }
-locations:
-  room: { name: Room }
+start: { place: Room }
 relationships:
   people:
     robin: { name: Robin, age: 25 }
@@ -17,7 +15,7 @@ stats:
   perception: { kind: skill, start: 0, max: 100 }
 actions:
   look_around:
-    check: { chance: "50 + perception / 10" }
+    check: { vs: 11, add: "perception / 10" }
 `;
 
 function load(extra = "") {

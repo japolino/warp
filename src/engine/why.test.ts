@@ -11,7 +11,7 @@ stats:
   stress: { start: 0, good: low, narrator: 10, per_hour: 1 }
   pain: { start: 0, good: low }
 actions:
-  lift: { label: Lift the crate, time: 60, cost: { stress: +2 }, check: { chance: 100, crits: false, label: Strength }, success: { pain: +5 } }
+  lift: { label: Lift the crate, time: 60, cost: { stress: +2 }, check: { vs: -20, label: Strength }, success: { pain: +5 }, fail: { pain: +5 } }
 triggers:
   strain: { when: "pain >= 5", do: { stress: +10 } }
 `, order: 0 }]).ruleset!;

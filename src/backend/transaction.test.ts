@@ -314,20 +314,6 @@ test("state-only and trimmed replay match full replay through saves and branch e
   }
 });
 
-test("medium-confidence encounter text spends no round and never starts the narrator; a redo with a move plays it", async () => {
-  const f = fixture({ stats: { health: { start: 50 } }, encounters: { fight: { round_limit: 20,
-    actions: { talk: { effects: { health: 1 } } }, foe_moves: { wait: { desc: "Waits", weight: 1 } }, end_when: { won: "round >= 10" },
-  } } });
-  f.add("assistant", "A confrontation starts.", { warp: { swipes: { "0": record([{ t: "enc", id: "fight", foe: {}, src: "trigger" }]) } } });
-  f.quiet = async () => ({ content: '{"action":{"choice":"talk","confidence":0.55}}' });
-  await playRound({ chatId: f.id, userId: f.id, intent: null, typed: "I pause and look around." });
-  const typed = f.messages.at(-1);
-  expect(typed.is_user).toBe(true); expect(warpMeta(typed)).toEqual({ judged: true });
-  expect(foldPath(f.r, f.messages).state.encounter!.round).toBe(0);
-  await frontendMessage({ type: "redo", chatId: f.id, userMessageId: typed.id, actionId: "talk" }, f.id);
-  expect(foldPath(f.r, f.messages).state.encounter!.round).toBe(1);
-  expect(f.narratorCalls ?? 0).toBe(0);
-});
 
 test("registered sheet adjustments merge their newly computed deltas instead of overwriting", async () => {
   const f = fixture(); f.add("assistant", "Story");
@@ -336,19 +322,6 @@ test("registered sheet adjustments merge their newly computed deltas instead of 
   expect(warpMeta(f.messages[0]).swipes!["0"].events.filter((e) => e.src === "manual")).toHaveLength(2);
 });
 
-test("a superseded quiet operation cannot commit its late round or unlock a host generation", async () => {
-  const f = fixture({ stats: { health: { start: 50 } }, encounters: { fight: { actions: { wait: { effects: { health: -1 } } }, foe_moves: { wait: { desc: "Waits", weight: 1 } } } } });
-  const m = f.add("assistant", "Fight", { warp: { swipes: { "0": record([{ t: "enc", id: "fight", foe: {}, src: "trigger" }]) } } });
-  const gate = deferExtraction(f);
-  const round = playRound({ chatId: f.id, userId: f.id, intent: { actionId: "wait", via: "choice" } });
-  await gate.waiting;
-  const generationId = `${f.id}-host`;
-  await onGenerationStarted({ chatId: f.id, generationId, targetMessageId: m.id }, f.id);
-  gate.release(); await round;
-  expect(busyChats.has(f.id)).toBe(true);
-  expect(foldPath(f.r, f.messages).state.encounter!.round).toBe(0);
-  await onGenerationStopped({ chatId: f.id, generationId }, f.id);
-});
 
 test("card edits invalidate profiles and CHAT_CHANGED rebinding uses the new character immediately", async () => {
   const f = fixture(), next = fixture();

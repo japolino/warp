@@ -132,3 +132,35 @@ export function rollDice(notation: string, rng: Rng): DiceRoll {
   });
   return { notation, dice, total, natural, primarySides: parsed.primarySides };
 }
+
+// ───────────────────────── the one check: d20 + modifier vs a target ─────────────────────────
+
+/** The tier of a d20 check: natural 20 = critical success, natural 1 = critical failure, else total vs target. */
+export function d20Tier(natural: number, add: number, target: number, partial: number): "crit_success" | "success" | "partial" | "fail" | "crit_fail" {
+  if (natural >= 20) return "crit_success";
+  if (natural <= 1) return "crit_fail";
+  const total = natural + add;
+  if (total >= target) return "success";
+  if (partial > 0 && total >= target - partial) return "partial";
+  return "fail";
+}
+
+/**
+ * The exact odds of a d20 check, by counting faces (the shown % is the real %):
+ * P(success or better) = (1 + #{f in 2..19 : f + add >= target}) / 20,
+ * P(partial) = #{f in 2..19 : target - partial <= f + add < target} / 20.
+ */
+export function d20Odds(add: number, target: number, partial: number): { success: number; partial: number } {
+  let ok = 1, part = 0;
+  for (let f = 2; f <= 19; f++) {
+    const t = f + add;
+    if (t >= target) ok++;
+    else if (partial > 0 && t >= target - partial) part++;
+  }
+  return { success: ok / 20, partial: part / 20 };
+}
+
+/** One d20 face from a seeded generator. */
+export function rollD20(rng: Rng): number {
+  return 1 + Math.floor(rng() * 20);
+}

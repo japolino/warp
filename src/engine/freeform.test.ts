@@ -10,10 +10,7 @@ import { checkStats, improvAction, practiceGain } from "./freeform.js";
 const YAML = `
 name: Freeform
 clock: { start: "Mon 12:00" }
-start: { location: bar, items: { spray: 2 } }
-locations:
-  bar: { name: The Bar }
-  street: { name: The Street }
+start: { place: The Bar, items: { spray: 2 } }
 stats:
   health: { kind: meter, start: 100, narrator: 20 }
   charm: { kind: attribute, max: 10, start: 3 }
@@ -26,24 +23,19 @@ relationships:
   stats: { trust: { start: 20, narrator: 5 } }
   people:
     bartender: { name: Rosa }
-encounters:
-  brawl:
-    name: Brawl
-    foe: { name: Thug, stats: { nerve: { start: 10, max: 10 } } }
-    actions: { swing: { label: Swing, check: { vs: 12, add: "floor(athletics / 10)" }, success: { foe: { nerve: -5 } } } }
-    momentum: { win: won, lose: lost }
-    outcomes: { won: { hint: "They back off." }, lost: { health: -20 } }
-  duel:
-    name: Formal duel
-    from_story: false
-    foe: { name: Rival, stats: {} }
-    actions: { lunge: { label: Lunge } }
+conflict:
+  kinds:
+    brawl:
+      label: Brawl
+      stats: [athletics, charm]
+      won: { hint: "They back off." }
+      lost: { health: -20 }
 actions:
-  to_street: { label: Step outside, effects: { move: street } }
-  to_bar: { label: Go back in, effects: { move: bar } }
+  to_street: { label: Step outside, effects: { place: The Street } }
+  to_bar: { label: Go back in, effects: { place: The Bar } }
   vault:
     label: Vault the counter
-    check: { chance: "20 + athletics / 2" }
+    check: { vs: hard, add: "athletics / 10" }
 `;
 const r = loadRuleset([{ label: "t", content: YAML, order: 0 }]).ruleset!;
 const turn = (s: GameState, intent: Intent | null, opts: Record<string, unknown> = {}) => {
@@ -69,22 +61,25 @@ describe("improvised attempts", () => {
     expect(improvAction(r, s, "try:nonsense")).toBeNull();
   });
 
-  test("with nothing to lean on it's a plain roll; improvise: false turns it off", () => {
+  test("with nothing to lean on it's a plain roll; checks: false (and a story) turn it off", () => {
     const s = initialState(r);
     expect(turn(s, { actionId: "try:", params: { difficulty: "easy" }, via: "adjudicator" }).rec.check?.add).toBe(0);
-    const off = loadRuleset([{ label: "t", content: `${YAML}\nimprovise: false`, order: 0 }]).ruleset!;
+    const off = loadRuleset([{ label: "t", content: `${YAML}\nchecks: false`, order: 0 }]).ruleset!;
     expect(improvAction(off, initialState(off), "try:charm")).toBeNull();
+    const story = loadRuleset([{ label: "t", content: `${YAML.replace(/conflict:[\s\S]*?actions:/, "actions:").replace(/check: \{[^}]*\}/, "effects: {}")}\nstyle: story`, order: 0 }]).ruleset!;
+    expect(improvAction(story, initialState(story), "try:charm")).toBeNull();
   });
 
-  test("in a fight, an improvised move swings it like any other", () => {
+  test("in a contest, a typed attempt is a move on its stat", () => {
     let s = initialState(r);
-    s = turn(s, null, { encounter: { id: "brawl", foe: "Rosa" } }).s;
-    expect(s.encounter?.id).toBe("brawl");
-    expect(s.encounter?.foeName).toBe("Rosa");
-    expect(stateDigest(r, s)).toContain("vs Rosa");
+    const start = turn(s, null, { contest: { kind: "brawl", opponent: "Rosa" } });
+    s = start.s;
+    expect(s.contest).toMatchObject({ kind: "brawl", opponent: "Rosa", who: "bartender", round: 1 });
+    expect(stateDigest(r, s)).toContain("Contest: brawl with Rosa");
     const { rec } = turn(s, { actionId: "try:athletics", params: { difficulty: "fair" }, via: "adjudicator" });
     expect(rec.events.some((e) => e.t === "swing")).toBe(true);
-    expect(rec.hints.join(" ")).toContain("beats, in order");
+    expect(rec.check?.label).toBe("Athletics");
+    expect(rec.beats).toContain("beats, in order");
   });
 });
 
@@ -137,7 +132,7 @@ describe("who's in the scene", () => {
     const left = read(s, { scene: { Clarice: false } });
     s = left.s;
     expect(here()).not.toContain("Clarice");
-    expect(summarizeEvents(r, initialState(r), s, left.events).map((c) => c.text)).toContain("Clarice left");
+    expect(summarizeEvents(r, initialState(r), s, left.events).map((c) => c.text)).toContain("Clarice leaves");
     // The narrator only gets relationships for people here; the rest are named apart.
     const digest = stateDigest(r, s);
     expect(digest).toMatch(/Relationships \(here\):[^\n]*Miu/);
@@ -157,7 +152,7 @@ describe("who's in the scene", () => {
     let s = read(initialState(r), { people: [{ name: "Miu" }] }).s;
     s = turn(s, { actionId: "to_street", via: "choice" }).s;
     expect(presentPeople(r, s, makeEnv(r, s))).toEqual([]);
-    expect(stateDigest(r, s)).toContain("Were with {{user}} before arriving here");
+    expect(stateDigest(r, s)).toContain("Were with {{user}} before the move");
     s = read(s, { scene: { Miu: true } }).s;
     expect(presentPeople(r, s, makeEnv(r, s))).toEqual(["miu"]);
     // Back at the bar, the story says Rosa is there, then that she stepped out.
@@ -184,21 +179,20 @@ describe("items the story uses", () => {
   });
 });
 
-describe("fights from the story", () => {
-  test("the prose starting a fight starts the encounter, against whoever it's with", () => {
+describe("contests from the story", () => {
+  test("the prose starting a fight starts a contest, against whoever it's with", () => {
     const s = initialState(r);
-    const started = read(s, { encounter: "brawl", foe: "Rosa" }).s;
-    expect(started.encounter).toMatchObject({ id: "brawl", foeName: "Rosa" });
-    expect(started.notices.join(" ")).toContain("Opponent: Rosa");
-    // Some encounters only start from the rules.
-    expect(read(s, { encounter: "duel" }).s.encounter).toBeNull();
-    expect(turn(s, null, { encounter: { id: "duel" } }).s.encounter).toBeNull();
+    const started = read(s, { contest: { kind: "brawl", opponent: "Rosa", threat: "hard" } }).s;
+    expect(started.contest).toMatchObject({ kind: "brawl", opponent: "Rosa", threat: "hard", dc: 16, round: 0 });
+    expect(started.notices.join(" ")).toContain("brawl with Rosa starts");
+    // An unknown kind starts nothing.
+    expect(read(s, { contest: { kind: "duel", opponent: "Rival" } }).s.contest).toBeNull();
   });
 
-  test("and the prose ending it ends it", () => {
-    const s = read(initialState(r), { encounter: "brawl" }).s;
+  test("the prose can't end it: the old encounter end is ignored", () => {
+    const s = read(initialState(r), { contest: { kind: "brawl", opponent: "Rosa" } }).s;
     const over = read(s, { encounterEnd: "lost" }).s;
-    expect(over.encounter).toBeNull();
-    expect(over.stats.health).toBe(80);
+    expect(over.contest).not.toBeNull();
+    expect(over.stats.health).toBe(100);
   });
 });

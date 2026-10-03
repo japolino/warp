@@ -1,8 +1,8 @@
 // Regressions for the engine review of the format-limits work.
 import { describe, expect, test } from "bun:test";
 import { loadRuleset } from "./loader.js";
-import { applyProposal, availableChoices, odds, resolveTurn, findAction } from "./resolve.js";
-import { applyEvent, foldEvents, initialState } from "./state.js";
+import { applyProposal, odds, resolveTurn, findAction } from "./resolve.js";
+import { foldEvents, initialState } from "./state.js";
 import { buildChoices, buildHud } from "./view.js";
 
 const load = (y: string) => loadRuleset([{ label: "t", order: 0, content: y }]).ruleset!;
@@ -10,27 +10,6 @@ const turn = (r: any, s: any, actionId: string, params?: Record<string, string>)
   const rec = resolveTurn(r, s, { actionId, via: "choice", ...(params ? { params } : {}) }, { seed: "x" });
   return { rec, s: foldEvents(r, [rec.events], s) };
 };
-
-describe("being broke in a fight never makes the expensive moves free", () => {
-  const r = load(`stats:
-  hp: { kind: meter, start: 30 }
-  sta: { kind: meter, start: 10, max: 10 }
-encounters:
-  duel:
-    foe: { name: F, stats: { hp: { start: 100, max: 100 } } }
-    actions:
-      jab: { label: Jab, cost: { sta: -5 }, effects: { foe: { hp: -1 } } }
-      nuke: { label: Nuke, cost: { sta: -50 }, effects: { foe: { hp: -40 } } }
-    end_when: { won: "foe.hp <= 0", beaten: "hp <= 0" }
-`);
-  test("only the cheapest priced-out move stays open; the nuke stays locked", () => {
-    const s = initialState(r);
-    applyEvent(s, { t: "enc", id: "duel", foe: { hp: 100 }, src: "manual" } as any, r);
-    s.stats.sta = 0;
-    expect(availableChoices(r, s).map((c) => c.id)).toEqual(["jab"]);
-    expect(turn(r, s, "nuke").rec.events.some((e: any) => e.t === "foe")).toBe(false);
-  });
-});
 
 describe("the price follows the chosen params", () => {
   const book = (dflt: string) => load(`stats:
@@ -60,15 +39,17 @@ actions:
   });
 });
 
-describe("the story moves between places (no travel gates any more)", () => {
-  const r = load(`locations:
-  hall: { name: Hall }
-  vault: { name: Vault }
-start: { location: hall }
+describe("the story moves between places (no travel graph)", () => {
+  const r = load(`start: { place: Hall }
 `);
-  test("a story move to a declared place goes there", () => {
+  test("a story move goes to the place it names, in words", () => {
     const s = initialState(r);
-    expect(applyProposal(r, s, { move: "Vault" } as any).some((e: any) => e.t === "move" && e.to === "vault")).toBe(true);
+    expect(s.locationName).toBe("Hall");
+    expect(applyProposal(r, s, { place: "The Vault" }).some((e: any) => e.t === "move" && e.to === "the_vault" && e.name === "The Vault")).toBe(true);
+    // The old alias still works.
+    expect(applyProposal(r, s, { move: "Vault" }).some((e: any) => e.t === "move" && e.name === "Vault")).toBe(true);
+    // The same place again is no move.
+    expect(applyProposal(r, s, { place: "hall" })).toEqual([]);
   });
 });
 
@@ -78,10 +59,11 @@ test("eff() in a check formula doesn't count gear twice", () => {
 items: { belt: { name: Belt, bonus: { str: 5 } } }
 start: { items: { belt: 1 } }
 actions:
-  lift: { label: Lift, check: { chance: "str + eff('str') - str" }, success: { str: +0 } }
+  lift: { label: Lift, check: { vs: 20, add: "(str + eff('str') - str) / 5" }, success: { str: +0 } }
 `);
   const s = initialState(r);
-  expect(odds(r, s, findAction(r, s, "lift")!.a)!.success).toBeCloseTo(0.15, 5);
+  // eff('str') = 15 (10 + the belt), read once: add = 3 → succeeds on 17+ (4 faces of 20).
+  expect(odds(r, s, findAction(r, s, "lift")!.a)!.success).toBeCloseTo(0.2, 5);
 });
 
 test("a meter with a max formula and no start keeps its old start; start: full fills it", () => {

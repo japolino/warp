@@ -132,7 +132,7 @@ test("full loop: install → choose → roll → narrate → bookkeeping → swi
   const injected = out.messages[out.breakdown[0].messageIndex].content as string;
   expect(injected).toContain("<warp>");
   expect(injected).toContain("Sam chose: Head out to the High Street");
-  expect(injected).toContain("Location: High Street");
+  expect(injected).toContain("· High Street");
 
   // The narrator replies; the extractor reports 20 minutes and a stress bump (clamped by the ruleset).
   messages.push(mkMsg("m2", false, "You step out into the bustle of the High Street. A man jostles you roughly."));
@@ -162,7 +162,7 @@ test("full loop: install → choose → roll → narrate → bookkeeping → swi
   const out2 = await interceptor([{ role: "user", content: messages[3].content }], { chatId: "c1", generationId: "g2", generationType: "normal", isDryRun: false, interceptorDeadlineAt: Date.now() + 30000 });
   const text2 = out2.messages[out2.breakdown[0].messageIndex].content as string;
   expect(text2).toContain("Sam chose: Pick a pocket");
-  expect(text2).toMatch(/Check: Skulduggery — d100: \d+, needed \d+ or less → /);
+  expect(text2).toMatch(/Check: Skulduggery — d20 \d+/);
 
   messages.push(mkMsg("m4", false, "Your fingers close around leather..."));
   quietReplies.push("{}");
@@ -246,7 +246,7 @@ test("real host shape: no generationId in the interceptor context, reply pre-sta
   const out = await interceptor([{ role: "user", content: appended[0].msg.content }], hostCtx);
   const injected = out.messages[out.breakdown[0].messageIndex].content as string;
   expect(injected).toContain("chose: Head out to the High Street");
-  expect(injected).toContain("Location: High Street");
+  expect(injected).toContain("· High Street");
 
   // The reply lands in the staged message.
   staged.content = "You step out onto the High Street.";

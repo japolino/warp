@@ -52,19 +52,6 @@ describe("reading typed roleplay", () => {
     expect(sug.intent).toBeNull();
   });
 
-  test("a fight breaking out in the exchange is read, with who it's against", async () => {
-    let s = initialState(r);
-    s = foldEvents(r, [applyProposal(r, s, { people: [{ name: "Dex" }] })], s);
-    const d = new Scripted((q) => ({
-      encounter: choice("enc:brawl", 0.8, keysOf(q, "encounter")),
-      opponent: choice("p:dex", 0.9, keysOf(q, "opponent")),
-    }));
-    const rd = await readTurn({ ...base, decider: d, r, s, playerText: null });
-    expect(rd.encounter).toEqual({ id: "brawl", foe: "Dex" });
-    // Only threatened: not sure enough.
-    const maybe = new Scripted((q) => ({ encounter: choice("enc:brawl", 0.45, keysOf(q, "encounter")) }));
-    expect((await readTurn({ ...base, decider: maybe, r, s, playerText: null })).encounter).toBeUndefined();
-  });
 });
 
 describe("reading the reply", () => {
@@ -98,13 +85,6 @@ describe("reading the reply", () => {
     expect(after.items.hoodie).toBe(1);
   });
 
-  test("an encounter in progress can be read as over", async () => {
-    let s = initialState(r);
-    s = foldEvents(r, [applyProposal(r, s, { encounter: "brawl" })], s);
-    const d = new Scripted((q): Answers => (q.encounter_end ? { encounter_end: choice("end:won", 0.85, keysOf(q, "encounter_end")) } : {}));
-    const out = await bookkeeping({ decider: d, r, s, playerText: "…", reply: "The thug stumbles out into the rain.", player: "Sam" });
-    expect(out.proposal.encounterEnd).toBe("won");
-  });
 });
 
 describe("text helpers", () => {

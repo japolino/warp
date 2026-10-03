@@ -29,6 +29,7 @@ describe("reading the player's turn", () => {
     const r = town();
     const s = initialState(r);
     s.location = "high_street";
+    s.locationName = "High Street";
     for (const [conf, expectAct] of [[0.9, true], [0.55, false], [0.2, false]] as const) {
       const d = new Scripted((q) => ({ action: choice("pickpocket", conf, Object.keys((q.action as any).criteria)) }));
       const rd = await readTurn({ ...base, decider: d, r, s, playerText: "I lift his wallet" });
@@ -40,6 +41,7 @@ describe("reading the player's turn", () => {
     const r = town();
     const s = initialState(r);
     s.location = "high_street";
+    s.locationName = "High Street";
     const none = await readTurn({ ...base, decider: new Scripted((q) => ({ action: choice("none", 0.95, Object.keys((q.action as any).criteria)) })), r, s, playerText: "Hello!" });
     expect(none.intent).toBeNull();
     const go = await readTurn({ ...base, decider: new Scripted((q) => ({ action: choice("go:park", 0.9, Object.keys((q.action as any).criteria)) })), r, s, playerText: "I walk to the park" });
@@ -74,6 +76,7 @@ describe("reading the player's turn", () => {
     const r = town();
     const s = initialState(r);
     s.location = "high_street";
+    s.locationName = "High Street";
     const rd = await readTurn({ ...base, decider: new RulesDecider(), r, s, playerText: "I try to pick a pocket of the tourist" });
     expect(rd.intent).toBeNull();
   });
@@ -149,7 +152,6 @@ describe("System-1 bookkeeping", () => {
     expect(out.proposal.minutes).toBe(30);
     expect(out.proposal.stats).toEqual({ stress: r.stats.stress.narrator });
     expect(out.proposal.rel).toEqual({ Robin: { trust: -2 } });
-    expect(out.proposal.move).toBe("park");
     expect(out.proposal.people?.map((p) => p.name)).toEqual(["Alex"]);
     expect([...out.needsWriting]).toEqual([]);
     // Only people the reply mentions are asked about.
