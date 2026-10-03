@@ -54,7 +54,7 @@ Model calls per turn, besides the narrator's reply (measured by the pipeline tes
 
 | Turn | Helper only | With Jev |
 |---|---|---|
-| Typed dialogue or an ordinary action | 1 helper | 1 helper + up to 2 Jev |
+| Typed dialogue or an ordinary action | 1 helper | 1 helper + up to 3 Jev |
 | Typed risky attempt (Adventure) | 2 helper (the read must come before the dice) | 1 helper + up to 3 Jev |
 | Clicked choice | 1 helper | 1 helper + up to 2 Jev |
 | Contest round | 1 helper | 1 helper + 1–2 Jev |
@@ -62,7 +62,7 @@ Model calls per turn, besides the narrator's reply (measured by the pipeline tes
 
 The greeting read costs 1 more helper call (and 1 Jev call with Jev) once per greeting swipe. Every turn records what it cost (`calls` on the turn record).
 
-A typed message rolls only when the read is at least 75% sure it attempts something risky and contested. The dice chip says how sure it was, with a **Not an action?** button that redoes the turn without a roll.
+Without Jev, a typed message is read only when it has a risky verb (fight, sneak, climb, steal, lie, try…), so ordinary turns keep to one helper call; Jev reads every message that does something. A typed message rolls only when the read is at least 75% sure it attempts something risky and contested. The dice chip says how sure it was, with a **Not an action?** button that redoes the turn without a roll.
 
 ## Settings
 

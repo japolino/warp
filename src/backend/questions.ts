@@ -127,12 +127,21 @@ const EVERYDAY = new Set(("look looks looking glance glances stare stares watch 
   + "wait waits pause pauses think thinks wonder wonders frown frowns wave waves breathe breathes relax relaxes rest rests "
   + "walk walks follow follows turn turns hum hums yawn yawns stretch stretches drink sip sips eat eats smirk smirks wink winks "
   + "hug hugs hold holds take takes put puts open opens close closes reach reaches set sets head eyes hand hands face seat chair table").split(" "));
-/** Verbs that are often a risky move even in a short message ("I punch him"). They override the short-message prefilter. */
-const RISKY = new Set(("punch punches hit hits kick kicks stab stabs shoot shoots slap slaps attack attacks fight fights tackle tackles shove shoves push pushes "
-  + "grab grabs steal steals pickpocket lift sneak sneaks hide hides climb climbs jump jumps leap leaps vault vaults run runs flee flees dodge dodges "
-  + "escape escapes chase chases lie lies bluff bluffs persuade persuades convince convinces threaten threatens intimidate intimidates bribe bribes "
-  + "seduce seduces force forces break breaks smash smashes pick picks lockpick swing swings slash slashes throw throws cast casts resist resists "
-  + "try tries attempt attempts").split(" "));
+/**
+ * Verbs that often make a move risky even in a short message ("I punch him"). Without Jev, only a message with one
+ * of these is read (the read is a second helper call before the reply); everything else is plain roleplay.
+ */
+const RISKY = new Set(("punch punches hit hits kick kicks stab stabs lunge lunges shoot shoots slap slaps attack attacks fight fights tackle tackles shove shoves push pushes "
+  + "grab grabs snatch snatches steal steals rob robs pickpocket lift sneak sneaks hide hides climb climbs jump jumps leap leaps vault vaults "
+  + "run runs sprint sprints flee flees dodge dodges duck ducks evade evades swerve swerves escape escapes chase chases pursue pursues tail tails "
+  + "lie lies bluff bluffs trick tricks deceive deceives con cheat cheats persuade persuades convince convinces haggle haggles bargain bargains negotiate "
+  + "threaten threatens intimidate intimidates interrogate interrogates bribe bribes seduce seduces force forces break breaks smash smashes pry pries "
+  + "pick picks lockpick hack hacks disarm disarms defuse defuses sabotage sabotages search searches spy spies eavesdrop eavesdrops infiltrate infiltrates "
+  + "wrestle wrestles grapple grapples strangle strangles choke chokes trip trips aim aims fire fires swing swings slash slashes throw throws "
+  + "cast casts resist resists swim swims dive dives try tries attempt attempts").split(" "));
+
+/** Everyday phrases that contain a risky verb ("pick up", "force a smile"). */
+const EVERYDAY_PHRASES = /\b(?:pick(?:s|ed)? (?:it |them |him |her )?up|cast(?:s)? a (?:glance|look)|force(?:s)? a (?:smile|laugh)|hide(?:s)? (?:a |my |his |her )?(?:smile|grin|blush)|run(?:s)? (?:my|his|her|a) (?:hand|hands|fingers?)|break(?:s)? the (?:silence|ice))\b/gi;
 
 function words(s: string): string[] {
   return s.toLowerCase().replace(/[^\p{L}\p{N}' -]+/gu, " ").split(/\s+/).map((w) => w.replace(/^'+|'+$/g, "")).filter(Boolean);
@@ -160,23 +169,20 @@ export function readable(r: Ruleset): boolean {
 
 /**
  * Should the typed read run at all? Never for a story, for quoted dialogue only, for speech tags only, or for a
- * bare emote around dialogue. Helper only (it costs a second helper call): also not for very short or everyday
- * messages, unless a risky verb is in them. Jev is cheap, so it gets everything else.
+ * bare emote around dialogue. Helper only (it costs a second helper call before the reply): only when a risky verb
+ * is in the message, so an ordinary turn keeps to one helper call. Jev is cheap, so it gets everything else.
  */
 export function needsRead(r: Ruleset, split: { action: string }, provider: Provider): boolean {
   if (!readable(r)) return false;
   const action = split.action.trim();
   if (!action || onlySpeechTags(action)) return false;
   const ws = words(action);
-  const risky = ws.some((w) => RISKY.has(w));
+  const risky = words(action.replace(EVERYDAY_PHRASES, " ")).some((w) => RISKY.has(w));
   const content = ws.filter((w) => !STOP.has(w) && !/ly$/.test(w));
   const everyday = content.every((w) => EVERYDAY.has(w) || SPEECH.has(w));
   // A bare emote around the dialogue ("*smiles* "Hi."", "I nod.") is part of the talk, for both providers.
   if (!risky && content.length <= 2 && everyday) return false;
-  if (provider === "jev") return true;
-  if (risky) return true;
-  if (content.length < 3) return false;
-  return !everyday;
+  return provider === "jev" || risky;
 }
 
 // ───────────────────────── difficulty (shared) ─────────────────────────

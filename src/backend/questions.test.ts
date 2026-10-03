@@ -59,6 +59,25 @@ describe("quoted dialogue never reaches a model as an action", () => {
     expect(needsRead(adv, splitTyped("I punch him."), "llm")).toBe(true);
     expect(needsRead(adv, splitTyped("I try to slip past the guard into the vault."), "llm")).toBe(true);
   });
+
+  test("the budget: without Jev only a risky verb costs the read; ordinary actions stay at one helper call", () => {
+    const ORDINARY = [
+      "I sit down at the counter and look around the shop.", "I walk to the market to buy some bread.", "I go upstairs and unpack my bags.",
+      "I check my phone for messages.", "I pick up the book and flip through it.", "I cast a glance at the clock.",
+      "I run my fingers through her hair.", "*I smile and take the mug.* \"Thanks.\"", "I lean against the counter. \"Busy day?\"",
+    ];
+    for (const line of ORDINARY) {
+      expect({ line, llm: needsRead(adv, splitTyped(line), "llm") }).toEqual({ line, llm: false });
+    }
+    // Jev is cheap: it still reads the ones that do something.
+    expect(needsRead(adv, splitTyped(ORDINARY[0]), "jev")).toBe(true);
+    const RISKY = [
+      "I sneak past the guard while he's distracted.", "I pick the lock on the back door.", "I lie and tell him I'm with the police.",
+      "I search his desk for the ledger before he gets back.", "I hack into the terminal.", "I sprint for the door before it closes.",
+      "I haggle the merchant down to half price.", "I slip the knife out of my boot and lunge at him.",
+    ];
+    for (const line of RISKY) expect({ line, llm: needsRead(adv, splitTyped(line), "llm") }).toEqual({ line, llm: true });
+  });
 });
 
 describe("question limits and safe defaults", () => {

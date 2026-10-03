@@ -16,7 +16,7 @@ beforeAll(async () => {
 
 type Style = "story" | "adventure";
 type Provider = "helper" | "jev";
-type Kind = "typed dialogue" | "typed attempt" | "clicked choice" | "contest round (typed)" | "contest round (clicked)";
+type Kind = "typed dialogue" | "typed action" | "typed attempt" | "clicked choice" | "contest round (typed)" | "contest round (clicked)";
 interface Row { style: Style; provider: Provider; kind: Kind; helper: number; jev: number; calls: { helper: number; jev: number } | undefined; asked: string[][]; helperKinds: string[]; rolled: boolean }
 
 const REPLY = "Mira sets a glass down and studies you. \"Rough night out there?\"";
@@ -38,6 +38,7 @@ async function measure(style: Style, provider: Provider, kind: Kind): Promise<Ro
   }
   h.resetCounts();
   if (kind === "typed dialogue") await h.say(chatId, "\"How long have you run this place?\" I ask.");
+  else if (kind === "typed action") await h.say(chatId, "I sit down at the bar and look around the room for an empty table.");
   else if (kind === "typed attempt") await h.say(chatId, "I try to vault over the bar and grab the keys before the guard turns around.");
   else if (kind === "contest round (typed)") await h.say(chatId, "I swing at him with everything I have.");
   else await h.frontend({ type: "act", chatId, actionId: "live:0" });
@@ -53,7 +54,7 @@ const rows: Row[] = [];
 
 test("calls per turn: Story/Adventure × helper/Jev × typed dialogue / typed attempt / clicked choice / contest round", async () => {
   for (const style of ["story", "adventure"] as const) for (const provider of ["helper", "jev"] as const) {
-    const kinds: Kind[] = ["typed dialogue", "typed attempt", "clicked choice", ...(style === "adventure" ? ["contest round (typed)", "contest round (clicked)"] as Kind[] : [])];
+    const kinds: Kind[] = ["typed dialogue", "typed action", "typed attempt", "clicked choice", ...(style === "adventure" ? ["contest round (typed)", "contest round (clicked)"] as Kind[] : [])];
     for (const kind of kinds) rows.push(await measure(style, provider, kind));
   }
   console.log(["style | provider | turn | helper | jev", ...rows.map((r) => `${r.style} | ${r.provider} | ${r.kind} | ${r.helper} | ${r.jev}`)].join("\n"));
