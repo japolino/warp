@@ -1,8 +1,4 @@
 import { universal } from "./universal.js";
-import { hometown } from "./hometown.js";
-import { starfarer } from "./starfarer.js";
-import { questbound } from "./questbound.js";
-import { casefile } from "./casefile.js";
 import { romance } from "./romance.js";
 
 export interface Template {
@@ -13,7 +9,7 @@ export interface Template {
   parts: { label: string; yaml: string }[];
 }
 
-export const TEMPLATES: Template[] = [universal, romance, hometown, starfarer, questbound, casefile];
+export const TEMPLATES: Template[] = [universal, romance];
 
 export function getTemplate(id: string): Template | undefined {
   return TEMPLATES.find((t) => t.id === id);

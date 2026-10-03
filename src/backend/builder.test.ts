@@ -3,8 +3,8 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { TEMPLATES } from "../engine/templates/index.js";
 
-const HOMETOWN = TEMPLATES.find((t) => t.id === "hometown")!;
-const partYaml = (label: string) => HOMETOWN.parts.find((p) => p.label === label)?.yaml ?? "";
+const UNIVERSAL = TEMPLATES.find((t) => t.id === "universal")!;
+const partYaml = (label: string) => UNIVERSAL.parts.find((p) => p.label === label)?.yaml ?? "";
 
 const sent: any[] = [];
 const prompts: string[] = [];
@@ -17,7 +17,7 @@ function reply(user: string): string {
   if (user.includes('"suggestedTemplate"')) {
     return JSON.stringify({
       summary: "Chono Aina, a sharp-tongued catgirl roommate at university. Slice of life with romance.",
-      suggestedTemplate: "hometown", reason: "It's a modern town life-sim.",
+      suggestedTemplate: "universal", reason: "Light mechanics fit a slice-of-life card.",
       systems: ["needs", "relationships", "money", "clothing"],
       statusBlock: { found: true, fields: ["Mood", "Affection"] },
       followUps: [{ text: "Aina gets jealous easily. Track jealousy?", kind: "single", options: ["Yes", "No"], why: "The card mentions it." }],
@@ -80,7 +80,7 @@ describe("AI builder", () => {
     await b.builderStart("c1", { connectionId: "", creative: false }, undefined);
     let s = lastSession();
     expect(s.step).toBe("questions");
-    expect(s.base).toBe("hometown");
+    expect(s.base).toBe("universal");
     expect(s.analysis.statusBlock).toEqual({ found: true, fields: ["Mood", "Affection"] });
     const ids = s.rounds[0].questions.map((q: any) => q.id);
     expect(ids).toEqual(["tone", "systems", "difficulty", "relationship_depth", "f1_0"]);
@@ -100,7 +100,7 @@ describe("AI builder", () => {
     expect(s.parts.map((p: any) => p.label)).not.toContain("encounters");
     expect(repairCalls).toBeGreaterThan(0);
     expect(s.parts.every((p: any) => p.status !== "error")).toBe(true);
-    expect(s.preview.summary).toMatch(/Hometown: \d+ meters/);
+    expect(s.preview.summary).toMatch(/Universal: \d+ meters/);
     expect(s.preview.hud.bars.length).toBeGreaterThan(0);
     // One pass: no designer, depth audit or balance review in the draft.
     for (const k of ["log", "depth", "designPass", "effort", "waived"]) expect(s[k]).toBeUndefined();
@@ -115,7 +115,7 @@ describe("AI builder", () => {
     s = lastSession();
     expect(s.changeSummary).toBe("Added a cooking skill.");
     expect(s.parts.find((p: any) => p.label === "stats").changed).toBe(true);
-    expect(s.preview.counts.skills).toBe(7);
+    expect(s.preview.counts.skills).toBe(4); // body, mind, charm and the new cooking
 
     await b.builderInstall("c1", undefined);
     s = lastSession();

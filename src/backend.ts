@@ -101,7 +101,7 @@ spindle.on("CHARACTER_EDITED", (p, userId) => {
 // ── Command palette ──────────────────────────────────────────────
 spindle.commands.register([
   { id: "open", label: "Warp: Open character sheet", description: "Stats, skills, people, inventory and settings", keywords: ["stats", "sheet", "hud", "game"], scope: "chat" },
-  { id: "install", label: "Warp: Add a ruleset to this character", description: "Pick a starter game (Universal, life-sim, sci-fi RPG)", keywords: ["ruleset", "template", "game", "setup"], scope: "chat" },
+  { id: "install", label: "Warp: Add a ruleset to this character", description: "Pick a starter game (Universal or Romance), or build one with AI", keywords: ["ruleset", "template", "game", "setup"], scope: "chat" },
   { id: "reload", label: "Warp: Reload ruleset", description: "Re-read the character's warp-ruleset lorebook", keywords: ["refresh", "ruleset"], scope: "chat" },
 ]);
 spindle.commands.onInvoked((id, context) => {

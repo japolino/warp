@@ -49,20 +49,3 @@ for (const t of TEMPLATES) {
     });
   });
 }
-
-test("hometown: wandering can lead to a mugging that plays out to an end", () => {
-  const t = TEMPLATES.find((x) => x.id === "hometown")!;
-  const r = loadRuleset(t.parts.map((p, i) => ({ label: p.label, content: p.yaml, order: i }))).ruleset!;
-  let s = initialState(r);
-  const id = resolveTurnFull(r, s, { actionId: "wander", via: "choice" }, { seed: "w" }).needs[0].id;
-  const { record } = resolveTurnFull(r, s, { actionId: "wander", via: "choice" }, { seed: "w", odds: { [id]: { mugged: 1 } } });
-  for (const e of record.events) applyEvent(s, e, r);
-  expect(s.encounter?.id).toBe("mugging");
-  expect(availableChoices(r, s).map((c) => c.id)).toEqual(["fight_back", "shout", "hand_over", "run"]);
-  for (let i = 0; i < 30 && s.encounter; i++) {
-    const next = cloneState(s);
-    for (const e of resolveTurnFull(r, s, { actionId: "fight_back", via: "choice" }, { seed: `f${i}` }).record.events) applyEvent(next, e, r);
-    s = next;
-  }
-  expect(s.encounter).toBeNull();
-});

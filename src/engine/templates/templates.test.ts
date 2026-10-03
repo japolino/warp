@@ -17,7 +17,7 @@ describe("scenario vs character cards", () => {
   });
 
   test("withCharacter only adds the named person, once", () => {
-    const t = TEMPLATES.find((x) => x.id === "hometown")!;
+    const t = TEMPLATES.find((x) => x.id === "universal")!;
     const people = t.parts.find((p) => p.label === "people")!.yaml;
     const once = withCharacter(people, "Chono Aina");
     expect(withCharacter(once, "Chono Aina")).toBe(once);

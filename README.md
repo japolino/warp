@@ -96,7 +96,7 @@ In the character's lorebook, so they travel with the card:
 - any lorebook named `warp-ruleset`, or
 - any entry whose title starts with `warp-ruleset` (e.g. `warp-ruleset · stats`).
 
-Each entry is YAML; entries merge. Warp keeps them out of the prompt automatically. Command palette → **Warp: Add a ruleset to this character** installs a starter (Universal, Hometown life-sim, Starfarer sci-fi RPG).
+Each entry is YAML; entries merge. Warp keeps them out of the prompt automatically. Command palette → **Warp: Add a ruleset to this character** installs a starter (Universal, or Romance with no dice), or opens **Build with AI**.
 
 ## Ruleset reference
 
@@ -185,7 +185,7 @@ triggers:
 
 **Formula names:** stats, flags, `hour`, `minute`, `day`, `weekday`, `turn`, `location`, and `has()`, `count()`, `flag()`, `cond()`, `at()`, `rel(person, stat)`, `met()`, `between(v, lo, hi)`, `min`, `max`, `clamp`, `floor`, `ceil`, `round`, `abs`.
 
-The Ruleset tab lists problems in plain language, with "did you mean" suggestions for typos.
+The Ruleset tab lists problems in plain language, with "did you mean" suggestions for typos. Keys of parts that were taken out of Warp (`dungeons:`, `dating:`, `look:`, minigame `game:` and `gamble:`, encounter `sim:`) are ignored with a plain warning; the old version is on the `legacy` branch.
 
 ## Develop
 

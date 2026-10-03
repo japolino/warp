@@ -8,6 +8,7 @@ import { applyProposal, odds, resolveTurn } from "./resolve.js";
 import { foldEvents, initialState } from "./state.js";
 import { buildChoices, buildHud, outcomePacket, stateDigest } from "./view.js";
 import { TEMPLATES } from "./templates/index.js";
+import { town, TOWN_YAML } from "./town.fixture.js";
 
 const env = (vars: Record<string, number | string | boolean>): ExprEnv => ({
   lookup: (p) => vars[p.join(".")],
@@ -66,13 +67,16 @@ describe("templates", () => {
       expect(stateDigest(ruleset!, s).length).toBeGreaterThan(20);
     });
   }
+  test("the test town (for the tests below) loads clean too", () => {
+    const { ruleset, issues } = loadRuleset([{ label: "warp-ruleset · town", content: TOWN_YAML, order: 0 }]);
+    expect(issues).toEqual([]);
+    expect(lintRuleset(ruleset!)).toEqual([]);
+  });
 });
-
-const hometown = () => loadRuleset(TEMPLATES.find((t) => t.id === "hometown")!.parts.map((p, i) => ({ label: p.label, content: p.yaml, order: i }))).ruleset!;
 
 describe("turn resolution", () => {
   test("a check resolves deterministically from its seed and applies costs, outcomes and time", () => {
-    const r = hometown();
+    const r = town();
     let s = initialState(r);
     s = foldEvents(r, [resolveTurn(r, s, { actionId: "go:high_street", via: "choice" }, { seed: "a" }).events], s);
     expect(s.location).toBe("high_street");
@@ -87,7 +91,7 @@ describe("turn resolution", () => {
   });
 
   test("casual swipes: different seeds can give different results", () => {
-    const r = hometown();
+    const r = town();
     const s = foldEvents(r, [resolveTurn(r, initialState(r), { actionId: "go:high_street", via: "choice" }, { seed: "a" }).events]);
     const tiers = new Set<string>();
     for (let i = 0; i < 40; i++) tiers.add(resolveTurn(r, s, { actionId: "pickpocket", via: "choice" }, { seed: `swipe-${i}` }).check!.tier);
@@ -95,7 +99,7 @@ describe("turn resolution", () => {
   });
 
   test("odds match the chance formula for d100 roll-under", () => {
-    const r = hometown();
+    const r = town();
     const s = initialState(r);
     s.location = "high_street";
     const o = odds(r, s, r.actions.cafe_shift)!;
@@ -103,7 +107,7 @@ describe("turn resolution", () => {
   });
 
   test("triggers fire on the rising edge only", () => {
-    const r = hometown();
+    const r = town();
     const s = initialState(r);
     s.stats.stress = 99;
     s.location = "apartment";
@@ -121,7 +125,7 @@ describe("turn resolution", () => {
   });
 
   test("veiled tags are flagged; lined tags disappear from choices", () => {
-    const r = hometown();
+    const r = town();
     const s = initialState(r);
     s.location = "high_street";
     expect(buildChoices(r, s, { lines: ["crime"], veils: [] }).some((c) => c.id === "pickpocket")).toBe(false);
@@ -132,7 +136,7 @@ describe("turn resolution", () => {
 
 describe("narrator proposals are bounded", () => {
   test("clamps stat changes, ignores engine-only stats, adds people and items", () => {
-    const r = hometown();
+    const r = town();
     const s = initialState(r);
     const ev = applyProposal(r, s, {
       stats: { stress: 99999, skulduggery: 500, pain: -5 },
@@ -180,7 +184,7 @@ describe("normalizer", () => {
 
 describe("choices turned off", () => {
   test("no buttons under the story", () => {
-    const r = hometown();
+    const r = town();
     const s = initialState(r);
     expect(buildChoices(r, s, { lines: [], veils: [] }).length).toBeGreaterThan(0);
     expect(buildChoices(r, s, { lines: [], veils: [], showChoices: false })).toEqual([]);

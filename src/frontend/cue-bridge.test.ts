@@ -8,7 +8,7 @@ import type { BackendToFrontend } from "../shared/protocol.js";
 
 type StateMsg = Extract<BackendToFrontend, { type: "state" }>;
 
-const t = TEMPLATES.find((x) => x.id === "hometown")!;
+const t = TEMPLATES.find((x) => x.id === "universal")!;
 const r = loadRuleset(t.parts.map((p, i) => ({ label: p.label, content: p.yaml, order: i }))).ruleset!;
 const s = initialState(r);
 const msg = (): StateMsg => ({

@@ -1,10 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { Answers, Decider, Questions } from "../engine/decide.js";
-import { loadRuleset } from "../engine/loader.js";
 import { normalizeRuleset } from "../engine/ruleset.js";
 import { applyProposal, forgetPerson, manualSetRel, resolveTurnFull } from "../engine/resolve.js";
 import { foldEvents, initialState } from "../engine/state.js";
-import { TEMPLATES } from "../engine/templates/index.js";
+import { town } from "../engine/town.fixture.js";
 import { DEFAULT_SETTINGS } from "../shared/protocol.js";
 import { JevDecider, RulesDecider } from "./deciders.js";
 import { bookkeeping, readTurn } from "./decisions.js";
@@ -18,7 +17,6 @@ class Scripted implements Decider {
   async ask(_state: unknown, q: Questions) { this.asked.push(q); return this.fn(q); }
 }
 
-const hometown = () => loadRuleset(TEMPLATES.find((t) => t.id === "hometown")!.parts.map((p, i) => ({ label: p.label, content: p.yaml, order: i }))).ruleset!;
 const choice = (c: string, conf: number, keys: string[]) => ({
   type: "choice" as const, choice: c, confidence: conf,
   probabilities: Object.fromEntries(keys.map((k) => [k, k === c ? conf : (1 - conf) / (keys.length - 1)])),
@@ -28,7 +26,7 @@ describe("reading the player's turn", () => {
   const base = { settings: DEFAULT_SETTINGS, sceneText: "A busy street.", player: "Sam", timeoutMs: 5000 };
 
   test("confidence decides: act, suggest, or leave as roleplay", async () => {
-    const r = hometown();
+    const r = town();
     const s = initialState(r);
     s.location = "high_street";
     for (const [conf, expectAct, expectSuggest] of [[0.9, true, false], [0.55, false, true], [0.2, false, false]] as const) {
@@ -40,7 +38,7 @@ describe("reading the player's turn", () => {
   });
 
   test("'none' means plain roleplay; travel and difficulty map onto the ruleset", async () => {
-    const r = hometown();
+    const r = town();
     const s = initialState(r);
     s.location = "high_street";
     const none = await readTurn({ ...base, decider: new Scripted((q) => ({ action: choice("none", 0.95, Object.keys((q.action as any).criteria)) })), r, s, playerText: "Hello!" });
@@ -74,7 +72,7 @@ describe("reading the player's turn", () => {
   });
 
   test("rules-only provider never acts on its own", async () => {
-    const r = hometown();
+    const r = town();
     const s = initialState(r);
     s.location = "high_street";
     const rd = await readTurn({ ...base, decider: new RulesDecider(), r, s, playerText: "I try to pick a pocket of the tourist" });
@@ -129,7 +127,7 @@ describe("decide blocks: model odds, engine dice", () => {
 
 describe("System-1 bookkeeping", () => {
   test("atomic answers become bounded deltas; new names are picked from the reply", async () => {
-    const r = hometown();
+    const r = town();
     const s = initialState(r);
     s.people.robin = { name: "Robin" };
     s.rel.robin = { love: 0, lust: 0, trust: 10, dominance: 0 };
@@ -200,7 +198,7 @@ describe("Jev adapter", () => {
 
 describe("starting feelings", () => {
   test("someone new to the story is read once on the stat's own scale, then only nudged", async () => {
-    const r = hometown();
+    const r = town();
     const s = initialState(r);
     s.people.aria = { name: "Aria" };
     s.rel.aria = { love: 0, lust: 0, trust: 10, dominance: 0 };
@@ -225,7 +223,7 @@ describe("starting feelings", () => {
   });
 
   test("new people arrive with their feelings; forgetting and hand edits work", () => {
-    const r = hometown();
+    const r = town();
     const s = initialState(r);
     const after = foldEvents(r, [applyProposal(r, s, { people: [{ name: "Mara", feelings: { trust: 70, dominance: 50 } }] })], s);
     expect(after.rel.mara.trust).toBe(70);

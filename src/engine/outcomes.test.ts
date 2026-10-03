@@ -28,7 +28,7 @@ describe("how an ending counts", () => {
     expect(r.encounters.e.outcomeKinds).toMatchObject({ dragged_down: "lost", banished: "won", focused: "won" });
   });
 
-  test("the casefile template: catching the lie is a win, losing your nerve a loss", () => {
+  test("an interrogation: catching the lie is a win, losing your nerve a loss", () => {
     const r = rules({
       stats: { nerve: { kind: "meter", start: 50 } },
       encounters: { interrogation: {

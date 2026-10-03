@@ -1,14 +1,16 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { loadRuleset } from "../engine/loader.js";
 import { initialState } from "../engine/state.js";
-import { TEMPLATES } from "../engine/templates/index.js";
+import { TEMPLATES, withCharacter } from "../engine/templates/index.js";
 import { buildChoices, buildHud } from "../engine/view.js";
 import { emptyDraft, renderBuilder } from "../frontend/builder-ui.js";
 import { builderCurrent, builderOpen } from "./builder.js";
 import { BUILDER_SESSION_VERSION, restoreBuilderSession } from "./builder-session.js";
 
-const template = TEMPLATES.find(t => t.id === "hometown")!;
-const r = loadRuleset(template.parts.map((p, order) => ({label: p.label, content: p.yaml, order}))).ruleset!;
+// The builder adds the card's character to the people section, so the preview has someone in it.
+const template = TEMPLATES.find(t => t.id === "universal")!;
+const templateParts = template.parts.map(p => ({...p, yaml: p.label === "people" ? withCharacter(p.yaml, "Aina") : p.yaml}));
+const r = loadRuleset(templateParts.map((p, order) => ({label: p.label, content: p.yaml, order}))).ruleset!;
 let sequence = 0;
 let previousHost: unknown;
 let characterId: string;
@@ -26,11 +28,11 @@ beforeEach(() => {
   sent = [];
   stored = {
     characterId, characterName: "Aina", mode: "build", step: "review",
-    connectionId: "saved-builder-model", creative: true, base: "hometown",
+    connectionId: "saved-builder-model", creative: true, base: "universal",
     analysis: null,
     rounds: [{questions: [{id: "systems", text: "Systems?", kind: "multi", options: [{id: "skills", label: "Skills"}]}], answers: {systems: ["skills"], difficulty: 3}}],
     additions: [{name: "Cooking", kind: "skill", note: "Keep this custom skill"}],
-    parts: template.parts.map(p => ({...p, status: "ok", issues: []})),
+    parts: templateParts.map(p => ({...p, status: "ok", issues: []})),
     preview: {summary: "Old preview", counts: {}, hud: buildHud(r, initialState(r)), choices: buildChoices(r, initialState(r), {lines: [], veils: []}), warnings: []},
     request: null, changeSummary: "Saved edit", busy: "Writing before restart", error: null, updatedAt: 1,
   };

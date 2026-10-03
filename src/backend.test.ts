@@ -2,6 +2,7 @@
 
 import { beforeAll, expect, test } from "bun:test";
 import { TEMPLATES } from "./engine/templates/index.js";
+import { TOWN_YAML } from "./engine/town.fixture.js";
 
 type Fn = (...a: any[]) => any;
 interface Msg {
@@ -99,21 +100,27 @@ test("full loop: install → choose → roll → narrate → bookkeeping → swi
   await frontendHandler({ type: "hello", chatId: "c1" });
   expect(lastState().status.state).toBe("none");
 
-  // Install the life-sim template.
-  await frontendHandler({ type: "install_template", chatId: "c1", templateId: "hometown" });
+  // Install the Universal template.
+  await frontendHandler({ type: "install_template", chatId: "c1", templateId: "universal" });
   const book = Object.values(books)[0];
   expect(book.name).toBe("warp-ruleset");
-  expect(book.entries.length).toBe(TEMPLATES.find((t) => t.id === "hometown")!.parts.length);
+  expect(book.entries.length).toBe(TEMPLATES.find((t) => t.id === "universal")!.parts.length);
   expect(book.entries.every((e) => e.disabled === true && e.comment.startsWith("warp-ruleset"))).toBe(true);
   expect(character.world_book_ids).toContain(book.id);
   let st = lastState();
   expect(st.status.state).toBe("ok");
   expect(st.status.issues).toEqual([]);
+  // The card's own character is tracked from the start.
+  expect(st.hud.people.map((p: any) => p.name)).toContain("Robin");
+
+  // The author swaps in a rulebook of their own (a small town with places to go) and reloads.
+  book.entries.splice(0, book.entries.length, { id: "town", world_book_id: book.id, comment: "warp-ruleset · town", content: TOWN_YAML, disabled: true, key: [] });
+  await frontendHandler({ type: "reload", chatId: "c1" });
+  st = lastState();
+  expect(st.status.issues).toEqual([]);
   expect(st.hud.location.name).toBe("Your Apartment");
   expect(st.choices.map((c: any) => c.id)).toContain("go:high_street");
   expect(st.choicesAnchor).toBe("m0");
-  // The card's own character is tracked from the start.
-  expect(st.hud.people.map((p: any) => p.name)).toContain("Robin");
 
   // Click "Go to High Street".
   await frontendHandler({ type: "act", chatId: "c1", actionId: "go:high_street" });
