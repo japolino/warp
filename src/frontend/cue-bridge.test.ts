@@ -14,7 +14,7 @@ const s = initialState(r);
 const msg = (): StateMsg => ({
   type: "state", chatId: "c1", status: { state: "ok", name: r.name, source: null, issues: [], characterName: null, cardKind: "character", tags: [] },
   hud: buildHud(r, s), choices: buildChoices(r, s, { lines: [], veils: [] }), records: [],
-  latestMessageId: "m2", choicesAnchor: "m2", busy: false,
+  latestMessageId: "m2", choicesAnchor: "m2", busy: false, player: "Sam",
 });
 
 type Sent = { type: string; detail: any };
@@ -35,8 +35,8 @@ describe("Cue bridge", () => {
 
   test("choices keep ids and odds; locked moves stay in Warp", () => {
     const out = cueChoices([
-      { id: "a", label: "A", group: "G", desc: "d", odds: 0.5, partialOdds: null, checkLabel: "Wits", veiled: false, params: [] },
-      { id: "b", label: "Pick the lock", group: null, desc: null, odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [], locked: "Needs a lockpick" },
+      { id: "a", label: "A", group: "G", desc: "d", odds: 0.5, partialOdds: null, checkLabel: "Wits", veiled: false, params: [], difficulty: null },
+      { id: "b", label: "Pick the lock", group: null, desc: null, odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [], locked: "Needs a lockpick", difficulty: null },
     ], false);
     expect(out).toEqual([{ id: "a", label: "A", group: "G", detail: "d\nCheck: Wits", odds: null }]);
   });

@@ -2,6 +2,9 @@
 
 import type { Tier } from "../engine/ruleset.js";
 
+/** A move's difficulty word: `none` = no roll. */
+export type DifficultyView = "none" | "easy" | "fair" | "hard" | "extreme";
+
 
 export type Tone = "good" | "warn" | "bad" | "neutral";
 
@@ -45,6 +48,37 @@ export interface PersonView {
   conditions: { label: string; tone: Tone; remaining: string | null }[];
   /** What they remember about {{user}}, newest first. */
   memories: { text: string; when: string | null }[];
+  /** Looks and clothes as one line of text each (null = not known yet). */
+  appearance: string | null;
+  outfit: string | null;
+  /** Authored per-person actions, shown as buttons in this person's row (not under the reply). */
+  actions: ChoiceView[];
+}
+
+/** The contest running now: a momentum gauge from −100 (the opponent wins) to +100 (you win). */
+export interface ConflictView {
+  kind: string;
+  /** The kind's label ("Fight"). */
+  label: string;
+  opponent: string;
+  /** Rounds played so far, and the last round there can be. */
+  round: number;
+  maxRounds: number;
+  momentum: number;
+  /** "You have the upper hand." */
+  words: string;
+  /** The next move's odds of success-or-better on the best stat. */
+  next: { odds: number; stat: string } | null;
+}
+
+/** A story goal for the Goals section and the journal. */
+export interface GoalView {
+  id: string;
+  text: string;
+  status: "open" | "done" | "failed";
+  /** Who it is for (a person's name). */
+  from: string | null;
+  stakes: string | null;
 }
 
 /** A quest as the journal shows it: offered here, under way, waiting to be handed in, or over. */
@@ -74,13 +108,16 @@ export interface QuestView {
 
 export interface HudView {
   rulesetName: string;
-  clock: { label: string; time: string; day: string; phase: string } | null;
+  /** `minutes` = the raw clock (day = floor(minutes / 1440) + 1). */
+  clock: { label: string; time: string; day: string; phase: string; minutes: number } | null;
   /** "Sun 4th Sep" when the ruleset has a calendar. */
   date: string | null;
   location: { name: string; desc?: string } | null;
   money: string | null;
   bars: BarView[];
   skills: SkillView[];
+  /** {{user}}'s looks and clothes as text (null = not known yet). */
+  you: { appearance: string | null; outfit: string | null };
   people: PersonView[];
   items: {
     id: string; name: string; count: number; /** "3/5" uses left in the one in hand. */ uses: string | null;
@@ -90,8 +127,13 @@ export interface HudView {
     bonus: string | null;
   }[];
   conditions: { id: string; label: string; tone: Tone; desc?: string; remaining?: string }[];
-  /** Quests: offered here, under way, waiting to be handed in, and the last few that ended. */
+  /** Open story goals first, then the last few done or failed. */
+  goals: GoalView[];
+  /** The contest running now, or null. */
+  conflict: ConflictView | null;
+  /** @deprecated Replaced by `goals` (kept until the UI stops reading it). */
   quests: QuestView[];
+  /** @deprecated Replaced by `conflict` (kept until the UI stops reading it). */
   encounter: {
     name: string;
     foe: string;
@@ -140,8 +182,13 @@ export interface EncounterLogView {
   ended: { label: string; loss: boolean } | null;
 }
 
+/**
+ * A choice button. Ids: `live:<i>` = one of the choices written for this reply (in a contest: the written
+ * moves), `contest:break_off` = Break off, `item:<id>` = use an item, anything else = an authored action
+ * (the compact "More" row).
+ */
 export interface ChoiceView {
-  /** Nonbinding story forecast. Mechanics and odds still come only from the tag. */
+  /** @deprecated Forecasts are dropped (CORE-DESIGN §2.0.6 point 3). */
   forecast?: { goal: string; risk: string; payoff: string };
   id: string;
   label: string;
@@ -157,6 +204,8 @@ export interface ChoiceView {
   locked?: string;
   /** Why it's suggested now (items: "Clears Scented"). */
   why?: string;
+  /** The written choice's difficulty word (live choices; null for authored actions). */
+  difficulty: DifficultyView | null;
 }
 
 export interface ChangeView {
@@ -191,6 +240,8 @@ export interface RecordView {
     tierLabel: string;
     summary: string;
   } | null;
+  /** Band-crossing story lines ("Mira is warming to you."), shown first, before `changes`. */
+  lines: string[];
   changes: ChangeView[];
   hints: string[];
   veiled: boolean;
@@ -200,7 +251,7 @@ export interface RecordView {
   decisions: { ask: string; picked: string; p: number; source: "model" | "weights"; odds: { desc: string; p: number }[] }[];
   /** The player's message this reply answers, when the turn can still be redone. */
   redoFrom: string | null;
-  /** The player's message told a roll made on the click: roll again from it (rewrites the line and the reply). */
+  /** @deprecated Swipes reroll (Casual); there is no separate reroll. */
   rerollFrom?: string | null;
 }
 
@@ -216,11 +267,19 @@ export interface RulesetStatus {
   cardKind: "character" | "scenario";
   /** Content tags used by this ruleset's actions, for the Lines & Veils picker. */
   tags: string[];
+  /** The installed ruleset's style (story = no dice), for the Story / Adventure switch. */
+  style?: "story" | "adventure";
 }
 
+/**
+ * Settings. Target after the core cut (CORE-DESIGN §4.7; the pipeline owns this section): visible = enabled,
+ * helperConnectionId, decider (llm | jev), showChoices, showOdds, swipesReroll, showChanges, lines, veils;
+ * hidden with fixed defaults = narratorUpdates, storyQuests (→ story goals), hotkeys, autoConfidence, jevUrl,
+ * jevModel, jevFormat. Fields marked deprecated go.
+ */
 export interface Settings {
   enabled: boolean;
-  /** Read free-text messages and map them to a ruleset action (the adjudicator). */
+  /** @deprecated Follows the ruleset's `style:` (CORE-DESIGN §4.7). */
   freeTextChecks: boolean;
   /** Let a model read each reply and suggest bounded state changes. */
   narratorUpdates: boolean;
@@ -229,13 +288,14 @@ export interface Settings {
   /** Connection used for the adjudicator and extractor; empty = the chat's own connection. */
   helperConnectionId: string;
   showOdds: boolean;
+  /** @deprecated The dice chip always shows (CORE-DESIGN §4.7). */
   showDiceChips: boolean;
   hotkeys: boolean;
   /** Content tags removed from the game entirely. */
   lines: string[];
   /** Content tags that still happen but are narrated off-screen. */
   veils: string[];
-  /** Which model answers Warp's typed questions (reading actions, bookkeeping, NPC odds, scene triggers). */
+  /** Which model answers Warp's typed questions (reading actions, bookkeeping, NPC odds, scene triggers). `rules` is going. */
   decider: "llm" | "jev" | "rules";
   jevModel: string;
   /** The classifier endpoint: TypeSafe's by default, or any compatible URL (or an OpenAI-style chat endpoint). */
@@ -246,7 +306,7 @@ export interface Settings {
   storyQuests: boolean;
   /** Read typed actions and roll automatically at or above this confidence. */
   autoConfidence: number;
-  /** A clicked move is rolled on the click, and the player's message says how it went, in their voice. */
+  /** @deprecated `sayOutcome` is cut (CORE-CUT): clicks no longer roll early or write the player's line. */
   sayOutcome: boolean;
   /** Choice buttons under the reply (the CYOA). Off: none, and none are written — fights and endings keep theirs. */
   showChoices: boolean;
@@ -277,6 +337,9 @@ export const DEFAULT_SETTINGS: Settings = {
 };
 
 export interface TemplateInfo { id: string; name: string; blurb: string }
+
+/** What a one-click fix can change. */
+export type FixField = "time" | "place" | "present" | "appearance" | "outfit" | "item" | "money" | "goal";
 
 // ───────────────────────── AI ruleset builder ─────────────────────────
 
@@ -364,7 +427,9 @@ export type BackendToFrontend =
       /** Latest message is from the assistant (choices are shown under it). */
       choicesAnchor: string | null;
       busy: boolean;
-      /** Quiet encounter logs among the recent messages, for their round cards. */
+      /** The player's name (persona), for "You" lines and `warp-state-v1`. */
+      player: string;
+      /** @deprecated Quiet encounters are cut: every contest round is a narrated reply. */
       encounterLogs?: EncounterLogView[];
     }
   | { type: "busy"; chatId: string; busy: boolean; label?: string }
@@ -389,8 +454,17 @@ export type FrontendToBackend =
   | { type: "reload"; chatId: string | null }
   /** Replace the reply to `userMessageId` and resend it with this intent (null = "not an action"). */
   | { type: "redo"; chatId: string; userMessageId: string; actionId: string | null; params?: Record<string, string> }
-  /** Roll a clicked move again: a new roll, a new line in the player's message, a new reply. */
+  /** @deprecated Swipes reroll (Casual); the separate reroll goes. */
   | { type: "reroll"; chatId: string; messageId: string }
+  /**
+   * One-click fix of a state line (a manual event on the latest message). `value` by field: time = minutes or
+   * "HH:MM" / "Day 2 08:00"; place = words (null clears); present = boolean (who = person id); appearance /
+   * outfit = text or null (who = "you" or a person id); item = the new count (who = item id); money = the new
+   * amount; goal = "done" | "failed" | "open" | "drop" (who = goal id). The engine's `manualFix` builds the events.
+   */
+  | { type: "fix"; chatId: string; field: FixField; who?: string; value: string | number | boolean | null }
+  /** The contest panel's buttons: try to get away (a check), or give in (an immediate loss). */
+  | { type: "contest"; chatId: string; op: "break_off" | "give_in" }
   | { type: "adjust_rel"; chatId: string; who: string; stat: string; value: number }
   | { type: "forget"; chatId: string; who: string }
   | { type: "builder_open"; chatId: string; mode: "build" | "refine" }

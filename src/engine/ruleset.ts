@@ -14,7 +14,21 @@ export type ShowMode = "text" | "number" | "both" | "hidden";
 export type Tier = "crit_success" | "success" | "partial" | "fail" | "crit_fail";
 export const TIERS: Tier[] = ["crit_success", "success", "partial", "fail", "crit_fail"];
 
-export interface Band { at: number; text: string; tone: Tone }
+/**
+ * The ruleset format this engine reads. Legacy (before the core cut) = 1. Warp Studio checks it at build time
+ * and through `warp-state-v1` at run time; raise it whenever a key's meaning changes.
+ */
+export const RULESET_FORMAT = 2;
+
+/** `story` = no rolls anywhere; `adventure` = d20 checks on risky, contested moves and contests. */
+export type Style = "story" | "adventure";
+
+/**
+ * A band of a stat. `say` is the one story line shown when the value enters this band from below,
+ * `sayDown` when it enters from above, and `voice` is a directive for how a person speaks and acts while
+ * their value is in this band (relationship stats; ignored on the player's meters).
+ */
+export interface Band { at: number; text: string; tone: Tone; say?: string; sayDown?: string; voice?: string }
 
 /**
  * Limits on what the story may change after a reply, on top of the per-reply cap:
@@ -78,8 +92,16 @@ export interface Effect {
   startEncounter?: string;
   /** Open the next stage of these secrets, whatever their conditions say. */
   reveal: string[];
-  /** Swing the encounter's momentum toward the player (+) or the foe (−). */
-  momentum?: string | number;
+  /** Swing the contest's (or a legacy encounter's) momentum toward the player (+) or the opponent (−). */
+  swing?: string | number;
+  /** Where {{user}} is now, in words (`place: "The docks"`, alias `move:` with free text). */
+  place?: string;
+  /** Looks and clothes as text: `look: { you: { outfit: "..." }, mira: { appearance: "..." } }` (null clears). */
+  look: Record<string, { appearance?: string | null; outfit?: string | null }>;
+  /** Story goals: `goal: { find_sister: done }` (start, done or fail). */
+  goal: Record<string, GoalOp>;
+  /** Start a contest: `contest: { kind: fight, with: "the bouncer", threat: hard }`. */
+  contest?: { kind: string; with: string; threat?: Difficulty };
   /** Wear down the current encounter's main meter (HP, resolve, composure…) by this much — portable across encounters. */
   harm?: string | number;
   /** Put conditions on the opponent (in an encounter) or the person an action is aimed at: `inflict: { poisoned: 3 }`. */
@@ -101,6 +123,7 @@ export interface Effect {
 }
 
 export type QuestOp = "start" | "done" | "fail" | "drop" | "report";
+export type GoalOp = "start" | "done" | "fail";
 /** A condition put on someone else: rounds in an encounter (minutes outside one), and an optional chance to land. */
 export interface InflictSpec { rounds?: string | number; chance?: string | number }
 
@@ -113,6 +136,12 @@ export interface DecideSpec { id: string; ask: string; options: DecideOption[] }
 
 export type CheckStyle = "chance" | "vs" | "pbta";
 
+/**
+ * A check: d20 + `add` vs `target`. `target` is a difficulty word (easy, fair, hard, extreme), a number or a
+ * formula; absent, the difficulty word of the move decides it (a live choice's word, or `params.difficulty`,
+ * default fair). Natural 20 is a critical success, natural 1 a critical failure.
+ * (`style`, `dice`, `crits` and `crit` are kept only until the old d100/PbtA styles are taken out.)
+ */
 export interface CheckDef {
   style: CheckStyle;
   dice: string;
@@ -237,6 +266,8 @@ export interface ConditionDef {
 /** `at: null` (or `at: away`) = not anywhere the player can go while `when` holds. */
 export interface PersonDef {
   id: string; name: string; age?: number; start: Record<string, number>; desc?: string;
+  /** Looks and clothes as plain text (≤160 chars each); empty = read from the greeting and the story. */
+  appearance?: string; outfit?: string;
 }
 export interface FlagDef { id: string; label?: string; narrator: boolean; start: string | number | boolean | null; gate?: NarratorGate }
 
@@ -355,6 +386,8 @@ export interface SecretDef {
   id: string;
   /** Who or what it's about ("Professor Ward"). */
   about: string;
+  /** The tracked person it is about (an id in relationships.people): stage `band:` sugar reads their stats. */
+  person?: string;
   /** exists = the narrator is told there's more it doesn't know, so it deflects instead of inventing. */
   tell: "none" | "exists";
   stages: SecretStage[];
@@ -372,6 +405,8 @@ export interface LiveChoicesDef {
   when?: string;
   guide?: string;
   tags: Record<string, ActionDef>;
+  /** Positive effects of a tag shrink with recent use on the same target: × max(floor, 1 / (1 + step × n)). */
+  taper: { step: number; floor: number } | false;
 }
 
 export type Difficulty = "easy" | "fair" | "hard" | "extreme";
@@ -393,6 +428,86 @@ export interface ImproviseDef {
   /** Minutes an attempt takes (default: the clock's minutes_per_action). */
   time?: number;
   outcomes: Partial<Record<Tier, Effect>>;
+}
+
+/** A move's difficulty as the writer or the reader gives it: `none` = no roll. */
+export type DifficultyWord = Difficulty | "none";
+export const DIFFICULTY_WORDS: DifficultyWord[] = ["none", "easy", "fair", "hard", "extreme"];
+
+/**
+ * `checks:` — the one check style (d20 + modifier vs a difficulty) and typed attempts.
+ * Replaces `improvise:` (read as an alias). Only used with `style: adventure`.
+ */
+export interface ChecksDef {
+  /** Read risky typed text and roll it (adventure only; always false in a story). */
+  typed: boolean;
+  /** Difficulty words → d20 target. */
+  dc: Record<Difficulty, number>;
+  /** Missing by this much or less is a partial success. */
+  partial: number;
+  /** Stats a typed attempt may lean on (default: attributes and skills; never hidden, money or meters). */
+  stats: string[];
+  /** What a maxed stat adds to the d20 on a typed attempt. */
+  bonus: number;
+  /** The narrator's direction per tier, replacing the defaults. */
+  directions: Partial<Record<Tier, string>>;
+  /** Effects of typed attempts per tier. */
+  outcomes: Partial<Record<Tier, Effect>>;
+  /** Minutes a typed attempt takes (default: the clock's minutes_per_action). */
+  time?: number;
+}
+
+/** One kind of contest (fight, chase, argument, or the author's own). */
+export interface KindDef {
+  id: string;
+  label: string;
+  /** Approaches a move may lean on (attributes or skills; the first is the default). */
+  stats: string[];
+  /** The stat a Break off rolls (default: the first of `stats`). */
+  escape: string;
+  /** The opponent's pressure on {{user}} per tier of {{user}}'s move. */
+  cost: Partial<Record<Tier, Effect>>;
+  won: Effect;
+  lost: Effect;
+  escaped: Effect;
+}
+
+/** `conflict:` — one momentum gauge for fights, chases and arguments. Replaces `encounters:`. */
+export interface ConflictDef {
+  /** The story (or a typed message) can start one. */
+  fromStory: boolean;
+  /** No end before round `min`; round `max` is the last (then it breaks off). */
+  rounds: { min: number; max: number };
+  /** Stakes rise each round: swing × (1 + escalate × (round − 1)). */
+  escalate: number;
+  /** Base swing of the gauge per tier of {{user}}'s move. */
+  swing: Record<Tier, number>;
+  kinds: Record<string, KindDef>;
+}
+
+/** An authored story goal. Story goals the reply makes have no definition. */
+export interface GoalDef {
+  id: string;
+  text: string;
+  /** Formulas that close it. */
+  doneWhen?: string;
+  failWhen?: string;
+  /** Plain-language conditions judged in the post-reply read. */
+  judge?: string;
+  judgeFail?: string;
+  /** What is at stake, in a line. */
+  stakes?: string;
+  /** Applied once when it is done. */
+  reward: Effect;
+}
+
+/** `goals:` — a short list of story goals. Replaces `quests:`. */
+export interface GoalsDef {
+  /** Promises, favours and plans the story makes are tracked. */
+  fromStory: boolean;
+  /** Open at once. */
+  max: number;
+  list: Record<string, GoalDef>;
 }
 
 /** Skills and attributes improve with use: every check, and practice the story describes, adds progress. */
@@ -421,7 +536,10 @@ export const DEFAULT_PRACTICE_REPEAT: PracticeRepeatDef = { step: 0.5, floor: 0.
 export interface Ruleset {
   name: string;
   description?: string;
-  player: { name?: string; age?: number };
+  /** story = no rolls anywhere; adventure = checks, typed attempts and contests. */
+  style: Style;
+  /** The player (`you:`, alias `player:`). Empty text fields are read from the persona and the greeting. */
+  you: { name?: string; age?: number; appearance?: string; outfit?: string };
   stats: Record<string, StatDef>;
   statOrder: string[];
   relStats: Record<string, StatDef>;
@@ -437,6 +555,8 @@ export interface Ruleset {
   /** Narrator may move the player, including to undeclared places. */
   locationsOpen: boolean;
   startLocation: string | null;
+  /** Where the game starts, in words; "greeting" = read it from the greeting; null = unknown. */
+  startPlace: string | null;
   conditions: Record<string, ConditionDef>;
   flags: Record<string, FlagDef>;
   actions: Record<string, ActionDef>;
@@ -444,7 +564,10 @@ export interface Ruleset {
   triggers: TriggerDef[];
   clock: {
     enabled: boolean;
-    start: number;
+    /** Start in minutes, or "greeting": read the time (and day) from the greeting; `fallback` until then. */
+    start: number | "greeting";
+    /** Minutes used when the greeting gives no time (and before it is read). */
+    fallback: number;
     minutesPerAction: number;
     /** Max minutes the narrator may advance in one turn. */
     narratorMax: number;
@@ -455,14 +578,23 @@ export interface Ruleset {
   /** currency: the sign; currencyAfter: written after the amount ("18d") instead of before ("$18"). */
   hud: { bars: string[]; money?: string; currency: string; currencyAfter?: boolean };
   narration: { notes?: string; numbers: boolean };
+  /** @deprecated Replaced by `conflict` (kept until the backend and UI stop reading it). */
   encounters: Record<string, EncounterDef>;
+  /** @deprecated Replaced by `goals`. */
   quests: Record<string, QuestDef>;
+  /** @deprecated Replaced by `goals`. */
   questOrder: string[];
   /** Quests the story hands out: someone asks {{user}} for something, and it's tracked with stakes. */
   storyQuests: { enabled: boolean; max: number };
   secrets: Record<string, SecretDef>;
   liveChoices: LiveChoicesDef;
+  /** @deprecated Read `checks` (kept until the backend's old typed read is gone). */
   improvise: ImproviseDef;
+  checks: ChecksDef;
+  conflict: ConflictDef;
+  goals: GoalsDef;
+  /** A big moment (rescue, betrayal, confession) multiplies one person's caps for one reply; null = off. */
+  relBigMoment: { factor: number; cooldown: number } | null;
   growth: GrowthDef;
 }
 
@@ -641,28 +773,34 @@ function toneFor(index: number, count: number, good: StatDef["good"]): Tone {
 
 function normBands(raw: unknown, good: StatDef["good"], where: string, c: Ctx): Band[] {
   if (raw === undefined || raw === null) return [];
-  const list: { at: number; text: string; tone?: Tone }[] = [];
+  const list: { at: number; text: string; tone?: Tone; say?: string; sayDown?: string; voice?: string }[] = [];
+  // The long form adds the story line on entering the band (say / say_down) and how a person acts in it (voice).
+  const lines = (b: Raw) => ({
+    ...(typeof b.say === "string" && b.say.trim() ? { say: b.say.trim() } : {}),
+    ...(typeof b.say_down === "string" && b.say_down.trim() ? { sayDown: b.say_down.trim() } : {}),
+    ...(typeof b.voice === "string" && b.voice.trim() ? { voice: b.voice.trim() } : {}),
+  });
   if (Array.isArray(raw)) {
     raw.forEach((b, i) => {
       if (!isObj(b)) { c.warn(`${where} › #${i + 1}`, "each band needs `at` and `text`"); return; }
       const at = c.num(b.at ?? b.from ?? b.min, `${where} › #${i + 1}`, NaN);
       if (!Number.isFinite(at) || typeof b.text !== "string") { c.warn(`${where} › #${i + 1}`, "each band needs a numeric `at` and a `text`"); return; }
       const tone = ["good", "warn", "bad", "neutral"].includes(b.tone) ? (b.tone as Tone) : undefined;
-      list.push({ at, text: b.text, tone });
+      list.push({ at, text: b.text, tone, ...lines(b) });
     });
   } else if (isObj(raw)) {
     for (const [k, v] of Object.entries(raw)) {
       const at = Number(k.replace(/%\s*$/, ""));
       if (!Number.isFinite(at)) { c.warn(where, `band key "${k}" should be a number (the value where this text starts), or a percentage like 75%`); continue; }
       if (typeof v === "string") list.push({ at, text: v });
-      else if (isObj(v) && typeof v.text === "string") list.push({ at, text: v.text, tone: v.tone });
+      else if (isObj(v) && typeof v.text === "string") list.push({ at, text: v.text, tone: v.tone, ...lines(v) });
       else c.warn(`${where} › ${k}`, "band should be a line of text");
     }
   } else {
     c.warn(where, "bands should be a map like `0: You feel fine.`");
   }
   list.sort((a, b) => a.at - b.at);
-  return list.map((b, i) => ({ at: b.at, text: b.text, tone: b.tone ?? toneFor(i, list.length, good) }));
+  return list.map((b, i) => ({ ...b, tone: b.tone ?? toneFor(i, list.length, good) }));
 }
 
 const KIND_ALIASES: Record<string, StatKind> = {
@@ -753,6 +891,7 @@ export function emptyEffect(): Effect {
     stats: {}, set: {}, flags: {}, items: {}, rel: {}, addConditions: {}, removeConditions: [], decide: [],
     foe: {}, reveal: [],
     inflict: {}, afflict: {}, cleanse: [], quest: {}, progress: {}, remember: {},
+    look: {}, goal: {},
   };
 }
 
@@ -765,6 +904,19 @@ const QUEST_OPS: Record<string, QuestOp> = {
   drop: "drop", abandon: "drop", cancel: "drop",
   report: "report", turn_in: "report", hand_in: "report",
 };
+
+const GOAL_OPS: Record<string, GoalOp> = {
+  start: "start", begin: "start", open: "start",
+  done: "done", complete: "done", completed: "done", succeed: "done", success: "done", finish: "done",
+  fail: "fail", failed: "fail", lose: "fail",
+};
+
+/** A difficulty word (`normal` = fair), or null. */
+export function difficultyOf(v: unknown): Difficulty | null {
+  const s = String(v ?? "").trim().toLowerCase();
+  if (s === "normal" || s === "medium") return "fair";
+  return (DIFFICULTIES as string[]).includes(s) ? (s as Difficulty) : null;
+}
 
 export const list = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : []);
 
@@ -870,7 +1022,40 @@ export function normEffect(raw: unknown, where: string, c: Ctx, known: { stats: 
         break;
       case "momentum": case "swing": {
         const x = c.expr(v, w);
-        if (x !== undefined) e.momentum = x;
+        if (x !== undefined) e.swing = x;
+        break;
+      }
+      case "place":
+        if (typeof v === "string" && v.trim()) e.place = v.trim().slice(0, 120);
+        else c.warn(w, "expected where {{user}} is now, in words (`place: The docks`)");
+        break;
+      case "look": case "looks":
+        if (!isObj(v)) { c.warn(w, "expected `look: { you: { outfit: \"...\" }, mira: { appearance: \"...\" } }`"); break; }
+        for (const [who, m] of Object.entries(v)) {
+          if (!isObj(m)) { c.warn(`${w} › ${who}`, "expected `appearance:` and/or `outfit:`"); continue; }
+          const out: { appearance?: string | null; outfit?: string | null } = {};
+          for (const f of ["appearance", "outfit"] as const) if (f in m) out[f] = typeof m[f] === "string" && m[f].trim() ? m[f].trim().slice(0, 160) : null;
+          for (const k2 of Object.keys(m)) if (k2 !== "appearance" && k2 !== "outfit") c.warn(`${w} › ${who} › ${k2}`, "a look has `appearance:` and `outfit:`");
+          if (Object.keys(out).length) e.look[who] = out;
+        }
+        break;
+      case "goal": case "goals":
+        if (typeof v === "string") e.goal[v] = "start";
+        else if (Array.isArray(v)) for (const id of v) e.goal[String(id)] = "start";
+        else if (isObj(v)) for (const [id, op] of Object.entries(v)) {
+          const o = GOAL_OPS[String(op).toLowerCase()];
+          if (o) e.goal[id] = o;
+          else c.warn(`${w} › ${id}`, `"${op}" isn't a goal step (start, done, fail)`);
+        }
+        break;
+      case "contest": {
+        if (!isObj(v)) { c.warn(w, "expected `contest: { kind: fight, with: \"the bouncer\", threat: hard }`"); break; }
+        const kind = typeof v.kind === "string" ? v.kind : "";
+        const who = typeof v.with === "string" ? v.with : typeof v.opponent === "string" ? v.opponent : "";
+        const threat = v.threat === undefined ? undefined : difficultyOf(v.threat);
+        if (!kind || !who.trim()) { c.warn(w, "a contest needs `kind:` and `with:` (the opponent's name)"); break; }
+        if (v.threat !== undefined && !threat) c.warn(`${w} › threat`, `"${v.threat}" — use easy, fair, hard or extreme`);
+        e.contest = { kind, with: who.trim().slice(0, 60), ...(threat ? { threat } : {}) };
         break;
       }
       case "harm": {
@@ -933,7 +1118,7 @@ export function normEffect(raw: unknown, where: string, c: Ctx, known: { stats: 
       default:
         // Flat shorthand: a known stat name maps to a delta.
         if (known.stats.has(k)) { const x = c.expr(v, w); if (x !== undefined) e.stats[k] = x; }
-        else c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, move, time, add_condition, remove_condition, hint, decide, foe, end, start_encounter, reveal, momentum, harm, hits, pierce, inflict, cleanse, quest, progress, remember)`);
+        else c.warn(w, `"${k}" isn't a stat or a known effect (stats, set, flags, give, take, rel, place, look, time, add_condition, remove_condition, hint, decide, remember, reveal, goal, contest, swing)`);
     }
   }
   return e;
@@ -1475,20 +1660,22 @@ function normSecrets(raw: unknown, c: Ctx): Record<string, SecretDef> {
     });
     if (!stages.length) { c.warn(w, "has no stages — add `cue:` and/or `stages:`"); continue; }
     const tell = r.tell === true || r.tell === "exists" ? "exists" : "none";
-    out[id] = { id, about: typeof r.about === "string" ? r.about : titleCase(id), tell, stages };
+    const person = typeof r.person === "string" && r.person.trim() ? r.person.trim() : undefined;
+    out[id] = { id, about: typeof r.about === "string" ? r.about : titleCase(id), ...(person ? { person } : {}), tell, stages };
   }
   return out;
 }
 
 
 function normLiveChoices(raw: unknown, c: Ctx, known: { stats: Set<string> }): LiveChoicesDef {
-  const def: LiveChoicesDef = { enabled: false, label: "Right now", count: 3, tags: {} };
+  const def: LiveChoicesDef = { enabled: false, label: "Right now", count: 3, tags: {}, taper: { ...DEFAULT_TAPER } };
   if (raw === undefined || raw === false) return def;
   if (!isObj(raw)) { c.warn("Live choices", "should be a map with `tags:`"); return def; }
   def.label = typeof raw.label === "string" ? raw.label : def.label;
   def.count = Math.max(1, Math.min(6, Math.round(c.num(raw.count, "Live choices › count", def.count))));
   if (raw.when !== undefined) { const x = c.expr(raw.when, "Live choices › when"); if (x !== undefined) def.when = String(x); }
   if (typeof raw.guide === "string") def.guide = raw.guide;
+  def.taper = normTaper(raw.taper, c);
   let i = 0;
   for (const [id, t] of Object.entries(isObj(raw.tags) ? raw.tags : {})) {
     const a = normAction(id, typeof t === "string" ? { desc: t } : t, `Live choices › tags › ${id}`, c, known, i++);
@@ -1501,6 +1688,32 @@ function normLiveChoices(raw: unknown, c: Ctx, known: { stats: Set<string> }): L
   return def;
 }
 
+
+/** Live tags taper by default: the same tag on the same person soon again gives less. */
+export const DEFAULT_TAPER = { step: 0.5, floor: 0.25 };
+
+function normTaper(raw: unknown, c: Ctx): LiveChoicesDef["taper"] {
+  if (raw === undefined || raw === true || raw === null) return { ...DEFAULT_TAPER };
+  if (raw === false) return false;
+  if (!isObj(raw)) { c.warn("Live choices › taper", "expected `taper: false` or `{ step: 0.5, floor: 0.25 }`"); return { ...DEFAULT_TAPER }; }
+  return {
+    step: tuned(c, raw.step, "Live choices › taper › step", DEFAULT_TAPER.step, 0, 10, "0 means repeats never taper"),
+    floor: tuned(c, raw.floor, "Live choices › taper › floor", DEFAULT_TAPER.floor, 0, 1, "the smallest share a repeat keeps"),
+  };
+}
+
+/** `appearance:` and `outfit:` as short plain text. */
+function lookText(r: Raw, where: string, c: Ctx): { appearance?: string; outfit?: string } {
+  const out: { appearance?: string; outfit?: string } = {};
+  for (const f of ["appearance", "outfit"] as const) {
+    const v = r[f];
+    if (v === undefined || v === null || v === "") continue;
+    if (typeof v !== "string") { c.warn(`${where} › ${f}`, "should be a line of text"); continue; }
+    if (v.length > 160) c.warn(`${where} › ${f}`, "is longer than 160 characters; it is cut there");
+    out[f] = v.trim().slice(0, 160);
+  }
+  return out;
+}
 
 function normImprovise(raw: unknown, c: Ctx, known: { stats: Set<string> }, stats: Record<string, StatDef>, order: string[]): ImproviseDef {
   const usable = order.filter((id) => stats[id].kind === "skill" || stats[id].kind === "attribute");
@@ -1525,6 +1738,187 @@ function normImprovise(raw: unknown, c: Ctx, known: { stats: Set<string> }, stat
   }
   return def;
 }
+
+/** What the narrator is told for each tier when an effect gives no direction of its own ("fail forward"). */
+export const DEFAULT_DIRECTIONS: Record<Tier, string> = {
+  crit_success: "It goes better than {{user}} hoped: a clean success with something extra.",
+  success: "It works.",
+  partial: "It works, but not cleanly: add a cost, a complication or a price.",
+  fail: "It doesn't work. Show a concrete consequence, a lost chance or a changed situation that makes the next choice different. No identical retry. Do not grant the intended success.",
+  crit_fail: "It goes badly wrong: a failure that costs {{user}} something real.",
+};
+
+export const DEFAULT_DC: Record<Difficulty, number> = { easy: 8, fair: 12, hard: 16, extreme: 20 };
+
+/** Stats a typed attempt never leans on by default, even when they are attributes (levels, points). */
+const NOT_A_SKILL = /^(level|lvl|xp|exp|experience|perk_?points|skill_?points|stat_?points|points)$/i;
+
+/** `checks:` (alias `improvise:`): the one check style, and what typed attempts may lean on. */
+function normChecks(raw: unknown, c: Ctx, known: { stats: Set<string> }, stats: Record<string, StatDef>, order: string[], where: string): ChecksDef {
+  const usable = order.filter((id) => (stats[id].kind === "skill" || stats[id].kind === "attribute") && !NOT_A_SKILL.test(id));
+  const def: ChecksDef = { typed: true, dc: { ...DEFAULT_DC }, partial: 3, stats: usable, bonus: 10, directions: {}, outcomes: {} };
+  if (raw === undefined || raw === true) return def;
+  if (raw === false) return { ...def, typed: false };
+  if (!isObj(raw)) { c.warn(where, "expected `checks: false` or a map of settings"); return def; }
+  if (raw.enabled === false || raw.typed === false) def.typed = false;
+  if (isObj(raw.dc)) for (const [k, v] of Object.entries(raw.dc)) {
+    const d = difficultyOf(k);
+    if (d) def.dc[d] = c.num(v, `${where} › dc › ${k}`, def.dc[d]);
+    else c.warn(`${where} › dc › ${k}`, "difficulty words are easy, fair, hard and extreme");
+  }
+  def.bonus = c.num(raw.bonus, `${where} › bonus`, 10);
+  def.partial = Math.max(0, c.num(raw.partial, `${where} › partial`, 3));
+  if (raw.stats !== undefined) {
+    const want = list(raw.stats);
+    for (const id of want) if (!stats[id]) c.warn(`${where} › stats`, `"${id}" isn't a stat`);
+    def.stats = want.filter((id) => stats[id]);
+  }
+  if (raw.time !== undefined) def.time = Math.max(0, c.num(raw.time, `${where} › time`, 10));
+  if (isObj(raw.directions)) for (const [k, v] of Object.entries(raw.directions)) {
+    const tier = TIER_KEYS[k];
+    if (tier && typeof v === "string" && v.trim()) def.directions[tier] = v.trim();
+    else c.warn(`${where} › directions › ${k}`, "directions are lines of text per tier: crit_success, success, partial, fail, crit_fail");
+  }
+  if (isObj(raw.outcomes)) for (const [k, v] of Object.entries(raw.outcomes)) {
+    const tier = TIER_KEYS[k];
+    if (tier) def.outcomes[tier] = normEffect(v, `${where} › outcomes › ${k}`, c, known);
+    else c.warn(`${where} › outcomes › ${k}`, "tiers are crit_success, success, partial, fail, crit_fail");
+  }
+  return def;
+}
+
+/** Contest defaults (CORE-DESIGN §2.5, tuned by simulation). */
+export const DEFAULT_SWING: Record<Tier, number> = { crit_success: 50, success: 35, partial: 15, fail: -35, crit_fail: -50 };
+export const DEFAULT_ROUNDS = { min: 3, max: 8 };
+export const DEFAULT_ESCALATE = 0.4;
+
+/** The three kinds an adventure gets when it declares none (costs only on stats that exist). */
+const DEFAULT_KINDS: Record<string, Raw> = {
+  fight: {
+    label: "Fight", stats: ["body", "mind"], escape: "body",
+    cost: { partial: { health: -3 }, fail: { health: -8 }, crit_fail: { health: -15 } },
+    won: { mood: 5, hint: "{opponent} is beaten or yields." },
+    lost: { health: -10, mood: -5, hint: "{{user}} is beaten. {opponent} gets what they wanted; {{user}} is hurt but alive." },
+    escaped: { energy: -10, hint: "{{user}} gets away." },
+  },
+  chase: {
+    label: "Chase", stats: ["body", "mind"], escape: "body",
+    cost: { fail: { energy: -8 }, crit_fail: { energy: -12, health: -5 } },
+    won: { hint: "{{user}} wins the chase: catches {opponent} or loses them for good." },
+    lost: { energy: -10, hint: "{opponent} wins the chase." },
+    escaped: { hint: "The chase breaks off." },
+  },
+  argument: {
+    label: "Argument", stats: ["charm", "mind"], escape: "charm",
+    cost: { fail: { mood: -4 }, crit_fail: { mood: -8 } },
+    won: { mood: 4, hint: "{opponent} gives in, or is won over." },
+    lost: { mood: -6, hint: "{opponent} wins the argument; {{user}} has to give ground." },
+    escaped: { hint: "{{user}} walks away from it." },
+  },
+};
+
+/** Keep only effects on stats that exist (the default kinds fit any ruleset). */
+function onlyKnown(e: unknown, known: { stats: Set<string> }): unknown {
+  if (!isObj(e)) return e;
+  return Object.fromEntries(Object.entries(e).filter(([k]) => k === "hint" || known.stats.has(k)));
+}
+
+/** `conflict:` — contests on one momentum gauge. */
+function normConflict(raw: unknown, c: Ctx, known: { stats: Set<string> }, stats: Record<string, StatDef>, checkStats: string[], style: Style): ConflictDef {
+  const def: ConflictDef = { fromStory: true, rounds: { ...DEFAULT_ROUNDS }, escalate: DEFAULT_ESCALATE, swing: { ...DEFAULT_SWING }, kinds: {} };
+  if (style === "story") {
+    if (raw !== undefined && raw !== false) c.warn("Conflict", "story rulesets don't roll, so `conflict:` is ignored (use `style: adventure`)");
+    return { ...def, fromStory: false };
+  }
+  if (raw === false) return { ...def, fromStory: false };
+  const r: Raw = isObj(raw) ? raw : {};
+  if (raw !== undefined && !isObj(raw) && raw !== true) c.warn("Conflict", "expected a map with `kinds:`");
+  def.fromStory = r.from_story !== false;
+  if (isObj(r.rounds)) {
+    def.rounds.min = Math.round(tuned(c, r.rounds.min, "Conflict › rounds › min", DEFAULT_ROUNDS.min, 1, 20));
+    def.rounds.max = Math.round(tuned(c, r.rounds.max, "Conflict › rounds › max", DEFAULT_ROUNDS.max, 1, 30));
+    if (def.rounds.max < def.rounds.min) { c.warn("Conflict › rounds", "max is below min — using max = min"); def.rounds.max = def.rounds.min; }
+  } else if (r.rounds !== undefined) c.warn("Conflict › rounds", "expected `{ min: 3, max: 8 }`");
+  def.escalate = tuned(c, r.escalate, "Conflict › escalate", DEFAULT_ESCALATE, 0, 3, "how much the stakes rise per round");
+  if (isObj(r.swing)) for (const [k, v] of Object.entries(r.swing)) {
+    const tier = TIER_KEYS[k];
+    if (tier) def.swing[tier] = c.num(v, `Conflict › swing › ${k}`, def.swing[tier]);
+    else c.warn(`Conflict › swing › ${k}`, "tiers are crit_success, success, partial, fail, crit_fail");
+  }
+  const authored = isObj(r.kinds);
+  const kinds: Record<string, unknown> = authored ? r.kinds : DEFAULT_KINDS;
+  for (const [id, kRaw] of Object.entries(kinds)) {
+    const w = `Conflict › kinds › ${id}`;
+    if (!isObj(kRaw)) { c.warn(w, "expected a kind (label, stats, cost, won, lost, escaped)"); continue; }
+    const fix = (e: unknown) => (authored ? e : onlyKnown(e, known));
+    let kStats = list(kRaw.stats).filter((s) => {
+      if (stats[s]) {
+        if (stats[s].kind !== "attribute" && stats[s].kind !== "skill" && authored) c.warn(`${w} › stats`, `"${s}" isn't an attribute or skill — moves lean on it anyway`);
+        return true;
+      }
+      if (authored) c.warn(`${w} › stats`, `"${s}" isn't a stat`);
+      return false;
+    });
+    if (!kStats.length) {
+      if (authored) { c.err(w, "a contest kind needs `stats:` (the attributes or skills its moves lean on)"); continue; }
+      kStats = checkStats.slice(0, 2);
+    }
+    const escRaw = typeof kRaw.escape === "string" ? kRaw.escape : undefined;
+    if (escRaw && !stats[escRaw] && authored) c.warn(`${w} › escape`, `"${escRaw}" isn't a stat — using ${kStats[0] ?? "luck"}`);
+    const cost: Partial<Record<Tier, Effect>> = {};
+    if (isObj(kRaw.cost)) for (const [k, v] of Object.entries(kRaw.cost)) {
+      const tier = TIER_KEYS[k];
+      if (tier) cost[tier] = normEffect(fix(v), `${w} › cost › ${k}`, c, known);
+      else c.warn(`${w} › cost › ${k}`, "tiers are crit_success, success, partial, fail, crit_fail");
+    }
+    if (authored) warnUnknownKeys(kRaw, KIND_KEYS, w, c);
+    def.kinds[id] = {
+      id,
+      label: typeof kRaw.label === "string" ? kRaw.label : titleCase(id),
+      stats: kStats,
+      escape: escRaw && stats[escRaw] ? escRaw : kStats[0] ?? "",
+      cost,
+      won: normEffect(fix(kRaw.won), `${w} › won`, c, known),
+      lost: normEffect(fix(kRaw.lost), `${w} › lost`, c, known),
+      escaped: normEffect(fix(kRaw.escaped), `${w} › escaped`, c, known),
+    };
+  }
+  return def;
+}
+
+const KIND_KEYS = new Set(["label", "stats", "escape", "cost", "won", "lost", "escaped", "desc"]);
+
+/** `goals:` — story goals: from the story (up to `max` open), and the author's own. */
+function normGoals(raw: unknown, c: Ctx, known: { stats: Set<string> }): GoalsDef {
+  const def: GoalsDef = { fromStory: true, max: 3, list: {} };
+  if (raw === undefined || raw === true) return def;
+  if (raw === false) return { ...def, fromStory: false };
+  if (!isObj(raw)) { c.warn("Goals", "expected `goals: { from_story: true, max: 3, list: … }`"); return def; }
+  def.fromStory = raw.from_story !== false;
+  def.max = Math.round(tuned(c, raw.max, "Goals › max", 3, 0, 10, "goals open at once"));
+  if (raw.list !== undefined && !isObj(raw.list)) c.warn("Goals › list", "should be a map of goal ids to goals");
+  for (const [id, g] of Object.entries(isObj(raw.list) ? raw.list : {})) {
+    const w = `Goals › ${id}`;
+    const r: Raw = isObj(g) ? g : typeof g === "string" ? { text: g } : {};
+    if (typeof r.text !== "string" || !r.text.trim()) { c.warn(w, "a goal needs `text:`"); continue; }
+    const doneWhen = r.done_when !== undefined ? c.expr(r.done_when, `${w} › done_when`) : undefined;
+    const failWhen = r.fail_when !== undefined ? c.expr(r.fail_when, `${w} › fail_when`) : undefined;
+    for (const k of Object.keys(r)) if (!GOAL_KEYS.has(k)) c.warn(`${w} › ${k}`, `"${k}" isn't something a goal reads (text, done_when, fail_when, judge, judge_fail, stakes, reward)`);
+    def.list[id] = {
+      id,
+      text: r.text.trim(),
+      ...(doneWhen !== undefined ? { doneWhen: String(doneWhen) } : {}),
+      ...(failWhen !== undefined ? { failWhen: String(failWhen) } : {}),
+      ...(typeof r.judge === "string" && r.judge.trim() ? { judge: r.judge.trim() } : {}),
+      ...(typeof r.judge_fail === "string" && r.judge_fail.trim() ? { judgeFail: r.judge_fail.trim() } : {}),
+      ...(typeof r.stakes === "string" && r.stakes.trim() ? { stakes: r.stakes.trim() } : {}),
+      reward: normEffect(r.reward, `${w} › reward`, c, known),
+    };
+  }
+  return def;
+}
+
+const GOAL_KEYS = new Set(["text", "done_when", "fail_when", "judge", "judge_fail", "stakes", "reward"]);
 
 function normGrowth(raw: unknown, c: Ctx): GrowthDef {
   const def: GrowthDef = { enabled: true, rate: 1, attributes: 0.5, train: true, repeat: { ...DEFAULT_PRACTICE_REPEAT } };
@@ -1632,6 +2026,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
       age: r.age !== undefined ? c.num(r.age, `Relationships › people › ${id} › age`, 0) : undefined,
       start,
       desc: typeof r.desc === "string" ? r.desc : undefined,
+      ...lookText(r, `Relationships › people › ${id}`, c),
     };
   }
 
@@ -1731,8 +2126,15 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   // Clock
   const clockRaw: Raw = isObj(raw.clock) ? raw.clock : {};
   const clockStartRaw = startRaw.time ?? clockRaw.start ?? "Mon 08:00";
-  const clockStart = parseClockStart(clockStartRaw, weekdays);
-  if (clockStart === null) c.warn("Clock › start", `"${clockStartRaw}" should look like "Mon 07:30" or "Day 1 07:30"`);
+  const fromGreeting = typeof clockStartRaw === "string" && clockStartRaw.trim().toLowerCase() === "greeting";
+  const clockStart = fromGreeting ? null : parseClockStart(clockStartRaw, weekdays);
+  if (clockStart === null && !fromGreeting) c.warn("Clock › start", `"${clockStartRaw}" should look like "Mon 07:30", "Day 1 07:30" or greeting`);
+  const fallbackRaw = clockRaw.fallback ?? "Day 1 09:00";
+  const clockFallback = parseClockStart(fallbackRaw, weekdays);
+  if (clockFallback === null) c.warn("Clock › fallback", `"${fallbackRaw}" should look like "Day 1 09:00"`);
+  // Where the game starts: words, or read from the greeting.
+  const placeRaw = startRaw.place;
+  const startPlace = typeof placeRaw === "string" && placeRaw.trim() ? (placeRaw.trim().toLowerCase() === "greeting" ? "greeting" : placeRaw.trim().slice(0, 120)) : null;
   const dateRaw = clockRaw.date ?? clockRaw.start_date ?? startRaw.date;
   const startDate = dateRaw === undefined ? null : parseDate(dateRaw);
   if (dateRaw !== undefined && !startDate) c.warn("Clock › date", `"${dateRaw}" should look like "Sep 4"`);
@@ -1780,7 +2182,10 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   }) : statOrder.filter((s) => stats[s].kind === "meter");
 
   const narrRaw: Raw = isObj(raw.narration) ? raw.narration : {};
-  const playerRaw: Raw = isObj(raw.player) ? raw.player : {};
+  const playerRaw: Raw = isObj(raw.you) ? raw.you : isObj(raw.player) ? raw.player : {};
+  const styleRaw = raw.style === undefined ? "adventure" : String(raw.style).trim().toLowerCase();
+  if (styleRaw !== "story" && styleRaw !== "adventure") c.warn("Style", `"${raw.style}" — use story (no dice) or adventure (dice); using adventure`);
+  const style: Style = styleRaw === "story" ? "story" : "adventure";
 
   // Encounters
   const encounters: Record<string, EncounterDef> = {};
@@ -1802,14 +2207,25 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   // Parts of Warp that were taken out (the old version is on the `legacy` branch).
   for (const [k, what] of Object.entries(REMOVED_KEYS)) if (raw[k] !== undefined) c.removed(titleCase(k), k, what);
   const improvise = normImprovise(raw.improvise ?? raw.improvised, c, known, stats, statOrder);
+  // `checks:` replaces `improvise:` (still read). The contract keeps both until the backend reads `checks`.
+  const checks = normChecks(raw.checks ?? raw.improvise ?? raw.improvised, new Ctx(), known, stats, statOrder, "Checks");
+  const conflict = normConflict(raw.conflict, c, known, stats, checks.stats, style);
+  const goals = normGoals(raw.goals, c, known);
+  const bigRaw = relRaw.big_moment;
+  const relBigMoment = bigRaw === false || bigRaw === null ? null : {
+    factor: isObj(bigRaw) ? tuned(c, bigRaw.factor, "Relationships › big_moment › factor", 3, 1, 10) : 3,
+    cooldown: isObj(bigRaw) ? Math.round(tuned(c, bigRaw.cooldown, "Relationships › big_moment › cooldown", 10, 0, 1000, "turns")) : 10,
+  };
   const growth = normGrowth(raw.growth ?? raw.practice, c);
 
   const ruleset: Ruleset = {
     name: typeof raw.name === "string" ? raw.name : "Untitled ruleset",
     description: typeof raw.description === "string" ? raw.description : undefined,
-    player: {
+    style,
+    you: {
       name: typeof playerRaw.name === "string" ? playerRaw.name : undefined,
-      age: playerRaw.age !== undefined ? c.num(playerRaw.age, "Player › age", 0) : undefined,
+      age: playerRaw.age !== undefined ? c.num(playerRaw.age, "You › age", 0) : undefined,
+      ...lookText(playerRaw, "You", c),
     },
     stats, statOrder, relStats, relStatOrder, people,
     peopleOpen: relRaw.open !== false && (relStatOrder.length > 0),
@@ -1819,10 +2235,12 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     locations,
     locationsOpen: raw.locations_open === true || Object.keys(locations).length === 0,
     startLocation,
+    startPlace,
     conditions, flags, actions, actionOrder, triggers,
     clock: {
       enabled: clockRaw.enabled !== false,
-      start: clockStart ?? 480,
+      start: fromGreeting ? "greeting" : clockStart ?? 480,
+      fallback: clockFallback ?? 540,
       minutesPerAction: c.num(clockRaw.minutes_per_action, "Clock › minutes_per_action", 10),
       narratorMax: c.num(clockRaw.narrator_max ?? clockRaw.narrator, "Clock › narrator_max", 480),
       weekdays,
@@ -1831,7 +2249,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     hud: { bars, money: moneyStat && stats[moneyStat] ? moneyStat : undefined, ...normCurrency(hudRaw.currency, c) },
     narration: { notes: typeof narrRaw.notes === "string" ? narrRaw.notes : undefined, numbers: narrRaw.numbers === true },
     encounters, quests, questOrder, storyQuests,
-    secrets, liveChoices, improvise, growth,
+    secrets, liveChoices, improvise, checks, conflict, goals, relBigMoment, growth,
   };
 
   // Cross-references that need everything loaded.
@@ -1842,7 +2260,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
 
   // Hard floor: sexual content and minors never mix, whatever the tags or settings.
   const minors = [
-    ...(ruleset.player.age !== undefined && ruleset.player.age < 18 ? ["the player"] : []),
+    ...(ruleset.you.age !== undefined && ruleset.you.age < 18 ? ["the player"] : []),
     ...Object.values(people).filter((p) => p.age !== undefined && p.age < 18).map((p) => p.name),
   ];
   const sexualActions = [

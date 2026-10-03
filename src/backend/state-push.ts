@@ -37,7 +37,7 @@ export async function pushState(chatId: string | null, userId?: string, force = 
     const loaded = await getRuleset(chatId, userId, force);
     const status = statusOf(loaded);
     if (!chatId || !loaded?.ruleset) {
-      if (current()) send({ type: "state", chatId, revision, status, hud: null, choices: [], records: [], latestMessageId: null, choicesAnchor: null, busy: false }, userId);
+      if (current()) send({ type: "state", chatId, revision, status, hud: null, choices: [], records: [], latestMessageId: null, choicesAnchor: null, busy: false, player: "You" }, userId);
       return;
     }
     const r = loaded.ruleset;
@@ -81,6 +81,8 @@ export async function pushState(chatId: string | null, userId?: string, force = 
       latestMessageId: latest?.id ?? null,
       choicesAnchor: anchor,
       busy: busyChats.has(chatId),
+      // "{{user}}" becomes the persona's name in withName below.
+      player: "{{user}}",
       encounterLogs: settings.enabled ? encounterLogsOf(r, msgs) : [],
     }, chatId, userId);
     if (current()) send(view, userId);

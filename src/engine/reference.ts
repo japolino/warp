@@ -266,6 +266,16 @@ memories(person) (how many), cond_of(person, cond), foe_cond(cond), stat_max(sta
 eff(stat) (stat + gear + statuses), gear(stat) (gear alone),
 min, max, clamp, floor, ceil, round, abs.
 Operators: + - * / % < <= > >= == != and or not, a ? b : c. Strings in single quotes.
+
+CORE FORMAT (new keys; this reference is rewritten for the core format in a later step):
+style: adventure                  # story (no dice anywhere) | adventure (d20 checks, typed attempts, contests)
+you: { name: Sam, age: 24, appearance: "tall, freckles", outfit: "grey hoodie" }   # alias player:; empty = read from the persona and the greeting
+clock: { start: greeting, fallback: "Day 1 09:00" }   # start: greeting reads the time from the greeting
+start: { place: greeting }        # or words: "The Rusty Anchor"
+checks: { dc: { easy: 8, fair: 12, hard: 16, extreme: 20 }, partial: 3, typed: true, stats: [body, mind], bonus: 10, directions: { fail: "..." }, outcomes: { fail: { energy: -5 } } }
+conflict: { from_story: true, rounds: { min: 3, max: 8 }, escalate: 0.4, kinds: { fight: { label: Fight, stats: [body, mind], escape: body, cost: { fail: { health: -8 } }, won: { hint: "..." }, lost: { hint: "..." }, escaped: { hint: "..." } } } }
+goals: { from_story: true, max: 3, list: { find_sister: { text: "Find your sister", done_when: "flag('sister_found')", stakes: "..." } } }
+EFFECTS (core): place: "The docks", look: { you: { outfit: "..." } } (also looks:), goal: { find_sister: done } (also goals:), contest: { kind: fight, with: "the bouncer", threat: hard }, swing: +20
 `;
 
 /**

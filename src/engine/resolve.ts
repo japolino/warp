@@ -3,7 +3,7 @@
 import type { ExprEnv, Value } from "./expr.js";
 import { evalBool, evalNumber, evaluate, identifiers } from "./expr.js";
 import { rollDice, seededRng, type Rng } from "./dice.js";
-import type { ActionDef, CheckDef, DecideSpec, Effect, NarratorGate, Requirement, Ruleset, Tier } from "./ruleset.js";
+import type { ActionDef, CheckDef, DecideSpec, Difficulty, DifficultyWord, Effect, NarratorGate, Requirement, Ruleset, Tier } from "./ruleset.js";
 import { TIERS } from "./ruleset.js";
 import { normalize, sample } from "./decide.js";
 import { percentOf, slug } from "./ruleset.js";
@@ -43,6 +43,12 @@ export interface TurnRecord {
   decisions?: DecisionResult[];
   /** How sure the adjudicator was when it read the player's message (0–1). */
   confidence?: number;
+  /** The post-reply read's answers to `when_scene` triggers, by trigger id; the next turn's resolve fires them. */
+  sceneRead?: Record<string, boolean>;
+  /** Model calls this turn cost (the budget meter). */
+  calls?: { helper: number; jev: number };
+  /** Band-crossing story lines of this turn ("Mira is warming to you."), shown first in its "what changed" line. */
+  lines?: string[];
   at: number;
 }
 
@@ -66,17 +72,24 @@ export interface Intent {
   via: "choice" | "adjudicator" | "command" | "confirmed";
   /** The label the player saw, for choices written on the spot (live choices). */
   label?: string;
-  /** Nonbinding live-choice story intent and stakes, never mechanical effects. */
+  /** @deprecated Live-choice forecasts are dropped (CORE-DESIGN §2.0.6 point 3). */
   forecast?: LiveChoice["forecast"];
-  /** Rolled when it was chosen (the seed), and the tier that came up — the player's message already tells it, so it stands. */
+  /** @deprecated Clicks no longer roll early: one reroll rule for typed and clicked moves (CORE-DESIGN §2.3.3). */
   seed?: string;
+  /** @deprecated See `seed`. */
   tier?: Tier;
 }
 
-/** A choice written for the moment: the label is the writer's, the tag decides what happens. */
+/**
+ * A choice written for the moment: the label is the writer's, the tag decides what happens.
+ * `difficulty` is the writer's (or Jev's) word for how hard it is: it sets the target of a tag's check that has
+ * no `vs:` (so the odds follow the words); `none` = no roll. In a contest the tag is `contest:<stat>` (a move
+ * leaning on that stat) or `contest:break_off`.
+ */
 export interface LiveChoice {
   label: string; tag: string; target?: string;
-  /** Story intent/stakes only. Never alters tag-defined effects, checks or odds. */
+  difficulty?: DifficultyWord;
+  /** @deprecated Dropped (CORE-DESIGN §2.0.6 point 3); kept until the writer stops producing it. */
   forecast?: { goal: string; risk: string; payoff: string };
 }
 
@@ -701,8 +714,8 @@ function effectToEvents(w: Working, e: Effect, src: EventSource, extra: Record<s
     const cur = w.s.secrets[id] ?? -1;
     if (sec && cur + 1 < sec.stages.length) w.push({ t: "secret", id, stage: cur + 1, src });
   }
-  if (e.momentum !== undefined && w.s.encounter?.momentum !== undefined) {
-    const v = evalNumber(e.momentum, w.env(extra), 0);
+  if (e.swing !== undefined && w.s.encounter?.momentum !== undefined) {
+    const v = evalNumber(e.swing, w.env(extra), 0);
     if (v !== 0) w.push({ t: "swing", d: v, src });
   }
 
@@ -1087,10 +1100,12 @@ export interface ResolveOptions {
   veils?: string[];
   /** Model odds for decide blocks, by decide id. Missing ones fall back to author weights and are listed in `needs`. */
   odds?: Record<string, Record<string, number>>;
-  /** Judged plain-language trigger conditions, by trigger id. */
+  /** Judged plain-language trigger conditions, by trigger id (the previous reply's record `sceneRead`). */
   scene?: Record<string, boolean>;
-  /** The scene says an encounter is breaking out (and who the opponent is, when it's someone from the story). */
+  /** @deprecated Legacy encounters; use `contest`. */
   encounter?: { id: string; foe?: string; fresh?: boolean };
+  /** A typed message starts a contest: it begins before the move lands, and this message is round 1. */
+  contest?: { kind: string; opponent: string; threat?: Difficulty };
 }
 
 export interface Resolution { record: TurnRecord; needs: DecideSpec[] }
@@ -1264,16 +1279,31 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
 
 // ───────────────────────── narrator proposals ─────────────────────────
 
+/**
+ * What the post-reply read proposes: the only interface between the pipeline's interpreters and the engine.
+ * Every field is optional; `applyProposal` enforces the ruleset's limits (caps, gates, open/closed lists).
+ */
 export interface Proposal {
   minutes?: number;
   stats?: Record<string, number>;
   rel?: Record<string, Record<string, number>>;
-  /** Newly introduced people, with where they stand toward the player right now. */
-  people?: { id?: string; name: string; feelings?: Record<string, number> }[];
+  /** Newly introduced people, with where they stand toward the player right now, and whether they are adults (null = unclear). */
+  people?: { id?: string; name: string; feelings?: Record<string, number>; adult?: boolean | null }[];
   /** One-time starting feelings for tracked people who have never been calibrated. */
   feelings?: Record<string, Record<string, number>>;
   items?: Record<string, number>;
+  /** Where {{user}} is at the end of the reply, in words. */
+  place?: string;
+  /** @deprecated Alias of `place`. */
   move?: string;
+  /** Looks and clothes that changed, keyed "you" or a person's name (null clears a line). */
+  looks?: Record<string, { appearance?: string | null; outfit?: string | null }>;
+  /** Big-moment people (a rescue, betrayal, confession), highest probability first; the engine uses the first. */
+  moments?: string[];
+  /** A contest broke out in the reply (kind, the opponent's name, how dangerous). */
+  contest?: { kind: string; opponent: string; threat?: Difficulty };
+  /** Story goals: new ones (text, what counts as done, who asked, what's at stake), and ids that moved, closed or failed. */
+  goals?: { new?: { text: string; done?: string; from?: string; stakes?: string }[]; advanced?: string[]; done?: string[]; failed?: string[] };
   conditions?: { add?: string[]; remove?: string[] };
   flags?: Record<string, Value>;
   /** Who is (true) or isn't (false) in the scene at the end of the reply, by name. */
@@ -1282,14 +1312,15 @@ export interface Proposal {
   used?: Record<string, number>;
   /** Skills or attributes {{user}} practised, trained or studied during the reply. */
   train?: string[];
-  /** An encounter that broke out in the reply (id or name), and who the opponent is. */
+  /** @deprecated Legacy encounters (use `contest`). */
   encounter?: string;
+  /** @deprecated Legacy encounters. */
   foe?: string;
-  /** The encounter in progress ended in the reply, with this outcome. */
+  /** @deprecated Only a full swing ends a contest. */
   encounterEnd?: string;
-  /** The story is sure this is a genuinely new incident, not the one that just ended. */
+  /** @deprecated Legacy encounters. */
   encounterFresh?: boolean;
-  /** Quests the story handed out, finished or failed. */
+  /** @deprecated Replaced by `goals`. */
   quests?: StoryQuestNews;
   /** Moments people will remember about {{user}}, by name. */
   memories?: Record<string, string>;
@@ -1326,7 +1357,8 @@ function clampAbs(v: number, lim: number) {
   return Math.max(-lim, Math.min(lim, v));
 }
 
-function findPerson(r: Ruleset, s: GameState, key: string): string | null {
+/** A tracked person's id from a name or id ("Miu" finds "Miu Tanaka" when only one fits), or null. */
+export function findPerson(r: Ruleset, s: GameState, key: string): string | null {
   const k = String(key).trim().toLowerCase();
   if (!k) return null;
   const sl = slug(k);
@@ -1359,6 +1391,7 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
     const id = slug(person.id || person.name);
     if (!w.s.people[id]) w.push({ t: "person", id, name: person.name, src });
     calibrate(w, id, person.feelings ?? {}, src);
+    if (typeof person.adult === "boolean" && w.s.adults[id] !== person.adult) w.push({ t: "adult", who: id, adult: person.adult, src });
     scene[id] = true;
   }
   for (const [who, feelings] of Object.entries(p.feelings ?? {})) {
@@ -1419,11 +1452,23 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
     }
   }
 
-  if (p.move) {
-    const k = p.move.toLowerCase();
+  const placeWords = typeof p.place === "string" && p.place.trim() ? p.place.trim().slice(0, 120) : p.move;
+  if (placeWords) {
+    const k = placeWords.toLowerCase();
     const loc = Object.values(r.locations).find((l) => l.id === k || l.name.toLowerCase() === k);
     if (loc && loc.id !== w.s.location) w.push({ t: "move", to: loc.id, src });
-    else if (!loc && r.locationsOpen && k !== (w.s.locationName ?? "").toLowerCase()) w.push({ t: "move", to: slug(p.move), name: p.move, src });
+    else if (!loc && r.locationsOpen && k !== (w.s.locationName ?? "").toLowerCase()) w.push({ t: "move", to: slug(placeWords), name: placeWords, src });
+  }
+  // Looks and clothes the reply changed ("you" or a person's name).
+  for (const [key, l] of Object.entries(p.looks ?? {})) {
+    const who = key.trim().toLowerCase() === "you" ? "you" : findPerson(r, w.s, key);
+    if (!who || !l || typeof l !== "object") continue;
+    for (const field of ["appearance", "outfit"] as const) {
+      if (!(field in l)) continue;
+      const v = l[field];
+      const text = typeof v === "string" && v.trim() ? v.trim().slice(0, 160) : null;
+      if (text !== (w.s.look?.[who]?.[field] ?? null)) w.push({ t: "look", who, field, text, src });
+    }
   }
 
   for (const id of p.conditions?.add ?? []) {

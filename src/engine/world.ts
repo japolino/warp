@@ -23,7 +23,8 @@ export function dateAt(r: Ruleset, minutes: number): CalendarDate | null {
   if (!start) return null;
   let month = start.month - 1;
   // The clock's start may sit on a weekday offset (Sun = day index 6); the date counts from that first day.
-  const elapsed = Math.floor(minutes / 1440) - Math.floor(r.clock.start / 1440);
+  const first = typeof r.clock.start === "number" ? r.clock.start : r.clock.fallback;
+  const elapsed = Math.floor(minutes / 1440) - Math.floor(first / 1440);
   let day = start.day - 1 + Math.max(0, elapsed);
   while (day >= MONTH_DAYS[month]) { day -= MONTH_DAYS[month]; month = (month + 1) % 12; }
   return { month: month + 1, day: day + 1, monthName: MONTH_NAMES[month] };

@@ -11,7 +11,7 @@ import { encounterGuide, itemRelevance } from "./encounter-view.js";
 import { cleanLiveForecast, spentLock, whenHolds, actionPool, availableChoices, dangerStats, foeArmor, isAvailable, LIVE_PREFIX, lockReason, mainMeter, odds, playerArmor, usableItems, TIER_LABEL, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
 import { dueWords, effectWords, goalDone, questDef, questDigest, questOffers, questsToReport, QUEST_PREFIX } from "./quests.js";
 import { dateAt, ordinal, presentPeople } from "./world.js";
-import type { ChangeView, ChoiceView, HudView, QuestView, RecordView, Tone } from "../shared/protocol.js";
+import type { ChangeView, ChoiceView, ConflictView, GoalView, HudView, QuestView, RecordView, Tone } from "../shared/protocol.js";
 import { namesIt, namesTitle } from "./mention.js";
 
 function pct(v: number, min: number, max: number) {
@@ -98,6 +98,9 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
         label: r.conditions[cid]?.label ?? cid, tone: r.conditions[cid]?.tone ?? "warn" as Tone, remaining: c.until !== null ? minutesLeft(c.until - s.minutes) : null,
       })),
       memories: (s.memories?.[id] ?? []).slice().reverse().slice(0, 5).map((m) => ({ text: m.text, when: r.clock.enabled ? formatClock(r, m.at).day : null })),
+      appearance: s.look?.[id]?.appearance ?? null,
+      outfit: s.look?.[id]?.outfit ?? null,
+      actions: [] as ChoiceView[],
     };
   }).sort((a, b) => Number(b.present) - Number(a.present));
 
@@ -167,19 +170,42 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
 
   return {
     rulesetName: r.name,
-    clock: r.clock.enabled ? formatClock(r, s.minutes) : null,
+    clock: r.clock.enabled ? { ...formatClock(r, s.minutes), minutes: s.minutes } : null,
     date: date ? `${r.clock.weekdays[Math.floor(s.minutes / 1440) % r.clock.weekdays.length] ?? ""} ${ordinal(date.day)} ${date.monthName}`.trim() : null,
     location: s.locationName ? { name: s.locationName, desc: loc?.desc } : null,
     money,
     bars: bars.filter((b) => r.stats[b.id].kind !== "money"),
     skills,
+    you: { appearance: s.look?.you?.appearance ?? null, outfit: s.look?.you?.outfit ?? null },
     people,
     items,
     conditions,
+    goals: goalViews(r, s),
+    conflict: conflictView(r, s),
     quests: questViews(r, s),
     encounter,
     turn: s.turn,
   };
+}
+
+/** Story goals: open first, then the last few done or failed. */
+function goalViews(r: Ruleset, s: GameState): GoalView[] {
+  const all = Object.entries(s.goals ?? {});
+  const view = ([id, g]: [string, NonNullable<GameState["goals"]>[string]]): GoalView => ({
+    id, text: g.text, status: g.st, from: g.from ? personName(r, s, g.from) : null, stakes: g.stakes ?? r.goals.list[id]?.stakes ?? null,
+  });
+  const open = all.filter(([, g]) => g.st === "open").map(view);
+  const ended = all.filter(([, g]) => g.st !== "open").sort((a, b) => (b[1].ended ?? 0) - (a[1].ended ?? 0)).slice(0, 6).map(view);
+  return [...open, ...ended];
+}
+
+/** The contest running now, for the Conflict section. */
+function conflictView(r: Ruleset, s: GameState): ConflictView | null {
+  const c = s.contest;
+  if (!c) return null;
+  const m = c.momentum;
+  const words = m >= 60 ? "You are close to winning" : m >= 20 ? "You have the upper hand" : m > -20 ? "Evenly matched" : m > -60 ? `${c.opponent} has the upper hand` : `${c.opponent} is close to winning`;
+  return { kind: c.kind, label: r.conflict.kinds[c.kind]?.label ?? c.kind, opponent: c.opponent, round: c.round, maxRounds: r.conflict.rounds.max, momentum: m, words, next: null };
 }
 
 function agoWords(min: number): string {
@@ -258,7 +284,7 @@ function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: st
   // Choices written for this moment come first; their tag decides the check and the odds.
   const live: ChoiceView[] = [];
   const plain = (id: string, label: string, group: string | null, desc: string | null = null): ChoiceView =>
-    ({ id, label, group, desc, odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [] });
+    ({ id, label, group, desc, odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [], difficulty: null });
   // Choices turned off: the story is typed. Only the modes played with buttons (above, and an encounter's moves) keep them.
   if (opts.showChoices === false && !s.encounter) return [];
   if (!s.encounter) (opts.live ?? []).forEach((c, i) => {
@@ -278,6 +304,7 @@ function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: st
       checkLabel: a.check?.label ?? null,
       veiled: a.tags.some((t) => veils.has(t)),
       params: [],
+      difficulty: c.difficulty ?? null,
     });
   });
   const encName = s.encounter ? r.encounters[s.encounter.id]?.name ?? "Encounter" : null;
@@ -295,6 +322,7 @@ function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: st
         checkLabel: a.check?.label ?? null,
         veiled: a.tags.some((t) => veils.has(t)),
         params: a.params.map((p) => ({ id: p.id, label: p.label, options: Object.keys(p.options), default: p.default })),
+        difficulty: null,
       };
     });
   // Moves out of reach say why, when it's something the player could work toward: an item, a skill level, someone to bring.
@@ -317,7 +345,7 @@ function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: st
 function questChoices(r: Ruleset, s: GameState): ChoiceView[] {
   if (s.encounter) return [];
   const plain = (id: string, label: string, desc: string | null, why?: string): ChoiceView =>
-    ({ id, label, group: "Quests", desc, odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [], ...(why ? { why } : {}) });
+    ({ id, label, group: "Quests", desc, odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [], difficulty: null, ...(why ? { why } : {}) });
   const out: ChoiceView[] = [];
   for (const { id, to } of questsToReport(r, s)) {
     const q = questDef(r, s, id);
@@ -349,7 +377,7 @@ function itemChoices(r: Ruleset, s: GameState, lines: Set<string>): ChoiceView[]
     return {
       id: u.id, label: u.a.label, group: "Items", desc: u.a.desc ?? r.items[u.id.slice(5)]?.desc ?? null,
       odds: o ? o.success : null, partialOdds: o && o.partial > 0 ? o.partial : null, checkLabel: u.a.check?.label ?? null,
-      veiled: u.a.tags.some((t) => veils.has(t)), params: [], ...(why ? { why } : {}),
+      veiled: u.a.tags.some((t) => veils.has(t)), params: [], difficulty: null, ...(why ? { why } : {}),
     };
   });
 }
@@ -569,6 +597,7 @@ export function buildRecordView(r: Ruleset, messageId: string, swipe: number, re
       tierLabel: TIER_LABEL[rec.check.tier],
       summary: checkSummary(rec.check),
     } : null,
+    lines: rec.lines ?? [],
     changes: summarizeEvents(r, before, after, rec.events),
     hints: rec.hints,
     veiled: !!rec.veiled,

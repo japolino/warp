@@ -7,7 +7,7 @@
 
 import type { Value, ExprEnv } from "./expr.js";
 import { evalNumber } from "./expr.js";
-import type { Ruleset, StatDef, Band } from "./ruleset.js";
+import type { Ruleset, StatDef, Band, Difficulty } from "./ruleset.js";
 import { dateAt, isIndoors, presentPeople, seasonAt } from "./world.js";
 
 export interface EncounterState {
@@ -35,11 +35,48 @@ export interface QuestState { st: QuestStatus; at: number; due: number | null; p
 /** Something a person remembers about {{user}}. */
 export interface Memory { text: string; at: number }
 
+/** Looks and clothes as plain text, for "you" or a person id; `at` = the minute it was last set. */
+export interface LookState { appearance?: string; outfit?: string; at: number }
+
+/** How a contest ended. `gave_in` and `lost` use the kind's `lost` effects; `broken_off` uses `escaped`. */
+export type ContestOutcome = "won" | "lost" | "escaped" | "gave_in" | "broken_off";
+
+/** A running contest: one momentum gauge from −100 (the opponent wins) to +100 ({{user}} wins). */
+export interface ContestState {
+  kind: string;
+  /** The opponent's name; `who` = their person id when they are tracked. */
+  opponent: string;
+  who?: string;
+  threat: Difficulty;
+  /** The d20 target every move (and Break off, before momentum) rolls against. */
+  dc: number;
+  /** Rounds played so far (0 before the first move). */
+  round: number;
+  momentum: number;
+  /** In-game minute it started. */
+  at: number;
+}
+
+export type GoalStatus = "open" | "done" | "failed";
+/** A story goal: authored (id from `goals.list`) or made by the story. */
+export interface GoalState { st: GoalStatus; text: string; at: number; from?: string; stakes?: string; ended?: number }
+
 /** Uses of something limited (an encounter move with `per_day:` / `per_encounter:`): today's count, and this encounter's. */
 export interface Charge { day: number; n: number; enc?: string; encN: number }
 
 export interface GameState {
+  /** @deprecated Legacy encounters; replaced by `contest` (always null once the old system is taken out). */
   encounter: EncounterState | null;
+  /** The contest running now (fight, chase, argument), or null. */
+  contest: ContestState | null;
+  /** The last contest that ended (the same opponent can't restart one within 15 in-game minutes). */
+  lastContest: { kind: string; opponent: string; who?: string; outcome: ContestOutcome; at: number } | null;
+  /** Looks and clothes as text: "you" and person ids. */
+  look: Record<string, LookState>;
+  /** Person → the turn of their last big moment (the cap exception has a cooldown). */
+  big: Record<string, number>;
+  /** Story goals: open, done or failed. */
+  goals: Record<string, GoalState>;
   /** The last encounter that ended: which, against whom, how, where and when (so the story can't simply restart it). */
   lastEncounter?: { id: string; foeName?: string; outcome: string; at: number; loc: string | null } | null;
   /** A limited move's key → how much it has been used. */
@@ -62,7 +99,7 @@ export interface GameState {
   conditions: Record<string, { until: number | null; rounds?: number }>;
   /** Conditions on other people (drugged, sick, charmed…): person → condition → until. */
   pconds: Record<string, Record<string, { until: number | null }>>;
-  /** Quests taken, done or failed. */
+  /** @deprecated Quests taken, done or failed; replaced by `goals`. */
   quests: Record<string, QuestState>;
   /** What people remember about {{user}}, oldest first. */
   memories: Record<string, Memory[]>;
@@ -124,6 +161,17 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "practice_use"; key: string; n: number; turn: number; minutes: number }
   | { t: "scene"; who: string; here: boolean }
   | { t: "use"; id: string; n: number }
+  /** The clock set outright (the greeting read, or the player's fix). */
+  | { t: "set_time"; minutes: number }
+  /** A look or outfit line ("you" or a person id); null clears it. */
+  | { t: "look"; who: string; field: "appearance" | "outfit"; text: string | null }
+  /** A contest starts (round 0, momentum 0). */
+  | { t: "contest"; kind: string; opponent: string; who?: string; threat: Difficulty; dc: number }
+  | { t: "contest_end"; outcome: ContestOutcome }
+  /** A big moment for this person (their caps were multiplied this reply). */
+  | { t: "big"; who: string }
+  /** A goal opens, closes or is dropped (st null). Story goals carry their text. */
+  | { t: "goal"; id: string; st: GoalStatus | null; text?: string; from?: string; stakes?: string }
 );
 
 /** Memories kept per person (the oldest fade first). */
@@ -132,6 +180,11 @@ const MEMORIES_KEPT = 12;
 export function initialState(r: Ruleset): GameState {
   const s: GameState = {
     encounter: null,
+    contest: null,
+    lastContest: null,
+    look: {},
+    big: {},
+    goals: {},
     charges: {},
     calibrated: {},
     forgotten: {},
@@ -141,9 +194,9 @@ export function initialState(r: Ruleset): GameState {
     itemNames: {},
     rel: {},
     people: {},
-    location: r.startLocation,
-    locationName: r.startLocation ? r.locations[r.startLocation]?.name ?? r.startLocation : null,
-    minutes: r.clock.start,
+    location: r.startLocation ?? (r.startPlace && r.startPlace !== "greeting" ? placeId(r.startPlace) : null),
+    locationName: r.startLocation ? r.locations[r.startLocation]?.name ?? r.startLocation : r.startPlace && r.startPlace !== "greeting" ? r.startPlace : null,
+    minutes: startMinutes(r),
     conditions: {},
     triggers: {},
     turn: 0,
@@ -175,6 +228,15 @@ export function initialState(r: Ruleset): GameState {
     s.secrets[sec.id] = open;
   }
   for (const f of Object.values(r.flags)) s.flags[f.id] = f.start;
+  // Looks and clothes the ruleset gives (the greeting and the story fill in the rest).
+  const firstLook = (appearance?: string, outfit?: string): LookState | null =>
+    appearance || outfit ? { ...(appearance ? { appearance } : {}), ...(outfit ? { outfit } : {}), at: s.minutes } : null;
+  const mine = firstLook(r.you.appearance, r.you.outfit);
+  if (mine) s.look.you = mine;
+  for (const p of Object.values(r.people)) {
+    const theirs = firstLook(p.appearance, p.outfit);
+    if (theirs) s.look[p.id] = theirs;
+  }
   for (const p of Object.values(r.people)) {
     s.people[p.id] = { name: p.name };
     s.rel[p.id] = {};
@@ -183,6 +245,16 @@ export function initialState(r: Ruleset): GameState {
     if (Object.keys(p.start).length) s.calibrated[p.id] = true;
   }
   return s;
+}
+
+/** The minute the game starts at: the ruleset's start, or its fallback until the greeting is read. */
+export function startMinutes(r: Ruleset): number {
+  return typeof r.clock.start === "number" ? r.clock.start : r.clock.fallback;
+}
+
+/** A place's id from its words ("The Rusty Anchor" → "the_rusty_anchor"). */
+export function placeId(name: string): string {
+  return String(name).trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "x";
 }
 
 /** Who the current encounter's opponent is. */
@@ -285,7 +357,8 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       s.encounter = e.id ? { id: e.id, round: 0, foe: { ...(e.foe ?? {}) }, ...(e.momentum !== undefined ? { momentum: e.momentum } : {}), ...(e.foeName ? { foeName: e.foeName } : {}), at: s.minutes, ...(e.max ? { max: { ...e.max } } : {}), ...(e.armor ? { armor: { ...e.armor } } : {}) } : null;
       break;
     case "swing":
-      if (s.encounter && s.encounter.momentum !== undefined) s.encounter.momentum = clamp(s.encounter.momentum + e.d, -100, 100);
+      if (s.contest) s.contest = { ...s.contest, momentum: clamp(s.contest.momentum + e.d, -100, 100) };
+      else if (s.encounter && s.encounter.momentum !== undefined) s.encounter.momentum = clamp(s.encounter.momentum + e.d, -100, 100);
       break;
     case "foe": {
       if (!s.encounter) break;
@@ -295,7 +368,37 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       s.encounter.foe[e.stat] = def ? clamp(next, 0, s.encounter.max?.[e.stat] ?? def.max) : next;
       break;
     }
-    case "round": if (s.encounter) s.encounter.round += 1; break;
+    case "round":
+      if (s.contest) s.contest = { ...s.contest, round: s.contest.round + 1 };
+      else if (s.encounter) s.encounter.round += 1;
+      break;
+    case "set_time": if (Number.isFinite(e.minutes)) s.minutes = Math.max(0, Math.floor(e.minutes)); break;
+    case "look": {
+      const cur: LookState = { ...(s.look?.[e.who] ?? { at: s.minutes }) };
+      if (e.text) cur[e.field] = e.text; else delete cur[e.field];
+      cur.at = s.minutes;
+      const look = { ...(s.look ?? {}) };
+      if (cur.appearance || cur.outfit) look[e.who] = cur; else delete look[e.who];
+      s.look = look;
+      break;
+    }
+    case "contest":
+      s.contest = { kind: e.kind, opponent: e.opponent, ...(e.who ? { who: e.who } : {}), threat: e.threat, dc: e.dc, round: 0, momentum: 0, at: s.minutes };
+      break;
+    case "contest_end":
+      if (s.contest) s.lastContest = { kind: s.contest.kind, opponent: s.contest.opponent, ...(s.contest.who ? { who: s.contest.who } : {}), outcome: e.outcome, at: s.minutes };
+      s.contest = null;
+      break;
+    case "big": s.big = { ...(s.big ?? {}), [e.who]: s.turn }; break;
+    case "goal": {
+      const all = { ...(s.goals ?? {}) };
+      const cur = all[e.id];
+      if (e.st === null) delete all[e.id];
+      else if (e.st === "open") all[e.id] = { st: "open", text: e.text ?? cur?.text ?? e.id, at: s.minutes, ...(e.from ?? cur?.from ? { from: e.from ?? cur?.from } : {}), ...(e.stakes ?? cur?.stakes ? { stakes: e.stakes ?? cur?.stakes } : {}) };
+      else if (cur) all[e.id] = { ...cur, st: e.st, ended: s.minutes };
+      s.goals = all;
+      break;
+    }
     case "charge": {
       const charges = (s.charges ??= {});
       const c = charges[e.key];
