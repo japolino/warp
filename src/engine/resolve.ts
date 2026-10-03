@@ -670,9 +670,12 @@ export function tagKey(tag: string, target?: string): string {
   return `tag:${tag}:${target ?? ""}`;
 }
 
-/** The taper settings as a practice-repetition rule (uses within 8 turns or 120 in-game minutes count). */
+/**
+ * The taper settings as a practice-repetition rule: uses in the last 8 turns count; a long break (8 in-game hours)
+ * also resets it. (A story that skips an hour per reply must not make the same kind move fresh every few turns.)
+ */
 export function taperRule(r: Ruleset) {
-  return r.liveChoices.taper === false ? false as const : { step: r.liveChoices.taper.step, floor: r.liveChoices.taper.floor, recoverMinutes: 120, recoverTurns: 8 };
+  return r.liveChoices.taper === false ? false as const : { step: r.liveChoices.taper.step, floor: r.liveChoices.taper.floor, recoverMinutes: 480, recoverTurns: 8 };
 }
 
 function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts: ResolveOptions, needs: DecideSpec[]): TurnRecord {
