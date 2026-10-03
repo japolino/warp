@@ -115,7 +115,7 @@ describe("T-P4 repeated tags taper; no dominant kind", () => {
     const gain = s.rel.mira.trust - start;
     expect(gain).toBeLessThanOrEqual(12);
     expect(gain).toBeLessThan(8 * 2 * 0.5);
-    expect(tagTaper(r, s, "tender", "mira")).toBe(0.25);
+    expect(tagTaper(r, s, "tender", "mira")).toBeCloseTo(1 / (1 + 0.75 * 8));
     expect(recentTags(r, s).tender).toBeGreaterThanOrEqual(8);
     // Another target is fresh.
     expect(tagTaper(r, s, "tender", "jo")).toBe(1);

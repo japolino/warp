@@ -1200,13 +1200,17 @@ function normLiveChoices(raw: unknown, c: Ctx, known: { stats: Set<string> }, st
 }
 
 
-/** Live tags taper by default: the same tag on the same person soon again gives less. */
-export const DEFAULT_TAPER = { step: 0.5, floor: 0.25 };
+/**
+ * Live tags taper by default: the same tag on the same person soon again gives less (57% the second time, 40% the
+ * third, never below 10%). The loop simulator's "always kind" gate passes with it on every seed base tried; 0.5/0.25
+ * failed it on a custom ruleset on 2 of 8 bases.
+ */
+export const DEFAULT_TAPER = { step: 0.75, floor: 0.1 };
 
 function normTaper(raw: unknown, c: Ctx): LiveChoicesDef["taper"] {
   if (raw === undefined || raw === true || raw === null) return { ...DEFAULT_TAPER };
   if (raw === false) return false;
-  if (!isObj(raw)) { c.warn("Live choices › taper", "expected `taper: false` or `{ step: 0.5, floor: 0.25 }`"); return { ...DEFAULT_TAPER }; }
+  if (!isObj(raw)) { c.warn("Live choices › taper", "expected `taper: false` or `{ step: 0.75, floor: 0.1 }`"); return { ...DEFAULT_TAPER }; }
   return {
     step: tuned(c, raw.step, "Live choices › taper › step", DEFAULT_TAPER.step, 0, 10, "0 means repeats never taper"),
     floor: tuned(c, raw.floor, "Live choices › taper › floor", DEFAULT_TAPER.floor, 0, 1, "the smallest share a repeat keeps"),

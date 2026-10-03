@@ -33,7 +33,6 @@ triggers:
   recovered: { when: "energy >= 30", do: { remove_condition: [exhausted] } }
 live_choices:
   count: 3
-  taper: { step: 0.5, floor: 0.25 }
   tags:
     bold: { desc: "A daring move", check: { add: body, label: Body }, success: { mood: +3 }, fail: { health: -5, mood: -3 } }
     clever: { desc: "A clever trick", check: { add: mind, label: Mind }, success: { mood: +2 }, fail: { mood: -2 } }

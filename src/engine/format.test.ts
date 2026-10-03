@@ -116,7 +116,7 @@ describe("the format", () => {
     // Default kinds keep costs only on stats that exist.
     expect(r!.conflict.kinds.fight.cost.fail?.stats).toEqual({ health: -8 });
     expect(r!.conflict.kinds.argument.cost.fail?.stats).toEqual({});
-    expect(r!.liveChoices.taper).toEqual({ step: 0.5, floor: 0.25 });
+    expect(r!.liveChoices.taper).toEqual({ step: 0.75, floor: 0.1 });
     expect(r!.relBigMoment).toEqual({ factor: 3, cooldown: 10 });
     expect(r!.checks.dc).toEqual({ easy: 8, fair: 12, hard: 16, extreme: 20 });
   });
