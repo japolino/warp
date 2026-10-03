@@ -13,6 +13,7 @@
 
 import type { Answer, Answers, Question, Questions } from "../engine/decide.js";
 import { noulConfidence } from "../engine/decide.js";
+import { evalBool } from "../engine/expr.js";
 import { mentions } from "../engine/mention.js";
 import { availableChoices, findPerson, usableItems, type Intent, type LiveChoice, type Proposal } from "../engine/resolve.js";
 import { DIFFICULTIES, type ActionDef, type DecideSpec, type Difficulty, type Ruleset, type StatDef } from "../engine/ruleset.js";
@@ -697,8 +698,9 @@ export function bookkeepingQuestions(o: {
   if (r.goals.fromStory && o.storyGoals !== false && open < r.goals.max) {
     q["gate:goal"] = { type: "noul", instructions: `In \`narrator_reply\`, someone asks ${player} for a specific task or favour that ${player} agrees to, or ${player} sets out to do something specific, and it is not one of the open goals.` };
   }
+  // A scene rule is asked only while its formula part holds: it couldn't fire otherwise (F3).
   for (const tr of r.triggers) {
-    if (tr.whenScene) q[`scene:${tr.id}`] = { type: "noul", instructions: fill(tr.whenScene, player) };
+    if (tr.whenScene && (tr.when === undefined || evalBool(tr.when, makeEnv(r, s), true))) q[`scene:${tr.id}`] = { type: "noul", instructions: fill(tr.whenScene, player) };
   }
 
   // A contest the prose starts (only a full swing ends one, so there is no "is it over?" question).

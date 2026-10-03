@@ -177,7 +177,7 @@ live_choices:                         # 3 choices written for each reply; each c
 triggers:
   exhausted: { when: "energy <= 0", do: { add_condition: [exhausted], hint: "{{user}} is running on empty." } }   # fires once when it becomes true
   drain: { when: "stress >= 80", repeat: true, do: { energy: -2 } }   # every turn while true
-  danger: { when_scene: "{{user}} is in immediate danger", do: { stress: +5 } }   # plain words, judged after the reply; fires on the next turn
+  danger: { when_scene: "{{user}} is in immediate danger", do: { stress: +5 } }   # plain words, judged after the reply (only while its when:, if any, holds); fires on the next turn
   # WHEN RULES RUN: in declaration order, in passes until nothing changes, in every batch of changes: the turn's own resolve (before
   #   the reply), the post-reply read (turn is already the next turn there), the greeting read and a hand edit.
   #   An edge rule fires each time its condition turns true (in any batch). A repeat: rule runs once per player turn, in the turn's own

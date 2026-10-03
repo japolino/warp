@@ -301,3 +301,20 @@ describe("names", () => {
     expect(newNames("The door opens. Miu looks up as Jonah walks in.", ["Miu"])).toEqual(["Jonah"]);
   });
 });
+
+describe("scene rules (F3)", () => {
+  test("a when_scene rule is asked only while its when: holds", () => {
+    const r = load(`style: story
+flags:
+  at_ball: { start: false }
+triggers:
+  dance: { when: "flag('at_ball')", when_scene: "{{user}} dances with someone", do: { hint: "A dance." } }
+  danger: { when_scene: "{{user}} is in danger", do: { hint: "Danger." } }
+`);
+    const s = cloneState(initialState(r));
+    const ask = (st: GameState) => Object.keys(bookkeepingQuestions({ r, s: st, playerText: "", reply: "Time passes.", player: "Sam", applied: null }).questions).filter((k) => k.startsWith("scene:"));
+    expect(ask(s)).toEqual(["scene:danger"]);
+    applyEvent(s, { t: "flag", key: "at_ball", v: true, src: "manual" }, r);
+    expect(ask(s)).toEqual(["scene:dance", "scene:danger"]);
+  });
+});
