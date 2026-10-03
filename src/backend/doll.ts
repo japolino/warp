@@ -6,6 +6,9 @@ import { PRESETS } from "../frontend/doll/body.js";
 import { EARS, EXPRESSIONS, HAIR_STYLES, HORNS, TAILS } from "../frontend/doll/features.js";
 import { FITS, HEMS, KINDS, LENGTHS, MATERIALS, NECKLINES, PATTERNS, SLEEVE_FITS, SLEEVES, STYLES } from "../frontend/doll/garments.js";
 import { cleanLook, NAMED } from "../frontend/doll/outfits.js";
+import type { Look } from "../frontend/doll/render.js";
+import { applyChanges, describeLook, dollChangeQuestions, dollDetailQuestions, dollQuestions, finishChanges, lookFromAnswers } from "./doll-questions.js";
+import { getDecider, JevDecider } from "./deciders.js";
 import type { DollRequest } from "../shared/protocol.js";
 import { ask } from "./helpers.js";
 import { host, logError, send, toast } from "./host.js";
@@ -89,29 +92,33 @@ export async function dollLook(m: DollRequest, userId?: string): Promise<void> {
   try {
     const settings = await getSettings(userId);
     const parts: string[] = [];
+    /** What a classifier reads: plain facts, no instructions. */
+    const context: Record<string, unknown> = {};
     if (m.source === "text") {
       const text = String(m.text ?? "").trim().slice(0, 3000);
-      if (text) parts.push(`Describe this look:\n${text}`);
+      if (text) { parts.push(`Describe this look:\n${text}`); context.description = text; }
     } else if (who === "you") {
       name = ((await macro("{{user}}", m.chatId, userId)) || "the player").slice(0, 80);
       const persona = await macro("{{persona}}", m.chatId, userId);
       parts.push(`Who: ${name}, the player character.`);
-      if (persona) parts.push(`Their persona:\n${persona.slice(0, 3000)}`);
+      if (persona) { parts.push(`Their persona:\n${persona.slice(0, 3000)}`); context.description = persona.slice(0, 3000); }
     } else {
       parts.push(who && who !== "them" ? `Who: ${who}.` : "Who: the other person in the scene.");
       if (m.chatId && who && who !== "them") {
         const p = await personProfile(m.chatId, who, userId);
-        if (p.text) parts.push(p.text);
-        if (p.setting) parts.push(`The setting:\n${p.setting}`);
+        if (p.text) { parts.push(p.text); context.description = p.text; }
+        if (p.setting) { parts.push(`The setting:\n${p.setting}`); context.setting = p.setting; }
       }
     }
     const worn = (m.worn ?? []).filter((w) => typeof w === "string").slice(0, 16).map((w) => w.slice(0, 120));
+    if (worn.length) context.wearing_now_in_the_game = worn;
     if (worn.length) parts.push(`What the game says they are wearing now (keep all of these; describe each as a garment):\n${worn.map((w) => `- ${w}`).join("\n")}`);
     if (m.source === "story" && m.chatId) {
       const msgs = await getMessages(m.chatId);
       const recent = msgs.slice(-6).map((x) => `${x.is_user ? "(player)" : "(story)"} ${x.content.slice(0, 1500)}`).join("\n\n");
       parts.push(`Their look right now:\n${JSON.stringify(m.current ?? {}).slice(0, 4000)}`);
       parts.push(`The latest story:\n${recent}`);
+      context.latest_story = msgs.slice(-3).map((x) => x.content.slice(0, 2500)).join("\n\n");
       parts.push(`Return the whole look, changed only where the latest story changed it (clothes put on, taken off, torn, swapped; hair let down; a transformation). If nothing changed, return it as it was.`);
     } else if (m.source !== "text" && m.current) {
       parts.push(`Their current look, for reference (replace it): ${JSON.stringify(m.current).slice(0, 2000)}`);
@@ -119,12 +126,18 @@ export async function dollLook(m: DollRequest, userId?: string): Promise<void> {
     if (m.chatId && m.source === "profile") {
       const msgs = await getMessages(m.chatId).catch(() => []);
       const tail = msgs.slice(-3).map((x) => x.content.slice(0, 800)).join("\n\n");
-      if (tail) parts.push(`The story lately (for what they're wearing now):\n${tail}`);
+      if (tail) { parts.push(`The story lately (for what they're wearing now):\n${tail}`); context.story_lately = tail; }
     }
     const enough = m.source === "text" ? parts.length > 0 : m.source === "story" ? !!m.chatId : who === "you" ? parts.length > 1 : parts.length > 1;
     if (!enough) {
       send({ type: "doll_look", who: m.who, look: null, note: "", error: m.source === "text" ? "Describe the look first." : "Nothing to go on yet: open a chat with them, or describe the look." }, userId);
       return;
+    }
+    // With a classifier set up, answer typed questions (fast, and always well-formed); the writing model is the fallback.
+    const decider = await getDecider(settings, userId).catch(() => null);
+    if (decider instanceof JevDecider) {
+      const done = await classify(decider, m, who === "you" ? name : who && who !== "them" ? who : "the other person", context).catch((e) => { logError("doll classifier", e); return null; });
+      if (done) { send({ type: "doll_look", who: m.who, look: done.look, note: done.note, ...(who !== "them" ? { name } : {}) }, userId); return; }
     }
     const got = lookFrom(await ask(DOLL_SYSTEM, parts.join("\n\n"), settings, userId, 60000, { temperature: 0.6 }));
     if (!got) throw new Error("the helper didn't send a look");
@@ -135,4 +148,26 @@ export async function dollLook(m: DollRequest, userId?: string): Promise<void> {
     toast("warning", "The helper couldn't dress the doll this time. Try again, or describe the look.", userId);
     send({ type: "doll_look", who: m.who, look: null, note: "", error: String((e as Error)?.message ?? e).slice(0, 200) }, userId);
   }
+}
+
+/** The classifier path: one batch of typed questions (two for a story change with something new). */
+export async function classify(d: JevDecider, m: DollRequest, who: string, context: Record<string, unknown>): Promise<{ look: Look; note: string } | null> {
+  if (m.source === "story") {
+    const current = cleanLook(m.current);
+    const story = String(context.latest_story ?? "");
+    if (!story) return null;
+    const before = describeLook(current);
+    const gate = await d.ask({ who, how_they_looked_before: before, latest_story: story }, dollChangeQuestions(who), { timeoutMs: 15000 });
+    const ch = applyChanges(current, gate);
+    if (!ch) return { look: current, note: "Nothing about their look changed in the latest replies." };
+    const done = ch.needs.size || ch.hair || ch.hairColour || ch.body
+      ? finishChanges(ch, await d.ask({ who, latest_story: story, how_they_looked_before: before }, dollDetailQuestions(who), { timeoutMs: 15000 }), who)
+      : { look: ch.look, changed: ch.changed };
+    return { look: done.look, note: done.changed.length ? `Changed: ${done.changed.join(", ")}.` : "Nothing about their look changed in the latest replies." };
+  }
+  if (!context.description && !context.story_lately && !context.wearing_now_in_the_game) return null;
+  const answers = await d.ask({ who, ...context }, dollQuestions(who), { timeoutMs: 15000 });
+  if (!Object.keys(answers).length) return null;
+  const { look, guessed } = lookFromAnswers(answers, who);
+  return { look, note: guessed.length ? `Guessed: ${guessed.join("; ")}.` : "" };
 }

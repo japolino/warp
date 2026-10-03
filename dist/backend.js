@@ -19068,6 +19068,315 @@ var init_settings = __esm(() => {
   writes = new Map;
 });
 
+// src/shared/classifier-config.ts
+function classifierIssue(format, model, url) {
+  const path = (() => {
+    try {
+      return new URL(url).pathname.replace(/\/+$/, "");
+    } catch {
+      return "";
+    }
+  })();
+  const jev = /^(?:~?typesafe\/)?jev(?:[-./]|$)/i.test(model.trim());
+  if (format === "openai" && (jev || /\/(?:alpha\/decisions|systemone)(?:\/chat\/completions)?$/.test(path)))
+    return `Jev and decisions endpoints require Typed questions (TypeSafe API). For Jev on OpenRouter, use ${OPENROUTER_JEV.jevUrl} with model ${OPENROUTER_JEV.jevModel}, or choose the Jev on OpenRouter preset.`;
+  if (format === "typesafe" && /\/chat\/completions$/.test(path))
+    return `This URL is a chat endpoint. For Jev on OpenRouter, use ${OPENROUTER_JEV.jevUrl} with Typed questions (TypeSafe API). For a text model, select OpenAI-compatible chat.`;
+  return null;
+}
+var OPENROUTER_JEV;
+var init_classifier_config = __esm(() => {
+  OPENROUTER_JEV = {
+    decider: "jev",
+    jevFormat: "typesafe",
+    jevModel: "typesafe/jev-1.13",
+    jevUrl: "https://openrouter.ai/api/alpha/decisions"
+  };
+});
+
+// src/backend/deciders.ts
+async function post(url, headers, body, signal) {
+  signal.throwIfAborted();
+  const call = (async () => {
+    try {
+      const r = await host().cors(url, { method: "POST", headers, body, signal });
+      signal.throwIfAborted();
+      return { status: r.status, body: r.body };
+    } catch (e) {
+      signal.throwIfAborted();
+      if (typeof fetch !== "function")
+        throw e;
+      const r = await fetch(url, { method: "POST", headers, body, signal });
+      return { status: r.status, body: await r.text() };
+    }
+  })();
+  return abortable(call, signal);
+}
+function abortable(call, signal) {
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason ?? new DeciderError("Decision model canceled"));
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted)
+      abort();
+    call.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
+}
+async function postJson(url, key, body, timeoutMs, who, supplied) {
+  const headers = { "Content-Type": "application/json", ...key ? { Authorization: `Bearer ${key}` } : {} };
+  let delay = 400;
+  const controller = new AbortController;
+  const onAbort = () => controller.abort(supplied?.reason);
+  supplied?.addEventListener("abort", onAbort, { once: true });
+  if (supplied?.aborted)
+    onAbort();
+  const timer = setTimeout(() => controller.abort(new DeciderError("Decision model timed out")), Math.max(1, timeoutMs));
+  try {
+    for (let attempt = 0;; attempt++) {
+      const res = await post(url, headers, body, controller.signal);
+      if (res.status === 200)
+        return res.body;
+      if ((res.status === 429 || res.status === 529 || res.status === 503) && attempt < 2) {
+        await abortable(new Promise((r) => setTimeout(r, delay)), controller.signal);
+        delay *= 3;
+        continue;
+      }
+      const hint = res.status === 401 || res.status === 403 ? `the ${who} API key was rejected` : res.status === 404 ? `${who} wasn't found at ${url}` : res.status === 422 ? `${who} rejected the request` : `${who} returned ${res.status}`;
+      throw new DeciderError(`${hint}${res.body ? `: ${res.body.slice(0, 200)}` : ""}`);
+    }
+  } finally {
+    clearTimeout(timer);
+    supplied?.removeEventListener("abort", onAbort);
+  }
+}
+
+class JevDecider {
+  key;
+  model;
+  url;
+  id = "jev";
+  canWrite = false;
+  constructor(key, model, url = JEV_URL) {
+    this.key = key;
+    this.model = model;
+    this.url = url;
+  }
+  async ask(state, questions, opts = {}) {
+    if (!Object.keys(questions).length)
+      return {};
+    const issue = classifierIssue("typesafe", this.model, this.url);
+    if (issue)
+      throw new DeciderError(issue);
+    const body = JSON.stringify({ model: this.model || "jev-latest", state, questions });
+    const who = this.url === JEV_URL ? "Jev" : "The classifier";
+    const parsed = JSON.parse(await postJson(this.url || JEV_URL, this.key, body, opts.timeoutMs ?? 8000, who, opts.signal));
+    return parsed.answers ?? {};
+  }
+}
+
+class ChatEndpointDecider {
+  key;
+  model;
+  url;
+  id = "jev";
+  canWrite = false;
+  constructor(key, model, url) {
+    this.key = key;
+    this.model = model;
+    this.url = url;
+  }
+  async ask(state, questions, opts = {}) {
+    const ids = Object.keys(questions);
+    if (!ids.length)
+      return {};
+    const issue = classifierIssue("openai", this.model, this.url);
+    if (issue)
+      throw new DeciderError(issue);
+    const { system, user } = typedPrompt(state, questions);
+    const url = /\/chat\/completions\/?$/.test(this.url) ? this.url : `${this.url.replace(/\/+$/, "")}/chat/completions`;
+    const body = JSON.stringify({ model: this.model, messages: [{ role: "system", content: system }, { role: "user", content: user }], temperature: 0, max_tokens: 60 + ids.length * 30 });
+    const parsed = JSON.parse(await postJson(url, this.key, body, opts.timeoutMs ?? 15000, "The classifier", opts.signal));
+    return typedAnswers(firstJson(parsed.choices?.[0]?.message?.content ?? "") ?? {}, questions);
+  }
+}
+function firstJson(text) {
+  const s = text.replace(/```(?:json)?/gi, "");
+  const start = s.indexOf("{");
+  const end = s.lastIndexOf("}");
+  if (start < 0 || end <= start)
+    return null;
+  try {
+    return JSON.parse(s.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+function typedPrompt(state, questions) {
+  const ids = Object.keys(questions);
+  const lines = ids.map((id) => {
+    const q = questions[id];
+    if (q.type === "choice")
+      return `${id} (choice) — ${q.instructions}
+${Object.entries(q.criteria).map(([k, v]) => `    "${k}": ${v}`).join(`
+`)}`;
+    if (q.type === "score")
+      return `${id} (score 0–${q.criteria.length - 1}) — ${q.instructions}
+${q.criteria.map((c, i) => `    ${i}: ${c}`).join(`
+`)}`;
+    return `${id} (yes/no) — ${q.instructions}`;
+  });
+  const system = [
+    "You answer typed questions about a roleplay game's current situation. You never write story.",
+    "Answer every question. Reply with JSON only, one key per question id:",
+    '  choice → {"choice": "<option key>", "confidence": 0.0–1.0}',
+    '  score  → {"level": <integer>, "confidence": 0.0–1.0}',
+    '  yes/no → {"p": <probability it is true, 0.0–1.0>}',
+    "Be honest about confidence: 0.5 means a coin flip."
+  ].join(`
+`);
+  const user = `State:
+${typeof state === "string" ? state : JSON.stringify(state, null, 1)}
+
+Questions:
+${lines.join(`
+
+`)}`;
+  return { system, user };
+}
+function typedAnswers(raw, questions) {
+  const out = {};
+  for (const id of Object.keys(questions)) {
+    const q = questions[id];
+    const a = raw[id] ?? {};
+    const conf = clamp01(Number(a.confidence ?? 0.6));
+    if (q.type === "choice") {
+      const keys = Object.keys(q.criteria);
+      const pick = typeof a.choice === "string" && keys.includes(a.choice) ? a.choice : null;
+      if (!pick)
+        continue;
+      const rest = keys.length > 1 ? (1 - conf) / (keys.length - 1) : 0;
+      out[id] = { type: "choice", choice: pick, confidence: conf, probabilities: Object.fromEntries(keys.map((k) => [k, k === pick ? conf : rest])) };
+    } else if (q.type === "score") {
+      const n = q.criteria.length;
+      const level = Math.max(0, Math.min(n - 1, Math.round(Number(a.level))));
+      if (!Number.isFinite(level))
+        continue;
+      const rest = n > 1 ? (1 - conf) / (n - 1) : 0;
+      out[id] = { type: "score", score: level, confidence: conf, probabilities: Object.fromEntries(q.criteria.map((_, i) => [String(i), i === level ? conf : rest])) };
+    } else {
+      const p = Number(a.p ?? a.probability ?? a.noul);
+      if (Number.isFinite(p))
+        out[id] = { type: "noul", noul: clamp01(p) };
+    }
+  }
+  return out;
+}
+
+class LlmDecider {
+  settings;
+  userId;
+  id = "llm";
+  canWrite = true;
+  constructor(settings, userId) {
+    this.settings = settings;
+    this.userId = userId;
+  }
+  async ask(state, questions, opts = {}) {
+    const ids = Object.keys(questions);
+    if (!ids.length)
+      return {};
+    const { system, user } = typedPrompt(state, questions);
+    const res = await host().generate.quiet({
+      type: "quiet",
+      messages: [{ role: "system", content: system }, { role: "user", content: user }],
+      connection_id: this.settings.helperConnectionId || undefined,
+      reasoning: { source: "off" },
+      parameters: { temperature: 0, max_tokens: 60 + ids.length * 30 },
+      userId: this.userId,
+      signal: opts.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(Math.max(1, opts.timeoutMs ?? 20000))]) : AbortSignal.timeout(Math.max(1, opts.timeoutMs ?? 20000))
+    });
+    return typedAnswers(firstJson(typeof res === "string" ? res : res?.content ?? "") ?? {}, questions);
+  }
+}
+
+class RulesDecider {
+  id = "rules";
+  canWrite = false;
+  async ask(state, questions) {
+    const text = typeof state === "string" ? state : JSON.stringify(state?.player_message ?? state);
+    const have = words(text);
+    const out = {};
+    for (const [id, q] of Object.entries(questions)) {
+      if (q.type === "choice") {
+        const keys = Object.keys(q.criteria);
+        const scores = {};
+        for (const k of keys) {
+          const want = words(`${k.replace(/_/g, " ")} ${q.criteria[k]}`);
+          let hit = 0;
+          for (const w of want)
+            if (have.has(w))
+              hit++;
+          scores[k] = 0.15 + hit;
+        }
+        const p = normalize(scores, keys);
+        const best = keys.reduce((a, b) => p[b] > p[a] ? b : a);
+        out[id] = { type: "choice", choice: best, probabilities: p, confidence: Math.min(0.6, p[best]) };
+      } else if (q.type === "score") {
+        const mid = Math.floor((q.criteria.length - 1) / 2);
+        out[id] = { type: "score", score: mid, confidence: 0.2, probabilities: Object.fromEntries(q.criteria.map((_, i) => [String(i), 1 / q.criteria.length])) };
+      } else {
+        out[id] = { type: "noul", noul: 0.5 };
+      }
+    }
+    return out;
+  }
+}
+function clamp01(n) {
+  return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0.5;
+}
+async function getDecider(settings, userId) {
+  if (settings.decider === "rules")
+    return new RulesDecider;
+  if (settings.decider === "jev") {
+    const issue = classifierIssue(settings.jevFormat ?? "typesafe", settings.jevModel, settings.jevUrl || JEV_URL);
+    if (issue)
+      throw new DeciderError(issue);
+    let key = null;
+    try {
+      key = await host().enclave.get(JEV_KEY, userId);
+    } catch {}
+    const url = settings.jevUrl?.trim() || JEV_URL;
+    if (settings.jevFormat === "openai")
+      return new ChatEndpointDecider(key ?? "", settings.jevModel, url);
+    if (key || url !== JEV_URL)
+      return new JevDecider(key ?? "", settings.jevModel, url);
+  }
+  return new LlmDecider(settings, userId);
+}
+async function getTurnDecider(settings, userId) {
+  try {
+    const decider = await getDecider(settings, userId);
+    fallbackNotices.delete(userId ?? "_");
+    return decider;
+  } catch (error) {
+    logError("decision model setup", error);
+    const reason = error instanceof Error ? error.message : String(error);
+    const key = userId ?? "_";
+    if (fallbackNotices.get(key) !== reason) {
+      fallbackNotices.set(key, reason);
+      toast("warning", `Using rulebook outcomes because the decision model isn't configured: ${reason}`, userId);
+    }
+    return new RulesDecider;
+  }
+}
+var JEV_KEY = "jev_api_key", JEV_URL = "https://api.typesafe.ai/v1/systemone", DeciderError, STOP, words = (s) => new Set(s.toLowerCase().split(/[^a-z0-9']+/).filter((w) => w.length > 2 && !STOP.has(w))), fallbackNotices;
+var init_deciders = __esm(() => {
+  init_classifier_config();
+  DeciderError = class DeciderError extends Error {
+  };
+  STOP = new Set("a an the to of and or in on at for with my i me you your it is be do try tries trying".split(" "));
+  fallbackNotices = new Map;
+});
+
 // src/engine/dungeon/battle.ts
 function say(b, line) {
   b.log = [...b.log, line].slice(-LOG_KEPT);
@@ -21555,7 +21864,7 @@ var init_view = __esm(() => {
 });
 
 // src/backend/helpers.ts
-function firstJson(text) {
+function firstJson2(text) {
   const cleaned = text.replace(/```(?:json)?/gi, "");
   const start = cleaned.indexOf("{");
   if (start < 0)
@@ -21705,7 +22014,7 @@ async function extract(r, s, playerText, reply, settings, userId, only, applied)
   ].join(`
 `);
   try {
-    const out = firstJson(await ask(system, user, settings, userId, 30000));
+    const out = firstJson2(await ask(system, user, settings, userId, 30000));
     if (!out)
       return null;
     const p = out;
@@ -22611,315 +22920,6 @@ var init_decisions = __esm(() => {
   TIME_MINUTES = [0, 5, 30, 60, 180, 480];
 });
 
-// src/shared/classifier-config.ts
-function classifierIssue(format, model, url) {
-  const path = (() => {
-    try {
-      return new URL(url).pathname.replace(/\/+$/, "");
-    } catch {
-      return "";
-    }
-  })();
-  const jev = /^(?:~?typesafe\/)?jev(?:[-./]|$)/i.test(model.trim());
-  if (format === "openai" && (jev || /\/(?:alpha\/decisions|systemone)(?:\/chat\/completions)?$/.test(path)))
-    return `Jev and decisions endpoints require Typed questions (TypeSafe API). For Jev on OpenRouter, use ${OPENROUTER_JEV.jevUrl} with model ${OPENROUTER_JEV.jevModel}, or choose the Jev on OpenRouter preset.`;
-  if (format === "typesafe" && /\/chat\/completions$/.test(path))
-    return `This URL is a chat endpoint. For Jev on OpenRouter, use ${OPENROUTER_JEV.jevUrl} with Typed questions (TypeSafe API). For a text model, select OpenAI-compatible chat.`;
-  return null;
-}
-var OPENROUTER_JEV;
-var init_classifier_config = __esm(() => {
-  OPENROUTER_JEV = {
-    decider: "jev",
-    jevFormat: "typesafe",
-    jevModel: "typesafe/jev-1.13",
-    jevUrl: "https://openrouter.ai/api/alpha/decisions"
-  };
-});
-
-// src/backend/deciders.ts
-async function post(url, headers, body, signal) {
-  signal.throwIfAborted();
-  const call = (async () => {
-    try {
-      const r = await host().cors(url, { method: "POST", headers, body, signal });
-      signal.throwIfAborted();
-      return { status: r.status, body: r.body };
-    } catch (e) {
-      signal.throwIfAborted();
-      if (typeof fetch !== "function")
-        throw e;
-      const r = await fetch(url, { method: "POST", headers, body, signal });
-      return { status: r.status, body: await r.text() };
-    }
-  })();
-  return abortable(call, signal);
-}
-function abortable(call, signal) {
-  return new Promise((resolve, reject) => {
-    const abort = () => reject(signal.reason ?? new DeciderError("Decision model canceled"));
-    signal.addEventListener("abort", abort, { once: true });
-    if (signal.aborted)
-      abort();
-    call.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
-  });
-}
-async function postJson(url, key, body, timeoutMs, who, supplied) {
-  const headers = { "Content-Type": "application/json", ...key ? { Authorization: `Bearer ${key}` } : {} };
-  let delay = 400;
-  const controller = new AbortController;
-  const onAbort = () => controller.abort(supplied?.reason);
-  supplied?.addEventListener("abort", onAbort, { once: true });
-  if (supplied?.aborted)
-    onAbort();
-  const timer = setTimeout(() => controller.abort(new DeciderError("Decision model timed out")), Math.max(1, timeoutMs));
-  try {
-    for (let attempt = 0;; attempt++) {
-      const res = await post(url, headers, body, controller.signal);
-      if (res.status === 200)
-        return res.body;
-      if ((res.status === 429 || res.status === 529 || res.status === 503) && attempt < 2) {
-        await abortable(new Promise((r) => setTimeout(r, delay)), controller.signal);
-        delay *= 3;
-        continue;
-      }
-      const hint = res.status === 401 || res.status === 403 ? `the ${who} API key was rejected` : res.status === 404 ? `${who} wasn't found at ${url}` : res.status === 422 ? `${who} rejected the request` : `${who} returned ${res.status}`;
-      throw new DeciderError(`${hint}${res.body ? `: ${res.body.slice(0, 200)}` : ""}`);
-    }
-  } finally {
-    clearTimeout(timer);
-    supplied?.removeEventListener("abort", onAbort);
-  }
-}
-
-class JevDecider {
-  key;
-  model;
-  url;
-  id = "jev";
-  canWrite = false;
-  constructor(key, model, url = JEV_URL) {
-    this.key = key;
-    this.model = model;
-    this.url = url;
-  }
-  async ask(state, questions, opts = {}) {
-    if (!Object.keys(questions).length)
-      return {};
-    const issue = classifierIssue("typesafe", this.model, this.url);
-    if (issue)
-      throw new DeciderError(issue);
-    const body = JSON.stringify({ model: this.model || "jev-latest", state, questions });
-    const who = this.url === JEV_URL ? "Jev" : "The classifier";
-    const parsed = JSON.parse(await postJson(this.url || JEV_URL, this.key, body, opts.timeoutMs ?? 8000, who, opts.signal));
-    return parsed.answers ?? {};
-  }
-}
-
-class ChatEndpointDecider {
-  key;
-  model;
-  url;
-  id = "jev";
-  canWrite = false;
-  constructor(key, model, url) {
-    this.key = key;
-    this.model = model;
-    this.url = url;
-  }
-  async ask(state, questions, opts = {}) {
-    const ids = Object.keys(questions);
-    if (!ids.length)
-      return {};
-    const issue = classifierIssue("openai", this.model, this.url);
-    if (issue)
-      throw new DeciderError(issue);
-    const { system, user } = typedPrompt(state, questions);
-    const url = /\/chat\/completions\/?$/.test(this.url) ? this.url : `${this.url.replace(/\/+$/, "")}/chat/completions`;
-    const body = JSON.stringify({ model: this.model, messages: [{ role: "system", content: system }, { role: "user", content: user }], temperature: 0, max_tokens: 60 + ids.length * 30 });
-    const parsed = JSON.parse(await postJson(url, this.key, body, opts.timeoutMs ?? 15000, "The classifier", opts.signal));
-    return typedAnswers(firstJson2(parsed.choices?.[0]?.message?.content ?? "") ?? {}, questions);
-  }
-}
-function firstJson2(text) {
-  const s = text.replace(/```(?:json)?/gi, "");
-  const start = s.indexOf("{");
-  const end = s.lastIndexOf("}");
-  if (start < 0 || end <= start)
-    return null;
-  try {
-    return JSON.parse(s.slice(start, end + 1));
-  } catch {
-    return null;
-  }
-}
-function typedPrompt(state, questions) {
-  const ids = Object.keys(questions);
-  const lines = ids.map((id) => {
-    const q = questions[id];
-    if (q.type === "choice")
-      return `${id} (choice) — ${q.instructions}
-${Object.entries(q.criteria).map(([k, v]) => `    "${k}": ${v}`).join(`
-`)}`;
-    if (q.type === "score")
-      return `${id} (score 0–${q.criteria.length - 1}) — ${q.instructions}
-${q.criteria.map((c, i) => `    ${i}: ${c}`).join(`
-`)}`;
-    return `${id} (yes/no) — ${q.instructions}`;
-  });
-  const system = [
-    "You answer typed questions about a roleplay game's current situation. You never write story.",
-    "Answer every question. Reply with JSON only, one key per question id:",
-    '  choice → {"choice": "<option key>", "confidence": 0.0–1.0}',
-    '  score  → {"level": <integer>, "confidence": 0.0–1.0}',
-    '  yes/no → {"p": <probability it is true, 0.0–1.0>}',
-    "Be honest about confidence: 0.5 means a coin flip."
-  ].join(`
-`);
-  const user = `State:
-${typeof state === "string" ? state : JSON.stringify(state, null, 1)}
-
-Questions:
-${lines.join(`
-
-`)}`;
-  return { system, user };
-}
-function typedAnswers(raw, questions) {
-  const out = {};
-  for (const id of Object.keys(questions)) {
-    const q = questions[id];
-    const a = raw[id] ?? {};
-    const conf = clamp01(Number(a.confidence ?? 0.6));
-    if (q.type === "choice") {
-      const keys = Object.keys(q.criteria);
-      const pick = typeof a.choice === "string" && keys.includes(a.choice) ? a.choice : null;
-      if (!pick)
-        continue;
-      const rest = keys.length > 1 ? (1 - conf) / (keys.length - 1) : 0;
-      out[id] = { type: "choice", choice: pick, confidence: conf, probabilities: Object.fromEntries(keys.map((k) => [k, k === pick ? conf : rest])) };
-    } else if (q.type === "score") {
-      const n = q.criteria.length;
-      const level = Math.max(0, Math.min(n - 1, Math.round(Number(a.level))));
-      if (!Number.isFinite(level))
-        continue;
-      const rest = n > 1 ? (1 - conf) / (n - 1) : 0;
-      out[id] = { type: "score", score: level, confidence: conf, probabilities: Object.fromEntries(q.criteria.map((_, i) => [String(i), i === level ? conf : rest])) };
-    } else {
-      const p = Number(a.p ?? a.probability ?? a.noul);
-      if (Number.isFinite(p))
-        out[id] = { type: "noul", noul: clamp01(p) };
-    }
-  }
-  return out;
-}
-
-class LlmDecider {
-  settings;
-  userId;
-  id = "llm";
-  canWrite = true;
-  constructor(settings, userId) {
-    this.settings = settings;
-    this.userId = userId;
-  }
-  async ask(state, questions, opts = {}) {
-    const ids = Object.keys(questions);
-    if (!ids.length)
-      return {};
-    const { system, user } = typedPrompt(state, questions);
-    const res = await host().generate.quiet({
-      type: "quiet",
-      messages: [{ role: "system", content: system }, { role: "user", content: user }],
-      connection_id: this.settings.helperConnectionId || undefined,
-      reasoning: { source: "off" },
-      parameters: { temperature: 0, max_tokens: 60 + ids.length * 30 },
-      userId: this.userId,
-      signal: opts.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(Math.max(1, opts.timeoutMs ?? 20000))]) : AbortSignal.timeout(Math.max(1, opts.timeoutMs ?? 20000))
-    });
-    return typedAnswers(firstJson2(typeof res === "string" ? res : res?.content ?? "") ?? {}, questions);
-  }
-}
-
-class RulesDecider {
-  id = "rules";
-  canWrite = false;
-  async ask(state, questions) {
-    const text = typeof state === "string" ? state : JSON.stringify(state?.player_message ?? state);
-    const have = words(text);
-    const out = {};
-    for (const [id, q] of Object.entries(questions)) {
-      if (q.type === "choice") {
-        const keys = Object.keys(q.criteria);
-        const scores = {};
-        for (const k of keys) {
-          const want = words(`${k.replace(/_/g, " ")} ${q.criteria[k]}`);
-          let hit = 0;
-          for (const w of want)
-            if (have.has(w))
-              hit++;
-          scores[k] = 0.15 + hit;
-        }
-        const p = normalize(scores, keys);
-        const best = keys.reduce((a, b) => p[b] > p[a] ? b : a);
-        out[id] = { type: "choice", choice: best, probabilities: p, confidence: Math.min(0.6, p[best]) };
-      } else if (q.type === "score") {
-        const mid = Math.floor((q.criteria.length - 1) / 2);
-        out[id] = { type: "score", score: mid, confidence: 0.2, probabilities: Object.fromEntries(q.criteria.map((_, i) => [String(i), 1 / q.criteria.length])) };
-      } else {
-        out[id] = { type: "noul", noul: 0.5 };
-      }
-    }
-    return out;
-  }
-}
-function clamp01(n) {
-  return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0.5;
-}
-async function getDecider(settings, userId) {
-  if (settings.decider === "rules")
-    return new RulesDecider;
-  if (settings.decider === "jev") {
-    const issue = classifierIssue(settings.jevFormat ?? "typesafe", settings.jevModel, settings.jevUrl || JEV_URL);
-    if (issue)
-      throw new DeciderError(issue);
-    let key = null;
-    try {
-      key = await host().enclave.get(JEV_KEY, userId);
-    } catch {}
-    const url = settings.jevUrl?.trim() || JEV_URL;
-    if (settings.jevFormat === "openai")
-      return new ChatEndpointDecider(key ?? "", settings.jevModel, url);
-    if (key || url !== JEV_URL)
-      return new JevDecider(key ?? "", settings.jevModel, url);
-  }
-  return new LlmDecider(settings, userId);
-}
-async function getTurnDecider(settings, userId) {
-  try {
-    const decider = await getDecider(settings, userId);
-    fallbackNotices.delete(userId ?? "_");
-    return decider;
-  } catch (error) {
-    logError("decision model setup", error);
-    const reason = error instanceof Error ? error.message : String(error);
-    const key = userId ?? "_";
-    if (fallbackNotices.get(key) !== reason) {
-      fallbackNotices.set(key, reason);
-      toast("warning", `Using rulebook outcomes because the decision model isn't configured: ${reason}`, userId);
-    }
-    return new RulesDecider;
-  }
-}
-var JEV_KEY = "jev_api_key", JEV_URL = "https://api.typesafe.ai/v1/systemone", DeciderError, STOP, words = (s) => new Set(s.toLowerCase().split(/[^a-z0-9']+/).filter((w) => w.length > 2 && !STOP.has(w))), fallbackNotices;
-var init_deciders = __esm(() => {
-  init_classifier_config();
-  DeciderError = class DeciderError extends Error {
-  };
-  STOP = new Set("a an the to of and or in on at for with my i me you your it is be do try tries trying".split(" "));
-  fallbackNotices = new Map;
-});
-
 // src/backend/operations.ts
 function takeOperation(chatId) {
   if (busyChats.has(chatId))
@@ -23103,7 +23103,7 @@ ${fillNames(outcome, o.player)}` : ""
 
 `);
   try {
-    const raw = firstJson(await ask(SYSTEM, user, settings, userId, 15000, { temperature: 0.9 }));
+    const raw = firstJson2(await ask(SYSTEM, user, settings, userId, 15000, { temperature: 0.9 }));
     const lines = Array.isArray(raw?.lines) ? raw.lines : [];
     const out = [];
     for (const l of lines.slice(0, MAX_LINES)) {
@@ -23488,7 +23488,7 @@ async function writeLiveChoices(opts) {
   const user = ["Current state:", stateDigest(r, s), "", "Narrator's latest reply:", clip3(opts.reply, 4000)].join(`
 `);
   try {
-    const out = firstJson(await ask(system, user, settings, opts.userId, 25000, { temperature: 0.8 }));
+    const out = firstJson2(await ask(system, user, settings, opts.userId, 25000, { temperature: 0.8 }));
     return cleanChoices(r, s, tags, out?.choices, count);
   } catch (e) {
     logError("live choices", e);
@@ -29074,7 +29074,284 @@ function cleanLook(raw) {
   return look;
 }
 
+// src/backend/doll-questions.ts
+var choice = (instructions, criteria) => ({ type: "choice", instructions, criteria });
+var score = (instructions, criteria) => ({ type: "score", instructions, criteria });
+var yes = (instructions) => ({ type: "noul", instructions });
+var CLOTH = ["black", "charcoal", "grey", "silver", "white", "ivory", "cream", "beige", "tan", "khaki", "brown", "dark brown", "maroon", "burgundy", "crimson", "red", "coral", "pink", "rose", "magenta", "orange", "gold", "yellow", "olive", "green", "dark green", "emerald", "mint", "teal", "turquoise", "sky", "blue", "dark blue", "navy", "indigo", "violet", "purple", "lavender"];
+var HAIR = { black: "black or jet", "dark brown": "dark brown", brown: "brown or chestnut", "light brown": "light brown", auburn: "auburn", ginger: "ginger, red or copper", blonde: "blonde or golden", platinum: "platinum or white", silver: "silver or grey", pink: "pink", blue: "blue", green: "green", purple: "purple or violet" };
+var EYES = { brown: "brown or dark", hazel: "hazel", amber: "amber or gold", green: "green", emerald: "bright green", blue: "blue", sky: "pale blue or grey-blue", grey: "grey", violet: "violet or purple", red: "red or crimson", pink: "pink", gold: "golden or yellow" };
+var SKIN = {
+  pale: ["very pale, porcelain or snow-white", "#fbe3d3"],
+  fair: ["fair or light", "#f6d7c3"],
+  light: ["light with a warm tone", "#efc4a4"],
+  olive: ["olive or lightly tanned", "#d9a37e"],
+  tan: ["tanned or light brown", "#c98e65"],
+  brown: ["brown", "#a8714c"],
+  dark: ["dark brown", "#8d5a3b"],
+  deep: ["very dark", "#6a4128"],
+  blue: ["blue or blue-grey (not human)", "#c9d8e8"],
+  green: ["green (not human)", "#9fd3a8"]
+};
+function slots() {
+  const colourQ = (who, noun) => choice(`The main colour of ${who}'s ${noun}`, Object.fromEntries(CLOTH.map((c) => [c, c])));
+  const patternQ = (who, noun) => choice(`The pattern on ${who}'s ${noun}`, { none: "plain, one colour", stripes: "horizontal stripes", vstripes: "vertical stripes or pinstripes", plaid: "plaid or tartan", check: "checked or gingham", dots: "polka dots", floral: "flowers or blossoms", waves: "waves or a Japanese wave pattern", stars: "stars or moons", cow: "cow print or black-and-white patches", leopard: "leopard or animal print", fishnet: "fishnet or mesh", scales: "scales, chainmail or overlapping plates" });
+  const damageQ = (who, noun) => score(`How worn or damaged ${who}'s ${noun} is`, ["intact, clean", "worn, scuffed or stained", "torn or ripped in places", "in tatters, falling apart"]);
+  const materialQ = (who, noun) => choice(`What ${who}'s ${noun} is made of`, { cloth: "ordinary cloth, cotton, linen, wool", leather: "leather or hide", metal: "metal, steel, iron or chainmail", sheer: "see-through, sheer, lace or mesh", knit: "knitted", silk: "silk, satin or other shiny cloth" });
+  const base = (who, key, noun) => ({
+    [`${key}.colour`]: colourQ(who, noun),
+    [`${key}.pattern`]: patternQ(who, noun),
+    [`${key}.damage`]: damageQ(who, noun),
+    [`${key}.material`]: materialQ(who, noun)
+  });
+  const neckline = (who, noun) => choice(`The neckline of ${who}'s ${noun}`, { crew: "round, close to the neck (t-shirt)", scoop: "low round", v: "V-neck or plunging", wrap: "wrapped, crossing over (kimono, robe, wrap top)", collar: "shirt collar or lapels", turtle: "turtleneck or high collar", boat: "wide and shallow", strapless: "strapless or tube", offshoulder: "off the shoulders", halter: "halter, tied behind the neck" });
+  const sleeves = (who, noun) => choice(`How long the sleeves of ${who}'s ${noun} are`, { none: "no sleeves", cap: "tiny cap sleeves", short: "short sleeves", elbow: "to the elbow", three: "three-quarter", long: "long, to the wrist" });
+  const sleeveFit = (who, noun) => choice(`The shape of the sleeves of ${who}'s ${noun}`, { tight: "fitted", loose: "loose or baggy", wide: "very wide hanging sleeves (kimono)", puff: "puffed at the shoulder", bell: "flaring wide at the wrist" });
+  const legLength = (who, noun) => choice(`How far down ${who}'s ${noun} reaches`, { micro: "barely below the hips", short: "upper thigh", mid: "mid thigh", knee: "the knee", calf: "mid calf", ankle: "the ankle", floor: "the floor" });
+  const topReach = (who, noun) => choice(`Where the top of ${who}'s ${noun} sits`, { ankle: "at the ankle", calf: "mid calf", knee: "at the knee", short: "over the knee, on the thigh" });
+  const fit = (who, noun) => choice(`How ${who}'s ${noun} fits`, { tight: "tight or form-fitting", regular: "ordinary fit", loose: "loose, baggy or oversized" });
+  const S = (kind, noun, extra) => ({ kind, noun, ask: (who) => ({ ...base(who, kind, noun), ...extra(who) }) });
+  return [
+    S("top", "shirt or top", (w) => ({ "top.neckline": neckline(w, "top"), "top.sleeves": sleeves(w, "top"), "top.sleeveFit": sleeveFit(w, "top"), "top.fit": fit(w, "top"), "top.hem": choice(`Where ${w}'s top ends`, { crop: "cropped, showing the belly", waist: "at the waist", hip: "at the hips", knee: "a long tunic to the knee" }) })),
+    S("outer", "jacket, coat or vest", (w) => ({ "outer.style": choice(`What kind of outer layer ${w} wears`, { jacket: "jacket or blazer", coat: "long coat, trench coat, duster or overcoat", vest: "vest or waistcoat (no sleeves)", hoodie: "hoodie or sweatshirt" }), "outer.open": yes(`${w}'s jacket or coat hangs open at the front`), "outer.neckline": neckline(w, "jacket or coat") })),
+    S("dress", "dress", (w) => ({ "dress.neckline": neckline(w, "dress"), "dress.sleeves": sleeves(w, "dress"), "dress.sleeveFit": sleeveFit(w, "dress"), "dress.length": legLength(w, "dress"), "dress.flare": score(`How full ${w}'s dress skirt is`, ["straight or tight", "a little flared", "full and swishing", "very full, ball gown"]) })),
+    S("robe", "robe or kimono", (w) => ({ "robe.neckline": neckline(w, "robe"), "robe.sleeveFit": sleeveFit(w, "robe"), "robe.length": legLength(w, "robe") })),
+    S("armor", "armour", (w) => ({ "armor.sleeves": sleeves(w, "armour") })),
+    S("bottom", "trousers or shorts", (w) => ({ "bottom.length": legLength(w, "trousers or shorts"), "bottom.fit": fit(w, "trousers or shorts") })),
+    S("skirt", "skirt", (w) => ({ "skirt.length": legLength(w, "skirt"), "skirt.flare": score(`How full ${w}'s skirt is`, ["straight or pencil", "a little flared", "pleated or full", "very full"]) })),
+    S("legwear", "socks, stockings or tights", (w) => ({ "legwear.style": choice(`What ${w} wears on the legs`, { socks: "socks", stockings: "stockings or thigh-highs", tights: "tights or pantyhose" }), "legwear.length": topReach(w, "socks or stockings") })),
+    S("shoes", "shoes", (w) => ({ "shoes.style": choice(`What ${w} wears on the feet`, { shoes: "shoes, loafers or flats", boots: "boots", heels: "high heels", sandals: "sandals", geta: "geta or wooden clogs", sneakers: "sneakers or trainers" }), "shoes.length": topReach(w, "boots") })),
+    S("gloves", "gloves", (w) => ({ "gloves.style": choice(`${w}'s gloves`, { full: "full gloves", fingerless: "fingerless gloves, bracers or arm warmers" }), "gloves.sleeves": choice(`How far up ${w}'s gloves go`, { cap: "just the hand and wrist", short: "the forearm", elbow: "to the elbow", long: "above the elbow" }) })),
+    S("hat", "hat or headwear", (w) => ({ "hat.style": choice(`What ${w} wears on the head`, { newsboy: "flat or newsboy cap, beret", beanie: "beanie or knit cap", witch: "pointed witch or wizard hat", sunhat: "wide-brimmed hat, sun hat, cowboy or straw hat", cap: "baseball cap", crown: "crown", tiara: "tiara or circlet", headband: "headband or maid headdress", hood: "a hood, up" }) })),
+    S("neck", "necklace, collar or scarf", (w) => ({ "neck.style": choice(`What ${w} wears around the neck`, { choker: "choker", necklace: "necklace or pendant", scarf: "scarf", collar: "collar with a bell or ring" }) })),
+    S("belt", "belt", () => ({})),
+    S("sash", "sash or obi", () => ({})),
+    S("apron", "apron", () => ({})),
+    S("cape", "cape or cloak", (w) => ({ "cape.length": legLength(w, "cape or cloak") })),
+    S("sleeves", "detached sleeves", () => ({}))
+  ];
+}
+var NOT = {
+  top: " (a shirt, blouse, t-shirt or sweater; not a dress, robe, vest or jacket)",
+  outer: " (not a cloak or cape)",
+  cape: " (a cape or cloak, not a coat)",
+  belt: " (a belt, not an obi or sash)"
+};
+function dollQuestions(who) {
+  const q = {
+    sex: choice(`Is ${who} female or male?`, { f: "female: a woman or girl", m: "male: a man or boy" }),
+    build: choice(`${who}'s build`, { slim: "slim, slender, thin, petite or lithe", athletic: "athletic, fit, toned or sporty", big: "curvy or voluptuous (a woman); broad, burly or very muscular (a man)", heavy: "heavy, plump, chubby, stout or fat" }),
+    height: score(`How tall ${who} is`, ["very short or tiny", "short or petite", "average height", "tall", "very tall"]),
+    skin: choice(`${who}'s skin`, Object.fromEntries(Object.entries(SKIN).map(([k, [d]]) => [k, d]))),
+    hairStyle: choice(`${who}'s hairstyle`, { long: "long and loose, straight", bob: "a bob, chin length", ponytail: "a ponytail", twintails: "twin tails or pigtails", short: "short and neat", spiky: "short and spiky", messy: "messy, tousled or shaggy", bun: "tied up in a bun", buzz: "shaved or buzzed" }),
+    hairLength: score(`How long ${who}'s hair is`, ["shaved or very short", "short, above the ears", "chin or neck length", "to the shoulders", "past the shoulders", "to the waist or longer"]),
+    hairColour: choice(`${who}'s hair colour`, HAIR),
+    eyes: choice(`${who}'s eye colour`, EYES),
+    expression: choice(`${who}'s usual expression or manner`, { neutral: "calm or neutral", smile: "cheerful, warm or smiling", serious: "serious, stern, cold or tired", surprised: "nervous, shy or startled", smug: "smug, teasing, sly or confident" }),
+    ears: choice(`What kind of ears ${who} has`, { none: "ordinary human ears", cat: "cat ears", fox: "fox ears", wolf: "wolf or dog ears", bunny: "rabbit ears", elf: "long pointed elf ears" }),
+    tail: choice(`What kind of tail ${who} has`, { none: "no tail", fox: "one fluffy fox tail", kitsune: "several fox tails (a kitsune)", cat: "a thin cat tail", wolf: "a wolf or dog tail", demon: "a thin demon tail with a spade tip" }),
+    horns: choice(`What horns ${who} has`, { none: "no horns", small: "small horns", ram: "curled ram horns", oni: "one or two straight oni horns" }),
+    furColour: choice(`The colour of ${who}'s animal ears and tail, if any`, { hair: "the same as their hair", orange: "orange or red, like a red fox", white: "white or snowy", black: "black", grey: "grey", brown: "brown", gold: "golden", silver: "silver" })
+  };
+  for (const s of slots()) {
+    q[`${s.kind}.wears`] = yes(`${who} is wearing ${/^[aeiou]/.test(s.noun) ? "an" : "a"} ${s.noun}${NOT[s.kind] ?? ""}`);
+    Object.assign(q, s.ask(who));
+  }
+  return q;
+}
+var pickOf = (a) => a?.type === "choice" ? a : null;
+var scoreOf = (a) => a?.type === "score" ? a : null;
+var yesOf = (a) => a?.type === "noul" ? a.noul : 0;
+var SURE = 0.6;
+function lookFromAnswers(a, who, force = new Set) {
+  const guessed = [];
+  const c = (id, label) => {
+    const x = pickOf(a[id]);
+    if (x && x.confidence < SURE)
+      guessed.push(label);
+    return x?.choice;
+  };
+  const sex = c("sex", "sex") === "m" ? "m" : "f";
+  const buildPick = c("build", "build") ?? "athletic";
+  const preset = buildPick === "big" ? sex === "f" ? "curvy" : "broad" : buildPick;
+  const h = scoreOf(a.height);
+  const hairL = scoreOf(a.hairLength);
+  if (h && h.confidence < SURE)
+    guessed.push("height");
+  const hairStyle = c("hairStyle", "hairstyle") ?? "long";
+  const skinKey = c("skin", "skin") ?? "fair";
+  const look = {
+    body: { sex, preset, ...h ? { height: 0.88 + h.score / 4 * 0.24 } : {} },
+    skin: SKIN[skinKey]?.[1] ?? "#f0c8a8",
+    hair: { style: hairStyle, colour: NAMED[c("hairColour", "hair colour") ?? "brown"] ?? NAMED.brown, length: hairL ? Math.min(1, hairL.score / 5) : 0.5 },
+    eyes: NAMED[c("eyes", "eye colour") ?? "brown"] ?? "#6b4a32",
+    expression: c("expression", "expression") ?? "neutral",
+    ears: ((x) => x && x !== "none" ? x : null)(c("ears", "ears")),
+    tail: ((x) => x && x !== "none" ? x : null)(c("tail", "tail")),
+    horns: ((x) => x && x !== "none" ? x : null)(c("horns", "horns")),
+    outfit: []
+  };
+  const fur = c("furColour", "ear and tail colour");
+  const furHex = fur && fur !== "hair" ? NAMED[fur] ?? look.hair.colour : look.hair.colour;
+  if (look.ears && look.ears !== "elf")
+    look.earColour = furHex;
+  if (look.tail)
+    look.tailColour = furHex;
+  const wears = (k) => yesOf(a[`${k}.wears`]);
+  const on = new Set;
+  for (const s of slots())
+    if (wears(s.kind) >= 0.5 || force.has(s.kind))
+      on.add(s.kind);
+  const full = on.has("dress") || on.has("robe");
+  if (full) {
+    for (const k of ["top", "bottom", "skirt"])
+      if (on.has(k) && wears(k) < 0.85 && !force.has(k))
+        on.delete(k);
+  }
+  if (on.has("dress") && on.has("robe"))
+    on.delete(wears("dress") >= wears("robe") ? "robe" : "dress");
+  if (on.has("skirt") && on.has("bottom"))
+    on.delete(wears("skirt") >= wears("bottom") ? "bottom" : "skirt");
+  if (on.has("sash") && on.has("belt") && wears("belt") <= wears("sash"))
+    on.delete("belt");
+  if (on.has("armor") && on.has("outer") && wears("outer") < 0.85)
+    on.delete("outer");
+  const ORDER = ["legwear", "shoes", "bottom", "skirt", "top", "dress", "robe", "armor", "sash", "belt", "apron", "outer", "cape", "sleeves", "gloves", "neck", "hat"];
+  for (const k of ORDER) {
+    if (!on.has(k))
+      continue;
+    const slot = slots().find((s) => s.kind === k);
+    if (wears(k) < 0.7)
+      guessed.push(`whether ${who} wears ${/^[aeiou]/.test(slot.noun) ? "an" : "a"} ${slot.noun}`);
+    const g = { kind: k, colour: NAMED[c(`${k}.colour`, `${slot.noun} colour`) ?? "grey"] ?? "#7a7a84", label: slot.noun.split(/,| or /)[0].trim() };
+    const set = (field, id = `${k}.${String(field)}`) => {
+      const x = pickOf(a[id]);
+      if (x)
+        g[field] = x.choice;
+    };
+    const pat = pickOf(a[`${k}.pattern`]);
+    if (pat && pat.choice !== "none" && pat.confidence >= 0.5) {
+      g.pattern = pat.choice;
+      g.patternColour = pat.choice === "fishnet" ? "#1d1720" : g.colour === NAMED.black || g.colour === NAMED.charcoal ? "#e8e4dc" : "#1d1a22";
+    }
+    const mat = pickOf(a[`${k}.material`]);
+    if (mat && mat.choice !== "cloth" && mat.confidence >= 0.5 && (k !== "shoes" || mat.choice === "metal"))
+      g.material = mat.choice;
+    const dmg = scoreOf(a[`${k}.damage`]);
+    if (dmg && dmg.score >= 1)
+      g.damage = Math.min(1, (dmg.score - 0.5) / 3);
+    for (const f of ["neckline", "sleeves", "sleeveFit", "fit", "hem", "length", "style"])
+      if (a[`${k}.${String(f)}`])
+        set(f);
+    for (const f of ["flare"]) {
+      const s = scoreOf(a[`${k}.${f}`]);
+      if (s)
+        g.flare = s.score / 3;
+    }
+    if (k === "outer")
+      g.open = yesOf(a["outer.open"]) >= 0.5;
+    if (k === "shoes" && g.style !== "boots")
+      delete g.length;
+    if (k === "legwear" && g.style === "tights")
+      delete g.length;
+    if (k === "sash" || k === "belt")
+      g.colour2 = "#c9a54a";
+    look.outfit.push(g);
+  }
+  return { look, guessed };
+}
+var nameOf = (hex) => Object.entries(NAMED).find(([, h]) => h === hex)?.[0] ?? "coloured";
+function describeLook(l) {
+  const lines = [
+    `${l.body.sex === "m" ? "Male" : "Female"}, ${l.body.preset} build.`,
+    `Hair: ${l.hair.style}, ${nameOf(l.hair.colour)}. Eyes: ${nameOf(l.eyes)}.`,
+    l.ears ? `Ears: ${l.ears}.` : "",
+    l.tail ? `Tail: ${l.tail}.` : "",
+    l.horns ? `Horns: ${l.horns}.` : "",
+    l.outfit.length ? `Wearing: ${l.outfit.map((g) => [g.damage && g.damage > 0.4 ? "torn" : "", nameOf(g.colour), g.pattern && g.pattern !== "none" ? `${g.pattern}` : "", g.material && g.material !== "cloth" ? g.material : "", g.style ?? "", g.label ?? g.kind, g.kind === "outer" && g.open ? "(open)" : ""].filter(Boolean).join(" ")).join("; ")}.` : "Wearing: nothing."
+  ];
+  return lines.filter(Boolean).join(" ");
+}
+function dollChangeQuestions(who) {
+  const q = {
+    changed: yes(`In the latest story, ${who}'s clothes, hair or body visibly change (something put on, taken off, swapped, torn, or a transformation)`),
+    "changed.hair": yes(`In the latest story, ${who}'s hairstyle changes (cut, let down, tied up, braided)`),
+    "changed.hairColour": yes(`In the latest story, ${who}'s hair colour changes (dyed, bleached, magic)`),
+    "changed.body": yes(`In the latest story, ${who} grows or loses animal ears, a tail or horns`)
+  };
+  for (const s of slots()) {
+    q[`${s.kind}.off`] = yes(`In the latest story, ${who} takes off or loses their ${s.noun}`);
+    q[`${s.kind}.on`] = yes(`In the latest story, ${who} puts on a ${s.noun}${NOT[s.kind] ?? ""}`);
+    q[`${s.kind}.torn`] = yes(`In the latest story, ${who}'s ${s.noun} gets torn, cut or damaged`);
+  }
+  return q;
+}
+function applyChanges(current, a) {
+  if (yesOf(a.changed) < 0.5)
+    return null;
+  const look = JSON.parse(JSON.stringify(current));
+  const changed = [];
+  const needs = new Set;
+  const fullBody = look.outfit.some((g) => g.kind === "robe" || g.kind === "dress") || yesOf(a["robe.on"]) >= 0.6 || yesOf(a["dress.on"]) >= 0.6;
+  for (const s of slots()) {
+    const i = look.outfit.findIndex((g) => g.kind === s.kind);
+    const bar = fullBody && ["top", "bottom", "skirt"].includes(s.kind) ? 0.85 : 0.6;
+    const off = yesOf(a[`${s.kind}.off`]) >= 0.6, on = yesOf(a[`${s.kind}.on`]) >= bar, torn = yesOf(a[`${s.kind}.torn`]) >= 0.6;
+    if (off && i >= 0 && !on) {
+      look.outfit.splice(i, 1);
+      changed.push(`${s.noun} off`);
+      continue;
+    }
+    if (on) {
+      needs.add(s.kind);
+      continue;
+    }
+    if (torn && i >= 0) {
+      look.outfit[i].damage = Math.max(look.outfit[i].damage ?? 0, 0.55);
+      changed.push(`${s.noun} torn`);
+    }
+  }
+  const hair = yesOf(a["changed.hair"]) >= 0.6, hairColour = yesOf(a["changed.hairColour"]) >= 0.6, body = yesOf(a["changed.body"]) >= 0.6;
+  if (!changed.length && !needs.size && !hair && !hairColour && !body)
+    return null;
+  return { look, changed, needs, hair, hairColour, body };
+}
+var dollDetailQuestions = dollQuestions;
+function finishChanges(ch, a, who) {
+  const fresh = lookFromAnswers(a, who, ch.needs).look;
+  const look = ch.look, changed = [...ch.changed];
+  if (ch.hair) {
+    look.hair = { ...look.hair, style: fresh.hair.style, length: fresh.hair.length };
+    changed.push("hair");
+  }
+  if (ch.hairColour) {
+    look.hair = { ...look.hair, colour: fresh.hair.colour };
+    changed.push("hair colour");
+  }
+  if (ch.body) {
+    look.ears = fresh.ears;
+    look.tail = fresh.tail;
+    look.horns = fresh.horns;
+    look.earColour = fresh.earColour;
+    look.tailColour = fresh.tailColour;
+    changed.push("ears, tail or horns");
+  }
+  for (const k of ch.needs) {
+    const now = fresh.outfit.find((g) => g.kind === k);
+    if (!now)
+      continue;
+    const i = look.outfit.findIndex((g) => g.kind === k);
+    if (i >= 0)
+      look.outfit[i] = now;
+    else
+      look.outfit.push(now);
+    changed.push(`${slots().find((s) => s.kind === k).noun} on`);
+  }
+  return { look, changed };
+}
+
 // src/backend/doll.ts
+init_deciders();
 init_helpers();
 init_ledger();
 init_settings();
@@ -29170,30 +29447,41 @@ async function dollLook(m, userId) {
   try {
     const settings = await getSettings(userId);
     const parts = [];
+    const context = {};
     if (m.source === "text") {
       const text = String(m.text ?? "").trim().slice(0, 3000);
-      if (text)
+      if (text) {
         parts.push(`Describe this look:
 ${text}`);
+        context.description = text;
+      }
     } else if (who === "you") {
       name = (await macro("{{user}}", m.chatId, userId) || "the player").slice(0, 80);
       const persona = await macro("{{persona}}", m.chatId, userId);
       parts.push(`Who: ${name}, the player character.`);
-      if (persona)
+      if (persona) {
         parts.push(`Their persona:
 ${persona.slice(0, 3000)}`);
+        context.description = persona.slice(0, 3000);
+      }
     } else {
       parts.push(who && who !== "them" ? `Who: ${who}.` : "Who: the other person in the scene.");
       if (m.chatId && who && who !== "them") {
         const p = await personProfile(m.chatId, who, userId);
-        if (p.text)
+        if (p.text) {
           parts.push(p.text);
-        if (p.setting)
+          context.description = p.text;
+        }
+        if (p.setting) {
           parts.push(`The setting:
 ${p.setting}`);
+          context.setting = p.setting;
+        }
       }
     }
     const worn = (m.worn ?? []).filter((w) => typeof w === "string").slice(0, 16).map((w) => w.slice(0, 120));
+    if (worn.length)
+      context.wearing_now_in_the_game = worn;
     if (worn.length)
       parts.push(`What the game says they are wearing now (keep all of these; describe each as a garment):
 ${worn.map((w) => `- ${w}`).join(`
@@ -29207,6 +29495,9 @@ ${worn.map((w) => `- ${w}`).join(`
 ${JSON.stringify(m.current ?? {}).slice(0, 4000)}`);
       parts.push(`The latest story:
 ${recent}`);
+      context.latest_story = msgs.slice(-3).map((x) => x.content.slice(0, 2500)).join(`
+
+`);
       parts.push(`Return the whole look, changed only where the latest story changed it (clothes put on, taken off, torn, swapped; hair let down; a transformation). If nothing changed, return it as it was.`);
     } else if (m.source !== "text" && m.current) {
       parts.push(`Their current look, for reference (replace it): ${JSON.stringify(m.current).slice(0, 2000)}`);
@@ -29216,14 +29507,27 @@ ${recent}`);
       const tail = msgs.slice(-3).map((x) => x.content.slice(0, 800)).join(`
 
 `);
-      if (tail)
+      if (tail) {
         parts.push(`The story lately (for what they're wearing now):
 ${tail}`);
+        context.story_lately = tail;
+      }
     }
     const enough = m.source === "text" ? parts.length > 0 : m.source === "story" ? !!m.chatId : who === "you" ? parts.length > 1 : parts.length > 1;
     if (!enough) {
       send({ type: "doll_look", who: m.who, look: null, note: "", error: m.source === "text" ? "Describe the look first." : "Nothing to go on yet: open a chat with them, or describe the look." }, userId);
       return;
+    }
+    const decider = await getDecider(settings, userId).catch(() => null);
+    if (decider instanceof JevDecider) {
+      const done = await classify(decider, m, who === "you" ? name : who && who !== "them" ? who : "the other person", context).catch((e) => {
+        logError("doll classifier", e);
+        return null;
+      });
+      if (done) {
+        send({ type: "doll_look", who: m.who, look: done.look, note: done.note, ...who !== "them" ? { name } : {} }, userId);
+        return;
+      }
     }
     const got = lookFrom(await ask(DOLL_SYSTEM, parts.join(`
 
@@ -29237,6 +29541,28 @@ ${tail}`);
     toast("warning", "The helper couldn't dress the doll this time. Try again, or describe the look.", userId);
     send({ type: "doll_look", who: m.who, look: null, note: "", error: String(e?.message ?? e).slice(0, 200) }, userId);
   }
+}
+async function classify(d, m, who, context) {
+  if (m.source === "story") {
+    const current = cleanLook(m.current);
+    const story = String(context.latest_story ?? "");
+    if (!story)
+      return null;
+    const before = describeLook(current);
+    const gate = await d.ask({ who, how_they_looked_before: before, latest_story: story }, dollChangeQuestions(who), { timeoutMs: 15000 });
+    const ch = applyChanges(current, gate);
+    if (!ch)
+      return { look: current, note: "Nothing about their look changed in the latest replies." };
+    const done = ch.needs.size || ch.hair || ch.hairColour || ch.body ? finishChanges(ch, await d.ask({ who, latest_story: story, how_they_looked_before: before }, dollDetailQuestions(who), { timeoutMs: 15000 }), who) : { look: ch.look, changed: ch.changed };
+    return { look: done.look, note: done.changed.length ? `Changed: ${done.changed.join(", ")}.` : "Nothing about their look changed in the latest replies." };
+  }
+  if (!context.description && !context.story_lately && !context.wearing_now_in_the_game)
+    return null;
+  const answers = await d.ask({ who, ...context }, dollQuestions(who), { timeoutMs: 15000 });
+  if (!Object.keys(answers).length)
+    return null;
+  const { look, guessed } = lookFromAnswers(answers, who);
+  return { look, note: guessed.length ? `Guessed: ${guessed.join("; ")}.` : "" };
 }
 
 // src/backend.ts
