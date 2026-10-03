@@ -5,6 +5,23 @@ import { evaluate, type ExprEnv, type Value } from "./expr.js";
 import { difficultyOf, type ActionDef, type Effect, type Issue, type Ruleset } from "./ruleset.js";
 import { BUILTIN_NAMES, initialState, makeEnv } from "./state.js";
 import { costValue } from "./resolve.js";
+import { adultGated } from "./adults.js";
+
+/**
+ * Words that make a move toward someone look romantic or sexual (English, Korean, Japanese). Warp only offers such a
+ * move toward a known adult when it carries a `romance` (or similar) tag, so an untagged one gets a warning.
+ */
+const ROMANTIC_WORDS = new RegExp([
+  String.raw`\b(?:confess\w*|kiss\w*|flirt\w*|seduc\w*|romanc\w*|romantic\w*|cuddl\w*|caress\w*|smooch\w*|make out|making out|ask (?:her|him|them|\{\{?target\}?\}) out|go on a date|first date|date night|sleep with|propos(?:e|al) (?:marriage|to))\b`,
+  "고백|키스|입맞춤|뽀뽀|플러팅|유혹|데이트|스킨십|애무|연애|청혼|프러포즈",
+  "告白|キス|口説|デート|イチャ",
+].join("|"), "i");
+
+/** A per-person move whose words look romantic but that has no adults-only tag. */
+export function untaggedRomance(a: ActionDef): boolean {
+  if (!a.perPerson || adultGated(a.tags)) return false;
+  return ROMANTIC_WORDS.test([a.label, a.desc ?? "", a.say ?? ""].join(" "));
+}
 
 /** The formula functions Warp reads (CORE-DESIGN §1.4). */
 export const FUNCTIONS = [
@@ -186,6 +203,10 @@ export function lintRuleset(r: Ruleset): Issue[] {
   for (const sec of Object.values(r.secrets)) sec.stages.forEach((st, i) => check(st.when, `Secrets › ${sec.id} › stage ${i + 1} › when`));
   check(r.liveChoices.when, "Live choices › when");
   for (const a of Object.values(r.liveChoices.tags)) checkAction(a, `Live choices › tags › ${a.id}`);
+  // Romantic moves toward someone must carry an adults-only tag, or Warp can't keep them away from minors.
+  const romanceHint = "looks romantic. If it is, add `tags: [romance]` so Warp offers it only toward someone known to be an adult.";
+  for (const a of Object.values(r.actions)) if (untaggedRomance(a)) warn(`Actions › ${a.id}`, `"${a.label}" ${romanceHint}`);
+  for (const a of Object.values(r.liveChoices.tags)) if (untaggedRomance(a)) warn(`Live choices › tags › ${a.id}`, `"${a.id}" (${a.desc ?? a.label}) ${romanceHint}`);
   // Checks lean on attributes and skills; a typed attempt's stats and a contest kind's stats should be those.
   for (const id of r.checks.stats) if (r.stats[id] && r.stats[id].kind !== "attribute" && r.stats[id].kind !== "skill") warn("Checks › stats", `"${id}" is a ${r.stats[id].kind}: typed attempts lean on attributes and skills`);
   for (const k of Object.values(r.conflict.kinds)) {

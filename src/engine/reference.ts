@@ -137,7 +137,7 @@ actions:                              # the small authored moves, shown in one "
     fail: { hint: "The pick snaps; someone heard." }
     # tiers: crit_success, success, partial, fail, crit_fail (or outcomes: { … }); a natural 20 is a critical success, a natural 1 a critical failure
     # effects: next to a check always apply; without a check, effects: is what the action does
-    tags: [crime]                     # content tags for Lines & Veils
+    tags: [crime]                     # content tags for Lines & Veils; romance / romantic / sexual also mean adults only: such a move toward someone is offered only when they are known to be an adult (tag every romantic move)
   talk:
     label: Talk with {target}
     per_person: true                  # one button per person here, in their row; {target} / target = that person
