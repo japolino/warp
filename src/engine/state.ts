@@ -7,7 +7,7 @@
 
 import type { Value, ExprEnv } from "./expr.js";
 import { evalBool, evalNumber } from "./expr.js";
-import type { Ruleset, StatDef, Band, KeepSpec } from "./ruleset.js";
+import type { Ruleset, StatDef, Band } from "./ruleset.js";
 import {
   dateAt, exposedSlots, hasTrait, isIndoors, presentPeople, revealOf, seasonAt, temperatureAt,
   warmthNeeded, warmthOf, weatherAt,
@@ -88,20 +88,10 @@ export interface GameState {
   notices: string[];
   /** Who is known to be an adult (true) or not (false), when the ruleset gives no age: asked once, then remembered. */
   adults: Record<string, boolean>;
-  /** Save slots: a copy of the state at the moment of saving. */
-  saves: Record<string, SaveSlot>;
-  /** Which playthrough this is (starting over after an ending adds one). */
-  runs: number;
-  /** Times the story has been rewound to a save. */
-  loops: number;
   /** The player character's body: part → trait → value. */
   body: Record<string, Record<string, string>>;
   /** Transformation → stages applied. */
   tf: Record<string, number>;
-  /** The story reached an ending (told = the narrator has written it). */
-  ended: { id: string; at: number; told: boolean } | null;
-  /** Continued past this ending; rearm only after its predicate becomes false. */
-  dismissedEndings: string[];
   /** Progress toward the next point, per stat (in the stat's own units; a point is gained at 1). */
   practice: Record<string, number>;
   /** Recent checked action/context uses. Optional for saves made before diminishing practice. */
@@ -113,8 +103,6 @@ export interface GameState {
   /** Uses left in the item in hand, for items with uses (absent = a fresh one). */
   uses: Record<string, number>;
 }
-
-export interface SaveSlot { at: number; turn: number; label: string; snap: GameState }
 
 export type EventSource = "cost" | "check" | "action" | "drift" | "trigger" | "narrator" | "manual" | "start" | "world";
 
@@ -163,13 +151,6 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "practice_use"; key: string; n: number; turn: number; minutes: number }
   | { t: "scene"; who: string; here: boolean }
   | { t: "use"; id: string; n: number }
-  | { t: "save"; slot: string; label: string }
-  | { t: "load"; slot: string }
-  | { t: "restart" }
-  | { t: "end"; id: string; told: boolean }
-  | { t: "end_told" }
-  | { t: "unend" }
-  | { t: "end_rearm"; id: string }
 );
 
 /** Memories kept per person (the oldest fade first). */
@@ -203,11 +184,6 @@ export function initialState(r: Ruleset): GameState {
     secrets: {},
     notices: [],
     adults: {},
-    saves: {},
-    runs: 1,
-    loops: 0,
-    ended: null,
-    dismissedEndings: [],
     body: structuredClone(r.body.parts),
     tf: {},
     practice: {},
@@ -550,72 +526,9 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       break;
     }
     case "tf": s.tf = { ...s.tf, [e.id]: Math.max(s.tf[e.id] ?? 0, e.stage) }; break;
-    case "save":
-      s.saves = { ...s.saves, [e.slot]: { at: s.minutes, turn: s.turn, label: e.label, snap: snapshotOf(s) } };
-      break;
-    case "load": {
-      const base = e.slot === "start" ? initialState(r) : s.saves[e.slot] ? structuredClone(s.saves[e.slot].snap) : null;
-      if (!base) break;
-      rewind(r, s, base, r.checkpoints.keep);
-      s.loops += 1;
-      break;
-    }
-    case "restart": {
-      rewind(r, s, initialState(r), r.legacy);
-      s.saves = {};
-      s.runs += 1;
-      s.loops = 0;
-      break;
-    }
-    case "end": if (!s.ended) s.ended = { id: e.id, at: s.minutes, told: e.told }; break;
-    case "end_told": if (s.ended) s.ended = { ...s.ended, told: true }; break;
-    case "unend":
-      if (s.ended) s.dismissedEndings = [...new Set([...(s.dismissedEndings ?? []), s.ended.id])];
-      s.ended = null;
-      break;
-    case "end_rearm": s.dismissedEndings = (s.dismissedEndings ?? []).filter((id) => id !== e.id); break;
     // Events of removed systems (dungeons, dates, family…) in old chats are ignored.
     default: break;
   }
-}
-
-/** A save's copy of the state (without the other saves inside it). */
-function snapshotOf(s: GameState): GameState {
-  const snap = structuredClone({ ...s, saves: {} });
-  return snap;
-}
-
-/** Replace the state with `base`, carrying over what `keep` says survives. Save slots and run counters stay. */
-function rewind(r: Ruleset, s: GameState, base: GameState, keep: KeepSpec) {
-  const from = structuredClone(s);
-  const next = structuredClone(base);
-  // Saves made before a newer part of the state existed: fill it in fresh.
-  const fresh = initialState(r) as unknown as Record<string, unknown>;
-  for (const [k, v] of Object.entries(fresh)) if ((next as unknown as Record<string, unknown>)[k] === undefined) (next as unknown as Record<string, unknown>)[k] = v;
-  if (keep.codex) next.codex = { ...next.codex, ...from.codex };
-  if (keep.feats) next.feats = { ...next.feats, ...from.feats };
-  if (keep.perks) next.perks = { ...next.perks, ...from.perks };
-  if (keep.secrets) for (const [id, st] of Object.entries(from.secrets)) next.secrets[id] = Math.max(next.secrets[id] ?? -1, st);
-  if (keep.people) {
-    next.people = { ...next.people, ...from.people };
-    for (const id of Object.keys(from.people)) next.rel[id] ??= from.rel[id];
-  }
-  for (const id of keep.stats) if (id in from.stats) next.stats[id] = from.stats[id];
-  for (const id of keep.flags) if (id in from.flags) next.flags[id] = from.flags[id];
-  for (const id of keep.items) {
-    if (from.items[id] > 0) next.items[id] = from.items[id];
-    else delete next.items[id];
-  }
-  for (const stat of keep.rel) for (const [who, m] of Object.entries(from.rel)) if (stat in m) (next.rel[who] ??= {})[stat] = m[stat];
-  // Bookkeeping that belongs to the playthrough, not the moment.
-  next.seed = from.seed;
-  next.saves = from.saves;
-  next.runs = from.runs;
-  next.loops = from.loops;
-  next.ended = null;
-  next.turn = from.turn;
-  void r;
-  Object.assign(s, next);
 }
 
 export function dayOf(s: GameState): number { return Math.floor(s.minutes / 1440); }
@@ -650,7 +563,6 @@ export const BUILTIN_NAMES = [
   "month", "date", "season", "weather", "temperature", "indoors", "outside",
   "warmth", "warmth_min", "warmth_max", "too_cold", "too_hot", "reveal", "exposed", "naked",
   "in_encounter", "encounter", "encounter_round", "round", "momentum", "target",
-  "loops", "runs",
 ];
 
 export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> = {}): ExprEnv {
@@ -686,8 +598,6 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
       encounter: s.encounter?.id ?? "",
       encounter_round: s.encounter?.round ?? 0,
       momentum: s.encounter?.momentum ?? 0,
-      loops: s.loops,
-      runs: s.runs,
       round: s.encounter?.round ?? 0,
       target: "",
     };
@@ -760,8 +670,6 @@ export function makeEnv(r: Ruleset, s: GameState, extra: Record<string, Value> =
         case "perk": return a0 in s.perks;
         // How many stages of a secret the narrator knows (0 = none).
         case "secret": return (s.secrets[a0] ?? -1) + 1;
-        // Checkpoints: whether a slot holds a save.
-        case "saved": return a0 in s.saves;
         // Body: a trait's value ('' when absent), and how far a transformation has gone.
         case "body": return s.body[a0]?.[String(args[1] ?? "type")] ?? "";
         case "transformed": return s.tf[a0] ?? 0;

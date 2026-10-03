@@ -681,8 +681,6 @@ export function setup(ctx: SpindleFrontendContext) {
     const view = t.closest<HTMLElement>("[data-view]");
     if (view) { drawerView = view.dataset.view as typeof drawerView; renderDrawer(); return; }
     if (onBuilderClick(t)) return;
-    const runBtn = t.closest<HTMLElement>("[data-run]");
-    if (runBtn) { act(runBtn.dataset.run!); return; }
     const jump = t.closest<HTMLElement>("[data-jump]");
     if (jump) {
       const el = ctx.dom.findMessageElement(jump.dataset.jump!);
@@ -839,8 +837,6 @@ export function setup(ctx: SpindleFrontendContext) {
 
   // ───────── events: in-chat clicks (delegated; injected nodes are sanitized) ─────────
   function act(actionId: string, params?: Record<string, string>) {
-    // Saving, loading and starting over change the game without a new reply.
-    if (actionId.startsWith("run:") && actionId !== "run:epilogue") { void confirmRun(actionId); return; }
     const cid = chatId();
     if (!cid || (busy.on && busy.chatId === cid)) return;
     send({ type: "act", chatId: cid, actionId, ...(params ? { params } : {}) });
@@ -859,25 +855,6 @@ export function setup(ctx: SpindleFrontendContext) {
       }
     }, 15000);
   }
-  async function confirmRun(actionId: string) {
-    const cid = chatId();
-    if (!cid) return;
-    const [, op, slot] = actionId.split(":") as [string, "save" | "load" | "restart" | "continue", string | undefined];
-    const run = state?.hud?.run;
-    if (op === "load" || op === "restart") {
-      const res = await ctx.ui.showConfirm({
-        title: op === "load" ? "Rewind to this save?" : "Start over?",
-        message: op === "load"
-          ? `The game rewinds to ${slot === "start" ? "the very beginning" : slot === "auto" ? "the autosave" : `slot ${slot}`}. The chat keeps its messages; the next reply picks up from the rewind. Kept: ${run?.keeps ?? "nothing"}.`
-          : `A new playthrough from the beginning. Carried over: ${run?.legacy ?? "nothing"}.`,
-        confirmLabel: op === "load" ? "Rewind" : "Start over",
-        variant: "warning",
-      });
-      if (!res.confirmed) return;
-    }
-    send({ type: "run", chatId: cid, op, ...(slot ? { slot } : {}) });
-  }
-
   async function confirmRedo(btn: HTMLElement) {
     const cid = chatId();
     const userMessageId = btn.dataset.redo;

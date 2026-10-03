@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { normalizeRuleset } from "./ruleset.js";
 import { applyEvent, foldEvents, initialState, type GameState } from "./state.js";
-import { applyProposal, encounterStartEvents, odds, resolveTurn, runOp } from "./resolve.js";
+import { applyProposal, encounterStartEvents, odds, resolveTurn } from "./resolve.js";
 import { buildChoices } from "./view.js";
 import { encounterGuide } from "./encounter-view.js";
 import { intentFor } from "../backend/intents.js";
@@ -120,21 +120,6 @@ test("check numbers use the visible pre-cost context; the cost still applies", (
   expect(result.rec.check!.target).toBe(100);
   expect(result.rec.check!.tier).toBe("success");
   expect(result.s.stats.stamina).toBe(0);
-});
-
-test("Keep playing acknowledges an ending until its predicate becomes false, then rearms it", () => {
-  const r = rules({ stats: { health: { start: 0 } }, endings: { fallen: { when: "health <= 0", text: "The end" } }, checkpoints: true,
-    actions: { recover: { effects: { health: 10 } }, hurt: { effects: { health: -20 } } } });
-  const ended = step(r, initialState(r), null).s;
-  const operation = runOp(r, ended, { op: "continue" });
-  if (typeof operation === "string") throw new Error(operation);
-  let s = foldEvents(r, [operation], ended);
-  s = step(r, s, null).s;
-  expect(s.ended).toBeNull();
-  expect(s.dismissedEndings).toEqual(["fallen"]);
-  s = step(r, s, "recover").s;
-  expect(s.dismissedEndings).toEqual([]);
-  expect(step(r, s, "hurt").s.ended!.id).toBe("fallen");
 });
 
 test("automatic recurring quests restart after cooldown without a duplicate reward", () => {

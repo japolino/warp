@@ -155,18 +155,6 @@ export interface HudView {
   body: { part: string; label: string; text: string; covered: boolean }[] | null;
   /** Transformations under way. */
   transforms: { label: string; stage: number; of: number }[];
-  /** Checkpoints and endings, when the ruleset has them. */
-  run: {
-    slots: { id: string; label: string | null }[];
-    auto: string | null;
-    runs: number;
-    loops: number;
-    hard: boolean;
-    ended: { title: string; kind: string; text: string; told: boolean } | null;
-    /** What survives loading a save / starting over, in words. */
-    keeps: string;
-    legacy: string;
-  } | null;
   turn: number;
 }
 
@@ -490,6 +478,5 @@ export type FrontendToBackend =
   | { type: "builder_install"; chatId: string }
   | { type: "builder_back"; chatId: string }
   | { type: "builder_close"; chatId: string }
-  | { type: "run"; chatId: string; op: "save" | "load" | "restart" | "continue"; slot?: string }
   | { type: "set_jev_key"; key: string }
   | { type: "test_decider" };

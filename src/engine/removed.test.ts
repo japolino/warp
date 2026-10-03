@@ -50,7 +50,7 @@ describe("removed parts of Warp", () => {
     const removed = issues.filter((i) => i.message.includes("was removed from Warp"));
     const where = removed.map((i) => i.where).sort();
     expect(where).toEqual([
-      "Actions › cards › gamble", "Actions › dance › check › game", "Checkpoints › keep › dating", "Checkpoints › keep › deepest",
+      "Actions › cards › gamble", "Actions › dance › check › game", "Checkpoints",
       "Dating", "Dungeons", "Look", "Minigames", "Perks › lucky › rule › game", "Relationships › people › robin › schedule",
     ].sort());
     for (const i of removed) {

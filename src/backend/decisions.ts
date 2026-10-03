@@ -179,7 +179,7 @@ export async function readTurn(opts: {
     }
   }
   // Fights (and other encounters) can break out of the story itself.
-  const storyEnc = !s.encounter && !s.ended ? Object.values(r.encounters).filter((x) => x.fromStory) : [];
+  const storyEnc = !s.encounter ? Object.values(r.encounters).filter((x) => x.fromStory) : [];
   const here = storyEnc.length ? presentPeople(r, s, makeEnv(r, s)) : [];
   if (storyEnc.length) {
     q.encounter = {

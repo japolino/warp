@@ -1,6 +1,6 @@
 // View models for the UI and the text the narrator sees.
 
-import type { ActionDef, KeepSpec, Ruleset, StatDef } from "./ruleset.js";
+import type { ActionDef, Ruleset, StatDef } from "./ruleset.js";
 import { percentOf, TIERS } from "./ruleset.js";
 import {
   amountValue, bandFor, foeName, formatClock, formatMoney, formatNumber, gradeFor, initialState, itemName, makeEnv, personName, statMax,
@@ -8,7 +8,7 @@ import {
 } from "./state.js";
 import { practiceProgress } from "./freeform.js";
 import { encounterGuide, itemRelevance } from "./encounter-view.js";
-import { cleanLiveForecast, costValue, spentLock, whenHolds, paramValues, ABILITY_PREFIX, abilityStatus, actionPool, availableChoices, dangerStats, findAction, foeArmor, isAvailable, knowsAbility, LIVE_PREFIX, lockReason, mainMeter, odds, perkOffers, playerArmor, usableAbilities, usableItems, perkBlocker, RUN_EPILOGUE, TIER_LABEL, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
+import { cleanLiveForecast, costValue, spentLock, whenHolds, paramValues, ABILITY_PREFIX, abilityStatus, actionPool, availableChoices, dangerStats, findAction, foeArmor, isAvailable, knowsAbility, LIVE_PREFIX, lockReason, mainMeter, odds, perkOffers, playerArmor, usableAbilities, usableItems, perkBlocker, TIER_LABEL, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
 import { dueWords, effectWords, goalDone, questDef, questDigest, questOffers, questsToReport, QUEST_PREFIX } from "./quests.js";
 import {
   dateAt, exposedSlots, isIndoors, ordinal, presentPeople, seasonAt, temperatureAt, warmthNeeded, warmthOf, weatherAt,
@@ -238,16 +238,6 @@ export function buildHud(r: Ruleset, s: GameState): HudView {
       part, label: part.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()), text: traitText(traits) || "—", covered: bodyCovered(r, s, part),
     })) : null,
     transforms: Object.values(r.body.transforms).filter((t) => (s.tf[t.id] ?? 0) > 0).map((t) => ({ label: t.label, stage: s.tf[t.id], of: t.stages.length })),
-    run: r.checkpoints.enabled ? {
-      slots: Array.from({ length: r.checkpoints.slots }, (_, i) => ({ id: String(i + 1), label: s.saves[String(i + 1)]?.label ?? null })),
-      auto: s.saves.auto?.label ?? null,
-      runs: s.runs,
-      loops: s.loops,
-      hard: r.checkpoints.hard,
-      ended: s.ended ? { title: r.endings[s.ended.id]?.title ?? s.ended.id, kind: r.endings[s.ended.id]?.kind ?? "neutral", text: r.endings[s.ended.id]?.text ?? "", told: s.ended.told } : null,
-      keeps: keepWords(r, r.checkpoints.keep),
-      legacy: keepWords(r, r.legacy),
-    } : null,
     turn: s.turn,
   };
 }
@@ -338,16 +328,6 @@ function sceneCast(r: Ruleset, s: GameState): { here: Set<string>; names: Map<st
   return { here, names };
 }
 
-/** "codex, feats and trust" — what a rewind keeps, in words. */
-export function keepWords(r: Ruleset, k: KeepSpec): string {
-  const parts = [
-    k.codex && "the codex", k.feats && "feats", k.perks && "perks", k.secrets && "secrets learned", k.people && "people met",
-    ...k.stats.map((id) => r.stats[id]?.label ?? id), ...k.flags.map((id) => r.flags[id]?.label ?? id.replace(/_/g, " ")),
-    ...k.items.map((id) => itemName(r, initialState(r), id)), ...k.rel.map((id) => r.relStats[id]?.label ?? id),
-  ].filter(Boolean) as string[];
-  return parts.length ? parts.join(", ") : "nothing";
-}
-
 export function buildChoices(r: Ruleset, s: GameState, opts: { lines: string[]; veils: string[]; live?: LiveChoice[]; showChoices?: boolean }): ChoiceView[] {
   return choiceList(r, s, opts);
 }
@@ -359,17 +339,6 @@ function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: st
   const live: ChoiceView[] = [];
   const plain = (id: string, label: string, group: string | null, desc: string | null = null): ChoiceView =>
     ({ id, label, group, desc, odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [] });
-  // The story has ended: see it written, rewind, start over, or (unless hard mode) keep going.
-  if (s.ended) {
-    const e = r.endings[s.ended.id];
-    const group = `The end · ${e?.title ?? ""}`.trim();
-    return [
-      ...(!s.ended.told ? [plain(RUN_EPILOGUE, "See how it ends", group, "The narrator writes the ending")] : []),
-      plain("run:restart", "Start over", group, `A new playthrough from the beginning. Carries over: ${keepWords(r, r.legacy)}`),
-      ...Object.entries(s.saves).map(([slot, v]) => plain(`run:load:${slot}`, `Load ${slot === "auto" ? "autosave" : `slot ${slot}`}`, group, v.label)),
-      ...(!r.checkpoints.hard ? [plain("run:continue", "Keep playing", group, "Carry on past the ending")] : []),
-    ];
-  }
   // Choices turned off: the story is typed. Only the modes played with buttons (above, and an encounter's moves) keep them.
   if (opts.showChoices === false && !s.encounter) return [];
   if (!s.encounter) (opts.live ?? []).forEach((c, i) => {
@@ -426,7 +395,7 @@ function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: st
 
 /** Quests to hand in here, and a few on offer (from whoever's here first, then the board). */
 function questChoices(r: Ruleset, s: GameState): ChoiceView[] {
-  if (s.encounter || s.ended) return [];
+  if (s.encounter) return [];
   const plain = (id: string, label: string, desc: string | null, why?: string): ChoiceView =>
     ({ id, label, group: "Quests", desc, odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [], ...(why ? { why } : {}) });
   const out: ChoiceView[] = [];
@@ -457,7 +426,6 @@ function costText(r: Ruleset, s: GameState, a: ActionDef): string | null {
 
 /** The player's own abilities, offered with the other moves: usable ones, and in an encounter the ones out of reach, with why. */
 function abilityChoices(r: Ruleset, s: GameState, lines: Set<string>): ChoiceView[] {
-  if (s.ended) return [];
   const out: ChoiceView[] = [];
   for (const { id, a, status } of usableAbilities(r, s)) {
     if (a.hidden || a.tags.some((t) => lines.has(t))) continue;
@@ -560,7 +528,6 @@ function perkViews(r: Ruleset, s: GameState): HudView["perks"] {
 
 /** Held items worth using now: in an encounter, any that bear on it (up to 3); otherwise only clearly helpful ones (up to 2). */
 function itemChoices(r: Ruleset, s: GameState, lines: Set<string>): ChoiceView[] {
-  if (s.ended) return [];
   const veils = new Set<string>();
   const ranked = usableItems(r, s)
     .filter((u) => !u.locked && !u.a.tags.some((t) => lines.has(t)))

@@ -488,28 +488,6 @@ export interface LiveChoicesDef {
   tags: Record<string, ActionDef>;
 }
 
-/** What survives rewinding to a save (or starting over after an ending). Everything else rewinds. */
-export interface KeepSpec {
-  codex: boolean; feats: boolean; perks: boolean; secrets: boolean; people: boolean;
-  stats: string[]; flags: string[]; items: string[];
-  /** Relationship stats kept for everyone. */
-  rel: string[];
-}
-
-export interface CheckpointsDef {
-  enabled: boolean;
-  /** Manual save slots. */
-  slots: number;
-  keep: KeepSpec;
-  /** Save automatically at the start of each in-game day (slot "auto"). */
-  auto: boolean;
-  /** A time loop: when this holds, the story rewinds to a save by itself. */
-  loop: { when: string; to: string; text: string; effects: Effect } | null;
-  /** Hard mode: an ending is final — load or start over, never "keep playing". */
-  hard: boolean;
-}
-
-export interface EndingDef { id: string; title: string; kind: "good" | "bad" | "neutral"; when: string; text: string }
 
 /** A transformation in stages; each step advances one stage with `chance` percent. */
 export interface TransformDef {
@@ -633,10 +611,6 @@ export interface Ruleset {
   storyQuests: { enabled: boolean; max: number };
   secrets: Record<string, SecretDef>;
   liveChoices: LiveChoicesDef;
-  checkpoints: CheckpointsDef;
-  endings: Record<string, EndingDef>;
-  /** What carries over to a new run after an ending. */
-  legacy: KeepSpec;
   body: BodyDef;
   improvise: ImproviseDef;
   growth: GrowthDef;
@@ -1947,63 +1921,6 @@ function normLiveChoices(raw: unknown, c: Ctx, known: { stats: Set<string> }): L
   return def;
 }
 
-const KEEP_FLAGS = ["codex", "feats", "perks", "secrets", "people"] as const;
-const KEEP_LISTS = ["stats", "flags", "items", "rel"] as const;
-
-/** `keep: [codex, feats, { stats: [insight] }]` or `keep: { codex: true, stats: [insight] }`. */
-export function normKeep(raw: unknown, where: string, c: Ctx, dflt: Partial<KeepSpec> = {}): KeepSpec {
-  const k: KeepSpec = { codex: false, feats: false, perks: false, secrets: false, people: false, stats: [], flags: [], items: [], rel: [], ...dflt };
-  if (raw === undefined) return k;
-  const entries: [string, unknown][] = Array.isArray(raw)
-    ? raw.flatMap((x) => (isObj(x) ? Object.entries(x) : [[String(x), true] as [string, unknown]]))
-    : isObj(raw) ? Object.entries(raw) : typeof raw === "string" ? [[raw, true]] : [];
-  for (const [key, v] of entries) {
-    if ((KEEP_FLAGS as readonly string[]).includes(key)) (k as unknown as Record<string, boolean>)[key] = v !== false;
-    else if (key === "dating" || key === "deepest") c.removed(`${where} › ${key}`, key, key === "dating" ? "dating" : "dungeons");
-    else if ((KEEP_LISTS as readonly string[]).includes(key)) (k as unknown as Record<string, string[]>)[key] = list(v);
-    else c.warn(`${where} › ${key}`, `can keep ${[...KEEP_FLAGS, ...KEEP_LISTS].join(", ")}`);
-  }
-  return k;
-}
-
-function normCheckpoints(raw: unknown, endings: boolean, c: Ctx, known: { stats: Set<string> }): CheckpointsDef {
-  const def: CheckpointsDef = { enabled: endings, slots: 3, keep: normKeep(undefined, "", c), auto: false, loop: null, hard: false };
-  if (raw === undefined || raw === false) return def;
-  def.enabled = true;
-  if (!isObj(raw)) return def;
-  def.slots = Math.max(0, Math.min(9, Math.round(c.num(raw.slots, "Checkpoints › slots", 3))));
-  def.keep = normKeep(raw.keep, "Checkpoints › keep", c);
-  def.auto = raw.auto === true || raw.auto === "day";
-  def.hard = raw.hard === true;
-  if (isObj(raw.loop)) {
-    const when = c.expr(raw.loop.when, "Checkpoints › loop › when");
-    if (when === undefined) c.warn("Checkpoints › loop", "needs `when:` — the moment the day rewinds");
-    else def.loop = {
-      when: String(when),
-      to: raw.loop.to !== undefined ? String(raw.loop.to) : def.auto ? "auto" : "start",
-      text: typeof raw.loop.text === "string" ? raw.loop.text : "Time rewinds. Only {{user}} remembers what happened.",
-      effects: normEffect(raw.loop.do ?? raw.loop.effects, "Checkpoints › loop › do", c, known),
-    };
-  }
-  return def;
-}
-
-function normEndings(raw: unknown, c: Ctx): Record<string, EndingDef> {
-  const out: Record<string, EndingDef> = {};
-  for (const [id, e] of Object.entries(isObj(raw) ? raw : {})) {
-    const w = `Endings › ${id}`;
-    if (!isObj(e)) { c.warn(w, "needs `when:` and `text:`"); continue; }
-    const when = c.expr(e.when, `${w} › when`);
-    if (when === undefined) { c.warn(w, "needs `when:` — the formula that ends the story"); continue; }
-    out[id] = {
-      id, when: String(when),
-      title: typeof e.title === "string" ? e.title : titleCase(id),
-      kind: e.kind === "good" || e.kind === "bad" ? e.kind : "neutral",
-      text: typeof e.text === "string" ? e.text : "",
-    };
-  }
-  return out;
-}
 
 function normBody(raw: unknown, c: Ctx): BodyDef {
   const def: BodyDef = { enabled: false, narrator: true, open: true, parts: {}, hiddenBy: {}, transforms: {} };
@@ -2109,6 +2026,7 @@ export const REMOVED_KEYS: Record<string, string> = {
   discovery: "discovering new places",
   companions: "companion lives, jealousy and feelings between people",
   fronts: "hidden world clocks (fronts)", random_events: "random events", events: "random events",
+  checkpoints: "checkpoints, save slots and time loops", endings: "endings and new playthroughs",
 };
 
 const SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
@@ -2390,10 +2308,6 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const liveChoices = normLiveChoices(raw.live_choices, c, known);
   // Parts of Warp that were taken out (the old version is on the `legacy` branch).
   for (const [k, what] of Object.entries(REMOVED_KEYS)) if (raw[k] !== undefined) c.removed(titleCase(k), k, what);
-  const endingsRaw: Raw = isObj(raw.endings) ? raw.endings : {};
-  const endings = normEndings(Object.fromEntries(Object.entries(endingsRaw).filter(([k]) => k !== "legacy")), c);
-  const legacy = normKeep(endingsRaw.legacy, "Endings › legacy", c, { codex: true, feats: true, perks: true });
-  const checkpoints = normCheckpoints(raw.checkpoints, Object.keys(endings).length > 0, c, known);
   const body = normBody(raw.body, c);
   const improvise = normImprovise(raw.improvise ?? raw.improvised, c, known, stats, statOrder);
   const growth = normGrowth(raw.growth ?? raw.practice, c);
@@ -2427,7 +2341,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     weather, wardrobe, encounters, codex, feats, perks,
     ...(perkPoints && stats[perkPoints] ? { perkPoints } : {}),
     perkPick, abilities, quests, questOrder, storyQuests,
-    secrets, liveChoices, checkpoints, endings, legacy, body, improvise, growth,
+    secrets, liveChoices, body, improvise, growth,
   };
 
   // Cross-references that need everything loaded.

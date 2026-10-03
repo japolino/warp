@@ -50,7 +50,7 @@ export interface QuestOffer { id: string; via: "giver" | "board" | "place"; from
 
 /** Quests that can be taken here and now: from someone who's with {{user}}, off a board, or at the place itself. */
 export function questOffers(r: Ruleset, s: GameState): QuestOffer[] {
-  if (!r.questOrder.length || s.encounter || s.ended) return [];
+  if (!r.questOrder.length || s.encounter) return [];
   const env = makeEnv(r, s);
   const here = new Set(presentPeople(r, s, env));
   const board = !!(s.location && r.locations[s.location]?.board);

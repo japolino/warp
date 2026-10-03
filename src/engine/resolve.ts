@@ -10,7 +10,6 @@ import { emptyEffect, percentOf, slug } from "./ruleset.js";
 import { amountValue, bonusSources, applyEvent, cloneState, dayOf, encounterKey, foeMaxOf, foeName, formatClock, formatNumber, itemName, makeEnv, personName, statMax, usesOf, type EventSource, type GameState, type WarpEvent } from "./state.js";
 import { isLoss, thresholds } from "./encounter-view.js";
 import { checkGains, checkStats, DIFFICULTY_WORD, hardnessFrom, IMPROV, IMPROV_DIRECTION, improvAction, isDifficulty, practise, trainingGain } from "./freeform.js";
-import { endingDirection } from "./chronicle.js";
 import { presentPeople, SCENE_HOLDS, sceneWord } from "./world.js";
 import { QUEST_PREFIX, questHooks, questLife, questOp, questProgress, resolveQuest, storyQuestNews, type StoryQuestNews } from "./quests.js";
 
@@ -1015,82 +1014,6 @@ function openSecrets(w: Working) {
   }
 }
 
-// ───────────────────────── checkpoints, loops and endings ─────────────────────────
-
-/** Endings, the time loop and the daily autosave — checked after anything that changes the state. */
-function checkRun(w: Working, before: GameState) {
-  const r = w.r;
-  if (!r.checkpoints.enabled) return;
-  if (!w.s.ended) for (const e of Object.values(r.endings)) {
-    const active = evalBool(e.when, w.env(), false);
-    if ((w.s.dismissedEndings ?? []).includes(e.id)) {
-      if (!active) w.push({ t: "end_rearm", id: e.id, src: "world" });
-      continue;
-    }
-    if (!active) continue;
-    // Reached while resolving a turn, the reply about to be written tells it; otherwise the next one does.
-    w.push({ t: "end", id: e.id, told: !w.defer, src: "trigger" });
-    announce(w, endingDirection(r, w.s, e));
-    return;
-  }
-  if (w.s.ended) return;
-  const loop = r.checkpoints.loop;
-  if (loop && evalBool(loop.when, w.env(), false)) {
-    const to = loop.to !== "start" && w.s.saves[loop.to] ? loop.to : "start";
-    const label = to === "start" ? "the very beginning" : w.s.saves[to].label;
-    because(w, "Time loop", () => {
-      w.push({ t: "load", slot: to, src: "world" });
-      effectToEvents(w, loop.effects, "world", {});
-    });
-    announce(w, `${loop.text} The story rewinds to ${label}: treat everything after it as undone, except what {{user}} remembers.`);
-    return;
-  }
-  if (r.checkpoints.auto && r.clock.enabled && Math.floor(w.s.minutes / 1440) > Math.floor(before.minutes / 1440)) {
-    w.push({ t: "save", slot: "auto", label: `Autosave · ${formatClock(r, w.s.minutes).label}`, src: "world" });
-  }
-}
-
-/** The player asks to see the ending written (after one was reached between replies). */
-export const RUN_EPILOGUE = "run:epilogue";
-
-export type RunOp = { op: "save"; slot: string } | { op: "load"; slot: string } | { op: "restart" } | { op: "continue" };
-
-/** Save, load, start over or keep playing after an ending (from the journal or the ending's choices). */
-export function runOp(r: Ruleset, before: GameState, op: RunOp): WarpEvent[] | string {
-  const c = r.checkpoints;
-  if (!c.enabled) return "This ruleset has no checkpoints.";
-  const w = new Working(r, cloneState(before));
-  switch (op.op) {
-    case "save": {
-      const n = Number(op.slot);
-      if (!Number.isInteger(n) || n < 1 || n > c.slots) return "No such save slot.";
-      if (before.ended) return "The story has ended — load a save or start over.";
-      const where = before.locationName ? ` · ${before.locationName}` : "";
-      w.push({ t: "save", slot: op.slot, label: `${r.clock.enabled ? formatClock(r, before.minutes).label : `Turn ${before.turn}`}${where}`, src: "manual" });
-      break;
-    }
-    case "load": {
-      if (op.slot !== "start" && !before.saves[op.slot]) return "That slot is empty.";
-      const label = op.slot === "start" ? "the very beginning" : before.saves[op.slot].label;
-      w.push({ t: "load", slot: op.slot, src: "manual" });
-      w.push({ t: "notice", text: `Time rewinds to ${label}. Treat everything after that point as undone — except what {{user}} remembers.`, src: "world" });
-      break;
-    }
-    case "restart":
-      w.push({ t: "restart", src: "manual" });
-      w.push({ t: "notice", text: "The story starts over from the very beginning: a new playthrough. Earlier events never happened, though some of what was learned carries over.", src: "world" });
-      break;
-    case "continue":
-      if (!before.ended) return "The story hasn't ended.";
-      if (c.hard) return "Hard mode: an ending is final.";
-      w.push({ t: "unend", src: "manual" });
-      w.push({ t: "notice", text: "The story goes on past its ending.", src: "world" });
-      break;
-  }
-  runTriggers(w, false);
-  return w.events;
-}
-
 /** How long an ended encounter stays ended for the story, in the same place (in-game minutes). */
 export const ENCOUNTER_REST = 60;
 
@@ -1360,14 +1283,12 @@ export function resolveTurn(r: Ruleset, before: GameState, intent: Intent | null
 }
 
 function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts: ResolveOptions, needs: DecideSpec[]): TurnRecord {
-  // After an ending has been written, nothing more resolves until the player loads, starts over or keeps playing.
-  if (before.ended?.told && intent?.actionId !== RUN_EPILOGUE) intent = null;
   const w = new Working(r, cloneState(before), seededRng(`${opts.seed}:fx`), opts.seed, opts.odds ?? {}, opts.scene ?? {});
   w.defer = false;
   const rec: TurnRecord = { v: 1, hints: [], events: [], at: Date.now() };
   // A suggestion is not a committed move, nor dialogue for the active session.
   if (!intent && opts.pendingSuggestion) return rec;
-  if (intent && !before.ended && !intent.actionId.startsWith(QUEST_PREFIX) && intent.actionId !== RUN_EPILOGUE) {
+  if (intent && !intent.actionId.startsWith(QUEST_PREFIX)) {
     const valid = !!findAction(r, before, intent.actionId);
     if (!valid) return { ...rec, hints: ["The attempted action isn't available in the current state. It did not happen and spent no turn or resources."] };
     // The chosen params decide the price ("buy ten" costs more than "buy one"): judge the exact choice.
@@ -1382,16 +1303,9 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
     w.hints.push(...before.notices);
     w.push({ t: "noticed", src: "world" });
   }
-  // An ending reached after the last reply is written now.
-  if (before.ended && !before.ended.told) {
-    const e = r.endings[before.ended.id];
-    if (e && !before.notices.some((n) => n.startsWith("THE STORY REACHES AN ENDING"))) w.hints.push(endingDirection(r, before, e));
-    w.push({ t: "end_told", src: "world" });
-    rec.action = { id: RUN_EPILOGUE, label: `The end: ${e?.title ?? "the story ends"}`, via: intent?.via ?? "choice" };
-  }
   // A fight (or any encounter) the scene says is breaking out starts before the player's move lands.
   let encBase = before;
-  if (opts.encounter && !before.encounter && !before.ended) {
+  if (opts.encounter && !before.encounter) {
     const enc = r.encounters[opts.encounter.id];
     if (enc?.fromStory && !encounterJustEnded(before, enc.id, opts.encounter.fresh === true)) {
       because(w, `The scene: ${enc.name} breaks out`, () => startEncounter(w, enc.id, "trigger", opts.encounter!.foe));
@@ -1541,7 +1455,6 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   if (!inEncounter) for (const id of Object.keys(w.s.conditions)) if (r.conditions[id]?.every === "turn") tickPlayer(w, id);
 
   runTriggers(w, true);
-  checkRun(w, before);
   w.push({ t: "turn", src: "action" });
   rec.events = w.events;
   rec.hints = w.hints;
@@ -1814,7 +1727,6 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
 
   w.cause = null;
   runTriggers(w, false);
-  checkRun(w, before);
   return w.events;
 }
 
@@ -1866,7 +1778,6 @@ export function buildTurn(r: Ruleset, before: GameState, seed: string, fn: (t: T
   const w = new Working(r, cloneState(before), seededRng(`${seed}:fx`), seed);
   fn(builderOf(w));
   runTriggers(w, false);
-  checkRun(w, before);
   return w.events;
 }
 

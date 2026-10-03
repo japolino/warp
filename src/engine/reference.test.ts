@@ -20,7 +20,7 @@ describe("the builder's reference", () => {
   test("mentions every effect key", () => {
     const src = readFileSync(new URL("./ruleset.ts", import.meta.url), "utf8");
     const fn = src.slice(src.indexOf("export function normEffect"), src.indexOf("function normCheck"));
-    const EFFECT_ALIASES = new Set(["flag", "minutes", "add_conditions", "remove_conditions", "cure", "end_encounter", "put_on", "take_off", "events_gauge", "afflict", "status", "quests", "memory"]);
+    const EFFECT_ALIASES = new Set(["flag", "go", "minutes", "add_conditions", "remove_conditions", "cure", "end_encounter", "put_on", "take_off", "events_gauge", "afflict", "status", "quests", "memory"]);
     const keys = [...new Set([...fn.matchAll(/case "([a-z_]+)"/g)].map((m) => m[1]))].filter((k) => !EFFECT_ALIASES.has(k));
     const missing = keys.filter((k) => !REFERENCE.includes(`${k}:`) && !REFERENCE.includes(`${k} `));
     expect(missing).toEqual([]);

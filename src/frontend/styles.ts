@@ -375,9 +375,4 @@ export const STYLES = `
 .warp-momentum-mid { position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--warp-border); }
 .warp-momentum-mark { position: absolute; top: -3px; width: 4px; height: 14px; margin-left: -2px; border-radius: 2px; background: var(--warp-text); transition: left 400ms ease; }
 
-/* ───────── checkpoints ───────── */
-.warp-run-slot { display: grid; grid-template-columns: 52px 1fr auto auto; gap: 6px; align-items: center; font-size: 12.5px; }
-.warp-run-slot-name { color: var(--warp-dim); }
-.warp-run-slot-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.warp-run-end { padding: 8px; border-radius: var(--warp-radius); border: 1px solid currentColor; }
 `;

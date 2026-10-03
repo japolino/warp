@@ -10,7 +10,7 @@ export const FUNCTIONS = [
   "has", "count", "flag", "cond", "at", "rel", "met", "between", "roll",
   "wearing", "worn", "trait", "present", "codex", "feat", "perk",
   "eff", "gear", "integrity",
-  "secret", "saved", "body", "transformed", "age",
+  "secret", "body", "transformed", "age",
   "quest", "quest_active", "quest_done", "quest_failed", "goal", "quests_done", "memories", "cond_of", "foe_cond", "stat_max", "foe_max", "in_encounter",
   "min", "max", "clamp", "floor", "ceil", "round", "abs",
 ];
@@ -21,6 +21,7 @@ const REMOVED_NAMES: Record<string, string> = {
   in_date: "dating", on_outing: "dating", "partner()": "dating", "dates()": "dating", "stage()": "dating",
   pregnant: "family and pregnancy", pregnancy_weeks: "family and pregnancy", "children()": "family and pregnancy",
   "seen_by()": "being seen", "fame()": "being seen",
+  "saved()": "checkpoints", loops: "checkpoints", runs: "endings and new playthroughs",
   "front()": "hidden world clocks (fronts)", "front_stage()": "hidden world clocks (fronts)", "happened()": "random events",
   "bond()": "feelings between people", "arc()": "companion lives", "where()": "schedules",
   at_work: "work shifts", "owed()": "bills and debts", "missed()": "bills and debts", "days_until()": "bills and debts",
@@ -311,20 +312,6 @@ export function lintRuleset(r: Ruleset): Issue[] {
   for (const sec of Object.values(r.secrets)) sec.stages.forEach((st, i) => check(st.when, `Secrets › ${sec.id} › stage ${i + 1} › when`));
   check(r.liveChoices.when, "Live choices › when");
   for (const a of Object.values(r.liveChoices.tags)) checkAction(a, `Live choices › tags › ${a.id}`);
-  if (r.checkpoints.loop) {
-    check(r.checkpoints.loop.when, "Checkpoints › loop › when");
-    checkEffect(r.checkpoints.loop.effects, "Checkpoints › loop › do");
-    const to = r.checkpoints.loop.to;
-    const n = Number(to);
-    if (to !== "start" && to !== "auto" && !(Number.isInteger(n) && n >= 1 && n <= r.checkpoints.slots)) issues.push({ level: "warning", where: "Checkpoints › loop › to", message: `"${to}" should be start, auto or a slot number (1–${r.checkpoints.slots})` });
-    if (to === "auto" && !r.checkpoints.auto) issues.push({ level: "warning", where: "Checkpoints › loop › to", message: "rewinds to the autosave, but `auto: day` is off — it will rewind to the start" });
-  }
-  for (const k of [r.checkpoints.keep, r.legacy]) {
-    for (const id of k.stats) if (!r.stats[id]) issues.push({ level: "warning", where: "Checkpoints › keep", message: `"${id}" isn't a stat${suggest(id, r.statOrder)}` });
-    for (const id of k.rel) if (!r.relStats[id]) issues.push({ level: "warning", where: "Checkpoints › keep", message: `"${id}" isn't a relationship stat` });
-    for (const id of k.flags) if (!r.flags[id]) issues.push({ level: "warning", where: "Checkpoints › keep", message: `"${id}" isn't a declared flag` });
-  }
-  for (const e of Object.values(r.endings)) check(e.when, `Endings › ${e.id} › when`);
   const slotIds = r.wardrobe.slots.map((s) => s.id);
   for (const [part, slots] of Object.entries(r.body.hiddenBy)) for (const slot of slots) {
     if (!slotIds.includes(slot)) issues.push({ level: "warning", where: `Body › hidden_by › ${part}`, message: `"${slot}" isn't a wardrobe slot${suggest(slot, slotIds)}` });

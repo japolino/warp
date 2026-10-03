@@ -101,18 +101,6 @@ describe("checked practice repetition", () => {
     expect(replay).toEqual(s);
   });
 
-  test("loading an old save fills in the new repetition history", () => {
-    const s = initialState(r);
-    const snap = initialState(r);
-    delete snap.practiceUse;
-    s.saves.old = { at: s.minutes, turn: s.turn, label: "Old save", snap };
-    practice(s);
-    applyEvent(s, { t: "load", slot: "old", src: "manual" }, r);
-    expect(s.practiceUse).toEqual({});
-    practice(s);
-    expect(Object.values(s.practiceUse ?? {})[0]?.n).toBe(1);
-  });
-
   test("history and stat bounds stay bounded; invalid gain does not poison state", () => {
     const s = initialState(r);
     for (let i = 0; i < 100; i++) practice(s, `new_${i}`);

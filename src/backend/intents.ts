@@ -1,7 +1,7 @@
 // What a clicked choice means: the line posted as the player's message and the
 // intent the turn resolves. Shared by clicking and by pre-writing replies.
 
-import { cleanLiveForecast, ABILITY_PREFIX, availableChoices, findAction, ITEM_PREFIX, LIVE_PREFIX, usableAbilities, usableItems, RUN_EPILOGUE, TARGET_SEP, type Intent } from "../engine/resolve.js";
+import { cleanLiveForecast, ABILITY_PREFIX, availableChoices, findAction, ITEM_PREFIX, LIVE_PREFIX, usableAbilities, usableItems, TARGET_SEP, type Intent } from "../engine/resolve.js";
 import type { Ruleset } from "../engine/ruleset.js";
 import type { GameState } from "../engine/state.js";
 import { QUEST_PREFIX, questDef, questOffers, questsToReport } from "../engine/quests.js";
@@ -11,10 +11,6 @@ import { liveChoicesOf, type Msg } from "./ledger.js";
 export type ChoiceIntent = { say: string; intent: Intent } | { error: string };
 
 export function intentFor(r: Ruleset, state: GameState, settings: Settings, msgs: Msg[], actionId: string, params?: Record<string, string>): ChoiceIntent {
-  if (actionId === RUN_EPILOGUE) {
-    if (!state.ended || state.ended.told) return { error: "" };
-    return { say: "*The end.*", intent: { actionId: RUN_EPILOGUE, via: "choice", label: "The ending" } };
-  }
   if (actionId.startsWith(LIVE_PREFIX)) {
     // Choices written for the latest reply: the tag decides what happens, the label is what the player saw.
     const c = liveChoicesOf(msgs[msgs.length - 1])[Number(actionId.slice(LIVE_PREFIX.length))];

@@ -13,7 +13,7 @@ export const PART_CONTENTS: Record<PartLabel, string> = {
   actions: "actions, improvise",
   encounters: "encounters",
   quests: "quests (bounties on a notice board, favours people ask, story jobs: goals, deadline, reward, failure)",
-  journal: "codex, feats, perks, abilities, checkpoints, endings",
+  journal: "codex, feats, perks, abilities",
   rules: "triggers",
   story: "secrets, live_choices",
 };
@@ -29,7 +29,7 @@ export function partForIssue(where: string): PartLabel {
   if (["actions", "improvise"].some((k) => head.startsWith(k))) return "actions";
   if (head.startsWith("encounters")) return "encounters";
   if (head.startsWith("quests")) return "quests";
-  if (["codex", "feats", "perks", "abilities", "checkpoints", "endings"].some((k) => head.startsWith(k))) return "journal";
+  if (["codex", "feats", "perks", "abilities"].some((k) => head.startsWith(k))) return "journal";
   if (head.startsWith("triggers") || head.startsWith("rules")) return "rules";
   if (["secrets", "live choices"].some((k) => head.startsWith(k))) return "story";
   return "core";
@@ -239,17 +239,6 @@ perks:
   adrenaline: { name: Adrenaline Junkie, edge: { athletics: 20, when: "stress >= 60" }, drawback: { desc: "Stress builds faster", gains: { stress: +10% } }, weight: 1 }
   cold: { name: Cold, drawback: { desc: Hard to like, gains: { fondness: "-25%" } } }   # gains/losses may name relationship stats
 
-checkpoints:      # save slots in the journal; loading rewinds the game (the chat keeps its messages)
-  slots: 3
-  auto: day                        # autosave at the start of each in-game day (slot "auto")
-  keep: [codex, feats, { stats: [insight] }, { flags: [knows_the_truth] }]   # what survives a rewind: codex, feats, perks, secrets, people, stats/flags/items/rel lists
-  loop: { when: "hour >= 23", to: auto, text: "Midnight. The day folds back on itself; only {{user}} remembers.", do: { stress: +5 } }   # a time loop
-  hard: false                      # true = an ending is final (load or start over, never keep playing)
-endings:          # when one holds, the story ends: the narrator writes an epilogue from what happened; then start over, load, or keep playing
-  burned_out: { when: "trauma >= 100", title: Burned out, kind: bad, text: "{{user}} can't go on and leaves town on the night bus." }
-  legacy: [codex, feats]           # carried into a new playthrough (default codex, feats, perks)
-FUNCTIONS for runs: saved(slot); names: loops (rewinds so far), runs (playthrough number).
-
 triggers:
   exhausted: { when: "fatigue >= 85", do: { add_condition: [exhausted], hint: "..." } }         # fires once when it becomes true
   drain: { when: "fatigue >= 85", repeat: true, do: { stress: +2 } }                           # every turn while true
@@ -339,7 +328,7 @@ Name it before writing YAML: what the player does most days, what pushes back, w
 Pressures (needs, money, threats, rivals) should pull against each other so choices cost something.
 
 ## stats
-Every stat needs a SOURCE (what raises it), a SINK (what lowers it), and a CONSEQUENCE (a check, trigger, ending or encounter that reads it).
+Every stat needs a SOURCE (what raises it), a SINK (what lowers it), and a CONSEQUENCE (a check, trigger or encounter that reads it).
 A meter nothing reads is decoration. Use per_hour drift for needs; narrator: lets the story nudge it within limits.
 Skills grow when checks read them — so every skill should appear in at least two checks, in different places.
 Mistake: ten meters that only the narrator touches. Fewer stats, each wired into play, beat many idle ones.
