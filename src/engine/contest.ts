@@ -9,7 +9,7 @@ export { statAdd };
 import { d20Odds, d20Tier, rollD20, seededRng } from "./dice.js";
 import { checkGains, practise, statAdd } from "./freeform.js";
 import { emptyEffect, type ActionDef, type Difficulty, type Effect, type KindDef, type Ruleset, type Tier } from "./ruleset.js";
-import type { ContestOutcome, GameState } from "./state.js";
+import type { ContestOutcome, EventSource, GameState } from "./state.js";
 import { findPerson, type CheckResult, type TurnBuilder } from "./resolve.js";
 
 /** Intent ids of contest moves: `contest:<stat>` (a move leaning on that stat), Break off and Give in. */
@@ -156,6 +156,22 @@ function endContest(t: TurnBuilder, outcome: ContestOutcome, src: "check" | "act
   }
   t.push({ t: "contest_end", outcome, src });
   return hint;
+}
+
+/**
+ * A `swing:` effect moves the gauge as a check does: before `rounds.min` it stops at ±90, and a full swing ends the
+ * contest (won at +100, lost at −100) with the kind's effects (ADVENTURE-3).
+ */
+export function effectSwing(t: TurnBuilder, d: number, src: EventSource) {
+  const c = t.s.contest;
+  if (!c || !d) return;
+  const next = nextMomentum(t.r, c.momentum, d, c.round);
+  if (next !== c.momentum) t.push({ t: "swing", d: next - c.momentum, src });
+  if (Math.abs(next) < 100) return;
+  const outcome: ContestOutcome = next >= 100 ? "won" : "lost";
+  const kind = kindOf(t.r, c.kind);
+  const hint = endContest(t, outcome, "action");
+  t.announce(`This ends the ${kind.label.toLowerCase()}: ${fillOpp(ENDING[outcome], c.opponent)}.${hint ? ` ${hint}` : ""}`);
 }
 
 export interface RoundResult { check: CheckResult | null; beats: string; outcome: ContestOutcome | null }

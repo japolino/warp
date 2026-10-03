@@ -212,7 +212,7 @@ EFFECTS (any effects / success / fail / cost / do / reward / won block):
   add_condition: [exhausted] or { exhausted: 120 }; remove_condition: [exhausted]
   hint: "a direction for the narrator"; remember: { jo: "{{user}} paid for her drink." } (something a person remembers)
   reveal: [past] (opens a secret's next stage); goal: { find_sister: done } (start | done | fail)
-  contest: { kind: fight, with: "the bouncer", threat: hard } (starts a contest); swing: +20 (moves a running contest's gauge)
+  contest: { kind: fight, with: "the bouncer", threat: hard } (starts a contest); swing: +20 (moves a running contest's gauge like a check: it stops at ±90 before rounds.min; a full swing ends the contest)
   decide: { ask: "How does Jo react?", options: { agrees: { desc: "She agrees", weight: 2, rel: { jo: { trust: +2 } } }, refuses: { desc: "She refuses", weight: 1 } } }
     (an uncertain reaction the engine rolls on the decision model's odds; options may have when:)
 

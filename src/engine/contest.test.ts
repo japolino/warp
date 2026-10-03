@@ -7,7 +7,7 @@ import { foldEvents, initialState, type GameState } from "./state.js";
 import { applyProposal, availableChoices, resolveTurn, type Intent, type Proposal } from "./resolve.js";
 import { rollD20, seededRng } from "./dice.js";
 import { buildChoices, buildHud, buildRecordView, outcomePacket, stateDigest } from "./view.js";
-import { BREAK_OFF, GIVE_IN, simulateContest, swingFor } from "./contest.js";
+import { BREAK_OFF, GIVE_IN, contestMoveId, simulateContest, swingFor } from "./contest.js";
 
 const r = normalizeRuleset({
   clock: { start: "Day 1 22:00" },
@@ -167,5 +167,30 @@ describe("T-K6 no dominant move", () => {
     const m = simulateContest(r, "fight", 5, "fair", 4000), b = simulateContest(r, "fight", 3, "fair", 4000);
     expect(m.won).toBeGreaterThan(b.won);
     expect(simulateContest(r, "fight", 3, "fair", 4000).won).toBe(b.won);
+  });
+});
+
+describe("a swing: effect (ADVENTURE-3)", () => {
+  const rules = (min: number) => normalizeRuleset({
+    style: "adventure",
+    stats: { body: { kind: "attribute", max: 10, start: 5 }, mood: { kind: "meter", start: 50 } },
+    conflict: { rounds: { min, max: 8 }, kinds: { fight: { label: "Fight", stats: ["body"], escape: "body", won: { mood: 10, hint: "The bandit yields." }, lost: { hint: "lost" }, escaped: { hint: "escaped" } } } },
+    triggers: { second_wind: { when: "in_contest() and round == 1", do: { swing: 100 } } },
+  }).ruleset!;
+  const round1 = (min: number) => {
+    const sw = rules(min);
+    const s = foldEvents(sw, [applyProposal(sw, initialState(sw), { contest: { kind: "fight", opponent: "the bandit" } })], initialState(sw));
+    const rec = resolveTurn(sw, s, { actionId: contestMoveId("body"), via: "choice" }, { seed: seedFor(10) });
+    return { rec, s: foldEvents(sw, [rec.events], s) };
+  };
+  test("before rounds.min it stops at +90, like a check, and the contest runs on", () => {
+    const { s } = round1(3);
+    expect(s.contest?.momentum).toBe(90);
+  });
+  test("from rounds.min a full swing ends the contest as won, with the kind's effects", () => {
+    const { s, rec } = round1(1);
+    expect(s.contest).toBeNull();
+    expect(s.stats.mood).toBe(60);
+    expect(rec.hints.join(" ")).toContain("The bandit yields.");
   });
 });

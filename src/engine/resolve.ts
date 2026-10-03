@@ -10,7 +10,7 @@ import { bonusSources, applyEvent, cloneState, formatNumber, itemName, makeEnv, 
 import { checkGains, checkStats, hardnessFrom, IMPROV, improvAction, isDifficulty, practise, practiceRepetition, trainingGain } from "./freeform.js";
 import { presentPeople } from "./world.js";
 import { bandCrossings, crossingLines } from "./people.js";
-import { BREAK_OFF, GIVE_IN, CONTEST_PREFIX, bestStat, busyRound, breakOff, contestAction, contestId, contestRound, giveIn, kindOf, startContest, type RoundResult } from "./contest.js";
+import { BREAK_OFF, GIVE_IN, CONTEST_PREFIX, bestStat, busyRound, breakOff, contestAction, contestId, contestRound, effectSwing, giveIn, kindOf, startContest, type RoundResult } from "./contest.js";
 import { goalLife, goalOp, storyGoalNews, type GoalNews } from "./goals.js";
 
 export interface CheckResult {
@@ -491,8 +491,7 @@ function effectToEvents(w: Working, e: Effect, src: EventSource, extra: Record<s
     if (sec && cur + 1 < sec.stages.length) w.push({ t: "secret", id, stage: cur + 1, src });
   }
   if (e.swing !== undefined && w.s.contest) {
-    const v = evalNumber(e.swing, w.env(extra), 0);
-    if (v !== 0) w.push({ t: "swing", d: v, src });
+    effectSwing(builderOf(w), evalNumber(e.swing, w.env(extra), 0), src);
   }
   if (e.contest && !w.s.contest) startContest(builderOf(w), { kind: e.contest.kind, opponent: fillTarget(w, e.contest.with, extra), threat: e.contest.threat }, src === "narrator" ? "narrator" : "trigger");
   if (e.time) advanceTime(w, e.time, src);
