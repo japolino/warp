@@ -15226,7 +15226,7 @@ narration:
     desc: Climbing, forcing, running, fighting, enduring pain — anything that tests the body.
     params:
       difficulty: { easy: 8, normal: 12, hard: 16, extreme: 20 }
-    check: { vs: difficulty, add: body, label: Body, partial: 3 }
+    check: { vs: difficulty, add: "body - (health < 25 ? 2 : 0) - (cond('exhausted') ? 2 : 0)", label: Body, partial: 3 }   # hurt or exhausted: harder
     success: { body: +0.2, hint: "It works." }
     fail: { energy: -10, hint: "It doesn't work, and it takes something out of {{user}}." }
     crit_fail: { health: -15, energy: -10, hint: "It goes badly wrong — a real setback or injury." }
@@ -15237,7 +15237,7 @@ narration:
     desc: Recalling facts, solving puzzles, spotting lies or danger, working something out.
     params:
       difficulty: { easy: 8, normal: 12, hard: 16, extreme: 20 }
-    check: { vs: difficulty, add: mind, label: Mind, partial: 3 }
+    check: { vs: difficulty, add: "mind - (cond('exhausted') ? 2 : 0)", label: Mind, partial: 3 }
     success: { mind: +0.2, hint: "The answer or insight comes clearly." }
     fail: { hint: "The attempt fails. Show a concrete obstacle or a lost opportunity and a different next approach; do not grant the answer or repeat the same dead end." }
 
@@ -15247,7 +15247,7 @@ narration:
     desc: Persuading, lying, seducing, intimidating, calming someone down, haggling.
     params:
       difficulty: { easy: 8, normal: 12, hard: 16, extreme: 20 }
-    check: { vs: difficulty, add: charm, label: Charm, partial: 3 }
+    check: { vs: difficulty, add: "charm + (mood >= 75 ? 1 : 0) - (mood < 25 ? 1 : 0)", label: Charm, partial: 3 }   # good spirits help, a low mood shows
     success: { charm: +0.2, hint: "They're swayed." }
     fail: { mood: -5, hint: "It doesn't land. They're unconvinced, or put off." }
     crit_fail: { mood: -10, hint: "It backfires embarrassingly and they react badly." }
