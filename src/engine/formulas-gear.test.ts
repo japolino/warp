@@ -201,3 +201,15 @@ describe("gear on a stat at its max (ADVENTURE-2)", () => {
     expect(statAdd(r, { ...s, stats: { ...s.stats, body: 8 } }, "body")).toBe(11);
   });
 });
+
+describe("a max formula that drops (PRESSURE-2)", () => {
+  test("the stat follows its max down when the max's inputs change", () => {
+    const { r } = load({ stats: { people: { kind: "meter", max: 1000, start: 10 }, sick: { kind: "meter", start: 0, max: "people" } } });
+    let s = initialState(r);
+    s = { ...s, stats: { ...s.stats, sick: 8 } };
+    const n = cloneState(s);
+    applyEvent(n, { t: "stat", id: "people", d: -9, src: "manual" }, r);
+    expect(n.stats.people).toBe(1);
+    expect(n.stats.sick).toBe(1);
+  });
+});

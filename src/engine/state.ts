@@ -287,6 +287,23 @@ function clamp(v: number, lo: number, hi: number) {
 }
 
 export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
+  applyOne(s, e, r);
+  // A max formula can drop when its inputs change: the stat follows it down (PRESSURE-2).
+  for (const id of formulaMaxStats(r)) {
+    const def = r.stats[id];
+    const v = s.stats[id];
+    if (v !== undefined && v > def.min && v > statMax(r, def, s)) s.stats[id] = Math.max(def.min, statMax(r, def, s));
+  }
+}
+
+const maxFormulaCache = new WeakMap<Ruleset, string[]>();
+function formulaMaxStats(r: Ruleset): string[] {
+  let ids = maxFormulaCache.get(r);
+  if (!ids) { ids = r.statOrder.filter((id) => r.stats[id].maxExpr); maxFormulaCache.set(r, ids); }
+  return ids;
+}
+
+function applyOne(s: GameState, e: WarpEvent, r: Ruleset): void {
   // Chats from before dating was removed: "is an adult" was remembered as a dating taste.
   const old = e as unknown as { t: string; who?: unknown; key?: unknown; v?: unknown };
   if (old.t === "dt_pref" && old.key === "__adult" && typeof old.who === "string") { s.adults = { ...s.adults, [old.who]: Number(old.v) > 0 }; return; }
