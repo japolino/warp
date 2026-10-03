@@ -134,6 +134,13 @@ describe("no numbers from Jev", () => {
   });
   test("money amounts are picked from the reply's numbers, never read by Jev", () => {
     expect(moneyAmounts("You pay $20 and get twenty coins back, plus 5 gold.", "$")).toEqual([20, 5]);
+    // Korean amounts with 천 / 만 / 억, with or without a space and 원 (LIFE-8)
+    expect(moneyAmounts("택시비로 3만 원을 냈다.", "원")).toEqual([30000]);
+    expect(moneyAmounts("월세 50만원을 보냈다.", "원")).toEqual([500000]);
+    expect(moneyAmounts("5천 원짜리 우산을 샀다.", "{n}원")).toEqual([5000]);
+    expect(moneyAmounts("커피값으로 4,500원을 냈다.", "원")).toEqual([4500]);
+    expect(moneyAmounts("1억 2천만 원, 그리고 3만 5천 원과 2만5000원", "원")).toEqual([120000000, 35000, 25000]);
+    expect(moneyAmounts("3만 명이 모였다", "원")).toEqual([]);
     const r = load(ADVENTURE_YAML.replace("  charm:", "  coin: { kind: money, narrator: 100 }\n  charm:"));
     expect(r.hud.money).toBe("coin");
     const s = withMira(r);

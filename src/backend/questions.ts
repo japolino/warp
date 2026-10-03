@@ -532,8 +532,29 @@ export interface BookMeta {
 }
 
 /** Amounts of money in a reply ("$20", "20 gold", "twenty coins"), for Jev to pick from (it can't read numbers). */
+/** Korean number units: 3만 = 30,000, 5천 = 5,000, 1억 2천만 = 120,000,000. */
+const KO_UNIT: Record<string, number> = { 백: 100, 천: 1000, 만: 10000, 억: 100000000 };
+function koNumber(s: string): number {
+  let total = 0, section = 0, cur = 0;
+  for (const m of s.matchAll(/(\d[\d,]*(?:\.\d+)?)|([억만천백])/g)) {
+    if (m[1]) { cur = Number(m[1].replace(/,/g, "")); continue; }
+    const u = KO_UNIT[m[2]];
+    if (u >= 10000) { total += (section + cur || 1) * u; section = 0; } else section += (cur || 1) * u;
+    cur = 0;
+  }
+  return total + section + cur;
+}
+
 export function moneyAmounts(text: string, currency: string, max = 6): number[] {
   const out: number[] = [];
+  // Korean amounts first ("3만 원", "50만원", "1억 2천만 원"); their text is then taken out so its digits aren't read twice.
+  const curWord = esc((currency || "").replace(/\{n\}/g, "").trim() || "원");
+  const ko = new RegExp(`((?:\\d[\\d,]*(?:\\.\\d+)?\\s?[억만천백]+\\s?)+(?:\\d[\\d,]*)?)\\s?(?:원|${curWord})`, "g");
+  text = text.replace(ko, (_, amount: string) => {
+    const n = koNumber(amount);
+    if (Number.isFinite(n) && n > 0 && !out.includes(n) && out.length < max) out.push(n);
+    return " ";
+  });
   const NUM: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, twelve: 12, fifteen: 15, twenty: 20, thirty: 30, forty: 40, fifty: 50, hundred: 100, thousand: 1000 };
   const unit = "(?:gold|silver|copper|coins?|credits?|bucks|dollars?|euros?|pounds?|yen|crowns?|marks?|gp|sp|cp)";
   const cur = esc(currency || "$");
