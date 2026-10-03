@@ -3,16 +3,14 @@
 import type { Ruleset, StatDef } from "./ruleset.js";
 import { percentOf, TIERS } from "./ruleset.js";
 import {
-  amountValue, bandFor, foeName, formatClock, formatMoney, formatNumber, gradeFor, initialState, itemName, makeEnv, personName, statMax,
+  amountValue, bandFor, foeName, formatClock, formatMoney, formatNumber, gradeFor, itemName, makeEnv, personName, statMax,
   type GameState, type WarpEvent,
 } from "./state.js";
 import { practiceProgress } from "./freeform.js";
 import { encounterGuide, itemRelevance } from "./encounter-view.js";
-import { cleanLiveForecast, spentLock, whenHolds, paramValues, actionPool, availableChoices, dangerStats, findAction, foeArmor, isAvailable, LIVE_PREFIX, lockReason, mainMeter, odds, playerArmor, usableItems, TIER_LABEL, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
+import { cleanLiveForecast, spentLock, whenHolds, actionPool, availableChoices, dangerStats, foeArmor, isAvailable, LIVE_PREFIX, lockReason, mainMeter, odds, playerArmor, usableItems, TIER_LABEL, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
 import { dueWords, effectWords, goalDone, questDef, questDigest, questOffers, questsToReport, QUEST_PREFIX } from "./quests.js";
-import {
-  dateAt, ordinal, presentPeople,
-} from "./world.js";
+import { dateAt, ordinal, presentPeople } from "./world.js";
 import type { ChangeView, ChoiceView, HudView, QuestView, RecordView, Tone } from "../shared/protocol.js";
 import { namesIt, namesTitle } from "./mention.js";
 

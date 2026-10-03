@@ -4,7 +4,7 @@ import { lintRuleset } from "./lint.js";
 import { normalizeRuleset, type Ruleset } from "./ruleset.js";
 import { applyProposal, findAction, resolveTurn, type Intent } from "./resolve.js";
 import { applyEvent, cloneState, foldEvents, initialState, type GameState, type WarpEvent } from "./state.js";
-import { buildChoices, buildHud, narratorKnowledge, stateDigest } from "./view.js";
+import { buildChoices, narratorKnowledge, stateDigest } from "./view.js";
 import { cleanChoices, repairTag, usableTags } from "../backend/live.js";
 
 const RULES = yaml.load(`

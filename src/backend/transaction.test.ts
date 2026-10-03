@@ -5,7 +5,6 @@ import { DEFAULT_SETTINGS } from "../shared/protocol.js";
 import { busyChats, lastStates } from "./state-push.js";
 import { encounterLogOf, foldPath, liveChoicesOf, patchMeta, patchWarpMeta, reconcilePath, recordPath, shiftAfterSwipeDelete, warpMeta, withRecordPath, writeRecord } from "./ledger.js";
 import { interceptor, onGenerationEnded, onGenerationStarted, onGenerationStopped } from "./turn.js";
-import { foldEvents, initialState } from "../engine/state.js";
 import { characterBrief, characterForChat, personProfile } from "./source.js";
 import { playRound } from "./encounter.js";
 import { takeOperation, releaseOperation } from "./operations.js";
