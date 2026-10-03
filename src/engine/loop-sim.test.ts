@@ -142,3 +142,55 @@ triggers:
     expect(runLoopSim(r, { turns: 20, seeds: 3, contestRuns: 200, seed: "other" }).counts).not.toEqual(whole.counts);
   });
 });
+
+describe("gates that measured the wrong thing", () => {
+  const load = (y: string) => loadRuleset([{ label: "t", content: y, order: 0 }]).ruleset!;
+  test("two equal tags pass the greedy-tag-share gate (LONG-1)", () => {
+    const r = load(`name: two equal tags
+style: story
+relationships:
+  stats: { trust: { start: 20, narrator: 4 } }
+  people: { jo: { name: Jo, age: 30 } }
+live_choices:
+  tags:
+    warm: { desc: "Something warm toward someone here", per_person: true, effects: { rel: { target: { trust: 2 } } } }
+    kind: { desc: "Something kind toward someone here", per_person: true, effects: { rel: { target: { trust: 2 } } } }
+`);
+    for (const seed of ["loop", "a", "b", "c"]) {
+      const g = runLoopSim(r, { turns: 50, seeds: 30, seed }).gates.find((x) => x.id === "greedy-tag-share")!;
+      expect(g.bar).toBe("≤ 0.75");
+      expect(g.pass).toBe(true);
+    }
+  });
+  test("contest rounds a rule starts don't count as typed rolls (ADVENTURE-7)", () => {
+    const r = load(`name: ambush gate
+style: adventure
+stats:
+  body: { kind: attribute, max: 10, start: 3 }
+  mind: { kind: attribute, max: 10, start: 3 }
+  amb_at: { kind: hidden, min: -100, max: 100000, start: 0 }
+triggers:
+  ambush: { when: "turn - amb_at >= 12 and not in_contest()", repeat: true, do: { set: { amb_at: turn }, contest: { kind: fight, with: "an ambusher" }, hint: "Ambush!" } }
+conflict:
+  kinds:
+    fight: { label: Fight, stats: [body, mind], escape: body }
+`);
+    const rep = runLoopSim(r, { turns: 50, seeds: 30, contestRuns: 100 });
+    expect(rep.counts.contestsStarted).toBeGreaterThan(30);
+    expect(rep.gates.find((x) => x.id === "typed-rolls")!.pass).toBe(true);
+  });
+  test("an odds spread that was never measured says so (CREW-5)", () => {
+    const r = load(`name: no live checks
+style: adventure
+stats:
+  body: { kind: attribute, max: 10, start: 3 }
+conflict: false
+live_choices:
+  tags:
+    careful: { desc: "The cautious option (no roll)" }
+    plain: { desc: "Something ordinary (no roll)" }
+`);
+    const g = runLoopSim(r, { turns: 20, seeds: 3 }).gates.find((x) => x.id === "odds-spread")!;
+    expect(g.bar).toMatch(/not measured/);
+  });
+});

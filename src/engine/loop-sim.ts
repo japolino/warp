@@ -270,7 +270,8 @@ export function createLoopSim(r: Ruleset, opts: LoopOptions = {}): { run(turns: 
     // The scene holds unless the reader changed it (this reader never does).
     if (!sameScene(sceneOf(r, after), run.baseline)) c.sceneMisses++;
     // Typed messages: how many rolled.
-    if (move.typed) { c.typed++; if (rec.check) c.typedRolled++; if (run.policy === "dialogue") { dialogue.typed++; if (rec.check) dialogue.rolled++; } }
+    // Contest rounds roll every message by design: the typed-rolls gate measures the referee outside contests.
+    if (move.typed) { c.typed++; if (rec.check) c.typedRolled++; if (run.policy === "dialogue" && !before.contest) { dialogue.typed++; if (rec.check) dialogue.rolled++; } }
     if (rec.check) {
       c.checks++;
       const real = d20Odds(rec.check.add, rec.check.target ?? 0, 0).success;
@@ -293,7 +294,8 @@ export function createLoopSim(r: Ruleset, opts: LoopOptions = {}): { run(turns: 
     }
     if (move.tag && run.policy === "greedy" && !before.contest) picks[move.tag] = (picks[move.tag] ?? 0) + 1;
     // A band crossing always has its line in the same record.
-    const crossings = bandCrossings(r, before, after);
+    // A crossing whose band says `say: ""` has no line on purpose.
+    const crossings = bandCrossings(r, before, after).filter((x) => x.line);
     if (crossings.length) {
       c.crossings += crossings.length;
       if (!buildRecordView(r, "m", 0, whole, before, after).lines.length) c.crossingsWithoutLine++;
@@ -351,7 +353,7 @@ export function createLoopSim(r: Ruleset, opts: LoopOptions = {}): { run(turns: 
           { id: "odds-shown-real", label: "Shown odds vs the real odds of the check that was rolled", value: c.worstOddsGap, bar: "≤ 0.02", pass: c.worstOddsGap <= 0.02 },
           { id: "typed-rolls", label: "Typed messages that rolled, in a dialogue-heavy chat", value: typedShare, bar: "≤ 1/3", pass: typedShare <= 1 / 3 },
           { id: "fail-direction", label: "Partial, failed and critically failed checks without a direction", value: c.failsWithoutDirection, bar: "= 0", pass: c.failsWithoutDirection === 0 },
-          { id: "odds-spread", label: "Odds spread of the written choices (easy … hard)", value: c.minSpread ?? 0, bar: "≥ 0.20", pass: c.minSpread === null || c.minSpread >= 0.2 },
+          { id: "odds-spread", label: "Odds spread of the written choices (easy … hard)", value: c.minSpread ?? 0, bar: c.minSpread === null ? "not measured: no turn offered checked choices with two difficulty words" : "≥ 0.20", pass: c.minSpread === null || c.minSpread >= 0.2 },
         );
         if (contests.length) {
           const mean = contests.map((x) => x.meanRounds), within = contests.map((x) => x.within), broke = contests.map((x) => x.brokenOff);
@@ -363,8 +365,11 @@ export function createLoopSim(r: Ruleset, opts: LoopOptions = {}): { run(turns: 
         }
       }
       if (pickTotal) {
+        // With two tags one of them always has half the picks: the bar is 0.75 there (and there is no gate with one tag).
         const top = Math.max(...Object.values(tagShare));
-        gates.push({ id: "greedy-tag-share", label: "Share of one tag in a greedy player's picks", value: top, bar: "≤ 0.50", pass: top <= 0.5 });
+        const tags = Object.keys(r.liveChoices.tags).length;
+        const bar = tags <= 2 ? 0.75 : 0.5;
+        if (tags >= 2) gates.push({ id: "greedy-tag-share", label: "Share of one tag in a greedy player's picks", value: top, bar: `≤ ${bar.toFixed(2)}`, pass: top <= bar });
       }
       if (alwaysTag && gains.always.length) {
         const ratio = c.mixedGain > 0 ? c.alwaysGain / c.mixedGain : c.alwaysGain > 0 ? Infinity : 0;
