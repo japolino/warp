@@ -200,3 +200,26 @@ describe("T-P6 adults only", () => {
     expect(read(s, { people: [{ name: "Kit", adult: true }] }).events.some((e) => e.t === "adult")).toBe(false);
   });
 });
+
+describe("a band crossing without say: (ADVENTURE-8, PRESSURE-3, LONG-8)", () => {
+  const m = normalizeRuleset({
+    style: "story",
+    stats: {
+      furnace: { kind: "meter", max: 3, start: 0, bands: { 0: "Off", 2: "Half", 3: "Max" } },
+      job: { kind: "meter", good: "none", max: 3, start: 0, bands: { 0: { text: "No job booked", say: "", say_down: "" }, 2: { text: "Local radio", say: "", say_down: "" } } },
+    },
+    relationships: { stats: { trust: { start: 10, narrator: 50, bands: { 0: "Wary", 40: "Open" } } }, people: { jo: { name: "Jo", start: { trust: 10 } } } },
+  }).ruleset!;
+  test("{{user}}'s stat names itself, as a person's does, and ends with a full stop", () => {
+    const a = initialState(m);
+    const b = { ...a, stats: { ...a.stats, furnace: 3 }, rel: { ...a.rel, jo: { trust: 45 } } };
+    expect(crossingLines(bandCrossings(m, a, b))).toEqual(["Jo: Trust — Open.", "Furnace — Max."]);
+  });
+  test('say: "" turns the line off', () => {
+    const a = initialState(m);
+    const b = { ...a, stats: { ...a.stats, job: 2 } };
+    expect(bandCrossings(m, a, b)).toHaveLength(1);
+    expect(crossingLines(bandCrossings(m, a, b))).toEqual([]);
+    expect(crossingLines(bandCrossings(m, b, a))).toEqual([]);
+  });
+});

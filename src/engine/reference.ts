@@ -63,6 +63,7 @@ stats:                                # kinds: meter (a bar) | attribute | skill
     start: 60                         # a number, full, "50%" of the max, or a formula
     bands:                            # short form "25: Low." or the long form:
       25: { text: Low., say_down: "Your spirits sink." }   # say: a story line when the value enters this band from below; say_down: from above
+      # no say: = the line is "Mood — Low."; say: "" = no line (for label-like bands)
       75: { text: In good spirits., say: "Things are looking up." }
   money: { kind: money, narrator: 100 }
   body: { kind: attribute, max: 10, start: 3, desc: "Strength, speed, endurance." }

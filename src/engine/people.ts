@@ -32,7 +32,13 @@ function crossing(def: StatDef, before: number, after: number, max: number, befo
   return { from, to, dir: (from?.at ?? -Infinity) < to.at ? "up" : "down" };
 }
 
-/** Every band crossing between two states: relationship stats of each person, and {{user}}'s meters. */
+/** Band text as the end of a line: a full stop unless it has one. */
+const sentence = (t: string) => (/[.!?。！？…"')]$/.test(t.trim()) ? t.trim() : `${t.trim()}.`);
+
+/**
+ * Every band crossing between two states: relationship stats of each person, and {{user}}'s meters. Without a
+ * `say:` line the band text is the line, with the stat's name; `say: ""` (or `say_down: ""`) leaves it empty: no line.
+ */
 export function bandCrossings(r: Ruleset, before: GameState, after: GameState): BandCrossing[] {
   const out: BandCrossing[] = [];
   for (const who of Object.keys(after.people)) {
@@ -46,7 +52,7 @@ export function bandCrossings(r: Ruleset, before: GameState, after: GameState): 
       if (!c) continue;
       const own = c.dir === "up" ? c.to.say : c.to.sayDown;
       const moved = Math.abs(a - b);
-      out.push({ who, stat: id, ...c, moved, share: moved / Math.max(1e-9, def.max - def.min), authored: !!own, line: fill(own ?? `${name}: ${def.label} — ${c.to.text}.`, name) });
+      out.push({ who, stat: id, ...c, moved, share: moved / Math.max(1e-9, def.max - def.min), authored: !!own, line: fill(own ?? `${name}: ${def.label} — ${sentence(c.to.text)}`, name) });
     }
   }
   for (const id of r.statOrder) {
@@ -57,7 +63,7 @@ export function bandCrossings(r: Ruleset, before: GameState, after: GameState): 
     if (!c) continue;
     const own = c.dir === "up" ? c.to.say : c.to.sayDown;
     const moved = Math.abs(a - b);
-    out.push({ who: null, stat: id, ...c, moved, share: moved / Math.max(1e-9, statMax(r, def, after) - def.min), authored: !!own, line: own ?? c.to.text });
+    out.push({ who: null, stat: id, ...c, moved, share: moved / Math.max(1e-9, statMax(r, def, after) - def.min), authored: !!own, line: own ?? `${def.label} — ${sentence(c.to.text)}` });
   }
   return out;
 }
@@ -69,6 +75,7 @@ const better = (a: BandCrossing, b: BandCrossing) => Number(b.authored) - Number
 export function crossingLines(crossings: BandCrossing[], max = 3): string[] {
   const best = new Map<string, BandCrossing>();
   for (const c of crossings) {
+    if (!c.line) continue;
     const key = c.who ?? `you:${c.stat}`;
     const cur = best.get(key);
     if (!cur || better(c, cur) < 0) best.set(key, c);

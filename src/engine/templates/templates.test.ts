@@ -163,7 +163,7 @@ describe("the what-changed line", () => {
     const told = applyProposal(r, mid, { stats: { energy: -8 } });
     const after = foldEvents(r, [told], mid);
     const view = buildRecordView(r, "m", 0, { ...rec, events: [...rec.events, ...told] }, before, after);
-    expect(view.lines).toEqual(["Tired."]);
+    expect(view.lines).toEqual(["Energy — Tired."]);
     const energy = view.changes.filter((c) => c.text.startsWith("Energy"));
     expect(energy.map((c) => c.text)).toEqual(["Energy +2", "Energy -8"]);
     expect(energy.every((c) => !c.band)).toBe(true);

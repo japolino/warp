@@ -568,8 +568,9 @@ function normBands(raw: unknown, good: StatDef["good"], where: string, c: Ctx): 
   const list: { at: number; text: string; tone?: Tone; say?: string; sayDown?: string; voice?: string }[] = [];
   // The long form adds the story line on entering the band (say / say_down) and how a person acts in it (voice).
   const lines = (b: Raw) => ({
-    ...(typeof b.say === "string" && b.say.trim() ? { say: b.say.trim() } : {}),
-    ...(typeof b.say_down === "string" && b.say_down.trim() ? { sayDown: b.say_down.trim() } : {}),
+    // say: "" turns the story line off for that band (no line from the band text either).
+    ...(typeof b.say === "string" ? { say: b.say.trim() } : {}),
+    ...(typeof b.say_down === "string" ? { sayDown: b.say_down.trim() } : {}),
     ...(typeof b.voice === "string" && b.voice.trim() ? { voice: b.voice.trim() } : {}),
   });
   if (Array.isArray(raw)) {
