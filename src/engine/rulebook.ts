@@ -2,21 +2,10 @@
 // sections Warp keeps as lorebook entries, and joined back for export. Splitting
 // is textual, so comments and formatting survive the round trip.
 
-import { PART_LABELS } from "./reference.js";
+import { PART_LABELS, PART_OF_KEY } from "./reference.js";
 
-/**
- * Which section each top-level key of format 2 belongs in (CORE-DESIGN §1.1): core, stats, people, world, actions,
- * story, conflict. Anything else (an unknown or removed key) goes to core, where the checker flags it.
- */
-export const PART_OF_KEY: Record<string, string> = {
-  name: "core", description: "core", style: "core", clock: "core", start: "core", hud: "core", narration: "core",
-  stats: "stats", growth: "stats", practice: "stats", checks: "stats", improvise: "stats", improvised: "stats",
-  relationships: "people", people: "people", you: "people", player: "people",
-  items: "world", inventory: "world", conditions: "world", flags: "world",
-  actions: "actions",
-  secrets: "story", live_choices: "story", goals: "story", triggers: "story", rules: "story",
-  conflict: "conflict",
-};
+/** Which section each top-level key of format 2 belongs in (kept with the format reference). */
+export { PART_OF_KEY };
 
 export interface RulebookPart { label: string; yaml: string }
 
@@ -92,9 +81,7 @@ function merge(out: RulebookPart[], p: RulebookPart) {
 
 /** Sections in the order Warp lists them; unknown labels last. */
 function order(parts: RulebookPart[]): RulebookPart[] {
-  // The sections in the order of format 2 (labels the reference doesn't list yet go by this order too).
-  const ORDER = ["core", "stats", "people", "world", "actions", "story", "conflict"];
-  const rank = (l: string) => { const i = ORDER.indexOf(l); const j = (PART_LABELS as readonly string[]).indexOf(l); return i >= 0 ? i : j >= 0 ? 50 + j : 99; };
+  const rank = (l: string) => { const i = (PART_LABELS as readonly string[]).indexOf(l); return i >= 0 ? i : 99; };
   return parts.map((p) => ({ ...p, yaml: `${p.yaml.trim()}\n` })).sort((a, b) => rank(a.label) - rank(b.label));
 }
 

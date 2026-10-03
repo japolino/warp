@@ -439,8 +439,7 @@ async function draftAll(s: BuilderSession, userId?: string) {
   const t = getTemplate(s.base);
   const systems = chosenSystems(s);
   const want = (label: PartLabel) => {
-    if (label === "encounters") return systems.has("encounters");
-    if (label === "quests") return systems.has("quests");
+    if (label === "conflict") return systems.has("encounters");
     if (label === "story") return systems.has("story");
     return true;
   };

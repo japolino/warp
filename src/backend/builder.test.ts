@@ -24,14 +24,14 @@ function reply(user: string): string {
     });
   }
   if (user.includes("Ask up to 4 more")) return JSON.stringify({ followUps: [{ text: "Should she have a part-time job?", kind: "single", options: ["Yes", "No"] }] });
-  if (user.includes("has problems reported by the checker")) { repairCalls++; return "```yaml\n" + partYaml("rules") + "```"; }
+  if (user.includes("has problems reported by the checker")) { repairCalls++; return "```yaml\n" + partYaml("people") + "```"; }
   if (user.includes("The player wants:")) {
     return JSON.stringify({ summary: "Added a cooking skill.", parts: { stats: partYaml("stats").replace("stats:\n", "stats:\n  cooking: { kind: skill, max: 100, start: 5, grades: [F, D, C, B, A, S] }\n") } });
   }
   const m = /Write the "(\w+)" section/.exec(user);
   if (m) {
-    // The first draft of "rules" is broken on purpose; the repair loop must fix it.
-    if (m[1] === "rules") return "Here you go:\n```yaml\ntriggers:\n  broken:\n    when: fatigue >=\n    do: { stress: +1 }\n```";
+    // The first draft of "people" is broken on purpose; the repair loop must fix it.
+    if (m[1] === "people") return "Here you go:\n```yaml\nrelationships:\n  stats: [\n```";
     return "```yaml\n" + partYaml(m[1]) + "```";
   }
   return "{}";

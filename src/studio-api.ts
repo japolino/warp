@@ -15,7 +15,7 @@ export {
 
 // Sections of a whole rulebook, and the format reference.
 export { splitRulebook, joinRulebook, type RulebookPart } from "./engine/rulebook.js";
-export { PART_LABELS, PART_CONTENTS, partForIssue, REFERENCE, DESIGN_GUIDE, type PartLabel } from "./engine/reference.js";
+export { PART_LABELS, PART_CONTENTS, PART_OF_KEY, partForIssue, REFERENCE, DESIGN_GUIDE, type PartLabel } from "./engine/reference.js";
 export { TEMPLATES, getTemplate, withCharacter, looksLikeScenario, type Template } from "./engine/templates/index.js";
 
 // What the audit reads: formulas, the start state, odds.
