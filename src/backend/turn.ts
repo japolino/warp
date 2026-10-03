@@ -18,7 +18,6 @@ import { extract, type ExtractPart } from "./helpers.js";
 import { host, logError, toast } from "./host.js";
 import { activeRecord, appendDrafts, encounterLogOf, encounterSlots, foldPath, getMessages, patchMeta, patchWarpMeta, pathRevision, recordPath, warpMeta, writeRecord, type Msg, type Suggestion } from "./ledger.js";
 import { writeLiveChoices } from "./live.js";
-import { discoverPlace } from "./discover.js";
 import { getSettings } from "./settings.js";
 import { characterBrief, getRuleset } from "./source.js";
 import { busyChats, pushState, schedulePush } from "./state-push.js";
@@ -221,16 +220,13 @@ export async function interceptor(messages: LlmMessageDTO[], ctx: InterceptorCon
       rec = res.record;
       if (confidence !== undefined && rec.action) rec.confidence = confidence;
       if (!info.isDryRun && !generationIsCurrent(ctx.chatId, info.generationId)) return messages;
-      // Exploring found somewhere new: invent it, save it to the ruleset, step into it.
-      if (rec.discover && !info.isDryRun && loaded) await discoverPlace(loaded, r, before, rec, ctx.chatId, settings, ctx.userId);
       after = cloneState(before);
       for (const e of rec.events) applyEvent(after, e, r);
       if (!info.isDryRun) {
         if (!generationIsCurrent(ctx.chatId, info.generationId)) return messages;
         // Keep the revision that actually decided this turn. A later rule edit
         // must be reconciled rather than making old effects appear newly valid.
-        const resolvedRules = rec.discover ? (await getRuleset(ctx.chatId, ctx.userId))?.ruleset ?? r : r;
-        rec.path = recordPath(resolvedRules, history);
+        rec.path = recordPath(r, history);
         pending.set(info.generationId ?? ctx.chatId, {
           chatId: ctx.chatId, userId: ctx.userId, rec, after,
           ...(info.generationId ? { generationId: info.generationId } : {}),

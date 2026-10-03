@@ -128,8 +128,6 @@ export async function prewrite(opts: {
       if (Object.keys(o).length) res = resolveTurnFull(r, state, ci.intent, { seed, veils: settings.veils, odds: o, playerText: ci.say });
     }
     const rec = res.record;
-    // Exploring invents places and ending runs need the live turn; don't pre-write those.
-    if (rec.discover) return;
     const after = cloneState(state);
     for (const e of rec.events) applyEvent(after, e, r);
     const prompt = nextPrompt(opts.prompt, opts.reply, ci.say, buildInjection(r, rec, state, after, opts.player, `${opts.reply}\n${ci.say}`));

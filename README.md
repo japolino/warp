@@ -20,7 +20,7 @@ A game engine under your roleplay. Warp owns stats, dice, time, inventory and re
 |---|---|
 | Stats | Meters described in words (bands), graded skills, attributes, money, hidden stats, drift over time, caps by formula. Limit what the story may change after a reply: a cap per reply, and optionally only while a formula holds (`narrator_when`), only when the exchange mentions certain words (`narrator_words`), or only after certain actions (`narrator_actions`). The bookkeeper is told what the dice already applied, so nothing counts twice |
 | Checks | d100 chance, d20 vs difficulty, 2d6 PbtA; crits and partial successes; odds shown on buttons |
-| Time & world | Clock and calendar, seasons, weather, temperature (indoors vs out), a map of places with travel. With `discovery`, exploring can find places the ruleset never had: the helper model invents one that fits the card, it's written into the ruleset lorebook, and it stays on the map. Each found place comes with one safe thing to look at, and with `discovery: { people: true }` sometimes a resident (no age is assumed, so they don't count as an adult until the story shows it) |
+| Time & world | Clock and calendar, seasons, weather, temperature (indoors vs out), and named places. The story says where {{user}} goes; there is no map or travel graph |
 | Body | Parts with any traits (hair, eyes, ears, tails, marks…), what clothing covers, and transformations in stages that each roll a chance. The story can change the body after a reply (new parts allowed unless closed), and the narrator always sees it — including what others can't see right now |
 | Clothing | Slots, warmth vs the weather, damage, how revealing, traits like rainproof; change clothes from the sheet |
 | People | Relationship stats, schedules (who is where, when), per-person actions ("Talk to Jo"). Companions live between replies: a goal, a hidden arc they push through a choice of their own each in-game day (weighed by the decision model), feelings toward each other, jealousy when you grow close to a rival, and secrets only they know |
@@ -121,7 +121,7 @@ relationships:
     robin: { name: Robin, start: { trust: 30 } }
 
 locations:
-  home: { name: Your Flat, desc: "...", exits: [street], travel: 10 }   # exits become "Go to…" choices
+  home: { name: Your Flat, desc: "..." }   # the story (or a move: effect) takes {{user}} to a place
 items: { lockpick: Lockpick }
 conditions: { exhausted: { label: Exhausted, tone: bad } }
 flags: { door_open: { start: false, narrator: true } }
@@ -179,7 +179,7 @@ triggers:
 
 **Formula names:** stats, flags, `hour`, `minute`, `day`, `weekday`, `turn`, `location`, and `has()`, `count()`, `flag()`, `cond()`, `at()`, `rel(person, stat)`, `met()`, `between(v, lo, hi)`, `min`, `max`, `clamp`, `floor`, `ceil`, `round`, `abs`.
 
-The Ruleset tab lists problems in plain language, with "did you mean" suggestions for typos. Keys of parts that were taken out of Warp (`dungeons:`, `dating:`, `look:`, minigame `game:` and `gamble:`, encounter `sim:`, `lineage:`, `observers:`, `mind:`, `obligations:`, `jobs:`, action `errand:`) are ignored with a plain warning; the old version is on the `legacy` branch.
+The Ruleset tab lists problems in plain language, with "did you mean" suggestions for typos. Keys of parts that were taken out of Warp (`dungeons:`, `dating:`, `look:`, minigame `game:` and `gamble:`, encounter `sim:`, `lineage:`, `observers:`, `mind:`, `obligations:`, `jobs:`, `discovery:`, place `exits:`/`travel:`/`requires:`, action `errand:`) are ignored with a plain warning; the old version is on the `legacy` branch.
 
 ## Develop
 

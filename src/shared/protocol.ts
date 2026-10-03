@@ -178,11 +178,6 @@ export interface HudView {
   turn: number;
 }
 
-export interface MapView {
-  nodes: { id: string; name: string; x: number; y: number; here: boolean; reachable: boolean; indoors: boolean; people: string[]; /** Why travel there is locked (its `requires:`). */ locked?: string }[];
-  edges: [string, string][];
-}
-
 /** One encounter round, straight from the ledger: the check is the check, not the encounter. */
 export interface RoundCardView {
   move: string;
@@ -450,7 +445,6 @@ export type BackendToFrontend =
       historyConflict?: string | null;
       status: RulesetStatus;
       hud: HudView | null;
-      map: MapView | null;
       choices: ChoiceView[];
       records: RecordView[];
       suggestions: SuggestionView[];

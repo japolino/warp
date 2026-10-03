@@ -106,9 +106,6 @@ export interface GameState {
   tf: Record<string, number>;
   /** How people feel about each other: a → b → −100…100. */
   bonds: Record<string, Record<string, number>>;
-  /** Fruitless explorations per place since the last find, and the places found. */
-  explored: Record<string, number>;
-  discovered: string[];
   /** The story reached an ending (told = the narrator has written it). */
   ended: { id: string; at: number; told: boolean } | null;
   /** Continued past this ending; rearm only after its predicate becomes false. */
@@ -178,8 +175,6 @@ export type WarpEvent = { src: EventSource; note?: string; why?: string } & (
   | { t: "tf"; id: string; stage: number }
   | { t: "bond"; a: string; b: string; d: number }
   | { t: "news"; text: string }
-  | { t: "explored"; loc: string; found: boolean }
-  | { t: "discovered"; id: string }
   | { t: "practice"; id: string; d: number }
   | { t: "practice_use"; key: string; n: number; turn: number; minutes: number }
   | { t: "scene"; who: string; here: boolean }
@@ -242,8 +237,6 @@ export function initialState(r: Ruleset): GameState {
     body: structuredClone(r.body.parts),
     tf: {},
     bonds: structuredClone(r.bonds),
-    explored: {},
-    discovered: [],
     practice: {},
     practiceUse: {},
     scene: {},
@@ -614,8 +607,6 @@ export function applyEvent(s: GameState, e: WarpEvent, r: Ruleset): void {
       break;
     }
     case "tf": s.tf = { ...s.tf, [e.id]: Math.max(s.tf[e.id] ?? 0, e.stage) }; break;
-    case "explored": s.explored = { ...s.explored, [e.loc]: e.found ? 0 : (s.explored[e.loc] ?? 0) + 1 }; break;
-    case "discovered": if (!s.discovered.includes(e.id)) s.discovered = [...s.discovered, e.id]; break;
     case "news": s.news = [...s.news, { text: e.text, at: s.minutes }].slice(-NEWS_KEPT); break;
     case "bond": s.bonds = { ...s.bonds, [e.a]: { ...(s.bonds[e.a] ?? {}), [e.b]: clamp((s.bonds[e.a]?.[e.b] ?? 0) + e.d, -100, 100) } }; break;
     case "save":

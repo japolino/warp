@@ -13,7 +13,7 @@ const r = loadRuleset(t.parts.map((p, i) => ({ label: p.label, content: p.yaml, 
 const s = initialState(r);
 const msg = (): StateMsg => ({
   type: "state", chatId: "c1", status: { state: "ok", name: r.name, source: null, issues: [], characterName: null, cardKind: "character", tags: [] },
-  hud: buildHud(r, s), map: null, choices: buildChoices(r, s, { lines: [], veils: [] }), records: [], suggestions: [],
+  hud: buildHud(r, s), choices: buildChoices(r, s, { lines: [], veils: [] }), records: [], suggestions: [],
   latestMessageId: "m2", choicesAnchor: "m2", busy: false,
 });
 

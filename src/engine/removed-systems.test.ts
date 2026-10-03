@@ -23,6 +23,7 @@ lineage:
   pregnancy: { weeks: 36 }
 observers:
   when: "exposed > 0"
+discovery: { at: [park], people: true }
 obligations:
   rent: { amount: 10, every: 7 }
 jobs:
@@ -53,12 +54,12 @@ describe("removed in-chat systems", () => {
   test("each removed key or effect gets one plain warning and is ignored", () => {
     const { ruleset: r, issues } = load();
     expect(r).not.toBeNull();
-    expect(removedWhere()).toEqual(["Actions › nap › errand", "Actions › night › effects › conceive", "Jobs", "Lineage", "Mind", "Obligations", "Observers"].sort());
+    expect(removedWhere()).toEqual(["Actions › nap › errand", "Actions › night › effects › conceive", "Discovery", "Jobs", "Lineage", "Mind", "Obligations", "Observers"].sort());
     for (const i of issues.filter((x) => x.message.includes("was removed from Warp"))) {
       expect(i.level).toBe("warning");
       expect(i.message).toContain("`legacy` branch");
     }
-    for (const k of ["lineage", "observers", "mind", "obligations", "jobs"]) expect(Object.keys(r!)).not.toContain(k);
+    for (const k of ["lineage", "observers", "mind", "obligations", "jobs", "discovery"]) expect(Object.keys(r!)).not.toContain(k);
     expect(JSON.stringify(r!.actions.night)).not.toContain("conceive");
   });
 
@@ -88,12 +89,14 @@ describe("removed in-chat systems", () => {
       { t: "seen", who: "robin", what: "exposed: top", where: "Park", src: "world" },
       { t: "due", id: "rent", due: 100, owed: 10, missed: 1, src: "world" },
       { t: "job", job: { id: "cafe", n: 0, patron: 0, earned: 0, tips: 0, log: [] }, src: "action" },
+      { t: "explored", loc: "park", found: true, src: "action" },
+      { t: "discovered", id: "cove", src: "action" },
       { t: "stat", id: "coin", d: 5, src: "action" },
     ] as unknown as WarpEvent[];
     const s = foldEvents(r, [old]);
     expect(s.stats.coin).toBe(55);
     expect(Object.keys(s)).not.toContain("pregnancy");
-    for (const k of ["kin", "seen", "dues", "job"]) expect(Object.keys(s)).not.toContain(k);
+    for (const k of ["kin", "seen", "dues", "job", "explored", "discovered"]) expect(Object.keys(s)).not.toContain(k);
     expect(s.people.child_1).toBeUndefined();
     expect(buildHud(r, s)).toBeTruthy();
     expect(buildChoices(r, s, { lines: [], veils: [] }).length).toBeGreaterThan(0);

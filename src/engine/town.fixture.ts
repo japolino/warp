@@ -150,30 +150,22 @@ locations:
     name: Your Apartment
     desc: A cramped one-bedroom above a chip shop. Thin walls, a lock that sticks.
     indoors: true
-    exits: [high_street]
   high_street:
     name: High Street
     desc: Shops, a café with a corkboard of odd jobs in the window, a busy bus stop. Crowded by day, emptier at night.
-    exits: [apartment, campus, park, docks, the_strip]
   campus:
     name: University Campus
     desc: Lecture halls, a library, a gym with a pool.
     indoors: true
-    exits: [high_street]
-    travel: 15
   park:
     name: Seaview Park
     desc: Lawns, a duck pond, dense woods at the far end.
-    exits: [high_street]
   docks:
     name: The Docks
     desc: Warehouses and cargo ships. Rough, and rougher after dark.
-    exits: [high_street]
-    travel: 20
   the_strip:
     name: The Strip
     desc: Bars and clubs, neon and noise until dawn.
-    exits: [high_street]
 
 items:
   phone:
@@ -193,6 +185,13 @@ conditions:
   shaken: { label: Shaken, tone: warn, desc: Recently overwhelmed., bonus: { athletics: -5, skulduggery: -10 } }
 
 actions:
+  head_out:
+    label: Head out to the High Street
+    group: Travel
+    at: apartment
+    say: "*I head out to the High Street.*"
+    time: 10
+    effects: { move: high_street }
   shower:
     label: Shower
     group: Home

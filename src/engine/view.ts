@@ -8,12 +8,12 @@ import {
 } from "./state.js";
 import { practiceProgress } from "./freeform.js";
 import { encounterGuide, itemRelevance } from "./encounter-view.js";
-import { cleanLiveForecast, costValue, spentLock, whenHolds, paramValues, ABILITY_PREFIX, abilityStatus, actionPool, availableChoices, canExplore, dangerStats, EXPLORE, findAction, foeArmor, isAvailable, knowsAbility, lockedExits, placeKnown, placeLock, LIVE_PREFIX, lockReason, mainMeter, odds, perkOffers, playerArmor, usableAbilities, usableItems, perkBlocker, RUN_EPILOGUE, TIER_LABEL, TRAVEL_PREFIX, travelTargets, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
+import { cleanLiveForecast, costValue, spentLock, whenHolds, paramValues, ABILITY_PREFIX, abilityStatus, actionPool, availableChoices, dangerStats, findAction, foeArmor, isAvailable, knowsAbility, LIVE_PREFIX, lockReason, mainMeter, odds, perkOffers, playerArmor, usableAbilities, usableItems, perkBlocker, RUN_EPILOGUE, TIER_LABEL, type CheckResult, type LiveChoice, type TurnRecord } from "./resolve.js";
 import { dueWords, effectWords, goalDone, questDef, questDigest, questOffers, questsToReport, QUEST_PREFIX } from "./quests.js";
 import {
   dateAt, exposedSlots, isIndoors, ordinal, personLocation, presentPeople, seasonAt, temperatureAt, warmthNeeded, warmthOf, weatherAt,
 } from "./world.js";
-import type { ChangeView, ChoiceView, ClothingView, HudView, MapView, QuestView, RecordView, Tone } from "../shared/protocol.js";
+import type { ChangeView, ChoiceView, ClothingView, HudView, QuestView, RecordView, Tone } from "../shared/protocol.js";
 import { evalBool, evalNumber } from "./expr.js";
 import { namesIt, namesTitle } from "./mention.js";
 
@@ -307,73 +307,6 @@ function questViews(r: Ruleset, s: GameState): QuestView[] {
   return out.filter((x): x is QuestView => !!x);
 }
 
-/** A radial map: the start location in the middle, neighbours around it (authored `pos:` wins). */
-export function buildMap(r: Ruleset, s: GameState): MapView | null {
-  const ids = Object.keys(r.locations);
-  if (ids.length < 2) return null;
-  const pos = new Map<string, [number, number]>();
-  if (ids.every((id) => r.locations[id].pos)) {
-    for (const id of ids) pos.set(id, r.locations[id].pos!);
-  } else {
-    // Centre on the best-connected place (the hub), so spokes radiate from it.
-    const root = ids.reduce((best, id) => (r.locations[id].exits.length > r.locations[best].exits.length ? id : best),
-      r.startLocation && r.locations[r.startLocation] ? r.startLocation : ids[0]);
-    // BFS tree, then give each subtree an angular slice proportional to its size.
-    const children = new Map<string, string[]>();
-    const depth = new Map<string, number>([[root, 0]]);
-    const queue = [root];
-    while (queue.length) {
-      const id = queue.shift()!;
-      for (const x of r.locations[id].exits) {
-        if (!r.locations[x] || depth.has(x)) continue;
-        depth.set(x, depth.get(id)! + 1);
-        children.set(id, [...(children.get(id) ?? []), x]);
-        queue.push(x);
-      }
-    }
-    // Unconnected places go on an outer ring.
-    for (const id of ids) if (!depth.has(id)) { depth.set(id, 3); children.set(root, [...(children.get(root) ?? []), id]); }
-    const size = (id: string): number => 1 + (children.get(id) ?? []).reduce((a, c) => a + size(c), 0);
-    const place = (id: string, a0: number, a1: number) => {
-      const d = depth.get(id)!;
-      const a = (a0 + a1) / 2;
-      pos.set(id, [Math.cos(a) * d * 110, Math.sin(a) * d * 110]);
-      const kids = children.get(id) ?? [];
-      const total = kids.reduce((n, c) => n + size(c), 0) || 1;
-      let start = a0;
-      for (const c of kids) {
-        const span = ((a1 - a0) * size(c)) / total;
-        place(c, start, start + span);
-        start += span;
-      }
-    };
-    place(root, -Math.PI / 2, (3 * Math.PI) / 2);
-  }
-  const env = makeEnv(r, s);
-  const peopleAt = new Map<string, string[]>();
-  for (const pid of Object.keys(r.people).filter((id) => !s.forgotten[id])) {
-    const at = personLocation(r, s, pid, env);
-    if (at) peopleAt.set(at, [...(peopleAt.get(at) ?? []), personName(r, s, pid)]);
-  }
-  const reach = new Set(travelTargets(r, s));
-  // A place whose `when:` doesn't hold isn't on the map (unless the player is there); one locked by `requires:` shows why.
-  const shown = new Set(ids.filter((id) => id === s.location || placeKnown(r, s, id)));
-  const edges: [string, string][] = [];
-  const seen = new Set<string>();
-  for (const id of ids) for (const x of r.locations[id].exits) {
-    const k = [id, x].sort().join("|");
-    if (r.locations[x] && shown.has(id) && shown.has(x) && !seen.has(k)) { seen.add(k); edges.push([id, x]); }
-  }
-  return {
-    nodes: ids.filter((id) => shown.has(id)).map((id) => {
-      const [x, y] = pos.get(id) ?? [0, 0];
-      const locked = s.location === id ? null : placeLock(r, s, id);
-      return { id, name: r.locations[id].name, x, y, here: s.location === id, reachable: reach.has(id), indoors: r.locations[id].indoors, people: peopleAt.get(id) ?? [], ...(locked ? { locked } : {}) };
-    }),
-    edges,
-  };
-}
-
 /** Is a body part covered by what's worn (so others can't see it)? */
 export function bodyCovered(r: Ruleset, s: GameState, part: string): boolean {
   const slots = r.body.hiddenBy[part];
@@ -481,16 +414,6 @@ function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: st
       params: [],
     });
   });
-  const explore = canExplore(r, s) ? [plain(EXPLORE, r.discovery.label, "Travel", "Look for somewhere you haven't been")] : [];
-  const travel: ChoiceView[] = travelTargets(r, s).map((id) => ({
-    id: `${TRAVEL_PREFIX}${id}`,
-    label: `Go to ${r.locations[id].name}`,
-    group: "Travel",
-    desc: r.locations[id].desc ?? null,
-    odds: null, partialOdds: null, checkLabel: null, veiled: false, params: [],
-  }));
-  // Places shown but locked by their `requires:` say what's missing.
-  for (const x of lockedExits(r, s)) travel.push({ ...plain(`${TRAVEL_PREFIX}${x.id}`, `Go to ${r.locations[x.id].name}`, "Travel", r.locations[x.id].desc ?? null), locked: x.locked });
   const encName = s.encounter ? r.encounters[s.encounter.id]?.name ?? "Encounter" : null;
   const actions = availableChoices(r, s, opts.lines)
     .filter(({ a }) => !a.hidden)
@@ -521,7 +444,7 @@ function choiceList(r: Ruleset, s: GameState, opts: { lines: string[]; veils: st
     if (isAvailable(r, s, a)) continue;
     locked.push({ ...plain(id, a.label, encName ?? a.group ?? null, a.desc ?? null), locked: spent ?? lockReason(r, s, a) });
   }
-  return [...live, ...actions, ...abilityChoices(r, s, lines), ...itemChoices(r, s, lines), ...locked, ...questChoices(r, s), ...travel, ...explore];
+  return [...live, ...actions, ...abilityChoices(r, s, lines), ...itemChoices(r, s, lines), ...locked, ...questChoices(r, s)];
 }
 
 /** Quests to hand in here, and a few on offer (from whoever's here first, then the board). */

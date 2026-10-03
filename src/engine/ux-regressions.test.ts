@@ -25,12 +25,11 @@ test("an unowned item or gated saved action produces no effects or turn consumpt
   }
 });
 
-test("travel cannot jump across the map or bypass an encounter", () => {
-  const r = rules({ start: { location: "home" }, locations: { home: { exits: ["town"] }, town: { exits: ["home"] }, distant: {} },
+test("travel choices are gone: a go: move does nothing, in or out of an encounter", () => {
+  const r = rules({ start: { location: "home" }, locations: { home: {}, town: {} },
     encounters: { test: { actions: { wait: { effects: {} } } } } });
   const s = initialState(r);
-  expect(step(r, s, "go:distant").s.location).toBe("home");
-  expect(step(r, s, "go:town").s.location).toBe("town");
+  expect(step(r, s, "go:town").rec.events).toEqual([]);
   const fight = foldEvents(r, [encounterStartEvents(r, s, "test", "fight")], s);
   expect(step(r, fight, "go:town").rec.events).toEqual([]);
 });

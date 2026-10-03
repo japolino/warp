@@ -4,7 +4,7 @@ import { lintRuleset } from "./lint.js";
 import { normalizeRuleset } from "./ruleset.js";
 import { applyProposal, availableChoices, buyPerk, changeClothes, resolveTurn, resolveTurnFull } from "./resolve.js";
 import { foldEvents, initialState, type GameState } from "./state.js";
-import { buildHud, buildMap, stateDigest } from "./view.js";
+import { buildHud, stateDigest } from "./view.js";
 import { temperatureAt, warmthNeeded, weatherAt } from "./world.js";
 
 const RULES = yaml.load(`
@@ -26,9 +26,9 @@ items:
   jeans: { name: Jeans, slot: bottom, warmth: 4, integrity: 50 }
   coat: { name: Rain coat, slot: outer, warmth: 8, traits: [rainproof] }
 locations:
-  home: { name: Home, indoors: true, exits: [street] }
-  street: { name: Street, exits: [home, park] }
-  park: { name: Park, exits: [street] }
+  home: { name: Home, indoors: true }
+  street: { name: Street }
+  park: { name: Park }
 relationships:
   stats:
     trust: { start: 10, narrator: 5 }
@@ -39,6 +39,8 @@ relationships:
         - { when: "between(hour, 9, 17)", at: park }
         - { at: home }
 actions:
+  to_street: { label: Go out, effects: { move: street } }
+  to_park: { label: Walk to the park, effects: { move: park } }
   chat:
     label: Chat with {target}
     per_person: true
@@ -99,7 +101,7 @@ describe("new systems", () => {
     expect(hud.date).toBe("Sun 4th Sep");
     expect(hud.weather?.indoors).toBe(true);
     expect(hud.weather?.temp).toBe(20);
-    s = step(r, s, "go:street");
+    s = step(r, s, "to_street");
     const out = temperatureAt(r, s)!;
     expect(out).toBeLessThan(15);
     expect(weatherAt(r, s)).not.toBeNull();
@@ -113,7 +115,7 @@ describe("new systems", () => {
     expect(s.worn).toEqual({ top: "shirt", bottom: "jeans" });
     let hud = buildHud(r, s);
     expect(hud.warmth!.value).toBe(7); // shirt 3 + jeans 4, judged against the indoor temperature
-    s = step(r, s, "go:street");
+    s = step(r, s, "to_street");
     hud = buildHud(r, s);
     expect(hud.warmth!.value).toBe(7);
     const need = warmthNeeded(temperatureAt(r, s)!);
@@ -151,7 +153,7 @@ describe("new systems", () => {
 
   test("encounters: start, rounds with foe moves, end conditions and outcomes", () => {
     const r = load();
-    let s = step(r, initialState(r), "go:street");
+    let s = step(r, initialState(r), "to_street");
     s = step(r, s, "pick_fight");
     expect(s.encounter?.id).toBe("brawl");
     // Encounter moves replace normal choices; no travel mid-fight.
@@ -170,7 +172,7 @@ describe("new systems", () => {
 
   test("running away ends with its own outcome", () => {
     const r = load();
-    let s = step(r, step(r, initialState(r), "go:street"), "pick_fight");
+    let s = step(r, step(r, initialState(r), "to_street"), "pick_fight");
     s = step(r, s, "run");
     expect(s.encounter).toBeNull();
     expect(s.stats.stress).toBe(5);
@@ -178,7 +180,7 @@ describe("new systems", () => {
 
   test("codex unlocks by formula; perks cost points and check requirements", () => {
     const r = load();
-    let s = step(r, step(r, initialState(r), "go:street"), "go:park");
+    let s = step(r, step(r, initialState(r), "to_street"), "to_park");
     expect(s.codex.park_lore).toBe(true);
     const bought = buyPerk(r, s, "smooth");
     expect(Array.isArray(bought)).toBe(true);
@@ -189,13 +191,4 @@ describe("new systems", () => {
     expect(buyPerk(r, s, "smooth")).toBe("Already taken.");
   });
 
-  test("map: every place placed, edges deduplicated, reachable neighbours marked", () => {
-    const r = load();
-    const m = buildMap(r, initialState(r))!;
-    expect(m.nodes.map((n) => n.id).sort()).toEqual(["home", "park", "street"]);
-    expect(m.edges.length).toBe(2);
-    expect(m.nodes.find((n) => n.id === "street")?.reachable).toBe(true);
-    expect(m.nodes.find((n) => n.id === "home")?.here).toBe(true);
-    expect(new Set(m.nodes.map((n) => `${Math.round(n.x)},${Math.round(n.y)}`)).size).toBe(3);
-  });
 });

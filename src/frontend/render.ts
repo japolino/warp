@@ -1,7 +1,7 @@
 // Pure view → HTML renderers. Every interpolated string goes through `esc`.
 
 import type {
-  ChoiceView, EncounterLogView, HudView, MapView, RoundCardView, RecordView, RulesetStatus, Settings, SuggestionView, TemplateInfo,
+  ChoiceView, EncounterLogView, HudView, RoundCardView, RecordView, RulesetStatus, Settings, SuggestionView, TemplateInfo,
 } from "../shared/protocol.js";
 import { DEFAULT_SETTINGS } from "../shared/protocol.js";
 import { classifierIssue } from "../shared/classifier-config.js";
@@ -21,7 +21,7 @@ function pctTone(p: number): "good" | "warn" | "bad" {
 /** One of the HUD's sections: it can sit in the main window or be torn off into a panel of its own. */
 export interface HudPart { id: string; title: string; count: number; body: string; open: boolean }
 
-export interface HudOpts { editing: string | null; compact: boolean; map?: MapView | null; /** Points placed with +/− but not yet spent: stat → steps. */ alloc?: Record<string, number> }
+export interface HudOpts { editing: string | null; compact: boolean; /** Points placed with +/− but not yet spent: stat → steps. */ alloc?: Record<string, number> }
 
 /** Points left in a pool once the +/− placed so far are counted. */
 function allocLeft(h: HudView, pool: string, draft: Record<string, number>): number {
@@ -147,10 +147,9 @@ export function hudParts(h: HudView, opts: HudOpts): { head: string; parts: HudP
       </div>`).join("")
     : `<div class="warp-empty">Empty-handed.</div>`, !opts.compact);
 
-  const map = opts.map ? part("map", "Map", 0, renderMapView(opts.map), !opts.compact) : null;
   return {
     head: `${renderEncounter(h)}<div class="warp-hud-top">${top}</div>${renderWarmth(h)}<div class="warp-bars">${bars}</div>`,
-    parts: [renderOutfit(h, opts.compact), skills, renderAbilities(h, opts.compact), renderQuests(h, opts.compact), people, map, body, items, renderPerks(h, opts.compact)].filter((p): p is HudPart => !!p),
+    parts: [renderOutfit(h, opts.compact), skills, renderAbilities(h, opts.compact), renderQuests(h, opts.compact), people, body, items, renderPerks(h, opts.compact)].filter((p): p is HudPart => !!p),
   };
 }
 
@@ -294,41 +293,6 @@ function renderAbilities(h: HudView, compact: boolean): HudPart | null {
         : `<button class="warp-btn warp-mini" data-use="${esc(a.choice)}" title="${esc(a.desc ?? a.name)}">Use</button>`}</span>
     </div>`).join("");
   return part("abilities", "Abilities", h.abilities.filter((a) => !a.locked).length, rows, !compact);
-}
-
-// ───────────────────────── map ─────────────────────────
-
-/** The map: scroll to zoom, drag to look around, click a lit place next to you to go there. */
-export function renderMapView(m: MapView): string {
-  if (!m.nodes.length) return `<div class="warp-empty">No places yet.</div>`;
-  const xs = m.nodes.map((n) => n.x), ys = m.nodes.map((n) => n.y);
-  const pad = 70;
-  const minX = Math.min(...xs) - pad, minY = Math.min(...ys) - pad;
-  const w = Math.max(...xs) - minX + pad, hgt = Math.max(...ys) - minY + pad;
-  const byId = new Map(m.nodes.map((n) => [n.id, n]));
-  const edges = m.edges.map(([a, b]) => {
-    const p = byId.get(a), q = byId.get(b);
-    return p && q ? `<line x1="${p.x}" y1="${p.y}" x2="${q.x}" y2="${q.y}" class="warp-map-edge" />` : "";
-  }).join("");
-  const nodes = m.nodes.map((n) => `
-    <g class="warp-map-node${n.here ? " here" : ""}${n.reachable ? " reachable" : ""}${n.locked ? " locked" : ""}" ${n.reachable ? `data-go="${esc(n.id)}" tabindex="0" role="button" aria-label="Go to ${esc(n.name)}"` : ""}>
-      <title>${esc(n.reachable ? `Go to ${n.name}` : n.locked ? `${n.name} — 🔒 ${n.locked}` : n.name)}</title>
-      <circle cx="${n.x}" cy="${n.y}" r="${n.here ? 13 : 10}" />
-      <text x="${n.x}" y="${n.y + 26}" text-anchor="middle">${n.locked ? "🔒 " : ""}${esc(n.name)}</text>
-      ${n.people.length ? `<text x="${n.x}" y="${n.y + 40}" text-anchor="middle" class="warp-map-people">${esc(n.people.join(", "))}</text>` : ""}
-      ${n.indoors ? `<text x="${n.x}" y="${n.y + 4}" text-anchor="middle" class="warp-map-icon">⌂</text>` : ""}
-    </g>`).join("");
-  const here = m.nodes.find((n) => n.here);
-  const base = `${minX} ${minY} ${w} ${hgt}`;
-  return `<div class="warp-map-view" data-map="${esc(base)}"${here ? ` data-map-here="${here.x} ${here.y}"` : ""}>
-    <svg class="warp-map" viewBox="${base}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Map">${edges}${nodes}</svg>
-    <div class="warp-map-tools">
-      <button class="warp-map-tool" type="button" data-map-zoom="in" title="Zoom in" aria-label="Zoom in">+</button>
-      <button class="warp-map-tool" type="button" data-map-zoom="out" title="Zoom out" aria-label="Zoom out">−</button>
-      <button class="warp-map-tool" type="button" data-map-zoom="here" title="Centre on where you are" aria-label="Centre on where you are">◎</button>
-    </div>
-  </div>
-  <p class="warp-dim warp-map-hint">Scroll to zoom, drag to look around. Click a lit place next to you to go there.</p>`;
 }
 
 // ───────────────────────── journal ─────────────────────────

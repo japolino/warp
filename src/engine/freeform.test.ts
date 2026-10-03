@@ -12,8 +12,8 @@ name: Freeform
 clock: { start: "Mon 12:00" }
 start: { location: bar, items: { spray: 2, hoodie: 1, cap: 1 } }
 locations:
-  bar: { name: The Bar, exits: [street] }
-  street: { name: The Street, exits: [bar] }
+  bar: { name: The Bar }
+  street: { name: The Street }
 stats:
   health: { kind: meter, start: 100, narrator: 20 }
   charm: { kind: attribute, max: 10, start: 3 }
@@ -43,6 +43,8 @@ encounters:
     foe: { name: Rival, stats: {} }
     actions: { lunge: { label: Lunge } }
 actions:
+  to_street: { label: Step outside, effects: { move: street } }
+  to_bar: { label: Go back in, effects: { move: bar } }
   vault:
     label: Vault the counter
     check: { chance: "20 + athletics / 2" }
@@ -157,13 +159,13 @@ describe("who's in the scene", () => {
 
   test("moving leaves people behind until the story brings them along; schedules fill in the rest", () => {
     let s = read(initialState(r), { people: [{ name: "Miu" }] }).s;
-    s = turn(s, { actionId: "go:street", via: "choice" }).s;
+    s = turn(s, { actionId: "to_street", via: "choice" }).s;
     expect(presentPeople(r, s, makeEnv(r, s))).toEqual([]);
     expect(stateDigest(r, s)).toContain("Were with {{user}} before arriving here");
     s = read(s, { scene: { Miu: true } }).s;
     expect(presentPeople(r, s, makeEnv(r, s))).toEqual(["miu"]);
     // Rosa's schedule keeps her at the bar; the story can still say she stepped out.
-    s = turn(s, { actionId: "go:bar", via: "choice" }).s;
+    s = turn(s, { actionId: "to_bar", via: "choice" }).s;
     expect(presentPeople(r, s, makeEnv(r, s))).toContain("bartender");
     s = read(s, { scene: { Rosa: false } }).s;
     expect(presentPeople(r, s, makeEnv(r, s))).not.toContain("bartender");

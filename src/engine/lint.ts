@@ -281,10 +281,6 @@ export function lintRuleset(r: Ruleset): Issue[] {
     checkEffect(t.effects, `Triggers › ${t.id}`);
   }
   for (const p of Object.values(r.people)) p.schedule.forEach((e, i) => check(e.when, `People › ${p.id} › schedule #${i + 1}`));
-  for (const l of Object.values(r.locations)) {
-    check(l.when, `Locations › ${l.id} › when`);
-    for (const q of l.requires ?? []) check(q.when, `Locations › ${l.id} › requires`);
-  }
   for (const c of Object.values(r.codex)) check(c.unlock, `Codex › ${c.id} › unlock`);
   for (const f of Object.values(r.feats)) { check(f.unlock, `Feats › ${f.id} › unlock`); checkEffect(f.reward, `Feats › ${f.id} › reward`); }
   for (const p of Object.values(r.perks)) { check(p.requires, `Perks › ${p.id} › requires`); checkEffect(p.effects, `Perks › ${p.id}`); }
@@ -358,10 +354,6 @@ export function lintRuleset(r: Ruleset): Issue[] {
     for (const id of k.flags) if (!r.flags[id]) issues.push({ level: "warning", where: "Checkpoints › keep", message: `"${id}" isn't a declared flag` });
   }
   for (const e of Object.values(r.endings)) check(e.when, `Endings › ${e.id} › when`);
-  if (r.discovery.enabled) {
-    check(r.discovery.chance, "Discovery › chance");
-    for (const loc of r.discovery.at) if (!r.locations[loc]) issues.push({ level: "warning", where: "Discovery › at", message: `"${loc}" isn't a location${suggest(loc, Object.keys(r.locations))}` });
-  }
   for (const c of Object.values(r.companions)) {
     const w = `Companions › ${c.id}`;
     if (!r.people[c.id]) issues.push({ level: "warning", where: w, message: `"${c.id}" isn't a person in relationships › people${suggest(c.id, people)}` });

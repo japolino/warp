@@ -1,6 +1,6 @@
 // Computing the full UI state for a chat and pushing it to the frontend.
 
-import { buildChoices, buildHud, buildMap, buildRecordView } from "../engine/view.js";
+import { buildChoices, buildHud, buildRecordView } from "../engine/view.js";
 import type { ChoiceView, EncounterLogView, RecordView, SuggestionView } from "../shared/protocol.js";
 import type { Ruleset } from "../engine/ruleset.js";
 import { momentKey, readyChoices } from "./drafts.js";
@@ -38,7 +38,7 @@ export async function pushState(chatId: string | null, userId?: string, force = 
     const loaded = await getRuleset(chatId, userId, force);
     const status = statusOf(loaded);
     if (!chatId || !loaded?.ruleset) {
-      if (current()) send({ type: "state", chatId, revision, status, hud: null, map: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false }, userId);
+      if (current()) send({ type: "state", chatId, revision, status, hud: null, choices: [], records: [], suggestions: [], latestMessageId: null, choicesAnchor: null, busy: false }, userId);
       return;
     }
     const r = loaded.ruleset;
@@ -83,7 +83,6 @@ export async function pushState(chatId: string | null, userId?: string, force = 
       historyConflict: conflict,
       status,
       hud: settings.enabled ? buildHud(r, state) : null,
-      map: settings.enabled ? buildMap(r, state) : null,
       choices: settings.enabled && !conflict ? markReady(buildChoices(r, state, { ...settings, live: liveChoicesOf(latest) }), readyChoices(chatId, momentKey(msgs, state, { r, settings }))) : [],
       records: settings.enabled ? records : [],
       suggestions: settings.enabled ? suggestions.filter((s) => s.canRedo) : [],

@@ -1,13 +1,11 @@
-// Places, people and world gates: locked places, "away" schedules, per-person targets,
-// per-exit travel, conditional front stages, always-offered perks with their own points,
-// and per-place indoor temperature.
+// Places, people and world gates: "away" schedules, per-person targets, conditional front
+// stages, always-offered perks with their own points, and per-place indoor temperature.
 
 import { describe, expect, test } from "bun:test";
 import { lintRuleset } from "./lint.js";
 import { normalizeRuleset } from "./ruleset.js";
-import { availableChoices, buyPerk, perkBlocker, perkOffers, resolveTurn, travelTargets } from "./resolve.js";
+import { availableChoices, buyPerk, perkBlocker, perkOffers, resolveTurn } from "./resolve.js";
 import { foldEvents, initialState, makeEnv, type GameState } from "./state.js";
-import { buildChoices, buildMap } from "./view.js";
 import { personLocation, temperatureAt } from "./world.js";
 
 const BASE = {
@@ -22,12 +20,10 @@ const BASE = {
   },
   flags: { gate_found: false, maud_gone: false },
   locations: {
-    market: { name: "Market", exits: { north_road: 10, garret: 2, gate: null, ruin: 5 } },
-    north_road: { name: "North Road", exits: ["market"], travel: 45 },
-    garret: { name: "Garret", indoors: true, temp: 6, exits: ["market", { tavern: 3 }] },
-    tavern: { name: "Tavern", indoors: true, exits: ["garret"] },
-    gate: { name: "Hollow Gate", exits: ["market"], requires: { level: 5 } },
-    ruin: { name: "Old Ruin", exits: ["market"], when: "flag('gate_found')" },
+    market: { name: "Market" },
+    north_road: { name: "North Road" },
+    garret: { name: "Garret", indoors: true, temp: 6 },
+    tavern: { name: "Tavern", indoors: true },
   },
   relationships: {
     stats: { trust: { start: 10 } },
@@ -40,6 +36,8 @@ const BASE = {
   actions: {
     train: { label: "Train with {target}", targets: ["maud", "kael"], effects: { rel: { target: { trust: 2 } } } },
     chat: { label: "Chat with {target}", per_person: true, when: "target != 'hesper'", effects: { rel: { target: { trust: 1 } } } },
+    to_garret: { label: "Go up to the garret", effects: { move: "garret" } },
+    to_tavern: { label: "Go to the tavern", effects: { move: "tavern" } },
   },
 };
 
@@ -57,85 +55,23 @@ describe("places", () => {
     expect(lintRuleset(r)).toEqual([]);
   });
 
-  test("a place with requires: is shown locked with the reason, and travel there is refused", () => {
-    const { r } = load();
-    let s = initialState(r);
-    expect(travelTargets(r, s)).not.toContain("gate");
-    const go = buildChoices(r, s, { lines: [], veils: [] }).find((c) => c.id === "go:gate");
-    expect(go?.locked).toBe("Needs Level 5 (you have 1)");
-    const before = s.minutes;
-    const rec = resolveTurn(r, s, { actionId: "go:gate", via: "choice" }, { seed: "x" });
-    expect(rec.hints[0]).toContain("can't go to Hollow Gate yet");
-    s = foldEvents(r, [rec.events], s);
-    expect(s.location).toBe("market");
-    expect(s.minutes).toBe(before);
-    const node = buildMap(r, s)!.nodes.find((n) => n.id === "gate")!;
-    expect(node.locked).toBe("Needs Level 5 (you have 1)");
-    expect(node.reachable).toBe(false);
-    s.stats.level = 5;
-    expect(travelTargets(r, s)).toContain("gate");
-    expect(buildMap(r, s)!.nodes.find((n) => n.id === "gate")!.locked).toBeUndefined();
-    expect(step(r, s, "go:gate").location).toBe("gate");
-  });
-
-  test("why_not replaces the generated reason", () => {
-    const { r } = load({ locations: { ...BASE.locations, gate: { name: "Hollow Gate", exits: ["market"], requires: { level: 5 }, why_not: "The guild won't let novices in" } } });
-    expect(buildMap(r, initialState(r))!.nodes.find((n) => n.id === "gate")!.locked).toBe("The guild won't let novices in");
-  });
-
-  test("a place with when: is hidden from travel and the map until it holds", () => {
-    const { r } = load();
-    const s = initialState(r);
-    expect(travelTargets(r, s)).not.toContain("ruin");
-    expect(buildChoices(r, s, { lines: [], veils: [] }).some((c) => c.id === "go:ruin")).toBe(false);
-    expect(buildMap(r, s)!.nodes.some((n) => n.id === "ruin")).toBe(false);
-    expect(buildMap(r, s)!.edges.some((e) => e.includes("ruin"))).toBe(false);
-    s.flags.gate_found = true;
-    expect(travelTargets(r, s)).toContain("ruin");
-    expect(buildMap(r, s)!.nodes.some((n) => n.id === "ruin")).toBe(true);
-  });
-
-  test("exits as a map set minutes per exit; ~ and list entries use the place's travel", () => {
-    const { r } = load();
-    expect(r.locations.market.exits).toEqual(["north_road", "garret", "gate", "ruin"]);
-    expect(r.locations.market.exitTravel).toEqual({ north_road: 10, garret: 2, ruin: 5 });
-    expect(r.locations.garret.exits).toEqual(["market", "tavern"]);
-    let s = initialState(r);
-    const t0 = s.minutes;
-    s = step(r, s, "go:north_road");
-    expect(s.minutes - t0).toBe(10);
-    const t1 = s.minutes;
-    s = step(r, s, "go:market");
-    expect(s.minutes - t1).toBe(45); // the road's own travel: applies on the way back
-    const t2 = s.minutes;
-    s = step(r, s, "go:garret");
-    expect(s.minutes - t2).toBe(2);
-    const t3 = s.minutes;
-    s = step(r, s, "go:tavern");
-    expect(s.minutes - t3).toBe(3);
-  });
-
-  test("bad exit minutes warn and fall back", () => {
-    const { r, issues } = load({ locations: { ...BASE.locations, market: { name: "Market", exits: { north_road: "far", garret: -3 } } } });
-    expect(r.locations.market.exits).toEqual(["north_road", "garret"]);
-    expect(r.locations.market.exitTravel).toBeUndefined();
-    expect(issues.filter((i) => i.where.startsWith("Locations › market › exits")).length).toBe(2);
+  test("the travel graph and the map were removed: their keys warn and are ignored", () => {
+    const { r, issues } = load({ locations: { ...BASE.locations, market: { name: "Market", exits: { garret: 2 }, travel: 5, requires: { level: 5 }, why_not: "x", when: "true", pos: [1, 2] } } });
+    const gone = issues.filter((i) => i.message.includes("was removed from Warp")).map((i) => i.where).sort();
+    expect(gone).toEqual(["exits", "pos", "requires", "travel", "when", "why_not"].map((k) => `Locations › market › ${k}`).sort());
+    expect(Object.keys(r.locations.market).sort()).toEqual(["board", "desc", "id", "indoors", "name"]);
+    expect(availableChoices(r, initialState(r)).some((c) => c.id.startsWith("go:"))).toBe(false);
   });
 
   test("an indoor place can have its own temperature; others use weather: { indoors }", () => {
     const { r } = load();
     let s = initialState(r);
-    s = step(r, s, "go:garret");
+    s = step(r, s, "to_garret");
     expect(temperatureAt(r, s)).toBe(6);
-    s = step(r, s, "go:tavern");
+    s = step(r, s, "to_tavern");
     expect(temperatureAt(r, s)).toBe(18);
-    const { issues } = load({ locations: { ...BASE.locations, north_road: { name: "North Road", exits: ["market"], temp: -5 } } });
+    const { issues } = load({ locations: { ...BASE.locations, north_road: { name: "North Road", temp: -5 } } });
     expect(issues.some((i) => i.where === "Locations › north_road › temp")).toBe(true);
-  });
-
-  test("bad requires on a place warn like action requires", () => {
-    const { issues } = load({ locations: { ...BASE.locations, gate: { name: "Gate", requires: 7, why_not: "x" } } });
-    expect(issues.some((i) => i.where.startsWith("Locations › gate"))).toBe(true);
   });
 });
 

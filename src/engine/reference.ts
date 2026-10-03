@@ -88,11 +88,9 @@ player: { age: 20 }
 
 weather: { temps: { spring: 12, summer: 22, autumn: 11, winter: 3 }, indoors: 20 }     # enables weather + temperature; indoors: °C inside (a place's temp: wins)
 locations:
-  home: { name: Home, desc: "...", indoors: true, exits: [street], travel: 10 }   # exits become travel buttons
-  tavern: { name: The Drowned Rat, exits: [street], board: true }   # board: a notice board — quests with board: true are posted here
-  gate: { name: Hollow Gate, exits: { market: 15 }, requires: { level: 5 }, why_not: "The guild bars novices" }   # requires: travel shown LOCKED with what's missing (same keys as action requires); why_not: replaces the words
-  ruin: { name: Old Ruin, exits: [market, { deep_wood: 45 }], when: "flag('ruin_found')" }   # when: off the map and travel until it holds; exits as a map (or one-key list entries) = minutes per exit, ~ = the place's travel:
-  garret: { name: Garret, indoors: true, temp: 8, exits: [tavern] }   # temp: this indoor place's °C
+  home: { name: Home, desc: "...", indoors: true }   # places the story can name; the story (or a move: effect) takes {{user}} there
+  tavern: { name: The Drowned Rat, board: true }   # board: a notice board — quests with board: true are posted here
+  garret: { name: Garret, indoors: true, temp: 8 }   # temp: this indoor place's °C
 locations_open: true             # the story may name places the ruleset doesn't list (on by default when there are none)
 items:
   phone: Phone
@@ -225,12 +223,6 @@ body:             # the player character's body; the story may change it after a
 EFFECTS for the body: body: { hair: { color: red } } (null removes a trait), transform: { feline_splice: 1 } (advance stages; each rolls its chance).
 FUNCTIONS: body('hair', 'color') ('' when absent), transformed('feline_splice') (stages so far).
 
-discovery:        # exploring can turn up places the ruleset never had; each is written into the ruleset lorebook and stays on the map
-  at: [docks, park]                # where (empty = anywhere); found places can be explored too
-  people: true                     # optional (default false): a found place may come with one generated resident (name, short desc, always there). No age is set, so they don't count as an adult until the story shows it. Only offered when the rulebook has relationship stats or no people yet.
-  chance: 25                       # percent per try (formula); each fruitless try adds 10
-  max: 12
-  guide: "Small, grounded places: a back-alley bar, a hidden garden."
 codex: { docks: { title: The Docks, category: Places, text: "...", unlock: "location == 'docks'", lore: [Lorebook entry title] } }
 feats: { night_owl: { name: Night owl, desc: "...", unlock: "hour >= 2 and hour < 5", reward: { stress: -5 } } }
 abilities:        # the player's OWN moves (spells, techniques, tricks): offered as choices in encounters and the story, typed or clicked
@@ -417,8 +409,7 @@ Statuses do the work themselves: dot: (damage each round, or every: hour for ble
 The same condition can sit on {{user}}, on the opponent (inflict:) or on someone in the story (inflict: on a per-person action — a sleeping draught, a love charm, a cold they caught).
 
 ## places
-Every place needs a reason to go there: actions at: it, people scheduled there, a job, a shop, a quest board.
-Connect them with exits so the map is walkable from the start.
+Every place needs a reason to go there: actions at: it, people scheduled there, a shop, a quest board.
 For quest-driven adventures, a central notice board (board: true) offers reliable work. Do not add one automatically to relationship drama, political intrigue, or a freeform sandbox; use people and scene-specific goals instead.
 Gate the best actions behind things the player can work toward, with requires: (a skill level, someone who has to come along, an item, a quest, trust) — a locked choice that says "Needs Lockpicking 30, Brann with you" is a goal, not a dead end.
 

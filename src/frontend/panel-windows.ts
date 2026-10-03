@@ -10,7 +10,6 @@ import {
   type Layout, type Panel, type Slot,
 } from "./panels.js";
 import { esc, renderPart, type HudPart } from "./render.js";
-import { restoreMaps, wireMaps } from "./map-view.js";
 
 interface Win { id: string; handle: SpindleFloatWidgetHandle; el: HTMLElement; head: HTMLElement; body: HTMLElement; box: Box; shown: boolean; html: string; off: (() => void)[]; resizing: boolean }
 
@@ -86,7 +85,6 @@ export function createPanels(o: PanelHost) {
     });
     body.addEventListener("pointerdown", (e) => startSectionDrag(e, p.id));
     o.wire(body);
-    win.off.push(wireMaps(body));
     head.addEventListener("pointerdown", (e) => { if (e.button === 0) panelDrag = { id: win.id, at: { x: e.clientX, y: e.clientY } }; });
     head.addEventListener("click", (e) => {
       const t = e.target as Element;
@@ -177,7 +175,6 @@ export function createPanels(o: PanelHost) {
         w.body.innerHTML = html;
         w.html = html;
         o.restoreSections(w.body);
-        restoreMaps(w.body);
         w.body.scrollTop = kept;
       }
       if (!w.shown) { w.handle.setVisible(true); w.shown = true; }

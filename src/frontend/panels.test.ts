@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { attachedAt, capPanels, columnsOf, dropSlot, GAP, MAX_PANELS, mergePanel, resized, updatePanel, movePart, panelOf, parseLayout, sideFor, slotAt, snapToScreen, tearOff, type Layout } from "./panels.js";
-import { centreOn, clampView, MAX_ZOOM, panBy, zoomAt } from "./map-view.js";
 
 const vp = { width: 1400, height: 900 };
 const main = { x: 1000, y: 80, w: 290, h: 500 };
@@ -79,35 +78,6 @@ describe("torn-off panels", () => {
     expect(parseLayout("not json")).toEqual({ panels: [] });
     expect(parseLayout(JSON.stringify({ panels: [{ id: "a", parts: ["map"] }, { id: "b", parts: ["map", "x"], attach: { side: "up" } }] })).panels)
       .toEqual([{ id: "a", parts: ["map"], x: 80, y: 80, attach: null }, { id: "b", parts: ["x"], x: 80, y: 80, attach: null }]);
-  });
-});
-
-describe("map zoom and pan", () => {
-  const base = { x: 0, y: 0, w: 400, h: 200 };
-
-  test("zooming keeps the point under the pointer where it is", () => {
-    const v = zoomAt(base, base, 2, 100, 50);
-    expect(v).toEqual({ x: 50, y: 25, w: 200, h: 100 });
-    // The pointer's point sits at the same fraction of the view as before.
-    expect((100 - v.x) / v.w).toBeCloseTo(100 / 400);
-  });
-
-  test("never further out than the whole map, nor nearer than the limit", () => {
-    expect(zoomAt(base, base, 0.2, 200, 100)).toEqual(base);
-    expect(zoomAt(base, base, 1000, 200, 100).w).toBeCloseTo(400 / MAX_ZOOM);
-  });
-
-  test("panning stays inside the map", () => {
-    const v = zoomAt(base, base, 2, 200, 100);
-    expect(panBy(v, base, 30, 0).x).toBe(v.x - 30);
-    expect(panBy(v, base, 1000, 1000)).toMatchObject({ x: 0, y: 0 });
-    expect(panBy(v, base, -1000, -1000)).toMatchObject({ x: 200, y: 100 });
-    expect(clampView({ x: -50, y: 0, w: 400, h: 200 }, base)).toEqual(base);
-  });
-
-  test("centring on where you are zooms in and frames it", () => {
-    const v = centreOn(base, base, 300, 100, 2);
-    expect(v).toEqual({ x: 200, y: 50, w: 200, h: 100 });
   });
 });
 

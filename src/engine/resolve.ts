@@ -48,8 +48,6 @@ export interface TurnRecord {
   confidence?: number;
   /** Consistency check: probability the reply contradicts the state. */
   contradiction?: number;
-  /** Exploring found somewhere new: the backend writes the place and moves the player there. */
-  discover?: { from: string };
   at: number;
 }
 
@@ -166,55 +164,6 @@ class Working {
       },
     };
   }
-}
-
-/** Exploring the current place for somewhere new: `explore:`. */
-export const EXPLORE = "explore:";
-
-/** Can the player explore here for somewhere new? */
-export function canExplore(r: Ruleset, s: GameState): boolean {
-  const d = r.discovery;
-  if (!d.enabled || !s.location || s.encounter || s.ended) return false;
-  if (s.discovered.length >= d.max) return false;
-  return !d.at.length || d.at.includes(s.location) || s.discovered.includes(s.location);
-}
-
-/** Pseudo-actions for walking between connected locations: `go:<location id>`. */
-export const TRAVEL_PREFIX = "go:";
-
-export function travelTargets(r: Ruleset, s: GameState): string[] {
-  if (s.encounter) return []; // no walking away mid-encounter; use its actions
-  const here = s.location ? r.locations[s.location] : undefined;
-  return here ? here.exits.filter((x) => r.locations[x] && placeKnown(r, s, x) && !placeLock(r, s, x)) : [];
-}
-
-/** Does this place exist for travel and the map right now? (A place's `when:`.) */
-export function placeKnown(r: Ruleset, s: GameState, id: string): boolean {
-  const l = r.locations[id];
-  return !!l && (!l.when || evalBool(l.when, makeEnv(r, s), true));
-}
-
-/** Why travel to a place is locked right now (its `requires:`), or null when it's open. */
-export function placeLock(r: Ruleset, s: GameState, id: string): string | null {
-  const l = r.locations[id];
-  return l ? gateLock(r, s, l.requires ?? [], l.whyNot) : null;
-}
-
-/** Exits from here that are shown but locked, with the reason. */
-export function lockedExits(r: Ruleset, s: GameState): { id: string; locked: string }[] {
-  if (s.encounter) return [];
-  const here = s.location ? r.locations[s.location] : undefined;
-  if (!here) return [];
-  return here.exits.flatMap((x) => {
-    const locked = r.locations[x] && placeKnown(r, s, x) ? placeLock(r, s, x) : null;
-    return locked ? [{ id: x, locked }] : [];
-  });
-}
-
-/** Minutes from one place to the next: the exit's own minutes, else the origin's `travel:`. */
-export function travelMinutes(r: Ruleset, from: string | null | undefined, to: string): number {
-  const f = from ? r.locations[from] : undefined;
-  return f?.exitTravel?.[to] ?? f?.travel ?? r.locations[to]?.travel ?? 10;
 }
 
 // ───────────────────────── availability & odds ─────────────────────────
@@ -426,21 +375,6 @@ export function requirementText(r: Ruleset, s: GameState, q: Requirement): strin
     case "perk": return `★ ${r.perks[id]?.name ?? id}`;
     default: return q.text ?? "the right moment";
   }
-}
-
-/**
- * Why a gate (`requires:` on a place) is shut right now, or null when every
- * requirement holds. `whyNot` replaces the generated words.
- */
-export function gateLock(r: Ruleset, s: GameState, requires: Requirement[], whyNot?: string): string | null {
-  if (!requires.length) return null;
-  const env = makeEnv(r, s);
-  const unmet = requires.filter((q) => !evalBool(q.when, env, false));
-  if (!unmet.length) return null;
-  if (whyNot) return whyNot;
-  const needs = unmet.filter((q) => q.kind !== "formula").map((q) => requirementText(r, s, q));
-  const other = unmet.filter((q) => q.kind === "formula").map((q) => requirementText(r, s, q));
-  return [needs.length ? `Needs ${needs.join(", ")}` : "", ...other].filter(Boolean).join(" · ") || "Not possible right now";
 }
 
 /** A plain reason a choice is locked, read from simple conditions ("Needs a Cream Brioche"). */
@@ -1613,14 +1547,10 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   // A suggestion is not a committed move, nor dialogue for the active session.
   if (!intent && opts.pendingSuggestion) return rec;
   if (intent && !before.ended && !intent.actionId.startsWith(QUEST_PREFIX) && intent.actionId !== RUN_EPILOGUE) {
-    const valid = intent.actionId === EXPLORE ? canExplore(r, before)
-      : intent.actionId.startsWith(TRAVEL_PREFIX) ? travelTargets(r, before).includes(intent.actionId.slice(TRAVEL_PREFIX.length))
-      : !!findAction(r, before, intent.actionId);
-    const shut = !valid && intent.actionId.startsWith(TRAVEL_PREFIX) ? lockedExits(r, before).find((x) => x.id === intent.actionId.slice(TRAVEL_PREFIX.length)) : undefined;
-    if (shut) return { ...rec, hints: [`{{user}} can't go to ${r.locations[shut.id].name} yet (${shut.locked}). It did not happen and spent no turn or resources.`] };
+    const valid = !!findAction(r, before, intent.actionId);
     if (!valid) return { ...rec, hints: ["The attempted action isn't available in the current state. It did not happen and spent no turn or resources."] };
     // The chosen params decide the price ("buy ten" costs more than "buy one"): judge the exact choice.
-    const chosen = intent.params && !intent.actionId.startsWith(TRAVEL_PREFIX) && intent.actionId !== EXPLORE ? findAction(r, before, intent.actionId) : null;
+    const chosen = intent.params ? findAction(r, before, intent.actionId) : null;
     const short = chosen && chosen.a.params.length ? spentLock(r, before, chosen.a, chosen.target, intent.params) : null;
     if (short) return { ...rec, hints: [`The attempted action can't be paid for with that choice (${short}). It did not happen and spent no turn or resources.`] };
   }
@@ -1647,7 +1577,7 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
       encBase = cloneState(w.s);
     }
   }
-  const found = intent && !intent.actionId.startsWith(TRAVEL_PREFIX) ? findAction(r, before, intent.actionId) : null;
+  const found = intent ? findAction(r, before, intent.actionId) : null;
   const a = found?.a;
   const inEncounter = !!encBase.encounter;
   const improvised = !!a && a.id.startsWith(IMPROV);
@@ -1656,29 +1586,6 @@ function resolveInner(r: Ruleset, before: GameState, intent: Intent | null, opts
   if (intent?.actionId.startsWith(QUEST_PREFIX)) {
     const label = because(w, "Quests", () => resolveQuest(builderOf(w), intent.actionId));
     if (label) rec.action = { id: intent.actionId, label, via: intent.via };
-  } else if (intent?.actionId === EXPLORE) {
-    if (canExplore(r, before)) {
-      const loc = before.location!;
-      const name = before.locationName ?? loc;
-      rec.action = { id: EXPLORE, label: `Explore ${name}`, via: intent.via };
-      const chance = Math.min(100, evalNumber(r.discovery.chance, w.env(), 25) + 10 * (before.explored[loc] ?? 0));
-      const found = seededRng(`${opts.seed}:explore`)() * 100 < chance;
-      w.push({ t: "explored", loc, found, src: "action" });
-      advanceTime(w, r.discovery.time, "action");
-      if (found) rec.discover = { from: loc };
-      else w.hints.push(`{{user}} explores around ${name} but finds nothing new this time — though they're getting to know the area.`);
-    }
-  } else if (intent?.actionId.startsWith(TRAVEL_PREFIX)) {
-    const to = intent.actionId.slice(TRAVEL_PREFIX.length);
-    const dest = r.locations[to];
-    if (dest) {
-      rec.action = { id: intent.actionId, label: `Go to ${dest.name}`, via: intent.via };
-      because(w, `Travel to ${dest.name}`, () => {
-        w.push({ t: "move", to, src: "action" });
-        advanceTime(w, travelMinutes(r, before.location, to), "action");
-      });
-      if (dest.desc) w.hints.push(`Arriving at ${dest.name}: ${dest.desc}`);
-    }
   } else if (a && inEncounter && (stunned = lostTurn(w, "player"))) {
     // A status costs {{user}} the turn: the move simply doesn't happen, and the foe still acts.
     rec.action = { id: intent!.actionId, label: `${a.label} — ${stunned.toLowerCase()}, turn lost`, via: intent!.via };
@@ -1998,10 +1905,7 @@ export function applyProposal(r: Ruleset, before: GameState, p: Proposal, ctx?: 
   if (p.move) {
     const k = p.move.toLowerCase();
     const loc = Object.values(r.locations).find((l) => l.id === k || l.name.toLowerCase() === k);
-    // The story can't walk {{user}} past a gate the rules hold shut: a place still hidden (when:) or locked (requires:).
-    const shut = loc && loc.id !== w.s.location ? (!placeKnown(r, w.s, loc.id) ? "not found yet" : placeLock(r, w.s, loc.id)) : null;
-    if (loc && shut) w.hints.push(`{{user}} doesn't reach ${loc.name} (${shut}); they are still at ${w.s.locationName ?? r.locations[w.s.location ?? ""]?.name ?? "the same place"}.`);
-    else if (loc && loc.id !== w.s.location) w.push({ t: "move", to: loc.id, src });
+    if (loc && loc.id !== w.s.location) w.push({ t: "move", to: loc.id, src });
     else if (!loc && r.locationsOpen && k !== (w.s.locationName ?? "").toLowerCase()) w.push({ t: "move", to: slug(p.move), name: p.move, src });
   }
 

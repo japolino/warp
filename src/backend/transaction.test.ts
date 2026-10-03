@@ -7,7 +7,6 @@ import { appendDrafts, encounterLogOf, foldPath, liveChoicesOf, patchMeta, patch
 import { interceptor, onGenerationEnded, onGenerationStarted, onGenerationStopped } from "./turn.js";
 import { foldEvents, initialState } from "../engine/state.js";
 import { characterBrief, characterForChat, personProfile } from "./source.js";
-import { discoverPlace } from "./discover.js";
 import { playRound } from "./encounter.js";
 import { prewrite, momentKey, readyChoices, takePrewritten } from "./drafts.js";
 import { RulesDecider } from "./deciders.js";
@@ -229,27 +228,6 @@ test("duplicate successful End extracts and commits exactly once", async () => {
   await onGenerationEnded(payload, f.id);
   expect(f.calls).toBe(1);
   expect(foldPath(f.r, f.messages).state.stats.health).toBe(45);
-});
-
-test("failed map writes preserve the current location; retry creates both routes before arrival", async () => {
-  const f = fixture({ start: { location: "home" }, locations: { home: { name: "Home", exits: ["town"] }, town: { exits: ["home"] } }, discovery: true });
-  f.failCreate = true;
-  f.quiet = async () => ({ content: '{"name":"Courtyard","desc":"A small courtyard.","indoors":false,"opportunity":{"label":"Inspect courtyard","hint":"Inspect the courtyard walls."}}' });
-  const failed = { ...record(), discover: { from: "home" } };
-  const loaded = { bookIds: [f.id], characterId: f.id } as any;
-  await discoverPlace(loaded, f.r, initialState(f.r), failed, f.id, f.settings, f.id);
-  const unchanged = foldEvents(f.r, [failed.events]);
-  expect(unchanged.location).toBe("home");
-  expect(unchanged.discovered).toEqual([]);
-  expect(f.extraEntries).toEqual([]);
-  f.failCreate = false;
-  const retried = { ...record(), discover: { from: "home" } };
-  await discoverPlace(loaded, f.r, initialState(f.r), retried, f.id, f.settings, f.id);
-  const grown = loadRuleset([{ label: "base", content: JSON.stringify(f.raw), order: 0 },
-    { label: "discovered", content: f.extraEntries[0].content, order: 900 }]).ruleset!;
-  expect(grown.locations.home.exits).toEqual(["town", "courtyard"]);
-  expect(grown.locations.courtyard.exits).toEqual(["home"]);
-  expect(foldEvents(grown, [retried.events]).location).toBe("courtyard");
 });
 
 for (const change of ["edit", "delete", "swipe", "rules"] as const) {

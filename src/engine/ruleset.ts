@@ -218,21 +218,11 @@ export interface TriggerDef {
 }
 
 export interface LocationDef {
-  id: string; name: string; desc?: string; exits: string[]; travel: number;
-  /** Minutes to a particular exit (`exits: { field: 30 }`); exits not listed take `travel`. */
-  exitTravel?: Record<string, number>;
+  id: string; name: string; desc?: string;
   /** Indoors: temperature is the indoor temperature and weather doesn't touch you. */
   indoors: boolean;
   /** This place's own indoor temperature (°C), instead of the ruleset's `weather: { indoors }`. */
   temp?: number;
-  /** The place only exists for travel and the map while this holds (a hidden spot, a ruin not yet found). */
-  when?: string;
-  /** Travel here is shown locked, with what's missing, until these are met. */
-  requires?: Requirement[];
-  /** Words on the locked travel choice instead of the missing requirements. */
-  whyNot?: string;
-  /** Optional map position (any units; the map scales to fit). */
-  pos?: [number, number];
   /** Has a quest board: quests with `board: true` are posted here. */
   board: boolean;
 }
@@ -632,22 +622,6 @@ export interface CompanionDef {
 }
 
 
-/** Exploring can turn up places the ruleset never had; they're written into the ruleset for good. */
-export interface DiscoveryDef {
-  enabled: boolean;
-  /** Where exploring can find somewhere new (empty = any place). */
-  at: string[];
-  /** Percent chance per exploration (formula); each fruitless try adds 10. */
-  chance: string | number;
-  /** Places that can be discovered in total. */
-  max: number;
-  time: number;
-  label: string;
-  /** Guidance for the writer inventing places ("small, grounded places…"). */
-  guide?: string;
-  /** `people: true` lets a discovered place come with one generated resident (no age; romance stays blocked until known adult). */
-  people: boolean;
-}
 
 export type Difficulty = "easy" | "fair" | "hard" | "extreme";
 export const DIFFICULTIES: Difficulty[] = ["easy", "fair", "hard", "extreme"];
@@ -757,7 +731,6 @@ export interface Ruleset {
   companions: Record<string, CompanionDef>;
   /** Starting feelings between people: a → b → −100…100. */
   bonds: Record<string, Record<string, number>>;
-  discovery: DiscoveryDef;
   improvise: ImproviseDef;
   growth: GrowthDef;
 }
@@ -2064,33 +2037,6 @@ function normSecrets(raw: unknown, c: Ctx): Record<string, SecretDef> {
   return out;
 }
 
-/**
- * `exits:` — a list (`[street, park]`, each taking the place's `travel:` minutes) or a map with
- * minutes per exit (`{ street: 5, far_field: 45 }`; `~` = the place's `travel:`). List entries may be
- * one-key maps too (`[street, { far_field: 45 }]`).
- */
-function normExits(v: unknown, where: string, c: Ctx): { exits: string[]; exitTravel?: Record<string, number> } {
-  const exits: string[] = [];
-  const exitTravel: Record<string, number> = {};
-  const add = (id: string, mins: unknown) => {
-    if (!exits.includes(id)) exits.push(id);
-    if (mins === null || mins === undefined || mins === true) return;
-    const n = typeof mins === "number" ? mins : Number(mins);
-    if (Number.isFinite(n) && n >= 0) exitTravel[id] = n;
-    else c.warn(`${where} › ${id}`, `"${String(mins)}" should be travel minutes (0 or more) — using the place's \`travel:\``);
-  };
-  if (v === undefined || v === null) return { exits };
-  if (Array.isArray(v)) {
-    for (const x of v) {
-      if (isObj(x)) for (const [id, m] of Object.entries(x)) add(id, m);
-      else add(String(x), undefined);
-    }
-  } else if (isObj(v)) for (const [id, m] of Object.entries(v)) add(id, m);
-  else if (typeof v === "string") add(v, undefined);
-  else c.warn(where, "expected a list of places (`[street, park]`) or minutes per place (`{ street: 5, park: 20 }`)");
-  return Object.keys(exitTravel).length ? { exits, exitTravel } : { exits };
-}
-
 /** A stage's `if:` (alias `when:`) decides whether its `do:` happens; `else:` happens when it doesn't. */
 function stageIf(st: Raw, sw: string, c: Ctx, known: { stats: Set<string> }): Pick<FrontStage, "if" | "else"> {
   const raw = st.if ?? st.when;
@@ -2396,23 +2342,6 @@ function normPracticeRepeat(raw: unknown, c: Ctx): PracticeRepeatDef | false {
   return def;
 }
 
-function normDiscovery(raw: unknown, c: Ctx): DiscoveryDef {
-  const def: DiscoveryDef = { enabled: false, at: [], chance: 25, max: 12, time: 60, label: "Explore around here", people: false };
-  if (raw === undefined || raw === false) return def;
-  const r: Raw = isObj(raw) ? raw : {};
-  def.enabled = true;
-  def.at = list(r.at);
-  def.chance = c.expr(r.chance ?? 25, "Discovery › chance") ?? 25;
-  def.max = Math.max(0, Math.round(c.num(r.max, "Discovery › max", 12)));
-  def.time = Math.max(0, c.num(r.time, "Discovery › time", 60));
-  if (typeof r.label === "string") def.label = r.label;
-  if (typeof r.guide === "string") def.guide = r.guide;
-  if (r.people !== undefined) {
-    if (typeof r.people === "boolean") def.people = r.people;
-    else c.warn("Discovery › people", "should be true or false; discovered places will have no resident");
-  }
-  return def;
-}
 
 /** Top-level keys of systems removed from Warp: an old ruleset that has them still loads, with a plain warning. */
 export const REMOVED_KEYS: Record<string, string> = {
@@ -2424,6 +2353,7 @@ export const REMOVED_KEYS: Record<string, string> = {
   observers: "being seen", being_seen: "being seen",
   mind: "mind overrides and perception filters",
   obligations: "bills and debts", debts: "bills and debts", jobs: "work shifts",
+  discovery: "discovering new places",
 };
 
 const SEXUAL_TAGS = new Set(["sexual", "sex", "nsfw", "lewd", "explicit", "erotic", "smut"]);
@@ -2534,32 +2464,19 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   for (const [id, l] of Object.entries(isObj(raw.locations) ? raw.locations : {})) {
     const r: Raw = isObj(l) ? l : typeof l === "string" ? { name: l } : {};
     const lw = `Locations › ${id}`;
-    const { exits, exitTravel } = normExits(r.exits, `${lw} › exits`, c);
+    // The travel graph and the map were taken out: exits, travel times, gates and map positions are ignored.
+    for (const k of ["exits", "travel", "when", "requires", "needs", "why_not", "locked", "pos"]) if (r[k] !== undefined) c.removed(`${lw} › ${k}`, k, "the map and travel between places");
     const indoors = r.indoors === true || r.inside === true;
     const temp = r.temp ?? r.temperature;
     if (temp !== undefined && !indoors) c.warn(`${lw} › temp`, "only indoor places take `temp:` — outdoors follows the weather (add `indoors: true`)");
-    const when = r.when !== undefined ? c.expr(r.when, `${lw} › when`) : undefined;
-    const requires = normRequires(r.requires ?? r.needs, `${lw} › requires`, c, known);
-    const whyNot = typeof r.why_not === "string" ? r.why_not : typeof r.locked === "string" ? r.locked : undefined;
-    if (whyNot && !requires.length) c.warn(`${lw} › why_not`, "only shows on a place locked by `requires:` — add `requires:` (a `when:` hides the place instead)");
     locations[id] = {
       id,
       name: typeof r.name === "string" ? r.name : titleCase(id),
       desc: typeof r.desc === "string" ? r.desc : undefined,
-      exits,
-      ...(exitTravel ? { exitTravel } : {}),
-      travel: c.num(r.travel, `${lw} › travel`, 10),
       indoors,
       ...(temp !== undefined && indoors ? { temp: c.num(temp, `${lw} › temp`, 20) } : {}),
-      ...(when !== undefined ? { when: String(when) } : {}),
-      ...(requires.length ? { requires } : {}),
-      ...(whyNot && requires.length ? { whyNot } : {}),
       board: r.board === true || r.quest_board === true,
-      ...(Array.isArray(r.pos) && r.pos.length === 2 && r.pos.every((n: unknown) => Number.isFinite(Number(n))) ? { pos: [Number(r.pos[0]), Number(r.pos[1])] as [number, number] } : {}),
     };
-  }
-  for (const l of Object.values(locations)) for (const x of l.exits) {
-    if (!locations[x]) c.warn(`Locations › ${l.id} › exits`, `"${x}" isn't a declared location`);
   }
 
   // Conditions
@@ -2737,7 +2654,6 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
   const body = normBody(raw.body, c);
   const bonds: Record<string, Record<string, number>> = {};
   const companions = normCompanions(raw.companions, c, known, fronts, bonds);
-  const discovery = normDiscovery(raw.discovery, c);
   const improvise = normImprovise(raw.improvise ?? raw.improvised, c, known, stats, statOrder);
   const growth = normGrowth(raw.growth ?? raw.practice, c);
 
@@ -2770,7 +2686,7 @@ export function normalizeRuleset(raw: unknown): { ruleset: Ruleset | null; issue
     weather, wardrobe, encounters, codex, feats, perks,
     ...(perkPoints && stats[perkPoints] ? { perkPoints } : {}),
     perkPick, abilities, quests, questOrder, storyQuests,
-    secrets, fronts, randomEvents, liveChoices, checkpoints, endings, legacy, body, companions, bonds, discovery, improvise, growth,
+    secrets, fronts, randomEvents, liveChoices, checkpoints, endings, legacy, body, companions, bonds, improvise, growth,
   };
 
   // Cross-references that need everything loaded.

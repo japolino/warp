@@ -10,7 +10,6 @@ import { emptyDraft, renderBuilder, renderBuilderCta, type BuilderDraft } from "
 import { connectCue } from "./frontend/cue-bridge.js";
 import { esc, hudParts, renderChips, renderEncounterLog, renderWhyFold, renderChoices, renderHud, renderJournal, renderPart, renderRulesetCard, renderSettings, renderSuggestion, renderTemplatePicker } from "./frontend/render.js";
 import { createPanels, wireGrip } from "./frontend/panel-windows.js";
-import { restoreMaps, wireMaps } from "./frontend/map-view.js";
 import { acceptsResponse } from "./frontend/response-gate.js";
 import { logoSvg } from "./frontend/logo.js";
 
@@ -321,7 +320,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const kept = dockRoot.scrollTop;
     if (state?.hud) {
       // The head always stays here; each section sits here unless it's been torn off into a panel.
-      const { head, parts } = hudParts(state.hud, { editing: editingBar, compact: true, map: state.map, alloc: allocDraft });
+      const { head, parts } = hudParts(state.hud, { editing: editingBar, compact: true, alloc: allocDraft });
       const mine = parts.filter((p) => panels.inMain(p.id));
       dockRoot.innerHTML = historyNotice() + head + mine.map((p) => renderPart(p, true)).join("");
       panels.render(parts);
@@ -333,7 +332,6 @@ export function setup(ctx: SpindleFrontendContext) {
       panels.render([]);
     }
     restoreSections(dockRoot);
-    restoreMaps(dockRoot);
     dockRoot.scrollTop = kept;
     flashChangedBars(dockRoot);
   }
@@ -367,7 +365,7 @@ export function setup(ctx: SpindleFrontendContext) {
     </div>`;
     let body = "";
     if (drawerView === "sheet") {
-      body = state?.hud ? renderHud(state.hud, { editing: editingBar, compact: false, map: state.map, alloc: allocDraft }) : renderRulesetCard(status, hasChat);
+      body = state?.hud ? renderHud(state.hud, { editing: editingBar, compact: false, alloc: allocDraft }) : renderRulesetCard(status, hasChat);
     } else if (drawerView === "journal") {
       body = renderJournal(state?.hud ?? null, state?.records ?? []);
     } else if (drawerView === "rules" && builder) {
@@ -379,7 +377,6 @@ export function setup(ctx: SpindleFrontendContext) {
     }
     drawerRoot.innerHTML = tabs + historyNotice() + body;
     restoreSections(drawerRoot);
-    restoreMaps(drawerRoot);
     flashChangedBars(drawerRoot);
     tab.setBadge(status.issues.some((i) => i.level === "error") ? "!" : null);
   }
@@ -686,8 +683,6 @@ export function setup(ctx: SpindleFrontendContext) {
     if (onBuilderClick(t)) return;
     const runBtn = t.closest<HTMLElement>("[data-run]");
     if (runBtn) { act(runBtn.dataset.run!); return; }
-    const go = t.closest<HTMLElement>("[data-go]");
-    if (go) { act(`go:${go.dataset.go}`); return; }
     const jump = t.closest<HTMLElement>("[data-jump]");
     if (jump) {
       const el = ctx.dom.findMessageElement(jump.dataset.jump!);
@@ -840,10 +835,7 @@ export function setup(ctx: SpindleFrontendContext) {
     root.addEventListener("keydown", onPanelKey as EventListener);
     root.addEventListener("toggle", () => rememberSections(root), true);
   }
-  for (const root of [drawerRoot, dockRoot]) {
-    wirePanel(root);
-    cleanups.push(wireMaps(root));
-  }
+  for (const root of [drawerRoot, dockRoot]) wirePanel(root);
 
   // ───────── events: in-chat clicks (delegated; injected nodes are sanitized) ─────────
   function act(actionId: string, params?: Record<string, string>) {

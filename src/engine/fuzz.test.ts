@@ -3,10 +3,10 @@
 import { describe, expect, test } from "bun:test";
 import { seededRng } from "./dice.js";
 import { loadRuleset } from "./loader.js";
-import { applyProposal, availableChoices, resolveTurnFull, TRAVEL_PREFIX, travelTargets } from "./resolve.js";
+import { applyProposal, availableChoices, resolveTurnFull } from "./resolve.js";
 import { applyEvent, cloneState, initialState, statMax } from "./state.js";
 import { TEMPLATES } from "./templates/index.js";
-import { buildChoices, buildHud, buildMap, stateDigest } from "./view.js";
+import { buildChoices, buildHud, stateDigest } from "./view.js";
 
 for (const t of TEMPLATES) {
   describe(`fuzz: ${t.id}`, () => {
@@ -16,10 +16,7 @@ for (const t of TEMPLATES) {
       const rng = seededRng(`fuzz:${t.id}`);
       let encounters = 0;
       for (let turn = 0; turn < 300; turn++) {
-        const choices = [
-          ...availableChoices(r, s).map((c) => c.id),
-          ...travelTargets(r, s).map((x) => `${TRAVEL_PREFIX}${x}`),
-        ];
+        const choices = availableChoices(r, s).map((c) => c.id);
         const pick = choices.length && rng() < 0.9 ? choices[Math.floor(rng() * choices.length)] : null;
         const { record } = resolveTurnFull(r, s, pick ? { actionId: pick, via: "choice" } : null, { seed: `${t.id}:${turn}` });
         const next = cloneState(s);
@@ -41,7 +38,6 @@ for (const t of TEMPLATES) {
         // Views never throw.
         buildHud(r, s);
         buildChoices(r, s, { lines: [], veils: [] });
-        buildMap(r, s);
         expect(stateDigest(r, s).length).toBeGreaterThan(0);
       }
       expect(s.turn).toBe(300);

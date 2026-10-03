@@ -1,7 +1,7 @@
 // What a clicked choice means: the line posted as the player's message and the
 // intent the turn resolves. Shared by clicking and by pre-writing replies.
 
-import { cleanLiveForecast, ABILITY_PREFIX, availableChoices, canExplore, EXPLORE, findAction, ITEM_PREFIX, LIVE_PREFIX, usableAbilities, usableItems, lockedExits, RUN_EPILOGUE, TARGET_SEP, TRAVEL_PREFIX, travelTargets, type Intent } from "../engine/resolve.js";
+import { cleanLiveForecast, ABILITY_PREFIX, availableChoices, findAction, ITEM_PREFIX, LIVE_PREFIX, usableAbilities, usableItems, RUN_EPILOGUE, TARGET_SEP, type Intent } from "../engine/resolve.js";
 import type { Ruleset } from "../engine/ruleset.js";
 import type { GameState } from "../engine/state.js";
 import { QUEST_PREFIX, questDef, questOffers, questsToReport } from "../engine/quests.js";
@@ -11,10 +11,6 @@ import { liveChoicesOf, type Msg } from "./ledger.js";
 export type ChoiceIntent = { say: string; intent: Intent } | { error: string };
 
 export function intentFor(r: Ruleset, state: GameState, settings: Settings, msgs: Msg[], actionId: string, params?: Record<string, string>): ChoiceIntent {
-  if (actionId === EXPLORE) {
-    if (!canExplore(r, state)) return { error: "There's nowhere new to find here." };
-    return { say: "*I explore around, looking for somewhere I haven't been.*", intent: { actionId: EXPLORE, via: "choice", label: "Explore" } };
-  }
   if (actionId === RUN_EPILOGUE) {
     if (!state.ended || state.ended.told) return { error: "" };
     return { say: "*The end.*", intent: { actionId: RUN_EPILOGUE, via: "choice", label: "The ending" } };
@@ -29,14 +25,6 @@ export function intentFor(r: Ruleset, state: GameState, settings: Settings, msgs
     const known = new Set(found.a.params.map((p) => p.id));
     const explicit = Object.fromEntries(Object.entries(params ?? {}).filter(([k, v]) => known.has(k) && typeof v === "string"));
     return { say: `*${c.label}*`, intent: { ...(forecast ? { forecast } : {}), actionId: `${LIVE_PREFIX}${c.tag}${c.target ? `${TARGET_SEP}${c.target}` : ""}`, ...(Object.keys(explicit).length ? { params: explicit } : {}), via: "choice", label: c.label } };
-  }
-  if (actionId.startsWith(TRAVEL_PREFIX)) {
-    const to = actionId.slice(TRAVEL_PREFIX.length);
-    if (!travelTargets(r, state).includes(to)) {
-      const shut = lockedExits(r, state).find((x) => x.id === to);
-      return { error: shut ? `${r.locations[to].name} is locked: ${shut.locked}` : "You can't get there from here." };
-    }
-    return { say: `*I head to ${r.locations[to].name}.*`, intent: { actionId, params, via: "choice" } };
   }
   if (actionId.startsWith(ITEM_PREFIX)) {
     const u = usableItems(r, state).find((x) => x.id === actionId);

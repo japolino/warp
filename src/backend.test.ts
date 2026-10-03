@@ -119,19 +119,19 @@ test("full loop: install → choose → roll → narrate → bookkeeping → swi
   st = lastState();
   expect(st.status.issues).toEqual([]);
   expect(st.hud.location.name).toBe("Your Apartment");
-  expect(st.choices.map((c: any) => c.id)).toContain("go:high_street");
+  expect(st.choices.map((c: any) => c.id)).toContain("head_out");
   expect(st.choicesAnchor).toBe("m0");
 
-  // Click "Go to High Street".
-  await frontendHandler({ type: "act", chatId: "c1", actionId: "go:high_street" });
+  // Click "Head out to the High Street".
+  await frontendHandler({ type: "act", chatId: "c1", actionId: "head_out" });
   expect(appended[0].opts).toEqual({ triggerGeneration: true });
-  expect(appended[0].msg.metadata.warp.intent.actionId).toBe("go:high_street");
+  expect(appended[0].msg.metadata.warp.intent.actionId).toBe("head_out");
 
   const prompt = [{ role: "system", content: "sys" }, { role: "user", content: appended[0].msg.content }];
   const out = await interceptor(prompt, { userId: undefined, chatId: "c1", generationId: "g1", generationType: "normal", isDryRun: false, interceptorDeadlineAt: Date.now() + 30000 });
   const injected = out.messages[out.breakdown[0].messageIndex].content as string;
   expect(injected).toContain("<warp>");
-  expect(injected).toContain("Sam chose: Go to High Street");
+  expect(injected).toContain("Sam chose: Head out to the High Street");
   expect(injected).toContain("Location: High Street");
 
   // The narrator replies; the extractor reports 20 minutes and a stress bump (clamped by the ruleset).
@@ -140,7 +140,7 @@ test("full loop: install → choose → roll → narrate → bookkeeping → swi
   await emit("GENERATION_ENDED", { generationId: "g1", chatId: "c1", messageId: "m2", content: messages[2].content, generationType: "normal" });
   await settle();
   const rec = (messages[2].extra.spindle_metadata as any).warp.swipes["0"];
-  expect(rec.action.id).toBe("go:high_street");
+  expect(rec.action.id).toBe("head_out");
   const narr = rec.events.filter((e: any) => e.src === "narrator");
   expect(narr.find((e: any) => e.t === "stat" && e.id === "stress").d).toBe(15);
   expect(narr.some((e: any) => e.id === "skulduggery")).toBe(false);
@@ -238,14 +238,14 @@ test("real host shape: no generationId in the interceptor context, reply pre-sta
   // Click "Go to High Street" → Lumiverse appends the user message, fires GENERATION_STARTED,
   // stages an empty assistant reply, THEN runs interceptors with a context lacking generationId.
   appended.length = 0;
-  await frontendHandler({ type: "act", chatId: "c1", actionId: "go:high_street" });
+  await frontendHandler({ type: "act", chatId: "c1", actionId: "head_out" });
   const staged = mkMsg("staged1", false, "");
   messages.push(staged);
   await emit("GENERATION_STARTED", { generationId: "real-1", chatId: "c1", targetMessageId: "staged1", generationType: "normal" });
   const hostCtx = { chatId: "c1", generationType: "normal", dryRun: false, userId: undefined };
   const out = await interceptor([{ role: "user", content: appended[0].msg.content }], hostCtx);
   const injected = out.messages[out.breakdown[0].messageIndex].content as string;
-  expect(injected).toContain("chose: Go to High Street");
+  expect(injected).toContain("chose: Head out to the High Street");
   expect(injected).toContain("Location: High Street");
 
   // The reply lands in the staged message.
@@ -254,7 +254,7 @@ test("real host shape: no generationId in the interceptor context, reply pre-sta
   quietReplies.push("{}");
   await emit("GENERATION_ENDED", { generationId: "real-1", chatId: "c1", messageId: "staged1", content: staged.content, generationType: "normal" });
   await settle();
-  expect((staged.extra.spindle_metadata as any).warp.swipes["0"].action.id).toBe("go:high_street");
+  expect((staged.extra.spindle_metadata as any).warp.swipes["0"].action.id).toBe("head_out");
   const st = lastState();
   expect(st.hud.location.name).toBe("High Street");
   const ids = st.choices.map((c: any) => c.id);

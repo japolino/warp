@@ -8,7 +8,7 @@
 import { mentions } from "../engine/mention.js";
 import type { Answer, Answers, Decider, Questions } from "../engine/decide.js";
 import { normalize, noulConfidence } from "../engine/decide.js";
-import { usableAbilities, usableItems, availableChoices, TRAVEL_PREFIX, travelTargets, type Intent, type Proposal } from "../engine/resolve.js";
+import { usableAbilities, usableItems, availableChoices, type Intent, type Proposal } from "../engine/resolve.js";
 import { QUEST_PREFIX, questDef, questOffers, questsToReport } from "../engine/quests.js";
 import { judgedQuests } from "./helpers.js";
 import { DIFFICULTIES, type DecideSpec, type Ruleset, type StatDef } from "../engine/ruleset.js";
@@ -145,7 +145,6 @@ export async function readTurn(opts: {
         ...usableAbilities(r, s).filter((u) => !u.status.locked).map((u) => ({ id: u.id, a: u.a, label: u.a.label })),
       ]
     : [];
-  const travel = playerText ? travelTargets(r, s) : [];
   // Saying yes to someone's request, or telling them it's done, takes or hands in the quest.
   const questMoves: Record<string, string> = {};
   if (playerText) {
@@ -160,12 +159,11 @@ export async function readTurn(opts: {
   const improv = !!playerText && r.improvise.enabled;
   const approach = improv ? improvStats(r) : [];
 
-  if (playerText && (actions.length || travel.length || improv || Object.keys(questMoves).length)) {
+  if (playerText && (actions.length || improv || Object.keys(questMoves).length)) {
     const criteria: Record<string, string> = {
       [NONE]: "None of these: dialogue, thoughts, feelings, plans, questions, or something trivial that can't fail",
     };
     for (const c of actions) criteria[c.id] = `${c.label}${c.a.desc ? ` — ${c.a.desc}` : ""}`;
-    for (const t of travel) criteria[`${TRAVEL_PREFIX}${t}`] = `Go to ${r.locations[t].name}`;
     Object.assign(criteria, questMoves);
     if (improv) criteria[ATTEMPT] = "Something else with a real chance of failing that matters to the story, not listed above (sneaking, persuading, lying, fighting, climbing, stealing, resisting, performing…)";
     q.action = { type: "choice", instructions: `Which of these does ${player}'s latest message actually attempt right now?`, criteria };
@@ -262,11 +260,6 @@ export async function readTurn(opts: {
     if (!questMoves[id]) return out;
     intent = { actionId: id, via: "adjudicator" };
     label = questMoves[id];
-  } else if (id.startsWith(TRAVEL_PREFIX)) {
-    const to = id.slice(TRAVEL_PREFIX.length);
-    if (!travel.includes(to)) return out;
-    intent = { actionId: id, via: "adjudicator" };
-    label = `Go to ${r.locations[to].name}`;
   } else {
     const c = actions.find((x) => x.id === id);
     const a = c?.a;

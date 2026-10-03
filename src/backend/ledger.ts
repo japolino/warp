@@ -239,17 +239,3 @@ export async function reconcilePath(chatId: string, r: Ruleset, keep: boolean): 
   }
 }
 
-/** A known additive map discovery changes rules but does not reinterpret old events. */
-export async function acceptAdditiveRules(chatId: string, before: Ruleset, after: Ruleset): Promise<void> {
-  const msgs = await getMessages(chatId);
-  if (foldPath(before, msgs, 0).conflict) return;
-  for (const m of msgs) {
-    if (!activeRecord(m)?.path) continue;
-    await patchWarpMeta(chatId, m.id, async (w, current) => {
-      const slot = String(current.swipe_id ?? 0), rec = w.swipes?.[slot];
-      if (!rec) return w;
-      const now = await getMessages(chatId);
-      return { ...w, swipes: { ...w.swipes, [slot]: withRecordPath(rec, after, now.filter((x) => x.index_in_chat < current.index_in_chat)) } };
-    });
-  }
-}

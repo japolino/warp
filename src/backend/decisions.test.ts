@@ -37,14 +37,14 @@ describe("reading the player's turn", () => {
     }
   });
 
-  test("'none' means plain roleplay; travel and difficulty map onto the ruleset", async () => {
+  test("'none' means plain roleplay; difficulty maps onto the ruleset; travel is no longer an action", async () => {
     const r = town();
     const s = initialState(r);
     s.location = "high_street";
     const none = await readTurn({ ...base, decider: new Scripted((q) => ({ action: choice("none", 0.95, Object.keys((q.action as any).criteria)) })), r, s, playerText: "Hello!" });
     expect(none.intent).toBeNull();
     const go = await readTurn({ ...base, decider: new Scripted((q) => ({ action: choice("go:park", 0.9, Object.keys((q.action as any).criteria)) })), r, s, playerText: "I walk to the park" });
-    expect(go.intent?.actionId).toBe("go:park");
+    expect(go.intent).toBeNull();
     // "escape" has difficulty params; a score of 3 (extreme) picks the hardest option.
     const d = new Scripted((q) => ({
       action: choice("escape", 0.9, Object.keys((q.action as any).criteria)),

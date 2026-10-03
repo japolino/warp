@@ -78,7 +78,7 @@ describe("turn resolution", () => {
   test("a check resolves deterministically from its seed and applies costs, outcomes and time", () => {
     const r = town();
     let s = initialState(r);
-    s = foldEvents(r, [resolveTurn(r, s, { actionId: "go:high_street", via: "choice" }, { seed: "a" }).events], s);
+    s = foldEvents(r, [resolveTurn(r, s, { actionId: "head_out", via: "choice" }, { seed: "a" }).events], s);
     expect(s.location).toBe("high_street");
     const rec1 = resolveTurn(r, s, { actionId: "cafe_shift", via: "choice" }, { seed: "seed-1" });
     const rec2 = resolveTurn(r, s, { actionId: "cafe_shift", via: "choice" }, { seed: "seed-1" });
@@ -92,7 +92,7 @@ describe("turn resolution", () => {
 
   test("casual swipes: different seeds can give different results", () => {
     const r = town();
-    const s = foldEvents(r, [resolveTurn(r, initialState(r), { actionId: "go:high_street", via: "choice" }, { seed: "a" }).events]);
+    const s = foldEvents(r, [resolveTurn(r, initialState(r), { actionId: "head_out", via: "choice" }, { seed: "a" }).events]);
     const tiers = new Set<string>();
     for (let i = 0; i < 40; i++) tiers.add(resolveTurn(r, s, { actionId: "pickpocket", via: "choice" }, { seed: `swipe-${i}` }).check!.tier);
     expect(tiers.size).toBeGreaterThan(1);

@@ -208,28 +208,7 @@ export const STYLES = `
 .warp-forget { float: right; font-size: 11px; padding: 0 4px; }
 .warp-here { font-size: 10.5px; color: var(--warp-good); border: 1px solid currentColor; border-radius: 999px; padding: 0 6px; margin-left: 4px; font-weight: 500; }
 
-/* ───────── map & journal ───────── */
-.warp-map-view { position: relative; height: 220px; border-radius: 10px; background: var(--warp-fill-subtle); overflow: hidden; touch-action: none; cursor: grab; }
-.warp-root:not(.warp-overlay-body) .warp-map-view { height: 360px; }
-.warp-panel-solo .warp-map-view { height: 300px; }
-.warp-map-view.panning { cursor: grabbing; }
-.warp-map-view.panning .warp-map-node { pointer-events: none; }
-.warp-map { display: block; width: 100%; height: 100%; }
-.warp-map-tools { position: absolute; right: 6px; bottom: 6px; display: flex; flex-direction: column; gap: 4px; }
-.warp-map-tool { width: 26px; height: 26px; padding: 0; border-radius: 7px; border: 1px solid var(--warp-border); background: color-mix(in srgb, var(--lumiverse-fill-strong, #16141d) 82%, transparent); color: inherit; font: inherit; font-size: 14px; line-height: 1; cursor: pointer; }
-.warp-map-tool:hover { border-color: var(--warp-accent); }
-.warp-map-hint { font-size: 11px; margin: 2px 0 0; }
-.warp-map-edge { stroke: var(--warp-border); stroke-width: 2; }
-.warp-map-node circle { fill: var(--warp-fill); stroke: var(--warp-border); stroke-width: 2; }
-.warp-map-node text { fill: var(--warp-muted); font-size: 11px; }
-.warp-map-node .warp-map-people { fill: var(--warp-good); font-size: 10px; }
-.warp-map-node .warp-map-icon { fill: var(--warp-dim); font-size: 10px; }
-.warp-map-node.here circle { fill: var(--warp-accent); stroke: var(--warp-accent); }
-.warp-map-node.here text { fill: var(--warp-text); font-weight: 700; }
-.warp-map-node.reachable { cursor: pointer; }
-.warp-map-node.locked circle { stroke-dasharray: 3 3; opacity: .6; }
-.warp-map-node.reachable circle { stroke: var(--warp-accent); }
-.warp-map-node.reachable:hover circle, .warp-map-node.reachable:focus circle { fill: color-mix(in srgb, var(--warp-accent) 35%, transparent); }
+/* ───────── journal ───────── */
 .warp-codex summary { cursor: pointer; padding: 3px 0; }
 .warp-codex p { margin: 2px 0 6px 14px; }
 .warp-feat { display: flex; gap: 8px; align-items: flex-start; opacity: .55; font-size: 12.5px; }

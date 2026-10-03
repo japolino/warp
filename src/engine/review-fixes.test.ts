@@ -60,22 +60,15 @@ actions:
   });
 });
 
-describe("the narrator can't walk past a gate", () => {
-  const r = load(`flags: { key: { start: false }, found: { start: false } }
-locations:
-  hall: { name: Hall, exits: [vault, crypt] }
-  vault: { name: Vault, exits: [hall], requires: "flag('key')" }
-  crypt: { name: Crypt, exits: [hall], when: "flag('found')" }
+describe("the story moves between places (no travel gates any more)", () => {
+  const r = load(`locations:
+  hall: { name: Hall }
+  vault: { name: Vault }
 start: { location: hall }
 `);
-  test("story moves into a locked or hidden place are skipped with a hint", () => {
+  test("a story move to a declared place goes there", () => {
     const s = initialState(r);
-    for (const move of ["Vault", "crypt"]) {
-      const events = applyProposal(r, s, { move } as any);
-      expect(events.some((e: any) => e.t === "move")).toBe(false);
-    }
-    s.flags.key = true;
-    expect(applyProposal(r, s, { move: "Vault" } as any).some((e: any) => e.t === "move")).toBe(true);
+    expect(applyProposal(r, s, { move: "Vault" } as any).some((e: any) => e.t === "move" && e.to === "vault")).toBe(true);
   });
 });
 
