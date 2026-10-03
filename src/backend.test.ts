@@ -126,13 +126,16 @@ test("contest buttons post a move to the chat (Give in / Break off); without a c
   const before = h.appended.length;
   await h.frontend({ type: "contest", chatId, op: "give_in" });
   expect(h.appended.length).toBe(before);
-  h.record(h.messages(chatId)[0]).events.push({ t: "contest", kind: "fight", opponent: "the bouncer", threat: "hard", dc: 16, src: "narrator" });
+  const fight = { t: "contest", kind: "fight", opponent: "the bouncer", threat: "hard", dc: 16, src: "narrator" };
+  h.record(h.messages(chatId)[0]).events.push({ ...fight });
+  await h.frontend({ type: "contest", chatId, op: "break_off" });
+  expect(h.appended.at(-1).msg.metadata.warp.intent).toMatchObject({ actionId: "contest:break_off", via: "choice" });
+  expect(h.appended.at(-1).opts).toEqual({ triggerGeneration: true });
+  // Break off may end the contest (a success gets away), so a fresh one is on before Give in.
+  const { record } = await h.generate(chatId, "You try to slip away.");
+  record.events.push({ ...fight });
   await h.frontend({ type: "contest", chatId, op: "give_in" });
   expect(h.appended.at(-1).msg.metadata.warp.intent).toMatchObject({ actionId: "contest:give_in", via: "choice" });
-  expect(h.appended.at(-1).opts).toEqual({ triggerGeneration: true });
-  await h.generate(chatId, "You raise your hands.");
-  await h.frontend({ type: "contest", chatId, op: "break_off" });
-  expect(h.appended.at(-1).msg.metadata.warp.intent.actionId).toBe("contest:break_off");
 });
 
 test("T-C4: one reroll rule — Casual swipes reroll clicked and typed moves; Ironman keeps the roll", async () => {
