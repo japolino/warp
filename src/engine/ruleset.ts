@@ -6,6 +6,7 @@
 // Keys of systems that were taken out still load: each gets one plain warning and is ignored.
 
 import { compile, ExprError } from "./expr.js";
+import { idFrom } from "./ids.js";
 
 export type Tone = "good" | "warn" | "bad" | "neutral";
 export type StatKind = "meter" | "attribute" | "skill" | "money" | "hidden";
@@ -408,8 +409,9 @@ export function titleCase(id: string): string {
   return id.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/** An id from a name: letters and digits of any script (see ids.ts). */
 export function slug(s: string): string {
-  return String(s).trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "x";
+  return idFrom(s);
 }
 
 const DEFAULT_WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];

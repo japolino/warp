@@ -16,7 +16,7 @@ export function goalWord(s: GameState, id: string): string {
   return s.goals?.[id]?.st ?? "";
 }
 
-const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+const norm = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}\p{M}]+/gu, " ").trim();
 
 /** Close a goal: done applies an authored goal's reward once; a story goal's person remembers how it went. */
 function close(t: TurnBuilder, id: string, st: "done" | "failed", src: EventSource) {

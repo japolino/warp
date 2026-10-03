@@ -9,6 +9,7 @@ import type { Value, ExprEnv } from "./expr.js";
 import { evalNumber } from "./expr.js";
 import type { Ruleset, StatDef, Band, Difficulty } from "./ruleset.js";
 import { presentPeople } from "./world.js";
+import { idFrom } from "./ids.js";
 
 /** Something a person remembers about {{user}}. */
 export interface Memory { text: string; at: number }
@@ -219,7 +220,7 @@ export function startMinutes(r: Ruleset): number {
 
 /** A place's id from its words ("The Rusty Anchor" → "the_rusty_anchor"). */
 export function placeId(name: string): string {
-  return String(name).trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "x";
+  return idFrom(name);
 }
 
 export function statMax(r: Ruleset, def: StatDef, s: GameState): number {
