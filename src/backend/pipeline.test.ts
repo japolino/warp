@@ -129,3 +129,28 @@ test("a swipe of a typed turn reuses the saved verdict: no typed read, no odds c
   expect(again.record.action?.id).toBe("try:body");
   expect(again.record.calls.jev).toBeLessThanOrEqual(2);
 });
+
+test("decide blocks: Jev gives odds just in time (and the swipe reuses them); without Jev the author's weights, no extra call", async () => {
+  const yaml = ADVENTURE_YAML.replace("actions:\n", "actions:\n  ask_out: { label: Ask Mira to dance, effects: { decide: { ask: \"Does Mira say yes to {{user}}?\", options: { yes: { desc: \"Says yes\", weight: 1 }, no: { desc: \"Says no\", weight: 1 } } } } }\n");
+  for (const provider of ["jev", "helper"] as const) {
+    const chatId = `pipe-${++n}`;
+    h.chat(chatId, yaml, GREETING);
+    await h.settings(provider === "jev" ? { decider: "jev", jevUrl: JEV_TEST_URL } : { decider: "llm" });
+    await h.frontend({ type: "hello", chatId });
+    await settle();
+    h.resetCounts();
+    await h.frontend({ type: "act", chatId, actionId: "ask_out" });
+    const { record } = await h.generate(chatId, "Mira laughs.");
+    expect(record.decisions?.[0].source).toBe(provider === "jev" ? "model" : "weights");
+    expect(h.counts.helper).toBe(1);
+    if (provider === "jev") {
+      expect(Object.keys(h.jevBatches[0].questions)[0]).toMatch(/^decide:/);
+      expect(record.calls.jev).toBe(h.counts.jev);
+      h.resetCounts();
+      const again = await h.generate(chatId, "Mira smiles.", "swipe");
+      expect(h.jevBatches.some((b) => Object.keys(b.questions).some((k) => k.startsWith("decide:")))).toBe(false);
+      expect(again.record.decisions?.[0].source).toBe("model");
+    } else expect(h.counts.jev).toBe(0);
+  }
+  await h.settings({ decider: "llm" });
+});
