@@ -1,9 +1,9 @@
 // Author-facing checks that need the whole ruleset: unknown names in formulas,
 // with "did you mean" suggestions, and effects that point at things that don't exist.
 
-import { evaluate, identifiers, type ExprEnv, type Value } from "./expr.js";
+import { evaluate, evalNumber, identifiers, type ExprEnv, type Value } from "./expr.js";
 import { difficultyOf, type ActionDef, type Effect, type Issue, type Ruleset } from "./ruleset.js";
-import { BUILTIN_NAMES, initialState, makeEnv } from "./state.js";
+import { BUILTIN_NAMES, initialState, makeEnv, type GameState } from "./state.js";
 import { costValue } from "./resolve.js";
 import { rollDice, seededRng } from "./dice.js";
 import { adultGated } from "./adults.js";
@@ -174,6 +174,18 @@ export function lintRuleset(r: Ruleset): Issue[] {
     return rolled;
   };
 
+  /** Does this formula's value move with the clock (a stamp), rather than only read it? Worked out at two far-apart clocks. */
+  const followsClock = (src: string, name: "turn" | "minutes"): boolean => {
+    const at = (v: number) => {
+      const base = makeEnv(r, { ...s, [name]: v } as GameState);
+      const env: ExprEnv = { lookup: base.lookup, call: (fn, a) => (fn === "roll" ? 1 : base.call?.(fn, a)) };
+      try { return evalNumber(src, env, Number.NaN); } catch { return Number.NaN; }
+    };
+    const lo = name === "turn" ? 2e4 : 2e8, hi = lo * 2;
+    const a = at(lo), b = at(hi);
+    return Number.isFinite(a) && Number.isFinite(b) && Math.abs(b - a) >= (hi - lo) / 2;
+  };
+
   const checkEffect = (e: Effect, where: string, extra: Record<string, Value> = {}) => {
     for (const [id, v] of Object.entries(e.stats)) {
       if (!r.stats[id]) warn(where, `changes "${id}", which isn't a stat${suggest(id, r.statOrder)}`);
@@ -188,9 +200,10 @@ export function lintRuleset(r: Ruleset): Issue[] {
     for (const [id, v] of Object.entries(e.set)) {
       if (!r.stats[id]) warn(where, `sets "${id}", which isn't a stat${suggest(id, r.statOrder)}`);
       check(v, `${where} › set › ${id}`, extra);
-      // A turn stamp in a stat with a small max sticks at the max (CREW-3, LONG-3).
+      // A turn stamp in a stat with a small max sticks at the max (CREW-3, LONG-3). Only a value that follows the clock
+      // is a stamp: "(turn - cd >= 3) ? 3 : 0" reads turn but stores a weight.
       const def = r.stats[id];
-      const stamp = identifiers(String(v)).find((n) => n === "turn" || n === "minutes");
+      const stamp = (["turn", "minutes"] as const).find((n) => identifiers(String(v)).includes(n) && followsClock(String(v), n));
       const room = stamp === "minutes" ? 1e7 : 1e4;
       if (def && stamp && !def.maxExpr && def.max < room) warn(`${where} › set › ${id}`, `stores ${stamp}, but ${id} stops at ${def.max} (max), so it sticks there after ${stamp} ${def.max}. Give it max: ${room === 1e4 ? 100000 : 100000000}`);
     }

@@ -163,6 +163,35 @@ actions:
   });
 });
 
+describe("turn stamps: only a value that follows the clock warns", () => {
+  test("a formula that only reads turn in a condition (a weight, a flag-like 0/3) does not warn", () => {
+    const out = issuesOf(`style: story
+stats:
+  cd_rush: { kind: hidden, min: -1000, max: 100000, start: -1000 }
+  w_rush: { kind: hidden, min: 0, max: 100, start: 0 }
+  ev: { kind: hidden, max: 10 }
+triggers:
+  dice: { when: "turn >= 0", repeat: true, do: { set: { w_rush: "(turn - cd_rush >= 3) ? 3 : 0", ev: "turn - cd_rush >= 5 ? 2 : 0" } } }
+`);
+    expect(out.filter((l) => /stops at/.test(l))).toEqual([]);
+  });
+
+  test("a stamp written as a formula still warns: turn + 1, and a stamp taken only when a cooldown is over", () => {
+    const out = issuesOf(`style: story
+stats:
+  cd: { kind: hidden, min: -1000, max: 100000, start: -1000 }
+  next_at: { kind: hidden }
+  last_at: { kind: hidden }
+  late_at: { kind: hidden }
+triggers:
+  dice: { when: "turn >= 0", repeat: true, do: { set: { next_at: "turn + 1", last_at: "turn - cd >= 3 ? turn : last_at", late_at: "minutes" } } }
+`);
+    expect(has(out, "Triggers › dice › set › next_at", /stores turn.*stops at 100/)).toBe(true);
+    expect(has(out, "Triggers › dice › set › last_at", /stores turn.*stops at 100/)).toBe(true);
+    expect(has(out, "Triggers › dice › set › late_at", /stores minutes.*stops at 100/)).toBe(true);
+  });
+});
+
 describe("an adventure without conflict: (PRESSURE-7, LONG-4)", () => {
   test("default contest kinds that lean on no stat warn; conflict: false or player stats don't", () => {
     expect(has(issuesOf(`style: adventure
