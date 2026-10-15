@@ -21,19 +21,9 @@ interface HttpResult { status: number; body: string }
 
 async function post(url: string, headers: Record<string, string>, body: string, signal: AbortSignal): Promise<HttpResult> {
   signal.throwIfAborted();
-  // Prefer the host proxy (sanctioned network path for extensions); fall back to fetch where allowed.
-  const call = (async (): Promise<HttpResult> => {
-    try {
-      const r = (await host().cors(url, { method: "POST", headers, body, signal } as never)) as { status: number; body: string };
-      signal.throwIfAborted();
-      return { status: r.status, body: r.body };
-    } catch (e) {
-      signal.throwIfAborted();
-      if (typeof fetch !== "function") throw e;
-      const r = await fetch(url, { method: "POST", headers, body, signal });
-      return { status: r.status, body: await r.text() };
-    }
-  })();
+  // Lumiverse blocks native fetch in extensions; the host proxy is the only network path. The proxy
+  // cannot carry an AbortSignal (it is not cloneable), so cancellation is handled here by abortable().
+  const call = (host().cors(url, { method: "POST", headers, body }) as Promise<HttpResult>).then((r) => ({ status: r.status, body: r.body }));
   return abortable(call, signal);
 }
 

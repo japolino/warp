@@ -173,6 +173,7 @@ export function makeHost(userId: string) {
       },
     },
     cors: async (url: string, init: any) => {
+      structuredClone(init); // the real host posts options to another thread; uncloneable ones throw there
       if (url !== JEV_TEST_URL) throw new Error(`unexpected url ${url}`);
       counts.jev++;
       const body = JSON.parse(init.body);
