@@ -9274,19 +9274,7 @@ var init_classifier_config = __esm(() => {
 // src/backend/deciders.ts
 async function post(url, headers, body, signal) {
   signal.throwIfAborted();
-  const call = (async () => {
-    try {
-      const r = await host().cors(url, { method: "POST", headers, body, signal });
-      signal.throwIfAborted();
-      return { status: r.status, body: r.body };
-    } catch (e) {
-      signal.throwIfAborted();
-      if (typeof fetch !== "function")
-        throw e;
-      const r = await fetch(url, { method: "POST", headers, body, signal });
-      return { status: r.status, body: await r.text() };
-    }
-  })();
+  const call = host().cors(url, { method: "POST", headers, body }).then((r) => ({ status: r.status, body: r.body }));
   return abortable(call, signal);
 }
 function abortable(call, signal) {
