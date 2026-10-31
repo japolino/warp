@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
 import { makeHost, settle, type HelperCall } from "../backend/test-host.js";
-import { livingEnded, livingIntercept, livingStarted, livingStopped, needsAttemptRead, syncLiving } from "./runtime.js";
+import { livingEnded, livingIntercept, livingStarted, livingStopped, livingSwipeDeleted, needsAttemptRead, repairLiving, syncLiving } from "./runtime.js";
 import type { InterceptorContextDTO } from "lumiverse-spindle-types";
 
 const h = makeHost("living-runtime-user", false);
@@ -114,4 +114,31 @@ test("swipes reuse the prepared attempt rather than asking for a more favorable 
   expect(reads).toBe(1);
   expect(alternate).toEqual(firstDecision);
   expect(alternate.intent).toBe("Vault the wall");
+});
+
+test("a source edited far outside the recent window can be repaired in place", async () => {
+  const id = chat(); await syncLiving(id, h.userId);
+  const source = h.messages(id)[0];
+  for (let i = 0; i < 30; i++) h.msg(id, `${id}-f${i}`, false, "They talk quietly about the rain.");
+  source.content = "Jo waits in the café. You own a red scarf.";
+  h.helper = c => {
+    const entries = JSON.parse(c.user.split("Messages:\n")[1] ?? "[]");
+    const target = entries.find((m: any) => m.id === source.id);
+    expect(target.content).toContain("red scarf");
+    return { changes: [{ op: "put", id: "scarf", kind: "possession", subject: "scarf", holder: "you", text: "Red scarf", message: source.id, quote: "You own a red scarf." }] };
+  };
+  await repairLiving(id, source.id, h.userId);
+  expect(latest(id).world.facts.map((f: any) => f.id)).toEqual(["scarf"]);
+});
+
+test("deleting an earlier swipe retains the later swipe's own record", async () => {
+  const id = chat(); await syncLiving(id, h.userId);
+  await h.say(id, "I try to vault the wall before anyone sees me.");
+  const { target } = await h.generate(id, "The evening is quiet.");
+  await h.generate(id, "Dex takes the jacket.", "swipe");
+  const oldRecord = (target.extra.spindle_metadata as any).warpLiving["1"];
+  target.swipes.splice(0, 1); target.swipe_dates.splice(0, 1); target.swipe_id = 0;
+  await livingSwipeDeleted(id, target.id, 0);
+  expect((target.extra.spindle_metadata as any).warpLiving["0"]).toEqual(oldRecord);
+  expect((target.extra.spindle_metadata as any).warpLiving["1"]).toBeUndefined();
 });

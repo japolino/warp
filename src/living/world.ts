@@ -2,22 +2,29 @@ import { revision } from "../shared/revision.js";
 import { seededRng } from "../engine/dice.js";
 
 export type Kind = "fact" | "possession" | "knowledge" | "commitment" | "situation" | "motive" | "ability";
-export interface Evidence { message: string; quote: string; }
+export interface Evidence { message: string; quote: string; sourceRevision?: string; }
 export interface Fact extends Evidence {
   id: string; kind: Kind; subject: string; text: string;
   holder?: string; status: "open" | "done";
 }
 export interface World { place: string; present: string[]; facts: Fact[]; }
-export interface Message { id: string; content: string; is_user: boolean; swipe_id?: number; }
-export interface Event { op: "put" | "remove" | "transfer"; fact?: Fact; id: string; to?: string; evidence: Evidence; }
+export interface Message { id: string; content: string; is_user: boolean; name?: string; swipe_id?: number; }
+export interface Event { op: "put" | "remove" | "transfer"; fact?: Fact; id: string; from?: string; to?: string; evidence: Evidence; }
 export interface Record {
   version: 1; path: string; text: string; events: Event[];
-  scene?: { place: string; present: string[] }; notes: string[];
+  scene?: { place: string; present: string[]; message?: string; quote?: string; sourceRevision?: string }; notes: string[];
   decision?: Decision;
+  notice?: string;
 }
 export interface Decision { tier: "favorable" | "uncertain" | "outmatched"; result: "clean" | "mixed" | "setback"; intent: string; stakes: string; reasons: string[]; }
 export const emptyWorld = (): World => ({ place: "", present: [], facts: [] });
-export const text = (v: unknown, limit = 240): string => typeof v === "string" ? v.trim().replace(/\s+/g, " ").slice(0, limit) : "";
+export const text = (v: unknown, limit = 240): string => {
+  if (typeof v !== "string") return "";
+  const clean = v.trim().replace(/\s+/g, " ");
+  if (clean.length <= limit) return clean;
+  const boundary = clean.lastIndexOf(" ", limit);
+  return clean.slice(0, boundary > limit * 0.65 ? boundary : limit).trimEnd();
+};
 const obj = (v: unknown): v is { [key: string]: unknown } => !!v && typeof v === "object" && !Array.isArray(v);
 const kinds = new Set<Kind>(["fact", "possession", "knowledge", "commitment", "situation", "motive", "ability"]);
 const ROOT = "warp-living-v1";
@@ -29,34 +36,45 @@ function evidence(v: unknown, messages: Message[]): Evidence | null {
   const message = text(v.message, 160), quote = text(v.quote, 400);
   const source = messages.find(m => m.id === message);
   if (!source || quote.length < 4 || !source.content.replace(/\s+/g, " ").includes(quote)) return null;
-  return { message, quote };
+  return { message, quote, sourceRevision: revision(source.content) };
 }
 
 /** Validate each proposed change against its quoted source and existing ownership. */
-export function readChanges(raw: unknown, before: World, messages: Message[]): { events: Event[]; scene?: Record["scene"]; notes: string[] } {
+export function readChanges(raw: unknown, before: World, messages: Message[], playerName?: string): { events: Event[]; scene?: Record["scene"]; notes: string[] } {
   if (!obj(raw)) return { events: [], notes: [] };
   const events: Event[] = [], notes: string[] = [];
   let world = structuredClone(before);
   const sourceMessages = new Map(messages.map(m => [m.id, m]));
+  const playerNames = new Set(["you", "player", "me", "i", "{{user}}", ...(playerName ? [playerName.toLowerCase()] : []), ...messages.filter(m => m.is_user && m.name).map(m => m.name!.toLowerCase())]);
+  const person = (v: unknown) => { const s = text(v, 80); return playerNames.has(s.toLowerCase()) ? "you" : s; };
   for (const v of (Array.isArray(raw.changes) ? raw.changes : []).slice(0, 16)) {
     if (!obj(v)) continue;
     const e = evidence(v, messages), id = text(v.id, 100);
     if (!e || !id) continue;
     const previous = world.facts.find(f => f.id === id);
     let event: Event;
-    if (v.op === "remove") {
+    if (v.op === "resolve") {
+      if (!previous || !["commitment", "situation"].includes(previous.kind) || previous.status === "done") continue;
+      const source = sourceMessages.get(e.message)!;
+      if (source.is_user && !/^\(OOC correction:/i.test(source.content)) continue;
+      event = { op: "put", id, fact: { ...previous, ...e, status: "done" }, evidence: e };
+    } else if (v.op === "remove") {
       if (!previous) continue;
       event = { op: "remove", id, evidence: e };
     } else if (v.op === "transfer") {
-      const to = text(v.to, 80), from = text(v.from, 80);
+      const to = person(v.to), from = person(v.from);
       if (!previous || previous.kind !== "possession" || previous.holder !== from || !to || from === to) continue;
-      event = { op: "transfer", id, to, evidence: e };
+      const source = sourceMessages.get(e.message)!;
+      if (source.is_user && !/^\(OOC correction:/i.test(source.content)) continue;
+      event = { op: "transfer", id, from, to, evidence: e };
     } else if (v.op === "put") {
-      const kind = text(v.kind) as Kind, subject = text(v.subject, 80), description = text(v.text);
+      const kind = text(v.kind) as Kind, subject = person(v.subject), description = text(v.text);
       if (!kinds.has(kind) || !subject || !description) continue;
       // Player agreements require evidence in the player's own words.
-      if (kind === "commitment" && subject === "you" && !sourceMessages.get(e.message)?.is_user && !previous) continue;
-      const holder = kind === "possession" ? text(v.holder, 80) : "";
+      if (kind === "commitment" && subject === "you" && !sourceMessages.get(e.message)?.is_user
+        && (!previous || previous.text !== description || (previous.status === "done" && v.status !== "done"))) continue;
+      if (kind === "motive" && subject === "you") continue;
+      const holder = kind === "possession" ? person(v.holder) : "";
       // An existing possession can change hands only through a validated transfer.
       if (previous?.kind === "possession" && (kind !== "possession" || previous.holder !== holder)) continue;
       const fact: Fact = { id, kind, subject, text: description, ...e, status: v.status === "done" ? "done" : "open", ...(holder ? { holder } : {}) };
@@ -71,41 +89,61 @@ export function readChanges(raw: unknown, before: World, messages: Message[]): {
     else if (event.fact && event.fact.text !== previous?.text && ["commitment", "knowledge", "ability"].includes(event.fact.kind)) notes.push(event.fact.text);
   }
   let scene: Record["scene"];
-  if (obj(raw.scene) && evidence(raw.scene, messages)) {
-    scene = { place: text(raw.scene.place, 100) || before.place, present: Array.isArray(raw.scene.present) ? [...new Set(raw.scene.present.map(x => text(x, 80)).filter(Boolean))].slice(0, 8) : before.present };
+  const sceneSource = obj(raw.scene) ? evidence(raw.scene, messages) : null;
+  if (obj(raw.scene) && sceneSource) {
+    scene = { place: text(raw.scene.place, 100) || before.place, present: Array.isArray(raw.scene.present) ? [...new Set(raw.scene.present.map(person).filter(p => p && p !== "you"))].slice(0, 8) : before.present, ...sceneSource };
   }
   return { events, ...(scene ? { scene } : {}), notes: notes.slice(0, 2) };
 }
 
-export function applyEvents(before: World, events: Event[]): World {
-  const facts = new Map(before.facts.map(f => [f.id, f]));
+function replayEvents(facts: Map<string, Fact>, events: Event[]) {
   for (const e of events) {
     if (e.op === "put" && e.fact) facts.set(e.id, e.fact);
     if (e.op === "remove") facts.delete(e.id);
     if (e.op === "transfer") {
       const old = facts.get(e.id);
-      if (old?.kind === "possession" && e.to) facts.set(e.id, { ...old, holder: e.to, ...e.evidence });
+      if (old?.kind === "possession" && e.to && (!e.from || e.from === old.holder)) facts.set(e.id, { ...old, holder: e.to, ...e.evidence });
     }
   }
-  // Bound prompt and replay size. Settled history is evicted before live facts.
-  const all = [...facts.values()];
-  const kept = [...all.filter(f => f.status === "done").slice(-16), ...all.filter(f => f.status === "open").slice(-80)];
-  return { ...before, facts: kept };
 }
 
-/** A changed source invalidates descendants; the next extraction repairs from current prose. */
+export function applyEvents(before: World, events: Event[]): World {
+  const facts = new Map(before.facts.map(f => [f.id, f]));
+  replayEvents(facts, events);
+  return { ...before, facts: [...facts.values()] };
+}
+
+/** Preserve facts still supported by active prose; stale decisions never re-roll during replay. */
 export function foldWorld(messages: (Message & { record?: Record })[]): World {
   let world = emptyWorld();
+  const facts = new Map<string, Fact>();
+  const sourceById = new Map(messages.map(m => [m.id, m]));
+  const sourceIndex = new Map(messages.map((m, i) => [m.id, i]));
+  const quoted = (e: Evidence, ownIndex: number): Evidence | null => {
+    const named = sourceById.get(e.message);
+    const matches = (m: Message) => (!e.sourceRevision || e.sourceRevision === revision(m.content)) && m.content.replace(/\s+/g, " ").includes(e.quote);
+    if (named && matches(named) && sourceIndex.get(named.id)! <= ownIndex) return e;
+    // Forks may assign new ids. Rebind only a unique quote in the preceding path.
+    if (named) return null;
+    const candidates = messages.slice(0, ownIndex + 1).filter(matches);
+    return candidates.length === 1 ? { ...e, message: candidates[0].id } : null;
+  };
   let path = ROOT;
-  for (const m of messages) {
+  for (const [index, m] of messages.entries()) {
     const r = m.record;
-    if (r?.version === 1 && r.text === revision(m.content) && r.path === path) {
-      world = applyEvents(world, r.events);
-      if (r.scene) world = { ...world, ...r.scene };
+    if (r?.version === 1 && r.text === revision(m.content)) {
+      const matchingPath = r.path === path;
+      const events = matchingPath ? r.events : r.events.flatMap(e => {
+        const source = quoted(e.evidence, index);
+        if (!source || (e.op === "transfer" && !e.from)) return [];
+        return [{ ...e, evidence: source, ...(e.fact ? { fact: { ...e.fact, ...source } } : {}) }];
+      });
+      replayEvents(facts, events);
+      if (r.scene && (matchingPath || (r.scene.message && r.scene.quote && quoted({ message: r.scene.message, quote: r.scene.quote, sourceRevision: r.scene.sourceRevision }, index)))) world = { ...world, place: r.scene.place, present: r.scene.present };
     }
     path = nextPath(path, m);
   }
-  return world;
+  return { ...world, facts: [...facts.values()] };
 }
 
 /** A classifier supplies circumstances. It never supplies the random outcome. */
@@ -120,6 +158,13 @@ export function resolveAttempt(raw: unknown, seed: string): Decision | null {
   return { tier, result: n < clean ? "clean" : n < clean + mixed ? "mixed" : "setback", intent, stakes, reasons };
 }
 
-export function worldPacket(world: World): string {
-  return JSON.stringify({ place: world.place || undefined, present: world.present, established: world.facts.filter(f => f.kind !== "motive").map(({ kind, subject, text, holder, status }) => ({ kind, subject, text, holder, status })), possibleMotives: world.facts.filter(f => f.kind === "motive").map(f => ({ subject: f.subject, text: f.text })) });
+export function worldPacket(world: World, focus = ""): string {
+  const ignored = new Set(["the", "and", "you", "your", "that", "this", "with", "for", "what", "have", "from", "about"]);
+  const words = new Set((focus.toLocaleLowerCase().match(/[\p{L}\p{N}_]{3,}/gu) ?? []).filter(w => !ignored.has(w)));
+  const people = new Set(world.present.map(p => p.toLocaleLowerCase()));
+  const score = (f: Fact) => (f.status === "open" ? 10 : 0) + (f.kind === "commitment" || f.kind === "situation" ? 10 : 0)
+    + (people.has(f.subject.toLocaleLowerCase()) ? 6 : 0) + (f.text.toLocaleLowerCase().match(/[\p{L}\p{N}_]{3,}/gu) ?? []).filter(w => words.has(w)).length * 4
+    + ((`${f.id} ${f.subject}`.toLocaleLowerCase().match(/[\p{L}\p{N}_]{3,}/gu) ?? []).some(w => words.has(w)) ? 25 : 0);
+  const selected = world.facts.map((fact, index) => ({ fact, index, score: score(fact) })).sort((a, b) => b.score - a.score || b.index - a.index).slice(0, 80).map(x => x.fact);
+  return JSON.stringify({ place: world.place || undefined, present: world.present, established: selected.filter(f => f.kind !== "motive").map(({ id, kind, subject, text, holder, status }) => ({ id, kind, subject, text, holder, status })), possibleMotives: selected.filter(f => f.kind === "motive").map(f => ({ id: f.id, subject: f.subject, text: f.text })) });
 }

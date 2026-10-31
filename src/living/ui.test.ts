@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import type { SpindleFrontendContext } from "lumiverse-spindle-types";
 import { connectLiving } from "./ui.js";
+import { setup } from "../frontend.js";
 
 let window: Window, ui: ReturnType<typeof connectLiving>, sent: any[], active: string;
 const globals = ["window", "document", "HTMLElement", "HTMLTextAreaElement", "CSS", "CustomEvent"] as const;
@@ -73,4 +74,38 @@ test("the scene is restored if the host replaces the message DOM", async () => {
   ui.accept(view()); window.document.querySelector(".warp-scene")!.remove();
   await new Promise(r => setTimeout(r, 650));
   expect(window.document.querySelector(".warp-scene-place")?.textContent).toBe("Jo's café");
+});
+
+test("old memory stays searchable without rendering an unbounded list", () => {
+  const facts = Array.from({ length: 200 }, (_, i) => ({ id: `f${i}`, subject: "you", text: i ? `A remembered event ${i}` : "The silver ring", quote: i ? `Quote ${i}` : "You found a silver ring.", kind: "fact", status: "open" }));
+  ui.accept(view({ world: { place: "Here", present: [], facts } }));
+  expect(window.document.querySelectorAll(".warp-scene-fact")).toHaveLength(80);
+  const search = window.document.querySelector("[data-memory-query]")! as any;
+  search.value = "silver ring"; search.dispatchEvent(new window.Event("input", { bubbles: true }));
+  expect(window.document.querySelectorAll(".warp-scene-fact")).toHaveLength(1);
+  expect(window.document.querySelector(".warp-scene-fact")?.textContent).toContain("silver ring");
+});
+
+test("default production startup does not create a drawer or floating widget", () => {
+  ui.destroy();
+  let receive!: (raw: unknown) => void;
+  const ctx = {
+    getActiveChat: () => ({ chatId: active }), sendToBackend: (value: unknown) => sent.push(value),
+    onBackendMessage: (fn: (raw: unknown) => void) => { receive = fn; return () => {}; },
+    ui: { registerDrawerTab: () => { throw new Error("Default startup must not use panels"); }, createFloatWidget: () => { throw new Error("Default startup must not use widgets"); } },
+    dom: {
+      addStyle: () => () => {}, findMessageElement: () => window.document.getElementById("row"),
+      inject: (target: Element, html: string, position: InsertPosition) => { const wrapper = window.document.createElement("div"); wrapper.innerHTML = html; target.insertAdjacentElement(position, wrapper as unknown as Element); return wrapper; },
+      uninject: (element: Element) => element.remove(),
+    },
+  } as unknown as SpindleFrontendContext;
+  const cleanup = setup(ctx);
+  try {
+    expect(sent.at(-1)).toEqual({ type: "hello", chatId: "test" });
+    receive({ type: "settings", settings: { authoredRules: false }, connections: [] });
+    receive(view());
+    expect(window.document.querySelector(".warp-scene-place")?.textContent).toBe("Jo's café");
+    receive({ type: "command", command: "open" });
+    expect(window.document.querySelector("[data-helper-connection]")).not.toBeNull();
+  } finally { cleanup(); }
 });

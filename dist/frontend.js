@@ -10,6 +10,97 @@ var __esm = (fn, res, err) => () => {
   return res;
 };
 
+// src/frontend/html.ts
+function esc(v) {
+  return String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+function pctTone(p) {
+  return p >= 0.66 ? "good" : p >= 0.33 ? "warn" : "bad";
+}
+function section(title, count, body, open, key = title) {
+  return `<details class="warp-section" data-section="${esc(key)}"${open ? " open" : ""}><summary><span>${esc(title)}${count ? ` · ${count}` : ""}</span></summary><div class="warp-section-body">${body}</div></details>`;
+}
+function editButton(key, label) {
+  return `<button class="warp-btn warp-btn-ghost warp-edit" data-edit="${esc(key)}" title="${esc(label)}" aria-label="${esc(label)}">✎</button>`;
+}
+var TIER_TONE, pct = (p) => `${Math.round(p * 100)}%`;
+var init_html = __esm(() => {
+  TIER_TONE = { crit_success: "good", success: "good", partial: "warn", fail: "bad", crit_fail: "bad" };
+});
+
+// src/engine/format-version.ts
+var RULESET_FORMAT = 2;
+
+// src/shared/revision.ts
+function revision(value) {
+  const text = JSON.stringify(value);
+  let a = 2166136261, b = 2246822507;
+  for (let i = 0;i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    a = Math.imul(a ^ c, 16777619);
+    b = Math.imul(b ^ c, 3266489909);
+  }
+  return `${(a >>> 0).toString(16)}:${(b >>> 0).toString(16)}`;
+}
+
+// src/frontend/public-events.ts
+function toWarpState(state, opts) {
+  const name = state?.player ?? "";
+  const h = opts.enabled ? state?.hud ?? null : null;
+  if (!state || !h) {
+    return { version: 1, provider: "warp", rulesetFormat: RULESET_FORMAT, chatId: state?.chatId ?? opts.chatId ?? null, messageId: null, you: { name }, people: [] };
+  }
+  const out = { version: 1, provider: "warp", rulesetFormat: RULESET_FORMAT, chatId: state.chatId, messageId: state.latestMessageId, you: { name }, people: [] };
+  if (h.clock) {
+    const m = Math.max(0, Math.round(h.clock.minutes));
+    out.time = { label: h.clock.label, day: Math.floor(m / 1440) + 1, hour: Math.floor(m % 1440 / 60), minute: m % 60 };
+  }
+  out.place = h.location?.name ?? null;
+  const appearance = some(h.you.appearance), outfit = some(h.you.outfit);
+  out.you = { name, ...appearance ? { appearance } : {}, ...outfit ? { outfit } : {}, items: h.items.map((i) => i.name) };
+  out.people = h.people.map((p) => {
+    const a = some(p.appearance), o = some(p.outfit);
+    const bands = {};
+    for (const s of p.stats)
+      bands[s.label] = s.text ?? s.display;
+    return { id: p.id, name: p.name, present: p.present, ...a ? { appearance: a } : {}, ...o ? { outfit: o } : {}, bands };
+  });
+  out.meters = h.bars.map((b) => ({ id: b.id, label: b.label, band: b.text ?? b.display }));
+  return out;
+}
+function connectPublicEvents(opts) {
+  const target = opts.target ?? window;
+  let last = null;
+  let dead = false;
+  const publish = (force = false) => {
+    if (dead)
+      return;
+    const snap = opts.getState();
+    const rev = revision(snap);
+    if (!force && rev === last)
+      return;
+    last = rev;
+    try {
+      target.dispatchEvent(new CustomEvent(WARP_STATE, { detail: snap }));
+    } catch {}
+  };
+  const onRequest = (e) => {
+    const d = e.detail;
+    if (d?.version === 1)
+      publish(true);
+  };
+  target.addEventListener(WARP_STATE_REQUEST, onRequest);
+  return {
+    publish,
+    destroy() {
+      dead = true;
+      target.removeEventListener(WARP_STATE_REQUEST, onRequest);
+    }
+  };
+}
+var WARP_STATE = "warp-state-v1", WARP_STATE_REQUEST = "warp-state-request-v1", some = (v) => v && v.trim() ? v : undefined;
+var init_public_events = () => {};
+
 // src/shared/protocol.ts
 var DEFAULT_SETTINGS;
 var init_protocol = __esm(() => {
@@ -51,25 +142,6 @@ var init_classifier_config = __esm(() => {
     jevUrl: "https://openrouter.ai/api/alpha/decisions"
   };
 });
-
-// src/engine/format-version.ts
-var RULESET_FORMAT = 2;
-
-// src/shared/revision.ts
-function revision(value) {
-  const text = JSON.stringify(value);
-  let a = 2166136261, b = 2246822507;
-  for (let i = 0;i < text.length; i++) {
-    const c = text.charCodeAt(i);
-    a = Math.imul(a ^ c, 16777619);
-    b = Math.imul(b ^ c, 3266489909);
-  }
-  return `${(a >>> 0).toString(16)}:${(b >>> 0).toString(16)}`;
-}
-
-// src/frontend.ts
-init_protocol();
-init_classifier_config();
 
 // src/frontend/styles.ts
 var STYLES = `
@@ -402,12 +474,6 @@ var STYLES = `
 `;
 
 // src/frontend/overlay-layout.ts
-var PAD = 12;
-var SNAP = 28;
-var PILL = { w: 150, h: 38 };
-var PANEL_W = 290;
-var SIDE_W = 300;
-var STRIP_H = 190;
 function edgeForDrop(start, box, vp) {
   const dx = box.x - start.x;
   const dy = box.y - start.y;
@@ -461,29 +527,16 @@ function floatingBox(vp, open, h, y = 72) {
 function wh(s) {
   return { w: s.w, h: s.h };
 }
-
-// src/frontend/html.ts
-function esc(v) {
-  return String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-}
-function pctTone(p) {
-  return p >= 0.66 ? "good" : p >= 0.33 ? "warn" : "bad";
-}
-var TIER_TONE = { crit_success: "good", success: "good", partial: "warn", fail: "bad", crit_fail: "bad" };
-function section(title, count, body, open, key = title) {
-  return `<details class="warp-section" data-section="${esc(key)}"${open ? " open" : ""}><summary><span>${esc(title)}${count ? ` · ${count}` : ""}</span></summary><div class="warp-section-body">${body}</div></details>`;
-}
-function editButton(key, label) {
-  return `<button class="warp-btn warp-btn-ghost warp-edit" data-edit="${esc(key)}" title="${esc(label)}" aria-label="${esc(label)}">✎</button>`;
-}
-var pct = (p) => `${Math.round(p * 100)}%`;
+var PAD = 12, SNAP = 28, PILL, PANEL_W = 290, SIDE_W = 300, STRIP_H = 190;
+var init_overlay_layout = __esm(() => {
+  PILL = { w: 150, h: 38 };
+});
 
 // src/frontend/render-panel.ts
 function renderHud(h, opts) {
   const { head, parts } = hudParts(h, opts);
   return head + parts.map(renderPart).join("");
 }
-var renderPart = (p) => section(p.title, p.count, p.body, p.open, p.id);
 function hudParts(h, opts) {
   const parts = [sceneSection(h, opts), youSection(h, opts)];
   if (h.people.length)
@@ -493,7 +546,6 @@ function hudParts(h, opts) {
     parts.push(goals);
   return { head: h.conflict ? renderConflict(h.conflict) : "", parts };
 }
-var draft = (opts, key, fallback) => opts.drafts?.[key] ?? fallback;
 function fixRow(key, field, who, inputs) {
   return `<div class="warp-fix" data-fix-row="${esc(key)}">${inputs}<button class="warp-btn warp-btn-primary warp-mini" data-fix="${esc(field)}"${who !== null ? ` data-who="${esc(who)}"` : ""}>Set</button><button class="warp-btn warp-btn-ghost warp-mini" data-edit="${esc(key)}" aria-label="Cancel">Cancel</button></div>`;
 }
@@ -503,21 +555,15 @@ function textInput(key, value, label, opts, placeholder = "") {
 function numberInput(key, value, label, opts, attrs = "") {
   return `<input class="warp-input warp-num" type="number" inputmode="decimal" data-fix-input="${esc(key)}" value="${esc(draft(opts, key, String(value)))}" aria-label="${esc(label)}"${attrs}>`;
 }
-var hhmm = (minutes) => {
-  const m = (Math.round(minutes) % 1440 + 1440) % 1440;
-  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
-};
 function clockParts(minutes) {
   return { day: Math.floor(minutes / 1440) + 1, time: hhmm(minutes) };
 }
-var gaugeLeft = (momentum) => (100 - Math.max(-100, Math.min(100, momentum))) / 2;
 function renderGauge(c) {
   const m = Math.round(c.momentum);
   return `<div class="warp-gauge-labels"><span class="warp-tone-good">You</span><span class="warp-tone-bad">${esc(c.opponent)}</span></div>
     <div class="warp-momentum" role="meter" aria-valuemin="-100" aria-valuemax="100" aria-valuenow="${m}" aria-label="Momentum" title="${esc(`Momentum ${m > 0 ? "+" : ""}${m}: only a full swing either way ends it`)}"><div class="warp-momentum-mid"></div><div class="warp-momentum-mark" style="left:${gaugeLeft(m).toFixed(1)}%"></div></div>
     <div class="warp-conflict-words">${esc(c.words)}</div>`;
 }
-var roundText = (c) => `round ${Math.min(c.round + 1, c.maxRounds)}/${c.maxRounds}`;
 function renderConflict(c) {
   return `<div class="warp-conflict" role="group" aria-label="${esc(`${c.label} with ${c.opponent}`)}">
     <div class="warp-conflict-head"><span>⚔ ${esc(c.label)} · ${esc(c.opponent)}</span><span class="warp-dim">${esc(roundText(c))}</span></div>
@@ -672,9 +718,15 @@ function goalsSection(goals, opts) {
   const body = `${open.slice(0, 3).map((g) => goalRow(g, opts)).join("") || `<div class="warp-empty">No goals open.</div>`}${ended.length ? `<details class="warp-away" data-section="goals-ended"><summary>Finished · ${ended.length}</summary><div class="warp-section-body">${ended.map((g) => goalRow(g, opts)).join("")}</div></details>` : ""}`;
   return { id: "goals", title: "Goals", count: open.length, body, open: true };
 }
+var renderPart = (p) => section(p.title, p.count, p.body, p.open, p.id), draft = (opts, key, fallback) => opts.drafts?.[key] ?? fallback, hhmm = (minutes) => {
+  const m = (Math.round(minutes) % 1440 + 1440) % 1440;
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+}, gaugeLeft = (momentum) => (100 - Math.max(-100, Math.min(100, momentum))) / 2, roundText = (c) => `round ${Math.min(c.round + 1, c.maxRounds)}/${c.maxRounds}`;
+var init_render_panel = __esm(() => {
+  init_html();
+});
 
 // src/frontend/render-chat.ts
-var SHOWN_CHANGES = 6;
 function d20Odds(add, target) {
   let n = 1;
   for (let f = 2;f <= 19; f++)
@@ -742,11 +794,9 @@ function renderReply(rec, opts) {
   }
   return out.join("");
 }
-var isMainChoice = (c) => c.id.startsWith("live:") || c.id.startsWith("contest:");
 function choiceOrder(choices) {
   return [...choices.filter(isMainChoice), ...choices.filter((c) => !isMainChoice(c))];
 }
-var MORE_SHOWN = 4;
 function oddsTip(c) {
   if (c.odds === null)
     return "";
@@ -775,10 +825,13 @@ function renderChoices(choices, opts) {
   const moreRow = more.length ? `<div class="warp-more">${moreButtons.slice(0, MORE_SHOWN).join("")}${more.length > MORE_SHOWN ? `<details class="warp-more-fold"><summary title="More actions">…</summary><div class="warp-more">${moreButtons.slice(MORE_SHOWN).join("")}</div></details>` : ""}</div>` : "";
   return `${status}${gauge}${mainRow}${moreRow}`;
 }
+var SHOWN_CHANGES = 6, isMainChoice = (c) => c.id.startsWith("live:") || c.id.startsWith("contest:"), MORE_SHOWN = 4;
+var init_render_chat = __esm(() => {
+  init_html();
+  init_render_panel();
+});
 
 // src/frontend/render-settings.ts
-init_protocol();
-init_classifier_config();
 function toggle(key, label, hint, on) {
   return `<label class="warp-toggle"><span>${esc(label)}</span><small>${esc(hint)}</small><input type="checkbox" data-setting="${esc(key)}"${on ? " checked" : ""}></label>`;
 }
@@ -882,6 +935,11 @@ function renderSettings(s, status, connections, jevKeySet = false, templates = [
     <div class="warp-row"><input class="warp-input" data-newtag placeholder="Add a tag… (Enter)" style="flex:1" aria-label="Add a tag"></div>
   </div>`;
 }
+var init_render_settings = __esm(() => {
+  init_protocol();
+  init_classifier_config();
+  init_html();
+});
 
 // src/frontend/render.ts
 function renderJournal(h, records, editing = null) {
@@ -922,15 +980,10 @@ function renderRulesetCard(s, hasChat) {
     <div class="warp-row"><button class="warp-btn" data-reload>Reload</button><button class="warp-btn warp-btn-ghost" data-install>Replace with a template…</button></div>
   </div>`;
 }
-var STUDIO_URL = "https://github.com/japolino/warp-studio";
 function renderWritingRules() {
   return `<div class="warp-card"><h3>Writing rules</h3><p>Rules live in entries titled <b>warp-ruleset · …</b> (or any lorebook named <b>warp-ruleset</b>). Each entry is YAML; entries merge together. Warp keeps them out of the prompt automatically.</p>
     <p class="warp-studio-line">Deep passes, checks, playtest and import/export: <a href="${STUDIO_URL}" target="_blank" rel="noopener">Warp Studio</a> (${STUDIO_URL})</p></div>`;
 }
-var STYLE_CARD = {
-  story: { title: "\uD83D\uDCD6 Story (no dice)", blurb: "Time, place, who is here and how they feel about you, with slow-burn relationships. Nothing is rolled." },
-  adventure: { title: "\uD83C\uDFB2 Adventure (dice)", blurb: "Everything in Story, plus dice at risky moments and contests (fights, chases, arguments) on one momentum gauge." }
-};
 function renderTemplatePicker(templates, card = null) {
   const track = card ? `<label class="warp-toggle"><span>Track <b>${esc(card.name)}</b> as a character</span><small>${card.track ? "Their relationship with you is tracked from the start." : "This looks like a scenario or narrator card, so its name isn't added as a person. Tick if it really is one character."}</small><input type="checkbox" data-track${card.track ? " checked" : ""}></label>` : "";
   const cards = ["story", "adventure"].map((st) => {
@@ -945,18 +998,26 @@ function renderTemplatePicker(templates, card = null) {
     <p class="warp-dim" style="margin:0">Warp makes one small model call per turn to keep score and write the choices (a typed risky move without Jev needs a second one). It uses the chat's own model unless you pick a fast, cheap <b>Helper connection</b> in Settings.</p>
   </div>`;
 }
+var STUDIO_URL = "https://github.com/japolino/warp-studio", STYLE_CARD;
+var init_render = __esm(() => {
+  init_html();
+  init_render_panel();
+  init_render_chat();
+  init_render_settings();
+  init_html();
+  init_render_panel();
+  init_render_chat();
+  init_render_settings();
+  STYLE_CARD = {
+    story: { title: "\uD83D\uDCD6 Story (no dice)", blurb: "Time, place, who is here and how they feel about you, with slow-burn relationships. Nothing is rolled." },
+    adventure: { title: "\uD83C\uDFB2 Adventure (dice)", blurb: "Everything in Story, plus dice at risky moments and contests (fights, chases, arguments) on one momentum gauge." }
+  };
+});
 
 // src/frontend/builder-ui.ts
 function emptyDraft() {
   return { answers: {}, additions: [], notes: {}, refine: "", base: "", connectionId: "" };
 }
-var KINDS = ["skill", "meter", "item", "person", "action", "rule", "other"];
-var REFINE_CHIPS = [
-  "Make it harder",
-  "Make it more forgiving",
-  "Make relationships move slower",
-  "Add a skill for something the card mentions"
-];
 function renderBuilderCta(hasRuleset, hasChat) {
   if (!hasChat)
     return "";
@@ -1110,10 +1171,19 @@ function countLine(yaml) {
 `).filter((l) => l.trim() && !l.trim().startsWith("#")).length;
   return `${lines} lines`;
 }
+var KINDS, REFINE_CHIPS;
+var init_builder_ui = __esm(() => {
+  init_render();
+  KINDS = ["skill", "meter", "item", "person", "action", "rule", "other"];
+  REFINE_CHIPS = [
+    "Make it harder",
+    "Make it more forgiving",
+    "Make relationships move slower",
+    "Add a skill for something the card mentions"
+  ];
+});
 
 // src/frontend/cue-bridge.ts
-var PROVIDER = "warp";
-var MAX_CHOICES = 12;
 function cueChoices(choices, showOdds) {
   return choices.filter((c) => !c.locked).slice(0, MAX_CHOICES).map((c) => ({
     id: c.id,
@@ -1124,24 +1194,6 @@ function cueChoices(choices, showOdds) {
     odds: showOdds ? c.odds : null
   }));
 }
-var CARD_CSS = `
-.w{font:13px/1.45 system-ui,sans-serif;color:#ecebf2;display:grid;gap:8px}
-.top{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline}
-.top b{font-size:15px}.dim{color:#a9a6b8}
-.bars{display:grid;gap:6px}
-.bar{display:grid;grid-template-columns:auto 1fr;gap:2px 8px;align-items:center}
-.bar .l{font-weight:600}.bar .v{text-align:right;color:#a9a6b8;font-variant-numeric:tabular-nums}
-.track{grid-column:1/-1;height:6px;border-radius:99px;background:#2b2a36;overflow:hidden}
-.fill{height:100%;border-radius:99px}
-.good{background:#5fc58a}.warn{background:#e0b34f}.bad{background:#e06a6a}.neutral{background:#8b86a8}
-.t-good{color:#8fe0a8}.t-warn{color:#f0cf7a}.t-bad{color:#f19a9a}.t-neutral{color:#c9c6d8}
-.chips{display:flex;flex-wrap:wrap;gap:4px}
-.chip{padding:1px 8px;border-radius:99px;background:#2b2a36;font-size:12px}
-.sec{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#a9a6b8;margin-top:2px}
-.ppl{display:grid;gap:3px}
-.gauge{position:relative;height:8px;border-radius:4px;background:linear-gradient(90deg,#5fc58a,#2b2a36 45%,#2b2a36 55%,#e06a6a)}
-.mark{position:absolute;top:-3px;width:4px;height:14px;margin-left:-2px;border-radius:2px;background:#ecebf2}
-`;
 function renderCueCard(h) {
   const top = [
     h.clock ? `<b>${esc(h.clock.time)}</b> <span class="dim">${esc(h.date ?? h.clock.day)}</span>` : `<b>${esc(h.rulesetName)}</b>`,
@@ -1242,75 +1294,36 @@ function connectCue(opts) {
     }
   };
 }
-
-// src/frontend/public-events.ts
-var WARP_STATE = "warp-state-v1";
-var WARP_STATE_REQUEST = "warp-state-request-v1";
-var some = (v) => v && v.trim() ? v : undefined;
-function toWarpState(state, opts) {
-  const name = state?.player ?? "";
-  const h = opts.enabled ? state?.hud ?? null : null;
-  if (!state || !h) {
-    return { version: 1, provider: "warp", rulesetFormat: RULESET_FORMAT, chatId: state?.chatId ?? opts.chatId ?? null, messageId: null, you: { name }, people: [] };
-  }
-  const out = { version: 1, provider: "warp", rulesetFormat: RULESET_FORMAT, chatId: state.chatId, messageId: state.latestMessageId, you: { name }, people: [] };
-  if (h.clock) {
-    const m = Math.max(0, Math.round(h.clock.minutes));
-    out.time = { label: h.clock.label, day: Math.floor(m / 1440) + 1, hour: Math.floor(m % 1440 / 60), minute: m % 60 };
-  }
-  out.place = h.location?.name ?? null;
-  const appearance = some(h.you.appearance), outfit = some(h.you.outfit);
-  out.you = { name, ...appearance ? { appearance } : {}, ...outfit ? { outfit } : {}, items: h.items.map((i) => i.name) };
-  out.people = h.people.map((p) => {
-    const a = some(p.appearance), o = some(p.outfit);
-    const bands = {};
-    for (const s of p.stats)
-      bands[s.label] = s.text ?? s.display;
-    return { id: p.id, name: p.name, present: p.present, ...a ? { appearance: a } : {}, ...o ? { outfit: o } : {}, bands };
-  });
-  out.meters = h.bars.map((b) => ({ id: b.id, label: b.label, band: b.text ?? b.display }));
-  return out;
-}
-function connectPublicEvents(opts) {
-  const target = opts.target ?? window;
-  let last = null;
-  let dead = false;
-  const publish = (force = false) => {
-    if (dead)
-      return;
-    const snap = opts.getState();
-    const rev = revision(snap);
-    if (!force && rev === last)
-      return;
-    last = rev;
-    try {
-      target.dispatchEvent(new CustomEvent(WARP_STATE, { detail: snap }));
-    } catch {}
-  };
-  const onRequest = (e) => {
-    const d = e.detail;
-    if (d?.version === 1)
-      publish(true);
-  };
-  target.addEventListener(WARP_STATE_REQUEST, onRequest);
-  return {
-    publish,
-    destroy() {
-      dead = true;
-      target.removeEventListener(WARP_STATE_REQUEST, onRequest);
-    }
-  };
-}
+var PROVIDER = "warp", MAX_CHOICES = 12, CARD_CSS = `
+.w{font:13px/1.45 system-ui,sans-serif;color:#ecebf2;display:grid;gap:8px}
+.top{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline}
+.top b{font-size:15px}.dim{color:#a9a6b8}
+.bars{display:grid;gap:6px}
+.bar{display:grid;grid-template-columns:auto 1fr;gap:2px 8px;align-items:center}
+.bar .l{font-weight:600}.bar .v{text-align:right;color:#a9a6b8;font-variant-numeric:tabular-nums}
+.track{grid-column:1/-1;height:6px;border-radius:99px;background:#2b2a36;overflow:hidden}
+.fill{height:100%;border-radius:99px}
+.good{background:#5fc58a}.warn{background:#e0b34f}.bad{background:#e06a6a}.neutral{background:#8b86a8}
+.t-good{color:#8fe0a8}.t-warn{color:#f0cf7a}.t-bad{color:#f19a9a}.t-neutral{color:#c9c6d8}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{padding:1px 8px;border-radius:99px;background:#2b2a36;font-size:12px}
+.sec{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#a9a6b8;margin-top:2px}
+.ppl{display:grid;gap:3px}
+.gauge{position:relative;height:8px;border-radius:4px;background:linear-gradient(90deg,#5fc58a,#2b2a36 45%,#2b2a36 55%,#e06a6a)}
+.mark{position:absolute;top:-3px;width:4px;height:14px;margin-left:-2px;border-radius:2px;background:#ecebf2}
+`;
+var init_cue_bridge = __esm(() => {
+  init_html();
+  init_render_panel();
+});
 
 // src/frontend/roll-fx.ts
-var rollKey = (r) => r.check ? `${r.messageId}:${r.swipe}:${r.check.total}:${r.check.tier}` : null;
 function newRolls(prev, next) {
   if (!prev || prev.chatId !== next.chatId)
     return [];
   const seen = new Set(prev.records.map(rollKey).filter(Boolean));
   return next.records.filter((r) => r.check && !seen.has(rollKey(r)));
 }
-var ROLL_MS = 2600;
 function playRoll(row, rec, reduced) {
   if (!rec.check)
     return;
@@ -1338,6 +1351,10 @@ function prefersReducedMotion() {
     return false;
   }
 }
+var rollKey = (r) => r.check ? `${r.messageId}:${r.swipe}:${r.check.total}:${r.check.tier}` : null, ROLL_MS = 2600;
+var init_roll_fx = __esm(() => {
+  init_html();
+});
 
 // src/frontend/response-gate.ts
 function acceptsResponse(message, activeChat, current) {
@@ -1349,212 +1366,19 @@ function acceptsResponse(message, activeChat, current) {
     return message.chatId === undefined || message.chatId === activeChat;
   return true;
 }
-var ACT_GUARD_MS = 4000;
 function mayAct(pending, chatId, now) {
   return !pending || pending.chatId !== chatId || now - pending.at >= ACT_GUARD_MS;
 }
+var ACT_GUARD_MS = 4000;
 
 // src/frontend/logo.ts
-var SOFT = "M38.7,76.9C34.8,76.4 31.5,73.8 30.3,70.1C28.7,65.3 30.0,58.4 33.9,51.1C34.4,50.2 34.9,49.3 35.0,49.0C35.1,48.8 35.2,48.5 35.4,48.4C35.7,48.1 35.7,48.1 35.4,47.6L35.2,47.2 L35.4,46.3C35.9,44.4 36.8,42.2 37.6,40.5C38.4,39.0 38.2,38.9 36.2,40.0C29.4,43.8 25.8,46.7 25.2,49.3C24.8,50.7 25.5,51.8 27.1,52.6C27.9,53.0 27.9,53.2 27.4,53.2C26.2,53.3 24.0,52.5 23.1,51.7C20.9,49.7 22.7,46.7 28.0,43.3C30.3,41.9 34.2,39.8 37.5,38.4C39.1,37.6 39.3,37.5 39.7,36.8C40.2,35.8 42.5,32.5 43.7,31.0C46.0,28.2 49.3,24.9 52.1,22.7C58.3,17.9 64.6,15.8 67.9,17.4C70.6,18.7 71.6,22.7 70.8,28.5C69.9,35.0 67.8,41.7 64.8,47.7C64.3,48.7 64.3,49.2 64.6,49.5C64.8,49.7 64.8,49.7 65.4,49.7C66.1,49.7 66.3,49.6 66.7,49.2C66.8,49.1 67.1,48.9 67.2,48.8C67.5,48.6 69.5,46.8 71.8,44.7C76.4,40.3 78.6,36.7 78.1,34.2C77.9,33.1 77.2,32.2 76.0,31.2C75.5,30.9 75.2,30.6 75.2,30.5C75.2,30.4 75.9,30.6 76.6,30.8C78.1,31.4 79.5,32.5 80.0,33.6C81.7,36.9 78.8,40.7 69.1,48.0C68.5,48.4 67.9,48.9 67.7,49.1C67.4,49.4 67.2,49.6 66.9,49.7C66.6,49.8 66.6,49.9 66.4,50.2C66.3,50.4 66.1,50.8 65.9,51.0C65.5,51.4 65.5,51.4 65.7,51.6C65.8,51.6 66.0,51.8 66.1,51.9C66.4,52.4 66.9,52.8 67.7,52.9C68.4,53.1 68.8,53.4 68.8,53.7C68.8,54.0 68.3,55.6 67.9,56.4C66.7,59.2 63.9,62.0 58.8,65.3C58.0,65.9 57.1,66.5 57.0,66.7C55.0,68.9 52.3,71.4 50.1,73.0C46.2,75.9 41.9,77.3 38.7,76.9ZM50.0,66.0C50.7,65.8 52.9,63.8 54.3,62.2C56.7,59.5 57.9,57.6 59.1,54.5C61.5,48.3 62.1,40.6 60.6,34.4C59.6,30.2 57.7,27.4 55.3,26.9C52.3,26.2 47.9,28.3 43.6,32.5C42.3,33.8 42.3,34.0 43.4,34.4C43.7,34.5 44.1,34.7 44.3,34.8L44.7,35.0 L45.0,34.8C45.2,34.7 45.5,34.6 45.7,34.6C46.4,34.6 47.1,34.4 49.3,33.7C51.0,33.1 51.7,32.9 52.2,32.9C53.0,32.8 53.0,32.8 53.0,33.2C53.0,33.6 52.9,33.8 51.9,34.9C43.8,43.9 40.8,55.0 44.5,62.4C45.4,64.2 46.7,65.6 47.8,66.0C48.1,66.2 49.6,66.1 50.0,66.0Z";
-var LIT = "M38.3,76.8C35.7,76.3 33.4,75.0 31.9,72.9C29.3,69.5 29.0,64.5 31.0,58.0C32.0,54.8 34.1,50.5 35.8,48.1C36.1,47.6 36.1,47.6 37.1,47.8C38.1,48.0 38.1,48.1 37.6,49.4C37.2,50.4 36.3,53.2 35.9,54.6C34.1,62.2 34.9,68.0 38.4,71.5C40.3,73.4 42.5,74.4 45.4,74.6C46.4,74.7 46.6,74.7 46.6,74.9C46.6,75.3 44.2,76.3 42.3,76.7C41.2,76.9 39.2,77.0 38.3,76.8ZM48.7,70.1C48.7,70.1 48.8,69.9 49.0,69.7C49.3,69.3 49.3,69.3 49.0,68.7C48.6,67.9 47.4,67.0 46.7,66.8C46.2,66.6 45.9,66.4 45.9,66.2C45.9,66.0 45.9,66.0 46.9,66.1C49.4,66.3 51.5,66.0 54.5,65.0C58.9,63.5 63.1,60.9 66.5,57.7C67.4,56.8 67.6,56.9 67.1,57.8C65.8,60.4 60.7,64.5 54.9,67.6C51.9,69.2 48.7,70.5 48.7,70.1ZM59.4,55.2C59.3,55.0 59.3,54.8 59.8,53.8C64.0,44.9 66.6,31.7 65.2,26.0C64.7,23.5 63.4,21.9 61.5,21.3C60.6,21.0 58.8,20.9 57.6,21.2C56.4,21.4 55.0,21.9 53.5,22.6C51.8,23.5 51.5,23.5 52.3,22.8C53.9,21.2 57.9,18.9 60.6,17.9C68.8,14.9 72.2,18.7 70.6,29.2C69.3,38.3 65.6,47.7 60.8,54.1C59.8,55.4 59.5,55.6 59.4,55.2ZM67.7,48.6C67.8,48.5 68.5,47.8 69.3,47.1C74.4,42.4 76.1,40.5 77.4,37.9C77.6,37.5 78.0,37.0 78.1,36.8C78.4,36.4 78.5,36.4 78.9,36.4C79.3,36.4 79.5,36.3 79.8,36.2C80.4,35.9 80.4,36.4 79.8,37.7C79.0,39.4 77.4,41.1 74.6,43.6C72.4,45.4 68.0,48.8 67.7,48.8C67.7,48.8 67.7,48.7 67.7,48.6ZM24.6,47.8C23.7,47.3 23.7,47.3 23.7,47.0C23.7,46.2 27.2,43.7 31.2,41.5C35.5,39.2 43.1,35.8 44.7,35.6L45.0,35.5 L44.8,35.7C44.7,35.8 43.9,36.2 43.0,36.6C33.5,41.1 28.3,44.4 26.0,47.5C25.4,48.2 25.4,48.2 24.6,47.8ZM62.4,37.9C62.4,37.8 62.2,37.1 62.2,36.3C62.1,35.6 61.9,34.5 61.8,34.0C61.5,32.6 61.5,32.1 61.6,32.1C61.9,32.1 62.4,32.7 62.7,33.2C62.9,33.5 63.0,33.8 63.1,33.9C63.6,34.5 63.7,35.5 63.4,36.4C63.3,36.6 63.2,37.0 63.2,37.2C62.9,37.9 62.6,38.3 62.4,37.9Z";
-var STARS = "M58.9,71.7C58.5,71.3 58.7,70.5 59.3,70.5C59.6,70.5 60.0,70.9 60.0,71.2C60.0,71.6 59.6,72.0 59.3,72.0C59.2,72.0 59.0,71.9 58.9,71.7ZM64.2,69.5C63.9,68.8 63.7,68.5 63.2,68.2C62.8,67.9 62.8,67.7 63.2,67.4C63.7,67.0 63.9,66.8 64.2,66.2C64.6,65.4 64.7,65.4 65.1,66.3C65.4,66.9 65.5,67.0 65.9,67.3C66.2,67.5 66.4,67.7 66.4,67.8C66.4,67.8 66.2,68.1 65.9,68.3C65.5,68.6 65.4,68.8 65.1,69.4C64.7,70.2 64.6,70.3 64.2,69.5ZM27.0,60.3C27.0,60.2 26.8,60.0 26.7,59.8C26.6,59.6 26.4,59.4 26.3,59.3C26.0,59.0 26.0,58.8 26.3,58.4C26.4,58.3 26.7,58.0 26.8,57.8C27.1,57.3 27.3,57.3 27.6,57.8C27.7,58.0 28.0,58.3 28.1,58.4C28.4,58.8 28.4,59.0 28.1,59.3C28.0,59.4 27.8,59.6 27.6,59.8C27.4,60.2 27.3,60.4 27.1,60.4C27.1,60.4 27.1,60.4 27.0,60.3ZM48.6,59.8C48.5,59.6 48.4,59.5 48.4,59.4C48.4,59.3 48.5,59.1 48.6,59.0C48.7,58.8 48.9,58.7 49.0,58.7C49.1,58.7 49.3,58.8 49.4,59.0C49.5,59.1 49.6,59.3 49.6,59.4C49.6,59.5 49.5,59.6 49.4,59.8C49.3,59.9 49.1,60.0 49.0,60.0C48.9,60.0 48.7,59.9 48.6,59.8ZM69.8,58.2C69.6,57.9 69.6,57.6 69.9,57.4C70.2,57.1 70.7,57.2 70.8,57.7C70.9,58.3 70.2,58.6 69.8,58.2ZM52.8,54.7C52.8,54.6 52.7,54.3 52.7,53.9C52.5,52.5 52.1,51.7 51.4,50.9C50.8,50.3 50.5,50.1 49.5,49.9C48.6,49.6 48.5,49.6 49.4,49.4C51.2,49.0 52.4,47.6 52.8,45.4C52.9,44.9 53.0,44.6 53.1,44.6C53.2,44.6 53.2,44.6 53.4,45.8C53.6,47.1 54.1,48.1 54.9,48.7C55.4,49.0 56.3,49.4 56.6,49.4C56.7,49.4 56.8,49.4 56.9,49.5C57.1,49.6 57.0,49.7 56.4,49.9C54.5,50.3 53.7,51.4 53.1,54.3C53.1,54.7 52.9,54.9 52.8,54.7ZM73.4,53.4C73.1,52.9 72.9,52.7 72.7,52.5C72.4,52.3 72.4,52.1 72.8,51.7C72.9,51.6 73.2,51.3 73.3,51.1C73.5,50.6 73.7,50.6 74.0,51.1C74.1,51.3 74.3,51.6 74.5,51.8C74.9,52.2 74.9,52.2 74.5,52.6C74.3,52.8 74.1,53.1 74.0,53.3C73.8,53.7 73.5,53.7 73.4,53.4ZM31.7,47.2C31.2,46.8 31.7,45.9 32.3,46.1C32.8,46.3 32.9,46.8 32.6,47.2C32.3,47.4 32.0,47.5 31.7,47.2ZM72.0,37.4C71.4,37.1 71.2,36.4 71.5,35.8C72.1,34.8 73.5,35.1 73.6,36.3C73.7,37.2 72.8,37.8 72.0,37.4ZM33.9,37.2C33.6,36.9 33.7,36.4 34.1,36.2C34.7,36.0 35.2,36.8 34.7,37.2C34.5,37.5 34.2,37.5 33.9,37.2ZM36.2,31.9C36.2,31.8 36.0,31.6 36.0,31.3C35.9,31.1 35.7,30.8 35.3,30.4C34.6,29.7 34.6,29.7 35.1,29.3C35.5,29.0 35.6,28.8 35.9,28.2C36.4,27.3 36.4,27.3 36.9,28.2C37.2,28.8 37.3,29.0 37.7,29.3C37.9,29.5 38.2,29.7 38.2,29.7C38.2,29.8 37.9,30.0 37.6,30.4C37.1,30.8 36.9,31.0 36.8,31.3C36.7,31.7 36.5,32.0 36.4,32.0C36.4,32.0 36.3,31.9 36.2,31.9ZM42.6,24.0C42.5,23.9 42.3,23.6 42.3,23.3C42.3,23.2 42.7,22.8 42.9,22.8C43.2,22.8 43.6,23.2 43.6,23.4C43.6,23.8 43.0,24.1 42.6,24.0Z";
 function logoSvg(opts = {}) {
   const size = opts.size ? ` width="${opts.size}" height="${opts.size}"` : "";
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="19.5 15.1 63.6 63.6"${size} fill="${opts.color ?? "currentColor"}" fill-rule="evenodd" aria-hidden="true"><path opacity="${opts.soft ?? 0.5}" d="${SOFT}"/><path d="${LIT}"/><path d="${STARS}"/></svg>`;
 }
+var SOFT = "M38.7,76.9C34.8,76.4 31.5,73.8 30.3,70.1C28.7,65.3 30.0,58.4 33.9,51.1C34.4,50.2 34.9,49.3 35.0,49.0C35.1,48.8 35.2,48.5 35.4,48.4C35.7,48.1 35.7,48.1 35.4,47.6L35.2,47.2 L35.4,46.3C35.9,44.4 36.8,42.2 37.6,40.5C38.4,39.0 38.2,38.9 36.2,40.0C29.4,43.8 25.8,46.7 25.2,49.3C24.8,50.7 25.5,51.8 27.1,52.6C27.9,53.0 27.9,53.2 27.4,53.2C26.2,53.3 24.0,52.5 23.1,51.7C20.9,49.7 22.7,46.7 28.0,43.3C30.3,41.9 34.2,39.8 37.5,38.4C39.1,37.6 39.3,37.5 39.7,36.8C40.2,35.8 42.5,32.5 43.7,31.0C46.0,28.2 49.3,24.9 52.1,22.7C58.3,17.9 64.6,15.8 67.9,17.4C70.6,18.7 71.6,22.7 70.8,28.5C69.9,35.0 67.8,41.7 64.8,47.7C64.3,48.7 64.3,49.2 64.6,49.5C64.8,49.7 64.8,49.7 65.4,49.7C66.1,49.7 66.3,49.6 66.7,49.2C66.8,49.1 67.1,48.9 67.2,48.8C67.5,48.6 69.5,46.8 71.8,44.7C76.4,40.3 78.6,36.7 78.1,34.2C77.9,33.1 77.2,32.2 76.0,31.2C75.5,30.9 75.2,30.6 75.2,30.5C75.2,30.4 75.9,30.6 76.6,30.8C78.1,31.4 79.5,32.5 80.0,33.6C81.7,36.9 78.8,40.7 69.1,48.0C68.5,48.4 67.9,48.9 67.7,49.1C67.4,49.4 67.2,49.6 66.9,49.7C66.6,49.8 66.6,49.9 66.4,50.2C66.3,50.4 66.1,50.8 65.9,51.0C65.5,51.4 65.5,51.4 65.7,51.6C65.8,51.6 66.0,51.8 66.1,51.9C66.4,52.4 66.9,52.8 67.7,52.9C68.4,53.1 68.8,53.4 68.8,53.7C68.8,54.0 68.3,55.6 67.9,56.4C66.7,59.2 63.9,62.0 58.8,65.3C58.0,65.9 57.1,66.5 57.0,66.7C55.0,68.9 52.3,71.4 50.1,73.0C46.2,75.9 41.9,77.3 38.7,76.9ZM50.0,66.0C50.7,65.8 52.9,63.8 54.3,62.2C56.7,59.5 57.9,57.6 59.1,54.5C61.5,48.3 62.1,40.6 60.6,34.4C59.6,30.2 57.7,27.4 55.3,26.9C52.3,26.2 47.9,28.3 43.6,32.5C42.3,33.8 42.3,34.0 43.4,34.4C43.7,34.5 44.1,34.7 44.3,34.8L44.7,35.0 L45.0,34.8C45.2,34.7 45.5,34.6 45.7,34.6C46.4,34.6 47.1,34.4 49.3,33.7C51.0,33.1 51.7,32.9 52.2,32.9C53.0,32.8 53.0,32.8 53.0,33.2C53.0,33.6 52.9,33.8 51.9,34.9C43.8,43.9 40.8,55.0 44.5,62.4C45.4,64.2 46.7,65.6 47.8,66.0C48.1,66.2 49.6,66.1 50.0,66.0Z", LIT = "M38.3,76.8C35.7,76.3 33.4,75.0 31.9,72.9C29.3,69.5 29.0,64.5 31.0,58.0C32.0,54.8 34.1,50.5 35.8,48.1C36.1,47.6 36.1,47.6 37.1,47.8C38.1,48.0 38.1,48.1 37.6,49.4C37.2,50.4 36.3,53.2 35.9,54.6C34.1,62.2 34.9,68.0 38.4,71.5C40.3,73.4 42.5,74.4 45.4,74.6C46.4,74.7 46.6,74.7 46.6,74.9C46.6,75.3 44.2,76.3 42.3,76.7C41.2,76.9 39.2,77.0 38.3,76.8ZM48.7,70.1C48.7,70.1 48.8,69.9 49.0,69.7C49.3,69.3 49.3,69.3 49.0,68.7C48.6,67.9 47.4,67.0 46.7,66.8C46.2,66.6 45.9,66.4 45.9,66.2C45.9,66.0 45.9,66.0 46.9,66.1C49.4,66.3 51.5,66.0 54.5,65.0C58.9,63.5 63.1,60.9 66.5,57.7C67.4,56.8 67.6,56.9 67.1,57.8C65.8,60.4 60.7,64.5 54.9,67.6C51.9,69.2 48.7,70.5 48.7,70.1ZM59.4,55.2C59.3,55.0 59.3,54.8 59.8,53.8C64.0,44.9 66.6,31.7 65.2,26.0C64.7,23.5 63.4,21.9 61.5,21.3C60.6,21.0 58.8,20.9 57.6,21.2C56.4,21.4 55.0,21.9 53.5,22.6C51.8,23.5 51.5,23.5 52.3,22.8C53.9,21.2 57.9,18.9 60.6,17.9C68.8,14.9 72.2,18.7 70.6,29.2C69.3,38.3 65.6,47.7 60.8,54.1C59.8,55.4 59.5,55.6 59.4,55.2ZM67.7,48.6C67.8,48.5 68.5,47.8 69.3,47.1C74.4,42.4 76.1,40.5 77.4,37.9C77.6,37.5 78.0,37.0 78.1,36.8C78.4,36.4 78.5,36.4 78.9,36.4C79.3,36.4 79.5,36.3 79.8,36.2C80.4,35.9 80.4,36.4 79.8,37.7C79.0,39.4 77.4,41.1 74.6,43.6C72.4,45.4 68.0,48.8 67.7,48.8C67.7,48.8 67.7,48.7 67.7,48.6ZM24.6,47.8C23.7,47.3 23.7,47.3 23.7,47.0C23.7,46.2 27.2,43.7 31.2,41.5C35.5,39.2 43.1,35.8 44.7,35.6L45.0,35.5 L44.8,35.7C44.7,35.8 43.9,36.2 43.0,36.6C33.5,41.1 28.3,44.4 26.0,47.5C25.4,48.2 25.4,48.2 24.6,47.8ZM62.4,37.9C62.4,37.8 62.2,37.1 62.2,36.3C62.1,35.6 61.9,34.5 61.8,34.0C61.5,32.6 61.5,32.1 61.6,32.1C61.9,32.1 62.4,32.7 62.7,33.2C62.9,33.5 63.0,33.8 63.1,33.9C63.6,34.5 63.7,35.5 63.4,36.4C63.3,36.6 63.2,37.0 63.2,37.2C62.9,37.9 62.6,38.3 62.4,37.9Z", STARS = "M58.9,71.7C58.5,71.3 58.7,70.5 59.3,70.5C59.6,70.5 60.0,70.9 60.0,71.2C60.0,71.6 59.6,72.0 59.3,72.0C59.2,72.0 59.0,71.9 58.9,71.7ZM64.2,69.5C63.9,68.8 63.7,68.5 63.2,68.2C62.8,67.9 62.8,67.7 63.2,67.4C63.7,67.0 63.9,66.8 64.2,66.2C64.6,65.4 64.7,65.4 65.1,66.3C65.4,66.9 65.5,67.0 65.9,67.3C66.2,67.5 66.4,67.7 66.4,67.8C66.4,67.8 66.2,68.1 65.9,68.3C65.5,68.6 65.4,68.8 65.1,69.4C64.7,70.2 64.6,70.3 64.2,69.5ZM27.0,60.3C27.0,60.2 26.8,60.0 26.7,59.8C26.6,59.6 26.4,59.4 26.3,59.3C26.0,59.0 26.0,58.8 26.3,58.4C26.4,58.3 26.7,58.0 26.8,57.8C27.1,57.3 27.3,57.3 27.6,57.8C27.7,58.0 28.0,58.3 28.1,58.4C28.4,58.8 28.4,59.0 28.1,59.3C28.0,59.4 27.8,59.6 27.6,59.8C27.4,60.2 27.3,60.4 27.1,60.4C27.1,60.4 27.1,60.4 27.0,60.3ZM48.6,59.8C48.5,59.6 48.4,59.5 48.4,59.4C48.4,59.3 48.5,59.1 48.6,59.0C48.7,58.8 48.9,58.7 49.0,58.7C49.1,58.7 49.3,58.8 49.4,59.0C49.5,59.1 49.6,59.3 49.6,59.4C49.6,59.5 49.5,59.6 49.4,59.8C49.3,59.9 49.1,60.0 49.0,60.0C48.9,60.0 48.7,59.9 48.6,59.8ZM69.8,58.2C69.6,57.9 69.6,57.6 69.9,57.4C70.2,57.1 70.7,57.2 70.8,57.7C70.9,58.3 70.2,58.6 69.8,58.2ZM52.8,54.7C52.8,54.6 52.7,54.3 52.7,53.9C52.5,52.5 52.1,51.7 51.4,50.9C50.8,50.3 50.5,50.1 49.5,49.9C48.6,49.6 48.5,49.6 49.4,49.4C51.2,49.0 52.4,47.6 52.8,45.4C52.9,44.9 53.0,44.6 53.1,44.6C53.2,44.6 53.2,44.6 53.4,45.8C53.6,47.1 54.1,48.1 54.9,48.7C55.4,49.0 56.3,49.4 56.6,49.4C56.7,49.4 56.8,49.4 56.9,49.5C57.1,49.6 57.0,49.7 56.4,49.9C54.5,50.3 53.7,51.4 53.1,54.3C53.1,54.7 52.9,54.9 52.8,54.7ZM73.4,53.4C73.1,52.9 72.9,52.7 72.7,52.5C72.4,52.3 72.4,52.1 72.8,51.7C72.9,51.6 73.2,51.3 73.3,51.1C73.5,50.6 73.7,50.6 74.0,51.1C74.1,51.3 74.3,51.6 74.5,51.8C74.9,52.2 74.9,52.2 74.5,52.6C74.3,52.8 74.1,53.1 74.0,53.3C73.8,53.7 73.5,53.7 73.4,53.4ZM31.7,47.2C31.2,46.8 31.7,45.9 32.3,46.1C32.8,46.3 32.9,46.8 32.6,47.2C32.3,47.4 32.0,47.5 31.7,47.2ZM72.0,37.4C71.4,37.1 71.2,36.4 71.5,35.8C72.1,34.8 73.5,35.1 73.6,36.3C73.7,37.2 72.8,37.8 72.0,37.4ZM33.9,37.2C33.6,36.9 33.7,36.4 34.1,36.2C34.7,36.0 35.2,36.8 34.7,37.2C34.5,37.5 34.2,37.5 33.9,37.2ZM36.2,31.9C36.2,31.8 36.0,31.6 36.0,31.3C35.9,31.1 35.7,30.8 35.3,30.4C34.6,29.7 34.6,29.7 35.1,29.3C35.5,29.0 35.6,28.8 35.9,28.2C36.4,27.3 36.4,27.3 36.9,28.2C37.2,28.8 37.3,29.0 37.7,29.3C37.9,29.5 38.2,29.7 38.2,29.7C38.2,29.8 37.9,30.0 37.6,30.4C37.1,30.8 36.9,31.0 36.8,31.3C36.7,31.7 36.5,32.0 36.4,32.0C36.4,32.0 36.3,31.9 36.2,31.9ZM42.6,24.0C42.5,23.9 42.3,23.6 42.3,23.3C42.3,23.2 42.7,22.8 42.9,22.8C43.2,22.8 43.6,23.2 43.6,23.4C43.6,23.8 43.0,24.1 42.6,24.0Z";
 
-// src/living/ui.ts
-var STYLE = `
-.warp-scene{font:inherit;font-size:13px;line-height:1.5;color:inherit;margin:12px 0 18px;padding:10px 0;border-top:1px solid color-mix(in srgb,currentColor 14%,transparent);opacity:.9;max-width:100%;overflow-wrap:anywhere}
-.warp-scene-top{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}.warp-scene-place{font-weight:600}.warp-scene-people{opacity:.7}.warp-scene-tools{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
-.warp-scene button{font:inherit;color:inherit;background:transparent;border:1px solid transparent;border-radius:5px;padding:3px 7px;cursor:pointer;text-align:left}.warp-scene button:hover{background:color-mix(in srgb,currentColor 8%,transparent)}
-.warp-scene button:focus-visible,.warp-scene textarea:focus-visible{outline:2px solid currentColor;outline-offset:3px}.warp-scene button:disabled{opacity:.5;cursor:wait}
-.warp-scene-note{margin-top:5px;opacity:.8}.warp-scene details{margin-top:7px}.warp-scene summary{cursor:pointer;opacity:.7}.warp-scene textarea{display:block;box-sizing:border-box;width:100%;min-height:72px;font:inherit;color:inherit;background:transparent;border:1px solid color-mix(in srgb,currentColor 28%,transparent);border-radius:6px;padding:9px;margin:9px 0;resize:vertical}
-.warp-scene-ideas{display:grid;gap:5px;margin-top:9px}.warp-scene-idea{border:1px solid color-mix(in srgb,currentColor 18%,transparent)!important;padding:9px!important}.warp-scene-fact{padding:7px 0;border-bottom:1px solid color-mix(in srgb,currentColor 8%,transparent)}.warp-scene-source{display:block;font-size:12px;opacity:.6}.warp-scene-error{margin-top:8px;opacity:.75}
-@media(max-width:540px){.warp-scene-tools{margin-left:0;width:100%}.warp-scene{font-size:12px}}
-`;
-function connectLiving(ctx) {
-  let view = null, root = null, ideas = [], loading = false, error = "", draft = null;
-  let mode = "say";
-  let injected = null;
-  const remove = () => {
-    if (injected)
-      ctx.dom.uninject(injected);
-    injected = null;
-    root = null;
-  };
-  const unstyle = ctx.dom.addStyle(STYLE);
-  const active = () => ctx.getActiveChat().chatId ?? null;
-  const send = (action, value) => {
-    if (view)
-      ctx.sendToBackend({ type: "living_action", chatId: view.chatId, action, text: value });
-  };
-  function markup() {
-    if (!view)
-      return "";
-    if (!view.enabled)
-      return `<div class="warp-scene-top"><span>Warp paused</span><button data-living="resume">Resume</button></div>`;
-    const world = view.world;
-    const relevant = world.facts.filter((f) => f.status === "open" && ["commitment", "situation"].includes(f.kind)).slice(-2);
-    return `<div class="warp-scene-top"><span class="warp-scene-place">${esc(world.place || "Here")}</span><span class="warp-scene-people">${world.present.map(esc).join(" · ")}</span><span class="warp-scene-tools"><button data-living="ideas" ${loading ? "disabled" : ""}>${loading ? "Thinking…" : "Ideas"}</button><button data-living="correct">Correct</button><button data-living="pause">Pause</button></span></div>
-      ${relevant.length ? `<div class="warp-scene-note">${relevant.map((f) => esc(f.text)).join(" · ")}</div>` : ""}
-      ${view.notes.length ? `<div class="warp-scene-note">${view.notes.map(esc).join(" · ")}</div>` : ""}
-      ${view.retry ? `<button data-living="retry">Scene read unavailable · Retry</button>` : ""}
-      ${ideas.length ? `<div class="warp-scene-ideas">${ideas.map((s, i) => `<button class="warp-scene-idea" data-idea="${i}">${esc(s)}</button>`).join("")}</div>` : ""}
-      ${draft !== null ? `<label>${mode === "correct" ? "What should Warp know?" : "Your message"}<textarea data-living-draft>${esc(draft)}</textarea></label><button data-living="submit">${mode === "correct" ? "Save correction" : "Send"}</button><button data-living="cancel">Cancel</button>` : ""}
-      ${error ? `<div class="warp-scene-error" role="status">${esc(error)}</div>` : ""}
-      <details><summary>Remembered${view.decision ? " · This attempt" : ""}</summary>
-      ${view.decision ? `<p>${esc(view.decision.intent)}: ${esc(view.decision.result)}. ${esc(view.decision.stakes)}<br>${view.decision.reasons.map(esc).join(" · ")}</p>` : ""}
-      ${world.facts.map((f) => `<div class="warp-scene-fact">${esc(f.subject)} · ${esc(f.text)}${f.holder ? ` · with ${esc(f.holder)}` : ""}<span class="warp-scene-source">${f.kind === "motive" ? "Possible motive · " : ""}${esc(f.quote)}</span></div>`).join("") || "No lasting events recorded yet."}</details>`;
-  }
-  function paint() {
-    if (!view || view.chatId !== active() || !view.anchor) {
-      remove();
-      return;
-    }
-    const row = ctx.dom.findMessageElement(view.anchor);
-    if (!row)
-      return;
-    const card = row.querySelector(`[data-message-id="${CSS.escape(view.anchor)}"]`) ?? row;
-    if (!root) {
-      injected = ctx.dom.inject(card, '<div class="warp-scene" data-warp-living="true"></div>', card === row ? "beforeend" : "afterend");
-      root = injected.querySelector(".warp-scene");
-      root.addEventListener("input", (e) => {
-        if (e.target.matches("[data-living-draft]"))
-          draft = e.target.value;
-      });
-      root.addEventListener("click", (e) => {
-        const button = e.target.closest("button");
-        if (!button || !view)
-          return;
-        if (button.dataset.idea !== undefined) {
-          draft = ideas[Number(button.dataset.idea)] ?? "";
-          mode = "say";
-          paint();
-          root?.querySelector("textarea")?.focus();
-          return;
-        }
-        switch (button.dataset.living) {
-          case "ideas":
-            loading = true;
-            ideas = [];
-            error = "";
-            send("ideas");
-            break;
-          case "retry":
-            send("retry");
-            break;
-          case "correct":
-            mode = "correct";
-            draft = "";
-            break;
-          case "cancel":
-            draft = null;
-            break;
-          case "submit":
-            if (draft?.trim()) {
-              send(mode, draft);
-              draft = null;
-              ideas = [];
-            }
-            break;
-          case "pause":
-            send("pause");
-            break;
-          case "resume":
-            send("resume");
-            break;
-        }
-        paint();
-      });
-    }
-    if (card === row) {
-      if (injected.parentElement !== row)
-        row.append(injected);
-    } else if (card.nextElementSibling !== injected)
-      card.after(injected);
-    const detailsOpen = root.querySelector("details")?.open;
-    const focused = root.contains(document.activeElement) && document.activeElement instanceof HTMLTextAreaElement;
-    const selection = focused ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
-    root.innerHTML = markup();
-    if (detailsOpen)
-      root.querySelector("details")?.setAttribute("open", "");
-    if (selection) {
-      const input = root.querySelector("textarea");
-      input?.focus();
-      input?.setSelectionRange(selection[0], selection[1]);
-    }
-  }
-  const poll = setInterval(() => {
-    if (view?.chatId !== active()) {
-      remove();
-      view = null;
-      ideas = [];
-      draft = null;
-      loading = false;
-    } else if (root && injected && !injected.contains(root)) {
-      remove();
-      paint();
-    } else if (view && !root?.isConnected)
-      paint();
-  }, 600);
-  return {
-    accept(raw) {
-      if (!raw || typeof raw !== "object")
-        return false;
-      const m = raw;
-      if (m.type === "state" && m.chatId === active()) {
-        view = null;
-        remove();
-        return false;
-      }
-      if (m.type === "living_ideas") {
-        if (!view || m.chatId !== active() || m.chatId !== view.chatId || m.signature !== view.signature)
-          return true;
-        loading = false;
-        ideas = m.ideas ?? [];
-        error = m.error ?? (ideas.length ? "" : "No suggestions this time. You can keep typing.");
-        paint();
-        return true;
-      }
-      if (m.type !== "living")
-        return false;
-      if (m.chatId !== active() || view?.chatId === m.chatId && m.revision < view.revision)
-        return true;
-      if (view?.anchor !== m.anchor || view?.signature !== m.signature) {
-        ideas = [];
-        draft = null;
-        loading = false;
-      }
-      view = { ...m, type: "living" };
-      paint();
-      window.dispatchEvent(new CustomEvent("warp-state-v1", { detail: { version: 1, provider: "warp", chatId: m.chatId, messageId: m.anchor, place: m.world.place || undefined, you: {}, people: m.enabled ? m.world.present.map((name) => ({ id: name, name, present: true })) : [] } }));
-      return true;
-    },
-    publicState() {
-      if (!view || view.chatId !== active())
-        return null;
-      return {
-        version: 1,
-        provider: "warp",
-        chatId: view.chatId,
-        messageId: view.anchor,
-        place: view.world.place || undefined,
-        you: { name: "You", items: view.enabled ? view.world.facts.filter((f) => f.kind === "possession" && f.holder === "you").map((f) => f.text) : [] },
-        people: view.enabled ? view.world.present.map((name) => ({ id: name, name, present: true })) : []
-      };
-    },
-    destroy() {
-      clearInterval(poll);
-      remove();
-      unstyle();
-    }
-  };
-}
-
-// src/frontend.ts
-var CLEANUP_KEY = "__warpCleanup";
-var ICON = logoSvg({ size: 20 });
+// src/frontend/legacy.ts
 function store(key, value) {
   try {
     if (value !== undefined)
@@ -1564,16 +1388,13 @@ function store(key, value) {
     return null;
   }
 }
-function setup(ctx) {
+function setupLegacy(ctx) {
   const prev = globalThis[CLEANUP_KEY];
   if (typeof prev === "function")
     prev();
   const cleanups = [];
-  const living = connectLiving(ctx);
-  cleanups.push(() => living.destroy());
   cleanups.push(ctx.dom.addStyle(STYLES));
   let state = null;
-  let livingMode = false;
   let settings = { ...DEFAULT_SETTINGS };
   let templates = [];
   let connections = [];
@@ -1843,11 +1664,6 @@ function setup(ctx) {
   cleanups.push(() => dockRoot.removeEventListener("click", reconcileClick));
   cleanups.push(() => drawerRoot.removeEventListener("click", reconcileClick));
   function renderDrawer() {
-    if (livingMode) {
-      paint(drawerRoot, `<div class="warp-card"><p>Warp follows this conversation. Ideas, remembered events, corrections and Pause are beside the latest reply.</p><label>Helper connection<select data-setting="helperConnectionId"><option value="">Use this chat's connection</option>${connections.map((c) => `<option value="${esc(c.id)}"${settings.helperConnectionId === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label><p>A scene read uses an additional model call through this connection. Risky attempts may use one more.</p></div>`);
-      tab.setBadge(null);
-      return;
-    }
     const hasChat = !!state?.chatId;
     const status = state?.status ?? { state: "none", name: null, source: null, issues: [], characterName: null, cardKind: "character", tags: [] };
     const views = [
@@ -1987,7 +1803,7 @@ function setup(ctx) {
   function syncCue() {
     cue.update({ state, enabled: settings.enabled, showOdds: settings.showOdds, busy: busy.on && busy.chatId === state?.chatId, busyLabel: busy.label });
   }
-  const publicEvents = connectPublicEvents({ getState: () => living.publicState() ?? toWarpState(state, { enabled: settings.enabled, chatId: chatId() }) });
+  const publicEvents = connectPublicEvents({ getState: () => toWarpState(state, { enabled: settings.enabled, chatId: chatId() }) });
   cleanups.push(() => publicEvents.destroy());
   function renderAll() {
     renderDock();
@@ -2565,22 +2381,13 @@ function setup(ctx) {
     const incoming = raw;
     if (incoming.type?.startsWith("living") && incoming.chatId !== chatId())
       return;
-    if (living.accept(raw)) {
-      livingMode = true;
-      state = null;
-      overlay?.setVisible(false);
-      reconcileMessages();
-      renderDrawer();
-      syncCue();
-      publicEvents.publish();
+    if (incoming.type?.startsWith("living"))
       return;
-    }
     const m = raw;
     if (!acceptsResponse(m, chatId(), state))
       return;
     switch (m.type) {
       case "state": {
-        livingMode = false;
         const rolls = newRolls(state, m);
         if (state?.chatId !== m.chatId) {
           editing = null;
@@ -2652,7 +2459,11 @@ function setup(ctx) {
     }
   }, 1000);
   cleanups.push(() => clearInterval(poll));
+  let cleaned = false;
   const cleanup = () => {
+    if (cleaned)
+      return;
+    cleaned = true;
     for (const { el } of chipEls.values())
       ctx.dom.uninject(el);
     if (choicesEl)
@@ -2664,6 +2475,319 @@ function setup(ctx) {
     }
   };
   globalThis[CLEANUP_KEY] = cleanup;
+  return cleanup;
+}
+var CLEANUP_KEY = "__warpLegacyCleanup", ICON;
+var init_legacy = __esm(() => {
+  init_protocol();
+  init_classifier_config();
+  init_overlay_layout();
+  init_builder_ui();
+  init_cue_bridge();
+  init_html();
+  init_render_panel();
+  init_render_chat();
+  init_render_settings();
+  init_render();
+  init_public_events();
+  init_roll_fx();
+  ICON = logoSvg({ size: 20 });
+});
+
+// src/living/ui.ts
+init_html();
+var STYLE = `
+.warp-scene{font:inherit;font-size:13px;line-height:1.5;color:inherit;margin:12px 0 18px;padding:10px 0;border-top:1px solid color-mix(in srgb,currentColor 14%,transparent);opacity:.9;max-width:100%;overflow-wrap:anywhere}
+.warp-scene-top{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}.warp-scene-place{font-weight:600}.warp-scene-people{opacity:.7}.warp-scene-tools{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+.warp-scene button{font:inherit;color:inherit;background:transparent;border:1px solid transparent;border-radius:5px;padding:3px 7px;cursor:pointer;text-align:left}.warp-scene button:hover{background:color-mix(in srgb,currentColor 8%,transparent)}
+.warp-scene button:focus-visible,.warp-scene textarea:focus-visible,.warp-scene input:focus-visible{outline:2px solid currentColor;outline-offset:3px}.warp-scene button:disabled{opacity:.5;cursor:wait}
+.warp-scene-note{margin-top:5px;opacity:.8}.warp-scene details{margin-top:7px}.warp-scene summary{cursor:pointer;opacity:.7}.warp-scene textarea{display:block;box-sizing:border-box;width:100%;min-height:72px;font:inherit;color:inherit;background:transparent;border:1px solid color-mix(in srgb,currentColor 28%,transparent);border-radius:6px;padding:9px;margin:9px 0;resize:vertical}
+.warp-scene-ideas{display:grid;gap:5px;margin-top:9px}.warp-scene-idea{border:1px solid color-mix(in srgb,currentColor 18%,transparent)!important;padding:9px!important}.warp-scene-fact{padding:7px 0;border-bottom:1px solid color-mix(in srgb,currentColor 8%,transparent)}.warp-scene-source{display:block;font-size:12px;opacity:.6}.warp-scene-error{margin-top:8px;opacity:.75}
+.warp-scene input[type=search]{box-sizing:border-box;width:100%;font:inherit;color:inherit;background:transparent;border:1px solid color-mix(in srgb,currentColor 25%,transparent);border-radius:5px;padding:6px;margin:8px 0}
+.warp-scene select{max-width:100%;font:inherit;color:inherit;background:transparent;border:1px solid color-mix(in srgb,currentColor 25%,transparent);border-radius:5px;padding:5px}.warp-scene-settings{margin:9px 0}.warp-scene-settings p{font-size:12px;opacity:.7}
+@media(max-width:540px){.warp-scene-tools{margin-left:0;width:100%}.warp-scene{font-size:12px}}
+`;
+function connectLiving(ctx) {
+  let view = null, root = null, ideas = [], loading = false, error = "", draft = null;
+  let mode = "say";
+  let memoryQuery = "";
+  let settingsOpen = false, helperConnection = "", connections = [];
+  let injected = null;
+  const remove = () => {
+    if (injected)
+      ctx.dom.uninject(injected);
+    injected = null;
+    root = null;
+  };
+  const unstyle = ctx.dom.addStyle(STYLE);
+  const active = () => ctx.getActiveChat().chatId ?? null;
+  const send = (action, value) => {
+    if (view)
+      ctx.sendToBackend({ type: "living_action", chatId: view.chatId, action, text: value });
+  };
+  function markup() {
+    if (!view)
+      return "";
+    if (!view.enabled)
+      return `<div class="warp-scene-top"><span>Warp paused</span><button data-living="resume">Resume</button></div>`;
+    const world = view.world;
+    const matches = world.facts.filter((f) => !memoryQuery || `${f.subject} ${f.text} ${f.quote}`.toLocaleLowerCase().includes(memoryQuery.toLocaleLowerCase()));
+    const remembered = matches.slice(-80).reverse();
+    const relevant = world.facts.filter((f) => f.status === "open" && ["commitment", "situation"].includes(f.kind)).slice(-2);
+    return `<div class="warp-scene-top"><span class="warp-scene-place">${esc(world.place || "Here")}</span><span class="warp-scene-people">${world.present.map(esc).join(" · ")}${view.busy ? ' <span role="status" aria-label="Updating the scene">…</span>' : ""}</span><span class="warp-scene-tools"><button data-living="ideas" ${loading ? "disabled" : ""}>${loading ? "Thinking…" : "Ideas"}</button><button data-living="correct">Correct</button><button data-living="pause">Pause</button><button data-living="settings" aria-expanded="${settingsOpen}">Settings</button></span></div>
+      ${settingsOpen ? `<div class="warp-scene-settings"><label>Helper connection <select data-helper-connection><option value="">Use this chat's connection</option>${connections.map((c) => `<option value="${esc(c.id)}"${helperConnection === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label><p>Reading the scene uses an additional model call. A risky attempt may use one more. You can choose a faster helper connection here.</p></div>` : ""}
+      ${relevant.length ? `<div class="warp-scene-note">${relevant.map((f) => esc(f.text)).join(" · ")}</div>` : ""}
+      ${view.notes.length ? `<div class="warp-scene-note">${view.notes.map(esc).join(" · ")}</div>` : ""}
+      ${view.retry ? `<button data-living="retry">Scene read unavailable · Retry</button>` : ""}
+      ${view.notice ? `<div class="warp-scene-error" role="status">${esc(view.notice)}</div>` : ""}
+      ${ideas.length ? `<div class="warp-scene-ideas">${ideas.map((s, i) => `<button class="warp-scene-idea" data-idea="${i}">${esc(s)}</button>`).join("")}</div>` : ""}
+      ${draft !== null ? `<label>${mode === "correct" ? "What should Warp know?" : "Your message"}<textarea data-living-draft>${esc(draft)}</textarea></label><button data-living="submit">${mode === "correct" ? "Save correction" : "Send"}</button><button data-living="cancel">Cancel</button>` : ""}
+      ${error ? `<div class="warp-scene-error" role="status">${esc(error)}</div>` : ""}
+      <details><summary>Remembered${view.decision ? " · This attempt" : ""}</summary>
+      <input type="search" data-memory-query aria-label="Find a remembered event" placeholder="Find a remembered event" value="${esc(memoryQuery)}">
+      ${view.decision ? `<p>${esc(view.decision.intent)}: ${esc(view.decision.result)}. ${esc(view.decision.stakes)}<br>${view.decision.reasons.map(esc).join(" · ")}</p>` : ""}
+      ${remembered.map((f) => `<div class="warp-scene-fact">${esc(f.subject)} · ${esc(f.text)}${f.holder ? ` · with ${esc(f.holder)}` : ""}${f.status === "done" ? " · settled" : ""}<span class="warp-scene-source">${f.kind === "motive" ? "Possible motive · " : ""}${esc(f.quote)}</span></div>`).join("") || (memoryQuery ? "No matching events." : "No lasting events recorded yet.")}${matches.length > 80 ? `<p>Showing the latest 80 matches. Search to find an older event.</p>` : ""}</details>`;
+  }
+  function paint() {
+    if (!view || view.chatId !== active() || !view.anchor) {
+      remove();
+      return;
+    }
+    const row = ctx.dom.findMessageElement(view.anchor);
+    if (!row)
+      return;
+    const card = row.querySelector(`[data-message-id="${CSS.escape(view.anchor)}"]`) ?? row;
+    if (!root) {
+      injected = ctx.dom.inject(card, '<div class="warp-scene" data-warp-living="true"></div>', card === row ? "beforeend" : "afterend");
+      root = injected.querySelector(".warp-scene");
+      if (!root) {
+        ctx.dom.uninject(injected);
+        injected = null;
+        return;
+      }
+      root.addEventListener("input", (e) => {
+        if (e.target.matches("[data-living-draft]"))
+          draft = e.target.value;
+        if (e.target.matches("[data-memory-query]")) {
+          memoryQuery = e.target.value;
+          paint();
+        }
+      });
+      root.addEventListener("change", (e) => {
+        if (e.target.matches("[data-helper-connection]"))
+          ctx.sendToBackend({ type: "settings", patch: { helperConnectionId: e.target.value } });
+      });
+      root.addEventListener("click", (e) => {
+        const button = e.target.closest("button");
+        if (!button || !view)
+          return;
+        if (button.dataset.idea !== undefined) {
+          draft = ideas[Number(button.dataset.idea)] ?? "";
+          mode = "say";
+          paint();
+          root?.querySelector("textarea")?.focus();
+          return;
+        }
+        switch (button.dataset.living) {
+          case "ideas":
+            loading = true;
+            ideas = [];
+            error = "";
+            send("ideas");
+            break;
+          case "retry":
+            send("retry");
+            break;
+          case "correct":
+            mode = "correct";
+            draft = "";
+            break;
+          case "cancel":
+            draft = null;
+            break;
+          case "submit":
+            if (draft?.trim()) {
+              send(mode, draft);
+              draft = null;
+              ideas = [];
+            }
+            break;
+          case "pause":
+            send("pause");
+            break;
+          case "resume":
+            send("resume");
+            break;
+          case "settings":
+            settingsOpen = !settingsOpen;
+            break;
+        }
+        paint();
+      });
+    }
+    if (card === row) {
+      if (injected.parentElement !== row)
+        row.append(injected);
+    } else if (card.nextElementSibling !== injected)
+      card.after(injected);
+    const detailsOpen = root.querySelector("details")?.open;
+    const focused = root.contains(document.activeElement) && document.activeElement?.matches("textarea,[data-memory-query]");
+    const selector = document.activeElement?.matches("[data-memory-query]") ? "[data-memory-query]" : "textarea";
+    const selection = focused ? [document.activeElement.selectionStart ?? 0, document.activeElement.selectionEnd ?? 0] : null;
+    root.innerHTML = markup();
+    if (detailsOpen)
+      root.querySelector("details")?.setAttribute("open", "");
+    if (selection) {
+      const input = root.querySelector(selector);
+      input?.focus();
+      input?.setSelectionRange(selection[0], selection[1]);
+    }
+  }
+  const poll = setInterval(() => {
+    if (view?.chatId !== active()) {
+      remove();
+      view = null;
+      ideas = [];
+      draft = null;
+      loading = false;
+      memoryQuery = "";
+    } else if (root && injected && !injected.contains(root)) {
+      remove();
+      paint();
+    } else if (view && !root?.isConnected)
+      paint();
+  }, 600);
+  const publicSnapshot = () => {
+    if (!view || view.chatId !== active())
+      return null;
+    return {
+      version: 1,
+      provider: "warp",
+      chatId: view.chatId,
+      messageId: view.anchor,
+      place: view.enabled ? view.world.place || undefined : undefined,
+      you: { name: "You", items: view.enabled ? view.world.facts.filter((f) => f.kind === "possession" && f.holder === "you").map((f) => f.text) : [] },
+      people: view.enabled ? view.world.present.map((name) => ({ id: name, name, present: true })) : []
+    };
+  };
+  return {
+    accept(raw) {
+      if (!raw || typeof raw !== "object")
+        return false;
+      const m = raw;
+      if (m.type === "settings") {
+        helperConnection = m.settings?.helperConnectionId ?? "";
+        connections = m.connections ?? [];
+        paint();
+        return false;
+      }
+      if (m.type === "state" && m.chatId === active()) {
+        view = null;
+        remove();
+        return false;
+      }
+      if (m.type === "living_ideas") {
+        if (!view || m.chatId !== active() || m.chatId !== view.chatId || m.signature !== view.signature)
+          return true;
+        loading = false;
+        ideas = m.ideas ?? [];
+        error = m.error ?? (ideas.length ? "" : "No suggestions this time. You can keep typing.");
+        paint();
+        return true;
+      }
+      if (m.type !== "living")
+        return false;
+      if (m.chatId !== active() || view?.chatId === m.chatId && m.revision < view.revision)
+        return true;
+      if (view?.anchor !== m.anchor || view?.signature !== m.signature) {
+        ideas = [];
+        draft = null;
+        loading = false;
+      }
+      view = { ...m, type: "living" };
+      paint();
+      window.dispatchEvent(new CustomEvent("warp-state-v1", { detail: publicSnapshot() }));
+      return true;
+    },
+    publicState: publicSnapshot,
+    openSettings() {
+      settingsOpen = true;
+      paint();
+      root?.querySelector("[data-helper-connection]")?.focus();
+    },
+    destroy() {
+      clearInterval(poll);
+      remove();
+      unstyle();
+    }
+  };
+}
+
+// src/frontend.ts
+init_public_events();
+var CLEANUP = "__warpCleanup";
+function setup(ctx) {
+  const previous = globalThis[CLEANUP];
+  if (typeof previous === "function")
+    previous();
+  let dead = false, authored = false, legacy = null, loading = false;
+  const living = connectLiving(ctx);
+  const active = () => ctx.getActiveChat().chatId ?? null;
+  const empty = () => ({ version: 1, provider: "warp", chatId: active(), messageId: null, you: { name: "You" }, people: [] });
+  let publicEvents = connectPublicEvents({ getState: () => living.publicState() ?? empty() });
+  const unlisten = ctx.onBackendMessage((raw) => {
+    if (!raw || typeof raw !== "object" || dead)
+      return;
+    const m = raw;
+    if (typeof m.type !== "string")
+      return;
+    if (m.type === "settings") {
+      authored = m.settings?.authoredRules === true;
+      if (!authored && legacy) {
+        legacy();
+        legacy = null;
+        publicEvents = connectPublicEvents({ getState: () => living.publicState() ?? empty() });
+      }
+    }
+    if (m.type.startsWith("living") && m.chatId !== active())
+      return;
+    if (!authored) {
+      living.accept(raw);
+      if (m.type === "command" && m.command === "open")
+        living.openSettings();
+      return;
+    }
+    if (!legacy && !loading && m.type === "state" && m.chatId === active()) {
+      loading = true;
+      Promise.resolve().then(() => (init_legacy(), {})).then((module) => {
+        loading = false;
+        if (dead || !authored)
+          return;
+        publicEvents.destroy();
+        legacy = setupLegacy(ctx);
+      });
+    }
+  });
+  ctx.sendToBackend({ type: "hello", chatId: active() });
+  let last = active();
+  const timer = setInterval(() => {
+    if (active() !== last) {
+      last = active();
+      publicEvents.publish(true);
+      ctx.sendToBackend({ type: "refresh", chatId: last });
+    }
+  }, 750);
+  const cleanup = () => {
+    if (dead)
+      return;
+    dead = true;
+    clearInterval(timer);
+    unlisten();
+    publicEvents.destroy();
+    living.destroy();
+    legacy?.();
+  };
+  globalThis[CLEANUP] = cleanup;
   return cleanup;
 }
 export {

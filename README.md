@@ -8,7 +8,7 @@ A small strip beside the latest reply shows the place, people present, and a cou
 
 People can remember an agreement, disagree with your plan, or pursue something of their own. Established preparation, possessions, knowledge and abilities are included when a consequential attempt is judged. Routine conversation needs no roll. A risky contested attempt has one recorded outcome that survives swipes. Consequences become facts only after the story actually establishes them.
 
-Warp uses the chat's connection, including a pinned connection, unless you select a helper connection in its settings. Reading a scene uses an additional model call. Some risky actions use one short call before narration. Failed reads offer Retry while ordinary chat remains usable.
+Warp uses the chat's connection, including a pinned connection, unless you select a helper in the inline Settings control. Reading a scene uses an additional model call. Some risky actions use a bounded call before narration. Failed scene reads offer Retry while ordinary chat remains usable. If an attempt cannot be assessed, Warp reports that it continued without a roll.
 
 This is a development build. Real-model play quality, production browser behavior and long-session repair are still under verification. [Build evidence](docs/BUILD_STATUS.md) records the remaining gates; [the design](docs/PLAY_DESIGN.md) defines the target experience.
 
@@ -21,8 +21,12 @@ bun install --frozen-lockfile
 bun run verify
 bun run build
 bun scripts/host-smoke.ts D:/Lumiverse
+bun scripts/frontend-host-smoke.ts D:/Lumiverse
+bun scripts/living-bench.ts
 ```
 
 The host smoke check runs the built backend inside that checkout's sandboxed Spindle worker with disposable fixture data. It does not use your chats, credentials, or a live model. Unit and DOM tests cover ownership, sourced changes, prepared outcomes, cancellation, stale responses, editable suggestions and host message replacement.
+
+[Live-model observations](docs/LIVE_PLAYTEST.md) describe the separate synthetic model checks and their limitations. [Local deployment and rollback](docs/LOCAL_DEPLOYMENT.md) describe the reversible development update.
 
 Warp publishes established scene information through `warp-state-v1` for integrations. Automatic illustration is not required for play.

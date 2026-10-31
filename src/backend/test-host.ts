@@ -88,7 +88,7 @@ export function makeHost(userId: string, authoredRules = true) {
      * Run one host generation the way Lumiverse does: GENERATION_STARTED, stage the reply, the interceptor
      * (no generation id in its context), then GENERATION_ENDED with the reply text.
      */
-    async generate(chatId: string, reply: string, type: "normal" | "swipe" = "normal") {
+    async generate(chatId: string, reply: string | ((messages: any[]) => Promise<string>), type: "normal" | "swipe" = "normal") {
       const list = chats[chatId].messages;
       let target: FakeMsg;
       if (type === "swipe") {
@@ -100,8 +100,9 @@ export function makeHost(userId: string, authoredRules = true) {
       const user = [...list].reverse().find((m) => m.is_user);
       const out = await interceptor([{ role: "system", content: "sys" }, { role: "user", content: user?.content ?? "" }], { chatId, userId, generationType: type });
       const injected = Array.isArray(out) ? "" : String(out.messages[out.breakdown[0].messageIndex].content);
-      target.content = reply; target.swipes[target.swipe_id] = reply;
-      await h.emit("GENERATION_ENDED", { generationId, chatId, messageId: target.id, content: reply, generationType: type });
+      const content = typeof reply === "function" ? await reply(Array.isArray(out) ? out : out.messages) : reply;
+      target.content = content; target.swipes[target.swipe_id] = content;
+      await h.emit("GENERATION_ENDED", { generationId, chatId, messageId: target.id, content, generationType: type });
       return { injected, target, record: h.record(target) };
     },
     async say(chatId: string, text: string) { h.msg(chatId, `${chatId}-u${chats[chatId].messages.length}`, true, text); },

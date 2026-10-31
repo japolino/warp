@@ -16,7 +16,7 @@ import { contestExit, intentFor, type ChoiceIntent } from "./backend/intents.js"
 import { isRulesetEntryTitle } from "./engine/loader.js";
 import { getDecider, JEV_KEY } from "./backend/deciders.js";
 import { builderAnswer, builderBack, builderClose, builderCurrent, builderInstall, builderOpen, builderRedo, builderRefine, builderStart } from "./backend/builder.js";
-import { livingAction, livingEnded, livingIntercept, livingStarted, livingStopped, livingSwipeDeleted, syncLiving, usesLiving } from "./living/runtime.js";
+import { livingAction, livingEnded, livingIntercept, livingStarted, livingStopped, livingSwipeDeleted, repairLiving, syncLiving, usesLiving } from "./living/runtime.js";
 
 declare const spindle: SpindleAPI;
 
@@ -105,6 +105,11 @@ for (const ev of ["MESSAGE_SENT", "MESSAGE_DELETED", "MESSAGE_EDITED", "SWIPE_ED
     const chatId = chatIdOf(p);
     if (chatId) invalidateChat(chatId);
     schedulePush(chatId, userId, 250);
+    if (chatId && ["MESSAGE_EDITED", "SWIPE_EDITED", "MESSAGE_DELETED"].includes(ev)) {
+      const source = p as { message?: { id?: string }; messageId?: string };
+      const target = ev === "MESSAGE_DELETED" ? undefined : source?.message?.id ?? source?.messageId;
+      void usesLiving(chatId, userId).then(living => living ? repairLiving(chatId, target, userId) : undefined).catch(e => logError("history repair", e));
+    }
   });
 }
 spindle.on("CHARACTER_EDITED", (p, userId) => {

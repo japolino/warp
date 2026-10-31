@@ -3,21 +3,25 @@ import type { World, Decision } from "./world.js";
 import { esc } from "../frontend/html.js";
 import type { WarpStateV1 } from "../frontend/public-events.js";
 
-interface View { type: "living"; chatId: string; signature: string; revision: number; enabled: boolean; busy: boolean; retry: boolean; anchor: string | null; world: World; notes: string[]; decision?: Decision; }
+interface View { type: "living"; chatId: string; signature: string; revision: number; enabled: boolean; busy: boolean; retry: boolean; anchor: string | null; world: World; notes: string[]; decision?: Decision; notice?: string; }
 const STYLE = `
 .warp-scene{font:inherit;font-size:13px;line-height:1.5;color:inherit;margin:12px 0 18px;padding:10px 0;border-top:1px solid color-mix(in srgb,currentColor 14%,transparent);opacity:.9;max-width:100%;overflow-wrap:anywhere}
 .warp-scene-top{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}.warp-scene-place{font-weight:600}.warp-scene-people{opacity:.7}.warp-scene-tools{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
 .warp-scene button{font:inherit;color:inherit;background:transparent;border:1px solid transparent;border-radius:5px;padding:3px 7px;cursor:pointer;text-align:left}.warp-scene button:hover{background:color-mix(in srgb,currentColor 8%,transparent)}
-.warp-scene button:focus-visible,.warp-scene textarea:focus-visible{outline:2px solid currentColor;outline-offset:3px}.warp-scene button:disabled{opacity:.5;cursor:wait}
+.warp-scene button:focus-visible,.warp-scene textarea:focus-visible,.warp-scene input:focus-visible{outline:2px solid currentColor;outline-offset:3px}.warp-scene button:disabled{opacity:.5;cursor:wait}
 .warp-scene-note{margin-top:5px;opacity:.8}.warp-scene details{margin-top:7px}.warp-scene summary{cursor:pointer;opacity:.7}.warp-scene textarea{display:block;box-sizing:border-box;width:100%;min-height:72px;font:inherit;color:inherit;background:transparent;border:1px solid color-mix(in srgb,currentColor 28%,transparent);border-radius:6px;padding:9px;margin:9px 0;resize:vertical}
 .warp-scene-ideas{display:grid;gap:5px;margin-top:9px}.warp-scene-idea{border:1px solid color-mix(in srgb,currentColor 18%,transparent)!important;padding:9px!important}.warp-scene-fact{padding:7px 0;border-bottom:1px solid color-mix(in srgb,currentColor 8%,transparent)}.warp-scene-source{display:block;font-size:12px;opacity:.6}.warp-scene-error{margin-top:8px;opacity:.75}
+.warp-scene input[type=search]{box-sizing:border-box;width:100%;font:inherit;color:inherit;background:transparent;border:1px solid color-mix(in srgb,currentColor 25%,transparent);border-radius:5px;padding:6px;margin:8px 0}
+.warp-scene select{max-width:100%;font:inherit;color:inherit;background:transparent;border:1px solid color-mix(in srgb,currentColor 25%,transparent);border-radius:5px;padding:5px}.warp-scene-settings{margin:9px 0}.warp-scene-settings p{font-size:12px;opacity:.7}
 @media(max-width:540px){.warp-scene-tools{margin-left:0;width:100%}.warp-scene{font-size:12px}}
 `;
 
 /** The full default play interface lives below the latest reply. */
-export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknown): boolean; publicState(): WarpStateV1 | null; destroy(): void } {
+export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknown): boolean; openSettings(): void; publicState(): WarpStateV1 | null; destroy(): void } {
   let view: View | null = null, root: HTMLElement | null = null, ideas: string[] = [], loading = false, error = "", draft: string | null = null;
   let mode: "say" | "correct" = "say";
+  let memoryQuery = "";
+  let settingsOpen = false, helperConnection = "", connections: { id: string; name: string }[] = [];
   let injected: Element | null = null;
   const remove = () => { if (injected) ctx.dom.uninject(injected); injected = null; root = null; };
   const unstyle = ctx.dom.addStyle(STYLE);
@@ -27,17 +31,22 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
     if (!view) return "";
     if (!view.enabled) return `<div class="warp-scene-top"><span>Warp paused</span><button data-living="resume">Resume</button></div>`;
     const world = view.world;
+    const matches = world.facts.filter(f => !memoryQuery || `${f.subject} ${f.text} ${f.quote}`.toLocaleLowerCase().includes(memoryQuery.toLocaleLowerCase()));
+    const remembered = matches.slice(-80).reverse();
     const relevant = world.facts.filter(f => f.status === "open" && ["commitment", "situation"].includes(f.kind)).slice(-2);
-    return `<div class="warp-scene-top"><span class="warp-scene-place">${esc(world.place || "Here")}</span><span class="warp-scene-people">${world.present.map(esc).join(" · ")}</span><span class="warp-scene-tools"><button data-living="ideas" ${loading ? "disabled" : ""}>${loading ? "Thinking…" : "Ideas"}</button><button data-living="correct">Correct</button><button data-living="pause">Pause</button></span></div>
+    return `<div class="warp-scene-top"><span class="warp-scene-place">${esc(world.place || "Here")}</span><span class="warp-scene-people">${world.present.map(esc).join(" · ")}${view.busy ? ' <span role="status" aria-label="Updating the scene">…</span>' : ""}</span><span class="warp-scene-tools"><button data-living="ideas" ${loading ? "disabled" : ""}>${loading ? "Thinking…" : "Ideas"}</button><button data-living="correct">Correct</button><button data-living="pause">Pause</button><button data-living="settings" aria-expanded="${settingsOpen}">Settings</button></span></div>
+      ${settingsOpen ? `<div class="warp-scene-settings"><label>Helper connection <select data-helper-connection><option value="">Use this chat's connection</option>${connections.map(c => `<option value="${esc(c.id)}"${helperConnection === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label><p>Reading the scene uses an additional model call. A risky attempt may use one more. You can choose a faster helper connection here.</p></div>` : ""}
       ${relevant.length ? `<div class="warp-scene-note">${relevant.map(f => esc(f.text)).join(" · ")}</div>` : ""}
       ${view.notes.length ? `<div class="warp-scene-note">${view.notes.map(esc).join(" · ")}</div>` : ""}
       ${view.retry ? `<button data-living="retry">Scene read unavailable · Retry</button>` : ""}
+      ${view.notice ? `<div class="warp-scene-error" role="status">${esc(view.notice)}</div>` : ""}
       ${ideas.length ? `<div class="warp-scene-ideas">${ideas.map((s, i) => `<button class="warp-scene-idea" data-idea="${i}">${esc(s)}</button>`).join("")}</div>` : ""}
       ${draft !== null ? `<label>${mode === "correct" ? "What should Warp know?" : "Your message"}<textarea data-living-draft>${esc(draft)}</textarea></label><button data-living="submit">${mode === "correct" ? "Save correction" : "Send"}</button><button data-living="cancel">Cancel</button>` : ""}
       ${error ? `<div class="warp-scene-error" role="status">${esc(error)}</div>` : ""}
       <details><summary>Remembered${view.decision ? " · This attempt" : ""}</summary>
+      <input type="search" data-memory-query aria-label="Find a remembered event" placeholder="Find a remembered event" value="${esc(memoryQuery)}">
       ${view.decision ? `<p>${esc(view.decision.intent)}: ${esc(view.decision.result)}. ${esc(view.decision.stakes)}<br>${view.decision.reasons.map(esc).join(" · ")}</p>` : ""}
-      ${world.facts.map(f => `<div class="warp-scene-fact">${esc(f.subject)} · ${esc(f.text)}${f.holder ? ` · with ${esc(f.holder)}` : ""}<span class="warp-scene-source">${f.kind === "motive" ? "Possible motive · " : ""}${esc(f.quote)}</span></div>`).join("") || "No lasting events recorded yet."}</details>`;
+      ${remembered.map(f => `<div class="warp-scene-fact">${esc(f.subject)} · ${esc(f.text)}${f.holder ? ` · with ${esc(f.holder)}` : ""}${f.status === "done" ? " · settled" : ""}<span class="warp-scene-source">${f.kind === "motive" ? "Possible motive · " : ""}${esc(f.quote)}</span></div>`).join("") || (memoryQuery ? "No matching events." : "No lasting events recorded yet.")}${matches.length > 80 ? `<p>Showing the latest 80 matches. Search to find an older event.</p>` : ""}</details>`;
   }
   function paint() {
     if (!view || view.chatId !== active() || !view.anchor) { remove(); return; }
@@ -47,7 +56,12 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
     if (!root) {
       injected = ctx.dom.inject(card, '<div class="warp-scene" data-warp-living="true"></div>', card === row ? "beforeend" : "afterend");
       root = injected.querySelector<HTMLElement>(".warp-scene")!;
-      root.addEventListener("input", e => { if ((e.target as HTMLElement).matches("[data-living-draft]")) draft = (e.target as HTMLTextAreaElement).value; });
+      if (!root) { ctx.dom.uninject(injected); injected = null; return; }
+      root.addEventListener("input", e => {
+        if ((e.target as HTMLElement).matches("[data-living-draft]")) draft = (e.target as HTMLTextAreaElement).value;
+        if ((e.target as HTMLElement).matches("[data-memory-query]")) { memoryQuery = (e.target as HTMLInputElement).value; paint(); }
+      });
+      root.addEventListener("change", e => { if ((e.target as HTMLElement).matches("[data-helper-connection]")) ctx.sendToBackend({ type: "settings", patch: { helperConnectionId: (e.target as HTMLSelectElement).value } }); });
       root.addEventListener("click", e => {
         const button = (e.target as HTMLElement).closest<HTMLButtonElement>("button"); if (!button || !view) return;
         if (button.dataset.idea !== undefined) { draft = ideas[Number(button.dataset.idea)] ?? ""; mode = "say"; paint(); root?.querySelector("textarea")?.focus(); return; }
@@ -59,6 +73,7 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
           case "submit": if (draft?.trim()) { send(mode, draft); draft = null; ideas = []; } break;
           case "pause": send("pause"); break;
           case "resume": send("resume"); break;
+          case "settings": settingsOpen = !settingsOpen; break;
         }
         paint();
       });
@@ -66,21 +81,29 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
     if (card === row) { if (injected!.parentElement !== row) row.append(injected!); }
     else if (card.nextElementSibling !== injected) card.after(injected!);
     const detailsOpen = root.querySelector("details")?.open;
-    const focused = root.contains(document.activeElement) && document.activeElement instanceof HTMLTextAreaElement;
-    const selection = focused ? [(document.activeElement as HTMLTextAreaElement).selectionStart, (document.activeElement as HTMLTextAreaElement).selectionEnd] : null;
+    const focused = root.contains(document.activeElement) && document.activeElement?.matches("textarea,[data-memory-query]");
+    const selector = document.activeElement?.matches("[data-memory-query]") ? "[data-memory-query]" : "textarea";
+    const selection = focused ? [(document.activeElement as HTMLTextAreaElement).selectionStart ?? 0, (document.activeElement as HTMLTextAreaElement).selectionEnd ?? 0] : null;
     root.innerHTML = markup();
     if (detailsOpen) root.querySelector("details")?.setAttribute("open", "");
-    if (selection) { const input = root.querySelector("textarea"); input?.focus(); input?.setSelectionRange(selection[0], selection[1]); }
+    if (selection) { const input = root.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector); input?.focus(); input?.setSelectionRange(selection[0], selection[1]); }
   }
   const poll = setInterval(() => {
-    if (view?.chatId !== active()) { remove(); view = null; ideas = []; draft = null; loading = false; }
+    if (view?.chatId !== active()) { remove(); view = null; ideas = []; draft = null; loading = false; memoryQuery = ""; }
     else if (root && injected && !injected.contains(root)) { remove(); paint(); }
     else if (view && !root?.isConnected) paint();
   }, 600);
+  const publicSnapshot = (): WarpStateV1 | null => {
+    if (!view || view.chatId !== active()) return null;
+    return { version: 1, provider: "warp", chatId: view.chatId, messageId: view.anchor, place: view.enabled ? view.world.place || undefined : undefined,
+      you: { name: "You", items: view.enabled ? view.world.facts.filter(f => f.kind === "possession" && f.holder === "you").map(f => f.text) : [] },
+      people: view.enabled ? view.world.present.map(name => ({ id: name, name, present: true })) : [] };
+  };
   return {
     accept(raw) {
       if (!raw || typeof raw !== "object") return false;
-      const m = raw as Omit<View, "type"> & { type: string; ideas?: string[]; error?: string };
+      const m = raw as Omit<View, "type"> & { type: string; ideas?: string[]; error?: string; settings?: { helperConnectionId?: string }; connections?: { id: string; name: string }[] };
+      if (m.type === "settings") { helperConnection = m.settings?.helperConnectionId ?? ""; connections = m.connections ?? []; paint(); return false; }
       if (m.type === "state" && m.chatId === active()) { view = null; remove(); return false; }
       if (m.type === "living_ideas") {
         if (!view || m.chatId !== active() || m.chatId !== view.chatId || m.signature !== view.signature) return true;
@@ -90,15 +113,11 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
       if (m.chatId !== active() || (view?.chatId === m.chatId && m.revision < view.revision)) return true;
       if (view?.anchor !== m.anchor || view?.signature !== m.signature) { ideas = []; draft = null; loading = false; }
       view = { ...m, type: "living" }; paint();
-      window.dispatchEvent(new CustomEvent("warp-state-v1", { detail: { version: 1, provider: "warp", chatId: m.chatId, messageId: m.anchor, place: m.world.place || undefined, you: {}, people: m.enabled ? m.world.present.map(name => ({ id: name, name, present: true })) : [] } }));
+      window.dispatchEvent(new CustomEvent("warp-state-v1", { detail: publicSnapshot() }));
       return true;
     },
-    publicState() {
-      if (!view || view.chatId !== active()) return null;
-      return { version: 1, provider: "warp", chatId: view.chatId, messageId: view.anchor, place: view.world.place || undefined,
-        you: { name: "You", items: view.enabled ? view.world.facts.filter(f => f.kind === "possession" && f.holder === "you").map(f => f.text) : [] },
-        people: view.enabled ? view.world.present.map(name => ({ id: name, name, present: true })) : [] };
-    },
+    publicState: publicSnapshot,
+    openSettings() { settingsOpen = true; paint(); root?.querySelector<HTMLSelectElement>("[data-helper-connection]")?.focus(); },
     destroy() { clearInterval(poll); remove(); unstyle(); },
   };
 }
