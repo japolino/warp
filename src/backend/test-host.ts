@@ -31,7 +31,7 @@ export const pick = (q: Questions[string], choice: string, p = 0.9): Answers[str
   return { type: "choice", choice, confidence: p, probabilities: Object.fromEntries(keys.map((k) => [k, k === choice ? p : (1 - p) / Math.max(1, keys.length - 1)])) };
 };
 
-export function makeHost(userId: string) {
+export function makeHost(userId: string, authoredRules = true) {
   const handlers = new Map<string, Fn[]>();
   const books: Record<string, { id: string; name: string; entries: any[]; metadata?: unknown }> = {};
   const characters: Record<string, any> = {};
@@ -124,7 +124,7 @@ export function makeHost(userId: string) {
     log: { info: () => {}, error: () => {}, warn: () => {} },
     toast: { info: () => {}, success: () => {}, warning: () => {}, error: () => {} },
     userStorage: {
-      getJson: async (p: string, o: any) => (p in storage ? structuredClone(storage[p]) : o?.fallback),
+      getJson: async (p: string, o: any) => (p in storage ? structuredClone(storage[p]) : p === "settings.json" ? { ...o?.fallback, authoredRules } : o?.fallback),
       setJson: async (p: string, v: unknown) => { storage[p] = structuredClone(v); },
     },
     enclave: { get: async (k: string) => secrets[k] ?? null, has: async (k: string) => k in secrets, put: async (k: string, v: string) => { secrets[k] = v; }, delete: async (k: string) => { delete secrets[k]; } },

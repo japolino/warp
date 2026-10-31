@@ -1,11 +1,11 @@
 {
-  "version": "0.2.0",
+  "version": "0.3.0-dev",
   "name": "Warp",
   "identifier": "warp",
   "author": "japolino",
   "github": "https://github.com/japolino/warp",
   "homepage": "https://github.com/japolino/warp",
-  "description": "Your roleplay keeps score. Warp decides risky moments with dice the narrator can't fudge, and remembers the time, the place, who is here and how they feel about you. Story (no dice) or Adventure (dice); rules live in the character's warp-ruleset lorebook.",
+  "description": "Keep roleplaying. Warp remembers consequential events, follows people's interests, and makes your preparations and promises matter. Starts automatically; ideas and corrections live beside the conversation.",
   "permissions": ["generation", "interceptor", "chat_mutation", "chats", "characters", "world_books", "ui_panels", "cors_proxy"],
   "entry_backend": "dist/backend.js",
   "entry_frontend": "dist/frontend.js",

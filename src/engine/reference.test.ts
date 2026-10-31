@@ -89,9 +89,9 @@ describe("the format reference (format 2)", () => {
   });
 });
 
-describe("the README's example ruleset", () => {
+describe("the compatibility documentation's example ruleset", () => {
   test("loads with no issues and passes every loop-simulator gate", () => {
-    const readme = readFileSync(new URL("../../README.md", import.meta.url), "utf8");
+    const readme = readFileSync(new URL("../../docs/AUTHORED_RULESETS.md", import.meta.url), "utf8");
     const yaml = /```yaml\n([\s\S]*?)```/.exec(readme)![1];
     const parts = splitRulebook(yaml);
     expect(parts.map((p) => p.label)).toEqual(["core", "stats", "people", "world", "actions", "story", "conflict"]);

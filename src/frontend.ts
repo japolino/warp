@@ -17,6 +17,7 @@ import { connectPublicEvents, toWarpState } from "./frontend/public-events.js";
 import { newRolls, playRoll, prefersReducedMotion } from "./frontend/roll-fx.js";
 import { acceptsResponse, mayAct } from "./frontend/response-gate.js";
 import { logoSvg } from "./frontend/logo.js";
+import { connectLiving } from "./living/ui.js";
 
 type StateMsg = Extract<BackendToFrontend, { type: "state" }>;
 
@@ -35,9 +36,12 @@ export function setup(ctx: SpindleFrontendContext) {
   if (typeof prev === "function") prev();
 
   const cleanups: (() => void)[] = [];
+  const living = connectLiving(ctx);
+  cleanups.push(() => living.destroy());
   cleanups.push(ctx.dom.addStyle(STYLES));
 
   let state: StateMsg | null = null;
+  let livingMode = false;
   let settings: Settings = { ...DEFAULT_SETTINGS };
   let templates: TemplateInfo[] = [];
   let connections: { id: string; name: string }[] = [];
@@ -301,6 +305,11 @@ export function setup(ctx: SpindleFrontendContext) {
   cleanups.push(() => drawerRoot.removeEventListener("click", reconcileClick));
 
   function renderDrawer() {
+    if (livingMode) {
+      paint(drawerRoot, `<div class="warp-card"><p>Warp follows this conversation. Ideas, remembered events, corrections and Pause are beside the latest reply.</p><label>Helper connection<select data-setting="helperConnectionId"><option value="">Use this chat's connection</option>${connections.map(c => `<option value="${esc(c.id)}"${settings.helperConnectionId === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label><p>A scene read uses an additional model call through this connection. Risky attempts may use one more.</p></div>`);
+      tab.setBadge(null);
+      return;
+    }
     const hasChat = !!state?.chatId;
     const status: RulesetStatus = state?.status ?? { state: "none", name: null, source: null, issues: [], characterName: null, cardKind: "character", tags: [] };
     const views: [typeof drawerView, string][] = [
@@ -438,7 +447,7 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   // Other extensions (LumiDoll…) read the scene from warp-state-v1.
-  const publicEvents = connectPublicEvents({ getState: () => toWarpState(state, { enabled: settings.enabled, chatId: chatId() }) });
+  const publicEvents = connectPublicEvents({ getState: () => living.publicState() ?? toWarpState(state, { enabled: settings.enabled, chatId: chatId() }) });
   cleanups.push(() => publicEvents.destroy());
 
   function renderAll() {
@@ -879,10 +888,14 @@ export function setup(ctx: SpindleFrontendContext) {
 
   // ───────── backend messages ─────────
   cleanups.push(ctx.onBackendMessage((raw) => {
+    const incoming = raw as { type?: string; chatId?: string };
+    if (incoming.type?.startsWith("living") && incoming.chatId !== chatId()) return;
+    if (living.accept(raw)) { livingMode = true; state = null; overlay?.setVisible(false); reconcileMessages(); renderDrawer(); syncCue(); publicEvents.publish(); return; }
     const m = raw as BackendToFrontend;
     if (!acceptsResponse(m, chatId(), state)) return;
     switch (m.type) {
       case "state": {
+        livingMode = false;
         const rolls = newRolls(state, m);
         if (state?.chatId !== m.chatId) { editing = null; drafts = {}; lastBars = new Map(); }
         // The backend answered: a new click may go.

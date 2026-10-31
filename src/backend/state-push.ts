@@ -33,7 +33,17 @@ export async function pushState(chatId: string | null, userId?: string, force = 
   revisions.set(k, revision);
   const current = () => revisions.get(k) === revision;
   try {
+    if (chatId && !(await getSettings(userId)).authoredRules) {
+      const { pushLiving } = await import("../living/runtime.js");
+      if (current()) await pushLiving(chatId, userId);
+      return;
+    }
     const loaded = await getRuleset(chatId, userId, force);
+    if (chatId && loaded?.source === "Automatic") {
+      const { pushLiving } = await import("../living/runtime.js");
+      if (current()) await pushLiving(chatId, userId);
+      return;
+    }
     const status = statusOf(loaded);
     if (!chatId || !loaded?.ruleset) {
       if (current()) send({ type: "state", chatId, revision, status, hud: null, choices: [], records: [], latestMessageId: null, choicesAnchor: null, busy: false, player: "You", sceneHint: null }, userId);

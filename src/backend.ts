@@ -16,11 +16,14 @@ import { contestExit, intentFor, type ChoiceIntent } from "./backend/intents.js"
 import { isRulesetEntryTitle } from "./engine/loader.js";
 import { getDecider, JEV_KEY } from "./backend/deciders.js";
 import { builderAnswer, builderBack, builderClose, builderCurrent, builderInstall, builderOpen, builderRedo, builderRefine, builderStart } from "./backend/builder.js";
+import { livingAction, livingEnded, livingIntercept, livingStarted, livingStopped, livingSwipeDeleted, syncLiving, usesLiving } from "./living/runtime.js";
 
 declare const spindle: SpindleAPI;
 
 // ── Prompt pipeline ──────────────────────────────────────────────
-spindle.registerInterceptor(interceptor, 60);
+spindle.registerInterceptor(async (messages, ctx) => {
+  return await usesLiving(ctx.chatId, ctx.userId) ? livingIntercept(messages, ctx) : interceptor(messages, ctx);
+}, 60);
 
 // Ruleset YAML must never reach the model, even if an author forgets to disable an entry.
 spindle.registerWorldInfoInterceptor(async (ctx) => {
@@ -33,7 +36,7 @@ spindle.registerWorldInfoInterceptor(async (ctx) => {
   const forced: string[] = [];
   try {
     const loaded = await getRuleset(ctx.chatId, ctx.userId);
-    const r = loaded?.ruleset;
+    const r = await usesLiving(ctx.chatId, ctx.userId) ? null : loaded?.ruleset;
     const gates: { lore: string[]; open: (s: GameState) => boolean }[] = [];
     if (r) {
       for (const sec of Object.values(r.secrets)) sec.stages.forEach((st, i) => {
@@ -56,6 +59,11 @@ spindle.registerWorldInfoInterceptor(async (ctx) => {
   } catch (e) {
     logError("lore gate", e);
   }
+  // Loading the attached books above discovers whole-book rule entries, including
+  // entries whose titles do not themselves say warp-ruleset.
+  for (const e of ctx.entries) {
+    if ((knownRulesetEntryIds.has(e.id) || knownRulesetBookIds.has(e.world_book_id) || isRulesetEntryTitle(e.comment)) && !disabled.includes(e.id)) disabled.push(e.id);
+  }
   return disabled.length || forced.length ? { ...(disabled.length ? { disabled } : {}), ...(forced.length ? { forced } : {}) } : undefined;
 }, 10);
 
@@ -70,11 +78,21 @@ spindle.on("CHAT_SWITCHED", (p, userId) => {
   setActiveChat(userId, chatId);
   void pushState(chatId, userId);
 });
-spindle.on("GENERATION_STARTED", (p, userId) => onGenerationStarted(p, userId));
-spindle.on("GENERATION_ENDED", (p, userId) => onGenerationEnded(p, userId));
-spindle.on("GENERATION_STOPPED", (p, userId) => onGenerationStopped(p, userId));
+spindle.on("GENERATION_STARTED", async (p, userId) => {
+  if (await usesLiving(p.chatId, userId)) livingStarted(p);
+  else await onGenerationStarted(p, userId);
+});
+spindle.on("GENERATION_ENDED", async (p, userId) => {
+  if (await usesLiving(p.chatId, userId)) await livingEnded(p, userId);
+  else await onGenerationEnded(p, userId);
+});
+spindle.on("GENERATION_STOPPED", async (p, userId) => {
+  if (await usesLiving(p.chatId, userId)) { livingStopped(p); await pushState(p.chatId, userId); }
+  else await onGenerationStopped(p, userId);
+});
 spindle.on("MESSAGE_SWIPED", (p, userId) => {
   if (p.action === "deleted") {
+    void livingSwipeDeleted(p.chatId, p.message.id, p.swipeId);
     void shiftAfterSwipeDelete(p.chatId, p.message.id, p.swipeId).catch((e) => logError("swipe delete", e)).finally(() => schedulePush(p.chatId, userId));
     return;
   }
@@ -97,13 +115,12 @@ spindle.on("CHARACTER_EDITED", (p, userId) => {
 
 // ── Command palette ──────────────────────────────────────────────
 spindle.commands.register([
-  { id: "open", label: "Warp: Open the sheet", description: "Scene, you, people, goals and settings", keywords: ["stats", "sheet", "hud", "game"], scope: "chat" },
-  { id: "install", label: "Warp: Add rules to this character", description: "Story (no dice) or Adventure (dice), or build one with AI", keywords: ["ruleset", "template", "story", "adventure", "game", "setup"], scope: "chat" },
-  { id: "reload", label: "Warp: Reload ruleset", description: "Re-read the character's warp-ruleset lorebook", keywords: ["refresh", "ruleset"], scope: "chat" },
+  { id: "open", label: "Warp: Settings", description: "Helper connection and extension settings", keywords: ["settings", "connection", "game"], scope: "chat" },
+  { id: "reload", label: "Warp: Refresh scene", description: "Read the current scene again", keywords: ["refresh", "scene"], scope: "chat" },
 ]);
 spindle.commands.onInvoked((id, context) => {
   if (id === "reload") {
-    void pushState(context.chatId ?? null, undefined, true).then(() => toast("info", "Ruleset reloaded"));
+    if (context.chatId) void usesLiving(context.chatId).then(living => living ? syncLiving(context.chatId!) : pushState(context.chatId!, undefined, true));
     return;
   }
   send({ type: "command", command: id as "open" | "install" });
@@ -146,6 +163,7 @@ async function applyManual(
 async function readGreetingLater(chatId: string | null, userId?: string): Promise<void> {
   if (!chatId) return;
   try {
+    if (await usesLiving(chatId, userId)) { await syncLiving(chatId, userId); return; }
     const msgs = await getMessages(chatId);
     if (!greetingOf(msgs)) return;
     if (await ensureGreeting(chatId, userId)) await pushState(chatId, userId);
@@ -179,6 +197,7 @@ async function sendSettings(userId?: string) {
 }
 
 spindle.onFrontendMessage(async (raw, userId) => {
+  if (await livingAction(raw, userId)) return;
   const msg = raw as FrontendToBackend;
   try {
     if ("chatId" in msg && msg.chatId && !["hello", "refresh", "reload", "reconcile_history", "undo"].includes(msg.type) && !msg.type.startsWith("builder") && msg.type !== "install_template") {
@@ -201,14 +220,14 @@ spindle.onFrontendMessage(async (raw, userId) => {
         setActiveChat(userId, msg.chatId);
         await sendSettings(userId);
         await pushState(msg.chatId, userId);
-        await builderCurrent(msg.chatId, userId);
+        if (msg.chatId && !await usesLiving(msg.chatId, userId)) await builderCurrent(msg.chatId, userId);
         void readGreetingLater(msg.chatId, userId);
         break;
       }
       case "refresh":
         setActiveChat(userId, msg.chatId);
         await pushState(msg.chatId, userId);
-        await builderCurrent(msg.chatId, userId);
+        if (msg.chatId && !await usesLiving(msg.chatId, userId)) await builderCurrent(msg.chatId, userId);
         void readGreetingLater(msg.chatId, userId);
         break;
       case "reload":

@@ -85,7 +85,28 @@ async function loadForCharacter(characterId: string, userId?: string): Promise<L
     if (found) books.push(`${book.name} (${found} ${found === 1 ? "entry" : "entries"})`);
     if (found) base.bookIds.push(bookId);
   }
-  if (!parts.length) return base;
+  if (!parts.length) {
+    // A chat can start without publishing a ruleset into the character's lorebook.
+    // This deliberately keeps the default small: people and story goals are
+    // observed from the conversation, with no relationship scores or action menu.
+    const automatic = loadRuleset([{ label: "Warp automatic", order: 0, content: `
+name: Warp
+style: story
+clock: { start: greeting, fallback: "Day 1 09:00", minutes_per_action: 0, narrator_max: 720 }
+start: { place: greeting }
+relationships: { open: true, stats: {}, people: {} }
+goals: { from_story: true, max: 3 }
+narration:
+  notes: >-
+    Let people act from their own established interests and knowledge. Remember
+    promises and consequences. Respect the player's actions, words and feelings.
+    Match the tone and pace of the ongoing scene; quiet scenes need no crisis.
+` }]);
+    base.ruleset = automatic.ruleset;
+    base.issues = automatic.issues;
+    base.source = "Automatic";
+    return base;
+  }
   const { ruleset, issues } = loadRuleset(parts);
   base.issues = ruleset ? [...issues, ...lintRuleset(ruleset)] : issues;
   base.ruleset = base.issues.some((i) => i.level === "error") ? null : ruleset;

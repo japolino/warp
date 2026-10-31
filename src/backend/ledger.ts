@@ -112,10 +112,10 @@ export function foldState(r: Ruleset, msgs: Msg[]): GameState { return foldPath(
 // queue, including writers of top-level keys owned by companion extensions.
 const metadataWrites = new Map<string, Promise<void>>();
 
-function serializeMetadata(chatId: string, messageId: string, edit: () => Promise<void>): Promise<void> {
+export function serializeMetadata<T>(chatId: string, messageId: string, edit: () => Promise<T>): Promise<T> {
   const key = JSON.stringify([chatId, messageId]);
   const result = (metadataWrites.get(key) ?? Promise.resolve()).then(edit);
-  const tail = result.catch(() => {});
+  const tail = result.then(() => {}, () => {});
   metadataWrites.set(key, tail);
   void tail.then(() => { if (metadataWrites.get(key) === tail) metadataWrites.delete(key); });
   return result;

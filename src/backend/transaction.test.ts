@@ -24,7 +24,7 @@ const written = (o: { health?: string; choices?: any[]; answers?: Record<string,
 function fixture(input: any = raw) {
   const id = `transaction-${++seq}`;
   const f: any = { id, messages: [], sent: [], calls: 0, failWrite: false, emitEdits: true,
-    settings: { ...DEFAULT_SETTINGS, decider: "llm", draftItemUses: false },
+    settings: { ...DEFAULT_SETTINGS, authoredRules: true, decider: "llm", draftItemUses: false },
     raw: input, extraEntries: [], r: loadRuleset([{ label: "warp-ruleset", content: JSON.stringify(input), order: 0 }]).ruleset!,
     quiet: async () => ({ content: "{}" }),
   };

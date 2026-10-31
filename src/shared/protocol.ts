@@ -211,6 +211,8 @@ export interface RulesetStatus {
  */
 export interface Settings {
   enabled: boolean;
+  /** Explicit compatibility for authored rulebooks. The default play loop needs no rulebook. */
+  authoredRules: boolean;
   /** Connection used for the helper calls (the typed read without Jev, the post-reply call, the greeting read); empty = the chat's own connection. */
   helperConnectionId: string;
   /** Which model answers Warp's typed questions: the helper LLM, or Jev (TypeSafe's classifier, or any service with the same API). */
@@ -235,6 +237,7 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   enabled: true,
+  authoredRules: false,
   helperConnectionId: "",
   decider: "llm",
   jevModel: "jev-latest",
