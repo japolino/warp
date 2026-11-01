@@ -1,6 +1,6 @@
 # Local build and rollback
 
-The verified `0.3.0-dev` bundles have been deployed locally. Their SHA256 hashes match the implementation worktree. Lumiverse's extension Restart action and a frontend refresh are still required. The previous `0.2.0` manifest and bundles are saved in `C:\Users\eme4\warp-core\.artifacts\warp-backup-1793489881232`.
+The verified `0.3.0-dev` bundles have been deployed locally. Warp has been enabled through Lumiverse's normal manager and its frontend refreshed in the running browser. The previous `0.2.0` manifest and bundles are saved in `C:\Users\eme4\warp-core\.artifacts\warp-backup-1793489881232`. A second backup, before the duplicate-reminder frontend fix, is at `.artifacts/warp-backup-1793543751102`.
 
 The worktree is `C:\Users\eme4\warp-core`, branch `codex/warp-living-play`. The running installation's bundles are under `D:\Lumiverse\data\extensions\warp\repo`. `D:\Lumiverse\warp` is an older independent checkout and is not the installation target.
 

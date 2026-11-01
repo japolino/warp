@@ -1,6 +1,6 @@
 # Build evidence
 
-The goal remains active. This file records implemented behavior and outstanding verification; it is not a completion claim.
+This file records implemented behavior and outstanding verification; it is not a completion claim.
 
 The default now uses the living-play runtime for existing and new chats. The old rulebook engine remains behind an explicit `authoredRules` compatibility setting. Existing books, old turn records, and unrelated message metadata are preserved. No template install or generated YAML is required.
 
@@ -25,16 +25,15 @@ Evidence gathered:
 - `bun scripts/frontend-host-smoke.ts D:\Lumiverse` passes against that checkout's real DOM helper with the production frontend. It verifies scoped owned roots and Ideas/edit interactions in an isolated DOM, not production browser pixels or sandbox transport.
 - Fixed synthetic social, quiet, adventure, contested-action, correction and Ideas scenes have been exercised through the existing configured model connection. The tests exposed timeouts and stale reads that were corrected; timing, limitations and reproducing commands are in `docs/LIVE_PLAYTEST.md`.
 - Default frontend startup no longer creates the compatibility drawer or floating widget. A dedicated startup test rejects any access to those panel APIs. Helper selection is inline.
-- A local deploy/rollback script previews changes by default. Its backup, replacement, unrelated-file preservation and restoration behavior pass a disposable-directory test. It has now deployed version `0.3.0-dev` to the installed extension directory. SHA256 checks confirm the manifest and both installed bundles match the verified worktree. The running worker and frontend still need Restart and refresh.
+- A local deploy/rollback script previews changes by default. Its backup, replacement, unrelated-file preservation and restoration behavior pass a disposable-directory test. It has deployed version `0.3.0-dev` to the installed extension directory. The extension has now been enabled through Lumiverse's normal manager, and its frontend refreshed in the actual browser.
+- The actual browser session verifies the production frontend bridge, rendered inline controls under the user's existing skin, sourced memory, Pause/Resume, correction, agreement, message editing, and reload. See `docs/BROWSER_PLAYTEST.md` for observations and limits. A duplicate reminder found during that session was removed; the inline UI suite and production build pass after the fix.
 - The previous installed `0.2.0` manifest and bundles are saved at `C:\Users\eme4\warp-core\.artifacts\warp-backup-1793489881232`. Development packages are also staged under `D:\Lumiverse\.artifacts\warp-living-play-*`. Nothing has been published.
 
 Still required before declaring the project finished:
 
-- Production browser rendering and interactions in the running Lumiverse, including scoped styling and the actual frontend bridge. Computer Use currently reports both browser access and native pipe unavailable. An HTTP response from port 7860 does not prove browser behavior.
 - Verify real user cards and presets beyond the fixed synthetic cases. The live samples show coherent behavior and one honored seeded setback; they do not establish general semantic accuracy.
 - Measure broader real latency, usage and long-session correction frequency. Current samples show some slow or timed-out reads, now exposed through Retry or the no-roll notice.
-- Verify edits, forks and deleted swipe handling through the actual running app. Offline coverage and the engine benchmark pass; the production UI action path remains unverified.
-- Restart the deployed extension and refresh the frontend through the running app, then verify the update in use. Rollback instructions and a verified backup exist.
+- Verify forks and deleted swipe handling through the actual running app. Message editing, selecting alternate swipes, restoring the prior swipe, and reload have now passed through the production UI; offline branch coverage and the engine benchmark also pass.
 - Playtest the intended pleasure. Automated checks of state handling cannot establish that people want another turn.
 
 The user's `D:\Lumiverse\warp` checkout contains older code and a local skill edit and is untouched. The installation is separately under `D:\Lumiverse\data\extensions\warp\repo`; only its manifest and two production bundles were replaced. Its source and Git history are preserved. The implementation branch is `codex/warp-living-play` in `C:\Users\eme4\warp-core`.
