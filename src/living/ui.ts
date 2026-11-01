@@ -5,7 +5,7 @@ import type { WarpStateV1 } from "../frontend/public-events.js";
 
 interface View { type: "living"; chatId: string; signature: string; revision: number; enabled: boolean; busy: boolean; retry: boolean; anchor: string | null; world: World; notes: string[]; decision?: Decision; notice?: string; }
 const STYLE = `
-.warp-scene{font:inherit;font-size:13px;line-height:1.5;color:inherit;margin:12px 0 18px;padding:10px 0;border-top:1px solid color-mix(in srgb,currentColor 14%,transparent);opacity:.9;max-width:100%;overflow-wrap:anywhere}
+.warp-scene{font:inherit;font-size:13px;line-height:1.5;color:inherit;margin:12px 0 18px;padding:12px 18px;box-sizing:border-box;border-top:1px solid color-mix(in srgb,currentColor 14%,transparent);opacity:.9;max-width:100%;overflow-wrap:anywhere}
 .warp-scene-top{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}.warp-scene-place{font-weight:600}.warp-scene-people{opacity:.7}.warp-scene-tools{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
 .warp-scene button{font:inherit;color:inherit;background:transparent;border:1px solid transparent;border-radius:5px;padding:3px 7px;cursor:pointer;text-align:left}.warp-scene button:hover{background:color-mix(in srgb,currentColor 8%,transparent)}
 .warp-scene button:focus-visible,.warp-scene textarea:focus-visible,.warp-scene input:focus-visible{outline:2px solid currentColor;outline-offset:3px}.warp-scene button:disabled{opacity:.5;cursor:wait}
@@ -21,7 +21,7 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
   let view: View | null = null, root: HTMLElement | null = null, ideas: string[] = [], loading = false, error = "", draft: string | null = null;
   let mode: "say" | "correct" = "say";
   let memoryQuery = "";
-  let settingsOpen = false, helperConnection = "", connections: { id: string; name: string }[] = [];
+  let settingsOpen = false, helperConnection = "", decisionConnection = "", decisionConnections: { id: string; name: string }[] = [], connections: { id: string; name: string }[] = [];
   let injected: Element | null = null;
   const remove = () => { if (injected) ctx.dom.uninject(injected); injected = null; root = null; };
   const unstyle = ctx.dom.addStyle(STYLE);
@@ -37,7 +37,7 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
     const reminders = new Set(relevant.map(f => f.text.trim().toLocaleLowerCase()));
     const notes = view.notes.filter(note => { const key = note.trim().toLocaleLowerCase(); if (reminders.has(key)) return false; reminders.add(key); return true; });
     return `<div class="warp-scene-top"><span class="warp-scene-place">${esc(world.place || "Here")}</span><span class="warp-scene-people">${world.present.map(esc).join(" · ")}${view.busy ? ' <span role="status" aria-label="Updating the scene">…</span>' : ""}</span><span class="warp-scene-tools"><button data-living="ideas" ${loading ? "disabled" : ""}>${loading ? "Thinking…" : "Ideas"}</button><button data-living="correct">Correct</button><button data-living="pause">Pause</button><button data-living="settings" aria-expanded="${settingsOpen}">Settings</button></span></div>
-      ${settingsOpen ? `<div class="warp-scene-settings"><label>Helper connection <select data-helper-connection><option value="">Use this chat's connection</option>${connections.map(c => `<option value="${esc(c.id)}"${helperConnection === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label><p>Reading the scene uses an additional model call. A risky attempt may use one more. You can choose a faster helper connection here.</p></div>` : ""}
+      ${settingsOpen ? `<div class="warp-scene-settings"><label>Helper connection <select data-helper-connection><option value="">Use this chat's connection</option>${connections.map(c => `<option value="${esc(c.id)}"${helperConnection === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label><label style="display:block;margin-top:8px">Decision connection <select data-decision-connection><option value="">Use the helper</option>${decisionConnection && !decisionConnections.some(c => c.id === decisionConnection) ? `<option value="${esc(decisionConnection)}" selected>Saved profile unavailable</option>` : ""}${decisionConnections.map(c => `<option value="${esc(c.id)}"${decisionConnection === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label><p>Decision profiles come from Lumiverse Connections. They assess contested attempts; Warp rolls the outcome. Unavailable profiles fall back to the helper.</p><p>Reading the scene uses an additional model call. A risky attempt may use one more. You can choose a faster helper connection here.</p></div>` : ""}
       ${relevant.length ? `<div class="warp-scene-note">${relevant.map(f => esc(f.text)).join(" · ")}</div>` : ""}
       ${notes.length ? `<div class="warp-scene-note">${notes.map(esc).join(" · ")}</div>` : ""}
       ${view.retry ? `<button data-living="retry">Scene read unavailable · Retry</button>` : ""}
@@ -63,7 +63,7 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
         if ((e.target as HTMLElement).matches("[data-living-draft]")) draft = (e.target as HTMLTextAreaElement).value;
         if ((e.target as HTMLElement).matches("[data-memory-query]")) { memoryQuery = (e.target as HTMLInputElement).value; paint(); }
       });
-      root.addEventListener("change", e => { if ((e.target as HTMLElement).matches("[data-helper-connection]")) ctx.sendToBackend({ type: "settings", patch: { helperConnectionId: (e.target as HTMLSelectElement).value } }); });
+      root.addEventListener("change", e => { if ((e.target as HTMLElement).matches("[data-decision-connection]")) ctx.sendToBackend({ type: "settings", patch: { decisionConnectionId: (e.target as HTMLSelectElement).value } }); if ((e.target as HTMLElement).matches("[data-helper-connection]")) ctx.sendToBackend({ type: "settings", patch: { helperConnectionId: (e.target as HTMLSelectElement).value } }); });
       root.addEventListener("click", e => {
         const button = (e.target as HTMLElement).closest<HTMLButtonElement>("button"); if (!button || !view) return;
         if (button.dataset.idea !== undefined) { draft = ideas[Number(button.dataset.idea)] ?? ""; mode = "say"; paint(); root?.querySelector("textarea")?.focus(); return; }
@@ -104,8 +104,8 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
   return {
     accept(raw) {
       if (!raw || typeof raw !== "object") return false;
-      const m = raw as Omit<View, "type"> & { type: string; ideas?: string[]; error?: string; settings?: { helperConnectionId?: string }; connections?: { id: string; name: string }[] };
-      if (m.type === "settings") { helperConnection = m.settings?.helperConnectionId ?? ""; connections = m.connections ?? []; paint(); return false; }
+      const m = raw as Omit<View, "type"> & { type: string; ideas?: string[]; error?: string; settings?: { helperConnectionId?: string; decisionConnectionId?: string }; decisionConnections?: { id: string; name: string }[]; connections?: { id: string; name: string }[] };
+      if (m.type === "settings") { helperConnection = m.settings?.helperConnectionId ?? ""; decisionConnection = m.settings?.decisionConnectionId ?? ""; decisionConnections = m.decisionConnections ?? []; connections = m.connections ?? []; paint(); return false; }
       if (m.type === "state" && m.chatId === active()) { view = null; remove(); return false; }
       if (m.type === "living_ideas") {
         if (!view || m.chatId !== active() || m.chatId !== view.chatId || m.signature !== view.signature) return true;

@@ -215,6 +215,8 @@ export interface Settings {
   authoredRules: boolean;
   /** Connection used for the helper calls (the typed read without Jev, the post-reply call, the greeting read); empty = the chat's own connection. */
   helperConnectionId: string;
+  /** Native Lumiverse decision profile; empty uses the helper. */
+  decisionConnectionId: string;
   /** Which model answers Warp's typed questions: the helper LLM, or Jev (TypeSafe's classifier, or any service with the same API). */
   decider: "llm" | "jev";
   jevModel: string;
@@ -239,6 +241,7 @@ export const DEFAULT_SETTINGS: Settings = {
   enabled: true,
   authoredRules: false,
   helperConnectionId: "",
+  decisionConnectionId: "",
   decider: "llm",
   jevModel: "jev-latest",
   jevUrl: "https://api.typesafe.ai/v1/systemone",
@@ -348,7 +351,7 @@ export type BackendToFrontend =
       sceneHint?: string | null;
     }
   | { type: "busy"; chatId: string; busy: boolean; label?: string }
-  | { type: "settings"; settings: Settings; templates: TemplateInfo[]; connections: { id: string; name: string }[]; jevKeySet: boolean }
+  | { type: "settings"; settings: Settings; templates: TemplateInfo[]; connections: { id: string; name: string }[]; decisionConnections?: { id: string; name: string }[]; jevKeySet: boolean }
   | { type: "toast"; level: "info" | "success" | "warning" | "error"; message: string }
   | { type: "command"; command: "open" | "install" }
   | { type: "builder"; session: BuilderSession | null; chatId?: string | null };

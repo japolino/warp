@@ -6,7 +6,7 @@
   "github": "https://github.com/japolino/warp",
   "homepage": "https://github.com/japolino/warp",
   "description": "Keep roleplaying. Warp remembers consequential events, follows people's interests, and makes your preparations and promises matter. Starts automatically; ideas and corrections live beside the conversation.",
-  "permissions": ["generation", "interceptor", "chat_mutation", "chats", "characters", "world_books", "ui_panels", "cors_proxy"],
+  "permissions": ["decisions", "generation", "interceptor", "chat_mutation", "chats", "characters", "world_books", "ui_panels", "cors_proxy"],
   "entry_backend": "dist/backend.js",
   "entry_frontend": "dist/frontend.js",
   "minimum_lumiverse_version": "0.1.0"

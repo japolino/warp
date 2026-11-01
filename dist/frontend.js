@@ -108,6 +108,7 @@ var init_protocol = __esm(() => {
     enabled: true,
     authoredRules: false,
     helperConnectionId: "",
+    decisionConnectionId: "",
     decider: "llm",
     jevModel: "jev-latest",
     jevUrl: "https://api.typesafe.ai/v1/systemone",
@@ -2497,7 +2498,7 @@ var init_legacy = __esm(() => {
 // src/living/ui.ts
 init_html();
 var STYLE = `
-.warp-scene{font:inherit;font-size:13px;line-height:1.5;color:inherit;margin:12px 0 18px;padding:10px 0;border-top:1px solid color-mix(in srgb,currentColor 14%,transparent);opacity:.9;max-width:100%;overflow-wrap:anywhere}
+.warp-scene{font:inherit;font-size:13px;line-height:1.5;color:inherit;margin:12px 0 18px;padding:12px 18px;box-sizing:border-box;border-top:1px solid color-mix(in srgb,currentColor 14%,transparent);opacity:.9;max-width:100%;overflow-wrap:anywhere}
 .warp-scene-top{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}.warp-scene-place{font-weight:600}.warp-scene-people{opacity:.7}.warp-scene-tools{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
 .warp-scene button{font:inherit;color:inherit;background:transparent;border:1px solid transparent;border-radius:5px;padding:3px 7px;cursor:pointer;text-align:left}.warp-scene button:hover{background:color-mix(in srgb,currentColor 8%,transparent)}
 .warp-scene button:focus-visible,.warp-scene textarea:focus-visible,.warp-scene input:focus-visible{outline:2px solid currentColor;outline-offset:3px}.warp-scene button:disabled{opacity:.5;cursor:wait}
@@ -2511,7 +2512,7 @@ function connectLiving(ctx) {
   let view = null, root = null, ideas = [], loading = false, error = "", draft = null;
   let mode = "say";
   let memoryQuery = "";
-  let settingsOpen = false, helperConnection = "", connections = [];
+  let settingsOpen = false, helperConnection = "", decisionConnection = "", decisionConnections = [], connections = [];
   let injected = null;
   const remove = () => {
     if (injected)
@@ -2543,7 +2544,7 @@ function connectLiving(ctx) {
       return true;
     });
     return `<div class="warp-scene-top"><span class="warp-scene-place">${esc(world.place || "Here")}</span><span class="warp-scene-people">${world.present.map(esc).join(" · ")}${view.busy ? ' <span role="status" aria-label="Updating the scene">…</span>' : ""}</span><span class="warp-scene-tools"><button data-living="ideas" ${loading ? "disabled" : ""}>${loading ? "Thinking…" : "Ideas"}</button><button data-living="correct">Correct</button><button data-living="pause">Pause</button><button data-living="settings" aria-expanded="${settingsOpen}">Settings</button></span></div>
-      ${settingsOpen ? `<div class="warp-scene-settings"><label>Helper connection <select data-helper-connection><option value="">Use this chat's connection</option>${connections.map((c) => `<option value="${esc(c.id)}"${helperConnection === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label><p>Reading the scene uses an additional model call. A risky attempt may use one more. You can choose a faster helper connection here.</p></div>` : ""}
+      ${settingsOpen ? `<div class="warp-scene-settings"><label>Helper connection <select data-helper-connection><option value="">Use this chat's connection</option>${connections.map((c) => `<option value="${esc(c.id)}"${helperConnection === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label><label style="display:block;margin-top:8px">Decision connection <select data-decision-connection><option value="">Use the helper</option>${decisionConnection && !decisionConnections.some((c) => c.id === decisionConnection) ? `<option value="${esc(decisionConnection)}" selected>Saved profile unavailable</option>` : ""}${decisionConnections.map((c) => `<option value="${esc(c.id)}"${decisionConnection === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label><p>Decision profiles come from Lumiverse Connections. They assess contested attempts; Warp rolls the outcome. Unavailable profiles fall back to the helper.</p><p>Reading the scene uses an additional model call. A risky attempt may use one more. You can choose a faster helper connection here.</p></div>` : ""}
       ${relevant.length ? `<div class="warp-scene-note">${relevant.map((f) => esc(f.text)).join(" · ")}</div>` : ""}
       ${notes.length ? `<div class="warp-scene-note">${notes.map(esc).join(" · ")}</div>` : ""}
       ${view.retry ? `<button data-living="retry">Scene read unavailable · Retry</button>` : ""}
@@ -2582,6 +2583,8 @@ function connectLiving(ctx) {
         }
       });
       root.addEventListener("change", (e) => {
+        if (e.target.matches("[data-decision-connection]"))
+          ctx.sendToBackend({ type: "settings", patch: { decisionConnectionId: e.target.value } });
         if (e.target.matches("[data-helper-connection]"))
           ctx.sendToBackend({ type: "settings", patch: { helperConnectionId: e.target.value } });
       });
@@ -2685,6 +2688,8 @@ function connectLiving(ctx) {
       const m = raw;
       if (m.type === "settings") {
         helperConnection = m.settings?.helperConnectionId ?? "";
+        decisionConnection = m.settings?.decisionConnectionId ?? "";
+        decisionConnections = m.decisionConnections ?? [];
         connections = m.connections ?? [];
         paint();
         return false;

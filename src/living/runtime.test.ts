@@ -142,3 +142,18 @@ test("deleting an earlier swipe retains the later swipe's own record", async () 
   expect((target.extra.spindle_metadata as any).warpLiving["0"]).toEqual(oldRecord);
   expect((target.extra.spindle_metadata as any).warpLiving["1"]).toBeUndefined();
 });
+
+test("native decision profiles route attempt reads and fall back when unavailable", async () => {
+  const previous = (h.fake as any).decisions;
+  let native = 0, helper = 0;
+  (h.fake as any).decisions = { evaluate: async () => { native++; return { answers: { roll: { type: "choice", choice: "none" } } }; } };
+  await h.settings({ decisionConnectionId: "native-profile" });
+  h.helper = c => { if (c.system.includes("Determine whether")) helper++; return extract(c); };
+  try {
+    const id = chat(); await h.say(id, "I try to vault the wall."); await h.generate(id, "You move toward the wall.");
+    expect(native).toBe(1); expect(helper).toBe(0);
+    (h.fake as any).decisions.evaluate = async () => { throw new Error("Unavailable profile"); };
+    const next = chat(); await h.say(next, "I try to vault the wall."); await h.generate(next, "You move toward the wall.");
+    expect(helper).toBe(1);
+  } finally { await h.settings({ decisionConnectionId: "" }); (h.fake as any).decisions = previous; }
+});

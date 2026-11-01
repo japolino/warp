@@ -198,6 +198,7 @@ async function sendSettings(userId?: string) {
     type: "settings", settings, jevKeySet,
     templates: TEMPLATES.map(({ id, name, blurb }) => ({ id, name, blurb })),
     connections: await connectionsFor(userId),
+    decisionConnections: await spindle.decisions?.listConnections({ userId }).then(list => list.map(c => ({ id: c.id, name: `${c.name} — ${c.model}` }))).catch(() => []) ?? [],
   }, userId);
 }
 
