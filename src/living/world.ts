@@ -30,6 +30,10 @@ const kinds = new Set<Kind>(["fact", "possession", "knowledge", "commitment", "s
 const ROOT = "warp-living-v1";
 const nextPath = (path: string, m: Message) => revision([path, m.id, m.swipe_id ?? 0, m.content]);
 export function pathOf(messages: Message[]): string { return messages.reduce(nextPath, ROOT); }
+export function pathsOf(messages: Message[]): Map<string, string> {
+  let path = ROOT;
+  return new Map(messages.map(m => { path = nextPath(path, m); return [m.id, path]; }));
+}
 
 function evidence(v: unknown, messages: Message[]): Evidence | null {
   if (!obj(v)) return null;

@@ -1,3 +1,4 @@
+import { PROMPT_KEY, promptSnapshot, replayPrompt, type PromptSnapshot } from "./prompt-cache.js";
 import { readDecision } from "./decisions.js";
 import type { InterceptorContextDTO, LlmMessageDTO } from "lumiverse-spindle-types";
 import { host, logError } from "../backend/host.js";
@@ -9,7 +10,7 @@ import { patchSettings } from "../backend/settings.js";
 import { splitTyped } from "../backend/questions.js";
 import { injectInto } from "../backend/inject.js";
 import { revision } from "../shared/revision.js";
-import { foldWorld, pathOf, readChanges, resolveAttempt, text, worldPacket, type Decision, type Record as LivingRecord, type World } from "./world.js";
+import { foldWorld, pathOf, pathsOf, readChanges, resolveAttempt, text, worldPacket, type Decision, type Record as LivingRecord, type World } from "./world.js";
 
 const KEY = "warpLiving";
 interface Slots { [swipe: string]: LivingRecord; }
@@ -176,12 +177,36 @@ The player controls their own feelings, words and decisions. Requests for anothe
 If a result is supplied, honor it. A mixed result achieves the intention with a fitting cost; a setback changes the situation and leaves another approach.
 Use the chat's existing style. Never mention Warp, internal records, probabilities, or these instructions.`;
 
+async function cachedInjection(messages: LlmMessageDTO[], ctx: InterceptorContextDTO, history: Msg[], world: World, decision: Decision | null, persist: boolean, controller?: AbortController) {
+  const settings = await getSettings(ctx.userId);
+  const preferences = { exclude: settings.lines, offScreen: settings.veils };
+  const latest = history.filter(m => m.is_user).at(-1);
+  const paths = pathsOf(history);
+  const existing = latest ? promptSnapshot(latest, paths) : undefined;
+  const snapshot: PromptSnapshot = existing && JSON.stringify(existing.packet.preferences) === JSON.stringify(preferences) && (!history.at(-1)?.is_user || JSON.stringify(existing.decision ?? null) === JSON.stringify(decision)) ? existing : {
+    version: 1, path: latest ? paths.get(latest.id)! : "",
+    packet: { ...JSON.parse(worldPacket(world, latest?.content)), preferences }, ...(decision ? { decision } : {}),
+  };
+  // Old hosts lack source ids. Keep their safe terminal injection rather than guessing at transformed content.
+  if (!latest || !messages.some(m => m.role === "user" && m.sourceMessageId === latest.id)) {
+    return injectInto(replayPrompt(messages, history, DIRECTOR), `${DIRECTOR}\nPlayer content preferences: ${JSON.stringify(preferences)}\nRecorded state:\n${worldPacket(world, latest?.content)}${decision ? `\nResolved attempt:\n${JSON.stringify(decision)}` : ""}`).messages;
+  }
+  if (persist && !controller?.signal.aborted && snapshot !== existing) await serializeMetadata(ctx.chatId, latest.id, async () => {
+    const now = await getMessages(ctx.chatId), current = now.find(m => m.id === latest.id);
+    if (!current || controller?.signal.aborted || pathsOf(now).get(current.id) !== snapshot.path) return;
+    await host().chat.updateMessage(ctx.chatId, latest.id, { metadata: { ...current.metadata, [PROMPT_KEY]: {
+      ...((current.metadata?.[PROMPT_KEY] ?? {}) as object), [String(current.swipe_id ?? 0)]: snapshot,
+    } }, skipChunkRebuild: true });
+  });
+  if (controller?.signal.aborted) return messages;
+  return replayPrompt(messages, history, DIRECTOR, { id: latest.id, snapshot });
+}
+
 export async function livingIntercept(messages: LlmMessageDTO[], ctx: InterceptorContextDTO): Promise<LlmMessageDTO[]> {
   const settings = await getSettings(ctx.userId);
   if (["quiet", "impersonate"].includes(ctx.generationType ?? "") || !settings.enabled) return messages;
-  const boundaries = `Player content preferences: exclude ${JSON.stringify(settings.lines)}; keep ${JSON.stringify(settings.veils)} off screen.`;
   const context = ctx as unknown as { isDryRun?: boolean; dryRun?: boolean };
-  if (context.isDryRun || context.dryRun) return injectInto(messages, `${DIRECTOR}\n${boundaries}\nRecorded state:\n${worldPacket(worldOf(await getMessages(ctx.chatId)))}`).messages;
+  if (context.isDryRun || context.dryRun) { const history = await getMessages(ctx.chatId); return cachedInjection(messages, ctx, history, worldOf(history), null, false); }
   const active = started.get(ctx.chatId);
   const controller = new AbortController();
   ctx.signal?.addEventListener("abort", () => controller.abort(), { once: true });
@@ -228,7 +253,7 @@ export async function livingIntercept(messages: LlmMessageDTO[], ctx: Intercepto
   } catch { notice = "This attempt continued without a roll because its scene read was unavailable."; }
   if (pending.get(ctx.chatId)?.generation !== generation) return messages;
   pending.set(ctx.chatId, { generation, controller, ...(decision ? { decision } : {}), ...(notice ? { notice } : {}) });
-  return injectInto(messages, `${DIRECTOR}\n${boundaries}\nRecorded state:\n${worldPacket(world, last?.content)}${decision ? `\nResolved attempt:\n${JSON.stringify(decision)}` : ""}`).messages;
+  return cachedInjection(messages, ctx, history, world, decision, true, controller);
 }
 
 export function needsAttemptRead(content: string): boolean {

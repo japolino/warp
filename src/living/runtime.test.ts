@@ -157,3 +157,22 @@ test("native decision profiles route attempt reads and fall back when unavailabl
     expect(helper).toBe(1);
   } finally { await h.settings({ decisionConnectionId: "" }); (h.fake as any).decisions = previous; }
 });
+
+test("production interceptor persists snapshots and extends the prior prompt without changing it", async () => {
+  const { getMessages } = await import("../backend/ledger.js");
+  const id = chat(); await syncLiving(id, h.userId); await h.say(id, '"Hello, Jo."');
+  const promptFor = async () => (await getMessages(id)).map(m => ({ role: m.role, content: m.content, sourceMessageId: m.id }));
+  const context = { chatId: id, userId: h.userId, generationType: "normal", signal: new AbortController().signal } as InterceptorContextDTO;
+  const first = await livingIntercept(await promptFor(), context);
+  const player = (await getMessages(id)).at(-1)!;
+  expect(player.metadata?.warpLivingPrompt).toBeDefined();
+  h.msg(id, `${id}-reply`, false, "Jo nods."); await h.say(id, '"How are you?"');
+  const second = await livingIntercept(await promptFor(), context);
+  expect(second.slice(0, first.length)).toEqual(first);
+  expect(second[first.length].content).toBe("Jo nods.");
+  const repeated = await livingIntercept(await promptFor(), context);
+  expect(repeated).toEqual(second);
+  const before = structuredClone((await getMessages(id)).at(-1)!.metadata);
+  await livingIntercept(await promptFor(), { ...context, isDryRun: true });
+  expect((await getMessages(id)).at(-1)!.metadata).toEqual(before);
+});
