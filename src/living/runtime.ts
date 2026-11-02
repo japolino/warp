@@ -18,6 +18,7 @@ import { injectInto } from "../backend/inject.js";
 import { revision } from "../shared/revision.js";
 import { isRulesetEntryTitle } from "../engine/loader.js";
 import { foldWorld, pathOf, pathsOf, readChanges, resolveAttempt, text, worldPacket, type Decision, type Record as LivingRecord, type World } from "./world.js";
+import { KNOWLEDGE_INSTRUCTIONS } from "./knowledge.js";
 
 const KEY = "warpLiving";
 interface Slots { [swipe: string]: LivingRecord; }
@@ -77,11 +78,12 @@ Do not invent a wallet, time, debt, statistic, personality or convenient exit to
 
 const EXTRACTION = `${PRINCIPLES}
 Read what ACTUALLY happened. Output one JSON object:
-{"scene":{"place":"short established place","present":["names physically present"],"message":"source message id","quote":"exact source substring"},"changes":[{"op":"put","id":"stable descriptive id","kind":"fact|possession|knowledge|commitment|situation|motive|ability","subject":"person name, or you for the player","text":"short specific fact","holder":"person name or you, possessions only","status":"open|done","message":"source message id","quote":"exact source substring"}]}
+{"scene":{"place":"short established place","present":["names physically present"],"message":"source message id","quote":"exact source substring"},"changes":[{"op":"put","id":"stable descriptive id","kind":"fact|possession|commitment|situation|motive|ability","subject":"person name, or you for the player","text":"short specific fact","holder":"person name or you, possessions only","status":"open|done","message":"source message id","quote":"exact source substring"}]}
 Every change and scene needs a real quote from the supplied messages, never from the card or memory. Omit unsupported fields. Preserve existing ids for updates.
 Extract only consequential established information. A request or proposed plan is not an accomplished action or accepted promise.
 Player commitments require the player's own explicit agreement. Other characters can make their own commitments in narrator text.
 Knowledge states WHO knows WHAT. The narrator knowing a secret does not mean everyone knows it.
+${KNOWLEDGE_INSTRUCTIONS}
 Motive is a tentative reading of behavior, never a new biographical fact; phrase uncertain motives as possibilities.
 Track at most three live situations. A situation needs an established person, change and reason it matters. Empty slots need no replacement.
 Complete an existing agreement or situation with {op:"resolve",id,message,quote} citing its actual fulfillment. Do not rewrite what the player promised. Remove only explicitly obsolete facts with {op:"remove",id,message,quote}.

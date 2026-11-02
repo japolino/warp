@@ -6,7 +6,8 @@ import { pathToFileURL } from "node:url";
 const checkout = resolve(process.argv[2] ?? "D:/Lumiverse");
 const root = resolve(import.meta.dir, "..");
 const manifest = await Bun.file(join(root, "spindle.json")).json();
-const message: any = { id: "greeting", chat_id: "smoke", role: "assistant", is_user: false, content: "Jo waits in the café. You own a distinctive jacket.", index_in_chat: 0, swipe_id: 0, metadata: {}, extra: {} };
+const knowledge = process.argv.includes("--knowledge");
+const message: any = { id: "greeting", chat_id: "smoke", role: "assistant", is_user: false, content: knowledge ? "Jo waits in the café. You read a signed letter naming Vale as the donor. You quietly tell Jo its contents. Dex waits outside." : "Jo waits in the café. You own a distinctive jacket.", index_in_chat: 0, swipe_id: 0, metadata: {}, extra: {} };
 const types = new Set<string>();
 let writes = 0, timer: ReturnType<typeof setTimeout>;
 const worker = new Worker(pathToFileURL(join(checkout, "src/spindle/worker-runtime.ts")).href);
@@ -30,14 +31,20 @@ try {
         if (event.path === "settings.json") respond("{}");
         else worker.postMessage({ type: "response", requestId: event.requestId, error: "Fixture file not found" });
       }
-      else if (event.type === "request_generation") respond({ content: JSON.stringify({ scene: { place: "The café", present: ["Jo"], message: "greeting", quote: "Jo waits in the café." }, changes: [{ op: "put", id: "jacket", kind: "possession", subject: "jacket", holder: "you", text: "Distinctive jacket", message: "greeting", quote: "You own a distinctive jacket." }] }) });
+      else if (event.type === "request_generation") respond({ content: JSON.stringify({ scene: { place: "The café", present: ["Jo"], message: "greeting", quote: "Jo waits in the café." }, changes: knowledge ? [
+        { op: "put", id: "donor", kind: "fact", subject: "Vale", text: "The letter names Vale as the donor", message: "greeting", quote: "a signed letter naming Vale as the donor" },
+        { op: "learn", about: "donor", subject: "you", via: "discovered", message: "greeting", quote: "You read a signed letter naming Vale as the donor." },
+        { op: "learn", about: "donor", subject: "Jo", via: "told", from: "you", message: "greeting", quote: "You quietly tell Jo its contents." },
+      ] : [{ op: "put", id: "jacket", kind: "possession", subject: "jacket", holder: "you", text: "Distinctive jacket", message: "greeting", quote: "You own a distinctive jacket." }] }) });
       else if (event.type === "chat_update_message") { message.metadata = event.patch.metadata; writes++; respond(undefined); }
       else if (event.type === "frontend_message" && event.payload?.type === "living" && event.payload.world.facts.length) {
-        if (event.payload.world.place !== "The café" || event.payload.world.facts[0].holder !== "you" || writes !== 1) reject(new Error("Worker scene mismatch"));
+        const facts = event.payload.world.facts;
+        const valid = knowledge ? JSON.stringify(facts.filter((f: any) => f.kind === "knowledge").map((f: any) => f.subject)) === '["you","Jo"]' && !event.payload.world.mechanics : facts[0].holder === "you";
+        if (event.payload.world.place !== "The café" || !valid || writes !== 1) reject(new Error("Worker scene mismatch"));
         else done();
       } else if (event.requestId) worker.postMessage({ type: "response", requestId: event.requestId, error: `Unsupported fixture RPC: ${event.type}` });
     };
     worker.postMessage({ type: "init", manifest: { ...manifest, entry_backend: pathToFileURL(join(root, "dist/backend.js")).href }, storagePath: join(root, ".artifacts/worker-smoke") });
   });
-  console.log("PASS: built Warp loaded in Lumiverse's sandboxed worker, initialized an unconfigured chat, and committed a sourced possession without a ruleset install.");
+  console.log(knowledge ? "PASS: production sandbox recorded a private café discovery and disclosure with only its actual learners, without rolls, meters or a ruleset install." : "PASS: built Warp loaded in Lumiverse's sandboxed worker, initialized an unconfigured chat, and committed a sourced possession without a ruleset install.");
 } finally { clearTimeout(timer!); worker.terminate(); }

@@ -34,6 +34,36 @@ function extract(c: HelperCall): unknown {
 }
 const latest = (id: string) => [...h.sent].reverse().find(m => m.type === "living" && m.chatId === id);
 
+test("a quiet café disclosure learns only its listener, survives reload and follows the selected swipe without rolls or meters", async () => {
+  const id = `living-secret-${++serial}`, opening = "You privately read a letter naming Vale as the donor. Jo waits beside you. Dex is outside.";
+  h.chat(id, "", opening); h.characters[`char-${id}`].world_book_ids = [];
+  let attempts = 0;
+  h.helper = c => {
+    if (c.system.includes("Determine whether")) { attempts++; return { risky: false, contested: false }; }
+    const entries = JSON.parse(c.user.split("Messages:\n")[1] ?? "[]") as { id: string; content: string }[];
+    const first = entries.find(m => m.content === opening)!, last = entries.at(-1)!;
+    const changes: any[] = [{ op: "put", id: "donor", kind: "fact", subject: "Vale", text: "The letter names Vale as the donor", message: first.id, quote: "a letter naming Vale as the donor" },
+      { op: "learn", about: "donor", subject: "you", via: "discovered", message: first.id, quote: "You privately read a letter naming Vale as the donor." }];
+    if (last.content === "You tell Jo what the letter says. She listens quietly.") changes.push({ op: "learn", about: "donor", subject: "Jo", from: "you", via: "told", message: last.id, quote: last.content });
+    if (last.content === "Dex arrives later.") changes.push({ op: "learn", about: "donor", subject: "Dex", via: "witnessed", message: last.id, quote: last.content });
+    return { changes };
+  };
+  await syncLiving(id, h.userId);
+  await h.say(id, '"Jo, the letter names Vale."');
+  await h.generate(id, "You tell Jo what the letter says. She listens quietly.");
+  expect(latest(id).world.facts.filter((f: any) => f.kind === "knowledge").map((f: any) => f.subject)).toEqual(["you", "Jo"]);
+  expect(latest(id).world.mechanics).toBeUndefined(); expect(latest(id).decision).toBeUndefined();
+  await syncLiving(id, h.userId);
+  expect(latest(id).world.facts.filter((f: any) => f.kind === "knowledge")).toHaveLength(2);
+  const preview = await h.interceptor([{ role: "user", content: "What now?" }], { chatId: id, userId: h.userId, generationType: "normal", isDryRun: true });
+  expect(JSON.stringify(preview)).toContain("knowledgeBoundary");
+  await h.generate(id, "Jo walks away before you can tell her.", "swipe");
+  expect(latest(id).world.facts.filter((f: any) => f.kind === "knowledge").map((f: any) => f.subject)).toEqual(["you"]);
+  await h.say(id, '"Hello, Dex."'); await h.generate(id, "Dex arrives later.");
+  expect(latest(id).world.facts.filter((f: any) => f.kind === "knowledge").map((f: any) => f.subject)).toEqual(["you"]);
+  expect(attempts).toBe(0); expect(latest(id).world.mechanics).toBeUndefined();
+});
+
 test("install-and-play: no ruleset install, no scores, no invented clock", async () => {
   const id = chat(), books = Object.keys(h.books);
   await syncLiving(id, h.userId);

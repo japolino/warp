@@ -2,12 +2,15 @@ import { revision } from "../shared/revision.js";
 import { seededRng } from "../engine/dice.js";
 import { attemptBands } from "./check-bands.js";
 import { mechanicalPacket, type MechanicalState } from "./mechanics.js";
+import { learnKnowledge, knowledgeDependencyHolds, type KnowledgeAccess } from "./knowledge.js";
+import { actorName } from "./encounters.js";
 
 export type Kind = "fact" | "possession" | "knowledge" | "commitment" | "situation" | "motive" | "ability";
 export interface Evidence { message: string; quote: string; sourceRevision?: string; }
 export interface Fact extends Evidence {
   id: string; kind: Kind; subject: string; text: string;
   holder?: string; status: "open" | "done";
+  access?: KnowledgeAccess;
 }
 export interface World { place: string; present: string[]; facts: Fact[]; mechanics?: MechanicalState; }
 export interface Message { id: string; content: string; is_user: boolean; name?: string; swipe_id?: number; }
@@ -52,14 +55,21 @@ export function readChanges(raw: unknown, before: World, messages: Message[], pl
   let world = structuredClone(before);
   const sourceMessages = new Map(messages.map(m => [m.id, m]));
   const playerNames = new Set(["you", "player", "me", "i", "{{user}}", ...(playerName ? [playerName.toLowerCase()] : []), ...messages.filter(m => m.is_user && m.name).map(m => m.name!.toLowerCase())]);
-  const person = (v: unknown) => { const s = text(v, 80); return playerNames.has(s.toLowerCase()) ? "you" : s; };
+  const person = (v: unknown) => {
+    const s = text(v, 80); if (playerNames.has(s.toLowerCase())) return "you";
+    try { return world.mechanics ? actorName(world.mechanics, s) : s; } catch { return ""; }
+  };
   for (const v of (Array.isArray(raw.changes) ? raw.changes : []).slice(0, 16)) {
     if (!obj(v)) continue;
-    const e = evidence(v, messages), id = text(v.id, 100);
-    if (!e || !id) continue;
+    const e = evidence(v, messages); let id = text(v.id, 100);
+    if (!e || !id && v.op !== "learn") continue;
     const previous = world.facts.find(f => f.id === id);
     let event: Event;
-    if (v.op === "resolve") {
+    if (v.op === "learn") {
+      const fact = learnKnowledge(v, e, world, messages, person(v.subject), person(v.from), [...playerNames]);
+      if (!fact) continue;
+      id = fact.id; event = { op: "put", id, fact, evidence: e };
+    } else if (v.op === "resolve") {
       if (!previous || !["commitment", "situation"].includes(previous.kind) || previous.status === "done") continue;
       const source = sourceMessages.get(e.message)!;
       if (source.is_user && !/^\(OOC correction:/i.test(source.content)) continue;
@@ -76,6 +86,7 @@ export function readChanges(raw: unknown, before: World, messages: Message[], pl
     } else if (v.op === "put") {
       const kind = text(v.kind) as Kind, subject = person(v.subject), description = text(v.text);
       if (!kinds.has(kind) || !subject || !description) continue;
+      if (kind === "knowledge") continue; // New access uses learn; historical put records still replay.
       // Player agreements require evidence in the player's own words.
       if (kind === "commitment" && subject === "you" && !sourceMessages.get(e.message)?.is_user
         && (!previous || previous.text !== description || (previous.status === "done" && v.status !== "done"))) continue;
@@ -104,7 +115,7 @@ export function readChanges(raw: unknown, before: World, messages: Message[], pl
 
 function replayEvents(facts: Map<string, Fact>, events: Event[]) {
   for (const e of events) {
-    if (e.op === "put" && e.fact) facts.set(e.id, e.fact);
+    if (e.op === "put" && e.fact && knowledgeDependencyHolds(e.fact, facts.values())) facts.set(e.id, e.fact);
     if (e.op === "remove") facts.delete(e.id);
     if (e.op === "transfer") {
       const old = facts.get(e.id);
@@ -172,5 +183,7 @@ export function worldPacket(world: World, focus = ""): string {
     + (people.has(f.subject.toLocaleLowerCase()) ? 6 : 0) + (f.text.toLocaleLowerCase().match(/[\p{L}\p{N}_]{3,}/gu) ?? []).filter(w => words.has(w)).length * 4
     + ((`${f.id} ${f.subject}`.toLocaleLowerCase().match(/[\p{L}\p{N}_]{3,}/gu) ?? []).some(w => words.has(w)) ? 25 : 0);
   const selected = world.facts.map((fact, index) => ({ fact, index, score: score(fact) })).sort((a, b) => b.score - a.score || b.index - a.index).slice(0, 80).map(x => x.fact);
-  return JSON.stringify({ place: world.place || undefined, present: world.present, established: selected.filter(f => f.kind !== "motive").map(({ id, kind, subject, text, holder, status }) => ({ id, kind, subject, text, holder, status })), possibleMotives: selected.filter(f => f.kind === "motive").map(f => ({ id: f.id, subject: f.subject, text: f.text })), ...(world.mechanics ? { mechanics: mechanicalPacket(world.mechanics) } : {}) });
+  return JSON.stringify({ place: world.place || undefined, present: world.present, established: selected.filter(f => f.kind !== "motive").map(({ id, kind, subject, text, holder, status, access }) => ({ id, kind, subject, text, holder, status, ...(access ? { access } : {}) })), possibleMotives: selected.filter(f => f.kind === "motive").map(f => ({ id: f.id, subject: f.subject, text: f.text })),
+    ...(selected.some(f => f.access) ? { knowledgeBoundary: "Knowledge records identify actual learners and the proposition they learned. Other facts are narrator context, not shared information. Unrecorded access is unknown. Do not reveal secrets or let someone act on privileged information without an established way to learn it. Hearing an allegation does not make it true; old knowledge need not match a newer fact." } : {}),
+    ...(world.mechanics ? { mechanics: mechanicalPacket(world.mechanics) } : {}) });
 }

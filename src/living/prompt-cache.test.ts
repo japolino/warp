@@ -129,3 +129,19 @@ test("resilience and healed-injury changes append deltas without publishing reti
   expect(next.at(-1)!.content).not.toContain("closedConditions");
   expect(next.at(-1)!.content).not.toContain('"load":1');
 });
+
+test("a new listener appends their knowledge and its boundary without changing the earlier secret or prompt prefix", () => {
+  const first = msg("0", true, "I read the letter."), history = [first];
+  const initial = store(history, first, "Private letter");
+  const a = replayPrompt(prompt(history), history, "Director");
+  history.push(msg("1", false, "You tell Jo privately."), msg("2", true, "I greet Dex."));
+  const next = store(history, history.at(-1)!, "Private letter");
+  next.packet.knowledgeBoundary = "Only recorded learners have established access.";
+  next.packet.established.push({ id: "knowledge-jo", kind: "knowledge", subject: "Jo", text: "Private letter", access: { about: "jacket", version: "saved", via: "told", from: "you", fromKnowledge: "knowledge-you" } });
+  const b = replayPrompt(prompt(history), history, "Director");
+  expect(b.slice(0, a.length)).toEqual(a);
+  expect(b.at(-1)!.content).toContain('"knowledgeBoundary":"Only recorded learners');
+  expect(b.at(-1)!.content).toContain('"subject":"Jo"');
+  expect(b.at(-1)!.content).not.toContain('"subject":"Dex"');
+  expect(initial.packet.established).toHaveLength(1);
+});

@@ -12,7 +12,7 @@ export async function runPlaytest(model: (input: any) => Promise<any>) {
     const entry: any = { kind: category, pending: true }; calls.push(entry);
     try {
       const response = await model({ ...input, signal: input.signal ?? AbortSignal.timeout(30000), reasoning: { source: "off" } });
-      Object.assign(entry, { pending: false, ms: Math.round(performance.now() - start), usage: response.usage, ...(category === "attempt" ? { response: response.content } : {}) });
+      Object.assign(entry, { pending: false, ms: Math.round(performance.now() - start), usage: response.usage, ...(kind === "helper" ? { response: response.content } : {}) });
       return response;
     } catch (error) { Object.assign(entry, { pending: false, ms: Math.round(performance.now() - start), failed: true }); throw error; }
   };
@@ -21,6 +21,10 @@ export async function runPlaytest(model: (input: any) => Promise<any>) {
   try {
     await import("../src/backend.ts" + "?live-model-playtest");
     const cases: { name: string; card: string; greeting: string; turns: string[]; persona?: string }[] = [
+      { name: "mystery", card: "Mira, 30, runs a quiet café. Dex, 29, is a regular customer waiting outside. Mira and Dex have their own interests and neither knows the contents of a private letter until actually told or shown. They cannot hear private speech through the closed front door. There is no combat, supernatural power or numerical relationship system. Mira may choose whether to keep a confidence.",
+        greeting: "You privately read a signed letter naming Vale as the café's anonymous donor. Mira is beside you at the counter but has not seen the letter. Dex waits outside the closed front door and cannot hear you. Nobody has promised to keep a secret yet.",
+        turns: ['I quietly tell Mira what the letter says while Dex is still outside. "The donor is Vale. I wanted you to know."', 'I put the letter away, open the door and ask Dex, "How was your morning?"', '"Mira, would you keep what I told you between us for now?"'],
+      },
       { name: "exchange", card: "Jo, 32, is Sam's cooperative sparring partner. Jo wants to practise a short exchange, not seriously hurt Sam. Jo can use Jab, costing 2 Focus to deal 10 physical Health damage at touch range. These numeric resources are established rules of this practice scene. Neither participant has any other powers or equipment. Jo respects a request to stop.",
         persona: "Sam is an adult sparring partner with 40 of 40 Health. Sam can guard, move and make ordinary physical strikes, with no special powers.",
         greeting: "Jo faces you at touch distance on a practice mat, hands raised for a sparring exchange. Jo has 40 of 40 Health and 10 of 10 Focus. You have 40 of 40 Health. Jo says, 'I'll try a jab. Ready?' and starts to bring a fist forward toward you.",

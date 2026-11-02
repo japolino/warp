@@ -1,0 +1,194 @@
+{
+  "description": "Synthetic live-model samples. The first helper cited a player attempt and its grant was rejected; explicit narrator-citation instructions produced the second valid grant. These samples do not establish general accuracy.",
+  "cases": [
+    {
+      "report": "1793643406176",
+      "opening": {
+        "id": "live-mystery-g",
+        "is_user": false,
+        "content": "You privately read a signed letter naming Vale as the café's anonymous donor. Mira is beside you at the counter but has not seen the letter. Dex waits outside the closed front door and cannot hear you. Nobody has promised to keep a secret yet."
+      },
+      "player": {
+        "id": "live-mystery-u1",
+        "is_user": true,
+        "content": "I quietly tell Mira what the letter says while Dex is still outside. \"The donor is Vale. I wanted you to know.\""
+      },
+      "reply": {
+        "id": "live-mystery-r2",
+        "is_user": false,
+        "content": "Mira pauses with the cloth still against the counter, her gaze shifting from the folded paper in your hand to your face. \n\n\"Vale?\" she repeats softly, her voice staying low enough not to carry beyond the counter. Outside the closed glass door, Dex shifts his weight from one foot to the other, oblivious to the conversation inside. \n\nMira sets the cloth down, taking a quiet breath as she absorbs the news. \"I didn't expect that. After all this time wondering who kept the place afloat, I never would have guessed.\" She glances briefly toward the front door where Dex is waiting, then looks back at you with a thoughtful expression. \"Does the letter say why, or may I see it for myself? And... are you planning to keep this between us, or are we telling people?\""
+      },
+      "bootstrap": {
+        "scene": {
+          "place": "café counter",
+          "present": [
+            "Mira"
+          ],
+          "message": "live-mystery-g",
+          "quote": "Mira is beside you at the counter"
+        },
+        "changes": [
+          {
+            "op": "put",
+            "id": "signed_donor_letter",
+            "kind": "possession",
+            "subject": "you",
+            "holder": "you",
+            "text": "You have a signed letter naming Vale as the café's anonymous donor.",
+            "message": "live-mystery-g",
+            "quote": "You privately read a signed letter naming Vale as the café's anonymous donor."
+          },
+          {
+            "op": "put",
+            "id": "vale_is_anonymous_donor",
+            "kind": "fact",
+            "subject": "Vale",
+            "text": "A signed letter names Vale as the café's anonymous donor.",
+            "message": "live-mystery-g",
+            "quote": "You privately read a signed letter naming Vale as the café's anonymous donor."
+          },
+          {
+            "op": "learn",
+            "about": "vale_is_anonymous_donor",
+            "subject": "you",
+            "via": "witnessed",
+            "message": "live-mystery-g",
+            "quote": "You privately read a signed letter naming Vale as the café's anonymous donor."
+          },
+          {
+            "op": "put",
+            "id": "dex_waiting_outside",
+            "kind": "fact",
+            "subject": "Dex",
+            "text": "Dex waits outside the closed front door and cannot hear inside.",
+            "message": "live-mystery-g",
+            "quote": "Dex waits outside the closed front door and cannot hear you."
+          }
+        ]
+      },
+      "extraction": {
+        "scene": {
+          "place": "café counter",
+          "present": [
+            "Mira"
+          ],
+          "message": "live-mystery-r2",
+          "quote": "Mira pauses with the cloth still against the counter, her gaze shifting from the folded paper in your hand to your face."
+        },
+        "changes": [
+          {
+            "op": "learn",
+            "about": "vale_is_anonymous_donor",
+            "subject": "Mira",
+            "via": "told",
+            "from": "you",
+            "message": "live-mystery-u1",
+            "quote": "I quietly tell Mira what the letter says while Dex is still outside. \"The donor is Vale. I wanted you to know.\""
+          },
+          {
+            "op": "put",
+            "id": "mira_asks_to_see_letter",
+            "kind": "situation",
+            "subject": "Mira",
+            "text": "Mira asks to see the donor letter and whether you plan to keep Vale's identity between the two of you.",
+            "status": "open",
+            "message": "live-mystery-r2",
+            "quote": "\"Does the letter say why, or may I see it for myself? And... are you planning to keep this between us, or are we telling people?\""
+          }
+        ]
+      },
+      "expectedLearners": ["you"]
+    },
+    {
+      "report": "1793643494840",
+      "opening": {
+        "id": "live-mystery-g",
+        "is_user": false,
+        "content": "You privately read a signed letter naming Vale as the café's anonymous donor. Mira is beside you at the counter but has not seen the letter. Dex waits outside the closed front door and cannot hear you. Nobody has promised to keep a secret yet."
+      },
+      "player": {
+        "id": "live-mystery-u1",
+        "is_user": true,
+        "content": "I quietly tell Mira what the letter says while Dex is still outside. \"The donor is Vale. I wanted you to know.\""
+      },
+      "reply": {
+        "id": "live-mystery-r2",
+        "is_user": false,
+        "content": "Mira stops wiping the counter, her cloth stilling against the wood. Her eyes dart briefly toward the letter in your hand, then shift toward the glass of the closed front door where Dex stands waiting on the sidewalk, completely out of earshot.\n\n\"Vale?\" she repeats, keeping her voice just as low as yours. A crease forms between her brows as she takes in the news, relief mingling with plain surprise. Running this place has clearly left her with questions about where the help came from, and having a name changes things for her. \n\nAfter a brief pause, she looks back up at you, her posture loosening slightly. \"Thank you for telling me, Sam. Really.\" She glances toward the door again before meeting your eyes. \"Does the letter actually have Vale's signature on it? And... are you planning to keep this between us for now, or were you going to tell Dex when he comes in?\""
+      },
+      "bootstrap": {
+        "scene": {
+          "place": "café counter",
+          "present": [
+            "Mira"
+          ],
+          "message": "live-mystery-g",
+          "quote": "Mira is beside you at the counter"
+        },
+        "changes": [
+          {
+            "op": "put",
+            "id": "signed_letter",
+            "kind": "possession",
+            "subject": "you",
+            "holder": "you",
+            "text": "a signed letter naming Vale as the café's anonymous donor",
+            "message": "live-mystery-g",
+            "quote": "You privately read a signed letter naming Vale as the café's anonymous donor."
+          },
+          {
+            "op": "put",
+            "id": "vale_is_cafe_donor",
+            "kind": "fact",
+            "subject": "Vale",
+            "text": "A signed letter names Vale as the café's anonymous donor.",
+            "message": "live-mystery-g",
+            "quote": "You privately read a signed letter naming Vale as the café's anonymous donor."
+          },
+          {
+            "op": "learn",
+            "about": "vale_is_cafe_donor",
+            "subject": "you",
+            "via": "discovered",
+            "message": "live-mystery-g",
+            "quote": "You privately read a signed letter naming Vale as the café's anonymous donor."
+          },
+          {
+            "op": "put",
+            "id": "dex_waiting_outside",
+            "kind": "fact",
+            "subject": "Dex",
+            "text": "Dex is waiting outside the closed front door and cannot hear inside.",
+            "message": "live-mystery-g",
+            "quote": "Dex waits outside the closed front door and cannot hear you."
+          }
+        ]
+      },
+      "extraction": {
+        "scene": {
+          "place": "café counter",
+          "present": [
+            "Mira"
+          ],
+          "message": "live-mystery-r2",
+          "quote": "Mira stops wiping the counter, her cloth stilling against the wood."
+        },
+        "changes": [
+          {
+            "op": "learn",
+            "about": "vale_is_cafe_donor",
+            "subject": "Mira",
+            "via": "told",
+            "from": "you",
+            "message": "live-mystery-r2",
+            "quote": "Mira stops wiping the counter, her cloth stilling against the wood. Her eyes dart briefly toward the letter in your hand, then shift toward the glass of the closed front door where Dex stands waiting on the sidewalk, completely out of earshot.\n\n\"Vale?\" she repeats, keeping her voice just as low as yours."
+          }
+        ]
+      },
+      "expectedLearners": [
+        "you",
+        "Mira"
+      ]
+    }
+  ]
+}
