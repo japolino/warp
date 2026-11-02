@@ -1,6 +1,6 @@
 import type { SpindleFrontendContext } from "lumiverse-spindle-types";
 import type { World, Decision } from "./world.js";
-import { attemptBands } from "./check-bands.js";
+import { createDiceReveal, DICE_STYLE, percentileDice } from "./dice-reveal.js";
 import { esc } from "../frontend/html.js";
 import type { WarpStateV1 } from "../frontend/public-events.js";
 
@@ -8,17 +8,11 @@ interface View { type: "living"; chatId: string; signature: string; revision: nu
 function checkMarkup(view: View): string {
   const d = view.decision;
   if (!d) return `<div class="warp-check-none">${view.busy ? "Updating Warp's record for this reply…" : "No recorded Warp roll for this reply."}</div>`;
-  const [clean, mixed] = attemptBands(d.tier);
   const label = { clean: "Clean success", mixed: "Success with a cost", setback: "Setback" }[d.result];
-  const tier = { favorable: "Favorable", uncertain: "Even footing", outmatched: "Outmatched" }[d.tier];
   const hasRoll = Number.isInteger(d.roll) && d.roll! >= 1 && d.roll! <= 100;
   return `<section class="warp-check" aria-label="Warp dice check">
-    <div class="warp-check-die" aria-label="${hasRoll ? `Rolled ${d.roll} on a d100` : "Roll value not saved"}">${hasRoll ? d.roll : "?"}<small>d100</small></div>
-    <div class="warp-check-copy"><strong>Warp check · ${label}</strong><p>${esc(d.intent)}</p>
-    <details data-check-details><summary>${tier} · Why this result?</summary>
-    <p>${d.reasons.map(esc).join(" · ")}</p><p>At risk: ${esc(d.stakes)}</p>
-    <p>1–${clean}: clean success · ${clean + 1}–${mixed}: success with a cost · ${mixed + 1}–100: setback. Lower rolls are better.</p>
-    <p>${hasRoll ? "Warp rolled this outcome and sent it to the narrator. The model still writes what happens." : "This older check saved its outcome without the die value."} Regenerating the reply keeps the same check.</p></details></div></section>`;
+    <div class="warp-check-die" role="img" aria-label="${hasRoll ? `Rolled ${d.roll} on a d100` : "Roll value not saved"}">${percentileDice(d.roll)}</div>
+    <div class="warp-check-copy"><strong>${label}</strong><p>${esc(d.intent)}</p></div></section>`;
 }
 const STYLE = `
 .warp-scene{font:inherit;font-size:13px;line-height:1.5;color:inherit;margin:12px 0 18px;padding:12px 18px;box-sizing:border-box;border-top:1px solid color-mix(in srgb,currentColor 14%,transparent);opacity:.9;max-width:100%;overflow-wrap:anywhere}
@@ -29,7 +23,7 @@ const STYLE = `
 .warp-scene-ideas{display:grid;gap:5px;margin-top:9px}.warp-scene-idea{border:1px solid color-mix(in srgb,currentColor 18%,transparent)!important;padding:9px!important}.warp-scene-fact{padding:7px 0;border-bottom:1px solid color-mix(in srgb,currentColor 8%,transparent)}.warp-scene-source{display:block;font-size:12px;opacity:.6}.warp-scene-error{margin-top:8px;opacity:.75}
 .warp-scene input[type=search]{box-sizing:border-box;width:100%;font:inherit;color:inherit;background:transparent;border:1px solid color-mix(in srgb,currentColor 25%,transparent);border-radius:5px;padding:6px;margin:8px 0}
 .warp-scene select{max-width:100%;font:inherit;color:inherit;background:transparent;border:1px solid color-mix(in srgb,currentColor 25%,transparent);border-radius:5px;padding:5px}.warp-scene-settings{margin:9px 0}.warp-scene-settings p{font-size:12px;opacity:.7}
-.warp-check{display:flex;align-items:center;gap:10px;margin:10px 0;padding:10px 12px;border:1px solid color-mix(in srgb,currentColor 20%,transparent);border-radius:7px}.warp-check-die{display:grid;place-content:center;flex-shrink:0;min-width:44px;min-height:44px;border:1px solid currentColor;border-radius:8px;font-variant-numeric:tabular-nums;text-align:center;font-size:20px;font-weight:600}.warp-check-die small{font-size:10px;font-weight:400;opacity:.7}.warp-check-copy{min-width:0}.warp-check-copy p{margin:2px 0}.warp-check-copy details{font-size:12px}.warp-check-copy summary{opacity:1}.warp-check-none{font-size:12px;opacity:.65;margin-top:8px}
+${DICE_STYLE}
 @media(max-width:540px){.warp-scene-tools{margin-left:0;width:100%}.warp-scene{font-size:12px}}
 `;
 
@@ -40,7 +34,9 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
   let memoryQuery = "";
   let settingsOpen = false, helperConnection = "", decisionConnection = "", decisionConnections: { id: string; name: string }[] = [], connections: { id: string; name: string }[] = [];
   let injected: Element | null = null;
-  const remove = () => { if (injected) ctx.dom.uninject(injected); injected = null; root = null; };
+  const diceReveal = createDiceReveal();
+  let renderedCheckKey = "";
+  const remove = () => { diceReveal.destroy(); if (injected) ctx.dom.uninject(injected); injected = null; root = null; renderedCheckKey = ""; };
   const unstyle = ctx.dom.addStyle(STYLE);
   const active = () => ctx.getActiveChat().chatId ?? null;
   const send = (action: string, value?: string) => { if (view) ctx.sendToBackend({ type: "living_action", chatId: view.chatId, action, text: value }); };
@@ -100,13 +96,16 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
     if (card === row) { if (injected!.parentElement !== row) row.append(injected!); }
     else if (card.nextElementSibling !== injected) card.after(injected!);
     const detailsOpen = root.querySelector<HTMLDetailsElement>("[data-memory]")?.open;
-    const checkOpen = root.querySelector<HTMLDetailsElement>("[data-check-details]")?.open;
+    const checkKey = JSON.stringify([view.chatId, view.anchor, view.decision]);
+    const previousCheck = renderedCheckKey === checkKey ? root.querySelector(".warp-check") : null;
     const focused = root.contains(document.activeElement) && document.activeElement?.matches("textarea,[data-memory-query]");
     const selector = document.activeElement?.matches("[data-memory-query]") ? "[data-memory-query]" : "textarea";
     const selection = focused ? [(document.activeElement as HTMLTextAreaElement).selectionStart ?? 0, (document.activeElement as HTMLTextAreaElement).selectionEnd ?? 0] : null;
     root.innerHTML = markup();
+    if (previousCheck) root.querySelector(".warp-check")?.replaceWith(previousCheck);
+    renderedCheckKey = checkKey;
+    diceReveal.observe(root.querySelector<HTMLElement>(".warp-check"), checkKey);
     if (detailsOpen) root.querySelector("[data-memory]")?.setAttribute("open", "");
-    if (checkOpen) root.querySelector("[data-check-details]")?.setAttribute("open", "");
     if (selection) { const input = root.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector); input?.focus(); input?.setSelectionRange(selection[0], selection[1]); }
   }
   const poll = setInterval(() => {

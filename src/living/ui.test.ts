@@ -30,18 +30,18 @@ afterEach(() => {
 });
 const click = (selector: string) => (window.document.querySelector(selector) as unknown as HTMLButtonElement).click();
 
-test("dice receipts are visible outside memory, explain odds, and survive repaint", () => {
+test("dice receipts stay compact and keep the same dice DOM on repaint", () => {
   ui.accept(view({ decision: { tier: "uncertain", result: "mixed", roll: 52, intent: 'Vault <the wall>', stakes: "A lost opportunity", reasons: ["The wall is slippery"] } }));
   const check = window.document.querySelector(".warp-check")!;
   expect(check.closest("[data-memory]")).toBeNull();
-  expect(check.querySelector(".warp-check-die")?.textContent).toContain("52");
+  expect(check.querySelector(".warp-check-die")?.getAttribute("aria-label")).toContain("52");
+  expect(check.querySelectorAll("svg")).toHaveLength(2);
   expect(check.textContent).toContain("Success with a cost");
-  expect(check.textContent).toContain("31–75");
-  expect(check.textContent).toContain("The wall is slippery");
+  expect(check.textContent).not.toContain("The wall is slippery");
+  expect(check.querySelector("details")).toBeNull();
   expect(check.querySelector("the")).toBeNull();
-  check.querySelector("details")!.open = true;
   click('[data-living="settings"]');
-  expect(window.document.querySelector("[data-check-details]")?.hasAttribute("open")).toBe(true);
+  expect(window.document.querySelector(".warp-check")).toBe(check);
   expect(window.document.querySelector("[data-memory]")?.hasAttribute("open")).toBe(false);
   ui.accept(view({ revision: 2 }));
   expect(window.document.querySelector(".warp-check")).toBeNull();
@@ -50,7 +50,7 @@ test("dice receipts are visible outside memory, explain odds, and survive repain
 
 test("old checks show their outcome without inventing a die value", () => {
   ui.accept(view({ decision: { tier: "outmatched", result: "setback", intent: "Escape", stakes: "Exposure", reasons: ["Guards surround you"] } }));
-  expect(window.document.querySelector(".warp-check")?.textContent).toContain("older check");
+  expect(window.document.querySelector(".warp-check-die")?.getAttribute("aria-label")).toContain("not saved");
   expect(window.document.querySelector(".warp-check-die")?.textContent).toContain("?");
 });
 

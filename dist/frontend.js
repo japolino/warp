@@ -10,11 +10,6 @@ var __esm = (fn, res, err) => () => {
   return res;
 };
 
-// src/living/check-bands.ts
-function attemptBands(tier) {
-  return tier === "favorable" ? [60, 90] : tier === "outmatched" ? [10, 45] : [30, 75];
-}
-
 // src/frontend/html.ts
 function esc(v) {
   return String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -2500,23 +2495,110 @@ var init_legacy = __esm(() => {
   ICON = logoSvg({ size: 20 });
 });
 
+// src/living/dice-reveal.ts
+var seen = new Set;
+var DICE_REVEAL_MS = 1250;
+function percentileDice(roll) {
+  const known = Number.isInteger(roll) && roll >= 1 && roll <= 100;
+  const n = known ? roll % 100 : undefined;
+  const values = n === undefined ? ["?", "?"] : [String(Math.floor(n / 10) * 10).padStart(2, "0"), String(n % 10)];
+  return values.map((value, i) => `<span class="warp-percentile-die warp-percentile-${i}" aria-hidden="true">
+    <svg viewBox="0 0 76 84" focusable="false"><path class="warp-die-body" d="M38 3 69 23 73 54 38 80 3 54 7 23Z"/>
+    <path class="warp-die-facet-a" d="M38 3 38 23 7 23Z M3 54 21 59 38 80Z"/>
+    <path class="warp-die-facet-b" d="M38 3 69 23 55 59 38 80 38 23Z"/>
+    <path class="warp-die-facet-c" d="M38 23 55 59 21 59Z"/>
+    <path class="warp-die-edges" d="M38 3 69 23 73 54 38 80 3 54 7 23Z M7 23 38 23 69 23 M38 3 38 23 21 59 3 54 M38 23 55 59 73 54 M21 59 38 80 55 59"/>
+    </svg><span class="warp-die-number" data-die-final="${value}">${value}</span></span>`).join("");
+}
+function createDiceReveal() {
+  let target = null, observer = null;
+  let frame = 0;
+  const stop = () => {
+    observer?.disconnect();
+    observer = null;
+    if (frame)
+      window.cancelAnimationFrame(frame);
+    frame = 0;
+    if (target) {
+      target.classList.remove("warp-dice-rolling");
+      for (const number of target.querySelectorAll("[data-die-final]"))
+        number.textContent = number.dataset.dieFinal;
+    }
+  };
+  return {
+    observe(next, key) {
+      if (next === target)
+        return;
+      stop();
+      target = next;
+      if (!next || seen.has(key) || !next.querySelector('[data-die-final]:not([data-die-final="?"])'))
+        return;
+      if (!window.IntersectionObserver || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches)
+        return;
+      observer = new window.IntersectionObserver((entries) => {
+        if (target !== next)
+          return;
+        if (!entries.some((e) => e.target === next && e.isIntersecting && e.intersectionRatio >= 0.4))
+          return;
+        observer?.disconnect();
+        observer = null;
+        seen.add(key);
+        if (seen.size > 2000)
+          seen.delete(seen.values().next().value);
+        next.classList.add("warp-dice-rolling");
+        const numbers = [...next.querySelectorAll("[data-die-final]")];
+        let start, lastTick = -1;
+        const tick = (now) => {
+          start ??= now;
+          const elapsed = now - start, step = Math.floor(elapsed / 70);
+          if (elapsed >= DICE_REVEAL_MS) {
+            stop();
+            return;
+          }
+          if (step !== lastTick) {
+            lastTick = step;
+            numbers.forEach((node, i) => {
+              const digit = (step * 7 + i * 3) % 10;
+              node.textContent = i ? String(digit) : String(digit * 10).padStart(2, "0");
+            });
+          }
+          frame = window.requestAnimationFrame(tick);
+        };
+        frame = window.requestAnimationFrame(tick);
+      }, { threshold: 0.4 });
+      observer.observe(next);
+    },
+    destroy() {
+      stop();
+      target = null;
+    }
+  };
+}
+var DICE_STYLE = `
+.warp-check{--die-edge:#c8a96b;--die-ink:#f6e5b8;display:flex;align-items:center;gap:12px;margin:10px 0;padding:3px 0;perspective:500px}
+.warp-check-die{display:flex;align-items:center;flex-shrink:0;width:106px;height:74px;perspective:350px}
+.warp-percentile-die{position:relative;display:block;width:58px;height:66px;flex-shrink:0;filter:drop-shadow(0 5px 4px #0006);transform:rotate(-9deg);transform-origin:50% 65%}
+.warp-percentile-1{margin-left:-9px;transform:translateY(5px) rotate(12deg);--die-edge:#a8becf;--die-ink:#e7f2fa}
+.warp-percentile-die svg{width:100%;height:100%;overflow:visible}.warp-die-body{fill:#32263f}.warp-die-facet-a{fill:#63516d}.warp-die-facet-b{fill:#211b30}.warp-die-facet-c{fill:#493653}.warp-percentile-1 .warp-die-body{fill:#263644}.warp-percentile-1 .warp-die-facet-a{fill:#516879}.warp-percentile-1 .warp-die-facet-b{fill:#172532}.warp-percentile-1 .warp-die-facet-c{fill:#354c60}
+.warp-die-edges{fill:none;stroke:var(--die-edge);stroke-width:1.1;stroke-linejoin:round}.warp-die-number{position:absolute;inset:0;display:grid;place-content:center;padding-top:5px;color:var(--die-ink);font:600 20px Georgia,serif;font-variant-numeric:tabular-nums;text-shadow:0 1px 2px #000}
+.warp-check-copy{min-width:0}.warp-check-copy strong{font-size:13px}.warp-check-copy p{margin:2px 0;opacity:.7}.warp-check-none{font-size:11px;opacity:.5;margin-top:7px}
+.warp-dice-rolling .warp-percentile-0{animation:warp-die-tumble 1.25s both}.warp-dice-rolling .warp-percentile-1{animation:warp-die-tumble-second 1.25s both}
+@keyframes warp-die-tumble{0%{transform:translate(-12px,-16px) rotateX(35deg) rotateY(0deg) rotateZ(-85deg)}25%{transform:translate(4px,-22px) rotateX(200deg) rotateY(155deg) rotateZ(80deg)}55%{transform:translate(-3px,2px) rotateX(360deg) rotateY(330deg) rotateZ(190deg)}75%{transform:translate(0,-8px) rotateX(375deg) rotateY(365deg) rotateZ(330deg)}100%{transform:rotateX(360deg) rotateY(360deg) rotateZ(351deg)}}
+@keyframes warp-die-tumble-second{0%{transform:translate(15px,-10px) rotateX(-30deg) rotateY(30deg) rotateZ(65deg)}30%{transform:translate(-3px,-18px) rotateX(-180deg) rotateY(-160deg) rotateZ(-90deg)}60%{transform:translate(2px,7px) rotateX(-350deg) rotateY(-320deg) rotateZ(-220deg)}80%{transform:translate(0,-3px) rotateX(-375deg) rotateY(-365deg) rotateZ(-360deg)}100%{transform:translateY(5px) rotateX(-360deg) rotateY(-360deg) rotateZ(-348deg)}}
+@media(prefers-reduced-motion:reduce){.warp-dice-rolling .warp-percentile-die{animation:none!important}}
+`;
+
 // src/living/ui.ts
 init_html();
 function checkMarkup(view) {
   const d = view.decision;
   if (!d)
     return `<div class="warp-check-none">${view.busy ? "Updating Warp's record for this reply…" : "No recorded Warp roll for this reply."}</div>`;
-  const [clean, mixed] = attemptBands(d.tier);
   const label = { clean: "Clean success", mixed: "Success with a cost", setback: "Setback" }[d.result];
-  const tier = { favorable: "Favorable", uncertain: "Even footing", outmatched: "Outmatched" }[d.tier];
   const hasRoll = Number.isInteger(d.roll) && d.roll >= 1 && d.roll <= 100;
   return `<section class="warp-check" aria-label="Warp dice check">
-    <div class="warp-check-die" aria-label="${hasRoll ? `Rolled ${d.roll} on a d100` : "Roll value not saved"}">${hasRoll ? d.roll : "?"}<small>d100</small></div>
-    <div class="warp-check-copy"><strong>Warp check · ${label}</strong><p>${esc(d.intent)}</p>
-    <details data-check-details><summary>${tier} · Why this result?</summary>
-    <p>${d.reasons.map(esc).join(" · ")}</p><p>At risk: ${esc(d.stakes)}</p>
-    <p>1–${clean}: clean success · ${clean + 1}–${mixed}: success with a cost · ${mixed + 1}–100: setback. Lower rolls are better.</p>
-    <p>${hasRoll ? "Warp rolled this outcome and sent it to the narrator. The model still writes what happens." : "This older check saved its outcome without the die value."} Regenerating the reply keeps the same check.</p></details></div></section>`;
+    <div class="warp-check-die" role="img" aria-label="${hasRoll ? `Rolled ${d.roll} on a d100` : "Roll value not saved"}">${percentileDice(d.roll)}</div>
+    <div class="warp-check-copy"><strong>${label}</strong><p>${esc(d.intent)}</p></div></section>`;
 }
 var STYLE = `
 .warp-scene{font:inherit;font-size:13px;line-height:1.5;color:inherit;margin:12px 0 18px;padding:12px 18px;box-sizing:border-box;border-top:1px solid color-mix(in srgb,currentColor 14%,transparent);opacity:.9;max-width:100%;overflow-wrap:anywhere}
@@ -2527,7 +2609,7 @@ var STYLE = `
 .warp-scene-ideas{display:grid;gap:5px;margin-top:9px}.warp-scene-idea{border:1px solid color-mix(in srgb,currentColor 18%,transparent)!important;padding:9px!important}.warp-scene-fact{padding:7px 0;border-bottom:1px solid color-mix(in srgb,currentColor 8%,transparent)}.warp-scene-source{display:block;font-size:12px;opacity:.6}.warp-scene-error{margin-top:8px;opacity:.75}
 .warp-scene input[type=search]{box-sizing:border-box;width:100%;font:inherit;color:inherit;background:transparent;border:1px solid color-mix(in srgb,currentColor 25%,transparent);border-radius:5px;padding:6px;margin:8px 0}
 .warp-scene select{max-width:100%;font:inherit;color:inherit;background:transparent;border:1px solid color-mix(in srgb,currentColor 25%,transparent);border-radius:5px;padding:5px}.warp-scene-settings{margin:9px 0}.warp-scene-settings p{font-size:12px;opacity:.7}
-.warp-check{display:flex;align-items:center;gap:10px;margin:10px 0;padding:10px 12px;border:1px solid color-mix(in srgb,currentColor 20%,transparent);border-radius:7px}.warp-check-die{display:grid;place-content:center;flex-shrink:0;min-width:44px;min-height:44px;border:1px solid currentColor;border-radius:8px;font-variant-numeric:tabular-nums;text-align:center;font-size:20px;font-weight:600}.warp-check-die small{font-size:10px;font-weight:400;opacity:.7}.warp-check-copy{min-width:0}.warp-check-copy p{margin:2px 0}.warp-check-copy details{font-size:12px}.warp-check-copy summary{opacity:1}.warp-check-none{font-size:12px;opacity:.65;margin-top:8px}
+${DICE_STYLE}
 @media(max-width:540px){.warp-scene-tools{margin-left:0;width:100%}.warp-scene{font-size:12px}}
 `;
 function connectLiving(ctx) {
@@ -2536,11 +2618,15 @@ function connectLiving(ctx) {
   let memoryQuery = "";
   let settingsOpen = false, helperConnection = "", decisionConnection = "", decisionConnections = [], connections = [];
   let injected = null;
+  const diceReveal = createDiceReveal();
+  let renderedCheckKey = "";
   const remove = () => {
+    diceReveal.destroy();
     if (injected)
       ctx.dom.uninject(injected);
     injected = null;
     root = null;
+    renderedCheckKey = "";
   };
   const unstyle = ctx.dom.addStyle(STYLE);
   const active = () => ctx.getActiveChat().chatId ?? null;
@@ -2664,15 +2750,18 @@ function connectLiving(ctx) {
     } else if (card.nextElementSibling !== injected)
       card.after(injected);
     const detailsOpen = root.querySelector("[data-memory]")?.open;
-    const checkOpen = root.querySelector("[data-check-details]")?.open;
+    const checkKey = JSON.stringify([view.chatId, view.anchor, view.decision]);
+    const previousCheck = renderedCheckKey === checkKey ? root.querySelector(".warp-check") : null;
     const focused = root.contains(document.activeElement) && document.activeElement?.matches("textarea,[data-memory-query]");
     const selector = document.activeElement?.matches("[data-memory-query]") ? "[data-memory-query]" : "textarea";
     const selection = focused ? [document.activeElement.selectionStart ?? 0, document.activeElement.selectionEnd ?? 0] : null;
     root.innerHTML = markup();
+    if (previousCheck)
+      root.querySelector(".warp-check")?.replaceWith(previousCheck);
+    renderedCheckKey = checkKey;
+    diceReveal.observe(root.querySelector(".warp-check"), checkKey);
     if (detailsOpen)
       root.querySelector("[data-memory]")?.setAttribute("open", "");
-    if (checkOpen)
-      root.querySelector("[data-check-details]")?.setAttribute("open", "");
     if (selection) {
       const input = root.querySelector(selector);
       input?.focus();
