@@ -23,3 +23,10 @@ for (const fixture of resolver4.cases) test(`${fixture.name} replays the install
   expect(fixture.receipt.engine).toBe(4);
   expect(commitMechanical(fixture.before, fixture.receipt)).toEqual(fixture.after);
 });
+
+const resolver5 = await Bun.file(new URL("./fixtures/resolver5-receipts.json", import.meta.url)).json() as Pick<typeof fixtures, "generatedFrom" | "cases">;
+for (const fixture of resolver5.cases) test(`${fixture.name} replays before optional local-routing annotations existed`, () => {
+  expect(resolver5.generatedFrom).toBe("61a8f49329676d9b94743a94836db614507ece26");
+  expect(fixture.receipt.engine).toBe(5);
+  expect(commitMechanical(fixture.before, fixture.receipt)).toEqual(fixture.after);
+});

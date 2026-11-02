@@ -13,6 +13,12 @@ const users = readonly.query('SELECT id FROM "user"').all() as { id: string }[];
 const owner = installed?.installed_by_user_id || (users.length === 1 ? users[0].id : null);
 readonly.close();
 if (!owner) throw new Error("Cannot identify the existing Warp account unambiguously. No model call was made.");
+const settingsFile = Bun.file(join(checkout, "data/users", owner, "extensions/warp/settings.json"));
+const saved = await settingsFile.exists() ? await settingsFile.json() : {};
+const settings = {
+  helperConnectionId: typeof saved.helperConnectionId === "string" ? saved.helperConnectionId : "",
+  decisionConnectionId: typeof saved.decisionConnectionId === "string" ? saved.decisionConnectionId : "",
+};
 const load = (path: string) => import(pathToFileURL(join(checkout, path)).href);
 const database = await load("src/db/connection.ts");
 database.initDatabase(join(checkout, "data/lumiverse.db"));
@@ -21,7 +27,13 @@ try {
   const id = connections.resolveActingConnectionId(owner);
   const profile = id ? connections.getConnection(owner, id) : null;
   if (!profile) throw new Error("The existing Warp account has no active model connection. No model call was made.");
-  console.log(JSON.stringify({ accountIdentified: true, existingConnection: true, provider: profile.provider, model: profile.model, mode: inspect ? "inspect" : "live" }));
+  const decisions = await load("src/services/decision-connections.service.ts");
+  const helper = settings.helperConnectionId ? connections.getConnection(owner, settings.helperConnectionId) : profile;
+  const decision = settings.decisionConnectionId ? decisions.getConnection(owner, settings.decisionConnectionId) : null;
+  if (settings.helperConnectionId && !helper || settings.decisionConnectionId && !decision) throw new Error("A selected Warp profile is missing. No model call was made.");
+  const describe = (p: any) => p ? { provider: p.provider, model: p.model } : null;
+  const profiles = { narrator: describe(profile), helper: describe(helper), decision: describe(decision) };
+  console.log(JSON.stringify({ accountIdentified: true, existingConnection: true, profiles, mode: inspect ? "inspect" : "live" }));
   if (!inspect) {
     const config = await load("src/env.ts");
     if (resolve(config.env.dataDir) !== join(checkout, "data") || !await Bun.file(join(checkout, "data/lumiverse.identity")).exists()) throw new Error("The existing installation identity was not found at the expected location. No model call was made.");
@@ -29,7 +41,10 @@ try {
     const { quietGenerate } = await load("src/services/generation/direct-generation.ts");
     if (playtest) {
       const { runPlaytest } = await import("./live-playtest.js");
-      await runPlaytest(async (input: any) => quietGenerate(owner, { ...input, connection_id: id }));
+      const { evaluateDecision } = await load("src/services/decisions.service.ts");
+      await runPlaytest(async (input: any) => quietGenerate(owner, { ...input, connection_id: input.connection_id || id }), {
+        settings, profiles, decision: (input: any, options: any) => evaluateDecision(owner, { ...input, userId: owner }, options?.signal),
+      });
     } else {
     const result = await quietGenerate(owner, { connection_id: id, messages: [
       { role: "system", content: "This is a synthetic integration test. Reply with JSON only, without commentary: {\"ready\":true}." },

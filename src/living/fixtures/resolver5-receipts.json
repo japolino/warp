@@ -1,0 +1,488 @@
+{
+  "generatedFrom": "61a8f49329676d9b94743a94836db614507ece26",
+  "cases": [
+    {
+      "name": "resolver5 conserved reward without routing hints",
+      "before": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "res-jo-coins",
+            "owner": "Jo",
+            "name": "Coins",
+            "current": 20,
+            "unit": "Coins",
+            "role": "money",
+            "source": {
+              "message": "live-agreement-g",
+              "quote": "Jo has 20 Coins.",
+              "sourceRevision": "616e6c:eb535d0a"
+            }
+          },
+          {
+            "id": "res-you-coins",
+            "owner": "you",
+            "name": "Coins",
+            "current": 3,
+            "unit": "Coins",
+            "role": "money",
+            "source": {
+              "message": "live-agreement-g",
+              "quote": "You have 3 Coins.",
+              "sourceRevision": "616e6c:eb535d0a"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [],
+        "applied": [],
+        "agreements": [
+          {
+            "id": "agreement-4f7e7c98:ef5bdba8",
+            "owner": "you",
+            "name": "Cover counter and clean cups for Jo",
+            "source": {
+              "message": "live-agreement-u1",
+              "quote": "\"I accept. I will cover the counter during your call and clean the cups afterward.\"",
+              "sourceRevision": "43b71f6c:356972b8"
+            },
+            "offer": {
+              "message": "live-agreement-g",
+              "quote": "Jo says, 'If you cover the counter while I make this brief supplier call and clean the cups afterward, I will give you 10 Coins. Interested?'",
+              "sourceRevision": "616e6c:eb535d0a"
+            },
+            "from": "Jo",
+            "requirements": [
+              {
+                "id": "requirement-b873e2fa:17149b78",
+                "text": "cover the counter while I make this brief supplier call",
+                "source": {
+                  "message": "live-agreement-g",
+                  "quote": "cover the counter while I make this brief supplier call",
+                  "sourceRevision": "616e6c:eb535d0a"
+                },
+                "done": {
+                  "message": "live-agreement-r2",
+                  "quote": "\"All sorted with the supplier. That's the counter covered—just the cups left to clean, and then those 10 Coins are yours.\"",
+                  "sourceRevision": "8d0ca0c7:7ff383b7"
+                }
+              },
+              {
+                "id": "requirement-690cfcf7:3f284cf7",
+                "text": "clean the cups afterward",
+                "source": {
+                  "message": "live-agreement-g",
+                  "quote": "clean the cups afterward",
+                  "sourceRevision": "616e6c:eb535d0a"
+                },
+                "done": {
+                  "message": "live-agreement-r4",
+                  "quote": "Jo glances over at the drying rack, taking in the row of spotless ceramic mugs and saucers.",
+                  "sourceRevision": "5acde9d4:627fd9d2"
+                }
+              }
+            ],
+            "rewards": [
+              {
+                "id": "reward-cc35500a:d7b1a0e8",
+                "kind": "resource",
+                "asset": "Coins",
+                "amount": 10,
+                "source": {
+                  "message": "live-agreement-g",
+                  "quote": "I will give you 10 Coins",
+                  "sourceRevision": "616e6c:eb535d0a"
+                },
+                "ready": {
+                  "allowed": true,
+                  "source": {
+                    "message": "live-agreement-r4",
+                    "quote": "Stepping over to the register, Jo counts out 10 Coins from the 20 Coins on hand and sets the stack neatly on the counter",
+                    "sourceRevision": "5acde9d4:627fd9d2"
+                  }
+                }
+              }
+            ],
+            "unsupported": []
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "live-agreement-r4",
+              "quote": "Stepping over to the register, Jo counts out 10 Coins from the 20 Coins on hand and sets the stack neatly on the counter",
+              "sourceRevision": "5acde9d4:627fd9d2"
+            }
+          }
+        ]
+      },
+      "receipt": {
+        "version": 1,
+        "engine": 5,
+        "id": "original-resolver5-payment",
+        "input": "29b55c7:b7514e07",
+        "base": "ca28b63:3927cc29",
+        "actor": "you",
+        "operations": [
+          {
+            "kind": "claim",
+            "agreement": "agreement-4f7e7c98:ef5bdba8",
+            "reward": "reward-cc35500a:d7b1a0e8"
+          }
+        ],
+        "responses": [],
+        "changes": [
+          {
+            "kind": "resource",
+            "id": "res-jo-coins",
+            "before": {
+              "id": "res-jo-coins",
+              "owner": "Jo",
+              "name": "Coins",
+              "current": 20,
+              "unit": "Coins",
+              "role": "money",
+              "source": {
+                "message": "live-agreement-g",
+                "quote": "Jo has 20 Coins.",
+                "sourceRevision": "616e6c:eb535d0a"
+              }
+            },
+            "after": {
+              "id": "res-jo-coins",
+              "owner": "Jo",
+              "name": "Coins",
+              "current": 10,
+              "unit": "Coins",
+              "role": "money",
+              "source": {
+                "message": "live-agreement-g",
+                "quote": "Jo has 20 Coins.",
+                "sourceRevision": "616e6c:eb535d0a"
+              }
+            }
+          },
+          {
+            "kind": "resource",
+            "id": "res-you-coins",
+            "before": {
+              "id": "res-you-coins",
+              "owner": "you",
+              "name": "Coins",
+              "current": 3,
+              "unit": "Coins",
+              "role": "money",
+              "source": {
+                "message": "live-agreement-g",
+                "quote": "You have 3 Coins.",
+                "sourceRevision": "616e6c:eb535d0a"
+              }
+            },
+            "after": {
+              "id": "res-you-coins",
+              "owner": "you",
+              "name": "Coins",
+              "current": 13,
+              "unit": "Coins",
+              "role": "money",
+              "source": {
+                "message": "live-agreement-g",
+                "quote": "You have 3 Coins.",
+                "sourceRevision": "616e6c:eb535d0a"
+              }
+            }
+          },
+          {
+            "kind": "agreement",
+            "id": "agreement-4f7e7c98:ef5bdba8",
+            "before": {
+              "id": "agreement-4f7e7c98:ef5bdba8",
+              "owner": "you",
+              "name": "Cover counter and clean cups for Jo",
+              "source": {
+                "message": "live-agreement-u1",
+                "quote": "\"I accept. I will cover the counter during your call and clean the cups afterward.\"",
+                "sourceRevision": "43b71f6c:356972b8"
+              },
+              "offer": {
+                "message": "live-agreement-g",
+                "quote": "Jo says, 'If you cover the counter while I make this brief supplier call and clean the cups afterward, I will give you 10 Coins. Interested?'",
+                "sourceRevision": "616e6c:eb535d0a"
+              },
+              "from": "Jo",
+              "requirements": [
+                {
+                  "id": "requirement-b873e2fa:17149b78",
+                  "text": "cover the counter while I make this brief supplier call",
+                  "source": {
+                    "message": "live-agreement-g",
+                    "quote": "cover the counter while I make this brief supplier call",
+                    "sourceRevision": "616e6c:eb535d0a"
+                  },
+                  "done": {
+                    "message": "live-agreement-r2",
+                    "quote": "\"All sorted with the supplier. That's the counter covered—just the cups left to clean, and then those 10 Coins are yours.\"",
+                    "sourceRevision": "8d0ca0c7:7ff383b7"
+                  }
+                },
+                {
+                  "id": "requirement-690cfcf7:3f284cf7",
+                  "text": "clean the cups afterward",
+                  "source": {
+                    "message": "live-agreement-g",
+                    "quote": "clean the cups afterward",
+                    "sourceRevision": "616e6c:eb535d0a"
+                  },
+                  "done": {
+                    "message": "live-agreement-r4",
+                    "quote": "Jo glances over at the drying rack, taking in the row of spotless ceramic mugs and saucers.",
+                    "sourceRevision": "5acde9d4:627fd9d2"
+                  }
+                }
+              ],
+              "rewards": [
+                {
+                  "id": "reward-cc35500a:d7b1a0e8",
+                  "kind": "resource",
+                  "asset": "Coins",
+                  "amount": 10,
+                  "source": {
+                    "message": "live-agreement-g",
+                    "quote": "I will give you 10 Coins",
+                    "sourceRevision": "616e6c:eb535d0a"
+                  },
+                  "ready": {
+                    "allowed": true,
+                    "source": {
+                      "message": "live-agreement-r4",
+                      "quote": "Stepping over to the register, Jo counts out 10 Coins from the 20 Coins on hand and sets the stack neatly on the counter",
+                      "sourceRevision": "5acde9d4:627fd9d2"
+                    }
+                  }
+                }
+              ],
+              "unsupported": []
+            },
+            "after": {
+              "id": "agreement-4f7e7c98:ef5bdba8",
+              "owner": "you",
+              "name": "Cover counter and clean cups for Jo",
+              "source": {
+                "message": "live-agreement-u1",
+                "quote": "\"I accept. I will cover the counter during your call and clean the cups afterward.\"",
+                "sourceRevision": "43b71f6c:356972b8"
+              },
+              "offer": {
+                "message": "live-agreement-g",
+                "quote": "Jo says, 'If you cover the counter while I make this brief supplier call and clean the cups afterward, I will give you 10 Coins. Interested?'",
+                "sourceRevision": "616e6c:eb535d0a"
+              },
+              "from": "Jo",
+              "requirements": [
+                {
+                  "id": "requirement-b873e2fa:17149b78",
+                  "text": "cover the counter while I make this brief supplier call",
+                  "source": {
+                    "message": "live-agreement-g",
+                    "quote": "cover the counter while I make this brief supplier call",
+                    "sourceRevision": "616e6c:eb535d0a"
+                  },
+                  "done": {
+                    "message": "live-agreement-r2",
+                    "quote": "\"All sorted with the supplier. That's the counter covered—just the cups left to clean, and then those 10 Coins are yours.\"",
+                    "sourceRevision": "8d0ca0c7:7ff383b7"
+                  }
+                },
+                {
+                  "id": "requirement-690cfcf7:3f284cf7",
+                  "text": "clean the cups afterward",
+                  "source": {
+                    "message": "live-agreement-g",
+                    "quote": "clean the cups afterward",
+                    "sourceRevision": "616e6c:eb535d0a"
+                  },
+                  "done": {
+                    "message": "live-agreement-r4",
+                    "quote": "Jo glances over at the drying rack, taking in the row of spotless ceramic mugs and saucers.",
+                    "sourceRevision": "5acde9d4:627fd9d2"
+                  }
+                }
+              ],
+              "rewards": [
+                {
+                  "id": "reward-cc35500a:d7b1a0e8",
+                  "kind": "resource",
+                  "asset": "Coins",
+                  "amount": 10,
+                  "source": {
+                    "message": "live-agreement-g",
+                    "quote": "I will give you 10 Coins",
+                    "sourceRevision": "616e6c:eb535d0a"
+                  },
+                  "ready": {
+                    "allowed": true,
+                    "source": {
+                      "message": "live-agreement-r4",
+                      "quote": "Stepping over to the register, Jo counts out 10 Coins from the 20 Coins on hand and sets the stack neatly on the counter",
+                      "sourceRevision": "5acde9d4:627fd9d2"
+                    }
+                  },
+                  "paid": {
+                    "action": "original-resolver5-payment"
+                  }
+                }
+              ],
+              "unsupported": []
+            }
+          }
+        ],
+        "beats": [
+          {
+            "kind": "reward",
+            "actor": "Jo",
+            "target": "you",
+            "name": "Coins",
+            "amount": 10
+          }
+        ],
+        "result": "1e318a69:3b21e9a3",
+        "status": "ready"
+      },
+      "after": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "res-jo-coins",
+            "owner": "Jo",
+            "name": "Coins",
+            "current": 10,
+            "unit": "Coins",
+            "role": "money",
+            "source": {
+              "message": "live-agreement-g",
+              "quote": "Jo has 20 Coins.",
+              "sourceRevision": "616e6c:eb535d0a"
+            }
+          },
+          {
+            "id": "res-you-coins",
+            "owner": "you",
+            "name": "Coins",
+            "current": 13,
+            "unit": "Coins",
+            "role": "money",
+            "source": {
+              "message": "live-agreement-g",
+              "quote": "You have 3 Coins.",
+              "sourceRevision": "616e6c:eb535d0a"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [],
+        "applied": [
+          {
+            "id": "original-resolver5-payment",
+            "input": "29b55c7:b7514e07"
+          }
+        ],
+        "agreements": [
+          {
+            "id": "agreement-4f7e7c98:ef5bdba8",
+            "owner": "you",
+            "name": "Cover counter and clean cups for Jo",
+            "source": {
+              "message": "live-agreement-u1",
+              "quote": "\"I accept. I will cover the counter during your call and clean the cups afterward.\"",
+              "sourceRevision": "43b71f6c:356972b8"
+            },
+            "offer": {
+              "message": "live-agreement-g",
+              "quote": "Jo says, 'If you cover the counter while I make this brief supplier call and clean the cups afterward, I will give you 10 Coins. Interested?'",
+              "sourceRevision": "616e6c:eb535d0a"
+            },
+            "from": "Jo",
+            "requirements": [
+              {
+                "id": "requirement-b873e2fa:17149b78",
+                "text": "cover the counter while I make this brief supplier call",
+                "source": {
+                  "message": "live-agreement-g",
+                  "quote": "cover the counter while I make this brief supplier call",
+                  "sourceRevision": "616e6c:eb535d0a"
+                },
+                "done": {
+                  "message": "live-agreement-r2",
+                  "quote": "\"All sorted with the supplier. That's the counter covered—just the cups left to clean, and then those 10 Coins are yours.\"",
+                  "sourceRevision": "8d0ca0c7:7ff383b7"
+                }
+              },
+              {
+                "id": "requirement-690cfcf7:3f284cf7",
+                "text": "clean the cups afterward",
+                "source": {
+                  "message": "live-agreement-g",
+                  "quote": "clean the cups afterward",
+                  "sourceRevision": "616e6c:eb535d0a"
+                },
+                "done": {
+                  "message": "live-agreement-r4",
+                  "quote": "Jo glances over at the drying rack, taking in the row of spotless ceramic mugs and saucers.",
+                  "sourceRevision": "5acde9d4:627fd9d2"
+                }
+              }
+            ],
+            "rewards": [
+              {
+                "id": "reward-cc35500a:d7b1a0e8",
+                "kind": "resource",
+                "asset": "Coins",
+                "amount": 10,
+                "source": {
+                  "message": "live-agreement-g",
+                  "quote": "I will give you 10 Coins",
+                  "sourceRevision": "616e6c:eb535d0a"
+                },
+                "ready": {
+                  "allowed": true,
+                  "source": {
+                    "message": "live-agreement-r4",
+                    "quote": "Stepping over to the register, Jo counts out 10 Coins from the 20 Coins on hand and sets the stack neatly on the counter",
+                    "sourceRevision": "5acde9d4:627fd9d2"
+                  }
+                },
+                "paid": {
+                  "action": "original-resolver5-payment"
+                }
+              }
+            ],
+            "unsupported": []
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "live-agreement-r4",
+              "quote": "Stepping over to the register, Jo counts out 10 Coins from the 20 Coins on hand and sets the stack neatly on the counter",
+              "sourceRevision": "5acde9d4:627fd9d2"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

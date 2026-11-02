@@ -6,7 +6,7 @@ import { actorName, present, capable, vital, type EncounterBeat, MechanicalKnowl
 export interface AgreementRequirement { id: string; text: string; source: Evidence; done?: Evidence; }
 export interface RewardClaim {
   id: string; kind: "item" | "resource"; asset: string; amount: number; source: Evidence;
-  ready?: { allowed: boolean; source: Evidence }; paid?: { action: string };
+  ready?: { allowed: boolean; source: Evidence; uncontested?: true }; paid?: { action: string };
 }
 export interface Agreement {
   id: string; owner: string; name: string; source: Evidence; offer?: Evidence; from?: string;
@@ -16,7 +16,7 @@ export interface Agreement {
 export type AgreementObservation =
   | { kind: "agreement"; value: Agreement }
   | { kind: "agreement_progress"; value: { agreement: string; requirement: string; source: Evidence } }
-  | { kind: "reward_ready"; value: { agreement: string; reward: string; ready: boolean; source: Evidence } }
+  | { kind: "reward_ready"; value: { agreement: string; reward: string; ready: boolean; source: Evidence; uncontested?: true } }
   | { kind: "agreement_cancel"; value: { agreement: string; source: Evidence } };
 const str = (v: unknown, max = 240) => typeof v === "string" && v.trim().length <= max ? v.trim().replace(/\s+/g, " ") : "";
 const obj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -117,8 +117,8 @@ export function readAgreementObservation(raw: Record<string, unknown>, state: Me
     if (!reward || reward.paid || !agreementDone(agreement) || typeof raw.ready !== "boolean" || !other || !names(state, source, other)) return;
     if (agreement.requirements.some(r => at(r.done!, messages) > at(source, messages))) return;
     if (reward.ready && at(reward.ready.source, messages) >= at(source, messages)) return;
-    if (reward.ready?.allowed === raw.ready) return;
-    return { kind: "reward_ready", value: { agreement: agreement.id, reward: reward.id, ready: raw.ready, source } };
+    if (reward.ready?.allowed === raw.ready && !(raw.ready && raw.uncontested === true)) return;
+    return { kind: "reward_ready", value: { agreement: agreement.id, reward: reward.id, ready: raw.ready, source, ...(raw.ready && raw.uncontested === true ? { uncontested: true } : {}) } };
   }
 }
 
@@ -130,7 +130,7 @@ export function observeAgreement(state: MechanicalState, observation: AgreementO
   const agreement = state.agreements?.find(a => a.id === observation.value.agreement);
   if (!agreement) return;
   if (observation.kind === "agreement_progress") agreement.requirements.find(r => r.id === observation.value.requirement)!.done = observation.value.source;
-  else if (observation.kind === "reward_ready") agreement.rewards.find(r => r.id === observation.value.reward)!.ready = { allowed: observation.value.ready, source: observation.value.source };
+  else if (observation.kind === "reward_ready") agreement.rewards.find(r => r.id === observation.value.reward)!.ready = { allowed: observation.value.ready, source: observation.value.source, ...(observation.value.uncontested ? { uncontested: true } : {}) };
   else agreement.cancelled = observation.value.source;
 }
 
@@ -178,5 +178,5 @@ export function settleReward(state: MechanicalState, actor: string, agreementId:
 
 export const AGREEMENT_INSTRUCTIONS = `When an actual agreement has several requirements or an explicit counted reward, optionally add mechanicalObservations {kind:"agreement",owner,name,from:"reward payer if any",offer:{message,quote},requirements:[{message,quote}],rewards:[{kind:"item|resource",asset:"established asset name",amount,message,quote}],unsupported:[],message,quote}. The root quote is the owner's actual acceptance, in the player's own message for owner:you. An NPC payer's offer is actual narrator text naming them and the terms, never a player's invented NPC offer. When the player offers payment for another person's work, from:you requires the player's own offer, and owner is the NPC who actually accepts in narrator text. Each requirement quote is a distinct exact clause within that acceptance or offer; all requirements are required. Do not drop a condition, invent a reward, automatically accept a request, or turn an ordinary invitation into a quest. No reward means rewards:[]. Unknown source mechanics/restrictions stay in unsupported. Do not create duplicate free-form commitments, situations or facts for requirements, progress or rewards already represented by the structured agreement. Retain a separate event only for an independent consequence, such as a witness learning a secret. Resolve an earlier pending-offer situation when the agreement is accepted.
 Record actual fulfillment with {kind:"agreement_progress",agreement:"saved id or name",requirement:"saved id or exact clause",message,quote}, citing actual NARRATOR completion, not the player's attempt or a repeated offer. Code completes the agreement only after every requirement. Do not change accepted terms on subsequent reads. The owner can explicitly withdraw with {kind:"agreement_cancel",agreement,message,quote}; an NPC's displeasure does not withdraw the player's promise for them.
-After all requirements are fulfilled, an actual payer offering/holding out a particular reward can establish {kind:"reward_ready",agreement,reward:"saved id or asset name",ready:true,message,quote}. A subsequent explicit refusal/withdrawal can set ready:false. This is current willingness, separate from the original promise. It needs actual narrator text naming the NPC counterpart after the recorded fulfillment. For from:you this is the NPC recipient's willingness to receive, never permission to spend the player's money automatically. An earned reward does not force someone to cooperate. Do not narrate a completed monetary/item handover without its mechanical receipt. Make the offer available and leave acceptance to the player. The player can collect it through normal chat; no menu is required.
+After all requirements are fulfilled, an actual payer offering/holding out a particular reward can establish {kind:"reward_ready",agreement,reward:"saved id or asset name",ready:true,message,quote}. An offer may add uncontested:true only when taking/receiving this particular reward now is routine, with no established obstacle, hazard or opposing action. Willingness alone does not prove that. The code may use this fresh classification to skip a redundant pre-read for a simple collection; ambiguity, changed scenes and opposed actions still need interpretation. A subsequent explicit refusal/withdrawal can set ready:false. This is current willingness, separate from the original promise. It needs actual narrator text naming the NPC counterpart after the recorded fulfillment. For from:you this is the NPC recipient's willingness to receive, never permission to spend the player's money automatically. An earned reward does not force someone to cooperate. Do not narrate a completed monetary/item handover without its mechanical receipt. Make the offer available and leave acceptance to the player. The player can collect it through normal chat; no menu is required.
 Reward collection uses saved exact amounts and transfers actual owned items or between two established same-unit resource balances. Unknown balances are unknown, not zero. An offer alone does not prove the payer owns the money or item. Do not mint items or coins, refill a spent balance, substitute a different reward, or create numerical Health/relationship/XP to pay a promise. When a physical reward, including a counted pile of coins, is established without known total wallet balances, use an item claim and track that actual stack instead of inventing a wallet total. The offered amount alone does not prove possession; a later actual holding/counting/setting-out event can establish the counted item. Use a distinct source-backed item instance ID for a new stack, not the ID of a previously transferred stack. Actual paid rewards cannot be offered or collected again.`;

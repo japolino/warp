@@ -2,7 +2,11 @@ import { join } from "node:path";
 import { makeHost } from "../src/backend/test-host.js";
 import { syncLiving } from "../src/living/runtime.js";
 
-export async function runPlaytest(model: (input: any) => Promise<any>) {
+export async function runPlaytest(model: (input: any) => Promise<any>, options: {
+  settings?: { helperConnectionId?: string; decisionConnectionId?: string };
+  profiles?: unknown;
+  decision?: (input: any, options?: any) => Promise<any>;
+} = {}) {
   const calls: any[] = [], results: any[] = [];
   const h = makeHost("synthetic-live-playtest", false);
   const original = (globalThis as any).spindle;
@@ -14,9 +18,21 @@ export async function runPlaytest(model: (input: any) => Promise<any>) {
       const response = await model({ ...input, signal: input.signal ?? AbortSignal.timeout(30000), reasoning: { source: "off" } });
       Object.assign(entry, { pending: false, ms: Math.round(performance.now() - start), usage: response.usage, ...(kind === "helper" ? { response: response.content } : {}) });
       return response;
-    } catch (error) { Object.assign(entry, { pending: false, ms: Math.round(performance.now() - start), failed: true }); throw error; }
+    } catch (error) {
+      const failure = error instanceof Error && error.name === "TimeoutError" ? "timeout" : input.signal?.aborted || error instanceof Error && error.name === "AbortError" ? "aborted" : "other";
+      Object.assign(entry, { pending: false, ms: Math.round(performance.now() - start), failed: true, failure }); throw error;
+    }
   };
   h.fake.generate.quiet = (input: any) => invoke(input, "helper");
+  if (options.settings) await h.fake.userStorage.setJson("settings.json", { ...options.settings, authoredRules: false });
+  if (options.decision) h.fake.decisions = { evaluate: async (input: any, settings: any) => {
+    const start = performance.now(), entry: any = { kind: "decision", pending: true }; calls.push(entry);
+    try {
+      const result = await options.decision!(input, settings);
+      Object.assign(entry, { pending: false, ms: Math.round(performance.now() - start) });
+      return result;
+    } catch (error) { Object.assign(entry, { pending: false, ms: Math.round(performance.now() - start), failed: true, failure: settings?.signal?.aborted ? "aborted" : "other" }); throw error; }
+  } };
   (globalThis as any).spindle = h.fake;
   try {
     await import("../src/backend.ts" + "?live-model-playtest");
@@ -67,6 +83,7 @@ export async function runPlaytest(model: (input: any) => Promise<any>) {
       const turns = Number.isInteger(requestedTurns) && requestedTurns > 0 ? scenario.turns.slice(0, Math.min(10, requestedTurns)) : scenario.turns;
       for (const [index, turn] of turns.entries()) {
         await h.say(chatId, turn);
+        const beforePreReads = calls.filter(c => c.kind === "attempt").length;
         const generated = await h.generate(chatId, async messages => {
           const prompt = [{ role: "system", content: `Continue a roleplay as the people and world in this character card. Sam is the adult player. Do not write Sam's speech, actions or feelings. Keep this reply under ${scenario.name === "exchange" ? 100 : 180} words. Respect established facts and the player's freedom to decline.\nCard:\n${scenario.card}` }, ...transcript, ...messages.filter(m => m.role !== "system")];
           const response = await invoke({ messages: prompt, parameters: { max_tokens: scenario.name === "exchange" ? 400 : 700, temperature: 0.7 } }, "narrator");
@@ -75,7 +92,7 @@ export async function runPlaytest(model: (input: any) => Promise<any>) {
         transcript.push({ role: "user", content: turn }, { role: "assistant", content: generated.target.content });
         const state = [...h.sent].reverse().find(m => m.type === "living" && m.chatId === chatId);
         console.log(`${scenario.name} turn ${index + 1}: ${state?.world.facts.length ?? 0} facts, ${state?.decision?.result ?? "no player roll"}, ${state?.responses?.length ?? 0} NPC checks, retry=${state?.retry ?? false}`);
-        results.push({ scenario: scenario.name, turn: index + 1, player: turn, reply: generated.target.content, state });
+        results.push({ scenario: scenario.name, turn: index + 1, player: turn, reply: generated.target.content, helperPreReads: calls.filter(c => c.kind === "attempt").length - beforePreReads, state });
       }
       if (process.argv.includes("--extras") && scenario.name === "quiet") {
         const correction = "The current scene is the archive worktable. Sam is alone; Mira has gone to the next room.";
@@ -93,7 +110,7 @@ export async function runPlaytest(model: (input: any) => Promise<any>) {
   } finally {
     (globalThis as any).spindle = original;
     const target = join(import.meta.dir, "../.artifacts", `live-playtest-${Date.now()}.json`);
-    await Bun.write(target, JSON.stringify({ calls, results }, null, 2));
+    await Bun.write(target, JSON.stringify({ profiles: options.profiles, calls, results }, null, 2));
     console.log(`Synthetic playtest report: ${target}`);
   }
 }

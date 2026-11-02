@@ -10,14 +10,14 @@ const greeting = "Jo waits in the café. Jo has 20 Coins. You have 3 Coins. Jo s
 const accept = "I accept. I will cover the counter and clean the cups.";
 const shift = "You finish covering the counter.";
 const cups = "You finish cleaning the cups. Jo holds out the promised 10 Coins.";
-let previous: unknown, serial = 0, reads = 0, extractionDown = false, omitEntity = false;
+let previous: unknown, serial = 0, reads = 0, extractionDown = false, omitEntity = false, routine = false;
 beforeAll(async () => {
   previous = (globalThis as any).spindle; (globalThis as any).spindle = h.fake;
   await import("../backend.ts" + "?agreement-runtime-test"); (globalThis as any).spindle = previous;
 });
 beforeEach(() => {
   previous = (globalThis as any).spindle; (globalThis as any).spindle = h.fake;
-  h.helper = helper; reads = 0; extractionDown = false; omitEntity = false;
+  h.helper = helper; reads = 0; extractionDown = false; omitEntity = false; routine = false;
   h.fake.world_books.getActivated = async () => [];
 });
 afterEach(() => { (globalThis as any).spindle = previous; });
@@ -42,7 +42,7 @@ function helper(c: HelperCall): unknown {
   ];
   if (acceptance) mechanicalObservations.push({ kind: "agreement", owner: "you", name: "Help at the café", from: "Jo", offer: { message: opening.id, quote: "Jo says, 'If you cover the counter and clean the cups, I will give you 10 Coins.'" }, requirements: ["cover the counter", "clean the cups"].map(quote => ({ message: opening.id, quote })), rewards: [{ kind: "resource", asset: "Coins", amount: 10, message: opening.id, quote: "10 Coins" }], message: acceptance.id, quote: accept });
   if (last.content === shift) mechanicalObservations.push({ kind: "agreement_progress", agreement: "Help at the café", requirement: "cover the counter", message: last.id, quote: shift });
-  if (last.content === cups) mechanicalObservations.push({ kind: "agreement_progress", agreement: "Help at the café", requirement: "clean the cups", message: last.id, quote: cups }, { kind: "reward_ready", agreement: "Help at the café", reward: "Coins", ready: true, message: last.id, quote: cups });
+  if (last.content === cups) mechanicalObservations.push({ kind: "agreement_progress", agreement: "Help at the café", requirement: "clean the cups", message: last.id, quote: cups }, { kind: "reward_ready", agreement: "Help at the café", reward: "Coins", ready: true, ...(routine ? { uncontested: true } : {}), message: last.id, quote: cups });
   return { changes: [], ...(omitEntity ? { scene: { place: "Café", present: last.content === "Jo leaves the café." ? [] : ["Jo"], message: last.content === "Jo leaves the café." ? last.id : opening.id, quote: last.content === "Jo leaves the café." ? last.content : "Jo waits in the café." } } : {}), mechanicalObservations: omitEntity ? mechanicalObservations.filter(o => o.kind !== "entity") : mechanicalObservations };
 }
 async function earn(id: string) {
@@ -102,6 +102,45 @@ test("a completion swipe that leaves one requirement unfinished makes collection
   await h.say(id, "I collect my pay."); await h.generate(id, "Jo asks you to finish the cups first.");
   expect((await state(id)).resources.map(r => r.current)).toEqual([20, 3]);
   expect(latest(id).notice).toContain("not all fulfilled");
+});
+
+test("a fresh routine reward skips the pre-read, preserves preparation/commit, and reuses its receipt on another swipe", async () => {
+  routine = true; const id = await chat(); await earn(id);
+  expect((await state(id)).agreements![0].rewards[0].ready?.uncontested).toBe(true);
+  const previousReads = reads;
+  h.helper = c => { if (c.system.includes("Determine whether")) throw new Error("A routine collection must not call the interpreter"); return helper(c); };
+  await h.say(id, "I collect my pay.");
+  await h.generate(id, async prompt => {
+    expect(reads).toBe(previousReads);
+    expect((await state(id)).resources.map(r => r.current)).toEqual([20, 3]);
+    expect(JSON.stringify(prompt)).toContain('\\"kind\\":\\"reward\\"');
+    return "Jo hands you the agreed pay.";
+  });
+  const after = await state(id);
+  expect(after.resources.map(r => r.current)).toEqual([10, 13]);
+  expect(latest(id).notice).toBeUndefined();
+  await h.generate(id, "Jo passes over the promised Coins.", "swipe");
+  expect(await state(id)).toEqual(after); expect(reads).toBe(previousReads);
+});
+
+test("a cancelled local collection spends nothing and its retry can commit even when later extraction fails", async () => {
+  routine = true; const id = await chat(); await earn(id); await h.say(id, "I collect my pay.");
+  const target = h.msg(id, `${id}-local-partial`, false, ""), previousReads = reads;
+  livingStarted({ chatId: id, generationId: "local-stopped", targetMessageId: target.id });
+  const history = await getMessages(id);
+  await livingIntercept(history.map(m => ({ role: m.role, content: m.content, sourceMessageId: m.id })), { chatId: id, userId: h.userId, generationType: "normal" } as InterceptorContextDTO);
+  livingStopped({ chatId: id, generationId: "local-stopped" }); await livingEnded({ chatId: id, generationId: "local-stopped", messageId: target.id }, h.userId);
+  expect((await state(id)).resources.map(r => r.current)).toEqual([20, 3]);
+  h.messages(id).pop(); extractionDown = true; await h.generate(id, "Jo hands over the agreed pay.");
+  expect((await state(id)).resources.map(r => r.current)).toEqual([10, 13]);
+  expect(reads).toBe(previousReads); expect(latest(id).retry).toBe(true);
+});
+
+test("a routine offer followed by another event still invokes interpretation before collection", async () => {
+  routine = true; const id = await chat(); await earn(id);
+  await h.say(id, '"Hello."'); await h.generate(id, "Jo turns toward a new customer.");
+  const previousReads = reads; await h.say(id, "I collect my pay."); await h.generate(id, "Jo returns to the payment.");
+  expect(reads).toBe(previousReads + 1);
 });
 
 test("a normal sourced cast supplies payment identity without an entity setup, and a later departure blocks collection", async () => {
