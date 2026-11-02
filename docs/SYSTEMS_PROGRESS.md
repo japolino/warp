@@ -2,6 +2,8 @@
 
 Target: [Deep systems without a setup wizard](SEAMLESS_SYSTEMS.md). The complete target remains active. This checkpoint does not complete the new game engine.
 
+The user also requires an acceptance pass with their existing cards after implementation, spanning fantasy, romance, science fiction and other tones. [Real-card playtest](REAL_CARD_PLAYTEST.md) records that gate and its isolation/evidence requirements. It remains pending; the synthetic fixtures below do not satisfy it.
+
 ## Checkpoint 1: mechanical state and action receipts
 
 Implemented in `src/living/mechanics.ts`, `mechanical-history.ts`, and the default runtime:
