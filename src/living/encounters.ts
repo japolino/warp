@@ -1,6 +1,8 @@
 import { revision } from "../shared/revision.js";
 import type { Evidence, Decision } from "./world.js";
 import type { MechanicalState, MechanicalChange, Resource, Condition } from "./mechanics.js";
+import { applyInjury } from "./injuries.js";
+import { messageOwnsAction } from "./condition-history.js";
 
 export const DAMAGE_TYPES = ["physical", "fire", "cold", "electric", "poison", "mental", "untyped"] as const;
 export type DamageType = typeof DAMAGE_TYPES[number];
@@ -11,7 +13,7 @@ export interface Distance { id: string; from: string; to: string; band: Range; s
 export interface Defense { kind: "armor" | "resistance" | "immunity" | "shield" | "reflect"; amount: number; damageType: DamageType | "all"; }
 export interface ActionClock { id: string; actor: string; actions: number; }
 export interface Cooldown { id: string; actor: string; readyAt: number; }
-export interface EncounterBeat { kind: "damage" | "expired" | "move" | "wait" | "defend" | "attempt" | "skipped" | "response"; actor: string; target?: string; name?: string; amount?: number; absorbed?: number; resisted?: number; reflected?: number; reason?: string; decision?: Decision; }
+export interface EncounterBeat { kind: "damage" | "harm" | "mend" | "expired" | "move" | "wait" | "defend" | "attempt" | "skipped" | "response"; actor: string; target?: string; name?: string; amount?: number; absorbed?: number; resisted?: number; reflected?: number; reason?: string; decision?: Decision; basis?: "warp"; }
 export class MechanicalKnowledgeError extends Error {}
 const normalize = (value: string) => value.normalize("NFKC").trim().toLocaleLowerCase();
 export const entityId = (name: string) => normalize(name) === "you" ? "you" : `entity-${revision(normalize(name))}`;
@@ -21,7 +23,7 @@ export function actorName(state: MechanicalState, input: string): string {
   const candidates = (state.entities ?? []).filter(e => [e.id, e.name, e.displayName, ...e.aliases].some(n => normalize(n) === normalize(input)));
   if (candidates.length > 1) throw new Error("Actor identity is ambiguous");
   if (candidates[0]) return candidates[0].name;
-  const owners = [...new Set([...state.resources, ...state.items, ...state.conditions, ...(state.abilities ?? [])].map(row => row.owner))].filter(n => normalize(n) === normalize(input));
+  const owners = [...new Set([...state.resources, ...state.items, ...state.conditions, ...(state.abilities ?? []), ...(state.resilience ?? [])].map(row => row.owner))].filter(n => normalize(n) === normalize(input));
   if (owners.length > 1) throw new Error("Actor identity is ambiguous");
   return owners[0] ?? input;
 }
@@ -33,7 +35,7 @@ export function vital(state: MechanicalState, owner: string): Resource | undefin
   return state.resources.find(r => r.owner === owner && (r.role === "vital" || (!r.role && /^(?:hp|health|vitality)$/i.test(r.name))));
 }
 export function capable(state: MechanicalState, owner: string) {
-  return entityFor(state, owner)?.status !== "dead" && (vital(state, owner)?.current ?? 1) > 0;
+  return entityFor(state, owner)?.status !== "dead" && (vital(state, owner)?.current ?? 1) > 0 && !state.conditions.some(c => c.owner === owner && (c.injury?.load ?? 0) >= 4);
 }
 export function distanceId(from: string, to: string) { return `distance-${revision([from, to].sort())}`; }
 export function distance(state: MechanicalState, from: string, to: string) {
@@ -82,8 +84,8 @@ function defenses(state: MechanicalState, owner: string, type: DamageType): Defe
 export function immune(state: MechanicalState, owner: string, type: DamageType) { return defenses(state, owner, type).some(d => d.kind === "immunity"); }
 
 /** One ordered packet, with at most one reflected packet. Neither path calls a model. */
-export function damage(state: MechanicalState, actor: string, target: string, resource: Resource, raw: number, type: DamageType, changes: MechanicalChange[], beats: EncounterBeat[], secondary = false, strict = false) {
-  if (immune(state, target, type)) { beats.push({ kind: "damage", actor, target, amount: 0, resisted: raw, name: type }); return; }
+export function absorbDamage(state: MechanicalState, target: string, raw: number, type: DamageType, changes: MechanicalChange[]) {
+  if (immune(state, target, type)) return { immune: true, remaining: 0, absorbed: 0, resisted: raw, reflect: 0 };
   const protection = defenses(state, target, type);
   const armor = protection.filter(d => d.kind === "armor").reduce((sum, d) => sum + d.amount, 0);
   const resistance = Math.min(100, protection.filter(d => d.kind === "resistance").reduce((sum, d) => sum + d.amount, 0));
@@ -102,15 +104,26 @@ export function damage(state: MechanicalState, actor: string, target: string, re
     shield.current -= used; remaining -= used; absorbed += used;
     if (used) changes.push({ kind: "resource", id: shield.id, before, after: structuredClone(shield) });
   }
+  const reflect = Math.min(100, protection.filter(d => d.kind === "reflect").reduce((sum, d) => sum + d.amount, 0));
+  return { immune: false, remaining, absorbed, resisted, reflect };
+}
+
+export function damage(state: MechanicalState, actor: string, target: string, resource: Resource, raw: number, type: DamageType, changes: MechanicalChange[], beats: EncounterBeat[], secondary = false, strict = false, qualitative = false, action = "") {
+  const protection = absorbDamage(state, target, raw, type, changes);
+  if (protection.immune) { beats.push({ kind: "damage", actor, target, amount: 0, resisted: raw, name: type }); return; }
+  const { remaining, absorbed, resisted } = protection;
   const old = structuredClone(resource), actual = Math.min(resource.current, remaining);
   resource.current = Math.max(0, resource.current - actual);
   if (actual) changes.push({ kind: "resource", id: resource.id, before: old, after: structuredClone(resource) });
-  const reflect = secondary ? 0 : Math.min(100, protection.filter(d => d.kind === "reflect").reduce((sum, d) => sum + d.amount, 0));
+  const reflect = secondary ? 0 : protection.reflect;
   const reflected = Math.round(actual * reflect * 10) / 1000;
   beats.push({ kind: "damage", actor, target, amount: actual, absorbed, resisted, reflected, name: type });
   const back = reflected > 0 ? vital(state, actor) : undefined;
-  if (strict && reflected > 0 && !back && actor !== target) throw new MechanicalKnowledgeError("Reflection needs the attacker's known vital resource");
-  if (back && actor !== target) damage(state, target, actor, back, reflected, type, changes, beats, true, strict);
+  if (qualitative && reflected > 0 && actor !== target) applyInjury(state, target, actor, reflected, type, changes, beats, action, true);
+  else {
+    if (strict && reflected > 0 && !back && actor !== target) throw new MechanicalKnowledgeError("Reflection needs the attacker's known vital resource");
+    if (back && actor !== target) damage(state, target, actor, back, reflected, type, changes, beats, true, strict);
+  }
 }
 
 export function readDefenses(raw: unknown, quote: string): Defense[] {
@@ -142,7 +155,7 @@ export function readEncounterObservation(row: Record<string, unknown>, state: Me
     if (!name || !["person", "object"].includes(row.entityKind as string)) return;
     const aliases = Array.isArray(row.aliases) ? [...new Set(row.aliases.map(a => text(a)).filter(Boolean))].slice(0, 12) : [];
     if (normalize(name) !== "you" && aliases.some(a => normalize(a) === "you")) return;
-    const matches = [...new Set([name, ...aliases].map(n => actorName(state, n)).filter(n => state.entities?.some(e => e.name === n) || [...state.resources, ...state.items, ...state.conditions, ...(state.abilities ?? [])].some(row => row.owner === n)))];
+    const matches = [...new Set([name, ...aliases].map(n => actorName(state, n)).filter(n => state.entities?.some(e => e.name === n) || [...state.resources, ...state.items, ...state.conditions, ...(state.abilities ?? []), ...(state.resilience ?? [])].some(row => row.owner === n)))];
     if (matches.length > 1) return; // An alias is not permission to merge two established people.
     const canonical = matches[0] ?? actorName(state, name), old = state.entities?.find(e => e.name === canonical);
     if (profile && old && !old.source.message.startsWith("warp-source:")) return;
@@ -164,10 +177,7 @@ export function readEncounterObservation(row: Record<string, unknown>, state: Me
     if (old && !correction) {
       if (old.source.message.startsWith("warp-action:")) {
         const actionId = old.source.message.slice("warp-action:".length);
-        const committed = messages.findIndex(m => {
-          const record = m as { swipe_id?: number; metadata?: Record<string, Record<string, { receipt?: { id?: string } }>> };
-          return record.metadata?.warpMechanics?.[String(record.swipe_id ?? 0)]?.receipt?.id === actionId;
-        });
+        const committed = messages.findIndex(m => messageOwnsAction(m, actionId));
         if (committed < 0 || messages.findIndex(m => m.id === source.message) <= committed) return;
       } else if (!newer(old.source)) return;
     }

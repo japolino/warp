@@ -26,7 +26,7 @@ export function foldMechanics(messages: Msg[]): MechanicalState {
         const sources = (record.sources ?? []).filter(validDefinitionSource);
         if (record.receipt) {
           try {
-            if (record.receipt.engine === 3) {
+            if ((record.receipt.engine ?? 1) >= 3) {
               const plans = readResponsePlans(record.receipt.responses?.map(p => ({ actor: p.actor, action: p.action, assessment: p.assessment, message: p.source.message, quote: p.source.quote })), state, messages.slice(0, index), true);
               if (revision(plans) !== revision(record.receipt.responses ?? [])) throw new Error("NPC evidence changed");
             }
@@ -37,12 +37,12 @@ export function foldMechanics(messages: Msg[]): MechanicalState {
         // Revalidate persisted evidence, including corrections, without asking a model.
         const raw = record.observations.flatMap<Record<string, unknown>>(o => {
           if (!o || typeof o !== "object") return [];
-          if (o.kind === "condition_end") return [{ kind: o.kind, id: o.id, ...o.source }];
+          if (o.kind === "condition_end") return [{ kind: o.kind, id: o.id, ...(o.retire ? { retire: true } : {}), ...o.source }];
           if (o.kind === "ability") return [];
           if (!o.value?.source) return [];
           return [{ kind: o.kind, ...o.value, ...o.value.source }];
         });
-        state = applyObservations(state, readMechanicalObservations(raw, state, [...messages.slice(0, index + 1), ...sourceMessages(sources)]));
+        state = applyObservations(state, readMechanicalObservations(raw, state, [...messages.slice(0, index + 1), ...sourceMessages(sources)], undefined, true));
         for (const observation of record.observations) {
           if (observation?.kind !== "ability") continue;
           const ability = observation.value;

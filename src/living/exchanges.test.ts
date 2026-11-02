@@ -44,7 +44,7 @@ function seedFor(plan: ResponsePlan, result: "clean" | "mixed" | "setback") {
 test("an NPC pays its saved cost and rolls against an explicit player guard in the same atomic receipt", () => {
   const { state } = fixture(), responses = plans(state), id = seedFor(responses[0], "clean");
   const receipt = prepareExchange(state, id, "you", [{ kind: "defend" }], responses);
-  expect(receipt.status).toBe("ready"); expect(receipt.engine).toBe(3);
+  expect(receipt.status).toBe("ready"); expect(receipt.engine).toBe(4);
   expect(value(state, "you-hp")).toBe(40); expect(value(state, "Jo-focus")).toBe(10);
   const after = commitMechanical(state, receipt);
   expect(value(after, "you-hp")).toBe(35); expect(value(after, "Jo-focus")).toBe(8);
@@ -137,7 +137,11 @@ test("missing response or reflection data leaves the whole exchange unresolved i
   expect(receipt.status).toBe("blocked"); expect(receipt.reason).toContain("Health"); expect(receipt.changes).toEqual([]);
   expect(value(state, "Jo-hp")).toBe(40); expect(value(state, "you-focus")).toBe(10);
   state.conditions.push({ id: "mirror", name: "Mirror", owner: "Jo", hinders: [], helps: [], blocks: [], ending: "When removed", defenses: [{ kind: "reflect", damageType: "all", amount: 50 }], source: evidence });
-  expect(prepareExchange(state, "missing-reflection", "you", [ownAbility(state, "you", "Jab", "Jo")], []).reason).toContain("Reflection needs");
+  const reflected = prepareExchange(state, "missing-reflection", "you", [ownAbility(state, "you", "Jab", "Jo")], []);
+  expect(reflected.status).toBe("ready");
+  const afterReflection = commitMechanical(state, reflected);
+  expect(afterReflection.conditions.some(c => c.owner === "you" && c.injury)).toBe(true);
+  expect(afterReflection.resources.some(r => r.id === "you-hp")).toBe(false);
 });
 
 test("active exchange records replay both actors exactly and reject changed plans, rolls or source evidence", () => {
@@ -172,7 +176,9 @@ test("an unmodified strike works without creating an ability, but cannot overrid
   expect(value(commitMechanical(state, receipt), "Jo-hp")).toBe(35);
   expect(() => readMechanicalPlan([{ kind: "strike", target: "Jo", amount: 999, quote: "I punch Jo." }], state, "I punch Jo.")).toThrow("no model-selected damage");
   state.resources = state.resources.filter(r => r.id !== "Jo-hp");
-  expect(prepareExchange(state, "unknown", "you", [{ kind: "strike", target: "Jo" }], []).status).toBe("blocked");
+  const noPool = commitMechanical(state, prepareExchange(state, "unknown", "you", [{ kind: "strike", target: "Jo" }], []));
+  expect(noPool.conditions.some(c => c.owner === "Jo" && c.injury)).toBe(true);
+  expect(noPool.resources.some(r => r.owner === "Jo" && r.role === "vital")).toBe(false);
 });
 
 test("bounded exchanges reflect power differences and resource starvation without free regeneration", () => {

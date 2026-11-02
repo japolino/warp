@@ -1,0 +1,2397 @@
+{
+  "generatedFrom": "887d0271b37620659c503e7010df82f390e06d2f",
+  "cases": [
+    {
+      "name": "resolver2 resource recovery",
+      "before": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "you-hp",
+            "owner": "you",
+            "name": "Health",
+            "current": 20,
+            "max": 40,
+            "role": "vital",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          },
+          {
+            "id": "you-focus",
+            "owner": "you",
+            "name": "Focus",
+            "current": 10,
+            "max": 10,
+            "role": "effort",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          },
+          {
+            "id": "Jo-hp",
+            "owner": "Jo",
+            "name": "Health",
+            "current": 40,
+            "max": 40,
+            "role": "vital",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          },
+          {
+            "id": "Jo-focus",
+            "owner": "Jo",
+            "name": "Focus",
+            "current": 10,
+            "max": 10,
+            "role": "effort",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [
+          {
+            "id": "bruise",
+            "owner": "you",
+            "name": "Bruised",
+            "hinders": [
+              "movement"
+            ],
+            "blocks": [],
+            "helps": [],
+            "ending": "Until treated",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "applied": [],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-6ef5a364:ef90f07a",
+            "version": 1,
+            "owner": "you",
+            "name": "Restore",
+            "description": "Restore",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "you-focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "restore",
+                "target": "self",
+                "resource": "Health",
+                "amount": 5,
+                "basis": "source"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "14fba035:d83b9327",
+            "source": {
+              "message": "warp-source:persona:681c168d:d73360eb",
+              "quote": "Restore costs 2 Focus and restores 5 Health. Release clears a Bruised condition.",
+              "sourceRevision": "681c168d:d73360eb"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-8ffbfd73:d8c90adf",
+            "version": 1,
+            "owner": "you",
+            "name": "Release",
+            "description": "Release",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [],
+            "effects": [
+              {
+                "kind": "clear_condition",
+                "target": "self",
+                "name": "Bruised"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "cc1b0f98:e006b3a0",
+            "source": {
+              "message": "warp-source:persona:681c168d:d73360eb",
+              "quote": "Restore costs 2 Focus and restores 5 Health. Release clears a Bruised condition.",
+              "sourceRevision": "681c168d:d73360eb"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-c0e04287:26a93ad",
+            "version": 1,
+            "owner": "Jo",
+            "name": "Jab",
+            "description": "Jab",
+            "approach": "force",
+            "target": "other",
+            "range": "touch",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "Jo-focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "damage",
+                "target": "target",
+                "resource": "Health",
+                "amount": 10,
+                "basis": "source",
+                "damageType": "physical"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "c3a6957:651d6965",
+            "source": {
+              "message": "warp-source:card:dce8f6b6:a315e0b4",
+              "quote": "Jo can use Jab, costing 2 Focus to deal 10 physical Health damage at touch range.",
+              "sourceRevision": "dce8f6b6:a315e0b4"
+            },
+            "sourceKind": "card"
+          }
+        ]
+      },
+      "receipt": {
+        "version": 1,
+        "engine": 2,
+        "id": "legacy-heal",
+        "input": "9d601740:b6bf7634",
+        "base": "bdd4698e:b80fa610",
+        "actor": "you",
+        "operations": [
+          {
+            "kind": "ability",
+            "ability": "ability-6ef5a364:ef90f07a",
+            "version": 1
+          }
+        ],
+        "changes": [
+          {
+            "kind": "resource",
+            "id": "you-focus",
+            "before": {
+              "id": "you-focus",
+              "owner": "you",
+              "name": "Focus",
+              "current": 10,
+              "max": 10,
+              "role": "effort",
+              "source": {
+                "message": "legacy-greeting",
+                "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+                "sourceRevision": "946cead2:7fde43a8"
+              }
+            },
+            "after": {
+              "id": "you-focus",
+              "owner": "you",
+              "name": "Focus",
+              "current": 8,
+              "max": 10,
+              "role": "effort",
+              "source": {
+                "message": "legacy-greeting",
+                "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+                "sourceRevision": "946cead2:7fde43a8"
+              }
+            }
+          },
+          {
+            "kind": "resource",
+            "id": "you-hp",
+            "before": {
+              "id": "you-hp",
+              "owner": "you",
+              "name": "Health",
+              "current": 20,
+              "max": 40,
+              "role": "vital",
+              "source": {
+                "message": "legacy-greeting",
+                "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+                "sourceRevision": "946cead2:7fde43a8"
+              }
+            },
+            "after": {
+              "id": "you-hp",
+              "owner": "you",
+              "name": "Health",
+              "current": 25,
+              "max": 40,
+              "role": "vital",
+              "source": {
+                "message": "legacy-greeting",
+                "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+                "sourceRevision": "946cead2:7fde43a8"
+              }
+            }
+          }
+        ],
+        "beats": [],
+        "result": "bb80b177:6fd10d59",
+        "status": "ready"
+      },
+      "after": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "you-hp",
+            "owner": "you",
+            "name": "Health",
+            "current": 25,
+            "max": 40,
+            "role": "vital",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          },
+          {
+            "id": "you-focus",
+            "owner": "you",
+            "name": "Focus",
+            "current": 8,
+            "max": 10,
+            "role": "effort",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          },
+          {
+            "id": "Jo-hp",
+            "owner": "Jo",
+            "name": "Health",
+            "current": 40,
+            "max": 40,
+            "role": "vital",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          },
+          {
+            "id": "Jo-focus",
+            "owner": "Jo",
+            "name": "Focus",
+            "current": 10,
+            "max": 10,
+            "role": "effort",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [
+          {
+            "id": "bruise",
+            "owner": "you",
+            "name": "Bruised",
+            "hinders": [
+              "movement"
+            ],
+            "blocks": [],
+            "helps": [],
+            "ending": "Until treated",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "applied": [
+          {
+            "id": "legacy-heal",
+            "input": "9d601740:b6bf7634"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-6ef5a364:ef90f07a",
+            "version": 1,
+            "owner": "you",
+            "name": "Restore",
+            "description": "Restore",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "you-focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "restore",
+                "target": "self",
+                "resource": "Health",
+                "amount": 5,
+                "basis": "source"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "14fba035:d83b9327",
+            "source": {
+              "message": "warp-source:persona:681c168d:d73360eb",
+              "quote": "Restore costs 2 Focus and restores 5 Health. Release clears a Bruised condition.",
+              "sourceRevision": "681c168d:d73360eb"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-8ffbfd73:d8c90adf",
+            "version": 1,
+            "owner": "you",
+            "name": "Release",
+            "description": "Release",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [],
+            "effects": [
+              {
+                "kind": "clear_condition",
+                "target": "self",
+                "name": "Bruised"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "cc1b0f98:e006b3a0",
+            "source": {
+              "message": "warp-source:persona:681c168d:d73360eb",
+              "quote": "Restore costs 2 Focus and restores 5 Health. Release clears a Bruised condition.",
+              "sourceRevision": "681c168d:d73360eb"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-c0e04287:26a93ad",
+            "version": 1,
+            "owner": "Jo",
+            "name": "Jab",
+            "description": "Jab",
+            "approach": "force",
+            "target": "other",
+            "range": "touch",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "Jo-focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "damage",
+                "target": "target",
+                "resource": "Health",
+                "amount": 10,
+                "basis": "source",
+                "damageType": "physical"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "c3a6957:651d6965",
+            "source": {
+              "message": "warp-source:card:dce8f6b6:a315e0b4",
+              "quote": "Jo can use Jab, costing 2 Focus to deal 10 physical Health damage at touch range.",
+              "sourceRevision": "dce8f6b6:a315e0b4"
+            },
+            "sourceKind": "card"
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "resolver3 guarded exchange",
+      "before": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "you-hp",
+            "owner": "you",
+            "name": "Health",
+            "current": 20,
+            "max": 40,
+            "role": "vital",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          },
+          {
+            "id": "you-focus",
+            "owner": "you",
+            "name": "Focus",
+            "current": 10,
+            "max": 10,
+            "role": "effort",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          },
+          {
+            "id": "Jo-hp",
+            "owner": "Jo",
+            "name": "Health",
+            "current": 40,
+            "max": 40,
+            "role": "vital",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          },
+          {
+            "id": "Jo-focus",
+            "owner": "Jo",
+            "name": "Focus",
+            "current": 10,
+            "max": 10,
+            "role": "effort",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [
+          {
+            "id": "bruise",
+            "owner": "you",
+            "name": "Bruised",
+            "hinders": [
+              "movement"
+            ],
+            "blocks": [],
+            "helps": [],
+            "ending": "Until treated",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "applied": [],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-6ef5a364:ef90f07a",
+            "version": 1,
+            "owner": "you",
+            "name": "Restore",
+            "description": "Restore",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "you-focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "restore",
+                "target": "self",
+                "resource": "Health",
+                "amount": 5,
+                "basis": "source"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "14fba035:d83b9327",
+            "source": {
+              "message": "warp-source:persona:681c168d:d73360eb",
+              "quote": "Restore costs 2 Focus and restores 5 Health. Release clears a Bruised condition.",
+              "sourceRevision": "681c168d:d73360eb"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-8ffbfd73:d8c90adf",
+            "version": 1,
+            "owner": "you",
+            "name": "Release",
+            "description": "Release",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [],
+            "effects": [
+              {
+                "kind": "clear_condition",
+                "target": "self",
+                "name": "Bruised"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "cc1b0f98:e006b3a0",
+            "source": {
+              "message": "warp-source:persona:681c168d:d73360eb",
+              "quote": "Restore costs 2 Focus and restores 5 Health. Release clears a Bruised condition.",
+              "sourceRevision": "681c168d:d73360eb"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-c0e04287:26a93ad",
+            "version": 1,
+            "owner": "Jo",
+            "name": "Jab",
+            "description": "Jab",
+            "approach": "force",
+            "target": "other",
+            "range": "touch",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "Jo-focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "damage",
+                "target": "target",
+                "resource": "Health",
+                "amount": 10,
+                "basis": "source",
+                "damageType": "physical"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "c3a6957:651d6965",
+            "source": {
+              "message": "warp-source:card:dce8f6b6:a315e0b4",
+              "quote": "Jo can use Jab, costing 2 Focus to deal 10 physical Health damage at touch range.",
+              "sourceRevision": "dce8f6b6:a315e0b4"
+            },
+            "sourceKind": "card"
+          }
+        ]
+      },
+      "receipt": {
+        "version": 1,
+        "engine": 3,
+        "id": "legacy-exchange",
+        "input": "b5bf92ea:10a180b2",
+        "base": "bdd4698e:b80fa610",
+        "actor": "you",
+        "operations": [
+          {
+            "kind": "defend"
+          }
+        ],
+        "responses": [
+          {
+            "actor": "Jo",
+            "action": {
+              "kind": "ability",
+              "ability": "ability-c0e04287:26a93ad",
+              "version": 1,
+              "target": "you"
+            },
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            },
+            "assessment": {
+              "contested": true,
+              "tier": "uncertain",
+              "intent": "Jab",
+              "stakes": "An opening",
+              "reasons": [
+                "Touch distance"
+              ]
+            }
+          }
+        ],
+        "changes": [
+          {
+            "kind": "condition",
+            "id": "guard-fc83617a:3cd83148",
+            "before": null,
+            "after": {
+              "id": "guard-fc83617a:3cd83148",
+              "owner": "you",
+              "name": "Guarding",
+              "hinders": [],
+              "helps": [],
+              "blocks": [],
+              "ending": "When this actor next acts",
+              "expiresAt": 2,
+              "defenses": [
+                {
+                  "kind": "resistance",
+                  "damageType": "physical",
+                  "amount": 50
+                }
+              ],
+              "source": {
+                "message": "warp-action:legacy-exchange",
+                "quote": "Defend against physical attacks",
+                "sourceRevision": "c388bbd1:c68611d7"
+              }
+            }
+          },
+          {
+            "kind": "resource",
+            "id": "Jo-focus",
+            "before": {
+              "id": "Jo-focus",
+              "owner": "Jo",
+              "name": "Focus",
+              "current": 10,
+              "max": 10,
+              "role": "effort",
+              "source": {
+                "message": "legacy-greeting",
+                "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+                "sourceRevision": "946cead2:7fde43a8"
+              }
+            },
+            "after": {
+              "id": "Jo-focus",
+              "owner": "Jo",
+              "name": "Focus",
+              "current": 8,
+              "max": 10,
+              "role": "effort",
+              "source": {
+                "message": "legacy-greeting",
+                "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+                "sourceRevision": "946cead2:7fde43a8"
+              }
+            }
+          }
+        ],
+        "beats": [
+          {
+            "kind": "defend",
+            "actor": "you"
+          },
+          {
+            "kind": "response",
+            "actor": "Jo",
+            "target": "you",
+            "decision": {
+              "tier": "uncertain",
+              "roll": 93,
+              "result": "setback",
+              "intent": "Jab",
+              "stakes": "An opening",
+              "reasons": [
+                "Touch distance"
+              ]
+            },
+            "name": "Jab"
+          }
+        ],
+        "result": "a8873243:63c64859",
+        "status": "ready"
+      },
+      "after": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "you-hp",
+            "owner": "you",
+            "name": "Health",
+            "current": 20,
+            "max": 40,
+            "role": "vital",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          },
+          {
+            "id": "you-focus",
+            "owner": "you",
+            "name": "Focus",
+            "current": 10,
+            "max": 10,
+            "role": "effort",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          },
+          {
+            "id": "Jo-hp",
+            "owner": "Jo",
+            "name": "Health",
+            "current": 40,
+            "max": 40,
+            "role": "vital",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          },
+          {
+            "id": "Jo-focus",
+            "owner": "Jo",
+            "name": "Focus",
+            "current": 8,
+            "max": 10,
+            "role": "effort",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [
+          {
+            "id": "bruise",
+            "owner": "you",
+            "name": "Bruised",
+            "hinders": [
+              "movement"
+            ],
+            "blocks": [],
+            "helps": [],
+            "ending": "Until treated",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          },
+          {
+            "id": "guard-fc83617a:3cd83148",
+            "owner": "you",
+            "name": "Guarding",
+            "hinders": [],
+            "helps": [],
+            "blocks": [],
+            "ending": "When this actor next acts",
+            "expiresAt": 2,
+            "defenses": [
+              {
+                "kind": "resistance",
+                "damageType": "physical",
+                "amount": 50
+              }
+            ],
+            "source": {
+              "message": "warp-action:legacy-exchange",
+              "quote": "Defend against physical attacks",
+              "sourceRevision": "c388bbd1:c68611d7"
+            }
+          }
+        ],
+        "applied": [
+          {
+            "id": "legacy-exchange",
+            "input": "b5bf92ea:10a180b2"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-6ef5a364:ef90f07a",
+            "version": 1,
+            "owner": "you",
+            "name": "Restore",
+            "description": "Restore",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "you-focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "restore",
+                "target": "self",
+                "resource": "Health",
+                "amount": 5,
+                "basis": "source"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "14fba035:d83b9327",
+            "source": {
+              "message": "warp-source:persona:681c168d:d73360eb",
+              "quote": "Restore costs 2 Focus and restores 5 Health. Release clears a Bruised condition.",
+              "sourceRevision": "681c168d:d73360eb"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-8ffbfd73:d8c90adf",
+            "version": 1,
+            "owner": "you",
+            "name": "Release",
+            "description": "Release",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [],
+            "effects": [
+              {
+                "kind": "clear_condition",
+                "target": "self",
+                "name": "Bruised"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "cc1b0f98:e006b3a0",
+            "source": {
+              "message": "warp-source:persona:681c168d:d73360eb",
+              "quote": "Restore costs 2 Focus and restores 5 Health. Release clears a Bruised condition.",
+              "sourceRevision": "681c168d:d73360eb"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-c0e04287:26a93ad",
+            "version": 1,
+            "owner": "Jo",
+            "name": "Jab",
+            "description": "Jab",
+            "approach": "force",
+            "target": "other",
+            "range": "touch",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "Jo-focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "damage",
+                "target": "target",
+                "resource": "Health",
+                "amount": 10,
+                "basis": "source",
+                "damageType": "physical"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "c3a6957:651d6965",
+            "source": {
+              "message": "warp-source:card:dce8f6b6:a315e0b4",
+              "quote": "Jo can use Jab, costing 2 Focus to deal 10 physical Health damage at touch range.",
+              "sourceRevision": "dce8f6b6:a315e0b4"
+            },
+            "sourceKind": "card"
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 1
+          },
+          {
+            "id": "Jo",
+            "actor": "Jo",
+            "actions": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "resolver3 condition clearing",
+      "before": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "you-hp",
+            "owner": "you",
+            "name": "Health",
+            "current": 20,
+            "max": 40,
+            "role": "vital",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          },
+          {
+            "id": "you-focus",
+            "owner": "you",
+            "name": "Focus",
+            "current": 10,
+            "max": 10,
+            "role": "effort",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          },
+          {
+            "id": "Jo-hp",
+            "owner": "Jo",
+            "name": "Health",
+            "current": 40,
+            "max": 40,
+            "role": "vital",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          },
+          {
+            "id": "Jo-focus",
+            "owner": "Jo",
+            "name": "Focus",
+            "current": 10,
+            "max": 10,
+            "role": "effort",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [
+          {
+            "id": "bruise",
+            "owner": "you",
+            "name": "Bruised",
+            "hinders": [
+              "movement"
+            ],
+            "blocks": [],
+            "helps": [],
+            "ending": "Until treated",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "applied": [],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-6ef5a364:ef90f07a",
+            "version": 1,
+            "owner": "you",
+            "name": "Restore",
+            "description": "Restore",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "you-focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "restore",
+                "target": "self",
+                "resource": "Health",
+                "amount": 5,
+                "basis": "source"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "14fba035:d83b9327",
+            "source": {
+              "message": "warp-source:persona:681c168d:d73360eb",
+              "quote": "Restore costs 2 Focus and restores 5 Health. Release clears a Bruised condition.",
+              "sourceRevision": "681c168d:d73360eb"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-8ffbfd73:d8c90adf",
+            "version": 1,
+            "owner": "you",
+            "name": "Release",
+            "description": "Release",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [],
+            "effects": [
+              {
+                "kind": "clear_condition",
+                "target": "self",
+                "name": "Bruised"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "cc1b0f98:e006b3a0",
+            "source": {
+              "message": "warp-source:persona:681c168d:d73360eb",
+              "quote": "Restore costs 2 Focus and restores 5 Health. Release clears a Bruised condition.",
+              "sourceRevision": "681c168d:d73360eb"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-c0e04287:26a93ad",
+            "version": 1,
+            "owner": "Jo",
+            "name": "Jab",
+            "description": "Jab",
+            "approach": "force",
+            "target": "other",
+            "range": "touch",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "Jo-focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "damage",
+                "target": "target",
+                "resource": "Health",
+                "amount": 10,
+                "basis": "source",
+                "damageType": "physical"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "c3a6957:651d6965",
+            "source": {
+              "message": "warp-source:card:dce8f6b6:a315e0b4",
+              "quote": "Jo can use Jab, costing 2 Focus to deal 10 physical Health damage at touch range.",
+              "sourceRevision": "dce8f6b6:a315e0b4"
+            },
+            "sourceKind": "card"
+          }
+        ]
+      },
+      "receipt": {
+        "version": 1,
+        "engine": 3,
+        "id": "legacy-clear",
+        "input": "d8b77f60:ee3edae",
+        "base": "bdd4698e:b80fa610",
+        "actor": "you",
+        "operations": [
+          {
+            "kind": "ability",
+            "ability": "ability-8ffbfd73:d8c90adf",
+            "version": 1
+          }
+        ],
+        "responses": [],
+        "changes": [
+          {
+            "kind": "condition",
+            "id": "bruise",
+            "before": {
+              "id": "bruise",
+              "owner": "you",
+              "name": "Bruised",
+              "hinders": [
+                "movement"
+              ],
+              "blocks": [],
+              "helps": [],
+              "ending": "Until treated",
+              "source": {
+                "message": "legacy-greeting",
+                "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+                "sourceRevision": "946cead2:7fde43a8"
+              }
+            },
+            "after": null
+          }
+        ],
+        "beats": [],
+        "result": "54d08cf7:9fcc9399",
+        "status": "ready"
+      },
+      "after": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "you-hp",
+            "owner": "you",
+            "name": "Health",
+            "current": 20,
+            "max": 40,
+            "role": "vital",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          },
+          {
+            "id": "you-focus",
+            "owner": "you",
+            "name": "Focus",
+            "current": 10,
+            "max": 10,
+            "role": "effort",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          },
+          {
+            "id": "Jo-hp",
+            "owner": "Jo",
+            "name": "Health",
+            "current": 40,
+            "max": 40,
+            "role": "vital",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          },
+          {
+            "id": "Jo-focus",
+            "owner": "Jo",
+            "name": "Focus",
+            "current": 10,
+            "max": 10,
+            "role": "effort",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [],
+        "applied": [
+          {
+            "id": "legacy-clear",
+            "input": "d8b77f60:ee3edae"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-6ef5a364:ef90f07a",
+            "version": 1,
+            "owner": "you",
+            "name": "Restore",
+            "description": "Restore",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "you-focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "restore",
+                "target": "self",
+                "resource": "Health",
+                "amount": 5,
+                "basis": "source"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "14fba035:d83b9327",
+            "source": {
+              "message": "warp-source:persona:681c168d:d73360eb",
+              "quote": "Restore costs 2 Focus and restores 5 Health. Release clears a Bruised condition.",
+              "sourceRevision": "681c168d:d73360eb"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-8ffbfd73:d8c90adf",
+            "version": 1,
+            "owner": "you",
+            "name": "Release",
+            "description": "Release",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [],
+            "effects": [
+              {
+                "kind": "clear_condition",
+                "target": "self",
+                "name": "Bruised"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "cc1b0f98:e006b3a0",
+            "source": {
+              "message": "warp-source:persona:681c168d:d73360eb",
+              "quote": "Restore costs 2 Focus and restores 5 Health. Release clears a Bruised condition.",
+              "sourceRevision": "681c168d:d73360eb"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-c0e04287:26a93ad",
+            "version": 1,
+            "owner": "Jo",
+            "name": "Jab",
+            "description": "Jab",
+            "approach": "force",
+            "target": "other",
+            "range": "touch",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "Jo-focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "damage",
+                "target": "target",
+                "resource": "Health",
+                "amount": 10,
+                "basis": "source",
+                "damageType": "physical"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "c3a6957:651d6965",
+            "source": {
+              "message": "warp-source:card:dce8f6b6:a315e0b4",
+              "quote": "Jo can use Jab, costing 2 Focus to deal 10 physical Health damage at touch range.",
+              "sourceRevision": "dce8f6b6:a315e0b4"
+            },
+            "sourceKind": "card"
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "resolver3 unavailable response pool",
+      "before": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "you-focus",
+            "owner": "you",
+            "name": "Focus",
+            "current": 10,
+            "max": 10,
+            "role": "effort",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          },
+          {
+            "id": "Jo-hp",
+            "owner": "Jo",
+            "name": "Health",
+            "current": 40,
+            "max": 40,
+            "role": "vital",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          },
+          {
+            "id": "Jo-focus",
+            "owner": "Jo",
+            "name": "Focus",
+            "current": 10,
+            "max": 10,
+            "role": "effort",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [
+          {
+            "id": "bruise",
+            "owner": "you",
+            "name": "Bruised",
+            "hinders": [
+              "movement"
+            ],
+            "blocks": [],
+            "helps": [],
+            "ending": "Until treated",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "applied": [],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-6ef5a364:ef90f07a",
+            "version": 1,
+            "owner": "you",
+            "name": "Restore",
+            "description": "Restore",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "you-focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "restore",
+                "target": "self",
+                "resource": "Health",
+                "amount": 5,
+                "basis": "source"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "14fba035:d83b9327",
+            "source": {
+              "message": "warp-source:persona:681c168d:d73360eb",
+              "quote": "Restore costs 2 Focus and restores 5 Health. Release clears a Bruised condition.",
+              "sourceRevision": "681c168d:d73360eb"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-8ffbfd73:d8c90adf",
+            "version": 1,
+            "owner": "you",
+            "name": "Release",
+            "description": "Release",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [],
+            "effects": [
+              {
+                "kind": "clear_condition",
+                "target": "self",
+                "name": "Bruised"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "cc1b0f98:e006b3a0",
+            "source": {
+              "message": "warp-source:persona:681c168d:d73360eb",
+              "quote": "Restore costs 2 Focus and restores 5 Health. Release clears a Bruised condition.",
+              "sourceRevision": "681c168d:d73360eb"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-c0e04287:26a93ad",
+            "version": 1,
+            "owner": "Jo",
+            "name": "Jab",
+            "description": "Jab",
+            "approach": "force",
+            "target": "other",
+            "range": "touch",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "Jo-focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "damage",
+                "target": "target",
+                "resource": "Health",
+                "amount": 10,
+                "basis": "source",
+                "damageType": "physical"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "c3a6957:651d6965",
+            "source": {
+              "message": "warp-source:card:dce8f6b6:a315e0b4",
+              "quote": "Jo can use Jab, costing 2 Focus to deal 10 physical Health damage at touch range.",
+              "sourceRevision": "dce8f6b6:a315e0b4"
+            },
+            "sourceKind": "card"
+          }
+        ]
+      },
+      "receipt": {
+        "version": 1,
+        "engine": 3,
+        "id": "legacy-unknown",
+        "input": "74d9c27f:ebee7bcd",
+        "base": "d7e80bf1:8c37274d",
+        "actor": "you",
+        "operations": [
+          {
+            "kind": "wait"
+          }
+        ],
+        "changes": [],
+        "status": "blocked",
+        "reason": "Unknown or ambiguous Health for you"
+      },
+      "after": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "you-focus",
+            "owner": "you",
+            "name": "Focus",
+            "current": 10,
+            "max": 10,
+            "role": "effort",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          },
+          {
+            "id": "Jo-hp",
+            "owner": "Jo",
+            "name": "Health",
+            "current": 40,
+            "max": 40,
+            "role": "vital",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          },
+          {
+            "id": "Jo-focus",
+            "owner": "Jo",
+            "name": "Focus",
+            "current": 10,
+            "max": 10,
+            "role": "effort",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [
+          {
+            "id": "bruise",
+            "owner": "you",
+            "name": "Bruised",
+            "hinders": [
+              "movement"
+            ],
+            "blocks": [],
+            "helps": [],
+            "ending": "Until treated",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "applied": [],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "legacy-greeting",
+              "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+              "sourceRevision": "946cead2:7fde43a8"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-6ef5a364:ef90f07a",
+            "version": 1,
+            "owner": "you",
+            "name": "Restore",
+            "description": "Restore",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "you-focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "restore",
+                "target": "self",
+                "resource": "Health",
+                "amount": 5,
+                "basis": "source"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "14fba035:d83b9327",
+            "source": {
+              "message": "warp-source:persona:681c168d:d73360eb",
+              "quote": "Restore costs 2 Focus and restores 5 Health. Release clears a Bruised condition.",
+              "sourceRevision": "681c168d:d73360eb"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-8ffbfd73:d8c90adf",
+            "version": 1,
+            "owner": "you",
+            "name": "Release",
+            "description": "Release",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [],
+            "effects": [
+              {
+                "kind": "clear_condition",
+                "target": "self",
+                "name": "Bruised"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "cc1b0f98:e006b3a0",
+            "source": {
+              "message": "warp-source:persona:681c168d:d73360eb",
+              "quote": "Restore costs 2 Focus and restores 5 Health. Release clears a Bruised condition.",
+              "sourceRevision": "681c168d:d73360eb"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-c0e04287:26a93ad",
+            "version": 1,
+            "owner": "Jo",
+            "name": "Jab",
+            "description": "Jab",
+            "approach": "force",
+            "target": "other",
+            "range": "touch",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "Jo-focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "damage",
+                "target": "target",
+                "resource": "Health",
+                "amount": 10,
+                "basis": "source",
+                "damageType": "physical"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "c3a6957:651d6965",
+            "source": {
+              "message": "warp-source:card:dce8f6b6:a315e0b4",
+              "quote": "Jo can use Jab, costing 2 Focus to deal 10 physical Health damage at touch range.",
+              "sourceRevision": "dce8f6b6:a315e0b4"
+            },
+            "sourceKind": "card"
+          }
+        ]
+      }
+    }
+  ],
+  "history": {
+    "messages": [
+      {
+        "id": "legacy-greeting",
+        "role": "assistant",
+        "is_user": false,
+        "swipe_id": 0,
+        "index_in_chat": 0,
+        "content": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+        "metadata": {
+          "warpMechanics": {
+            "0": {
+              "version": 1,
+              "path": "warp-living-v1",
+              "text": "946cead2:7fde43a8",
+              "observations": [
+                {
+                  "kind": "entity",
+                  "value": {
+                    "id": "entity-bee4fa7c:b5c60136",
+                    "name": "Jo",
+                    "displayName": "Jo",
+                    "aliases": [],
+                    "entityKind": "person",
+                    "present": true,
+                    "status": "active",
+                    "source": {
+                      "message": "legacy-greeting",
+                      "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+                      "sourceRevision": "946cead2:7fde43a8"
+                    }
+                  }
+                },
+                {
+                  "kind": "distance",
+                  "value": {
+                    "id": "distance-c3962d65:8aac587f",
+                    "from": "you",
+                    "to": "Jo",
+                    "band": "touch",
+                    "source": {
+                      "message": "legacy-greeting",
+                      "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+                      "sourceRevision": "946cead2:7fde43a8"
+                    }
+                  }
+                },
+                {
+                  "kind": "resource",
+                  "value": {
+                    "id": "you-hp",
+                    "owner": "you",
+                    "name": "Health",
+                    "current": 20,
+                    "max": 40,
+                    "role": "vital",
+                    "source": {
+                      "message": "legacy-greeting",
+                      "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+                      "sourceRevision": "946cead2:7fde43a8"
+                    }
+                  }
+                },
+                {
+                  "kind": "resource",
+                  "value": {
+                    "id": "you-focus",
+                    "owner": "you",
+                    "name": "Focus",
+                    "current": 10,
+                    "max": 10,
+                    "role": "effort",
+                    "source": {
+                      "message": "legacy-greeting",
+                      "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+                      "sourceRevision": "946cead2:7fde43a8"
+                    }
+                  }
+                },
+                {
+                  "kind": "resource",
+                  "value": {
+                    "id": "Jo-hp",
+                    "owner": "Jo",
+                    "name": "Health",
+                    "current": 40,
+                    "max": 40,
+                    "role": "vital",
+                    "source": {
+                      "message": "legacy-greeting",
+                      "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+                      "sourceRevision": "946cead2:7fde43a8"
+                    }
+                  }
+                },
+                {
+                  "kind": "resource",
+                  "value": {
+                    "id": "Jo-focus",
+                    "owner": "Jo",
+                    "name": "Focus",
+                    "current": 10,
+                    "max": 10,
+                    "role": "effort",
+                    "source": {
+                      "message": "legacy-greeting",
+                      "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+                      "sourceRevision": "946cead2:7fde43a8"
+                    }
+                  }
+                },
+                {
+                  "kind": "condition",
+                  "value": {
+                    "id": "bruise",
+                    "owner": "you",
+                    "name": "Bruised",
+                    "hinders": [
+                      "movement"
+                    ],
+                    "blocks": [],
+                    "helps": [],
+                    "ending": "Until treated",
+                    "source": {
+                      "message": "legacy-greeting",
+                      "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+                      "sourceRevision": "946cead2:7fde43a8"
+                    }
+                  }
+                },
+                {
+                  "kind": "ability",
+                  "value": {
+                    "id": "ability-6ef5a364:ef90f07a",
+                    "version": 1,
+                    "owner": "you",
+                    "name": "Restore",
+                    "description": "Restore",
+                    "approach": "concentration",
+                    "target": "self",
+                    "costs": [
+                      {
+                        "kind": "resource",
+                        "id": "you-focus",
+                        "amount": 2
+                      }
+                    ],
+                    "effects": [
+                      {
+                        "kind": "restore",
+                        "target": "self",
+                        "resource": "Health",
+                        "amount": 5,
+                        "basis": "source"
+                      }
+                    ],
+                    "requires": [],
+                    "unsupported": [],
+                    "fingerprint": "14fba035:d83b9327",
+                    "source": {
+                      "message": "warp-source:persona:681c168d:d73360eb",
+                      "quote": "Restore costs 2 Focus and restores 5 Health. Release clears a Bruised condition.",
+                      "sourceRevision": "681c168d:d73360eb"
+                    },
+                    "sourceKind": "persona"
+                  }
+                },
+                {
+                  "kind": "ability",
+                  "value": {
+                    "id": "ability-8ffbfd73:d8c90adf",
+                    "version": 1,
+                    "owner": "you",
+                    "name": "Release",
+                    "description": "Release",
+                    "approach": "concentration",
+                    "target": "self",
+                    "costs": [],
+                    "effects": [
+                      {
+                        "kind": "clear_condition",
+                        "target": "self",
+                        "name": "Bruised"
+                      }
+                    ],
+                    "requires": [],
+                    "unsupported": [],
+                    "fingerprint": "cc1b0f98:e006b3a0",
+                    "source": {
+                      "message": "warp-source:persona:681c168d:d73360eb",
+                      "quote": "Restore costs 2 Focus and restores 5 Health. Release clears a Bruised condition.",
+                      "sourceRevision": "681c168d:d73360eb"
+                    },
+                    "sourceKind": "persona"
+                  }
+                },
+                {
+                  "kind": "ability",
+                  "value": {
+                    "id": "ability-c0e04287:26a93ad",
+                    "version": 1,
+                    "owner": "Jo",
+                    "name": "Jab",
+                    "description": "Jab",
+                    "approach": "force",
+                    "target": "other",
+                    "range": "touch",
+                    "costs": [
+                      {
+                        "kind": "resource",
+                        "id": "Jo-focus",
+                        "amount": 2
+                      }
+                    ],
+                    "effects": [
+                      {
+                        "kind": "damage",
+                        "target": "target",
+                        "resource": "Health",
+                        "amount": 10,
+                        "basis": "source",
+                        "damageType": "physical"
+                      }
+                    ],
+                    "requires": [],
+                    "unsupported": [],
+                    "fingerprint": "c3a6957:651d6965",
+                    "source": {
+                      "message": "warp-source:card:dce8f6b6:a315e0b4",
+                      "quote": "Jo can use Jab, costing 2 Focus to deal 10 physical Health damage at touch range.",
+                      "sourceRevision": "dce8f6b6:a315e0b4"
+                    },
+                    "sourceKind": "card"
+                  }
+                }
+              ],
+              "sources": [
+                {
+                  "id": "warp-source:persona:681c168d:d73360eb",
+                  "kind": "persona",
+                  "text": "Restore costs 2 Focus and restores 5 Health. Release clears a Bruised condition."
+                },
+                {
+                  "id": "warp-source:card:dce8f6b6:a315e0b4",
+                  "kind": "card",
+                  "text": "Jo can use Jab, costing 2 Focus to deal 10 physical Health damage at touch range."
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": "legacy-recovery",
+        "role": "assistant",
+        "is_user": false,
+        "swipe_id": 0,
+        "index_in_chat": 1,
+        "content": "The bruise is fully treated.",
+        "metadata": {
+          "warpMechanics": {
+            "0": {
+              "version": 1,
+              "path": "98090179:18152c2b",
+              "text": "5e7f158b:7d019501",
+              "observations": [
+                {
+                  "kind": "condition_end",
+                  "id": "bruise",
+                  "source": {
+                    "message": "legacy-recovery",
+                    "quote": "The bruise is fully treated.",
+                    "sourceRevision": "5e7f158b:7d019501"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    ],
+    "after": {
+      "version": 1,
+      "resources": [
+        {
+          "id": "you-hp",
+          "owner": "you",
+          "name": "Health",
+          "current": 20,
+          "max": 40,
+          "role": "vital",
+          "source": {
+            "message": "legacy-greeting",
+            "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+            "sourceRevision": "946cead2:7fde43a8"
+          }
+        },
+        {
+          "id": "you-focus",
+          "owner": "you",
+          "name": "Focus",
+          "current": 10,
+          "max": 10,
+          "role": "effort",
+          "source": {
+            "message": "legacy-greeting",
+            "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+            "sourceRevision": "946cead2:7fde43a8"
+          }
+        },
+        {
+          "id": "Jo-hp",
+          "owner": "Jo",
+          "name": "Health",
+          "current": 40,
+          "max": 40,
+          "role": "vital",
+          "source": {
+            "message": "legacy-greeting",
+            "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+            "sourceRevision": "946cead2:7fde43a8"
+          }
+        },
+        {
+          "id": "Jo-focus",
+          "owner": "Jo",
+          "name": "Focus",
+          "current": 10,
+          "max": 10,
+          "role": "effort",
+          "source": {
+            "message": "legacy-greeting",
+            "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+            "sourceRevision": "946cead2:7fde43a8"
+          }
+        }
+      ],
+      "items": [],
+      "conditions": [],
+      "applied": [],
+      "entities": [
+        {
+          "id": "entity-bee4fa7c:b5c60136",
+          "name": "Jo",
+          "displayName": "Jo",
+          "aliases": [],
+          "entityKind": "person",
+          "present": true,
+          "status": "active",
+          "source": {
+            "message": "legacy-greeting",
+            "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+            "sourceRevision": "946cead2:7fde43a8"
+          }
+        }
+      ],
+      "distances": [
+        {
+          "id": "distance-c3962d65:8aac587f",
+          "from": "you",
+          "to": "Jo",
+          "band": "touch",
+          "source": {
+            "message": "legacy-greeting",
+            "quote": "Jo stands at touch distance, ready to jab. You have 20 of 40 Health and 10 of 10 Focus. Jo has 40 of 40 Health and 10 of 10 Focus. You have a bruise until treated.",
+            "sourceRevision": "946cead2:7fde43a8"
+          }
+        }
+      ],
+      "abilities": [
+        {
+          "id": "ability-6ef5a364:ef90f07a",
+          "version": 1,
+          "owner": "you",
+          "name": "Restore",
+          "description": "Restore",
+          "approach": "concentration",
+          "target": "self",
+          "costs": [
+            {
+              "kind": "resource",
+              "id": "you-focus",
+              "amount": 2
+            }
+          ],
+          "effects": [
+            {
+              "kind": "restore",
+              "target": "self",
+              "resource": "Health",
+              "amount": 5,
+              "basis": "source"
+            }
+          ],
+          "requires": [],
+          "unsupported": [],
+          "fingerprint": "14fba035:d83b9327",
+          "source": {
+            "message": "warp-source:persona:681c168d:d73360eb",
+            "quote": "Restore costs 2 Focus and restores 5 Health. Release clears a Bruised condition.",
+            "sourceRevision": "681c168d:d73360eb"
+          },
+          "sourceKind": "persona"
+        },
+        {
+          "id": "ability-8ffbfd73:d8c90adf",
+          "version": 1,
+          "owner": "you",
+          "name": "Release",
+          "description": "Release",
+          "approach": "concentration",
+          "target": "self",
+          "costs": [],
+          "effects": [
+            {
+              "kind": "clear_condition",
+              "target": "self",
+              "name": "Bruised"
+            }
+          ],
+          "requires": [],
+          "unsupported": [],
+          "fingerprint": "cc1b0f98:e006b3a0",
+          "source": {
+            "message": "warp-source:persona:681c168d:d73360eb",
+            "quote": "Restore costs 2 Focus and restores 5 Health. Release clears a Bruised condition.",
+            "sourceRevision": "681c168d:d73360eb"
+          },
+          "sourceKind": "persona"
+        },
+        {
+          "id": "ability-c0e04287:26a93ad",
+          "version": 1,
+          "owner": "Jo",
+          "name": "Jab",
+          "description": "Jab",
+          "approach": "force",
+          "target": "other",
+          "range": "touch",
+          "costs": [
+            {
+              "kind": "resource",
+              "id": "Jo-focus",
+              "amount": 2
+            }
+          ],
+          "effects": [
+            {
+              "kind": "damage",
+              "target": "target",
+              "resource": "Health",
+              "amount": 10,
+              "basis": "source",
+              "damageType": "physical"
+            }
+          ],
+          "requires": [],
+          "unsupported": [],
+          "fingerprint": "c3a6957:651d6965",
+          "source": {
+            "message": "warp-source:card:dce8f6b6:a315e0b4",
+            "quote": "Jo can use Jab, costing 2 Focus to deal 10 physical Health damage at touch range.",
+            "sourceRevision": "dce8f6b6:a315e0b4"
+          },
+          "sourceKind": "card"
+        }
+      ]
+    }
+  }
+}

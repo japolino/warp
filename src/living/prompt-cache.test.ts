@@ -110,3 +110,22 @@ test("saved receipt presentation remains frozen when future turns use a differen
   expect(b.slice(0, a.length)).toEqual(a);
   expect(b.at(-1)!.content).toContain("Leave arithmetic and resource totals");
 });
+
+test("resilience and healed-injury changes append deltas without publishing retirement bookkeeping or rewriting old prompts", () => {
+  const first = msg("0", true, "I try to get past Jo."), history = [first], state = emptyMechanics();
+  const source = { message: "old", quote: "Sam has a tough body." };
+  state.resilience = [{ id: "body", owner: "you", band: "tough", version: 1, basis: "warp", source }];
+  state.conditions = [{ id: "wound", owner: "you", name: "Hurt", hinders: [], blocks: [], helps: [], ending: "Treatment", injury: { rule: 1, load: 1, basis: "warp" }, source }];
+  store(history, first, "Jacket").packet.mechanics = mechanicalPacket(state);
+  const original = replayPrompt(prompt(history), history, "Director");
+  state.conditions = []; state.resilience[0] = { ...state.resilience[0], band: "exceptional", version: 2 };
+  state.closedConditions = [{ id: "wound", owner: "you", name: "Hurt", after: { kind: "receipt", id: "treated" } }];
+  history.push(msg("1", false, "Jo treats the wound."), msg("2", true, "I stand up."));
+  store(history, history.at(-1)!, "Jacket").packet.mechanics = mechanicalPacket(state);
+  const next = replayPrompt(prompt(history), history, "Director");
+  expect(next.slice(0, original.length)).toEqual(original);
+  expect(next.at(-1)!.content).toContain('"conditions":{"put":[],"remove":["wound"]}');
+  expect(next.at(-1)!.content).toContain('"resilience":{"put":[{"id":"body"');
+  expect(next.at(-1)!.content).not.toContain("closedConditions");
+  expect(next.at(-1)!.content).not.toContain('"load":1');
+});

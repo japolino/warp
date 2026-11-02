@@ -2,13 +2,16 @@ import { revision } from "../shared/revision.js";
 import type { Evidence, Message } from "./world.js";
 import type { Approach, MechanicalState } from "./mechanics.js";
 import { actorName, RANGES, DAMAGE_TYPES, readDefenses, type Range, type DamageType, type Defense } from "./encounters.js";
+import { IMPACTS, type Impact } from "./injuries.js";
 
 export interface DefinitionSource { id: string; kind: "card" | "persona" | "lore"; text: string; }
 export interface AbilityEffect {
-  kind: "restore" | "damage" | "condition" | "clear_condition" | "defense";
+  kind: "restore" | "damage" | "harm" | "mend" | "condition" | "clear_condition" | "defense";
   target: "self" | "target"; resource?: string; amount?: number; basis?: "source" | "warp";
   name?: string; hinders?: Approach[]; helps?: Approach[]; blocks?: Approach[]; ending?: string;
   damageType?: DamageType; defense?: Defense; duration?: number;
+  impact?: Impact;
+  maxInjury?: Impact | "any";
 }
 export interface AbilityDefinition {
   id: string; version: number; owner: string; name: string; description: string;
@@ -77,12 +80,17 @@ export function readAbilityDefinitions(raw: unknown, state: MechanicalState, mes
         return { kind: c.kind as "resource" | "item", id: candidate.id, amount: c.amount };
       });
       const effects: AbilityEffect[] = row.effects.map(e => {
-        const fields: Record<string, string[]> = { restore: ["resource", "amount", "basis", "magnitude"], damage: ["resource", "amount", "basis", "magnitude", "damageType"], condition: ["name", "hinders", "helps", "blocks", "ending", "duration"], clear_condition: ["name"], defense: ["name", "defense", "ending", "duration", "basis", "magnitude"] };
+        const fields: Record<string, string[]> = { restore: ["resource", "amount", "basis", "magnitude"], damage: ["resource", "amount", "basis", "magnitude", "damageType"], harm: ["impact", "damageType"], mend: ["impact", "maxInjury"], condition: ["name", "hinders", "helps", "blocks", "ending", "duration"], clear_condition: ["name"], defense: ["name", "defense", "ending", "duration", "basis", "magnitude"] };
         if (!obj(e) || !fields[e.kind as string] || Object.keys(e).some(k => !["kind", "target", ...fields[e.kind as string]].includes(k))) throw new Error("Unsupported effect fields");
         if (!obj(e) || !["self", "target"].includes(e.target as string)) throw new Error("Unknown effect target");
         const target = e.target as "self" | "target";
         const duration = e.duration;
         if (duration !== undefined && (!positive(duration) || !Number.isInteger(duration) || duration > 10000 || !numberIn(quote, duration))) throw new Error("Unsourced action duration");
+        if (e.kind === "harm" || e.kind === "mend") {
+          if (!Object.hasOwn(IMPACTS, e.impact as string) || e.kind === "harm" && !["physical", "fire", "cold", "electric", "poison"].includes(e.damageType as string)) throw new Error("Unsupported qualitative physical effect");
+          if (e.maxInjury !== undefined && (!["minor", "standard", "major", "any"].includes(e.maxInjury as string) || !(e.maxInjury === "any" ? /\b(?:all|any)\b/i : new RegExp(`\\b${e.maxInjury}\\b`, "i")).test(quote))) throw new Error("Unsourced treatment limit");
+          return { kind: e.kind, target, impact: e.impact as Impact, ...(e.kind === "harm" ? { damageType: e.damageType as DamageType } : {}), ...(e.maxInjury ? { maxInjury: e.maxInjury as Impact | "any" } : {}) };
+        }
         if (e.kind === "restore" || e.kind === "damage") {
           const resource = str(e.resource);
           if (!resource) throw new Error("Missing resource selector");

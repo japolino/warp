@@ -40,6 +40,150 @@ function revision(value) {
   return `${(a >>> 0).toString(16)}:${(b >>> 0).toString(16)}`;
 }
 
+// src/living/condition-history.ts
+function messageOwnsAction(message, action) {
+  const record = message;
+  const receipt = record.metadata?.warpMechanics?.[String(message.swipe_id ?? 0)]?.receipt;
+  return receipt?.id === action || !!receipt?.id && Array.isArray(receipt.responses) && receipt.responses.some((p) => action === `${receipt.id}:response:${p.actor}`);
+}
+function closeCondition(state, condition, after) {
+  state.closedConditions ??= [];
+  const row = { id: condition.id, owner: condition.owner, name: condition.name, ...condition.injury ? { injuryNames: ["Lightly hurt", "Hurt", "Injured", "Badly injured", "Incapacitated"] } : {}, after };
+  const index = state.closedConditions.findIndex((c) => c.id === row.id || c.owner === row.owner && c.name.toLocaleLowerCase() === row.name.toLocaleLowerCase());
+  if (index < 0)
+    state.closedConditions.push(row);
+  else
+    state.closedConditions[index] = row;
+}
+function conditionCauseIsNew(state, id, owner, name, source, messages, physical = false) {
+  const closed = state.closedConditions?.find((c) => c.id === id || c.owner === owner && (c.name.toLocaleLowerCase() === name.toLocaleLowerCase() || c.injuryNames?.some((n) => n.toLocaleLowerCase() === name.toLocaleLowerCase()) || physical && c.injuryNames?.length));
+  if (!closed)
+    return true;
+  if (source.message.startsWith("warp-source:"))
+    return false;
+  const ended = messages.findIndex((m) => {
+    if (closed.after.kind === "message")
+      return m.id === closed.after.id;
+    return messageOwnsAction(m, closed.after.id);
+  });
+  return ended >= 0 && messages.findIndex((m) => m.id === source.message) > ended;
+}
+
+// src/living/injuries.ts
+function readResilience(row, state, owner, source, messages, correction) {
+  if (!Object.hasOwn(BODY_RESILIENCE, row.band))
+    return;
+  const old = state.resilience?.find((r) => r.owner === owner);
+  if (old) {
+    const message = messages.find((m) => m.id === source.message);
+    const profileKind = (id) => id.match(/^warp-source:(card|persona|lore):/)?.[1];
+    const edited = profileKind(source.message) && profileKind(source.message) === profileKind(old.source.message) && message && !message.content.replace(/\s+/g, " ").includes(old.source.quote);
+    if (old.band === row.band || !correction && !edited)
+      return;
+  }
+  return { id: old?.id ?? `resilience-${revision(owner)}`, owner, band: row.band, version: (old?.version ?? 0) + 1, basis: "warp", source };
+}
+function applyInjury(state, actor, target, raw, type, changes, beats, action, secondary = false) {
+  const pool = vital(state, target);
+  if (pool) {
+    damage(state, actor, target, pool, raw, type, changes, beats, secondary, true, true, action);
+    return;
+  }
+  if (!PHYSICAL_TYPES.includes(type))
+    throw new MechanicalKnowledgeError(`No physical injury mapping for ${type} damage without a known resource`);
+  if (target !== "you" && state.entities?.find((e) => e.name === actorName(state, target))?.entityKind !== "person")
+    throw new MechanicalKnowledgeError("An unmeasured object needs a supported material effect");
+  const protection = absorbDamage(state, target, raw, type, changes);
+  if (protection.immune) {
+    beats.push({ kind: "harm", actor, target, name: "Unaffected", basis: "warp" });
+    return;
+  }
+  const scale = BODY_RESILIENCE[state.resilience?.find((r) => r.owner === target)?.band ?? "ordinary"];
+  const id = injuryId(target), old = state.conditions.find((c) => c.id === id), beforeLoad = old?.injury?.load ?? 0;
+  const load = Math.min(4, Math.round((beforeLoad + protection.remaining / (5 * scale)) * 1000) / 1000);
+  const delivered = Math.max(0, load - beforeLoad) * 5 * scale;
+  let name = old?.name;
+  if (load > beforeLoad) {
+    const level = Math.min(4, Math.floor(load));
+    name = ["Lightly hurt", "Hurt", "Injured", "Badly injured", "Incapacitated"][level];
+    const condition = {
+      id,
+      owner: target,
+      name,
+      hinders: level >= 2 ? ["movement", "force", "precision"] : [],
+      helps: [],
+      blocks: level >= 4 ? ["movement", "force", "precision", "speech", "perception", "concentration"] : [],
+      ending: "Appropriate treatment or established recovery",
+      injury: { rule: 1, load, basis: "warp" },
+      source: { message: `warp-action:${action}`, quote: `Physical harm to ${target}`, sourceRevision: revision([action, actor, target, raw, type]) }
+    };
+    if (old)
+      state.conditions[state.conditions.indexOf(old)] = condition;
+    else
+      state.conditions.push(condition);
+    changes.push({ kind: "condition", id, before: old ? structuredClone(old) : null, after: structuredClone(condition) });
+  }
+  const reflected = secondary ? 0 : Math.round(delivered * protection.reflect / 100 * 1000) / 1000;
+  beats.push({ kind: "harm", actor, target, name: name ?? "Protected", absorbed: protection.absorbed, resisted: protection.resisted, reflected, basis: "warp" });
+  if (reflected > 0 && actor !== target)
+    applyInjury(state, target, actor, reflected, type, changes, beats, action, true);
+}
+function mendInjury(state, owner, impact, changes, beats, action, maxInjury = "any") {
+  const id = injuryId(owner), old = state.conditions.find((c) => c.id === id && c.injury);
+  const limit = { minor: 1, standard: 2, major: 3, any: 4 }[maxInjury];
+  if (old && Math.floor(old.injury.load) > limit)
+    throw new Error("This injury exceeds the treatment's supported severity");
+  if (!old) {
+    const grades = { minor: 1, standard: 2, major: 3 };
+    const condition = state.conditions.filter((c) => c.owner === owner && c.category === "physical_injury" && c.recovery === "routine" && c.severity && grades[c.severity] <= Math.min(grades[impact], limit)).sort((a, b) => grades[b.severity] - grades[a.severity] || a.id.localeCompare(b.id))[0];
+    if (condition) {
+      state.conditions = state.conditions.filter((c) => c.id !== condition.id);
+      closeCondition(state, condition, { kind: "receipt", id: action });
+      changes.push({ kind: "condition", id: condition.id, before: structuredClone(condition), after: null });
+      beats.push({ kind: "mend", actor: owner, target: owner, name: `${condition.name}: cleared`, basis: "warp" });
+      return;
+    }
+    const pool = vital(state, owner);
+    if (pool) {
+      if (maxInjury !== "any")
+        throw new MechanicalKnowledgeError("A source-limited treatment needs a known qualitative injury severity");
+      if (pool.max === undefined)
+        throw new MechanicalKnowledgeError(`Recovery limit for ${pool.name} is unknown`);
+      if (pool.current >= pool.max)
+        throw new Error("No recorded physical injury to treat");
+      const before = structuredClone(pool);
+      pool.current = Math.min(pool.max, pool.current + IMPACTS[impact]);
+      changes.push({ kind: "resource", id: pool.id, before, after: structuredClone(pool) });
+      beats.push({ kind: "mend", actor: owner, target: owner, name: "Recovery", amount: pool.current - before.current, basis: "warp" });
+      return;
+    }
+    throw new Error("No supported physical injury to treat");
+  }
+  const load = Math.max(0, Math.round((old.injury.load - IMPACTS[impact] / 5) * 1000) / 1000);
+  if (!load) {
+    state.conditions = state.conditions.filter((c) => c.id !== id);
+    closeCondition(state, old, { kind: "receipt", id: action });
+    changes.push({ kind: "condition", id, before: structuredClone(old), after: null });
+    beats.push({ kind: "mend", actor: owner, target: owner, name: "Recovered", basis: "warp" });
+    return;
+  }
+  const level = Math.min(4, Math.floor(load)), condition = { ...structuredClone(old), name: ["Lightly hurt", "Hurt", "Injured", "Badly injured", "Incapacitated"][level], injury: { rule: 1, load, basis: "warp" }, hinders: level >= 2 ? ["movement", "force", "precision"] : [], blocks: level >= 4 ? ["movement", "force", "precision", "speech", "perception", "concentration"] : [] };
+  state.conditions[state.conditions.indexOf(old)] = condition;
+  changes.push({ kind: "condition", id, before: structuredClone(old), after: structuredClone(condition) });
+  beats.push({ kind: "mend", actor: owner, target: owner, name: condition.name, basis: "warp" });
+}
+var IMPACTS, BODY_RESILIENCE, PHYSICAL_TYPES, injuryId = (owner) => `injury-${revision(owner)}`, isVitalSelector = (selector) => !!selector && /^(?:health|hp|vitality|vital)$/i.test(selector.trim()), INJURY_INSTRUCTIONS = `When a physical encounter has no numerical Health/HP pool, do not invent one. Resolver 4 can apply engine-owned physical injury conditions instead. Ordinary unmodified strikes use this path automatically for a present person without a vital resource. These conditions are game approximations, not fictional numerical health values or medical diagnoses. They progress Lightly hurt/Hurt, Injured, Badly injured, Incapacitated. They never declare death, consent, feelings or thoughts. Speech/social checks are not penalized by a lesser physical injury.
+Source-backed ability effects may use {kind:"harm",target:"self|target",impact:"minor|standard|major",damageType:"physical|fire|cold|electric|poison"} for qualitative physical harm, and {kind:"mend",target,impact:"minor|standard|major"} for established injury treatment. Do not discard an explicit numerical damage/recovery amount to make it fit this vocabulary. Exact numerical effects still require a known resource. Mend treats the engine injury first, then a suitably minor routine physical condition, or restores a known vital resource with a known cap. It cannot regrow a limb, remove a curse, reset money/energy or supply an invented recovery limit. Retain unsupported restrictions/effects explicitly.
+Mend can include maxInjury:"minor|standard|major|any" only when that limit is stated in its source quote. A minor-only treatment needs maxInjury:"minor"; it cannot be spammed to remove a more severe injury. Keep other unsupported restrictions explicit. An observed physical condition can include category:"physical_injury",severity:"minor|standard|major",recovery:"routine|special" only when the cause and treatment class are supported. Lost body parts, chronic disabilities, curses and injuries requiring a specific exceptional cure are special, never routine. Generic mend cannot remove them. A specific source-backed cure may use clear_condition for an actual named condition when that cure really applies.
+Optionally add mechanicalObservations {kind:"resilience",owner,band:"frail|ordinary|tough|exceptional",message,quote} only when physical bodily durability is actually established. The quote can be a supplied profile or an actual narrator fact. The engine owns the relative scale and labels it a Warp interpretation. Ordinary is the fallback, not a field to fill for every person. Skill, military rank, magical output, wealth and mood do not prove bodily durability. Do not invent an immunity from a resilience band. Source-backed immunities remain distinct hard constraints.
+Do not add a duplicate prose condition for the same recorded injury. Appropriate new injury/recovery evidence can still be observed, but an old quote cannot reapply a healed injury. Repeated dialogue, inspecting state, API waiting and ordinary affection do not create or heal an injury. A living incapacitated player may explicitly wait for another present person's source-backed aid; this takes no active player action, spends no player resource and does not advance their action clock. It never resurrects an explicitly dead person.`;
+var init_injuries = __esm(() => {
+  init_encounters();
+  IMPACTS = { minor: 5, standard: 15, major: 30 };
+  BODY_RESILIENCE = { frail: 0.5, ordinary: 1, tough: 2, exceptional: 8 };
+  PHYSICAL_TYPES = ["physical", "fire", "cold", "electric", "poison"];
+});
+
 // src/living/encounters.ts
 function actorName(state, input) {
   if (normalize(input) === "you")
@@ -49,7 +193,7 @@ function actorName(state, input) {
     throw new Error("Actor identity is ambiguous");
   if (candidates[0])
     return candidates[0].name;
-  const owners = [...new Set([...state.resources, ...state.items, ...state.conditions, ...state.abilities ?? []].map((row) => row.owner))].filter((n) => normalize(n) === normalize(input));
+  const owners = [...new Set([...state.resources, ...state.items, ...state.conditions, ...state.abilities ?? [], ...state.resilience ?? []].map((row) => row.owner))].filter((n) => normalize(n) === normalize(input));
   if (owners.length > 1)
     throw new Error("Actor identity is ambiguous");
   return owners[0] ?? input;
@@ -64,7 +208,7 @@ function vital(state, owner) {
   return state.resources.find((r) => r.owner === owner && (r.role === "vital" || !r.role && /^(?:hp|health|vitality)$/i.test(r.name)));
 }
 function capable(state, owner) {
-  return entityFor(state, owner)?.status !== "dead" && (vital(state, owner)?.current ?? 1) > 0;
+  return entityFor(state, owner)?.status !== "dead" && (vital(state, owner)?.current ?? 1) > 0 && !state.conditions.some((c) => c.owner === owner && (c.injury?.load ?? 0) >= 4);
 }
 function distanceId(from, to) {
   return `distance-${revision([from, to].sort())}`;
@@ -127,11 +271,9 @@ function defenses(state, owner, type) {
 function immune(state, owner, type) {
   return defenses(state, owner, type).some((d) => d.kind === "immunity");
 }
-function damage(state, actor, target, resource, raw, type, changes, beats, secondary = false, strict = false) {
-  if (immune(state, target, type)) {
-    beats.push({ kind: "damage", actor, target, amount: 0, resisted: raw, name: type });
-    return;
-  }
+function absorbDamage(state, target, raw, type, changes) {
+  if (immune(state, target, type))
+    return { immune: true, remaining: 0, absorbed: 0, resisted: raw, reflect: 0 };
   const protection = defenses(state, target, type);
   const armor = protection.filter((d) => d.kind === "armor").reduce((sum, d) => sum + d.amount, 0);
   const resistance = Math.min(100, protection.filter((d) => d.kind === "resistance").reduce((sum, d) => sum + d.amount, 0));
@@ -159,18 +301,32 @@ function damage(state, actor, target, resource, raw, type, changes, beats, secon
       if (used)
         changes.push({ kind: "resource", id: shield.id, before, after: structuredClone(shield) });
     }
+  const reflect = Math.min(100, protection.filter((d) => d.kind === "reflect").reduce((sum, d) => sum + d.amount, 0));
+  return { immune: false, remaining, absorbed, resisted, reflect };
+}
+function damage(state, actor, target, resource, raw, type, changes, beats, secondary = false, strict = false, qualitative = false, action = "") {
+  const protection = absorbDamage(state, target, raw, type, changes);
+  if (protection.immune) {
+    beats.push({ kind: "damage", actor, target, amount: 0, resisted: raw, name: type });
+    return;
+  }
+  const { remaining, absorbed, resisted } = protection;
   const old = structuredClone(resource), actual = Math.min(resource.current, remaining);
   resource.current = Math.max(0, resource.current - actual);
   if (actual)
     changes.push({ kind: "resource", id: resource.id, before: old, after: structuredClone(resource) });
-  const reflect = secondary ? 0 : Math.min(100, protection.filter((d) => d.kind === "reflect").reduce((sum, d) => sum + d.amount, 0));
+  const reflect = secondary ? 0 : protection.reflect;
   const reflected = Math.round(actual * reflect * 10) / 1000;
   beats.push({ kind: "damage", actor, target, amount: actual, absorbed, resisted, reflected, name: type });
   const back = reflected > 0 ? vital(state, actor) : undefined;
-  if (strict && reflected > 0 && !back && actor !== target)
-    throw new MechanicalKnowledgeError("Reflection needs the attacker's known vital resource");
-  if (back && actor !== target)
-    damage(state, target, actor, back, reflected, type, changes, beats, true, strict);
+  if (qualitative && reflected > 0 && actor !== target)
+    applyInjury(state, target, actor, reflected, type, changes, beats, action, true);
+  else {
+    if (strict && reflected > 0 && !back && actor !== target)
+      throw new MechanicalKnowledgeError("Reflection needs the attacker's known vital resource");
+    if (back && actor !== target)
+      damage(state, target, actor, back, reflected, type, changes, beats, true, strict);
+  }
 }
 function readDefenses(raw, quote) {
   if (raw === undefined)
@@ -208,7 +364,7 @@ function readEncounterObservation(row, state, source, messages) {
     const aliases = Array.isArray(row.aliases) ? [...new Set(row.aliases.map((a) => text(a)).filter(Boolean))].slice(0, 12) : [];
     if (normalize(name) !== "you" && aliases.some((a) => normalize(a) === "you"))
       return;
-    const matches = [...new Set([name, ...aliases].map((n) => actorName(state, n)).filter((n) => state.entities?.some((e) => e.name === n) || [...state.resources, ...state.items, ...state.conditions, ...state.abilities ?? []].some((row) => row.owner === n)))];
+    const matches = [...new Set([name, ...aliases].map((n) => actorName(state, n)).filter((n) => state.entities?.some((e) => e.name === n) || [...state.resources, ...state.items, ...state.conditions, ...state.abilities ?? [], ...state.resilience ?? []].some((row) => row.owner === n)))];
     if (matches.length > 1)
       return;
     const canonical = matches[0] ?? actorName(state, name), old = state.entities?.find((e) => e.name === canonical);
@@ -239,10 +395,7 @@ function readEncounterObservation(row, state, source, messages) {
     if (old && !correction) {
       if (old.source.message.startsWith("warp-action:")) {
         const actionId = old.source.message.slice("warp-action:".length);
-        const committed = messages.findIndex((m) => {
-          const record = m;
-          return record.metadata?.warpMechanics?.[String(record.swipe_id ?? 0)]?.receipt?.id === actionId;
-        });
+        const committed = messages.findIndex((m) => messageOwnsAction(m, actionId));
         if (committed < 0 || messages.findIndex((m) => m.id === source.message) <= committed)
           return;
       } else if (!newer(old.source))
@@ -254,6 +407,7 @@ function readEncounterObservation(row, state, source, messages) {
 var DAMAGE_TYPES, RANGES, MechanicalKnowledgeError, normalize = (value) => value.normalize("NFKC").trim().toLocaleLowerCase(), entityId = (name) => normalize(name) === "you" ? "you" : `entity-${revision(normalize(name))}`, ENCOUNTER_INSTRUCTIONS = `For relevant established participants/objects, mechanicalObservations may include {kind:"entity",name,displayName,aliases:[],entityKind:"person|object",present,status:"active|dead",message,quote} and {kind:"distance",from,to,band:"touch|near|far",message,quote}. Use you for the player. Reuse identity and names across aliases. Profiles can establish identity but cannot establish current presence, distance or a death. Presence and distance require an actual scene quote. Dead means explicitly dead, not merely injured or at zero health. Do not materialize an encounter for ordinary conversation.
 Resources may have role:"vital|effort|shield|money|other" only when their fictional function is supported. Equipped items and conditions may have defenses:[{kind:"armor|resistance|immunity|reflect",amount,damageType:"physical|fire|cold|electric|poison|mental|untyped|all"}]. Armor subtracts a flat amount, resistance/reflect use percentages, immunity uses amount:0. All non-immunity numbers must occur in the source quote. Do not invent these defenses or health values. A shield pool is an explicit resource with role:shield. Actual values stay unknown without source evidence. Never emit an absolute update to undo an action receipt.`;
 var init_encounters = __esm(() => {
+  init_injuries();
   DAMAGE_TYPES = ["physical", "fire", "cold", "electric", "poison", "mental", "untyped"];
   RANGES = ["touch", "near", "far"];
   MechanicalKnowledgeError = class MechanicalKnowledgeError extends Error {
@@ -2827,6 +2981,10 @@ function effectText(e) {
   const who = e.target === "self" ? "self" : "target";
   if (e.kind === "restore" || e.kind === "damage")
     return `${e.kind === "restore" ? "Restore" : "Damage"} ${e.amount} ${e.resource}${e.damageType ? ` · ${e.damageType}` : ""} · ${who}${e.basis === "warp" ? " · Warp value" : ""}`;
+  if (e.kind === "harm")
+    return `${e.impact} ${e.damageType} harm · ${who} · Warp interpretation`;
+  if (e.kind === "mend")
+    return `${e.impact} injury treatment · ${who}${e.maxInjury && e.maxInjury !== "any" ? ` · treats at most ${e.maxInjury} injuries` : ""} · Warp interpretation`;
   if (e.kind === "clear_condition")
     return `Clear ${e.name} · ${who}`;
   if (e.kind === "defense" && e.defense)
@@ -2836,10 +2994,12 @@ function effectText(e) {
 function inspectMechanics(state) {
   const resources = state.resources.filter((r) => r.owner === "you"), items = state.items.filter((i) => i.owner === "you" && i.quantity > 0);
   const conditions = state.conditions.filter((c) => c.owner === "you"), abilities = state.abilities?.filter((a) => a.owner === "you") ?? [];
+  const resilience = state.resilience?.find((r) => r.owner === "you" && r.band !== "ordinary");
   const named = (id) => state.resources.find((r) => r.id === id)?.name ?? state.items.find((i) => i.id === id)?.name ?? id;
   return `<section class="warp-inspector" aria-label="Your saved mechanics">
     ${resources.length ? `<dl class="warp-inspector-resources">${resources.map((r) => `<div><dt>${esc(r.name)}</dt><dd>${r.current}${r.max === undefined ? "" : ` / ${r.max}`}${r.unit ? ` ${esc(r.unit)}` : ""}</dd></div>`).join("")}</dl>` : ""}
     ${items.length ? `<div class="warp-inspector-items">${items.map((i) => `<span>${esc(i.name)} × ${i.quantity}${i.equipped ? " · equipped" : ""}</span>`).join("")}</div>` : ""}
+    ${resilience ? `<p>Physical resilience: ${esc(resilience.band)}<small>Warp interpretation · ${esc(resilience.source.quote)}</small></p>` : ""}
     ${conditions.map((c) => `<p>${esc(c.name)}${c.targets?.length ? ` · with ${c.targets.map(esc).join(", ")}` : ""}${c.place ? ` · ${esc(c.place)}` : ""}<small>${esc(c.ending)}${c.defenses?.length ? ` · ${c.defenses.map((d) => esc(defenseText(d, true))).join(" · ")}` : ""}</small></p>`).join("")}
     ${abilities.length ? `<div class="warp-inspector-abilities">${abilities.map((a) => `<details data-inspect-ability="${esc(a.id)}"><summary><strong>${esc(a.name)}</strong><span>${a.costs.length ? a.costs.map((c) => `${c.amount} ${esc(named(c.id))}`).join(" + ") : "No established resource cost"}</span></summary>
       <p>${esc(a.description)}</p>${a.effects.map((e) => `<p>${esc(effectText(e))}</p>`).join("")}
@@ -2847,7 +3007,7 @@ function inspectMechanics(state) {
       ${a.requires.length ? `<p>Requires ${a.requires.map((r) => `${esc(named(r.item))}${r.equipped ? " equipped" : " carried"}`).join(", ")}</p>` : ""}
       ${a.unsupported.length ? `<p class="warp-inspector-blocked">Needs clarification: ${a.unsupported.map(esc).join(" · ")}</p>` : ""}
       <small>Version ${a.version} · ${esc(a.sourceKind)}</small><blockquote>${esc(a.source.quote)}</blockquote></details>`).join("")}</div>` : ""}
-    ${!resources.length && !items.length && !conditions.length && !abilities.length ? "No established player mechanics yet." : ""}
+    ${!resources.length && !items.length && !conditions.length && !abilities.length && !resilience ? "No established player mechanics yet." : ""}
   </section>`;
 }
 var INSPECTOR_STYLE = `
@@ -2915,7 +3075,7 @@ function connectLiving(ctx) {
     if (!view.enabled)
       return `<div class="warp-scene-top"><span>Warp paused</span><button data-living="resume">Resume</button></div>`;
     const world = view.world;
-    const inspectable = !!world.mechanics && [...world.mechanics.resources, ...world.mechanics.items.filter((i) => i.quantity > 0), ...world.mechanics.conditions, ...world.mechanics.abilities ?? []].some((row) => row.owner === "you");
+    const inspectable = !!world.mechanics && [...world.mechanics.resources, ...world.mechanics.items.filter((i) => i.quantity > 0), ...world.mechanics.conditions, ...world.mechanics.abilities ?? [], ...(world.mechanics.resilience ?? []).filter((r) => r.band !== "ordinary")].some((row) => row.owner === "you");
     const matches = world.facts.filter((f) => !memoryQuery || `${f.subject} ${f.text} ${f.quote}`.toLocaleLowerCase().includes(memoryQuery.toLocaleLowerCase()));
     const remembered = matches.slice(-80).reverse();
     const relevant = world.facts.filter((f) => f.status === "open" && ["commitment", "situation"].includes(f.kind)).slice(-2);

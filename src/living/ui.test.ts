@@ -95,6 +95,23 @@ test("tracking people or NPC-only mechanics never adds an empty player inspector
   expect(window.document.querySelector(".warp-inspector")).toBeNull();
 });
 
+test("qualitative harm, treatment limits and resilience are readable without exposing hidden injury loads or NPC traits", () => {
+  const source = { message: "persona", quote: "A tough body and first aid for minor injuries." };
+  const mechanics = { version: 1, resources: [], items: [], conditions: [], applied: [], resilience: [
+    { id: "you", owner: "you", band: "tough", version: 1, basis: "warp", source },
+    { id: "jo", owner: "Jo", band: "exceptional", version: 1, basis: "warp", source: { ...source, quote: "Secret regeneration" } },
+  ], abilities: [{ id: "aid", version: 1, name: "First aid", owner: "you", description: "Treat a cut", approach: "precision", target: "either", costs: [], effects: [{ kind: "mend", target: "target", impact: "minor", maxInjury: "minor" }, { kind: "harm", target: "target", impact: "minor", damageType: "physical" }], requires: [], unsupported: [], source, sourceKind: "persona", fingerprint: "saved" }] };
+  ui.accept(view({ world: { place: "Clinic", present: ["Jo"], facts: [], mechanics } }));
+  click('[data-living="inspect"]');
+  const panel = window.document.querySelector(".warp-inspector")!;
+  expect(panel.textContent).toContain("Physical resilience: tough");
+  expect(panel.textContent).toContain("treats at most minor injuries");
+  expect(panel.textContent).toContain("minor physical harm");
+  expect(panel.textContent).toContain("Warp interpretation");
+  expect(panel.textContent).not.toContain("undefined"); expect(panel.textContent).not.toContain("Secret regeneration");
+  expect(sent).toEqual([]);
+});
+
 test("old checks show their outcome without inventing a die value", () => {
   ui.accept(view({ decision: { tier: "outmatched", result: "setback", intent: "Escape", stakes: "Exposure", reasons: ["Guards surround you"] } }));
   expect(window.document.querySelector(".warp-check-die")?.getAttribute("aria-label")).toContain("not saved");
