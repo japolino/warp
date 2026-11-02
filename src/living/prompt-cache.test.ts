@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import type { Msg } from "../backend/ledger.js";
 import { pathsOf } from "./world.js";
 import { PROMPT_KEY, replayPrompt, type PromptSnapshot } from "./prompt-cache.js";
+import { emptyMechanics, prepareMechanical } from "./mechanics.js";
 
 const msg = (id: string, is_user: boolean, content: string): Msg => ({ id, is_user, content, role: is_user ? "user" : "assistant", index_in_chat: Number(id), swipe_id: 0 } as Msg);
 const packet = (text: string) => ({ place: "Cafe", present: ["Jo"], preferences: { exclude: [], offScreen: [] }, established: [{ id: "jacket", text }], possibleMotives: [] });
@@ -51,4 +52,25 @@ test("multimodal parts and provider cache/signature fields survive without modif
   expect(parts).toHaveLength(2); expect(output[0].content).toHaveLength(3);
   expect((output[0].content as any[]).slice(0, 2)).toEqual(parts);
   expect(output[0].thought_signature).toBe("opaque"); expect(output[0].cache_control).toEqual(input[0].cache_control);
+});
+
+test("mechanical receipts and resource deltas preserve all prior prompt bytes", () => {
+  const first = msg("0", true, "I spend 5 coins."), history = [first];
+  const before = emptyMechanics();
+  before.resources.push({ id: "coins", owner: "you", name: "Coins", current: 20, source: { message: "source", quote: "20 coins" } });
+  const initial = store(history, first, "Jacket");
+  initial.packet.mechanics = { resources: before.resources, items: [], conditions: [] };
+  initial.receipt = prepareMechanical(before, "pay", "you", [{ kind: "spend", resource: "coins", amount: 5 }]);
+  const a = replayPrompt(prompt(history), history, "Stable director");
+  const reply = msg("1", false, "Payment accepted."), next = msg("2", true, "What can I afford?"); history.push(reply, next);
+  const updated = store(history, next, "Jacket");
+  updated.packet.mechanics = { resources: [{ ...before.resources[0], current: 15 }], items: [], conditions: [] };
+  const b = replayPrompt(prompt(history), history, "Stable director");
+  expect(b.slice(0, a.length)).toEqual(a);
+  expect(b.at(-1)!.content).toContain('"mechanics":{"resources":{"put":');
+  expect(b.at(-1)!.content).toContain('"current":15');
+  expect(b.at(-1)!.content).not.toContain("mechanical receipt");
+  const after = msg("3", true, "Hello."); history.push(after); store(history, after, "Jacket");
+  const c = replayPrompt(prompt(history), history, "Stable director");
+  expect(c.at(-1)!.content).toContain('"remove":["coins"]');
 });

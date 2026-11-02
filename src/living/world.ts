@@ -1,6 +1,7 @@
 import { revision } from "../shared/revision.js";
 import { seededRng } from "../engine/dice.js";
 import { attemptBands } from "./check-bands.js";
+import { mechanicalPacket, type MechanicalState } from "./mechanics.js";
 
 export type Kind = "fact" | "possession" | "knowledge" | "commitment" | "situation" | "motive" | "ability";
 export interface Evidence { message: string; quote: string; sourceRevision?: string; }
@@ -8,7 +9,7 @@ export interface Fact extends Evidence {
   id: string; kind: Kind; subject: string; text: string;
   holder?: string; status: "open" | "done";
 }
-export interface World { place: string; present: string[]; facts: Fact[]; }
+export interface World { place: string; present: string[]; facts: Fact[]; mechanics?: MechanicalState; }
 export interface Message { id: string; content: string; is_user: boolean; name?: string; swipe_id?: number; }
 export interface Event { op: "put" | "remove" | "transfer"; fact?: Fact; id: string; from?: string; to?: string; evidence: Evidence; }
 export interface Record {
@@ -171,5 +172,5 @@ export function worldPacket(world: World, focus = ""): string {
     + (people.has(f.subject.toLocaleLowerCase()) ? 6 : 0) + (f.text.toLocaleLowerCase().match(/[\p{L}\p{N}_]{3,}/gu) ?? []).filter(w => words.has(w)).length * 4
     + ((`${f.id} ${f.subject}`.toLocaleLowerCase().match(/[\p{L}\p{N}_]{3,}/gu) ?? []).some(w => words.has(w)) ? 25 : 0);
   const selected = world.facts.map((fact, index) => ({ fact, index, score: score(fact) })).sort((a, b) => b.score - a.score || b.index - a.index).slice(0, 80).map(x => x.fact);
-  return JSON.stringify({ place: world.place || undefined, present: world.present, established: selected.filter(f => f.kind !== "motive").map(({ id, kind, subject, text, holder, status }) => ({ id, kind, subject, text, holder, status })), possibleMotives: selected.filter(f => f.kind === "motive").map(f => ({ id: f.id, subject: f.subject, text: f.text })) });
+  return JSON.stringify({ place: world.place || undefined, present: world.present, established: selected.filter(f => f.kind !== "motive").map(({ id, kind, subject, text, holder, status }) => ({ id, kind, subject, text, holder, status })), possibleMotives: selected.filter(f => f.kind === "motive").map(f => ({ id: f.id, subject: f.subject, text: f.text })), ...(world.mechanics ? { mechanics: mechanicalPacket(world.mechanics) } : {}) });
 }
