@@ -116,6 +116,26 @@ test("swipes reuse the prepared attempt rather than asking for a more favorable 
   expect(alternate.intent).toBe("Vault the wall");
 });
 
+test("the inline receipt retains the actual roll even when scene extraction fails", async () => {
+  const id = chat(); await syncLiving(id, h.userId);
+  h.helper = c => {
+    if (c.system.includes("Determine whether")) return { risky: true, contested: true, tier: "uncertain", intent: "Vault the wall", stakes: "Exposure", reasons: ["A guard watches"] };
+    throw new Error("Scene reader offline");
+  };
+  await h.say(id, "I try to vault the wall.");
+  const generated = await h.generate(id, "You scramble toward the wall.");
+  expect(latest(id).retry).toBe(true);
+  expect(latest(id).decision.roll).toBeGreaterThanOrEqual(1);
+  expect(latest(id).decision.roll).toBeLessThanOrEqual(100);
+  const receipt = latest(id).decision;
+  await h.generate(id, "You scramble toward the wall again.", "swipe");
+  expect(latest(id).decision).toEqual(receipt);
+  // Editing the cause must not leave the old receipt attached to its reply.
+  h.messages(id).find(m => m.is_user)!.content = "I stay here.";
+  await repairLiving(id, generated.target.id, h.userId);
+  expect(latest(id).decision).toBeUndefined();
+});
+
 test("a source edited far outside the recent window can be repaired in place", async () => {
   const id = chat(); await syncLiving(id, h.userId);
   const source = h.messages(id)[0];

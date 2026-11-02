@@ -98,9 +98,14 @@ export async function pushLiving(chatId: string, userId?: string): Promise<void>
   const last = messages.filter(m => !m.is_user && m.content.trim()).at(-1);
   const record = last ? recordOf(last) : undefined;
   const valid = last && record?.text === revision(last.content) && record.path === pathOf(messages.filter(m => m.index_in_chat < last.index_in_chat));
+  // The roll is saved before narration. Scene extraction can fail independently.
+  const prefix = last ? messages.filter(m => m.index_in_chat < last.index_in_chat) : [];
+  const player = prefix.at(-1);
+  const attempt = player?.is_user ? player.metadata?.warpLivingAttempt as { path?: string; decision?: Decision | null } | undefined : undefined;
+  const preparedDecision = attempt?.path === pathOf(prefix) ? attempt?.decision : undefined;
   if (sequence.get(chatId) !== n) return;
   host().sendToFrontend({ type: "living", chatId, signature: pathOf(messages), revision: n, enabled: settings.enabled, busy: jobs.has(chatId), retry: failures.has(chatId),
-    anchor: last?.id ?? null, world, notes: valid ? record?.notes ?? [] : [], decision: valid ? record?.decision : undefined, notice: valid ? record?.notice : undefined }, userId);
+    anchor: last?.id ?? null, world, notes: valid ? record?.notes ?? [] : [], decision: valid ? record?.decision ?? preparedDecision : preparedDecision, notice: valid ? record?.notice : undefined }, userId);
 }
 
 /** One extraction after a reply; no off-screen world events are committed here. */

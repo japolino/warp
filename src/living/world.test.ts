@@ -1,11 +1,25 @@
 import { expect, test } from "bun:test";
 import { revision } from "../shared/revision.js";
+import { seededRng } from "../engine/dice.js";
 import { applyEvents, emptyWorld, foldWorld, pathOf, readChanges, resolveAttempt, worldPacket, type Fact, type Message, type Record } from "./world.js";
 
 const player: Message = { id: "p", is_user: true, content: "I promise Jo I will cover the counter. I lend Dex my jacket." };
 const reply: Message = { id: "r", is_user: false, content: "Jo says, 'I will cover for you.' Dex takes the jacket and leaves." };
 const jacket: Fact = { id: "jacket", kind: "possession", subject: "jacket", holder: "you", text: "Your distinctive jacket", message: "old", quote: "I own a distinctive jacket", status: "open" };
 const owned = () => ({ ...emptyWorld(), facts: [jacket] });
+
+test("the visible d100 roll agrees with the outcome and preserves previous seeded results", () => {
+  for (const tier of ["favorable", "uncertain", "outmatched"] as const) {
+    const [clean, mixed] = tier === "favorable" ? [60, 90] : tier === "outmatched" ? [10, 45] : [30, 75];
+    for (let i = 0; i < 500; i++) {
+      const seed = `receipt-${i}`, n = seededRng(seed)();
+      const d = resolveAttempt({ risky: true, contested: true, tier, intent: "Escape", stakes: "Exposure", reasons: ["Guards watch"] }, seed)!;
+      expect(d.roll).toBe(Math.floor(n * 100) + 1);
+      expect(d.result).toBe(n < clean / 100 ? "clean" : n < mixed / 100 ? "mixed" : "setback");
+      expect(d.result).toBe(d.roll! <= clean ? "clean" : d.roll! <= mixed ? "mixed" : "setback");
+    }
+  }
+});
 
 test("promises need actual player agreement; quoted evidence is mandatory", () => {
   const result = readChanges({ changes: [

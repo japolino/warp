@@ -10,6 +10,11 @@ var __esm = (fn, res, err) => () => {
   return res;
 };
 
+// src/living/check-bands.ts
+function attemptBands(tier) {
+  return tier === "favorable" ? [60, 90] : tier === "outmatched" ? [10, 45] : [30, 75];
+}
+
 // src/frontend/html.ts
 function esc(v) {
   return String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -2497,6 +2502,22 @@ var init_legacy = __esm(() => {
 
 // src/living/ui.ts
 init_html();
+function checkMarkup(view) {
+  const d = view.decision;
+  if (!d)
+    return `<div class="warp-check-none">${view.busy ? "Updating Warp's record for this reply…" : "No recorded Warp roll for this reply."}</div>`;
+  const [clean, mixed] = attemptBands(d.tier);
+  const label = { clean: "Clean success", mixed: "Success with a cost", setback: "Setback" }[d.result];
+  const tier = { favorable: "Favorable", uncertain: "Even footing", outmatched: "Outmatched" }[d.tier];
+  const hasRoll = Number.isInteger(d.roll) && d.roll >= 1 && d.roll <= 100;
+  return `<section class="warp-check" aria-label="Warp dice check">
+    <div class="warp-check-die" aria-label="${hasRoll ? `Rolled ${d.roll} on a d100` : "Roll value not saved"}">${hasRoll ? d.roll : "?"}<small>d100</small></div>
+    <div class="warp-check-copy"><strong>Warp check · ${label}</strong><p>${esc(d.intent)}</p>
+    <details data-check-details><summary>${tier} · Why this result?</summary>
+    <p>${d.reasons.map(esc).join(" · ")}</p><p>At risk: ${esc(d.stakes)}</p>
+    <p>1–${clean}: clean success · ${clean + 1}–${mixed}: success with a cost · ${mixed + 1}–100: setback. Lower rolls are better.</p>
+    <p>${hasRoll ? "Warp rolled this outcome and sent it to the narrator. The model still writes what happens." : "This older check saved its outcome without the die value."} Regenerating the reply keeps the same check.</p></details></div></section>`;
+}
 var STYLE = `
 .warp-scene{font:inherit;font-size:13px;line-height:1.5;color:inherit;margin:12px 0 18px;padding:12px 18px;box-sizing:border-box;border-top:1px solid color-mix(in srgb,currentColor 14%,transparent);opacity:.9;max-width:100%;overflow-wrap:anywhere}
 .warp-scene-top{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}.warp-scene-place{font-weight:600}.warp-scene-people{opacity:.7}.warp-scene-tools{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
@@ -2506,6 +2527,7 @@ var STYLE = `
 .warp-scene-ideas{display:grid;gap:5px;margin-top:9px}.warp-scene-idea{border:1px solid color-mix(in srgb,currentColor 18%,transparent)!important;padding:9px!important}.warp-scene-fact{padding:7px 0;border-bottom:1px solid color-mix(in srgb,currentColor 8%,transparent)}.warp-scene-source{display:block;font-size:12px;opacity:.6}.warp-scene-error{margin-top:8px;opacity:.75}
 .warp-scene input[type=search]{box-sizing:border-box;width:100%;font:inherit;color:inherit;background:transparent;border:1px solid color-mix(in srgb,currentColor 25%,transparent);border-radius:5px;padding:6px;margin:8px 0}
 .warp-scene select{max-width:100%;font:inherit;color:inherit;background:transparent;border:1px solid color-mix(in srgb,currentColor 25%,transparent);border-radius:5px;padding:5px}.warp-scene-settings{margin:9px 0}.warp-scene-settings p{font-size:12px;opacity:.7}
+.warp-check{display:flex;align-items:center;gap:10px;margin:10px 0;padding:10px 12px;border:1px solid color-mix(in srgb,currentColor 20%,transparent);border-radius:7px}.warp-check-die{display:grid;place-content:center;flex-shrink:0;min-width:44px;min-height:44px;border:1px solid currentColor;border-radius:8px;font-variant-numeric:tabular-nums;text-align:center;font-size:20px;font-weight:600}.warp-check-die small{font-size:10px;font-weight:400;opacity:.7}.warp-check-copy{min-width:0}.warp-check-copy p{margin:2px 0}.warp-check-copy details{font-size:12px}.warp-check-copy summary{opacity:1}.warp-check-none{font-size:12px;opacity:.65;margin-top:8px}
 @media(max-width:540px){.warp-scene-tools{margin-left:0;width:100%}.warp-scene{font-size:12px}}
 `;
 function connectLiving(ctx) {
@@ -2547,14 +2569,14 @@ function connectLiving(ctx) {
       ${settingsOpen ? `<div class="warp-scene-settings"><label>Helper connection <select data-helper-connection><option value="">Use this chat's connection</option>${connections.map((c) => `<option value="${esc(c.id)}"${helperConnection === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label><label style="display:block;margin-top:8px">Decision connection <select data-decision-connection><option value="">Use the helper</option>${decisionConnection && !decisionConnections.some((c) => c.id === decisionConnection) ? `<option value="${esc(decisionConnection)}" selected>Saved profile unavailable</option>` : ""}${decisionConnections.map((c) => `<option value="${esc(c.id)}"${decisionConnection === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label><p>Decision profiles come from Lumiverse Connections. They assess contested attempts; Warp rolls the outcome. Unavailable profiles fall back to the helper.</p><p>Reading the scene uses an additional model call. A risky attempt may use one more. You can choose a faster helper connection here.</p></div>` : ""}
       ${relevant.length ? `<div class="warp-scene-note">${relevant.map((f) => esc(f.text)).join(" · ")}</div>` : ""}
       ${notes.length ? `<div class="warp-scene-note">${notes.map(esc).join(" · ")}</div>` : ""}
+      ${checkMarkup(view)}
       ${view.retry ? `<button data-living="retry">Scene read unavailable · Retry</button>` : ""}
       ${view.notice ? `<div class="warp-scene-error" role="status">${esc(view.notice)}</div>` : ""}
       ${ideas.length ? `<div class="warp-scene-ideas">${ideas.map((s, i) => `<button class="warp-scene-idea" data-idea="${i}">${esc(s)}</button>`).join("")}</div>` : ""}
       ${draft !== null ? `<label>${mode === "correct" ? "What should Warp know?" : "Your message"}<textarea data-living-draft>${esc(draft)}</textarea></label><button data-living="submit">${mode === "correct" ? "Save correction" : "Send"}</button><button data-living="cancel">Cancel</button>` : ""}
       ${error ? `<div class="warp-scene-error" role="status">${esc(error)}</div>` : ""}
-      <details><summary>Remembered${view.decision ? " · This attempt" : ""}</summary>
+      <details data-memory><summary>Remembered</summary>
       <input type="search" data-memory-query aria-label="Find a remembered event" placeholder="Find a remembered event" value="${esc(memoryQuery)}">
-      ${view.decision ? `<p>${esc(view.decision.intent)}: ${esc(view.decision.result)}. ${esc(view.decision.stakes)}<br>${view.decision.reasons.map(esc).join(" · ")}</p>` : ""}
       ${remembered.map((f) => `<div class="warp-scene-fact">${esc(f.subject)} · ${esc(f.text)}${f.holder ? ` · with ${esc(f.holder)}` : ""}${f.status === "done" ? " · settled" : ""}<span class="warp-scene-source">${f.kind === "motive" ? "Possible motive · " : ""}${esc(f.quote)}</span></div>`).join("") || (memoryQuery ? "No matching events." : "No lasting events recorded yet.")}${matches.length > 80 ? `<p>Showing the latest 80 matches. Search to find an older event.</p>` : ""}</details>`;
   }
   function paint() {
@@ -2641,13 +2663,16 @@ function connectLiving(ctx) {
         row.append(injected);
     } else if (card.nextElementSibling !== injected)
       card.after(injected);
-    const detailsOpen = root.querySelector("details")?.open;
+    const detailsOpen = root.querySelector("[data-memory]")?.open;
+    const checkOpen = root.querySelector("[data-check-details]")?.open;
     const focused = root.contains(document.activeElement) && document.activeElement?.matches("textarea,[data-memory-query]");
     const selector = document.activeElement?.matches("[data-memory-query]") ? "[data-memory-query]" : "textarea";
     const selection = focused ? [document.activeElement.selectionStart ?? 0, document.activeElement.selectionEnd ?? 0] : null;
     root.innerHTML = markup();
     if (detailsOpen)
-      root.querySelector("details")?.setAttribute("open", "");
+      root.querySelector("[data-memory]")?.setAttribute("open", "");
+    if (checkOpen)
+      root.querySelector("[data-check-details]")?.setAttribute("open", "");
     if (selection) {
       const input = root.querySelector(selector);
       input?.focus();

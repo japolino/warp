@@ -30,6 +30,30 @@ afterEach(() => {
 });
 const click = (selector: string) => (window.document.querySelector(selector) as unknown as HTMLButtonElement).click();
 
+test("dice receipts are visible outside memory, explain odds, and survive repaint", () => {
+  ui.accept(view({ decision: { tier: "uncertain", result: "mixed", roll: 52, intent: 'Vault <the wall>', stakes: "A lost opportunity", reasons: ["The wall is slippery"] } }));
+  const check = window.document.querySelector(".warp-check")!;
+  expect(check.closest("[data-memory]")).toBeNull();
+  expect(check.querySelector(".warp-check-die")?.textContent).toContain("52");
+  expect(check.textContent).toContain("Success with a cost");
+  expect(check.textContent).toContain("31–75");
+  expect(check.textContent).toContain("The wall is slippery");
+  expect(check.querySelector("the")).toBeNull();
+  check.querySelector("details")!.open = true;
+  click('[data-living="settings"]');
+  expect(window.document.querySelector("[data-check-details]")?.hasAttribute("open")).toBe(true);
+  expect(window.document.querySelector("[data-memory]")?.hasAttribute("open")).toBe(false);
+  ui.accept(view({ revision: 2 }));
+  expect(window.document.querySelector(".warp-check")).toBeNull();
+  expect(window.document.querySelector(".warp-check-none")?.textContent).toContain("No recorded Warp roll");
+});
+
+test("old checks show their outcome without inventing a die value", () => {
+  ui.accept(view({ decision: { tier: "outmatched", result: "setback", intent: "Escape", stakes: "Exposure", reasons: ["Guards surround you"] } }));
+  expect(window.document.querySelector(".warp-check")?.textContent).toContain("older check");
+  expect(window.document.querySelector(".warp-check-die")?.textContent).toContain("?");
+});
+
 test("a chat opens with a small inline scene and no action menu or stat panel", () => {
   ui.accept(view());
   expect(window.document.querySelector(".warp-scene-place")?.textContent).toBe("Jo's café");

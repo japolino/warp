@@ -11855,6 +11855,11 @@ var init_inject = __esm(() => {
   init_view();
 });
 
+// src/living/check-bands.ts
+function attemptBands(tier) {
+  return tier === "favorable" ? [60, 90] : tier === "outmatched" ? [10, 45] : [30, 75];
+}
+
 // src/living/world.ts
 function pathOf(messages) {
   return messages.reduce(nextPath2, ROOT);
@@ -12006,9 +12011,9 @@ function resolveAttempt(raw, seed) {
   if (!intent || !stakes || !reasons.length)
     return null;
   const tier = raw.tier === "favorable" || raw.tier === "outmatched" ? raw.tier : "uncertain";
-  const [clean, mixed] = tier === "favorable" ? [0.6, 0.3] : tier === "outmatched" ? [0.1, 0.35] : [0.3, 0.45];
-  const n = seededRng(seed)();
-  return { tier, result: n < clean ? "clean" : n < clean + mixed ? "mixed" : "setback", intent, stakes, reasons };
+  const [clean, mixed] = attemptBands(tier);
+  const roll = Math.floor(seededRng(seed)() * 100) + 1;
+  return { tier, result: roll <= clean ? "clean" : roll <= mixed ? "mixed" : "setback", roll, intent, stakes, reasons };
 }
 function worldPacket(world, focus = "") {
   const ignored = new Set(["the", "and", "you", "your", "that", "this", "with", "for", "what", "have", "from", "about"]);
@@ -12214,6 +12219,10 @@ async function pushLiving(chatId, userId) {
   const last = messages.filter((m) => !m.is_user && m.content.trim()).at(-1);
   const record = last ? recordOf(last) : undefined;
   const valid = last && record?.text === revision(last.content) && record.path === pathOf(messages.filter((m) => m.index_in_chat < last.index_in_chat));
+  const prefix = last ? messages.filter((m) => m.index_in_chat < last.index_in_chat) : [];
+  const player = prefix.at(-1);
+  const attempt = player?.is_user ? player.metadata?.warpLivingAttempt : undefined;
+  const preparedDecision = attempt?.path === pathOf(prefix) ? attempt?.decision : undefined;
   if (sequence.get(chatId) !== n)
     return;
   host().sendToFrontend({
@@ -12227,7 +12236,7 @@ async function pushLiving(chatId, userId) {
     anchor: last?.id ?? null,
     world,
     notes: valid ? record?.notes ?? [] : [],
-    decision: valid ? record?.decision : undefined,
+    decision: valid ? record?.decision ?? preparedDecision : preparedDecision,
     notice: valid ? record?.notice : undefined
   }, userId);
 }

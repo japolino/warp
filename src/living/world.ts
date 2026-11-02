@@ -1,5 +1,6 @@
 import { revision } from "../shared/revision.js";
 import { seededRng } from "../engine/dice.js";
+import { attemptBands } from "./check-bands.js";
 
 export type Kind = "fact" | "possession" | "knowledge" | "commitment" | "situation" | "motive" | "ability";
 export interface Evidence { message: string; quote: string; sourceRevision?: string; }
@@ -16,7 +17,7 @@ export interface Record {
   decision?: Decision;
   notice?: string;
 }
-export interface Decision { tier: "favorable" | "uncertain" | "outmatched"; result: "clean" | "mixed" | "setback"; intent: string; stakes: string; reasons: string[]; }
+export interface Decision { tier: "favorable" | "uncertain" | "outmatched"; result: "clean" | "mixed" | "setback"; intent: string; stakes: string; reasons: string[]; roll?: number; }
 export const emptyWorld = (): World => ({ place: "", present: [], facts: [] });
 export const text = (v: unknown, limit = 240): string => {
   if (typeof v !== "string") return "";
@@ -157,9 +158,9 @@ export function resolveAttempt(raw: unknown, seed: string): Decision | null {
   const reasons = Array.isArray(raw.reasons) ? raw.reasons.map(x => text(x, 180)).filter(Boolean).slice(0, 3) : [];
   if (!intent || !stakes || !reasons.length) return null;
   const tier = raw.tier === "favorable" || raw.tier === "outmatched" ? raw.tier : "uncertain";
-  const [clean, mixed] = tier === "favorable" ? [0.6, 0.3] : tier === "outmatched" ? [0.1, 0.35] : [0.3, 0.45];
-  const n = seededRng(seed)();
-  return { tier, result: n < clean ? "clean" : n < clean + mixed ? "mixed" : "setback", intent, stakes, reasons };
+  const [clean, mixed] = attemptBands(tier);
+  const roll = Math.floor(seededRng(seed)() * 100) + 1;
+  return { tier, result: roll <= clean ? "clean" : roll <= mixed ? "mixed" : "setback", roll, intent, stakes, reasons };
 }
 
 export function worldPacket(world: World, focus = ""): string {
