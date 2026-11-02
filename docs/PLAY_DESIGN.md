@@ -2,6 +2,8 @@
 
 Design specification, 2026-10-31. Implementation is on `codex/warp-living-play`. This document defines the intended end state; implementation and verification must be checked against it before release.
 
+Revision, 2026-11-02: [Deep systems without a setup wizard](SEAMLESS_SYSTEMS.md) supersedes the mechanically small scope and restrictions on optional numerical systems in this draft. The user accepts complex interacting systems and metagaming; the constraint is immediate play without rulebook creation, preset selection or menu-led learning. Retain the agency, evidence, branch and caching requirements below.
+
 Warp makes an ongoing roleplay into a world the player can act on. People want things, opportunities change, and the particulars of the player's actions have lasting consequences. A new user installs Warp, opens a chat, and plays through the normal composer. No rulebook, template, genre selector, character sheet, or drawer visit is required.
 
 1. The product must earn its presence during play.
