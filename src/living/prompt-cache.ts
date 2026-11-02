@@ -23,7 +23,7 @@ function delta(before: any, after: any) {
     if (put.length || remove.length) changes[key] = { put, remove };
   }
   const mechanics: any = {};
-  for (const key of ["resources", "items", "conditions"]) {
+  for (const key of ["resources", "items", "conditions", "abilities"]) {
     const old = before.mechanics?.[key] ?? [], next = after.mechanics?.[key] ?? [];
     const previous = new Map(old.map((row: any) => [row.id, JSON.stringify(row)]));
     const current = new Set(next.map((row: any) => row.id));

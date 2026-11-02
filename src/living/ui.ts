@@ -1,6 +1,7 @@
 import type { SpindleFrontendContext } from "lumiverse-spindle-types";
 import type { World, Decision } from "./world.js";
 import { createDiceReveal, DICE_STYLE, percentileDice } from "./dice-reveal.js";
+import { inspectMechanics, INSPECTOR_STYLE } from "./inspector.js";
 import { esc } from "../frontend/html.js";
 import type { WarpStateV1 } from "../frontend/public-events.js";
 
@@ -24,6 +25,7 @@ const STYLE = `
 .warp-scene input[type=search]{box-sizing:border-box;width:100%;font:inherit;color:inherit;background:transparent;border:1px solid color-mix(in srgb,currentColor 25%,transparent);border-radius:5px;padding:6px;margin:8px 0}
 .warp-scene select{max-width:100%;font:inherit;color:inherit;background:transparent;border:1px solid color-mix(in srgb,currentColor 25%,transparent);border-radius:5px;padding:5px}.warp-scene-settings{margin:9px 0}.warp-scene-settings p{font-size:12px;opacity:.7}
 ${DICE_STYLE}
+${INSPECTOR_STYLE}
 @media(max-width:540px){.warp-scene-tools{margin-left:0;width:100%}.warp-scene{font-size:12px}}
 `;
 
@@ -32,6 +34,7 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
   let view: View | null = null, root: HTMLElement | null = null, ideas: string[] = [], loading = false, error = "", draft: string | null = null;
   let mode: "say" | "correct" = "say";
   let memoryQuery = "";
+  let inspectorOpen = false;
   let settingsOpen = false, helperConnection = "", decisionConnection = "", decisionConnections: { id: string; name: string }[] = [], connections: { id: string; name: string }[] = [];
   let injected: Element | null = null;
   const diceReveal = createDiceReveal();
@@ -49,11 +52,12 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
     const relevant = world.facts.filter(f => f.status === "open" && ["commitment", "situation"].includes(f.kind)).slice(-2);
     const reminders = new Set(relevant.map(f => f.text.trim().toLocaleLowerCase()));
     const notes = view.notes.filter(note => { const key = note.trim().toLocaleLowerCase(); if (reminders.has(key)) return false; reminders.add(key); return true; });
-    return `<div class="warp-scene-top"><span class="warp-scene-place">${esc(world.place || "Here")}</span><span class="warp-scene-people">${world.present.map(esc).join(" · ")}${view.busy ? ' <span role="status" aria-label="Updating the scene">…</span>' : ""}</span><span class="warp-scene-tools"><button data-living="ideas" ${loading ? "disabled" : ""}>${loading ? "Thinking…" : "Ideas"}</button><button data-living="correct">Correct</button><button data-living="pause">Pause</button><button data-living="settings" aria-expanded="${settingsOpen}">Settings</button></span></div>
+    return `<div class="warp-scene-top"><span class="warp-scene-place">${esc(world.place || "Here")}</span><span class="warp-scene-people">${world.present.map(esc).join(" · ")}${view.busy ? ' <span role="status" aria-label="Updating the scene">…</span>' : ""}</span><span class="warp-scene-tools"><button data-living="ideas" ${loading ? "disabled" : ""}>${loading ? "Thinking…" : "Ideas"}</button>${world.mechanics ? `<button data-living="inspect" aria-expanded="${inspectorOpen}">Inspect</button>` : ""}<button data-living="correct">Correct</button><button data-living="pause">Pause</button><button data-living="settings" aria-expanded="${settingsOpen}">Settings</button></span></div>
       ${settingsOpen ? `<div class="warp-scene-settings"><label>Helper connection <select data-helper-connection><option value="">Use this chat's connection</option>${connections.map(c => `<option value="${esc(c.id)}"${helperConnection === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label><label style="display:block;margin-top:8px">Decision connection <select data-decision-connection><option value="">Use the helper</option>${decisionConnection && !decisionConnections.some(c => c.id === decisionConnection) ? `<option value="${esc(decisionConnection)}" selected>Saved profile unavailable</option>` : ""}${decisionConnections.map(c => `<option value="${esc(c.id)}"${decisionConnection === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label><p>Decision profiles come from Lumiverse Connections. They assess contested attempts; Warp rolls the outcome. Unavailable profiles fall back to the helper.</p><p>Reading the scene uses an additional model call. A risky attempt may use one more. You can choose a faster helper connection here.</p></div>` : ""}
       ${relevant.length ? `<div class="warp-scene-note">${relevant.map(f => esc(f.text)).join(" · ")}</div>` : ""}
       ${notes.length ? `<div class="warp-scene-note">${notes.map(esc).join(" · ")}</div>` : ""}
       ${checkMarkup(view)}
+      ${inspectorOpen && world.mechanics ? inspectMechanics(world.mechanics) : ""}
       ${view.retry ? `<button data-living="retry">Scene read unavailable · Retry</button>` : ""}
       ${view.notice ? `<div class="warp-scene-error" role="status">${esc(view.notice)}</div>` : ""}
       ${ideas.length ? `<div class="warp-scene-ideas">${ideas.map((s, i) => `<button class="warp-scene-idea" data-idea="${i}">${esc(s)}</button>`).join("")}</div>` : ""}
@@ -89,6 +93,7 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
           case "pause": send("pause"); break;
           case "resume": send("resume"); break;
           case "settings": settingsOpen = !settingsOpen; break;
+          case "inspect": inspectorOpen = !inspectorOpen; break;
         }
         paint();
       });
@@ -98,6 +103,7 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
     const detailsOpen = root.querySelector<HTMLDetailsElement>("[data-memory]")?.open;
     const checkKey = JSON.stringify([view.chatId, view.anchor, view.decision]);
     const previousCheck = renderedCheckKey === checkKey ? root.querySelector(".warp-check") : null;
+    const expandedAbilities = [...root.querySelectorAll<HTMLDetailsElement>("[data-inspect-ability][open]")].map(e => e.dataset.inspectAbility);
     const focused = root.contains(document.activeElement) && document.activeElement?.matches("textarea,[data-memory-query]");
     const selector = document.activeElement?.matches("[data-memory-query]") ? "[data-memory-query]" : "textarea";
     const selection = focused ? [(document.activeElement as HTMLTextAreaElement).selectionStart ?? 0, (document.activeElement as HTMLTextAreaElement).selectionEnd ?? 0] : null;
@@ -106,17 +112,20 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
     renderedCheckKey = checkKey;
     diceReveal.observe(root.querySelector<HTMLElement>(".warp-check"), checkKey);
     if (detailsOpen) root.querySelector("[data-memory]")?.setAttribute("open", "");
+    for (const id of expandedAbilities) root.querySelector(`[data-inspect-ability="${CSS.escape(id!)}"]`)?.setAttribute("open", "");
     if (selection) { const input = root.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector); input?.focus(); input?.setSelectionRange(selection[0], selection[1]); }
   }
   const poll = setInterval(() => {
-    if (view?.chatId !== active()) { remove(); view = null; ideas = []; draft = null; loading = false; memoryQuery = ""; }
+    if (view?.chatId !== active()) { remove(); view = null; ideas = []; draft = null; loading = false; memoryQuery = ""; inspectorOpen = false; }
     else if (root && injected && !injected.contains(root)) { remove(); paint(); }
     else if (view && !root?.isConnected) paint();
   }, 600);
   const publicSnapshot = (): WarpStateV1 | null => {
     if (!view || view.chatId !== active()) return null;
+    const counted = view.world.mechanics?.items ?? [];
+    const possessions = view.world.facts.filter(f => f.kind === "possession" && f.holder === "you" && !counted.some(i => i.id === f.id || i.name.toLocaleLowerCase() === f.subject.toLocaleLowerCase())).map(f => f.text);
     return { version: 1, provider: "warp", chatId: view.chatId, messageId: view.anchor, place: view.enabled ? view.world.place || undefined : undefined,
-      you: { name: "You", items: view.enabled ? view.world.facts.filter(f => f.kind === "possession" && f.holder === "you").map(f => f.text) : [] },
+      you: { name: "You", items: view.enabled ? [...possessions, ...counted.filter(i => i.owner === "you" && i.quantity > 0).map(i => `${i.name} × ${i.quantity}`)] : [] },
       people: view.enabled ? view.world.present.map(name => ({ id: name, name, present: true })) : [] };
   };
   return {
@@ -132,6 +141,7 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
       if (m.type !== "living") return false;
       if (m.chatId !== active() || (view?.chatId === m.chatId && m.revision < view.revision)) return true;
       if (view?.anchor !== m.anchor || view?.signature !== m.signature) { ideas = []; draft = null; loading = false; }
+      if (view?.chatId !== m.chatId) inspectorOpen = false;
       view = { ...m, type: "living" }; paint();
       window.dispatchEvent(new CustomEvent("warp-state-v1", { detail: publicSnapshot() }));
       return true;

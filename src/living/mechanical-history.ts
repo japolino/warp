@@ -2,6 +2,7 @@ import type { Msg } from "../backend/ledger.js";
 import { revision } from "../shared/revision.js";
 import { pathOf, pathsOf } from "./world.js";
 import { applyObservations, commitMechanical, emptyMechanics, readMechanicalObservations, type MechanicalRecord, type MechanicalState } from "./mechanics.js";
+import { readAbilityDefinitions, sourceMessages, validDefinitionSource } from "./abilities.js";
 
 export const MECHANICS_KEY = "warpMechanics";
 export function mechanicalRecordOf(m: Msg): MechanicalRecord | undefined {
@@ -21,6 +22,7 @@ export function foldMechanics(messages: Msg[]): MechanicalState {
         // Keeping the old pre-spend value would turn an edit into free inventory.
         state = emptyMechanics();
       } else {
+        const sources = (record.sources ?? []).filter(validDefinitionSource);
         if (record.receipt) {
           try { state = commitMechanical(state, record.receipt); }
           catch { state = emptyMechanics(); }
@@ -29,10 +31,17 @@ export function foldMechanics(messages: Msg[]): MechanicalState {
         const raw = record.observations.flatMap<Record<string, unknown>>(o => {
           if (!o || typeof o !== "object") return [];
           if (o.kind === "condition_end") return [{ kind: o.kind, id: o.id, ...o.source }];
+          if (o.kind === "ability") return [];
           if (!o.value?.source) return [];
           return [{ kind: o.kind, ...o.value, ...o.value.source }];
         });
-        state = applyObservations(state, readMechanicalObservations(raw, state, messages.slice(0, index + 1)));
+        state = applyObservations(state, readMechanicalObservations(raw, state, [...messages.slice(0, index + 1), ...sourceMessages(sources)]));
+        for (const observation of record.observations) {
+          if (observation?.kind !== "ability") continue;
+          const ability = observation.value;
+          const imported = readAbilityDefinitions([{ ...ability, message: ability.source.message, quote: ability.source.quote, effects: ability.effects.map(e => e.basis === "warp" ? { ...e, amount: undefined, magnitude: ({ 5: "minor", 15: "standard", 30: "major" } as Record<number, string>)[e.amount!] } : e) }], state, messages.slice(0, index + 1), sources);
+          state = applyObservations(state, imported.map(value => ({ kind: "ability", value })));
+        }
       }
     }
     prefix = paths.get(message.id)!;

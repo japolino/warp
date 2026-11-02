@@ -4,6 +4,8 @@ import { pathToFileURL } from "node:url";
 
 const checkout = resolve(process.argv[2] ?? "D:/Lumiverse"), root = resolve(import.meta.dir, "..");
 const manifest = await Bun.file(join(root, "spindle.json")).json();
+const abilityMode = process.argv.includes("--abilities");
+const persona = "Sam has 10 of 10 Focus and 2 of 10 Composure. Grounding costs 2 Focus and restores 3 Composure.";
 const message = (id: string, role: "user" | "assistant", content: string, index: number): any => ({ id, chat_id: "smoke", role, is_user: role === "user", content, index_in_chat: index, swipe_id: 0, metadata: {}, extra: {} });
 const messages = [message("greeting", "assistant", "Jo waits in the café. You have three bandages.", 0)];
 const types = new Set<string>();
@@ -27,13 +29,23 @@ try {
         else if (event.type === "chat_get_messages") respond(structuredClone(messages));
         else if (event.type === "connections_list") respond([]);
         else if (event.type === "enclave_has") respond(false);
-        else if (event.type === "macros_resolve") respond({ text: "Sam", warnings: [] });
+        else if (event.type === "macros_resolve") respond({ text: abilityMode && event.template === "{{persona}}" ? persona : "Sam", diagnostics: [] });
         else if (event.type === "user_storage_read") {
           if (event.path === "settings.json") respond("{}");
           else worker.postMessage({ type: "response", requestId: event.requestId, error: "Fixture file not found" });
         } else if (event.type === "request_generation") {
           const system = event.input.messages[0]?.content ?? "";
-          respond({ content: JSON.stringify(system.includes("Determine whether")
+          if (abilityMode) {
+            const user = event.input.messages[1]?.content ?? "";
+            const source = JSON.parse(user.split("\n").find((line: string) => line.startsWith('[{"id":"warp-source:')) ?? "[]").find((s: any) => s.kind === "persona");
+            if (!source) throw new Error("Missing production persona reference");
+            respond({ content: JSON.stringify(system.includes("Determine whether")
+              ? { risky: false, contested: false, approach: "concentration", mechanicalActions: [{ kind: "ability", ability: "Grounding", quote: "I perform Grounding." }] }
+              : { changes: [], mechanicalObservations: [
+                { kind: "resource", id: "focus", owner: "you", name: "Focus", current: 10, max: 10, message: source.id, quote: "10 of 10 Focus" },
+                { kind: "resource", id: "composure", owner: "you", name: "Composure", current: 2, max: 10, message: source.id, quote: "2 of 10 Composure" },
+              ], abilityDefinitions: [{ owner: "you", name: "Grounding", approach: "concentration", target: "self", costs: [{ kind: "resource", id: "focus", amount: 2 }], effects: [{ kind: "restore", target: "self", resource: "Composure", amount: 3 }], requires: [], unsupported: [], message: source.id, quote: "Grounding costs 2 Focus and restores 3 Composure." }] }) });
+          } else respond({ content: JSON.stringify(system.includes("Determine whether")
             ? { risky: false, contested: false, approach: "other", mechanicalActions: [{ kind: "consume", item: "bandages", amount: 1, quote: "I use a bandage." }] }
             : { changes: [], mechanicalObservations: [{ kind: "item", id: "bandages", owner: "you", name: "Bandages", quantity: 3, message: "greeting", quote: "three bandages" }] }) });
         } else if (event.type === "chat_update_message") {
@@ -42,25 +54,26 @@ try {
           target.metadata = event.patch.metadata; respond(undefined);
         } else if (event.type === "frontend_message" && event.payload?.type === "living") {
           const items = event.payload.world.mechanics?.items;
-          if (phase === "bootstrap" && items?.[0]?.quantity === 3) {
+          const resources = event.payload.world.mechanics?.resources;
+          if (phase === "bootstrap" && (abilityMode ? resources?.[0]?.current === 10 && event.payload.world.mechanics?.abilities?.length === 1 : items?.[0]?.quantity === 3)) {
             if (!registrationId) throw new Error("No registered production interceptor");
             phase = "prepare";
-            messages.push(message("player", "user", "I use a bandage.", 1), message("reply", "assistant", "", 2));
+            messages.push(message("player", "user", abilityMode ? "I perform Grounding." : "I use a bandage.", 1), message("reply", "assistant", "", 2));
             worker.postMessage({ type: "event", event: "GENERATION_STARTED", userId: "fixture-user", payload: { chatId: "smoke", generationId: "generation", targetMessageId: "reply", generationType: "normal" } });
             worker.postMessage({ type: "intercept_request", requestId: "mechanical-action", registrationId, messages: messages.filter(m => m.content).map(m => ({ role: m.role, content: m.content, sourceMessageId: m.id })), context: { chatId: "smoke", userId: "fixture-user", generationType: "normal", isDryRun: false } });
-          } else if (phase === "commit" && !event.payload.busy && items?.[0]?.quantity === 2) {
-            if (!event.payload.notes.includes("Bandages: 2 left")) throw new Error("Missing committed change note");
+          } else if (phase === "commit" && !event.payload.busy && (abilityMode ? resources?.[0]?.current === 8 && resources?.[1]?.current === 5 : items?.[0]?.quantity === 2)) {
+            if (!event.payload.notes.includes(abilityMode ? "Focus: 8 / 10" : "Bandages: 2 left")) throw new Error("Missing committed change note");
             done();
           }
         } else if (event.type === "intercept_result" && event.requestId === "mechanical-action") {
           if (event.error || !JSON.stringify(event.messages).includes("mechanical receipt")) throw new Error(`Missing prepared receipt: ${event.error ?? ""}`);
           if (messages[2].metadata.warpMechanics) throw new Error("Spent the bandage before reply completion");
-          phase = "commit"; messages[2].content = "You bind the wound with a bandage.";
+          phase = "commit"; messages[2].content = abilityMode ? "You steady your breathing." : "You bind the wound with a bandage.";
           worker.postMessage({ type: "event", event: "GENERATION_ENDED", userId: "fixture-user", payload: { chatId: "smoke", generationId: "generation", messageId: "reply", content: messages[2].content } });
         } else if (event.requestId) worker.postMessage({ type: "response", requestId: event.requestId, error: `Unsupported fixture RPC: ${event.type}` });
       } catch (error) { reject(error); }
     };
     worker.postMessage({ type: "init", manifest: { ...manifest, entry_backend: pathToFileURL(join(root, "dist/backend.js")).href }, storagePath: join(root, ".artifacts/mechanical-worker-smoke") });
   });
-  console.log("PASS: production backend bootstrapped counted inventory, prepared a use before narration, and committed it once with an inline change note inside Lumiverse's sandbox worker.");
+  console.log(abilityMode ? "PASS: production backend compiled an owned persona ability without a rulebook, paid its saved cost and applied recovery atomically inside Lumiverse's sandbox worker." : "PASS: production backend bootstrapped counted inventory, prepared a use before narration, and committed it once with an inline change note inside Lumiverse's sandbox worker.");
 } finally { clearTimeout(timer!); worker.terminate(); }

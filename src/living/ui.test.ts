@@ -30,6 +30,28 @@ afterEach(() => {
 });
 const click = (selector: string) => (window.document.querySelector(selector) as unknown as HTMLButtonElement).click();
 
+test("optional inspection reads saved player mechanics without calls, actions, or NPC spoilers", () => {
+  const source = { message: "card", quote: '<img src=x onerror="boom"> Grounding costs 2 Focus.' };
+  const ability = { id: "grounding", version: 1, owner: "you", name: "Grounding", description: "A breathing exercise", approach: "concentration", target: "self", costs: [{ kind: "resource", id: "focus", amount: 2 }], effects: [{ kind: "restore", target: "self", resource: "Composure", amount: 3, basis: "source" }], requires: [], unsupported: [], source, sourceKind: "persona", fingerprint: "saved" };
+  const mechanics = { version: 1, resources: [{ id: "focus", owner: "you", name: "Focus", current: 8, max: 10, source }], items: [], conditions: [], applied: [], abilities: [ability, { ...ability, id: "secret", owner: "Guard", name: "Secret identity" }] };
+  const before = structuredClone(mechanics);
+  ui.accept(view({ world: { place: "Cafe", present: ["Guard"], facts: [], mechanics } }));
+  expect(window.document.querySelector(".warp-inspector")).toBeNull();
+  click('[data-living="inspect"]');
+  const panel = window.document.querySelector(".warp-inspector")!;
+  expect(panel.textContent).toContain("8 / 10");
+  expect(panel.textContent).toContain("2 Focus");
+  expect(panel.textContent).not.toContain("Secret identity");
+  expect(panel.querySelector("img")).toBeNull();
+  expect(sent).toEqual([]);
+  expect(mechanics).toEqual(before);
+  const details = panel.querySelector("details")!; details.open = true;
+  click('[data-living="settings"]');
+  expect(window.document.querySelector("[data-inspect-ability]")?.hasAttribute("open")).toBe(true);
+  click('[data-living="inspect"]');
+  expect(window.document.querySelector(".warp-inspector")).toBeNull();
+});
+
 test("dice receipts stay compact and keep the same dice DOM on repaint", () => {
   ui.accept(view({ decision: { tier: "uncertain", result: "mixed", roll: 52, intent: 'Vault <the wall>', stakes: "A lost opportunity", reasons: ["The wall is slippery"] } }));
   const check = window.document.querySelector(".warp-check")!;

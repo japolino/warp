@@ -1,5 +1,6 @@
 import { revision } from "../shared/revision.js";
 import type { Evidence, Message } from "./world.js";
+import type { AbilityDefinition, DefinitionSource } from "./abilities.js";
 
 export const APPROACHES = ["movement", "precision", "force", "speech", "perception", "concentration"] as const;
 export type Approach = typeof APPROACHES[number];
@@ -14,26 +15,29 @@ export interface Condition {
 export interface MechanicalState {
   version: 1; resources: Resource[]; items: Item[]; conditions: Condition[];
   applied: { id: string; input: string }[];
+  abilities?: AbilityDefinition[];
 }
 export type Observation =
   | { kind: "resource"; value: Resource; correction?: boolean }
   | { kind: "item"; value: Item; correction?: boolean }
   | { kind: "condition"; value: Condition }
+  | { kind: "ability"; value: AbilityDefinition }
   | { kind: "condition_end"; id: string; source: Evidence };
 export type MechanicalOperation =
   | { kind: "spend" | "restore"; resource: string; amount: number }
   | { kind: "consume"; item: string; amount: number }
   | { kind: "transfer"; item: string; amount: number; to: string }
-  | { kind: "equip"; item: string; equipped: boolean };
-export interface MechanicalChange { kind: "resource" | "item"; id: string; before: Resource | Item | null; after: Resource | Item | null; }
+  | { kind: "equip"; item: string; equipped: boolean }
+  | { kind: "ability"; ability: string; version: number; target?: string; outcome?: "clean" | "mixed" | "setback"; place?: string };
+export interface MechanicalChange { kind: "resource" | "item" | "condition"; id: string; before: Resource | Item | Condition | null; after: Resource | Item | Condition | null; }
 export interface MechanicalReceipt {
   version: 1; id: string; input: string; base: string; actor: string;
   operations: MechanicalOperation[]; changes: MechanicalChange[];
   status: "ready" | "blocked"; reason?: string;
 }
-export interface MechanicalRecord { version: 1; path: string; text: string; receipt?: MechanicalReceipt; observations: Observation[]; }
+export interface MechanicalRecord { version: 1; path: string; text: string; receipt?: MechanicalReceipt; observations: Observation[]; sources?: DefinitionSource[]; }
 export const emptyMechanics = (): MechanicalState => ({ version: 1, resources: [], items: [], conditions: [], applied: [] });
-export const hasMechanics = (s: MechanicalState) => !!(s.resources.length || s.items.length || s.conditions.length);
+export const hasMechanics = (s: MechanicalState) => !!(s.resources.length || s.items.length || s.conditions.length || s.abilities?.length);
 const obj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const str = (v: unknown, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "";
 const amount = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1e9;
@@ -94,6 +98,13 @@ export function readMechanicalObservations(raw: unknown, before: MechanicalState
 
 function observe(state: MechanicalState, o: Observation) {
   if (o.kind === "condition_end") { state.conditions = state.conditions.filter(c => c.id !== o.id); return; }
+  if (o.kind === "ability") {
+    state.abilities ??= [];
+    const existing = state.abilities.findIndex(a => a.id === o.value.id);
+    if (existing < 0) state.abilities.push(structuredClone(o.value));
+    else if (o.value.version === state.abilities[existing].version + 1) state.abilities[existing] = structuredClone(o.value);
+    return;
+  }
   const collection = o.kind === "resource" ? state.resources : o.kind === "item" ? state.items : state.conditions;
   const index = collection.findIndex(v => v.id === o.value.id);
   if (index < 0) (collection as (Resource | Item | Condition)[]).push(structuredClone(o.value));
@@ -110,7 +121,49 @@ function execute(before: MechanicalState, actor: string, operations: MechanicalO
   const state = structuredClone(before), changes: MechanicalChange[] = [];
   if (!actor || operations.length > 16) throw new Error("Invalid mechanical plan");
   for (const [index, op] of operations.entries()) {
-    if (op.kind === "spend" || op.kind === "restore") {
+    if (op.kind === "ability") {
+      if (op.outcome !== undefined && !["clean", "mixed", "setback"].includes(op.outcome)) throw new Error("Invalid ability outcome");
+      const ability = state.abilities?.find(a => a.id === op.ability && a.version === op.version);
+      if (!ability || ability.owner !== actor) throw new Error("Ability unavailable to this actor");
+      if (ability.unsupported.length) throw new Error(`${ability.name} needs clarification: ${ability.unsupported.join("; ")}`);
+      const target = op.target ?? (ability.target === "self" ? actor : "");
+      if (!target || (ability.target === "self" && target !== actor) || (ability.target === "other" && target === actor)) throw new Error("Invalid ability target");
+      if (conditionInfluence(state, actor, ability.approach, target, op.place).blocked.length) throw new Error("A condition prevents this ability");
+      for (const effect of ability.effects) if (effect.kind === "restore" || effect.kind === "damage") {
+        const owner = effect.target === "self" ? actor : target;
+        const resources = state.resources.filter(r => r.owner === owner && (r.id === effect.resource || r.name.toLocaleLowerCase() === effect.resource?.toLocaleLowerCase()));
+        if (resources.length !== 1 || (effect.kind === "restore" && resources[0].max === undefined)) throw new Error(`Unknown or ambiguous ${effect.resource} for ${owner}`);
+      }
+      for (const requirement of ability.requires) {
+        const item = state.items.find(i => i.id === requirement.item && i.owner === actor && i.quantity > 0);
+        if (!item || (requirement.equipped && !item.equipped)) throw new Error("Required equipment is not available");
+      }
+      // Costs are derived from the stored definition, never from invocation arguments.
+      const costs: MechanicalOperation[] = ability.costs.map(c => c.kind === "resource" ? { kind: "spend", resource: c.id, amount: c.amount } : { kind: "consume", item: c.id, amount: c.amount });
+      const paid = execute(state, actor, costs, `${actionId}:${index}:cost`);
+      state.resources = paid.state.resources; state.items = paid.state.items; changes.push(...paid.changes);
+      if (op.outcome === "setback") continue; // An executed failed attempt pays its established cost, not its success effects.
+      for (const [effectIndex, effect] of ability.effects.entries()) {
+        const owner = effect.target === "self" ? actor : target;
+        if (effect.kind === "restore" || effect.kind === "damage") {
+          const candidates = state.resources.filter(r => r.owner === owner && (r.id === effect.resource || r.name.toLocaleLowerCase() === effect.resource?.toLocaleLowerCase()));
+          if (candidates.length !== 1 || !amount(effect.amount) || !effect.amount) throw new Error(`Unknown or ambiguous ${effect.resource} for ${owner}`);
+          const resource = candidates[0], old = structuredClone(resource);
+          if (effect.kind === "restore" && resource.max === undefined) throw new Error(`Recovery limit for ${resource.name} is unknown`);
+          resource.current = effect.kind === "restore" ? Math.min(resource.max!, resource.current + effect.amount) : Math.max(0, resource.current - effect.amount);
+          changes.push({ kind: "resource", id: resource.id, before: old, after: structuredClone(resource) });
+        } else if (effect.kind === "condition") {
+          if (!effect.name || !effect.ending) throw new Error("Incomplete condition effect");
+          const id = `effect-${revision([ability.id, owner, effectIndex])}`;
+          const old = state.conditions.find(c => c.id === id);
+          const condition: Condition = { id, owner, name: effect.name, ending: effect.ending, helps: effect.helps ?? [], hinders: effect.hinders ?? [], blocks: effect.blocks ?? [], source: ability.source };
+          if (!old) { state.conditions.push(condition); changes.push({ kind: "condition", id, before: null, after: structuredClone(condition) }); }
+        } else if (effect.kind === "clear_condition") {
+          const removed = state.conditions.filter(c => c.owner === owner && c.name.toLocaleLowerCase() === effect.name?.toLocaleLowerCase());
+          for (const old of removed) { state.conditions = state.conditions.filter(c => c.id !== old.id); changes.push({ kind: "condition", id: old.id, before: structuredClone(old), after: null }); }
+        }
+      }
+    } else if (op.kind === "spend" || op.kind === "restore") {
       const resource = state.resources.find(r => r.id === op.resource);
       if (!resource || resource.owner !== actor) throw new Error("Resource unavailable to this actor");
       if (!amount(op.amount) || op.amount <= 0) throw new Error("Invalid resource amount");
@@ -169,14 +222,24 @@ export function commitMechanical(before: MechanicalState, receipt: MechanicalRec
   return state;
 }
 
-/** Only explicit quantified spends and known item use are admitted before ability compilation exists. */
+/** Admit player-backed operations; ability invocations reference their saved definitions. */
+export class MechanicalPlanError extends Error {}
 export function readMechanicalPlan(raw: unknown, state: MechanicalState, action: string): MechanicalOperation[] {
+  try { return parseMechanicalPlan(raw, state, action); }
+  catch (error) { throw new MechanicalPlanError(error instanceof Error ? error.message : "Mechanical interpretation is incomplete"); }
+}
+function parseMechanicalPlan(raw: unknown, state: MechanicalState, action: string): MechanicalOperation[] {
   if (!Array.isArray(raw) || raw.length > 16) throw new Error("Mechanical interpretation is incomplete");
   const operations: MechanicalOperation[] = [];
   for (const row of raw) {
     if (!obj(row) || !str(row.quote, 400) || !action.replace(/\s+/g, " ").includes(row.quote as string)) throw new Error("Mechanical action lacks player evidence");
     const quote = row.quote as string;
-    if (row.kind === "consume" || row.kind === "transfer") {
+    if (row.kind === "ability") {
+      const ability = state.abilities?.find(a => (a.id === row.ability || a.name.toLocaleLowerCase() === str(row.ability).toLocaleLowerCase()) && a.owner === "you");
+      if (!ability || !/\b(?:use|cast|invoke|perform|activate|apply|treat|focus|deploy|repair|patch|switch|turn)\b/i.test(quote)) throw new Error("Ability use is not established");
+      if (row.version !== undefined && row.version !== ability.version) throw new Error("Ability definition changed");
+      operations.push({ kind: "ability", ability: ability.id, version: ability.version, ...(str(row.target, 80) ? { target: str(row.target, 80) } : {}) });
+    } else if (row.kind === "consume" || row.kind === "transfer") {
       if (!(row.kind === "consume" ? /\b(?:use|drink|eat|consume|apply|take)\b/i : /\b(?:give|hand|pass|transfer)\b/i).test(quote)) throw new Error("Item operation is not an explicit action");
       const item = state.items.find(i => i.id === row.item && i.owner === "you");
       if (!item || !amount(row.amount) || row.amount <= 0 || !Number.isInteger(row.amount)
@@ -194,6 +257,18 @@ export function readMechanicalPlan(raw: unknown, state: MechanicalState, action:
       operations.push({ kind: "equip", item: row.item as string, equipped: row.equipped });
     } else throw new Error("Unsupported player mechanical action");
   }
+  for (const [index, operation] of operations.entries()) {
+    if (operation.kind !== "ability") continue;
+    const ability = state.abilities!.find(a => a.id === operation.ability)!;
+    const quoted = (raw[index] as Record<string, unknown>).quote as string;
+    for (const [otherIndex, other] of operations.entries()) {
+      if (otherIndex === index || (other.kind !== "spend" && other.kind !== "consume")) continue;
+      const otherId = "resource" in other ? other.resource : other.item;
+      const duplicate = ability.costs.some(c => c.id === otherId && c.kind === (other.kind === "spend" ? "resource" : "item"));
+      const otherQuote = (raw[otherIndex] as Record<string, unknown>).quote as string;
+      if (duplicate && (quoted.includes(otherQuote) || otherQuote.includes(quoted))) throw new Error("Ability costs must not also be charged as a separate action");
+    }
+  }
   return operations;
 }
 
@@ -208,12 +283,14 @@ export function conditionInfluence(state: MechanicalState, actor: string, approa
 
 export function mechanicalPacket(state: MechanicalState) {
   const withoutSource = <T extends { source: Evidence }>({ source, ...value }: T) => value;
-  return { resources: state.resources.map(withoutSource), items: state.items.map(withoutSource), conditions: state.conditions.map(withoutSource) };
+  return { resources: state.resources.map(withoutSource), items: state.items.map(withoutSource), conditions: state.conditions.map(withoutSource), ...(state.abilities?.length ? { abilities: state.abilities.map(a => {
+    const { source, sourceKind, fingerprint, ...value } = a; return value;
+  }) } : {}) };
 }
 export function receiptPacket(receipt: MechanicalReceipt) {
   return { id: receipt.id, status: receipt.status, ...(receipt.reason ? { reason: receipt.reason } : {}), changes: receipt.changes.map(c => ({
-    kind: c.kind, id: c.id, before: c.before ? ("current" in c.before ? c.before.current : c.before.quantity) : null,
-    after: c.after ? ("current" in c.after ? c.after.current : c.after.quantity) : null,
+    kind: c.kind, id: c.id, before: c.before ? ("current" in c.before ? c.before.current : "quantity" in c.before ? c.before.quantity : true) : null,
+    after: c.after ? ("current" in c.after ? c.after.current : "quantity" in c.after ? c.after.quantity : true) : null,
     name: c.after?.name ?? c.before?.name, owner: c.after?.owner, ...(c.after && "equipped" in c.after ? { equipped: c.after.equipped } : {}),
   })) };
 }
@@ -221,8 +298,9 @@ export function mechanicalNotes(receipt?: MechanicalReceipt): string[] {
   if (!receipt || receipt.status !== "ready") return [];
   return receipt.changes.filter(c => c.after?.owner === "you" || c.before?.owner === "you").map(c => {
     const value = c.after;
-    if (!value) return "";
+    if (!value) return c.kind === "condition" && c.before ? `${c.before.name}: cleared` : "";
     if ("current" in value) return `${value.name}: ${value.current}${value.max === undefined ? "" : ` / ${value.max}`}${value.unit ? ` ${value.unit}` : ""}`;
-    return value.owner !== "you" ? `${value.name}: now with ${value.owner}` : `${value.name}: ${value.quantity} left${value.equipped ? " · equipped" : ""}`;
+    if ("quantity" in value) return value.owner !== "you" ? `${value.name}: now with ${value.owner}` : `${value.name}: ${value.quantity} left${value.equipped ? " · equipped" : ""}`;
+    return value.name;
   }).filter(Boolean).slice(-2);
 }
