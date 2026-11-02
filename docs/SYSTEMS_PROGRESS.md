@@ -105,4 +105,8 @@ Live evidence is in [LIVE_PLAYTEST.md](LIVE_PLAYTEST.md). The first three-turn r
 | Model cost and cache | Existing historical prompts remain stable across mechanical deltas in tests; ordinary affectionate gestures do not invoke a mechanical read. | Profile real helper behavior/latency, bound large-state retrieval, verify live provider cache telemetry where available. The current intent hints remain English-oriented. |
 | Reliability and enjoyment | Engine and fake-host invariants have direct tests. | Multi-card live play, long histories, unfamiliar abilities, first-session learning, tactical alternatives and sustained fun. |
 
-The new transaction foundation has not been deployed to the running local installation at this checkpoint. The installed build remains the previously verified animated-dice build while the next mechanical layers are developed.
+## Local installation of the verified checkpoint
+
+Commit `e7ec33c` was pushed to `codex/warp-living-play` and its manifest/backend/frontend bundles deployed to `D:/Lumiverse/data/extensions/warp/repo` using `scripts/deploy-local.ts --apply`. All three file hashes match the worktree. No additional permissions were requested. The previous installed files were saved to `C:/Users/eme4/warp-core/.artifacts/warp-backup-1793643921115` before replacement. That backup includes `deployment.json` and can be restored with the same script's `--restore` option.
+
+Warp alone was restarted through Lumiverse's existing extension manager. Browser logs recorded frontend unload, load and ready without a Warp error. A later manager check showed Warp active with its existing 9/9 permissions. The screenshot is `.artifacts/warp-installed-e7ec33c.png`. This proves installation/startup, not a production chat playthrough of every new system. Disposable worker fixtures and the synthetic live-model samples remain the gameplay evidence described above. The full design goal remains active.

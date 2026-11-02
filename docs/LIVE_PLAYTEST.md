@@ -46,7 +46,7 @@ bun C:/Users/eme4/warp-core/scripts/live-model-check.ts D:/Lumiverse --playtest 
 
 Reports are written under the Warp worktree's ignored `.artifacts/` directory. A report may retain an unsettled provider call after the local read was cancelled; this is not counted as a successful response.
 
-Later baseline browser/install evidence is recorded in [BROWSER_PLAYTEST.md](BROWSER_PLAYTEST.md). The new systems expansion remains on the development branch; it has not replaced the running animated-dice build. Real-card first use, long-session model accuracy, the expanded mechanics in the installed app and sustained enjoyment still need verification.
+Later baseline browser/install evidence is recorded in [BROWSER_PLAYTEST.md](BROWSER_PLAYTEST.md). The systems checkpoint through `e7ec33c` has since been installed and started locally, as recorded in [SYSTEMS_PROGRESS.md](SYSTEMS_PROGRESS.md). Real-card first use, long-session model accuracy, the expanded mechanics in actual chats and sustained enjoyment still need verification.
 
 ## 2026-11-02: NPC exchange checks
 

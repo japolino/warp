@@ -2,7 +2,7 @@
 
 This file records implemented behavior and outstanding verification; it is not a completion claim.
 
-The 2026-11-02 systems expansion is tracked in [SYSTEMS_PROGRESS.md](SYSTEMS_PROGRESS.md). Its transaction, ability-definition, initial encounter, bounded NPC-exchange, stat-free injury and causal-knowledge checkpoints are implemented on the branch but have not replaced the running local animated-dice build. The evidence below describes the earlier living-play baseline; the progress file records current checks and the full remaining scope.
+The 2026-11-02 systems expansion is tracked in [SYSTEMS_PROGRESS.md](SYSTEMS_PROGRESS.md). Its transaction, ability-definition, initial encounter, bounded NPC-exchange, stat-free injury and causal-knowledge checkpoints were installed locally from commit `e7ec33c` after 636 tests, typechecking, build and production worker/frontend checks passed. The bundle hashes match the worktree. Warp was restarted through Lumiverse's manager and reported frontend ready. The earlier baseline evidence below remains historical; the progress file records current checks and the full remaining scope. This installation is a development checkpoint, not completion of the full design.
 
 The default now uses the living-play runtime for existing and new chats. The old rulebook engine remains behind an explicit `authoredRules` compatibility setting. Existing books, old turn records, and unrelated message metadata are preserved. No template install or generated YAML is required.
 
