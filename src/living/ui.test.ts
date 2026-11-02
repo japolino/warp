@@ -70,6 +70,31 @@ test("dice receipts stay compact and keep the same dice DOM on repaint", () => {
   expect(window.document.querySelector(".warp-check-none")?.textContent).toContain("No recorded Warp roll");
 });
 
+test("inspection explains saved shield capacity and cooldown without advancing either", () => {
+  const source = { message: "persona", quote: "Pulse costs 2 Battery and requires 1 action to recharge." };
+  const mechanics = { version: 1, resources: [], items: [], conditions: [{ id: "ward", name: "Ward", owner: "you", hinders: [], helps: [], blocks: [], ending: "Until depleted", defenses: [{ kind: "shield", damageType: "all", amount: 6 }], source }], applied: [],
+    clocks: [{ id: "you", actor: "you", actions: 1 }], cooldowns: [{ id: "pulse", actor: "you", readyAt: 3 }],
+    abilities: [{ id: "pulse", version: 1, name: "Pulse", owner: "you", description: "A pulse", approach: "precision", target: "other", range: "near", cooldown: 1, costs: [], effects: [{ kind: "damage", target: "target", resource: "Health", amount: 20, damageType: "physical" }], requires: [], unsupported: [], source, sourceKind: "persona", fingerprint: "saved" }] };
+  const before = structuredClone(mechanics);
+  ui.accept(view({ world: { place: "Corridor", present: ["Jo"], facts: [], mechanics } }));
+  click('[data-living="inspect"]');
+  const panel = window.document.querySelector(".warp-inspector")!;
+  expect(panel.textContent).toContain("6 shield remaining against all damage");
+  expect(panel.textContent).toContain("Ready after 1 more action");
+  expect(panel.textContent).toContain("Range: near");
+  expect(mechanics).toEqual(before);
+  expect(sent).toEqual([]);
+});
+
+test("tracking people or NPC-only mechanics never adds an empty player inspector to a quiet scene", () => {
+  const source = { message: "scene", quote: "Jo waits in the café." };
+  const mechanics = { version: 1, resources: [{ id: "npc-focus", owner: "Jo", name: "Focus", current: 2, source }], items: [], conditions: [], applied: [],
+    entities: [{ id: "jo", name: "Jo", displayName: "Jo", aliases: [], entityKind: "person", present: true, status: "active", source }] };
+  ui.accept(view({ world: { place: "Cafe", present: ["Jo"], facts: [], mechanics } }));
+  expect(window.document.querySelector('[data-living="inspect"]')).toBeNull();
+  expect(window.document.querySelector(".warp-inspector")).toBeNull();
+});
+
 test("old checks show their outcome without inventing a die value", () => {
   ui.accept(view({ decision: { tier: "outmatched", result: "setback", intent: "Escape", stakes: "Exposure", reasons: ["Guards surround you"] } }));
   expect(window.document.querySelector(".warp-check-die")?.getAttribute("aria-label")).toContain("not saved");

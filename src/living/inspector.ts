@@ -1,11 +1,22 @@
 import { esc } from "../frontend/html.js";
 import type { MechanicalState } from "./mechanics.js";
 import type { AbilityEffect } from "./abilities.js";
+import { cooldownRemaining, type Defense } from "./encounters.js";
+
+function defenseText(d: Defense, remaining = false) {
+  const damage = `${d.damageType === "all" ? "all" : d.damageType} damage`;
+  if (d.kind === "immunity") return `Immune to ${damage}`;
+  if (d.kind === "resistance") return `${d.amount}% resistance to ${damage}`;
+  if (d.kind === "reflect") return `Reflect ${d.amount}% of ${damage} received`;
+  if (d.kind === "armor") return `${d.amount} armor against ${damage}`;
+  return `${d.amount} shield${remaining ? " remaining" : ""} against ${damage}`;
+}
 
 function effectText(e: AbilityEffect) {
   const who = e.target === "self" ? "self" : "target";
-  if (e.kind === "restore" || e.kind === "damage") return `${e.kind === "restore" ? "Restore" : "Damage"} ${e.amount} ${e.resource} · ${who}${e.basis === "warp" ? " · Warp value" : ""}`;
+  if (e.kind === "restore" || e.kind === "damage") return `${e.kind === "restore" ? "Restore" : "Damage"} ${e.amount} ${e.resource}${e.damageType ? ` · ${e.damageType}` : ""} · ${who}${e.basis === "warp" ? " · Warp value" : ""}`;
   if (e.kind === "clear_condition") return `Clear ${e.name} · ${who}`;
+  if (e.kind === "defense" && e.defense) return `${e.name}: ${defenseText(e.defense)} · ${who} · ${e.ending}${e.basis === "warp" ? " · Warp value" : ""}`;
   return `${e.name} · ${who} · ${e.ending}`;
 }
 
@@ -17,9 +28,10 @@ export function inspectMechanics(state: MechanicalState): string {
   return `<section class="warp-inspector" aria-label="Your saved mechanics">
     ${resources.length ? `<dl class="warp-inspector-resources">${resources.map(r => `<div><dt>${esc(r.name)}</dt><dd>${r.current}${r.max === undefined ? "" : ` / ${r.max}`}${r.unit ? ` ${esc(r.unit)}` : ""}</dd></div>`).join("")}</dl>` : ""}
     ${items.length ? `<div class="warp-inspector-items">${items.map(i => `<span>${esc(i.name)} × ${i.quantity}${i.equipped ? " · equipped" : ""}</span>`).join("")}</div>` : ""}
-    ${conditions.map(c => `<p>${esc(c.name)}${c.targets?.length ? ` · with ${c.targets.map(esc).join(", ")}` : ""}${c.place ? ` · ${esc(c.place)}` : ""}<small>${esc(c.ending)}</small></p>`).join("")}
+    ${conditions.map(c => `<p>${esc(c.name)}${c.targets?.length ? ` · with ${c.targets.map(esc).join(", ")}` : ""}${c.place ? ` · ${esc(c.place)}` : ""}<small>${esc(c.ending)}${c.defenses?.length ? ` · ${c.defenses.map(d => esc(defenseText(d, true))).join(" · ")}` : ""}</small></p>`).join("")}
     ${abilities.length ? `<div class="warp-inspector-abilities">${abilities.map(a => `<details data-inspect-ability="${esc(a.id)}"><summary><strong>${esc(a.name)}</strong><span>${a.costs.length ? a.costs.map(c => `${c.amount} ${esc(named(c.id))}`).join(" + ") : "No established resource cost"}</span></summary>
       <p>${esc(a.description)}</p>${a.effects.map(e => `<p>${esc(effectText(e))}</p>`).join("")}
+      ${a.range ? `<p>Range: ${esc(a.range)}</p>` : ""}${a.cooldown ? `<p>${cooldownRemaining(state, "you", a.id) ? `Ready after ${cooldownRemaining(state, "you", a.id)} more action${cooldownRemaining(state, "you", a.id) === 1 ? "" : "s"}` : "Ready"} · ${a.cooldown}-action cooldown</p>` : ""}
       ${a.requires.length ? `<p>Requires ${a.requires.map(r => `${esc(named(r.item))}${r.equipped ? " equipped" : " carried"}`).join(", ")}</p>` : ""}
       ${a.unsupported.length ? `<p class="warp-inspector-blocked">Needs clarification: ${a.unsupported.map(esc).join(" · ")}</p>` : ""}
       <small>Version ${a.version} · ${esc(a.sourceKind)}</small><blockquote>${esc(a.source.quote)}</blockquote></details>`).join("")}</div>` : ""}

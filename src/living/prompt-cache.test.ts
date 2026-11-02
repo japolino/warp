@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import type { Msg } from "../backend/ledger.js";
 import { pathsOf } from "./world.js";
 import { PROMPT_KEY, replayPrompt, type PromptSnapshot } from "./prompt-cache.js";
-import { emptyMechanics, prepareMechanical } from "./mechanics.js";
+import { emptyMechanics, prepareMechanical, mechanicalPacket } from "./mechanics.js";
 
 const msg = (id: string, is_user: boolean, content: string): Msg => ({ id, is_user, content, role: is_user ? "user" : "assistant", index_in_chat: Number(id), swipe_id: 0 } as Msg);
 const packet = (text: string) => ({ place: "Cafe", present: ["Jo"], preferences: { exclude: [], offScreen: [] }, established: [{ id: "jacket", text }], possibleMotives: [] });
@@ -73,4 +73,25 @@ test("mechanical receipts and resource deltas preserve all prior prompt bytes", 
   const after = msg("3", true, "Hello."); history.push(after); store(history, after, "Jacket");
   const c = replayPrompt(prompt(history), history, "Stable director");
   expect(c.at(-1)!.content).toContain('"remove":["coins"]');
+});
+
+test("encounter timing, movement and identity append deltas without rewriting previous requests", () => {
+  const first = msg("0", true, "I approach Jo."), history = [first], state = emptyMechanics();
+  const source = { message: "scene", quote: "Jo stands near you." };
+  state.entities = [{ id: "jo", name: "Jo", displayName: "Jo", aliases: [], entityKind: "person", present: true, status: "active", source }];
+  state.distances = [{ id: "range", from: "you", to: "Jo", band: "near", source }];
+  store(history, first, "Jacket").packet.mechanics = mechanicalPacket(state);
+  const a = replayPrompt(prompt(history), history, "Director");
+  history.push(msg("1", false, "You move closer."), msg("2", true, "I wait."));
+  state.clocks = [{ id: "you", actor: "you", actions: 1 }];
+  state.cooldowns = [{ id: "pulse", actor: "you", readyAt: 3 }];
+  state.distances[0].band = "touch";
+  state.entities[0].displayName = "Mara";
+  store(history, history.at(-1)!, "Jacket").packet.mechanics = mechanicalPacket(state);
+  const b = replayPrompt(prompt(history), history, "Director");
+  expect(b.slice(0, a.length)).toEqual(a);
+  expect(b.at(-1)!.content).toContain('"clocks":{"put":[{"id":"you","actor":"you","actions":1}]');
+  expect(b.at(-1)!.content).toContain('"band":"touch"');
+  expect(b.at(-1)!.content).toContain('"displayName":"Mara"');
+  expect(b.at(-1)!.content).not.toContain('"quote"');
 });

@@ -1,16 +1,19 @@
 import { revision } from "../shared/revision.js";
 import type { Evidence, Message } from "./world.js";
 import type { Approach, MechanicalState } from "./mechanics.js";
+import { actorName, RANGES, DAMAGE_TYPES, readDefenses, type Range, type DamageType, type Defense } from "./encounters.js";
 
 export interface DefinitionSource { id: string; kind: "card" | "persona" | "lore"; text: string; }
 export interface AbilityEffect {
-  kind: "restore" | "damage" | "condition" | "clear_condition";
+  kind: "restore" | "damage" | "condition" | "clear_condition" | "defense";
   target: "self" | "target"; resource?: string; amount?: number; basis?: "source" | "warp";
   name?: string; hinders?: Approach[]; helps?: Approach[]; blocks?: Approach[]; ending?: string;
+  damageType?: DamageType; defense?: Defense; duration?: number;
 }
 export interface AbilityDefinition {
   id: string; version: number; owner: string; name: string; description: string;
   approach: Approach | "other"; target: "self" | "other" | "either";
+  range?: Range; cooldown?: number;
   costs: { kind: "resource" | "item"; id: string; amount: number }[];
   effects: AbilityEffect[]; requires: { item: string; equipped: boolean }[];
   unsupported: string[];
@@ -51,8 +54,8 @@ export function readAbilityDefinitions(raw: unknown, state: MechanicalState, mes
   for (const row of raw.slice(0, 6)) {
     if (!obj(row)) continue;
     try {
-      if (Object.keys(row).some(k => !["id", "version", "owner", "name", "description", "approach", "target", "costs", "effects", "requires", "unsupported", "message", "quote", "source", "sourceKind", "fingerprint"].includes(k))) continue;
-      const owner = own(row.owner, player), name = str(row.name), quote = str(row.quote, 800), messageId = str(row.message);
+      if (Object.keys(row).some(k => !["id", "version", "owner", "name", "description", "approach", "target", "range", "cooldown", "costs", "effects", "requires", "unsupported", "message", "quote", "source", "sourceKind", "fingerprint"].includes(k))) continue;
+      const owner = actorName(state, own(row.owner, player)), name = str(row.name), quote = str(row.quote, 800), messageId = str(row.message);
       const source = sources.find(s => validDefinitionSource(s) && s.id === messageId);
       const message = messages.find(m => m.id === messageId);
       const isCorrection = !!message?.is_user && /^\s*\(?OOC correction:/i.test(message.content);
@@ -62,6 +65,8 @@ export function readAbilityDefinitions(raw: unknown, state: MechanicalState, mes
       // Preserve an established definition. An explicit correction or edited source can replace it.
       if (existing && !isCorrection && !(source && existing.sourceKind === source.kind && !content.replace(/\s+/g, " ").includes(existing.source.quote))) continue;
       if (!methods.includes(row.approach as typeof methods[number]) || !["self", "other", "either"].includes(row.target as string)) continue;
+      if (row.range !== undefined && !RANGES.includes(row.range as Range)) continue;
+      if (row.cooldown !== undefined && (!positive(row.cooldown) || !Number.isInteger(row.cooldown) || row.cooldown > 10000 || !numberIn(quote, row.cooldown))) continue;
       if (!Array.isArray(row.costs) || row.costs.length > 6 || !Array.isArray(row.effects) || !row.effects.length || row.effects.length > 8) continue;
       const costs: AbilityDefinition["costs"] = row.costs.map(c => {
         if (!obj(c) || Object.keys(c).some(k => !["kind", "id", "amount"].includes(k))) throw new Error("Unsupported cost fields");
@@ -71,9 +76,12 @@ export function readAbilityDefinitions(raw: unknown, state: MechanicalState, mes
         return { kind: c.kind as "resource" | "item", id: candidate.id, amount: c.amount };
       });
       const effects: AbilityEffect[] = row.effects.map(e => {
-        if (!obj(e) || Object.keys(e).some(k => !["kind", "target", "resource", "amount", "basis", "magnitude", "name", "hinders", "helps", "blocks", "ending"].includes(k))) throw new Error("Unsupported effect fields");
+        const fields: Record<string, string[]> = { restore: ["resource", "amount", "basis", "magnitude"], damage: ["resource", "amount", "basis", "magnitude", "damageType"], condition: ["name", "hinders", "helps", "blocks", "ending", "duration"], clear_condition: ["name"], defense: ["name", "defense", "ending", "duration", "basis", "magnitude"] };
+        if (!obj(e) || !fields[e.kind as string] || Object.keys(e).some(k => !["kind", "target", ...fields[e.kind as string]].includes(k))) throw new Error("Unsupported effect fields");
         if (!obj(e) || !["self", "target"].includes(e.target as string)) throw new Error("Unknown effect target");
         const target = e.target as "self" | "target";
+        const duration = e.duration;
+        if (duration !== undefined && (!positive(duration) || !Number.isInteger(duration) || duration > 10000 || !numberIn(quote, duration))) throw new Error("Unsourced action duration");
         if (e.kind === "restore" || e.kind === "damage") {
           const resource = str(e.resource);
           if (!resource) throw new Error("Missing resource selector");
@@ -81,12 +89,24 @@ export function readAbilityDefinitions(raw: unknown, state: MechanicalState, mes
           const magnitude = { minor: 5, standard: 15, major: 30 }[e.magnitude as "minor" | "standard" | "major"];
           if (e.amount !== undefined && !exact) throw new Error("Unsourced numerical effect");
           if (!exact && !magnitude) throw new Error("Unrecognized effect magnitude");
-          return { kind: e.kind, target, resource, amount: exact ? e.amount as number : magnitude, basis: exact ? "source" : "warp" };
+          if (e.damageType !== undefined && !DAMAGE_TYPES.includes(e.damageType as DamageType)) throw new Error("Unknown damage type");
+          return { kind: e.kind, target, resource, amount: exact ? e.amount as number : magnitude, basis: exact ? "source" : "warp", ...(e.damageType ? { damageType: e.damageType as DamageType } : {}) };
         }
         if (e.kind === "condition") {
           const name = str(e.name), ending = str(e.ending, 240);
           if (!name || !ending) throw new Error("Missing condition semantics");
-          return { kind: "condition", target, name, ending, hinders: scope(e.hinders), blocks: scope(e.blocks), helps: scope(e.helps) };
+          return { kind: "condition", target, name, ending, hinders: scope(e.hinders), blocks: scope(e.blocks), helps: scope(e.helps), ...(duration ? { duration: duration as number } : {}) };
+        }
+        if (e.kind === "defense") {
+          const name = str(e.name), ending = str(e.ending, 240);
+          if (!name || !ending || !obj(e.defense) || Object.keys(e.defense).some(k => !["kind", "amount", "damageType"].includes(k))) throw new Error("Incomplete defense effect");
+          let defense: Defense, basis: "source" | "warp" | undefined;
+          if (e.defense.kind === "shield") {
+            const exact = positive(e.defense.amount) && numberIn(quote, e.defense.amount), magnitude = { minor: 5, standard: 15, major: 30 }[e.magnitude as "minor" | "standard" | "major"];
+            if ((e.defense.amount !== undefined && !exact) || (!exact && !magnitude) || ![...DAMAGE_TYPES, "all"].includes(e.defense.damageType as DamageType | "all")) throw new Error("Unsupported shield effect");
+            defense = { kind: "shield", amount: exact ? e.defense.amount as number : magnitude, damageType: e.defense.damageType as DamageType | "all" }; basis = exact ? "source" : "warp";
+          } else defense = readDefenses([e.defense], quote)[0];
+          return { kind: "defense", target, name, ending, defense, ...(basis ? { basis } : {}), ...(duration ? { duration: duration as number } : {}) };
         }
         if (e.kind === "clear_condition" && str(e.name)) return { kind: "clear_condition", target, name: str(e.name) };
         throw new Error("Unsupported effect");
@@ -102,7 +122,7 @@ export function readAbilityDefinitions(raw: unknown, state: MechanicalState, mes
       }
       if (row.unsupported !== undefined && (!Array.isArray(row.unsupported) || row.unsupported.length > 8 || row.unsupported.some(v => !str(v, 240)))) continue;
       const unsupported = Array.isArray(row.unsupported) ? row.unsupported.map(v => str(v, 240)) : [];
-      const body = { owner, name, description: str(row.description, 400) || name, approach: row.approach as AbilityDefinition["approach"], target: row.target as AbilityDefinition["target"], costs, effects, requires, unsupported };
+      const body = { owner, name, description: str(row.description, 400) || name, approach: row.approach as AbilityDefinition["approach"], target: row.target as AbilityDefinition["target"], ...(row.range ? { range: row.range as Range } : {}), ...(row.cooldown ? { cooldown: row.cooldown as number } : {}), costs, effects, requires, unsupported };
       const fingerprint = revision(body);
       if (existing?.fingerprint === fingerprint) continue;
       definitions.push({ id, version: (existing?.version ?? 0) + 1, ...body, fingerprint, source: { message: messageId, quote, sourceRevision: revision(content) }, sourceKind: source?.kind ?? "story" });
@@ -118,6 +138,7 @@ export function abilitySummary(a: AbilityDefinition, state?: MechanicalState): s
 
 export const ABILITY_INSTRUCTIONS = `Optionally include abilityDefinitions:[{owner,name,description,approach:"movement|precision|force|speech|perception|concentration|other",target:"self|other|either",costs:[{kind:"resource|item",id,amount}],effects:[],requires:[{item,equipped}],unsupported:[],message,quote}].
 Prepare only established abilities/item actions relevant to this scene. Use exact source IDs and one contiguous source quote covering the ability's effects and restrictions. Player attempts cannot establish a new ability. Respect which person actually owns the ability: a character card normally describes that character, while the persona describes the player. An item action requires the actual owned item.
-Effect vocabulary: {kind:"restore|damage",target:"self|target",resource:"resource name or saved ID",amount:explicitNumber} or magnitude:"minor|standard|major" ONLY when no numerical amount exists; {kind:"condition",target,name,hinders:[],blocks:[],helps:[],ending}; {kind:"clear_condition",target,name}. Approaches use the same enum as above, except other.
+Effect vocabulary: {kind:"restore|damage",target:"self|target",resource:"resource name or saved ID",amount:explicitNumber} or magnitude:"minor|standard|major" ONLY when no numerical amount exists; damage may have damageType:"physical|fire|cold|electric|poison|mental|untyped"; {kind:"condition",target,name,hinders:[],blocks:[],helps:[],ending,duration?:explicitOwnerActions}; {kind:"clear_condition",target,name}; {kind:"defense",target,name,defense:{kind:"armor|resistance|immunity|shield|reflect",amount,damageType:"physical|fire|cold|electric|poison|mental|untyped|all"},ending,duration?:explicitOwnerActions}. Resistance/reflect are percentages, armor is flat, immunity uses amount:0. Only shield may use magnitude with its amount omitted. Approaches use the same enum as above, except other.
+Definitions may include range:"touch|near|far" and cooldown:explicitSubsequentOwnerActions only when established in source. Never infer a timer, default range or default cooldown. Duration counts subsequent actions of the affected owner, not chat messages. A cooldown of 1 requires another action before reuse. Seconds, real-time durations, unsupported damage types, multi-target rules and complex triggers belong in unsupported until supported; do not silently convert them. Reapplying the same effect refreshes it without stacking. Defenses resolve immunity, flat armor, capped resistance, shields, then loss, then at most one reflection.
 All costs must be explicit numbers in the source quote and reference an established resource/item owned by the ability owner. Do not invent mana, energy, health, timers, drawbacks, limits or new powers. No stated resource cost means costs:[]. Code supplies fixed magnitude values where needed and labels them Warp values. No formulas or scripts.
 Put unsupported restrictions or effects in unsupported; never silently omit them to make an ability executable. Do not regenerate a saved definition unless the source actually changed or an explicit OOC correction changes it. Return at most 3 relevant definitions. These are automatically prepared content, not a rulebook or a setup question.`;

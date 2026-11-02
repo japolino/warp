@@ -39,7 +39,8 @@ export function foldMechanics(messages: Msg[]): MechanicalState {
         for (const observation of record.observations) {
           if (observation?.kind !== "ability") continue;
           const ability = observation.value;
-          const imported = readAbilityDefinitions([{ ...ability, message: ability.source.message, quote: ability.source.quote, effects: ability.effects.map(e => e.basis === "warp" ? { ...e, amount: undefined, magnitude: ({ 5: "minor", 15: "standard", 30: "major" } as Record<number, string>)[e.amount!] } : e) }], state, messages.slice(0, index + 1), sources);
+          const magnitudes: Record<number, string> = { 5: "minor", 15: "standard", 30: "major" };
+          const imported = readAbilityDefinitions([{ ...ability, message: ability.source.message, quote: ability.source.quote, effects: ability.effects.map(e => e.basis !== "warp" ? e : e.kind === "defense" && e.defense ? { ...e, defense: { ...e.defense, amount: undefined }, magnitude: magnitudes[e.defense.amount] } : { ...e, amount: undefined, magnitude: magnitudes[e.amount!] }) }], state, messages.slice(0, index + 1), sources);
           state = applyObservations(state, imported.map(value => ({ kind: "ability", value })));
         }
       }

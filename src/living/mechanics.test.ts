@@ -96,6 +96,14 @@ test("suspicion and local terrain do not become universal social or movement pen
   expect(conditionInfluence(before, "you", "movement", undefined, "Cafe").shift).toBe(0);
 });
 
+test("an explicitly carried singular item needs no numerical inventory setup", () => {
+  const m = { id: "singular", is_user: false, content: "You carry a medkit and have a compass. Repair requires a spare part." };
+  const rows = ["Medkit", "Compass", "Spare part"].map((name, i) => ({ kind: "item", id: `item-${i}`, owner: "you", name, quantity: 1, equipped: false, message: m.id, quote: i === 2 ? "Repair requires a spare part." : m.content.split(" Repair")[0] }));
+  const items = applyObservations(emptyMechanics(), readMechanicalObservations(rows, emptyMechanics(), [m])).items;
+  expect(items.map(i => i.name)).toEqual(["Medkit", "Compass"]);
+  expect(items.every(i => i.quantity === 1)).toBe(true);
+});
+
 test("preparation admits explicit player operations without inventing costs or effects", () => {
   const state = bootstrap();
   expect(readMechanicalPlan([{ kind: "consume", item: "bandages", amount: 1, quote: "I use a bandage." }], state, "I use a bandage.")).toEqual([{ kind: "consume", item: "bandages", amount: 1 }]);

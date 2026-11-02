@@ -99,6 +99,7 @@ test("a saved Warp-valued definition replays with exactly the same generated amo
 
 test("first aid combines a consumable cost with another person's recovery in one transaction", () => {
   const before = state(); before.resources.push({ ...before.resources[1], id: "dex-health", name: "Health", owner: "Dex", current: 4 });
+  before.entities = [{ id: "dex", name: "Dex", displayName: "Dex", aliases: [], entityKind: "person", present: true, status: "active", source: { message: "greeting", quote: "Dex is here" } }];
   before.items.push({ id: "bandage", name: "Bandage", owner: "you", quantity: 1, equipped: false, source: { message: "greeting", quote: "one bandage" } });
   const source = definitionSource("persona", "First aid uses one bandage and restores 5 Health to another person.")!;
   const ability = readAbilityDefinitions([{ ...raw(), name: "First aid", target: "other", approach: "precision", costs: [{ kind: "item", id: "bandage", amount: 1 }], effects: [{ kind: "restore", target: "target", resource: "Health", amount: 5 }], message: source.id, quote: source.text }], before, [], [source])[0];
