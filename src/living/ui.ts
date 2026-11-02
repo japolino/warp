@@ -4,16 +4,19 @@ import { createDiceReveal, DICE_STYLE, percentileDice } from "./dice-reveal.js";
 import { inspectMechanics, INSPECTOR_STYLE } from "./inspector.js";
 import { esc } from "../frontend/html.js";
 import type { WarpStateV1 } from "../frontend/public-events.js";
+import type { ResponseCheck } from "./exchanges.js";
 
-interface View { type: "living"; chatId: string; signature: string; revision: number; enabled: boolean; busy: boolean; retry: boolean; anchor: string | null; world: World; notes: string[]; decision?: Decision; notice?: string; }
+interface View { type: "living"; chatId: string; signature: string; revision: number; enabled: boolean; busy: boolean; retry: boolean; anchor: string | null; world: World; notes: string[]; decision?: Decision; responses?: ResponseCheck[]; notice?: string; }
 function checkMarkup(view: View): string {
-  const d = view.decision;
-  if (!d) return `<div class="warp-check-none">${view.busy ? "Updating Warp's record for this reply…" : "No recorded Warp roll for this reply."}</div>`;
-  const label = { clean: "Clean success", mixed: "Success with a cost", setback: "Setback" }[d.result];
-  const hasRoll = Number.isInteger(d.roll) && d.roll! >= 1 && d.roll! <= 100;
-  return `<section class="warp-check" aria-label="Warp dice check">
+  const checks = [...(view.decision ? [{ id: "player", decision: view.decision, actor: "" }] : []), ...(view.responses ?? []).slice(0, 3).map((r, i) => ({ id: `response-${i}`, decision: r.decision, actor: r.actor }))];
+  if (!checks.length) return `<div class="warp-check-none">${view.busy ? "Updating Warp's record for this reply…" : "No recorded Warp roll for this reply."}</div>`;
+  return checks.map(({ id, decision: d, actor }) => {
+    const label = actor ? `${actor} ${ { clean: "succeeds", mixed: "succeeds with a cost", setback: "falters" }[d.result]}` : { clean: "Clean success", mixed: "Success with a cost", setback: "Setback" }[d.result];
+    const hasRoll = Number.isInteger(d.roll) && d.roll! >= 1 && d.roll! <= 100;
+    return `<section class="warp-check${actor ? " warp-check-response" : ""}" data-check-id="${id}" aria-label="${actor ? `${esc(actor)} dice check` : "Warp dice check"}">
     <div class="warp-check-die" role="img" aria-label="${hasRoll ? `Rolled ${d.roll} on a d100` : "Roll value not saved"}">${percentileDice(d.roll)}</div>
-    <div class="warp-check-copy"><strong>${label}</strong><p>${esc(d.intent)}</p></div></section>`;
+    <div class="warp-check-copy"><strong>${esc(label)}</strong><p>${esc(d.intent)}</p></div></section>`;
+  }).join("");
 }
 const STYLE = `
 .warp-scene{font:inherit;font-size:13px;line-height:1.5;color:inherit;margin:12px 0 18px;padding:12px 18px;box-sizing:border-box;border-top:1px solid color-mix(in srgb,currentColor 14%,transparent);opacity:.9;max-width:100%;overflow-wrap:anywhere}
@@ -25,6 +28,7 @@ const STYLE = `
 .warp-scene input[type=search]{box-sizing:border-box;width:100%;font:inherit;color:inherit;background:transparent;border:1px solid color-mix(in srgb,currentColor 25%,transparent);border-radius:5px;padding:6px;margin:8px 0}
 .warp-scene select{max-width:100%;font:inherit;color:inherit;background:transparent;border:1px solid color-mix(in srgb,currentColor 25%,transparent);border-radius:5px;padding:5px}.warp-scene-settings{margin:9px 0}.warp-scene-settings p{font-size:12px;opacity:.7}
 ${DICE_STYLE}
+.warp-check-response{margin:5px 0;gap:10px}.warp-check-response .warp-check-die{width:76px;height:52px}.warp-check-response .warp-percentile-die{width:42px;height:48px}.warp-check-response .warp-die-number{font-size:14px}.warp-check-response .warp-check-copy strong{font-size:12px}.warp-check-response .warp-check-copy p{font-size:12px}
 ${INSPECTOR_STYLE}
 @media(max-width:540px){.warp-scene-tools{margin-left:0;width:100%}.warp-scene{font-size:12px}}
 `;
@@ -37,9 +41,9 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
   let inspectorOpen = false;
   let settingsOpen = false, helperConnection = "", decisionConnection = "", decisionConnections: { id: string; name: string }[] = [], connections: { id: string; name: string }[] = [];
   let injected: Element | null = null;
-  const diceReveal = createDiceReveal();
+  const diceReveals = new Map<string, ReturnType<typeof createDiceReveal>>();
   let renderedCheckKey = "";
-  const remove = () => { diceReveal.destroy(); if (injected) ctx.dom.uninject(injected); injected = null; root = null; renderedCheckKey = ""; };
+  const remove = () => { for (const reveal of diceReveals.values()) reveal.destroy(); diceReveals.clear(); if (injected) ctx.dom.uninject(injected); injected = null; root = null; renderedCheckKey = ""; };
   const unstyle = ctx.dom.addStyle(STYLE);
   const active = () => ctx.getActiveChat().chatId ?? null;
   const send = (action: string, value?: string) => { if (view) ctx.sendToBackend({ type: "living_action", chatId: view.chatId, action, text: value }); };
@@ -102,16 +106,22 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
     if (card === row) { if (injected!.parentElement !== row) row.append(injected!); }
     else if (card.nextElementSibling !== injected) card.after(injected!);
     const detailsOpen = root.querySelector<HTMLDetailsElement>("[data-memory]")?.open;
-    const checkKey = JSON.stringify([view.chatId, view.anchor, view.decision]);
-    const previousCheck = renderedCheckKey === checkKey ? root.querySelector(".warp-check") : null;
+    const checkKey = JSON.stringify([view.chatId, view.anchor, view.decision, view.responses]);
+    const previousChecks = new Map(renderedCheckKey === checkKey ? [...root.querySelectorAll<HTMLElement>("[data-check-id]")].map(e => [e.dataset.checkId!, e]) : []);
     const expandedAbilities = [...root.querySelectorAll<HTMLDetailsElement>("[data-inspect-ability][open]")].map(e => e.dataset.inspectAbility);
     const focused = root.contains(document.activeElement) && document.activeElement?.matches("textarea,[data-memory-query]");
     const selector = document.activeElement?.matches("[data-memory-query]") ? "[data-memory-query]" : "textarea";
     const selection = focused ? [(document.activeElement as HTMLTextAreaElement).selectionStart ?? 0, (document.activeElement as HTMLTextAreaElement).selectionEnd ?? 0] : null;
     root.innerHTML = markup();
-    if (previousCheck) root.querySelector(".warp-check")?.replaceWith(previousCheck);
+    for (const check of root.querySelectorAll<HTMLElement>("[data-check-id]")) { const previous = previousChecks.get(check.dataset.checkId!); if (previous) check.replaceWith(previous); }
     renderedCheckKey = checkKey;
-    diceReveal.observe(root.querySelector<HTMLElement>(".warp-check"), checkKey);
+    const ids = new Set<string>();
+    for (const check of root.querySelectorAll<HTMLElement>("[data-check-id]")) {
+      const id = check.dataset.checkId!; ids.add(id);
+      let reveal = diceReveals.get(id); if (!reveal) { reveal = createDiceReveal(); diceReveals.set(id, reveal); }
+      reveal.observe(check, JSON.stringify([view.chatId, view.anchor, id, id === "player" ? view.decision : view.responses?.[Number(id.slice("response-".length))]]));
+    }
+    for (const [id, reveal] of diceReveals) if (!ids.has(id)) { reveal.destroy(); diceReveals.delete(id); }
     if (detailsOpen) root.querySelector("[data-memory]")?.setAttribute("open", "");
     for (const id of expandedAbilities) root.querySelector(`[data-inspect-ability="${CSS.escape(id!)}"]`)?.setAttribute("open", "");
     if (selection) { const input = root.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector); input?.focus(); input?.setSelectionRange(selection[0], selection[1]); }

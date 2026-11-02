@@ -46,4 +46,26 @@ bun C:/Users/eme4/warp-core/scripts/live-model-check.ts D:/Lumiverse --playtest 
 
 Reports are written under the Warp worktree's ignored `.artifacts/` directory. A report may retain an unsettled provider call after the local read was cancelled; this is not counted as a successful response.
 
-Still unproven: browser layout, actual frontend sandbox transport, end-to-end install/restart in the running app, interaction with real user presets and cards, long-session model recall accuracy, and whether people want to keep playing. Browser and Windows automation currently both report an unavailable connection. The goal remains active pending those checks.
+Later baseline browser/install evidence is recorded in [BROWSER_PLAYTEST.md](BROWSER_PLAYTEST.md). The new systems expansion remains on the development branch; it has not replaced the running animated-dice build. Real-card first use, long-session model accuracy, the expanded mechanics in the installed app and sustained enjoyment still need verification.
+
+## 2026-11-02: NPC exchange checks
+
+The `exchange` case in `scripts/live-playtest.ts` exercises a disposable sparring scene through the existing Lumiverse account's configured model connection. It uses explicit numerical resources to test the arithmetic contract, not a private card or a claim that arbitrary unknown health has been solved. The host/chat side is a fixture; the helper and narrator calls use the real generation service. No test chat is written into the account.
+
+```powershell
+bun C:/Users/eme4/warp-core/scripts/live-model-check.ts D:/Lumiverse --playtest --case=exchange
+bun C:/Users/eme4/warp-core/scripts/live-model-check.ts D:/Lumiverse --playtest --case=exchange --turn-limit=1
+```
+
+Run these from `D:/Lumiverse`, as above, to resolve the existing installation's configuration. They incur normal model usage. The checked connection reported `google_vertex` / `gemini-4-argon`; this identifies the tested configuration, not a speed or availability guarantee.
+
+The ignored reports retain these observations:
+
+- `.artifacts/live-playtest-1793637991389.json`: the helper selected a plausible NPC action and supplied a correct current quote, but drafted future prose in the message-ID field. The validator rejected the exchange, displayed an unresolved notice and spent nothing. Responses now omit that ID field; code binds a quote to the single allowed latest narrator message and pins its revision. An absent/nonmatching quote still rejects.
+- `.artifacts/live-playtest-1793638127169.json`: a complete three-turn run. Jo's saved d100 roll was 1, a clean response. Jab spent 2 Focus, reducing Jo from 10 to 8; the player's explicit guard reduced ten damage to five, leaving 35/40 Health. Both clocks advanced once. Retreat moved touch to near, ended the guard and caused no extra NPC attack. Stopping sparring caused no roll, cost or additional attack. No extraction retry was needed. The two pre-action reads took 5.210 and 6.595 seconds; narration took 5.455, 3.292 and 4.970 seconds. Bootstrap took 10.982 seconds and the later reads took 5.269–7.303 seconds. These are small samples, not latency guarantees.
+- `.artifacts/live-playtest-1793638360548.json`: bootstrap reached the 16-second read deadline. The first-use fallback returned actual resource values but omitted their IDs and used `Focus` as a cost reference. That originally prevented compilation. Deterministic local IDs and unique owned-name references now cover this captured response shape, including replay and non-refilling balances, in runtime tests. The live run itself remained unresolved and did not charge either side.
+- `.artifacts/live-playtest-1793638634250.json`: a later attempt hit all three deadlines: bootstrap at 16 seconds, interpretation at 12 seconds and the synthetic narrator at 30 seconds. This is a failed live run, not a successful fallback or semantic-accuracy sample. No live completion is claimed for that run.
+
+The successful narration honored the actual damage, resource cost, range and stopping boundary, but recited too much arithmetic. Resolver 3 now carries a turn-local presentation instruction to describe the physical consequences and leave counts to the inline display. Subsequent provider timeouts prevented a successful live check of that prose policy. The compact-prose browser screenshot is a production-frontend rendering preview with a hand-written example paragraph and the actual saved NPC check, not proof that the narrator generated that paragraph.
+
+Provider usage contained prompt/completion totals but no explicit cache-hit fields. No live cache-hit claim follows from those totals. Prompt tests separately prove old message bytes stay stable, including a frozen receipt-presentation packet. More live repetitions, broader cards, unknown numerical premises, fast decision routing and sustained player sessions remain open.

@@ -1,5 +1,5 @@
 import { revision } from "../shared/revision.js";
-import type { Evidence } from "./world.js";
+import type { Evidence, Decision } from "./world.js";
 import type { MechanicalState, MechanicalChange, Resource, Condition } from "./mechanics.js";
 
 export const DAMAGE_TYPES = ["physical", "fire", "cold", "electric", "poison", "mental", "untyped"] as const;
@@ -11,7 +11,8 @@ export interface Distance { id: string; from: string; to: string; band: Range; s
 export interface Defense { kind: "armor" | "resistance" | "immunity" | "shield" | "reflect"; amount: number; damageType: DamageType | "all"; }
 export interface ActionClock { id: string; actor: string; actions: number; }
 export interface Cooldown { id: string; actor: string; readyAt: number; }
-export interface EncounterBeat { kind: "damage" | "expired" | "move" | "wait" | "defend" | "attempt" | "skipped"; actor: string; target?: string; name?: string; amount?: number; absorbed?: number; resisted?: number; reflected?: number; reason?: string; }
+export interface EncounterBeat { kind: "damage" | "expired" | "move" | "wait" | "defend" | "attempt" | "skipped" | "response"; actor: string; target?: string; name?: string; amount?: number; absorbed?: number; resisted?: number; reflected?: number; reason?: string; decision?: Decision; }
+export class MechanicalKnowledgeError extends Error {}
 const normalize = (value: string) => value.normalize("NFKC").trim().toLocaleLowerCase();
 export const entityId = (name: string) => normalize(name) === "you" ? "you" : `entity-${revision(normalize(name))}`;
 
@@ -81,7 +82,7 @@ function defenses(state: MechanicalState, owner: string, type: DamageType): Defe
 export function immune(state: MechanicalState, owner: string, type: DamageType) { return defenses(state, owner, type).some(d => d.kind === "immunity"); }
 
 /** One ordered packet, with at most one reflected packet. Neither path calls a model. */
-export function damage(state: MechanicalState, actor: string, target: string, resource: Resource, raw: number, type: DamageType, changes: MechanicalChange[], beats: EncounterBeat[], secondary = false) {
+export function damage(state: MechanicalState, actor: string, target: string, resource: Resource, raw: number, type: DamageType, changes: MechanicalChange[], beats: EncounterBeat[], secondary = false, strict = false) {
   if (immune(state, target, type)) { beats.push({ kind: "damage", actor, target, amount: 0, resisted: raw, name: type }); return; }
   const protection = defenses(state, target, type);
   const armor = protection.filter(d => d.kind === "armor").reduce((sum, d) => sum + d.amount, 0);
@@ -108,7 +109,8 @@ export function damage(state: MechanicalState, actor: string, target: string, re
   const reflected = Math.round(actual * reflect * 10) / 1000;
   beats.push({ kind: "damage", actor, target, amount: actual, absorbed, resisted, reflected, name: type });
   const back = reflected > 0 ? vital(state, actor) : undefined;
-  if (back && actor !== target) damage(state, target, actor, back, reflected, type, changes, beats, true);
+  if (strict && reflected > 0 && !back && actor !== target) throw new MechanicalKnowledgeError("Reflection needs the attacker's known vital resource");
+  if (back && actor !== target) damage(state, target, actor, back, reflected, type, changes, beats, true, strict);
 }
 
 export function readDefenses(raw: unknown, quote: string): Defense[] {

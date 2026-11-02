@@ -127,7 +127,7 @@ function defenses(state, owner, type) {
 function immune(state, owner, type) {
   return defenses(state, owner, type).some((d) => d.kind === "immunity");
 }
-function damage(state, actor, target, resource, raw, type, changes, beats, secondary = false) {
+function damage(state, actor, target, resource, raw, type, changes, beats, secondary = false, strict = false) {
   if (immune(state, target, type)) {
     beats.push({ kind: "damage", actor, target, amount: 0, resisted: raw, name: type });
     return;
@@ -167,8 +167,10 @@ function damage(state, actor, target, resource, raw, type, changes, beats, secon
   const reflected = Math.round(actual * reflect * 10) / 1000;
   beats.push({ kind: "damage", actor, target, amount: actual, absorbed, resisted, reflected, name: type });
   const back = reflected > 0 ? vital(state, actor) : undefined;
+  if (strict && reflected > 0 && !back && actor !== target)
+    throw new MechanicalKnowledgeError("Reflection needs the attacker's known vital resource");
   if (back && actor !== target)
-    damage(state, target, actor, back, reflected, type, changes, beats, true);
+    damage(state, target, actor, back, reflected, type, changes, beats, true, strict);
 }
 function readDefenses(raw, quote) {
   if (raw === undefined)
@@ -249,11 +251,13 @@ function readEncounterObservation(row, state, source, messages) {
     return { kind: "distance", value: { id, from, to, band: row.band, source } };
   }
 }
-var DAMAGE_TYPES, RANGES, normalize = (value) => value.normalize("NFKC").trim().toLocaleLowerCase(), entityId = (name) => normalize(name) === "you" ? "you" : `entity-${revision(normalize(name))}`, ENCOUNTER_INSTRUCTIONS = `For relevant established participants/objects, mechanicalObservations may include {kind:"entity",name,displayName,aliases:[],entityKind:"person|object",present,status:"active|dead",message,quote} and {kind:"distance",from,to,band:"touch|near|far",message,quote}. Use you for the player. Reuse identity and names across aliases. Profiles can establish identity but cannot establish current presence, distance or a death. Presence and distance require an actual scene quote. Dead means explicitly dead, not merely injured or at zero health. Do not materialize an encounter for ordinary conversation.
+var DAMAGE_TYPES, RANGES, MechanicalKnowledgeError, normalize = (value) => value.normalize("NFKC").trim().toLocaleLowerCase(), entityId = (name) => normalize(name) === "you" ? "you" : `entity-${revision(normalize(name))}`, ENCOUNTER_INSTRUCTIONS = `For relevant established participants/objects, mechanicalObservations may include {kind:"entity",name,displayName,aliases:[],entityKind:"person|object",present,status:"active|dead",message,quote} and {kind:"distance",from,to,band:"touch|near|far",message,quote}. Use you for the player. Reuse identity and names across aliases. Profiles can establish identity but cannot establish current presence, distance or a death. Presence and distance require an actual scene quote. Dead means explicitly dead, not merely injured or at zero health. Do not materialize an encounter for ordinary conversation.
 Resources may have role:"vital|effort|shield|money|other" only when their fictional function is supported. Equipped items and conditions may have defenses:[{kind:"armor|resistance|immunity|reflect",amount,damageType:"physical|fire|cold|electric|poison|mental|untyped|all"}]. Armor subtracts a flat amount, resistance/reflect use percentages, immunity uses amount:0. All non-immunity numbers must occur in the source quote. Do not invent these defenses or health values. A shield pool is an explicit resource with role:shield. Actual values stay unknown without source evidence. Never emit an absolute update to undo an action receipt.`;
 var init_encounters = __esm(() => {
   DAMAGE_TYPES = ["physical", "fire", "cold", "electric", "poison", "mental", "untyped"];
   RANGES = ["touch", "near", "far"];
+  MechanicalKnowledgeError = class MechanicalKnowledgeError extends Error {
+  };
 });
 
 // src/engine/format-version.ts
@@ -2855,14 +2859,16 @@ var INSPECTOR_STYLE = `
 // src/living/ui.ts
 init_html();
 function checkMarkup(view) {
-  const d = view.decision;
-  if (!d)
+  const checks = [...view.decision ? [{ id: "player", decision: view.decision, actor: "" }] : [], ...(view.responses ?? []).slice(0, 3).map((r, i) => ({ id: `response-${i}`, decision: r.decision, actor: r.actor }))];
+  if (!checks.length)
     return `<div class="warp-check-none">${view.busy ? "Updating Warp's record for this reply…" : "No recorded Warp roll for this reply."}</div>`;
-  const label = { clean: "Clean success", mixed: "Success with a cost", setback: "Setback" }[d.result];
-  const hasRoll = Number.isInteger(d.roll) && d.roll >= 1 && d.roll <= 100;
-  return `<section class="warp-check" aria-label="Warp dice check">
+  return checks.map(({ id, decision: d, actor }) => {
+    const label = actor ? `${actor} ${{ clean: "succeeds", mixed: "succeeds with a cost", setback: "falters" }[d.result]}` : { clean: "Clean success", mixed: "Success with a cost", setback: "Setback" }[d.result];
+    const hasRoll = Number.isInteger(d.roll) && d.roll >= 1 && d.roll <= 100;
+    return `<section class="warp-check${actor ? " warp-check-response" : ""}" data-check-id="${id}" aria-label="${actor ? `${esc(actor)} dice check` : "Warp dice check"}">
     <div class="warp-check-die" role="img" aria-label="${hasRoll ? `Rolled ${d.roll} on a d100` : "Roll value not saved"}">${percentileDice(d.roll)}</div>
-    <div class="warp-check-copy"><strong>${label}</strong><p>${esc(d.intent)}</p></div></section>`;
+    <div class="warp-check-copy"><strong>${esc(label)}</strong><p>${esc(d.intent)}</p></div></section>`;
+  }).join("");
 }
 var STYLE = `
 .warp-scene{font:inherit;font-size:13px;line-height:1.5;color:inherit;margin:12px 0 18px;padding:12px 18px;box-sizing:border-box;border-top:1px solid color-mix(in srgb,currentColor 14%,transparent);opacity:.9;max-width:100%;overflow-wrap:anywhere}
@@ -2874,6 +2880,7 @@ var STYLE = `
 .warp-scene input[type=search]{box-sizing:border-box;width:100%;font:inherit;color:inherit;background:transparent;border:1px solid color-mix(in srgb,currentColor 25%,transparent);border-radius:5px;padding:6px;margin:8px 0}
 .warp-scene select{max-width:100%;font:inherit;color:inherit;background:transparent;border:1px solid color-mix(in srgb,currentColor 25%,transparent);border-radius:5px;padding:5px}.warp-scene-settings{margin:9px 0}.warp-scene-settings p{font-size:12px;opacity:.7}
 ${DICE_STYLE}
+.warp-check-response{margin:5px 0;gap:10px}.warp-check-response .warp-check-die{width:76px;height:52px}.warp-check-response .warp-percentile-die{width:42px;height:48px}.warp-check-response .warp-die-number{font-size:14px}.warp-check-response .warp-check-copy strong{font-size:12px}.warp-check-response .warp-check-copy p{font-size:12px}
 ${INSPECTOR_STYLE}
 @media(max-width:540px){.warp-scene-tools{margin-left:0;width:100%}.warp-scene{font-size:12px}}
 `;
@@ -2884,10 +2891,12 @@ function connectLiving(ctx) {
   let inspectorOpen = false;
   let settingsOpen = false, helperConnection = "", decisionConnection = "", decisionConnections = [], connections = [];
   let injected = null;
-  const diceReveal = createDiceReveal();
+  const diceReveals = new Map;
   let renderedCheckKey = "";
   const remove = () => {
-    diceReveal.destroy();
+    for (const reveal of diceReveals.values())
+      reveal.destroy();
+    diceReveals.clear();
     if (injected)
       ctx.dom.uninject(injected);
     injected = null;
@@ -3021,17 +3030,35 @@ function connectLiving(ctx) {
     } else if (card.nextElementSibling !== injected)
       card.after(injected);
     const detailsOpen = root.querySelector("[data-memory]")?.open;
-    const checkKey = JSON.stringify([view.chatId, view.anchor, view.decision]);
-    const previousCheck = renderedCheckKey === checkKey ? root.querySelector(".warp-check") : null;
+    const checkKey = JSON.stringify([view.chatId, view.anchor, view.decision, view.responses]);
+    const previousChecks = new Map(renderedCheckKey === checkKey ? [...root.querySelectorAll("[data-check-id]")].map((e) => [e.dataset.checkId, e]) : []);
     const expandedAbilities = [...root.querySelectorAll("[data-inspect-ability][open]")].map((e) => e.dataset.inspectAbility);
     const focused = root.contains(document.activeElement) && document.activeElement?.matches("textarea,[data-memory-query]");
     const selector = document.activeElement?.matches("[data-memory-query]") ? "[data-memory-query]" : "textarea";
     const selection = focused ? [document.activeElement.selectionStart ?? 0, document.activeElement.selectionEnd ?? 0] : null;
     root.innerHTML = markup();
-    if (previousCheck)
-      root.querySelector(".warp-check")?.replaceWith(previousCheck);
+    for (const check of root.querySelectorAll("[data-check-id]")) {
+      const previous = previousChecks.get(check.dataset.checkId);
+      if (previous)
+        check.replaceWith(previous);
+    }
     renderedCheckKey = checkKey;
-    diceReveal.observe(root.querySelector(".warp-check"), checkKey);
+    const ids = new Set;
+    for (const check of root.querySelectorAll("[data-check-id]")) {
+      const id = check.dataset.checkId;
+      ids.add(id);
+      let reveal = diceReveals.get(id);
+      if (!reveal) {
+        reveal = createDiceReveal();
+        diceReveals.set(id, reveal);
+      }
+      reveal.observe(check, JSON.stringify([view.chatId, view.anchor, id, id === "player" ? view.decision : view.responses?.[Number(id.slice("response-".length))]]));
+    }
+    for (const [id, reveal] of diceReveals)
+      if (!ids.has(id)) {
+        reveal.destroy();
+        diceReveals.delete(id);
+      }
     if (detailsOpen)
       root.querySelector("[data-memory]")?.setAttribute("open", "");
     for (const id of expandedAbilities)

@@ -104,6 +104,16 @@ test("an explicitly carried singular item needs no numerical inventory setup", (
   expect(items.every(i => i.quantity === 1)).toBe(true);
 });
 
+test("locally assigned IDs stay stable through spending, repeated bootstrap and a named correction", () => {
+  const row = { kind: "resource", owner: "you", name: "Coins", current: 20, message: scene.id, quote: "You have 20 coins" };
+  const first = applyObservations(emptyMechanics(), readMechanicalObservations([row], emptyMechanics(), [scene])), id = first.resources[0].id;
+  const spent = commitMechanical(first, prepareMechanical(first, "pay", "you", [{ kind: "spend", resource: id, amount: 5 }]));
+  expect(readMechanicalObservations([row], spent, [scene])).toEqual([]);
+  const fix = { id: "fix", is_user: true, content: "(OOC correction: You have 7 coins.)" };
+  const corrected = applyObservations(spent, readMechanicalObservations([{ ...row, id: "unnecessary-new-id", current: 7, message: fix.id, quote: fix.content }], spent, [scene, fix]));
+  expect(corrected.resources).toHaveLength(1); expect(corrected.resources[0].id).toBe(id); expect(corrected.resources[0].current).toBe(7);
+});
+
 test("preparation admits explicit player operations without inventing costs or effects", () => {
   const state = bootstrap();
   expect(readMechanicalPlan([{ kind: "consume", item: "bandages", amount: 1, quote: "I use a bandage." }], state, "I use a bandage.")).toEqual([{ kind: "consume", item: "bandages", amount: 1 }]);

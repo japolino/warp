@@ -20,7 +20,12 @@ export async function runPlaytest(model: (input: any) => Promise<any>) {
   (globalThis as any).spindle = h.fake;
   try {
     await import("../src/backend.ts" + "?live-model-playtest");
-    const cases = [
+    const cases: { name: string; card: string; greeting: string; turns: string[]; persona?: string }[] = [
+      { name: "exchange", card: "Jo, 32, is Sam's cooperative sparring partner. Jo wants to practise a short exchange, not seriously hurt Sam. Jo can use Jab, costing 2 Focus to deal 10 physical Health damage at touch range. These numeric resources are established rules of this practice scene. Neither participant has any other powers or equipment. Jo respects a request to stop.",
+        persona: "Sam is an adult sparring partner with 40 of 40 Health. Sam can guard, move and make ordinary physical strikes, with no special powers.",
+        greeting: "Jo faces you at touch distance on a practice mat, hands raised for a sparring exchange. Jo has 40 of 40 Health and 10 of 10 Focus. You have 40 of 40 Health. Jo says, 'I'll try a jab. Ready?' and starts to bring a fist forward toward you.",
+        turns: ["I guard my flank and brace for Jo's jab.", "I step away from Jo to open some distance.", '"Enough for now, thanks." I lower my hands and stop sparring.'],
+      },
       { name: "social", card: "Jo, 32, runs a small café. She values reliability, cares for her staff, and has little patience for evasions. Dex, 29, is her friend, worried about being seen by a creditor. Neither person exists to agree with every request.", greeting: "Jo is counting the café's till before closing. 'Can you cover the counter while I call the supplier?' Dex waits by the back door, watching the street. You own a distinctive blue jacket. You have not promised to help either of them yet.", turns: [
         '"Yes, Jo. I promise to cover the counter until closing." I stay at the till.',
         '"Dex, I can lend you my jacket, but I am staying here. Will that help?"',
@@ -47,18 +52,21 @@ export async function runPlaytest(model: (input: any) => Promise<any>) {
       const chatId = `live-${scenario.name}`;
       h.chat(chatId, "name: unused", scenario.greeting);
       h.characters[`char-${chatId}`] = { id: `char-${chatId}`, name: scenario.name, description: scenario.card, world_book_ids: [] };
+      h.fake.macros.resolve = async (text: string) => ({ text: text === "{{user}}" ? "Sam" : text === "{{persona}}" ? scenario.persona ?? "Sam is an adult visitor." : text });
       await syncLiving(chatId, h.userId);
       const transcript: any[] = [{ role: "assistant", content: scenario.greeting }];
-      for (const [index, turn] of scenario.turns.entries()) {
+      const requestedTurns = Number(process.argv.find(arg => arg.startsWith("--turn-limit="))?.slice("--turn-limit=".length));
+      const turns = Number.isInteger(requestedTurns) && requestedTurns > 0 ? scenario.turns.slice(0, Math.min(10, requestedTurns)) : scenario.turns;
+      for (const [index, turn] of turns.entries()) {
         await h.say(chatId, turn);
         const generated = await h.generate(chatId, async messages => {
-          const prompt = [{ role: "system", content: `Continue a roleplay as the people and world in this character card. Sam is the adult player. Do not write Sam's speech, actions or feelings. Keep this reply under 180 words. Respect established facts and the player's freedom to decline.\nCard:\n${scenario.card}` }, ...transcript, ...messages.filter(m => m.role !== "system")];
-          const response = await invoke({ messages: prompt, parameters: { max_tokens: 700, temperature: 0.7 } }, "narrator");
+          const prompt = [{ role: "system", content: `Continue a roleplay as the people and world in this character card. Sam is the adult player. Do not write Sam's speech, actions or feelings. Keep this reply under ${scenario.name === "exchange" ? 100 : 180} words. Respect established facts and the player's freedom to decline.\nCard:\n${scenario.card}` }, ...transcript, ...messages.filter(m => m.role !== "system")];
+          const response = await invoke({ messages: prompt, parameters: { max_tokens: scenario.name === "exchange" ? 400 : 700, temperature: 0.7 } }, "narrator");
           return response.content ?? "";
         });
         transcript.push({ role: "user", content: turn }, { role: "assistant", content: generated.target.content });
         const state = [...h.sent].reverse().find(m => m.type === "living" && m.chatId === chatId);
-        console.log(`${scenario.name} turn ${index + 1}: ${state?.world.facts.length ?? 0} facts, ${state?.decision?.result ?? "no roll"}, retry=${state?.retry ?? false}`);
+        console.log(`${scenario.name} turn ${index + 1}: ${state?.world.facts.length ?? 0} facts, ${state?.decision?.result ?? "no player roll"}, ${state?.responses?.length ?? 0} NPC checks, retry=${state?.retry ?? false}`);
         results.push({ scenario: scenario.name, turn: index + 1, player: turn, reply: generated.target.content, state });
       }
       if (process.argv.includes("--extras") && scenario.name === "quiet") {

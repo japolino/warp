@@ -3,6 +3,7 @@ import { revision } from "../shared/revision.js";
 import { pathOf, pathsOf } from "./world.js";
 import { applyObservations, commitMechanical, emptyMechanics, readMechanicalObservations, type MechanicalRecord, type MechanicalState } from "./mechanics.js";
 import { readAbilityDefinitions, sourceMessages, validDefinitionSource } from "./abilities.js";
+import { readResponsePlans } from "./exchanges.js";
 
 export const MECHANICS_KEY = "warpMechanics";
 export function mechanicalRecordOf(m: Msg): MechanicalRecord | undefined {
@@ -24,7 +25,13 @@ export function foldMechanics(messages: Msg[]): MechanicalState {
       } else {
         const sources = (record.sources ?? []).filter(validDefinitionSource);
         if (record.receipt) {
-          try { state = commitMechanical(state, record.receipt); }
+          try {
+            if (record.receipt.engine === 3) {
+              const plans = readResponsePlans(record.receipt.responses?.map(p => ({ actor: p.actor, action: p.action, assessment: p.assessment, message: p.source.message, quote: p.source.quote })), state, messages.slice(0, index), true);
+              if (revision(plans) !== revision(record.receipt.responses ?? [])) throw new Error("NPC evidence changed");
+            }
+            state = commitMechanical(state, record.receipt);
+          }
           catch { state = emptyMechanics(); }
         }
         // Revalidate persisted evidence, including corrections, without asking a model.

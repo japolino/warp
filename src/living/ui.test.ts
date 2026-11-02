@@ -101,6 +101,42 @@ test("old checks show their outcome without inventing a die value", () => {
   expect(window.document.querySelector(".warp-check-die")?.textContent).toContain("?");
 });
 
+test("NPC rolls are attributed, compact, escaped and preserved individually through repaint", () => {
+  const responses = [{ actor: "Jo", decision: { tier: "uncertain", result: "setback", roll: 87, intent: "Jab · you" } }];
+  ui.accept(view({ decision: { tier: "uncertain", result: "mixed", roll: 32, intent: "Push through", stakes: "An opening", reasons: [] }, responses }));
+  const checks = [...window.document.querySelectorAll(".warp-check")];
+  expect(checks).toHaveLength(2); expect(checks[1].classList.contains("warp-check-response")).toBe(true);
+  expect(checks[1].textContent).toContain("Jo falters");
+  expect(checks[1].querySelector('[role="img"]')?.getAttribute("aria-label")).toContain("87");
+  click('[data-living="settings"]');
+  expect([...window.document.querySelectorAll(".warp-check")]).toEqual(checks);
+  ui.accept(view({ revision: 2, responses: [{ ...responses[0], actor: '<img src=x onerror="boom">' }] }));
+  expect(window.document.querySelector(".warp-check-none")).toBeNull();
+  expect(window.document.querySelector(".warp-check img")).toBeNull();
+  expect(window.document.querySelectorAll(".warp-check")).toHaveLength(1);
+});
+
+test("each actor's dice start when that row first becomes visible and retain their own saved value", () => {
+  const observed = new Map<HTMLElement, (entries: any[]) => void>(), frames = new Map<number, FrameRequestCallback>(); let serial = 0;
+  (window as any).matchMedia = () => ({ matches: false });
+  (window as any).IntersectionObserver = class { constructor(private cb: (entries: any[]) => void) {} observe(el: HTMLElement) { observed.set(el, this.cb); } disconnect() {} };
+  (window as any).requestAnimationFrame = (fn: FrameRequestCallback) => { frames.set(++serial, fn); return serial; };
+  (window as any).cancelAnimationFrame = (id: number) => frames.delete(id);
+  ui.accept(view({ decision: { tier: "uncertain", result: "mixed", roll: 43, intent: "Advance", stakes: "Noise", reasons: [] }, responses: [{ actor: "Dex", decision: { tier: "uncertain", result: "setback", roll: 96, intent: "Strike · you" } }] }));
+  const checks = [...window.document.querySelectorAll(".warp-check")] as unknown as HTMLElement[];
+  expect(observed.size).toBe(2);
+  observed.get(checks[0])!([{ target: checks[0], isIntersecting: true, intersectionRatio: 1 }]);
+  expect(checks[0].classList.contains("warp-dice-rolling")).toBe(true);
+  expect(checks[1].classList.contains("warp-dice-rolling")).toBe(false);
+  observed.get(checks[1])!([{ target: checks[1], isIntersecting: true, intersectionRatio: 1 }]);
+  expect(frames.size).toBe(2);
+  const advance = (now: number) => { const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach(fn => fn(now)); };
+  advance(0); click('[data-living="settings"]'); expect(frames.size).toBe(2); advance(1300);
+  expect([...checks[0].querySelectorAll("[data-die-final]")].map(e => e.textContent)).toEqual(["40", "3"]);
+  expect([...checks[1].querySelectorAll("[data-die-final]")].map(e => e.textContent)).toEqual(["90", "6"]);
+  expect(frames.size).toBe(0);
+});
+
 test("a chat opens with a small inline scene and no action menu or stat panel", () => {
   ui.accept(view());
   expect(window.document.querySelector(".warp-scene-place")?.textContent).toBe("Jo's café");

@@ -71,8 +71,9 @@ export function readAbilityDefinitions(raw: unknown, state: MechanicalState, mes
       const costs: AbilityDefinition["costs"] = row.costs.map(c => {
         if (!obj(c) || Object.keys(c).some(k => !["kind", "id", "amount"].includes(k))) throw new Error("Unsupported cost fields");
         if (!obj(c) || !["resource", "item"].includes(c.kind as string) || !positive(c.amount) || !numberIn(quote, c.amount)) throw new Error("Unsupported ability cost");
-        const candidate = c.kind === "resource" ? state.resources.find(r => r.id === c.id) : state.items.find(i => i.id === c.id);
-        if (!candidate || candidate.owner !== owner || (c.kind === "item" && !Number.isInteger(c.amount))) throw new Error("Unknown ability payer");
+        const candidates = (c.kind === "resource" ? state.resources : state.items).filter(v => v.owner === owner && (v.id === c.id || v.name.normalize("NFKC").toLocaleLowerCase() === str(c.id).normalize("NFKC").toLocaleLowerCase()));
+        const candidate = candidates.length === 1 ? candidates[0] : undefined;
+        if (!candidate || (c.kind === "item" && !Number.isInteger(c.amount))) throw new Error("Unknown or ambiguous ability payer");
         return { kind: c.kind as "resource" | "item", id: candidate.id, amount: c.amount };
       });
       const effects: AbilityEffect[] = row.effects.map(e => {
@@ -115,9 +116,11 @@ export function readAbilityDefinitions(raw: unknown, state: MechanicalState, mes
       if (row.requires !== undefined) {
         if (!Array.isArray(row.requires) || row.requires.length > 6) continue;
         for (const r of row.requires) {
-          if (!obj(r) || !state.items.some(i => i.id === r.item && i.owner === owner) || typeof r.equipped !== "boolean") throw new Error("Unknown required equipment");
+          if (!obj(r) || typeof r.equipped !== "boolean") throw new Error("Unknown required equipment");
+          const candidates = state.items.filter(i => i.owner === owner && (i.id === r.item || i.name.normalize("NFKC").toLocaleLowerCase() === str(r.item).normalize("NFKC").toLocaleLowerCase()));
+          if (candidates.length !== 1) throw new Error("Unknown or ambiguous required equipment");
           if (Object.keys(r).some(k => !["item", "equipped"].includes(k))) throw new Error("Unsupported prerequisite");
-          requires.push({ item: r.item as string, equipped: r.equipped });
+          requires.push({ item: candidates[0].id, equipped: r.equipped });
         }
       }
       if (row.unsupported !== undefined && (!Array.isArray(row.unsupported) || row.unsupported.length > 8 || row.unsupported.some(v => !str(v, 240)))) continue;
