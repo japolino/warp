@@ -1,0 +1,276 @@
+{
+  "report": "1793653175850",
+  "description": "Synthetic live responses captured before the scene/mechanical participant bridge. The original collection was blocked because the helper emitted scene.present but no entity observation.",
+  "greeting": "Jo waits beside you at the café counter. Jo has 20 Coins. You have 3 Coins. Jo says, 'If you cover the counter while I make this brief supplier call and clean the cups afterward, I will give you 10 Coins. Interested?'",
+  "bootstrap": {
+    "scene": {
+      "place": "café counter",
+      "present": [
+        "Jo"
+      ],
+      "message": "live-agreement-g",
+      "quote": "Jo waits beside you at the café counter."
+    },
+    "changes": [
+      {
+        "op": "put",
+        "id": "fact-jo-job-offer",
+        "kind": "fact",
+        "subject": "Jo",
+        "text": "Jo offered you 10 Coins to cover the counter during a supplier call and clean the cups afterward.",
+        "message": "live-agreement-g",
+        "quote": "Jo says, 'If you cover the counter while I make this brief supplier call and clean the cups afterward, I will give you 10 Coins. Interested?'"
+      },
+      {
+        "op": "learn",
+        "about": "fact-jo-job-offer",
+        "subject": "you",
+        "via": "witnessed",
+        "message": "live-agreement-g",
+        "quote": "Jo waits beside you at the café counter. Jo has 20 Coins. You have 3 Coins. Jo says, 'If you cover the counter while I make this brief supplier call and clean the cups afterward, I will give you 10 Coins. Interested?'"
+      },
+      {
+        "op": "learn",
+        "about": "fact-jo-job-offer",
+        "subject": "Jo",
+        "via": "witnessed",
+        "message": "live-agreement-g",
+        "quote": "Jo says, 'If you cover the counter while I make this brief supplier call and clean the cups afterward, I will give you 10 Coins. Interested?'"
+      },
+      {
+        "op": "put",
+        "id": "sit-jo-job-offer",
+        "kind": "situation",
+        "subject": "Jo",
+        "text": "Jo is waiting for your answer to the 10-Coin offer to cover the counter and clean the cups.",
+        "status": "open",
+        "message": "live-agreement-g",
+        "quote": "Jo says, 'If you cover the counter while I make this brief supplier call and clean the cups afterward, I will give you 10 Coins. Interested?'"
+      }
+    ],
+    "mechanicalObservations": [
+      {
+        "kind": "resource",
+        "id": "res-jo-coins",
+        "owner": "Jo",
+        "name": "Coins",
+        "current": 20,
+        "unit": "Coins",
+        "role": "money",
+        "message": "live-agreement-g",
+        "quote": "Jo has 20 Coins."
+      },
+      {
+        "kind": "resource",
+        "id": "res-you-coins",
+        "owner": "you",
+        "name": "Coins",
+        "current": 3,
+        "unit": "Coins",
+        "role": "money",
+        "message": "live-agreement-g",
+        "quote": "You have 3 Coins."
+      }
+    ]
+  },
+  "turns": [
+    {
+      "extraction": {
+        "scene": {
+          "place": "café counter",
+          "present": [
+            "Jo"
+          ],
+          "message": "live-agreement-r2",
+          "quote": "Jo hangs up the receiver and returns to the counter."
+        },
+        "changes": [
+          {
+            "op": "resolve",
+            "id": "sit-jo-job-offer",
+            "message": "live-agreement-r2",
+            "quote": "\"Great, I appreciate it,\" Jo says, handing you a clean dish towel"
+          },
+          {
+            "op": "put",
+            "id": "pos-dish-towel",
+            "kind": "possession",
+            "subject": "you",
+            "holder": "you",
+            "text": "A clean dish towel handed over by Jo.",
+            "status": "open",
+            "message": "live-agreement-r2",
+            "quote": "Jo says, handing you a clean dish towel"
+          },
+          {
+            "op": "put",
+            "id": "fact-you-covered-counter",
+            "kind": "fact",
+            "subject": "you",
+            "text": "You covered the counter while Jo completed the supplier call, and only cleaning the cups remains.",
+            "status": "open",
+            "message": "live-agreement-r2",
+            "quote": "\"All sorted with the supplier. That's the counter covered—just the cups left to clean, and then those 10 Coins are yours.\""
+          },
+          {
+            "op": "learn",
+            "about": "fact-you-covered-counter",
+            "subject": "Jo",
+            "via": "witnessed",
+            "message": "live-agreement-r2",
+            "quote": "Soon, Jo hangs up the receiver and returns to the counter. \"All sorted with the supplier. That's the counter covered—just the cups left to clean, and then those 10 Coins are yours.\""
+          },
+          {
+            "op": "learn",
+            "about": "fact-you-covered-counter",
+            "subject": "you",
+            "via": "witnessed",
+            "message": "live-agreement-r2",
+            "quote": "For the next few minutes, you hear Jo's quiet voice confirming a bean delivery and checking off invoice numbers. No new customers come in while you watch the front, leaving the counter quiet except for the hum of the espresso machine.\n\nSoon, Jo hangs up the receiver and returns to the counter. \"All sorted with the supplier. That's the counter covered—just the cups left to clean"
+          },
+          {
+            "op": "put",
+            "id": "sit-cups-left-to-clean",
+            "kind": "situation",
+            "subject": "you",
+            "text": "A tray of used ceramic mugs and saucers beside the sink still needs to be cleaned to finish Jo's job.",
+            "status": "open",
+            "message": "live-agreement-r2",
+            "quote": "just the cups left to clean, and then those 10 Coins are yours."
+          }
+        ],
+        "mechanicalObservations": [
+          {
+            "kind": "agreement",
+            "owner": "you",
+            "name": "Cover counter and clean cups for Jo",
+            "from": "Jo",
+            "offer": {
+              "message": "live-agreement-g",
+              "quote": "Jo says, 'If you cover the counter while I make this brief supplier call and clean the cups afterward, I will give you 10 Coins. Interested?'"
+            },
+            "requirements": [
+              {
+                "message": "live-agreement-g",
+                "quote": "cover the counter while I make this brief supplier call"
+              },
+              {
+                "message": "live-agreement-g",
+                "quote": "clean the cups afterward"
+              }
+            ],
+            "rewards": [
+              {
+                "kind": "resource",
+                "asset": "Coins",
+                "amount": 10,
+                "message": "live-agreement-g",
+                "quote": "I will give you 10 Coins"
+              }
+            ],
+            "unsupported": [],
+            "message": "live-agreement-u1",
+            "quote": "\"I accept. I will cover the counter during your call and clean the cups afterward.\""
+          },
+          {
+            "kind": "agreement_progress",
+            "agreement": "Cover counter and clean cups for Jo",
+            "requirement": "cover the counter while I make this brief supplier call",
+            "message": "live-agreement-r2",
+            "quote": "\"All sorted with the supplier. That's the counter covered—just the cups left to clean, and then those 10 Coins are yours.\""
+          }
+        ]
+      },
+      "reply": "\"Great, I appreciate it,\" Jo says, handing you a clean dish towel before stepping into the back corner with the café phone. \n\nFor the next few minutes, you hear Jo's quiet voice confirming a bean delivery and checking off invoice numbers. No new customers come in while you watch the front, leaving the counter quiet except for the hum of the espresso machine.\n\nSoon, Jo hangs up the receiver and returns to the counter. \"All sorted with the supplier. That's the counter covered—just the cups left to clean, and then those 10 Coins are yours.\" \n\nA tray of used ceramic mugs and saucers sits beside the sink, ready to be washed.",
+      "player": "\"I accept. I will cover the counter during your call and clean the cups afterward.\" I take over the counter while Jo makes the call."
+    },
+    {
+      "extraction": {
+        "scene": {
+          "place": "café counter",
+          "present": [
+            "Jo"
+          ],
+          "message": "live-agreement-r4",
+          "quote": "Stepping over to the register, Jo counts out 10 Coins from the 20 Coins on hand and sets the stack neatly on the counter"
+        },
+        "changes": [
+          {
+            "op": "resolve",
+            "id": "sit-cups-left-to-clean",
+            "message": "live-agreement-r4",
+            "quote": "Jo glances over at the drying rack, taking in the row of spotless ceramic mugs and saucers."
+          },
+          {
+            "op": "put",
+            "id": "fact-you-cleaned-cups",
+            "kind": "fact",
+            "subject": "you",
+            "text": "You finished cleaning the ceramic mugs and saucers, completing Jo's job.",
+            "status": "open",
+            "message": "live-agreement-r4",
+            "quote": "Jo glances over at the drying rack, taking in the row of spotless ceramic mugs and saucers."
+          },
+          {
+            "op": "learn",
+            "about": "fact-you-cleaned-cups",
+            "subject": "Jo",
+            "via": "witnessed",
+            "message": "live-agreement-r4",
+            "quote": "Jo glances over at the drying rack, taking in the row of spotless ceramic mugs and saucers."
+          },
+          {
+            "op": "learn",
+            "about": "fact-you-cleaned-cups",
+            "subject": "you",
+            "via": "witnessed",
+            "message": "live-agreement-r4",
+            "quote": "Jo glances over at the drying rack, taking in the row of spotless ceramic mugs and saucers. \n\n\"Looks spotless. Thanks for the reliable help—having the front watched while I sorted out that bean delivery saved me a headache.\" \n\nStepping over to the register, Jo counts out 10 Coins from the 20 Coins on hand and sets the stack neatly on the counter in front of you, ready for you to take."
+          },
+          {
+            "op": "put",
+            "id": "sit-jo-coins-ready",
+            "kind": "situation",
+            "subject": "Jo",
+            "text": "Jo has set the promised 10 Coins on the counter in front of you, waiting for you to take them.",
+            "status": "open",
+            "message": "live-agreement-r4",
+            "quote": "sets the stack neatly on the counter in front of you, ready for you to take."
+          }
+        ],
+        "mechanicalObservations": [
+          {
+            "kind": "agreement_progress",
+            "agreement": "agreement-4f7e7c98:ef5bdba8",
+            "requirement": "requirement-690cfcf7:3f284cf7",
+            "message": "live-agreement-r4",
+            "quote": "Jo glances over at the drying rack, taking in the row of spotless ceramic mugs and saucers."
+          },
+          {
+            "kind": "reward_ready",
+            "agreement": "agreement-4f7e7c98:ef5bdba8",
+            "reward": "reward-cc35500a:d7b1a0e8",
+            "ready": true,
+            "message": "live-agreement-r4",
+            "quote": "Stepping over to the register, Jo counts out 10 Coins from the 20 Coins on hand and sets the stack neatly on the counter"
+          }
+        ]
+      },
+      "reply": "Jo glances over at the drying rack, taking in the row of spotless ceramic mugs and saucers. \n\n\"Looks spotless. Thanks for the reliable help—having the front watched while I sorted out that bean delivery saved me a headache.\" \n\nStepping over to the register, Jo counts out 10 Coins from the 20 Coins on hand and sets the stack neatly on the counter in front of you, ready for you to take. \n\n\"Here are your 10 Coins, just as agreed.\"",
+      "player": "I finish cleaning the cups and set the last clean cup on the rack."
+    }
+  ],
+  "claim": "I collect the promised Coins from Jo.",
+  "claimRead": {
+    "risky": false,
+    "contested": false,
+    "mechanicalActions": [
+      {
+        "kind": "claim",
+        "agreement": "agreement-4f7e7c98:ef5bdba8",
+        "reward": "reward-cc35500a:d7b1a0e8",
+        "quote": "I collect the promised Coins from Jo."
+      }
+    ]
+  }
+}

@@ -145,3 +145,19 @@ test("a new listener appends their knowledge and its boundary without changing t
   expect(b.at(-1)!.content).not.toContain('"subject":"Dex"');
   expect(initial.packet.established).toHaveLength(1);
 });
+
+test("agreement progress and a paid reward append state deltas while preserving the original offer and prior prompt bytes", () => {
+  const first = msg("0", true, "I accept Jo's offer."), history = [first], initial = store(history, first, "Café");
+  initial.packet.mechanics = { agreements: [{ id: "cafe", owner: "you", requirements: [{ id: "counter", done: false }, { id: "cups", done: false }], rewards: [{ id: "pay", amount: 10, paid: false }] }] };
+  const a = replayPrompt(prompt(history), history, "Director");
+  history.push(msg("1", false, "The work is completed and Jo offers the pay."), msg("2", true, "I collect it."));
+  const next = store(history, history.at(-1)!, "Café");
+  next.packet.agreementBoundary = "Offer a completed reward; transfer only with its receipt.";
+  next.packet.mechanics = structuredClone(initial.packet.mechanics); next.packet.mechanics.agreements[0].requirements.forEach((r: any) => r.done = true); next.packet.mechanics.agreements[0].rewards[0].paid = true;
+  const b = replayPrompt(prompt(history), history, "Director");
+  expect(b.slice(0, a.length)).toEqual(a);
+  expect(b.at(-1)!.content).toContain('"agreements":{"put":[{"id":"cafe"');
+  expect(b.at(-1)!.content).toContain('"paid":true');
+  expect(b.at(-1)!.content).toContain('"agreementBoundary":"Offer a completed reward');
+  expect(initial.packet.mechanics.agreements[0].rewards[0].paid).toBe(false);
+});

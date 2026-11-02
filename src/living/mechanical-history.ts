@@ -39,6 +39,7 @@ export function foldMechanics(messages: Msg[]): MechanicalState {
           if (!o || typeof o !== "object") return [];
           if (o.kind === "condition_end") return [{ kind: o.kind, id: o.id, ...(o.retire ? { retire: true } : {}), ...o.source }];
           if (o.kind === "ability") return [];
+          if (o.kind === "agreement") return [{ kind: o.kind, owner: o.value.owner, name: o.value.name, from: o.value.from, offer: o.value.offer, requirements: o.value.requirements.map(r => ({ message: r.source.message, quote: r.source.quote })), rewards: o.value.rewards.map(r => ({ kind: r.kind, asset: r.asset, amount: r.amount, message: r.source.message, quote: r.source.quote })), unsupported: o.value.unsupported, message: o.value.source.message, quote: o.value.source.quote }];
           if (!o.value?.source) return [];
           return [{ kind: o.kind, ...o.value, ...o.value.source }];
         });

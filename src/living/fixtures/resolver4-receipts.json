@@ -1,0 +1,995 @@
+{
+  "generatedFrom": "e7ec33c3cbdbe2665e7074546386c3a44058ed1e",
+  "cases": [
+    {
+      "name": "resolver4 qualitative strike",
+      "before": {
+        "version": 1,
+        "resources": [],
+        "items": [
+          {
+            "id": "item-299d9d7c:5c9b1b4c",
+            "owner": "you",
+            "name": "Bandage",
+            "quantity": 1,
+            "equipped": false,
+            "source": {
+              "message": "greeting",
+              "quote": "Jo stands at touch distance, preparing to strike you. You carry one Bandage.",
+              "sourceRevision": "de41c268:f6b27d6"
+            }
+          }
+        ],
+        "conditions": [],
+        "applied": [],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "greeting",
+              "quote": "Jo stands at touch distance, preparing to strike you. You carry one Bandage.",
+              "sourceRevision": "de41c268:f6b27d6"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "greeting",
+              "quote": "Jo stands at touch distance, preparing to strike you. You carry one Bandage.",
+              "sourceRevision": "de41c268:f6b27d6"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-ced84ada:f3aa373c",
+            "version": 1,
+            "owner": "you",
+            "name": "First aid",
+            "description": "First aid",
+            "approach": "precision",
+            "target": "other",
+            "range": "touch",
+            "costs": [
+              {
+                "kind": "item",
+                "id": "item-299d9d7c:5c9b1b4c",
+                "amount": 1
+              }
+            ],
+            "effects": [
+              {
+                "kind": "mend",
+                "target": "target",
+                "impact": "minor"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "4fba1832:5a60f964",
+            "source": {
+              "message": "warp-source:persona:8cf1faea:4c0f9608",
+              "quote": "First aid uses one Bandage to treat physical injuries on another person at touch range.",
+              "sourceRevision": "8cf1faea:4c0f9608"
+            },
+            "sourceKind": "persona"
+          }
+        ]
+      },
+      "receipt": {
+        "version": 1,
+        "engine": 4,
+        "id": "injure",
+        "input": "3b7ac2bb:63ade1b1",
+        "base": "a7fe81a0:6f93b712",
+        "actor": "you",
+        "operations": [
+          {
+            "kind": "strike",
+            "target": "Jo"
+          }
+        ],
+        "responses": [],
+        "changes": [
+          {
+            "kind": "condition",
+            "id": "injury-5c5a62dc:f1f75b16",
+            "before": null,
+            "after": {
+              "id": "injury-5c5a62dc:f1f75b16",
+              "owner": "Jo",
+              "name": "Hurt",
+              "hinders": [],
+              "helps": [],
+              "blocks": [],
+              "ending": "Appropriate treatment or established recovery",
+              "injury": {
+                "rule": 1,
+                "load": 1,
+                "basis": "warp"
+              },
+              "source": {
+                "message": "warp-action:injure",
+                "quote": "Physical harm to Jo",
+                "sourceRevision": "da0c0306:a7168c44"
+              }
+            }
+          }
+        ],
+        "beats": [
+          {
+            "kind": "harm",
+            "actor": "you",
+            "target": "Jo",
+            "name": "Hurt",
+            "absorbed": 0,
+            "resisted": 0,
+            "reflected": 0,
+            "basis": "warp"
+          }
+        ],
+        "result": "97142781:21b261d3",
+        "status": "ready"
+      },
+      "after": {
+        "version": 1,
+        "resources": [],
+        "items": [
+          {
+            "id": "item-299d9d7c:5c9b1b4c",
+            "owner": "you",
+            "name": "Bandage",
+            "quantity": 1,
+            "equipped": false,
+            "source": {
+              "message": "greeting",
+              "quote": "Jo stands at touch distance, preparing to strike you. You carry one Bandage.",
+              "sourceRevision": "de41c268:f6b27d6"
+            }
+          }
+        ],
+        "conditions": [
+          {
+            "id": "injury-5c5a62dc:f1f75b16",
+            "owner": "Jo",
+            "name": "Hurt",
+            "hinders": [],
+            "helps": [],
+            "blocks": [],
+            "ending": "Appropriate treatment or established recovery",
+            "injury": {
+              "rule": 1,
+              "load": 1,
+              "basis": "warp"
+            },
+            "source": {
+              "message": "warp-action:injure",
+              "quote": "Physical harm to Jo",
+              "sourceRevision": "da0c0306:a7168c44"
+            }
+          }
+        ],
+        "applied": [
+          {
+            "id": "injure",
+            "input": "3b7ac2bb:63ade1b1"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "greeting",
+              "quote": "Jo stands at touch distance, preparing to strike you. You carry one Bandage.",
+              "sourceRevision": "de41c268:f6b27d6"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "greeting",
+              "quote": "Jo stands at touch distance, preparing to strike you. You carry one Bandage.",
+              "sourceRevision": "de41c268:f6b27d6"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-ced84ada:f3aa373c",
+            "version": 1,
+            "owner": "you",
+            "name": "First aid",
+            "description": "First aid",
+            "approach": "precision",
+            "target": "other",
+            "range": "touch",
+            "costs": [
+              {
+                "kind": "item",
+                "id": "item-299d9d7c:5c9b1b4c",
+                "amount": 1
+              }
+            ],
+            "effects": [
+              {
+                "kind": "mend",
+                "target": "target",
+                "impact": "minor"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "4fba1832:5a60f964",
+            "source": {
+              "message": "warp-source:persona:8cf1faea:4c0f9608",
+              "quote": "First aid uses one Bandage to treat physical injuries on another person at touch range.",
+              "sourceRevision": "8cf1faea:4c0f9608"
+            },
+            "sourceKind": "persona"
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "resolver4 injury recovery and retirement",
+      "before": {
+        "version": 1,
+        "resources": [],
+        "items": [
+          {
+            "id": "item-299d9d7c:5c9b1b4c",
+            "owner": "you",
+            "name": "Bandage",
+            "quantity": 1,
+            "equipped": false,
+            "source": {
+              "message": "greeting",
+              "quote": "Jo stands at touch distance, preparing to strike you. You carry one Bandage.",
+              "sourceRevision": "de41c268:f6b27d6"
+            }
+          }
+        ],
+        "conditions": [
+          {
+            "id": "injury-5c5a62dc:f1f75b16",
+            "owner": "Jo",
+            "name": "Hurt",
+            "hinders": [],
+            "helps": [],
+            "blocks": [],
+            "ending": "Appropriate treatment or established recovery",
+            "injury": {
+              "rule": 1,
+              "load": 1,
+              "basis": "warp"
+            },
+            "source": {
+              "message": "warp-action:injure",
+              "quote": "Physical harm to Jo",
+              "sourceRevision": "da0c0306:a7168c44"
+            }
+          }
+        ],
+        "applied": [
+          {
+            "id": "injure",
+            "input": "3b7ac2bb:63ade1b1"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "greeting",
+              "quote": "Jo stands at touch distance, preparing to strike you. You carry one Bandage.",
+              "sourceRevision": "de41c268:f6b27d6"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "greeting",
+              "quote": "Jo stands at touch distance, preparing to strike you. You carry one Bandage.",
+              "sourceRevision": "de41c268:f6b27d6"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-ced84ada:f3aa373c",
+            "version": 1,
+            "owner": "you",
+            "name": "First aid",
+            "description": "First aid",
+            "approach": "precision",
+            "target": "other",
+            "range": "touch",
+            "costs": [
+              {
+                "kind": "item",
+                "id": "item-299d9d7c:5c9b1b4c",
+                "amount": 1
+              }
+            ],
+            "effects": [
+              {
+                "kind": "mend",
+                "target": "target",
+                "impact": "minor"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "4fba1832:5a60f964",
+            "source": {
+              "message": "warp-source:persona:8cf1faea:4c0f9608",
+              "quote": "First aid uses one Bandage to treat physical injuries on another person at touch range.",
+              "sourceRevision": "8cf1faea:4c0f9608"
+            },
+            "sourceKind": "persona"
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 1
+          }
+        ]
+      },
+      "receipt": {
+        "version": 1,
+        "engine": 4,
+        "id": "treat",
+        "input": "269fae4:52cdb0e6",
+        "base": "19a36508:120f3096",
+        "actor": "you",
+        "operations": [
+          {
+            "kind": "ability",
+            "ability": "ability-ced84ada:f3aa373c",
+            "version": 1,
+            "target": "Jo"
+          }
+        ],
+        "responses": [],
+        "changes": [
+          {
+            "kind": "item",
+            "id": "item-299d9d7c:5c9b1b4c",
+            "before": {
+              "id": "item-299d9d7c:5c9b1b4c",
+              "owner": "you",
+              "name": "Bandage",
+              "quantity": 1,
+              "equipped": false,
+              "source": {
+                "message": "greeting",
+                "quote": "Jo stands at touch distance, preparing to strike you. You carry one Bandage.",
+                "sourceRevision": "de41c268:f6b27d6"
+              }
+            },
+            "after": {
+              "id": "item-299d9d7c:5c9b1b4c",
+              "owner": "you",
+              "name": "Bandage",
+              "quantity": 0,
+              "equipped": false,
+              "source": {
+                "message": "greeting",
+                "quote": "Jo stands at touch distance, preparing to strike you. You carry one Bandage.",
+                "sourceRevision": "de41c268:f6b27d6"
+              }
+            }
+          },
+          {
+            "kind": "condition",
+            "id": "injury-5c5a62dc:f1f75b16",
+            "before": {
+              "id": "injury-5c5a62dc:f1f75b16",
+              "owner": "Jo",
+              "name": "Hurt",
+              "hinders": [],
+              "helps": [],
+              "blocks": [],
+              "ending": "Appropriate treatment or established recovery",
+              "injury": {
+                "rule": 1,
+                "load": 1,
+                "basis": "warp"
+              },
+              "source": {
+                "message": "warp-action:injure",
+                "quote": "Physical harm to Jo",
+                "sourceRevision": "da0c0306:a7168c44"
+              }
+            },
+            "after": null
+          }
+        ],
+        "beats": [
+          {
+            "kind": "mend",
+            "actor": "Jo",
+            "target": "Jo",
+            "name": "Recovered",
+            "basis": "warp"
+          }
+        ],
+        "result": "92394401:67d6c22f",
+        "status": "ready"
+      },
+      "after": {
+        "version": 1,
+        "resources": [],
+        "items": [
+          {
+            "id": "item-299d9d7c:5c9b1b4c",
+            "owner": "you",
+            "name": "Bandage",
+            "quantity": 0,
+            "equipped": false,
+            "source": {
+              "message": "greeting",
+              "quote": "Jo stands at touch distance, preparing to strike you. You carry one Bandage.",
+              "sourceRevision": "de41c268:f6b27d6"
+            }
+          }
+        ],
+        "conditions": [],
+        "applied": [
+          {
+            "id": "injure",
+            "input": "3b7ac2bb:63ade1b1"
+          },
+          {
+            "id": "treat",
+            "input": "269fae4:52cdb0e6"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "greeting",
+              "quote": "Jo stands at touch distance, preparing to strike you. You carry one Bandage.",
+              "sourceRevision": "de41c268:f6b27d6"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "greeting",
+              "quote": "Jo stands at touch distance, preparing to strike you. You carry one Bandage.",
+              "sourceRevision": "de41c268:f6b27d6"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-ced84ada:f3aa373c",
+            "version": 1,
+            "owner": "you",
+            "name": "First aid",
+            "description": "First aid",
+            "approach": "precision",
+            "target": "other",
+            "range": "touch",
+            "costs": [
+              {
+                "kind": "item",
+                "id": "item-299d9d7c:5c9b1b4c",
+                "amount": 1
+              }
+            ],
+            "effects": [
+              {
+                "kind": "mend",
+                "target": "target",
+                "impact": "minor"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "4fba1832:5a60f964",
+            "source": {
+              "message": "warp-source:persona:8cf1faea:4c0f9608",
+              "quote": "First aid uses one Bandage to treat physical injuries on another person at touch range.",
+              "sourceRevision": "8cf1faea:4c0f9608"
+            },
+            "sourceKind": "persona"
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 2
+          }
+        ],
+        "closedConditions": [
+          {
+            "id": "injury-5c5a62dc:f1f75b16",
+            "owner": "Jo",
+            "name": "Hurt",
+            "injuryNames": [
+              "Lightly hurt",
+              "Hurt",
+              "Injured",
+              "Badly injured",
+              "Incapacitated"
+            ],
+            "after": {
+              "kind": "receipt",
+              "id": "treat"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "resolver4 guarded healthless exchange",
+      "before": {
+        "version": 1,
+        "resources": [],
+        "items": [
+          {
+            "id": "item-299d9d7c:5c9b1b4c",
+            "owner": "you",
+            "name": "Bandage",
+            "quantity": 0,
+            "equipped": false,
+            "source": {
+              "message": "greeting",
+              "quote": "Jo stands at touch distance, preparing to strike you. You carry one Bandage.",
+              "sourceRevision": "de41c268:f6b27d6"
+            }
+          }
+        ],
+        "conditions": [],
+        "applied": [
+          {
+            "id": "injure",
+            "input": "3b7ac2bb:63ade1b1"
+          },
+          {
+            "id": "treat",
+            "input": "269fae4:52cdb0e6"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "greeting",
+              "quote": "Jo stands at touch distance, preparing to strike you. You carry one Bandage.",
+              "sourceRevision": "de41c268:f6b27d6"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "greeting",
+              "quote": "Jo stands at touch distance, preparing to strike you. You carry one Bandage.",
+              "sourceRevision": "de41c268:f6b27d6"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-ced84ada:f3aa373c",
+            "version": 1,
+            "owner": "you",
+            "name": "First aid",
+            "description": "First aid",
+            "approach": "precision",
+            "target": "other",
+            "range": "touch",
+            "costs": [
+              {
+                "kind": "item",
+                "id": "item-299d9d7c:5c9b1b4c",
+                "amount": 1
+              }
+            ],
+            "effects": [
+              {
+                "kind": "mend",
+                "target": "target",
+                "impact": "minor"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "4fba1832:5a60f964",
+            "source": {
+              "message": "warp-source:persona:8cf1faea:4c0f9608",
+              "quote": "First aid uses one Bandage to treat physical injuries on another person at touch range.",
+              "sourceRevision": "8cf1faea:4c0f9608"
+            },
+            "sourceKind": "persona"
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 2
+          }
+        ],
+        "closedConditions": [
+          {
+            "id": "injury-5c5a62dc:f1f75b16",
+            "owner": "Jo",
+            "name": "Hurt",
+            "injuryNames": [
+              "Lightly hurt",
+              "Hurt",
+              "Injured",
+              "Badly injured",
+              "Incapacitated"
+            ],
+            "after": {
+              "kind": "receipt",
+              "id": "treat"
+            }
+          }
+        ]
+      },
+      "receipt": {
+        "version": 1,
+        "engine": 4,
+        "id": "exchange",
+        "input": "e400cd31:fe58090b",
+        "base": "90378d7a:4ac6bea4",
+        "actor": "you",
+        "operations": [
+          {
+            "kind": "defend"
+          }
+        ],
+        "responses": [
+          {
+            "actor": "Jo",
+            "action": {
+              "kind": "strike",
+              "target": "you"
+            },
+            "source": {
+              "message": "greeting",
+              "quote": "Jo stands at touch distance, preparing to strike you. You carry one Bandage.",
+              "sourceRevision": "de41c268:f6b27d6"
+            },
+            "assessment": {
+              "contested": true,
+              "tier": "uncertain",
+              "intent": "Strike",
+              "stakes": "Leave an opening",
+              "reasons": [
+                "An opposed exchange"
+              ]
+            }
+          }
+        ],
+        "changes": [
+          {
+            "kind": "condition",
+            "id": "guard-fc83617a:3cd83148",
+            "before": null,
+            "after": {
+              "id": "guard-fc83617a:3cd83148",
+              "owner": "you",
+              "name": "Guarding",
+              "hinders": [],
+              "helps": [],
+              "blocks": [],
+              "ending": "When this actor next acts",
+              "expiresAt": 4,
+              "defenses": [
+                {
+                  "kind": "resistance",
+                  "damageType": "physical",
+                  "amount": 50
+                }
+              ],
+              "source": {
+                "message": "warp-action:exchange",
+                "quote": "Defend against physical attacks",
+                "sourceRevision": "c388bbd1:c68611d7"
+              }
+            }
+          },
+          {
+            "kind": "condition",
+            "id": "injury-fc83617a:3cd83148",
+            "before": null,
+            "after": {
+              "id": "injury-fc83617a:3cd83148",
+              "owner": "you",
+              "name": "Lightly hurt",
+              "hinders": [],
+              "helps": [],
+              "blocks": [],
+              "ending": "Appropriate treatment or established recovery",
+              "injury": {
+                "rule": 1,
+                "load": 0.5,
+                "basis": "warp"
+              },
+              "source": {
+                "message": "warp-action:exchange:response:Jo",
+                "quote": "Physical harm to you",
+                "sourceRevision": "32d984e0:9ef34ed6"
+              }
+            }
+          }
+        ],
+        "beats": [
+          {
+            "kind": "defend",
+            "actor": "you"
+          },
+          {
+            "kind": "response",
+            "actor": "Jo",
+            "target": "you",
+            "decision": {
+              "tier": "uncertain",
+              "roll": 36,
+              "result": "mixed",
+              "intent": "Strike",
+              "stakes": "Leave an opening",
+              "reasons": [
+                "An opposed exchange"
+              ]
+            },
+            "name": "strike"
+          },
+          {
+            "kind": "harm",
+            "actor": "Jo",
+            "target": "you",
+            "name": "Lightly hurt",
+            "absorbed": 0,
+            "resisted": 2.5,
+            "reflected": 0,
+            "basis": "warp"
+          }
+        ],
+        "result": "e955681f:aa9be62d",
+        "status": "ready"
+      },
+      "after": {
+        "version": 1,
+        "resources": [],
+        "items": [
+          {
+            "id": "item-299d9d7c:5c9b1b4c",
+            "owner": "you",
+            "name": "Bandage",
+            "quantity": 0,
+            "equipped": false,
+            "source": {
+              "message": "greeting",
+              "quote": "Jo stands at touch distance, preparing to strike you. You carry one Bandage.",
+              "sourceRevision": "de41c268:f6b27d6"
+            }
+          }
+        ],
+        "conditions": [
+          {
+            "id": "guard-fc83617a:3cd83148",
+            "owner": "you",
+            "name": "Guarding",
+            "hinders": [],
+            "helps": [],
+            "blocks": [],
+            "ending": "When this actor next acts",
+            "expiresAt": 4,
+            "defenses": [
+              {
+                "kind": "resistance",
+                "damageType": "physical",
+                "amount": 50
+              }
+            ],
+            "source": {
+              "message": "warp-action:exchange",
+              "quote": "Defend against physical attacks",
+              "sourceRevision": "c388bbd1:c68611d7"
+            }
+          },
+          {
+            "id": "injury-fc83617a:3cd83148",
+            "owner": "you",
+            "name": "Lightly hurt",
+            "hinders": [],
+            "helps": [],
+            "blocks": [],
+            "ending": "Appropriate treatment or established recovery",
+            "injury": {
+              "rule": 1,
+              "load": 0.5,
+              "basis": "warp"
+            },
+            "source": {
+              "message": "warp-action:exchange:response:Jo",
+              "quote": "Physical harm to you",
+              "sourceRevision": "32d984e0:9ef34ed6"
+            }
+          }
+        ],
+        "applied": [
+          {
+            "id": "injure",
+            "input": "3b7ac2bb:63ade1b1"
+          },
+          {
+            "id": "treat",
+            "input": "269fae4:52cdb0e6"
+          },
+          {
+            "id": "exchange",
+            "input": "e400cd31:fe58090b"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "greeting",
+              "quote": "Jo stands at touch distance, preparing to strike you. You carry one Bandage.",
+              "sourceRevision": "de41c268:f6b27d6"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "greeting",
+              "quote": "Jo stands at touch distance, preparing to strike you. You carry one Bandage.",
+              "sourceRevision": "de41c268:f6b27d6"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-ced84ada:f3aa373c",
+            "version": 1,
+            "owner": "you",
+            "name": "First aid",
+            "description": "First aid",
+            "approach": "precision",
+            "target": "other",
+            "range": "touch",
+            "costs": [
+              {
+                "kind": "item",
+                "id": "item-299d9d7c:5c9b1b4c",
+                "amount": 1
+              }
+            ],
+            "effects": [
+              {
+                "kind": "mend",
+                "target": "target",
+                "impact": "minor"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "4fba1832:5a60f964",
+            "source": {
+              "message": "warp-source:persona:8cf1faea:4c0f9608",
+              "quote": "First aid uses one Bandage to treat physical injuries on another person at touch range.",
+              "sourceRevision": "8cf1faea:4c0f9608"
+            },
+            "sourceKind": "persona"
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 3
+          },
+          {
+            "id": "Jo",
+            "actor": "Jo",
+            "actions": 1
+          }
+        ],
+        "closedConditions": [
+          {
+            "id": "injury-5c5a62dc:f1f75b16",
+            "owner": "Jo",
+            "name": "Hurt",
+            "injuryNames": [
+              "Lightly hurt",
+              "Hurt",
+              "Injured",
+              "Badly injured",
+              "Incapacitated"
+            ],
+            "after": {
+              "kind": "receipt",
+              "id": "treat"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

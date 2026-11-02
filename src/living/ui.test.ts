@@ -112,6 +112,22 @@ test("qualitative harm, treatment limits and resilience are readable without exp
   expect(sent).toEqual([]);
 });
 
+test("agreement inspection distinguishes progress, offered and received rewards without collecting or exposing unrelated NPC promises", () => {
+  const source = { message: "offer", quote: "Cover the counter and clean the cups for 10 Coins." };
+  const agreement = { id: "cafe", owner: "you", from: "Jo", name: "Help at the café", source, offer: source, requirements: [{ id: "counter", text: "cover the counter", source, done: source }, { id: "cups", text: "clean the cups", source }], rewards: [{ id: "pay", kind: "resource", asset: "Coins", amount: 10, source, ready: { allowed: true, source } }], unsupported: [] };
+  const mechanics = { version: 1, resources: [], items: [], conditions: [], applied: [], agreements: [agreement, { ...agreement, id: "npc", owner: "Dex", from: "Mira", name: "Private deal" }] };
+  const before = structuredClone(mechanics);
+  ui.accept(view({ world: { place: "Café", present: ["Jo"], facts: [], mechanics } }));
+  click('[data-living="inspect"]');
+  const panel = window.document.querySelector(".warp-inspector")!;
+  expect(panel.textContent).toContain("1/2 done"); expect(panel.textContent).toContain("Pending · clean the cups");
+  expect(panel.textContent).toContain("Offered · 10 Coins"); expect(panel.textContent).not.toContain("Private deal");
+  panel.querySelector("details")!.open = true;
+  click('[data-living="settings"]');
+  expect(window.document.querySelector("[data-inspect-agreement]")?.hasAttribute("open")).toBe(true);
+  expect(mechanics).toEqual(before); expect(sent).toEqual([]);
+});
+
 test("old checks show their outcome without inventing a die value", () => {
   ui.accept(view({ decision: { tier: "outmatched", result: "setback", intent: "Escape", stakes: "Exposure", reasons: ["Guards surround you"] } }));
   expect(window.document.querySelector(".warp-check-die")?.getAttribute("aria-label")).toContain("not saved");

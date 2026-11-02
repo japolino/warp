@@ -5,6 +5,7 @@ import { actorName, distance, distanceId, readDefenses, readEncounterObservation
 import { MAX_RESPONSES, responseDecision, offensiveResponse, type ResponsePlan } from "./exchanges.js";
 import { applyInjury, mendInjury, isVitalSelector, IMPACTS, readResilience, type Resilience, type Injury } from "./injuries.js";
 import { closeCondition, conditionCauseIsNew, type ClosedCondition } from "./condition-history.js";
+import { readAgreementObservation, observeAgreement, settleReward, visibleAgreements, type Agreement, type AgreementObservation } from "./agreements.js";
 
 export const APPROACHES = ["movement", "precision", "force", "speech", "perception", "concentration"] as const;
 export type Approach = typeof APPROACHES[number];
@@ -23,8 +24,9 @@ export interface MechanicalState {
   abilities?: AbilityDefinition[];
   entities?: Entity[]; distances?: Distance[]; clocks?: ActionClock[]; cooldowns?: Cooldown[];
   resilience?: Resilience[]; closedConditions?: ClosedCondition[];
+  agreements?: Agreement[];
 }
-export type Observation =
+export type Observation = AgreementObservation
   | { kind: "resource"; value: Resource; correction?: boolean }
   | { kind: "item"; value: Item; correction?: boolean }
   | { kind: "condition"; value: Condition }
@@ -34,6 +36,7 @@ export type Observation =
   | { kind: "resilience"; value: Resilience }
   | { kind: "condition_end"; id: string; source: Evidence; retire?: true };
 export type MechanicalOperation =
+  | { kind: "claim"; agreement: string; reward: string }
   | { kind: "spend" | "restore"; resource: string; amount: number }
   | { kind: "consume"; item: string; amount: number }
   | { kind: "transfer"; item: string; amount: number; to: string }
@@ -43,16 +46,17 @@ export type MechanicalOperation =
   | { kind: "strike"; target: string; outcome?: "clean" | "mixed" | "setback"; place?: string }
   | { kind: "move"; target: string; direction: "closer" | "away"; place?: string }
   | { kind: "ability"; ability: string; version: number; target?: string; outcome?: "clean" | "mixed" | "setback"; place?: string };
-export interface MechanicalChange { kind: "resource" | "item" | "condition" | "distance"; id: string; before: Resource | Item | Condition | Distance | null; after: Resource | Item | Condition | Distance | null; }
+export interface MechanicalChange { kind: "resource" | "item" | "condition" | "distance" | "agreement"; id: string; before: Resource | Item | Condition | Distance | Agreement | null; after: Resource | Item | Condition | Distance | Agreement | null; }
 export interface MechanicalReceipt {
   version: 1; id: string; input: string; base: string; actor: string;
   operations: MechanicalOperation[]; changes: MechanicalChange[];
   status: "ready" | "blocked"; reason?: string;
-  engine?: 2 | 3 | 4; result?: string; beats?: EncounterBeat[]; responses?: ResponsePlan[]; place?: string;
+  unresolved?: true;
+  engine?: 2 | 3 | 4 | 5; result?: string; beats?: EncounterBeat[]; responses?: ResponsePlan[]; place?: string;
 }
 export interface MechanicalRecord { version: 1; path: string; text: string; receipt?: MechanicalReceipt; observations: Observation[]; sources?: DefinitionSource[]; }
 export const emptyMechanics = (): MechanicalState => ({ version: 1, resources: [], items: [], conditions: [], applied: [] });
-export const hasMechanics = (s: MechanicalState) => !!(s.resources.length || s.items.length || s.conditions.length || s.abilities?.length || s.entities?.length || s.resilience?.length || s.closedConditions?.length);
+export const hasMechanics = (s: MechanicalState) => !!(s.resources.length || s.items.length || s.conditions.length || s.abilities?.length || s.entities?.length || s.resilience?.length || s.closedConditions?.length || s.agreements?.length);
 const obj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const str = (v: unknown, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "";
 const amount = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1e9;
@@ -84,6 +88,13 @@ export function readMechanicalObservations(raw: unknown, before: MechanicalState
   // Resolve aliases before ownership regardless of the helper's JSON ordering.
   for (const row of [...rows.filter(r => obj(r) && r.kind === "entity"), ...rows.filter(r => !obj(r) || r.kind !== "entity")]) {
     if (!obj(row)) continue;
+    if (["agreement", "agreement_progress", "reward_ready", "agreement_cancel"].includes(row.kind as string)) {
+      try {
+        const observation = readAgreementObservation(row, working, messages, player);
+        if (observation) { out.push(observation); observeAgreement(working, observation); }
+      } catch { /* Invalid terms or references never create a partial agreement. */ }
+      continue;
+    }
     const s = source(row, messages); let id = str(row.id, 100);
     if (!s) continue;
     let observation: Observation | undefined;
@@ -137,6 +148,7 @@ export function readMechanicalObservations(raw: unknown, before: MechanicalState
 }
 
 function observe(state: MechanicalState, o: Observation) {
+  if (o.kind === "agreement" || o.kind === "agreement_progress" || o.kind === "reward_ready" || o.kind === "agreement_cancel") { observeAgreement(state, o); return; }
   if (o.kind === "condition_end") { const old = state.conditions.find(c => c.id === o.id); if (old && o.retire) closeCondition(state, old, { kind: "message", id: o.source.message }); state.conditions = state.conditions.filter(c => c.id !== o.id); return; }
   if (o.kind === "resilience") {
     state.resilience ??= []; const index = state.resilience.findIndex(r => r.id === o.value.id);
@@ -169,7 +181,7 @@ export function applyObservations(before: MechanicalState, observations: Observa
 }
 
 /** All operations resolve on a working copy. Any failed prerequisite rejects the whole plan. */
-function execute(before: MechanicalState, actor: string, operations: MechanicalOperation[], actionId: string, engine = 1, strict = false, qualitative = false) {
+function execute(before: MechanicalState, actor: string, operations: MechanicalOperation[], actionId: string, engine = 1, strict = false, qualitative = false, rewards = false) {
   const state = structuredClone(before), changes: MechanicalChange[] = [], beats: EncounterBeat[] = [];
   if (engine === 2) actor = actorName(state, actor);
   if (!actor || operations.length > 16) throw new Error("Invalid mechanical plan");
@@ -177,7 +189,9 @@ function execute(before: MechanicalState, actor: string, operations: MechanicalO
   const waitingWhileUnable = qualitative && operations.length > 0 && operations.every(op => op.kind === "wait") && state.entities?.find(e => e.name === actor)?.status !== "dead";
   if (engine === 2 && operations.length && !capable(state, actor) && !waitingWhileUnable) throw new Error("This actor cannot act");
   for (const [index, op] of operations.entries()) {
-    if (op.kind === "ability") {
+    if (op.kind === "claim" && rewards) {
+      settleReward(state, actor, op.agreement, op.reward, actionId, changes, beats);
+    } else if (op.kind === "ability") {
       if (op.outcome !== undefined && !["clean", "mixed", "setback"].includes(op.outcome)) throw new Error("Invalid ability outcome");
       const ability = state.abilities?.find(a => a.id === op.ability && a.version === op.version);
       if (!ability || ability.owner !== actor) throw new (strict ? MechanicalKnowledgeError : Error)("Ability unavailable to this actor");
@@ -344,9 +358,9 @@ function execute(before: MechanicalState, actor: string, operations: MechanicalO
 }
 
 /** The exchange is one bounded receipt. A response cannot enqueue another response. */
-function executeExchange(before: MechanicalState, actor: string, operations: MechanicalOperation[], id: string, responses: ResponsePlan[], place?: string, resolver: 3 | 4 = 3) {
+function executeExchange(before: MechanicalState, actor: string, operations: MechanicalOperation[], id: string, responses: ResponsePlan[], place?: string, resolver: 3 | 4 | 5 = 3) {
   if (!Array.isArray(responses) || responses.length > MAX_RESPONSES || (responses.length && !operations.length)) throw new Error("Invalid exchange opportunity");
-  let resolved = execute(before, actor, operations, id, 2, true, resolver === 4);
+  let resolved = execute(before, actor, operations, id, 2, true, resolver >= 4, resolver >= 5);
   const actors = new Set<string>();
   for (const plan of responses) {
     if (!plan || typeof plan.actor !== "string" || !plan.source?.message || !plan.source?.quote || !plan.assessment || !plan.action) throw new Error("Invalid NPC plan");
@@ -362,7 +376,7 @@ function executeExchange(before: MechanicalState, actor: string, operations: Mec
     if (!present(resolved.state, who) || !capable(resolved.state, who)) { skip("No longer able to respond"); continue; }
     try {
       // Validate the opportunity before drawing an outcome. This working copy is discarded.
-      execute(resolved.state, who, [{ ...action, ...(["ability", "strike", "move"].includes(action.kind) ? { place } : {}) }], `${id}:response:${who}`, 2, true, resolver === 4);
+      execute(resolved.state, who, [{ ...action, ...(["ability", "strike", "move"].includes(action.kind) ? { place } : {}) }], `${id}:response:${who}`, 2, true, resolver >= 4, resolver >= 5);
     } catch (error) {
       if (error instanceof MechanicalKnowledgeError) throw error;
       // An eligible NPC loses this opportunity, without paying an unavailable cost.
@@ -376,7 +390,7 @@ function executeExchange(before: MechanicalState, actor: string, operations: Mec
     if (action.kind === "ability" || action.kind === "strike") operation = { ...action, outcome: decision?.result ?? "clean", place };
     else if (action.kind === "move") operation = decision?.result === "setback" ? { kind: "attempt", approach: "movement", target: action.target, place } : { ...action, place };
     else if (action.kind === "defend" && decision?.result === "setback") operation = { kind: "attempt", approach: "movement", place };
-    const next = execute(resolved.state, who, [operation], `${id}:response:${who}`, 2, true, resolver === 4);
+    const next = execute(resolved.state, who, [operation], `${id}:response:${who}`, 2, true, resolver >= 4, resolver >= 5);
     resolved.beats.push({ kind: "response", actor: who, ...(target ? { target } : {}), ...(decision ? { decision } : {}), name: action.kind === "ability" ? resolved.state.abilities?.find(a => a.id === action.ability)?.name : action.kind });
     resolved = { state: next.state, changes: [...resolved.changes, ...next.changes], beats: [...resolved.beats, ...next.beats] };
   }
@@ -384,22 +398,22 @@ function executeExchange(before: MechanicalState, actor: string, operations: Mec
 }
 
 export function prepareMechanical(before: MechanicalState, id: string, actor: string, operations: MechanicalOperation[], context = ""): MechanicalReceipt {
-  return prepare(before, id, actor, operations, context, 4);
+  return prepare(before, id, actor, operations, context, 5);
 }
 export function prepareExchange(before: MechanicalState, id: string, actor: string, operations: MechanicalOperation[], responses: ResponsePlan[], context = "", place?: string): MechanicalReceipt {
-  return prepare(before, id, actor, operations, context, 4, responses, place);
+  return prepare(before, id, actor, operations, context, 5, responses, place);
 }
-function prepare(before: MechanicalState, id: string, actor: string, operations: MechanicalOperation[], context: string, engine: 2 | 3 | 4, responses?: ResponsePlan[], place?: string): MechanicalReceipt {
+function prepare(before: MechanicalState, id: string, actor: string, operations: MechanicalOperation[], context: string, engine: 2 | 3 | 4 | 5, responses?: ResponsePlan[], place?: string): MechanicalReceipt {
   place = place || undefined; responses ??= [];
   const base = revision(before), input = revision(engine === 2 ? [actor, operations, context] : [actor, operations, context, responses, place]);
   try {
     if (!str(id, 160)) throw new Error("Invalid action id");
     const previous = before.applied.find(a => a.id === id);
     if (previous) throw new Error(previous.input === input ? "Action already applied" : "Action id reused for different input");
-    const executed = engine >= 3 ? executeExchange(before, actor, operations, id, responses, place, engine as 3 | 4) : execute(before, actor, operations, id, 2);
+    const executed = engine >= 3 ? executeExchange(before, actor, operations, id, responses, place, engine as 3 | 4 | 5) : execute(before, actor, operations, id, 2);
     return { version: 1, engine, id, input, base, actor, operations: structuredClone(operations), ...(engine >= 3 ? { responses: structuredClone(responses), ...(place ? { place } : {}) } : {}), changes: executed.changes, beats: executed.beats, result: revision(executed.state), status: "ready" };
   } catch (e) {
-    return { version: 1, engine, id, input, base, actor, operations: structuredClone(operations), changes: [], status: "blocked", reason: e instanceof Error ? e.message : "Mechanical action unavailable" };
+    return { version: 1, engine, id, input, base, actor, operations: structuredClone(operations), changes: [], status: "blocked", reason: e instanceof Error ? e.message : "Mechanical action unavailable", ...(e instanceof MechanicalKnowledgeError ? { unresolved: true as const } : {}) };
   }
 }
 
@@ -407,9 +421,9 @@ export function commitMechanical(before: MechanicalState, receipt: MechanicalRec
   const existing = before.applied.find(a => a.id === receipt.id);
   if (existing) { if (existing.input !== receipt.input) throw new Error("Action id conflict"); return before; }
   if (receipt.version !== 1 || receipt.status !== "ready" || receipt.base !== revision(before)) throw new Error("Mechanical receipt is blocked or stale");
-  if (receipt.engine !== undefined && receipt.engine !== 2 && receipt.engine !== 3 && receipt.engine !== 4) throw new Error("Unsupported mechanical resolver");
+  if (receipt.engine !== undefined && receipt.engine !== 2 && receipt.engine !== 3 && receipt.engine !== 4 && receipt.engine !== 5) throw new Error("Unsupported mechanical resolver");
   if ((receipt.engine ?? 1) < 3 && receipt.responses?.length) throw new Error("Responses require the exchange resolver");
-  const { state, changes, beats } = (receipt.engine ?? 1) >= 3 ? executeExchange(before, receipt.actor, receipt.operations, receipt.id, receipt.responses ?? [], receipt.place, receipt.engine as 3 | 4) : execute(before, receipt.actor, receipt.operations, receipt.id, receipt.engine ?? 1);
+  const { state, changes, beats } = (receipt.engine ?? 1) >= 3 ? executeExchange(before, receipt.actor, receipt.operations, receipt.id, receipt.responses ?? [], receipt.place, receipt.engine as 3 | 4 | 5) : execute(before, receipt.actor, receipt.operations, receipt.id, receipt.engine ?? 1);
   if (revision(changes) !== revision(receipt.changes)) throw new Error("Mechanical receipt does not match its operations");
   if (receipt.engine !== undefined && (revision(state) !== receipt.result || revision(beats) !== revision(receipt.beats))) throw new Error("Mechanical encounter receipt does not match its resolution");
   state.applied.push({ id: receipt.id, input: receipt.input });
@@ -428,7 +442,18 @@ function parseMechanicalPlan(raw: unknown, state: MechanicalState, action: strin
   for (const row of raw) {
     if (!obj(row) || !str(row.quote, 400) || !action.replace(/\s+/g, " ").includes(row.quote as string)) throw new Error("Mechanical action lacks player evidence");
     const quote = row.quote as string;
-    if (row.kind === "ability") {
+    if (row.kind === "claim") {
+      if (Object.keys(row).some(k => !["kind", "agreement", "reward", "quote"].includes(k)) || !/\b(?:claim|collect|accept|take|receive|pay)\b/i.test(quote)) throw new Error("Reward collection must be explicit and uses its saved terms");
+      const eligible = state.agreements?.filter(a => a.owner === "you" || a.from === "you") ?? [];
+      const exact = eligible.find(a => a.id === row.agreement);
+      const named = eligible.filter(a => a.name.toLocaleLowerCase() === str(row.agreement).toLocaleLowerCase());
+      const open = named.filter(a => !a.cancelled && a.rewards.some(r => !r.paid));
+      const agreements = exact ? [exact] : open.length ? open : named;
+      const agreement = agreements.length === 1 ? agreements[0] : undefined;
+      const rewards = agreement?.rewards.filter(r => r.id === row.reward || r.asset.toLocaleLowerCase() === str(row.reward).toLocaleLowerCase()) ?? [];
+      if (!agreement || rewards.length !== 1) throw new Error("Reward reference is unknown or ambiguous");
+      operations.push({ kind: "claim", agreement: agreement.id, reward: rewards[0].id });
+    } else if (row.kind === "ability") {
       const ability = state.abilities?.find(a => (a.id === row.ability || a.name.toLocaleLowerCase() === str(row.ability).toLocaleLowerCase()) && a.owner === "you");
       if (!ability || !/\b(?:use|cast|invoke|perform|activate|apply|treat|focus|deploy|repair|patch|switch|turn)\b/i.test(quote)) throw new Error("Ability use is not established");
       if (row.version !== undefined && row.version !== ability.version) throw new Error("Ability definition changed");
@@ -491,7 +516,8 @@ export function mechanicalPacket(state: MechanicalState) {
   return { resources: state.resources.map(withoutSource), items: state.items.map(withoutSource), conditions: state.conditions.map(withoutSource), ...(state.abilities?.length ? { abilities: state.abilities.map(a => {
     const { source, sourceKind, fingerprint, ...value } = a; return value;
   }) } : {}), ...(state.entities?.length ? { entities: state.entities.map(withoutSource) } : {}), ...(state.distances?.length ? { distances: state.distances.map(withoutSource) } : {}),
-    ...(state.clocks?.length ? { clocks: state.clocks } : {}), ...(state.cooldowns?.length ? { cooldowns: state.cooldowns } : {}), ...(state.resilience?.length ? { resilience: state.resilience.map(withoutSource) } : {}) };
+    ...(state.clocks?.length ? { clocks: state.clocks } : {}), ...(state.cooldowns?.length ? { cooldowns: state.cooldowns } : {}), ...(state.resilience?.length ? { resilience: state.resilience.map(withoutSource) } : {}),
+    ...(state.agreements?.length ? { agreements: visibleAgreements(state.agreements).map(a => ({ id: a.id, owner: a.owner, name: a.name, from: a.from, cancelled: !!a.cancelled, unsupported: a.unsupported, requirements: a.requirements.map(r => ({ id: r.id, text: r.text, done: !!r.done })), rewards: a.rewards.map(r => ({ id: r.id, kind: r.kind, asset: r.asset, amount: r.amount, ready: r.ready?.allowed ?? null, paid: !!r.paid })) })) } : {}) };
 }
 export function receiptPacket(receipt: MechanicalReceipt) {
   return { id: receipt.id, status: receipt.status, ...(receipt.reason ? { reason: receipt.reason } : {}), changes: (receipt.status === "ready" ? receipt.changes : []).map(c => ({
@@ -499,7 +525,7 @@ export function receiptPacket(receipt: MechanicalReceipt) {
     after: c.after ? ("current" in c.after ? c.after.current : "quantity" in c.after ? c.after.quantity : "band" in c.after ? c.after.band : true) : null,
     ...(c.after && "name" in c.after ? { name: c.after.name } : c.before && "name" in c.before ? { name: c.before.name } : {}),
     ...(c.after && "owner" in c.after ? { owner: c.after.owner } : {}), ...(c.after && "equipped" in c.after ? { equipped: c.after.equipped } : {}),
-  })), ...(receipt.status === "ready" && receipt.beats?.length ? { events: receipt.beats } : {}), ...((receipt.engine ?? 1) >= 3 ? { boundary: receipt.engine === 3 ? "These recorded actions exhaust this exchange. Describe them once and stop at the next player choice. No extra attacks, costs, recovery or forced player reactions. Describe the physical and story consequences naturally. Leave arithmetic and resource totals to the inline display unless the player asks for those numbers; do not recite bookkeeping in the prose." : "These recorded mechanical outcomes are settled. Describe their consequences once and stop at the next player decision. Do not add another attack, resource cost, recovery or forced player reaction. Leave arithmetic and resource totals to the inline display unless the player asks for those numbers. Qualitative injuries are Warp interpretations, not an invented Health pool or a specific medical diagnosis. Do not declare death, lost limbs, feelings or consent from a generic physical injury." } : {}) };
+  })), ...(receipt.status === "ready" && receipt.beats?.length ? { events: receipt.beats } : {}), ...((receipt.engine ?? 1) >= 3 ? { boundary: receipt.engine === 5 && receipt.status === "blocked" ? (receipt.unresolved ? "This action is unresolved because a necessary mechanical fact is missing. Do not invent an NPC refusal, extra task, fee, restriction or adverse event to explain missing bookkeeping. Do not narrate payment, success or a new failure. Preserve the established agreement and leave the action pending; ordinary dialogue can continue." : "This action did not execute. Honor only its stated established prerequisite or already-paid result. Do not add new tasks, fees or restrictions to an accepted agreement, and do not narrate another payment. Leave the next choice to the player.") : receipt.engine === 3 ? "These recorded actions exhaust this exchange. Describe them once and stop at the next player choice. No extra attacks, costs, recovery or forced player reactions. Describe the physical and story consequences naturally. Leave arithmetic and resource totals to the inline display unless the player asks for those numbers; do not recite bookkeeping in the prose." : "These recorded mechanical outcomes are settled. Describe their consequences once and stop at the next player decision. Do not add another attack, resource cost, recovery or forced player reaction. Leave arithmetic and resource totals to the inline display unless the player asks for those numbers. Qualitative injuries are Warp interpretations, not an invented Health pool or a specific medical diagnosis. Do not declare death, lost limbs, feelings or consent from a generic physical injury." } : {}) };
 }
 export function mechanicalNotes(receipt?: MechanicalReceipt): string[] {
   if (!receipt || receipt.status !== "ready") return [];

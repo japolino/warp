@@ -13,7 +13,7 @@ export interface Distance { id: string; from: string; to: string; band: Range; s
 export interface Defense { kind: "armor" | "resistance" | "immunity" | "shield" | "reflect"; amount: number; damageType: DamageType | "all"; }
 export interface ActionClock { id: string; actor: string; actions: number; }
 export interface Cooldown { id: string; actor: string; readyAt: number; }
-export interface EncounterBeat { kind: "damage" | "harm" | "mend" | "expired" | "move" | "wait" | "defend" | "attempt" | "skipped" | "response"; actor: string; target?: string; name?: string; amount?: number; absorbed?: number; resisted?: number; reflected?: number; reason?: string; decision?: Decision; basis?: "warp"; }
+export interface EncounterBeat { kind: "damage" | "harm" | "mend" | "reward" | "expired" | "move" | "wait" | "defend" | "attempt" | "skipped" | "response"; actor: string; target?: string; name?: string; amount?: number; absorbed?: number; resisted?: number; reflected?: number; reason?: string; decision?: Decision; basis?: "warp"; }
 export class MechanicalKnowledgeError extends Error {}
 const normalize = (value: string) => value.normalize("NFKC").trim().toLocaleLowerCase();
 export const entityId = (name: string) => normalize(name) === "you" ? "you" : `entity-${revision(normalize(name))}`;

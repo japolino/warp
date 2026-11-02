@@ -414,6 +414,207 @@ var init_encounters = __esm(() => {
   };
 });
 
+// src/living/agreements.ts
+function agreementNotes(before, after) {
+  return (after.agreements ?? []).filter((a) => a.owner === "you" || a.from === "you").flatMap((a) => {
+    const old = before.agreements?.find((b) => b.id === a.id), count = a.requirements.filter((r) => r.done).length;
+    if (!old || !!old.cancelled !== !!a.cancelled || old.requirements.filter((r) => r.done).length !== count)
+      return [`${a.name} · ${a.cancelled ? "withdrawn" : `${count}/${a.requirements.length} done`}`];
+    return [];
+  }).slice(-2);
+}
+function evidence(raw, messages) {
+  if (!obj(raw))
+    return;
+  const message = str(raw.message, 160), quote = str(raw.quote, 400), m = messages.find((m) => m.id === message);
+  if (!m || quote.length < 4 || !m.content.replace(/\s+/g, " ").includes(quote) || message.startsWith("warp-source:"))
+    return;
+  return { message, quote, sourceRevision: revision(m.content) };
+}
+function canonical(state, v, player) {
+  const name = str(v, 80);
+  return ["you", "i", "me", "player", "{{user}}", player?.toLocaleLowerCase()].includes(name.toLocaleLowerCase()) ? "you" : actorName(state, name);
+}
+function names(state, source, who) {
+  const entity = state.entities?.find((e) => e.name === who);
+  return [who, ...entity ? [entity.displayName, ...entity.aliases] : []].some((n) => {
+    const escaped = n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return !!n && new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, "iu").test(source.quote);
+  });
+}
+function lookup(rows, selector) {
+  const key = normalized(str(selector));
+  const found = rows.filter((r) => [r.id, r.text, r.asset].some((v) => v && normalized(v) === key));
+  return found.length === 1 ? found[0] : undefined;
+}
+function readAgreementObservation(raw, state, messages, player) {
+  const source = evidence(raw, messages);
+  if (!source)
+    return;
+  const message = messages.find((m) => m.id === source.message);
+  const correction = message.is_user && /^\s*\(?OOC correction:/i.test(message.content);
+  if (raw.kind === "agreement") {
+    if (Object.keys(raw).some((k) => !["kind", "id", "owner", "name", "from", "offer", "requirements", "rewards", "unsupported", "message", "quote"].includes(k)))
+      return;
+    const owner = canonical(state, raw.owner, player), name = str(raw.name, 120), from = canonical(state, raw.from, player), offer = evidence(raw.offer, messages);
+    if (!owner || !name || (owner === "you" ? !message.is_user : message.is_user && !correction || !names(state, source, owner)))
+      return;
+    const offerMessage = offer && messages.find((m) => m.id === offer.message);
+    const correctedOffer = offerMessage?.is_user && /^\s*\(?OOC correction:/i.test(offerMessage.content);
+    if (from && (!offer || (from === "you" ? !offerMessage?.is_user : offerMessage?.is_user && !correctedOffer || !names(state, offer, from)) || at(offer, messages) > at(source, messages) || from === owner))
+      return;
+    if (raw.offer && !offer)
+      return;
+    const id = `agreement-${revision([owner, from, offer ? [offer.message, offer.sourceRevision] : [source.message, source.sourceRevision, source.quote]])}`;
+    if (state.agreements?.some((a) => a.id === id || offer && a.owner === owner && a.from === from && a.offer?.message === offer.message) || (state.agreements?.filter((a) => !agreementSettled(a)).length ?? 0) >= 3)
+      return;
+    if (!Array.isArray(raw.requirements) || !raw.requirements.length || raw.requirements.length > 6 || !Array.isArray(raw.rewards) || raw.rewards.length > 4)
+      return;
+    const terms = [source, ...offer ? [offer] : []];
+    const clause = (v) => {
+      const e = evidence(v, messages);
+      return e && terms.some((t) => t.message === e.message && t.quote.includes(e.quote)) ? e : undefined;
+    };
+    const requirements = [];
+    for (const value of raw.requirements) {
+      if (!obj(value) || Object.keys(value).some((k) => !["message", "quote"].includes(k)))
+        return;
+      const e = clause(value);
+      if (!e || requirements.some((r) => r.text === e.quote))
+        return;
+      requirements.push({ id: `requirement-${revision([id, e.quote])}`, text: e.quote, source: e });
+    }
+    const rewards = [];
+    for (const value of raw.rewards) {
+      if (!obj(value) || Object.keys(value).some((k) => !["kind", "asset", "amount", "message", "quote"].includes(k)) || !from || !offer || !["item", "resource"].includes(value.kind))
+        return;
+      const e = clause(value), asset = str(value.asset, 100), amount = value.amount;
+      if (!e || e.message !== offer.message || !asset || typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0 || amount > 1e6 || value.kind === "item" && !Number.isInteger(amount) || !numeric(e.quote, amount))
+        return;
+      const rows = value.kind === "item" ? state.items : state.resources;
+      const owned = rows.filter((r) => r.owner === from && (r.id === asset || normalized(r.name) === normalized(asset)));
+      const selector = owned.length === 1 ? owned[0].name : asset;
+      if (!normalized(e.quote).includes(normalized(selector)) || rewards.some((r) => r.kind === value.kind && normalized(r.asset) === normalized(selector)))
+        return;
+      rewards.push({ id: `reward-${revision([id, value.kind, selector])}`, kind: value.kind, asset: selector, amount, source: e });
+    }
+    if (raw.unsupported !== undefined && (!Array.isArray(raw.unsupported) || raw.unsupported.length > 6 || raw.unsupported.some((v) => !str(v))))
+      return;
+    return { kind: "agreement", value: { id, owner, name, source, ...offer ? { offer } : {}, ...from ? { from } : {}, requirements, rewards, unsupported: Array.isArray(raw.unsupported) ? raw.unsupported.map((v) => str(v)) : [] } };
+  }
+  const agreements = (state.agreements ?? []).map((a) => ({ ...a, text: a.name }));
+  const agreement = agreements.find((a) => a.id === raw.agreement) ?? lookup(agreements.filter((a) => !agreementSettled(a)), raw.agreement);
+  if (!agreement || agreement.cancelled || at(source, messages) < at(agreement.source, messages))
+    return;
+  if (raw.kind === "agreement_cancel") {
+    if (agreement.owner === "you" ? !message.is_user : message.is_user && !correction || !names(state, source, agreement.owner))
+      return;
+    return { kind: "agreement_cancel", value: { agreement: agreement.id, source } };
+  }
+  if (message.is_user && !correction)
+    return;
+  if (raw.kind === "agreement_progress") {
+    const requirement = lookup(agreement.requirements, raw.requirement);
+    if (!requirement || requirement.done)
+      return;
+    return { kind: "agreement_progress", value: { agreement: agreement.id, requirement: requirement.id, source } };
+  }
+  if (raw.kind === "reward_ready") {
+    const reward = lookup(agreement.rewards, raw.reward);
+    const other = agreement.from === "you" ? agreement.owner : agreement.from;
+    if (!reward || reward.paid || !agreementDone(agreement) || typeof raw.ready !== "boolean" || !other || !names(state, source, other))
+      return;
+    if (agreement.requirements.some((r) => at(r.done, messages) > at(source, messages)))
+      return;
+    if (reward.ready && at(reward.ready.source, messages) >= at(source, messages))
+      return;
+    if (reward.ready?.allowed === raw.ready)
+      return;
+    return { kind: "reward_ready", value: { agreement: agreement.id, reward: reward.id, ready: raw.ready, source } };
+  }
+}
+function observeAgreement(state, observation) {
+  if (observation.kind === "agreement") {
+    if (!state.agreements?.some((a) => a.id === observation.value.id))
+      (state.agreements ??= []).push(structuredClone(observation.value));
+    return;
+  }
+  const agreement = state.agreements?.find((a) => a.id === observation.value.agreement);
+  if (!agreement)
+    return;
+  if (observation.kind === "agreement_progress")
+    agreement.requirements.find((r) => r.id === observation.value.requirement).done = observation.value.source;
+  else if (observation.kind === "reward_ready")
+    agreement.rewards.find((r) => r.id === observation.value.reward).ready = { allowed: observation.value.ready, source: observation.value.source };
+  else
+    agreement.cancelled = observation.value.source;
+}
+function settleReward(state, actor, agreementId, rewardId, action, changes, beats) {
+  const agreement = state.agreements?.find((a) => a.id === agreementId), reward = agreement?.rewards.find((r) => r.id === rewardId);
+  if (!agreement || !reward || reward.paid)
+    throw new Error("Reward unavailable or already received");
+  if (agreement.owner !== actor && agreement.from !== actor || agreement.from === "you" && actor !== "you")
+    throw new Error("This actor cannot settle that reward");
+  if (!agreementDone(agreement))
+    throw new Error("The agreement's requirements are not all fulfilled");
+  const other = agreement.from === actor ? agreement.owner : agreement.from;
+  if (!reward.ready)
+    throw new MechanicalKnowledgeError("The other participant's current willingness is not recorded");
+  if (!reward.ready.allowed)
+    throw new Error("The other participant withdrew this reward exchange");
+  if (!agreement.from || !other || other !== "you" && !state.entities?.some((e) => e.name === other))
+    throw new MechanicalKnowledgeError("The other participant's current presence is not recorded");
+  if (!present(state, other) || !capable(state, other))
+    throw new Error("The other participant has not made this exchange available here");
+  const beforeAgreement = structuredClone(agreement), { from: payer, owner: recipient } = agreement;
+  if (reward.kind === "resource") {
+    const find = (owner) => state.resources.filter((r) => r.owner === owner && normalized(r.name) === normalized(reward.asset));
+    const from = find(payer), to = find(recipient);
+    if (from.length !== 1 || to.length !== 1)
+      throw new MechanicalKnowledgeError(`Both current ${reward.asset} balances must be known`);
+    const a = from[0], b = to[0];
+    if (a.role && b.role && a.role !== b.role || a.unit !== b.unit || a.role === "shield" || b.role === "shield" || vital(state, payer)?.id === a.id || vital(state, recipient)?.id === b.id)
+      throw new Error("The reward resources do not support this transfer");
+    if (a.current < reward.amount)
+      throw new Error(`The payer lacks ${reward.asset}`);
+    if (b.max !== undefined && b.current + reward.amount > b.max)
+      throw new Error("The recipient cannot hold the whole reward");
+    const oldA = structuredClone(a), oldB = structuredClone(b);
+    a.current -= reward.amount;
+    b.current += reward.amount;
+    changes.push({ kind: "resource", id: a.id, before: oldA, after: structuredClone(a) }, { kind: "resource", id: b.id, before: oldB, after: structuredClone(b) });
+  } else {
+    const items = state.items.filter((i) => i.owner === payer && normalized(i.name) === normalized(reward.asset) && i.quantity > 0);
+    if (items.length !== 1)
+      throw new MechanicalKnowledgeError("The actual reward item is not uniquely established");
+    const item = items[0];
+    if (item.equipped || item.quantity < reward.amount)
+      throw new Error("The actual reward quantity is unavailable");
+    const old = structuredClone(item);
+    if (item.quantity === reward.amount)
+      item.owner = recipient;
+    else {
+      const received = { ...structuredClone(item), id: `reward-item-${revision([agreement.id, reward.id])}`, owner: recipient, quantity: reward.amount };
+      if (state.items.some((i) => i.id === received.id))
+        throw new Error("Reward item already exists");
+      item.quantity -= reward.amount;
+      state.items.push(received);
+      changes.push({ kind: "item", id: received.id, before: null, after: structuredClone(received) });
+    }
+    changes.push({ kind: "item", id: item.id, before: old, after: structuredClone(item) });
+  }
+  reward.paid = { action };
+  changes.push({ kind: "agreement", id: agreement.id, before: beforeAgreement, after: structuredClone(agreement) });
+  beats.push({ kind: "reward", actor: payer, target: recipient, name: reward.asset, amount: reward.amount });
+}
+var str = (v, max = 240) => typeof v === "string" && v.trim().length <= max ? v.trim().replace(/\s+/g, " ") : "", obj = (v) => !!v && typeof v === "object" && !Array.isArray(v), normalized = (s) => s.normalize("NFKC").toLocaleLowerCase(), numeric = (quote, n) => (quote.match(/\d+(?:\.\d+)?/g) ?? []).some((v) => Number(v) === n) || ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].some((v, i) => i === n && new RegExp(`\\b${v}\\b`, "i").test(quote)), agreementDone = (a) => !a.cancelled && !a.unsupported.length && a.requirements.every((r) => !!r.done), agreementSettled = (a) => !!a.cancelled || agreementDone(a) && a.rewards.every((r) => !!r.paid), visibleAgreements = (rows = []) => [...rows.filter((a) => !agreementSettled(a)), ...rows.filter(agreementSettled).slice(-6)], at = (e, messages) => messages.findIndex((m) => m.id === e.message), AGREEMENT_INSTRUCTIONS = `When an actual agreement has several requirements or an explicit counted reward, optionally add mechanicalObservations {kind:"agreement",owner,name,from:"reward payer if any",offer:{message,quote},requirements:[{message,quote}],rewards:[{kind:"item|resource",asset:"established asset name",amount,message,quote}],unsupported:[],message,quote}. The root quote is the owner's actual acceptance, in the player's own message for owner:you. An NPC payer's offer is actual narrator text naming them and the terms, never a player's invented NPC offer. When the player offers payment for another person's work, from:you requires the player's own offer, and owner is the NPC who actually accepts in narrator text. Each requirement quote is a distinct exact clause within that acceptance or offer; all requirements are required. Do not drop a condition, invent a reward, automatically accept a request, or turn an ordinary invitation into a quest. No reward means rewards:[]. Unknown source mechanics/restrictions stay in unsupported. Do not create duplicate free-form commitments, situations or facts for requirements, progress or rewards already represented by the structured agreement. Retain a separate event only for an independent consequence, such as a witness learning a secret. Resolve an earlier pending-offer situation when the agreement is accepted.
+Record actual fulfillment with {kind:"agreement_progress",agreement:"saved id or name",requirement:"saved id or exact clause",message,quote}, citing actual NARRATOR completion, not the player's attempt or a repeated offer. Code completes the agreement only after every requirement. Do not change accepted terms on subsequent reads. The owner can explicitly withdraw with {kind:"agreement_cancel",agreement,message,quote}; an NPC's displeasure does not withdraw the player's promise for them.
+After all requirements are fulfilled, an actual payer offering/holding out a particular reward can establish {kind:"reward_ready",agreement,reward:"saved id or asset name",ready:true,message,quote}. A subsequent explicit refusal/withdrawal can set ready:false. This is current willingness, separate from the original promise. It needs actual narrator text naming the NPC counterpart after the recorded fulfillment. For from:you this is the NPC recipient's willingness to receive, never permission to spend the player's money automatically. An earned reward does not force someone to cooperate. Do not narrate a completed monetary/item handover without its mechanical receipt. Make the offer available and leave acceptance to the player. The player can collect it through normal chat; no menu is required.
+Reward collection uses saved exact amounts and transfers actual owned items or between two established same-unit resource balances. Unknown balances are unknown, not zero. An offer alone does not prove the payer owns the money or item. Do not mint items or coins, refill a spent balance, substitute a different reward, or create numerical Health/relationship/XP to pay a promise. When a physical reward, including a counted pile of coins, is established without known total wallet balances, use an item claim and track that actual stack instead of inventing a wallet total. The offered amount alone does not prove possession; a later actual holding/counting/setting-out event can establish the counted item. Use a distinct source-backed item instance ID for a new stack, not the ID of a previously transferred stack. Actual paid rewards cannot be offered or collected again.`;
+var init_agreements = __esm(() => {
+  init_encounters();
+});
+
 // src/engine/format-version.ts
 var RULESET_FORMAT = 2;
 
@@ -2965,6 +3166,7 @@ var DICE_STYLE = `
 // src/living/inspector.ts
 init_html();
 init_encounters();
+init_agreements();
 function defenseText(d, remaining = false) {
   const damage = `${d.damageType === "all" ? "all" : d.damageType} damage`;
   if (d.kind === "immunity")
@@ -2995,6 +3197,7 @@ function inspectMechanics(state) {
   const resources = state.resources.filter((r) => r.owner === "you"), items = state.items.filter((i) => i.owner === "you" && i.quantity > 0);
   const conditions = state.conditions.filter((c) => c.owner === "you"), abilities = state.abilities?.filter((a) => a.owner === "you") ?? [];
   const resilience = state.resilience?.find((r) => r.owner === "you" && r.band !== "ordinary");
+  const agreements = visibleAgreements(state.agreements?.filter((a) => a.owner === "you" || a.from === "you"));
   const named = (id) => state.resources.find((r) => r.id === id)?.name ?? state.items.find((i) => i.id === id)?.name ?? id;
   return `<section class="warp-inspector" aria-label="Your saved mechanics">
     ${resources.length ? `<dl class="warp-inspector-resources">${resources.map((r) => `<div><dt>${esc(r.name)}</dt><dd>${r.current}${r.max === undefined ? "" : ` / ${r.max}`}${r.unit ? ` ${esc(r.unit)}` : ""}</dd></div>`).join("")}</dl>` : ""}
@@ -3007,7 +3210,8 @@ function inspectMechanics(state) {
       ${a.requires.length ? `<p>Requires ${a.requires.map((r) => `${esc(named(r.item))}${r.equipped ? " equipped" : " carried"}`).join(", ")}</p>` : ""}
       ${a.unsupported.length ? `<p class="warp-inspector-blocked">Needs clarification: ${a.unsupported.map(esc).join(" · ")}</p>` : ""}
       <small>Version ${a.version} · ${esc(a.sourceKind)}</small><blockquote>${esc(a.source.quote)}</blockquote></details>`).join("")}</div>` : ""}
-    ${!resources.length && !items.length && !conditions.length && !abilities.length && !resilience ? "No established player mechanics yet." : ""}
+    ${agreements.map((a) => `<details data-inspect-agreement="${esc(a.id)}"><summary>${esc(a.name)} · ${a.cancelled ? "withdrawn" : `${a.requirements.filter((r) => r.done).length}/${a.requirements.length} done`}</summary>${a.requirements.map((r) => `<p>${r.done ? "Done" : "Pending"} · ${esc(r.text)}</p>`).join("")}${a.rewards.map((r) => `<p>${r.paid ? "Received" : a.cancelled ? "Declined" : r.ready?.allowed ? "Offered" : r.ready ? "Withheld" : "Promised"} · ${r.amount} ${esc(r.asset)}${a.from ? ` · from ${esc(a.from)}` : ""}</p>`).join("")}${a.unsupported.length ? `<p>Needs clarification: ${a.unsupported.map(esc).join(" · ")}</p>` : ""}<blockquote>${esc(a.offer?.quote ?? a.source.quote)}</blockquote></details>`).join("")}
+    ${!resources.length && !items.length && !conditions.length && !abilities.length && !resilience && !agreements.length ? "No established player mechanics yet." : ""}
   </section>`;
 }
 var INSPECTOR_STYLE = `
@@ -3075,7 +3279,7 @@ function connectLiving(ctx) {
     if (!view.enabled)
       return `<div class="warp-scene-top"><span>Warp paused</span><button data-living="resume">Resume</button></div>`;
     const world = view.world;
-    const inspectable = !!world.mechanics && [...world.mechanics.resources, ...world.mechanics.items.filter((i) => i.quantity > 0), ...world.mechanics.conditions, ...world.mechanics.abilities ?? [], ...(world.mechanics.resilience ?? []).filter((r) => r.band !== "ordinary")].some((row) => row.owner === "you");
+    const inspectable = !!world.mechanics && [...world.mechanics.resources, ...world.mechanics.items.filter((i) => i.quantity > 0), ...world.mechanics.conditions, ...world.mechanics.abilities ?? [], ...(world.mechanics.resilience ?? []).filter((r) => r.band !== "ordinary"), ...world.mechanics.agreements ?? []].some((row) => row.owner === "you" || ("from" in row) && row.from === "you");
     const matches = world.facts.filter((f) => !memoryQuery || `${f.subject} ${f.text} ${f.quote}`.toLocaleLowerCase().includes(memoryQuery.toLocaleLowerCase()));
     const remembered = matches.slice(-80).reverse();
     const relevant = world.facts.filter((f) => f.status === "open" && ["commitment", "situation"].includes(f.kind)).slice(-2);
@@ -3089,7 +3293,7 @@ function connectLiving(ctx) {
     });
     return `<div class="warp-scene-top"><span class="warp-scene-place">${esc(world.place || "Here")}</span><span class="warp-scene-people">${world.present.map(esc).join(" · ")}${view.busy ? ' <span role="status" aria-label="Updating the scene">…</span>' : ""}</span><span class="warp-scene-tools"><button data-living="ideas" ${loading ? "disabled" : ""}>${loading ? "Thinking…" : "Ideas"}</button>${inspectable ? `<button data-living="inspect" aria-expanded="${inspectorOpen}">Inspect</button>` : ""}<button data-living="correct">Correct</button><button data-living="pause">Pause</button><button data-living="settings" aria-expanded="${settingsOpen}">Settings</button></span></div>
       ${settingsOpen ? `<div class="warp-scene-settings"><label>Helper connection <select data-helper-connection><option value="">Use this chat's connection</option>${connections.map((c) => `<option value="${esc(c.id)}"${helperConnection === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label><label style="display:block;margin-top:8px">Decision connection <select data-decision-connection><option value="">Use the helper</option>${decisionConnection && !decisionConnections.some((c) => c.id === decisionConnection) ? `<option value="${esc(decisionConnection)}" selected>Saved profile unavailable</option>` : ""}${decisionConnections.map((c) => `<option value="${esc(c.id)}"${decisionConnection === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label><p>Decision profiles come from Lumiverse Connections. They assess contested attempts; Warp rolls the outcome. Unavailable profiles fall back to the helper.</p><p>Reading the scene uses an additional model call. A risky attempt may use one more. You can choose a faster helper connection here.</p></div>` : ""}
-      ${relevant.length ? `<div class="warp-scene-note">${relevant.map((f) => esc(f.text)).join(" · ")}</div>` : ""}
+      ${!notes.length && relevant.length ? `<div class="warp-scene-note">${relevant.map((f) => esc(f.text)).join(" · ")}</div>` : ""}
       ${notes.length ? `<div class="warp-scene-note">${notes.map(esc).join(" · ")}</div>` : ""}
       ${checkMarkup(view)}
       ${inspectorOpen && inspectable && world.mechanics ? inspectMechanics(world.mechanics) : ""}
@@ -3193,6 +3397,7 @@ function connectLiving(ctx) {
     const checkKey = JSON.stringify([view.chatId, view.anchor, view.decision, view.responses]);
     const previousChecks = new Map(renderedCheckKey === checkKey ? [...root.querySelectorAll("[data-check-id]")].map((e) => [e.dataset.checkId, e]) : []);
     const expandedAbilities = [...root.querySelectorAll("[data-inspect-ability][open]")].map((e) => e.dataset.inspectAbility);
+    const expandedAgreements = [...root.querySelectorAll("[data-inspect-agreement][open]")].map((e) => e.dataset.inspectAgreement);
     const focused = root.contains(document.activeElement) && document.activeElement?.matches("textarea,[data-memory-query]");
     const selector = document.activeElement?.matches("[data-memory-query]") ? "[data-memory-query]" : "textarea";
     const selection = focused ? [document.activeElement.selectionStart ?? 0, document.activeElement.selectionEnd ?? 0] : null;
@@ -3223,6 +3428,8 @@ function connectLiving(ctx) {
       root.querySelector("[data-memory]")?.setAttribute("open", "");
     for (const id of expandedAbilities)
       root.querySelector(`[data-inspect-ability="${CSS.escape(id)}"]`)?.setAttribute("open", "");
+    for (const id of expandedAgreements)
+      root.querySelector(`[data-inspect-agreement="${CSS.escape(id)}"]`)?.setAttribute("open", "");
     if (selection) {
       const input = root.querySelector(selector);
       input?.focus();

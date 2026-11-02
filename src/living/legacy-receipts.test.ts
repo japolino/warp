@@ -16,3 +16,10 @@ test("legacy narrative condition endings do not acquire new bookkeeping or chang
   expect(foldMechanics(fixtures.history.messages)).toEqual(fixtures.history.after);
   expect(foldMechanics(fixtures.history.messages).closedConditions).toBeUndefined();
 });
+
+const resolver4 = await Bun.file(new URL("./fixtures/resolver4-receipts.json", import.meta.url)).json() as Pick<typeof fixtures, "generatedFrom" | "cases">;
+for (const fixture of resolver4.cases) test(`${fixture.name} replays the installed resolver 4 result unchanged`, () => {
+  expect(resolver4.generatedFrom).toBe("e7ec33c3cbdbe2665e7074546386c3a44058ed1e");
+  expect(fixture.receipt.engine).toBe(4);
+  expect(commitMechanical(fixture.before, fixture.receipt)).toEqual(fixture.after);
+});

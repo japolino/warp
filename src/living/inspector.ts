@@ -2,6 +2,7 @@ import { esc } from "../frontend/html.js";
 import type { MechanicalState } from "./mechanics.js";
 import type { AbilityEffect } from "./abilities.js";
 import { cooldownRemaining, type Defense } from "./encounters.js";
+import { visibleAgreements } from "./agreements.js";
 
 function defenseText(d: Defense, remaining = false) {
   const damage = `${d.damageType === "all" ? "all" : d.damageType} damage`;
@@ -27,6 +28,7 @@ export function inspectMechanics(state: MechanicalState): string {
   const resources = state.resources.filter(r => r.owner === "you"), items = state.items.filter(i => i.owner === "you" && i.quantity > 0);
   const conditions = state.conditions.filter(c => c.owner === "you"), abilities = state.abilities?.filter(a => a.owner === "you") ?? [];
   const resilience = state.resilience?.find(r => r.owner === "you" && r.band !== "ordinary");
+  const agreements = visibleAgreements(state.agreements?.filter(a => a.owner === "you" || a.from === "you"));
   const named = (id: string) => state.resources.find(r => r.id === id)?.name ?? state.items.find(i => i.id === id)?.name ?? id;
   return `<section class="warp-inspector" aria-label="Your saved mechanics">
     ${resources.length ? `<dl class="warp-inspector-resources">${resources.map(r => `<div><dt>${esc(r.name)}</dt><dd>${r.current}${r.max === undefined ? "" : ` / ${r.max}`}${r.unit ? ` ${esc(r.unit)}` : ""}</dd></div>`).join("")}</dl>` : ""}
@@ -39,7 +41,8 @@ export function inspectMechanics(state: MechanicalState): string {
       ${a.requires.length ? `<p>Requires ${a.requires.map(r => `${esc(named(r.item))}${r.equipped ? " equipped" : " carried"}`).join(", ")}</p>` : ""}
       ${a.unsupported.length ? `<p class="warp-inspector-blocked">Needs clarification: ${a.unsupported.map(esc).join(" · ")}</p>` : ""}
       <small>Version ${a.version} · ${esc(a.sourceKind)}</small><blockquote>${esc(a.source.quote)}</blockquote></details>`).join("")}</div>` : ""}
-    ${!resources.length && !items.length && !conditions.length && !abilities.length && !resilience ? "No established player mechanics yet." : ""}
+    ${agreements.map(a => `<details data-inspect-agreement="${esc(a.id)}"><summary>${esc(a.name)} · ${a.cancelled ? "withdrawn" : `${a.requirements.filter(r => r.done).length}/${a.requirements.length} done`}</summary>${a.requirements.map(r => `<p>${r.done ? "Done" : "Pending"} · ${esc(r.text)}</p>`).join("")}${a.rewards.map(r => `<p>${r.paid ? "Received" : a.cancelled ? "Declined" : r.ready?.allowed ? "Offered" : r.ready ? "Withheld" : "Promised"} · ${r.amount} ${esc(r.asset)}${a.from ? ` · from ${esc(a.from)}` : ""}</p>`).join("")}${a.unsupported.length ? `<p>Needs clarification: ${a.unsupported.map(esc).join(" · ")}</p>` : ""}<blockquote>${esc(a.offer?.quote ?? a.source.quote)}</blockquote></details>`).join("")}
+    ${!resources.length && !items.length && !conditions.length && !abilities.length && !resilience && !agreements.length ? "No established player mechanics yet." : ""}
   </section>`;
 }
 

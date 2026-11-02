@@ -71,7 +71,7 @@ try {
           }
         } else if (e.type === "intercept_result" && e.requestId === "exchange") {
           receipt = messages[1].metadata.warpLivingAttempt?.receipt;
-          if (e.error || receipt?.status !== "ready" || receipt?.engine !== 4 || !receipt.beats.some((b: any) => b.kind === "response")) throw new Error("No production exchange receipt");
+          if (e.error || receipt?.status !== "ready" || receipt?.engine !== 5 || !receipt.beats.some((b: any) => b.kind === "response")) throw new Error("No production exchange receipt");
           if (messages[2].metadata.warpMechanics) throw new Error("Committed before narration completed");
           phase = "commit"; messages[2].content = "Jo attempts the jab while you guard.";
           worker.postMessage({ type: "event", event: "GENERATION_ENDED", userId: "fixture-user", payload: { chatId: "exchange-smoke", generationId: "exchange-generation", messageId: "reply", content: messages[2].content } });

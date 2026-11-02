@@ -44,7 +44,7 @@ function seedFor(plan: ResponsePlan, result: "clean" | "mixed" | "setback") {
 test("an NPC pays its saved cost and rolls against an explicit player guard in the same atomic receipt", () => {
   const { state } = fixture(), responses = plans(state), id = seedFor(responses[0], "clean");
   const receipt = prepareExchange(state, id, "you", [{ kind: "defend" }], responses);
-  expect(receipt.status).toBe("ready"); expect(receipt.engine).toBe(4);
+  expect(receipt.status).toBe("ready"); expect(receipt.engine).toBe(5);
   expect(value(state, "you-hp")).toBe(40); expect(value(state, "Jo-focus")).toBe(10);
   const after = commitMechanical(state, receipt);
   expect(value(after, "you-hp")).toBe(35); expect(value(after, "Jo-focus")).toBe(8);

@@ -85,3 +85,20 @@ bun C:/Users/eme4/warp-core/scripts/live-model-check.ts D:/Lumiverse --playtest 
 Both synthetic helper samples are pinned in `src/living/fixtures/mystery-learning.json` and replayed in tests, including rejection of the original player citation. This is one successful live learning sample, not an accuracy rate or proof of long-session privacy. The helper still interprets whether a passage establishes hearing, discovery, a claim or a fact. Structural validation checks references, named participants, chronology, the sender's prior knowledge and proposition versions; it cannot independently understand every passage. Narrator compliance with information boundaries also needs broader testing.
 
 No real chat was created or modified. The test harness retains ordinary usage data but still supplies no verified provider cache-hit telemetry. The new information boundary travels in future state deltas; the stable director and historical prompt snapshots are unchanged.
+
+## 2026-11-02: multi-part café work and offered payment
+
+The `agreement` case starts with ordinary café work and explicit current balances of 20 Coins for Jo and 3 Coins for Sam. Jo offers 10 Coins for covering the counter during a call and cleaning the cups afterward. No agreement is initially accepted. It uses the configured `google_vertex` / `gemini-4-argon` connection, synthetic characters, and disposable host data.
+
+```powershell
+bun C:/Users/eme4/warp-core/scripts/live-model-check.ts D:/Lumiverse --playtest --case=agreement
+bun C:/Users/eme4/warp-core/scripts/live-model-check.ts D:/Lumiverse --playtest --case=agreement --turn-limit=3
+```
+
+`.artifacts/live-playtest-1793653175850.json` completed four narrator turns. The helper created the accepted agreement with both distinct clauses and the exact 10-Coin reward. Turn one completed only counter coverage; turn two completed the cups and recorded Jo holding out the pay. Neither step paid early. Narration left the coins available for the player's acceptance and made no dice checks. The collection call selected the right saved claim, but the engine blocked because Jo had a validated `scene.present` record and no separate mechanical entity. No money moved. The narrator then invented a dish-towel/logging delay, demonstrating why an internal knowledge gap must not be presented as a fictional refusal or extra requirement.
+
+The corrected runtime derives relevant identities from the already sourced scene and marks missing mechanical facts unresolved without authorizing a new obstacle. `src/living/fixtures/cafe-agreement.json` pins the actual greeting, first two replies, extraction responses and collection read. A default-runtime regression replays them and now prepares/commits Jo 20→10 and Sam 3→13 with one paid marker. A separate production worker fixture also collects using scene presence with no explicit entity output. These are deterministic checks of the corrected path, not a successful fresh live rerun.
+
+The live sample's pre-reads took 3.167, 3.023 and 7.953 seconds; extraction took 9.707 seconds at greeting, then 13.719, 13.425, 8.507 and 5.425 seconds. Narration took 4.799, 6.341, 6.228 and 24.215 seconds. The helper also duplicated some structured progress as free-form facts/situations. Later instructions ask it to avoid that duplication, and the strip now prioritizes one progress notice. These samples show remaining latency/presentation work rather than a fast-play guarantee.
+
+`.artifacts/live-playtest-1793653638627.json` is the fresh follow-up after the identity fix. The greeting read returned in 8.228 seconds and the first narration in 5.810 seconds, but its extraction timed out at 16 seconds. The next interpretation timed out at 12 seconds and narration at 30 seconds, ending the process before collection. This run does not verify end-to-end live payment. No real account chat was written; existing model usage charges apply. Broader live interpretation, refusal handling, long sessions and enjoyment remain open.

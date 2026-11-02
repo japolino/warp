@@ -51,7 +51,7 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
     if (!view) return "";
     if (!view.enabled) return `<div class="warp-scene-top"><span>Warp paused</span><button data-living="resume">Resume</button></div>`;
     const world = view.world;
-    const inspectable = !!world.mechanics && [...world.mechanics.resources, ...world.mechanics.items.filter(i => i.quantity > 0), ...world.mechanics.conditions, ...(world.mechanics.abilities ?? []), ...(world.mechanics.resilience ?? []).filter(r => r.band !== "ordinary")].some(row => row.owner === "you");
+    const inspectable = !!world.mechanics && [...world.mechanics.resources, ...world.mechanics.items.filter(i => i.quantity > 0), ...world.mechanics.conditions, ...(world.mechanics.abilities ?? []), ...(world.mechanics.resilience ?? []).filter(r => r.band !== "ordinary"), ...(world.mechanics.agreements ?? [])].some(row => row.owner === "you" || "from" in row && row.from === "you");
     const matches = world.facts.filter(f => !memoryQuery || `${f.subject} ${f.text} ${f.quote}`.toLocaleLowerCase().includes(memoryQuery.toLocaleLowerCase()));
     const remembered = matches.slice(-80).reverse();
     const relevant = world.facts.filter(f => f.status === "open" && ["commitment", "situation"].includes(f.kind)).slice(-2);
@@ -59,7 +59,7 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
     const notes = view.notes.filter(note => { const key = note.trim().toLocaleLowerCase(); if (reminders.has(key)) return false; reminders.add(key); return true; });
     return `<div class="warp-scene-top"><span class="warp-scene-place">${esc(world.place || "Here")}</span><span class="warp-scene-people">${world.present.map(esc).join(" · ")}${view.busy ? ' <span role="status" aria-label="Updating the scene">…</span>' : ""}</span><span class="warp-scene-tools"><button data-living="ideas" ${loading ? "disabled" : ""}>${loading ? "Thinking…" : "Ideas"}</button>${inspectable ? `<button data-living="inspect" aria-expanded="${inspectorOpen}">Inspect</button>` : ""}<button data-living="correct">Correct</button><button data-living="pause">Pause</button><button data-living="settings" aria-expanded="${settingsOpen}">Settings</button></span></div>
       ${settingsOpen ? `<div class="warp-scene-settings"><label>Helper connection <select data-helper-connection><option value="">Use this chat's connection</option>${connections.map(c => `<option value="${esc(c.id)}"${helperConnection === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label><label style="display:block;margin-top:8px">Decision connection <select data-decision-connection><option value="">Use the helper</option>${decisionConnection && !decisionConnections.some(c => c.id === decisionConnection) ? `<option value="${esc(decisionConnection)}" selected>Saved profile unavailable</option>` : ""}${decisionConnections.map(c => `<option value="${esc(c.id)}"${decisionConnection === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label><p>Decision profiles come from Lumiverse Connections. They assess contested attempts; Warp rolls the outcome. Unavailable profiles fall back to the helper.</p><p>Reading the scene uses an additional model call. A risky attempt may use one more. You can choose a faster helper connection here.</p></div>` : ""}
-      ${relevant.length ? `<div class="warp-scene-note">${relevant.map(f => esc(f.text)).join(" · ")}</div>` : ""}
+      ${!notes.length && relevant.length ? `<div class="warp-scene-note">${relevant.map(f => esc(f.text)).join(" · ")}</div>` : ""}
       ${notes.length ? `<div class="warp-scene-note">${notes.map(esc).join(" · ")}</div>` : ""}
       ${checkMarkup(view)}
       ${inspectorOpen && inspectable && world.mechanics ? inspectMechanics(world.mechanics) : ""}
@@ -109,6 +109,7 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
     const checkKey = JSON.stringify([view.chatId, view.anchor, view.decision, view.responses]);
     const previousChecks = new Map(renderedCheckKey === checkKey ? [...root.querySelectorAll<HTMLElement>("[data-check-id]")].map(e => [e.dataset.checkId!, e]) : []);
     const expandedAbilities = [...root.querySelectorAll<HTMLDetailsElement>("[data-inspect-ability][open]")].map(e => e.dataset.inspectAbility);
+    const expandedAgreements = [...root.querySelectorAll<HTMLDetailsElement>("[data-inspect-agreement][open]")].map(e => e.dataset.inspectAgreement);
     const focused = root.contains(document.activeElement) && document.activeElement?.matches("textarea,[data-memory-query]");
     const selector = document.activeElement?.matches("[data-memory-query]") ? "[data-memory-query]" : "textarea";
     const selection = focused ? [(document.activeElement as HTMLTextAreaElement).selectionStart ?? 0, (document.activeElement as HTMLTextAreaElement).selectionEnd ?? 0] : null;
@@ -124,6 +125,7 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
     for (const [id, reveal] of diceReveals) if (!ids.has(id)) { reveal.destroy(); diceReveals.delete(id); }
     if (detailsOpen) root.querySelector("[data-memory]")?.setAttribute("open", "");
     for (const id of expandedAbilities) root.querySelector(`[data-inspect-ability="${CSS.escape(id!)}"]`)?.setAttribute("open", "");
+    for (const id of expandedAgreements) root.querySelector(`[data-inspect-agreement="${CSS.escape(id!)}"]`)?.setAttribute("open", "");
     if (selection) { const input = root.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector); input?.focus(); input?.setSelectionRange(selection[0], selection[1]); }
   }
   const poll = setInterval(() => {
