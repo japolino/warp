@@ -9,7 +9,7 @@ import type { ResponseCheck } from "./exchanges.js";
 interface View { type: "living"; chatId: string; signature: string; revision: number; enabled: boolean; busy: boolean; retry: boolean; anchor: string | null; world: World; notes: string[]; decision?: Decision; responses?: ResponseCheck[]; notice?: string; }
 function checkMarkup(view: View): string {
   const checks = [...(view.decision ? [{ id: "player", decision: view.decision, actor: "" }] : []), ...(view.responses ?? []).slice(0, 3).map((r, i) => ({ id: `response-${i}`, decision: r.decision, actor: r.actor }))];
-  if (!checks.length) return `<div class="warp-check-none">${view.busy ? "Updating Warp's record for this reply…" : "No recorded Warp roll for this reply."}</div>`;
+  if (!checks.length) return "";
   return checks.map(({ id, decision: d, actor }) => {
     const label = actor ? `${actor} ${ { clean: "succeeds", mixed: "succeeds with a cost", setback: "falters" }[d.result]}` : { clean: "Clean success", mixed: "Success with a cost", setback: "Setback" }[d.result];
     const hasRoll = Number.isInteger(d.roll) && d.roll! >= 1 && d.roll! <= 100;

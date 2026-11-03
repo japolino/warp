@@ -67,7 +67,8 @@ test("dice receipts stay compact and keep the same dice DOM on repaint", () => {
   expect(window.document.querySelector("[data-memory]")?.hasAttribute("open")).toBe(false);
   ui.accept(view({ revision: 2 }));
   expect(window.document.querySelector(".warp-check")).toBeNull();
-  expect(window.document.querySelector(".warp-check-none")?.textContent).toContain("No recorded Warp roll");
+  expect(window.document.querySelector(".warp-check-none")).toBeNull();
+  expect(window.document.body.textContent).not.toContain("No recorded Warp roll");
 });
 
 test("inspection explains saved shield capacity and cooldown without advancing either", () => {
