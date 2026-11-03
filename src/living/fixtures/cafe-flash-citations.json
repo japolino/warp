@@ -1,0 +1,199 @@
+{
+  "capturedFrom": "live-playtest-1793657768458.json",
+  "profile": {
+    "provider": "google_vertex",
+    "model": "gemini-3.8-flash"
+  },
+  "greeting": "Jo waits beside you at the café counter. Jo has 20 Coins. You have 3 Coins. Jo says, 'If you cover the counter while I make this brief supplier call and clean the cups afterward, I will give you 10 Coins. Interested?'",
+  "bootstrap": {
+    "scene": {
+      "place": "café counter",
+      "present": [
+        "Jo"
+      ],
+      "message": "live-agreement-g",
+      "quote": "Jo waits beside you at the café counter."
+    },
+    "changes": [
+      {
+        "op": "put",
+        "id": "jo-counter-offer",
+        "kind": "situation",
+        "subject": "Jo",
+        "text": "Jo offered 10 Coins to cover the counter during a call and clean cups.",
+        "status": "open",
+        "message": "live-agreement-g",
+        "quote": "If you cover the counter while I make this brief supplier call and clean the cups afterward, I will give you 10 Coins."
+      }
+    ],
+    "mechanicalObservations": [
+      {
+        "kind": "resource",
+        "id": "jo-coins",
+        "owner": "Jo",
+        "name": "Coins",
+        "current": 20,
+        "unit": "Coins",
+        "role": "money",
+        "message": "live-agreement-g",
+        "quote": "Jo has 20 Coins."
+      },
+      {
+        "kind": "resource",
+        "id": "you-coins",
+        "owner": "you",
+        "name": "Coins",
+        "current": 3,
+        "unit": "Coins",
+        "role": "money",
+        "message": "live-agreement-g",
+        "quote": "You have 3 Coins."
+      }
+    ]
+  },
+  "turns": [
+    {
+      "player": "\"I accept. I will cover the counter during your call and clean the cups afterward.\" I take over the counter while Jo makes the call.",
+      "reply": "Jo nods with relief. \"Thanks, Sam. It will only take a couple of minutes.\" \n\nJo steps to the back corner with a phone, speaking quietly to the supplier about next week's bean delivery. The café stays quiet while you mind the front, with no new customers stepping up to order. \n\nShortly after, Jo finishes the call, pockets the phone, and returns to the counter, gesturing toward a tray of used ceramic cups waiting by the sink. \"All done on the phone. Whenever you've got those cups cleaned, the 10 Coins are yours.\"",
+      "extraction": {
+        "scene": {
+          "place": "café counter",
+          "present": [
+            "Jo"
+          ],
+          "message": "live-agreement-r2",
+          "quote": "returns to the counter"
+        },
+        "changes": [
+          {
+            "op": "resolve",
+            "id": "jo-counter-offer",
+            "message": "live-agreement-u1",
+            "quote": "I accept."
+          }
+        ],
+        "mechanicalObservations": [
+          {
+            "kind": "agreement",
+            "owner": "you",
+            "name": "cover counter and clean cups",
+            "from": "Jo",
+            "offer": {
+              "message": "live-agreement-g",
+              "quote": "If you cover the counter while I make this brief supplier call and clean the cups afterward, I will give you 10 Coins."
+            },
+            "requirements": [
+              {
+                "message": "live-agreement-g",
+                "quote": "cover the counter while I make this brief supplier call"
+              },
+              {
+                "message": "live-agreement-g",
+                "quote": "clean the cups afterward"
+              }
+            ],
+            "rewards": [
+              {
+                "kind": "resource",
+                "asset": "Coins",
+                "amount": 10,
+                "message": "live-agreement-g",
+                "quote": "I will give you 10 Coins"
+              }
+            ],
+            "unsupported": [],
+            "message": "live-agreement-u1",
+            "quote": "I accept. I will cover the counter during your call and clean the cups afterward."
+          },
+          {
+            "kind": "agreement_progress",
+            "agreement": "cover counter and clean cups",
+            "requirement": "cover the counter while I make this brief supplier call",
+            "message": "live-agreement-r2",
+            "quote": "Shortly after, Jo finishes the call, pockets the phone, and returns to the counter"
+          }
+        ]
+      }
+    },
+    {
+      "player": "I finish cleaning the cups and set the last clean cup on the rack.",
+      "reply": "Jo looks over the gleaming cups on the drying rack and gives an approving nod. \"Spotless. Thanks for handling both the counter and the wash-up, Sam.\"\n\nCounting out the agreed payment from the register side, Jo sets a neat stack of 10 Coins on the counter within your reach. \"Here are the 10 Coins we agreed on, ready whenever you want to take them.\"",
+      "extraction": {
+        "scene": {
+          "place": "café counter",
+          "present": [
+            "Jo"
+          ],
+          "message": "live-agreement-r4",
+          "quote": "Jo looks over the gleaming cups on the drying rack"
+        },
+        "changes": [
+          {
+            "op": "resolve",
+            "id": "jo-counter-offer",
+            "message": "live-agreement-u1",
+            "quote": "I accept."
+          }
+        ],
+        "mechanicalObservations": [
+          {
+            "kind": "agreement",
+            "owner": "you",
+            "name": "café counter and cups",
+            "from": "Jo",
+            "offer": {
+              "message": "live-agreement-g",
+              "quote": "If you cover the counter while I make this brief supplier call and clean the cups afterward, I will give you 10 Coins."
+            },
+            "requirements": [
+              {
+                "message": "live-agreement-u1",
+                "quote": "cover the counter during your call"
+              },
+              {
+                "message": "live-agreement-u1",
+                "quote": "clean the cups afterward"
+              }
+            ],
+            "rewards": [
+              {
+                "kind": "resource",
+                "asset": "Coins",
+                "amount": 10,
+                "message": "live-agreement-g",
+                "quote": "I will give you 10 Coins."
+              }
+            ],
+            "unsupported": [],
+            "message": "live-agreement-u1",
+            "quote": "I accept. I will cover the counter during your call and clean the cups afterward."
+          },
+          {
+            "kind": "agreement_progress",
+            "agreement": "café counter and cups",
+            "requirement": "cover the counter during your call",
+            "message": "live-agreement-r2",
+            "quote": "The café stays quiet while you mind the front"
+          },
+          {
+            "kind": "agreement_progress",
+            "agreement": "café counter and cups",
+            "requirement": "clean the cups afterward",
+            "message": "live-agreement-r4",
+            "quote": "Spotless. Thanks for handling both the counter and the wash-up, Sam."
+          },
+          {
+            "kind": "reward_ready",
+            "agreement": "café counter and cups",
+            "reward": "Coins",
+            "ready": true,
+            "uncontested": true,
+            "message": "live-agreement-r4",
+            "quote": "Here are the 10 Coins we agreed on, ready whenever you want to take them."
+          }
+        ]
+      }
+    }
+  ],
+  "claim": "I collect the promised Coins from Jo."
+}

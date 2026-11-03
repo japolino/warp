@@ -51,6 +51,18 @@ function names(state: MechanicalState, source: Evidence, who: string) {
     return !!n && new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, "iu").test(source.quote);
   });
 }
+function namedEvidence(state: MechanicalState, source: Evidence | undefined, who: string, messages: Message[]): Evidence | undefined {
+  if (!source || !who || who === "you" || names(state, source, who)) return source;
+  const message = messages.find(m => m.id === source.message);
+  if (!message || message.is_user && !/^\s*\(?OOC correction:/i.test(message.content)) return;
+  // Bind the speaker outside a short dialogue quote to one bounded actual paragraph.
+  // No name supplied by the model is inserted into the source.
+  const paragraphs = message.content.split(/\n\s*\n/).map(p => p.trim().replace(/\s+/g, " ")).filter(p => p.length <= 400 && p.includes(source.quote));
+  if (paragraphs.length !== 1 || !names(state, { ...source, quote: paragraphs[0] }, who)) return;
+  const expanded = { ...source, quote: paragraphs[0] };
+  if (state.entities?.some(e => e.entityKind === "person" && e.name !== who && e.name !== "you" && names(state, expanded, e.name))) return;
+  return expanded;
+}
 function lookup<T extends { id: string; text?: string; asset?: string }>(rows: T[], selector: unknown): T | undefined {
   const key = normalized(str(selector));
   const found = rows.filter(r => [r.id, r.text, r.asset].some(v => v && normalized(v) === key));
@@ -59,12 +71,16 @@ function lookup<T extends { id: string; text?: string; asset?: string }>(rows: T
 
 /** The model identifies clauses and actual fulfillment; code retains the accepted terms. */
 export function readAgreementObservation(raw: Record<string, unknown>, state: MechanicalState, messages: Message[], player?: string): AgreementObservation | undefined {
-  const source = evidence(raw, messages); if (!source) return;
+  const rootSource = evidence(raw, messages); if (!rootSource) return;
+  let source: Evidence = rootSource;
   const message = messages.find(m => m.id === source.message)!;
   const correction = message.is_user && /^\s*\(?OOC correction:/i.test(message.content);
   if (raw.kind === "agreement") {
     if (Object.keys(raw).some(k => !["kind", "id", "owner", "name", "from", "offer", "requirements", "rewards", "unsupported", "message", "quote"].includes(k))) return;
-    const owner = canonical(state, raw.owner, player), name = str(raw.name, 120), from = canonical(state, raw.from, player), offer = evidence(raw.offer, messages);
+    const owner = canonical(state, raw.owner, player), name = str(raw.name, 120), from = canonical(state, raw.from, player);
+    const acceptedSource = namedEvidence(state, source, owner, messages); if (!acceptedSource) return;
+    source = acceptedSource;
+    const offer = namedEvidence(state, evidence(raw.offer, messages), from, messages);
     if (!owner || !name || (owner === "you" ? !message.is_user : message.is_user && !correction || !names(state, source, owner))) return;
     const offerMessage = offer && messages.find(m => m.id === offer.message);
     const correctedOffer = offerMessage?.is_user && /^\s*\(?OOC correction:/i.test(offerMessage.content);
@@ -114,6 +130,8 @@ export function readAgreementObservation(raw: Record<string, unknown>, state: Me
   if (raw.kind === "reward_ready") {
     const reward = lookup(agreement.rewards, raw.reward);
     const other = agreement.from === "you" ? agreement.owner : agreement.from;
+    const offeredSource = namedEvidence(state, source, other ?? "", messages); if (!offeredSource) return;
+    source = offeredSource;
     if (!reward || reward.paid || !agreementDone(agreement) || typeof raw.ready !== "boolean" || !other || !names(state, source, other)) return;
     if (agreement.requirements.some(r => at(r.done!, messages) > at(source, messages))) return;
     if (reward.ready && at(reward.ready.source, messages) >= at(source, messages)) return;

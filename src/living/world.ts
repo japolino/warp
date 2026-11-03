@@ -20,6 +20,7 @@ export interface Record {
   scene?: { place: string; present: string[]; message?: string; quote?: string; sourceRevision?: string }; notes: string[];
   decision?: Decision;
   notice?: string;
+  reads?: string[];
 }
 export interface Decision { tier: "favorable" | "uncertain" | "outmatched"; result: "clean" | "mixed" | "setback"; intent: string; stakes: string; reasons: string[]; roll?: number; }
 export const emptyWorld = (): World => ({ place: "", present: [], facts: [] });
@@ -185,6 +186,7 @@ export function worldPacket(world: World, focus = ""): string {
   const selected = world.facts.map((fact, index) => ({ fact, index, score: score(fact) })).sort((a, b) => b.score - a.score || b.index - a.index).slice(0, 80).map(x => x.fact);
   return JSON.stringify({ place: world.place || undefined, present: world.present, established: selected.filter(f => f.kind !== "motive").map(({ id, kind, subject, text, holder, status, access }) => ({ id, kind, subject, text, holder, status, ...(access ? { access } : {}) })), possibleMotives: selected.filter(f => f.kind === "motive").map(f => ({ id: f.id, subject: f.subject, text: f.text })),
     ...(selected.some(f => f.access) ? { knowledgeBoundary: "Knowledge records identify actual learners and the proposition they learned. Other facts are narrator context, not shared information. Unrecorded access is unknown. Do not reveal secrets or let someone act on privileged information without an established way to learn it. Hearing an allegation does not make it true; old knowledge need not match a newer fact." } : {}),
+    ...(world.mechanics && (world.mechanics.resources.length || world.mechanics.items.length) ? { assetBoundary: "Counted resources and items change only through a saved mechanical receipt. An offer, promise or completed task does not itself transfer payment. Hold an offered reward available for the player's acceptance and resolution. Do not invent or recite new balances from prose. Missing preparation is uncertainty in the record, not a fictional refusal, fee or extra chore." } : {}),
     ...(world.mechanics?.agreements?.length ? { agreementBoundary: "Accepted agreement requirements are separate and all must be fulfilled. Preserve their terms; an attempted task is not proof of completion. After completion the NPC may offer or refuse the promised reward. Hold an offered reward available for the player's acceptance; do not narrate a completed item or money handover without a reward receipt. Describe offers naturally; leave wallet arithmetic and current balances to the inline display unless asked. Paid rewards stay paid. Never automatically spend the player's promised payment. Do not introduce a setup menu, relationship score or new quest to manage an agreement." } : {}),
     ...(world.mechanics ? { mechanics: mechanicalPacket(world.mechanics) } : {}) });
 }

@@ -39,6 +39,18 @@ function earned() {
 }
 const claim = (state: MechanicalState, index = 0): MechanicalOperation => ({ kind: "claim", agreement: state.agreements![0].id, reward: state.agreements![0].rewards[index].id });
 
+test("short NPC dialogue can bind its actual speaker, but another paragraph or ambiguous named cast cannot supply the name", () => {
+  const short = { ...root, offer: { message: opening.id, quote: "If you cover the counter and clean the cups, I will give you 10 Coins and one Pastry." } };
+  const actual = readMechanicalObservations([short], emptyMechanics(), [opening, acceptance]);
+  expect(actual.some(o => o.kind === "agreement")).toBe(true);
+  const apart = { ...opening, content: opening.content.replace("Jo says, '", "Jo leaves.\n\nSomeone says, '") };
+  expect(readMechanicalObservations([short], emptyMechanics(), [apart, acceptance])).toEqual([]);
+  const { state } = setup(); delete state.agreements;
+  state.entities!.push({ ...structuredClone(state.entities![0]), id: "dex", name: "Dex", displayName: "Dex", aliases: [] });
+  const ambiguous = { ...opening, content: opening.content.replace("Jo says, '", "Jo waits while Dex says, '") };
+  expect(readMechanicalObservations([short], state, [ambiguous, acceptance])).toEqual([]);
+});
+
 test("an actual accepted agreement needs every sourced clause before its reward is collectible", () => {
   let { state } = setup(); expect(state.agreements).toHaveLength(1);
   expect(state.agreements![0].requirements.map(r => r.text)).toEqual(["cover the counter", "clean the cups"]);

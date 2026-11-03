@@ -161,3 +161,22 @@ test("agreement progress and a paid reward append state deltas while preserving 
   expect(b.at(-1)!.content).toContain('"agreementBoundary":"Offer a completed reward');
   expect(initial.packet.mechanics.agreements[0].rewards[0].paid).toBe(false);
 });
+
+test("asset and missed-read boundaries append and clear without rewriting historical narrator prompts", () => {
+  const first = msg("0", true, "I accept the offer."), history = [first];
+  const initial = store(history, first, "Café");
+  const a = replayPrompt(prompt(history), history, "Director");
+  const nextMessage = msg("1", true, "I collect my pay."); history.push(nextMessage);
+  const next = store(history, nextMessage, "Café");
+  next.packet.assetBoundary = "A transfer needs its saved receipt.";
+  next.packet.readBoundary = "Some earlier exchanges are unrecorded.";
+  const b = replayPrompt(prompt(history), history, "Director");
+  expect(b.slice(0, a.length)).toEqual(a);
+  expect(b.at(-1)!.content).toContain('"assetBoundary":"A transfer');
+  expect(b.at(-1)!.content).toContain('"readBoundary":"Some earlier');
+  const recovered = msg("2", true, "Thanks."); history.push(recovered);
+  const after = store(history, recovered, "Café"); after.packet.assetBoundary = next.packet.assetBoundary;
+  const c = replayPrompt(prompt(history), history, "Director");
+  expect(c.slice(0, b.length)).toEqual(b); expect(c.at(-1)!.content).toContain('"readBoundary":null');
+  expect(initial.packet.readBoundary).toBeUndefined();
+});

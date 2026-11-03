@@ -77,6 +77,60 @@ test("ordinary chat prepares an accepted multi-part promise, shows progress, and
   expect(latest(id).notice).toContain("already received");
 });
 
+test("one later extraction recovers a missed acceptance and separate completion without an extra helper call", async () => {
+  const id = await chat(); extractionDown = true;
+  await h.say(id, accept); await h.generate(id, "Jo nods at your agreement.");
+  const missedAcceptance = h.messages(id).at(-1)!.id;
+  await h.say(id, "I cover the counter."); await h.generate(id, shift);
+  const missedCompletion = h.messages(id).at(-1)!.id;
+  expect((await state(id)).agreements).toBeUndefined();
+  expect(needsMechanicalRead("I collect my pay.", await state(id))).toBe(true);
+  extractionDown = false; let backgroundCalls = 0;
+  h.helper = c => {
+    if (c.system.includes("Determine whether")) return helper(c);
+    backgroundCalls++; expect(c.system).toContain("Recover previously unread exchanges");
+    const entries = JSON.parse(c.user.split("Messages:\n")[1]);
+    expect(entries.some((m: any) => m.id === missedAcceptance)).toBe(true);
+    expect(entries.some((m: any) => m.id === missedCompletion)).toBe(true);
+    const output = helper(c) as any;
+    output.mechanicalObservations.splice(-2, 0, { kind: "agreement_progress", agreement: "Help at the café", requirement: "cover the counter", message: missedCompletion, quote: shift });
+    output.mechanicalObservations.reverse(); // Local dependency ordering cannot rely on JSON array order.
+    return output;
+  };
+  await h.say(id, "I clean the cups."); await h.generate(id, cups);
+  expect(backgroundCalls).toBe(1);
+  const agreement = (await state(id)).agreements![0];
+  expect(agreement.requirements.every(r => r.done)).toBe(true);
+  expect(agreement.rewards[0].ready?.allowed).toBe(true);
+  const record = (await getMessages(id)).at(-1)!.metadata?.warpLiving as any;
+  expect(record["0"].reads).toContain(missedAcceptance); expect(record["0"].reads).toContain(missedCompletion);
+  expect(latest(id).retry).toBe(false);
+  h.helper = helper; await h.say(id, "I collect my pay."); await h.generate(id, "Jo hands over your earned pay.");
+  expect((await state(id)).resources.map(r => r.current)).toEqual([10, 13]);
+});
+
+test("catching up after a payment preserves its exact saved receipt and does not pay a second time", async () => {
+  const id = await chat(); await earn(id); extractionDown = true;
+  const evidence = "Jo sets aside 7 Stamps in a tin.";
+  await h.say(id, '"Anything else?"'); await h.generate(id, evidence);
+  const sourceId = h.messages(id).at(-1)!.id;
+  await h.say(id, "I collect my pay."); await h.generate(id, "Jo hands over the earned pay.");
+  const target = (await getMessages(id)).at(-1)!, receipt = structuredClone(mechanicalRecordOf(target)!.receipt);
+  expect((await state(id)).resources.map(r => r.current)).toEqual([10, 13]);
+  extractionDown = false;
+  h.helper = c => {
+    if (c.system.includes("Determine whether")) return helper(c);
+    expect(c.user).toContain(sourceId);
+    return { changes: [], mechanicalObservations: [{ kind: "resource", owner: "Jo", name: "Stamps", current: 7, message: sourceId, quote: evidence }] };
+  };
+  await syncLiving(id, h.userId);
+  expect(mechanicalRecordOf((await getMessages(id)).at(-1)!)?.receipt).toEqual(receipt);
+  expect((await state(id)).resources.map(r => r.current)).toEqual([10, 13, 7]);
+  expect((await state(id)).agreements![0].rewards[0].paid).toBeDefined();
+  await syncLiving(id, h.userId);
+  expect((await state(id)).resources.map(r => r.current)).toEqual([10, 13, 7]);
+});
+
 test("stopping a prepared reward pays nobody; retry reuses the plan and extraction failure cannot erase a completed payment", async () => {
   const id = await chat(); await earn(id); await h.say(id, "I collect my pay.");
   const target = h.msg(id, `${id}-partial`, false, "");
@@ -173,6 +227,34 @@ test("a saved setback while an established guard obstructs collection does not p
 });
 
 const live = await Bun.file(new URL("./fixtures/cafe-agreement.json", import.meta.url)).json() as { greeting: string; bootstrap: unknown; turns: { player: string; reply: string; extraction: unknown }[]; claim: string; claimRead: unknown };
+test("captured Flash output recovers a missed acceptance and binds short dialogue citations to their actual named paragraphs", async () => {
+  const data = await Bun.file(new URL("./fixtures/cafe-flash-citations.json", import.meta.url)).json();
+  const id = "live-flash-citations"; h.chat(id, "", data.greeting); h.characters[`char-${id}`].world_book_ids = [];
+  let preReads = 0;
+  h.helper = c => {
+    if (c.system.includes("Determine whether")) { preReads++; return { risky: false, contested: false }; }
+    const entries = JSON.parse(c.user.split("Messages:\n")[1]), last = entries.at(-1).content;
+    if (last === data.turns[0].reply) throw new Error("A missed first read");
+    return last === data.greeting ? data.bootstrap : data.turns.find((t: any) => t.reply === last)?.extraction ?? { changes: [] };
+  };
+  // Use the actual captured message IDs; they are part of the evidence, not substituted quotes.
+  h.messages(id)[0].id = "live-agreement-g";
+  await syncLiving(id, h.userId);
+  for (const [i, turn] of data.turns.entries()) {
+    await h.say(id, turn.player); h.messages(id).at(-1)!.id = `live-agreement-u${i * 2 + 1}`;
+    const reply = h.msg(id, `live-agreement-r${i * 2 + 2}`, false, turn.reply);
+    await syncLiving(id, h.userId, undefined, reply.id);
+  }
+  const before = await state(id), agreement = before.agreements![0];
+  expect(agreement.requirements.every(r => r.done)).toBe(true); expect(agreement.rewards[0].ready?.uncontested).toBe(true);
+  expect(agreement.offer!.quote).toContain("Jo says");
+  expect(agreement.rewards[0].ready!.source.quote).toContain("Jo sets");
+  expect(latest(id).retry).toBe(false);
+  await h.say(id, data.claim); await h.generate(id, "Jo hands over the earned Coins.");
+  expect(preReads).toBe(0); expect((await state(id)).resources.map(r => r.current)).toEqual([10, 13]);
+  expect((await state(id)).agreements![0].rewards[0].paid).toBeDefined();
+});
+
 test("captured live café output collects a fully earned reward using scene presence even when the model emits no mechanical entity", async () => {
   const id = "live-agreement"; h.chat(id, "", live.greeting); h.characters[`char-${id}`].world_book_ids = [];
   h.helper = c => {

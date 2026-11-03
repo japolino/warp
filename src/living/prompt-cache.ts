@@ -14,7 +14,7 @@ export function promptSnapshot(message: Msg, paths: Map<string, string>): Prompt
 
 function delta(before: any, after: any) {
   const changes: any = {};
-  for (const key of ["place", "present", "preferences", "knowledgeBoundary", "agreementBoundary"]) if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) changes[key] = after[key] ?? null;
+  for (const key of ["place", "present", "preferences", "knowledgeBoundary", "agreementBoundary", "assetBoundary", "readBoundary"]) if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) changes[key] = after[key] ?? null;
   for (const key of ["established", "possibleMotives"]) {
     const previous = new Map(before[key].map((f: any) => [f.id, JSON.stringify(f)]));
     const current = new Set(after[key].map((f: any) => f.id));
