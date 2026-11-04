@@ -197,3 +197,28 @@ test("route scene recovery rejects edited historical scenes and hidden card dest
   expect((await state(id)).routes).toBeUndefined();
   expect(currentSite(await state(id))?.name).toBe("Clinic");
 });
+
+test("the existing read supplies bounded literal scene references and retains route diagnostics outside narrator state", async () => {
+  const id = `exploration-runtime-${++serial}`; h.chat(id, "", null); h.characters[`char-${id}`].world_book_ids = [];
+  h.characters[`char-${id}`].description = "A Secret vault is hidden under Room 0.";
+  for (let i = 0; i < 10; i++) {
+    const row = h.msg(id, `${id}-room-${i}`, false, `You arrive in Room ${i}.`);
+    h.helper = () => ({ changes: [], scene: { place: `Room ${i}`, present: [], message: row.id, quote: row.content } });
+    await syncLiving(id, h.userId);
+  }
+  const reply = h.msg(id, `${id}-plan`, false, "The signed plan connects Room 9 to Room 8 by an open hallway.");
+  h.helper = c => {
+    const references = JSON.parse(c.user.split("Known scene references (historical visits, not current movement or proof of a connection):\n")[1].split("\nMessages:")[0]);
+    expect(references).toHaveLength(8); expect(references[0].name).toBe("Room 9");
+    expect(references[1].name).toBe("Room 8"); expect(references.some((r: any) => r.name === "Secret vault" || r.name === "Room 0")).toBe(false);
+    const route = { kind: "route", from: references[0].name, to: references[1].name, via: "hallway", status: "open", message: reply.id, quote: reply.content };
+    return { changes: [], mechanicalObservations: [route, { ...route, via: "invalid duplicate", secretOverride: true }] };
+  };
+  await syncLiving(id, h.userId);
+  const record = (reply.extra.spindle_metadata as any).warpLiving["0"];
+  expect(record.readSummary.offered.route).toBe(2); expect(record.readSummary.accepted.route).toBe(1);
+  expect(record.readSummary.spatial).toHaveLength(2);
+  expect((await state(id)).routes).toHaveLength(1); expect(currentSite(await state(id))?.name).toBe("Room 9");
+  const preview = await livingIntercept([{ role: "user", content: "Where am I?" }], { chatId: id, userId: h.userId, generationType: "normal", isDryRun: true } as InterceptorContextDTO);
+  expect(JSON.stringify(preview)).not.toContain("readSummary"); expect(JSON.stringify(preview)).not.toContain("secretOverride");
+});

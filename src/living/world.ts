@@ -22,6 +22,7 @@ export interface Record {
   decision?: Decision;
   notice?: string;
   reads?: string[];
+  readSummary?: ReturnType<typeof import("./scene-read.js").sceneReadSummary>;
 }
 export interface Decision { tier: "favorable" | "uncertain" | "outmatched"; result: "clean" | "mixed" | "setback"; intent: string; stakes: string; reasons: string[]; roll?: number; }
 export const emptyWorld = (): World => ({ place: "", present: [], facts: [] });
