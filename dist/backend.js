@@ -14350,24 +14350,42 @@ function delta(before, after) {
     changes.mechanics = mechanics;
   return changes;
 }
-function replayPrompt(messages, history, director, current) {
+function preparePrompt(messages, history, director, current) {
   const paths = pathsOf(history), rawPaths = rawPathsOf(history), source = new Map(history.map((m) => [m.id, m]));
+  const raw = (m) => m.metadata?.[PROMPT_KEY]?.[String(m.swipe_id ?? 0)];
+  const snapshots = new Map(history.map((m) => [m.id, current?.id === m.id ? current.snapshot : promptSnapshot(m, paths, rawPaths)]));
+  const renderings = new Map;
+  const key = (id, mode) => JSON.stringify([id, mode]);
+  for (const snapshot of snapshots.values())
+    for (const row of Array.isArray(snapshot?.renderings) ? snapshot.renderings : []) {
+      if (!row || typeof row.id !== "string" || typeof row.basis !== "string" || typeof row.block !== "string" || !["full", "delta", "omit"].includes(row.mode))
+        continue;
+      const origin = source.get(row.id);
+      if (!origin || row.basis !== renderingBasis(current?.id === row.id ? current.snapshot : raw(origin)))
+        continue;
+      if (!renderings.has(key(row.id, row.mode)))
+        renderings.set(key(row.id, row.mode), row);
+    }
+  const captured = [];
   let previous;
-  return messages.map((message) => {
+  const output = messages.map((message) => {
     if (message.role !== "user" || !message.sourceMessageId)
       return message;
     const origin = source.get(message.sourceMessageId);
     if (!origin?.is_user)
       return message;
-    const snapshot = current?.id === origin.id ? current.snapshot : promptSnapshot(origin, paths, rawPaths);
-    if (!snapshot)
-      return message;
-    const update = previous ? delta(previous.packet, snapshot.packet) : snapshot.packet;
-    if (previous && !Object.keys(update).length && !snapshot.decision && !snapshot.receipt) {
-      previous = snapshot;
+    const snapshot = snapshots.get(origin.id), basis = renderingBasis(current?.id === origin.id ? current.snapshot : raw(origin));
+    if (!snapshot || current?.id !== origin.id && renderings.has(key(origin.id, "omit"))) {
+      if (!snapshot && !renderings.has(key(origin.id, "omit"))) {
+        const row = { id: origin.id, basis, mode: "omit", block: "" };
+        captured.push(row);
+        renderings.set(key(origin.id, "omit"), row);
+      }
       return message;
     }
-    const block = `<warp>
+    const mode = previous ? "delta" : "full", frozen = renderings.get(key(origin.id, mode));
+    const update = previous ? delta(previous.packet, snapshot.packet) : snapshot.packet;
+    const block = frozen?.block ?? (previous && !Object.keys(update).length && !snapshot.decision && !snapshot.receipt ? "" : `<warp>
 ${previous ? "Recorded state update (put replaces by id; remove leaves the current projection):" : `${director}
 Player preferences are binding: exclude listed content and keep offScreen content off screen. Warp observations are chronological. Later updates replace earlier observations. Outcomes apply only to the player turn carrying them.
 Recorded state:`}
@@ -14376,16 +14394,34 @@ This player turn's resolved attempt:
 ${JSON.stringify(snapshot.decision)}` : ""}${snapshot.receipt ? `
 This player turn's mechanical receipt (authoritative changes; do not charge or award again):
 ${JSON.stringify(snapshot.receiptPacket ?? receiptPacket(snapshot.receipt))}` : ""}
-</warp>`;
+</warp>`);
+    if (!frozen) {
+      const row = { id: origin.id, basis, mode, block };
+      captured.push(row);
+      renderings.set(key(origin.id, mode), row);
+    }
     previous = snapshot;
+    if (!block)
+      return message;
     return typeof message.content === "string" ? { ...message, content: `${message.content}
 
 ${block}` } : { ...message, content: [...message.content, { type: "text", text: `
 
 ${block}` }] };
   });
+  return { messages: output, ...current ? { snapshot: captured.length ? { ...current.snapshot, renderings: [...Array.isArray(current.snapshot.renderings) ? current.snapshot.renderings : [], ...captured] } : current.snapshot } : {} };
 }
-var PROMPT_KEY = "warpLivingPrompt";
+function replayPrompt(messages, history, director, current) {
+  return preparePrompt(messages, history, director, current).messages;
+}
+var PROMPT_KEY = "warpLivingPrompt", renderingBasis = (snapshot) => revision(snapshot ? {
+  version: snapshot.version,
+  path: snapshot.path,
+  packet: snapshot.packet,
+  decision: snapshot.decision,
+  receipt: snapshot.receipt,
+  receiptPacket: snapshot.receiptPacket
+} : null);
 var init_prompt_cache = __esm(() => {
   init_world2();
   init_mechanics();
@@ -15038,19 +15074,21 @@ ${JSON.stringify(decision)}` : ""}${receipt ? `
 Mechanical receipt:
 ${JSON.stringify(receiptPacket(receipt))}` : ""}`).messages;
   }
-  if (persist && !controller?.signal.aborted && snapshot !== existing)
+  const rendered = preparePrompt(messages, history, DIRECTOR, { id: latest.id, snapshot });
+  const savedSnapshot = rendered.snapshot;
+  if (persist && !controller?.signal.aborted && savedSnapshot !== existing)
     await serializeMetadata(ctx.chatId, latest.id, async () => {
       const now = await getMessages(ctx.chatId), current = now.find((m) => m.id === latest.id);
-      if (!current || controller?.signal.aborted || pathsOf(now).get(current.id) !== snapshot.path)
+      if (!current || controller?.signal.aborted || !recordPathMatches(current, savedSnapshot.path, pathsOf(now).get(current.id), rawPathsOf(now).get(current.id), true))
         return;
       await host().chat.updateMessage(ctx.chatId, latest.id, { metadata: { ...current.metadata, [PROMPT_KEY]: {
         ...current.metadata?.[PROMPT_KEY] ?? {},
-        [String(current.swipe_id ?? 0)]: snapshot
+        [String(current.swipe_id ?? 0)]: savedSnapshot
       } }, skipChunkRebuild: true });
     });
   if (controller?.signal.aborted)
     return messages;
-  return replayPrompt(messages, history, DIRECTOR, { id: latest.id, snapshot });
+  return rendered.messages;
 }
 async function livingIntercept(messages, ctx) {
   const settings = await getSettings(ctx.userId);

@@ -34,6 +34,27 @@ function extract(c: HelperCall): unknown {
 }
 const latest = (id: string) => [...h.sent].reverse().find(m => m.type === "living" && m.chatId === id);
 
+test("normal source-identified generation saves wire forms once and replays them without modifying story text", async () => {
+  const id = chat(); await syncLiving(id, h.userId);
+  const request = () => h.messages(id).filter(m => m.content).map(m => ({ role: m.is_user ? "user" as const : "assistant" as const, content: m.content, sourceMessageId: m.id }));
+  await h.say(id, '"Hello, Jo."');
+  const firstPlayer = h.messages(id).at(-1)!, reply = h.msg(id, `${id}-reply`, false, "");
+  livingStarted({ chatId: id, generationId: `${id}-one`, targetMessageId: reply.id });
+  const first = await livingIntercept(request(), { chatId: id, userId: h.userId, generationType: "normal" } as InterceptorContextDTO);
+  const saved = (firstPlayer.extra.spindle_metadata as any).warpLivingPrompt["0"];
+  expect(saved.renderings).toHaveLength(1); expect(saved.renderings[0].block).toContain("<warp>");
+  reply.content = "Jo nods.";
+  await livingEnded({ chatId: id, generationId: `${id}-one`, messageId: reply.id }, h.userId);
+  await h.say(id, '"Thanks."'); const nextPlayer = h.messages(id).at(-1)!, nextReply = h.msg(id, `${id}-next-reply`, false, "");
+  livingStarted({ chatId: id, generationId: `${id}-two`, targetMessageId: nextReply.id });
+  const next = await livingIntercept(request(), { chatId: id, userId: h.userId, generationType: "normal" } as InterceptorContextDTO);
+  expect(next.slice(0, first.length)).toEqual(first);
+  expect((nextPlayer.extra.spindle_metadata as any).warpLivingPrompt["0"].renderings).toHaveLength(1);
+  expect((firstPlayer.extra.spindle_metadata as any).warpLivingPrompt["0"]).toEqual(saved);
+  expect(firstPlayer.content).toBe('"Hello, Jo."');
+  livingStopped({ chatId: id, generationId: `${id}-two` });
+});
+
 test("a quiet café disclosure learns only its listener, survives reload and follows the selected swipe without rolls or meters", async () => {
   const id = `living-secret-${++serial}`, opening = "You privately read a letter naming Vale as the donor. Jo waits beside you. Dex is outside.";
   h.chat(id, "", opening); h.characters[`char-${id}`].world_book_ids = [];

@@ -2,7 +2,7 @@ import { STORY_BINDINGS, storyContent, storyExcerpt, storyRevision, sourceRevisi
 import { storyHistory } from "./story-history.js";
 import { savedChecks } from "./check-history.js";
 import { EXPLORATION_INSTRUCTIONS, currentSite, evidenceIndex } from "./exploration.js";
-import { PROMPT_KEY, promptSnapshot, replayPrompt, type PromptSnapshot } from "./prompt-cache.js";
+import { PROMPT_KEY, promptSnapshot, replayPrompt, preparePrompt, type PromptSnapshot } from "./prompt-cache.js";
 import { readDecision } from "./decisions.js";
 import { emptyMechanics, hasMechanics, applyObservations, readMechanicalObservations, readMechanicalPlan, prepareMechanical, prepareExchange, conditionInfluence, mechanicalNotes, receiptPacket, MechanicalPlanError, APPROACHES, type Approach, type MechanicalOperation, type MechanicalReceipt, type MechanicalRecord, type MechanicalState, type Observation } from "./mechanics.js";
 import { MECHANICS_KEY, mechanicalRecordOf, foldMechanics } from "./mechanical-history.js";
@@ -382,15 +382,17 @@ async function cachedInjection(messages: LlmMessageDTO[], ctx: InterceptorContex
   if (!latest || !messages.some(m => m.role === "user" && m.sourceMessageId === latest.id)) {
     return injectInto(replayPrompt(messages, history, DIRECTOR), `${DIRECTOR}\nPlayer content preferences: ${JSON.stringify(preferences)}\nRecorded state:\n${JSON.stringify(packet)}${decision ? `\nResolved attempt:\n${JSON.stringify(decision)}` : ""}${receipt ? `\nMechanical receipt:\n${JSON.stringify(receiptPacket(receipt))}` : ""}`).messages;
   }
-  if (persist && !controller?.signal.aborted && snapshot !== existing) await serializeMetadata(ctx.chatId, latest.id, async () => {
+  const rendered = preparePrompt(messages, history, DIRECTOR, { id: latest.id, snapshot });
+  const savedSnapshot = rendered.snapshot!;
+  if (persist && !controller?.signal.aborted && savedSnapshot !== existing) await serializeMetadata(ctx.chatId, latest.id, async () => {
     const now = await getMessages(ctx.chatId), current = now.find(m => m.id === latest.id);
-    if (!current || controller?.signal.aborted || pathsOf(now).get(current.id) !== snapshot.path) return;
+    if (!current || controller?.signal.aborted || !recordPathMatches(current, savedSnapshot.path, pathsOf(now).get(current.id)!, rawPathsOf(now).get(current.id)!, true)) return;
     await host().chat.updateMessage(ctx.chatId, latest.id, { metadata: { ...current.metadata, [PROMPT_KEY]: {
-      ...((current.metadata?.[PROMPT_KEY] ?? {}) as object), [String(current.swipe_id ?? 0)]: snapshot,
+      ...((current.metadata?.[PROMPT_KEY] ?? {}) as object), [String(current.swipe_id ?? 0)]: savedSnapshot,
     } }, skipChunkRebuild: true });
   });
   if (controller?.signal.aborted) return messages;
-  return replayPrompt(messages, history, DIRECTOR, { id: latest.id, snapshot });
+  return rendered.messages;
 }
 
 export async function livingIntercept(messages: LlmMessageDTO[], ctx: InterceptorContextDTO): Promise<LlmMessageDTO[]> {

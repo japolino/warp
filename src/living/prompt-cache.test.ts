@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import type { Msg } from "../backend/ledger.js";
 import { pathsOf } from "./world.js";
-import { PROMPT_KEY, replayPrompt, type PromptSnapshot } from "./prompt-cache.js";
+import { PROMPT_KEY, replayPrompt, preparePrompt, type PromptSnapshot } from "./prompt-cache.js";
+import { STORY_BINDINGS, storyRevision } from "./story-text.js";
 import { emptyMechanics, prepareMechanical, prepareExchange, mechanicalPacket, receiptPacket } from "./mechanics.js";
 
 const msg = (id: string, is_user: boolean, content: string): Msg => ({ id, is_user, content, role: is_user ? "user" : "assistant", index_in_chat: Number(id), swipe_id: 0 } as Msg);
@@ -12,6 +13,73 @@ function store(history: Msg[], target: Msg, text: string) {
   return snapshot;
 }
 const prompt = (history: Msg[]) => [{ role: "system" as const, content: "Stable card and preset", cache_control: { type: "ephemeral" } }, ...history.map(m => ({ role: m.role, content: m.content, sourceMessageId: m.id }))];
+function publish(history: Msg[], target: Msg, input = prompt(history), director = "Director") {
+  const snapshot = (target.metadata![PROMPT_KEY] as Record<string, PromptSnapshot>)["0"];
+  const result = preparePrompt(input, history, director, { id: target.id, snapshot });
+  target.metadata = { ...target.metadata, [PROMPT_KEY]: { "0": result.snapshot } };
+  return result.messages;
+}
+
+test("recovering an omitted legacy snapshot leaves prior wire bytes unchanged and appends recovered state to the new turn", () => {
+  const a = msg("0", true, "First"), b = msg("1", true, "Second"), c = msg("2", true, "Third"), history = [a, b, c];
+  store(history, a, "Green jacket"); const recovered = store(history, b, "Blue jacket");
+  recovered.packet.established.push({ id: "old-hint", text: "A disclosed route" });
+  recovered.path = "verifiable-legacy-path";
+  store(history, c, "Blue jacket");
+  const first = publish(history, c);
+  expect(first[2].content).toBe("Second");
+  expect(first[3].content).not.toContain('"remove":["old-hint"]');
+  const paths = pathsOf(history);
+  b.metadata = { ...b.metadata, [STORY_BINDINGS]: { "0": { text: storyRevision(b.content), rawText: "old-text", prefix: paths.get(a.id), rawPrefix: "old-prefix", path: paths.get(b.id), rawPath: recovered.path } } };
+  const d = msg("3", true, "Fourth"); history.push(d);
+  const next = store(history, d, "Blue jacket"); next.packet.established.push({ id: "old-hint", text: "A disclosed route" });
+  const second = publish(history, d);
+  expect(second.slice(0, first.length)).toEqual(first);
+  expect(second.at(-1)!.content).toContain('"put":[{"id":"old-hint"');
+  expect(second[2].content).toBe("Second");
+  expect(recovered.packet.established).toHaveLength(2);
+});
+
+test("wire forms freeze formatter/director policy, bootstrap trimmed windows and store each form once", () => {
+  const a = msg("0", true, "First"), b = msg("1", true, "Second"), history = [a, b];
+  store(history, a, "Green jacket"); store(history, b, "Blue jacket");
+  const first = publish(history, b);
+  expect(first[1].content).toContain("Director");
+  const c = msg("2", true, "Third"); history.push(c); store(history, c, "Blue jacket");
+  const next = publish(history, c, prompt(history), "A future director");
+  expect(next.slice(0, first.length)).toEqual(first);
+  const d = msg("3", true, "Fourth"); history.push(d); store(history, d, "Blue jacket");
+  const trimmed = publish(history, d, prompt([b, c, d]), "A future director");
+  expect(trimmed[1].content).toContain("A future director");
+  expect(trimmed[1].content).toContain('"established":[{"id":"jacket","text":"Blue jacket"}]');
+  for (let i = 4; i < 20; i++) {
+    const row = msg(String(i), true, `Turn ${i}`); history.push(row); store(history, row, "Blue jacket");
+    const request = publish(history, row, prompt(history.slice(1)), "Another director");
+    expect(request.slice(0, trimmed.length)).toEqual(trimmed);
+  }
+  const saved = history.flatMap(m => ((m.metadata?.[PROMPT_KEY] as Record<string, PromptSnapshot>)?.["0"]?.renderings ?? []));
+  expect(saved).toHaveLength(21); // One form per turn plus B's legitimate full-state bootstrap.
+  expect(new Set(saved.map(r => JSON.stringify([r.id, r.basis, r.mode]))).size).toBe(saved.length);
+});
+
+test("frozen wire records cannot replay across real edits or swipes, and previews do not publish them", () => {
+  const a = msg("0", true, "First"), reply = msg("1", false, "Original"), b = msg("2", true, "Second"), history = [a, reply, b];
+  store(history, a, "Green jacket"); store(history, b, "Blue jacket"); publish(history, b);
+  const frozen = JSON.stringify(history);
+  preparePrompt(prompt(history), history, "Preview director", { id: b.id, snapshot: (b.metadata![PROMPT_KEY] as Record<string, PromptSnapshot>)["0"] });
+  expect(JSON.stringify(history)).toBe(frozen);
+  reply.content = "Edited";
+  expect(replayPrompt(prompt(history), history, "Director").at(-1)!.content).toBe("Second");
+  reply.content = "Original"; reply.swipe_id = 1;
+  expect(replayPrompt(prompt(history), history, "Director").at(-1)!.content).toBe("Second");
+});
+
+test("malformed saved rendering collections are ignored without losing valid state", () => {
+  const a = msg("0", true, "First"), history = [a], snapshot = store(history, a, "Green jacket");
+  (snapshot as any).renderings = { broken: true };
+  expect(replayPrompt(prompt(history), history, "Director")[1].content).toContain("Green jacket");
+  expect(preparePrompt(prompt(history), history, "Director", { id: a.id, snapshot }).snapshot?.renderings).toHaveLength(1);
+});
 
 test("the next request preserves the entire previous request and reply, using only changed facts", () => {
   const first = msg("0", true, "I arrive."); const history = [first]; store(history, first, "Green jacket");
