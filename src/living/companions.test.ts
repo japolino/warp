@@ -212,3 +212,15 @@ test("dismissal ends only effects explicitly bound to the summon and retains the
   expect(state.resources.map(r => r.current)).toEqual([7, 0]);
   state = cast(state, "return", "Recall"); expect(state.conditions.map(c => c.id)).toEqual(["wing"]);
 });
+
+test("a unique literal given name grounds a known full-name controller without merging ambiguous people", () => {
+  const { state } = setup(); delete state.companions;
+  const message = { id: "introduced", is_user: false, content: "Norma works beside Echo, her regular autonomous assistant." };
+  const source = { message: message.id, quote: message.content };
+  state.entities!.push({ id: "norma", name: "Norma Hollowell", displayName: "Norma Hollowell", aliases: [], entityKind: "person", present: true, status: "active", source });
+  const row = { kind: "companion", actor: "Echo", controller: "Norma Hollowell", companionKind: "companion", ...source };
+  expect(readMechanicalObservations([row], state, [scene, message])).toHaveLength(1);
+  expect(state.entities!.at(-1)!.aliases).toEqual([]);
+  state.entities!.push({ ...state.entities!.at(-1)!, id: "other", name: "Norma Vale", displayName: "Norma Vale" });
+  expect(readMechanicalObservations([row], state, [scene, message])).toEqual([]);
+});

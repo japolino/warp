@@ -12102,7 +12102,22 @@ function afterTransition(source, old, messages) {
 function mentioned(state, actor, quote) {
   const e = entityFor(state, actor);
   const names = actor === "you" ? ["you", "your", "{{user}}", ...e?.aliases ?? []] : [actor, e?.displayName ?? "", ...e?.aliases ?? []];
-  return names.some((n) => n && norm2(quote).includes(norm2(n)));
+  if (names.some((n) => n && norm2(quote).includes(norm2(n))))
+    return true;
+  const first = (name) => {
+    const parts = name.trim().split(/\s+/), word = parts[0];
+    return parts.length > 1 && word.length >= 3 && /^\p{Lu}/u.test(word) && !/^(?:the|dr\.?|professor|captain|sir|lady|lord)$/i.test(word) ? norm2(word) : "";
+  };
+  return [actor, e?.displayName ?? ""].some((name) => {
+    const short = first(name);
+    if (!short)
+      return false;
+    const matching = state.entities?.filter((row) => [row.name, row.displayName, ...row.aliases].some((n) => norm2(n) === short || first(n) === short)) ?? [];
+    if (matching.length !== 1 || matching[0].name !== actor)
+      return false;
+    const escaped = short.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`, "u").test(norm2(quote));
+  });
 }
 function compatible(from, to) {
   return from.role === "effort" && to.role === "effort" && from.owner !== to.owner && (from.unit && to.unit ? norm2(from.unit) === norm2(to.unit) : !from.unit && !to.unit && norm2(from.name) === norm2(to.name));
@@ -12255,7 +12270,8 @@ function expireCompanions(state, action, changes, beats) {
         changeManifestation(state, c, actor, false, action, changes, beats);
     }
 }
-var norm2 = (v) => v.normalize("NFKC").trim().toLocaleLowerCase(), text = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", COMPANION_INSTRUCTIONS = `For an established companion relationship only, use mechanicalObservations {kind:"companion",actor:"known entity name",controller:"known person or you",companionKind:"companion|summon",message,quote}. Cite both identities. Profiles establish the relationship, never current presence. Reuse that entity on every return. Companion is a relationship, not permission to control another person's actions or knowledge. Do not turn every friend or romance partner into a companion system.
+var norm2 = (v) => v.normalize("NFKC").trim().toLocaleLowerCase(), text = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", COMPANION_INSTRUCTIONS = `PRIORITY: When this conversation introduces, addresses or uses an established familiar, animal partner, autonomous assistant or summon, save its entity AND companion relationship before optional prose facts. This applies to NPC companions too, not only the player's. Recognizing a companion does not start combat or give it a stat sheet. An unnamed companion can keep its actual distinctive descriptor as its identity; never invent a proper name or treat it as disposable inventory. Reuse that identity on later replies.
+For that established relationship, use mechanicalObservations {kind:"companion",actor:"known entity name",controller:"known person or you",companionKind:"companion|summon",message,quote}. Declare both entities in this same response if missing, using actual scene quotes for presence and actual short-name aliases. The relationship quote must literally include both identities or their saved aliases; "my familiar" alone lacks its named speaker. Use an exact nearby narrative fragment naming both instead. Copy a contiguous exact source fragment, including actual punctuation; do not add quotation marks or omit intervening words. Profiles establish the relationship, never current presence. companionKind:summon requires an actual summoning/recall nature, not merely the word familiar. Companion is a relationship, not permission to control another person's actions or knowledge. Do not turn every friend or romance partner into a companion system. Do not duplicate the typed relationship as an inventory/possession fact.
 An explicit one-for-one SHARED COST permission between two known effort pools may use {kind:"cost_link",from:"borrower's resource id",to:"payer's resource id",enabled:true,unsupported:[],message,quote}. Both owners must occur in the actual grant. Preserve all limits/conditions in unsupported. Pools need role:effort and the same explicit unit, or the same resource name with no unit. No damage/healing links, money, health, conversion, guessed pool, implicit NPC consent or cycles. An actual revocation uses enabled:false. This redirects saved ability costs only, never standalone spending. It does not copy or refill either balance.
 A sourced recall/dismiss ability can use effects {kind:"summon|dismiss",target:"self",companion:"saved companion id or exact actor name"}. Only kind:summon relationships are eligible, owned by the ability's actual controller. summon may add duration:explicitSubsequentControllerActions, only if the source states that action duration. Seconds and other lifetime rules stay unsupported. Already present/absent is not another cast. Recall preserves injuries, resource balances, knowledge and death. No resurrection or automatic healing. A condition effect on a summon itself may add untilDismissed:true only when source explicitly ties that effect to being summoned. Dismissal/expiry clears only such bound temporary effects, never an injury or an unrelated condition. A successful departure does not bring companions along. Their actual cooperation still needs current scene evidence under the existing NPC response contract.`;
 var init_companions = __esm(() => {
@@ -15036,7 +15052,13 @@ function explorationScenes(raw, scene, messages) {
 function readObserved(raw, state, messages, sources, player, scene) {
   const seeded = readMechanicalObservations(chronologicalObservations(explorationScenes(raw, scene, messages), messages), state, messages, player);
   const base = seeded.length ? applyObservations(state, seeded) : state;
-  return [...seeded, ...readMechanicalObservations(chronologicalObservations(raw, messages, base), base, [...messages, ...sourceMessages(sources)], player)];
+  const rows = Array.isArray(raw) ? raw.slice(0, 24) : [], bonds = rows.filter((row) => row?.kind === "companion");
+  if (!bonds.length)
+    return [...seeded, ...readMechanicalObservations(chronologicalObservations(raw, messages, base), base, [...messages, ...sourceMessages(sources)], player)];
+  const observed = readMechanicalObservations(chronologicalObservations(rows.filter((row) => row?.kind !== "companion"), messages, base), base, [...messages, ...sourceMessages(sources)], player);
+  const participants = sceneParticipants(scene, applyObservations(base, observed), messages, player);
+  const ready = applyObservations(base, [...observed, ...participants]);
+  return [...seeded, ...observed, ...participants, ...readMechanicalObservations(chronologicalObservations(bonds, messages, ready), ready, [...messages, ...sourceMessages(sources)], player)];
 }
 async function call(chatId, system, user, userId, controller, timeout = 16000, maxTokens = 1200) {
   const settings = await getSettings(userId);

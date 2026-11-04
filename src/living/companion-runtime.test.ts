@@ -85,3 +85,15 @@ test("Stop and preview do not manifest or debit; a sourced companion response us
   await h.generate(id, "Echo's Beacon lights the room.", "swipe");
   expect((await state(id)).resources.map(r => r.current)).toEqual([7, 0]);
 });
+
+test("an NPC's newly introduced companion can use its controller from the same validated scene", async () => {
+  const id = `companion-runtime-${++serial}`, content = "Norma waits beside Echo, her regular autonomous assistant.";
+  h.helper = () => ({ changes: [], scene: { place: "Workshop", present: ["Norma", "Echo"], message: `${id}-g`, quote: content }, mechanicalObservations: [
+    { kind: "entity", name: "Echo", entityKind: "object", present: true, message: `${id}-g`, quote: content },
+    { kind: "companion", actor: "Echo", controller: "Norma", companionKind: "companion", message: `${id}-g`, quote: content },
+  ] });
+  h.chat(id, "", content); h.characters[`char-${id}`].world_book_ids = []; await syncLiving(id, h.userId);
+  expect((await state(id)).companions?.[0].controller).toBe("Norma");
+  expect((await state(id)).entities?.map(e => e.name)).toEqual(["Echo", "Norma"]);
+  expect((await state(id)).resources).toEqual([]); expect((await state(id)).abilities).toBeUndefined();
+});
