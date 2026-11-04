@@ -117,6 +117,11 @@ test("route-only reads reuse sourced visited scenes without requiring repeated p
   const scene = (message: string, place: string, quote: string) => ({ place, present: [], message, quote });
   h.helper = () => ({ scene: scene(`${id}-g`, "B1 사무구역", "You arrive at B1 사무구역."), changes: [] });
   await syncLiving(id, h.userId); expect((await state(id)).places).toBeUndefined();
+  for (let i = 0; i < 26; i++) {
+    const quiet = h.msg(id, `${id}-quiet-${i}`, false, "You remain in B1 사무구역.");
+    h.helper = () => ({ scene: scene(quiet.id, "B1 사무구역", quiet.content), changes: [] });
+    await syncLiving(id, h.userId);
+  }
   const next = h.msg(id, `${id}-next`, false, "You arrive at B3 연구실 앞.");
   h.helper = () => ({ scene: scene(next.id, "B3 연구실 앞", next.content), changes: [] });
   await syncLiving(id, h.userId); expect((await state(id)).places).toBeUndefined();
@@ -135,6 +140,28 @@ test("route-only reads reuse sourced visited scenes without requiring repeated p
   expect(after.routes?.map(r => r.status)).toEqual(["open", "blocked"]);
   expect(latest(id).retry).toBe(false);
   expect((route.extra.spindle_metadata as any).warpLiving["0"].reads).toContain(route.id);
+});
+
+test("preparation recovers visited route endpoints without moving the player before narration", async () => {
+  const id = `exploration-runtime-${++serial}`;
+  h.chat(id, "", "You stand in the Dock."); h.characters[`char-${id}`].world_book_ids = [];
+  h.helper = () => ({ changes: [], scene: { place: "Dock", present: [], message: `${id}-g`, quote: "You stand in the Dock." } });
+  await syncLiving(id, h.userId);
+  const next = h.msg(id, `${id}-next`, false, "You enter the Clinic. The stairs return to the Dock.");
+  h.helper = () => ({ changes: [], scene: { place: "Clinic", present: [], message: next.id, quote: "You enter the Clinic." } });
+  await syncLiving(id, h.userId);
+  await h.settings({ decisionConnectionId: "native" });
+  h.fake.decisions = { evaluate: async () => ({ answers: { operation: { type: "choice", choice: "travel" }, preparation: { type: "choice", choice: "mechanics" }, roll: { type: "choice", choice: "none" } } }) };
+  h.helper = c => c.system.includes("Determine whether") ? { risky: false, contested: false, mechanicalActions: [], mechanicalObservations: [
+    { kind: "route", from: "Clinic", to: "Dock", via: "stairs", bidirectional: true, status: "open", message: next.id, quote: "The stairs return to the Dock." },
+  ] } : { changes: [] };
+  await h.say(id, "I look down the stairs before returning to the Dock.");
+  await h.generate(id, async () => {
+    expect((await state(id)).routes?.length).toBe(1);
+    expect(currentSite(await state(id))?.name).toBe("Clinic");
+    return "You look down the stairs from the Clinic.";
+  });
+  expect(currentSite(await state(id))?.name).toBe("Clinic");
 });
 
 test("route scene recovery rejects edited historical scenes and hidden card destinations", async () => {

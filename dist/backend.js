@@ -12911,6 +12911,7 @@ var str3 = (v, max = 100) => typeof v === "string" && v.trim().length <= max ? v
 {kind:"stock",site,name,quantity,available:true|false,message,quote}; quantity needs an actual explicit count. available:true requires actual accessible unowned supplies or explicit permission, not somebody's property or an inaccessible/locked cache.
 {kind:"stock_access",site,stock:"saved id or name",available:true|false,message,quote} changes access without replenishing a count.
 Supply the places before their routes, discoveries or stocks. Reuse known names and IDs; never merge distinct rooms or invent exits, geographic distances, connections, permission or quantities. Narrator evidence or an explicit OOC correction is required; hidden card/lore maps and player attempts are not discoveries. Ordinary quiet scenes need no map. Reading a map reveals only what it actually shows, without moving the player. Investigating can reveal a clue without moving. Only actual arrival sets entered:true. A one-way drop is not a two-way passage; bidirectional:true needs a supported return route. An unknown route status is not proof of access.
+When the exchange investigates an exit or travel access, record its established connection and current restriction as route observations, not only prose facts. A saved scene or fact does not mean its routes are in the spatial state. Compare the supplied narrator context with known places/routes and recover missing connections relevant to that investigation, including an earlier supplied reply. Cite each original source. Preserve distinct normal and emergency passages separately; do not invent an endpoint or assume that a key opens an unrelated door.
 Keep old broken doors, clues, emptied supplies and known exits when returning. Updating one feature does not replace every discovery at that place. Repeating the old stock description cannot refill it. Counted gathering requires a saved gather receipt; narration can reveal or offer supplies, but must not hand over a counted amount before its transaction. Return at most eight newly relevant spatial observations; prioritize the current place, the actual next exit and requested supplies instead of repeating the whole map. Do not activate survival meters, currencies, XP or an exploration quest simply because a place exists.`;
 var init_exploration = __esm(() => {
   init_story_text();
@@ -12943,9 +12944,21 @@ function readMechanicalObservations(raw, before, messages, player, historical = 
     return parents.length === 1 ? 1 + depth(parents[0], seen) : 24;
   };
   placeRows.sort((a, b) => depth(a) - depth(b));
-  for (const row of [...rows.filter((r) => obj4(r) && r.kind === "entity"), ...placeRows, ...rows.filter((r) => !obj4(r) || r.kind !== "entity" && r.kind !== "place")]) {
-    if (!obj4(row))
+  const placeAliases = new Map;
+  const ambiguousPlaceAliases = new Set(placeRows.flatMap((row) => typeof row.id === "string" && new Set(placeRows.filter((other) => other.id === row.id).map((other) => JSON.stringify([other.name, other.parent]))).size > 1 ? [row.id] : []));
+  for (const input of [...rows.filter((r) => obj4(r) && r.kind === "entity"), ...placeRows, ...rows.filter((r) => !obj4(r) || r.kind !== "entity" && r.kind !== "place")]) {
+    if (!obj4(input))
       continue;
+    let row = input;
+    if (["place", "route", "discovery", "stock", "stock_access"].includes(row.kind)) {
+      row = { ...row };
+      for (const key of ["parent", "from", "to", "site"]) {
+        if (typeof row[key] === "string" && placeAliases.has(row[key]))
+          row[key] = placeAliases.get(row[key]);
+      }
+      if (row.kind === "place" && row.id !== undefined && !findPlace(working, row.id))
+        delete row.id;
+    }
     if (["agreement", "agreement_progress", "reward_ready", "agreement_cancel"].includes(row.kind)) {
       try {
         const observation = readAgreementObservation(row, working, messages, player, historical);
@@ -12963,6 +12976,8 @@ function readMechanicalObservations(raw, before, messages, player, historical = 
     let observation;
     if (["place", "route", "discovery", "stock", "stock_access"].includes(row.kind)) {
       observation = readExplorationObservation(row, working, s.evidence, messages, s.correction, historical);
+      if (observation?.kind === "place" && obj4(input) && typeof input.id === "string" && !ambiguousPlaceAliases.has(input.id))
+        placeAliases.set(input.id, observation.value.id);
     } else if (row.kind === "entity" || row.kind === "distance") {
       try {
         observation = readEncounterObservation(row.kind === "entity" ? { ...row, name: own(row.name, player), aliases: [...Array.isArray(row.aliases) ? row.aliases : [], ...own(row.name, player) === "you" && str4(row.name, 80) !== "you" ? [row.name] : []] } : { ...row, from: own(row.from, player), to: own(row.to, player) }, working, s.evidence, messages);
@@ -14646,7 +14661,7 @@ function sceneExploration(scene, state, messages) {
 function explorationScenes(raw, scene, messages) {
   if (!Array.isArray(raw) || !raw.some((row) => row && ["place", "route", "discovery", "stock", "stock_access"].includes(row.kind)))
     return [];
-  const references = new Set(raw.flatMap((row) => row && typeof row === "object" ? [row.from, row.to, row.site].filter((name) => typeof name === "string") : []));
+  const references = new Set(raw.slice(0, 24).flatMap((row) => row && typeof row === "object" ? [row.from, row.to, row.site].filter((name) => typeof name === "string") : []));
   if (scene?.place)
     references.add(scene.place);
   const paths = pathsOf(messages), rawPaths = rawPathsOf(messages), root = pathOf([]);
@@ -14656,10 +14671,16 @@ function explorationScenes(raw, scene, messages) {
   });
   if (scene)
     scenes.push(scene);
-  return scenes.flatMap((candidate) => {
+  const latest = new Map(scenes.map((candidate) => [candidate.place, candidate]));
+  return [...latest.values()].flatMap((candidate) => {
     const message = messages.find((m) => m.id === candidate.message);
     return references.has(candidate.place) && message && !message.is_user && sourceContains(message.content, candidate.place) ? [{ kind: "place", name: candidate.place, entered: true, message: candidate.message, quote: candidate.quote }] : [];
   });
+}
+function readObserved(raw, state, messages, sources, player, scene) {
+  const seeded = readMechanicalObservations(chronologicalObservations(explorationScenes(raw, scene, messages), messages), state, messages, player);
+  const base = seeded.length ? applyObservations(state, seeded) : state;
+  return [...seeded, ...readMechanicalObservations(chronologicalObservations(raw, messages, base), base, [...messages, ...sourceMessages(sources)], player)];
 }
 async function call(chatId, system, user, userId, controller, timeout = 16000, maxTokens = 1200) {
   const settings = await getSettings(userId);
@@ -14814,7 +14835,7 @@ Known state:
 ${worldPacket(before, messages.slice(-4).map((m) => storyContent(m.content)).join(`
 `))}
 Messages:
-${contextText(window.messages)}`, userId, controller, 30000, 2600);
+${contextText(window.messages)}`, userId, controller, 30000, 8192);
       if (!raw || typeof raw !== "object" || !(("changes" in raw) || ("scene" in raw) || ("mechanicalObservations" in raw) && Array.isArray(raw.mechanicalObservations) || ("abilityDefinitions" in raw) && Array.isArray(raw.abilityDefinitions)) || !current())
         throw new Error("Warp scene read did not complete");
       const changes = readChanges(freshChanges(raw, messages, recordOf), before, messages, playerName);
@@ -14825,8 +14846,7 @@ ${contextText(window.messages)}`, userId, controller, 30000, 2600);
       const previousMechanical = validRecord(last, savedMechanical, prefix) ? savedMechanical : undefined;
       const mechanicalBefore = foldMechanics(messages);
       const rawObserved = raw.mechanicalObservations;
-      const spatialScenes = explorationScenes(rawObserved, changes.scene, messages);
-      const modelObserved = readMechanicalObservations(chronologicalObservations(spatialScenes.length ? [...spatialScenes, ...Array.isArray(rawObserved) ? rawObserved : []] : rawObserved, messages, mechanicalBefore), mechanicalBefore, [...messages, ...sourceMessages(sources)], playerName);
+      const modelObserved = readObserved(rawObserved, mechanicalBefore, messages, sources, playerName, changes.scene);
       const positioned = sceneExploration(changes.scene, applyObservations(mechanicalBefore, modelObserved), messages);
       const observed = [...modelObserved, ...positioned, ...sceneParticipants(changes.scene, applyObservations(mechanicalBefore, [...modelObserved, ...positioned]), messages, playerName)];
       const definitions = readAbilityDefinitions(raw.abilityDefinitions, applyObservations(mechanicalBefore, observed), messages, sources, playerName);
@@ -15075,13 +15095,13 @@ ${JSON.stringify(definitionInput?.sources ?? [])}
 State:
 ${worldPacket(world, last.content)}
 Scene:
-${contextText(recovery?.pending ? recovery.messages : history.slice(-3))}`, ctx.userId, controller, Math.max(50, Math.min(12000, (ctx.interceptorDeadlineAt || Date.now() + 12500) - Date.now() - 500)), mechanicalRead ? 3200 : 900);
+${contextText(recovery?.pending ? recovery.messages : history.slice(-3))}`, ctx.userId, controller, Math.max(50, Math.min(12000, (ctx.interceptorDeadlineAt || Date.now() + 12500) - Date.now() - 500)), mechanicalRead ? 8192 : 4096);
         if (!read || typeof read !== "object" || !("risky" in read) || !("contested" in read))
           throw new Error("Attempt read incomplete");
         const parsed = read;
         if (definitionInput) {
           const base = world.mechanics ?? emptyMechanics();
-          const modelObserved = readMechanicalObservations(chronologicalObservations(parsed.mechanicalObservations, history, base), base, [...history, ...sourceMessages(definitionInput.sources)], definitionInput.player);
+          const modelObserved = readObserved(parsed.mechanicalObservations, base, history, definitionInput.sources, definitionInput.player, latestValidScene(history));
           const observed = [...modelObserved, ...sceneParticipants(latestValidScene(history), applyObservations(base, modelObserved), history, definitionInput.player)];
           const definitions = readAbilityDefinitions(parsed.abilityDefinitions, applyObservations(base, observed), history.slice(-14), definitionInput.sources, definitionInput.player);
           const observations = [...observed, ...definitions.map((value) => ({ kind: "ability", value }))];

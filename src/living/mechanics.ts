@@ -100,9 +100,22 @@ export function readMechanicalObservations(raw: unknown, before: MechanicalState
     return parents.length === 1 ? 1 + depth(parents[0], seen) : 24;
   };
   placeRows.sort((a, b) => depth(a) - depth(b));
+  // A helper may label a newly declared place and reference that label later in the
+  // same response. Resolve it only after the declaration passes source validation.
+  const placeAliases = new Map<string, string>();
+  const ambiguousPlaceAliases = new Set(placeRows.flatMap(row => typeof row.id === "string"
+    && new Set(placeRows.filter(other => other.id === row.id).map(other => JSON.stringify([other.name, other.parent]))).size > 1 ? [row.id] : []));
   // Resolve aliases before ownership regardless of the helper's JSON ordering.
-  for (const row of [...rows.filter(r => obj(r) && r.kind === "entity"), ...placeRows, ...rows.filter(r => !obj(r) || r.kind !== "entity" && r.kind !== "place")]) {
-    if (!obj(row)) continue;
+  for (const input of [...rows.filter(r => obj(r) && r.kind === "entity"), ...placeRows, ...rows.filter(r => !obj(r) || r.kind !== "entity" && r.kind !== "place")]) {
+    if (!obj(input)) continue;
+    let row: Record<string, unknown> = input;
+    if (["place", "route", "discovery", "stock", "stock_access"].includes(row.kind as string)) {
+      row = { ...row };
+      for (const key of ["parent", "from", "to", "site"]) {
+        if (typeof row[key] === "string" && placeAliases.has(row[key] as string)) row[key] = placeAliases.get(row[key] as string);
+      }
+      if (row.kind === "place" && row.id !== undefined && !findPlace(working, row.id)) delete row.id;
+    }
     if (["agreement", "agreement_progress", "reward_ready", "agreement_cancel"].includes(row.kind as string)) {
       try {
         const observation = readAgreementObservation(row, working, messages, player, historical);
@@ -115,6 +128,7 @@ export function readMechanicalObservations(raw: unknown, before: MechanicalState
     let observation: Observation | undefined;
     if (["place", "route", "discovery", "stock", "stock_access"].includes(row.kind as string)) {
       observation = readExplorationObservation(row, working, s.evidence, messages, s.correction, historical);
+      if (observation?.kind === "place" && obj(input) && typeof input.id === "string" && !ambiguousPlaceAliases.has(input.id)) placeAliases.set(input.id, observation.value.id);
     } else if (row.kind === "entity" || row.kind === "distance") {
       try { observation = readEncounterObservation(row.kind === "entity" ? { ...row, name: own(row.name, player), aliases: [...(Array.isArray(row.aliases) ? row.aliases : []), ...(own(row.name, player) === "you" && str(row.name, 80) !== "you" ? [row.name] : [])] } : { ...row, from: own(row.from, player), to: own(row.to, player) }, working, s.evidence, messages); } catch { continue; }
     } else if (row.kind === "condition_end") {

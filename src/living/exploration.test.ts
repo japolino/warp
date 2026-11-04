@@ -28,6 +28,39 @@ test("actual map knowledge prepares topology without moving to unvisited rooms o
   expect(state.resources).toEqual([]); expect(state.items).toEqual([]); expect(state.clocks).toBeUndefined();
 });
 
+test("validated response-local place labels resolve routes, scoped rooms and local features to stable IDs", () => {
+  const message = { id: "labels", is_user: false, content: "You stand in the Dock. A corridor connects Dock to Clinic. The Clinic contains a Ward with two free Bandages. The Ward has a broken lamp." };
+  const cite = (quote: string, row: object) => ({ ...row, message: message.id, quote });
+  const raw = [
+    cite("A corridor connects Dock to Clinic.", { kind: "route", from: "dock_tmp", to: "clinic_tmp", via: "corridor", status: "open", bidirectional: true }),
+    cite("The Clinic contains a Ward with two free Bandages.", { kind: "place", id: "ward_tmp", name: "Ward", parent: "clinic_tmp" }),
+    cite("You stand in the Dock.", { kind: "place", id: "dock_tmp", name: "Dock", entered: true }),
+    cite("A corridor connects Dock to Clinic.", { kind: "place", id: "clinic_tmp", name: "Clinic" }),
+    cite("The Clinic contains a Ward with two free Bandages.", { kind: "stock", site: "ward_tmp", name: "Bandages", quantity: 2, available: true }),
+    cite("The Ward has a broken lamp.", { kind: "discovery", site: "ward_tmp", name: "Lamp", text: "Broken lamp" }),
+  ];
+  const state = applyObservations(emptyMechanics(), readMechanicalObservations(raw, emptyMechanics(), [message]));
+  expect(state.routes?.[0].from).toBe(placeId("Dock")); expect(state.routes?.[0].to).toBe(placeId("Clinic"));
+  expect(state.stocks?.[0].site).toBe(placeId("Ward", placeId("Clinic")));
+  expect(state.discoveries?.[0].site).toBe(state.stocks?.[0].site);
+  expect(JSON.stringify(state)).not.toContain("_tmp");
+  expect(currentSite(state)?.name).toBe("Dock");
+});
+
+test("unverified, ambiguous or conflicting place labels cannot supply a route endpoint", () => {
+  const cite = (row: object) => cited("an open corridor between the Dock and Clinic in both directions", row);
+  const raw = [cite({ kind: "place", id: "origin", name: "Dock", entered: true }),
+    cite({ kind: "place", id: "reused", name: "Clinic" }), cite({ kind: "place", id: "reused", name: "Attic" }),
+    cite({ kind: "place", id: "hidden", name: "Secret vault" }),
+    ...["reused", "hidden"].map(to => cite({ kind: "route", from: "origin", to, via: "corridor", status: "open" }))];
+  const state = applyObservations(emptyMechanics(), readMechanicalObservations(raw, emptyMechanics(), [opening]));
+  expect(state.routes).toBeUndefined(); expect(state.places?.some(p => p.name === "Secret vault")).toBe(false);
+  const spoof = [cite({ kind: "place", id: placeId("Dock"), name: "Clinic" }), cite({ kind: "route", from: "Dock", to: "Clinic", via: "corridor", status: "open" })];
+  const before = applyObservations(emptyMechanics(), readMechanicalObservations([raw[0]], emptyMechanics(), [opening]));
+  const after = applyObservations(before, readMechanicalObservations(spoof, before, [opening]));
+  expect(after.places?.map(p => p.name)).toEqual(["Dock"]); expect(after.routes).toBeUndefined();
+});
+
 test("travel, gathering and returning preserve the broken object and conserve the actual remaining stock", () => {
   const before = bootstrap(), travel = go(before);
   expect(travel.engine).toBe(6); expect(currentSite(before)?.site).toBe(placeId("Dock"));
