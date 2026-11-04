@@ -14643,6 +14643,24 @@ function sceneExploration(scene, state, messages) {
     return [];
   return readMechanicalObservations([{ kind: "place", name: scene.place, entered: true, message: scene.message, quote: scene.quote }], state, messages);
 }
+function explorationScenes(raw, scene, messages) {
+  if (!Array.isArray(raw) || !raw.some((row) => row && ["place", "route", "discovery", "stock", "stock_access"].includes(row.kind)))
+    return [];
+  const references = new Set(raw.flatMap((row) => row && typeof row === "object" ? [row.from, row.to, row.site].filter((name) => typeof name === "string") : []));
+  if (scene?.place)
+    references.add(scene.place);
+  const paths = pathsOf(messages), rawPaths = rawPathsOf(messages), root = pathOf([]);
+  const scenes = messages.flatMap((message, i) => {
+    const record = recordOf(message);
+    return !message.is_user && record?.scene && sourceRevisionMatches(message, record.text) && recordPathMatches(message, record.path, i ? paths.get(messages[i - 1].id) : root, i ? rawPaths.get(messages[i - 1].id) : root) ? [record.scene] : [];
+  });
+  if (scene)
+    scenes.push(scene);
+  return scenes.flatMap((candidate) => {
+    const message = messages.find((m) => m.id === candidate.message);
+    return references.has(candidate.place) && message && !message.is_user && sourceContains(message.content, candidate.place) ? [{ kind: "place", name: candidate.place, entered: true, message: candidate.message, quote: candidate.quote }] : [];
+  });
+}
 async function call(chatId, system, user, userId, controller, timeout = 16000, maxTokens = 1200) {
   const settings = await getSettings(userId);
   const chat = await host().chats.get(chatId, userId);
@@ -14797,7 +14815,7 @@ ${worldPacket(before, messages.slice(-4).map((m) => storyContent(m.content)).joi
 `))}
 Messages:
 ${contextText(window.messages)}`, userId, controller, 30000, 2600);
-      if (!raw || typeof raw !== "object" || !(("changes" in raw) || ("scene" in raw)) || !current())
+      if (!raw || typeof raw !== "object" || !(("changes" in raw) || ("scene" in raw) || ("mechanicalObservations" in raw) && Array.isArray(raw.mechanicalObservations) || ("abilityDefinitions" in raw) && Array.isArray(raw.abilityDefinitions)) || !current())
         throw new Error("Warp scene read did not complete");
       const changes = readChanges(freshChanges(raw, messages, recordOf), before, messages, playerName);
       const priorScene = latestValidScene(messages), positions = new Map(messages.map((m, i) => [m.id, i]));
@@ -14806,7 +14824,9 @@ ${contextText(window.messages)}`, userId, controller, 30000, 2600);
       const savedMechanical = mechanicalRecordOf(last);
       const previousMechanical = validRecord(last, savedMechanical, prefix) ? savedMechanical : undefined;
       const mechanicalBefore = foldMechanics(messages);
-      const modelObserved = readMechanicalObservations(chronologicalObservations(raw.mechanicalObservations, messages, mechanicalBefore), mechanicalBefore, [...messages, ...sourceMessages(sources)], playerName);
+      const rawObserved = raw.mechanicalObservations;
+      const spatialScenes = explorationScenes(rawObserved, changes.scene, messages);
+      const modelObserved = readMechanicalObservations(chronologicalObservations(spatialScenes.length ? [...spatialScenes, ...Array.isArray(rawObserved) ? rawObserved : []] : rawObserved, messages, mechanicalBefore), mechanicalBefore, [...messages, ...sourceMessages(sources)], playerName);
       const positioned = sceneExploration(changes.scene, applyObservations(mechanicalBefore, modelObserved), messages);
       const observed = [...modelObserved, ...positioned, ...sceneParticipants(changes.scene, applyObservations(mechanicalBefore, [...modelObserved, ...positioned]), messages, playerName)];
       const definitions = readAbilityDefinitions(raw.abilityDefinitions, applyObservations(mechanicalBefore, observed), messages, sources, playerName);

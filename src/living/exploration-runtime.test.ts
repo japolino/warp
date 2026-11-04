@@ -110,3 +110,48 @@ test("editing the action during narration invalidates its preparation even when 
   expect((await state(id)).stocks![0].quantity).toBe(3); expect((await state(id)).items).toEqual([]);
   expect((reply.extra.spindle_metadata as any)[MECHANICS_KEY]?.["0"]?.receipt).toBeUndefined();
 });
+
+test("route-only reads reuse sourced visited scenes without requiring repeated place declarations", async () => {
+  const id = `exploration-runtime-${++serial}`;
+  h.chat(id, "", "You arrive at B1 사무구역."); h.characters[`char-${id}`].world_book_ids = [];
+  const scene = (message: string, place: string, quote: string) => ({ place, present: [], message, quote });
+  h.helper = () => ({ scene: scene(`${id}-g`, "B1 사무구역", "You arrive at B1 사무구역."), changes: [] });
+  await syncLiving(id, h.userId); expect((await state(id)).places).toBeUndefined();
+  const next = h.msg(id, `${id}-next`, false, "You arrive at B3 연구실 앞.");
+  h.helper = () => ({ scene: scene(next.id, "B3 연구실 앞", next.content), changes: [] });
+  await syncLiving(id, h.userId); expect((await state(id)).places).toBeUndefined();
+  const route = h.msg(id, `${id}-route`, false, "The stairs return to B1 사무구역. The emergency shaft is locked.");
+  h.helper = () => ({ mechanicalObservations: [
+    { kind: "route", from: "B3 연구실 앞", to: "B1 사무구역", via: "stairs", bidirectional: true, status: "open", message: route.id, quote: "The stairs return to B1 사무구역." },
+    { kind: "route", from: "B3 연구실 앞", to: "B1 사무구역", via: "emergency shaft", status: "blocked", reason: "Locked", message: route.id, quote: "The emergency shaft is locked." },
+    { kind: "route", from: "B3 연구실 앞", to: "Secret vault", via: "hidden tunnel", status: "open", message: route.id, quote: "The emergency shaft is locked." },
+  ] });
+  await syncLiving(id, h.userId);
+  const after = await state(id);
+  expect(after.places?.map(p => p.name)).toEqual(["B1 사무구역", "B3 연구실 앞"]);
+  expect(after.places?.every(p => p.visited)).toBe(true);
+  expect(currentSite(after)?.name).toBe("B3 연구실 앞");
+  expect(currentSite(after)?.source.message).toBe(next.id);
+  expect(after.routes?.map(r => r.status)).toEqual(["open", "blocked"]);
+  expect(latest(id).retry).toBe(false);
+  expect((route.extra.spindle_metadata as any).warpLiving["0"].reads).toContain(route.id);
+});
+
+test("route scene recovery rejects edited historical scenes and hidden card destinations", async () => {
+  const id = `exploration-runtime-${++serial}`;
+  h.chat(id, "", "You stand in the Dock.");
+  h.characters[`char-${id}`].description = "A Secret vault exists under the Clinic.";
+  h.characters[`char-${id}`].world_book_ids = [];
+  h.helper = () => ({ scene: { place: "Dock", present: [], message: `${id}-g`, quote: "You stand in the Dock." }, changes: [] });
+  await syncLiving(id, h.userId);
+  h.messages(id)[0].content = "You stand in the Garden.";
+  const next = h.msg(id, `${id}-next`, false, "You arrive at the Clinic. A sealed doorway blocks passage.");
+  h.helper = () => ({ scene: { place: "Clinic", present: [], message: next.id, quote: "You arrive at the Clinic." }, mechanicalObservations: [
+    { kind: "route", from: "Clinic", to: "Dock", via: "doorway", status: "blocked", message: next.id, quote: "A sealed doorway blocks passage." },
+    { kind: "route", from: "Clinic", to: "Secret vault", via: "doorway", status: "blocked", message: next.id, quote: "A sealed doorway blocks passage." },
+  ] });
+  await syncLiving(id, h.userId);
+  expect((await state(id)).places?.map(p => p.name)).toEqual(["Clinic"]);
+  expect((await state(id)).routes).toBeUndefined();
+  expect(currentSite(await state(id))?.name).toBe("Clinic");
+});
