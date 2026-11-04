@@ -1,5 +1,6 @@
 import { STORY_BINDINGS, storyContent, storyExcerpt, storyRevision, sourceRevisionMatches, recordPathMatches, sourceContains } from "./story-text.js";
 import { storyHistory } from "./story-history.js";
+import { savedChecks } from "./check-history.js";
 import { PROMPT_KEY, promptSnapshot, replayPrompt, type PromptSnapshot } from "./prompt-cache.js";
 import { readDecision } from "./decisions.js";
 import { emptyMechanics, hasMechanics, applyObservations, readMechanicalObservations, readMechanicalPlan, prepareMechanical, prepareExchange, conditionInfluence, mechanicalNotes, receiptPacket, MechanicalPlanError, APPROACHES, type Approach, type MechanicalOperation, type MechanicalReceipt, type MechanicalRecord, type MechanicalState, type Observation } from "./mechanics.js";
@@ -184,6 +185,7 @@ export async function pushLiving(chatId: string, userId?: string): Promise<void>
   const preparedAbilities = mechanicalValid ? mechanical!.observations.filter(o => o.kind === "ability" && o.value.owner === "you").map(o => o.kind === "ability" ? abilitySummary(o.value, world.mechanics) : "") : [];
   if (sequence.get(chatId) !== n) return;
   host().sendToFrontend({ type: "living", chatId, signature: pathOf(messages), revision: n, enabled: settings.enabled, busy: jobs.has(chatId), retry: failures.has(chatId) || !jobs.has(chatId) && !!extractionWindow(messages, recordOf)?.pending,
+    checks: savedChecks(messages, recordOf),
     anchor: last?.id ?? null, world, notes: [...(mechanicalValid ? mechanicalNotes(mechanical!.receipt) : []), ...(valid ? record?.notes ?? [] : []), ...preparedAbilities].slice(0, 2), decision: valid ? record?.decision ?? preparedDecision : preparedDecision,
     responses: mechanicalValid ? responseChecks(mechanical!.receipt, world.mechanics, world.present) : [], notice: valid ? record?.notice : undefined }, userId);
 }

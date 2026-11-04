@@ -3308,6 +3308,7 @@ var INSPECTOR_STYLE = `
 
 // src/living/ui.ts
 init_html();
+var revealKey = (chatId, messageId, id, d) => JSON.stringify([chatId, messageId, id, d?.tier, d?.result, d?.roll]);
 function checkMarkup(view) {
   const checks = [...view.decision ? [{ id: "player", decision: view.decision, actor: "" }] : [], ...(view.responses ?? []).slice(0, 3).map((r, i) => ({ id: `response-${i}`, decision: r.decision, actor: r.actor }))];
   if (!checks.length)
@@ -3322,6 +3323,7 @@ function checkMarkup(view) {
 }
 var STYLE = `
 .warp-scene{font:inherit;font-size:13px;line-height:1.5;color:inherit;margin:12px 0 18px;padding:12px 18px;box-sizing:border-box;border-top:1px solid color-mix(in srgb,currentColor 14%,transparent);opacity:.9;max-width:100%;overflow-wrap:anywhere}
+.warp-roll-history{font:inherit;font-size:13px;line-height:1.5;color:inherit;margin:12px 0 18px;padding:0 18px;box-sizing:border-box;opacity:.9;max-width:100%;overflow-wrap:anywhere}
 .warp-scene-top{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}.warp-scene-place{font-weight:600}.warp-scene-people{opacity:.7}.warp-scene-tools{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
 .warp-scene button{font:inherit;color:inherit;background:transparent;border:1px solid transparent;border-radius:5px;padding:3px 7px;cursor:pointer;text-align:left}.warp-scene button:hover{background:color-mix(in srgb,currentColor 8%,transparent)}
 .warp-scene button:focus-visible,.warp-scene textarea:focus-visible,.warp-scene input:focus-visible{outline:2px solid currentColor;outline-offset:3px}.warp-scene button:disabled{opacity:.5;cursor:wait}
@@ -3343,6 +3345,21 @@ function connectLiving(ctx) {
   let injected = null;
   const diceReveals = new Map;
   let renderedCheckKey = "";
+  let archivedChecks = new Map;
+  const archives = new Map;
+  const dropArchive = (id) => {
+    const old = archives.get(id);
+    if (!old)
+      return;
+    old.reveals.forEach((r) => r.destroy());
+    ctx.dom.uninject(old.injected);
+    archives.delete(id);
+  };
+  const clearArchives = () => {
+    for (const id of archives.keys())
+      dropArchive(id);
+    archivedChecks.clear();
+  };
   const remove = () => {
     for (const reveal of diceReveals.values())
       reveal.destroy();
@@ -3359,6 +3376,51 @@ function connectLiving(ctx) {
     if (view)
       ctx.sendToBackend({ type: "living_action", chatId: view.chatId, action, text: value });
   };
+  function paintArchives() {
+    if (!view || view.chatId !== active() || !view.enabled) {
+      for (const id of archives.keys())
+        dropArchive(id);
+      return;
+    }
+    const mounted = ctx.dom.listMessageElements?.() ?? [];
+    const seen = new Set;
+    for (const { messageId, element: row } of mounted) {
+      const entry = archivedChecks.get(messageId);
+      if (!entry || messageId === view.anchor || seen.has(messageId))
+        continue;
+      seen.add(messageId);
+      const card = row.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`) ?? row;
+      const key = JSON.stringify([entry.decision, entry.responses]);
+      let old = archives.get(messageId);
+      if (old && (old.key !== key || !old.root.isConnected || !old.injected.contains(old.root))) {
+        dropArchive(messageId);
+        old = undefined;
+      }
+      if (!old) {
+        const wrapper = ctx.dom.inject(card, `<div class="warp-roll-history">${checkMarkup(entry)}</div>`, card === row ? "beforeend" : "afterend");
+        const root = wrapper.querySelector(".warp-roll-history");
+        if (!root) {
+          ctx.dom.uninject(wrapper);
+          continue;
+        }
+        const reveals = [...root.querySelectorAll("[data-check-id]")].map((check) => {
+          const id = check.dataset.checkId, reveal = createDiceReveal();
+          reveal.observe(check, revealKey(view.chatId, messageId, id, id === "player" ? entry.decision : entry.responses[Number(id.slice("response-".length))]?.decision));
+          return reveal;
+        });
+        old = { injected: wrapper, root, key, reveals };
+        archives.set(messageId, old);
+      }
+      if (card === row) {
+        if (old.injected.parentElement !== row)
+          row.append(old.injected);
+      } else if (card.nextElementSibling !== old.injected)
+        card.after(old.injected);
+    }
+    for (const id of archives.keys())
+      if (!seen.has(id))
+        dropArchive(id);
+  }
   function markup() {
     if (!view)
       return "";
@@ -3395,11 +3457,15 @@ function connectLiving(ctx) {
   function paint() {
     if (!view || view.chatId !== active() || !view.anchor) {
       remove();
+      clearArchives();
       return;
     }
+    paintArchives();
     const row = ctx.dom.findMessageElement(view.anchor);
-    if (!row)
+    if (!row) {
+      remove();
       return;
+    }
     const card = row.querySelector(`[data-message-id="${CSS.escape(view.anchor)}"]`) ?? row;
     if (!root) {
       injected = ctx.dom.inject(card, '<div class="warp-scene" data-warp-living="true"></div>', card === row ? "beforeend" : "afterend");
@@ -3503,7 +3569,7 @@ function connectLiving(ctx) {
         reveal = createDiceReveal();
         diceReveals.set(id, reveal);
       }
-      reveal.observe(check, JSON.stringify([view.chatId, view.anchor, id, id === "player" ? view.decision : view.responses?.[Number(id.slice("response-".length))]]));
+      reveal.observe(check, revealKey(view.chatId, view.anchor, id, id === "player" ? view.decision : view.responses?.[Number(id.slice("response-".length))]?.decision));
     }
     for (const [id, reveal] of diceReveals)
       if (!ids.has(id)) {
@@ -3525,6 +3591,7 @@ function connectLiving(ctx) {
   const poll = setInterval(() => {
     if (view?.chatId !== active()) {
       remove();
+      clearArchives();
       view = null;
       ideas = [];
       draft = null;
@@ -3536,6 +3603,8 @@ function connectLiving(ctx) {
       paint();
     } else if (view && !root?.isConnected)
       paint();
+    else
+      paintArchives();
   }, 600);
   const publicSnapshot = () => {
     if (!view || view.chatId !== active())
@@ -3568,6 +3637,7 @@ function connectLiving(ctx) {
       if (m.type === "state" && m.chatId === active()) {
         view = null;
         remove();
+        clearArchives();
         return false;
       }
       if (m.type === "living_ideas") {
@@ -3590,6 +3660,7 @@ function connectLiving(ctx) {
       }
       if (view?.chatId !== m.chatId)
         inspectorOpen = false;
+      archivedChecks = new Map((m.checks ?? []).map((entry) => [entry.messageId, entry]));
       view = { ...m, type: "living" };
       paint();
       window.dispatchEvent(new CustomEvent("warp-state-v1", { detail: publicSnapshot() }));
@@ -3604,6 +3675,7 @@ function connectLiving(ctx) {
     destroy() {
       clearInterval(poll);
       remove();
+      clearArchives();
       unstyle();
     }
   };

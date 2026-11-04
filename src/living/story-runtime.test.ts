@@ -45,6 +45,9 @@ test("a short Korean theft and Run reach the native classifier, save one roll an
       await h.generate(id, "The guard reacts differently.", "swipe");
       expect(native).toBe(calls);
       expect((first.target.extra.spindle_metadata as any).warpLiving["1"].decision).toEqual(saved);
+      await h.say(id, '"Hello."'); await h.generate(id, "The next scene is quiet.");
+      expect(latest(id).decision).toBeUndefined();
+      expect(latest(id).checks.find((check: any) => check.messageId === first.target.id)?.decision).toEqual(saved);
     }
     expect(native).toBe(2);
   } finally { h.fake.characters.get = original; }

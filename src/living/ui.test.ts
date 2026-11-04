@@ -18,6 +18,7 @@ beforeEach(() => {
     getActiveChat: () => ({ chatId: active }), sendToBackend: (value: unknown) => sent.push(value),
     dom: {
       addStyle: () => () => {}, findMessageElement: () => window.document.getElementById("row"),
+      listMessageElements: () => [...window.document.querySelectorAll("article[data-test-message]")].map(element => ({ messageId: element.getAttribute("data-test-message")!, element })),
       inject: (target: Element, html: string, position: InsertPosition) => { const wrapper = window.document.createElement("div"); wrapper.setAttribute("data-spindle-ext", "warp"); wrapper.innerHTML = html; target.insertAdjacentElement(position, wrapper as unknown as Element); return wrapper; },
       uninject: (element: Element) => element.remove(),
     },
@@ -29,6 +30,45 @@ afterEach(() => {
   globals.forEach((key, i) => { if (previous[i]) Object.defineProperty(globalThis, key, previous[i]); else delete (globalThis as any)[key]; });
 });
 const click = (selector: string) => (window.document.querySelector(selector) as unknown as HTMLButtonElement).click();
+
+test("past checks remain under their reply, keep their DOM on updates, and follow mounted rows and active swipes", () => {
+  const oldRow = window.document.createElement("article"); oldRow.dataset.testMessage = "old";
+  oldRow.innerHTML = '<div data-message-id="old">An earlier attempt.</div>'; window.document.body.prepend(oldRow);
+  const decision = { tier: "uncertain", result: "mixed", roll: 47, intent: "Cross the guarded doorway", stakes: "Exposure", reasons: [] };
+  const checks = [{ messageId: "old", decision, responses: [] }];
+  ui.accept(view({ checks }));
+  expect(oldRow.querySelectorAll(".warp-check")).toHaveLength(1);
+  expect(oldRow.querySelectorAll("button")).toHaveLength(0);
+  expect(window.document.querySelectorAll(".warp-scene")).toHaveLength(1);
+  const die = oldRow.querySelector(".warp-check-die");
+  ui.accept(view({ checks, revision: 2, busy: true })); expect(oldRow.querySelector(".warp-check-die")).toBe(die);
+  oldRow.remove(); ui.accept(view({ checks, revision: 3 }));
+  expect(window.document.querySelectorAll(".warp-roll-history")).toHaveLength(0);
+  oldRow.innerHTML = '<div data-message-id="old">Remounted reply.</div>'; window.document.body.prepend(oldRow);
+  ui.accept(view({ checks, revision: 4 })); expect(oldRow.querySelector(".warp-check-die")?.getAttribute("aria-label")).toBe("Rolled 47 on a d100");
+  ui.accept(view({ checks: [{ ...checks[0], decision: { ...decision, roll: 18, result: "clean" } }], revision: 5 }));
+  expect(oldRow.querySelector(".warp-check-die")?.getAttribute("aria-label")).toBe("Rolled 18 on a d100");
+  ui.accept(view({ checks: [], revision: 6 })); expect(oldRow.querySelector(".warp-roll-history")).toBeNull();
+  ui.accept(view({ checks, revision: 7, enabled: false })); expect(oldRow.querySelector(".warp-roll-history")).toBeNull();
+  expect(sent).toEqual([]);
+});
+
+test("a latest check becomes a historical check without replaying its visibility animation", () => {
+  const instances: any[] = [];
+  (window as any).IntersectionObserver = class { cb: any; constructor(cb: any) { this.cb = cb; instances.push(this); } observe(target: Element) { this.target = target; } target?: Element; disconnect() {} };
+  (window as any).matchMedia = () => ({ matches: false });
+  const decision = { tier: "uncertain", result: "setback", roll: 82, intent: "History animation test", stakes: "Exposure", reasons: [] };
+  ui.accept(view({ decision }));
+  const observer = instances.at(-1); observer.cb([{ target: observer.target, isIntersecting: true, intersectionRatio: 1 }]);
+  expect(window.document.querySelector(".warp-dice-rolling")).not.toBeNull();
+  const old = window.document.querySelector("#row")! as any; old.dataset.testMessage = "reply";
+  old.id = "old-row"; const next = window.document.createElement("article"); next.id = "row"; next.innerHTML = '<div data-message-id="next">A quiet next reply.</div>'; window.document.body.append(next);
+  const before = instances.length;
+  ui.accept(view({ anchor: "next", checks: [{ messageId: "reply", decision, responses: [] }], revision: 2 }));
+  expect(old.querySelector(".warp-check-die")?.getAttribute("aria-label")).toBe("Rolled 82 on a d100");
+  expect(next.querySelectorAll(".warp-check")).toHaveLength(0);
+  expect(instances.length).toBe(before); expect(old.querySelector(".warp-dice-rolling")).toBeNull();
+});
 
 test("optional inspection reads saved player mechanics without calls, actions, or NPC spoilers", () => {
   const source = { message: "card", quote: '<img src=x onerror="boom"> Grounding costs 2 Focus.' };
