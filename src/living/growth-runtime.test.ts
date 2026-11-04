@@ -78,3 +78,25 @@ test("quoted metagame questions cannot spend, roll or train even with a helper i
   await h.say(id, '"How much Focus would it cost to cast Pulse at Ada?"'); await h.generate(id, "Pulse costs two Focus.");
   expect(await state(id)).toEqual(before); expect(reads).toBe(0);
 });
+
+test("a quiet sourced cast becomes available on its first real exchange before range rows are read", async () => {
+  const id = `growth-runtime-${++serial}`, content = "In the practice ring, Jo throws a punch at you within arm's reach.";
+  h.chat(id, "", content);
+  h.helper = c => c.system.includes("Determine whether") ? {
+    risky: true, contested: true, tier: "uncertain", intent: "Strike Jo", stakes: "Lose the opening", reasons: ["Jo is resisting"],
+    mechanicalObservations: [{ kind: "distance", from: "you", to: "Jo", band: "touch", message: `${id}-g`, quote: content }],
+    mechanicalActions: [{ kind: "strike", target: "Jo", quote: "I punch Jo's arm." }], exchange: true,
+    responses: [{ actor: "Jo", action: { kind: "strike", target: "you" }, quote: content, assessment: { contested: true, tier: "uncertain", intent: "Strike back", stakes: "Leave an opening", reasons: ["You resist"] } }],
+  } : { changes: [], scene: { place: "practice ring", present: ["Jo"], message: `${id}-g`, quote: content } };
+  await syncLiving(id, h.userId);
+  expect((await state(id)).entities).toBeUndefined();
+  await h.say(id, "I punch Jo's arm.");
+  const result = await h.generate(id, "Jo reacts to the recorded exchange.\n\n[體+1] [攻+1]");
+  const after = await state(id);
+  expect(after.applied).toHaveLength(1);
+  expect(after.growth!.find(g => g.owner === "you")!.credits).toHaveLength(1);
+  expect(after.growth!.find(g => g.owner === "Jo")!.credits).toHaveLength(1);
+  expect(after.resources).toEqual([]);
+  result.target.content = "Jo reacts to the recorded exchange.";
+  expect(await state(id)).toEqual(after);
+});

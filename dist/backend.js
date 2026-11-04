@@ -15218,8 +15218,8 @@ function usedSources(observations, sources) {
   const ids = new Set(observations.map((o) => o.kind === "condition_end" ? o.source.message : o.value.source.message));
   return sources.filter((s) => ids.has(s.id));
 }
-function sceneParticipants(scene, state, messages, player) {
-  if (!scene?.message || !scene.quote || !hasMechanics(state))
+function sceneParticipants(scene, state, messages, player, required = false) {
+  if (!scene?.message || !scene.quote || !required && !hasMechanics(state))
     return [];
   let here;
   try {
@@ -15714,7 +15714,7 @@ For explicit travel along an ALREADY KNOWN route use mechanicalActions {kind:"tr
 For an explicit wait or defensive action, use mechanicalActions {kind:"wait|defend",quote}. Defend provides Warp's 50% physical resistance until the actor next acts. Movement relative to an established participant uses {kind:"move",target,direction:"closer|away",quote}, changing one known distance band. These are actual actions, never questions or conversational gestures. Do not promise that retreat ends the encounter or that guarding prevents every kind of harm.
 You may also bootstrap mechanicalObservations for explicit initial resource values/counts in the supplied definition sources or narrator messages: {kind:"resource",owner,name,current,max?,role?,message,quote} or {kind:"item",owner,name,quantity,equipped,message,quote}. Code assigns a stable ID if omitted. Existing IDs stay unchanged. Within a newly prepared definition, a cost or required item may reference its unique owned name when no ID exists yet. Cite the actual source, never the current player attempt. Unknown resources stay unknown.` : ""}${classified ? `
 A separate classifier identified one ${classified.kind} action. Verify that against the original action; do not force an operation if unsupported. For a single matching operation cite the entire exact original player action in quote, preserving its language.` : ""}${mechanicalRead ? `
-REQUIRED preparation pass: always return mechanicalObservations:[] alongside mechanicalActions:[] and responses:[]. Before emitting a strike or ranged ability for either actor, check its required range in the supplied saved state. If absent, prepare a cited distance row from the latest actual narrator scene in THIS response. For a punch currently being delivered, touch means within melee reach, not an already successful contact. If no scene evidence establishes range, leave it unresolved; never invent a miss, disadvantage or extra movement because a stored row is absent. Return only newly needed observations, not every participant's distance.` : ""} Output only JSON.`, `Player: ${definitionInput?.player ?? "you"}. Use you for the player.
+REQUIRED preparation pass: always return mechanicalObservations:[] alongside mechanicalActions:[] and responses:[]. Declare any missing actual actor/target first with a cited entity row and current presence; an action plan alone does not establish identity or presence. Before emitting a strike or ranged ability for either actor, check its required range in the supplied saved state. If absent, prepare a cited distance row from the latest actual narrator scene in THIS response. For a punch currently being delivered, touch means within melee reach, not an already successful contact. If no scene evidence establishes range, leave it unresolved; never invent a miss, disadvantage or extra movement because a stored row is absent. Return only newly needed observations, not every participant's distance.` : ""} Output only JSON.`, `Player: ${definitionInput?.player ?? "you"}. Use you for the player.
 Definition sources:
 ${JSON.stringify(definitionInput?.sources ?? [])}
 State:
@@ -15726,8 +15726,11 @@ ${contextText(recovery?.pending ? recovery.messages : history.slice(-3))}`, ctx.
         const parsed = read;
         if (definitionInput) {
           const base = world.mechanics ?? emptyMechanics();
-          const modelObserved = readObserved(parsed.mechanicalObservations, base, history, definitionInput.sources, definitionInput.player, latestValidScene(history));
-          const observed = [...modelObserved, ...sceneParticipants(latestValidScene(history), applyObservations(base, modelObserved), history, definitionInput.player)];
+          const scene = latestValidScene(history);
+          const participants = mechanicalRead ? sceneParticipants(scene, base, history, definitionInput.player, true) : [];
+          const ready = applyObservations(base, participants);
+          const modelObserved = readObserved(parsed.mechanicalObservations, ready, history, definitionInput.sources, definitionInput.player, scene);
+          const observed = [...participants, ...modelObserved, ...sceneParticipants(scene, applyObservations(ready, modelObserved), history, definitionInput.player)];
           const definitions = readAbilityDefinitions(parsed.abilityDefinitions, applyObservations(base, observed), history.slice(-14), definitionInput.sources, definitionInput.player);
           const prepared = [...observed, ...definitions.map((value) => ({ kind: "ability", value }))];
           const lessons = Array.isArray(parsed.mechanicalObservations) ? readMechanicalObservations(parsed.mechanicalObservations.slice(0, 24).filter((row) => row?.kind === "practice"), applyObservations(base, prepared), history, definitionInput.player) : [];
