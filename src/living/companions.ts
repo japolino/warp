@@ -15,6 +15,17 @@ export interface CostLink { id: string; from: string; to: string; enabled: boole
 export type CompanionObservation = { kind: "companion"; value: Companion } | { kind: "cost_link"; value: CostLink };
 const norm = (v: string) => v.normalize("NFKC").trim().toLocaleLowerCase();
 const text = (v: unknown, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "";
+const givenName = (name: string) => {
+  const parts = name.trim().split(/\s+/), word = parts[0];
+  return parts.length > 1 && word.length >= 3 && /^\p{Lu}/u.test(word) && !/^(?:the|dr\.?|professor|captain|sir|lady|lord)$/i.test(word) ? norm(word) : "";
+};
+function participant(state: MechanicalState, input: string) {
+  const resolved = actorName(state, input);
+  if (resolved === "you" || entityFor(state, resolved)) return resolved;
+  const candidates = state.entities?.filter(e => [e.name, e.displayName, ...e.aliases].some(n => givenName(n) === norm(input))) ?? [];
+  if (candidates.length > 1) throw new Error("Companion participant is ambiguous");
+  return candidates[0]?.name ?? resolved;
+}
 
 /** A receipt transition cannot be contradicted by its own reply or an older quote. */
 export function afterTransition(source: Evidence, old: Evidence, messages: Pick<Message, "id">[]): boolean {
@@ -28,13 +39,9 @@ function mentioned(state: MechanicalState, actor: string, quote: string) {
   if (names.some(n => n && norm(quote).includes(norm(n)))) return true;
   // The scene may use Norma while the card names Norma Hollowell. This verifies
   // a unique literal given name; it never adds an alias or merges identities.
-  const first = (name: string) => {
-    const parts = name.trim().split(/\s+/), word = parts[0];
-    return parts.length > 1 && word.length >= 3 && /^\p{Lu}/u.test(word) && !/^(?:the|dr\.?|professor|captain|sir|lady|lord)$/i.test(word) ? norm(word) : "";
-  };
   return [actor, e?.displayName ?? ""].some(name => {
-    const short = first(name); if (!short) return false;
-    const matching = state.entities?.filter(row => [row.name, row.displayName, ...row.aliases].some(n => norm(n) === short || first(n) === short)) ?? [];
+    const short = givenName(name); if (!short) return false;
+    const matching = state.entities?.filter(row => [row.name, row.displayName, ...row.aliases].some(n => norm(n) === short || givenName(n) === short)) ?? [];
     if (matching.length !== 1 || matching[0].name !== actor) return false;
     const escaped = short.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`, "u").test(norm(quote));
@@ -73,7 +80,7 @@ export function readCompanionObservation(row: Record<string, unknown>, state: Me
   const editedProfile = (old: Evidence) => profile && old.message.startsWith("warp-source:") && old.message.split(":")[1] === source.message.split(":")[1]
     && !sourceContains(messages.find(m => m.id === source.message)?.content ?? "", old.quote);
   if (row.kind === "companion") {
-    const actor = actorName(state, text(row.actor, 80)), controller = actorName(state, text(row.controller, 80));
+    const actor = participant(state, text(row.actor, 80)), controller = participant(state, text(row.controller, 80));
     if (!actor || !controller || actor === "you" || actor === controller || !entityFor(state, actor) || controller !== "you" && !entityFor(state, controller)
       || !["companion", "summon"].includes(row.companionKind as string) || !mentioned(state, actor, source.quote) || !mentioned(state, controller, source.quote)) return;
     const old = state.companions?.find(c => c.actor === actor);

@@ -12093,6 +12093,15 @@ var init_injuries = __esm(() => {
 });
 
 // src/living/companions.ts
+function participant(state, input) {
+  const resolved = actorName(state, input);
+  if (resolved === "you" || entityFor(state, resolved))
+    return resolved;
+  const candidates = state.entities?.filter((e) => [e.name, e.displayName, ...e.aliases].some((n) => givenName(n) === norm2(input))) ?? [];
+  if (candidates.length > 1)
+    throw new Error("Companion participant is ambiguous");
+  return candidates[0]?.name ?? resolved;
+}
 function afterTransition(source, old, messages) {
   if (old.message === source.message && old.sourceRevision === source.sourceRevision)
     return false;
@@ -12104,15 +12113,11 @@ function mentioned(state, actor, quote) {
   const names = actor === "you" ? ["you", "your", "{{user}}", ...e?.aliases ?? []] : [actor, e?.displayName ?? "", ...e?.aliases ?? []];
   if (names.some((n) => n && norm2(quote).includes(norm2(n))))
     return true;
-  const first = (name) => {
-    const parts = name.trim().split(/\s+/), word = parts[0];
-    return parts.length > 1 && word.length >= 3 && /^\p{Lu}/u.test(word) && !/^(?:the|dr\.?|professor|captain|sir|lady|lord)$/i.test(word) ? norm2(word) : "";
-  };
   return [actor, e?.displayName ?? ""].some((name) => {
-    const short = first(name);
+    const short = givenName(name);
     if (!short)
       return false;
-    const matching = state.entities?.filter((row) => [row.name, row.displayName, ...row.aliases].some((n) => norm2(n) === short || first(n) === short)) ?? [];
+    const matching = state.entities?.filter((row) => [row.name, row.displayName, ...row.aliases].some((n) => norm2(n) === short || givenName(n) === short)) ?? [];
     if (matching.length !== 1 || matching[0].name !== actor)
       return false;
     const escaped = short.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -12164,7 +12169,7 @@ function readCompanionObservation(row, state, source, messages, correction) {
     return;
   const editedProfile = (old) => profile && old.message.startsWith("warp-source:") && old.message.split(":")[1] === source.message.split(":")[1] && !sourceContains(messages.find((m) => m.id === source.message)?.content ?? "", old.quote);
   if (row.kind === "companion") {
-    const actor = actorName(state, text(row.actor, 80)), controller = actorName(state, text(row.controller, 80));
+    const actor = participant(state, text(row.actor, 80)), controller = participant(state, text(row.controller, 80));
     if (!actor || !controller || actor === "you" || actor === controller || !entityFor(state, actor) || controller !== "you" && !entityFor(state, controller) || !["companion", "summon"].includes(row.companionKind) || !mentioned(state, actor, source.quote) || !mentioned(state, controller, source.quote))
       return;
     const old = state.companions?.find((c) => c.actor === actor);
@@ -12270,7 +12275,10 @@ function expireCompanions(state, action, changes, beats) {
         changeManifestation(state, c, actor, false, action, changes, beats);
     }
 }
-var norm2 = (v) => v.normalize("NFKC").trim().toLocaleLowerCase(), text = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", COMPANION_INSTRUCTIONS = `PRIORITY: When this conversation introduces, addresses or uses an established familiar, animal partner, autonomous assistant or summon, save its entity AND companion relationship before optional prose facts. This applies to NPC companions too, not only the player's. Recognizing a companion does not start combat or give it a stat sheet. An unnamed companion can keep its actual distinctive descriptor as its identity; never invent a proper name or treat it as disposable inventory. Reuse that identity on later replies.
+var norm2 = (v) => v.normalize("NFKC").trim().toLocaleLowerCase(), text = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", givenName = (name) => {
+  const parts = name.trim().split(/\s+/), word = parts[0];
+  return parts.length > 1 && word.length >= 3 && /^\p{Lu}/u.test(word) && !/^(?:the|dr\.?|professor|captain|sir|lady|lord)$/i.test(word) ? norm2(word) : "";
+}, COMPANION_INSTRUCTIONS = `PRIORITY: When this conversation introduces, addresses or uses an established familiar, animal partner, autonomous assistant or summon, save its entity AND companion relationship before optional prose facts. This applies to NPC companions too, not only the player's. Recognizing a companion does not start combat or give it a stat sheet. An unnamed companion can keep its actual distinctive descriptor as its identity; never invent a proper name or treat it as disposable inventory. Reuse that identity on later replies.
 For that established relationship, use mechanicalObservations {kind:"companion",actor:"known entity name",controller:"known person or you",companionKind:"companion|summon",message,quote}. Declare both entities in this same response if missing, using actual scene quotes for presence and actual short-name aliases. The relationship quote must literally include both identities or their saved aliases; "my familiar" alone lacks its named speaker. Use an exact nearby narrative fragment naming both instead. Copy a contiguous exact source fragment, including actual punctuation; do not add quotation marks or omit intervening words. Profiles establish the relationship, never current presence. companionKind:summon requires an actual summoning/recall nature, not merely the word familiar. Companion is a relationship, not permission to control another person's actions or knowledge. Do not turn every friend or romance partner into a companion system. Do not duplicate the typed relationship as an inventory/possession fact.
 An explicit one-for-one SHARED COST permission between two known effort pools may use {kind:"cost_link",from:"borrower's resource id",to:"payer's resource id",enabled:true,unsupported:[],message,quote}. Both owners must occur in the actual grant. Preserve all limits/conditions in unsupported. Pools need role:effort and the same explicit unit, or the same resource name with no unit. No damage/healing links, money, health, conversion, guessed pool, implicit NPC consent or cycles. An actual revocation uses enabled:false. This redirects saved ability costs only, never standalone spending. It does not copy or refill either balance.
 A sourced recall/dismiss ability can use effects {kind:"summon|dismiss",target:"self",companion:"saved companion id or exact actor name"}. Only kind:summon relationships are eligible, owned by the ability's actual controller. summon may add duration:explicitSubsequentControllerActions, only if the source states that action duration. Seconds and other lifetime rules stay unsupported. Already present/absent is not another cast. Recall preserves injuries, resource balances, knowledge and death. No resurrection or automatic healing. A condition effect on a summon itself may add untilDismissed:true only when source explicitly ties that effect to being summoned. Dismissal/expiry clears only such bound temporary effects, never an injury or an unrelated condition. A successful departure does not bring companions along. Their actual cooperation still needs current scene evidence under the existing NPC response contract.`;
@@ -14932,7 +14940,8 @@ function sceneReadSummary(raw, accepted) {
     return out;
   }, Object.create(null));
   const spatial = rows.filter((row) => row && typeof row === "object" && ["place", "route", "discovery", "stock", "stock_access"].includes(row.kind)).slice(0, 8).map((row) => ({ fields: Object.keys(row).slice(0, 24).map((key) => key.slice(0, 80)), ...Object.fromEntries(Object.entries(row).filter(([key]) => ["kind", "id", "name", "parent", "from", "to", "site", "via", "status", "message", "quote"].includes(key)).map(([key, value]) => [key, typeof value === "string" ? value.slice(0, key === "quote" ? 400 : 160) : null])) }));
-  return { offered: count(rows), accepted: count(accepted), ...spatial.length ? { spatial } : {} };
+  const companions = rows.filter((row) => row && typeof row === "object" && row.kind === "companion").slice(0, 8).map((row) => Object.fromEntries(Object.entries(row).filter(([key]) => ["actor", "controller", "companionKind", "message", "quote"].includes(key)).map(([key, value]) => [key, typeof value === "string" ? value.slice(0, key === "quote" ? 400 : 160) : null])));
+  return { offered: count(rows), accepted: count(accepted), ...spatial.length ? { spatial } : {}, ...companions.length ? { companions } : {} };
 }
 var SCENE_OBSERVATIONS;
 var init_scene_read = __esm(() => {

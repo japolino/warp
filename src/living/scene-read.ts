@@ -33,5 +33,8 @@ export function sceneReadSummary(raw: unknown, accepted: Observation[]) {
   const spatial = rows.filter(row => row && typeof row === "object" && ["place", "route", "discovery", "stock", "stock_access"].includes(row.kind)).slice(0, 8)
     .map<SpatialReadCandidate>(row => ({ fields: Object.keys(row).slice(0, 24).map(key => key.slice(0, 80)), ...Object.fromEntries(Object.entries(row).filter(([key]) => ["kind", "id", "name", "parent", "from", "to", "site", "via", "status", "message", "quote"].includes(key))
       .map(([key, value]) => [key, typeof value === "string" ? value.slice(0, key === "quote" ? 400 : 160) : null])) }));
-  return { offered: count(rows), accepted: count(accepted), ...(spatial.length ? { spatial } : {}) };
+  const companions = rows.filter(row => row && typeof row === "object" && row.kind === "companion").slice(0, 8)
+    .map(row => Object.fromEntries(Object.entries(row).filter(([key]) => ["actor", "controller", "companionKind", "message", "quote"].includes(key))
+      .map(([key, value]) => [key, typeof value === "string" ? value.slice(0, key === "quote" ? 400 : 160) : null])));
+  return { offered: count(rows), accepted: count(accepted), ...(spatial.length ? { spatial } : {}), ...(companions.length ? { companions } : {}) };
 }

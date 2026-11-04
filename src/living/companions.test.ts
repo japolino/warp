@@ -218,8 +218,9 @@ test("a unique literal given name grounds a known full-name controller without m
   const message = { id: "introduced", is_user: false, content: "Norma works beside Echo, her regular autonomous assistant." };
   const source = { message: message.id, quote: message.content };
   state.entities!.push({ id: "norma", name: "Norma Hollowell", displayName: "Norma Hollowell", aliases: [], entityKind: "person", present: true, status: "active", source });
-  const row = { kind: "companion", actor: "Echo", controller: "Norma Hollowell", companionKind: "companion", ...source };
-  expect(readMechanicalObservations([row], state, [scene, message])).toHaveLength(1);
+  const row = { kind: "companion", actor: "Echo", controller: "Norma", companionKind: "companion", ...source };
+  const rows = readMechanicalObservations([row], state, [scene, message]);
+  expect(rows).toHaveLength(1); expect(rows[0].kind === "companion" && rows[0].value.controller).toBe("Norma Hollowell");
   expect(state.entities!.at(-1)!.aliases).toEqual([]);
   state.entities!.push({ ...state.entities!.at(-1)!, id: "other", name: "Norma Vale", displayName: "Norma Vale" });
   expect(readMechanicalObservations([row], state, [scene, message])).toEqual([]);
