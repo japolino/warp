@@ -10,6 +10,36 @@ import { replayPrompt, PROMPT_KEY } from "./prompt-cache.js";
 
 const image = (id: string) => `<!-- inlay_illustrator -->\n<div data-inlay-illustrator="true" data-image="${id}" title="a > b"><div><img src="${id}"></div></div>\n\n`;
 const msg = (id: string, is_user: boolean, content: string, index: number): Msg => ({ id, is_user, content, role: is_user ? "user" : "assistant", index_in_chat: index, swipe_id: 0 } as Msg);
+
+test("a SEED-owned terminal card UI trigger can move without changing the story or prompt path", () => {
+  const base = "Echo waits beside Norma.\n\n[STATUS_PANEL: Workshop | calm]\n\n<!--[SEED|aBcD0123456789]-->", marked = `${base}\n★▲3★`;
+  expect(storyContent(marked)).toBe(base); expect(storyRevision(marked)).toBe(storyRevision(base));
+  expect(pathOf([msg("reply", false, marked, 0)])).toBe(pathOf([msg("reply", false, base, 0)]));
+  for (const text of ["The code is ★▲3★", "★▲3★", "Story\n<!--[SEED|short]-->\n★▲3★", `${base}\n★▲3★\nActual next sentence.`, `${base}\n★▲not-a-number★`]) expect(storyContent(text)).toBe(text);
+  expect(storyRevision(marked.replace("Echo waits", "Echo leaves"))).not.toBe(storyRevision(base));
+});
+
+test("legacy evidence can bind before its verified terminal UI trigger disappears without rewriting receipts", () => {
+  const content = "You have 5 coins.\n\n<!--[SEED|aBcD0123456789]-->", marked = `${content}\n★▲3★`;
+  const opening = msg("opening", false, marked, 0), evidence = { message: opening.id, quote: "You have 5 coins.", sourceRevision: revision(marked) };
+  const state = emptyMechanics(); state.resources = [{ id: "coins", owner: "you", name: "Coins", current: 5, source: evidence }];
+  opening.metadata = { [MECHANICS_KEY]: { "0": { version: 1, path: pathOf([]), text: revision(marked), observations: [{ kind: "resource", value: state.resources[0] }] } } };
+  const player = msg("player", true, "I spend 2 coins.", 1), receipt = prepareMechanical(state, "spend", "you", [{ kind: "spend", resource: "coins", amount: 2 }]);
+  const reply = msg("reply", false, "You pay two coins.", 2);
+  // The old renderer hashed the marked raw story, so retain its actual old prefix.
+  reply.metadata = { [MECHANICS_KEY]: { "0": { version: 1, path: rawPathOf([opening, player]), text: revision(reply.content), receipt, observations: [] } } };
+  const snapshot = { version: 1, path: rawPathOf([opening, player]), packet: { established: [], possibleMotives: [], mechanics: {} }, receipt };
+  player.metadata = { [PROMPT_KEY]: { "0": snapshot }, warpLivingAttempt: { path: rawPathOf([opening, player]), receipt } };
+  const messages = [opening, player, reply];
+  for (const { message, binding } of legacyStoryBindings(messages)) message.metadata = { ...message.metadata, [STORY_BINDINGS]: { "0": binding } };
+  const prompt = [{ role: "user" as const, content: player.content, sourceMessageId: player.id }], before = replayPrompt(prompt, messages, "Director"), frozen = JSON.stringify(receipt);
+  opening.content = content;
+  const after = foldMechanics(messages); expect(after.resources[0].current).toBe(3); expect(after.applied[0].id).toBe("spend");
+  expect(receipt.base).toBe(revision(state)); expect(receipt.changes[0].before).toEqual(state.resources[0]);
+  expect(replayPrompt(prompt, messages, "Director")).toEqual(before); expect(JSON.stringify(receipt)).toBe(frozen);
+  opening.content = content.replace("5 coins", "50 coins");
+  expect(foldMechanics(messages).resources).toEqual([]);
+});
 function carrier(markup: string) {
   let hash = 2166136261;
   for (let i = 0; i < markup.length; i++) hash = Math.imul(hash ^ markup.charCodeAt(i), 16777619) >>> 0;

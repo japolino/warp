@@ -24,9 +24,12 @@ export function imageStoryContent(content: string): string {
   return cursor ? result + content.slice(cursor) : content;
 }
 
-/** Restore Inlay's checksum-verified native asset placeholders to their original authored text. */
+/** Restore owned asset placeholders and omit the imported card's terminal UI trigger. */
 export function storyContent(content: string): string {
-  const clean = imageStoryContent(content);
+  // LumiRealm imports can move their ★▲number★ UI trigger to the newest reply.
+  // Recognize only that terminal trigger immediately following its SEED footer.
+  // Keep the seed, STATUS_PANEL and all ordinary story text and unpaired symbols.
+  const clean = imageStoryContent(content).replace(/(<!--\[SEED\|[A-Za-z0-9_-]{8,128}\]-->)[ \t]*\r?\n[ \t]*★▲\d{1,9}★?[ \t\r\n]*$/u, "$1");
   return clean.replace(/<span\b(?=[^>]*\sdata-inlay-illustrator-suppressed\s*=)(?:"[^"]*"|'[^']*'|[^'">])*>\s*<\/span\s*>/gi, carrier => {
     const attr = (name: string) => new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "i").exec(carrier);
     const id = attr("data-inlay-illustrator-suppressed"), payload = attr("data-inlay-illustrator-suppressed-payload");

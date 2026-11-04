@@ -213,7 +213,7 @@ function imageStoryContent(content) {
   return cursor ? result + content.slice(cursor) : content;
 }
 function storyContent(content) {
-  const clean = imageStoryContent(content);
+  const clean = imageStoryContent(content).replace(/(<!--\[SEED\|[A-Za-z0-9_-]{8,128}\]-->)[ \t]*\r?\n[ \t]*★▲\d{1,9}★?[ \t\r\n]*$/u, "$1");
   return clean.replace(/<span\b(?=[^>]*\sdata-inlay-illustrator-suppressed\s*=)(?:"[^"]*"|'[^']*'|[^'">])*>\s*<\/span\s*>/gi, (carrier) => {
     const attr = (name) => new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "i").exec(carrier);
     const id = attr("data-inlay-illustrator-suppressed"), payload = attr("data-inlay-illustrator-suppressed-payload");
