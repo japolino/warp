@@ -31,6 +31,29 @@ afterEach(() => {
 });
 const click = (selector: string) => (window.document.querySelector(selector) as unknown as HTMLButtonElement).click();
 
+test("the optional map distinguishes visited places, directions, blocked routes and depleted supplies without taking actions", () => {
+  const source = { message: "g", quote: "The map shows the Dock, Clinic and Attic. <img src=x onerror=boom>" };
+  const mechanics = { version: 1, resources: [], items: [], conditions: [], applied: [], places: [{ id: "dock", name: "Dock", visited: true, source }, { id: "clinic", name: "Clinic", visited: true, source }, { id: "attic", name: "Attic", visited: false, source }],
+    positions: [{ id: "position", owner: "you", site: "clinic", name: "Clinic", source }],
+    routes: [{ id: "corridor", from: "dock", to: "clinic", via: "Corridor", bidirectional: true, status: "open", unsupported: [], source }, { id: "hatch", from: "clinic", to: "attic", via: "Hatch", bidirectional: false, status: "blocked", reason: "Locked", unsupported: [], source }],
+    stocks: [{ id: "rations", site: "clinic", name: "Rations", quantity: 0, available: true, source }], discoveries: [{ id: "note", site: "clinic", name: "Notice", text: "<script>unsafe()</script>", source }] };
+  const shown = view({ world: { place: "Clinic", present: [], facts: [], mechanics } });
+  ui.accept(shown); expect(window.document.querySelector(".warp-map")).toBeNull(); expect(window.document.querySelector('[data-living="map"]')).not.toBeNull();
+  click('[data-living="map"]');
+  expect(window.document.querySelector(".warp-map-focus")?.textContent).toContain("You are here");
+  expect(window.document.querySelector(".warp-map")?.textContent).toContain("Locked");
+  expect(window.document.querySelector(".warp-map-stocks")?.textContent).toContain("0 left");
+  expect(window.document.querySelector(".warp-map script,.warp-map img")).toBeNull();
+  click('[data-map-place="attic"]');
+  expect(window.document.querySelector(".warp-map-focus")?.textContent).toContain("Known, not visited");
+  expect(window.document.querySelector(".warp-map-via")?.textContent).toContain("from");
+  expect((window.document.activeElement as any).matches("[data-map-site]")).toBe(true);
+  expect(mechanics.positions[0].site).toBe("clinic"); expect(mechanics.stocks[0].quantity).toBe(0); expect(sent).toEqual([]);
+  ui.accept({ ...shown, revision: 2, busy: true });
+  expect((window.document.querySelector("[data-map-site]") as any).value).toBe("attic");
+  expect((window.document.activeElement as any).matches("[data-map-site]")).toBe(true); expect(sent).toEqual([]);
+});
+
 test("past checks remain under their reply, keep their DOM on updates, and follow mounted rows and active swipes", () => {
   const oldRow = window.document.createElement("article"); oldRow.dataset.testMessage = "old";
   oldRow.innerHTML = '<div data-message-id="old">An earlier attempt.</div>'; window.document.body.prepend(oldRow);

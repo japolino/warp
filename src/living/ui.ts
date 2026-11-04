@@ -6,6 +6,7 @@ import { esc } from "../frontend/html.js";
 import type { WarpStateV1 } from "../frontend/public-events.js";
 import type { ResponseCheck } from "./exchanges.js";
 import type { SavedChecks } from "./check-history.js";
+import { inspectMap, MAP_STYLE } from "./map.js";
 
 interface View { type: "living"; chatId: string; signature: string; revision: number; enabled: boolean; busy: boolean; retry: boolean; anchor: string | null; world: World; notes: string[]; decision?: Decision; responses?: ResponseCheck[]; checks?: SavedChecks[]; notice?: string; }
 const revealKey = (chatId: string, messageId: string, id: string, d?: Pick<Decision, "tier" | "result" | "roll">) => JSON.stringify([chatId, messageId, id, d?.tier, d?.result, d?.roll]);
@@ -33,6 +34,7 @@ const STYLE = `
 ${DICE_STYLE}
 .warp-check-response{margin:5px 0;gap:10px}.warp-check-response .warp-check-die{width:76px;height:52px}.warp-check-response .warp-percentile-die{width:42px;height:48px}.warp-check-response .warp-die-number{font-size:14px}.warp-check-response .warp-check-copy strong{font-size:12px}.warp-check-response .warp-check-copy p{font-size:12px}
 ${INSPECTOR_STYLE}
+${MAP_STYLE}
 @media(max-width:540px){.warp-scene-tools{margin-left:0;width:100%}.warp-scene{font-size:12px}}
 `;
 
@@ -42,6 +44,7 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
   let mode: "say" | "correct" = "say";
   let memoryQuery = "";
   let inspectorOpen = false;
+  let mapOpen = false, selectedSite: string | undefined;
   let settingsOpen = false, helperConnection = "", decisionConnection = "", decisionConnections: { id: string; name: string }[] = [], connections: { id: string; name: string }[] = [];
   let injected: Element | null = null;
   const diceReveals = new Map<string, ReturnType<typeof createDiceReveal>>();
@@ -86,17 +89,19 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
     if (!view) return "";
     if (!view.enabled) return `<div class="warp-scene-top"><span>Warp paused</span><button data-living="resume">Resume</button></div>`;
     const world = view.world;
+    const mappable = !!world.mechanics?.places?.length;
     const inspectable = !!world.mechanics && [...world.mechanics.resources, ...world.mechanics.items.filter(i => i.quantity > 0), ...world.mechanics.conditions, ...(world.mechanics.abilities ?? []), ...(world.mechanics.resilience ?? []).filter(r => r.band !== "ordinary"), ...(world.mechanics.agreements ?? [])].some(row => row.owner === "you" || "from" in row && row.from === "you");
     const matches = world.facts.filter(f => !memoryQuery || `${f.subject} ${f.text} ${f.quote}`.toLocaleLowerCase().includes(memoryQuery.toLocaleLowerCase()));
     const remembered = matches.slice(-80).reverse();
     const relevant = world.facts.filter(f => f.status === "open" && ["commitment", "situation"].includes(f.kind)).slice(-2);
     const reminders = new Set(relevant.map(f => f.text.trim().toLocaleLowerCase()));
     const notes = view.notes.filter(note => { const key = note.trim().toLocaleLowerCase(); if (reminders.has(key)) return false; reminders.add(key); return true; });
-    return `<div class="warp-scene-top"><span class="warp-scene-place">${esc(world.place || "Here")}</span><span class="warp-scene-people">${world.present.map(esc).join(" · ")}${view.busy ? ' <span role="status" aria-label="Updating the scene">…</span>' : ""}</span><span class="warp-scene-tools"><button data-living="ideas" ${loading ? "disabled" : ""}>${loading ? "Thinking…" : "Ideas"}</button>${inspectable ? `<button data-living="inspect" aria-expanded="${inspectorOpen}">Inspect</button>` : ""}<button data-living="correct">Correct</button><button data-living="pause">Pause</button><button data-living="settings" aria-expanded="${settingsOpen}">Settings</button></span></div>
+    return `<div class="warp-scene-top"><span class="warp-scene-place">${esc(world.place || "Here")}</span><span class="warp-scene-people">${world.present.map(esc).join(" · ")}${view.busy ? ' <span role="status" aria-label="Updating the scene">…</span>' : ""}</span><span class="warp-scene-tools"><button data-living="ideas" ${loading ? "disabled" : ""}>${loading ? "Thinking…" : "Ideas"}</button>${inspectable ? `<button data-living="inspect" aria-expanded="${inspectorOpen}">Inspect</button>` : ""}${mappable ? `<button data-living="map" aria-expanded="${mapOpen}">Map</button>` : ""}<button data-living="correct">Correct</button><button data-living="pause">Pause</button><button data-living="settings" aria-expanded="${settingsOpen}">Settings</button></span></div>
       ${settingsOpen ? `<div class="warp-scene-settings"><label>Helper connection <select data-helper-connection><option value="">Use this chat's connection</option>${connections.map(c => `<option value="${esc(c.id)}"${helperConnection === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label><label style="display:block;margin-top:8px">Decision connection <select data-decision-connection><option value="">Use the helper</option>${decisionConnection && !decisionConnections.some(c => c.id === decisionConnection) ? `<option value="${esc(decisionConnection)}" selected>Saved profile unavailable</option>` : ""}${decisionConnections.map(c => `<option value="${esc(c.id)}"${decisionConnection === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label><p>Decision profiles come from Lumiverse Connections. They assess contested attempts; Warp rolls the outcome. Unavailable profiles fall back to the helper.</p><p>Reading the scene uses an additional model call. A risky attempt may use one more. You can choose a faster helper connection here.</p></div>` : ""}
       ${!notes.length && relevant.length ? `<div class="warp-scene-note">${relevant.map(f => esc(f.text)).join(" · ")}</div>` : ""}
       ${notes.length ? `<div class="warp-scene-note">${notes.map(esc).join(" · ")}</div>` : ""}
       ${checkMarkup(view)}
+      ${mapOpen && mappable && world.mechanics ? inspectMap(world.mechanics, selectedSite) : ""}
       ${inspectorOpen && inspectable && world.mechanics ? inspectMechanics(world.mechanics) : ""}
       ${view.retry ? `<button data-living="retry">Scene read unavailable · Retry</button>` : ""}
       ${view.notice ? `<div class="warp-scene-error" role="status">${esc(view.notice)}</div>` : ""}
@@ -121,9 +126,10 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
         if ((e.target as HTMLElement).matches("[data-living-draft]")) draft = (e.target as HTMLTextAreaElement).value;
         if ((e.target as HTMLElement).matches("[data-memory-query]")) { memoryQuery = (e.target as HTMLInputElement).value; paint(); }
       });
-      root.addEventListener("change", e => { if ((e.target as HTMLElement).matches("[data-decision-connection]")) ctx.sendToBackend({ type: "settings", patch: { decisionConnectionId: (e.target as HTMLSelectElement).value } }); if ((e.target as HTMLElement).matches("[data-helper-connection]")) ctx.sendToBackend({ type: "settings", patch: { helperConnectionId: (e.target as HTMLSelectElement).value } }); });
+      root.addEventListener("change", e => { if ((e.target as HTMLElement).matches("[data-map-site]")) { selectedSite = (e.target as HTMLSelectElement).value; paint(); } if ((e.target as HTMLElement).matches("[data-decision-connection]")) ctx.sendToBackend({ type: "settings", patch: { decisionConnectionId: (e.target as HTMLSelectElement).value } }); if ((e.target as HTMLElement).matches("[data-helper-connection]")) ctx.sendToBackend({ type: "settings", patch: { helperConnectionId: (e.target as HTMLSelectElement).value } }); });
       root.addEventListener("click", e => {
         const button = (e.target as HTMLElement).closest<HTMLButtonElement>("button"); if (!button || !view) return;
+        if (button.dataset.mapPlace) { selectedSite = button.dataset.mapPlace; paint(); root?.querySelector<HTMLSelectElement>("[data-map-site]")?.focus(); return; }
         if (button.dataset.idea !== undefined) { draft = ideas[Number(button.dataset.idea)] ?? ""; mode = "say"; paint(); root?.querySelector("textarea")?.focus(); return; }
         switch (button.dataset.living) {
           case "ideas": loading = true; ideas = []; error = ""; send("ideas"); break;
@@ -135,8 +141,10 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
           case "resume": send("resume"); break;
           case "settings": settingsOpen = !settingsOpen; break;
           case "inspect": inspectorOpen = !inspectorOpen; break;
+          case "map": mapOpen = !mapOpen; break;
         }
         paint();
+        if (button.dataset.living === "map" && mapOpen) root?.querySelector<HTMLSelectElement>("[data-map-site]")?.focus();
       });
     }
     if (card === row) { if (injected!.parentElement !== row) row.append(injected!); }
@@ -147,9 +155,12 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
     const expandedAbilities = [...root.querySelectorAll<HTMLDetailsElement>("[data-inspect-ability][open]")].map(e => e.dataset.inspectAbility);
     const expandedAgreements = [...root.querySelectorAll<HTMLDetailsElement>("[data-inspect-agreement][open]")].map(e => e.dataset.inspectAgreement);
     const focused = root.contains(document.activeElement) && document.activeElement?.matches("textarea,[data-memory-query]");
+    const mapFocused = root.contains(document.activeElement) && document.activeElement?.matches("[data-map-site]");
     const selector = document.activeElement?.matches("[data-memory-query]") ? "[data-memory-query]" : "textarea";
     const selection = focused ? [(document.activeElement as HTMLTextAreaElement).selectionStart ?? 0, (document.activeElement as HTMLTextAreaElement).selectionEnd ?? 0] : null;
     root.innerHTML = markup();
+    const mapPicker = root.querySelector<HTMLSelectElement>("[data-map-site]"), selectedOption = mapPicker?.querySelector<HTMLOptionElement>("option[selected]");
+    if (mapPicker && selectedOption) mapPicker.value = selectedOption.value;
     for (const check of root.querySelectorAll<HTMLElement>("[data-check-id]")) { const previous = previousChecks.get(check.dataset.checkId!); if (previous) check.replaceWith(previous); }
     renderedCheckKey = checkKey;
     const ids = new Set<string>();
@@ -163,9 +174,10 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
     for (const id of expandedAbilities) root.querySelector(`[data-inspect-ability="${CSS.escape(id!)}"]`)?.setAttribute("open", "");
     for (const id of expandedAgreements) root.querySelector(`[data-inspect-agreement="${CSS.escape(id!)}"]`)?.setAttribute("open", "");
     if (selection) { const input = root.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector); input?.focus(); input?.setSelectionRange(selection[0], selection[1]); }
+    if (mapFocused) root.querySelector<HTMLSelectElement>("[data-map-site]")?.focus();
   }
   const poll = setInterval(() => {
-    if (view?.chatId !== active()) { remove(); clearArchives(); view = null; ideas = []; draft = null; loading = false; memoryQuery = ""; inspectorOpen = false; }
+    if (view?.chatId !== active()) { remove(); clearArchives(); view = null; ideas = []; draft = null; loading = false; memoryQuery = ""; inspectorOpen = false; mapOpen = false; selectedSite = undefined; }
     else if (root && injected && !injected.contains(root)) { remove(); paint(); }
     else if (view && !root?.isConnected) paint();
     else paintArchives();
@@ -191,7 +203,7 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
       if (m.type !== "living") return false;
       if (m.chatId !== active() || (view?.chatId === m.chatId && m.revision < view.revision)) return true;
       if (view?.anchor !== m.anchor || view?.signature !== m.signature) { ideas = []; draft = null; loading = false; }
-      if (view?.chatId !== m.chatId) inspectorOpen = false;
+      if (view?.chatId !== m.chatId) { inspectorOpen = false; mapOpen = false; selectedSite = undefined; }
       archivedChecks = new Map((m.checks ?? []).map(entry => [entry.messageId, entry]));
       view = { ...m, type: "living" }; paint();
       window.dispatchEvent(new CustomEvent("warp-state-v1", { detail: publicSnapshot() }));

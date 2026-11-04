@@ -13,7 +13,7 @@ export interface Distance { id: string; from: string; to: string; band: Range; s
 export interface Defense { kind: "armor" | "resistance" | "immunity" | "shield" | "reflect"; amount: number; damageType: DamageType | "all"; }
 export interface ActionClock { id: string; actor: string; actions: number; }
 export interface Cooldown { id: string; actor: string; readyAt: number; }
-export interface EncounterBeat { kind: "damage" | "harm" | "mend" | "reward" | "expired" | "move" | "wait" | "defend" | "attempt" | "skipped" | "response"; actor: string; target?: string; name?: string; amount?: number; absorbed?: number; resisted?: number; reflected?: number; reason?: string; decision?: Decision; basis?: "warp"; }
+export interface EncounterBeat { kind: "damage" | "harm" | "mend" | "reward" | "expired" | "move" | "wait" | "defend" | "attempt" | "skipped" | "response" | "travel" | "gather"; actor: string; target?: string; name?: string; amount?: number; absorbed?: number; resisted?: number; reflected?: number; reason?: string; decision?: Decision; basis?: "warp"; }
 export class MechanicalKnowledgeError extends Error {}
 const normalize = (value: string) => value.normalize("NFKC").trim().toLocaleLowerCase();
 export const entityId = (name: string) => normalize(name) === "you" ? "you" : `entity-${revision(normalize(name))}`;
@@ -28,6 +28,10 @@ export function actorName(state: MechanicalState, input: string): string {
   return owners[0] ?? input;
 }
 export function entityFor(state: MechanicalState, name: string): Entity | undefined { return state.entities?.find(e => e.name === actorName(state, name)); }
+export function carriedObject(state: MechanicalState, entity: Entity, owner = "you"): boolean {
+  const names = [entity.id, entity.name, entity.displayName, ...entity.aliases].map(normalize);
+  return entity.entityKind === "object" && state.items.some(i => i.owner === owner && i.quantity > 0 && [i.id, i.name].some(n => names.includes(normalize(n))));
+}
 export function present(state: MechanicalState, name: string): boolean {
   return name === "you" || entityFor(state, name)?.present === true;
 }
@@ -161,9 +165,13 @@ export function readEncounterObservation(row: Record<string, unknown>, state: Me
     if (profile && old && !old.source.message.startsWith("warp-source:")) return;
     if (old && !newer(old.source)) return;
     if ([...aliases, text(row.displayName)].some(a => a && state.entities?.some(e => e.id !== old?.id && [e.id, e.name, e.displayName, ...e.aliases].some(n => normalize(n) === normalize(a))))) return;
+    let isPresent = profile ? old?.present ?? false : typeof row.present === "boolean" ? row.present : old?.present ?? false;
+    const position = state.positions?.find(p => p.owner === "you"), positionIndex = position && messages.findIndex(m => position.source.message.startsWith("warp-action:") ? messageOwnsAction(m, position.source.message.slice("warp-action:".length)) : m.id === position.source.message);
+    if (!profile && canonical !== "you" && isPresent && positionIndex !== undefined && positionIndex >= 0 && messages.findIndex(m => m.id === source.message) < positionIndex
+      && !(old && carriedObject(state, old))) isPresent = false;
     const value: Entity = { id: old?.id ?? entityId(canonical), name: canonical, displayName: text(row.displayName) || old?.displayName || name,
       aliases: [...new Set([...(old?.aliases ?? []), ...aliases, ...(name !== canonical ? [name] : [])])].slice(0, 24), entityKind: row.entityKind as Entity["entityKind"],
-      present: profile ? old?.present ?? false : typeof row.present === "boolean" ? row.present : old?.present ?? false,
+      present: isPresent,
       status: profile ? old?.status ?? "active" : ["active", "dead"].includes(row.status as string) ? row.status as Entity["status"] : old?.status ?? "active", source };
     return { kind: "entity" as const, value };
   }

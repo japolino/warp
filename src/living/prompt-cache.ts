@@ -16,7 +16,7 @@ export function promptSnapshot(message: Msg, paths: Map<string, string>, rawPath
 
 function delta(before: any, after: any) {
   const changes: any = {};
-  for (const key of ["place", "present", "preferences", "knowledgeBoundary", "agreementBoundary", "assetBoundary", "readBoundary"]) if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) changes[key] = after[key] ?? null;
+  for (const key of ["place", "present", "preferences", "knowledgeBoundary", "agreementBoundary", "assetBoundary", "readBoundary", "explorationBoundary"]) if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) changes[key] = after[key] ?? null;
   for (const key of ["established", "possibleMotives"]) {
     const previous = new Map(before[key].map((f: any) => [f.id, JSON.stringify(f)]));
     const current = new Set(after[key].map((f: any) => f.id));
@@ -25,7 +25,7 @@ function delta(before: any, after: any) {
     if (put.length || remove.length) changes[key] = { put, remove };
   }
   const mechanics: any = {};
-  for (const key of ["resources", "items", "conditions", "abilities", "entities", "distances", "clocks", "cooldowns", "resilience", "agreements"]) {
+  for (const key of ["resources", "items", "conditions", "abilities", "entities", "distances", "clocks", "cooldowns", "resilience", "agreements", "places", "positions", "routes", "discoveries", "stocks"]) {
     const old = before.mechanics?.[key] ?? [], next = after.mechanics?.[key] ?? [];
     const previous = new Map(old.map((row: any) => [row.id, JSON.stringify(row)]));
     const current = new Set(next.map((row: any) => row.id));

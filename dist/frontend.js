@@ -201,6 +201,10 @@ function actorName(state, input) {
 function entityFor(state, name) {
   return state.entities?.find((e) => e.name === actorName(state, name));
 }
+function carriedObject(state, entity, owner = "you") {
+  const names = [entity.id, entity.name, entity.displayName, ...entity.aliases].map(normalize);
+  return entity.entityKind === "object" && state.items.some((i) => i.owner === owner && i.quantity > 0 && [i.id, i.name].some((n) => names.includes(normalize(n))));
+}
 function present(state, name) {
   return name === "you" || entityFor(state, name)?.present === true;
 }
@@ -374,13 +378,17 @@ function readEncounterObservation(row, state, source, messages) {
       return;
     if ([...aliases, text(row.displayName)].some((a) => a && state.entities?.some((e) => e.id !== old?.id && [e.id, e.name, e.displayName, ...e.aliases].some((n) => normalize(n) === normalize(a)))))
       return;
+    let isPresent = profile ? old?.present ?? false : typeof row.present === "boolean" ? row.present : old?.present ?? false;
+    const position = state.positions?.find((p) => p.owner === "you"), positionIndex = position && messages.findIndex((m) => position.source.message.startsWith("warp-action:") ? messageOwnsAction(m, position.source.message.slice("warp-action:".length)) : m.id === position.source.message);
+    if (!profile && canonical !== "you" && isPresent && positionIndex !== undefined && positionIndex >= 0 && messages.findIndex((m) => m.id === source.message) < positionIndex && !(old && carriedObject(state, old)))
+      isPresent = false;
     const value = {
       id: old?.id ?? entityId(canonical),
       name: canonical,
       displayName: text(row.displayName) || old?.displayName || name,
       aliases: [...new Set([...old?.aliases ?? [], ...aliases, ...name !== canonical ? [name] : []])].slice(0, 24),
       entityKind: row.entityKind,
-      present: profile ? old?.present ?? false : typeof row.present === "boolean" ? row.present : old?.present ?? false,
+      present: isPresent,
       status: profile ? old?.status ?? "active" : ["active", "dead"].includes(row.status) ? row.status : old?.status ?? "active",
       source
     };
@@ -3289,7 +3297,7 @@ function inspectMechanics(state) {
     ${resources.length ? `<dl class="warp-inspector-resources">${resources.map((r) => `<div><dt>${esc(r.name)}</dt><dd>${r.current}${r.max === undefined ? "" : ` / ${r.max}`}${r.unit ? ` ${esc(r.unit)}` : ""}</dd></div>`).join("")}</dl>` : ""}
     ${items.length ? `<div class="warp-inspector-items">${items.map((i) => `<span>${esc(i.name)} × ${i.quantity}${i.equipped ? " · equipped" : ""}</span>`).join("")}</div>` : ""}
     ${resilience ? `<p>Physical resilience: ${esc(resilience.band)}<small>Warp interpretation · ${esc(resilience.source.quote)}</small></p>` : ""}
-    ${conditions.map((c) => `<p>${esc(c.name)}${c.targets?.length ? ` · with ${c.targets.map(esc).join(", ")}` : ""}${c.place ? ` · ${esc(c.place)}` : ""}<small>${esc(c.ending)}${c.defenses?.length ? ` · ${c.defenses.map((d) => esc(defenseText(d, true))).join(" · ")}` : ""}</small></p>`).join("")}
+    ${conditions.map((c) => `<p>${esc(c.name)}${c.targets?.length ? ` · with ${c.targets.map(esc).join(", ")}` : ""}${c.place ? ` · ${esc(state.places?.find((p) => p.id === c.place)?.name ?? c.place)}` : ""}<small>${esc(c.ending)}${c.defenses?.length ? ` · ${c.defenses.map((d) => esc(defenseText(d, true))).join(" · ")}` : ""}</small></p>`).join("")}
     ${abilities.length ? `<div class="warp-inspector-abilities">${abilities.map((a) => `<details data-inspect-ability="${esc(a.id)}"><summary><strong>${esc(a.name)}</strong><span>${a.costs.length ? a.costs.map((c) => `${c.amount} ${esc(named(c.id))}`).join(" + ") : "No established resource cost"}</span></summary>
       <p>${esc(a.description)}</p>${a.effects.map((e) => `<p>${esc(effectText(e))}</p>`).join("")}
       ${a.range ? `<p>Range: ${esc(a.range)}</p>` : ""}${a.cooldown ? `<p>${cooldownRemaining(state, "you", a.id) ? `Ready after ${cooldownRemaining(state, "you", a.id)} more action${cooldownRemaining(state, "you", a.id) === 1 ? "" : "s"}` : "Ready"} · ${a.cooldown}-action cooldown</p>` : ""}
@@ -3308,6 +3316,48 @@ var INSPECTOR_STYLE = `
 
 // src/living/ui.ts
 init_html();
+
+// src/living/map.ts
+init_html();
+function inspectMap(state, selected) {
+  const places = state.places ?? [], here = state.positions?.find((p) => p.owner === "you")?.site;
+  const place = places.find((p) => p.id === selected) ?? places.find((p) => p.id === here) ?? places[0];
+  if (!place)
+    return "";
+  const routes = (state.routes ?? []).filter((r) => r.from === place.id || r.to === place.id);
+  const label = (p) => `${p.name}${p.parent ? ` · ${places.find((parent) => parent.id === p.parent)?.name ?? ""}` : ""}`;
+  const discoveries = (state.discoveries ?? []).filter((d) => d.site === place.id), stocks = (state.stocks ?? []).filter((s) => s.site === place.id);
+  return `<section class="warp-map" aria-label="Known places and routes">
+    <label class="warp-map-picker">Place <select data-map-site>${places.map((p) => `<option value="${esc(p.id)}"${p.id === place.id ? " selected" : ""}>${esc(label(p))}</option>`).join("")}</select></label>
+    <div class="warp-map-focus"><span class="warp-map-pin${place.visited ? " is-visited" : ""}" aria-hidden="true"></span><strong>${esc(label(place))}</strong><span>${place.id === here ? "You are here" : place.visited ? "Visited" : "Known, not visited"}</span></div>
+    ${routes.length ? `<div class="warp-map-routes">${routes.map((r) => {
+    const outgoing = r.from === place.id, target = places.find((p) => p.id === (outgoing ? r.to : r.from));
+    if (!target)
+      return "";
+    const status = r.status === "blocked" ? r.reason || "Blocked" : r.unsupported.length ? r.unsupported[0] : r.status === "unknown" ? "Access unknown" : "Open";
+    const symbol = r.status === "blocked" ? "⊣" : r.bidirectional ? "↔" : outgoing ? "→" : "←";
+    return `<div class="warp-map-route" data-route-status="${esc(r.status)}"><span class="warp-map-link" aria-hidden="true">${symbol}</span><div><span class="warp-map-via">${esc(r.via)} · ${r.bidirectional ? "both ways" : outgoing ? "to" : "from"}</span><button data-map-place="${esc(target.id)}" aria-label="View ${esc(label(target))}"><span class="warp-map-pin${target.visited ? " is-visited" : ""}" aria-hidden="true"></span>${esc(label(target))}</button><span class="warp-map-access">${esc(status)}</span></div></div>`;
+  }).join("")}</div>` : ""}
+    ${discoveries.length ? `<dl class="warp-map-discoveries">${discoveries.map((d) => `<div><dt>${esc(d.name)}</dt><dd>${esc(d.text)}</dd></div>`).join("")}</dl>` : ""}
+    ${stocks.length ? `<ul class="warp-map-stocks" aria-label="Remaining supplies">${stocks.map((s) => `<li${!s.quantity ? ' class="is-empty"' : ""}><span>${esc(s.name)}</span><span>${s.quantity} left${s.available ? "" : " · unavailable"}</span></li>`).join("")}</ul>` : ""}
+    <details class="warp-map-source"><summary>Source</summary><q>${esc(place.source.quote)}</q></details>
+  </section>`;
+}
+var MAP_STYLE = `
+.warp-map{margin-top:14px;padding:12px 0 0;border-top:1px solid color-mix(in srgb,currentColor 14%,transparent);max-width:620px}
+.warp-map-picker{display:flex;gap:8px;align-items:center;font-size:12px;opacity:.8}.warp-map-picker select{min-width:100px;max-width:85%;padding:4px}
+.warp-map-focus{display:flex;align-items:center;gap:8px;margin-top:15px}.warp-map-focus strong{font-size:15px}.warp-map-focus>span:last-child{font-size:11px;opacity:.65;margin-left:auto}
+.warp-map-pin{display:inline-block;box-sizing:border-box;width:9px;height:9px;border:1px solid currentColor;border-radius:50%;flex:none;opacity:.7}.warp-map-pin.is-visited{background:currentColor}.warp-map-focus>.warp-map-pin{color:#c8a96b;box-shadow:0 0 0 4px color-mix(in srgb,#c8a96b 12%,transparent)}
+.warp-map-routes{margin-left:4px;padding-top:7px}.warp-map-route{display:flex;align-items:center;gap:8px;position:relative;padding:5px 0 5px 20px;border-left:1px solid color-mix(in srgb,currentColor 22%,transparent)}
+.warp-map-route:last-child{border-left-color:transparent}.warp-map-route:before{content:"";position:absolute;left:-1px;top:0;height:50%;width:18px;border-left:1px solid color-mix(in srgb,currentColor 22%,transparent);border-bottom:1px solid color-mix(in srgb,currentColor 22%,transparent)}
+.warp-map-link{width:20px;flex:none;opacity:.6;text-align:center}.warp-map-route>div{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}.warp-map-route button{display:inline-flex;align-items:center;gap:7px;padding:3px 5px!important;border-color:color-mix(in srgb,currentColor 16%,transparent)!important}
+.warp-map-via,.warp-map-access{font-size:11px;opacity:.65}.warp-map-route[data-route-status=blocked] .warp-map-link{color:#c87575;opacity:1}.warp-map-route[data-route-status=unknown] .warp-map-link{opacity:.4}
+.warp-map-discoveries{margin:13px 0 0}.warp-map-discoveries>div{padding:6px 0;border-top:1px solid color-mix(in srgb,currentColor 8%,transparent)}.warp-map-discoveries dt{font-weight:600;font-size:12px}.warp-map-discoveries dd{margin:2px 0 0;opacity:.75;font-size:12px}
+.warp-map-stocks{list-style:none;padding:0;margin:12px 0 0}.warp-map-stocks li{display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-top:1px solid color-mix(in srgb,currentColor 8%,transparent);font-size:12px}.warp-map-stocks li>span:last-child{font-variant-numeric:tabular-nums;opacity:.7}.warp-map-stocks li.is-empty{opacity:.5}.warp-map-source{font-size:11px;opacity:.65}.warp-map-source q{display:block;margin-top:6px;white-space:normal}
+@media(max-width:540px){.warp-map-focus{flex-wrap:wrap}.warp-map-focus>span:last-child{margin-left:0}.warp-map-route>div{gap:5px}.warp-map-via{width:100%}}
+`;
+
+// src/living/ui.ts
 var revealKey = (chatId, messageId, id, d) => JSON.stringify([chatId, messageId, id, d?.tier, d?.result, d?.roll]);
 function checkMarkup(view) {
   const checks = [...view.decision ? [{ id: "player", decision: view.decision, actor: "" }] : [], ...(view.responses ?? []).slice(0, 3).map((r, i) => ({ id: `response-${i}`, decision: r.decision, actor: r.actor }))];
@@ -3334,6 +3384,7 @@ var STYLE = `
 ${DICE_STYLE}
 .warp-check-response{margin:5px 0;gap:10px}.warp-check-response .warp-check-die{width:76px;height:52px}.warp-check-response .warp-percentile-die{width:42px;height:48px}.warp-check-response .warp-die-number{font-size:14px}.warp-check-response .warp-check-copy strong{font-size:12px}.warp-check-response .warp-check-copy p{font-size:12px}
 ${INSPECTOR_STYLE}
+${MAP_STYLE}
 @media(max-width:540px){.warp-scene-tools{margin-left:0;width:100%}.warp-scene{font-size:12px}}
 `;
 function connectLiving(ctx) {
@@ -3341,6 +3392,7 @@ function connectLiving(ctx) {
   let mode = "say";
   let memoryQuery = "";
   let inspectorOpen = false;
+  let mapOpen = false, selectedSite;
   let settingsOpen = false, helperConnection = "", decisionConnection = "", decisionConnections = [], connections = [];
   let injected = null;
   const diceReveals = new Map;
@@ -3427,6 +3479,7 @@ function connectLiving(ctx) {
     if (!view.enabled)
       return `<div class="warp-scene-top"><span>Warp paused</span><button data-living="resume">Resume</button></div>`;
     const world = view.world;
+    const mappable = !!world.mechanics?.places?.length;
     const inspectable = !!world.mechanics && [...world.mechanics.resources, ...world.mechanics.items.filter((i) => i.quantity > 0), ...world.mechanics.conditions, ...world.mechanics.abilities ?? [], ...(world.mechanics.resilience ?? []).filter((r) => r.band !== "ordinary"), ...world.mechanics.agreements ?? []].some((row) => row.owner === "you" || ("from" in row) && row.from === "you");
     const matches = world.facts.filter((f) => !memoryQuery || `${f.subject} ${f.text} ${f.quote}`.toLocaleLowerCase().includes(memoryQuery.toLocaleLowerCase()));
     const remembered = matches.slice(-80).reverse();
@@ -3439,11 +3492,12 @@ function connectLiving(ctx) {
       reminders.add(key);
       return true;
     });
-    return `<div class="warp-scene-top"><span class="warp-scene-place">${esc(world.place || "Here")}</span><span class="warp-scene-people">${world.present.map(esc).join(" · ")}${view.busy ? ' <span role="status" aria-label="Updating the scene">…</span>' : ""}</span><span class="warp-scene-tools"><button data-living="ideas" ${loading ? "disabled" : ""}>${loading ? "Thinking…" : "Ideas"}</button>${inspectable ? `<button data-living="inspect" aria-expanded="${inspectorOpen}">Inspect</button>` : ""}<button data-living="correct">Correct</button><button data-living="pause">Pause</button><button data-living="settings" aria-expanded="${settingsOpen}">Settings</button></span></div>
+    return `<div class="warp-scene-top"><span class="warp-scene-place">${esc(world.place || "Here")}</span><span class="warp-scene-people">${world.present.map(esc).join(" · ")}${view.busy ? ' <span role="status" aria-label="Updating the scene">…</span>' : ""}</span><span class="warp-scene-tools"><button data-living="ideas" ${loading ? "disabled" : ""}>${loading ? "Thinking…" : "Ideas"}</button>${inspectable ? `<button data-living="inspect" aria-expanded="${inspectorOpen}">Inspect</button>` : ""}${mappable ? `<button data-living="map" aria-expanded="${mapOpen}">Map</button>` : ""}<button data-living="correct">Correct</button><button data-living="pause">Pause</button><button data-living="settings" aria-expanded="${settingsOpen}">Settings</button></span></div>
       ${settingsOpen ? `<div class="warp-scene-settings"><label>Helper connection <select data-helper-connection><option value="">Use this chat's connection</option>${connections.map((c) => `<option value="${esc(c.id)}"${helperConnection === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label><label style="display:block;margin-top:8px">Decision connection <select data-decision-connection><option value="">Use the helper</option>${decisionConnection && !decisionConnections.some((c) => c.id === decisionConnection) ? `<option value="${esc(decisionConnection)}" selected>Saved profile unavailable</option>` : ""}${decisionConnections.map((c) => `<option value="${esc(c.id)}"${decisionConnection === c.id ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select></label><p>Decision profiles come from Lumiverse Connections. They assess contested attempts; Warp rolls the outcome. Unavailable profiles fall back to the helper.</p><p>Reading the scene uses an additional model call. A risky attempt may use one more. You can choose a faster helper connection here.</p></div>` : ""}
       ${!notes.length && relevant.length ? `<div class="warp-scene-note">${relevant.map((f) => esc(f.text)).join(" · ")}</div>` : ""}
       ${notes.length ? `<div class="warp-scene-note">${notes.map(esc).join(" · ")}</div>` : ""}
       ${checkMarkup(view)}
+      ${mapOpen && mappable && world.mechanics ? inspectMap(world.mechanics, selectedSite) : ""}
       ${inspectorOpen && inspectable && world.mechanics ? inspectMechanics(world.mechanics) : ""}
       ${view.retry ? `<button data-living="retry">Scene read unavailable · Retry</button>` : ""}
       ${view.notice ? `<div class="warp-scene-error" role="status">${esc(view.notice)}</div>` : ""}
@@ -3484,6 +3538,10 @@ function connectLiving(ctx) {
         }
       });
       root.addEventListener("change", (e) => {
+        if (e.target.matches("[data-map-site]")) {
+          selectedSite = e.target.value;
+          paint();
+        }
         if (e.target.matches("[data-decision-connection]"))
           ctx.sendToBackend({ type: "settings", patch: { decisionConnectionId: e.target.value } });
         if (e.target.matches("[data-helper-connection]"))
@@ -3493,6 +3551,12 @@ function connectLiving(ctx) {
         const button = e.target.closest("button");
         if (!button || !view)
           return;
+        if (button.dataset.mapPlace) {
+          selectedSite = button.dataset.mapPlace;
+          paint();
+          root?.querySelector("[data-map-site]")?.focus();
+          return;
+        }
         if (button.dataset.idea !== undefined) {
           draft = ideas[Number(button.dataset.idea)] ?? "";
           mode = "say";
@@ -3536,8 +3600,13 @@ function connectLiving(ctx) {
           case "inspect":
             inspectorOpen = !inspectorOpen;
             break;
+          case "map":
+            mapOpen = !mapOpen;
+            break;
         }
         paint();
+        if (button.dataset.living === "map" && mapOpen)
+          root?.querySelector("[data-map-site]")?.focus();
       });
     }
     if (card === row) {
@@ -3551,9 +3620,13 @@ function connectLiving(ctx) {
     const expandedAbilities = [...root.querySelectorAll("[data-inspect-ability][open]")].map((e) => e.dataset.inspectAbility);
     const expandedAgreements = [...root.querySelectorAll("[data-inspect-agreement][open]")].map((e) => e.dataset.inspectAgreement);
     const focused = root.contains(document.activeElement) && document.activeElement?.matches("textarea,[data-memory-query]");
+    const mapFocused = root.contains(document.activeElement) && document.activeElement?.matches("[data-map-site]");
     const selector = document.activeElement?.matches("[data-memory-query]") ? "[data-memory-query]" : "textarea";
     const selection = focused ? [document.activeElement.selectionStart ?? 0, document.activeElement.selectionEnd ?? 0] : null;
     root.innerHTML = markup();
+    const mapPicker = root.querySelector("[data-map-site]"), selectedOption = mapPicker?.querySelector("option[selected]");
+    if (mapPicker && selectedOption)
+      mapPicker.value = selectedOption.value;
     for (const check of root.querySelectorAll("[data-check-id]")) {
       const previous = previousChecks.get(check.dataset.checkId);
       if (previous)
@@ -3587,6 +3660,8 @@ function connectLiving(ctx) {
       input?.focus();
       input?.setSelectionRange(selection[0], selection[1]);
     }
+    if (mapFocused)
+      root.querySelector("[data-map-site]")?.focus();
   }
   const poll = setInterval(() => {
     if (view?.chatId !== active()) {
@@ -3598,6 +3673,8 @@ function connectLiving(ctx) {
       loading = false;
       memoryQuery = "";
       inspectorOpen = false;
+      mapOpen = false;
+      selectedSite = undefined;
     } else if (root && injected && !injected.contains(root)) {
       remove();
       paint();
@@ -3658,8 +3735,11 @@ function connectLiving(ctx) {
         draft = null;
         loading = false;
       }
-      if (view?.chatId !== m.chatId)
+      if (view?.chatId !== m.chatId) {
         inspectorOpen = false;
+        mapOpen = false;
+        selectedSite = undefined;
+      }
       archivedChecks = new Map((m.checks ?? []).map((entry) => [entry.messageId, entry]));
       view = { ...m, type: "living" };
       paint();

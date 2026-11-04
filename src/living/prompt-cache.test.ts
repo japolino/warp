@@ -180,3 +180,17 @@ test("asset and missed-read boundaries append and clear without rewriting histor
   expect(c.slice(0, b.length)).toEqual(b); expect(c.at(-1)!.content).toContain('"readBoundary":null');
   expect(initial.packet.readBoundary).toBeUndefined();
 });
+
+test("travel and depleted stocks append spatial deltas without rewriting an earlier narrator prefix", () => {
+  const first = msg("0", true, "I enter the Dock."), history = [first], snapshot = store(history, first, "Broken scanner");
+  snapshot.packet.mechanics = { places: [{ id: "dock", name: "Dock", visited: true }, { id: "clinic", name: "Clinic", visited: false }], positions: [{ id: "you", owner: "you", site: "dock" }], stocks: [{ id: "rations", site: "clinic", quantity: 3 }] };
+  const a = replayPrompt(prompt(history), history, "Director");
+  const player = msg("1", true, "I visit the Clinic and gather two Rations."); history.push(player);
+  const next = store(history, player, "Broken scanner"); next.packet.mechanics = structuredClone(snapshot.packet.mechanics);
+  next.packet.explorationBoundary = "Known places and remaining supplies persist.";
+  next.packet.mechanics.places[1].visited = true; next.packet.mechanics.positions[0].site = "clinic"; next.packet.mechanics.stocks[0].quantity = 1;
+  const b = replayPrompt(prompt(history), history, "Director");
+  expect(b.slice(0, a.length)).toEqual(a); expect(b.at(-1)!.content).toContain('"positions":{"put":[{"id":"you","owner":"you","site":"clinic"}]');
+  expect(b.at(-1)!.content).toContain('"stocks":{"put":[{"id":"rations","site":"clinic","quantity":1}]');
+  expect(b.at(-1)!.content).toContain('"explorationBoundary":"Known places'); expect(snapshot.packet.mechanics.stocks[0].quantity).toBe(3);
+});

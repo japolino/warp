@@ -41,6 +41,18 @@ try {
   receive({ type: "living_ideas", chatId: "fixture", signature: "path", ideas: ["I offer Jo a hand."] });
   (strip.querySelector('[data-idea="0"]') as any).click();
   if (!strip.querySelector("textarea")) throw new Error("Editable suggestion missing");
+  const source = { message: "fixture", quote: "The known corridor links Dock and Clinic." };
+  receive({ type: "living", chatId: "fixture", signature: "map-path", revision: 2, enabled: true, busy: false, retry: false, anchor: "reply", world: { place: "Clinic", present: [], facts: [], mechanics: {
+    version: 1, resources: [], items: [], conditions: [], applied: [], places: [{ id: "dock", name: "Dock", visited: true, source }, { id: "clinic", name: "Clinic", visited: true, source }],
+    positions: [{ id: "position", owner: "you", site: "clinic", name: "Clinic", source }], routes: [{ id: "corridor", from: "dock", to: "clinic", via: "corridor", bidirectional: true, status: "open", unsupported: [], source }],
+    stocks: [{ id: "rations", site: "clinic", name: "Rations", quantity: 0, available: true, source }],
+  } }, notes: [] });
+  const sentBeforeMap = sent.length;
+  (strip.querySelector('[data-living="map"]') as any).click();
+  if (!strip.querySelector(".warp-map-stocks")?.textContent?.includes("0 left")) throw new Error("Map lost depleted supplies");
+  (strip.querySelector('[data-map-place="dock"]') as any).click();
+  if (!strip.querySelector(".warp-map-focus")?.textContent?.includes("Dock") || sent.length !== sentBeforeMap) throw new Error("Map inspection moved or called the backend");
   console.log("PASS: production frontend uses Lumiverse's real scoped DOM helper, injects owned roots, dispatches Ideas, and opens an editable suggestion without a panel.");
+  console.log("PASS: optional known-route map uses the real scoped DOM helper and inspects places/depletion without a backend call or action.");
 } finally { cleanup(); dom.cleanup(); window.close(); }
 process.exit(0);
