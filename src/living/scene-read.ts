@@ -1,4 +1,5 @@
 import { GROWTH_INSTRUCTIONS } from "./growth.js";
+import { RANGE_OBSERVATIONS } from "./encounters.js";
 import { COMPANION_INSTRUCTIONS } from "./companions.js";
 import type { Observation } from "./mechanics.js";
 
@@ -15,6 +16,7 @@ Spatial rows:
 Stocks need explicit counts and actual ownership/access evidence. Someone else's property or a locked cache is not free supplies. Repetition never replenishes a stock. Counts are conserved by gather receipts; a narrated offer is not a completed counted handover. Keep old damage, clues and depleted supplies when returning. Return at most eight newly relevant spatial rows, prioritizing the investigated connection and its endpoints. A quiet scene or a changed scene label alone needs no map. No hidden card maps, invented distances, travel, survival meters or quests.
 
 Participants: {kind:"entity",name,displayName?,aliases:[],entityKind:"person|object",present,status:"active|dead",message,quote}; {kind:"distance",from,to,band:"touch|near|far",message,quote}. Scene evidence establishes presence/range/death; profiles only establish identity. Use you for the player. No numeric health is required. Do not materialize combat just because someone approaches in conversation.
+${RANGE_OBSERVATIONS}
 Resources may have role:"vital|effort|shield|money|other" when supported. Items/conditions may have defenses:[{kind:"armor|resistance|immunity|reflect",amount,damageType:"physical|fire|cold|electric|poison|mental|untyped|all"}]. All non-immunity numbers need the actual source quote; immunity uses amount:0. Never invent a defense or reset a spent balance.
 Physical condition observations may add category:"physical_injury",severity:"minor|standard|major",recovery:"routine|special". Lost limbs, chronic disabilities and exceptional cures are special, not routine. Bodily durability only may use {kind:"resilience",owner,band:"frail|ordinary|tough|exceptional",message,quote}; rank, skill, money and mood do not prove bodily durability. Death is explicit death, not zero health or injury. Actual recovery can end an existing condition, never automatic message-count healing.
 

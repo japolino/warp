@@ -31,6 +31,24 @@ function initial(): MechanicalState {
   ], before, [], [source]);
   return applyObservations(before, abilities.map(value => ({ kind: "ability", value })));
 }
+
+test("missing melee range is unresolved bookkeeping, while a sourced delivered attack can prepare reach", () => {
+  const s = initial();
+  s.distances = [];
+  const pending = prepareMechanical(s, "unknown-reach", "you", [{ kind: "strike", target: "Jo", outcome: "clean" }]);
+  expect(pending.status).toBe("blocked");
+  expect(pending.unresolved).toBe(true);
+  expect(pending.reason).toBe("Distance to Jo is unknown");
+  expect(pending.changes).toEqual([]);
+  expect(s.growth).toBeUndefined();
+  const delivered = { id: "delivered", is_user: false, content: "Jo throws a punch toward your chest within arm's reach." };
+  const row = { kind: "distance", from: "you", to: "Jo", band: "touch", message: delivered.id, quote: delivered.content };
+  const ready = applyObservations(s, readMechanicalObservations([row], s, [story, delivered]));
+  expect(distance(ready, "you", "Jo")).toBe("touch");
+  expect(prepareMechanical(ready, "known-reach", "you", [{ kind: "strike", target: "Jo", outcome: "clean" }]).status).toBe("ready");
+  const attempt = { ...delivered, id: "player", is_user: true, content: "I punch Jo, so I must be within arm's reach." };
+  expect(readMechanicalObservations([{ ...row, message: attempt.id, quote: attempt.content }], s, [story, attempt])).toEqual([]);
+});
 function use(s: MechanicalState, name: string, target?: string): MechanicalOperation {
   const a = s.abilities!.find(a => a.name === name)!;
   return { kind: "ability", ability: a.id, version: a.version, ...(target ? { target } : {}) };

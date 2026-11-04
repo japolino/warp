@@ -12381,7 +12381,7 @@ function checkRange(state, actor, target, range) {
     return;
   const band = distance2(state, actor, target);
   if (!band)
-    throw new Error(`Distance to ${target} is unknown`);
+    throw new MechanicalKnowledgeError(`Distance to ${target} is unknown`);
   if (RANGES.indexOf(band) > RANGES.indexOf(range))
     throw new Error(`${target} is outside ${range} range`);
 }
@@ -12570,8 +12570,7 @@ function readEncounterObservation(row, state, source, messages) {
     return { kind: "distance", value: { id, from, to, band: row.band, source } };
   }
 }
-var DAMAGE_TYPES, RANGES, MechanicalKnowledgeError, normalize2 = (value) => value.normalize("NFKC").trim().toLocaleLowerCase(), entityId = (name) => normalize2(name) === "you" ? "you" : `entity-${revision(normalize2(name))}`, ENCOUNTER_INSTRUCTIONS = `For relevant established participants/objects, mechanicalObservations may include {kind:"entity",name,displayName,aliases:[],entityKind:"person|object",present,status:"active|dead",message,quote} and {kind:"distance",from,to,band:"touch|near|far",message,quote}. Use you for the player. Reuse identity and names across aliases. Profiles can establish identity but cannot establish current presence, distance or a death. Presence and distance require an actual scene quote. Dead means explicitly dead, not merely injured or at zero health. Do not materialize an encounter for ordinary conversation.
-Resources may have role:"vital|effort|shield|money|other" only when their fictional function is supported. Equipped items and conditions may have defenses:[{kind:"armor|resistance|immunity|reflect",amount,damageType:"physical|fire|cold|electric|poison|mental|untyped|all"}]. Armor subtracts a flat amount, resistance/reflect use percentages, immunity uses amount:0. All non-immunity numbers must occur in the source quote. Do not invent these defenses or health values. A shield pool is an explicit resource with role:shield. Actual values stay unknown without source evidence. Never emit an absolute update to undo an action receipt.`;
+var DAMAGE_TYPES, RANGES, MechanicalKnowledgeError, normalize2 = (value) => value.normalize("NFKC").trim().toLocaleLowerCase(), entityId = (name) => normalize2(name) === "you" ? "you" : `entity-${revision(normalize2(name))}`, RANGE_OBSERVATIONS = `When an actual melee exchange is being prepared, prioritize its missing participant/range observations before optional prose facts. Range touch means within ordinary melee reach, not proof of physical contact or a successful hit. A narrator's currently delivered punch or grapple against someone can establish that reach; quote the actual scene event naming the opponent. Merely sharing a room, intending an attack or running toward someone from afar establishes no touch range. Do not cite the current player attempt to grant its own reach. Unknown range is missing bookkeeping, never proof the player swung too early, missed or must take an extra step.`, ENCOUNTER_INSTRUCTIONS;
 var init_encounters = __esm(() => {
   init_injuries();
   init_companions();
@@ -12579,6 +12578,9 @@ var init_encounters = __esm(() => {
   RANGES = ["touch", "near", "far"];
   MechanicalKnowledgeError = class MechanicalKnowledgeError extends Error {
   };
+  ENCOUNTER_INSTRUCTIONS = `For relevant established participants/objects, mechanicalObservations may include {kind:"entity",name,displayName,aliases:[],entityKind:"person|object",present,status:"active|dead",message,quote} and {kind:"distance",from,to,band:"touch|near|far",message,quote}. Use you for the player. Reuse identity and names across aliases. Profiles can establish identity but cannot establish current presence, distance or a death. Presence and distance require an actual scene quote. Dead means explicitly dead, not merely injured or at zero health. Do not materialize an encounter for ordinary conversation.
+${RANGE_OBSERVATIONS}
+Resources may have role:"vital|effort|shield|money|other" only when their fictional function is supported. Equipped items and conditions may have defenses:[{kind:"armor|resistance|immunity|reflect",amount,damageType:"physical|fire|cold|electric|poison|mental|untyped|all"}]. Armor subtracts a flat amount, resistance/reflect use percentages, immunity uses amount:0. All non-immunity numbers must occur in the source quote. Do not invent these defenses or health values. A shield pool is an explicit resource with role:shield. Actual values stay unknown without source evidence. Never emit an absolute update to undo an action receipt.`;
 });
 
 // src/living/growth.ts
@@ -15158,6 +15160,7 @@ function sceneReadSummary(raw, accepted) {
 var SCENE_OBSERVATIONS;
 var init_scene_read = __esm(() => {
   init_growth();
+  init_encounters();
   init_companions();
   SCENE_OBSERVATIONS = `Read the supplied story for consequential mechanical observations, not actions to execute. Return mechanicalObservations:[] alongside scene/changes, even when empty. Do not execute costs, roll, award, heal, move someone, advance clocks or invent an encounter during this read. Committed receipts remain authoritative.
 ${COMPANION_INSTRUCTIONS}
@@ -15171,6 +15174,7 @@ Spatial rows:
 Stocks need explicit counts and actual ownership/access evidence. Someone else's property or a locked cache is not free supplies. Repetition never replenishes a stock. Counts are conserved by gather receipts; a narrated offer is not a completed counted handover. Keep old damage, clues and depleted supplies when returning. Return at most eight newly relevant spatial rows, prioritizing the investigated connection and its endpoints. A quiet scene or a changed scene label alone needs no map. No hidden card maps, invented distances, travel, survival meters or quests.
 
 Participants: {kind:"entity",name,displayName?,aliases:[],entityKind:"person|object",present,status:"active|dead",message,quote}; {kind:"distance",from,to,band:"touch|near|far",message,quote}. Scene evidence establishes presence/range/death; profiles only establish identity. Use you for the player. No numeric health is required. Do not materialize combat just because someone approaches in conversation.
+${RANGE_OBSERVATIONS}
 Resources may have role:"vital|effort|shield|money|other" when supported. Items/conditions may have defenses:[{kind:"armor|resistance|immunity|reflect",amount,damageType:"physical|fire|cold|electric|poison|mental|untyped|all"}]. All non-immunity numbers need the actual source quote; immunity uses amount:0. Never invent a defense or reset a spent balance.
 Physical condition observations may add category:"physical_injury",severity:"minor|standard|major",recovery:"routine|special". Lost limbs, chronic disabilities and exceptional cures are special, not routine. Bodily durability only may use {kind:"resilience",owner,band:"frail|ordinary|tough|exceptional",message,quote}; rank, skill, money and mood do not prove bodily durability. Death is explicit death, not zero health or injury. Actual recovery can end an existing condition, never automatic message-count healing.
 
@@ -15707,7 +15711,8 @@ For an explicit withdrawal of an existing shared cost permission use mechanicalA
 For explicit travel along an ALREADY KNOWN route use mechanicalActions {kind:"travel",route:"saved route id",quote}. Code validates direction and access and moves only on success. Do not substitute a relative combat move for changing places. Unknown new space may be explored in ordinary narration with no travel operation; never invent a route merely to fill this field. For counted accessible location supplies use {kind:"gather",stock:"saved stock id",amount,quote}; amount must be explicitly stated by the player. Code conserves the local stock and creates the player's item stack once. A question, inspection, map reading, permission request or unaccepted suggestion executes neither operation. Do not use gather for another person's property, purchases, promised rewards or uncounted scenery.
 For an explicit wait or defensive action, use mechanicalActions {kind:"wait|defend",quote}. Defend provides Warp's 50% physical resistance until the actor next acts. Movement relative to an established participant uses {kind:"move",target,direction:"closer|away",quote}, changing one known distance band. These are actual actions, never questions or conversational gestures. Do not promise that retreat ends the encounter or that guarding prevents every kind of harm.
 You may also bootstrap mechanicalObservations for explicit initial resource values/counts in the supplied definition sources or narrator messages: {kind:"resource",owner,name,current,max?,role?,message,quote} or {kind:"item",owner,name,quantity,equipped,message,quote}. Code assigns a stable ID if omitted. Existing IDs stay unchanged. Within a newly prepared definition, a cost or required item may reference its unique owned name when no ID exists yet. Cite the actual source, never the current player attempt. Unknown resources stay unknown.` : ""}${classified ? `
-A separate classifier identified one ${classified.kind} action. Verify that against the original action; do not force an operation if unsupported. For a single matching operation cite the entire exact original player action in quote, preserving its language.` : ""} Output only JSON.`, `Player: ${definitionInput?.player ?? "you"}. Use you for the player.
+A separate classifier identified one ${classified.kind} action. Verify that against the original action; do not force an operation if unsupported. For a single matching operation cite the entire exact original player action in quote, preserving its language.` : ""}${mechanicalRead ? `
+REQUIRED preparation pass: always return mechanicalObservations:[] alongside mechanicalActions:[] and responses:[]. Before emitting a strike or ranged ability for either actor, check its required range in the supplied saved state. If absent, prepare a cited distance row from the latest actual narrator scene in THIS response. For a punch currently being delivered, touch means within melee reach, not an already successful contact. If no scene evidence establishes range, leave it unresolved; never invent a miss, disadvantage or extra movement because a stored row is absent. Return only newly needed observations, not every participant's distance.` : ""} Output only JSON.`, `Player: ${definitionInput?.player ?? "you"}. Use you for the player.
 Definition sources:
 ${JSON.stringify(definitionInput?.sources ?? [])}
 State:

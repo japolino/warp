@@ -50,7 +50,7 @@ export function distance(state: MechanicalState, from: string, to: string) {
 export function checkRange(state: MechanicalState, actor: string, target: string, range?: Range) {
   if (!range || actor === target) return;
   const band = distance(state, actor, target);
-  if (!band) throw new Error(`Distance to ${target} is unknown`);
+  if (!band) throw new MechanicalKnowledgeError(`Distance to ${target} is unknown`);
   if (RANGES.indexOf(band) > RANGES.indexOf(range)) throw new Error(`${target} is outside ${range} range`);
 }
 export function actionCount(state: MechanicalState, actor: string) { return state.clocks?.find(c => c.actor === actor)?.actions ?? 0; }
@@ -197,5 +197,8 @@ export function readEncounterObservation(row: Record<string, unknown>, state: Me
   }
 }
 
+export const RANGE_OBSERVATIONS = `When an actual melee exchange is being prepared, prioritize its missing participant/range observations before optional prose facts. Range touch means within ordinary melee reach, not proof of physical contact or a successful hit. A narrator's currently delivered punch or grapple against someone can establish that reach; quote the actual scene event naming the opponent. Merely sharing a room, intending an attack or running toward someone from afar establishes no touch range. Do not cite the current player attempt to grant its own reach. Unknown range is missing bookkeeping, never proof the player swung too early, missed or must take an extra step.`;
+
 export const ENCOUNTER_INSTRUCTIONS = `For relevant established participants/objects, mechanicalObservations may include {kind:"entity",name,displayName,aliases:[],entityKind:"person|object",present,status:"active|dead",message,quote} and {kind:"distance",from,to,band:"touch|near|far",message,quote}. Use you for the player. Reuse identity and names across aliases. Profiles can establish identity but cannot establish current presence, distance or a death. Presence and distance require an actual scene quote. Dead means explicitly dead, not merely injured or at zero health. Do not materialize an encounter for ordinary conversation.
+${RANGE_OBSERVATIONS}
 Resources may have role:"vital|effort|shield|money|other" only when their fictional function is supported. Equipped items and conditions may have defenses:[{kind:"armor|resistance|immunity|reflect",amount,damageType:"physical|fire|cold|electric|poison|mental|untyped|all"}]. Armor subtracts a flat amount, resistance/reflect use percentages, immunity uses amount:0. All non-immunity numbers must occur in the source quote. Do not invent these defenses or health values. A shield pool is an explicit resource with role:shield. Actual values stay unknown without source evidence. Never emit an absolute update to undo an action receipt.`;
