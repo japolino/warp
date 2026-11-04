@@ -12124,6 +12124,26 @@ function mentioned(state, actor, quote) {
     return new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`, "u").test(norm2(quote));
   });
 }
+function relationshipEvidence(state, actor, controller, source, messages) {
+  const bound = (quote) => mentioned(state, actor, quote) && mentioned(state, controller, quote);
+  if (bound(source.quote))
+    return source;
+  const message = messages.find((m) => m.id === source.message);
+  if (!message)
+    return;
+  {
+    const paragraph = storyContent(message.content).replace(/\s+/g, " "), start = paragraph.indexOf(source.quote);
+    if (start < 0)
+      return;
+    const end = start + source.quote.length, spare = 400 - source.quote.length;
+    const windows = [paragraph.slice(start, start + 400), paragraph.slice(Math.max(0, end - 400), end), paragraph.slice(Math.max(0, start - Math.floor(spare / 2)), end + Math.ceil(spare / 2))];
+    for (const window of windows) {
+      const quote = window.trim();
+      if (quote.length <= 400 && quote.includes(source.quote) && bound(quote))
+        return { ...source, quote };
+    }
+  }
+}
 function compatible(from, to) {
   return from.role === "effort" && to.role === "effort" && from.owner !== to.owner && (from.unit && to.unit ? norm2(from.unit) === norm2(to.unit) : !from.unit && !to.unit && norm2(from.name) === norm2(to.name));
 }
@@ -12170,7 +12190,10 @@ function readCompanionObservation(row, state, source, messages, correction) {
   const editedProfile = (old) => profile && old.message.startsWith("warp-source:") && old.message.split(":")[1] === source.message.split(":")[1] && !sourceContains(messages.find((m) => m.id === source.message)?.content ?? "", old.quote);
   if (row.kind === "companion") {
     const actor = participant(state, text(row.actor, 80)), controller = participant(state, text(row.controller, 80));
-    if (!actor || !controller || actor === "you" || actor === controller || !entityFor(state, actor) || controller !== "you" && !entityFor(state, controller) || !["companion", "summon"].includes(row.companionKind) || !mentioned(state, actor, source.quote) || !mentioned(state, controller, source.quote))
+    if (!actor || !controller || actor === "you" || actor === controller || !entityFor(state, actor) || controller !== "you" && !entityFor(state, controller) || !["companion", "summon"].includes(row.companionKind))
+      return;
+    const evidence = relationshipEvidence(state, actor, controller, source, messages);
+    if (!evidence)
       return;
     const old = state.companions?.find((c) => c.actor === actor);
     if (old && !correction && !editedProfile(old.source))
@@ -12182,7 +12205,7 @@ function readCompanionObservation(row, state, source, messages, correction) {
       actor,
       controller,
       companionKind: row.companionKind,
-      source,
+      source: evidence,
       ...old?.manifestation ? { manifestation: structuredClone(old.manifestation) } : {}
     } };
   }

@@ -225,3 +225,21 @@ test("a unique literal given name grounds a known full-name controller without m
   state.entities!.push({ ...state.entities!.at(-1)!, id: "other", name: "Norma Vale", displayName: "Norma Vale" });
   expect(readMechanicalObservations([row], state, [scene, message])).toEqual([]);
 });
+
+test("a controller-only citation can retain contiguous companion context, never invented or distant text", () => {
+  const { state } = setup(); delete state.companions;
+  const content = "Norma pauses beside the rig. She turns to Echo, her regular autonomous assistant, and introduces her partner.";
+  const message = { id: "context", is_user: false, content };
+  state.entities!.push({ id: "norma", name: "Norma Hollowell", displayName: "Norma Hollowell", aliases: [], entityKind: "person", present: true, status: "active", source: { message: message.id, quote: content } });
+  const row = { kind: "companion", actor: "Echo", controller: "Norma", companionKind: "companion", message: message.id, quote: "Norma pauses beside the rig." };
+  const result = readMechanicalObservations([row], state, [scene, message]); expect(result).toHaveLength(1);
+  expect(result[0].kind === "companion" && result[0].value.source.quote).toBe(content);
+  expect(readMechanicalObservations([{ ...row, quote: "Norma summons an entirely new assistant." }], state, [scene, message])).toEqual([]);
+  expect(readMechanicalObservations([row], state, [scene, { ...message, content: content.replace(". She", ".\n\nShe") }])).toHaveLength(1);
+  expect(readMechanicalObservations([row], state, [scene, { ...message, content: "Norma pauses beside the rig. " + "x".repeat(500) + " Echo waits." }])).toEqual([]);
+  const longer = { ...message, content: content + " " + "x".repeat(398 - content.length) + " tail" };
+  const observations = readMechanicalObservations([row], state, [scene, longer]);
+  const bond = observations[0]; if (bond.kind !== "companion") throw Error("Missing companion");
+  expect(bond.value.source.quote.length).toBe(399);
+  expect(readMechanicalObservations([{ kind: "companion", ...bond.value, ...bond.value.source }], state, [scene, longer], undefined, true)).toEqual(observations);
+});

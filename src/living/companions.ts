@@ -1,6 +1,6 @@
 import { revision } from "../shared/revision.js";
 import { actorName, entityFor, actionCount, MechanicalKnowledgeError } from "./encounters.js";
-import { sourceContains } from "./story-text.js";
+import { sourceContains, storyContent } from "./story-text.js";
 import { messageOwnsAction, closeCondition } from "./condition-history.js";
 import type { MechanicalState, MechanicalChange, Resource } from "./mechanics.js";
 import type { EncounterBeat } from "./encounters.js";
@@ -47,6 +47,24 @@ function mentioned(state: MechanicalState, actor: string, quote: string) {
     return new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`, "u").test(norm(quote));
   });
 }
+function relationshipEvidence(state: MechanicalState, actor: string, controller: string, source: Evidence, messages: Message[]): Evidence | undefined {
+  const bound = (quote: string) => mentioned(state, actor, quote) && mentioned(state, controller, quote);
+  if (bound(source.quote)) return source;
+  const message = messages.find(m => m.id === source.message); if (!message) return;
+  // Models often cite just the controller's sentence. Retain at most 400
+  // contiguous source characters around it. Ownership meaning is still the
+  // helper's interpretation; literal co-occurrence alone cannot prove it.
+  {
+    const paragraph = storyContent(message.content).replace(/\s+/g, " "), start = paragraph.indexOf(source.quote);
+    if (start < 0) return;
+    const end = start + source.quote.length, spare = 400 - source.quote.length;
+    const windows = [paragraph.slice(start, start + 400), paragraph.slice(Math.max(0, end - 400), end), paragraph.slice(Math.max(0, start - Math.floor(spare / 2)), end + Math.ceil(spare / 2))];
+    for (const window of windows) {
+      const quote = window.trim();
+      if (quote.length <= 400 && quote.includes(source.quote) && bound(quote)) return { ...source, quote };
+    }
+  }
+}
 function compatible(from: Resource, to: Resource) {
   return from.role === "effort" && to.role === "effort" && from.owner !== to.owner
     && (from.unit && to.unit ? norm(from.unit) === norm(to.unit) : !from.unit && !to.unit && norm(from.name) === norm(to.name));
@@ -82,11 +100,12 @@ export function readCompanionObservation(row: Record<string, unknown>, state: Me
   if (row.kind === "companion") {
     const actor = participant(state, text(row.actor, 80)), controller = participant(state, text(row.controller, 80));
     if (!actor || !controller || actor === "you" || actor === controller || !entityFor(state, actor) || controller !== "you" && !entityFor(state, controller)
-      || !["companion", "summon"].includes(row.companionKind as string) || !mentioned(state, actor, source.quote) || !mentioned(state, controller, source.quote)) return;
+      || !["companion", "summon"].includes(row.companionKind as string)) return;
+    const evidence = relationshipEvidence(state, actor, controller, source, messages); if (!evidence) return;
     const old = state.companions?.find(c => c.actor === actor);
     if (old && !correction && !editedProfile(old.source)) return;
     if (old?.manifestation?.active && (old.controller !== controller || old.companionKind !== row.companionKind)) return;
-    return { kind: "companion", value: { id: old?.id ?? `companion-${revision(actor)}`, actor, controller, companionKind: row.companionKind as Companion["companionKind"], source,
+    return { kind: "companion", value: { id: old?.id ?? `companion-${revision(actor)}`, actor, controller, companionKind: row.companionKind as Companion["companionKind"], source: evidence,
       ...(old?.manifestation ? { manifestation: structuredClone(old.manifestation) } : {}) } };
   }
   const from = resource(state, row.from), to = resource(state, row.to);
