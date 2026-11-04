@@ -21,6 +21,7 @@ Only a newly relevant source-backed ability/item action needs abilityDefinitions
 Supported effects: {kind:"damage|restore",target:"self|target",resource,amount:explicitNumber} or magnitude:"minor|standard|major" when no exact amount exists; damage may add damageType:"physical|fire|cold|electric|poison|mental|untyped". Qualitative physical harm/treatment may use {kind:"harm|mend",target,impact:"minor|standard|major",damageType?}; preserve an explicit numerical source amount rather than replacing it with a magnitude. Mend may add maxInjury:"minor|standard|major|any" only from source. It does not regrow limbs, remove special conditions or reset money/energy. Conditions use {kind:"condition",target,name,hinders:[],blocks:[],helps:[],ending,duration?}; an applicable specific cure can use {kind:"clear_condition",target,name}. Approaches are the enum above except other. Defenses use {kind:"defense",target,name,defense:{kind:"armor|resistance|immunity|shield|reflect",amount,damageType},ending,duration?}; only shield may replace amount with magnitude. Duration and definition cooldown count explicitly sourced subsequent OWNER actions, not messages or seconds; range is touch|near|far only from source. Preserve all unsupported targets, timing, effects, immunity exceptions or other restrictions in unsupported instead of dropping them. The foreground compiler resolves execution; this read only prepares supported content.`;
 
 /** Small private metadata trace, never narrator instructions or a player-facing explanation. */
+type SpatialReadCandidate = { fields: string[] } & Record<string, string | string[] | null>;
 export function sceneReadSummary(raw: unknown, accepted: Observation[]) {
   const rows = Array.isArray(raw) ? raw.slice(0, 24) : [];
   const count = (values: unknown[]) => values.reduce<Record<string, number>>((out, row) => {
@@ -28,7 +29,7 @@ export function sceneReadSummary(raw: unknown, accepted: Observation[]) {
     return out;
   }, Object.create(null));
   const spatial = rows.filter(row => row && typeof row === "object" && ["place", "route", "discovery", "stock", "stock_access"].includes(row.kind)).slice(0, 8)
-    .map(row => ({ fields: Object.keys(row).slice(0, 24).map(key => key.slice(0, 80)), ...Object.fromEntries(Object.entries(row).filter(([key]) => ["kind", "id", "name", "parent", "from", "to", "site", "via", "status", "message", "quote"].includes(key))
+    .map<SpatialReadCandidate>(row => ({ fields: Object.keys(row).slice(0, 24).map(key => key.slice(0, 80)), ...Object.fromEntries(Object.entries(row).filter(([key]) => ["kind", "id", "name", "parent", "from", "to", "site", "via", "status", "message", "quote"].includes(key))
       .map(([key, value]) => [key, typeof value === "string" ? value.slice(0, key === "quote" ? 400 : 160) : null])) }));
   return { offered: count(rows), accepted: count(accepted), ...(spatial.length ? { spatial } : {}) };
 }

@@ -222,3 +222,17 @@ test("the existing read supplies bounded literal scene references and retains ro
   const preview = await livingIntercept([{ role: "user", content: "Where am I?" }], { chatId: id, userId: h.userId, generationType: "normal", isDryRun: true } as InterceptorContextDTO);
   expect(JSON.stringify(preview)).not.toContain("readSummary"); expect(JSON.stringify(preview)).not.toContain("secretOverride");
 });
+
+test("the living read forwards the selected Flash helper's low policy in its one existing request", async () => {
+  const connections = h.fake.connections.list, generate = h.fake.generate.quiet, seen: any[] = [];
+  h.fake.connections.list = async () => [{ id: "flash", provider: "google_vertex", model: "gemini-3.8-flash", is_default: true }];
+  h.fake.generate.quiet = async (input: any) => { seen.push(structuredClone({ reasoning: input.reasoning, parameters: input.parameters })); return generate(input); };
+  try {
+    const id = await chat();
+    expect(seen).toHaveLength(1);
+    expect(seen[0].reasoning).toEqual({ source: "custom", apiReasoning: true, effort: "low" });
+    expect(seen[0].parameters.thinkingConfig).toEqual({ thinkingLevel: "low" });
+    expect(seen[0].parameters.max_tokens).toBe(8192);
+    expect(currentSite(await state(id))?.name).toBe("Dock");
+  } finally { h.fake.connections.list = connections; h.fake.generate.quiet = generate; }
+});

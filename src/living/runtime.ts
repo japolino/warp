@@ -14,7 +14,7 @@ import type { InterceptorContextDTO, LlmMessageDTO } from "lumiverse-spindle-typ
 import { host, logError } from "../backend/host.js";
 import { getMessages, serializeMetadata, type Msg } from "../backend/ledger.js";
 import { getSettings } from "../backend/settings.js";
-import { firstJson } from "../backend/helpers.js";
+import { firstJson, helperReasoning } from "../backend/helpers.js";
 import { characterBrief, getRuleset } from "../backend/source.js";
 import { patchSettings } from "../backend/settings.js";
 import { splitTyped } from "../backend/questions.js";
@@ -179,6 +179,8 @@ async function call(chatId: string, system: string, user: string, userId: string
   const chat = await host().chats.get(chatId, userId);
   // Quiet generations are not attached to a chat. Explicitly respect a pinned connection.
   const pinned = typeof chat?.metadata?.connection_profile_id === "string" ? chat.metadata.connection_profile_id : undefined;
+  const connectionId = settings.helperConnectionId || pinned || undefined;
+  const policy = await helperReasoning(connectionId, userId);
   const request = new AbortController(), abort = () => request.abort();
   if (controller.signal.aborted) abort(); else controller.signal.addEventListener("abort", abort, { once: true });
   const timer = setTimeout(abort, timeout);
@@ -188,9 +190,9 @@ async function call(chatId: string, system: string, user: string, userId: string
       aborted = () => reject(new Error("Warp request cancelled"));
       if (request.signal.aborted) aborted(); else request.signal.addEventListener("abort", aborted, { once: true });
     });
-    const generation = host().generate.quiet({ type: "quiet", connection_id: settings.helperConnectionId || pinned || undefined, userId,
+    const generation = host().generate.quiet({ type: "quiet", connection_id: connectionId, userId,
       messages: [{ role: "system", content: system }, { role: "user", content: user }],
-      reasoning: { source: "off" }, parameters: { temperature: 0.15, max_tokens: maxTokens }, signal: request.signal });
+      reasoning: policy.reasoning, parameters: { ...policy.parameters, temperature: 0.15, max_tokens: maxTokens }, signal: request.signal });
     let response: unknown;
     try { response = await Promise.race([generation, cancellation]); }
     finally { if (aborted) request.signal.removeEventListener("abort", aborted); }

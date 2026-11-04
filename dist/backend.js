@@ -9534,6 +9534,16 @@ var newMeter = () => ({ helper: 0, jev: 0 });
 var init_decisions = () => {};
 
 // src/backend/helpers.ts
+async function helperReasoning(connectionId, userId) {
+  try {
+    const profiles = await host().connections.list(userId);
+    const profile = connectionId ? profiles.find((p) => p.id === connectionId) : profiles.find((p) => p.is_default);
+    if (profile && ["google", "google_vertex"].includes(profile.provider) && /^gemini-3[.-]/i.test(profile.model) && /flash/i.test(profile.model)) {
+      return { reasoning: { source: "custom", apiReasoning: true, effort: "low" }, parameters: { thinkingConfig: { thinkingLevel: "low" } } };
+    }
+  } catch {}
+  return { reasoning: { source: "off" }, parameters: {} };
+}
 function firstJson2(text) {
   const cleaned = text.replace(/```(?:json)?/gi, "");
   const start = cleaned.indexOf("{");
@@ -14801,6 +14811,8 @@ async function call(chatId, system, user, userId, controller, timeout = 16000, m
   const settings = await getSettings(userId);
   const chat = await host().chats.get(chatId, userId);
   const pinned = typeof chat?.metadata?.connection_profile_id === "string" ? chat.metadata.connection_profile_id : undefined;
+  const connectionId = settings.helperConnectionId || pinned || undefined;
+  const policy = await helperReasoning(connectionId, userId);
   const request = new AbortController, abort = () => request.abort();
   if (controller.signal.aborted)
     abort();
@@ -14818,11 +14830,11 @@ async function call(chatId, system, user, userId, controller, timeout = 16000, m
     });
     const generation = host().generate.quiet({
       type: "quiet",
-      connection_id: settings.helperConnectionId || pinned || undefined,
+      connection_id: connectionId,
       userId,
       messages: [{ role: "system", content: system }, { role: "user", content: user }],
-      reasoning: { source: "off" },
-      parameters: { temperature: 0.15, max_tokens: maxTokens },
+      reasoning: policy.reasoning,
+      parameters: { ...policy.parameters, temperature: 0.15, max_tokens: maxTokens },
       signal: request.signal
     });
     let response;

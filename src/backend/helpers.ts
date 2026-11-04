@@ -1,8 +1,20 @@
 // One quiet call on the helper connection, and reading JSON out of a model's reply.
 
-import type { GenerationResponseDTO } from "lumiverse-spindle-types";
+import type { GenerationResponseDTO, GenerationReasoningOverrideDTO } from "lumiverse-spindle-types";
 import type { Settings } from "../shared/protocol.js";
 import { host } from "./host.js";
+
+/** Google Flash 3 keeps thinking when the host's generic off path removes its config. */
+export async function helperReasoning(connectionId?: string, userId?: string): Promise<{ reasoning: GenerationReasoningOverrideDTO; parameters: Record<string, unknown> }> {
+  try {
+    const profiles = await host().connections.list(userId);
+    const profile = connectionId ? profiles.find(p => p.id === connectionId) : profiles.find(p => p.is_default);
+    if (profile && ["google", "google_vertex"].includes(profile.provider) && /^gemini-3[.-]/i.test(profile.model) && /flash/i.test(profile.model)) {
+      return { reasoning: { source: "custom", apiReasoning: true, effort: "low" }, parameters: { thinkingConfig: { thinkingLevel: "low" } } };
+    }
+  } catch { /* Old/denied profile APIs retain the portable off request. */ }
+  return { reasoning: { source: "off" }, parameters: {} };
+}
 
 /** The first balanced JSON object in a model's reply (code fences and chatter around it are ignored). */
 export function firstJson(text: string): Record<string, unknown> | null {
