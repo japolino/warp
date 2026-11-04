@@ -10,24 +10,6 @@ var __esm = (fn, res, err) => () => {
   return res;
 };
 
-// src/frontend/html.ts
-function esc(v) {
-  return String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-}
-function pctTone(p) {
-  return p >= 0.66 ? "good" : p >= 0.33 ? "warn" : "bad";
-}
-function section(title, count, body, open, key = title) {
-  return `<details class="warp-section" data-section="${esc(key)}"${open ? " open" : ""}><summary><span>${esc(title)}${count ? ` · ${count}` : ""}</span></summary><div class="warp-section-body">${body}</div></details>`;
-}
-function editButton(key, label) {
-  return `<button class="warp-btn warp-btn-ghost warp-edit" data-edit="${esc(key)}" title="${esc(label)}" aria-label="${esc(label)}">✎</button>`;
-}
-var TIER_TONE, pct = (p) => `${Math.round(p * 100)}%`;
-var init_html = __esm(() => {
-  TIER_TONE = { crit_success: "good", success: "good", partial: "warn", fail: "bad", crit_fail: "bad" };
-});
-
 // src/shared/revision.ts
 function revision(value) {
   const text = JSON.stringify(value);
@@ -38,6 +20,147 @@ function revision(value) {
     b = Math.imul(b ^ c, 3266489909);
   }
   return `${(a >>> 0).toString(16)}:${(b >>> 0).toString(16)}`;
+}
+
+// src/engine/dice.ts
+function hashSeed(str) {
+  let h = 1779033703 ^ str.length;
+  for (let i = 0;i < str.length; i++) {
+    h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
+    h = h << 13 | h >>> 19;
+  }
+  h = Math.imul(h ^ h >>> 16, 2246822507);
+  h = Math.imul(h ^ h >>> 13, 3266489909);
+  return (h ^= h >>> 16) >>> 0;
+}
+function seededRng(seed) {
+  let a = hashSeed(seed);
+  return () => {
+    a = a + 1831565813 >>> 0;
+    let t = a;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function randomSeed() {
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+function parseDice(src) {
+  const s = src.replace(/\s+/g, "").toLowerCase();
+  if (!s)
+    throw new DiceError("Dice notation is empty");
+  const groups = [];
+  let flat = 0;
+  TERM.lastIndex = 0;
+  let consumed = 0;
+  let m;
+  while (consumed < s.length && (m = TERM.exec(s))) {
+    if (m[0] === "")
+      break;
+    if (consumed > 0 && !m[1])
+      break;
+    const sign = m[1] === "-" ? -1 : 1;
+    if (m[7] !== undefined) {
+      flat += sign * Number(m[7]);
+    } else {
+      const count = m[2] ? Number(m[2]) : 1;
+      const sides = m[3] === "%" ? 100 : Number(m[3]);
+      if (count < 1 || count > 100)
+        throw new DiceError(`"${src}": dice count must be 1–100`);
+      if (sides < 2 || sides > 1000)
+        throw new DiceError(`"${src}": dice need 2–1000 sides`);
+      const g = { count, sides, sign };
+      if (m[4]) {
+        const n = Number(m[5]);
+        if (n < 1 || n > count)
+          throw new DiceError(`"${src}": can't keep ${n} of ${count} dice`);
+        g.keep = { mode: m[4], n };
+      }
+      if (m[6])
+        g.explode = true;
+      groups.push(g);
+    }
+    consumed = TERM.lastIndex;
+  }
+  if (consumed !== s.length)
+    throw new DiceError(`"${src}" isn't valid dice notation (try d20, 2d6, d100, 4d6kh3)`);
+  if (!groups.length)
+    throw new DiceError(`"${src}" has no dice in it`);
+  return { groups, flat, primarySides: Math.max(...groups.map((g) => g.sides)) };
+}
+function rollDice(notation, rng) {
+  const parsed = parseDice(notation);
+  const dice = [];
+  let total = parsed.flat;
+  let natural = null;
+  parsed.groups.forEach((g, gi) => {
+    const faces = [];
+    for (let i = 0;i < g.count; i++) {
+      let face = 1 + Math.floor(rng() * g.sides);
+      faces.push(face);
+      let chain = 0;
+      while (g.explode && face === g.sides && chain++ < 20) {
+        face = 1 + Math.floor(rng() * g.sides);
+        faces.push(face);
+      }
+    }
+    const order = faces.map((v, i) => ({ v, i }));
+    let keptIdx = new Set(order.map((o) => o.i));
+    if (g.keep) {
+      order.sort((x, y) => g.keep.mode === "kh" ? y.v - x.v : x.v - y.v);
+      keptIdx = new Set(order.slice(0, g.keep.n).map((o) => o.i));
+    }
+    faces.forEach((v, i) => {
+      const kept = keptIdx.has(i);
+      dice.push({ sides: g.sides, value: v, kept });
+      if (kept)
+        total += g.sign * v;
+    });
+    const keptFaces = faces.filter((_, i) => keptIdx.has(i));
+    if (gi === 0 && keptFaces.length === 1)
+      natural = keptFaces[0];
+  });
+  return { notation, dice, total, natural, primarySides: parsed.primarySides };
+}
+function d20Tier(natural, add, target, partial) {
+  if (natural >= 20)
+    return "crit_success";
+  if (natural <= 1)
+    return "crit_fail";
+  const total = natural + add;
+  if (total >= target)
+    return "success";
+  if (partial > 0 && total >= target - partial)
+    return "partial";
+  return "fail";
+}
+function d20Odds(add, target, partial) {
+  let ok = 1, part = 0;
+  for (let f = 2;f <= 19; f++) {
+    const t = f + add;
+    if (t >= target)
+      ok++;
+    else if (partial > 0 && t >= target - partial)
+      part++;
+  }
+  return { success: ok / 20, partial: part / 20 };
+}
+function rollD20(rng) {
+  return 1 + Math.floor(rng() * 20);
+}
+var DiceError, TERM;
+var init_dice = __esm(() => {
+  DiceError = class DiceError extends Error {
+  };
+  TERM = /([+-]?)\s*(?:(\d*)d(\d+|%)(?:(kh|kl)(\d+))?(!)?|(\d+))/gy;
+});
+
+// src/living/check-bands.ts
+function attemptBands(tier) {
+  return tier === "favorable" ? [60, 90] : tier === "outmatched" ? [10, 45] : [30, 75];
 }
 
 // src/living/condition-history.ts
@@ -422,6 +545,20 @@ function costPayer(state, input) {
     payer = resource(state, link.to);
   }
 }
+function withdrawCostLink(state, actor, id, action, changes, beats) {
+  const link = state.costLinks?.find((l) => l.id === id), from = link && resource(state, link.from), to = link && resource(state, link.to);
+  if (!link || !from || !to || from.owner !== actor && to.owner !== actor)
+    throw Error("This shared cost permission is not yours to withdraw");
+  if (link.unsupported.length)
+    throw new MechanicalKnowledgeError(`Withdrawing this link needs clarification: ${link.unsupported.join("; ")}`);
+  if (!link.enabled)
+    return;
+  const old = structuredClone(link);
+  link.enabled = false;
+  link.source = { message: `warp-action:${action}`, quote: `Withdraw shared cost permission ${id}`, sourceRevision: revision([action, id]) };
+  changes.push({ kind: "cost_link", id, before: old, after: structuredClone(link) });
+  beats.push({ kind: "unlink", actor, name: "Shared cost permission withdrawn" });
+}
 function validateManifestation(state, controller, id, active) {
   const companion = state.companions?.find((c) => c.id === id && c.controller === controller && c.companionKind === "summon"), actor = companion && entityFor(state, companion.actor);
   if (!companion || !actor)
@@ -724,6 +861,113 @@ var init_encounters = __esm(() => {
   RANGES = ["touch", "near", "far"];
   MechanicalKnowledgeError = class MechanicalKnowledgeError extends Error {
   };
+});
+
+// src/living/growth.ts
+function subject(state, actor, operation) {
+  if (operation.kind === "strike")
+    return { skill: "strike", name: "Unarmed strikes" };
+  if (operation.kind !== "ability")
+    return;
+  const a = state.abilities?.find((a) => a.id === operation.ability && a.owner === actor && a.version === operation.version);
+  return a ? { skill: `ability:${a.id}:${a.fingerprint}`, name: a.name } : undefined;
+}
+function activePracticeTracks(state) {
+  return (state.growth ?? []).filter((g) => g.skill === "strike" || state.abilities?.some((a) => a.owner === g.owner && g.skill === `ability:${a.id}:${a.fingerprint}`));
+}
+function practiceBenefit(state, actor, operation) {
+  if (!operation)
+    return [];
+  actor = actorName(state, actor);
+  const skill = subject(state, actor, operation);
+  return skill && state.growth?.some((g) => g.owner === actor && g.skill === skill.skill && g.familiar) ? [`Practiced ${skill.name}`] : [];
+}
+function validLearningWitness(witness) {
+  if (!witness || typeof witness.seed !== "string" || witness.seed.length > 160 || !["favorable", "uncertain", "outmatched"].includes(witness.tier))
+    throw Error("Invalid learning check");
+  const roll = Math.floor(seededRng(witness.seed)() * 100) + 1, [clean, mixed] = attemptBands(witness.tier);
+  if (witness.roll !== roll || witness.result !== (roll <= clean ? "clean" : roll <= mixed ? "mixed" : "setback"))
+    throw Error("Learning check does not match the saved roll");
+}
+function credit(state, actor, skill, cause, changes, beats) {
+  const id = `practice-${revision([actor, skill.skill])}`, old = state.growth?.find((g) => g.id === id);
+  if (old?.familiar || old?.credits.some((c) => c.context === cause.context))
+    return;
+  const next = old ? structuredClone(old) : { id, owner: actor, ...skill, credits: [], familiar: false };
+  next.credits.push(structuredClone(cause));
+  next.familiar = next.credits.length >= PRACTICE_MILESTONE;
+  state.growth ??= [];
+  if (old)
+    state.growth[state.growth.indexOf(old)] = next;
+  else
+    state.growth.push(next);
+  changes?.push({ kind: "growth", id, before: old ? structuredClone(old) : null, after: structuredClone(next) });
+  if (next.familiar)
+    beats?.push({ kind: "milestone", actor, name: `${next.name}: familiar`, basis: "warp" });
+}
+function learnFromChallenge(state, before, actor, operation, action, witness, changes, beats) {
+  validLearningWitness(witness);
+  actor = actorName(before, actor);
+  const skill = subject(before, actor, operation);
+  if (!skill || !["ability", "strike"].includes(operation.kind))
+    return;
+  if (!("outcome" in operation) || operation.outcome !== witness.result)
+    throw Error("Learning outcome differs from the executed attempt");
+  const target = "target" in operation && operation.target ? actorName(before, operation.target) : "", entity = target ? entityFor(before, target) : undefined;
+  if (!entity && target !== "you" || target === actor || !present(before, target))
+    return;
+  credit(state, actor, skill, { context: `entity:${target === "you" ? "you" : entity.id}`, kind: "challenge", action }, changes, beats);
+}
+function readPractice(row, state, source, messages) {
+  if (source.message.startsWith("warp-source:") || Object.keys(row).some((k) => !["kind", "owner", "ability", "teacher", "unsupported", "message", "quote", "source", "sourceRevision"].includes(k)))
+    return;
+  if (row.unsupported !== undefined && (!Array.isArray(row.unsupported) || row.unsupported.length))
+    return;
+  const owner = participant(state, text2(row.owner)), teacher = participant(state, text2(row.teacher));
+  const ability = state.abilities?.find((a) => a.owner === owner && (a.id === row.ability || norm2(a.name) === norm2(text2(row.ability))));
+  if (!ability || !teacher || teacher === owner || teacher !== "you" && !entityFor(state, teacher) || !present(state, owner))
+    return;
+  const evidence = relationshipEvidence(state, owner, teacher, source, messages);
+  if (!evidence || !norm2(evidence.quote).includes(norm2(ability.name)))
+    return;
+  const observation = { kind: "practice", value: { owner, teacher, ability: ability.id, source: evidence } };
+  const key = `ability:${ability.id}:${ability.fingerprint}`, existing = state.growth?.find((g) => g.owner === owner && g.skill === key);
+  if (existing?.familiar || existing?.credits.some((c) => c.context === `entity:${teacher === "you" ? "you" : entityFor(state, teacher).id}`))
+    return;
+  return observation;
+}
+function observePractice(state, lesson) {
+  const a = state.abilities?.find((a) => a.id === lesson.ability && a.owner === lesson.owner), teacher = entityFor(state, lesson.teacher);
+  if (a && (teacher || lesson.teacher === "you"))
+    credit(state, lesson.owner, { skill: `ability:${a.id}:${a.fingerprint}`, name: a.name }, { context: `entity:${lesson.teacher === "you" ? "you" : teacher.id}`, kind: "instruction", source: lesson.source });
+}
+function growthNotes(before, after) {
+  return (after.growth ?? []).filter((g) => g.familiar && g.owner === "you" && !before.growth?.some((old) => old.id === g.id && old.familiar)).map((g) => `${g.name}: familiar`);
+}
+var PRACTICE_MILESTONE = 3, norm2 = (s) => s.normalize("NFKC").trim().toLocaleLowerCase(), text2 = (s) => typeof s === "string" && s.trim().length <= 160 ? s.trim() : "", GROWTH_INSTRUCTIONS = `Warp records familiarity locally from executed opposed strikes/known abilities and completed instruction. Do not invent XP, levels, stat pools, progression costs, extra practice rows for action receipts, or new powers. Repeated use against the same entity teaches at most once per technique; repeating one teacher's lesson cannot farm more credit. Three distinct eligible opportunities earn one bounded familiarity benefit for that exact technique. Familiarity alone never lifts an outmatched base tier. Code supplies this Warp rule; it never changes source costs, effects, immunity, consent or prerequisites. Ordinary conversation, affection, cancelled/rejected actions and uncontested routine casts earn no challenge credit. Announce only a newly earned milestone, never routine point totals unless asked. Read-only practice queries can include opportunities/milestoneAt from saved state; answering them grants nothing. Omitted progress is not erased.
+For an actual completed lesson in an ALREADY KNOWN ability only, mechanicalObservations may include {kind:"practice",owner:"student's exact identity",ability:"saved ability id or name",teacher:"known actual instructor",unsupported:[],message,quote}. Cite actual narrator completion naming both participants and the technique. Declare missing participants first. An offer to teach, watching someone without instruction, a question, a player attempt or a profile is not completed practice. No extra model call or setup is needed. Keep unresolved tuition, timing, prerequisites or learning rules in unsupported; such a lesson grants no automatic familiarity. Do not invent a published game's levels. A new/changed power still needs its own source-backed ability definition.`;
+var init_growth = __esm(() => {
+  init_dice();
+  init_encounters();
+  init_companions();
+});
+
+// src/frontend/html.ts
+function esc(v) {
+  return String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+function pctTone(p) {
+  return p >= 0.66 ? "good" : p >= 0.33 ? "warn" : "bad";
+}
+function section(title, count, body, open, key = title) {
+  return `<details class="warp-section" data-section="${esc(key)}"${open ? " open" : ""}><summary><span>${esc(title)}${count ? ` · ${count}` : ""}</span></summary><div class="warp-section-body">${body}</div></details>`;
+}
+function editButton(key, label) {
+  return `<button class="warp-btn warp-btn-ghost warp-edit" data-edit="${esc(key)}" title="${esc(label)}" aria-label="${esc(label)}">✎</button>`;
+}
+var TIER_TONE, pct = (p) => `${Math.round(p * 100)}%`;
+var init_html = __esm(() => {
+  TIER_TONE = { crit_success: "good", success: "good", partial: "warn", fail: "bad", crit_fail: "bad" };
 });
 
 // src/living/agreements.ts
@@ -1643,7 +1887,7 @@ var init_render_panel = __esm(() => {
 });
 
 // src/frontend/render-chat.ts
-function d20Odds(add, target) {
+function d20Odds2(add, target) {
   let n = 1;
   for (let f = 2;f <= 19; f++)
     if (f + add >= target)
@@ -1653,7 +1897,7 @@ function d20Odds(add, target) {
 function checkOdds(c) {
   if (c.target === null || c.faces.length !== 1 || c.faces[0].sides !== 20)
     return null;
-  return d20Odds(c.add, c.target);
+  return d20Odds2(c.add, c.target);
 }
 function momentumOf(rec) {
   const d = rec.contest?.swing ?? 0;
@@ -3504,6 +3748,7 @@ var DICE_STYLE = `
 `;
 
 // src/living/inspector.ts
+init_growth();
 init_html();
 init_encounters();
 init_companions();
@@ -3539,6 +3784,7 @@ function effectText(e, state) {
 function inspectMechanics(state) {
   const resources = state.resources.filter((r) => r.owner === "you"), items = state.items.filter((i) => i.owner === "you" && i.quantity > 0);
   const conditions = state.conditions.filter((c) => c.owner === "you"), abilities = state.abilities?.filter((a) => a.owner === "you") ?? [];
+  const growth = activePracticeTracks(state).filter((g) => g.owner === "you");
   const companions = state.companions?.filter((c) => c.controller === "you") ?? [];
   const resilience = state.resilience?.find((r) => r.owner === "you" && r.band !== "ordinary");
   const agreements = visibleAgreements(state.agreements?.filter((a) => a.owner === "you" || a.from === "you"));
@@ -3564,6 +3810,7 @@ function inspectMechanics(state) {
       ${a.requires.length ? `<p>Requires ${a.requires.map((r) => `${esc(named(r.item))}${r.equipped ? " equipped" : " carried"}`).join(", ")}</p>` : ""}
       ${a.unsupported.length ? `<p class="warp-inspector-blocked">Needs clarification: ${a.unsupported.map(esc).join(" · ")}</p>` : ""}
       <small>Version ${a.version} · ${esc(a.sourceKind)}</small><blockquote>${esc(a.source.quote)}</blockquote></details>`).join("")}</div>` : ""}
+    ${growth.map((g) => `<p>${esc(g.name)}: ${g.familiar ? "familiar" : `${g.credits.length} / 3 varied opportunities`}<small>Warp practice · one scoped help after the milestone · source costs and effects stay unchanged</small></p>`).join("")}
     ${companions.map((c) => {
     const entity = state.entities?.find((e) => e.name === c.actor);
     return `<details data-inspect-companion="${esc(c.id)}"><summary>${esc(entity?.displayName ?? c.actor)} · ${entity?.status === "dead" ? "Dead" : entity?.present ? "Here" : "Away"}</summary>
@@ -3573,7 +3820,7 @@ function inspectMechanics(state) {
       <blockquote>${esc(c.source.quote)}</blockquote></details>`;
   }).join("")}
     ${agreements.map((a) => `<details data-inspect-agreement="${esc(a.id)}"><summary>${esc(a.name)} · ${a.cancelled ? "withdrawn" : `${a.requirements.filter((r) => r.done).length}/${a.requirements.length} done`}</summary>${a.requirements.map((r) => `<p>${r.done ? "Done" : "Pending"} · ${esc(r.text)}</p>`).join("")}${a.rewards.map((r) => `<p>${r.paid ? "Received" : a.cancelled ? "Declined" : r.ready?.allowed ? "Offered" : r.ready ? "Withheld" : "Promised"} · ${r.amount} ${esc(r.asset)}${a.from ? ` · from ${esc(a.from)}` : ""}</p>`).join("")}${a.unsupported.length ? `<p>Needs clarification: ${a.unsupported.map(esc).join(" · ")}</p>` : ""}<blockquote>${esc(a.offer?.quote ?? a.source.quote)}</blockquote></details>`).join("")}
-    ${!resources.length && !items.length && !conditions.length && !abilities.length && !resilience && !agreements.length && !companions.length ? "No established player mechanics yet." : ""}
+    ${!resources.length && !items.length && !conditions.length && !abilities.length && !resilience && !agreements.length && !companions.length && !growth.length ? "No established player mechanics yet." : ""}
   </section>`;
 }
 var INSPECTOR_STYLE = `

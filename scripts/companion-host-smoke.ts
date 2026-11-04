@@ -18,6 +18,8 @@ const abilityDefinitions = [
  cite({owner:"you",name:"Recall",approach:"concentration",target:"self",costs:[{kind:"resource",id:"focus",amount:2}],effects:[{kind:"summon",target:"self",companion:"Echo"}],requires:[],unsupported:[]}),
  cite({owner:"Echo",name:"Beacon",approach:"concentration",target:"self",costs:[{kind:"resource",id:"echo-focus",amount:3}],effects:[{kind:"condition",target:"self",name:"Beacon",ending:"Until dismissed",untilDismissed:true}],requires:[],unsupported:[]}),
 ];
+const withdrawal = process.argv.includes("--withdraw");
+let beforeWithdrawalClocks="";
 let phase = "bootstrap", registrationId = "", timer: ReturnType<typeof setTimeout>;
 const worker = new Worker(pathToFileURL(join(checkout, "src/spindle/worker-runtime.ts")).href);
 try {
@@ -40,6 +42,10 @@ try {
         else if (e.type === "request_generation") {
           const attempt = e.input.messages[0].content.includes("Determine whether");
           if (attempt) {
+            if(phase==="prepare-withdraw"){
+              const state=JSON.parse(e.input.messages[1].content.split("State:\n")[1].split("\nScene:")[0]).mechanics;
+              respond({content:JSON.stringify({risky:false,contested:false,mechanicalActions:[{kind:"unlink",link:state.costLinks[0].id,quote:"I withdraw Echo's access to my Focus."}]})});return;
+            }
             const recall = phase === "prepare-recall";
             respond({ content: JSON.stringify({ risky:false, contested:false, exchange:!recall,
               mechanicalActions: recall ? [{kind:"ability",ability:"Recall",quote:"I summon Echo."}] : [{kind:"wait",quote:"I wait."}],
@@ -62,18 +68,22 @@ try {
           } else if (phase === "commit-beacon" && !e.payload.busy) {
             if (state.resources[0].current!==7 || state.resources[1].current!==0 || !state.conditions.some((c:any)=>c.name==="Beacon") || state.conditions[0].id!=="wing") throw Error("Shared cost failed conservation");
             if(e.payload.decision) throw Error("Routine action invented a roll");
+            if(withdrawal){beforeWithdrawalClocks=JSON.stringify(state.clocks);start("withdraw","I withdraw Echo's access to my Focus.");}else done();
+          } else if(phase==="commit-withdraw" && !e.payload.busy){
+            if(state.costLinks[0].enabled || state.resources[0].current!==7 || state.resources[1].current!==0 || JSON.stringify(state.clocks)!==beforeWithdrawalClocks || e.payload.decision)throw Error("Withdrawal spent, advanced time or failed authority");
             done();
           }
-        } else if (e.type === "intercept_result" && ["recall","beacon"].includes(e.requestId)) {
+        } else if (e.type === "intercept_result" && ["recall","beacon","withdraw"].includes(e.requestId)) {
           const action=messages.at(-2)!, reply=messages.at(-1)!,receipt=action.metadata.warpLivingAttempt?.receipt;
-          if(e.error || receipt?.engine!==7 || receipt.status!=="ready") throw Error("No saved companion receipt");
+          if(e.error || receipt?.engine!==(e.requestId==="withdraw"?8:7) || receipt.status!=="ready") throw Error("No saved companion receipt");
           if(reply.metadata.warpMechanics) throw Error("Companion operation committed before narration");
-          phase=`commit-${e.requestId}`;reply.content=e.requestId==="recall" ? "Echo appears with the same injured wing. Echo offers to light Beacon." : "Echo lights Beacon.";
+          phase=`commit-${e.requestId}`;reply.content=e.requestId==="recall" ? "Echo appears with the same injured wing. Echo offers to light Beacon." : e.requestId==="withdraw" ? "You withdraw the shared cost permission." : "Echo lights Beacon.";
           worker.postMessage({type:"event",event:"GENERATION_ENDED",userId:"fixture-user",payload:{chatId:"companion-smoke",generationId:e.requestId,messageId:reply.id}});
         } else if (e.requestId) worker.postMessage({ type: "response", requestId: e.requestId, error: `Unsupported fixture RPC ${e.type}` });
       } catch (error) { reject(error); }
     };
     worker.postMessage({ type: "init", manifest: { ...manifest, entry_backend: pathToFileURL(join(root, "dist/backend.js")).href }, storagePath: join(root, ".artifacts/companion-worker-smoke") });
   });
+  if(withdrawal)console.log("PASS: production worker withdrew an existing shared cost permission without a cost, clock tick, roll or NPC opportunity.");
   console.log("PASS: production worker recalled the same injured familiar, committed only after narration and charged a sourced companion action to its shared payer once.");
 } finally { clearTimeout(timer!); worker.terminate(); }

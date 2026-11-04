@@ -11,7 +11,7 @@ const opening = "Echo is your summoned familiar, currently absent. Echo has an i
 let previous: unknown, serial = 0, bootstrap = true, reads = 0;
 beforeAll(async () => { previous = (globalThis as any).spindle; (globalThis as any).spindle = h.fake; await import("../backend.ts" + "?companion-runtime-test"); (globalThis as any).spindle = previous; });
 beforeEach(() => { previous = (globalThis as any).spindle; (globalThis as any).spindle = h.fake; bootstrap = true; reads = 0; h.helper = helper; });
-afterEach(() => { (globalThis as any).spindle = previous; });
+afterEach(async () => { await h.settings({ decisionConnectionId: "" }); delete h.fake.decisions; (globalThis as any).spindle = previous; });
 const state = async (id: string) => foldMechanics(await getMessages(id));
 function helper(c: HelperCall) {
   const attempt = c.system.includes("Determine whether"), entries = JSON.parse(c.user.split(attempt ? "Scene:\n" : "Messages:\n")[1]);
@@ -96,4 +96,36 @@ test("an NPC's newly introduced companion can use its controller from the same v
   expect((await state(id)).companions?.[0].controller).toBe("Norma");
   expect((await state(id)).entities?.map(e => e.name)).toEqual(["Echo", "Norma"]);
   expect((await state(id)).resources).toEqual([]); expect((await state(id)).abilities).toBeUndefined();
+});
+
+test("ordinary withdrawal stops the next shared debit, is not a roll and cannot open an extra NPC turn", async () => {
+  const id = await chat(); await h.say(id, "I summon Echo."); await h.generate(id, "Echo appears. Echo offers to light Beacon.");
+  const before = await state(id), original = h.helper;
+  h.helper = c => {
+    if (!c.system.includes("Determine whether")) return original(c);
+    const action = JSON.parse(c.user.split("Scene:\n")[1]).at(-1).content;
+    if (!/withdraw/.test(action)) return original(c);
+    return { risky: true, contested: true, tier: "outmatched", intent: "Withdraw", stakes: "Companion objects", reasons: ["An invented objection"], exchange: true,
+      mechanicalActions: [{ kind: "unlink", link: before.costLinks![0].id, quote: action }],
+      responses: [{ actor: "Echo", action: { kind: "ability", ability: "Beacon" }, assessment: { contested: false }, quote: "Echo offers to light Beacon." }] };
+  };
+  await h.say(id, "I withdraw Echo's access to my Focus."); const result = await h.generate(id, "You withdraw the permission. Echo offers to light Beacon.");
+  const after = await state(id), r = (result.target.extra.spindle_metadata as any)[MECHANICS_KEY]["0"].receipt;
+  expect(after.costLinks![0].enabled).toBe(false); expect(after.resources).toEqual(before.resources); expect(after.clocks).toEqual(before.clocks);
+  expect(r.responses).toEqual([]); expect((result.record as any)?.decision).toBeUndefined();
+  await h.say(id, "I wait."); await h.generate(id, "Echo cannot light Beacon from its empty pool.");
+  expect((await state(id)).resources.map(r => r.current)).toEqual([10, 0]); expect((await state(id)).conditions.some(c => c.name === "Beacon")).toBe(false);
+  expect((await state(id)).costLinks![0].enabled).toBe(false);
+});
+
+test("a cancelled native-language withdrawal preserves permission and both balances", async () => {
+  const id = await chat(); await h.settings({ decisionConnectionId: "native" });
+  h.fake.decisions = { evaluate: async () => ({ answers: { operation: { type: "choice", choice: "unlink" }, preparation: { type: "choice", choice: "mechanics" }, roll: { type: "choice", choice: "none" } } }) };
+  const before = await state(id), original = h.helper;
+  h.helper = c => c.system.includes("Determine whether") ? { risky: false, contested: false, mechanicalActions: [{ kind: "unlink", link: before.costLinks![0].id, quote: "Echo의 자원 공유 권한을 철회한다." }] } : original(c);
+  await h.say(id, "Echo의 자원 공유 권한을 철회한다."); const player = h.messages(id).at(-1)!, reply = h.msg(id, `${id}-stop`, false, "");
+  livingStarted({ chatId: id, generationId: "unlink-stop", targetMessageId: reply.id });
+  await livingIntercept([{ role: "user", content: player.content }], { chatId: id, userId: h.userId, generationType: "normal" } as InterceptorContextDTO);
+  livingStopped({ chatId: id, generationId: "unlink-stop" }); expect(await state(id)).toEqual(before);
+  await h.settings({ decisionConnectionId: "" }); delete h.fake.decisions;
 });

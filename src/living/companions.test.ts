@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { applyObservations, emptyMechanics, readMechanicalObservations, prepareMechanical, prepareExchange, commitMechanical, mechanicalPacket } from "./mechanics.js";
+import { applyObservations, emptyMechanics, readMechanicalObservations, prepareMechanical, prepareExchange, commitMechanical, mechanicalPacket, mechanicalNotes, receiptPacket, readMechanicalPlan } from "./mechanics.js";
 import { readAbilityDefinitions } from "./abilities.js";
 import { actorName, actionCount, entityFor } from "./encounters.js";
 import { readResponsePlans } from "./exchanges.js";
@@ -242,4 +242,30 @@ test("a controller-only citation can retain contiguous companion context, never 
   const bond = observations[0]; if (bond.kind !== "companion") throw Error("Missing companion");
   expect(bond.value.source.quote.length).toBe(399);
   expect(readMechanicalObservations([{ kind: "companion", ...bond.value, ...bond.value.source }], state, [scene, longer], undefined, true)).toEqual(observations);
+});
+
+test("an endpoint owner withdraws shared funding without spending, waiting, consent or a surprise response", () => {
+  const state = cast(setup().state, "recall", "Recall"), before = revision(state), link = state.costLinks![0];
+  const r = prepareMechanical(state, "withdraw", "you", [{ kind: "unlink", link: link.id }]);
+  expect(r.engine).toBe(8); expect(r.status).toBe("ready"); expect(revision(state)).toBe(before);
+  const after = commitMechanical(state, r);
+  expect(after.costLinks![0].enabled).toBe(false); expect(after.resources).toEqual(state.resources); expect(after.clocks).toEqual(state.clocks);
+  expect(receiptPacket(r).changes[0]).toMatchObject({ kind: "cost_link", before: true, after: false });
+  expect(mechanicalNotes(r)).toEqual(["Shared resource access withdrawn"]);
+  expect(prepareMechanical(after, "beacon", "Echo", [invocation(after, "Beacon")]).status).toBe("blocked");
+  const repeated = prepareMechanical(after, "repeat", "you", [{ kind: "unlink", link: link.id }]);
+  expect(repeated.status).toBe("ready"); expect(repeated.changes).toEqual([]);
+  expect(prepareMechanical(state, "stranger", "Stranger", [{ kind: "unlink", link: link.id }]).status).toBe("blocked");
+  expect(readMechanicalPlan([{ kind: "unlink", link: link.id, quote: "I withdraw Echo's access to my Focus." }], state, "I withdraw Echo's access to my Focus.")).toEqual([{ kind: "unlink", link: link.id }]);
+  expect(readMechanicalPlan([{ kind: "unlink", link: link.id, quote: "Could I withdraw Echo's access?" }], state, "Could I withdraw Echo's access?")).toEqual([]);
+});
+
+test("withdrawing cannot waive an unresolved binding restriction or reopen an older grant", () => {
+  const state = cast(setup().state, "recall", "Recall"), link = state.costLinks![0];
+  const r = prepareMechanical(state, "withdraw", "you", [{ kind: "unlink", link: link.id }]);
+  const after = commitMechanical(state, r), reply = { id: "withdrawn", is_user: false, content: "You withdraw Echo's access to your Focus.", metadata: { warpMechanics: { "0": { receipt: r } } } };
+  expect(readMechanicalObservations([cite({ kind: "cost_link", from: link.from, to: link.to, enabled: true, unsupported: [] })], after, [scene, reply])).toEqual([]);
+  const constrained = structuredClone(state); constrained.costLinks![0].unsupported = ["Unbreakable pact until moonrise"];
+  const blocked = prepareMechanical(constrained, "blocked", "you", [{ kind: "unlink", link: link.id }]);
+  expect(blocked.status).toBe("blocked"); expect(blocked.unresolved).toBe(true); expect(constrained.costLinks![0].enabled).toBe(true);
 });

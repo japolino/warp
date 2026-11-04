@@ -1,0 +1,1679 @@
+{
+  "generatedFrom": "7d4278b",
+  "cases": [
+    {
+      "name": "summon recall",
+      "before": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "focus",
+            "owner": "you",
+            "name": "Focus",
+            "current": 12,
+            "max": 12,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          },
+          {
+            "id": "echo-focus",
+            "owner": "Echo",
+            "name": "Focus",
+            "current": 0,
+            "max": 8,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [
+          {
+            "id": "wing",
+            "owner": "Echo",
+            "name": "Injured wing",
+            "hinders": [
+              "movement"
+            ],
+            "blocks": [],
+            "helps": [],
+            "ending": "After treatment",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          }
+        ],
+        "applied": [],
+        "entities": [
+          {
+            "id": "entity-f7f9bc32:2212c02e",
+            "name": "Echo",
+            "displayName": "Echo",
+            "aliases": [
+              "familiar"
+            ],
+            "entityKind": "person",
+            "present": false,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          }
+        ],
+        "companions": [
+          {
+            "id": "companion-6b8aff92:4526d58e",
+            "actor": "Echo",
+            "controller": "you",
+            "companionKind": "summon",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          }
+        ],
+        "costLinks": [
+          {
+            "id": "cost-link-23aaaa5d:4db9b96b",
+            "from": "echo-focus",
+            "to": "focus",
+            "enabled": true,
+            "unsupported": [],
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-982a76f9:fa76bf17",
+            "version": 1,
+            "owner": "you",
+            "name": "Recall",
+            "description": "Recall",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "summon",
+                "target": "self",
+                "companion": "companion-6b8aff92:4526d58e",
+                "duration": 1
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "c789f751:5c8bbbd7",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            },
+            "sourceKind": "story"
+          },
+          {
+            "id": "ability-1ab2fb22:7095bbb8",
+            "version": 1,
+            "owner": "you",
+            "name": "Dismiss",
+            "description": "Dismiss",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [],
+            "effects": [
+              {
+                "kind": "dismiss",
+                "target": "self",
+                "companion": "companion-6b8aff92:4526d58e"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "175a8958:6e192c82",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            },
+            "sourceKind": "story"
+          },
+          {
+            "id": "ability-49468dc2:2884f444",
+            "version": 1,
+            "owner": "Echo",
+            "name": "Beacon",
+            "description": "Beacon",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "echo-focus",
+                "amount": 3
+              }
+            ],
+            "effects": [
+              {
+                "kind": "condition",
+                "target": "self",
+                "name": "Beacon",
+                "ending": "Until dismissed",
+                "hinders": [],
+                "blocks": [],
+                "helps": [],
+                "untilDismissed": true
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "45719c5c:f3a9289c",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            },
+            "sourceKind": "story"
+          }
+        ]
+      },
+      "receipt": {
+        "version": 1,
+        "engine": 7,
+        "id": "summon recall",
+        "input": "f8ff431:621c479f",
+        "base": "68438981:34dd41b3",
+        "actor": "you",
+        "operations": [
+          {
+            "kind": "ability",
+            "ability": "ability-982a76f9:fa76bf17",
+            "version": 1
+          }
+        ],
+        "responses": [],
+        "changes": [
+          {
+            "kind": "resource",
+            "id": "focus",
+            "before": {
+              "id": "focus",
+              "owner": "you",
+              "name": "Focus",
+              "current": 12,
+              "max": 12,
+              "role": "effort",
+              "source": {
+                "message": "opening",
+                "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+                "sourceRevision": "8aeeb427:fbf04683"
+              }
+            },
+            "after": {
+              "id": "focus",
+              "owner": "you",
+              "name": "Focus",
+              "current": 10,
+              "max": 12,
+              "role": "effort",
+              "source": {
+                "message": "opening",
+                "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+                "sourceRevision": "8aeeb427:fbf04683"
+              }
+            }
+          },
+          {
+            "kind": "companion",
+            "id": "companion-6b8aff92:4526d58e",
+            "before": {
+              "id": "companion-6b8aff92:4526d58e",
+              "actor": "Echo",
+              "controller": "you",
+              "companionKind": "summon",
+              "source": {
+                "message": "opening",
+                "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+                "sourceRevision": "8aeeb427:fbf04683"
+              }
+            },
+            "after": {
+              "id": "companion-6b8aff92:4526d58e",
+              "actor": "Echo",
+              "controller": "you",
+              "companionKind": "summon",
+              "source": {
+                "message": "opening",
+                "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+                "sourceRevision": "8aeeb427:fbf04683"
+              },
+              "manifestation": {
+                "active": true,
+                "source": {
+                  "message": "warp-action:summon recall",
+                  "quote": "Recall Echo",
+                  "sourceRevision": "628de832:43ede614"
+                },
+                "expiresAt": 3
+              }
+            }
+          },
+          {
+            "kind": "entity",
+            "id": "entity-f7f9bc32:2212c02e",
+            "before": {
+              "id": "entity-f7f9bc32:2212c02e",
+              "name": "Echo",
+              "displayName": "Echo",
+              "aliases": [
+                "familiar"
+              ],
+              "entityKind": "person",
+              "present": false,
+              "status": "active",
+              "source": {
+                "message": "opening",
+                "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+                "sourceRevision": "8aeeb427:fbf04683"
+              }
+            },
+            "after": {
+              "id": "entity-f7f9bc32:2212c02e",
+              "name": "Echo",
+              "displayName": "Echo",
+              "aliases": [
+                "familiar"
+              ],
+              "entityKind": "person",
+              "present": true,
+              "status": "active",
+              "source": {
+                "message": "opening",
+                "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+                "sourceRevision": "8aeeb427:fbf04683"
+              }
+            }
+          }
+        ],
+        "beats": [
+          {
+            "kind": "summon",
+            "actor": "you",
+            "target": "Echo"
+          }
+        ],
+        "result": "7c124ebe:dba85960",
+        "status": "ready"
+      },
+      "after": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "focus",
+            "owner": "you",
+            "name": "Focus",
+            "current": 10,
+            "max": 12,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          },
+          {
+            "id": "echo-focus",
+            "owner": "Echo",
+            "name": "Focus",
+            "current": 0,
+            "max": 8,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [
+          {
+            "id": "wing",
+            "owner": "Echo",
+            "name": "Injured wing",
+            "hinders": [
+              "movement"
+            ],
+            "blocks": [],
+            "helps": [],
+            "ending": "After treatment",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          }
+        ],
+        "applied": [
+          {
+            "id": "summon recall",
+            "input": "f8ff431:621c479f"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-f7f9bc32:2212c02e",
+            "name": "Echo",
+            "displayName": "Echo",
+            "aliases": [
+              "familiar"
+            ],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          }
+        ],
+        "companions": [
+          {
+            "id": "companion-6b8aff92:4526d58e",
+            "actor": "Echo",
+            "controller": "you",
+            "companionKind": "summon",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            },
+            "manifestation": {
+              "active": true,
+              "source": {
+                "message": "warp-action:summon recall",
+                "quote": "Recall Echo",
+                "sourceRevision": "628de832:43ede614"
+              },
+              "expiresAt": 3
+            }
+          }
+        ],
+        "costLinks": [
+          {
+            "id": "cost-link-23aaaa5d:4db9b96b",
+            "from": "echo-focus",
+            "to": "focus",
+            "enabled": true,
+            "unsupported": [],
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-982a76f9:fa76bf17",
+            "version": 1,
+            "owner": "you",
+            "name": "Recall",
+            "description": "Recall",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "summon",
+                "target": "self",
+                "companion": "companion-6b8aff92:4526d58e",
+                "duration": 1
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "c789f751:5c8bbbd7",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            },
+            "sourceKind": "story"
+          },
+          {
+            "id": "ability-1ab2fb22:7095bbb8",
+            "version": 1,
+            "owner": "you",
+            "name": "Dismiss",
+            "description": "Dismiss",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [],
+            "effects": [
+              {
+                "kind": "dismiss",
+                "target": "self",
+                "companion": "companion-6b8aff92:4526d58e"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "175a8958:6e192c82",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            },
+            "sourceKind": "story"
+          },
+          {
+            "id": "ability-49468dc2:2884f444",
+            "version": 1,
+            "owner": "Echo",
+            "name": "Beacon",
+            "description": "Beacon",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "echo-focus",
+                "amount": 3
+              }
+            ],
+            "effects": [
+              {
+                "kind": "condition",
+                "target": "self",
+                "name": "Beacon",
+                "ending": "Until dismissed",
+                "hinders": [],
+                "blocks": [],
+                "helps": [],
+                "untilDismissed": true
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "45719c5c:f3a9289c",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            },
+            "sourceKind": "story"
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "shared effort payment",
+      "before": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "focus",
+            "owner": "you",
+            "name": "Focus",
+            "current": 10,
+            "max": 12,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          },
+          {
+            "id": "echo-focus",
+            "owner": "Echo",
+            "name": "Focus",
+            "current": 0,
+            "max": 8,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [
+          {
+            "id": "wing",
+            "owner": "Echo",
+            "name": "Injured wing",
+            "hinders": [
+              "movement"
+            ],
+            "blocks": [],
+            "helps": [],
+            "ending": "After treatment",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          }
+        ],
+        "applied": [
+          {
+            "id": "summon recall",
+            "input": "f8ff431:621c479f"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-f7f9bc32:2212c02e",
+            "name": "Echo",
+            "displayName": "Echo",
+            "aliases": [
+              "familiar"
+            ],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          }
+        ],
+        "companions": [
+          {
+            "id": "companion-6b8aff92:4526d58e",
+            "actor": "Echo",
+            "controller": "you",
+            "companionKind": "summon",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            },
+            "manifestation": {
+              "active": true,
+              "source": {
+                "message": "warp-action:summon recall",
+                "quote": "Recall Echo",
+                "sourceRevision": "628de832:43ede614"
+              },
+              "expiresAt": 3
+            }
+          }
+        ],
+        "costLinks": [
+          {
+            "id": "cost-link-23aaaa5d:4db9b96b",
+            "from": "echo-focus",
+            "to": "focus",
+            "enabled": true,
+            "unsupported": [],
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-982a76f9:fa76bf17",
+            "version": 1,
+            "owner": "you",
+            "name": "Recall",
+            "description": "Recall",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "summon",
+                "target": "self",
+                "companion": "companion-6b8aff92:4526d58e",
+                "duration": 1
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "c789f751:5c8bbbd7",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            },
+            "sourceKind": "story"
+          },
+          {
+            "id": "ability-1ab2fb22:7095bbb8",
+            "version": 1,
+            "owner": "you",
+            "name": "Dismiss",
+            "description": "Dismiss",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [],
+            "effects": [
+              {
+                "kind": "dismiss",
+                "target": "self",
+                "companion": "companion-6b8aff92:4526d58e"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "175a8958:6e192c82",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            },
+            "sourceKind": "story"
+          },
+          {
+            "id": "ability-49468dc2:2884f444",
+            "version": 1,
+            "owner": "Echo",
+            "name": "Beacon",
+            "description": "Beacon",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "echo-focus",
+                "amount": 3
+              }
+            ],
+            "effects": [
+              {
+                "kind": "condition",
+                "target": "self",
+                "name": "Beacon",
+                "ending": "Until dismissed",
+                "hinders": [],
+                "blocks": [],
+                "helps": [],
+                "untilDismissed": true
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "45719c5c:f3a9289c",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            },
+            "sourceKind": "story"
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 1
+          }
+        ]
+      },
+      "receipt": {
+        "version": 1,
+        "engine": 7,
+        "id": "shared effort payment",
+        "input": "c6b30e3f:ac9f7bf7",
+        "base": "ddaac321:6ff28023",
+        "actor": "Echo",
+        "operations": [
+          {
+            "kind": "ability",
+            "ability": "ability-49468dc2:2884f444",
+            "version": 1
+          }
+        ],
+        "responses": [],
+        "changes": [
+          {
+            "kind": "resource",
+            "id": "focus",
+            "before": {
+              "id": "focus",
+              "owner": "you",
+              "name": "Focus",
+              "current": 10,
+              "max": 12,
+              "role": "effort",
+              "source": {
+                "message": "opening",
+                "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+                "sourceRevision": "8aeeb427:fbf04683"
+              }
+            },
+            "after": {
+              "id": "focus",
+              "owner": "you",
+              "name": "Focus",
+              "current": 7,
+              "max": 12,
+              "role": "effort",
+              "source": {
+                "message": "opening",
+                "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+                "sourceRevision": "8aeeb427:fbf04683"
+              }
+            }
+          },
+          {
+            "kind": "condition",
+            "id": "effect-419ee19b:2f3f812b",
+            "before": null,
+            "after": {
+              "id": "effect-419ee19b:2f3f812b",
+              "owner": "Echo",
+              "name": "Beacon",
+              "ending": "Until dismissed",
+              "helps": [],
+              "hinders": [],
+              "blocks": [],
+              "source": {
+                "message": "opening",
+                "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+                "sourceRevision": "8aeeb427:fbf04683"
+              },
+              "summon": "companion-6b8aff92:4526d58e"
+            }
+          }
+        ],
+        "beats": [],
+        "result": "43d6e8ec:b0021a68",
+        "status": "ready"
+      },
+      "after": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "focus",
+            "owner": "you",
+            "name": "Focus",
+            "current": 7,
+            "max": 12,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          },
+          {
+            "id": "echo-focus",
+            "owner": "Echo",
+            "name": "Focus",
+            "current": 0,
+            "max": 8,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [
+          {
+            "id": "wing",
+            "owner": "Echo",
+            "name": "Injured wing",
+            "hinders": [
+              "movement"
+            ],
+            "blocks": [],
+            "helps": [],
+            "ending": "After treatment",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          },
+          {
+            "id": "effect-419ee19b:2f3f812b",
+            "owner": "Echo",
+            "name": "Beacon",
+            "ending": "Until dismissed",
+            "helps": [],
+            "hinders": [],
+            "blocks": [],
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            },
+            "summon": "companion-6b8aff92:4526d58e"
+          }
+        ],
+        "applied": [
+          {
+            "id": "summon recall",
+            "input": "f8ff431:621c479f"
+          },
+          {
+            "id": "shared effort payment",
+            "input": "c6b30e3f:ac9f7bf7"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-f7f9bc32:2212c02e",
+            "name": "Echo",
+            "displayName": "Echo",
+            "aliases": [
+              "familiar"
+            ],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          }
+        ],
+        "companions": [
+          {
+            "id": "companion-6b8aff92:4526d58e",
+            "actor": "Echo",
+            "controller": "you",
+            "companionKind": "summon",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            },
+            "manifestation": {
+              "active": true,
+              "source": {
+                "message": "warp-action:summon recall",
+                "quote": "Recall Echo",
+                "sourceRevision": "628de832:43ede614"
+              },
+              "expiresAt": 3
+            }
+          }
+        ],
+        "costLinks": [
+          {
+            "id": "cost-link-23aaaa5d:4db9b96b",
+            "from": "echo-focus",
+            "to": "focus",
+            "enabled": true,
+            "unsupported": [],
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-982a76f9:fa76bf17",
+            "version": 1,
+            "owner": "you",
+            "name": "Recall",
+            "description": "Recall",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "summon",
+                "target": "self",
+                "companion": "companion-6b8aff92:4526d58e",
+                "duration": 1
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "c789f751:5c8bbbd7",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            },
+            "sourceKind": "story"
+          },
+          {
+            "id": "ability-1ab2fb22:7095bbb8",
+            "version": 1,
+            "owner": "you",
+            "name": "Dismiss",
+            "description": "Dismiss",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [],
+            "effects": [
+              {
+                "kind": "dismiss",
+                "target": "self",
+                "companion": "companion-6b8aff92:4526d58e"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "175a8958:6e192c82",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            },
+            "sourceKind": "story"
+          },
+          {
+            "id": "ability-49468dc2:2884f444",
+            "version": 1,
+            "owner": "Echo",
+            "name": "Beacon",
+            "description": "Beacon",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "echo-focus",
+                "amount": 3
+              }
+            ],
+            "effects": [
+              {
+                "kind": "condition",
+                "target": "self",
+                "name": "Beacon",
+                "ending": "Until dismissed",
+                "hinders": [],
+                "blocks": [],
+                "helps": [],
+                "untilDismissed": true
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "45719c5c:f3a9289c",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            },
+            "sourceKind": "story"
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 1
+          },
+          {
+            "id": "Echo",
+            "actor": "Echo",
+            "actions": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "dismiss bound effects",
+      "before": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "focus",
+            "owner": "you",
+            "name": "Focus",
+            "current": 7,
+            "max": 12,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          },
+          {
+            "id": "echo-focus",
+            "owner": "Echo",
+            "name": "Focus",
+            "current": 0,
+            "max": 8,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [
+          {
+            "id": "wing",
+            "owner": "Echo",
+            "name": "Injured wing",
+            "hinders": [
+              "movement"
+            ],
+            "blocks": [],
+            "helps": [],
+            "ending": "After treatment",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          },
+          {
+            "id": "effect-419ee19b:2f3f812b",
+            "owner": "Echo",
+            "name": "Beacon",
+            "ending": "Until dismissed",
+            "helps": [],
+            "hinders": [],
+            "blocks": [],
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            },
+            "summon": "companion-6b8aff92:4526d58e"
+          }
+        ],
+        "applied": [
+          {
+            "id": "summon recall",
+            "input": "f8ff431:621c479f"
+          },
+          {
+            "id": "shared effort payment",
+            "input": "c6b30e3f:ac9f7bf7"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-f7f9bc32:2212c02e",
+            "name": "Echo",
+            "displayName": "Echo",
+            "aliases": [
+              "familiar"
+            ],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          }
+        ],
+        "companions": [
+          {
+            "id": "companion-6b8aff92:4526d58e",
+            "actor": "Echo",
+            "controller": "you",
+            "companionKind": "summon",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            },
+            "manifestation": {
+              "active": true,
+              "source": {
+                "message": "warp-action:summon recall",
+                "quote": "Recall Echo",
+                "sourceRevision": "628de832:43ede614"
+              },
+              "expiresAt": 3
+            }
+          }
+        ],
+        "costLinks": [
+          {
+            "id": "cost-link-23aaaa5d:4db9b96b",
+            "from": "echo-focus",
+            "to": "focus",
+            "enabled": true,
+            "unsupported": [],
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-982a76f9:fa76bf17",
+            "version": 1,
+            "owner": "you",
+            "name": "Recall",
+            "description": "Recall",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "summon",
+                "target": "self",
+                "companion": "companion-6b8aff92:4526d58e",
+                "duration": 1
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "c789f751:5c8bbbd7",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            },
+            "sourceKind": "story"
+          },
+          {
+            "id": "ability-1ab2fb22:7095bbb8",
+            "version": 1,
+            "owner": "you",
+            "name": "Dismiss",
+            "description": "Dismiss",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [],
+            "effects": [
+              {
+                "kind": "dismiss",
+                "target": "self",
+                "companion": "companion-6b8aff92:4526d58e"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "175a8958:6e192c82",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            },
+            "sourceKind": "story"
+          },
+          {
+            "id": "ability-49468dc2:2884f444",
+            "version": 1,
+            "owner": "Echo",
+            "name": "Beacon",
+            "description": "Beacon",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "echo-focus",
+                "amount": 3
+              }
+            ],
+            "effects": [
+              {
+                "kind": "condition",
+                "target": "self",
+                "name": "Beacon",
+                "ending": "Until dismissed",
+                "hinders": [],
+                "blocks": [],
+                "helps": [],
+                "untilDismissed": true
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "45719c5c:f3a9289c",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            },
+            "sourceKind": "story"
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 1
+          },
+          {
+            "id": "Echo",
+            "actor": "Echo",
+            "actions": 1
+          }
+        ]
+      },
+      "receipt": {
+        "version": 1,
+        "engine": 7,
+        "id": "dismiss bound effects",
+        "input": "d1949f66:c26f792e",
+        "base": "86d13ee3:8ad22e79",
+        "actor": "you",
+        "operations": [
+          {
+            "kind": "ability",
+            "ability": "ability-1ab2fb22:7095bbb8",
+            "version": 1
+          }
+        ],
+        "responses": [],
+        "changes": [
+          {
+            "kind": "condition",
+            "id": "effect-419ee19b:2f3f812b",
+            "before": {
+              "id": "effect-419ee19b:2f3f812b",
+              "owner": "Echo",
+              "name": "Beacon",
+              "ending": "Until dismissed",
+              "helps": [],
+              "hinders": [],
+              "blocks": [],
+              "source": {
+                "message": "opening",
+                "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+                "sourceRevision": "8aeeb427:fbf04683"
+              },
+              "summon": "companion-6b8aff92:4526d58e"
+            },
+            "after": null
+          },
+          {
+            "kind": "companion",
+            "id": "companion-6b8aff92:4526d58e",
+            "before": {
+              "id": "companion-6b8aff92:4526d58e",
+              "actor": "Echo",
+              "controller": "you",
+              "companionKind": "summon",
+              "source": {
+                "message": "opening",
+                "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+                "sourceRevision": "8aeeb427:fbf04683"
+              },
+              "manifestation": {
+                "active": true,
+                "source": {
+                  "message": "warp-action:summon recall",
+                  "quote": "Recall Echo",
+                  "sourceRevision": "628de832:43ede614"
+                },
+                "expiresAt": 3
+              }
+            },
+            "after": {
+              "id": "companion-6b8aff92:4526d58e",
+              "actor": "Echo",
+              "controller": "you",
+              "companionKind": "summon",
+              "source": {
+                "message": "opening",
+                "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+                "sourceRevision": "8aeeb427:fbf04683"
+              },
+              "manifestation": {
+                "active": false,
+                "source": {
+                  "message": "warp-action:dismiss bound effects",
+                  "quote": "Dismiss Echo",
+                  "sourceRevision": "834d3f47:4db2a795"
+                }
+              }
+            }
+          },
+          {
+            "kind": "entity",
+            "id": "entity-f7f9bc32:2212c02e",
+            "before": {
+              "id": "entity-f7f9bc32:2212c02e",
+              "name": "Echo",
+              "displayName": "Echo",
+              "aliases": [
+                "familiar"
+              ],
+              "entityKind": "person",
+              "present": true,
+              "status": "active",
+              "source": {
+                "message": "opening",
+                "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+                "sourceRevision": "8aeeb427:fbf04683"
+              }
+            },
+            "after": {
+              "id": "entity-f7f9bc32:2212c02e",
+              "name": "Echo",
+              "displayName": "Echo",
+              "aliases": [
+                "familiar"
+              ],
+              "entityKind": "person",
+              "present": false,
+              "status": "active",
+              "source": {
+                "message": "opening",
+                "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+                "sourceRevision": "8aeeb427:fbf04683"
+              }
+            }
+          }
+        ],
+        "beats": [
+          {
+            "kind": "dismiss",
+            "actor": "you",
+            "target": "Echo"
+          }
+        ],
+        "result": "e5be06c2:85003d80",
+        "status": "ready"
+      },
+      "after": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "focus",
+            "owner": "you",
+            "name": "Focus",
+            "current": 7,
+            "max": 12,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          },
+          {
+            "id": "echo-focus",
+            "owner": "Echo",
+            "name": "Focus",
+            "current": 0,
+            "max": 8,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [
+          {
+            "id": "wing",
+            "owner": "Echo",
+            "name": "Injured wing",
+            "hinders": [
+              "movement"
+            ],
+            "blocks": [],
+            "helps": [],
+            "ending": "After treatment",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          }
+        ],
+        "applied": [
+          {
+            "id": "summon recall",
+            "input": "f8ff431:621c479f"
+          },
+          {
+            "id": "shared effort payment",
+            "input": "c6b30e3f:ac9f7bf7"
+          },
+          {
+            "id": "dismiss bound effects",
+            "input": "d1949f66:c26f792e"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-f7f9bc32:2212c02e",
+            "name": "Echo",
+            "displayName": "Echo",
+            "aliases": [
+              "familiar"
+            ],
+            "entityKind": "person",
+            "present": false,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          }
+        ],
+        "companions": [
+          {
+            "id": "companion-6b8aff92:4526d58e",
+            "actor": "Echo",
+            "controller": "you",
+            "companionKind": "summon",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            },
+            "manifestation": {
+              "active": false,
+              "source": {
+                "message": "warp-action:dismiss bound effects",
+                "quote": "Dismiss Echo",
+                "sourceRevision": "834d3f47:4db2a795"
+              }
+            }
+          }
+        ],
+        "costLinks": [
+          {
+            "id": "cost-link-23aaaa5d:4db9b96b",
+            "from": "echo-focus",
+            "to": "focus",
+            "enabled": true,
+            "unsupported": [],
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-982a76f9:fa76bf17",
+            "version": 1,
+            "owner": "you",
+            "name": "Recall",
+            "description": "Recall",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "summon",
+                "target": "self",
+                "companion": "companion-6b8aff92:4526d58e",
+                "duration": 1
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "c789f751:5c8bbbd7",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            },
+            "sourceKind": "story"
+          },
+          {
+            "id": "ability-1ab2fb22:7095bbb8",
+            "version": 1,
+            "owner": "you",
+            "name": "Dismiss",
+            "description": "Dismiss",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [],
+            "effects": [
+              {
+                "kind": "dismiss",
+                "target": "self",
+                "companion": "companion-6b8aff92:4526d58e"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "175a8958:6e192c82",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            },
+            "sourceKind": "story"
+          },
+          {
+            "id": "ability-49468dc2:2884f444",
+            "version": 1,
+            "owner": "Echo",
+            "name": "Beacon",
+            "description": "Beacon",
+            "approach": "concentration",
+            "target": "self",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "echo-focus",
+                "amount": 3
+              }
+            ],
+            "effects": [
+              {
+                "kind": "condition",
+                "target": "self",
+                "name": "Beacon",
+                "ending": "Until dismissed",
+                "hinders": [],
+                "blocks": [],
+                "helps": [],
+                "untilDismissed": true
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "45719c5c:f3a9289c",
+            "source": {
+              "message": "opening",
+              "quote": "You have 12 of 12 Focus. Echo has 0 of 8 Focus. Echo is your summoned familiar and is absent. Echo's Focus costs are paid one for one from your Focus. Recall costs 2 Focus and summons Echo for 1 subsequent action of yours. Dismiss dismisses Echo. Echo's Beacon costs 3 Focus and grants Echo a Beacon condition until dismissed. Echo has an injured wing.",
+              "sourceRevision": "8aeeb427:fbf04683"
+            },
+            "sourceKind": "story"
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 2
+          },
+          {
+            "id": "Echo",
+            "actor": "Echo",
+            "actions": 1
+          }
+        ],
+        "closedConditions": [
+          {
+            "id": "effect-419ee19b:2f3f812b",
+            "owner": "Echo",
+            "name": "Beacon",
+            "after": {
+              "kind": "receipt",
+              "id": "dismiss bound effects"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

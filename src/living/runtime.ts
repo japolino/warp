@@ -1,3 +1,4 @@
+import { readOnlyIntent } from "./intent.js";
 import { STORY_BINDINGS, storyContent, storyExcerpt, storyRevision, sourceRevisionMatches, recordPathMatches, sourceContains } from "./story-text.js";
 import { storyHistory } from "./story-history.js";
 import { savedChecks } from "./check-history.js";
@@ -23,6 +24,7 @@ import { revision } from "../shared/revision.js";
 import { isRulesetEntryTitle } from "../engine/loader.js";
 import { foldWorld, pathOf, pathsOf, rawPathOf, rawPathsOf, readChanges, resolveAttempt, text, worldPacket, type Decision, type Record as LivingRecord, type World } from "./world.js";
 import { KNOWLEDGE_INSTRUCTIONS } from "./knowledge.js";
+import { GROWTH_INSTRUCTIONS, growthNotes, type LearningWitness } from "./growth.js";
 import { COMPANION_INSTRUCTIONS } from "./companions.js";
 import { AGREEMENT_INSTRUCTIONS, agreementNotes } from "./agreements.js";
 import { readLocalClaim } from "./local-actions.js";
@@ -146,6 +148,7 @@ function explorationScenes(raw: unknown, scene: LivingRecord["scene"], messages:
 }
 
 function readObserved(raw: unknown, state: MechanicalState, messages: Msg[], sources: DefinitionSource[], player?: string, scene?: LivingRecord["scene"]): Observation[] {
+  raw = Array.isArray(raw) ? raw.slice(0, 24).filter(row => row?.kind !== "practice") : raw;
   const seeded = readMechanicalObservations(chronologicalObservations(explorationScenes(raw, scene, messages), messages), state, messages, player);
   const base = seeded.length ? applyObservations(state, seeded) : state;
   // A controller named in this validated scene may not yet have a mechanical
@@ -295,8 +298,10 @@ export async function syncLiving(chatId: string, userId?: string, decision?: Dec
       const positioned = sceneExploration(changes.scene, applyObservations(mechanicalBefore, modelObserved), messages);
       const observed = [...modelObserved, ...positioned, ...sceneParticipants(changes.scene, applyObservations(mechanicalBefore, [...modelObserved, ...positioned]), messages, playerName)];
       const definitions = readAbilityDefinitions((raw as { abilityDefinitions?: unknown }).abilityDefinitions, applyObservations(mechanicalBefore, observed), messages, sources, playerName);
-      const observations: Observation[] = [...observed, ...definitions.map(value => ({ kind: "ability" as const, value }))];
-      const progressNotes = agreementNotes(mechanicalBefore, applyObservations(mechanicalBefore, observations));
+      const prepared: Observation[] = [...observed, ...definitions.map(value => ({ kind: "ability" as const, value }))];
+      const lessons = Array.isArray(rawObserved) ? readMechanicalObservations(rawObserved.slice(0, 24).filter(row => row?.kind === "practice"), applyObservations(mechanicalBefore, prepared), messages, playerName) : [];
+      const observations: Observation[] = [...prepared, ...lessons];
+      const progressNotes = [...growthNotes(mechanicalBefore, applyObservations(mechanicalBefore, observations)), ...agreementNotes(mechanicalBefore, applyObservations(mechanicalBefore, observations))];
       if (progressNotes.length) changes.notes = progressNotes;
       if (observations.length) await saveMechanical(chatId, last, prefix, {
         version: 1, path: pathOf(prefix), text: storyRevision(last.content), receipt: previousMechanical?.receipt,
@@ -442,8 +447,9 @@ export async function livingIntercept(messages: LlmMessageDTO[], ctx: Intercepto
   let decision: Decision | null = ctx.generationType === "continue" && target ? recordOf(target)?.decision ?? null : null;
   let receipt = ctx.generationType === "continue" && target ? mechanicalRecordOf(target)?.receipt : undefined;
   let notice: string | undefined;
-  let mechanicalIntent = !!(last?.is_user && ((world.mechanics && needsMechanicalRead(last.content, world.mechanics)) || needsAbilityRead(last.content) || rewardIntent(last.content)));
-  const exchangeIntent = !!(last?.is_user && needsExchangeRead(last.content));
+  const readOnly = !!last && readOnlyIntent(last.content);
+  let mechanicalIntent = !!(last?.is_user && !readOnly && ((world.mechanics && needsMechanicalRead(last.content, world.mechanics)) || needsAbilityRead(last.content) || rewardIntent(last.content)));
+  const exchangeIntent = !!(last?.is_user && !readOnly && needsExchangeRead(last.content));
   let mechanicalRead = mechanicalIntent || exchangeIntent;
   const attempt = last?.is_user && (needsAttemptRead(last.content) || mechanicalRead);
   try {
@@ -478,6 +484,8 @@ ${INJURY_INSTRUCTIONS}
 ${AGREEMENT_INSTRUCTIONS}
 ${EXPLORATION_INSTRUCTIONS}
 ${COMPANION_INSTRUCTIONS}
+${GROWTH_INSTRUCTIONS}
+For an explicit withdrawal of an existing shared cost permission use mechanicalActions {kind:"unlink",link:"saved cost link id",quote}. Only an actual endpoint owner may withdraw; this spends nothing, advances no clock and opens no NPC response opportunity by itself. A question or hypothetical is not withdrawal. Never demand a roll, NPC agreement or fee to end a plain permission. Complex binding restrictions remain unresolved.
 For explicit travel along an ALREADY KNOWN route use mechanicalActions {kind:"travel",route:"saved route id",quote}. Code validates direction and access and moves only on success. Do not substitute a relative combat move for changing places. Unknown new space may be explored in ordinary narration with no travel operation; never invent a route merely to fill this field. For counted accessible location supplies use {kind:"gather",stock:"saved stock id",amount,quote}; amount must be explicitly stated by the player. Code conserves the local stock and creates the player's item stack once. A question, inspection, map reading, permission request or unaccepted suggestion executes neither operation. Do not use gather for another person's property, purchases, promised rewards or uncounted scenery.
 For an explicit wait or defensive action, use mechanicalActions {kind:"wait|defend",quote}. Defend provides Warp's 50% physical resistance until the actor next acts. Movement relative to an established participant uses {kind:"move",target,direction:"closer|away",quote}, changing one known distance band. These are actual actions, never questions or conversational gestures. Do not promise that retreat ends the encounter or that guarding prevents every kind of harm.
 You may also bootstrap mechanicalObservations for explicit initial resource values/counts in the supplied definition sources or narrator messages: {kind:"resource",owner,name,current,max?,role?,message,quote} or {kind:"item",owner,name,quantity,equipped,message,quote}. Code assigns a stable ID if omitted. Existing IDs stay unchanged. Within a newly prepared definition, a cost or required item may reference its unique owned name when no ID exists yet. Cite the actual source, never the current player attempt. Unknown resources stay unknown.` : ""}${classified ? `\nA separate classifier identified one ${classified.kind} action. Verify that against the original action; do not force an operation if unsupported. For a single matching operation cite the entire exact original player action in quote, preserving its language.` : ""} Output only JSON.`,
@@ -489,7 +497,9 @@ You may also bootstrap mechanicalObservations for explicit initial resource valu
           const modelObserved = readObserved(parsed.mechanicalObservations, base, history, definitionInput.sources, definitionInput.player, latestValidScene(history));
           const observed = [...modelObserved, ...sceneParticipants(latestValidScene(history), applyObservations(base, modelObserved), history, definitionInput.player)];
           const definitions = readAbilityDefinitions(parsed.abilityDefinitions, applyObservations(base, observed), history.slice(-14), definitionInput.sources, definitionInput.player);
-          const observations: Observation[] = [...observed, ...definitions.map(value => ({ kind: "ability" as const, value }))];
+          const prepared: Observation[] = [...observed, ...definitions.map(value => ({ kind: "ability" as const, value }))];
+          const lessons = Array.isArray(parsed.mechanicalObservations) ? readMechanicalObservations(parsed.mechanicalObservations.slice(0, 24).filter(row => row?.kind === "practice"), applyObservations(base, prepared), history, definitionInput.player) : [];
+          const observations: Observation[] = [...prepared, ...lessons];
           if (observations.length) {
             const previous = mechanicalRecordOf(last);
             const record: MechanicalRecord = { version: 1, path: pathOf(history.slice(0, -1)), text: storyRevision(last.content), observations: [...(previous?.observations ?? []), ...observations], sources: [...(previous?.sources ?? []), ...usedSources(observations, definitionInput.sources)].filter((s, i, all) => all.findIndex(x => x.id === s.id) === i) };
@@ -502,14 +512,15 @@ You may also bootstrap mechanicalObservations for explicit initial resource valu
         const refreshedWorld = worldOf(activeHistory); Object.assign(world, refreshedWorld);
         if (!refreshedWorld.mechanics) delete world.mechanics;
         const plan = mechanicalRead && (mechanicalIntent || parsed.mechanicalActions !== undefined) ? readMechanicalPlan(parsed.mechanicalActions, world.mechanics ?? emptyMechanics(), splitTyped(last.content).action, classified) : [];
+        const permissionOnly = plan.length > 0 && plan.every(op => op.kind === "unlink");
         let responses;
-        try { responses = readResponsePlans(parsed.responses, world.mechanics ?? emptyMechanics(), history, parsed.exchange === true && (plan.length > 0 || parsed.risky === true && parsed.contested === true)); }
+        try { responses = readResponsePlans(permissionOnly ? undefined : parsed.responses, world.mechanics ?? emptyMechanics(), history, parsed.exchange === true && (plan.length > 0 || parsed.risky === true && parsed.contested === true)); }
         catch (error) { throw new MechanicalPlanError(error instanceof Error ? error.message : "NPC response is unresolved"); }
-        const waiting = plan.length > 0 && plan.every(op => op.kind === "wait");
+        const waiting = permissionOnly || plan.length > 0 && plan.every(op => op.kind === "wait");
         const first = plan[0];
         const method = plan.length === 1 && first.kind === "ability" ? world.mechanics?.abilities?.find(a => a.id === first.ability)?.approach : plan.length === 1 && first.kind === "strike" ? "force" : plan.some(op => op.kind === "travel") ? "movement" : parsed.approach;
         const timed = !!(world.mechanics?.clocks?.some(c => c.actor === "you") || world.mechanics?.conditions.some(c => c.owner === "you" && c.expiresAt !== undefined));
-        const influence = waiting ? { blocked: [], shift: 0, reasons: [] } : conditionInfluence(world.mechanics ?? emptyMechanics(), "you", method, typeof parsed.target === "string" ? parsed.target : undefined, world.place, mechanicalRead || timed);
+        const influence = waiting ? { blocked: [], shift: 0, reasons: [] } : conditionInfluence(world.mechanics ?? emptyMechanics(), "you", method, typeof parsed.target === "string" ? parsed.target : undefined, world.place, mechanicalRead || timed, plan.length === 1 && parsed.tier !== "outmatched" ? first : undefined);
         if (influence.blocked.length) {
           notice = `This approach is blocked by ${influence.blocked.join(", ")}. No mechanical cost was paid.`;
           receipt = { ...prepareMechanical(world.mechanics!, `action-${stamp}`, "you", [], stamp), status: "blocked", reason: notice };
@@ -534,7 +545,8 @@ You may also bootstrap mechanicalObservations for explicit initial resource valu
                 const current = definitionInput?.sources.find(s => s.kind === definition.sourceKind);
                 return current && !sourceContains(current.text, definition.source.quote) ? [definition.name] : [];
               });
-              receipt = responses.length ? prepareExchange(world.mechanics ?? emptyMechanics(), `action-${stamp}`, "you", operations, responses, stamp, world.place) : prepareMechanical(world.mechanics ?? emptyMechanics(), `action-${stamp}`, "you", operations, stamp);
+              const learning: LearningWitness | undefined = decision?.roll && operations.length === 1 && (operations[0].kind === "ability" || operations[0].kind === "strike") ? { seed: stamp, tier: decision.tier, result: decision.result, roll: decision.roll } : undefined;
+              receipt = responses.length ? prepareExchange(world.mechanics ?? emptyMechanics(), `action-${stamp}`, "you", operations, responses, stamp, world.place, learning) : prepareMechanical(world.mechanics ?? emptyMechanics(), `action-${stamp}`, "you", operations, stamp, learning);
               if (changed.length) receipt = { ...receipt, changes: [], beats: [], result: undefined, status: "blocked", unresolved: true, reason: `${changed.join(", ")}: the source changed and the saved mechanics need updating` };
             }
           }
@@ -570,9 +582,11 @@ function rewardIntent(content: string): boolean {
 }
 
 export function needsMechanicalRead(content: string, state?: MechanicalState): boolean {
+  if (readOnlyIntent(content)) return false;
   if (/^\s*\(?\s*(?:ooc|out of character)\b/i.test(content)) return false;
   const action = splitTyped(content).action.trim();
   if (!action || /^(?:what|how|can|could|would|do|does|show|list|explain|tell)\b/i.test(action) || /\?$/.test(action)) return false;
+  if (state?.costLinks?.some(l => l.enabled && [l.from, l.to].some(id => state.resources.find(r => r.id === id)?.owner === "you")) && /\b(?:revoke|withdraw|stop|end|cut|disable|cancel)\b/i.test(action)) return true;
   if (rewardIntent(content)) return true;
   if (state?.agreements?.some(a => (a.owner === "you" || a.from === "you") && a.rewards.length && (/\b(?:claim|collect)\b/i.test(action) || a.rewards.some(r => !r.paid) && /\b(?:accept|take|receive|pay)\b/i.test(action)))) return true;
   if (state?.abilities?.some(a => a.owner === "you" && action.toLocaleLowerCase().includes(a.name.toLocaleLowerCase()))) return true;
@@ -592,12 +606,14 @@ export function needsMechanicalRead(content: string, state?: MechanicalState): b
 }
 
 export function needsAbilityRead(content: string): boolean {
+  if (readOnlyIntent(content)) return false;
   const action = splitTyped(content).action.trim();
   return !/^\s*\(?\s*(?:ooc|out of character|what|how|can|could|would|show|list|explain)\b/i.test(action)
     && !/\?$/.test(action) && /\b(?:use|cast|invoke|activate|perform|deploy|repair|treat|summon)\b/i.test(action);
 }
 
 export function needsAttemptRead(content: string): boolean {
+  if (readOnlyIntent(content)) return false;
   if (/^\s*\(?\s*(?:ooc|out of character)\b/i.test(content)) return false;
   const action = splitTyped(content).action.trim();
   if (!action) return false;

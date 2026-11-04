@@ -71,7 +71,7 @@ test("the normal composer prepares both sides on first use and exposes the actua
   });
   const messages = await getMessages(id), record = mechanicalRecordOf(messages.at(-1)!)!, beat = record.receipt!.beats!.find(b => b.kind === "response")!;
   const after = await state(id);
-  expect(record.receipt!.engine).toBe(5);
+  expect(record.receipt!.engine).toBe(8);
   expect(after.resources.find(r => r.id === "Jo-focus")?.current).toBe(8);
   expect(after.resources.find(r => r.id === "you-hp")?.current).toBe(beat.decision!.result === "setback" ? 40 : 35);
   expect(latest(id).responses[0].decision.roll).toBe(beat.decision!.roll);

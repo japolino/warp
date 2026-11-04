@@ -19,7 +19,7 @@ const givenName = (name: string) => {
   const parts = name.trim().split(/\s+/), word = parts[0];
   return parts.length > 1 && word.length >= 3 && /^\p{Lu}/u.test(word) && !/^(?:the|dr\.?|professor|captain|sir|lady|lord)$/i.test(word) ? norm(word) : "";
 };
-function participant(state: MechanicalState, input: string) {
+export function participant(state: MechanicalState, input: string) {
   const resolved = actorName(state, input);
   if (resolved === "you" || entityFor(state, resolved)) return resolved;
   const candidates = state.entities?.filter(e => [e.name, e.displayName, ...e.aliases].some(n => givenName(n) === norm(input))) ?? [];
@@ -47,7 +47,7 @@ function mentioned(state: MechanicalState, actor: string, quote: string) {
     return new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`, "u").test(norm(quote));
   });
 }
-function relationshipEvidence(state: MechanicalState, actor: string, controller: string, source: Evidence, messages: Message[]): Evidence | undefined {
+export function relationshipEvidence(state: MechanicalState, actor: string, controller: string, source: Evidence, messages: Message[]): Evidence | undefined {
   const bound = (quote: string) => mentioned(state, actor, quote) && mentioned(state, controller, quote);
   if (bound(source.quote)) return source;
   const message = messages.find(m => m.id === source.message); if (!message) return;
@@ -139,6 +139,18 @@ export function costPayer(state: MechanicalState, input: string): Resource {
     if (link.unsupported.length) throw new MechanicalKnowledgeError(`Shared cost needs clarification: ${link.unsupported.join("; ")}`);
     payer = resource(state, link.to)!;
   }
+}
+
+/** Either endpoint owner can stop a plain permission; unresolved binding rules remain blockers. */
+export function withdrawCostLink(state: MechanicalState, actor: string, id: string, action: string, changes: MechanicalChange[], beats: EncounterBeat[]) {
+  const link = state.costLinks?.find(l => l.id === id), from = link && resource(state, link.from), to = link && resource(state, link.to);
+  if (!link || !from || !to || from.owner !== actor && to.owner !== actor) throw Error("This shared cost permission is not yours to withdraw");
+  if (link.unsupported.length) throw new MechanicalKnowledgeError(`Withdrawing this link needs clarification: ${link.unsupported.join("; ")}`);
+  if (!link.enabled) return;
+  const old = structuredClone(link); link.enabled = false;
+  link.source = { message: `warp-action:${action}`, quote: `Withdraw shared cost permission ${id}`, sourceRevision: revision([action, id]) };
+  changes.push({ kind: "cost_link", id, before: old, after: structuredClone(link) });
+  beats.push({ kind: "unlink", actor, name: "Shared cost permission withdrawn" });
 }
 
 export function validateManifestation(state: MechanicalState, controller: string, id: string, active: boolean) {

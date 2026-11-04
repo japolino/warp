@@ -39,7 +39,7 @@ export function foldMechanics(messages: Msg[]): MechanicalState {
         const raw = record.observations.flatMap<Record<string, unknown>>(o => {
           if (!o || typeof o !== "object") return [];
           if (o.kind === "condition_end") return [{ kind: o.kind, id: o.id, ...(o.retire ? { retire: true } : {}), ...o.source }];
-          if (o.kind === "ability") return [];
+          if (o.kind === "ability" || o.kind === "practice") return [];
           if (o.kind === "companion") { const { manifestation, ...value } = o.value; return [{ kind: o.kind, ...value, ...o.value.source }]; }
           if (o.kind === "place") return [{ kind: o.kind, ...o.value, ...(o.entered ? { entered: true } : {}), ...o.value.source }];
           if (o.kind === "agreement") return [{ kind: o.kind, owner: o.value.owner, name: o.value.name, from: o.value.from, offer: o.value.offer, requirements: o.value.requirements.map(r => ({ ...r.source })), rewards: o.value.rewards.map(r => ({ kind: r.kind, asset: r.asset, amount: r.amount, ...r.source })), unsupported: o.value.unsupported, ...o.value.source }];
@@ -54,6 +54,8 @@ export function foldMechanics(messages: Msg[]): MechanicalState {
           const imported = readAbilityDefinitions([{ ...ability, message: ability.source.message, quote: ability.source.quote, effects: ability.effects.map(e => e.basis !== "warp" ? e : e.kind === "defense" && e.defense ? { ...e, defense: { ...e.defense, amount: undefined }, magnitude: magnitudes[e.defense.amount] } : { ...e, amount: undefined, magnitude: magnitudes[e.amount!] }) }], state, messages.slice(0, index + 1), sources, undefined, true);
           state = applyObservations(state, imported.map(value => ({ kind: "ability", value })));
         }
+        const lessons = record.observations.filter(o => o?.kind === "practice").map(o => ({ kind: o.kind, ...o.value, ...o.value.source }));
+        state = applyObservations(state, readMechanicalObservations(lessons, state, messages.slice(0, index + 1), undefined, true));
       }
     }
     prefix = paths.get(message.id)!;
