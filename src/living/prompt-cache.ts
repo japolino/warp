@@ -16,9 +16,11 @@ export function promptSnapshot(message: Msg, paths: Map<string, string>, rawPath
   return value;
 }
 
+const STATE_FIELDS = ["place", "present", "preferences", "knowledgeBoundary", "agreementBoundary", "assetBoundary", "readBoundary", "explorationBoundary", "preparationBoundary", "companionBoundary", "growthBoundary"];
+const MECHANICAL_COLLECTIONS = ["resources", "items", "conditions", "abilities", "entities", "distances", "clocks", "cooldowns", "resilience", "agreements", "places", "positions", "routes", "discoveries", "stocks", "companions", "costLinks", "growth"];
 function delta(before: any, after: any) {
   const changes: any = {};
-  for (const key of ["place", "present", "preferences", "knowledgeBoundary", "agreementBoundary", "assetBoundary", "readBoundary", "explorationBoundary", "preparationBoundary"]) if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) changes[key] = after[key] ?? null;
+  for (const key of STATE_FIELDS) if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) changes[key] = after[key] ?? null;
   for (const key of ["established", "possibleMotives"]) {
     const previous = new Map(before[key].map((f: any) => [f.id, JSON.stringify(f)]));
     const current = new Set(after[key].map((f: any) => f.id));
@@ -27,7 +29,7 @@ function delta(before: any, after: any) {
     if (put.length || remove.length) changes[key] = { put, remove };
   }
   const mechanics: any = {};
-  for (const key of ["resources", "items", "conditions", "abilities", "entities", "distances", "clocks", "cooldowns", "resilience", "agreements", "places", "positions", "routes", "discoveries", "stocks"]) {
+  for (const key of MECHANICAL_COLLECTIONS) {
     const old = before.mechanics?.[key] ?? [], next = after.mechanics?.[key] ?? [];
     const previous = new Map(old.map((row: any) => [row.id, JSON.stringify(row)]));
     const current = new Set(next.map((row: any) => row.id));
@@ -37,6 +39,36 @@ function delta(before: any, after: any) {
   }
   if (Object.keys(mechanics).length) changes.mechanics = mechanics;
   return changes;
+}
+
+/** Project what was actually published, including older formatters that omitted fields. */
+function publishedState(previous: any, block: string, mode: "full" | "delta") {
+  const marker = mode === "full" ? "\nRecorded state:\n" : "\nRecorded state update (put replaces by id; remove leaves the current projection):\n";
+  const at = block.lastIndexOf(marker);
+  if (at < 0) return previous;
+  try {
+    const update = JSON.parse(block.slice(at + marker.length).split("\n", 1)[0]);
+    if (!update || typeof update !== "object" || Array.isArray(update)) return previous;
+    if (mode === "full") return update;
+    const next = structuredClone(previous ?? { established: [], possibleMotives: [] });
+    for (const key of STATE_FIELDS) if (Object.hasOwn(update, key)) {
+      if (update[key] === null) delete next[key]; else next[key] = update[key];
+    }
+    const apply = (before: any[], change: any) => {
+      if (!change || !Array.isArray(change.put) || !Array.isArray(change.remove)
+        || change.put.some((row: any) => !row || typeof row.id !== "string")) throw Error("Invalid published collection");
+      const rows = new Map(before.map(row => [row.id, row]));
+      for (const id of change.remove) rows.delete(id);
+      for (const row of change.put) rows.set(row.id, row);
+      return [...rows.values()];
+    };
+    for (const key of ["established", "possibleMotives"]) if (Object.hasOwn(update, key)) next[key] = apply(next[key] ?? [], update[key]);
+    for (const key of MECHANICAL_COLLECTIONS) if (update.mechanics && Object.hasOwn(update.mechanics, key)) {
+      next.mechanics ??= {};
+      next.mechanics[key] = apply(next.mechanics[key] ?? [], update.mechanics[key]);
+    }
+    return next;
+  } catch { return previous; }
 }
 
 const renderingBasis = (snapshot: PromptSnapshot | undefined) => revision(snapshot ? {
@@ -60,6 +92,7 @@ export function preparePrompt(messages: LlmMessageDTO[], history: Msg[], directo
   }
   const captured: PromptRendering[] = [];
   let previous: PromptSnapshot | undefined;
+  let published: any = { established: [], possibleMotives: [] };
   const output = messages.map<LlmMessageDTO>(message => {
     if (message.role !== "user" || !message.sourceMessageId) return message;
     const origin = source.get(message.sourceMessageId);
@@ -73,7 +106,7 @@ export function preparePrompt(messages: LlmMessageDTO[], history: Msg[], directo
       return message;
     }
     const mode = previous ? "delta" : "full", frozen = renderings.get(key(origin.id, mode));
-    const update = previous ? delta(previous.packet, snapshot.packet) : snapshot.packet;
+    const update = previous ? delta(published, snapshot.packet) : snapshot.packet;
     const block = frozen?.block ?? (previous && !Object.keys(update).length && !snapshot.decision && !snapshot.receipt ? "" : `<warp>\n${previous ? "Recorded state update (put replaces by id; remove leaves the current projection):" : `${director}\nPlayer preferences are binding: exclude listed content and keep offScreen content off screen. Warp observations are chronological. Later updates replace earlier observations. Outcomes apply only to the player turn carrying them.\nRecorded state:`}\n${JSON.stringify(update)}${snapshot.decision ? `\nThis player turn's resolved attempt:\n${JSON.stringify(snapshot.decision)}` : ""}${snapshot.receipt ? `\nThis player turn's mechanical receipt (authoritative changes; do not charge or award again):\n${JSON.stringify(snapshot.receiptPacket ?? receiptPacket(snapshot.receipt))}` : ""}\n</warp>`);
     if (!frozen) {
       const row: PromptRendering = { id: origin.id, basis, mode, block };
@@ -81,6 +114,7 @@ export function preparePrompt(messages: LlmMessageDTO[], history: Msg[], directo
     }
     previous = snapshot;
     if (!block) return message;
+    published = publishedState(published, block, mode);
     return typeof message.content === "string" ? { ...message, content: `${message.content}\n\n${block}` }
       : { ...message, content: [...message.content, { type: "text", text: `\n\n${block}` }] };
   });

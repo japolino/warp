@@ -14420,7 +14420,7 @@ function worldPacket(world, focus = "") {
     ...selected.some((f) => f.access) ? { knowledgeBoundary: "Knowledge records identify actual learners and the proposition they learned. Other facts are narrator context, not shared information. Unrecorded access is unknown. Do not reveal secrets or let someone act on privileged information without an established way to learn it. Hearing an allegation does not make it true; old knowledge need not match a newer fact." } : {},
     ...world.mechanics && (world.mechanics.resources.length || world.mechanics.items.length) ? { assetBoundary: "Counted resources and items change only through a saved mechanical receipt. An offer, promise or completed task does not itself transfer payment. Hold an offered reward available for the player's acceptance and resolution. Do not invent or recite new balances from prose. Missing preparation is uncertainty in the record, not a fictional refusal, fee or extra chore." } : {},
     ...world.mechanics?.agreements?.length ? { agreementBoundary: "Accepted agreement requirements are separate and all must be fulfilled. Preserve their terms; an attempted task is not proof of completion. After completion the NPC may offer or refuse the promised reward. Hold an offered reward available for the player's acceptance; do not narrate a completed item or money handover without a reward receipt. Describe offers naturally; leave wallet arithmetic and current balances to the inline display unless asked. Paid rewards stay paid. Never automatically spend the player's promised payment. Do not introduce a setup menu, relationship score or new quest to manage an agreement." } : {},
-    ...world.mechanics && activePracticeTracks(world.mechanics).length > 0 ? { growthBoundary: "Earned familiarity is Warp practice, scoped to the exact recorded technique/version. It improves existing uncertainty once alongside conditions, never creates a new power, changes source numbers or bypasses hard constraints, feelings or consent. Do not invent XP or forced training. Only newly earned milestones are announced; routine progress totals stay offscreen unless asked. A query may include opportunities/milestoneAt from saved state, not source-defined XP. Omitted progress is not erased. Milestones arise from varied completed opportunities; routine repetition does not farm them." } : {},
+    ...world.mechanics && activePracticeTracks(world.mechanics).length > 0 ? { growthBoundary: "Earned familiarity is Warp practice, scoped to the exact recorded technique/version. It improves existing uncertainty once alongside conditions, never creates a new power, changes source numbers or bypasses hard constraints, feelings or consent. Do not invent XP or forced training. Only newly earned milestones are announced; routine progress totals stay offscreen unless asked. A query may include opportunities/milestoneAt from saved state, not source-defined XP. Answer with human technique names and plain progress, never internal IDs or control tags. Omitted progress is not erased. Milestones arise from varied completed opportunities; routine repetition does not farm them." } : {},
     ...world.mechanics?.companions?.length || world.mechanics?.costLinks?.length ? { companionBoundary: "Companion relationships do not grant control, consent, extra actions or shared knowledge. Recall/dismissal never resets injuries, balances, identity, cooldowns or death. Lifetime counts only sourced controller actions. Shared links redirect established ability effort costs one-for-one; they do not duplicate resources or transmit damage/healing. No automatic following, resurrection or recovery. Unknown restrictions stay unresolved." } : {},
     ...world.mechanics?.places?.length ? { explorationBoundary: "Known places, routes, local changes, clues and remaining supplies persist across visits. This packet contains relevant nearby/requested spatial knowledge, not the entire map; omitted places are not erased. This is the player's discovered map, not shared NPC knowledge. Unvisited places are known only through their established sources, not an omniscient map. A route's unknown status does not prove access. Do not reconnect rooms, relock an opened exit, repair a broken object or refill a cache simply because the player returns. Counted gathering and travel through recorded routes use saved receipts; do not grant supplies, move the player or repeat costs contrary to that turn's receipt. A question, map inspection or unaccepted trip does not move anyone or advance time. New unestablished space may be explored naturally; do not invent a setup requirement. A successful departure does not automatically bring other people along." } : {},
     ...world.mechanics ? { mechanics: mechanicalPacket(world.mechanics, focus) } : {}
@@ -14800,7 +14800,7 @@ function promptSnapshot(message, paths, rawPaths = paths) {
 }
 function delta(before, after) {
   const changes = {};
-  for (const key of ["place", "present", "preferences", "knowledgeBoundary", "agreementBoundary", "assetBoundary", "readBoundary", "explorationBoundary", "preparationBoundary"])
+  for (const key of STATE_FIELDS)
     if (JSON.stringify(before[key]) !== JSON.stringify(after[key]))
       changes[key] = after[key] ?? null;
   for (const key of ["established", "possibleMotives"]) {
@@ -14812,7 +14812,7 @@ function delta(before, after) {
       changes[key] = { put, remove };
   }
   const mechanics = {};
-  for (const key of ["resources", "items", "conditions", "abilities", "entities", "distances", "clocks", "cooldowns", "resilience", "agreements", "places", "positions", "routes", "discoveries", "stocks"]) {
+  for (const key of MECHANICAL_COLLECTIONS) {
     const old = before.mechanics?.[key] ?? [], next = after.mechanics?.[key] ?? [];
     const previous = new Map(old.map((row) => [row.id, JSON.stringify(row)]));
     const current = new Set(next.map((row) => row.id));
@@ -14824,6 +14824,53 @@ function delta(before, after) {
   if (Object.keys(mechanics).length)
     changes.mechanics = mechanics;
   return changes;
+}
+function publishedState(previous, block, mode) {
+  const marker = mode === "full" ? `
+Recorded state:
+` : `
+Recorded state update (put replaces by id; remove leaves the current projection):
+`;
+  const at = block.lastIndexOf(marker);
+  if (at < 0)
+    return previous;
+  try {
+    const update = JSON.parse(block.slice(at + marker.length).split(`
+`, 1)[0]);
+    if (!update || typeof update !== "object" || Array.isArray(update))
+      return previous;
+    if (mode === "full")
+      return update;
+    const next = structuredClone(previous ?? { established: [], possibleMotives: [] });
+    for (const key of STATE_FIELDS)
+      if (Object.hasOwn(update, key)) {
+        if (update[key] === null)
+          delete next[key];
+        else
+          next[key] = update[key];
+      }
+    const apply = (before, change) => {
+      if (!change || !Array.isArray(change.put) || !Array.isArray(change.remove) || change.put.some((row) => !row || typeof row.id !== "string"))
+        throw Error("Invalid published collection");
+      const rows = new Map(before.map((row) => [row.id, row]));
+      for (const id of change.remove)
+        rows.delete(id);
+      for (const row of change.put)
+        rows.set(row.id, row);
+      return [...rows.values()];
+    };
+    for (const key of ["established", "possibleMotives"])
+      if (Object.hasOwn(update, key))
+        next[key] = apply(next[key] ?? [], update[key]);
+    for (const key of MECHANICAL_COLLECTIONS)
+      if (update.mechanics && Object.hasOwn(update.mechanics, key)) {
+        next.mechanics ??= {};
+        next.mechanics[key] = apply(next.mechanics[key] ?? [], update.mechanics[key]);
+      }
+    return next;
+  } catch {
+    return previous;
+  }
 }
 function preparePrompt(messages, history, director, current) {
   const paths = pathsOf(history), rawPaths = rawPathsOf(history), source = new Map(history.map((m) => [m.id, m]));
@@ -14843,6 +14890,7 @@ function preparePrompt(messages, history, director, current) {
     }
   const captured = [];
   let previous;
+  let published = { established: [], possibleMotives: [] };
   const output = messages.map((message) => {
     if (message.role !== "user" || !message.sourceMessageId)
       return message;
@@ -14859,7 +14907,7 @@ function preparePrompt(messages, history, director, current) {
       return message;
     }
     const mode = previous ? "delta" : "full", frozen = renderings.get(key(origin.id, mode));
-    const update = previous ? delta(previous.packet, snapshot.packet) : snapshot.packet;
+    const update = previous ? delta(published, snapshot.packet) : snapshot.packet;
     const block = frozen?.block ?? (previous && !Object.keys(update).length && !snapshot.decision && !snapshot.receipt ? "" : `<warp>
 ${previous ? "Recorded state update (put replaces by id; remove leaves the current projection):" : `${director}
 Player preferences are binding: exclude listed content and keep offScreen content off screen. Warp observations are chronological. Later updates replace earlier observations. Outcomes apply only to the player turn carrying them.
@@ -14878,6 +14926,7 @@ ${JSON.stringify(snapshot.receiptPacket ?? receiptPacket(snapshot.receipt))}` : 
     previous = snapshot;
     if (!block)
       return message;
+    published = publishedState(published, block, mode);
     return typeof message.content === "string" ? { ...message, content: `${message.content}
 
 ${block}` } : { ...message, content: [...message.content, { type: "text", text: `
@@ -14889,7 +14938,7 @@ ${block}` }] };
 function replayPrompt(messages, history, director, current) {
   return preparePrompt(messages, history, director, current).messages;
 }
-var PROMPT_KEY = "warpLivingPrompt", renderingBasis = (snapshot) => revision(snapshot ? {
+var PROMPT_KEY = "warpLivingPrompt", STATE_FIELDS, MECHANICAL_COLLECTIONS, renderingBasis = (snapshot) => revision(snapshot ? {
   version: snapshot.version,
   path: snapshot.path,
   packet: snapshot.packet,
@@ -14901,6 +14950,8 @@ var init_prompt_cache = __esm(() => {
   init_world2();
   init_mechanics();
   init_story_text();
+  STATE_FIELDS = ["place", "present", "preferences", "knowledgeBoundary", "agreementBoundary", "assetBoundary", "readBoundary", "explorationBoundary", "preparationBoundary", "companionBoundary", "growthBoundary"];
+  MECHANICAL_COLLECTIONS = ["resources", "items", "conditions", "abilities", "entities", "distances", "clocks", "cooldowns", "resilience", "agreements", "places", "positions", "routes", "discoveries", "stocks", "companions", "costLinks", "growth"];
 });
 
 // src/living/decisions.ts

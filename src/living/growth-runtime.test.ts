@@ -100,3 +100,22 @@ test("a quiet sourced cast becomes available on its first real exchange before r
   result.target.content = "Jo reacts to the recorded exchange.";
   expect(await state(id)).toEqual(after);
 });
+
+test("a normal progress question delivers partial practice in the actual next prompt without another action", async () => {
+  const id = await chat();
+  await h.say(id, "I cast Pulse at Ada."); await h.generate(id, "Ada reacts to the recorded cast.");
+  const before = await state(id), readCount = reads;
+  await h.say(id, "(OOC: What practice progress is saved for Pulse?)");
+  await h.generate(id, async prompt => {
+    const current = String(prompt.at(-1)!.content);
+    // This host fixture has no source IDs, so it receives the safe full packet.
+    expect(current).toContain('"growth":[{');
+    expect(current).toContain('"opportunities":1,"milestoneAt":3');
+    expect(current).toContain("growthBoundary");
+    expect(current).not.toContain("This player turn's resolved attempt");
+    expect(current).not.toContain("This player turn's mechanical receipt");
+    return "Pulse has one of three eligible practice opportunities recorded.";
+  });
+  expect(reads).toBe(readCount);
+  expect(await state(id)).toEqual(before);
+});

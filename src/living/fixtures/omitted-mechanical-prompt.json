@@ -1,0 +1,119 @@
+{
+  "source": "Actual installed renderer 03187f1; synthetic public state, no provider calls",
+  "history": [
+    {
+      "id": "0",
+      "is_user": true,
+      "role": "user",
+      "content": "First",
+      "index_in_chat": 0,
+      "swipe_id": 0,
+      "metadata": {
+        "warpLivingPrompt": {
+          "0": {
+            "version": 1,
+            "path": "5f5688a9:f337f6fb",
+            "packet": {
+              "place": "Workshop",
+              "present": [
+                "Tutor"
+              ],
+              "preferences": {
+                "exclude": [],
+                "offScreen": []
+              },
+              "established": [],
+              "possibleMotives": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "1",
+      "is_user": true,
+      "role": "user",
+      "content": "Second",
+      "index_in_chat": 1,
+      "swipe_id": 0,
+      "metadata": {
+        "warpLivingPrompt": {
+          "0": {
+            "version": 1,
+            "path": "ab0b913f:a4fc087b",
+            "packet": {
+              "place": "Workshop",
+              "present": [
+                "Tutor"
+              ],
+              "preferences": {
+                "exclude": [],
+                "offScreen": []
+              },
+              "established": [],
+              "possibleMotives": [],
+              "companionBoundary": "Preserve companion identity.",
+              "growthBoundary": "Use human technique names.",
+              "mechanics": {
+                "companions": [
+                  {
+                    "id": "echo",
+                    "actor": "Echo",
+                    "controller": "you",
+                    "companionKind": "familiar"
+                  }
+                ],
+                "costLinks": [
+                  {
+                    "id": "shared",
+                    "from": "focus",
+                    "to": "echo-focus",
+                    "enabled": true
+                  }
+                ],
+                "growth": [
+                  {
+                    "id": "strike",
+                    "owner": "you",
+                    "name": "Unarmed strikes",
+                    "skill": "strike",
+                    "familiar": false,
+                    "basis": "warp",
+                    "opportunities": 1,
+                    "milestoneAt": 3
+                  }
+                ]
+              }
+            },
+            "renderings": [
+              {
+                "id": "0",
+                "basis": "6f94256a:aa3c523e",
+                "mode": "full",
+                "block": "<warp>\nDirector\nPlayer preferences are binding: exclude listed content and keep offScreen content off screen. Warp observations are chronological. Later updates replace earlier observations. Outcomes apply only to the player turn carrying them.\nRecorded state:\n{\"place\":\"Workshop\",\"present\":[\"Tutor\"],\"preferences\":{\"exclude\":[],\"offScreen\":[]},\"established\":[],\"possibleMotives\":[]}\n</warp>"
+              },
+              {
+                "id": "1",
+                "basis": "b7607c38:be8ff732",
+                "mode": "delta",
+                "block": ""
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "wire": [
+    {
+      "role": "user",
+      "content": "First\n\n<warp>\nDirector\nPlayer preferences are binding: exclude listed content and keep offScreen content off screen. Warp observations are chronological. Later updates replace earlier observations. Outcomes apply only to the player turn carrying them.\nRecorded state:\n{\"place\":\"Workshop\",\"present\":[\"Tutor\"],\"preferences\":{\"exclude\":[],\"offScreen\":[]},\"established\":[],\"possibleMotives\":[]}\n</warp>",
+      "sourceMessageId": "0"
+    },
+    {
+      "role": "user",
+      "content": "Second",
+      "sourceMessageId": "1"
+    }
+  ]
+}

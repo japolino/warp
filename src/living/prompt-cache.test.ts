@@ -4,6 +4,7 @@ import { pathsOf } from "./world.js";
 import { PROMPT_KEY, replayPrompt, preparePrompt, type PromptSnapshot } from "./prompt-cache.js";
 import { STORY_BINDINGS, storyRevision } from "./story-text.js";
 import { emptyMechanics, prepareMechanical, prepareExchange, mechanicalPacket, receiptPacket } from "./mechanics.js";
+import omittedMechanicalPrompt from "./fixtures/omitted-mechanical-prompt.json";
 
 const msg = (id: string, is_user: boolean, content: string): Msg => ({ id, is_user, content, role: is_user ? "user" : "assistant", index_in_chat: Number(id), swipe_id: 0 } as Msg);
 const packet = (text: string) => ({ place: "Cafe", present: ["Jo"], preferences: { exclude: [], offScreen: [] }, established: [{ id: "jacket", text }], possibleMotives: [] });
@@ -19,6 +20,29 @@ function publish(history: Msg[], target: Msg, input = prompt(history), director 
   target.metadata = { ...target.metadata, [PROMPT_KEY]: { "0": result.snapshot } };
   return result.messages;
 }
+
+test("new state previously omitted by the installed formatter is delivered once without rewriting its old wire", () => {
+  const { history, wire } = structuredClone(omittedMechanicalPrompt) as unknown as { history: Msg[]; wire: ReturnType<typeof prompt> };
+  const previous = (history.at(-1)!.metadata![PROMPT_KEY] as Record<string, PromptSnapshot>)["0"];
+  const next = msg("2", true, "What practice progress is saved?"); history.push(next);
+  const snapshot = store(history, next, "Jacket"); snapshot.packet = structuredClone(previous.packet);
+  const corrected = publish(history, next, history.map(m => ({ role: m.role, content: m.content, sourceMessageId: m.id })));
+  expect(corrected.slice(0, wire.length)).toEqual(wire);
+  for (const key of ["companions", "costLinks", "growth", "companionBoundary", "growthBoundary"]) expect(corrected.at(-1)!.content).toContain(`"${key}"`);
+  expect(corrected.at(-1)!.content).toContain('"opportunities":1,"milestoneAt":3');
+  const following = msg("3", true, "Same question"); history.push(following);
+  store(history, following, "Jacket").packet = structuredClone(snapshot.packet);
+  const stable = publish(history, following, history.map(m => ({ role: m.role, content: m.content, sourceMessageId: m.id })));
+  expect(stable.slice(0, corrected.length)).toEqual(corrected);
+  expect(stable.at(-1)!.content).toBe("Same question");
+  const revoked = msg("4", true, "Access is withdrawn"); history.push(revoked);
+  const changed = store(history, revoked, "Jacket"); changed.packet = structuredClone(snapshot.packet);
+  changed.packet.mechanics.costLinks[0].enabled = false;
+  const update = publish(history, revoked, history.map(m => ({ role: m.role, content: m.content, sourceMessageId: m.id })));
+  expect(update.slice(0, stable.length)).toEqual(stable);
+  expect(update.at(-1)!.content).toContain('"enabled":false');
+  expect(update.at(-1)!.content).not.toContain('"growth"');
+});
 
 test("recovering an omitted legacy snapshot leaves prior wire bytes unchanged and appends recovered state to the new turn", () => {
   const a = msg("0", true, "First"), b = msg("1", true, "Second"), c = msg("2", true, "Third"), history = [a, b, c];
