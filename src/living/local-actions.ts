@@ -1,5 +1,5 @@
 import { splitTyped } from "../backend/questions.js";
-import { revision } from "../shared/revision.js";
+import { sourceRevisionMatches, sourceContains } from "./story-text.js";
 import { agreementDone } from "./agreements.js";
 import { actorName, conditionActive } from "./encounters.js";
 import { prepareMechanical, type MechanicalOperation } from "./mechanics.js";
@@ -33,8 +33,8 @@ export function readLocalClaim(content: string, world: World, history: Message[]
     const names = [...new Set([counterpart, entity.displayName, ...entity.aliases])].filter(Boolean).map(escape).join("|");
     for (const reward of agreement.rewards) {
       const ready = reward.ready;
-      if (reward.paid || !ready?.allowed || !ready.uncontested || ready.source.message !== narrator.id || ready.source.sourceRevision !== revision(narrator.content)) continue;
-      if (!narrator.content.replace(/\s+/g, " ").includes(ready.source.quote)) continue;
+      if (reward.paid || !ready?.allowed || !ready.uncontested || ready.source.message !== narrator.id || !sourceRevisionMatches(narrator, ready.source.sourceRevision)) continue;
+      if (!sourceContains(narrator.content, ready.source.quote)) continue;
       const asset = escape(reward.asset);
       const reference = `(?:(?:my|the) (?:(?:offered|promised|earned|agreed) )?(?:pay|payment|reward)|(?:(?:the|my|your|this|that) )?(?:(?:offered|promised|earned|agreed) )?(?:${escape(String(reward.amount))} )?${asset})`;
       const pattern = paying

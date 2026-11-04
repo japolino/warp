@@ -4,6 +4,7 @@ import { attemptBands } from "./check-bands.js";
 import { mechanicalPacket, type MechanicalState } from "./mechanics.js";
 import { learnKnowledge, knowledgeDependencyHolds, type KnowledgeAccess } from "./knowledge.js";
 import { actorName } from "./encounters.js";
+import { storyContent, storyRevision, sourceRevisionMatches, sourceContains, recordPathMatches } from "./story-text.js";
 
 export type Kind = "fact" | "possession" | "knowledge" | "commitment" | "situation" | "motive" | "ability";
 export interface Evidence { message: string; quote: string; sourceRevision?: string; }
@@ -13,7 +14,7 @@ export interface Fact extends Evidence {
   access?: KnowledgeAccess;
 }
 export interface World { place: string; present: string[]; facts: Fact[]; mechanics?: MechanicalState; }
-export interface Message { id: string; content: string; is_user: boolean; name?: string; swipe_id?: number; }
+export interface Message { id: string; content: string; is_user: boolean; name?: string; swipe_id?: number; metadata?: { [key: string]: unknown }; }
 export interface Event { op: "put" | "remove" | "transfer"; fact?: Fact; id: string; from?: string; to?: string; evidence: Evidence; }
 export interface Record {
   version: 1; path: string; text: string; events: Event[];
@@ -34,7 +35,12 @@ export const text = (v: unknown, limit = 240): string => {
 const obj = (v: unknown): v is { [key: string]: unknown } => !!v && typeof v === "object" && !Array.isArray(v);
 const kinds = new Set<Kind>(["fact", "possession", "knowledge", "commitment", "situation", "motive", "ability"]);
 const ROOT = "warp-living-v1";
-const nextPath = (path: string, m: Message) => revision([path, m.id, m.swipe_id ?? 0, m.content]);
+const nextPath = (path: string, m: Message) => revision([path, m.id, m.swipe_id ?? 0, storyContent(m.content)]);
+export function rawPathOf(messages: Message[]): string { return messages.reduce((path, m) => revision([path, m.id, m.swipe_id ?? 0, m.content]), ROOT); }
+export function rawPathsOf(messages: Message[]): Map<string, string> {
+  let path = ROOT;
+  return new Map(messages.map(m => { path = revision([path, m.id, m.swipe_id ?? 0, m.content]); return [m.id, path]; }));
+}
 export function pathOf(messages: Message[]): string { return messages.reduce(nextPath, ROOT); }
 export function pathsOf(messages: Message[]): Map<string, string> {
   let path = ROOT;
@@ -45,8 +51,8 @@ function evidence(v: unknown, messages: Message[]): Evidence | null {
   if (!obj(v)) return null;
   const message = text(v.message, 160), quote = text(v.quote, 400);
   const source = messages.find(m => m.id === message);
-  if (!source || quote.length < 4 || !source.content.replace(/\s+/g, " ").includes(quote)) return null;
-  return { message, quote, sourceRevision: revision(source.content) };
+  if (!source || quote.length < 4 || !sourceContains(source.content, quote)) return null;
+  return { message, quote, sourceRevision: storyRevision(source.content) };
 }
 
 /** Validate each proposed change against its quoted source and existing ownership. */
@@ -137,9 +143,10 @@ export function foldWorld(messages: (Message & { record?: Record })[]): World {
   const facts = new Map<string, Fact>();
   const sourceById = new Map(messages.map(m => [m.id, m]));
   const sourceIndex = new Map(messages.map((m, i) => [m.id, i]));
+  const rawPaths = rawPathsOf(messages);
   const quoted = (e: Evidence, ownIndex: number): Evidence | null => {
     const named = sourceById.get(e.message);
-    const matches = (m: Message) => (!e.sourceRevision || e.sourceRevision === revision(m.content)) && m.content.replace(/\s+/g, " ").includes(e.quote);
+    const matches = (m: Message) => sourceRevisionMatches(m, e.sourceRevision) && sourceContains(m.content, e.quote);
     if (named && matches(named) && sourceIndex.get(named.id)! <= ownIndex) return e;
     // Forks may assign new ids. Rebind only a unique quote in the preceding path.
     if (named) return null;
@@ -149,8 +156,8 @@ export function foldWorld(messages: (Message & { record?: Record })[]): World {
   let path = ROOT;
   for (const [index, m] of messages.entries()) {
     const r = m.record;
-    if (r?.version === 1 && r.text === revision(m.content)) {
-      const matchingPath = r.path === path;
+    if (r?.version === 1 && sourceRevisionMatches(m, r.text)) {
+      const matchingPath = recordPathMatches(m, r.path, path, index ? rawPaths.get(messages[index - 1].id)! : ROOT);
       const events = matchingPath ? r.events : r.events.flatMap(e => {
         const source = quoted(e.evidence, index);
         if (!source || (e.op === "transfer" && !e.from)) return [];

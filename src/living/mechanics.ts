@@ -1,4 +1,5 @@
 import { revision } from "../shared/revision.js";
+import { storyRevision, sourceRevisionMatches, sourceContains } from "./story-text.js";
 import type { Evidence, Message } from "./world.js";
 import type { AbilityDefinition, DefinitionSource } from "./abilities.js";
 import { actorName, distance, distanceId, readDefenses, readEncounterObservation, RANGES, checkRange, present, capable, vital, advanceActor, actionCount, cooldownRemaining, setCooldown, conditionActive, damage, immune, MechanicalKnowledgeError, type Entity, type Distance, type Defense, type ActionClock, type Cooldown, type EncounterBeat } from "./encounters.js";
@@ -74,10 +75,12 @@ const singularPossession = (quote: string, name: string) => {
 export const correction = (m: Message) => m.is_user && /^\s*\(?OOC correction:/i.test(m.content);
 
 /** Grounding checks reject missing/edited evidence; the helper still owns semantic interpretation. */
-function source(raw: Record<string, unknown>, messages: Message[]): { evidence: Evidence; correction: boolean } | null {
+function source(raw: Record<string, unknown>, messages: Message[], historical = false): { evidence: Evidence; correction: boolean } | null {
   const id = str(raw.message), quote = str(raw.quote, 400), m = messages.find(m => m.id === id);
-  if (!m || quote.length < 4 || !m.content.replace(/\s+/g, " ").includes(quote) || (m.is_user && !correction(m))) return null;
-  return { evidence: { message: id, quote, sourceRevision: revision(m.content) }, correction: !!correction(m) };
+  if (!m || quote.length < 4 || !sourceContains(m.content, quote) || (m.is_user && !correction(m))) return null;
+  const saved = historical && typeof raw.sourceRevision === "string" ? raw.sourceRevision : undefined;
+  if (saved && !sourceRevisionMatches(m, saved)) return null;
+  return { evidence: { message: id, quote, sourceRevision: saved ?? storyRevision(m.content) }, correction: !!correction(m) };
 }
 
 /** Bootstrap only explicit values. Later absolute prose cannot overwrite executed costs. */
@@ -90,12 +93,12 @@ export function readMechanicalObservations(raw: unknown, before: MechanicalState
     if (!obj(row)) continue;
     if (["agreement", "agreement_progress", "reward_ready", "agreement_cancel"].includes(row.kind as string)) {
       try {
-        const observation = readAgreementObservation(row, working, messages, player);
+        const observation = readAgreementObservation(row, working, messages, player, historical);
         if (observation) { out.push(observation); observeAgreement(working, observation); }
       } catch { /* Invalid terms or references never create a partial agreement. */ }
       continue;
     }
-    const s = source(row, messages); let id = str(row.id, 100);
+    const s = source(row, messages, historical); let id = str(row.id, 100);
     if (!s) continue;
     let observation: Observation | undefined;
     if (row.kind === "entity" || row.kind === "distance") {
@@ -432,18 +435,22 @@ export function commitMechanical(before: MechanicalState, receipt: MechanicalRec
 
 /** Admit player-backed operations; ability invocations reference their saved definitions. */
 export class MechanicalPlanError extends Error {}
-export function readMechanicalPlan(raw: unknown, state: MechanicalState, action: string): MechanicalOperation[] {
-  try { return parseMechanicalPlan(raw, state, action); }
+export interface ActionClassification { action: string; kind: string; }
+export function readMechanicalPlan(raw: unknown, state: MechanicalState, action: string, classified?: ActionClassification): MechanicalOperation[] {
+  try { return parseMechanicalPlan(raw, state, action, classified); }
   catch (error) { throw new MechanicalPlanError(error instanceof Error ? error.message : "Mechanical interpretation is incomplete"); }
 }
-function parseMechanicalPlan(raw: unknown, state: MechanicalState, action: string): MechanicalOperation[] {
+function parseMechanicalPlan(raw: unknown, state: MechanicalState, action: string, classified?: ActionClassification): MechanicalOperation[] {
   if (!Array.isArray(raw) || raw.length > 16) throw new Error("Mechanical interpretation is incomplete");
   const operations: MechanicalOperation[] = [];
   for (const row of raw) {
     if (!obj(row) || !str(row.quote, 400) || !action.replace(/\s+/g, " ").includes(row.quote as string)) throw new Error("Mechanical action lacks player evidence");
     const quote = row.quote as string;
+    // A native classification of this exact single action can replace English verb matching.
+    // It cannot replace quoted evidence, ownership, amounts, saved definitions or transaction validation.
+    const stated = (verbs: RegExp) => verbs.test(quote) || raw.length === 1 && classified?.action === action && classified.kind === row.kind && quote === action;
     if (row.kind === "claim") {
-      if (Object.keys(row).some(k => !["kind", "agreement", "reward", "quote"].includes(k)) || !/\b(?:claim|collect|accept|take|receive|pay)\b/i.test(quote)) throw new Error("Reward collection must be explicit and uses its saved terms");
+      if (Object.keys(row).some(k => !["kind", "agreement", "reward", "quote"].includes(k)) || !stated(/\b(?:claim|collect|accept|take|receive|pay)\b/i)) throw new Error("Reward collection must be explicit and uses its saved terms");
       const eligible = state.agreements?.filter(a => a.owner === "you" || a.from === "you") ?? [];
       const exact = eligible.find(a => a.id === row.agreement);
       const named = eligible.filter(a => a.name.toLocaleLowerCase() === str(row.agreement).toLocaleLowerCase());
@@ -455,20 +462,20 @@ function parseMechanicalPlan(raw: unknown, state: MechanicalState, action: strin
       operations.push({ kind: "claim", agreement: agreement.id, reward: rewards[0].id });
     } else if (row.kind === "ability") {
       const ability = state.abilities?.find(a => (a.id === row.ability || a.name.toLocaleLowerCase() === str(row.ability).toLocaleLowerCase()) && a.owner === "you");
-      if (!ability || !/\b(?:use|cast|invoke|perform|activate|apply|treat|focus|deploy|repair|patch|switch|turn)\b/i.test(quote)) throw new Error("Ability use is not established");
+      if (!ability || !stated(/\b(?:use|cast|invoke|perform|activate|apply|treat|focus|deploy|repair|patch|switch|turn)\b/i)) throw new Error("Ability use is not established");
       if (row.version !== undefined && row.version !== ability.version) throw new Error("Ability definition changed");
       operations.push({ kind: "ability", ability: ability.id, version: ability.version, ...(str(row.target, 80) ? { target: str(row.target, 80) } : {}) });
     } else if (row.kind === "strike") {
-      if (Object.keys(row).some(k => !["kind", "target", "quote"].includes(k)) || !/\b(?:punch|strike|hit|kick|attack)\b/i.test(quote) || !str(row.target, 80)) throw new Error("A basic strike needs an explicit physical attack and has no model-selected damage");
+      if (Object.keys(row).some(k => !["kind", "target", "quote"].includes(k)) || !stated(/\b(?:punch|strike|hit|kick|attack)\b/i) || !str(row.target, 80)) throw new Error("A basic strike needs an explicit physical attack and has no model-selected damage");
       operations.push({ kind: "strike", target: actorName(state, str(row.target, 80)) });
     } else if (row.kind === "wait" || row.kind === "defend") {
-      if (!(row.kind === "wait" ? /\b(?:wait|hold|pause)\b/i : /\b(?:defend|guard|brace|block)\b/i).test(quote)) throw new Error("Action was not stated");
+      if (!stated(row.kind === "wait" ? /\b(?:wait|hold|pause)\b/i : /\b(?:defend|guard|brace|block)\b/i)) throw new Error("Action was not stated");
       operations.push({ kind: row.kind });
     } else if (row.kind === "move") {
-      if (!/\b(?:move|step|approach|retreat|back|close|advance)\b/i.test(quote) || !str(row.target, 80) || !["closer", "away"].includes(row.direction as string)) throw new Error("Movement was not established");
+      if (!stated(/\b(?:move|step|approach|retreat|back|close|advance)\b/i) || !str(row.target, 80) || !["closer", "away"].includes(row.direction as string)) throw new Error("Movement was not established");
       operations.push({ kind: "move", target: actorName(state, str(row.target, 80)), direction: row.direction as "closer" | "away" });
     } else if (row.kind === "consume" || row.kind === "transfer") {
-      if (!(row.kind === "consume" ? /\b(?:use|drink|eat|consume|apply|take)\b/i : /\b(?:give|hand|pass|transfer)\b/i).test(quote)) throw new Error("Item operation is not an explicit action");
+      if (!stated(row.kind === "consume" ? /\b(?:use|drink|eat|consume|apply|take)\b/i : /\b(?:give|hand|pass|transfer)\b/i)) throw new Error("Item operation is not an explicit action");
       const item = state.items.find(i => i.id === row.item && i.owner === "you");
       if (!item || !amount(row.amount) || row.amount <= 0 || !Number.isInteger(row.amount)
         || (!numberIn(quote, row.amount) && !(row.amount === 1 && /\b(?:a|an|one|the|my|it)\b/i.test(quote)))) throw new Error("Item amount is not established");
@@ -476,12 +483,12 @@ function parseMechanicalPlan(raw: unknown, state: MechanicalState, action: strin
       else if (str(row.to, 80)) operations.push({ kind: "transfer", item: item.id, amount: row.amount, to: str(row.to, 80) });
       else throw new Error("Transfer recipient is missing");
     } else if (row.kind === "spend") {
-      if (!/\b(?:spend|pay|donate|deposit)\b/i.test(quote)) throw new Error("Spending was not stated");
+      if (!stated(/\b(?:spend|pay|donate|deposit)\b/i)) throw new Error("Spending was not stated");
       const resource = state.resources.find(r => r.id === row.resource && r.owner === "you");
       if (!resource || !amount(row.amount) || row.amount <= 0 || !numberIn(quote, row.amount)) throw new Error("Resource cost is not established");
       operations.push({ kind: "spend", resource: resource.id, amount: row.amount });
     } else if (row.kind === "equip" && typeof row.equipped === "boolean" && state.items.some(i => i.id === row.item && i.owner === "you")) {
-      if (!/\b(?:equip|unequip|wear|wield|remove|put on|take off)\b/i.test(quote)) throw new Error("Equipping was not stated");
+      if (!stated(/\b(?:equip|unequip|wear|wield|remove|put on|take off)\b/i)) throw new Error("Equipping was not stated");
       operations.push({ kind: "equip", item: row.item as string, equipped: row.equipped });
     } else throw new Error("Unsupported player mechanical action");
   }

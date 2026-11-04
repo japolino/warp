@@ -4,7 +4,7 @@ import type { Condition, MechanicalState } from "./mechanics.js";
 export interface ClosedCondition { id: string; owner: string; name: string; injuryNames?: string[]; after: { kind: "receipt" | "message"; id: string }; }
 
 export function messageOwnsAction(message: { id: string; swipe_id?: number }, action: string): boolean {
-  const record = message as Message & { metadata?: Record<string, Record<string, { receipt?: { id?: string; responses?: { actor?: string }[] } }>> };
+  const record = message as { metadata?: Record<string, Record<string, { receipt?: { id?: string; responses?: { actor?: string }[] } }>> };
   const receipt = record.metadata?.warpMechanics?.[String(message.swipe_id ?? 0)]?.receipt;
   return receipt?.id === action || !!receipt?.id && Array.isArray(receipt.responses) && receipt.responses.some(p => action === `${receipt.id}:response:${p.actor}`);
 }

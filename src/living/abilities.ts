@@ -1,4 +1,5 @@
 import { revision } from "../shared/revision.js";
+import { storyRevision, sourceRevisionMatches, sourceContains } from "./story-text.js";
 import type { Evidence, Message } from "./world.js";
 import type { Approach, MechanicalState } from "./mechanics.js";
 import { actorName, RANGES, DAMAGE_TYPES, readDefenses, type Range, type DamageType, type Defense } from "./encounters.js";
@@ -51,7 +52,7 @@ export function sourceMessages(sources: DefinitionSource[]): Message[] {
 }
 
 /** Content is mapped into a fixed effect vocabulary; no generated formulas or executable rules. */
-export function readAbilityDefinitions(raw: unknown, state: MechanicalState, messages: Message[], sources: DefinitionSource[] = [], player?: string): AbilityDefinition[] {
+export function readAbilityDefinitions(raw: unknown, state: MechanicalState, messages: Message[], sources: DefinitionSource[] = [], player?: string, historical = false): AbilityDefinition[] {
   if (!Array.isArray(raw)) return [];
   const definitions: AbilityDefinition[] = [];
   for (const row of raw.slice(0, 6)) {
@@ -63,10 +64,11 @@ export function readAbilityDefinitions(raw: unknown, state: MechanicalState, mes
       const message = messages.find(m => m.id === messageId);
       const isCorrection = !!message?.is_user && /^\s*\(?OOC correction:/i.test(message.content);
       const content = source?.text ?? (message && (!message.is_user || isCorrection) ? message.content : "");
-      if (!owner || !name || quote.length < 8 || !content.replace(/\s+/g, " ").includes(quote)) continue;
+      const oldRevision = historical && obj(row.source) && typeof row.source.sourceRevision === "string" ? row.source.sourceRevision : undefined;
+      if (!owner || !name || quote.length < 8 || !sourceContains(content, quote) || oldRevision && !sourceRevisionMatches(source ? { content } : message!, oldRevision)) continue;
       const id = identity(owner, name), existing = [...(state.abilities ?? []), ...definitions].find(a => a.id === id);
       // Preserve an established definition. An explicit correction or edited source can replace it.
-      if (existing && !isCorrection && !(source && existing.sourceKind === source.kind && !content.replace(/\s+/g, " ").includes(existing.source.quote))) continue;
+      if (existing && !isCorrection && !(source && existing.sourceKind === source.kind && !sourceContains(content, existing.source.quote))) continue;
       if (!methods.includes(row.approach as typeof methods[number]) || !["self", "other", "either"].includes(row.target as string)) continue;
       if (row.range !== undefined && !RANGES.includes(row.range as Range)) continue;
       if (row.cooldown !== undefined && (!positive(row.cooldown) || !Number.isInteger(row.cooldown) || row.cooldown > 10000 || !numberIn(quote, row.cooldown))) continue;
@@ -136,7 +138,7 @@ export function readAbilityDefinitions(raw: unknown, state: MechanicalState, mes
       const body = { owner, name, description: str(row.description, 400) || name, approach: row.approach as AbilityDefinition["approach"], target: row.target as AbilityDefinition["target"], ...(row.range ? { range: row.range as Range } : {}), ...(row.cooldown ? { cooldown: row.cooldown as number } : {}), costs, effects, requires, unsupported };
       const fingerprint = revision(body);
       if (existing?.fingerprint === fingerprint) continue;
-      definitions.push({ id, version: (existing?.version ?? 0) + 1, ...body, fingerprint, source: { message: messageId, quote, sourceRevision: revision(content) }, sourceKind: source?.kind ?? "story" });
+      definitions.push({ id, version: (existing?.version ?? 0) + 1, ...body, fingerprint, source: { message: messageId, quote, sourceRevision: oldRevision ?? storyRevision(content) }, sourceKind: source?.kind ?? "story" });
     } catch { /* A partial or unsupported definition never replaces a working one. */ }
   }
   return definitions;

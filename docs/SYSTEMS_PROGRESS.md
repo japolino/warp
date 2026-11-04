@@ -2,6 +2,8 @@
 
 Target: [Deep systems without a setup wizard](SEAMLESS_SYSTEMS.md). The complete target remains active. This checkpoint does not complete the new game engine.
 
+2026-11-04: installed real-card pilots now include three quiet character turns, two science-fiction turns and one fantasy attempt. These are early pilots, not the acceptance gate. The fantasy attempt exposed short-action routing and image-markup interference. The corrective source checkpoint passes 688 tests with 19,933 assertions, typechecking, build and production worker/frontend checks; installation and a fresh actual-card retest remain pending. See [BUILD_STATUS.md](BUILD_STATUS.md) for the canonical prose projection, legacy proof migration, original-language native action classification and their limits.
+
 The user also requires an acceptance pass with their existing cards after implementation, spanning fantasy, romance, science fiction and other tones. [Real-card playtest](REAL_CARD_PLAYTEST.md) records that gate and its isolation/evidence requirements. It remains pending; the synthetic fixtures below do not satisfy it.
 
 ## Checkpoint 1: mechanical state and action receipts

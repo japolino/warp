@@ -1,4 +1,5 @@
 import { revision } from "../shared/revision.js";
+import { storyContent, storyRevision, sourceRevisionMatches, sourceContains } from "./story-text.js";
 import type { Evidence, Message } from "./world.js";
 import type { MechanicalState, MechanicalChange } from "./mechanics.js";
 import { actorName, present, capable, vital, type EncounterBeat, MechanicalKnowledgeError } from "./encounters.js";
@@ -33,11 +34,13 @@ export function agreementNotes(before: MechanicalState, after: MechanicalState):
     return [];
   }).slice(-2);
 }
-function evidence(raw: unknown, messages: Message[]): Evidence | undefined {
+function evidence(raw: unknown, messages: Message[], historical = false): Evidence | undefined {
   if (!obj(raw)) return;
   const message = str(raw.message, 160), quote = str(raw.quote, 400), m = messages.find(m => m.id === message);
-  if (!m || quote.length < 4 || !m.content.replace(/\s+/g, " ").includes(quote) || message.startsWith("warp-source:")) return;
-  return { message, quote, sourceRevision: revision(m.content) };
+  if (!m || quote.length < 4 || !sourceContains(m.content, quote) || message.startsWith("warp-source:")) return;
+  const saved = historical && typeof raw.sourceRevision === "string" ? raw.sourceRevision : undefined;
+  if (saved && !sourceRevisionMatches(m, saved)) return;
+  return { message, quote, sourceRevision: saved ?? storyRevision(m.content) };
 }
 const at = (e: Evidence, messages: Message[]) => messages.findIndex(m => m.id === e.message);
 function canonical(state: MechanicalState, v: unknown, player?: string): string {
@@ -57,7 +60,7 @@ function namedEvidence(state: MechanicalState, source: Evidence | undefined, who
   if (!message || message.is_user && !/^\s*\(?OOC correction:/i.test(message.content)) return;
   // Bind the speaker outside a short dialogue quote to one bounded actual paragraph.
   // No name supplied by the model is inserted into the source.
-  const paragraphs = message.content.split(/\n\s*\n/).map(p => p.trim().replace(/\s+/g, " ")).filter(p => p.length <= 400 && p.includes(source.quote));
+  const paragraphs = storyContent(message.content).split(/\n\s*\n/).map(p => p.trim().replace(/\s+/g, " ")).filter(p => p.length <= 400 && p.includes(source.quote));
   if (paragraphs.length !== 1 || !names(state, { ...source, quote: paragraphs[0] }, who)) return;
   const expanded = { ...source, quote: paragraphs[0] };
   if (state.entities?.some(e => e.entityKind === "person" && e.name !== who && e.name !== "you" && names(state, expanded, e.name))) return;
@@ -70,17 +73,17 @@ function lookup<T extends { id: string; text?: string; asset?: string }>(rows: T
 }
 
 /** The model identifies clauses and actual fulfillment; code retains the accepted terms. */
-export function readAgreementObservation(raw: Record<string, unknown>, state: MechanicalState, messages: Message[], player?: string): AgreementObservation | undefined {
-  const rootSource = evidence(raw, messages); if (!rootSource) return;
+export function readAgreementObservation(raw: Record<string, unknown>, state: MechanicalState, messages: Message[], player?: string, historical = false): AgreementObservation | undefined {
+  const rootSource = evidence(raw, messages, historical); if (!rootSource) return;
   let source: Evidence = rootSource;
   const message = messages.find(m => m.id === source.message)!;
   const correction = message.is_user && /^\s*\(?OOC correction:/i.test(message.content);
   if (raw.kind === "agreement") {
-    if (Object.keys(raw).some(k => !["kind", "id", "owner", "name", "from", "offer", "requirements", "rewards", "unsupported", "message", "quote"].includes(k))) return;
+    if (Object.keys(raw).some(k => !["kind", "id", "owner", "name", "from", "offer", "requirements", "rewards", "unsupported", "message", "quote", ...(historical ? ["sourceRevision"] : [])].includes(k))) return;
     const owner = canonical(state, raw.owner, player), name = str(raw.name, 120), from = canonical(state, raw.from, player);
     const acceptedSource = namedEvidence(state, source, owner, messages); if (!acceptedSource) return;
     source = acceptedSource;
-    const offer = namedEvidence(state, evidence(raw.offer, messages), from, messages);
+    const offer = namedEvidence(state, evidence(raw.offer, messages, historical), from, messages);
     if (!owner || !name || (owner === "you" ? !message.is_user : message.is_user && !correction || !names(state, source, owner))) return;
     const offerMessage = offer && messages.find(m => m.id === offer.message);
     const correctedOffer = offerMessage?.is_user && /^\s*\(?OOC correction:/i.test(offerMessage.content);
@@ -91,18 +94,18 @@ export function readAgreementObservation(raw: Record<string, unknown>, state: Me
     if (!Array.isArray(raw.requirements) || !raw.requirements.length || raw.requirements.length > 6 || !Array.isArray(raw.rewards) || raw.rewards.length > 4) return;
     const terms = [source, ...(offer ? [offer] : [])];
     const clause = (v: unknown) => {
-      const e = evidence(v, messages);
+      const e = evidence(v, messages, historical);
       return e && terms.some(t => t.message === e.message && t.quote.includes(e.quote)) ? e : undefined;
     };
     const requirements: AgreementRequirement[] = [];
     for (const value of raw.requirements) {
-      if (!obj(value) || Object.keys(value).some(k => !["message", "quote"].includes(k))) return;
+      if (!obj(value) || Object.keys(value).some(k => !["message", "quote", ...(historical ? ["sourceRevision"] : [])].includes(k))) return;
       const e = clause(value); if (!e || requirements.some(r => r.text === e.quote)) return;
       requirements.push({ id: `requirement-${revision([id, e.quote])}`, text: e.quote, source: e });
     }
     const rewards: RewardClaim[] = [];
     for (const value of raw.rewards) {
-      if (!obj(value) || Object.keys(value).some(k => !["kind", "asset", "amount", "message", "quote"].includes(k)) || !from || !offer || !["item", "resource"].includes(value.kind as string)) return;
+      if (!obj(value) || Object.keys(value).some(k => !["kind", "asset", "amount", "message", "quote", ...(historical ? ["sourceRevision"] : [])].includes(k)) || !from || !offer || !["item", "resource"].includes(value.kind as string)) return;
       const e = clause(value), asset = str(value.asset, 100), amount = value.amount;
       if (!e || e.message !== offer.message || !asset || typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0 || amount > 1e6 || value.kind === "item" && !Number.isInteger(amount) || !numeric(e.quote, amount)) return;
       const rows = value.kind === "item" ? state.items : state.resources;

@@ -1,6 +1,7 @@
 import type { Msg } from "../backend/ledger.js";
 import { revision } from "../shared/revision.js";
-import { pathOf, pathsOf } from "./world.js";
+import { pathOf, pathsOf, rawPathsOf } from "./world.js";
+import { sourceRevisionMatches, recordPathMatches } from "./story-text.js";
 import { applyObservations, commitMechanical, emptyMechanics, readMechanicalObservations, type MechanicalRecord, type MechanicalState } from "./mechanics.js";
 import { readAbilityDefinitions, sourceMessages, validDefinitionSource } from "./abilities.js";
 import { readResponsePlans } from "./exchanges.js";
@@ -15,11 +16,11 @@ export function mechanicalRecordOf(m: Msg): MechanicalRecord | undefined {
 /** Project only the active branch. A changed causal path cannot retain inferred balances. */
 export function foldMechanics(messages: Msg[]): MechanicalState {
   let state = emptyMechanics(), prefix = pathOf([]);
-  const paths = pathsOf(messages);
+  const paths = pathsOf(messages), rawPaths = rawPathsOf(messages);
   for (const [index, message] of messages.entries()) {
     const record = mechanicalRecordOf(message);
     if (record) {
-      if (record.path !== prefix || record.text !== revision(message.content)) {
+      if (!recordPathMatches(message, record.path, prefix, index ? rawPaths.get(messages[index - 1].id)! : pathOf([])) || !sourceRevisionMatches(message, record.text)) {
         // Keeping the old pre-spend value would turn an edit into free inventory.
         state = emptyMechanics();
       } else {
@@ -27,7 +28,7 @@ export function foldMechanics(messages: Msg[]): MechanicalState {
         if (record.receipt) {
           try {
             if ((record.receipt.engine ?? 1) >= 3) {
-              const plans = readResponsePlans(record.receipt.responses?.map(p => ({ actor: p.actor, action: p.action, assessment: p.assessment, message: p.source.message, quote: p.source.quote })), state, messages.slice(0, index), true);
+              const plans = readResponsePlans(record.receipt.responses?.map(p => ({ actor: p.actor, action: p.action, assessment: p.assessment, ...p.source })), state, messages.slice(0, index), true, true);
               if (revision(plans) !== revision(record.receipt.responses ?? [])) throw new Error("NPC evidence changed");
             }
             state = commitMechanical(state, record.receipt);
@@ -39,7 +40,7 @@ export function foldMechanics(messages: Msg[]): MechanicalState {
           if (!o || typeof o !== "object") return [];
           if (o.kind === "condition_end") return [{ kind: o.kind, id: o.id, ...(o.retire ? { retire: true } : {}), ...o.source }];
           if (o.kind === "ability") return [];
-          if (o.kind === "agreement") return [{ kind: o.kind, owner: o.value.owner, name: o.value.name, from: o.value.from, offer: o.value.offer, requirements: o.value.requirements.map(r => ({ message: r.source.message, quote: r.source.quote })), rewards: o.value.rewards.map(r => ({ kind: r.kind, asset: r.asset, amount: r.amount, message: r.source.message, quote: r.source.quote })), unsupported: o.value.unsupported, message: o.value.source.message, quote: o.value.source.quote }];
+          if (o.kind === "agreement") return [{ kind: o.kind, owner: o.value.owner, name: o.value.name, from: o.value.from, offer: o.value.offer, requirements: o.value.requirements.map(r => ({ ...r.source })), rewards: o.value.rewards.map(r => ({ kind: r.kind, asset: r.asset, amount: r.amount, ...r.source })), unsupported: o.value.unsupported, ...o.value.source }];
           if (!o.value?.source) return [];
           return [{ kind: o.kind, ...o.value, ...o.value.source }];
         });
@@ -48,7 +49,7 @@ export function foldMechanics(messages: Msg[]): MechanicalState {
           if (observation?.kind !== "ability") continue;
           const ability = observation.value;
           const magnitudes: Record<number, string> = { 5: "minor", 15: "standard", 30: "major" };
-          const imported = readAbilityDefinitions([{ ...ability, message: ability.source.message, quote: ability.source.quote, effects: ability.effects.map(e => e.basis !== "warp" ? e : e.kind === "defense" && e.defense ? { ...e, defense: { ...e.defense, amount: undefined }, magnitude: magnitudes[e.defense.amount] } : { ...e, amount: undefined, magnitude: magnitudes[e.amount!] }) }], state, messages.slice(0, index + 1), sources);
+          const imported = readAbilityDefinitions([{ ...ability, message: ability.source.message, quote: ability.source.quote, effects: ability.effects.map(e => e.basis !== "warp" ? e : e.kind === "defense" && e.defense ? { ...e, defense: { ...e.defense, amount: undefined }, magnitude: magnitudes[e.defense.amount] } : { ...e, amount: undefined, magnitude: magnitudes[e.amount!] }) }], state, messages.slice(0, index + 1), sources, undefined, true);
           state = applyObservations(state, imported.map(value => ({ kind: "ability", value })));
         }
       }

@@ -33,6 +33,14 @@ Also assess the experience: whether the strip interrupts reading, whether a cons
 
 ## Status
 
+2026-11-04 follow-up pilots used fresh memory-isolated chats bound to an existing writing preset with chat-scoped short-response/player-control variables. They required no Warp rulebook, preset or inspector. The script wrote only those new chat bindings; navigation may also select the existing active writing preset through normal app behavior, so global-setting invariance was not measured and is not claimed.
+
+Three quiet character turns preserved a private sketchbook boundary and an actual promise, then allowed the NPC to become curious and approach voluntarily. They produced no dice or invented resource meters. Two science-fiction turns honored a department choice, an issued badge and questions about actual escape procedures, with no unnecessary roll or cost. One background retry state recovered later. These short runs demonstrate some useful behavior, not long-session reliability or human enjoyment. One science-fiction narrator request took about 111 seconds with roughly 33,000 prompt tokens; a later one took about 14 seconds. The cause of the first request's long wait is not established.
+
+Actual saved outbound prompt breakdowns show the earlier quiet-scene Warp block unchanged across the next two turns. Another existing preset fragment moved, reducing the whole-request shared prefix. The provider supplied no cached-token metric, so this is Warp-prefix preservation evidence, not a measured cache hit.
+
+The fantasy pilot failed a fair-check requirement: a 24-character Korean theft attempt bypassed the English/length prefilter, leaving its outcome entirely to narration. Its illustrated reply also hid actual guard reactions from the raw-text excerpt. That old attempt will not receive a retroactive roll. Corrective source changes and regression evidence are recorded in [BUILD_STATUS.md](BUILD_STATUS.md); a new installed attempt is required before this failure can be considered fixed in real play. Private cards, prompts, chats and raw artifacts remain local and ignored.
+
 Pending. The earlier synthetic model runs, captured-response regressions, sandbox worker checks and UI previews are documented in `LIVE_PLAYTEST.md` and `SYSTEMS_PROGRESS.md`. They do not establish that the user's real cards have passed.
 
 An early pilot has now used one existing adult character card through the running app and its normal generation path, with the actual selected profiles and existing writing preset. It used a fresh memory-isolated chat; the original card and other stories were preserved. The player opened no Warp setup or inspector. Greeting extraction started automatically, a spoken promise was recorded, and an ordinary quiet approach produced no dice check or invented player scores. The pilot also exposed an unnecessary no-roll status line, now removed in source and covered by the existing UI regression.

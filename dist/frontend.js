@@ -414,6 +414,64 @@ var init_encounters = __esm(() => {
   };
 });
 
+// src/living/story-text.ts
+function storyContent(content) {
+  if (!/inlay[_-]illustrator/i.test(content))
+    return content;
+  const opening = /(?:<!--\s*inlay_illustrator\s*-->\s*)?<div\b(?=[^>]*\sdata-inlay-illustrator\s*=\s*(?:"true"|'true'|true(?=[\s>])))(?:"[^"]*"|'[^']*'|[^'">])*>/gi;
+  let result = "", cursor = 0, match;
+  while (match = opening.exec(content)) {
+    const tags = /<\/?div\b(?:"[^"]*"|'[^']*'|[^'">])*>/gi;
+    tags.lastIndex = opening.lastIndex;
+    let depth = 1, end = -1, tag;
+    while (tag = tags.exec(content)) {
+      depth += /^<\//.test(tag[0]) ? -1 : 1;
+      if (!depth) {
+        end = tags.lastIndex;
+        break;
+      }
+    }
+    if (end < 0)
+      break;
+    const separator = /^(?:[ \t]*\r?\n){2}/.exec(content.slice(end));
+    if (separator)
+      end += separator[0].length;
+    result += content.slice(cursor, match.index);
+    cursor = end;
+    opening.lastIndex = end;
+  }
+  return cursor ? result + content.slice(cursor) : content;
+}
+function storyBinding(message) {
+  const value = message.metadata?.[STORY_BINDINGS]?.[String(message.swipe_id ?? 0)];
+  if (!value || [value.text, value.rawText, value.prefix, value.rawPrefix, value.path, value.rawPath].some((v) => typeof v !== "string") || value.text !== storyRevision(message.content))
+    return;
+  return value;
+}
+function sourceRevisionMatches(message, expected) {
+  return !expected || expected === storyRevision(message.content) || expected === revision(message.content) || expected === storyBinding(message)?.rawText;
+}
+function sourceContains(content, quote) {
+  return storyContent(content).replace(/\s+/g, " ").includes(quote);
+}
+function recordPathMatches(message, expected, canonical, raw, full = false) {
+  if (expected === canonical || expected === raw)
+    return true;
+  const binding = storyBinding(message);
+  return !!binding && (full ? binding.path === canonical && binding.rawPath === expected : binding.prefix === canonical && binding.rawPrefix === expected);
+}
+function storyExcerpt(content, limit) {
+  const clean = storyContent(content);
+  if (clean.length <= limit)
+    return clean;
+  const head = Math.floor(limit * 0.75), tail = limit - head;
+  return `${clean.slice(0, head)}
+[excerpt omitted]
+${clean.slice(-tail)}`;
+}
+var STORY_BINDINGS = "warpStoryBindings", storyRevision = (content) => revision(storyContent(content));
+var init_story_text = () => {};
+
 // src/living/agreements.ts
 function agreementNotes(before, after) {
   return (after.agreements ?? []).filter((a) => a.owner === "you" || a.from === "you").flatMap((a) => {
@@ -423,13 +481,16 @@ function agreementNotes(before, after) {
     return [];
   }).slice(-2);
 }
-function evidence(raw, messages) {
+function evidence(raw, messages, historical = false) {
   if (!obj(raw))
     return;
   const message = str(raw.message, 160), quote = str(raw.quote, 400), m = messages.find((m) => m.id === message);
-  if (!m || quote.length < 4 || !m.content.replace(/\s+/g, " ").includes(quote) || message.startsWith("warp-source:"))
+  if (!m || quote.length < 4 || !sourceContains(m.content, quote) || message.startsWith("warp-source:"))
     return;
-  return { message, quote, sourceRevision: revision(m.content) };
+  const saved = historical && typeof raw.sourceRevision === "string" ? raw.sourceRevision : undefined;
+  if (saved && !sourceRevisionMatches(m, saved))
+    return;
+  return { message, quote, sourceRevision: saved ?? storyRevision(m.content) };
 }
 function canonical(state, v, player) {
   const name = str(v, 80);
@@ -448,7 +509,7 @@ function namedEvidence(state, source, who, messages) {
   const message = messages.find((m) => m.id === source.message);
   if (!message || message.is_user && !/^\s*\(?OOC correction:/i.test(message.content))
     return;
-  const paragraphs = message.content.split(/\n\s*\n/).map((p) => p.trim().replace(/\s+/g, " ")).filter((p) => p.length <= 400 && p.includes(source.quote));
+  const paragraphs = storyContent(message.content).split(/\n\s*\n/).map((p) => p.trim().replace(/\s+/g, " ")).filter((p) => p.length <= 400 && p.includes(source.quote));
   if (paragraphs.length !== 1 || !names(state, { ...source, quote: paragraphs[0] }, who))
     return;
   const expanded = { ...source, quote: paragraphs[0] };
@@ -461,22 +522,22 @@ function lookup(rows, selector) {
   const found = rows.filter((r) => [r.id, r.text, r.asset].some((v) => v && normalized(v) === key));
   return found.length === 1 ? found[0] : undefined;
 }
-function readAgreementObservation(raw, state, messages, player) {
-  const rootSource = evidence(raw, messages);
+function readAgreementObservation(raw, state, messages, player, historical = false) {
+  const rootSource = evidence(raw, messages, historical);
   if (!rootSource)
     return;
   let source = rootSource;
   const message = messages.find((m) => m.id === source.message);
   const correction = message.is_user && /^\s*\(?OOC correction:/i.test(message.content);
   if (raw.kind === "agreement") {
-    if (Object.keys(raw).some((k) => !["kind", "id", "owner", "name", "from", "offer", "requirements", "rewards", "unsupported", "message", "quote"].includes(k)))
+    if (Object.keys(raw).some((k) => !["kind", "id", "owner", "name", "from", "offer", "requirements", "rewards", "unsupported", "message", "quote", ...historical ? ["sourceRevision"] : []].includes(k)))
       return;
     const owner = canonical(state, raw.owner, player), name = str(raw.name, 120), from = canonical(state, raw.from, player);
     const acceptedSource = namedEvidence(state, source, owner, messages);
     if (!acceptedSource)
       return;
     source = acceptedSource;
-    const offer = namedEvidence(state, evidence(raw.offer, messages), from, messages);
+    const offer = namedEvidence(state, evidence(raw.offer, messages, historical), from, messages);
     if (!owner || !name || (owner === "you" ? !message.is_user : message.is_user && !correction || !names(state, source, owner)))
       return;
     const offerMessage = offer && messages.find((m) => m.id === offer.message);
@@ -492,12 +553,12 @@ function readAgreementObservation(raw, state, messages, player) {
       return;
     const terms = [source, ...offer ? [offer] : []];
     const clause = (v) => {
-      const e = evidence(v, messages);
+      const e = evidence(v, messages, historical);
       return e && terms.some((t) => t.message === e.message && t.quote.includes(e.quote)) ? e : undefined;
     };
     const requirements = [];
     for (const value of raw.requirements) {
-      if (!obj(value) || Object.keys(value).some((k) => !["message", "quote"].includes(k)))
+      if (!obj(value) || Object.keys(value).some((k) => !["message", "quote", ...historical ? ["sourceRevision"] : []].includes(k)))
         return;
       const e = clause(value);
       if (!e || requirements.some((r) => r.text === e.quote))
@@ -506,7 +567,7 @@ function readAgreementObservation(raw, state, messages, player) {
     }
     const rewards = [];
     for (const value of raw.rewards) {
-      if (!obj(value) || Object.keys(value).some((k) => !["kind", "asset", "amount", "message", "quote"].includes(k)) || !from || !offer || !["item", "resource"].includes(value.kind))
+      if (!obj(value) || Object.keys(value).some((k) => !["kind", "asset", "amount", "message", "quote", ...historical ? ["sourceRevision"] : []].includes(k)) || !from || !offer || !["item", "resource"].includes(value.kind))
         return;
       const e = clause(value), asset = str(value.asset, 100), amount = value.amount;
       if (!e || e.message !== offer.message || !asset || typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0 || amount > 1e6 || value.kind === "item" && !Number.isInteger(amount) || !numeric(e.quote, amount))
@@ -636,6 +697,7 @@ Record actual fulfillment with {kind:"agreement_progress",agreement:"saved id or
 After all requirements are fulfilled, an actual payer offering/holding out a particular reward can establish {kind:"reward_ready",agreement,reward:"saved id or asset name",ready:true,message,quote}. An offer may add uncontested:true only when taking/receiving this particular reward now is routine, with no established obstacle, hazard or opposing action. Willingness alone does not prove that. The code may use this fresh classification to skip a redundant pre-read for a simple collection; ambiguity, changed scenes and opposed actions still need interpretation. A subsequent explicit refusal/withdrawal can set ready:false. This is current willingness, separate from the original promise. It needs actual narrator text naming the NPC counterpart after the recorded fulfillment. For from:you this is the NPC recipient's willingness to receive, never permission to spend the player's money automatically. An earned reward does not force someone to cooperate. Do not narrate a completed monetary/item handover without its mechanical receipt. Make the offer available and leave acceptance to the player. The player can collect it through normal chat; no menu is required.
 Reward collection uses saved exact amounts and transfers actual owned items or between two established same-unit resource balances. Unknown balances are unknown, not zero. An offer alone does not prove the payer owns the money or item. Do not mint items or coins, refill a spent balance, substitute a different reward, or create numerical Health/relationship/XP to pay a promise. When a physical reward, including a counted pile of coins, is established without known total wallet balances, use an item claim and track that actual stack instead of inventing a wallet total. The offered amount alone does not prove possession; a later actual holding/counting/setting-out event can establish the counted item. Use a distinct source-backed item instance ID for a new stack, not the ID of a previously transferred stack. Actual paid rewards cannot be offered or collected again.`;
 var init_agreements = __esm(() => {
+  init_story_text();
   init_encounters();
 });
 

@@ -1,15 +1,15 @@
-import { pathOf, pathsOf, type Message, type Record as LivingRecord } from "./world.js";
-import { revision } from "../shared/revision.js";
+import { pathOf, pathsOf, rawPathsOf, type Message, type Record as LivingRecord } from "./world.js";
+import { sourceRevisionMatches, recordPathMatches, sourceContains } from "./story-text.js";
 import type { MechanicalState } from "./mechanics.js";
 
 /** Old records cover their own reply. New records also name the replies actually supplied to extraction. */
 export function extractionWindow<T extends Message>(messages: T[], recordOf: (message: T) => LivingRecord | undefined) {
-  const paths = pathsOf(messages), indexes = new Map(messages.map((m, i) => [m.id, i]));
+  const paths = pathsOf(messages), rawPaths = rawPathsOf(messages), indexes = new Map(messages.map((m, i) => [m.id, i]));
   const covered = new Set<string>();
   let baseline = -1;
   for (const [i, message] of messages.entries()) {
     const record = recordOf(message);
-    if (!record || record.text !== revision(message.content) || record.path !== (i ? paths.get(messages[i - 1].id) : pathOf([]))) continue;
+    if (!record || !sourceRevisionMatches(message, record.text) || !recordPathMatches(message, record.path, i ? paths.get(messages[i - 1].id)! : pathOf([]), i ? rawPaths.get(messages[i - 1].id)! : pathOf([]))) continue;
     if (baseline < 0) baseline = i;
     covered.add(message.id);
     for (const id of record.reads ?? []) if (typeof id === "string" && (indexes.get(id) ?? Infinity) <= i) covered.add(id);
@@ -34,10 +34,10 @@ export function extractionWindow<T extends Message>(messages: T[], recordOf: (me
 export function freshChanges<T extends Message>(raw: unknown, messages: T[], recordOf: (message: T) => LivingRecord | undefined): unknown {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
   const value = raw as { changes?: unknown }, indexes = new Map(messages.map((m, i) => [m.id, i]));
-  const paths = pathsOf(messages), newest = new Map<string, number>();
+  const paths = pathsOf(messages), rawPaths = rawPathsOf(messages), newest = new Map<string, number>();
   for (const [i, message] of messages.entries()) {
     const record = recordOf(message);
-    if (!record || record.text !== revision(message.content) || record.path !== (i ? paths.get(messages[i - 1].id) : pathOf([]))) continue;
+    if (!record || !sourceRevisionMatches(message, record.text) || !recordPathMatches(message, record.path, i ? paths.get(messages[i - 1].id)! : pathOf([]), i ? rawPaths.get(messages[i - 1].id)! : pathOf([]))) continue;
     for (const event of record.events) newest.set(event.id, Math.max(newest.get(event.id) ?? -1, indexes.get(event.evidence.message) ?? -1));
   }
   if (!Array.isArray(value.changes)) return raw;
@@ -53,7 +53,7 @@ export function chronologicalObservations(raw: unknown, messages: Message[], sta
   for (const row of raw) {
     if (row?.kind !== "agreement" || typeof row.name !== "string" || typeof row.offer?.quote !== "string" || row.offer.quote.trim().length < 4 || typeof row.quote !== "string" || row.quote.trim().length < 4) continue;
     const source = messages.find(m => m.id === row.offer.message), acceptance = messages.find(m => m.id === row.message);
-    if (!source?.content.replace(/\s+/g, " ").includes(row.offer.quote.trim().replace(/\s+/g, " ")) || !acceptance?.content.replace(/\s+/g, " ").includes(row.quote.trim().replace(/\s+/g, " "))) continue;
+    if (!source || !acceptance || !sourceContains(source.content, row.offer.quote.trim().replace(/\s+/g, " ")) || !sourceContains(acceptance.content, row.quote.trim().replace(/\s+/g, " "))) continue;
     const matches = state?.agreements?.filter(a => a.owner === row.owner && a.from === row.from && a.source.message === row.message && a.offer?.message === row.offer.message) ?? [];
     if (matches.length !== 1) continue;
     if (state?.agreements?.some(a => a.id !== matches[0].id && a.name === row.name)) continue;

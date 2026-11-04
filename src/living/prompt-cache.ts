@@ -1,13 +1,15 @@
 import type { LlmMessageDTO } from "lumiverse-spindle-types";
 import type { Msg } from "../backend/ledger.js";
-import { pathsOf } from "./world.js";
+import { pathsOf, rawPathsOf } from "./world.js";
 import { receiptPacket, type MechanicalReceipt } from "./mechanics.js";
+
+import { recordPathMatches } from "./story-text.js";
 
 export const PROMPT_KEY = "warpLivingPrompt";
 export interface PromptSnapshot { version: 1; path: string; packet: any; decision?: unknown; receipt?: MechanicalReceipt; receiptPacket?: ReturnType<typeof receiptPacket>; }
-export function promptSnapshot(message: Msg, paths: Map<string, string>): PromptSnapshot | undefined {
+export function promptSnapshot(message: Msg, paths: Map<string, string>, rawPaths = paths): PromptSnapshot | undefined {
   const value = (message.metadata?.[PROMPT_KEY] as Record<string, PromptSnapshot> | undefined)?.[String(message.swipe_id ?? 0)];
-  if (value?.version !== 1 || value.path !== paths.get(message.id) || !value.packet || !Array.isArray(value.packet.established) || !Array.isArray(value.packet.possibleMotives)) return;
+  if (value?.version !== 1 || !recordPathMatches(message, value.path, paths.get(message.id)!, rawPaths.get(message.id)!, true) || !value.packet || !Array.isArray(value.packet.established) || !Array.isArray(value.packet.possibleMotives)) return;
   if ([...value.packet.established, ...value.packet.possibleMotives].some(f => !f || typeof f !== "object" || typeof f.id !== "string")) return;
   return value;
 }
@@ -37,13 +39,13 @@ function delta(before: any, after: any) {
 
 /** Only source-identified history is changed. Preserve every other message field and part. */
 export function replayPrompt(messages: LlmMessageDTO[], history: Msg[], director: string, current?: { id: string; snapshot: PromptSnapshot }): LlmMessageDTO[] {
-  const paths = pathsOf(history), source = new Map(history.map(m => [m.id, m]));
+  const paths = pathsOf(history), rawPaths = rawPathsOf(history), source = new Map(history.map(m => [m.id, m]));
   let previous: PromptSnapshot | undefined;
   return messages.map(message => {
     if (message.role !== "user" || !message.sourceMessageId) return message;
     const origin = source.get(message.sourceMessageId);
     if (!origin?.is_user) return message;
-    const snapshot = current?.id === origin.id ? current.snapshot : promptSnapshot(origin, paths);
+    const snapshot = current?.id === origin.id ? current.snapshot : promptSnapshot(origin, paths, rawPaths);
     if (!snapshot) return message;
     const update = previous ? delta(previous.packet, snapshot.packet) : snapshot.packet;
     if (previous && !Object.keys(update).length && !snapshot.decision && !snapshot.receipt) { previous = snapshot; return message; }

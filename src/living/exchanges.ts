@@ -1,3 +1,4 @@
+import { storyRevision, sourceRevisionMatches, sourceContains } from "./story-text.js";
 import { revision } from "../shared/revision.js";
 import { seededRng } from "../engine/dice.js";
 import { attemptBands } from "./check-bands.js";
@@ -16,18 +17,18 @@ const obj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "o
 const text = (v: unknown, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "";
 
 /** Scene evidence authorizes NPC activity, never a player choice or a generated power. */
-export function readResponsePlans(raw: unknown, state: MechanicalState, messages: Message[], enabled: boolean): ResponsePlan[] {
+export function readResponsePlans(raw: unknown, state: MechanicalState, messages: Message[], enabled: boolean, historical = false): ResponsePlan[] {
   if (raw === undefined || (Array.isArray(raw) && !raw.length)) return [];
   if (!enabled) throw new Error("NPC responses need an actual player action in an ongoing exchange");
   if (!Array.isArray(raw) || raw.length > MAX_RESPONSES) throw new Error("Too many NPC responses");
   const latest = messages.filter(m => !m.is_user && m.content.trim()).at(-1), actors = new Set<string>();
   return raw.map(row => {
-    if (!obj(row) || Object.keys(row).some(k => !["actor", "action", "assessment", "message", "quote"].includes(k))) throw new Error("Unsupported NPC response");
+    if (!obj(row) || Object.keys(row).some(k => !["actor", "action", "assessment", "message", "quote", ...(historical ? ["sourceRevision"] : [])].includes(k))) throw new Error("Unsupported NPC response");
     const actor = actorName(state, text(row.actor, 80)), quote = text(row.quote, 400);
     if (!actor || actor === "you" || actors.has(actor) || !present(state, actor) || !capable(state, actor)) throw new Error("NPC response actor is unavailable");
     // There is exactly one allowed source. Bind its ID locally rather than asking
     // the model to copy it, while still rejecting any quote absent from that source.
-    if (!latest || quote.length < 4 || !latest.content.replace(/\s+/g, " ").includes(quote)) throw new Error("NPC response lacks current scene evidence");
+    if (!latest || quote.length < 4 || !sourceContains(latest.content, quote) || historical && typeof row.sourceRevision === "string" && !sourceRevisionMatches(latest, row.sourceRevision)) throw new Error("NPC response lacks current scene evidence");
     actors.add(actor);
     const a = row.action;
     if (!obj(a)) throw new Error("NPC action is missing");
@@ -58,7 +59,7 @@ export function readResponsePlans(raw: unknown, state: MechanicalState, messages
     const tier = assessment.tier;
     if (contested && (!["favorable", "uncertain", "outmatched"].includes(tier as string) || !text(assessment.intent) || !text(assessment.stakes)
       || !Array.isArray(assessment.reasons) || !assessment.reasons.length || assessment.reasons.some(r => !text(r, 180)))) throw new Error("NPC uncertainty is incomplete");
-    return { actor, action, source: { message: latest.id, quote, sourceRevision: revision(latest.content) }, assessment: {
+    return { actor, action, source: { message: latest.id, quote, sourceRevision: historical && typeof row.sourceRevision === "string" ? row.sourceRevision : storyRevision(latest.content) }, assessment: {
       contested, tier: ["favorable", "uncertain", "outmatched"].includes(tier as string) ? tier as Decision["tier"] : "uncertain",
       intent: text(assessment.intent), stakes: text(assessment.stakes), reasons: Array.isArray(assessment.reasons) ? assessment.reasons.map(r => text(r, 180)).filter(Boolean).slice(0, 3) : [],
     } };
