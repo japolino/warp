@@ -170,14 +170,17 @@ test("asset and missed-read boundaries append and clear without rewriting histor
   const next = store(history, nextMessage, "Café");
   next.packet.assetBoundary = "A transfer needs its saved receipt.";
   next.packet.readBoundary = "Some earlier exchanges are unrecorded.";
+  next.packet.preparationBoundary = "Missing preparation is not a fictional obstacle.";
   const b = replayPrompt(prompt(history), history, "Director");
   expect(b.slice(0, a.length)).toEqual(a);
   expect(b.at(-1)!.content).toContain('"assetBoundary":"A transfer');
   expect(b.at(-1)!.content).toContain('"readBoundary":"Some earlier');
+  expect(b.at(-1)!.content).toContain('"preparationBoundary":"Missing preparation');
   const recovered = msg("2", true, "Thanks."); history.push(recovered);
   const after = store(history, recovered, "Café"); after.packet.assetBoundary = next.packet.assetBoundary;
   const c = replayPrompt(prompt(history), history, "Director");
   expect(c.slice(0, b.length)).toEqual(b); expect(c.at(-1)!.content).toContain('"readBoundary":null');
+  expect(c.at(-1)!.content).toContain('"preparationBoundary":null');
   expect(initial.packet.readBoundary).toBeUndefined();
 });
 

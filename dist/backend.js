@@ -14325,7 +14325,7 @@ function promptSnapshot(message, paths, rawPaths = paths) {
 }
 function delta(before, after) {
   const changes = {};
-  for (const key of ["place", "present", "preferences", "knowledgeBoundary", "agreementBoundary", "assetBoundary", "readBoundary", "explorationBoundary"])
+  for (const key of ["place", "present", "preferences", "knowledgeBoundary", "agreementBoundary", "assetBoundary", "readBoundary", "explorationBoundary", "preparationBoundary"])
     if (JSON.stringify(before[key]) !== JSON.stringify(after[key]))
       changes[key] = after[key] ?? null;
   for (const key of ["established", "possibleMotives"]) {
@@ -14720,15 +14720,20 @@ async function call(chatId, system, user, userId, controller, timeout = 16000, m
   const settings = await getSettings(userId);
   const chat = await host().chats.get(chatId, userId);
   const pinned = typeof chat?.metadata?.connection_profile_id === "string" ? chat.metadata.connection_profile_id : undefined;
-  const timer = setTimeout(() => controller.abort(), timeout);
+  const request = new AbortController, abort = () => request.abort();
+  if (controller.signal.aborted)
+    abort();
+  else
+    controller.signal.addEventListener("abort", abort, { once: true });
+  const timer = setTimeout(abort, timeout);
   try {
     let aborted;
     const cancellation = new Promise((_, reject) => {
       aborted = () => reject(new Error("Warp request cancelled"));
-      if (controller.signal.aborted)
+      if (request.signal.aborted)
         aborted();
       else
-        controller.signal.addEventListener("abort", aborted, { once: true });
+        request.signal.addEventListener("abort", aborted, { once: true });
     });
     const generation = host().generate.quiet({
       type: "quiet",
@@ -14737,20 +14742,21 @@ async function call(chatId, system, user, userId, controller, timeout = 16000, m
       messages: [{ role: "system", content: system }, { role: "user", content: user }],
       reasoning: { source: "off" },
       parameters: { temperature: 0.15, max_tokens: maxTokens },
-      signal: controller.signal
+      signal: request.signal
     });
     let response;
     try {
       response = await Promise.race([generation, cancellation]);
     } finally {
       if (aborted)
-        controller.signal.removeEventListener("abort", aborted);
+        request.signal.removeEventListener("abort", aborted);
     }
-    if (controller.signal.aborted)
+    if (request.signal.aborted)
       throw new Error("Warp request cancelled");
     return firstJson2(typeof response === "string" ? response : response?.content ?? "");
   } finally {
     clearTimeout(timer);
+    controller.signal.removeEventListener("abort", abort);
   }
 }
 async function save(chatId, message, prefix, record, current) {
@@ -15009,6 +15015,7 @@ async function cachedInjection(messages, ctx, history, world, decision, persist,
   const packet = {
     ...JSON.parse(worldPacket(world, history.at(-1)?.content)),
     preferences,
+    ...receipt?.unresolved ? { preparationBoundary: "Mechanical interpretation did not complete. This is a bookkeeping limitation, not an in-world obstacle. Do not invent a refusal, new duty, punishment, locked door, fee or extra task to explain it. Do not claim unvalidated spending, counted transfers or mechanical effects occurred. Preserve the attempted action as unresolved, continue only supported dialogue/observation, and leave the next decision to the player." } : {},
     ...failures.has(ctx.chatId) || extractionWindow(history, recordOf)?.pending ? { readBoundary: "Some prior exchanges have not been fully recorded. Preserve actual story events, but do not infer completed payment, costs, inventory changes or a fair resolved check from missing records. Keep an offered transfer available until its receipt resolves it. Do not invent an obstacle, refusal, fee or extra task to explain missing preparation." } : {}
   };
   const latest = history.filter((m) => m.is_user).at(-1);

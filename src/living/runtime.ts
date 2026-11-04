@@ -165,22 +165,24 @@ async function call(chatId: string, system: string, user: string, userId: string
   const chat = await host().chats.get(chatId, userId);
   // Quiet generations are not attached to a chat. Explicitly respect a pinned connection.
   const pinned = typeof chat?.metadata?.connection_profile_id === "string" ? chat.metadata.connection_profile_id : undefined;
-  const timer = setTimeout(() => controller.abort(), timeout);
+  const request = new AbortController(), abort = () => request.abort();
+  if (controller.signal.aborted) abort(); else controller.signal.addEventListener("abort", abort, { once: true });
+  const timer = setTimeout(abort, timeout);
   try {
     let aborted: (() => void) | undefined;
     const cancellation = new Promise<never>((_, reject) => {
       aborted = () => reject(new Error("Warp request cancelled"));
-      if (controller.signal.aborted) aborted(); else controller.signal.addEventListener("abort", aborted, { once: true });
+      if (request.signal.aborted) aborted(); else request.signal.addEventListener("abort", aborted, { once: true });
     });
     const generation = host().generate.quiet({ type: "quiet", connection_id: settings.helperConnectionId || pinned || undefined, userId,
       messages: [{ role: "system", content: system }, { role: "user", content: user }],
-      reasoning: { source: "off" }, parameters: { temperature: 0.15, max_tokens: maxTokens }, signal: controller.signal });
+      reasoning: { source: "off" }, parameters: { temperature: 0.15, max_tokens: maxTokens }, signal: request.signal });
     let response: unknown;
     try { response = await Promise.race([generation, cancellation]); }
-    finally { if (aborted) controller.signal.removeEventListener("abort", aborted); }
-    if (controller.signal.aborted) throw new Error("Warp request cancelled");
+    finally { if (aborted) request.signal.removeEventListener("abort", aborted); }
+    if (request.signal.aborted) throw new Error("Warp request cancelled");
     return firstJson(typeof response === "string" ? response : (response as { content?: string })?.content ?? "");
-  } finally { clearTimeout(timer); }
+  } finally { clearTimeout(timer); controller.signal.removeEventListener("abort", abort); }
 }
 
 /** Merge into fresh metadata inside the extension's shared per-message queue. */
@@ -367,6 +369,7 @@ async function cachedInjection(messages: LlmMessageDTO[], ctx: InterceptorContex
   const settings = await getSettings(ctx.userId);
   const preferences = { exclude: settings.lines, offScreen: settings.veils };
   const packet = { ...JSON.parse(worldPacket(world, history.at(-1)?.content)), preferences,
+    ...(receipt?.unresolved ? { preparationBoundary: "Mechanical interpretation did not complete. This is a bookkeeping limitation, not an in-world obstacle. Do not invent a refusal, new duty, punishment, locked door, fee or extra task to explain it. Do not claim unvalidated spending, counted transfers or mechanical effects occurred. Preserve the attempted action as unresolved, continue only supported dialogue/observation, and leave the next decision to the player." } : {}),
     ...(failures.has(ctx.chatId) || extractionWindow(history, recordOf)?.pending ? { readBoundary: "Some prior exchanges have not been fully recorded. Preserve actual story events, but do not infer completed payment, costs, inventory changes or a fair resolved check from missing records. Keep an offered transfer available until its receipt resolves it. Do not invent an obstacle, refusal, fee or extra task to explain missing preparation." } : {}) };
   const latest = history.filter(m => m.is_user).at(-1);
   const paths = pathsOf(history);

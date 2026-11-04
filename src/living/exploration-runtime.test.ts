@@ -111,6 +111,21 @@ test("editing the action during narration invalidates its preparation even when 
   expect((reply.extra.spindle_metadata as any)[MECHANICS_KEY]?.["0"]?.receipt).toBeUndefined();
 });
 
+test("a helper deadline retains the unresolved prompt boundary without treating it as a user cancellation", async () => {
+  const id = await chat(); await h.say(id, "I walk through the corridor to the Clinic.");
+  const player = h.messages(id).at(-1)!, reply = h.msg(id, `${id}-timeout`, false, ""), generationId = `${id}-timeout`;
+  livingStarted({ chatId: id, generationId, targetMessageId: reply.id });
+  h.helper = () => new Promise(() => {});
+  const prompt = await livingIntercept([{ role: "user", sourceMessageId: player.id, content: player.content }], { chatId: id, userId: h.userId, generationType: "normal", interceptorDeadlineAt: Date.now() + 550 } as InterceptorContextDTO);
+  expect(JSON.stringify(prompt)).toContain("bookkeeping limitation, not an in-world obstacle");
+  expect(JSON.stringify(prompt)).toContain("Do not invent a refusal");
+  const saved = (player.extra.spindle_metadata as any).warpLivingPrompt["0"];
+  expect(saved.receipt.unresolved).toBe(true); expect(saved.receipt.status).toBe("blocked");
+  expect(saved.packet.preparationBoundary).toContain("Preserve the attempted action as unresolved");
+  expect(currentSite(await state(id))?.name).toBe("Dock");
+  livingStopped({ chatId: id, generationId });
+});
+
 test("route-only reads reuse sourced visited scenes without requiring repeated place declarations", async () => {
   const id = `exploration-runtime-${++serial}`;
   h.chat(id, "", "You arrive at B1 사무구역."); h.characters[`char-${id}`].world_book_ids = [];
