@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Msg } from "../backend/ledger.js";
 import { revision } from "../shared/revision.js";
-import { pathOf, rawPathOf } from "./world.js";
+import { pathOf, rawPathOf, resolveAttempt } from "./world.js";
 import { storyContent, cardStoryContent, imageStoryContent, storyExcerpt, storyRevision, STORY_BINDINGS } from "./story-text.js";
 import { legacyStoryBindings } from "./story-history.js";
 import { foldMechanics, MECHANICS_KEY } from "./mechanical-history.js";
@@ -10,6 +10,41 @@ import { replayPrompt, PROMPT_KEY } from "./prompt-cache.js";
 
 const image = (id: string) => `<!-- inlay_illustrator -->\n<div data-inlay-illustrator="true" data-image="${id}" title="a > b"><div><img src="${id}"></div></div>\n\n`;
 const msg = (id: string, is_user: boolean, content: string, index: number): Msg => ({ id, is_user, content, role: is_user ? "user" : "assistant", index_in_chat: index, swipe_id: 0 } as Msg);
+
+test("consumed cultivation controls do not change prose, while ordinary brackets and unsupported tags remain", () => {
+  const body = "Jo recoils from the controlled punch.", suffix = "\n\n[體+1] [攻+1] [正+1] [形:本+1]";
+  expect(storyContent(body + suffix)).toBe(body);
+  expect(storyRevision(body + suffix)).toBe(storyRevision(body));
+  for (const tail of [" [體+1]", "\n[End]", "\n[體+1] The lesson continues.", "\n[體+50]", "\n[攻+2]", "\n[形:dragon+1]", "\n[體+1] [Unknown]"]) expect(storyContent(body + tail)).toBe(body + tail);
+  for (const separator of [" ", "\n"]) {
+    const oversized = body + "\n" + Array(9).fill("[體+1]").join(separator);
+    expect(storyContent(oversized)).toBe(oversized);
+  }
+});
+
+test("removing a consumed control footer preserves earned practice, a saved roll and historical prompt bytes", () => {
+  const opening = msg("g", false, "Jo throws a punch at you within arm's reach.", 0), player = msg("u", true, "I punch Jo's arm.", 1);
+  const observations = readMechanicalObservations([
+    { kind: "entity", name: "Jo", entityKind: "person", present: true, message: opening.id, quote: opening.content },
+    { kind: "distance", from: "you", to: "Jo", band: "touch", message: opening.id, quote: opening.content },
+  ], emptyMechanics(), [opening]);
+  const state = applyObservations(emptyMechanics(), observations), seed = "control-footer-practice";
+  const decision = resolveAttempt({ risky: true, contested: true, tier: "uncertain", intent: "Strike Jo", stakes: "Lose the opening", reasons: ["Jo resists"] }, seed)!;
+  const receipt = prepareMechanical(state, "practice", "you", [{ kind: "strike", target: "Jo", outcome: decision.result }], seed, { seed, tier: decision.tier, result: decision.result, roll: decision.roll! });
+  const body = "Jo reacts to the recorded punch.", reply = msg("r", false, body + "\n\n[體+1] [攻+1] [正+1] [形:本+1]", 2);
+  opening.metadata = { [MECHANICS_KEY]: { "0": { version: 1, path: pathOf([]), text: storyRevision(opening.content), observations } } };
+  reply.metadata = { [MECHANICS_KEY]: { "0": { version: 1, path: pathOf([opening, player]), text: storyRevision(reply.content), observations: [], receipt } } };
+  player.metadata = { [PROMPT_KEY]: { "0": { version: 1, path: pathOf([opening, player]), packet: { established: [], possibleMotives: [], mechanics: {} }, decision, receipt } } };
+  const history = [opening, player, reply], after = commitMechanical(state, receipt), frozen = JSON.stringify(receipt);
+  expect(after.growth![0].credits).toHaveLength(1);
+  const wire = [{ role: "user" as const, content: player.content, sourceMessageId: player.id }], before = replayPrompt(wire, history, "Director");
+  reply.content = body;
+  expect(foldMechanics(history)).toEqual(after);
+  expect(replayPrompt(wire, history, "Director")).toEqual(before);
+  expect(JSON.stringify(receipt)).toBe(frozen);
+  reply.content = "Jo leaves before any punch.";
+  expect(foldMechanics(history).growth).toBeUndefined();
+});
 
 test("a SEED-owned terminal card UI trigger can move without changing the story or prompt path", () => {
   const base = "Echo waits beside Norma.\n\n[STATUS_PANEL: Workshop | calm]\n\n<!--[SEED|aBcD0123456789]-->", marked = `${base}\n★▲3★`;

@@ -355,7 +355,9 @@ function cardStoryContent(content) {
   });
 }
 function storyContent(content) {
-  return cardStoryContent(content).replace(/(?:[ \t]*\r?\n){1,8}(?:\[STATUS_PANEL:[^\]\r\n]{0,3000}\][ \t]*(?:\r?\n[ \t]*){1,8})?<!--\[SEED\|[A-Za-z0-9_-]{8,128}\]-->[ \t\r\n]*$/u, "").trimEnd();
+  const clean = cardStoryContent(content).replace(/(?:[ \t]*\r?\n){1,8}(?:\[STATUS_PANEL:[^\]\r\n]{0,3000}\][ \t]*(?:\r?\n[ \t]*){1,8})?<!--\[SEED\|[A-Za-z0-9_-]{8,128}\]-->[ \t\r\n]*$/u, "").trimEnd();
+  const controls = /(?:[ \t]*\r?\n)[ \t]*(?:\[(?:[體氣心]\+[12]|[攻守快重正奇]\+1|形:[虎本]\+1)\][ \t\r\n]*)+$/u.exec(clean);
+  return controls && controls[0].length <= 512 && (controls[0].match(/\[/g)?.length ?? 0) <= 8 ? clean.slice(0, controls.index).trimEnd() : clean;
 }
 function storyBinding(message) {
   const value = message.metadata?.[STORY_BINDINGS]?.[String(message.swipe_id ?? 0)];

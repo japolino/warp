@@ -45,7 +45,11 @@ export function cardStoryContent(content: string): string {
 }
 /** Imported Lua card footers move between replies; their UI state is not prose. */
 export function storyContent(content: string): string {
-  return cardStoryContent(content).replace(/(?:[ \t]*\r?\n){1,8}(?:\[STATUS_PANEL:[^\]\r\n]{0,3000}\][ \t]*(?:\r?\n[ \t]*){1,8})?<!--\[SEED\|[A-Za-z0-9_-]{8,128}\]-->[ \t\r\n]*$/u, "").trimEnd();
+  const clean = cardStoryContent(content).replace(/(?:[ \t]*\r?\n){1,8}(?:\[STATUS_PANEL:[^\]\r\n]{0,3000}\][ \t]*(?:\r?\n[ \t]*){1,8})?<!--\[SEED\|[A-Za-z0-9_-]{8,128}\]-->[ \t\r\n]*$/u, "").trimEnd();
+  // An imported cultivation hook consumes these bounded terminal control tags.
+  // Keep ordinary bracketed prose, unknown tags and controls embedded in a scene.
+  const controls = /(?:[ \t]*\r?\n)[ \t]*(?:\[(?:[體氣心]\+[12]|[攻守快重正奇]\+1|形:[虎本]\+1)\][ \t\r\n]*)+$/u.exec(clean);
+  return controls && controls[0].length <= 512 && (controls[0].match(/\[/g)?.length ?? 0) <= 8 ? clean.slice(0, controls.index).trimEnd() : clean;
 }
 export const storyRevision = (content: string) => revision(storyContent(content));
 export function storyBinding(message: SourceMessage): StoryBinding | undefined {

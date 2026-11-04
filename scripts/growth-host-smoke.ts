@@ -49,19 +49,27 @@ try {
             if(state.resources[0].current!==30-2*step || state.growth?.[0]?.credits.length!==step) throw Error("Practice lost a debit or an eligible opportunity");
             if(state.growth[0].familiar!==(step===3)) throw Error("Milestone occurred at the wrong opportunity");
             if(!Number.isInteger(e.payload.decision?.roll)) throw Error("No saved engine roll");
-            if(step===3){if(!e.payload.notes?.includes("Pulse: familiar"))throw Error("Milestone was not visible");done();}
+            if(step===3){
+              if(!e.payload.notes?.includes("Pulse: familiar"))throw Error("Milestone was not visible");
+              for(const message of messages)message.content=message.content.replace(/\n\n\[體\+1\] \[攻\+1\] \[正\+1\] \[形:本\+1\]$/,"");
+              phase="verify-consumed-footer";
+              worker.postMessage({type:"frontend_message",userId:"fixture-user",payload:{type:"hello",chatId:"growth-smoke"}});
+            }
             else {step++;start(`step${step}`,`I cast Pulse at ${["Ada","Bryn","Cora"][step-1]}.`);}
+          } else if(phase==="verify-consumed-footer" && !e.payload.busy){
+            if(state.resources[0].current!==24 || !state.growth?.[0]?.familiar || state.growth[0].credits.length!==3)throw Error("Consumed native controls invalidated paid practice");
+            done();
           }
         } else if(e.type==="intercept_result" && e.requestId===`step${step}`){
           const action=messages.at(-2)!,reply=messages.at(-1)!,receipt=action.metadata.warpLivingAttempt?.receipt;
           if(e.error || receipt?.engine!==8 || receipt.status!=="ready" || !receipt.learning || !receipt.changes.some((c:any)=>c.kind==="growth"))throw Error("No saved practice receipt");
           if(reply.metadata.warpMechanics)throw Error("Practice committed before narration");
-          phase=`commit-step${step}`;reply.content="The opponent reacts to the recorded attempt.";
+          phase=`commit-step${step}`;reply.content="The opponent reacts to the recorded attempt.\n\n[體+1] [攻+1] [正+1] [形:本+1]";
           worker.postMessage({type:"event",event:"GENERATION_ENDED",userId:"fixture-user",payload:{chatId:"growth-smoke",generationId:e.requestId,messageId:reply.id}});
         } else if (e.requestId) worker.postMessage({ type: "response", requestId: e.requestId, error: `Unsupported fixture RPC ${e.type}` });
       } catch (error) { reject(error); }
     };
     worker.postMessage({ type: "init", manifest: { ...manifest, entry_backend: pathToFileURL(join(root, "dist/backend.js")).href }, storagePath: join(root, ".artifacts/growth-worker-smoke") });
   });
-  console.log("PASS: production worker saved real deterministic checks, committed practice and costs only after narration, and exposed one familiarity milestone after three varied opponents.");
+  console.log("PASS: production worker saved deterministic checks, committed practice/costs after narration, exposed one milestone, and retained all progress/debits after native control tags were consumed.");
 } finally { clearTimeout(timer!); worker.terminate(); }
