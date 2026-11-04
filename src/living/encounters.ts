@@ -2,6 +2,7 @@ import { revision } from "../shared/revision.js";
 import type { Evidence, Decision } from "./world.js";
 import type { MechanicalState, MechanicalChange, Resource, Condition } from "./mechanics.js";
 import { applyInjury } from "./injuries.js";
+import { afterTransition } from "./companions.js";
 import { messageOwnsAction } from "./condition-history.js";
 
 export const DAMAGE_TYPES = ["physical", "fire", "cold", "electric", "poison", "mental", "untyped"] as const;
@@ -13,7 +14,7 @@ export interface Distance { id: string; from: string; to: string; band: Range; s
 export interface Defense { kind: "armor" | "resistance" | "immunity" | "shield" | "reflect"; amount: number; damageType: DamageType | "all"; }
 export interface ActionClock { id: string; actor: string; actions: number; }
 export interface Cooldown { id: string; actor: string; readyAt: number; }
-export interface EncounterBeat { kind: "damage" | "harm" | "mend" | "reward" | "expired" | "move" | "wait" | "defend" | "attempt" | "skipped" | "response" | "travel" | "gather"; actor: string; target?: string; name?: string; amount?: number; absorbed?: number; resisted?: number; reflected?: number; reason?: string; decision?: Decision; basis?: "warp"; }
+export interface EncounterBeat { kind: "damage" | "harm" | "mend" | "reward" | "expired" | "move" | "wait" | "defend" | "attempt" | "skipped" | "response" | "travel" | "gather" | "summon" | "dismiss"; actor: string; target?: string; name?: string; amount?: number; absorbed?: number; resisted?: number; reflected?: number; reason?: string; decision?: Decision; basis?: "warp"; }
 export class MechanicalKnowledgeError extends Error {}
 const normalize = (value: string) => value.normalize("NFKC").trim().toLocaleLowerCase();
 export const entityId = (name: string) => normalize(name) === "you" ? "you" : `entity-${revision(normalize(name))}`;
@@ -169,10 +170,13 @@ export function readEncounterObservation(row: Record<string, unknown>, state: Me
     const position = state.positions?.find(p => p.owner === "you"), positionIndex = position && messages.findIndex(m => position.source.message.startsWith("warp-action:") ? messageOwnsAction(m, position.source.message.slice("warp-action:".length)) : m.id === position.source.message);
     if (!profile && canonical !== "you" && isPresent && positionIndex !== undefined && positionIndex >= 0 && messages.findIndex(m => m.id === source.message) < positionIndex
       && !(old && carriedObject(state, old))) isPresent = false;
+    const manifestation = state.companions?.find(c => c.actor === canonical)?.manifestation;
+    const isCorrection = messages.some(m => m.id === source.message && "content" in m && typeof m.content === "string" && /^\s*\(?OOC correction:/i.test(m.content));
+    if (manifestation && !profile && !isCorrection && !afterTransition(source, manifestation.source, messages)) isPresent = old?.present ?? false;
     const value: Entity = { id: old?.id ?? entityId(canonical), name: canonical, displayName: text(row.displayName) || old?.displayName || name,
       aliases: [...new Set([...(old?.aliases ?? []), ...aliases, ...(name !== canonical ? [name] : [])])].slice(0, 24), entityKind: row.entityKind as Entity["entityKind"],
       present: isPresent,
-      status: profile ? old?.status ?? "active" : ["active", "dead"].includes(row.status as string) ? row.status as Entity["status"] : old?.status ?? "active", source };
+      status: (profile || old?.status === "dead" && !!state.companions?.some(c => c.actor === canonical) && !isCorrection) ? old?.status ?? "active" : ["active", "dead"].includes(row.status as string) ? row.status as Entity["status"] : old?.status ?? "active", source };
     return { kind: "entity" as const, value };
   }
   if (row.kind === "distance" && !profile && RANGES.includes(row.band as Range)) {

@@ -1,0 +1,729 @@
+{
+  "generatedFrom": "7930b7d0a1fb08e527ce00f0a6c30f47ee575dd4",
+  "cases": [
+    {
+      "name": "outward travel",
+      "before": {
+        "version": 1,
+        "resources": [],
+        "items": [],
+        "conditions": [],
+        "applied": [],
+        "places": [
+          {
+            "id": "place-a3cae888:1d350b9c",
+            "name": "Dock",
+            "visited": true,
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          },
+          {
+            "id": "place-e620f585:a64af6a5",
+            "name": "Clinic",
+            "visited": false,
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          }
+        ],
+        "positions": [
+          {
+            "id": "position-fc83617a:3cd83148",
+            "owner": "you",
+            "site": "place-a3cae888:1d350b9c",
+            "name": "Dock",
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          }
+        ],
+        "routes": [
+          {
+            "id": "route-df988076:7abbaa2",
+            "from": "place-a3cae888:1d350b9c",
+            "to": "place-e620f585:a64af6a5",
+            "via": "corridor",
+            "bidirectional": true,
+            "status": "open",
+            "unsupported": [],
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          }
+        ],
+        "stocks": [
+          {
+            "id": "stock-6aa7ce0e:e9f4058",
+            "site": "place-e620f585:a64af6a5",
+            "name": "Rations",
+            "quantity": 3,
+            "available": true,
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          }
+        ]
+      },
+      "receipt": {
+        "version": 1,
+        "engine": 6,
+        "id": "outward travel",
+        "input": "a65a8d83:1224b0cb",
+        "base": "46d2a7c:4f7e18e4",
+        "actor": "you",
+        "operations": [
+          {
+            "kind": "travel",
+            "route": "route-df988076:7abbaa2",
+            "outcome": "clean"
+          }
+        ],
+        "responses": [],
+        "changes": [
+          {
+            "kind": "position",
+            "id": "position-fc83617a:3cd83148",
+            "before": {
+              "id": "position-fc83617a:3cd83148",
+              "owner": "you",
+              "site": "place-a3cae888:1d350b9c",
+              "name": "Dock",
+              "source": {
+                "message": "opening",
+                "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+                "sourceRevision": "876b5eed:b3437c5d"
+              }
+            },
+            "after": {
+              "id": "position-fc83617a:3cd83148",
+              "owner": "you",
+              "site": "place-e620f585:a64af6a5",
+              "name": "Clinic",
+              "source": {
+                "message": "warp-action:outward travel",
+                "quote": "Travel to Clinic",
+                "sourceRevision": "24bc4b8f:df559a69"
+              }
+            }
+          },
+          {
+            "kind": "place",
+            "id": "place-e620f585:a64af6a5",
+            "before": {
+              "id": "place-e620f585:a64af6a5",
+              "name": "Clinic",
+              "visited": false,
+              "source": {
+                "message": "opening",
+                "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+                "sourceRevision": "876b5eed:b3437c5d"
+              }
+            },
+            "after": {
+              "id": "place-e620f585:a64af6a5",
+              "name": "Clinic",
+              "visited": true,
+              "source": {
+                "message": "opening",
+                "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+                "sourceRevision": "876b5eed:b3437c5d"
+              }
+            }
+          }
+        ],
+        "beats": [
+          {
+            "kind": "travel",
+            "actor": "you",
+            "name": "Clinic"
+          }
+        ],
+        "result": "2680d450:9b8236fa",
+        "status": "ready"
+      },
+      "after": {
+        "version": 1,
+        "resources": [],
+        "items": [],
+        "conditions": [],
+        "applied": [
+          {
+            "id": "outward travel",
+            "input": "a65a8d83:1224b0cb"
+          }
+        ],
+        "places": [
+          {
+            "id": "place-a3cae888:1d350b9c",
+            "name": "Dock",
+            "visited": true,
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          },
+          {
+            "id": "place-e620f585:a64af6a5",
+            "name": "Clinic",
+            "visited": true,
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          }
+        ],
+        "positions": [
+          {
+            "id": "position-fc83617a:3cd83148",
+            "owner": "you",
+            "site": "place-e620f585:a64af6a5",
+            "name": "Clinic",
+            "source": {
+              "message": "warp-action:outward travel",
+              "quote": "Travel to Clinic",
+              "sourceRevision": "24bc4b8f:df559a69"
+            }
+          }
+        ],
+        "routes": [
+          {
+            "id": "route-df988076:7abbaa2",
+            "from": "place-a3cae888:1d350b9c",
+            "to": "place-e620f585:a64af6a5",
+            "via": "corridor",
+            "bidirectional": true,
+            "status": "open",
+            "unsupported": [],
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          }
+        ],
+        "stocks": [
+          {
+            "id": "stock-6aa7ce0e:e9f4058",
+            "site": "place-e620f585:a64af6a5",
+            "name": "Rations",
+            "quantity": 3,
+            "available": true,
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "counted supplies",
+      "before": {
+        "version": 1,
+        "resources": [],
+        "items": [],
+        "conditions": [],
+        "applied": [
+          {
+            "id": "outward travel",
+            "input": "a65a8d83:1224b0cb"
+          }
+        ],
+        "places": [
+          {
+            "id": "place-a3cae888:1d350b9c",
+            "name": "Dock",
+            "visited": true,
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          },
+          {
+            "id": "place-e620f585:a64af6a5",
+            "name": "Clinic",
+            "visited": true,
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          }
+        ],
+        "positions": [
+          {
+            "id": "position-fc83617a:3cd83148",
+            "owner": "you",
+            "site": "place-e620f585:a64af6a5",
+            "name": "Clinic",
+            "source": {
+              "message": "warp-action:outward travel",
+              "quote": "Travel to Clinic",
+              "sourceRevision": "24bc4b8f:df559a69"
+            }
+          }
+        ],
+        "routes": [
+          {
+            "id": "route-df988076:7abbaa2",
+            "from": "place-a3cae888:1d350b9c",
+            "to": "place-e620f585:a64af6a5",
+            "via": "corridor",
+            "bidirectional": true,
+            "status": "open",
+            "unsupported": [],
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          }
+        ],
+        "stocks": [
+          {
+            "id": "stock-6aa7ce0e:e9f4058",
+            "site": "place-e620f585:a64af6a5",
+            "name": "Rations",
+            "quantity": 3,
+            "available": true,
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          }
+        ]
+      },
+      "receipt": {
+        "version": 1,
+        "engine": 6,
+        "id": "counted supplies",
+        "input": "ca5d7c0a:f428585c",
+        "base": "20b6e17d:1c457511",
+        "actor": "you",
+        "operations": [
+          {
+            "kind": "gather",
+            "stock": "stock-6aa7ce0e:e9f4058",
+            "amount": 2
+          }
+        ],
+        "responses": [],
+        "changes": [
+          {
+            "kind": "stock",
+            "id": "stock-6aa7ce0e:e9f4058",
+            "before": {
+              "id": "stock-6aa7ce0e:e9f4058",
+              "site": "place-e620f585:a64af6a5",
+              "name": "Rations",
+              "quantity": 3,
+              "available": true,
+              "source": {
+                "message": "opening",
+                "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+                "sourceRevision": "876b5eed:b3437c5d"
+              }
+            },
+            "after": {
+              "id": "stock-6aa7ce0e:e9f4058",
+              "site": "place-e620f585:a64af6a5",
+              "name": "Rations",
+              "quantity": 1,
+              "available": true,
+              "source": {
+                "message": "opening",
+                "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+                "sourceRevision": "876b5eed:b3437c5d"
+              }
+            }
+          },
+          {
+            "kind": "item",
+            "id": "gathered-e7070f96:29005c34",
+            "before": null,
+            "after": {
+              "id": "gathered-e7070f96:29005c34",
+              "owner": "you",
+              "name": "Rations",
+              "quantity": 2,
+              "equipped": false,
+              "source": {
+                "message": "opening",
+                "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+                "sourceRevision": "876b5eed:b3437c5d"
+              }
+            }
+          }
+        ],
+        "beats": [
+          {
+            "kind": "gather",
+            "actor": "you",
+            "name": "Rations",
+            "amount": 2
+          }
+        ],
+        "result": "86eba374:613e4c12",
+        "status": "ready"
+      },
+      "after": {
+        "version": 1,
+        "resources": [],
+        "items": [
+          {
+            "id": "gathered-e7070f96:29005c34",
+            "owner": "you",
+            "name": "Rations",
+            "quantity": 2,
+            "equipped": false,
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          }
+        ],
+        "conditions": [],
+        "applied": [
+          {
+            "id": "outward travel",
+            "input": "a65a8d83:1224b0cb"
+          },
+          {
+            "id": "counted supplies",
+            "input": "ca5d7c0a:f428585c"
+          }
+        ],
+        "places": [
+          {
+            "id": "place-a3cae888:1d350b9c",
+            "name": "Dock",
+            "visited": true,
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          },
+          {
+            "id": "place-e620f585:a64af6a5",
+            "name": "Clinic",
+            "visited": true,
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          }
+        ],
+        "positions": [
+          {
+            "id": "position-fc83617a:3cd83148",
+            "owner": "you",
+            "site": "place-e620f585:a64af6a5",
+            "name": "Clinic",
+            "source": {
+              "message": "warp-action:outward travel",
+              "quote": "Travel to Clinic",
+              "sourceRevision": "24bc4b8f:df559a69"
+            }
+          }
+        ],
+        "routes": [
+          {
+            "id": "route-df988076:7abbaa2",
+            "from": "place-a3cae888:1d350b9c",
+            "to": "place-e620f585:a64af6a5",
+            "via": "corridor",
+            "bidirectional": true,
+            "status": "open",
+            "unsupported": [],
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          }
+        ],
+        "stocks": [
+          {
+            "id": "stock-6aa7ce0e:e9f4058",
+            "site": "place-e620f585:a64af6a5",
+            "name": "Rations",
+            "quantity": 1,
+            "available": true,
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "return travel",
+      "before": {
+        "version": 1,
+        "resources": [],
+        "items": [
+          {
+            "id": "gathered-e7070f96:29005c34",
+            "owner": "you",
+            "name": "Rations",
+            "quantity": 2,
+            "equipped": false,
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          }
+        ],
+        "conditions": [],
+        "applied": [
+          {
+            "id": "outward travel",
+            "input": "a65a8d83:1224b0cb"
+          },
+          {
+            "id": "counted supplies",
+            "input": "ca5d7c0a:f428585c"
+          }
+        ],
+        "places": [
+          {
+            "id": "place-a3cae888:1d350b9c",
+            "name": "Dock",
+            "visited": true,
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          },
+          {
+            "id": "place-e620f585:a64af6a5",
+            "name": "Clinic",
+            "visited": true,
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          }
+        ],
+        "positions": [
+          {
+            "id": "position-fc83617a:3cd83148",
+            "owner": "you",
+            "site": "place-e620f585:a64af6a5",
+            "name": "Clinic",
+            "source": {
+              "message": "warp-action:outward travel",
+              "quote": "Travel to Clinic",
+              "sourceRevision": "24bc4b8f:df559a69"
+            }
+          }
+        ],
+        "routes": [
+          {
+            "id": "route-df988076:7abbaa2",
+            "from": "place-a3cae888:1d350b9c",
+            "to": "place-e620f585:a64af6a5",
+            "via": "corridor",
+            "bidirectional": true,
+            "status": "open",
+            "unsupported": [],
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          }
+        ],
+        "stocks": [
+          {
+            "id": "stock-6aa7ce0e:e9f4058",
+            "site": "place-e620f585:a64af6a5",
+            "name": "Rations",
+            "quantity": 1,
+            "available": true,
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          }
+        ]
+      },
+      "receipt": {
+        "version": 1,
+        "engine": 6,
+        "id": "return travel",
+        "input": "a65a8d83:1224b0cb",
+        "base": "6bf7ea5:895be507",
+        "actor": "you",
+        "operations": [
+          {
+            "kind": "travel",
+            "route": "route-df988076:7abbaa2",
+            "outcome": "clean"
+          }
+        ],
+        "responses": [],
+        "changes": [
+          {
+            "kind": "position",
+            "id": "position-fc83617a:3cd83148",
+            "before": {
+              "id": "position-fc83617a:3cd83148",
+              "owner": "you",
+              "site": "place-e620f585:a64af6a5",
+              "name": "Clinic",
+              "source": {
+                "message": "warp-action:outward travel",
+                "quote": "Travel to Clinic",
+                "sourceRevision": "24bc4b8f:df559a69"
+              }
+            },
+            "after": {
+              "id": "position-fc83617a:3cd83148",
+              "owner": "you",
+              "site": "place-a3cae888:1d350b9c",
+              "name": "Dock",
+              "source": {
+                "message": "warp-action:return travel",
+                "quote": "Travel to Dock",
+                "sourceRevision": "24bc4b8f:df559a69"
+              }
+            }
+          }
+        ],
+        "beats": [
+          {
+            "kind": "travel",
+            "actor": "you",
+            "name": "Dock"
+          }
+        ],
+        "result": "97de7442:f70594c4",
+        "status": "ready"
+      },
+      "after": {
+        "version": 1,
+        "resources": [],
+        "items": [
+          {
+            "id": "gathered-e7070f96:29005c34",
+            "owner": "you",
+            "name": "Rations",
+            "quantity": 2,
+            "equipped": false,
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          }
+        ],
+        "conditions": [],
+        "applied": [
+          {
+            "id": "outward travel",
+            "input": "a65a8d83:1224b0cb"
+          },
+          {
+            "id": "counted supplies",
+            "input": "ca5d7c0a:f428585c"
+          },
+          {
+            "id": "return travel",
+            "input": "a65a8d83:1224b0cb"
+          }
+        ],
+        "places": [
+          {
+            "id": "place-a3cae888:1d350b9c",
+            "name": "Dock",
+            "visited": true,
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          },
+          {
+            "id": "place-e620f585:a64af6a5",
+            "name": "Clinic",
+            "visited": true,
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          }
+        ],
+        "positions": [
+          {
+            "id": "position-fc83617a:3cd83148",
+            "owner": "you",
+            "site": "place-a3cae888:1d350b9c",
+            "name": "Dock",
+            "source": {
+              "message": "warp-action:return travel",
+              "quote": "Travel to Dock",
+              "sourceRevision": "24bc4b8f:df559a69"
+            }
+          }
+        ],
+        "routes": [
+          {
+            "id": "route-df988076:7abbaa2",
+            "from": "place-a3cae888:1d350b9c",
+            "to": "place-e620f585:a64af6a5",
+            "via": "corridor",
+            "bidirectional": true,
+            "status": "open",
+            "unsupported": [],
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          }
+        ],
+        "stocks": [
+          {
+            "id": "stock-6aa7ce0e:e9f4058",
+            "site": "place-e620f585:a64af6a5",
+            "name": "Rations",
+            "quantity": 1,
+            "available": true,
+            "source": {
+              "message": "opening",
+              "quote": "You stand in the Dock. An open corridor connects the Dock and Clinic in both directions. The Clinic has three free Rations.",
+              "sourceRevision": "876b5eed:b3437c5d"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

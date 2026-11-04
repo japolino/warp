@@ -184,6 +184,255 @@ var init_injuries = __esm(() => {
   PHYSICAL_TYPES = ["physical", "fire", "cold", "electric", "poison"];
 });
 
+// src/living/story-text.ts
+function imageStoryContent(content) {
+  if (!/inlay[_-]illustrator/i.test(content))
+    return content;
+  const opening = /(?:<!--\s*inlay_illustrator\s*-->\s*)?<div\b(?=[^>]*\sdata-inlay-illustrator\s*=\s*(?:"true"|'true'|true(?=[\s>])))(?:"[^"]*"|'[^']*'|[^'">])*>/gi;
+  let result = "", cursor = 0, match;
+  while (match = opening.exec(content)) {
+    const tags = /<\/?div\b(?:"[^"]*"|'[^']*'|[^'">])*>/gi;
+    tags.lastIndex = opening.lastIndex;
+    let depth = 1, end = -1, tag;
+    while (tag = tags.exec(content)) {
+      depth += /^<\//.test(tag[0]) ? -1 : 1;
+      if (!depth) {
+        end = tags.lastIndex;
+        break;
+      }
+    }
+    if (end < 0)
+      break;
+    const separator = /^(?:[ \t]*\r?\n){2}/.exec(content.slice(end));
+    if (separator)
+      end += separator[0].length;
+    result += content.slice(cursor, match.index);
+    cursor = end;
+    opening.lastIndex = end;
+  }
+  return cursor ? result + content.slice(cursor) : content;
+}
+function storyContent(content) {
+  const clean = imageStoryContent(content);
+  return clean.replace(/<span\b(?=[^>]*\sdata-inlay-illustrator-suppressed\s*=)(?:"[^"]*"|'[^']*'|[^'">])*>\s*<\/span\s*>/gi, (carrier) => {
+    const attr = (name) => new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "i").exec(carrier);
+    const id = attr("data-inlay-illustrator-suppressed"), payload = attr("data-inlay-illustrator-suppressed-payload");
+    if (!id || !payload)
+      return carrier;
+    try {
+      const decoded = decodeURIComponent(payload[1] ?? payload[2]);
+      let hash = 2166136261;
+      for (let i = 0;i < decoded.length; i++)
+        hash = Math.imul(hash ^ decoded.charCodeAt(i), 16777619) >>> 0;
+      const expected = `NAS1${hash.toString(16).padStart(8, "0").toUpperCase()}${decoded.length.toString(36).toUpperCase()}`;
+      return expected === (id[1] ?? id[2]) ? decoded : carrier;
+    } catch {
+      return carrier;
+    }
+  });
+}
+function storyBinding(message) {
+  const value = message.metadata?.[STORY_BINDINGS]?.[String(message.swipe_id ?? 0)];
+  if (!value || [value.text, value.rawText, value.prefix, value.rawPrefix, value.path, value.rawPath].some((v) => typeof v !== "string") || value.text !== storyRevision(message.content))
+    return;
+  return value;
+}
+function sourceRevisionMatches(message, expected) {
+  const binding = storyBinding(message);
+  return !expected || expected === storyRevision(message.content) || expected === revision(message.content) || expected === revision(imageStoryContent(message.content)) || expected === binding?.rawText || expected === binding?.imageText;
+}
+function sourceContains(content, quote) {
+  return storyContent(content).replace(/\s+/g, " ").includes(quote);
+}
+function recordPathMatches(message, expected, canonical, raw, full = false) {
+  if (expected === canonical || expected === raw)
+    return true;
+  const binding = storyBinding(message);
+  return !!binding && (full ? binding.path === canonical && (binding.rawPath === expected || binding.imagePath === expected) : binding.prefix === canonical && (binding.rawPrefix === expected || binding.imagePrefix === expected));
+}
+function storyExcerpt(content, limit) {
+  const clean = storyContent(content);
+  if (clean.length <= limit)
+    return clean;
+  const head = Math.floor(limit * 0.75), tail = limit - head;
+  return `${clean.slice(0, head)}
+[excerpt omitted]
+${clean.slice(-tail)}`;
+}
+var STORY_BINDINGS = "warpStoryBindings", storyRevision = (content) => revision(storyContent(content));
+var init_story_text = () => {};
+
+// src/living/companions.ts
+function afterTransition(source, old, messages) {
+  if (old.message === source.message && old.sourceRevision === source.sourceRevision)
+    return false;
+  const prior = messages.findIndex((m) => old.message.startsWith("warp-action:") ? messageOwnsAction(m, old.message.slice("warp-action:".length)) : m.id === old.message);
+  return prior >= 0 && messages.findIndex((m) => m.id === source.message) > prior;
+}
+function mentioned(state, actor, quote) {
+  const e = entityFor(state, actor);
+  const names = actor === "you" ? ["you", "your", "{{user}}", ...e?.aliases ?? []] : [actor, e?.displayName ?? "", ...e?.aliases ?? []];
+  return names.some((n) => n && norm(quote).includes(norm(n)));
+}
+function compatible(from, to) {
+  return from.role === "effort" && to.role === "effort" && from.owner !== to.owner && (from.unit && to.unit ? norm(from.unit) === norm(to.unit) : !from.unit && !to.unit && norm(from.name) === norm(to.name));
+}
+function resource(state, input) {
+  const matches = state.resources.filter((r) => r.id === input);
+  return matches.length === 1 ? matches[0] : undefined;
+}
+function assertGraph(state) {
+  for (const start of state.costLinks ?? []) {
+    if (!start.enabled)
+      continue;
+    const seen = new Set;
+    let id = start.from;
+    for (;; ) {
+      if (seen.has(id))
+        throw new Error("Cyclic shared cost link");
+      seen.add(id);
+      const edges = state.costLinks?.filter((l) => l.enabled && l.from === id) ?? [];
+      if (!edges.length)
+        break;
+      if (edges.length !== 1)
+        throw new Error("Ambiguous shared cost payer");
+      const edge = edges[0], from = resource(state, edge.from), to = resource(state, edge.to);
+      if (!from || !to || !compatible(from, to))
+        throw new MechanicalKnowledgeError("Shared cost pools need compatible established effort units");
+      id = edge.to;
+    }
+  }
+}
+function readCompanionObservation(row, state, source, messages, correction) {
+  const profile = source.message.startsWith("warp-source:");
+  const fields = row.kind === "companion" ? ["actor", "controller", "companionKind"] : ["from", "to", "enabled", "unsupported"];
+  if (Object.keys(row).some((k) => ![
+    "kind",
+    "id",
+    "source",
+    "sourceRevision",
+    "message",
+    "quote",
+    ...fields,
+    ...row.kind === "companion" ? ["manifestation"] : []
+  ].includes(k)))
+    return;
+  const editedProfile = (old) => profile && old.message.startsWith("warp-source:") && old.message.split(":")[1] === source.message.split(":")[1] && !sourceContains(messages.find((m) => m.id === source.message)?.content ?? "", old.quote);
+  if (row.kind === "companion") {
+    const actor = actorName(state, text(row.actor, 80)), controller = actorName(state, text(row.controller, 80));
+    if (!actor || !controller || actor === "you" || actor === controller || !entityFor(state, actor) || controller !== "you" && !entityFor(state, controller) || !["companion", "summon"].includes(row.companionKind) || !mentioned(state, actor, source.quote) || !mentioned(state, controller, source.quote))
+      return;
+    const old = state.companions?.find((c) => c.actor === actor);
+    if (old && !correction && !editedProfile(old.source))
+      return;
+    if (old?.manifestation?.active && (old.controller !== controller || old.companionKind !== row.companionKind))
+      return;
+    return { kind: "companion", value: {
+      id: old?.id ?? `companion-${revision(actor)}`,
+      actor,
+      controller,
+      companionKind: row.companionKind,
+      source,
+      ...old?.manifestation ? { manifestation: structuredClone(old.manifestation) } : {}
+    } };
+  }
+  const from = resource(state, row.from), to = resource(state, row.to);
+  if (!from || !to || typeof row.enabled !== "boolean" || !Array.isArray(row.unsupported) || row.unsupported.length > 8 || row.unsupported.some((v) => !text(v, 240)) || !compatible(from, to) || !mentioned(state, from.owner, source.quote) || !mentioned(state, to.owner, source.quote))
+    return;
+  const old = state.costLinks?.find((l) => l.from === from.id);
+  if (old && !correction && (profile ? !editedProfile(old.source) : !old.source.message.startsWith("warp-source:") && !afterTransition(source, old.source, messages)))
+    return;
+  const value = { id: `cost-link-${revision(from.id)}`, from: from.id, to: to.id, enabled: row.enabled, unsupported: row.unsupported, source };
+  const test = { ...state, costLinks: [...(state.costLinks ?? []).filter((l) => l.from !== from.id), value] };
+  assertGraph(test);
+  return { kind: "cost_link", value };
+}
+function observeCompanion(state, o) {
+  if (o.kind === "companion") {
+    const rows = state.companions ??= [], index = rows.findIndex((v) => v.id === o.value.id);
+    if (index < 0)
+      rows.push(structuredClone(o.value));
+    else
+      rows[index] = structuredClone(o.value);
+  } else {
+    const rows = state.costLinks ??= [], index = rows.findIndex((v) => v.id === o.value.id);
+    if (index < 0)
+      rows.push(structuredClone(o.value));
+    else
+      rows[index] = structuredClone(o.value);
+  }
+}
+function costPayer(state, input) {
+  assertGraph(state);
+  let payer = resource(state, input);
+  if (!payer)
+    throw new MechanicalKnowledgeError("Shared cost resource is unknown");
+  for (;; ) {
+    const link = state.costLinks?.find((l) => l.enabled && l.from === payer.id);
+    if (!link)
+      return payer;
+    if (link.unsupported.length)
+      throw new MechanicalKnowledgeError(`Shared cost needs clarification: ${link.unsupported.join("; ")}`);
+    payer = resource(state, link.to);
+  }
+}
+function validateManifestation(state, controller, id, active) {
+  const companion = state.companions?.find((c) => c.id === id && c.controller === controller && c.companionKind === "summon"), actor = companion && entityFor(state, companion.actor);
+  if (!companion || !actor)
+    throw new MechanicalKnowledgeError("This summon and its controller are not established");
+  if (active && actor.status === "dead")
+    throw new Error("Recalling a summon cannot resurrect it");
+  if (active && companion.manifestation?.active || actor.present === active)
+    throw new Error(active ? "This summon is already present" : "This summon is already absent");
+  return { companion, actor };
+}
+function manifest(state, controller, id, active, action, changes, beats, duration) {
+  const { companion, actor } = validateManifestation(state, controller, id, active);
+  changeManifestation(state, companion, actor, active, action, changes, beats, duration);
+}
+function changeManifestation(state, companion, actor, active, action, changes, beats, duration) {
+  const { controller, id } = companion;
+  const source = { message: `warp-action:${action}`, quote: `${active ? "Recall" : "Dismiss"} ${actor.name}`, sourceRevision: revision([id, active, duration]) };
+  const old = structuredClone(companion), oldActor = structuredClone(actor);
+  companion.manifestation = { active, source, ...active && duration ? { expiresAt: actionCount(state, controller) + duration + 1 } : {} };
+  actor.present = active;
+  if (!active) {
+    for (const condition of [...state.conditions])
+      if (condition.summon === companion.id) {
+        state.conditions = state.conditions.filter((c) => c.id !== condition.id);
+        closeCondition(state, condition, { kind: "receipt", id: action });
+        changes.push({ kind: "condition", id: condition.id, before: structuredClone(condition), after: null });
+      }
+  }
+  changes.push({ kind: "companion", id: companion.id, before: old, after: structuredClone(companion) }, { kind: "entity", id: actor.id, before: oldActor, after: structuredClone(actor) });
+  for (const d of [...state.distances ?? []])
+    if (d.from === actor.name || d.to === actor.name) {
+      state.distances = state.distances.filter((row) => row.id !== d.id);
+      changes.push({ kind: "distance", id: d.id, before: structuredClone(d), after: null });
+    }
+  for (const position of [...state.positions ?? []])
+    if (position.owner === actor.name) {
+      state.positions = state.positions.filter((p) => p.id !== position.id);
+      changes.push({ kind: "position", id: position.id, before: structuredClone(position), after: null });
+    }
+  beats.push({ kind: active ? "summon" : "dismiss", actor: controller, target: actor.name });
+}
+function expireCompanions(state, action, changes, beats) {
+  for (const c of state.companions ?? [])
+    if (c.manifestation?.active && c.manifestation.expiresAt !== undefined && c.manifestation.expiresAt <= actionCount(state, c.controller)) {
+      const actor = entityFor(state, c.actor);
+      if (actor)
+        changeManifestation(state, c, actor, false, action, changes, beats);
+    }
+}
+var norm = (v) => v.normalize("NFKC").trim().toLocaleLowerCase(), text = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", COMPANION_INSTRUCTIONS = `For an established companion relationship only, use mechanicalObservations {kind:"companion",actor:"known entity name",controller:"known person or you",companionKind:"companion|summon",message,quote}. Cite both identities. Profiles establish the relationship, never current presence. Reuse that entity on every return. Companion is a relationship, not permission to control another person's actions or knowledge. Do not turn every friend or romance partner into a companion system.
+An explicit one-for-one SHARED COST permission between two known effort pools may use {kind:"cost_link",from:"borrower's resource id",to:"payer's resource id",enabled:true,unsupported:[],message,quote}. Both owners must occur in the actual grant. Preserve all limits/conditions in unsupported. Pools need role:effort and the same explicit unit, or the same resource name with no unit. No damage/healing links, money, health, conversion, guessed pool, implicit NPC consent or cycles. An actual revocation uses enabled:false. This redirects saved ability costs only, never standalone spending. It does not copy or refill either balance.
+A sourced recall/dismiss ability can use effects {kind:"summon|dismiss",target:"self",companion:"saved companion id or exact actor name"}. Only kind:summon relationships are eligible, owned by the ability's actual controller. summon may add duration:explicitSubsequentControllerActions, only if the source states that action duration. Seconds and other lifetime rules stay unsupported. Already present/absent is not another cast. Recall preserves injuries, resource balances, knowledge and death. No resurrection or automatic healing. A condition effect on a summon itself may add untilDismissed:true only when source explicitly ties that effect to being summoned. Dismissal/expiry clears only such bound temporary effects, never an injury or an unrelated condition. A successful departure does not bring companions along. Their actual cooperation still needs current scene evidence under the existing NPC response contract.`;
+var init_companions = __esm(() => {
+  init_encounters();
+  init_story_text();
+});
+
 // src/living/encounters.ts
 function actorName(state, input) {
   if (normalize(input) === "you")
@@ -382,6 +631,10 @@ function readEncounterObservation(row, state, source, messages) {
     const position = state.positions?.find((p) => p.owner === "you"), positionIndex = position && messages.findIndex((m) => position.source.message.startsWith("warp-action:") ? messageOwnsAction(m, position.source.message.slice("warp-action:".length)) : m.id === position.source.message);
     if (!profile && canonical !== "you" && isPresent && positionIndex !== undefined && positionIndex >= 0 && messages.findIndex((m) => m.id === source.message) < positionIndex && !(old && carriedObject(state, old)))
       isPresent = false;
+    const manifestation = state.companions?.find((c) => c.actor === canonical)?.manifestation;
+    const isCorrection = messages.some((m) => m.id === source.message && ("content" in m) && typeof m.content === "string" && /^\s*\(?OOC correction:/i.test(m.content));
+    if (manifestation && !profile && !isCorrection && !afterTransition(source, manifestation.source, messages))
+      isPresent = old?.present ?? false;
     const value = {
       id: old?.id ?? entityId(canonical),
       name: canonical,
@@ -389,7 +642,7 @@ function readEncounterObservation(row, state, source, messages) {
       aliases: [...new Set([...old?.aliases ?? [], ...aliases, ...name !== canonical ? [name] : []])].slice(0, 24),
       entityKind: row.entityKind,
       present: isPresent,
-      status: profile ? old?.status ?? "active" : ["active", "dead"].includes(row.status) ? row.status : old?.status ?? "active",
+      status: profile || old?.status === "dead" && !!state.companions?.some((c) => c.actor === canonical) && !isCorrection ? old?.status ?? "active" : ["active", "dead"].includes(row.status) ? row.status : old?.status ?? "active",
       source
     };
     return { kind: "entity", value };
@@ -416,89 +669,12 @@ var DAMAGE_TYPES, RANGES, MechanicalKnowledgeError, normalize = (value) => value
 Resources may have role:"vital|effort|shield|money|other" only when their fictional function is supported. Equipped items and conditions may have defenses:[{kind:"armor|resistance|immunity|reflect",amount,damageType:"physical|fire|cold|electric|poison|mental|untyped|all"}]. Armor subtracts a flat amount, resistance/reflect use percentages, immunity uses amount:0. All non-immunity numbers must occur in the source quote. Do not invent these defenses or health values. A shield pool is an explicit resource with role:shield. Actual values stay unknown without source evidence. Never emit an absolute update to undo an action receipt.`;
 var init_encounters = __esm(() => {
   init_injuries();
+  init_companions();
   DAMAGE_TYPES = ["physical", "fire", "cold", "electric", "poison", "mental", "untyped"];
   RANGES = ["touch", "near", "far"];
   MechanicalKnowledgeError = class MechanicalKnowledgeError extends Error {
   };
 });
-
-// src/living/story-text.ts
-function imageStoryContent(content) {
-  if (!/inlay[_-]illustrator/i.test(content))
-    return content;
-  const opening = /(?:<!--\s*inlay_illustrator\s*-->\s*)?<div\b(?=[^>]*\sdata-inlay-illustrator\s*=\s*(?:"true"|'true'|true(?=[\s>])))(?:"[^"]*"|'[^']*'|[^'">])*>/gi;
-  let result = "", cursor = 0, match;
-  while (match = opening.exec(content)) {
-    const tags = /<\/?div\b(?:"[^"]*"|'[^']*'|[^'">])*>/gi;
-    tags.lastIndex = opening.lastIndex;
-    let depth = 1, end = -1, tag;
-    while (tag = tags.exec(content)) {
-      depth += /^<\//.test(tag[0]) ? -1 : 1;
-      if (!depth) {
-        end = tags.lastIndex;
-        break;
-      }
-    }
-    if (end < 0)
-      break;
-    const separator = /^(?:[ \t]*\r?\n){2}/.exec(content.slice(end));
-    if (separator)
-      end += separator[0].length;
-    result += content.slice(cursor, match.index);
-    cursor = end;
-    opening.lastIndex = end;
-  }
-  return cursor ? result + content.slice(cursor) : content;
-}
-function storyContent(content) {
-  const clean = imageStoryContent(content);
-  return clean.replace(/<span\b(?=[^>]*\sdata-inlay-illustrator-suppressed\s*=)(?:"[^"]*"|'[^']*'|[^'">])*>\s*<\/span\s*>/gi, (carrier) => {
-    const attr = (name) => new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "i").exec(carrier);
-    const id = attr("data-inlay-illustrator-suppressed"), payload = attr("data-inlay-illustrator-suppressed-payload");
-    if (!id || !payload)
-      return carrier;
-    try {
-      const decoded = decodeURIComponent(payload[1] ?? payload[2]);
-      let hash = 2166136261;
-      for (let i = 0;i < decoded.length; i++)
-        hash = Math.imul(hash ^ decoded.charCodeAt(i), 16777619) >>> 0;
-      const expected = `NAS1${hash.toString(16).padStart(8, "0").toUpperCase()}${decoded.length.toString(36).toUpperCase()}`;
-      return expected === (id[1] ?? id[2]) ? decoded : carrier;
-    } catch {
-      return carrier;
-    }
-  });
-}
-function storyBinding(message) {
-  const value = message.metadata?.[STORY_BINDINGS]?.[String(message.swipe_id ?? 0)];
-  if (!value || [value.text, value.rawText, value.prefix, value.rawPrefix, value.path, value.rawPath].some((v) => typeof v !== "string") || value.text !== storyRevision(message.content))
-    return;
-  return value;
-}
-function sourceRevisionMatches(message, expected) {
-  const binding = storyBinding(message);
-  return !expected || expected === storyRevision(message.content) || expected === revision(message.content) || expected === revision(imageStoryContent(message.content)) || expected === binding?.rawText || expected === binding?.imageText;
-}
-function sourceContains(content, quote) {
-  return storyContent(content).replace(/\s+/g, " ").includes(quote);
-}
-function recordPathMatches(message, expected, canonical, raw, full = false) {
-  if (expected === canonical || expected === raw)
-    return true;
-  const binding = storyBinding(message);
-  return !!binding && (full ? binding.path === canonical && (binding.rawPath === expected || binding.imagePath === expected) : binding.prefix === canonical && (binding.rawPrefix === expected || binding.imagePrefix === expected));
-}
-function storyExcerpt(content, limit) {
-  const clean = storyContent(content);
-  if (clean.length <= limit)
-    return clean;
-  const head = Math.floor(limit * 0.75), tail = limit - head;
-  return `${clean.slice(0, head)}
-[excerpt omitted]
-${clean.slice(-tail)}`;
-}
-var STORY_BINDINGS = "warpStoryBindings", storyRevision = (content) => revision(storyContent(content));
-var init_story_text = () => {};
 
 // src/living/agreements.ts
 function agreementNotes(before, after) {
@@ -3280,6 +3456,7 @@ var DICE_STYLE = `
 // src/living/inspector.ts
 init_html();
 init_encounters();
+init_companions();
 init_agreements();
 function defenseText(d, remaining = false) {
   const damage = `${d.damageType === "all" ? "all" : d.damageType} damage`;
@@ -3293,7 +3470,9 @@ function defenseText(d, remaining = false) {
     return `${d.amount} armor against ${damage}`;
   return `${d.amount} shield${remaining ? " remaining" : ""} against ${damage}`;
 }
-function effectText(e) {
+function effectText(e, state) {
+  if (e.kind === "summon" || e.kind === "dismiss")
+    return `${e.kind === "summon" ? "Recall" : "Dismiss"} ${state.companions?.find((c) => c.id === e.companion)?.actor ?? "summon"}${e.duration ? ` · ${e.duration} subsequent controller action${e.duration === 1 ? "" : "s"}` : ""}`;
   const who = e.target === "self" ? "self" : "target";
   if (e.kind === "restore" || e.kind === "damage")
     return `${e.kind === "restore" ? "Restore" : "Damage"} ${e.amount} ${e.resource}${e.damageType ? ` · ${e.damageType}` : ""} · ${who}${e.basis === "warp" ? " · Warp value" : ""}`;
@@ -3310,22 +3489,41 @@ function effectText(e) {
 function inspectMechanics(state) {
   const resources = state.resources.filter((r) => r.owner === "you"), items = state.items.filter((i) => i.owner === "you" && i.quantity > 0);
   const conditions = state.conditions.filter((c) => c.owner === "you"), abilities = state.abilities?.filter((a) => a.owner === "you") ?? [];
+  const companions = state.companions?.filter((c) => c.controller === "you") ?? [];
   const resilience = state.resilience?.find((r) => r.owner === "you" && r.band !== "ordinary");
   const agreements = visibleAgreements(state.agreements?.filter((a) => a.owner === "you" || a.from === "you"));
   const named = (id) => state.resources.find((r) => r.id === id)?.name ?? state.items.find((i) => i.id === id)?.name ?? id;
+  const costText = (kind, id, amount) => {
+    if (kind !== "resource")
+      return `${amount} ${named(id)}`;
+    try {
+      const payer = costPayer(state, id);
+      return `${amount} ${payer.name}${payer.id !== id ? ` · from ${payer.owner === "you" ? "you" : payer.owner}` : ""}`;
+    } catch {
+      return `${amount} ${named(id)} · payer needs clarification`;
+    }
+  };
   return `<section class="warp-inspector" aria-label="Your saved mechanics">
     ${resources.length ? `<dl class="warp-inspector-resources">${resources.map((r) => `<div><dt>${esc(r.name)}</dt><dd>${r.current}${r.max === undefined ? "" : ` / ${r.max}`}${r.unit ? ` ${esc(r.unit)}` : ""}</dd></div>`).join("")}</dl>` : ""}
     ${items.length ? `<div class="warp-inspector-items">${items.map((i) => `<span>${esc(i.name)} × ${i.quantity}${i.equipped ? " · equipped" : ""}</span>`).join("")}</div>` : ""}
     ${resilience ? `<p>Physical resilience: ${esc(resilience.band)}<small>Warp interpretation · ${esc(resilience.source.quote)}</small></p>` : ""}
     ${conditions.map((c) => `<p>${esc(c.name)}${c.targets?.length ? ` · with ${c.targets.map(esc).join(", ")}` : ""}${c.place ? ` · ${esc(state.places?.find((p) => p.id === c.place)?.name ?? c.place)}` : ""}<small>${esc(c.ending)}${c.defenses?.length ? ` · ${c.defenses.map((d) => esc(defenseText(d, true))).join(" · ")}` : ""}</small></p>`).join("")}
-    ${abilities.length ? `<div class="warp-inspector-abilities">${abilities.map((a) => `<details data-inspect-ability="${esc(a.id)}"><summary><strong>${esc(a.name)}</strong><span>${a.costs.length ? a.costs.map((c) => `${c.amount} ${esc(named(c.id))}`).join(" + ") : "No established resource cost"}</span></summary>
-      <p>${esc(a.description)}</p>${a.effects.map((e) => `<p>${esc(effectText(e))}</p>`).join("")}
+    ${abilities.length ? `<div class="warp-inspector-abilities">${abilities.map((a) => `<details data-inspect-ability="${esc(a.id)}"><summary><strong>${esc(a.name)}</strong><span>${a.costs.length ? a.costs.map((c) => esc(costText(c.kind, c.id, c.amount))).join(" + ") : "No established resource cost"}</span></summary>
+      <p>${esc(a.description)}</p>${a.effects.map((e) => `<p>${esc(effectText(e, state))}</p>`).join("")}
       ${a.range ? `<p>Range: ${esc(a.range)}</p>` : ""}${a.cooldown ? `<p>${cooldownRemaining(state, "you", a.id) ? `Ready after ${cooldownRemaining(state, "you", a.id)} more action${cooldownRemaining(state, "you", a.id) === 1 ? "" : "s"}` : "Ready"} · ${a.cooldown}-action cooldown</p>` : ""}
       ${a.requires.length ? `<p>Requires ${a.requires.map((r) => `${esc(named(r.item))}${r.equipped ? " equipped" : " carried"}`).join(", ")}</p>` : ""}
       ${a.unsupported.length ? `<p class="warp-inspector-blocked">Needs clarification: ${a.unsupported.map(esc).join(" · ")}</p>` : ""}
       <small>Version ${a.version} · ${esc(a.sourceKind)}</small><blockquote>${esc(a.source.quote)}</blockquote></details>`).join("")}</div>` : ""}
+    ${companions.map((c) => {
+    const entity = state.entities?.find((e) => e.name === c.actor);
+    return `<details data-inspect-companion="${esc(c.id)}"><summary>${esc(entity?.displayName ?? c.actor)} · ${entity?.status === "dead" ? "Dead" : entity?.present ? "Here" : "Away"}</summary>
+      ${state.conditions.filter((row) => row.owner === c.actor).map((row) => `<p>${esc(row.name)}<small>${esc(row.ending)}</small></p>`).join("")}
+      ${state.resources.filter((row) => row.owner === c.actor).map((row) => `<p>${esc(row.name)}: ${row.current}${row.max === undefined ? "" : ` / ${row.max}`}</p>`).join("")}
+      ${(state.abilities ?? []).filter((a) => a.owner === c.actor).map((a) => `<p>${esc(a.name)}<small>${a.costs.map((cost) => esc(costText(cost.kind, cost.id, cost.amount))).join(" + ") || "No established resource cost"}</small></p>`).join("")}
+      <blockquote>${esc(c.source.quote)}</blockquote></details>`;
+  }).join("")}
     ${agreements.map((a) => `<details data-inspect-agreement="${esc(a.id)}"><summary>${esc(a.name)} · ${a.cancelled ? "withdrawn" : `${a.requirements.filter((r) => r.done).length}/${a.requirements.length} done`}</summary>${a.requirements.map((r) => `<p>${r.done ? "Done" : "Pending"} · ${esc(r.text)}</p>`).join("")}${a.rewards.map((r) => `<p>${r.paid ? "Received" : a.cancelled ? "Declined" : r.ready?.allowed ? "Offered" : r.ready ? "Withheld" : "Promised"} · ${r.amount} ${esc(r.asset)}${a.from ? ` · from ${esc(a.from)}` : ""}</p>`).join("")}${a.unsupported.length ? `<p>Needs clarification: ${a.unsupported.map(esc).join(" · ")}</p>` : ""}<blockquote>${esc(a.offer?.quote ?? a.source.quote)}</blockquote></details>`).join("")}
-    ${!resources.length && !items.length && !conditions.length && !abilities.length && !resilience && !agreements.length ? "No established player mechanics yet." : ""}
+    ${!resources.length && !items.length && !conditions.length && !abilities.length && !resilience && !agreements.length && !companions.length ? "No established player mechanics yet." : ""}
   </section>`;
 }
 var INSPECTOR_STYLE = `

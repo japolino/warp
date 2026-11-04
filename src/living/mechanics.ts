@@ -9,6 +9,8 @@ import { closeCondition, conditionCauseIsNew, type ClosedCondition } from "./con
 import { readAgreementObservation, observeAgreement, settleReward, visibleAgreements, type Agreement, type AgreementObservation } from "./agreements.js";
 import { readExplorationObservation, observeExploration, executeExploration, explorationPacket, findPlace, currentSite, type ExplorationObservation, type Place, type Position, type Route, type Discovery, type SiteStock } from "./exploration.js";
 
+import { readCompanionObservation, observeCompanion, costPayer, validateManifestation, manifest, expireCompanions, type Companion, type CostLink, type CompanionObservation } from "./companions.js";
+
 export const APPROACHES = ["movement", "precision", "force", "speech", "perception", "concentration"] as const;
 export type Approach = typeof APPROACHES[number];
 export interface Resource { id: string; owner: string; name: string; current: number; max?: number; unit?: string; role?: "vital" | "effort" | "shield" | "money" | "other"; source: Evidence; }
@@ -18,6 +20,7 @@ export interface Condition {
   // A condition affects only these approaches; a hurt ankle is not a social penalty.
   hinders: Approach[]; blocks: Approach[]; helps: Approach[];
   ending: string; targets?: string[]; place?: string; source: Evidence; expiresAt?: number; defenses?: Defense[];
+  summon?: string;
   injury?: Injury; category?: "physical_injury"; severity?: "minor" | "standard" | "major"; recovery?: "routine" | "special";
 }
 export interface MechanicalState {
@@ -27,9 +30,10 @@ export interface MechanicalState {
   entities?: Entity[]; distances?: Distance[]; clocks?: ActionClock[]; cooldowns?: Cooldown[];
   resilience?: Resilience[]; closedConditions?: ClosedCondition[];
   agreements?: Agreement[];
+  companions?: Companion[]; costLinks?: CostLink[];
   places?: Place[]; positions?: Position[]; routes?: Route[]; discoveries?: Discovery[]; stocks?: SiteStock[];
 }
-export type Observation = AgreementObservation | ExplorationObservation
+export type Observation = AgreementObservation | ExplorationObservation | CompanionObservation
   | { kind: "resource"; value: Resource; correction?: boolean }
   | { kind: "item"; value: Item; correction?: boolean }
   | { kind: "condition"; value: Condition }
@@ -51,17 +55,17 @@ export type MechanicalOperation =
   | { kind: "strike"; target: string; outcome?: "clean" | "mixed" | "setback"; place?: string }
   | { kind: "move"; target: string; direction: "closer" | "away"; place?: string }
   | { kind: "ability"; ability: string; version: number; target?: string; outcome?: "clean" | "mixed" | "setback"; place?: string };
-export interface MechanicalChange { kind: "resource" | "item" | "condition" | "distance" | "agreement" | "position" | "place" | "stock" | "entity"; id: string; before: Resource | Item | Condition | Distance | Agreement | Position | Place | SiteStock | Entity | null; after: Resource | Item | Condition | Distance | Agreement | Position | Place | SiteStock | Entity | null; }
+export interface MechanicalChange { kind: "resource" | "item" | "condition" | "distance" | "agreement" | "position" | "place" | "stock" | "entity" | "companion"; id: string; before: Resource | Item | Condition | Distance | Agreement | Position | Place | SiteStock | Entity | Companion | null; after: Resource | Item | Condition | Distance | Agreement | Position | Place | SiteStock | Entity | Companion | null; }
 export interface MechanicalReceipt {
   version: 1; id: string; input: string; base: string; actor: string;
   operations: MechanicalOperation[]; changes: MechanicalChange[];
   status: "ready" | "blocked"; reason?: string;
   unresolved?: true;
-  engine?: 2 | 3 | 4 | 5 | 6; result?: string; beats?: EncounterBeat[]; responses?: ResponsePlan[]; place?: string;
+  engine?: 2 | 3 | 4 | 5 | 6 | 7; result?: string; beats?: EncounterBeat[]; responses?: ResponsePlan[]; place?: string;
 }
 export interface MechanicalRecord { version: 1; path: string; text: string; receipt?: MechanicalReceipt; observations: Observation[]; sources?: DefinitionSource[]; }
 export const emptyMechanics = (): MechanicalState => ({ version: 1, resources: [], items: [], conditions: [], applied: [] });
-export const hasMechanics = (s: MechanicalState) => !!(s.resources.length || s.items.length || s.conditions.length || s.abilities?.length || s.entities?.length || s.resilience?.length || s.closedConditions?.length || s.agreements?.length || s.places?.length);
+export const hasMechanics = (s: MechanicalState) => !!(s.resources.length || s.items.length || s.conditions.length || s.abilities?.length || s.entities?.length || s.resilience?.length || s.closedConditions?.length || s.agreements?.length || s.places?.length || s.companions?.length || s.costLinks?.length);
 const obj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const str = (v: unknown, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "";
 const amount = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1e9;
@@ -106,7 +110,7 @@ export function readMechanicalObservations(raw: unknown, before: MechanicalState
   const ambiguousPlaceAliases = new Set(placeRows.flatMap(row => typeof row.id === "string"
     && new Set(placeRows.filter(other => other.id === row.id).map(other => JSON.stringify([other.name, other.parent]))).size > 1 ? [row.id] : []));
   // Resolve aliases before ownership regardless of the helper's JSON ordering.
-  for (const input of [...rows.filter(r => obj(r) && r.kind === "entity"), ...placeRows, ...rows.filter(r => !obj(r) || r.kind !== "entity" && r.kind !== "place")]) {
+  for (const input of [...rows.filter(r => obj(r) && r.kind === "entity"), ...placeRows, ...rows.filter(r => !obj(r) || !["entity", "place", "companion", "cost_link"].includes(r.kind as string)), ...rows.filter(r => obj(r) && ["companion", "cost_link"].includes(r.kind as string))]) {
     if (!obj(input)) continue;
     let row: Record<string, unknown> = input;
     if (["place", "route", "discovery", "stock", "stock_access"].includes(row.kind as string)) {
@@ -126,7 +130,9 @@ export function readMechanicalObservations(raw: unknown, before: MechanicalState
     const s = source(row, messages, historical); let id = str(row.id, 100);
     if (!s) continue;
     let observation: Observation | undefined;
-    if (["place", "route", "discovery", "stock", "stock_access"].includes(row.kind as string)) {
+    if (["companion", "cost_link"].includes(row.kind as string)) {
+      try { observation = readCompanionObservation(row.kind === "companion" ? { ...row, actor: own(row.actor, player), controller: own(row.controller, player) } : row, working, s.evidence, messages, s.correction); } catch { continue; }
+    } else if (["place", "route", "discovery", "stock", "stock_access"].includes(row.kind as string)) {
       observation = readExplorationObservation(row, working, s.evidence, messages, s.correction, historical);
       if (observation?.kind === "place" && obj(input) && typeof input.id === "string" && !ambiguousPlaceAliases.has(input.id)) placeAliases.set(input.id, observation.value.id);
     } else if (row.kind === "entity" || row.kind === "distance") {
@@ -181,6 +187,7 @@ export function readMechanicalObservations(raw: unknown, before: MechanicalState
 }
 
 function observe(state: MechanicalState, o: Observation) {
+  if (o.kind === "companion" || o.kind === "cost_link") { observeCompanion(state, o); return; }
   if (o.kind === "place" || o.kind === "route" || o.kind === "discovery" || o.kind === "stock" || o.kind === "stock_access") { observeExploration(state, o); return; }
   if (o.kind === "agreement" || o.kind === "agreement_progress" || o.kind === "reward_ready" || o.kind === "agreement_cancel") { observeAgreement(state, o); return; }
   if (o.kind === "condition_end") { const old = state.conditions.find(c => c.id === o.id); if (old && o.retire) closeCondition(state, old, { kind: "message", id: o.source.message }); state.conditions = state.conditions.filter(c => c.id !== o.id); return; }
@@ -215,7 +222,7 @@ export function applyObservations(before: MechanicalState, observations: Observa
 }
 
 /** All operations resolve on a working copy. Any failed prerequisite rejects the whole plan. */
-function execute(before: MechanicalState, actor: string, operations: MechanicalOperation[], actionId: string, engine = 1, strict = false, qualitative = false, rewards = false, exploration = false) {
+function execute(before: MechanicalState, actor: string, operations: MechanicalOperation[], actionId: string, engine = 1, strict = false, qualitative = false, rewards = false, exploration = false, companions = false) {
   const state = structuredClone(before), changes: MechanicalChange[] = [], beats: EncounterBeat[] = [];
   if (engine === 2) actor = actorName(state, actor);
   if (!actor || operations.length > 16) throw new Error("Invalid mechanical plan");
@@ -234,6 +241,7 @@ function execute(before: MechanicalState, actor: string, operations: MechanicalO
       const ability = state.abilities?.find(a => a.id === op.ability && a.version === op.version);
       if (!ability || ability.owner !== actor) throw new (strict ? MechanicalKnowledgeError : Error)("Ability unavailable to this actor");
       if (ability.unsupported.length) throw new (strict ? MechanicalKnowledgeError : Error)(`${ability.name} needs clarification: ${ability.unsupported.join("; ")}`);
+      if (!companions && ability.effects.some(e => e.kind === "summon" || e.kind === "dismiss")) throw new Error("Ability requires the companion resolver");
       if (!qualitative && ability.effects.some(e => e.kind === "harm" || e.kind === "mend")) throw new Error("Ability requires the injury resolver");
       if (engine === 1 && (ability.range || ability.cooldown || ability.effects.some(e => e.defense || e.duration))) throw new Error("Ability requires the encounter resolver");
       const target = engine === 2 ? actorName(state, op.target ?? (ability.target === "self" ? actor : "")) : op.target ?? (ability.target === "self" ? actor : "");
@@ -268,15 +276,27 @@ function execute(before: MechanicalState, actor: string, operations: MechanicalO
         const item = state.items.find(i => i.id === requirement.item && i.owner === actor && i.quantity > 0);
         if (!item || (requirement.equipped && !item.equipped)) throw new Error("Required equipment is not available");
       }
+      if (companions) for (const effect of ability.effects) if (effect.kind === "summon" || effect.kind === "dismiss") validateManifestation(state, actor, effect.companion!, effect.kind === "summon");
       // Costs are derived from the stored definition, never from invocation arguments.
       const costs: MechanicalOperation[] = ability.costs.map(c => c.kind === "resource" ? { kind: "spend", resource: c.id, amount: c.amount } : { kind: "consume", item: c.id, amount: c.amount });
-      const paid = execute(state, actor, costs, `${actionId}:${index}:cost`);
-      state.resources = paid.state.resources; state.items = paid.state.items; changes.push(...paid.changes);
+      if (companions) {
+        for (const cost of costs) {
+          if (cost.kind === "spend" && state.resources.find(r => r.id === cost.resource)?.owner !== actor) throw new MechanicalKnowledgeError("Ability cost is not owned by its actor");
+          const payer = cost.kind === "spend" ? costPayer(state, cost.resource) : undefined;
+          const paid = execute(state, payer?.owner ?? actor, [payer && cost.kind === "spend" ? { ...cost, resource: payer.id } : cost], `${actionId}:${index}:cost`);
+          state.resources = paid.state.resources; state.items = paid.state.items; changes.push(...paid.changes);
+        }
+      } else {
+        const paid = execute(state, actor, costs, `${actionId}:${index}:cost`);
+        state.resources = paid.state.resources; state.items = paid.state.items; changes.push(...paid.changes);
+      }
       if (engine === 2) { advanceActor(state, actor, changes, beats); setCooldown(state, actor, ability.id, ability.cooldown ?? 0); }
       if (op.outcome === "setback") continue; // An executed failed attempt pays its established cost, not its success effects.
       for (const [effectIndex, effect] of ability.effects.entries()) {
         const owner = effect.target === "self" ? actor : target;
-        if (effect.kind === "restore" || effect.kind === "damage" || effect.kind === "harm" || effect.kind === "mend") {
+        if (companions && (effect.kind === "summon" || effect.kind === "dismiss")) {
+          manifest(state, actor, effect.companion!, effect.kind === "summon", actionId, changes, beats, effect.duration);
+        } else if (effect.kind === "restore" || effect.kind === "damage" || effect.kind === "harm" || effect.kind === "mend") {
           const candidates = state.resources.filter(r => r.owner === owner && (r.id === effect.resource || r.name.toLocaleLowerCase() === effect.resource?.toLocaleLowerCase()));
           const fallback = qualitative && (effect.kind === "harm" || effect.kind === "mend" || !candidates.length && effect.basis === "warp" && isVitalSelector(effect.resource) && Object.values(IMPACTS).includes(effect.amount as 5 | 15 | 30));
           if (fallback) {
@@ -298,6 +318,7 @@ function execute(before: MechanicalState, actor: string, operations: MechanicalO
           const id = `effect-${revision([ability.id, owner, effectIndex])}`;
           const old = state.conditions.find(c => c.id === id);
           const condition: Condition = { id, owner, name: effect.name, ending: effect.ending, helps: effect.helps ?? [], hinders: effect.hinders ?? [], blocks: effect.blocks ?? [], source: ability.source,
+            ...(companions && effect.untilDismissed ? { summon: state.companions?.find(c => c.actor === owner && c.companionKind === "summon")?.id } : {}),
             ...(engine === 2 && effect.duration ? { expiresAt: actionCount(state, owner) + effect.duration + 1 } : {}), ...(engine === 2 && effect.defense ? { defenses: [structuredClone(effect.defense)] } : {}) };
           if (!old) { state.conditions.push(condition); changes.push({ kind: "condition", id, before: null, after: structuredClone(condition) }); }
           else if (engine === 2) {
@@ -391,14 +412,15 @@ function execute(before: MechanicalState, actor: string, operations: MechanicalO
     // Once action timing exists, using equipment or supplies also uses an action.
     // Nested definition costs run under the original arithmetic path and never tick twice.
     if (engine === 2 && ["spend", "restore", "consume", "transfer", "equip"].includes(op.kind) && state.clocks?.some(c => c.actor === actor)) advanceActor(state, actor, changes, beats);
+    if (companions) expireCompanions(state, actionId, changes, beats);
   }
   return { state, changes, beats };
 }
 
 /** The exchange is one bounded receipt. A response cannot enqueue another response. */
-function executeExchange(before: MechanicalState, actor: string, operations: MechanicalOperation[], id: string, responses: ResponsePlan[], place?: string, resolver: 3 | 4 | 5 | 6 = 3) {
+function executeExchange(before: MechanicalState, actor: string, operations: MechanicalOperation[], id: string, responses: ResponsePlan[], place?: string, resolver: 3 | 4 | 5 | 6 | 7 = 3) {
   if (!Array.isArray(responses) || responses.length > MAX_RESPONSES || (responses.length && !operations.length)) throw new Error("Invalid exchange opportunity");
-  let resolved = execute(before, actor, operations, id, 2, true, resolver >= 4, resolver >= 5, resolver >= 6);
+  let resolved = execute(before, actor, operations, id, 2, true, resolver >= 4, resolver >= 5, resolver >= 6, resolver >= 7);
   const actors = new Set<string>();
   for (const plan of responses) {
     if (!plan || typeof plan.actor !== "string" || !plan.source?.message || !plan.source?.quote || !plan.assessment || !plan.action) throw new Error("Invalid NPC plan");
@@ -414,7 +436,7 @@ function executeExchange(before: MechanicalState, actor: string, operations: Mec
     if (!present(resolved.state, who) || !capable(resolved.state, who)) { skip("No longer able to respond"); continue; }
     try {
       // Validate the opportunity before drawing an outcome. This working copy is discarded.
-      execute(resolved.state, who, [{ ...action, ...(["ability", "strike", "move"].includes(action.kind) ? { place } : {}) }], `${id}:response:${who}`, 2, true, resolver >= 4, resolver >= 5);
+      execute(resolved.state, who, [{ ...action, ...(["ability", "strike", "move"].includes(action.kind) ? { place } : {}) }], `${id}:response:${who}`, 2, true, resolver >= 4, resolver >= 5, resolver >= 6, resolver >= 7);
     } catch (error) {
       if (error instanceof MechanicalKnowledgeError) throw error;
       // An eligible NPC loses this opportunity, without paying an unavailable cost.
@@ -428,7 +450,7 @@ function executeExchange(before: MechanicalState, actor: string, operations: Mec
     if (action.kind === "ability" || action.kind === "strike") operation = { ...action, outcome: decision?.result ?? "clean", place };
     else if (action.kind === "move") operation = decision?.result === "setback" ? { kind: "attempt", approach: "movement", target: action.target, place } : { ...action, place };
     else if (action.kind === "defend" && decision?.result === "setback") operation = { kind: "attempt", approach: "movement", place };
-    const next = execute(resolved.state, who, [operation], `${id}:response:${who}`, 2, true, resolver >= 4, resolver >= 5);
+    const next = execute(resolved.state, who, [operation], `${id}:response:${who}`, 2, true, resolver >= 4, resolver >= 5, resolver >= 6, resolver >= 7);
     resolved.beats.push({ kind: "response", actor: who, ...(target ? { target } : {}), ...(decision ? { decision } : {}), name: action.kind === "ability" ? resolved.state.abilities?.find(a => a.id === action.ability)?.name : action.kind });
     resolved = { state: next.state, changes: [...resolved.changes, ...next.changes], beats: [...resolved.beats, ...next.beats] };
   }
@@ -436,19 +458,19 @@ function executeExchange(before: MechanicalState, actor: string, operations: Mec
 }
 
 export function prepareMechanical(before: MechanicalState, id: string, actor: string, operations: MechanicalOperation[], context = ""): MechanicalReceipt {
-  return prepare(before, id, actor, operations, context, before.places?.length || operations.some(op => op.kind === "travel" || op.kind === "gather") ? 6 : 5);
+  return prepare(before, id, actor, operations, context, before.companions?.length || before.costLinks?.length ? 7 : before.places?.length || operations.some(op => op.kind === "travel" || op.kind === "gather") ? 6 : 5);
 }
 export function prepareExchange(before: MechanicalState, id: string, actor: string, operations: MechanicalOperation[], responses: ResponsePlan[], context = "", place?: string): MechanicalReceipt {
-  return prepare(before, id, actor, operations, context, before.places?.length || operations.some(op => op.kind === "travel" || op.kind === "gather") ? 6 : 5, responses, place);
+  return prepare(before, id, actor, operations, context, before.companions?.length || before.costLinks?.length ? 7 : before.places?.length || operations.some(op => op.kind === "travel" || op.kind === "gather") ? 6 : 5, responses, place);
 }
-function prepare(before: MechanicalState, id: string, actor: string, operations: MechanicalOperation[], context: string, engine: 2 | 3 | 4 | 5 | 6, responses?: ResponsePlan[], place?: string): MechanicalReceipt {
+function prepare(before: MechanicalState, id: string, actor: string, operations: MechanicalOperation[], context: string, engine: 2 | 3 | 4 | 5 | 6 | 7, responses?: ResponsePlan[], place?: string): MechanicalReceipt {
   place = place || undefined; responses ??= [];
   const base = revision(before), input = revision(engine === 2 ? [actor, operations, context] : [actor, operations, context, responses, place]);
   try {
     if (!str(id, 160)) throw new Error("Invalid action id");
     const previous = before.applied.find(a => a.id === id);
     if (previous) throw new Error(previous.input === input ? "Action already applied" : "Action id reused for different input");
-    const executed = engine >= 3 ? executeExchange(before, actor, operations, id, responses, place, engine as 3 | 4 | 5 | 6) : execute(before, actor, operations, id, 2);
+    const executed = engine >= 3 ? executeExchange(before, actor, operations, id, responses, place, engine as 3 | 4 | 5 | 6 | 7) : execute(before, actor, operations, id, 2);
     return { version: 1, engine, id, input, base, actor, operations: structuredClone(operations), ...(engine >= 3 ? { responses: structuredClone(responses), ...(place ? { place } : {}) } : {}), changes: executed.changes, beats: executed.beats, result: revision(executed.state), status: "ready" };
   } catch (e) {
     return { version: 1, engine, id, input, base, actor, operations: structuredClone(operations), changes: [], status: "blocked", reason: e instanceof Error ? e.message : "Mechanical action unavailable", ...(e instanceof MechanicalKnowledgeError ? { unresolved: true as const } : {}) };
@@ -459,9 +481,9 @@ export function commitMechanical(before: MechanicalState, receipt: MechanicalRec
   const existing = before.applied.find(a => a.id === receipt.id);
   if (existing) { if (existing.input !== receipt.input) throw new Error("Action id conflict"); return before; }
   if (receipt.version !== 1 || receipt.status !== "ready" || receipt.base !== revision(before)) throw new Error("Mechanical receipt is blocked or stale");
-  if (receipt.engine !== undefined && receipt.engine !== 2 && receipt.engine !== 3 && receipt.engine !== 4 && receipt.engine !== 5 && receipt.engine !== 6) throw new Error("Unsupported mechanical resolver");
+  if (receipt.engine !== undefined && receipt.engine !== 2 && receipt.engine !== 3 && receipt.engine !== 4 && receipt.engine !== 5 && receipt.engine !== 6 && receipt.engine !== 7) throw new Error("Unsupported mechanical resolver");
   if ((receipt.engine ?? 1) < 3 && receipt.responses?.length) throw new Error("Responses require the exchange resolver");
-  const { state, changes, beats } = (receipt.engine ?? 1) >= 3 ? executeExchange(before, receipt.actor, receipt.operations, receipt.id, receipt.responses ?? [], receipt.place, receipt.engine as 3 | 4 | 5 | 6) : execute(before, receipt.actor, receipt.operations, receipt.id, receipt.engine ?? 1);
+  const { state, changes, beats } = (receipt.engine ?? 1) >= 3 ? executeExchange(before, receipt.actor, receipt.operations, receipt.id, receipt.responses ?? [], receipt.place, receipt.engine as 3 | 4 | 5 | 6 | 7) : execute(before, receipt.actor, receipt.operations, receipt.id, receipt.engine ?? 1);
   if (revision(changes) !== revision(receipt.changes)) throw new Error("Mechanical receipt does not match its operations");
   if (receipt.engine !== undefined && (revision(state) !== receipt.result || revision(beats) !== revision(receipt.beats))) throw new Error("Mechanical encounter receipt does not match its resolution");
   state.applied.push({ id: receipt.id, input: receipt.input });
@@ -505,7 +527,7 @@ function parseMechanicalPlan(raw: unknown, state: MechanicalState, action: strin
       operations.push({ kind: "claim", agreement: agreement.id, reward: rewards[0].id });
     } else if (row.kind === "ability") {
       const ability = state.abilities?.find(a => (a.id === row.ability || a.name.toLocaleLowerCase() === str(row.ability).toLocaleLowerCase()) && a.owner === "you");
-      if (!ability || !stated(/\b(?:use|cast|invoke|perform|activate|apply|treat|focus|deploy|repair|patch|switch|turn)\b/i)) throw new Error("Ability use is not established");
+      if (!ability || !(stated(/\b(?:use|cast|invoke|perform|activate|apply|treat|focus|deploy|repair|patch|switch|turn)\b/i) || ability.effects.some(e => e.kind === "summon") && stated(/\b(?:summon|recall)\b/i) || ability.effects.some(e => e.kind === "dismiss") && stated(/\bdismiss\b/i))) throw new Error("Ability use is not established");
       if (row.version !== undefined && row.version !== ability.version) throw new Error("Ability definition changed");
       operations.push({ kind: "ability", ability: ability.id, version: ability.version, ...(str(row.target, 80) ? { target: str(row.target, 80) } : {}) });
     } else if (row.kind === "strike") {
@@ -570,7 +592,7 @@ export function conditionInfluence(state: MechanicalState, actor: string, approa
 
 export function mechanicalPacket(state: MechanicalState, focus = "") {
   const withoutSource = <T extends { source: Evidence }>({ source, ...value }: T) => value;
-  return { resources: state.resources.map(withoutSource), items: state.items.map(withoutSource), conditions: state.conditions.map(withoutSource), ...explorationPacket(state, focus), ...(state.abilities?.length ? { abilities: state.abilities.map(a => {
+  return { ...(state.companions?.length ? { companions: state.companions.map(c => ({ id: c.id, actor: c.actor, controller: c.controller, companionKind: c.companionKind, ...(c.manifestation ? { active: c.manifestation.active, ...(c.manifestation.expiresAt !== undefined ? { remainingControllerActions: Math.max(0, c.manifestation.expiresAt - actionCount(state, c.controller) - 1) } : {}) } : {}) })) } : {}), ...(state.costLinks?.length ? { costLinks: state.costLinks.map(withoutSource) } : {}), resources: state.resources.map(withoutSource), items: state.items.map(withoutSource), conditions: state.conditions.map(withoutSource), ...explorationPacket(state, focus), ...(state.abilities?.length ? { abilities: state.abilities.map(a => {
     const { source, sourceKind, fingerprint, ...value } = a; return value;
   }) } : {}), ...(state.entities?.length ? { entities: state.entities.map(withoutSource) } : {}), ...(state.distances?.length ? { distances: state.distances.map(withoutSource) } : {}),
     ...(state.clocks?.length ? { clocks: state.clocks } : {}), ...(state.cooldowns?.length ? { cooldowns: state.cooldowns } : {}), ...(state.resilience?.length ? { resilience: state.resilience.map(withoutSource) } : {}),

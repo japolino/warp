@@ -7,10 +7,11 @@ import { IMPACTS, type Impact } from "./injuries.js";
 
 export interface DefinitionSource { id: string; kind: "card" | "persona" | "lore"; text: string; }
 export interface AbilityEffect {
-  kind: "restore" | "damage" | "harm" | "mend" | "condition" | "clear_condition" | "defense";
+  kind: "summon" | "dismiss" | "restore" | "damage" | "harm" | "mend" | "condition" | "clear_condition" | "defense";
   target: "self" | "target"; resource?: string; amount?: number; basis?: "source" | "warp";
   name?: string; hinders?: Approach[]; helps?: Approach[]; blocks?: Approach[]; ending?: string;
   damageType?: DamageType; defense?: Defense; duration?: number;
+  companion?: string; untilDismissed?: true;
   impact?: Impact;
   maxInjury?: Impact | "any";
 }
@@ -82,12 +83,17 @@ export function readAbilityDefinitions(raw: unknown, state: MechanicalState, mes
         return { kind: c.kind as "resource" | "item", id: candidate.id, amount: c.amount };
       });
       const effects: AbilityEffect[] = row.effects.map(e => {
-        const fields: Record<string, string[]> = { restore: ["resource", "amount", "basis", "magnitude"], damage: ["resource", "amount", "basis", "magnitude", "damageType"], harm: ["impact", "damageType"], mend: ["impact", "maxInjury"], condition: ["name", "hinders", "helps", "blocks", "ending", "duration"], clear_condition: ["name"], defense: ["name", "defense", "ending", "duration", "basis", "magnitude"] };
+        const fields: Record<string, string[]> = { summon: ["companion", "duration"], dismiss: ["companion"], restore: ["resource", "amount", "basis", "magnitude"], damage: ["resource", "amount", "basis", "magnitude", "damageType"], harm: ["impact", "damageType"], mend: ["impact", "maxInjury"], condition: ["name", "hinders", "helps", "blocks", "ending", "duration", "untilDismissed"], clear_condition: ["name"], defense: ["name", "defense", "ending", "duration", "basis", "magnitude"] };
         if (!obj(e) || !fields[e.kind as string] || Object.keys(e).some(k => !["kind", "target", ...fields[e.kind as string]].includes(k))) throw new Error("Unsupported effect fields");
         if (!obj(e) || !["self", "target"].includes(e.target as string)) throw new Error("Unknown effect target");
         const target = e.target as "self" | "target";
         const duration = e.duration;
         if (duration !== undefined && (!positive(duration) || !Number.isInteger(duration) || duration > 10000 || !numberIn(quote, duration))) throw new Error("Unsourced action duration");
+        if (e.kind === "summon" || e.kind === "dismiss") {
+          const companion = state.companions?.find(c => (c.id === e.companion || c.actor === actorName(state, str(e.companion, 80))) && c.controller === owner && c.companionKind === "summon");
+          if (target !== "self" || !companion) throw new Error("Unknown owned summon");
+          return { kind: e.kind, target, companion: companion.id, ...(duration ? { duration: duration as number } : {}) };
+        }
         if (e.kind === "harm" || e.kind === "mend") {
           if (!Object.hasOwn(IMPACTS, e.impact as string) || e.kind === "harm" && !["physical", "fire", "cold", "electric", "poison"].includes(e.damageType as string)) throw new Error("Unsupported qualitative physical effect");
           if (e.maxInjury !== undefined && (!["minor", "standard", "major", "any"].includes(e.maxInjury as string) || !(e.maxInjury === "any" ? /\b(?:all|any)\b/i : new RegExp(`\\b${e.maxInjury}\\b`, "i")).test(quote))) throw new Error("Unsourced treatment limit");
@@ -106,7 +112,8 @@ export function readAbilityDefinitions(raw: unknown, state: MechanicalState, mes
         if (e.kind === "condition") {
           const name = str(e.name), ending = str(e.ending, 240);
           if (!name || !ending) throw new Error("Missing condition semantics");
-          return { kind: "condition", target, name, ending, hinders: scope(e.hinders), blocks: scope(e.blocks), helps: scope(e.helps), ...(duration ? { duration: duration as number } : {}) };
+          if (e.untilDismissed !== undefined && (e.untilDismissed !== true || target !== "self" || !state.companions?.some(c => c.actor === owner && c.companionKind === "summon"))) throw new Error("An effect bound to dismissal needs its established summon owner");
+          return { kind: "condition", target, name, ending, hinders: scope(e.hinders), blocks: scope(e.blocks), helps: scope(e.helps), ...(e.untilDismissed === true ? { untilDismissed: true as const } : {}), ...(duration ? { duration: duration as number } : {}) };
         }
         if (e.kind === "defense") {
           const name = str(e.name), ending = str(e.ending, 240);

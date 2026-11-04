@@ -12092,6 +12092,177 @@ var init_injuries = __esm(() => {
   PHYSICAL_TYPES = ["physical", "fire", "cold", "electric", "poison"];
 });
 
+// src/living/companions.ts
+function afterTransition(source, old, messages) {
+  if (old.message === source.message && old.sourceRevision === source.sourceRevision)
+    return false;
+  const prior = messages.findIndex((m) => old.message.startsWith("warp-action:") ? messageOwnsAction(m, old.message.slice("warp-action:".length)) : m.id === old.message);
+  return prior >= 0 && messages.findIndex((m) => m.id === source.message) > prior;
+}
+function mentioned(state, actor, quote) {
+  const e = entityFor(state, actor);
+  const names = actor === "you" ? ["you", "your", "{{user}}", ...e?.aliases ?? []] : [actor, e?.displayName ?? "", ...e?.aliases ?? []];
+  return names.some((n) => n && norm2(quote).includes(norm2(n)));
+}
+function compatible(from, to) {
+  return from.role === "effort" && to.role === "effort" && from.owner !== to.owner && (from.unit && to.unit ? norm2(from.unit) === norm2(to.unit) : !from.unit && !to.unit && norm2(from.name) === norm2(to.name));
+}
+function resource(state, input) {
+  const matches = state.resources.filter((r) => r.id === input);
+  return matches.length === 1 ? matches[0] : undefined;
+}
+function assertGraph(state) {
+  for (const start of state.costLinks ?? []) {
+    if (!start.enabled)
+      continue;
+    const seen = new Set;
+    let id = start.from;
+    for (;; ) {
+      if (seen.has(id))
+        throw new Error("Cyclic shared cost link");
+      seen.add(id);
+      const edges = state.costLinks?.filter((l) => l.enabled && l.from === id) ?? [];
+      if (!edges.length)
+        break;
+      if (edges.length !== 1)
+        throw new Error("Ambiguous shared cost payer");
+      const edge = edges[0], from = resource(state, edge.from), to = resource(state, edge.to);
+      if (!from || !to || !compatible(from, to))
+        throw new MechanicalKnowledgeError("Shared cost pools need compatible established effort units");
+      id = edge.to;
+    }
+  }
+}
+function readCompanionObservation(row, state, source, messages, correction) {
+  const profile = source.message.startsWith("warp-source:");
+  const fields = row.kind === "companion" ? ["actor", "controller", "companionKind"] : ["from", "to", "enabled", "unsupported"];
+  if (Object.keys(row).some((k) => ![
+    "kind",
+    "id",
+    "source",
+    "sourceRevision",
+    "message",
+    "quote",
+    ...fields,
+    ...row.kind === "companion" ? ["manifestation"] : []
+  ].includes(k)))
+    return;
+  const editedProfile = (old) => profile && old.message.startsWith("warp-source:") && old.message.split(":")[1] === source.message.split(":")[1] && !sourceContains(messages.find((m) => m.id === source.message)?.content ?? "", old.quote);
+  if (row.kind === "companion") {
+    const actor = actorName(state, text(row.actor, 80)), controller = actorName(state, text(row.controller, 80));
+    if (!actor || !controller || actor === "you" || actor === controller || !entityFor(state, actor) || controller !== "you" && !entityFor(state, controller) || !["companion", "summon"].includes(row.companionKind) || !mentioned(state, actor, source.quote) || !mentioned(state, controller, source.quote))
+      return;
+    const old = state.companions?.find((c) => c.actor === actor);
+    if (old && !correction && !editedProfile(old.source))
+      return;
+    if (old?.manifestation?.active && (old.controller !== controller || old.companionKind !== row.companionKind))
+      return;
+    return { kind: "companion", value: {
+      id: old?.id ?? `companion-${revision(actor)}`,
+      actor,
+      controller,
+      companionKind: row.companionKind,
+      source,
+      ...old?.manifestation ? { manifestation: structuredClone(old.manifestation) } : {}
+    } };
+  }
+  const from = resource(state, row.from), to = resource(state, row.to);
+  if (!from || !to || typeof row.enabled !== "boolean" || !Array.isArray(row.unsupported) || row.unsupported.length > 8 || row.unsupported.some((v) => !text(v, 240)) || !compatible(from, to) || !mentioned(state, from.owner, source.quote) || !mentioned(state, to.owner, source.quote))
+    return;
+  const old = state.costLinks?.find((l) => l.from === from.id);
+  if (old && !correction && (profile ? !editedProfile(old.source) : !old.source.message.startsWith("warp-source:") && !afterTransition(source, old.source, messages)))
+    return;
+  const value = { id: `cost-link-${revision(from.id)}`, from: from.id, to: to.id, enabled: row.enabled, unsupported: row.unsupported, source };
+  const test = { ...state, costLinks: [...(state.costLinks ?? []).filter((l) => l.from !== from.id), value] };
+  assertGraph(test);
+  return { kind: "cost_link", value };
+}
+function observeCompanion(state, o) {
+  if (o.kind === "companion") {
+    const rows = state.companions ??= [], index = rows.findIndex((v) => v.id === o.value.id);
+    if (index < 0)
+      rows.push(structuredClone(o.value));
+    else
+      rows[index] = structuredClone(o.value);
+  } else {
+    const rows = state.costLinks ??= [], index = rows.findIndex((v) => v.id === o.value.id);
+    if (index < 0)
+      rows.push(structuredClone(o.value));
+    else
+      rows[index] = structuredClone(o.value);
+  }
+}
+function costPayer(state, input) {
+  assertGraph(state);
+  let payer = resource(state, input);
+  if (!payer)
+    throw new MechanicalKnowledgeError("Shared cost resource is unknown");
+  for (;; ) {
+    const link = state.costLinks?.find((l) => l.enabled && l.from === payer.id);
+    if (!link)
+      return payer;
+    if (link.unsupported.length)
+      throw new MechanicalKnowledgeError(`Shared cost needs clarification: ${link.unsupported.join("; ")}`);
+    payer = resource(state, link.to);
+  }
+}
+function validateManifestation(state, controller, id, active) {
+  const companion = state.companions?.find((c) => c.id === id && c.controller === controller && c.companionKind === "summon"), actor = companion && entityFor(state, companion.actor);
+  if (!companion || !actor)
+    throw new MechanicalKnowledgeError("This summon and its controller are not established");
+  if (active && actor.status === "dead")
+    throw new Error("Recalling a summon cannot resurrect it");
+  if (active && companion.manifestation?.active || actor.present === active)
+    throw new Error(active ? "This summon is already present" : "This summon is already absent");
+  return { companion, actor };
+}
+function manifest(state, controller, id, active, action, changes, beats, duration) {
+  const { companion, actor } = validateManifestation(state, controller, id, active);
+  changeManifestation(state, companion, actor, active, action, changes, beats, duration);
+}
+function changeManifestation(state, companion, actor, active, action, changes, beats, duration) {
+  const { controller, id } = companion;
+  const source = { message: `warp-action:${action}`, quote: `${active ? "Recall" : "Dismiss"} ${actor.name}`, sourceRevision: revision([id, active, duration]) };
+  const old = structuredClone(companion), oldActor = structuredClone(actor);
+  companion.manifestation = { active, source, ...active && duration ? { expiresAt: actionCount(state, controller) + duration + 1 } : {} };
+  actor.present = active;
+  if (!active) {
+    for (const condition of [...state.conditions])
+      if (condition.summon === companion.id) {
+        state.conditions = state.conditions.filter((c) => c.id !== condition.id);
+        closeCondition(state, condition, { kind: "receipt", id: action });
+        changes.push({ kind: "condition", id: condition.id, before: structuredClone(condition), after: null });
+      }
+  }
+  changes.push({ kind: "companion", id: companion.id, before: old, after: structuredClone(companion) }, { kind: "entity", id: actor.id, before: oldActor, after: structuredClone(actor) });
+  for (const d of [...state.distances ?? []])
+    if (d.from === actor.name || d.to === actor.name) {
+      state.distances = state.distances.filter((row) => row.id !== d.id);
+      changes.push({ kind: "distance", id: d.id, before: structuredClone(d), after: null });
+    }
+  for (const position of [...state.positions ?? []])
+    if (position.owner === actor.name) {
+      state.positions = state.positions.filter((p) => p.id !== position.id);
+      changes.push({ kind: "position", id: position.id, before: structuredClone(position), after: null });
+    }
+  beats.push({ kind: active ? "summon" : "dismiss", actor: controller, target: actor.name });
+}
+function expireCompanions(state, action, changes, beats) {
+  for (const c of state.companions ?? [])
+    if (c.manifestation?.active && c.manifestation.expiresAt !== undefined && c.manifestation.expiresAt <= actionCount(state, c.controller)) {
+      const actor = entityFor(state, c.actor);
+      if (actor)
+        changeManifestation(state, c, actor, false, action, changes, beats);
+    }
+}
+var norm2 = (v) => v.normalize("NFKC").trim().toLocaleLowerCase(), text = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", COMPANION_INSTRUCTIONS = `For an established companion relationship only, use mechanicalObservations {kind:"companion",actor:"known entity name",controller:"known person or you",companionKind:"companion|summon",message,quote}. Cite both identities. Profiles establish the relationship, never current presence. Reuse that entity on every return. Companion is a relationship, not permission to control another person's actions or knowledge. Do not turn every friend or romance partner into a companion system.
+An explicit one-for-one SHARED COST permission between two known effort pools may use {kind:"cost_link",from:"borrower's resource id",to:"payer's resource id",enabled:true,unsupported:[],message,quote}. Both owners must occur in the actual grant. Preserve all limits/conditions in unsupported. Pools need role:effort and the same explicit unit, or the same resource name with no unit. No damage/healing links, money, health, conversion, guessed pool, implicit NPC consent or cycles. An actual revocation uses enabled:false. This redirects saved ability costs only, never standalone spending. It does not copy or refill either balance.
+A sourced recall/dismiss ability can use effects {kind:"summon|dismiss",target:"self",companion:"saved companion id or exact actor name"}. Only kind:summon relationships are eligible, owned by the ability's actual controller. summon may add duration:explicitSubsequentControllerActions, only if the source states that action duration. Seconds and other lifetime rules stay unsupported. Already present/absent is not another cast. Recall preserves injuries, resource balances, knowledge and death. No resurrection or automatic healing. A condition effect on a summon itself may add untilDismissed:true only when source explicitly ties that effect to being summoned. Dismissal/expiry clears only such bound temporary effects, never an injury or an unrelated condition. A successful departure does not bring companions along. Their actual cooperation still needs current scene evidence under the existing NPC response contract.`;
+var init_companions = __esm(() => {
+  init_encounters();
+  init_story_text();
+});
+
 // src/living/encounters.ts
 function actorName(state, input) {
   if (normalize2(input) === "you")
@@ -12290,6 +12461,10 @@ function readEncounterObservation(row, state, source, messages) {
     const position = state.positions?.find((p) => p.owner === "you"), positionIndex = position && messages.findIndex((m) => position.source.message.startsWith("warp-action:") ? messageOwnsAction(m, position.source.message.slice("warp-action:".length)) : m.id === position.source.message);
     if (!profile && canonical !== "you" && isPresent && positionIndex !== undefined && positionIndex >= 0 && messages.findIndex((m) => m.id === source.message) < positionIndex && !(old && carriedObject(state, old)))
       isPresent = false;
+    const manifestation = state.companions?.find((c) => c.actor === canonical)?.manifestation;
+    const isCorrection = messages.some((m) => m.id === source.message && ("content" in m) && typeof m.content === "string" && /^\s*\(?OOC correction:/i.test(m.content));
+    if (manifestation && !profile && !isCorrection && !afterTransition(source, manifestation.source, messages))
+      isPresent = old?.present ?? false;
     const value = {
       id: old?.id ?? entityId(canonical),
       name: canonical,
@@ -12297,7 +12472,7 @@ function readEncounterObservation(row, state, source, messages) {
       aliases: [...new Set([...old?.aliases ?? [], ...aliases, ...name !== canonical ? [name] : []])].slice(0, 24),
       entityKind: row.entityKind,
       present: isPresent,
-      status: profile ? old?.status ?? "active" : ["active", "dead"].includes(row.status) ? row.status : old?.status ?? "active",
+      status: profile || old?.status === "dead" && !!state.companions?.some((c) => c.actor === canonical) && !isCorrection ? old?.status ?? "active" : ["active", "dead"].includes(row.status) ? row.status : old?.status ?? "active",
       source
     };
     return { kind: "entity", value };
@@ -12324,6 +12499,7 @@ var DAMAGE_TYPES, RANGES, MechanicalKnowledgeError, normalize2 = (value) => valu
 Resources may have role:"vital|effort|shield|money|other" only when their fictional function is supported. Equipped items and conditions may have defenses:[{kind:"armor|resistance|immunity|reflect",amount,damageType:"physical|fire|cold|electric|poison|mental|untyped|all"}]. Armor subtracts a flat amount, resistance/reflect use percentages, immunity uses amount:0. All non-immunity numbers must occur in the source quote. Do not invent these defenses or health values. A shield pool is an explicit resource with role:shield. Actual values stay unknown without source evidence. Never emit an absolute update to undo an action receipt.`;
 var init_encounters = __esm(() => {
   init_injuries();
+  init_companions();
   DAMAGE_TYPES = ["physical", "fire", "cold", "electric", "poison", "mental", "untyped"];
   RANGES = ["touch", "near", "far"];
   MechanicalKnowledgeError = class MechanicalKnowledgeError extends Error {
@@ -12342,7 +12518,7 @@ function readResponsePlans(raw, state, messages, enabled, historical = false) {
   return raw.map((row) => {
     if (!obj2(row) || Object.keys(row).some((k) => !["actor", "action", "assessment", "message", "quote", ...historical ? ["sourceRevision"] : []].includes(k)))
       throw new Error("Unsupported NPC response");
-    const actor = actorName(state, text(row.actor, 80)), quote = text(row.quote, 400);
+    const actor = actorName(state, text2(row.actor, 80)), quote = text2(row.quote, 400);
     if (!actor || actor === "you" || actors.has(actor) || !present(state, actor) || !capable(state, actor))
       throw new Error("NPC response actor is unavailable");
     if (!latest || quote.length < 4 || !sourceContains(latest.content, quote) || historical && typeof row.sourceRevision === "string" && !sourceRevisionMatches(latest, row.sourceRevision))
@@ -12355,24 +12531,24 @@ function readResponsePlans(raw, state, messages, enabled, historical = false) {
     if (a.kind === "ability") {
       if (Object.keys(a).some((k) => !["kind", "ability", "version", "target"].includes(k)))
         throw new Error("NPC invocation cannot override its definition");
-      const ability = state.abilities?.find((d) => d.owner === actor && (d.id === a.ability || d.name.toLocaleLowerCase() === text(a.ability).toLocaleLowerCase()));
+      const ability = state.abilities?.find((d) => d.owner === actor && (d.id === a.ability || d.name.toLocaleLowerCase() === text2(a.ability).toLocaleLowerCase()));
       if (!ability || a.version !== undefined && a.version !== ability.version)
         throw new Error("NPC ability is not established");
-      const target = text(a.target, 80) ? actorName(state, text(a.target, 80)) : ability.target === "self" ? actor : "";
+      const target = text2(a.target, 80) ? actorName(state, text2(a.target, 80)) : ability.target === "self" ? actor : "";
       if (!target || !present(state, target))
         throw new Error("NPC target is not present");
       action = { kind: "ability", ability: ability.id, version: ability.version, target };
     } else if (a.kind === "move") {
       if (Object.keys(a).some((k) => !["kind", "target", "direction"].includes(k)) || !["closer", "away"].includes(a.direction))
         throw new Error("Invalid NPC movement");
-      const target = actorName(state, text(a.target, 80));
+      const target = actorName(state, text2(a.target, 80));
       if (!target || !present(state, target) || target === actor)
         throw new Error("NPC movement target is unavailable");
       action = { kind: "move", target, direction: a.direction };
     } else if (a.kind === "strike") {
       if (Object.keys(a).some((k) => !["kind", "target"].includes(k)))
         throw new Error("A basic strike has no model-selected damage");
-      const target = actorName(state, text(a.target, 80));
+      const target = actorName(state, text2(a.target, 80));
       if (!target || !present(state, target) || target === actor)
         throw new Error("NPC strike target is unavailable");
       action = { kind: "strike", target };
@@ -12386,14 +12562,14 @@ function readResponsePlans(raw, state, messages, enabled, historical = false) {
     const offensive = offensiveAction(action, state, actor);
     const contested = offensive || assessment.contested === true;
     const tier = assessment.tier;
-    if (contested && (!["favorable", "uncertain", "outmatched"].includes(tier) || !text(assessment.intent) || !text(assessment.stakes) || !Array.isArray(assessment.reasons) || !assessment.reasons.length || assessment.reasons.some((r) => !text(r, 180))))
+    if (contested && (!["favorable", "uncertain", "outmatched"].includes(tier) || !text2(assessment.intent) || !text2(assessment.stakes) || !Array.isArray(assessment.reasons) || !assessment.reasons.length || assessment.reasons.some((r) => !text2(r, 180))))
       throw new Error("NPC uncertainty is incomplete");
     return { actor, action, source: { message: latest.id, quote, sourceRevision: historical && typeof row.sourceRevision === "string" ? row.sourceRevision : storyRevision(latest.content) }, assessment: {
       contested,
       tier: ["favorable", "uncertain", "outmatched"].includes(tier) ? tier : "uncertain",
-      intent: text(assessment.intent),
-      stakes: text(assessment.stakes),
-      reasons: Array.isArray(assessment.reasons) ? assessment.reasons.map((r) => text(r, 180)).filter(Boolean).slice(0, 3) : []
+      intent: text2(assessment.intent),
+      stakes: text2(assessment.stakes),
+      reasons: Array.isArray(assessment.reasons) ? assessment.reasons.map((r) => text2(r, 180)).filter(Boolean).slice(0, 3) : []
     } };
   });
 }
@@ -12413,7 +12589,7 @@ function offensiveAction(action, state, actor) {
 function responseDecision(plan, actionId, shift, reasons, requireRoll = false) {
   if (!requireRoll && plan.assessment.contested === false)
     return;
-  if (!["outmatched", "uncertain", "favorable"].includes(plan.assessment.tier) || !text(plan.assessment.intent) || !text(plan.assessment.stakes) || !Array.isArray(plan.assessment.reasons) || !plan.assessment.reasons.length || plan.assessment.reasons.some((r) => !text(r, 180)))
+  if (!["outmatched", "uncertain", "favorable"].includes(plan.assessment.tier) || !text2(plan.assessment.intent) || !text2(plan.assessment.stakes) || !Array.isArray(plan.assessment.reasons) || !plan.assessment.reasons.length || plan.assessment.reasons.some((r) => !text2(r, 180)))
     throw new Error("NPC uncertainty is incomplete");
   const tiers = ["outmatched", "uncertain", "favorable"];
   const tier = tiers[Math.max(0, Math.min(2, tiers.indexOf(plan.assessment.tier) + shift))];
@@ -12448,7 +12624,7 @@ function responseChecks(receipt, state, visible = []) {
     intent: `${b.name ? b.name[0].toLocaleUpperCase() + b.name.slice(1) : "Respond"}${b.target ? ` · ${display(b.target)}` : ""}`
   } }] : []);
 }
-var MAX_RESPONSES = 3, obj2 = (v) => !!v && typeof v === "object" && !Array.isArray(v), text = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", RESPONSE_INSTRUCTIONS = `An ongoing physical exchange may include exchange:true and responses:[{actor,action,assessment:{contested,tier:"favorable|uncertain|outmatched",intent,stakes,reasons:[]},quote}]. Otherwise omit responses or return [].
+var MAX_RESPONSES = 3, obj2 = (v) => !!v && typeof v === "object" && !Array.isArray(v), text2 = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", RESPONSE_INSTRUCTIONS = `An ongoing physical exchange may include exchange:true and responses:[{actor,action,assessment:{contested,tier:"favorable|uncertain|outmatched",intent,stakes,reasons:[]},quote}]. Otherwise omit responses or return [].
 Plan at most one response for each present NPC, at most 3 total, in the order the scene supports. quote must be an EXACT substring of that NPC's current intention/opportunity in the MOST RECENT narrator message, never a card, old grudge, player attempt or generic personality. Code attaches the source message ID; do not draft future narration in a message field. Do not create opposition, interrupt quiet scenes, punish a question, or continue combat after it actually ended. Only an actual player action opens an exchange, not dialogue, inspection, a hypothetical or an OOC edit.
 NPC action vocabulary: {kind:"ability",ability:"saved ID or newly prepared name",target}; {kind:"move",target,direction:"closer|away"}; {kind:"strike",target} for an ordinary unmodified physical strike at touch range; {kind:"defend"}; {kind:"wait"}. Prepare a relevant NPC ability from its real source in abilityDefinitions if needed. Both sides use the same stored definitions, costs, range and defenses. No generated damage, no replacement cost and no new power in a response.
 Basic strike uses Warp's fixed 5 physical impact. It changes a known vital resource when present, otherwise resolver 4 records qualitative physical injury for a person without inventing a numerical pool. Prefer an established source-backed attack when the person has one; do not flatten exceptional abilities or equipment into this fallback. Explicit numerical ability damage still needs a known resource. Unknown money, energy and recovery limits remain unknown. If an exact numerical exchange cannot be prepared for both sides, keep that part unresolved locally rather than inventing health or letting one side take unrecorded damage.
@@ -12976,7 +13152,7 @@ function readMechanicalObservations(raw, before, messages, player, historical = 
   placeRows.sort((a, b) => depth(a) - depth(b));
   const placeAliases = new Map;
   const ambiguousPlaceAliases = new Set(placeRows.flatMap((row) => typeof row.id === "string" && new Set(placeRows.filter((other) => other.id === row.id).map((other) => JSON.stringify([other.name, other.parent]))).size > 1 ? [row.id] : []));
-  for (const input of [...rows.filter((r) => obj4(r) && r.kind === "entity"), ...placeRows, ...rows.filter((r) => !obj4(r) || r.kind !== "entity" && r.kind !== "place")]) {
+  for (const input of [...rows.filter((r) => obj4(r) && r.kind === "entity"), ...placeRows, ...rows.filter((r) => !obj4(r) || !["entity", "place", "companion", "cost_link"].includes(r.kind)), ...rows.filter((r) => obj4(r) && ["companion", "cost_link"].includes(r.kind))]) {
     if (!obj4(input))
       continue;
     let row = input;
@@ -13004,7 +13180,13 @@ function readMechanicalObservations(raw, before, messages, player, historical = 
     if (!s)
       continue;
     let observation;
-    if (["place", "route", "discovery", "stock", "stock_access"].includes(row.kind)) {
+    if (["companion", "cost_link"].includes(row.kind)) {
+      try {
+        observation = readCompanionObservation(row.kind === "companion" ? { ...row, actor: own(row.actor, player), controller: own(row.controller, player) } : row, working, s.evidence, messages, s.correction);
+      } catch {
+        continue;
+      }
+    } else if (["place", "route", "discovery", "stock", "stock_access"].includes(row.kind)) {
       observation = readExplorationObservation(row, working, s.evidence, messages, s.correction, historical);
       if (observation?.kind === "place" && obj4(input) && typeof input.id === "string" && !ambiguousPlaceAliases.has(input.id))
         placeAliases.set(input.id, observation.value.id);
@@ -13103,6 +13285,10 @@ function readMechanicalObservations(raw, before, messages, player, historical = 
   return out;
 }
 function observe(state, o) {
+  if (o.kind === "companion" || o.kind === "cost_link") {
+    observeCompanion(state, o);
+    return;
+  }
   if (o.kind === "place" || o.kind === "route" || o.kind === "discovery" || o.kind === "stock" || o.kind === "stock_access") {
     observeExploration(state, o);
     return;
@@ -13158,7 +13344,7 @@ function applyObservations(before, observations) {
     observe(state, observation);
   return state;
 }
-function execute(before, actor, operations, actionId, engine = 1, strict = false, qualitative = false, rewards = false, exploration = false) {
+function execute(before, actor, operations, actionId, engine = 1, strict = false, qualitative = false, rewards = false, exploration = false, companions = false) {
   const state = structuredClone(before), changes = [], beats = [];
   if (engine === 2)
     actor = actorName(state, actor);
@@ -13186,6 +13372,8 @@ function execute(before, actor, operations, actionId, engine = 1, strict = false
         throw new (strict ? MechanicalKnowledgeError : Error)("Ability unavailable to this actor");
       if (ability.unsupported.length)
         throw new (strict ? MechanicalKnowledgeError : Error)(`${ability.name} needs clarification: ${ability.unsupported.join("; ")}`);
+      if (!companions && ability.effects.some((e) => e.kind === "summon" || e.kind === "dismiss"))
+        throw new Error("Ability requires the companion resolver");
       if (!qualitative && ability.effects.some((e) => e.kind === "harm" || e.kind === "mend"))
         throw new Error("Ability requires the injury resolver");
       if (engine === 1 && (ability.range || ability.cooldown || ability.effects.some((e) => e.defense || e.duration)))
@@ -13235,11 +13423,28 @@ function execute(before, actor, operations, actionId, engine = 1, strict = false
         if (!item || requirement.equipped && !item.equipped)
           throw new Error("Required equipment is not available");
       }
+      if (companions) {
+        for (const effect of ability.effects)
+          if (effect.kind === "summon" || effect.kind === "dismiss")
+            validateManifestation(state, actor, effect.companion, effect.kind === "summon");
+      }
       const costs = ability.costs.map((c) => c.kind === "resource" ? { kind: "spend", resource: c.id, amount: c.amount } : { kind: "consume", item: c.id, amount: c.amount });
-      const paid = execute(state, actor, costs, `${actionId}:${index}:cost`);
-      state.resources = paid.state.resources;
-      state.items = paid.state.items;
-      changes.push(...paid.changes);
+      if (companions) {
+        for (const cost of costs) {
+          if (cost.kind === "spend" && state.resources.find((r) => r.id === cost.resource)?.owner !== actor)
+            throw new MechanicalKnowledgeError("Ability cost is not owned by its actor");
+          const payer = cost.kind === "spend" ? costPayer(state, cost.resource) : undefined;
+          const paid = execute(state, payer?.owner ?? actor, [payer && cost.kind === "spend" ? { ...cost, resource: payer.id } : cost], `${actionId}:${index}:cost`);
+          state.resources = paid.state.resources;
+          state.items = paid.state.items;
+          changes.push(...paid.changes);
+        }
+      } else {
+        const paid = execute(state, actor, costs, `${actionId}:${index}:cost`);
+        state.resources = paid.state.resources;
+        state.items = paid.state.items;
+        changes.push(...paid.changes);
+      }
       if (engine === 2) {
         advanceActor(state, actor, changes, beats);
         setCooldown(state, actor, ability.id, ability.cooldown ?? 0);
@@ -13248,7 +13453,9 @@ function execute(before, actor, operations, actionId, engine = 1, strict = false
         continue;
       for (const [effectIndex, effect] of ability.effects.entries()) {
         const owner = effect.target === "self" ? actor : target;
-        if (effect.kind === "restore" || effect.kind === "damage" || effect.kind === "harm" || effect.kind === "mend") {
+        if (companions && (effect.kind === "summon" || effect.kind === "dismiss")) {
+          manifest(state, actor, effect.companion, effect.kind === "summon", actionId, changes, beats, effect.duration);
+        } else if (effect.kind === "restore" || effect.kind === "damage" || effect.kind === "harm" || effect.kind === "mend") {
           const candidates = state.resources.filter((r) => r.owner === owner && (r.id === effect.resource || r.name.toLocaleLowerCase() === effect.resource?.toLocaleLowerCase()));
           const fallback = qualitative && (effect.kind === "harm" || effect.kind === "mend" || !candidates.length && effect.basis === "warp" && isVitalSelector(effect.resource) && Object.values(IMPACTS).includes(effect.amount));
           if (fallback) {
@@ -13284,6 +13491,7 @@ function execute(before, actor, operations, actionId, engine = 1, strict = false
             hinders: effect.hinders ?? [],
             blocks: effect.blocks ?? [],
             source: ability.source,
+            ...companions && effect.untilDismissed ? { summon: state.companions?.find((c) => c.actor === owner && c.companionKind === "summon")?.id } : {},
             ...engine === 2 && effect.duration ? { expiresAt: actionCount(state, owner) + effect.duration + 1 } : {},
             ...engine === 2 && effect.defense ? { defenses: [structuredClone(effect.defense)] } : {}
           };
@@ -13428,13 +13636,15 @@ function execute(before, actor, operations, actionId, engine = 1, strict = false
       throw new Error("Unsupported mechanical operation");
     if (engine === 2 && ["spend", "restore", "consume", "transfer", "equip"].includes(op.kind) && state.clocks?.some((c) => c.actor === actor))
       advanceActor(state, actor, changes, beats);
+    if (companions)
+      expireCompanions(state, actionId, changes, beats);
   }
   return { state, changes, beats };
 }
 function executeExchange(before, actor, operations, id, responses, place, resolver = 3) {
   if (!Array.isArray(responses) || responses.length > MAX_RESPONSES || responses.length && !operations.length)
     throw new Error("Invalid exchange opportunity");
-  let resolved = execute(before, actor, operations, id, 2, true, resolver >= 4, resolver >= 5, resolver >= 6);
+  let resolved = execute(before, actor, operations, id, 2, true, resolver >= 4, resolver >= 5, resolver >= 6, resolver >= 7);
   const actors = new Set;
   for (const plan of responses) {
     if (!plan || typeof plan.actor !== "string" || !plan.source?.message || !plan.source?.quote || !plan.assessment || !plan.action)
@@ -13456,7 +13666,7 @@ function executeExchange(before, actor, operations, id, responses, place, resolv
       continue;
     }
     try {
-      execute(resolved.state, who, [{ ...action, ...["ability", "strike", "move"].includes(action.kind) ? { place } : {} }], `${id}:response:${who}`, 2, true, resolver >= 4, resolver >= 5);
+      execute(resolved.state, who, [{ ...action, ...["ability", "strike", "move"].includes(action.kind) ? { place } : {} }], `${id}:response:${who}`, 2, true, resolver >= 4, resolver >= 5, resolver >= 6, resolver >= 7);
     } catch (error) {
       if (error instanceof MechanicalKnowledgeError)
         throw error;
@@ -13473,17 +13683,17 @@ function executeExchange(before, actor, operations, id, responses, place, resolv
       operation = decision?.result === "setback" ? { kind: "attempt", approach: "movement", target: action.target, place } : { ...action, place };
     else if (action.kind === "defend" && decision?.result === "setback")
       operation = { kind: "attempt", approach: "movement", place };
-    const next = execute(resolved.state, who, [operation], `${id}:response:${who}`, 2, true, resolver >= 4, resolver >= 5);
+    const next = execute(resolved.state, who, [operation], `${id}:response:${who}`, 2, true, resolver >= 4, resolver >= 5, resolver >= 6, resolver >= 7);
     resolved.beats.push({ kind: "response", actor: who, ...target ? { target } : {}, ...decision ? { decision } : {}, name: action.kind === "ability" ? resolved.state.abilities?.find((a) => a.id === action.ability)?.name : action.kind });
     resolved = { state: next.state, changes: [...resolved.changes, ...next.changes], beats: [...resolved.beats, ...next.beats] };
   }
   return resolved;
 }
 function prepareMechanical(before, id, actor, operations, context = "") {
-  return prepare(before, id, actor, operations, context, before.places?.length || operations.some((op) => op.kind === "travel" || op.kind === "gather") ? 6 : 5);
+  return prepare(before, id, actor, operations, context, before.companions?.length || before.costLinks?.length ? 7 : before.places?.length || operations.some((op) => op.kind === "travel" || op.kind === "gather") ? 6 : 5);
 }
 function prepareExchange(before, id, actor, operations, responses, context = "", place) {
-  return prepare(before, id, actor, operations, context, before.places?.length || operations.some((op) => op.kind === "travel" || op.kind === "gather") ? 6 : 5, responses, place);
+  return prepare(before, id, actor, operations, context, before.companions?.length || before.costLinks?.length ? 7 : before.places?.length || operations.some((op) => op.kind === "travel" || op.kind === "gather") ? 6 : 5, responses, place);
 }
 function prepare(before, id, actor, operations, context, engine, responses, place) {
   place = place || undefined;
@@ -13510,7 +13720,7 @@ function commitMechanical(before, receipt) {
   }
   if (receipt.version !== 1 || receipt.status !== "ready" || receipt.base !== revision(before))
     throw new Error("Mechanical receipt is blocked or stale");
-  if (receipt.engine !== undefined && receipt.engine !== 2 && receipt.engine !== 3 && receipt.engine !== 4 && receipt.engine !== 5 && receipt.engine !== 6)
+  if (receipt.engine !== undefined && receipt.engine !== 2 && receipt.engine !== 3 && receipt.engine !== 4 && receipt.engine !== 5 && receipt.engine !== 6 && receipt.engine !== 7)
     throw new Error("Unsupported mechanical resolver");
   if ((receipt.engine ?? 1) < 3 && receipt.responses?.length)
     throw new Error("Responses require the exchange resolver");
@@ -13565,7 +13775,7 @@ function parseMechanicalPlan(raw, state, action, classified) {
       operations.push({ kind: "claim", agreement: agreement.id, reward: rewards[0].id });
     } else if (row.kind === "ability") {
       const ability = state.abilities?.find((a) => (a.id === row.ability || a.name.toLocaleLowerCase() === str4(row.ability).toLocaleLowerCase()) && a.owner === "you");
-      if (!ability || !stated(/\b(?:use|cast|invoke|perform|activate|apply|treat|focus|deploy|repair|patch|switch|turn)\b/i))
+      if (!ability || !(stated(/\b(?:use|cast|invoke|perform|activate|apply|treat|focus|deploy|repair|patch|switch|turn)\b/i) || ability.effects.some((e) => e.kind === "summon") && stated(/\b(?:summon|recall)\b/i) || ability.effects.some((e) => e.kind === "dismiss") && stated(/\bdismiss\b/i)))
         throw new Error("Ability use is not established");
       if (row.version !== undefined && row.version !== ability.version)
         throw new Error("Ability definition changed");
@@ -13648,6 +13858,8 @@ function conditionInfluence(state, actor, approach, target, place, nextAction = 
 function mechanicalPacket(state, focus = "") {
   const withoutSource = ({ source, ...value }) => value;
   return {
+    ...state.companions?.length ? { companions: state.companions.map((c) => ({ id: c.id, actor: c.actor, controller: c.controller, companionKind: c.companionKind, ...c.manifestation ? { active: c.manifestation.active, ...c.manifestation.expiresAt !== undefined ? { remainingControllerActions: Math.max(0, c.manifestation.expiresAt - actionCount(state, c.controller) - 1) } : {} } : {} })) } : {},
+    ...state.costLinks?.length ? { costLinks: state.costLinks.map(withoutSource) } : {},
     resources: state.resources.map(withoutSource),
     items: state.items.map(withoutSource),
     conditions: state.conditions.map(withoutSource),
@@ -13695,7 +13907,7 @@ function mechanicalNotes(receipt) {
     return "name" in value ? value.name : "";
   }).filter(Boolean).slice(-2);
 }
-var APPROACHES, emptyMechanics = () => ({ version: 1, resources: [], items: [], conditions: [], applied: [] }), hasMechanics = (s) => !!(s.resources.length || s.items.length || s.conditions.length || s.abilities?.length || s.entities?.length || s.resilience?.length || s.closedConditions?.length || s.agreements?.length || s.places?.length), obj4 = (v) => !!v && typeof v === "object" && !Array.isArray(v), str4 = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", amount2 = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1e9, own = (v, player) => {
+var APPROACHES, emptyMechanics = () => ({ version: 1, resources: [], items: [], conditions: [], applied: [] }), hasMechanics = (s) => !!(s.resources.length || s.items.length || s.conditions.length || s.abilities?.length || s.entities?.length || s.resilience?.length || s.closedConditions?.length || s.agreements?.length || s.places?.length || s.companions?.length || s.costLinks?.length), obj4 = (v) => !!v && typeof v === "object" && !Array.isArray(v), str4 = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", amount2 = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1e9, own = (v, player) => {
   const name = str4(v, 80);
   return ["you", "me", "i", "player", "{{user}}", player?.toLowerCase()].includes(name.toLowerCase()) ? "you" : name;
 }, approaches = (v) => Array.isArray(v) ? [...new Set(v.filter((x) => APPROACHES.includes(x)))] : [], numberIn = (quote, n) => (quote.match(/\d+(?:\.\d+)?/g) ?? []).some((x) => Number(x) === n) || Number.isInteger(n) && ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].some((word, i) => i === n && new RegExp(`\\b${word}\\b`, "i").test(quote)), singularPossession = (quote, name) => {
@@ -13709,6 +13921,7 @@ var init_mechanics = __esm(() => {
   init_injuries();
   init_agreements();
   init_exploration();
+  init_companions();
   APPROACHES = ["movement", "precision", "force", "speech", "perception", "concentration"];
   MechanicalPlanError = class MechanicalPlanError extends Error {
   };
@@ -13804,7 +14017,7 @@ function pathsOf(messages) {
 function evidence2(v, messages) {
   if (!obj5(v))
     return null;
-  const message = text2(v.message, 160), quote = text2(v.quote, 400);
+  const message = text3(v.message, 160), quote = text3(v.quote, 400);
   const source = messages.find((m) => m.id === message);
   if (!source || quote.length < 4 || !sourceContains(source.content, quote))
     return null;
@@ -13818,7 +14031,7 @@ function readChanges(raw, before, messages, playerName) {
   const sourceMessages = new Map(messages.map((m) => [m.id, m]));
   const playerNames = new Set(["you", "player", "me", "i", "{{user}}", ...playerName ? [playerName.toLowerCase()] : [], ...messages.filter((m) => m.is_user && m.name).map((m) => m.name.toLowerCase())]);
   const person = (v) => {
-    const s = text2(v, 80);
+    const s = text3(v, 80);
     if (playerNames.has(s.toLowerCase()))
       return "you";
     try {
@@ -13831,7 +14044,7 @@ function readChanges(raw, before, messages, playerName) {
     if (!obj5(v))
       continue;
     const e = evidence2(v, messages);
-    let id = text2(v.id, 100);
+    let id = text3(v.id, 100);
     if (!e || !id && v.op !== "learn")
       continue;
     const previous = world.facts.find((f) => f.id === id);
@@ -13862,7 +14075,7 @@ function readChanges(raw, before, messages, playerName) {
         continue;
       event = { op: "transfer", id, from, to, evidence: e };
     } else if (v.op === "put") {
-      const kind = text2(v.kind), subject = person(v.subject), description = text2(v.text);
+      const kind = text3(v.kind), subject = person(v.subject), description = text3(v.text);
       if (!kinds.has(kind) || !subject || !description)
         continue;
       if (kind === "knowledge")
@@ -13892,7 +14105,7 @@ function readChanges(raw, before, messages, playerName) {
   let scene;
   const sceneSource = obj5(raw.scene) ? evidence2(raw.scene, messages) : null;
   if (obj5(raw.scene) && sceneSource) {
-    scene = { place: text2(raw.scene.place, 100) || before.place, present: Array.isArray(raw.scene.present) ? [...new Set(raw.scene.present.map(person).filter((p) => p && p !== "you"))].slice(0, 8) : before.present, ...sceneSource };
+    scene = { place: text3(raw.scene.place, 100) || before.place, present: Array.isArray(raw.scene.present) ? [...new Set(raw.scene.present.map(person).filter((p) => p && p !== "you"))].slice(0, 8) : before.present, ...sceneSource };
   }
   return { events, ...scene ? { scene } : {}, notes: notes.slice(0, 2) };
 }
@@ -13952,8 +14165,8 @@ function foldWorld(messages) {
 function resolveAttempt(raw, seed) {
   if (!obj5(raw) || raw.risky !== true || raw.contested !== true)
     return null;
-  const intent = text2(raw.intent), stakes = text2(raw.stakes);
-  const reasons = Array.isArray(raw.reasons) ? raw.reasons.map((x) => text2(x, 180)).filter(Boolean).slice(0, 3) : [];
+  const intent = text3(raw.intent), stakes = text3(raw.stakes);
+  const reasons = Array.isArray(raw.reasons) ? raw.reasons.map((x) => text3(x, 180)).filter(Boolean).slice(0, 3) : [];
   if (!intent || !stakes || !reasons.length)
     return null;
   const tier = raw.tier === "favorable" || raw.tier === "outmatched" ? raw.tier : "uncertain";
@@ -13975,11 +14188,12 @@ function worldPacket(world, focus = "") {
     ...selected.some((f) => f.access) ? { knowledgeBoundary: "Knowledge records identify actual learners and the proposition they learned. Other facts are narrator context, not shared information. Unrecorded access is unknown. Do not reveal secrets or let someone act on privileged information without an established way to learn it. Hearing an allegation does not make it true; old knowledge need not match a newer fact." } : {},
     ...world.mechanics && (world.mechanics.resources.length || world.mechanics.items.length) ? { assetBoundary: "Counted resources and items change only through a saved mechanical receipt. An offer, promise or completed task does not itself transfer payment. Hold an offered reward available for the player's acceptance and resolution. Do not invent or recite new balances from prose. Missing preparation is uncertainty in the record, not a fictional refusal, fee or extra chore." } : {},
     ...world.mechanics?.agreements?.length ? { agreementBoundary: "Accepted agreement requirements are separate and all must be fulfilled. Preserve their terms; an attempted task is not proof of completion. After completion the NPC may offer or refuse the promised reward. Hold an offered reward available for the player's acceptance; do not narrate a completed item or money handover without a reward receipt. Describe offers naturally; leave wallet arithmetic and current balances to the inline display unless asked. Paid rewards stay paid. Never automatically spend the player's promised payment. Do not introduce a setup menu, relationship score or new quest to manage an agreement." } : {},
+    ...world.mechanics?.companions?.length || world.mechanics?.costLinks?.length ? { companionBoundary: "Companion relationships do not grant control, consent, extra actions or shared knowledge. Recall/dismissal never resets injuries, balances, identity, cooldowns or death. Lifetime counts only sourced controller actions. Shared links redirect established ability effort costs one-for-one; they do not duplicate resources or transmit damage/healing. No automatic following, resurrection or recovery. Unknown restrictions stay unresolved." } : {},
     ...world.mechanics?.places?.length ? { explorationBoundary: "Known places, routes, local changes, clues and remaining supplies persist across visits. This packet contains relevant nearby/requested spatial knowledge, not the entire map; omitted places are not erased. This is the player's discovered map, not shared NPC knowledge. Unvisited places are known only through their established sources, not an omniscient map. A route's unknown status does not prove access. Do not reconnect rooms, relock an opened exit, repair a broken object or refill a cache simply because the player returns. Counted gathering and travel through recorded routes use saved receipts; do not grant supplies, move the player or repeat costs contrary to that turn's receipt. A question, map inspection or unaccepted trip does not move anyone or advance time. New unestablished space may be explored naturally; do not invent a setup requirement. A successful departure does not automatically bring other people along." } : {},
     ...world.mechanics ? { mechanics: mechanicalPacket(world.mechanics, focus) } : {}
   });
 }
-var emptyWorld = () => ({ place: "", present: [], facts: [] }), text2 = (v, limit = 240) => {
+var emptyWorld = () => ({ place: "", present: [], facts: [] }), text3 = (v, limit = 240) => {
   if (typeof v !== "string")
     return "";
   const clean = v.trim().replace(/\s+/g, " ");
@@ -14112,7 +14326,7 @@ function readAbilityDefinitions(raw, state, messages, sources = [], player, hist
         return { kind: c.kind, id: candidate.id, amount: c.amount };
       });
       const effects = row.effects.map((e) => {
-        const fields = { restore: ["resource", "amount", "basis", "magnitude"], damage: ["resource", "amount", "basis", "magnitude", "damageType"], harm: ["impact", "damageType"], mend: ["impact", "maxInjury"], condition: ["name", "hinders", "helps", "blocks", "ending", "duration"], clear_condition: ["name"], defense: ["name", "defense", "ending", "duration", "basis", "magnitude"] };
+        const fields = { summon: ["companion", "duration"], dismiss: ["companion"], restore: ["resource", "amount", "basis", "magnitude"], damage: ["resource", "amount", "basis", "magnitude", "damageType"], harm: ["impact", "damageType"], mend: ["impact", "maxInjury"], condition: ["name", "hinders", "helps", "blocks", "ending", "duration", "untilDismissed"], clear_condition: ["name"], defense: ["name", "defense", "ending", "duration", "basis", "magnitude"] };
         if (!obj6(e) || !fields[e.kind] || Object.keys(e).some((k) => !["kind", "target", ...fields[e.kind]].includes(k)))
           throw new Error("Unsupported effect fields");
         if (!obj6(e) || !["self", "target"].includes(e.target))
@@ -14121,6 +14335,12 @@ function readAbilityDefinitions(raw, state, messages, sources = [], player, hist
         const duration = e.duration;
         if (duration !== undefined && (!positive(duration) || !Number.isInteger(duration) || duration > 1e4 || !numberIn2(quote, duration)))
           throw new Error("Unsourced action duration");
+        if (e.kind === "summon" || e.kind === "dismiss") {
+          const companion = state.companions?.find((c) => (c.id === e.companion || c.actor === actorName(state, str5(e.companion, 80))) && c.controller === owner && c.companionKind === "summon");
+          if (target !== "self" || !companion)
+            throw new Error("Unknown owned summon");
+          return { kind: e.kind, target, companion: companion.id, ...duration ? { duration } : {} };
+        }
         if (e.kind === "harm" || e.kind === "mend") {
           if (!Object.hasOwn(IMPACTS, e.impact) || e.kind === "harm" && !["physical", "fire", "cold", "electric", "poison"].includes(e.damageType))
             throw new Error("Unsupported qualitative physical effect");
@@ -14146,7 +14366,9 @@ function readAbilityDefinitions(raw, state, messages, sources = [], player, hist
           const name = str5(e.name), ending = str5(e.ending, 240);
           if (!name || !ending)
             throw new Error("Missing condition semantics");
-          return { kind: "condition", target, name, ending, hinders: scope(e.hinders), blocks: scope(e.blocks), helps: scope(e.helps), ...duration ? { duration } : {} };
+          if (e.untilDismissed !== undefined && (e.untilDismissed !== true || target !== "self" || !state.companions?.some((c) => c.actor === owner && c.companionKind === "summon")))
+            throw new Error("An effect bound to dismissal needs its established summon owner");
+          return { kind: "condition", target, name, ending, hinders: scope(e.hinders), blocks: scope(e.blocks), helps: scope(e.helps), ...e.untilDismissed === true ? { untilDismissed: true } : {}, ...duration ? { duration } : {} };
         }
         if (e.kind === "defense") {
           const name = str5(e.name), ending = str5(e.ending, 240);
@@ -14253,6 +14475,10 @@ function foldMechanics(messages) {
             return [{ kind: o.kind, id: o.id, ...o.retire ? { retire: true } : {}, ...o.source }];
           if (o.kind === "ability")
             return [];
+          if (o.kind === "companion") {
+            const { manifestation, ...value } = o.value;
+            return [{ kind: o.kind, ...value, ...o.value.source }];
+          }
           if (o.kind === "place")
             return [{ kind: o.kind, ...o.value, ...o.entered ? { entered: true } : {}, ...o.value.source }];
           if (o.kind === "agreement")
@@ -14692,7 +14918,11 @@ function sceneReadSummary(raw, accepted) {
   const spatial = rows.filter((row) => row && typeof row === "object" && ["place", "route", "discovery", "stock", "stock_access"].includes(row.kind)).slice(0, 8).map((row) => ({ fields: Object.keys(row).slice(0, 24).map((key) => key.slice(0, 80)), ...Object.fromEntries(Object.entries(row).filter(([key]) => ["kind", "id", "name", "parent", "from", "to", "site", "via", "status", "message", "quote"].includes(key)).map(([key, value]) => [key, typeof value === "string" ? value.slice(0, key === "quote" ? 400 : 160) : null])) }));
   return { offered: count(rows), accepted: count(accepted), ...spatial.length ? { spatial } : {} };
 }
-var SCENE_OBSERVATIONS = `Read the supplied story for consequential mechanical observations, not actions to execute. Return mechanicalObservations:[] alongside scene/changes, even when empty. Do not execute costs, roll, award, heal, move someone, advance clocks or invent an encounter during this read. Committed receipts remain authoritative. Definition sources can establish actual owned quantities/capabilities, never presence, discoveries, exits or completed events. Every row needs message and a contiguous exact quote. Reuse known IDs/names. Keep unrelated systems absent.
+var SCENE_OBSERVATIONS;
+var init_scene_read = __esm(() => {
+  init_companions();
+  SCENE_OBSERVATIONS = `Read the supplied story for consequential mechanical observations, not actions to execute. Return mechanicalObservations:[] alongside scene/changes, even when empty. Do not execute costs, roll, award, heal, move someone, advance clocks or invent an encounter during this read. Committed receipts remain authoritative.
+${COMPANION_INSTRUCTIONS} Definition sources can establish actual owned quantities/capabilities, never presence, discoveries, exits or completed events. Every row needs message and a contiguous exact quote. Reuse known IDs/names. Keep unrelated systems absent.
 
 PRIORITY: When the conversation investigates a route, access, a local discovery or supplies, record that knowledge as typed spatial observations BEFORE optional prose facts. A scene/fact alone does not record its exits. Recover relevant missing connections from earlier supplied narrator replies; an earlier successful read does not prove the connection was saved. Keep normal and emergency passages distinct. Use the supplied known scene references for established endpoint names, not as proof of a new connection or current presence.
 Spatial rows:
@@ -14710,6 +14940,7 @@ Actual narrator completion uses {kind:"agreement_progress",agreement,requirement
 
 Only a newly relevant source-backed ability/item action needs abilityDefinitions:[{owner,name,description,approach:"movement|precision|force|speech|perception|concentration|other",target:"self|other|either",costs:[{kind:"resource|item",id,amount}],effects:[],requires:[{item,equipped}],unsupported:[],message,quote}]. Use one contiguous source quote covering effects, costs and restrictions; preserve the actual owner. Costs must be explicit source numbers for actual owned assets, otherwise costs:[]. No invented drawback, pool, range, cooldown, formula or power. Do not regenerate an unchanged saved definition. Return at most three relevant definitions.
 Supported effects: {kind:"damage|restore",target:"self|target",resource,amount:explicitNumber} or magnitude:"minor|standard|major" when no exact amount exists; damage may add damageType:"physical|fire|cold|electric|poison|mental|untyped". Qualitative physical harm/treatment may use {kind:"harm|mend",target,impact:"minor|standard|major",damageType?}; preserve an explicit numerical source amount rather than replacing it with a magnitude. Mend may add maxInjury:"minor|standard|major|any" only from source. It does not regrow limbs, remove special conditions or reset money/energy. Conditions use {kind:"condition",target,name,hinders:[],blocks:[],helps:[],ending,duration?}; an applicable specific cure can use {kind:"clear_condition",target,name}. Approaches are the enum above except other. Defenses use {kind:"defense",target,name,defense:{kind:"armor|resistance|immunity|shield|reflect",amount,damageType},ending,duration?}; only shield may replace amount with magnitude. Duration and definition cooldown count explicitly sourced subsequent OWNER actions, not messages or seconds; range is touch|near|far only from source. Preserve all unsupported targets, timing, effects, immunity exceptions or other restrictions in unsupported instead of dropping them. The foreground compiler resolves execution; this read only prepares supported content.`;
+});
 
 // src/living/runtime.ts
 async function usesLiving(chatId, userId) {
@@ -15221,6 +15452,7 @@ ${RESPONSE_INSTRUCTIONS}
 ${INJURY_INSTRUCTIONS}
 ${AGREEMENT_INSTRUCTIONS}
 ${EXPLORATION_INSTRUCTIONS}
+${COMPANION_INSTRUCTIONS}
 For explicit travel along an ALREADY KNOWN route use mechanicalActions {kind:"travel",route:"saved route id",quote}. Code validates direction and access and moves only on success. Do not substitute a relative combat move for changing places. Unknown new space may be explored in ordinary narration with no travel operation; never invent a route merely to fill this field. For counted accessible location supplies use {kind:"gather",stock:"saved stock id",amount,quote}; amount must be explicitly stated by the player. Code conserves the local stock and creates the player's item stack once. A question, inspection, map reading, permission request or unaccepted suggestion executes neither operation. Do not use gather for another person's property, purchases, promised rewards or uncounted scenery.
 For an explicit wait or defensive action, use mechanicalActions {kind:"wait|defend",quote}. Defend provides Warp's 50% physical resistance until the actor next acts. Movement relative to an established participant uses {kind:"move",target,direction:"closer|away",quote}, changing one known distance band. These are actual actions, never questions or conversational gestures. Do not promise that retreat ends the encounter or that guarding prevents every kind of harm.
 You may also bootstrap mechanicalObservations for explicit initial resource values/counts in the supplied definition sources or narrator messages: {kind:"resource",owner,name,current,max?,role?,message,quote} or {kind:"item",owner,name,quantity,equipped,message,quote}. Code assigns a stable ID if omitted. Existing IDs stay unchanged. Within a newly prepared definition, a cost or required item may reference its unique owned name when no ID exists yet. Cite the actual source, never the current player attempt. Unknown resources stay unknown.` : ""}${classified ? `
@@ -15369,7 +15601,7 @@ function needsMechanicalRead(content, state) {
 }
 function needsAbilityRead(content) {
   const action = splitTyped(content).action.trim();
-  return !/^\s*\(?\s*(?:ooc|out of character|what|how|can|could|would|show|list|explain)\b/i.test(action) && !/\?$/.test(action) && /\b(?:use|cast|invoke|activate|perform|deploy|repair|treat)\b/i.test(action);
+  return !/^\s*\(?\s*(?:ooc|out of character|what|how|can|could|would|show|list|explain)\b/i.test(action) && !/\?$/.test(action) && /\b(?:use|cast|invoke|activate|perform|deploy|repair|treat|summon)\b/i.test(action);
 }
 function needsAttemptRead(content) {
   if (/^\s*\(?\s*(?:ooc|out of character)\b/i.test(content))
@@ -15411,7 +15643,7 @@ async function livingAction(raw, userId) {
   }
   if (!(await getSettings(userId)).enabled)
     return true;
-  if (m.action === "say" && text2(m.text) && !started.has(chatId)) {
+  if (m.action === "say" && text3(m.text) && !started.has(chatId)) {
     await host().chat.appendMessage(chatId, { role: "user", content: m.text.trim().slice(0, 2000) }, { triggerGeneration: true });
   }
   if (m.action === "retry")
@@ -15424,14 +15656,14 @@ Suggest up to three distinct specific possibilities grounded in the scene. Inclu
 ${contextText(messages.slice(-4))}`, userId, controller, 12000, 500);
       if (pathOf(await getMessages(chatId)) !== signature)
         return true;
-      const ideas = raw && typeof raw === "object" && "ideas" in raw && Array.isArray(raw.ideas) ? raw.ideas.map((v) => text2(v, 240)).filter(Boolean).slice(0, 3) : [];
+      const ideas = raw && typeof raw === "object" && "ideas" in raw && Array.isArray(raw.ideas) ? raw.ideas.map((v) => text3(v, 240)).filter(Boolean).slice(0, 3) : [];
       host().sendToFrontend({ type: "living_ideas", chatId, signature, ideas }, userId);
     } catch {
       host().sendToFrontend({ type: "living_ideas", chatId, signature, ideas: [], error: "Ideas unavailable. You can keep typing or try again." }, userId);
     }
   }
-  if (m.action === "correct" && text2(m.text)) {
-    await host().chat.appendMessage(chatId, { role: "user", content: `(OOC correction: ${text2(m.text, 600)})` }, { triggerGeneration: false });
+  if (m.action === "correct" && text3(m.text)) {
+    await host().chat.appendMessage(chatId, { role: "user", content: `(OOC correction: ${text3(m.text, 600)})` }, { triggerGeneration: false });
     await syncLiving(chatId, userId);
   }
   return true;
@@ -15505,9 +15737,11 @@ var init_runtime = __esm(() => {
   init_loader();
   init_world2();
   init_knowledge();
+  init_companions();
   init_agreements();
   init_local_actions();
   init_read_window();
+  init_scene_read();
   started = new Map;
   jobs = new Map;
   failures = new Set;
@@ -16914,7 +17148,7 @@ ${fields.join(`
 `)}`
   };
 }
-var text3 = (v, n) => typeof v === "string" ? v.trim().slice(0, n) : "";
+var text4 = (v, n) => typeof v === "string" ? v.trim().slice(0, n) : "";
 function normQuestions(raw, prefix, max = 3) {
   if (!Array.isArray(raw))
     return [];
@@ -16925,7 +17159,7 @@ function normQuestions(raw, prefix, max = 3) {
     if (!q || typeof q !== "object")
       continue;
     const r = q;
-    const t = text3(r.text ?? r.question, 300);
+    const t = text4(r.text ?? r.question, 300);
     if (!t)
       continue;
     const kind = ["single", "multi", "text"].find((k) => k === r.kind) ?? (Array.isArray(r.options) ? "single" : "text");
@@ -16936,14 +17170,14 @@ function normQuestions(raw, prefix, max = 3) {
 }
 function readCard(out, cls, fallbackName) {
   const sb = out.statusBlock;
-  const strings = (v) => Array.isArray(v) ? v.map((x) => text3(x, 60)).filter(Boolean).slice(0, 12) : [];
+  const strings = (v) => Array.isArray(v) ? v.map((x) => text4(x, 60)).filter(Boolean).slice(0, 12) : [];
   const cast = Array.isArray(out.cast) ? out.cast.slice(0, 8).flatMap((c) => {
     const r = c && typeof c === "object" ? c : {};
-    const name = text3(r.name, 60);
+    const name = text4(r.name, 60);
     if (!name)
       return [];
     const age = Number(r.age);
-    return [{ name, relation: text3(r.relation, 200), ...Number.isFinite(age) && age > 0 ? { age: Math.round(age) } : {}, ...text3(r.appearance, 160) ? { appearance: text3(r.appearance, 160) } : {}, ...text3(r.outfit, 160) ? { outfit: text3(r.outfit, 160) } : {} }];
+    return [{ name, relation: text4(r.relation, 200), ...Number.isFinite(age) && age > 0 ? { age: Math.round(age) } : {}, ...text4(r.appearance, 160) ? { appearance: text4(r.appearance, 160) } : {}, ...text4(r.outfit, 160) ? { outfit: text4(r.outfit, 160) } : {} }];
   }) : [];
   const own = {
     style: out.style === "story" ? "story" : "adventure",
@@ -16954,8 +17188,8 @@ function readCard(out, cls, fallbackName) {
   const c = cls ?? own;
   return {
     ...c,
-    summary: text3(out.summary, 800) || `${fallbackName}.`,
-    reason: cls ? "" : text3(out.reason, 300),
+    summary: text4(out.summary, 800) || `${fallbackName}.`,
+    reason: cls ? "" : text4(out.reason, 300),
     statusFields: c.statusBlock ? cls ? strings(out.statusFields) : strings(sb?.fields) : [],
     cast,
     followUps: normQuestions(out.followUps, "f1_")

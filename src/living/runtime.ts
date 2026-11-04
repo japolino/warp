@@ -23,6 +23,7 @@ import { revision } from "../shared/revision.js";
 import { isRulesetEntryTitle } from "../engine/loader.js";
 import { foldWorld, pathOf, pathsOf, rawPathOf, rawPathsOf, readChanges, resolveAttempt, text, worldPacket, type Decision, type Record as LivingRecord, type World } from "./world.js";
 import { KNOWLEDGE_INSTRUCTIONS } from "./knowledge.js";
+import { COMPANION_INSTRUCTIONS } from "./companions.js";
 import { AGREEMENT_INSTRUCTIONS, agreementNotes } from "./agreements.js";
 import { readLocalClaim } from "./local-actions.js";
 import { extractionWindow, freshChanges, chronologicalObservations } from "./read-window.js";
@@ -469,6 +470,7 @@ ${RESPONSE_INSTRUCTIONS}
 ${INJURY_INSTRUCTIONS}
 ${AGREEMENT_INSTRUCTIONS}
 ${EXPLORATION_INSTRUCTIONS}
+${COMPANION_INSTRUCTIONS}
 For explicit travel along an ALREADY KNOWN route use mechanicalActions {kind:"travel",route:"saved route id",quote}. Code validates direction and access and moves only on success. Do not substitute a relative combat move for changing places. Unknown new space may be explored in ordinary narration with no travel operation; never invent a route merely to fill this field. For counted accessible location supplies use {kind:"gather",stock:"saved stock id",amount,quote}; amount must be explicitly stated by the player. Code conserves the local stock and creates the player's item stack once. A question, inspection, map reading, permission request or unaccepted suggestion executes neither operation. Do not use gather for another person's property, purchases, promised rewards or uncounted scenery.
 For an explicit wait or defensive action, use mechanicalActions {kind:"wait|defend",quote}. Defend provides Warp's 50% physical resistance until the actor next acts. Movement relative to an established participant uses {kind:"move",target,direction:"closer|away",quote}, changing one known distance band. These are actual actions, never questions or conversational gestures. Do not promise that retreat ends the encounter or that guarding prevents every kind of harm.
 You may also bootstrap mechanicalObservations for explicit initial resource values/counts in the supplied definition sources or narrator messages: {kind:"resource",owner,name,current,max?,role?,message,quote} or {kind:"item",owner,name,quantity,equipped,message,quote}. Code assigns a stable ID if omitted. Existing IDs stay unchanged. Within a newly prepared definition, a cost or required item may reference its unique owned name when no ID exists yet. Cite the actual source, never the current player attempt. Unknown resources stay unknown.` : ""}${classified ? `\nA separate classifier identified one ${classified.kind} action. Verify that against the original action; do not force an operation if unsupported. For a single matching operation cite the entire exact original player action in quote, preserving its language.` : ""} Output only JSON.`,
@@ -585,7 +587,7 @@ export function needsMechanicalRead(content: string, state?: MechanicalState): b
 export function needsAbilityRead(content: string): boolean {
   const action = splitTyped(content).action.trim();
   return !/^\s*\(?\s*(?:ooc|out of character|what|how|can|could|would|show|list|explain)\b/i.test(action)
-    && !/\?$/.test(action) && /\b(?:use|cast|invoke|activate|perform|deploy|repair|treat)\b/i.test(action);
+    && !/\?$/.test(action) && /\b(?:use|cast|invoke|activate|perform|deploy|repair|treat|summon)\b/i.test(action);
 }
 
 export function needsAttemptRead(content: string): boolean {

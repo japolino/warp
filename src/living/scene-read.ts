@@ -1,7 +1,9 @@
+import { COMPANION_INSTRUCTIONS } from "./companions.js";
 import type { Observation } from "./mechanics.js";
 
 /** Bookkeeping only. The foreground action compiler retains the full execution contracts. */
-export const SCENE_OBSERVATIONS = `Read the supplied story for consequential mechanical observations, not actions to execute. Return mechanicalObservations:[] alongside scene/changes, even when empty. Do not execute costs, roll, award, heal, move someone, advance clocks or invent an encounter during this read. Committed receipts remain authoritative. Definition sources can establish actual owned quantities/capabilities, never presence, discoveries, exits or completed events. Every row needs message and a contiguous exact quote. Reuse known IDs/names. Keep unrelated systems absent.
+export const SCENE_OBSERVATIONS = `Read the supplied story for consequential mechanical observations, not actions to execute. Return mechanicalObservations:[] alongside scene/changes, even when empty. Do not execute costs, roll, award, heal, move someone, advance clocks or invent an encounter during this read. Committed receipts remain authoritative.
+${COMPANION_INSTRUCTIONS} Definition sources can establish actual owned quantities/capabilities, never presence, discoveries, exits or completed events. Every row needs message and a contiguous exact quote. Reuse known IDs/names. Keep unrelated systems absent.
 
 PRIORITY: When the conversation investigates a route, access, a local discovery or supplies, record that knowledge as typed spatial observations BEFORE optional prose facts. A scene/fact alone does not record its exits. Recover relevant missing connections from earlier supplied narrator replies; an earlier successful read does not prove the connection was saved. Keep normal and emergency passages distinct. Use the supplied known scene references for established endpoint names, not as proof of a new connection or current presence.
 Spatial rows:

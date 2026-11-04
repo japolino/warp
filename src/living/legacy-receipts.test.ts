@@ -30,3 +30,10 @@ for (const fixture of resolver5.cases) test(`${fixture.name} replays before opti
   expect(fixture.receipt.engine).toBe(5);
   expect(commitMechanical(fixture.before, fixture.receipt)).toEqual(fixture.after);
 });
+
+const resolver6 = await Bun.file(new URL("./fixtures/resolver6-receipts.json", import.meta.url)).json() as Pick<typeof fixtures, "generatedFrom" | "cases">;
+for (const fixture of resolver6.cases) test(`${fixture.name} replays the installed exploration resolver before companions`, () => {
+  expect(resolver6.generatedFrom).toBe("7930b7d0a1fb08e527ce00f0a6c30f47ee575dd4");
+  expect(fixture.receipt.engine).toBe(6);
+  expect(commitMechanical(fixture.before, fixture.receipt)).toEqual(fixture.after);
+});
