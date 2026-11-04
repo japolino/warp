@@ -1,11 +1,11 @@
 import { revision } from "../shared/revision.js";
 
 export const STORY_BINDINGS = "warpStoryBindings";
-export interface StoryBinding { text: string; rawText: string; prefix: string; rawPrefix: string; path: string; rawPath: string; }
+export interface StoryBinding { text: string; rawText: string; prefix: string; rawPrefix: string; path: string; rawPath: string; imageText?: string; imagePrefix?: string; imagePath?: string; }
 interface SourceMessage { content: string; swipe_id?: number; metadata?: Record<string, unknown>; }
 
 /** Remove only Inlay's explicitly owned image projection, preserving the original paragraph separators. */
-export function storyContent(content: string): string {
+export function imageStoryContent(content: string): string {
   if (!/inlay[_-]illustrator/i.test(content)) return content;
   const opening = /(?:<!--\s*inlay_illustrator\s*-->\s*)?<div\b(?=[^>]*\sdata-inlay-illustrator\s*=\s*(?:"true"|'true'|true(?=[\s>])))(?:"[^"]*"|'[^']*'|[^'">])*>/gi;
   let result = "", cursor = 0, match: RegExpExecArray | null;
@@ -23,6 +23,23 @@ export function storyContent(content: string): string {
   }
   return cursor ? result + content.slice(cursor) : content;
 }
+
+/** Restore Inlay's checksum-verified native asset placeholders to their original authored text. */
+export function storyContent(content: string): string {
+  const clean = imageStoryContent(content);
+  return clean.replace(/<span\b(?=[^>]*\sdata-inlay-illustrator-suppressed\s*=)(?:"[^"]*"|'[^']*'|[^'">])*>\s*<\/span\s*>/gi, carrier => {
+    const attr = (name: string) => new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "i").exec(carrier);
+    const id = attr("data-inlay-illustrator-suppressed"), payload = attr("data-inlay-illustrator-suppressed-payload");
+    if (!id || !payload) return carrier;
+    try {
+      const decoded = decodeURIComponent(payload[1] ?? payload[2]);
+      let hash = 2166136261;
+      for (let i = 0; i < decoded.length; i++) hash = Math.imul(hash ^ decoded.charCodeAt(i), 16777619) >>> 0;
+      const expected = `NAS1${hash.toString(16).padStart(8, "0").toUpperCase()}${decoded.length.toString(36).toUpperCase()}`;
+      return expected === (id[1] ?? id[2]) ? decoded : carrier;
+    } catch { return carrier; }
+  });
+}
 export const storyRevision = (content: string) => revision(storyContent(content));
 export function storyBinding(message: SourceMessage): StoryBinding | undefined {
   const value = (message.metadata?.[STORY_BINDINGS] as Record<string, StoryBinding> | undefined)?.[String(message.swipe_id ?? 0)];
@@ -30,7 +47,8 @@ export function storyBinding(message: SourceMessage): StoryBinding | undefined {
   return value;
 }
 export function sourceRevisionMatches(message: SourceMessage, expected?: string): boolean {
-  return !expected || expected === storyRevision(message.content) || expected === revision(message.content) || expected === storyBinding(message)?.rawText;
+  const binding = storyBinding(message);
+  return !expected || expected === storyRevision(message.content) || expected === revision(message.content) || expected === revision(imageStoryContent(message.content)) || expected === binding?.rawText || expected === binding?.imageText;
 }
 export function sourceContains(content: string, quote: string): boolean {
   return storyContent(content).replace(/\s+/g, " ").includes(quote);
@@ -38,7 +56,7 @@ export function sourceContains(content: string, quote: string): boolean {
 export function recordPathMatches(message: SourceMessage, expected: string, canonical: string, raw: string, full = false): boolean {
   if (expected === canonical || expected === raw) return true;
   const binding = storyBinding(message);
-  return !!binding && (full ? binding.path === canonical && binding.rawPath === expected : binding.prefix === canonical && binding.rawPrefix === expected);
+  return !!binding && (full ? binding.path === canonical && (binding.rawPath === expected || binding.imagePath === expected) : binding.prefix === canonical && (binding.rawPrefix === expected || binding.imagePrefix === expected));
 }
 
 /** Keep a complete current prose response ahead of decorative HTML when making a bounded model excerpt. */

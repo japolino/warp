@@ -11856,7 +11856,7 @@ var init_inject = __esm(() => {
 });
 
 // src/living/story-text.ts
-function storyContent(content) {
+function imageStoryContent(content) {
   if (!/inlay[_-]illustrator/i.test(content))
     return content;
   const opening = /(?:<!--\s*inlay_illustrator\s*-->\s*)?<div\b(?=[^>]*\sdata-inlay-illustrator\s*=\s*(?:"true"|'true'|true(?=[\s>])))(?:"[^"]*"|'[^']*'|[^'">])*>/gi;
@@ -11883,6 +11883,25 @@ function storyContent(content) {
   }
   return cursor ? result + content.slice(cursor) : content;
 }
+function storyContent(content) {
+  const clean = imageStoryContent(content);
+  return clean.replace(/<span\b(?=[^>]*\sdata-inlay-illustrator-suppressed\s*=)(?:"[^"]*"|'[^']*'|[^'">])*>\s*<\/span\s*>/gi, (carrier) => {
+    const attr = (name) => new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "i").exec(carrier);
+    const id = attr("data-inlay-illustrator-suppressed"), payload = attr("data-inlay-illustrator-suppressed-payload");
+    if (!id || !payload)
+      return carrier;
+    try {
+      const decoded = decodeURIComponent(payload[1] ?? payload[2]);
+      let hash = 2166136261;
+      for (let i = 0;i < decoded.length; i++)
+        hash = Math.imul(hash ^ decoded.charCodeAt(i), 16777619) >>> 0;
+      const expected = `NAS1${hash.toString(16).padStart(8, "0").toUpperCase()}${decoded.length.toString(36).toUpperCase()}`;
+      return expected === (id[1] ?? id[2]) ? decoded : carrier;
+    } catch {
+      return carrier;
+    }
+  });
+}
 function storyBinding(message) {
   const value = message.metadata?.[STORY_BINDINGS]?.[String(message.swipe_id ?? 0)];
   if (!value || [value.text, value.rawText, value.prefix, value.rawPrefix, value.path, value.rawPath].some((v) => typeof v !== "string") || value.text !== storyRevision(message.content))
@@ -11890,7 +11909,8 @@ function storyBinding(message) {
   return value;
 }
 function sourceRevisionMatches(message, expected) {
-  return !expected || expected === storyRevision(message.content) || expected === revision(message.content) || expected === storyBinding(message)?.rawText;
+  const binding = storyBinding(message);
+  return !expected || expected === storyRevision(message.content) || expected === revision(message.content) || expected === revision(imageStoryContent(message.content)) || expected === binding?.rawText || expected === binding?.imageText;
 }
 function sourceContains(content, quote) {
   return storyContent(content).replace(/\s+/g, " ").includes(quote);
@@ -11899,7 +11919,7 @@ function recordPathMatches(message, expected, canonical, raw, full = false) {
   if (expected === canonical || expected === raw)
     return true;
   const binding = storyBinding(message);
-  return !!binding && (full ? binding.path === canonical && binding.rawPath === expected : binding.prefix === canonical && binding.rawPrefix === expected);
+  return !!binding && (full ? binding.path === canonical && (binding.rawPath === expected || binding.imagePath === expected) : binding.prefix === canonical && (binding.rawPrefix === expected || binding.imagePrefix === expected));
 }
 function storyExcerpt(content, limit) {
   const clean = storyContent(content);
@@ -13970,7 +13990,10 @@ var init_world2 = __esm(() => {
 // src/living/story-history.ts
 function legacyStoryBindings(messages) {
   const paths = pathsOf(messages), rawPaths = rawPathsOf(messages), root = pathOf([]);
+  const imagePaths = rawPathsOf(messages.map((m) => ({ ...m, content: imageStoryContent(m.content) })));
   const legacy = messages.some((m, i) => {
+    if (imagePaths.get(m.id) !== paths.get(m.id))
+      return true;
     const slots = String(m.swipe_id ?? 0), raw = revision(m.content), text = storyRevision(m.content);
     const attempt = m.metadata?.warpLivingAttempt;
     if (attempt?.path === rawPaths.get(m.id) && attempt?.path !== paths.get(m.id))
@@ -13987,9 +14010,20 @@ function legacyStoryBindings(messages) {
   if (!legacy)
     return [];
   return messages.flatMap((message, i) => {
-    const binding = { text: storyRevision(message.content), rawText: revision(message.content), prefix: i ? paths.get(messages[i - 1].id) : root, rawPrefix: i ? rawPaths.get(messages[i - 1].id) : root, path: paths.get(message.id), rawPath: rawPaths.get(message.id) };
-    const old = storyBinding(message);
-    if (binding.text === binding.rawText && binding.prefix === binding.rawPrefix || old?.text === binding.text && old.prefix === binding.prefix && old.path === binding.path)
+    const imageText = revision(imageStoryContent(message.content)), imagePrefix = i ? imagePaths.get(messages[i - 1].id) : root, imagePath = imagePaths.get(message.id);
+    const prefix = i ? paths.get(messages[i - 1].id) : root, path = paths.get(message.id), text = storyRevision(message.content);
+    const prior = message.metadata?.[STORY_BINDINGS]?.[String(message.swipe_id ?? 0)];
+    const old = prior && [prior.rawText, prior.rawPrefix, prior.rawPath].every((v) => typeof v === "string") && (prior.text === imageText && prior.prefix === imagePrefix && prior.path === imagePath || prior.text === text && prior.prefix === prefix && prior.path === path) ? prior : undefined;
+    const binding = {
+      text,
+      rawText: old?.rawText ?? revision(message.content),
+      prefix,
+      rawPrefix: old?.rawPrefix ?? (i ? rawPaths.get(messages[i - 1].id) : root),
+      path,
+      rawPath: old?.rawPath ?? rawPaths.get(message.id),
+      ...old?.imageText || imageText !== text || imagePath !== path ? { imageText: old?.imageText ?? imageText, imagePrefix: old?.imagePrefix ?? imagePrefix, imagePath: old?.imagePath ?? imagePath } : {}
+    };
+    if (binding.text === binding.rawText && binding.prefix === binding.rawPrefix && !binding.imageText || JSON.stringify(old) === JSON.stringify(binding))
       return [];
     return [{ message, binding }];
   });
@@ -14002,7 +14036,7 @@ async function storyHistory(chatId) {
       if (!current || current.swipe_id !== message.swipe_id || storyRevision(current.content) !== binding.text || pathsOf(currentHistory).get(current.id) !== binding.path)
         return;
       const old = storyBinding(current);
-      if (old?.prefix === binding.prefix && old.path === binding.path)
+      if (JSON.stringify(old) === JSON.stringify(binding))
         return;
       await host().chat.updateMessage(chatId, current.id, { metadata: { ...current.metadata, [STORY_BINDINGS]: { ...current.metadata?.[STORY_BINDINGS] ?? {}, [String(current.swipe_id ?? 0)]: binding } }, skipChunkRebuild: true });
     })));

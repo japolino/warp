@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import type { Msg } from "../backend/ledger.js";
 import { revision } from "../shared/revision.js";
 import { pathOf, rawPathOf } from "./world.js";
-import { storyContent, storyExcerpt, storyRevision, STORY_BINDINGS } from "./story-text.js";
+import { storyContent, imageStoryContent, storyExcerpt, storyRevision, STORY_BINDINGS } from "./story-text.js";
 import { legacyStoryBindings } from "./story-history.js";
 import { foldMechanics, MECHANICS_KEY } from "./mechanical-history.js";
 import { applyObservations, emptyMechanics, prepareMechanical, readMechanicalObservations, commitMechanical, readMechanicalPlan } from "./mechanics.js";
@@ -10,6 +10,58 @@ import { replayPrompt, PROMPT_KEY } from "./prompt-cache.js";
 
 const image = (id: string) => `<!-- inlay_illustrator -->\n<div data-inlay-illustrator="true" data-image="${id}" title="a > b"><div><img src="${id}"></div></div>\n\n`;
 const msg = (id: string, is_user: boolean, content: string, index: number): Msg => ({ id, is_user, content, role: is_user ? "user" : "assistant", index_in_chat: index, swipe_id: 0 } as Msg);
+function carrier(markup: string) {
+  let hash = 2166136261;
+  for (let i = 0; i < markup.length; i++) hash = Math.imul(hash ^ markup.charCodeAt(i), 16777619) >>> 0;
+  return `<span class="am-native-asset-suppression" data-inlay-illustrator-suppressed="NAS1${hash.toString(16).padStart(8, "0").toUpperCase()}${markup.length.toString(36).toUpperCase()}" data-inlay-illustrator-suppressed-payload="${encodeURIComponent(markup)}" aria-hidden="true" hidden></span>`;
+}
+
+test("verified native asset carriers restore authored tokens without discarding malformed or visible content", () => {
+  const token = '<img="Mira_미소 🌙">', hidden = carrier(token);
+  expect(storyContent(`Before\n\n${image("picture")}${hidden}\n\nAfter`)).toBe(`Before\n\n${token}\n\nAfter`);
+  expect(storyRevision(token)).toBe(storyRevision(hidden));
+  for (const invalid of [hidden.replace("NAS1", "NAS2"), hidden.replace("%3C", "%ZZ"), hidden.replace("</span>", "Visible story</span>"), hidden.replace("-suppressed=", "-unrelated=")]) expect(storyContent(invalid)).toBe(invalid);
+});
+
+test("native asset conversion preserves a prepared payment and byte-identical historical prompt", () => {
+  const token = '<img="Mira_미소">', opening = msg("g", false, `You have 20 Coins.\n\n${token}`, 0), player = msg("u", true, "I pay 5 Coins.", 1), reply = msg("r", false, "Jo receives the payment.", 2);
+  const observations = readMechanicalObservations([{ kind: "resource", id: "cash", owner: "you", name: "Coins", current: 20, message: opening.id, quote: "You have 20 Coins." }], emptyMechanics(), [opening]);
+  const state = applyObservations(emptyMechanics(), observations), receipt = prepareMechanical(state, "native-payment", "you", [{ kind: "spend", resource: "cash", amount: 5 }]);
+  opening.metadata = { [MECHANICS_KEY]: { "0": { version: 1, path: pathOf([]), text: storyRevision(opening.content), observations } } };
+  reply.metadata = { [MECHANICS_KEY]: { "0": { version: 1, path: pathOf([opening, player]), text: storyRevision(reply.content), observations: [], receipt } } };
+  const snapshot = { version: 1, path: pathOf([opening, player]), packet: { established: [], possibleMotives: [], mechanics: {} }, receipt };
+  player.metadata = { [PROMPT_KEY]: { "0": snapshot } };
+  const history = [opening, player, reply], frozen = JSON.stringify(receipt), prompt = [{ role: "user" as const, content: player.content, sourceMessageId: player.id }];
+  const before = replayPrompt(prompt, history, "Director");
+  opening.content = opening.content.replace(token, `${image("generated")}${carrier(token)}`);
+  expect(foldMechanics(history).resources[0].current).toBe(15);
+  expect(replayPrompt(prompt, history, "Director")).toEqual(before);
+  expect(JSON.stringify(receipt)).toBe(frozen);
+});
+
+test("pre-carrier-normalization records migrate without rewriting paid receipts or blessing later prose edits", () => {
+  const token = '<img="Mira_미소">', opening = msg("g", false, `You have 20 Coins.\n\n${image("old")}${carrier(token)}`, 0), player = msg("u", true, "I pay 5 Coins.", 1), reply = msg("r", false, "Jo receives the payment.", 2);
+  const history = [opening, player, reply], oldPath = (rows: Msg[]) => rawPathOf(rows.map(m => ({ ...m, content: imageStoryContent(m.content) })));
+  const observations = readMechanicalObservations([{ kind: "resource", id: "cash", owner: "you", name: "Coins", current: 20, message: opening.id, quote: "You have 20 Coins." }], emptyMechanics(), [opening]);
+  if (observations[0].kind !== "resource") throw new Error("Missing fixture balance");
+  observations[0].value.source.sourceRevision = revision(imageStoryContent(opening.content));
+  const state = applyObservations(emptyMechanics(), observations), receipt = prepareMechanical(state, "old-carrier-payment", "you", [{ kind: "spend", resource: "cash", amount: 5 }]);
+  opening.metadata = { [MECHANICS_KEY]: { "0": { version: 1, path: oldPath([]), text: revision(imageStoryContent(opening.content)), observations } } };
+  reply.metadata = { [MECHANICS_KEY]: { "0": { version: 1, path: oldPath([opening, player]), text: revision(reply.content), observations: [], receipt } } };
+  const snapshot = { version: 1, path: oldPath([opening, player]), packet: { established: [], possibleMotives: [], mechanics: {} }, receipt };
+  player.metadata = { [PROMPT_KEY]: { "0": snapshot } };
+  const frozen = JSON.stringify(receipt), oldSnapshot = JSON.stringify(snapshot);
+  for (const { message, binding } of legacyStoryBindings(history)) message.metadata = { ...message.metadata, [STORY_BINDINGS]: { "0": binding } };
+  expect(foldMechanics(history)).toEqual(commitMechanical(state, receipt));
+  const prompt = [{ role: "user" as const, content: player.content, sourceMessageId: player.id }], before = replayPrompt(prompt, history, "Director");
+  opening.content = opening.content.replace("data-image=\"old\"", "data-image=\"new\"").replace(carrier(token), token);
+  expect(foldMechanics(history).resources[0].current).toBe(15);
+  expect(replayPrompt(prompt, history, "Director")).toEqual(before);
+  expect(JSON.stringify(receipt)).toBe(frozen); expect(JSON.stringify(snapshot)).toBe(oldSnapshot);
+  opening.content = opening.content.replace("20 Coins", "200 Coins");
+  for (const { message, binding } of legacyStoryBindings(history)) message.metadata = { ...message.metadata, [STORY_BINDINGS]: { "0": binding } };
+  expect(foldMechanics(history).resources).toEqual([]);
+});
 
 test("owned nested image blocks disappear without swallowing prose or authored HTML", () => {
   const prose = 'A guard watches the wagon.\n\n<details><summary>Status</summary>Coins: 3</details>\n\nThe exit is guarded.';

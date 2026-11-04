@@ -423,7 +423,7 @@ var init_encounters = __esm(() => {
 });
 
 // src/living/story-text.ts
-function storyContent(content) {
+function imageStoryContent(content) {
   if (!/inlay[_-]illustrator/i.test(content))
     return content;
   const opening = /(?:<!--\s*inlay_illustrator\s*-->\s*)?<div\b(?=[^>]*\sdata-inlay-illustrator\s*=\s*(?:"true"|'true'|true(?=[\s>])))(?:"[^"]*"|'[^']*'|[^'">])*>/gi;
@@ -450,6 +450,25 @@ function storyContent(content) {
   }
   return cursor ? result + content.slice(cursor) : content;
 }
+function storyContent(content) {
+  const clean = imageStoryContent(content);
+  return clean.replace(/<span\b(?=[^>]*\sdata-inlay-illustrator-suppressed\s*=)(?:"[^"]*"|'[^']*'|[^'">])*>\s*<\/span\s*>/gi, (carrier) => {
+    const attr = (name) => new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "i").exec(carrier);
+    const id = attr("data-inlay-illustrator-suppressed"), payload = attr("data-inlay-illustrator-suppressed-payload");
+    if (!id || !payload)
+      return carrier;
+    try {
+      const decoded = decodeURIComponent(payload[1] ?? payload[2]);
+      let hash = 2166136261;
+      for (let i = 0;i < decoded.length; i++)
+        hash = Math.imul(hash ^ decoded.charCodeAt(i), 16777619) >>> 0;
+      const expected = `NAS1${hash.toString(16).padStart(8, "0").toUpperCase()}${decoded.length.toString(36).toUpperCase()}`;
+      return expected === (id[1] ?? id[2]) ? decoded : carrier;
+    } catch {
+      return carrier;
+    }
+  });
+}
 function storyBinding(message) {
   const value = message.metadata?.[STORY_BINDINGS]?.[String(message.swipe_id ?? 0)];
   if (!value || [value.text, value.rawText, value.prefix, value.rawPrefix, value.path, value.rawPath].some((v) => typeof v !== "string") || value.text !== storyRevision(message.content))
@@ -457,7 +476,8 @@ function storyBinding(message) {
   return value;
 }
 function sourceRevisionMatches(message, expected) {
-  return !expected || expected === storyRevision(message.content) || expected === revision(message.content) || expected === storyBinding(message)?.rawText;
+  const binding = storyBinding(message);
+  return !expected || expected === storyRevision(message.content) || expected === revision(message.content) || expected === revision(imageStoryContent(message.content)) || expected === binding?.rawText || expected === binding?.imageText;
 }
 function sourceContains(content, quote) {
   return storyContent(content).replace(/\s+/g, " ").includes(quote);
@@ -466,7 +486,7 @@ function recordPathMatches(message, expected, canonical, raw, full = false) {
   if (expected === canonical || expected === raw)
     return true;
   const binding = storyBinding(message);
-  return !!binding && (full ? binding.path === canonical && binding.rawPath === expected : binding.prefix === canonical && binding.rawPrefix === expected);
+  return !!binding && (full ? binding.path === canonical && (binding.rawPath === expected || binding.imagePath === expected) : binding.prefix === canonical && (binding.rawPrefix === expected || binding.imagePrefix === expected));
 }
 function storyExcerpt(content, limit) {
   const clean = storyContent(content);
