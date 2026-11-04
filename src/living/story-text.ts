@@ -1,7 +1,7 @@
 import { revision } from "../shared/revision.js";
 
 export const STORY_BINDINGS = "warpStoryBindings";
-export interface StoryBinding { text: string; rawText: string; prefix: string; rawPrefix: string; path: string; rawPath: string; imageText?: string; imagePrefix?: string; imagePath?: string; }
+export interface StoryBinding { text: string; rawText: string; prefix: string; rawPrefix: string; path: string; rawPath: string; imageText?: string; imagePrefix?: string; imagePath?: string; cardText?: string; cardPrefix?: string; cardPath?: string; }
 interface SourceMessage { content: string; swipe_id?: number; metadata?: Record<string, unknown>; }
 
 /** Remove only Inlay's explicitly owned image projection, preserving the original paragraph separators. */
@@ -24,8 +24,8 @@ export function imageStoryContent(content: string): string {
   return cursor ? result + content.slice(cursor) : content;
 }
 
-/** Restore owned asset placeholders and omit the imported card's terminal UI trigger. */
-export function storyContent(content: string): string {
+/** The previous projection is retained only for verifiable legacy migration. */
+export function cardStoryContent(content: string): string {
   // LumiRealm imports can move their ★▲number★ UI trigger to the newest reply.
   // Recognize only that terminal trigger immediately following its SEED footer.
   // Keep the seed, STATUS_PANEL and all ordinary story text and unpaired symbols.
@@ -43,6 +43,10 @@ export function storyContent(content: string): string {
     } catch { return carrier; }
   });
 }
+/** Imported Lua card footers move between replies; their UI state is not prose. */
+export function storyContent(content: string): string {
+  return cardStoryContent(content).replace(/(?:[ \t]*\r?\n){1,8}(?:\[STATUS_PANEL:[^\]\r\n]{0,3000}\][ \t]*(?:\r?\n[ \t]*){1,8})?<!--\[SEED\|[A-Za-z0-9_-]{8,128}\]-->[ \t\r\n]*$/u, "").trimEnd();
+}
 export const storyRevision = (content: string) => revision(storyContent(content));
 export function storyBinding(message: SourceMessage): StoryBinding | undefined {
   const value = (message.metadata?.[STORY_BINDINGS] as Record<string, StoryBinding> | undefined)?.[String(message.swipe_id ?? 0)];
@@ -51,7 +55,7 @@ export function storyBinding(message: SourceMessage): StoryBinding | undefined {
 }
 export function sourceRevisionMatches(message: SourceMessage, expected?: string): boolean {
   const binding = storyBinding(message);
-  return !expected || expected === storyRevision(message.content) || expected === revision(message.content) || expected === revision(imageStoryContent(message.content)) || expected === binding?.rawText || expected === binding?.imageText;
+  return !expected || expected === storyRevision(message.content) || expected === revision(message.content) || expected === revision(imageStoryContent(message.content)) || expected === revision(cardStoryContent(message.content)) || expected === binding?.rawText || expected === binding?.imageText || expected === binding?.cardText;
 }
 export function sourceContains(content: string, quote: string): boolean {
   return storyContent(content).replace(/\s+/g, " ").includes(quote);
@@ -59,7 +63,7 @@ export function sourceContains(content: string, quote: string): boolean {
 export function recordPathMatches(message: SourceMessage, expected: string, canonical: string, raw: string, full = false): boolean {
   if (expected === canonical || expected === raw) return true;
   const binding = storyBinding(message);
-  return !!binding && (full ? binding.path === canonical && (binding.rawPath === expected || binding.imagePath === expected) : binding.prefix === canonical && (binding.rawPrefix === expected || binding.imagePrefix === expected));
+  return !!binding && (full ? binding.path === canonical && (binding.rawPath === expected || binding.imagePath === expected || binding.cardPath === expected) : binding.prefix === canonical && (binding.rawPrefix === expected || binding.imagePrefix === expected || binding.cardPrefix === expected));
 }
 
 /** Keep a complete current prose response ahead of decorative HTML when making a bounded model excerpt. */

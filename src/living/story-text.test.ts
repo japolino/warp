@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import type { Msg } from "../backend/ledger.js";
 import { revision } from "../shared/revision.js";
 import { pathOf, rawPathOf } from "./world.js";
-import { storyContent, imageStoryContent, storyExcerpt, storyRevision, STORY_BINDINGS } from "./story-text.js";
+import { storyContent, cardStoryContent, imageStoryContent, storyExcerpt, storyRevision, STORY_BINDINGS } from "./story-text.js";
 import { legacyStoryBindings } from "./story-history.js";
 import { foldMechanics, MECHANICS_KEY } from "./mechanical-history.js";
 import { applyObservations, emptyMechanics, prepareMechanical, readMechanicalObservations, commitMechanical, readMechanicalPlan } from "./mechanics.js";
@@ -13,32 +13,45 @@ const msg = (id: string, is_user: boolean, content: string, index: number): Msg 
 
 test("a SEED-owned terminal card UI trigger can move without changing the story or prompt path", () => {
   const base = "Echo waits beside Norma.\n\n[STATUS_PANEL: Workshop | calm]\n\n<!--[SEED|aBcD0123456789]-->", marked = `${base}\n★▲3★`;
-  expect(storyContent(marked)).toBe(base); expect(storyRevision(marked)).toBe(storyRevision(base));
+  expect(storyContent(marked)).toBe("Echo waits beside Norma."); expect(storyRevision(marked)).toBe(storyRevision(base));
+  expect(storyRevision(marked)).toBe(storyRevision("Echo waits beside Norma.\n\n"));
   expect(pathOf([msg("reply", false, marked, 0)])).toBe(pathOf([msg("reply", false, base, 0)]));
   for (const text of ["The code is ★▲3★", "★▲3★", "Story\n<!--[SEED|short]-->\n★▲3★", `${base}\n★▲3★\nActual next sentence.`, `${base}\n★▲not-a-number★`]) expect(storyContent(text)).toBe(text);
   expect(storyRevision(marked.replace("Echo waits", "Echo leaves"))).not.toBe(storyRevision(base));
 });
 
+test("a paired card footer is omitted from extraction while unpaired status data and ordinary HTML remain", () => {
+  const body = "Echo waits beside Norma.", status = "[STATUS_PANEL: Workshop | calm | private thought]", seed = "<!--[SEED|aBcD0123456789]-->";
+  expect(storyContent(`${body}\n\n${status}\n\n${seed}`)).toBe(body);
+  expect(storyContent(`${body}\n\n\n\n${seed}\n★▲4★`)).toBe(body);
+  expect(storyContent(`${body}\n\n${status}`)).toContain(status);
+  expect(storyContent(`${body}\n<details>Actual authored status</details>`)).toContain("<details>");
+  expect(storyExcerpt(`${body}\n\n${status}\n\n${seed}`, 4800)).not.toContain("private thought");
+});
+
 test("legacy evidence can bind before its verified terminal UI trigger disappears without rewriting receipts", () => {
-  const content = "You have 5 coins.\n\n<!--[SEED|aBcD0123456789]-->", marked = `${content}\n★▲3★`;
-  const opening = msg("opening", false, marked, 0), evidence = { message: opening.id, quote: "You have 5 coins.", sourceRevision: revision(marked) };
+  for (const previous of ["raw", "card"] as const) {
+  const prose = "You have 5 coins.", content = `${prose}\n\n[STATUS_PANEL: Workshop | calm]\n\n<!--[SEED|aBcD0123456789]-->`, marked = `${content}\n★▲3★`;
+  const oldText = revision(previous === "raw" ? marked : cardStoryContent(marked));
+  const opening = msg("opening", false, marked, 0), evidence = { message: opening.id, quote: "You have 5 coins.", sourceRevision: oldText };
   const state = emptyMechanics(); state.resources = [{ id: "coins", owner: "you", name: "Coins", current: 5, source: evidence }];
-  opening.metadata = { [MECHANICS_KEY]: { "0": { version: 1, path: pathOf([]), text: revision(marked), observations: [{ kind: "resource", value: state.resources[0] }] } } };
+  opening.metadata = { [MECHANICS_KEY]: { "0": { version: 1, path: pathOf([]), text: oldText, observations: [{ kind: "resource", value: state.resources[0] }] } } };
   const player = msg("player", true, "I spend 2 coins.", 1), receipt = prepareMechanical(state, "spend", "you", [{ kind: "spend", resource: "coins", amount: 2 }]);
   const reply = msg("reply", false, "You pay two coins.", 2);
-  // The old renderer hashed the marked raw story, so retain its actual old prefix.
-  reply.metadata = { [MECHANICS_KEY]: { "0": { version: 1, path: rawPathOf([opening, player]), text: revision(reply.content), receipt, observations: [] } } };
-  const snapshot = { version: 1, path: rawPathOf([opening, player]), packet: { established: [], possibleMotives: [], mechanics: {} }, receipt };
-  player.metadata = { [PROMPT_KEY]: { "0": snapshot }, warpLivingAttempt: { path: rawPathOf([opening, player]), receipt } };
+  const oldPath = rawPathOf([opening, player].map(m => ({ ...m, content: previous === "card" ? cardStoryContent(m.content) : m.content })));
+  reply.metadata = { [MECHANICS_KEY]: { "0": { version: 1, path: oldPath, text: revision(reply.content), receipt, observations: [] } } };
+  const snapshot = { version: 1, path: oldPath, packet: { established: [], possibleMotives: [], mechanics: {} }, receipt };
+  player.metadata = { [PROMPT_KEY]: { "0": snapshot }, warpLivingAttempt: { path: oldPath, receipt } };
   const messages = [opening, player, reply];
   for (const { message, binding } of legacyStoryBindings(messages)) message.metadata = { ...message.metadata, [STORY_BINDINGS]: { "0": binding } };
   const prompt = [{ role: "user" as const, content: player.content, sourceMessageId: player.id }], before = replayPrompt(prompt, messages, "Director"), frozen = JSON.stringify(receipt);
-  opening.content = content;
+  opening.content = prose;
   const after = foldMechanics(messages); expect(after.resources[0].current).toBe(3); expect(after.applied[0].id).toBe("spend");
   expect(receipt.base).toBe(revision(state)); expect(receipt.changes[0].before).toEqual(state.resources[0]);
   expect(replayPrompt(prompt, messages, "Director")).toEqual(before); expect(JSON.stringify(receipt)).toBe(frozen);
-  opening.content = content.replace("5 coins", "50 coins");
+  opening.content = prose.replace("5 coins", "50 coins");
   expect(foldMechanics(messages).resources).toEqual([]);
+  }
 });
 function carrier(markup: string) {
   let hash = 2166136261;

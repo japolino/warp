@@ -212,7 +212,7 @@ function imageStoryContent(content) {
   }
   return cursor ? result + content.slice(cursor) : content;
 }
-function storyContent(content) {
+function cardStoryContent(content) {
   const clean = imageStoryContent(content).replace(/(<!--\[SEED\|[A-Za-z0-9_-]{8,128}\]-->)[ \t]*\r?\n[ \t]*★▲\d{1,9}★?[ \t\r\n]*$/u, "$1");
   return clean.replace(/<span\b(?=[^>]*\sdata-inlay-illustrator-suppressed\s*=)(?:"[^"]*"|'[^']*'|[^'">])*>\s*<\/span\s*>/gi, (carrier) => {
     const attr = (name) => new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "i").exec(carrier);
@@ -231,6 +231,9 @@ function storyContent(content) {
     }
   });
 }
+function storyContent(content) {
+  return cardStoryContent(content).replace(/(?:[ \t]*\r?\n){1,8}(?:\[STATUS_PANEL:[^\]\r\n]{0,3000}\][ \t]*(?:\r?\n[ \t]*){1,8})?<!--\[SEED\|[A-Za-z0-9_-]{8,128}\]-->[ \t\r\n]*$/u, "").trimEnd();
+}
 function storyBinding(message) {
   const value = message.metadata?.[STORY_BINDINGS]?.[String(message.swipe_id ?? 0)];
   if (!value || [value.text, value.rawText, value.prefix, value.rawPrefix, value.path, value.rawPath].some((v) => typeof v !== "string") || value.text !== storyRevision(message.content))
@@ -239,7 +242,7 @@ function storyBinding(message) {
 }
 function sourceRevisionMatches(message, expected) {
   const binding = storyBinding(message);
-  return !expected || expected === storyRevision(message.content) || expected === revision(message.content) || expected === revision(imageStoryContent(message.content)) || expected === binding?.rawText || expected === binding?.imageText;
+  return !expected || expected === storyRevision(message.content) || expected === revision(message.content) || expected === revision(imageStoryContent(message.content)) || expected === revision(cardStoryContent(message.content)) || expected === binding?.rawText || expected === binding?.imageText || expected === binding?.cardText;
 }
 function sourceContains(content, quote) {
   return storyContent(content).replace(/\s+/g, " ").includes(quote);
@@ -248,7 +251,7 @@ function recordPathMatches(message, expected, canonical, raw, full = false) {
   if (expected === canonical || expected === raw)
     return true;
   const binding = storyBinding(message);
-  return !!binding && (full ? binding.path === canonical && (binding.rawPath === expected || binding.imagePath === expected) : binding.prefix === canonical && (binding.rawPrefix === expected || binding.imagePrefix === expected));
+  return !!binding && (full ? binding.path === canonical && (binding.rawPath === expected || binding.imagePath === expected || binding.cardPath === expected) : binding.prefix === canonical && (binding.rawPrefix === expected || binding.imagePrefix === expected || binding.cardPrefix === expected));
 }
 function storyExcerpt(content, limit) {
   const clean = storyContent(content);

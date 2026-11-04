@@ -11893,7 +11893,7 @@ function imageStoryContent(content) {
   }
   return cursor ? result + content.slice(cursor) : content;
 }
-function storyContent(content) {
+function cardStoryContent(content) {
   const clean = imageStoryContent(content).replace(/(<!--\[SEED\|[A-Za-z0-9_-]{8,128}\]-->)[ \t]*\r?\n[ \t]*★▲\d{1,9}★?[ \t\r\n]*$/u, "$1");
   return clean.replace(/<span\b(?=[^>]*\sdata-inlay-illustrator-suppressed\s*=)(?:"[^"]*"|'[^']*'|[^'">])*>\s*<\/span\s*>/gi, (carrier) => {
     const attr = (name) => new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "i").exec(carrier);
@@ -11912,6 +11912,9 @@ function storyContent(content) {
     }
   });
 }
+function storyContent(content) {
+  return cardStoryContent(content).replace(/(?:[ \t]*\r?\n){1,8}(?:\[STATUS_PANEL:[^\]\r\n]{0,3000}\][ \t]*(?:\r?\n[ \t]*){1,8})?<!--\[SEED\|[A-Za-z0-9_-]{8,128}\]-->[ \t\r\n]*$/u, "").trimEnd();
+}
 function storyBinding(message) {
   const value = message.metadata?.[STORY_BINDINGS]?.[String(message.swipe_id ?? 0)];
   if (!value || [value.text, value.rawText, value.prefix, value.rawPrefix, value.path, value.rawPath].some((v) => typeof v !== "string") || value.text !== storyRevision(message.content))
@@ -11920,7 +11923,7 @@ function storyBinding(message) {
 }
 function sourceRevisionMatches(message, expected) {
   const binding = storyBinding(message);
-  return !expected || expected === storyRevision(message.content) || expected === revision(message.content) || expected === revision(imageStoryContent(message.content)) || expected === binding?.rawText || expected === binding?.imageText;
+  return !expected || expected === storyRevision(message.content) || expected === revision(message.content) || expected === revision(imageStoryContent(message.content)) || expected === revision(cardStoryContent(message.content)) || expected === binding?.rawText || expected === binding?.imageText || expected === binding?.cardText;
 }
 function sourceContains(content, quote) {
   return storyContent(content).replace(/\s+/g, " ").includes(quote);
@@ -11929,7 +11932,7 @@ function recordPathMatches(message, expected, canonical, raw, full = false) {
   if (expected === canonical || expected === raw)
     return true;
   const binding = storyBinding(message);
-  return !!binding && (full ? binding.path === canonical && (binding.rawPath === expected || binding.imagePath === expected) : binding.prefix === canonical && (binding.rawPrefix === expected || binding.imagePrefix === expected));
+  return !!binding && (full ? binding.path === canonical && (binding.rawPath === expected || binding.imagePath === expected || binding.cardPath === expected) : binding.prefix === canonical && (binding.rawPrefix === expected || binding.imagePrefix === expected || binding.cardPrefix === expected));
 }
 function storyExcerpt(content, limit) {
   const clean = storyContent(content);
@@ -14262,8 +14265,9 @@ var init_world2 = __esm(() => {
 function legacyStoryBindings(messages) {
   const paths = pathsOf(messages), rawPaths = rawPathsOf(messages), root = pathOf([]);
   const imagePaths = rawPathsOf(messages.map((m) => ({ ...m, content: imageStoryContent(m.content) })));
+  const cardPaths = rawPathsOf(messages.map((m) => ({ ...m, content: cardStoryContent(m.content) })));
   const legacy = messages.some((m, i) => {
-    if (imagePaths.get(m.id) !== paths.get(m.id))
+    if (imagePaths.get(m.id) !== paths.get(m.id) || cardPaths.get(m.id) !== paths.get(m.id))
       return true;
     const slots = String(m.swipe_id ?? 0), raw = revision(m.content), text = storyRevision(m.content);
     const attempt = m.metadata?.warpLivingAttempt;
@@ -14282,9 +14286,10 @@ function legacyStoryBindings(messages) {
     return [];
   return messages.flatMap((message, i) => {
     const imageText = revision(imageStoryContent(message.content)), imagePrefix = i ? imagePaths.get(messages[i - 1].id) : root, imagePath = imagePaths.get(message.id);
+    const cardText = revision(cardStoryContent(message.content)), cardPrefix = i ? cardPaths.get(messages[i - 1].id) : root, cardPath = cardPaths.get(message.id);
     const prefix = i ? paths.get(messages[i - 1].id) : root, path = paths.get(message.id), text = storyRevision(message.content);
     const prior = message.metadata?.[STORY_BINDINGS]?.[String(message.swipe_id ?? 0)];
-    const old = prior && [prior.rawText, prior.rawPrefix, prior.rawPath].every((v) => typeof v === "string") && (prior.text === imageText && prior.prefix === imagePrefix && prior.path === imagePath || prior.text === text && prior.prefix === prefix && prior.path === path) ? prior : undefined;
+    const old = prior && [prior.rawText, prior.rawPrefix, prior.rawPath].every((v) => typeof v === "string") && (prior.text === imageText && prior.prefix === imagePrefix && prior.path === imagePath || prior.text === cardText && prior.prefix === cardPrefix && prior.path === cardPath || prior.text === text && prior.prefix === prefix && prior.path === path) ? prior : undefined;
     const binding = {
       text,
       rawText: old?.rawText ?? revision(message.content),
@@ -14292,9 +14297,10 @@ function legacyStoryBindings(messages) {
       rawPrefix: old?.rawPrefix ?? (i ? rawPaths.get(messages[i - 1].id) : root),
       path,
       rawPath: old?.rawPath ?? rawPaths.get(message.id),
-      ...old?.imageText || imageText !== text || imagePath !== path ? { imageText: old?.imageText ?? imageText, imagePrefix: old?.imagePrefix ?? imagePrefix, imagePath: old?.imagePath ?? imagePath } : {}
+      ...old?.imageText || imageText !== text || imagePath !== path ? { imageText: old?.imageText ?? imageText, imagePrefix: old?.imagePrefix ?? imagePrefix, imagePath: old?.imagePath ?? imagePath } : {},
+      ...old?.cardText || cardText !== text || cardPath !== path ? { cardText: old?.cardText ?? cardText, cardPrefix: old?.cardPrefix ?? cardPrefix, cardPath: old?.cardPath ?? cardPath } : {}
     };
-    if (binding.text === binding.rawText && binding.prefix === binding.rawPrefix && !binding.imageText || JSON.stringify(old) === JSON.stringify(binding))
+    if (binding.text === binding.rawText && binding.prefix === binding.rawPrefix && !binding.imageText && !binding.cardText || JSON.stringify(old) === JSON.stringify(binding))
       return [];
     return [{ message, binding }];
   });
