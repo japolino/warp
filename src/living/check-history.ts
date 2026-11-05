@@ -1,3 +1,4 @@
+import { storyEvidenceMatches } from "./story-view.js";
 import type { Msg } from "../backend/ledger.js";
 import { pathOf, pathsOf, rawPathsOf, type Decision, type Record as LivingRecord } from "./world.js";
 import { sourceContains, sourceRevisionMatches, recordPathMatches } from "./story-text.js";
@@ -20,7 +21,7 @@ export function savedChecks(messages: Msg[], recordOf: (m: Msg) => LivingRecord 
     if (mechanicalValid) for (const observation of mechanical!.observations) {
       if (observation.kind !== "entity") continue;
       const entity = observation.value, source = byId.get(entity.source.message);
-      if (!source || source.index_in_chat > m.index_in_chat || !sourceRevisionMatches(source, entity.source.sourceRevision) || !sourceContains(source.content, entity.source.quote)) continue;
+      if (!source || source.index_in_chat > m.index_in_chat || !storyEvidenceMatches(source, entity.source)) continue;
       const prior = displayState.entities!.findIndex(e => e.name === entity.name);
       if (prior < 0) displayState.entities!.push(entity); else displayState.entities![prior] = entity;
     }

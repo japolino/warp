@@ -1,3 +1,4 @@
+import { storyReadContent } from "./story-view.js";
 import { pathOf, pathsOf, rawPathsOf, type Message, type Record as LivingRecord } from "./world.js";
 import { sourceRevisionMatches, recordPathMatches, sourceContains } from "./story-text.js";
 import type { MechanicalState } from "./mechanics.js";
@@ -5,6 +6,7 @@ import type { MechanicalState } from "./mechanics.js";
 /** Old records cover their own reply. New records also name the replies actually supplied to extraction. */
 export function extractionWindow<T extends Message>(messages: T[], recordOf: (message: T) => LivingRecord | undefined) {
   const paths = pathsOf(messages), rawPaths = rawPathsOf(messages), indexes = new Map(messages.map((m, i) => [m.id, i]));
+  if (!messages.some(m => !m.is_user && storyReadContent(m).trim())) return;
   const covered = new Set<string>();
   let baseline = -1;
   for (const [i, message] of messages.entries()) {
@@ -14,7 +16,7 @@ export function extractionWindow<T extends Message>(messages: T[], recordOf: (me
     covered.add(message.id);
     for (const id of record.reads ?? []) if (typeof id === "string" && (indexes.get(id) ?? Infinity) <= i) covered.add(id);
   }
-  const unread = messages.flatMap((m, i) => i > baseline && !m.is_user && m.content.trim() && !covered.has(m.id) ? [i] : []);
+  const unread = messages.flatMap((m, i) => i > baseline && !m.is_user && storyReadContent(m).trim() && !covered.has(m.id) ? [i] : []);
   if (baseline >= 0 && !unread.length && covered.has(messages.at(-1)?.id ?? "")) return;
   // First use in an existing story takes a bounded snapshot, without importing the whole chat.
   if (baseline < 0) return { messages: messages.slice(-14), reads: messages.slice(-14).filter(m => !m.is_user).map(m => m.id), remaining: 0, pending: 0 };

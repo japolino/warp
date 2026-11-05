@@ -1,3 +1,4 @@
+import { storyEvidenceMatches } from "./story-view.js";
 import { pathOf, rawPathOf } from "./story-path.js";
 import { costPayer } from "./companions.js";
 import { revision } from "../shared/revision.js";
@@ -28,14 +29,14 @@ export function aidAbility(ability: AbilityDefinition): boolean {
 /** Offers describe actual voluntary willingness. Neither a profile nor a player request supplies it. */
 export function readAidObservation(row: Record<string, unknown>, state: MechanicalState, source: Evidence, messages: Message[], historical = false): AidObservation | undefined {
   const latest = messages.filter(m => !m.is_user && m.content.trim() && !m.id.startsWith("warp-source:")).at(-1);
-  if (!latest || source.message !== latest.id || !sourceContains(latest.content, source.quote) || !sourceRevisionMatches(latest, source.sourceRevision)) return;
+  if (!latest || source.message !== latest.id || !storyEvidenceMatches(latest, source)) return;
   if (row.kind === "aid_end") {
-    if (Object.keys(row).some(k => !["kind", "id", "message", "quote", ...(historical ? ["sourceRevision"] : [])].includes(k))) return;
+    if (Object.keys(row).some(k => !["kind", "id", "message", "quote", ...(historical ? ["sourceRevision", "viewRevision"] : [])].includes(k))) return;
     const offer = state.aidOffers?.find(o => o.id === row.id && o.status === "offered");
     const entity = offer && entityFor(state, offer.actor);
     return offer && entity && [offer.actor, entity.displayName, ...entity.aliases].some(n => n && normalize(source.quote).includes(normalize(n))) ? { kind: "aid_end", id: offer.id, source } : undefined;
   }
-  if (Object.keys(row).some(k => !["kind", "actor", "target", "ability", "uncontested", "unsupported", "message", "quote", ...(historical ? ["id", "version", "abilityVersion", "name", "status", "source", "sourceRevision"] : [])].includes(k))) return;
+  if (Object.keys(row).some(k => !["kind", "actor", "target", "ability", "uncontested", "unsupported", "message", "quote", ...(historical ? ["id", "version", "abilityVersion", "name", "status", "source", "sourceRevision", "viewRevision"] : [])].includes(k))) return;
   if (row.target !== "you" || row.uncontested !== true && !historical) return;
   const actor = actorName(state, text(row.actor, 80));
   if (!actor || actor === "you" || !present(state, actor) || !capable(state, actor) || entityFor(state, actor)?.entityKind !== "person") return;

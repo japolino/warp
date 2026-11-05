@@ -1,3 +1,4 @@
+import { readStoryEvidence, templatedStory } from "./story-view.js";
 import { aidRequestBoundary } from "./aid.js";
 import { ROOT, nextPath, rawPathsOf } from "./story-path.js";
 export { pathOf, pathsOf, rawPathOf, rawPathsOf } from "./story-path.js";
@@ -12,7 +13,7 @@ import { actorName } from "./encounters.js";
 import { storyContent, storyRevision, sourceRevisionMatches, sourceContains, recordPathMatches } from "./story-text.js";
 
 export type Kind = "fact" | "possession" | "knowledge" | "commitment" | "situation" | "motive" | "ability";
-export interface Evidence { message: string; quote: string; sourceRevision?: string; }
+export interface Evidence { message: string; quote: string; sourceRevision?: string; viewRevision?: string; }
 export interface Fact extends Evidence {
   id: string; kind: Kind; subject: string; text: string;
   holder?: string; status: "open" | "done";
@@ -23,7 +24,7 @@ export interface Message { id: string; content: string; is_user: boolean; name?:
 export interface Event { op: "put" | "remove" | "transfer"; fact?: Fact; id: string; from?: string; to?: string; evidence: Evidence; }
 export interface Record {
   version: 1; path: string; text: string; events: Event[];
-  scene?: { place: string; present: string[]; message?: string; quote?: string; sourceRevision?: string }; notes: string[];
+  scene?: { place: string; present: string[]; message?: string; quote?: string; sourceRevision?: string; viewRevision?: string }; notes: string[];
   decision?: Decision;
   notice?: string;
   reads?: string[];
@@ -46,8 +47,8 @@ function evidence(v: unknown, messages: Message[]): Evidence | null {
   if (!obj(v)) return null;
   const message = text(v.message, 160), quote = text(v.quote, 400);
   const source = messages.find(m => m.id === message);
-  if (!source || quote.length < 4 || !sourceContains(source.content, quote)) return null;
-  return { message, quote, sourceRevision: storyRevision(source.content) };
+  if (!source || quote.length < 4) return null;
+  return readStoryEvidence(source, quote) ?? null;
 }
 
 /** Validate each proposed change against its quoted source and existing ownership. */
@@ -141,7 +142,7 @@ export function foldWorld(messages: (Message & { record?: Record })[]): World {
   const rawPaths = rawPathsOf(messages);
   const quoted = (e: Evidence, ownIndex: number): Evidence | null => {
     const named = sourceById.get(e.message);
-    const matches = (m: Message) => sourceRevisionMatches(m, e.sourceRevision) && sourceContains(m.content, e.quote);
+    const matches = (m: Message) => !!readStoryEvidence(m, e.quote, e, !templatedStory(m.content) || !!m.is_user || !!e.viewRevision);
     if (named && matches(named) && sourceIndex.get(named.id)! <= ownIndex) return e;
     // Forks may assign new ids. Rebind only a unique quote in the preceding path.
     if (named) return null;
@@ -153,13 +154,15 @@ export function foldWorld(messages: (Message & { record?: Record })[]): World {
     const r = m.record;
     if (r?.version === 1 && sourceRevisionMatches(m, r.text)) {
       const matchingPath = recordPathMatches(m, r.path, path, index ? rawPaths.get(messages[index - 1].id)! : ROOT);
-      const events = matchingPath ? r.events : r.events.flatMap(e => {
+      const events = r.events.flatMap(e => {
+        const original = sourceById.get(e.evidence.message);
+        if (matchingPath && !e.evidence.viewRevision && (!original || !templatedStory(original.content))) return [e];
         const source = quoted(e.evidence, index);
         if (!source || (e.op === "transfer" && !e.from)) return [];
         return [{ ...e, evidence: source, ...(e.fact ? { fact: { ...e.fact, ...source } } : {}) }];
       });
       replayEvents(facts, events);
-      if (r.scene && (matchingPath || (r.scene.message && r.scene.quote && quoted({ message: r.scene.message, quote: r.scene.quote, sourceRevision: r.scene.sourceRevision }, index)))) world = { ...world, place: r.scene.place, present: r.scene.present };
+      if (r.scene && (matchingPath && !r.scene.viewRevision && (!r.scene.message || !templatedStory(sourceById.get(r.scene.message)?.content ?? "")) || (r.scene.message && r.scene.quote && quoted({ message: r.scene.message, quote: r.scene.quote, sourceRevision: r.scene.sourceRevision, viewRevision: r.scene.viewRevision }, index)))) world = { ...world, place: r.scene.place, present: r.scene.present };
     }
     path = nextPath(path, m);
   }

@@ -1,3 +1,4 @@
+import { STORY_VIEW, makeStoryView } from "./story-view.js";
 import { expect, test } from "bun:test";
 import type { Msg } from "../backend/ledger.js";
 import { pathsOf } from "./world.js";
@@ -339,4 +340,20 @@ test("aid offers and their removal append deltas while previous narrator request
   expect(final.slice(0, stable.length)).toEqual(stable);
   expect(final.at(-1)!.content).toContain('"remove":["aid-jo"]');
   expect(final.at(-1)!.content).toContain('"aidBoundary":null');
+});
+
+
+test("capturing a source view changes no prior prompt bytes, and corrected remembered state appends a removal", () => {
+ const greeting = msg("0", false, '{{#when::en}}Clinic.{{/when}}{{#when::jp}}Hidden hall.{{/when}}');
+ const first = msg("1", true, "What is happening?"), history = [greeting, first];
+ store(history, first, "An event from a previously unprojected branch");
+ const previous = publish(history, first);
+ greeting.metadata = { [STORY_VIEW]: { "0": makeStoryView(greeting, "Clinic.")! } };
+ history.push(msg("2", false, "Jo greets you at the clinic."));
+ const next = msg("3", true, "What do you remember?"); history.push(next);
+ const snapshot = store(history, next, "unused"); snapshot.packet.established = [];
+ const current = publish(history, next);
+ expect(current.slice(0, previous.length)).toEqual(previous);
+ expect(current.at(-1)!.content).toContain('"remove":["jacket"]');
+ expect((first.metadata![PROMPT_KEY] as any)["0"].renderings).toHaveLength(1);
 });

@@ -1,3 +1,4 @@
+import { storyReadContent } from "./story-view.js";
 import { revision } from "../shared/revision.js";
 import { actorName, entityFor, actionCount, MechanicalKnowledgeError } from "./encounters.js";
 import { sourceContains, storyContent } from "./story-text.js";
@@ -55,7 +56,7 @@ export function relationshipEvidence(state: MechanicalState, actor: string, cont
   // contiguous source characters around it. Ownership meaning is still the
   // helper's interpretation; literal co-occurrence alone cannot prove it.
   {
-    const paragraph = storyContent(message.content).replace(/\s+/g, " "), start = paragraph.indexOf(source.quote);
+    const paragraph = (source.viewRevision ? storyReadContent(message) : storyContent(message.content)).replace(/\s+/g, " "), start = paragraph.indexOf(source.quote);
     if (start < 0) return;
     const end = start + source.quote.length, spare = 400 - source.quote.length;
     const windows = [paragraph.slice(start, start + 400), paragraph.slice(Math.max(0, end - 400), end), paragraph.slice(Math.max(0, start - Math.floor(spare / 2)), end + Math.ceil(spare / 2))];
@@ -93,7 +94,7 @@ function assertGraph(state: MechanicalState) {
 export function readCompanionObservation(row: Record<string, unknown>, state: MechanicalState, source: Evidence, messages: Message[], correction: boolean): CompanionObservation | undefined {
   const profile = source.message.startsWith("warp-source:");
   const fields = row.kind === "companion" ? ["actor", "controller", "companionKind"] : ["from", "to", "enabled", "unsupported"];
-  if (Object.keys(row).some(k => !["kind", "id", "source", "sourceRevision", "message", "quote", ...fields,
+  if (Object.keys(row).some(k => !["kind", "id", "source", "sourceRevision", "viewRevision", "message", "quote", ...fields,
     ...(row.kind === "companion" ? ["manifestation"] : [])].includes(k))) return;
   const editedProfile = (old: Evidence) => profile && old.message.startsWith("warp-source:") && old.message.split(":")[1] === source.message.split(":")[1]
     && !sourceContains(messages.find(m => m.id === source.message)?.content ?? "", old.quote);

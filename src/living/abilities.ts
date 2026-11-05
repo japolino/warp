@@ -1,3 +1,4 @@
+import { readStoryEvidence } from "./story-view.js";
 import { revision } from "../shared/revision.js";
 import { storyRevision, sourceRevisionMatches, sourceContains } from "./story-text.js";
 import type { Evidence, Message } from "./world.js";
@@ -68,7 +69,9 @@ export function readAbilityDefinitions(raw: unknown, state: MechanicalState, mes
       const isCorrection = !!message?.is_user && /^\s*\(?OOC correction:/i.test(message.content);
       const content = source?.text ?? (message && (!message.is_user || isCorrection) ? message.content : "");
       const oldRevision = historical && obj(row.source) && typeof row.source.sourceRevision === "string" ? row.source.sourceRevision : undefined;
-      if (!owner || !name || quote.length < 8 || !sourceContains(content, quote) || oldRevision && !sourceRevisionMatches(source ? { content } : message!, oldRevision)) continue;
+      const evidence = source ? sourceContains(content, quote) && (!oldRevision || sourceRevisionMatches({ content }, oldRevision)) ? { message: messageId, quote, sourceRevision: oldRevision ?? storyRevision(content) } : undefined
+        : message && (!message.is_user || isCorrection) ? readStoryEvidence(message, quote, { message: messageId, quote, sourceRevision: oldRevision, ...(historical && obj(row.source) && typeof row.source.viewRevision === "string" ? { viewRevision: row.source.viewRevision } : {}) }, historical) : undefined;
+      if (!owner || !name || quote.length < 8 || !evidence) continue;
       const id = identity(owner, name), existing = [...(state.abilities ?? []), ...definitions].find(a => a.id === id);
       // Preserve an established definition. An explicit correction or edited source can replace it.
       if (existing && !isCorrection && !(source && existing.sourceKind === source.kind && !sourceContains(content, existing.source.quote))) continue;
@@ -148,7 +151,7 @@ export function readAbilityDefinitions(raw: unknown, state: MechanicalState, mes
       const body = { owner, name, description: str(row.description, 400) || name, approach: row.approach as AbilityDefinition["approach"], target: row.target as AbilityDefinition["target"], ...(row.range ? { range: row.range as Range } : {}), ...(row.cooldown ? { cooldown: row.cooldown as number } : {}), costs, effects, requires, unsupported };
       const fingerprint = revision(body);
       if (existing?.fingerprint === fingerprint) continue;
-      definitions.push({ id, version: (existing?.version ?? 0) + 1, ...body, fingerprint, source: { message: messageId, quote, sourceRevision: oldRevision ?? storyRevision(content) }, sourceKind: source?.kind ?? "story" });
+      definitions.push({ id, version: (existing?.version ?? 0) + 1, ...body, fingerprint, source: evidence, sourceKind: source?.kind ?? "story" });
     } catch { /* A partial or unsupported definition never replaces a working one. */ }
   }
   return definitions;

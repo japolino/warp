@@ -1,3 +1,4 @@
+import { readStoryEvidence } from "./story-view.js";
 import { readAidObservation, observeAid, executeAid, awaitingAid, type AidOffer, type AidObservation, type AidOperation } from "./aid.js";
 import { readOnlyIntent } from "./intent.js";
 import { readBuildup, readPeriodicObservation, applyLingering, validateLingering, isLingering, hasLingering, lingeringImmune, scheduledPulses, finishPulses, type PeriodicState, type BuildupTrack, type BuildupObservation, type PeriodicObservation } from "./lingering.js";
@@ -94,10 +95,10 @@ export const correction = (m: Message) => m.is_user && /^\s*\(?OOC correction:/i
 /** Grounding checks reject missing/edited evidence; the helper still owns semantic interpretation. */
 function source(raw: Record<string, unknown>, messages: Message[], historical = false): { evidence: Evidence; correction: boolean } | null {
   const id = str(raw.message), quote = str(raw.quote, 400), m = messages.find(m => m.id === id);
-  if (!m || quote.length < 4 || !sourceContains(m.content, quote) || (m.is_user && !correction(m))) return null;
+  if (!m || quote.length < 4 || (m.is_user && !correction(m))) return null;
   const saved = historical && typeof raw.sourceRevision === "string" ? raw.sourceRevision : undefined;
-  if (saved && !sourceRevisionMatches(m, saved)) return null;
-  return { evidence: { message: id, quote, sourceRevision: saved ?? storyRevision(m.content) }, correction: !!correction(m) };
+  const evidence = readStoryEvidence(m, quote, { message: id, quote, sourceRevision: saved, ...(historical && typeof raw.viewRevision === "string" ? { viewRevision: raw.viewRevision } : {}) }, historical);
+  return evidence ? { evidence, correction: !!correction(m) } : null;
 }
 
 /** Bootstrap only explicit values. Later absolute prose cannot overwrite executed costs. */
@@ -124,7 +125,7 @@ export function readMechanicalObservations(raw: unknown, before: MechanicalState
   const literalPlayer = player ? new RegExp(`(?:^|[^\\p{L}\\p{N}])${player.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=$|[^\\p{L}\\p{N}])`, "iu") : undefined;
   if (player && player !== "you" && !working.entities?.some(e => e.name === "you" && e.aliases.some(a => a.toLocaleLowerCase() === player.toLocaleLowerCase()))) {
     const claim = rows.find(r => obj(r) && ["practice", "companion"].includes(r.kind as string) && (own(r.owner, player) === "you" || own(r.controller, player) === "you" || own(r.teacher, player) === "you") && typeof r.quote === "string" && literalPlayer!.test(r.quote) && source(r, messages, historical));
-    if (obj(claim)) playerIdentity.push({ kind: "entity", name: "you", aliases: [player], entityKind: "person", message: claim.message, quote: claim.quote, ...(claim.sourceRevision ? { sourceRevision: claim.sourceRevision } : {}) });
+    if (obj(claim)) playerIdentity.push({ kind: "entity", name: "you", aliases: [player], entityKind: "person", message: claim.message, quote: claim.quote, ...(claim.sourceRevision ? { sourceRevision: claim.sourceRevision } : {}), ...(claim.viewRevision ? { viewRevision: claim.viewRevision } : {}) });
   }
   // Resolve aliases before ownership regardless of the helper's JSON ordering.
   for (const input of [...playerIdentity, ...rows.filter(r => obj(r) && r.kind === "entity"), ...placeRows, ...rows.filter(r => !obj(r) || !["entity", "place", "companion", "cost_link"].includes(r.kind as string)), ...rows.filter(r => obj(r) && ["companion", "cost_link"].includes(r.kind as string))]) {

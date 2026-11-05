@@ -1,3 +1,5 @@
+import { captureStoryViews } from "./story-view-capture.js";
+import { storyReadContent, readStoryEvidence, storyEvidenceMatches, templatedStory } from "./story-view.js";
 import { AID_INSTRUCTIONS, aidRequestIntent, aidNotes } from "./aid.js";
 import { readOnlyIntent } from "./intent.js";
 import { STORY_BINDINGS, storyContent, storyExcerpt, storyRevision, sourceRevisionMatches, recordPathMatches, sourceContains } from "./story-text.js";
@@ -64,7 +66,7 @@ const worldOf = (messages: Msg[]) => {
   }
   return hasMechanics(mechanics) ? { ...world, mechanics } : world;
 };
-const contextText = (messages: Msg[]) => JSON.stringify(messages.slice(-14).map((m, i, all) => ({ id: m.id, role: m.is_user ? "player" : "narrator", content: storyExcerpt(m.content, i === all.length - 1 ? 4800 : 1600) })));
+const contextText = (messages: Msg[]) => JSON.stringify(messages.slice(-14).map((m, i, all) => ({ id: m.id, role: m.is_user ? "player" : "narrator", content: storyExcerpt(storyReadContent(m), i === all.length - 1 ? 4800 : 1600) })));
 const validRecord = (m: Msg, record: { text: string; path: string } | undefined, prefix: Msg[]) => !!record && sourceRevisionMatches(m, record.text) && recordPathMatches(m, record.path, pathOf(prefix), rawPathOf(prefix));
 
 async function definitionContext(chatId: string, userId?: string, lore?: unknown, freshCard = false) {
@@ -106,7 +108,9 @@ function latestValidScene(history: Msg[]): LivingRecord["scene"] {
   const paths = pathsOf(history), rawPaths = rawPathsOf(history), root = pathOf([]);
   for (let i = history.length - 1; i >= 0; i--) {
     const record = recordOf(history[i]);
-    if (record?.scene && sourceRevisionMatches(history[i], record.text) && recordPathMatches(history[i], record.path, i ? paths.get(history[i - 1].id)! : root, i ? rawPaths.get(history[i - 1].id)! : root)) return record.scene;
+    const source = record?.scene?.message ? history.find(m => m.id === record.scene!.message) : undefined;
+    const supported = !source || !templatedStory(source.content) || !!record?.scene?.quote && !!readStoryEvidence(source, record.scene.quote, { message: source.id, quote: record.scene.quote, sourceRevision: record.scene.sourceRevision, viewRevision: record.scene.viewRevision });
+    if (supported && record?.scene && sourceRevisionMatches(history[i], record.text) && recordPathMatches(history[i], record.path, i ? paths.get(history[i - 1].id)! : root, i ? rawPaths.get(history[i - 1].id)! : root)) return record.scene;
   }
 }
 
@@ -117,7 +121,7 @@ function knownSceneReferences(history: Msg[]) {
     if (history[i].is_user || !scene?.message || !scene.quote || found.has(scene.place) || !sourceRevisionMatches(history[i], record?.text)) continue;
     if (!recordPathMatches(history[i], record!.path, i ? paths.get(history[i - 1].id)! : root, i ? rawPaths.get(history[i - 1].id)! : root)) continue;
     const source = history.find(m => m.id === scene.message);
-    if (!source || source.is_user || !sourceContains(source.content, scene.place) || !sourceContains(source.content, scene.quote) || !sourceRevisionMatches(source, scene.sourceRevision)) continue;
+    if (!source || source.is_user || !sourceContains(storyReadContent(source), scene.place) || !storyEvidenceMatches(source, { message: source.id, quote: scene.quote, sourceRevision: scene.sourceRevision, viewRevision: scene.viewRevision })) continue;
     found.set(scene.place, { name: scene.place, message: scene.message, quote: scene.quote });
   }
   return [...found.values()];
@@ -143,7 +147,7 @@ function explorationScenes(raw: unknown, scene: LivingRecord["scene"], messages:
   const latest = new Map(scenes.map(candidate => [candidate.place, candidate]));
   return [...latest.values()].flatMap(candidate => {
     const message = messages.find(m => m.id === candidate.message);
-    return references.has(candidate.place) && message && !message.is_user && sourceContains(message.content, candidate.place)
+    return references.has(candidate.place) && message && !message.is_user && sourceContains(storyReadContent(message), candidate.place)
       ? [{ kind: "place", name: candidate.place, entered: true, message: candidate.message, quote: candidate.quote }] : [];
   });
 }
@@ -445,7 +449,7 @@ export async function livingIntercept(messages: LlmMessageDTO[], ctx: Intercepto
     await Promise.race([job.done, new Promise<void>(r => { timer = setTimeout(() => { failures.add(ctx.chatId); job.controller.abort(); r(); }, 3500); })]);
     if (timer) clearTimeout(timer);
   }
-  const all = await storyHistory(ctx.chatId);
+  const all = await captureStoryViews(ctx.chatId, messages, await storyHistory(ctx.chatId), () => Date.now() < deadline - 1500 && !controller.signal.aborted && pending.get(ctx.chatId)?.generation === generation);
   const target = active?.target ? all.find(m => m.id === active.target) : undefined;
   const history = target ? all.filter(m => m.index_in_chat < target.index_in_chat) : all.filter(m => m.is_user || !!m.content.trim());
   const world = worldOf(ctx.generationType === "continue" && target ? [...history, target] : history), last = history.at(-1);

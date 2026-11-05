@@ -1,3 +1,4 @@
+import { storyEvidenceMatches, storyReadContent } from "./story-view.js";
 import { splitTyped } from "../backend/questions.js";
 import { sourceRevisionMatches, sourceContains } from "./story-text.js";
 import { agreementDone } from "./agreements.js";
@@ -35,7 +36,7 @@ export function readLocalClaim(content: string, world: World, history: Message[]
     for (const reward of agreement.rewards) {
       const ready = reward.ready;
       if (reward.paid || !ready?.allowed || !ready.uncontested || ready.source.message !== narrator.id || !sourceRevisionMatches(narrator, ready.source.sourceRevision)) continue;
-      if (!sourceContains(narrator.content, ready.source.quote)) continue;
+      if (!storyEvidenceMatches(narrator, ready.source)) continue;
       const asset = escape(reward.asset);
       const reference = `(?:(?:my|the) (?:(?:offered|promised|earned|agreed) )?(?:pay|payment|reward)|(?:(?:the|my|your|this|that) )?(?:(?:offered|promised|earned|agreed) )?(?:${escape(String(reward.amount))} )?${asset})`;
       const pattern = paying
@@ -60,13 +61,13 @@ export function readLocalAid(content: string, world: World, history: Message[]):
   const narrator = history.at(-2), player = history.at(-1);
   if (offers.length !== 1 || !narrator || narrator.is_user || !player?.is_user || player.content !== content) return;
   const offer = offers[0];
-  if (offer.source.message !== narrator.id || !sourceRevisionMatches(narrator, offer.source.sourceRevision) || !sourceContains(narrator.content, offer.source.quote)) return;
+  if (offer.source.message !== narrator.id || !storyEvidenceMatches(narrator, offer.source)) return;
   if (state.agreements?.some(a => !a.cancelled && a.rewards.some(r => !r.paid && r.ready?.allowed))) return;
   const normalized = plain.replace(/[’‘]/g, "'").replace(/\s+/g, " ");
   const accept = /^(?:yes[,!]?\s+please|yes|please|go ahead|I accept(?: your)? (?:help|aid|offer))[.!]?$/i.test(normalized);
   const decline = /^(?:no[,!]?\s+thanks|no thank you|I (?:decline|refuse)(?: your)? (?:help|aid|offer))[.!]?$/i.test(normalized);
   if (!accept && !decline) return;
-  const flat = narrator.content.replace(/\s+/g, " "), end = flat.indexOf(offer.source.quote) + offer.source.quote.length;
+  const flat = storyReadContent(narrator).replace(/\s+/g, " "), end = flat.indexOf(offer.source.quote) + offer.source.quote.length;
   if (flat.slice(end).includes("?")) return; // A later question can change what a bare yes means.
   const op: AidOperation = { kind: accept ? "accept_aid" : "decline_aid", offer: offer.id, version: offer.version };
   if (prepareMechanical(state, "local-aid-preview", "you", [op]).status !== "ready") return;

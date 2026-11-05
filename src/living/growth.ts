@@ -61,7 +61,7 @@ export function learnFromChallenge(state: MechanicalState, before: MechanicalSta
 
 /** Source-backed completed instruction, not a player's intention or a static profile. */
 export function readPractice(row: Record<string, unknown>, state: MechanicalState, source: Evidence, messages: Message[]): PracticeObservation | undefined {
-  if (source.message.startsWith("warp-source:") || Object.keys(row).some(k => !["kind", "owner", "ability", "teacher", "unsupported", "message", "quote", "source", "sourceRevision"].includes(k))) return;
+  if (source.message.startsWith("warp-source:") || Object.keys(row).some(k => !["kind", "owner", "ability", "teacher", "unsupported", "message", "quote", "source", "sourceRevision", "viewRevision"].includes(k))) return;
   if (row.unsupported !== undefined && (!Array.isArray(row.unsupported) || row.unsupported.length)) return;
   const owner = participant(state, text(row.owner)), teacher = participant(state, text(row.teacher));
   const ability = state.abilities?.find(a => a.owner === owner && (a.id === row.ability || norm(a.name) === norm(text(row.ability))));

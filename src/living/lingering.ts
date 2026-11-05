@@ -113,7 +113,7 @@ export const hasLingering = (s: MechanicalState) => !!(s.buildups?.length || s.c
 
 /** Initial explicit counts reuse a compiled trigger; observations cannot rewind receipts. */
 export function readBuildup(row: Record<string, unknown>, state: MechanicalState, source: Evidence, correction: boolean, historical: boolean): BuildupObservation | undefined {
-  if (Object.keys(row).some(k => !["kind", "owner", "name", "current", "caster", "ability", "message", "quote", "sourceRevision", ...(historical ? ["id", "threshold", "trigger", "fingerprint", "basis", "source", "definition"] : [])].includes(k))) return;
+  if (Object.keys(row).some(k => !["kind", "owner", "name", "current", "caster", "ability", "message", "quote", "sourceRevision", "viewRevision", ...(historical ? ["id", "threshold", "trigger", "fingerprint", "basis", "source", "definition"] : [])].includes(k))) return;
   const owner = text(row.owner, 80), name = text(row.name), current = row.current;
   if (!owner || !name || typeof current !== "number" || !Number.isFinite(current) || current < 0 || !numberIn(source.quote, current) || !norm(source.quote).includes(norm(name))) return;
   if (!correction && state.buildups?.some(b => b.owner === owner && norm(b.name) === norm(name))) return;
@@ -133,7 +133,7 @@ export function readBuildup(row: Record<string, unknown>, state: MechanicalState
 
 /** Adopt a presently narrated effect, never retrospectively apply its old damage or cost. */
 export function readPeriodicObservation(row: Record<string, unknown>, state: MechanicalState, source: Evidence, messages: Message[], historical: boolean, correction = false): PeriodicObservation | undefined {
-  if (source.message.startsWith("warp-source:") || Object.keys(row).some(k => !["kind", "owner", "name", "caster", "ability", "remaining", "effect", "message", "quote", "sourceRevision", ...(historical ? ["definition"] : [])].includes(k))) return;
+  if (source.message.startsWith("warp-source:") || Object.keys(row).some(k => !["kind", "owner", "name", "caster", "ability", "remaining", "effect", "message", "quote", "sourceRevision", "viewRevision", ...(historical ? ["definition"] : [])].includes(k))) return;
   const latest = messages.filter(m => (!m.is_user || /^\s*\(?OOC correction:/i.test(m.content)) && !!m.content.trim() && !m.id.startsWith("warp-source:")).at(-1);
   if (source.message !== latest?.id) return;
   // An unresolved action cannot acquire its effects through the later prose read.

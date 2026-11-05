@@ -1,3 +1,4 @@
+import { storyReadContent } from "./story-view.js";
 import { revision } from "../shared/revision.js";
 import { sourceContains } from "./story-text.js";
 import { messageOwnsAction } from "./condition-history.js";
@@ -43,16 +44,16 @@ export function readExplorationObservation(row: Record<string, unknown>, state: 
   if (source.message.startsWith("warp-source:")) return;
   const message = messages.find(m => m.id === source.message); if (!message || message.is_user && !correction) return;
   const fields: Record<string, string[]> = { place: ["name", "parent", "entered", ...(historical ? ["visited"] : [])], route: ["from", "to", "via", "bidirectional", "status", "reason", "unsupported"], discovery: ["site", "name", "text"], stock: ["site", "name", "quantity", "available"], stock_access: ["site", "stock", "available"] };
-  if (!fields[row.kind as string] || Object.keys(row).some(k => !["kind", "id", "message", "quote", ...(historical ? ["source", "sourceRevision"] : []), ...fields[row.kind as string]].includes(k))) return;
+  if (!fields[row.kind as string] || Object.keys(row).some(k => !["kind", "id", "message", "quote", ...(historical ? ["source", "sourceRevision", "viewRevision"] : []), ...fields[row.kind as string]].includes(k))) return;
   if (row.kind === "place") {
     const name = str(row.name), parent = row.parent === undefined ? undefined : findPlace(state, row.parent);
     if (row.parent !== undefined && !parent) return;
     const named = state.places?.filter(p => normalized(p.name) === normalized(name)) ?? [];
     const known = row.id ? findPlace(state, row.id) : parent ? named.find(p => p.parent === parent.id) : named.length === 1 ? named[0] : undefined;
     if (!parent && !known && named.length > 1 || known && parent && known.parent !== parent.id) return;
-    if (!name || !known && !sourceContains(message.content.toLocaleLowerCase(), name.toLocaleLowerCase()) || known && normalized(known.name) !== normalized(name)) return;
+    if (!name || !known && !sourceContains((source.viewRevision ? storyReadContent(message) : message.content).toLocaleLowerCase(), name.toLocaleLowerCase()) || known && normalized(known.name) !== normalized(name)) return;
     const here = currentSite(state), current = findPlace(state, here?.site);
-    if (parent && !known && here?.site !== parent.id && current?.parent !== parent.id && !sourceContains(message.content.toLocaleLowerCase(), parent.name.toLocaleLowerCase())) return;
+    if (parent && !known && here?.site !== parent.id && current?.parent !== parent.id && !sourceContains((source.viewRevision ? storyReadContent(message) : message.content).toLocaleLowerCase(), parent.name.toLocaleLowerCase())) return;
     if (row.entered !== undefined && typeof row.entered !== "boolean") return;
     if (known && !newer(source, known.source, messages)) return;
     return { kind: "place", value: { id: known?.id ?? placeId(name, parent?.id), name, ...(parent ?? known?.parent ? { parent: parent?.id ?? known?.parent } : {}), visited: known?.visited === true || row.entered === true || historical && row.visited === true, source },
