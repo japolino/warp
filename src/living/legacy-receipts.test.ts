@@ -49,3 +49,10 @@ for (const fixture of resolver8.cases) test(`${fixture.name} replays the install
   expect(resolver8.generatedFrom).toBe("7d5e445"); expect(fixture.receipt.engine).toBe(8);
   expect(commitMechanical(fixture.before, fixture.receipt)).toEqual(fixture.after);
 });
+
+const resolver9 = await Bun.file(new URL("./fixtures/resolver9-receipts.json", import.meta.url)).json() as Pick<typeof fixtures, "generatedFrom" | "cases">;
+for (const fixture of resolver9.cases) test(`${fixture.name} replays the installed lingering resolver before voluntary aid`, () => {
+  expect(resolver9.generatedFrom).toBe("ba1aa759a82716b36619a5ec45d0641acd084294");
+  expect(fixture.receipt.engine).toBe(9);
+  expect(commitMechanical(fixture.before, fixture.receipt)).toEqual(fixture.after);
+});

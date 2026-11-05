@@ -39,8 +39,9 @@ export function foldMechanics(messages: Msg[]): MechanicalState {
         // Revalidate persisted evidence, including corrections, without asking a model.
         const raw = record.observations.flatMap<Record<string, unknown>>(o => {
           if (!o || typeof o !== "object") return [];
+          if (o.kind === "aid_end") return [{ kind: o.kind, id: o.id, ...o.source }];
           if (o.kind === "condition_end") return [{ kind: o.kind, id: o.id, ...(o.retire ? { retire: true } : {}), ...(o.natural ? { natural: true, ending: o.ending } : {}), ...o.source }];
-          if (o.kind === "ability" || o.kind === "practice" || o.kind === "buildup" || o.kind === "periodic") return [];
+          if (o.kind === "ability" || o.kind === "practice" || o.kind === "buildup" || o.kind === "periodic" || o.kind === "aid_offer") return [];
           if (o.kind === "companion") { const { manifestation, ...value } = o.value; return [{ kind: o.kind, ...value, ...o.value.source }]; }
           if (o.kind === "place") return [{ kind: o.kind, ...o.value, ...(o.entered ? { entered: true } : {}), ...o.value.source }];
           if (o.kind === "agreement") return [{ kind: o.kind, owner: o.value.owner, name: o.value.name, from: o.value.from, offer: o.value.offer, requirements: o.value.requirements.map(r => ({ ...r.source })), rewards: o.value.rewards.map(r => ({ kind: r.kind, asset: r.asset, amount: r.amount, ...r.source })), unsupported: o.value.unsupported, ...o.value.source }];
@@ -55,7 +56,7 @@ export function foldMechanics(messages: Msg[]): MechanicalState {
           const imported = readAbilityDefinitions([{ ...ability, message: ability.source.message, quote: ability.source.quote, effects: ability.effects.map(lingeringInput).map(e => e.basis !== "warp" || isLingering(e) ? e : e.kind === "defense" && e.defense ? { ...e, defense: { ...e.defense, amount: undefined }, magnitude: magnitudes[e.defense.amount] } : { ...e, amount: undefined, magnitude: magnitudes[e.amount!] }) }], state, messages.slice(0, index + 1), sources, undefined, true);
           state = applyObservations(state, imported.map(value => ({ kind: "ability", value })));
         }
-        const lessons = record.observations.filter(o => o?.kind === "practice" || o?.kind === "buildup" || o?.kind === "periodic").map(o => o.kind === "periodic" ? { kind: o.kind, owner: o.value.owner, name: o.value.name, caster: o.value.periodic?.caster, remaining: o.value.periodic?.remaining, definition: o.definition, ...o.value.source } : { kind: o.kind, ...o.value, ...o.value.source });
+        const lessons = record.observations.filter(o => o?.kind === "practice" || o?.kind === "buildup" || o?.kind === "periodic" || o?.kind === "aid_offer").map(o => o.kind === "periodic" ? { kind: o.kind, owner: o.value.owner, name: o.value.name, caster: o.value.periodic?.caster, remaining: o.value.periodic?.remaining, definition: o.definition, ...o.value.source } : { kind: o.kind, ...o.value, ...o.value.source });
         state = applyObservations(state, readMechanicalObservations(lessons, state, messages.slice(0, index + 1), undefined, true));
       }
     }

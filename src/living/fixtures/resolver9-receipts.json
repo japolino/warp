@@ -1,0 +1,2223 @@
+{
+  "generatedFrom": "ba1aa759a82716b36619a5ec45d0641acd084294",
+  "cases": [
+    {
+      "name": "periodic application",
+      "before": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "hp",
+            "owner": "you",
+            "name": "Health",
+            "current": 40,
+            "max": 50,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          },
+          {
+            "id": "energy",
+            "owner": "you",
+            "name": "Energy",
+            "current": 12,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          },
+          {
+            "id": "jo-hp",
+            "owner": "Jo",
+            "name": "Health",
+            "current": 40,
+            "max": 50,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [],
+        "applied": [],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-7ca62981:185dd265",
+            "version": 1,
+            "owner": "you",
+            "name": "Burn",
+            "description": "Burn",
+            "approach": "concentration",
+            "target": "either",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "energy",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "periodic",
+                "target": "target",
+                "name": "Burning",
+                "ending": "After 3 owner actions",
+                "duration": 3,
+                "cadence": "owner_action",
+                "timingBasis": "source",
+                "pulse": {
+                  "kind": "damage",
+                  "resource": "Health",
+                  "amount": 5,
+                  "basis": "source",
+                  "damageType": "fire"
+                }
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "f14897c6:7d528c3e",
+            "source": {
+              "message": "warp-source:persona:d68b4c9d:d494214b",
+              "quote": "Burn costs 2 Energy and applies Burning for 3 subsequent affected-owner actions, dealing 5 fire Health damage each. Salve costs 1 Energy and clears Burning. Venom adds 2 Venom toward threshold 3, applying Slowed for 2 owner actions.",
+              "sourceRevision": "d68b4c9d:d494214b"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-25679db7:cf0b29bb",
+            "version": 1,
+            "owner": "you",
+            "name": "Salve",
+            "description": "Salve",
+            "approach": "concentration",
+            "target": "either",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "energy",
+                "amount": 1
+              }
+            ],
+            "effects": [
+              {
+                "kind": "clear_condition",
+                "target": "target",
+                "name": "Burning"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "a7f9d13f:54b59c8f",
+            "source": {
+              "message": "warp-source:persona:d68b4c9d:d494214b",
+              "quote": "Burn costs 2 Energy and applies Burning for 3 subsequent affected-owner actions, dealing 5 fire Health damage each. Salve costs 1 Energy and clears Burning. Venom adds 2 Venom toward threshold 3, applying Slowed for 2 owner actions.",
+              "sourceRevision": "d68b4c9d:d494214b"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-e51e1ec7:67b4c24d",
+            "version": 1,
+            "owner": "you",
+            "name": "Venom",
+            "description": "Venom",
+            "approach": "concentration",
+            "target": "either",
+            "costs": [],
+            "effects": [
+              {
+                "kind": "buildup",
+                "target": "target",
+                "name": "Venom",
+                "amount": 2,
+                "threshold": 3,
+                "basis": "source",
+                "trigger": {
+                  "kind": "condition",
+                  "name": "Slowed",
+                  "ending": "After 2 owner actions",
+                  "helps": [],
+                  "hinders": [
+                    "movement"
+                  ],
+                  "blocks": [],
+                  "duration": 2
+                }
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "4f1c12a3:3712e525",
+            "source": {
+              "message": "warp-source:persona:d68b4c9d:d494214b",
+              "quote": "Burn costs 2 Energy and applies Burning for 3 subsequent affected-owner actions, dealing 5 fire Health damage each. Salve costs 1 Energy and clears Burning. Venom adds 2 Venom toward threshold 3, applying Slowed for 2 owner actions.",
+              "sourceRevision": "d68b4c9d:d494214b"
+            },
+            "sourceKind": "persona"
+          }
+        ]
+      },
+      "receipt": {
+        "version": 1,
+        "engine": 9,
+        "id": "legacy-nine-0",
+        "input": "638709ba:1f1f2db8",
+        "base": "8a64b002:5260f992",
+        "actor": "you",
+        "operations": [
+          {
+            "kind": "ability",
+            "ability": "ability-7ca62981:185dd265",
+            "version": 1,
+            "target": "you"
+          }
+        ],
+        "responses": [],
+        "changes": [
+          {
+            "kind": "resource",
+            "id": "energy",
+            "before": {
+              "id": "energy",
+              "owner": "you",
+              "name": "Energy",
+              "current": 12,
+              "role": "effort",
+              "source": {
+                "message": "opening",
+                "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+                "sourceRevision": "3d2187b7:dcc22c93"
+              }
+            },
+            "after": {
+              "id": "energy",
+              "owner": "you",
+              "name": "Energy",
+              "current": 10,
+              "role": "effort",
+              "source": {
+                "message": "opening",
+                "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+                "sourceRevision": "3d2187b7:dcc22c93"
+              }
+            }
+          },
+          {
+            "kind": "condition",
+            "id": "periodic-ffa58c8b:89071c89",
+            "before": null,
+            "after": {
+              "id": "periodic-ffa58c8b:89071c89",
+              "owner": "you",
+              "name": "Burning",
+              "ending": "After 3 owner actions",
+              "source": {
+                "message": "warp-action:legacy-nine-0",
+                "quote": "Burning applied to you",
+                "sourceRevision": "a07e505f:a152d605"
+              },
+              "helps": [],
+              "hinders": [],
+              "blocks": [],
+              "periodic": {
+                "rule": 1,
+                "caster": "you",
+                "nextAt": 2,
+                "remaining": 3,
+                "timingBasis": "source",
+                "pulse": {
+                  "kind": "damage",
+                  "resource": "Health",
+                  "amount": 5,
+                  "basis": "source",
+                  "damageType": "fire"
+                },
+                "startedBy": "aa93edfe:f4103f66"
+              }
+            }
+          }
+        ],
+        "beats": [],
+        "result": "84fcd1d0:58a5e464",
+        "status": "ready"
+      },
+      "after": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "hp",
+            "owner": "you",
+            "name": "Health",
+            "current": 40,
+            "max": 50,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          },
+          {
+            "id": "energy",
+            "owner": "you",
+            "name": "Energy",
+            "current": 10,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          },
+          {
+            "id": "jo-hp",
+            "owner": "Jo",
+            "name": "Health",
+            "current": 40,
+            "max": 50,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [
+          {
+            "id": "periodic-ffa58c8b:89071c89",
+            "owner": "you",
+            "name": "Burning",
+            "ending": "After 3 owner actions",
+            "source": {
+              "message": "warp-action:legacy-nine-0",
+              "quote": "Burning applied to you",
+              "sourceRevision": "a07e505f:a152d605"
+            },
+            "helps": [],
+            "hinders": [],
+            "blocks": [],
+            "periodic": {
+              "rule": 1,
+              "caster": "you",
+              "nextAt": 2,
+              "remaining": 3,
+              "timingBasis": "source",
+              "pulse": {
+                "kind": "damage",
+                "resource": "Health",
+                "amount": 5,
+                "basis": "source",
+                "damageType": "fire"
+              },
+              "startedBy": "aa93edfe:f4103f66"
+            }
+          }
+        ],
+        "applied": [
+          {
+            "id": "legacy-nine-0",
+            "input": "638709ba:1f1f2db8"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-7ca62981:185dd265",
+            "version": 1,
+            "owner": "you",
+            "name": "Burn",
+            "description": "Burn",
+            "approach": "concentration",
+            "target": "either",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "energy",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "periodic",
+                "target": "target",
+                "name": "Burning",
+                "ending": "After 3 owner actions",
+                "duration": 3,
+                "cadence": "owner_action",
+                "timingBasis": "source",
+                "pulse": {
+                  "kind": "damage",
+                  "resource": "Health",
+                  "amount": 5,
+                  "basis": "source",
+                  "damageType": "fire"
+                }
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "f14897c6:7d528c3e",
+            "source": {
+              "message": "warp-source:persona:d68b4c9d:d494214b",
+              "quote": "Burn costs 2 Energy and applies Burning for 3 subsequent affected-owner actions, dealing 5 fire Health damage each. Salve costs 1 Energy and clears Burning. Venom adds 2 Venom toward threshold 3, applying Slowed for 2 owner actions.",
+              "sourceRevision": "d68b4c9d:d494214b"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-25679db7:cf0b29bb",
+            "version": 1,
+            "owner": "you",
+            "name": "Salve",
+            "description": "Salve",
+            "approach": "concentration",
+            "target": "either",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "energy",
+                "amount": 1
+              }
+            ],
+            "effects": [
+              {
+                "kind": "clear_condition",
+                "target": "target",
+                "name": "Burning"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "a7f9d13f:54b59c8f",
+            "source": {
+              "message": "warp-source:persona:d68b4c9d:d494214b",
+              "quote": "Burn costs 2 Energy and applies Burning for 3 subsequent affected-owner actions, dealing 5 fire Health damage each. Salve costs 1 Energy and clears Burning. Venom adds 2 Venom toward threshold 3, applying Slowed for 2 owner actions.",
+              "sourceRevision": "d68b4c9d:d494214b"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-e51e1ec7:67b4c24d",
+            "version": 1,
+            "owner": "you",
+            "name": "Venom",
+            "description": "Venom",
+            "approach": "concentration",
+            "target": "either",
+            "costs": [],
+            "effects": [
+              {
+                "kind": "buildup",
+                "target": "target",
+                "name": "Venom",
+                "amount": 2,
+                "threshold": 3,
+                "basis": "source",
+                "trigger": {
+                  "kind": "condition",
+                  "name": "Slowed",
+                  "ending": "After 2 owner actions",
+                  "helps": [],
+                  "hinders": [
+                    "movement"
+                  ],
+                  "blocks": [],
+                  "duration": 2
+                }
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "4f1c12a3:3712e525",
+            "source": {
+              "message": "warp-source:persona:d68b4c9d:d494214b",
+              "quote": "Burn costs 2 Energy and applies Burning for 3 subsequent affected-owner actions, dealing 5 fire Health damage each. Salve costs 1 Energy and clears Burning. Venom adds 2 Venom toward threshold 3, applying Slowed for 2 owner actions.",
+              "sourceRevision": "d68b4c9d:d494214b"
+            },
+            "sourceKind": "persona"
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "affected-owner pulse",
+      "before": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "hp",
+            "owner": "you",
+            "name": "Health",
+            "current": 40,
+            "max": 50,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          },
+          {
+            "id": "energy",
+            "owner": "you",
+            "name": "Energy",
+            "current": 10,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          },
+          {
+            "id": "jo-hp",
+            "owner": "Jo",
+            "name": "Health",
+            "current": 40,
+            "max": 50,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [
+          {
+            "id": "periodic-ffa58c8b:89071c89",
+            "owner": "you",
+            "name": "Burning",
+            "ending": "After 3 owner actions",
+            "source": {
+              "message": "warp-action:legacy-nine-0",
+              "quote": "Burning applied to you",
+              "sourceRevision": "a07e505f:a152d605"
+            },
+            "helps": [],
+            "hinders": [],
+            "blocks": [],
+            "periodic": {
+              "rule": 1,
+              "caster": "you",
+              "nextAt": 2,
+              "remaining": 3,
+              "timingBasis": "source",
+              "pulse": {
+                "kind": "damage",
+                "resource": "Health",
+                "amount": 5,
+                "basis": "source",
+                "damageType": "fire"
+              },
+              "startedBy": "aa93edfe:f4103f66"
+            }
+          }
+        ],
+        "applied": [
+          {
+            "id": "legacy-nine-0",
+            "input": "638709ba:1f1f2db8"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-7ca62981:185dd265",
+            "version": 1,
+            "owner": "you",
+            "name": "Burn",
+            "description": "Burn",
+            "approach": "concentration",
+            "target": "either",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "energy",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "periodic",
+                "target": "target",
+                "name": "Burning",
+                "ending": "After 3 owner actions",
+                "duration": 3,
+                "cadence": "owner_action",
+                "timingBasis": "source",
+                "pulse": {
+                  "kind": "damage",
+                  "resource": "Health",
+                  "amount": 5,
+                  "basis": "source",
+                  "damageType": "fire"
+                }
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "f14897c6:7d528c3e",
+            "source": {
+              "message": "warp-source:persona:d68b4c9d:d494214b",
+              "quote": "Burn costs 2 Energy and applies Burning for 3 subsequent affected-owner actions, dealing 5 fire Health damage each. Salve costs 1 Energy and clears Burning. Venom adds 2 Venom toward threshold 3, applying Slowed for 2 owner actions.",
+              "sourceRevision": "d68b4c9d:d494214b"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-25679db7:cf0b29bb",
+            "version": 1,
+            "owner": "you",
+            "name": "Salve",
+            "description": "Salve",
+            "approach": "concentration",
+            "target": "either",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "energy",
+                "amount": 1
+              }
+            ],
+            "effects": [
+              {
+                "kind": "clear_condition",
+                "target": "target",
+                "name": "Burning"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "a7f9d13f:54b59c8f",
+            "source": {
+              "message": "warp-source:persona:d68b4c9d:d494214b",
+              "quote": "Burn costs 2 Energy and applies Burning for 3 subsequent affected-owner actions, dealing 5 fire Health damage each. Salve costs 1 Energy and clears Burning. Venom adds 2 Venom toward threshold 3, applying Slowed for 2 owner actions.",
+              "sourceRevision": "d68b4c9d:d494214b"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-e51e1ec7:67b4c24d",
+            "version": 1,
+            "owner": "you",
+            "name": "Venom",
+            "description": "Venom",
+            "approach": "concentration",
+            "target": "either",
+            "costs": [],
+            "effects": [
+              {
+                "kind": "buildup",
+                "target": "target",
+                "name": "Venom",
+                "amount": 2,
+                "threshold": 3,
+                "basis": "source",
+                "trigger": {
+                  "kind": "condition",
+                  "name": "Slowed",
+                  "ending": "After 2 owner actions",
+                  "helps": [],
+                  "hinders": [
+                    "movement"
+                  ],
+                  "blocks": [],
+                  "duration": 2
+                }
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "4f1c12a3:3712e525",
+            "source": {
+              "message": "warp-source:persona:d68b4c9d:d494214b",
+              "quote": "Burn costs 2 Energy and applies Burning for 3 subsequent affected-owner actions, dealing 5 fire Health damage each. Salve costs 1 Energy and clears Burning. Venom adds 2 Venom toward threshold 3, applying Slowed for 2 owner actions.",
+              "sourceRevision": "d68b4c9d:d494214b"
+            },
+            "sourceKind": "persona"
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 1
+          }
+        ]
+      },
+      "receipt": {
+        "version": 1,
+        "engine": 9,
+        "id": "legacy-nine-1",
+        "input": "8f643b3d:d7beea71",
+        "base": "e4efd10c:f45d36e",
+        "actor": "you",
+        "operations": [
+          {
+            "kind": "wait"
+          }
+        ],
+        "responses": [],
+        "changes": [
+          {
+            "kind": "resource",
+            "id": "hp",
+            "before": {
+              "id": "hp",
+              "owner": "you",
+              "name": "Health",
+              "current": 40,
+              "max": 50,
+              "role": "vital",
+              "source": {
+                "message": "opening",
+                "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+                "sourceRevision": "3d2187b7:dcc22c93"
+              }
+            },
+            "after": {
+              "id": "hp",
+              "owner": "you",
+              "name": "Health",
+              "current": 35,
+              "max": 50,
+              "role": "vital",
+              "source": {
+                "message": "opening",
+                "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+                "sourceRevision": "3d2187b7:dcc22c93"
+              }
+            }
+          },
+          {
+            "kind": "condition",
+            "id": "periodic-ffa58c8b:89071c89",
+            "before": {
+              "id": "periodic-ffa58c8b:89071c89",
+              "owner": "you",
+              "name": "Burning",
+              "ending": "After 3 owner actions",
+              "source": {
+                "message": "warp-action:legacy-nine-0",
+                "quote": "Burning applied to you",
+                "sourceRevision": "a07e505f:a152d605"
+              },
+              "helps": [],
+              "hinders": [],
+              "blocks": [],
+              "periodic": {
+                "rule": 1,
+                "caster": "you",
+                "nextAt": 2,
+                "remaining": 3,
+                "timingBasis": "source",
+                "pulse": {
+                  "kind": "damage",
+                  "resource": "Health",
+                  "amount": 5,
+                  "basis": "source",
+                  "damageType": "fire"
+                },
+                "startedBy": "aa93edfe:f4103f66"
+              }
+            },
+            "after": {
+              "id": "periodic-ffa58c8b:89071c89",
+              "owner": "you",
+              "name": "Burning",
+              "ending": "After 3 owner actions",
+              "source": {
+                "message": "warp-action:legacy-nine-0",
+                "quote": "Burning applied to you",
+                "sourceRevision": "a07e505f:a152d605"
+              },
+              "helps": [],
+              "hinders": [],
+              "blocks": [],
+              "periodic": {
+                "rule": 1,
+                "caster": "you",
+                "nextAt": 3,
+                "remaining": 2,
+                "timingBasis": "source",
+                "pulse": {
+                  "kind": "damage",
+                  "resource": "Health",
+                  "amount": 5,
+                  "basis": "source",
+                  "damageType": "fire"
+                },
+                "startedBy": "aa93edfe:f4103f66"
+              }
+            }
+          }
+        ],
+        "beats": [
+          {
+            "kind": "wait",
+            "actor": "you"
+          },
+          {
+            "kind": "damage",
+            "actor": "you",
+            "target": "you",
+            "amount": 5,
+            "absorbed": 0,
+            "resisted": 0,
+            "reflected": 0,
+            "name": "fire"
+          },
+          {
+            "kind": "pulse",
+            "actor": "you",
+            "target": "you",
+            "name": "Burning"
+          }
+        ],
+        "result": "334c7517:d331a58b",
+        "status": "ready"
+      },
+      "after": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "hp",
+            "owner": "you",
+            "name": "Health",
+            "current": 35,
+            "max": 50,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          },
+          {
+            "id": "energy",
+            "owner": "you",
+            "name": "Energy",
+            "current": 10,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          },
+          {
+            "id": "jo-hp",
+            "owner": "Jo",
+            "name": "Health",
+            "current": 40,
+            "max": 50,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [
+          {
+            "id": "periodic-ffa58c8b:89071c89",
+            "owner": "you",
+            "name": "Burning",
+            "ending": "After 3 owner actions",
+            "source": {
+              "message": "warp-action:legacy-nine-0",
+              "quote": "Burning applied to you",
+              "sourceRevision": "a07e505f:a152d605"
+            },
+            "helps": [],
+            "hinders": [],
+            "blocks": [],
+            "periodic": {
+              "rule": 1,
+              "caster": "you",
+              "nextAt": 3,
+              "remaining": 2,
+              "timingBasis": "source",
+              "pulse": {
+                "kind": "damage",
+                "resource": "Health",
+                "amount": 5,
+                "basis": "source",
+                "damageType": "fire"
+              },
+              "startedBy": "aa93edfe:f4103f66"
+            }
+          }
+        ],
+        "applied": [
+          {
+            "id": "legacy-nine-0",
+            "input": "638709ba:1f1f2db8"
+          },
+          {
+            "id": "legacy-nine-1",
+            "input": "8f643b3d:d7beea71"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-7ca62981:185dd265",
+            "version": 1,
+            "owner": "you",
+            "name": "Burn",
+            "description": "Burn",
+            "approach": "concentration",
+            "target": "either",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "energy",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "periodic",
+                "target": "target",
+                "name": "Burning",
+                "ending": "After 3 owner actions",
+                "duration": 3,
+                "cadence": "owner_action",
+                "timingBasis": "source",
+                "pulse": {
+                  "kind": "damage",
+                  "resource": "Health",
+                  "amount": 5,
+                  "basis": "source",
+                  "damageType": "fire"
+                }
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "f14897c6:7d528c3e",
+            "source": {
+              "message": "warp-source:persona:d68b4c9d:d494214b",
+              "quote": "Burn costs 2 Energy and applies Burning for 3 subsequent affected-owner actions, dealing 5 fire Health damage each. Salve costs 1 Energy and clears Burning. Venom adds 2 Venom toward threshold 3, applying Slowed for 2 owner actions.",
+              "sourceRevision": "d68b4c9d:d494214b"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-25679db7:cf0b29bb",
+            "version": 1,
+            "owner": "you",
+            "name": "Salve",
+            "description": "Salve",
+            "approach": "concentration",
+            "target": "either",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "energy",
+                "amount": 1
+              }
+            ],
+            "effects": [
+              {
+                "kind": "clear_condition",
+                "target": "target",
+                "name": "Burning"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "a7f9d13f:54b59c8f",
+            "source": {
+              "message": "warp-source:persona:d68b4c9d:d494214b",
+              "quote": "Burn costs 2 Energy and applies Burning for 3 subsequent affected-owner actions, dealing 5 fire Health damage each. Salve costs 1 Energy and clears Burning. Venom adds 2 Venom toward threshold 3, applying Slowed for 2 owner actions.",
+              "sourceRevision": "d68b4c9d:d494214b"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-e51e1ec7:67b4c24d",
+            "version": 1,
+            "owner": "you",
+            "name": "Venom",
+            "description": "Venom",
+            "approach": "concentration",
+            "target": "either",
+            "costs": [],
+            "effects": [
+              {
+                "kind": "buildup",
+                "target": "target",
+                "name": "Venom",
+                "amount": 2,
+                "threshold": 3,
+                "basis": "source",
+                "trigger": {
+                  "kind": "condition",
+                  "name": "Slowed",
+                  "ending": "After 2 owner actions",
+                  "helps": [],
+                  "hinders": [
+                    "movement"
+                  ],
+                  "blocks": [],
+                  "duration": 2
+                }
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "4f1c12a3:3712e525",
+            "source": {
+              "message": "warp-source:persona:d68b4c9d:d494214b",
+              "quote": "Burn costs 2 Energy and applies Burning for 3 subsequent affected-owner actions, dealing 5 fire Health damage each. Salve costs 1 Energy and clears Burning. Venom adds 2 Venom toward threshold 3, applying Slowed for 2 owner actions.",
+              "sourceRevision": "d68b4c9d:d494214b"
+            },
+            "sourceKind": "persona"
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "cure before due pulse",
+      "before": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "hp",
+            "owner": "you",
+            "name": "Health",
+            "current": 35,
+            "max": 50,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          },
+          {
+            "id": "energy",
+            "owner": "you",
+            "name": "Energy",
+            "current": 10,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          },
+          {
+            "id": "jo-hp",
+            "owner": "Jo",
+            "name": "Health",
+            "current": 40,
+            "max": 50,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [
+          {
+            "id": "periodic-ffa58c8b:89071c89",
+            "owner": "you",
+            "name": "Burning",
+            "ending": "After 3 owner actions",
+            "source": {
+              "message": "warp-action:legacy-nine-0",
+              "quote": "Burning applied to you",
+              "sourceRevision": "a07e505f:a152d605"
+            },
+            "helps": [],
+            "hinders": [],
+            "blocks": [],
+            "periodic": {
+              "rule": 1,
+              "caster": "you",
+              "nextAt": 3,
+              "remaining": 2,
+              "timingBasis": "source",
+              "pulse": {
+                "kind": "damage",
+                "resource": "Health",
+                "amount": 5,
+                "basis": "source",
+                "damageType": "fire"
+              },
+              "startedBy": "aa93edfe:f4103f66"
+            }
+          }
+        ],
+        "applied": [
+          {
+            "id": "legacy-nine-0",
+            "input": "638709ba:1f1f2db8"
+          },
+          {
+            "id": "legacy-nine-1",
+            "input": "8f643b3d:d7beea71"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-7ca62981:185dd265",
+            "version": 1,
+            "owner": "you",
+            "name": "Burn",
+            "description": "Burn",
+            "approach": "concentration",
+            "target": "either",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "energy",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "periodic",
+                "target": "target",
+                "name": "Burning",
+                "ending": "After 3 owner actions",
+                "duration": 3,
+                "cadence": "owner_action",
+                "timingBasis": "source",
+                "pulse": {
+                  "kind": "damage",
+                  "resource": "Health",
+                  "amount": 5,
+                  "basis": "source",
+                  "damageType": "fire"
+                }
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "f14897c6:7d528c3e",
+            "source": {
+              "message": "warp-source:persona:d68b4c9d:d494214b",
+              "quote": "Burn costs 2 Energy and applies Burning for 3 subsequent affected-owner actions, dealing 5 fire Health damage each. Salve costs 1 Energy and clears Burning. Venom adds 2 Venom toward threshold 3, applying Slowed for 2 owner actions.",
+              "sourceRevision": "d68b4c9d:d494214b"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-25679db7:cf0b29bb",
+            "version": 1,
+            "owner": "you",
+            "name": "Salve",
+            "description": "Salve",
+            "approach": "concentration",
+            "target": "either",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "energy",
+                "amount": 1
+              }
+            ],
+            "effects": [
+              {
+                "kind": "clear_condition",
+                "target": "target",
+                "name": "Burning"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "a7f9d13f:54b59c8f",
+            "source": {
+              "message": "warp-source:persona:d68b4c9d:d494214b",
+              "quote": "Burn costs 2 Energy and applies Burning for 3 subsequent affected-owner actions, dealing 5 fire Health damage each. Salve costs 1 Energy and clears Burning. Venom adds 2 Venom toward threshold 3, applying Slowed for 2 owner actions.",
+              "sourceRevision": "d68b4c9d:d494214b"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-e51e1ec7:67b4c24d",
+            "version": 1,
+            "owner": "you",
+            "name": "Venom",
+            "description": "Venom",
+            "approach": "concentration",
+            "target": "either",
+            "costs": [],
+            "effects": [
+              {
+                "kind": "buildup",
+                "target": "target",
+                "name": "Venom",
+                "amount": 2,
+                "threshold": 3,
+                "basis": "source",
+                "trigger": {
+                  "kind": "condition",
+                  "name": "Slowed",
+                  "ending": "After 2 owner actions",
+                  "helps": [],
+                  "hinders": [
+                    "movement"
+                  ],
+                  "blocks": [],
+                  "duration": 2
+                }
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "4f1c12a3:3712e525",
+            "source": {
+              "message": "warp-source:persona:d68b4c9d:d494214b",
+              "quote": "Burn costs 2 Energy and applies Burning for 3 subsequent affected-owner actions, dealing 5 fire Health damage each. Salve costs 1 Energy and clears Burning. Venom adds 2 Venom toward threshold 3, applying Slowed for 2 owner actions.",
+              "sourceRevision": "d68b4c9d:d494214b"
+            },
+            "sourceKind": "persona"
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 2
+          }
+        ]
+      },
+      "receipt": {
+        "version": 1,
+        "engine": 9,
+        "id": "legacy-nine-2",
+        "input": "90e5fee:c341c82",
+        "base": "8531aa48:70c53100",
+        "actor": "you",
+        "operations": [
+          {
+            "kind": "ability",
+            "ability": "ability-25679db7:cf0b29bb",
+            "version": 1,
+            "target": "you"
+          }
+        ],
+        "responses": [],
+        "changes": [
+          {
+            "kind": "resource",
+            "id": "energy",
+            "before": {
+              "id": "energy",
+              "owner": "you",
+              "name": "Energy",
+              "current": 10,
+              "role": "effort",
+              "source": {
+                "message": "opening",
+                "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+                "sourceRevision": "3d2187b7:dcc22c93"
+              }
+            },
+            "after": {
+              "id": "energy",
+              "owner": "you",
+              "name": "Energy",
+              "current": 9,
+              "role": "effort",
+              "source": {
+                "message": "opening",
+                "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+                "sourceRevision": "3d2187b7:dcc22c93"
+              }
+            }
+          },
+          {
+            "kind": "condition",
+            "id": "periodic-ffa58c8b:89071c89",
+            "before": {
+              "id": "periodic-ffa58c8b:89071c89",
+              "owner": "you",
+              "name": "Burning",
+              "ending": "After 3 owner actions",
+              "source": {
+                "message": "warp-action:legacy-nine-0",
+                "quote": "Burning applied to you",
+                "sourceRevision": "a07e505f:a152d605"
+              },
+              "helps": [],
+              "hinders": [],
+              "blocks": [],
+              "periodic": {
+                "rule": 1,
+                "caster": "you",
+                "nextAt": 3,
+                "remaining": 2,
+                "timingBasis": "source",
+                "pulse": {
+                  "kind": "damage",
+                  "resource": "Health",
+                  "amount": 5,
+                  "basis": "source",
+                  "damageType": "fire"
+                },
+                "startedBy": "aa93edfe:f4103f66"
+              }
+            },
+            "after": null
+          }
+        ],
+        "beats": [],
+        "result": "a3c415a9:2469d743",
+        "status": "ready"
+      },
+      "after": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "hp",
+            "owner": "you",
+            "name": "Health",
+            "current": 35,
+            "max": 50,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          },
+          {
+            "id": "energy",
+            "owner": "you",
+            "name": "Energy",
+            "current": 9,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          },
+          {
+            "id": "jo-hp",
+            "owner": "Jo",
+            "name": "Health",
+            "current": 40,
+            "max": 50,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [],
+        "applied": [
+          {
+            "id": "legacy-nine-0",
+            "input": "638709ba:1f1f2db8"
+          },
+          {
+            "id": "legacy-nine-1",
+            "input": "8f643b3d:d7beea71"
+          },
+          {
+            "id": "legacy-nine-2",
+            "input": "90e5fee:c341c82"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-7ca62981:185dd265",
+            "version": 1,
+            "owner": "you",
+            "name": "Burn",
+            "description": "Burn",
+            "approach": "concentration",
+            "target": "either",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "energy",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "periodic",
+                "target": "target",
+                "name": "Burning",
+                "ending": "After 3 owner actions",
+                "duration": 3,
+                "cadence": "owner_action",
+                "timingBasis": "source",
+                "pulse": {
+                  "kind": "damage",
+                  "resource": "Health",
+                  "amount": 5,
+                  "basis": "source",
+                  "damageType": "fire"
+                }
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "f14897c6:7d528c3e",
+            "source": {
+              "message": "warp-source:persona:d68b4c9d:d494214b",
+              "quote": "Burn costs 2 Energy and applies Burning for 3 subsequent affected-owner actions, dealing 5 fire Health damage each. Salve costs 1 Energy and clears Burning. Venom adds 2 Venom toward threshold 3, applying Slowed for 2 owner actions.",
+              "sourceRevision": "d68b4c9d:d494214b"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-25679db7:cf0b29bb",
+            "version": 1,
+            "owner": "you",
+            "name": "Salve",
+            "description": "Salve",
+            "approach": "concentration",
+            "target": "either",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "energy",
+                "amount": 1
+              }
+            ],
+            "effects": [
+              {
+                "kind": "clear_condition",
+                "target": "target",
+                "name": "Burning"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "a7f9d13f:54b59c8f",
+            "source": {
+              "message": "warp-source:persona:d68b4c9d:d494214b",
+              "quote": "Burn costs 2 Energy and applies Burning for 3 subsequent affected-owner actions, dealing 5 fire Health damage each. Salve costs 1 Energy and clears Burning. Venom adds 2 Venom toward threshold 3, applying Slowed for 2 owner actions.",
+              "sourceRevision": "d68b4c9d:d494214b"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-e51e1ec7:67b4c24d",
+            "version": 1,
+            "owner": "you",
+            "name": "Venom",
+            "description": "Venom",
+            "approach": "concentration",
+            "target": "either",
+            "costs": [],
+            "effects": [
+              {
+                "kind": "buildup",
+                "target": "target",
+                "name": "Venom",
+                "amount": 2,
+                "threshold": 3,
+                "basis": "source",
+                "trigger": {
+                  "kind": "condition",
+                  "name": "Slowed",
+                  "ending": "After 2 owner actions",
+                  "helps": [],
+                  "hinders": [
+                    "movement"
+                  ],
+                  "blocks": [],
+                  "duration": 2
+                }
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "4f1c12a3:3712e525",
+            "source": {
+              "message": "warp-source:persona:d68b4c9d:d494214b",
+              "quote": "Burn costs 2 Energy and applies Burning for 3 subsequent affected-owner actions, dealing 5 fire Health damage each. Salve costs 1 Energy and clears Burning. Venom adds 2 Venom toward threshold 3, applying Slowed for 2 owner actions.",
+              "sourceRevision": "d68b4c9d:d494214b"
+            },
+            "sourceKind": "persona"
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 3
+          }
+        ],
+        "closedConditions": [
+          {
+            "id": "periodic-ffa58c8b:89071c89",
+            "owner": "you",
+            "name": "Burning",
+            "after": {
+              "kind": "receipt",
+              "id": "legacy-nine-2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "two applications cross one threshold",
+      "before": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "hp",
+            "owner": "you",
+            "name": "Health",
+            "current": 35,
+            "max": 50,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          },
+          {
+            "id": "energy",
+            "owner": "you",
+            "name": "Energy",
+            "current": 9,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          },
+          {
+            "id": "jo-hp",
+            "owner": "Jo",
+            "name": "Health",
+            "current": 40,
+            "max": 50,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [],
+        "applied": [
+          {
+            "id": "legacy-nine-0",
+            "input": "638709ba:1f1f2db8"
+          },
+          {
+            "id": "legacy-nine-1",
+            "input": "8f643b3d:d7beea71"
+          },
+          {
+            "id": "legacy-nine-2",
+            "input": "90e5fee:c341c82"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-7ca62981:185dd265",
+            "version": 1,
+            "owner": "you",
+            "name": "Burn",
+            "description": "Burn",
+            "approach": "concentration",
+            "target": "either",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "energy",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "periodic",
+                "target": "target",
+                "name": "Burning",
+                "ending": "After 3 owner actions",
+                "duration": 3,
+                "cadence": "owner_action",
+                "timingBasis": "source",
+                "pulse": {
+                  "kind": "damage",
+                  "resource": "Health",
+                  "amount": 5,
+                  "basis": "source",
+                  "damageType": "fire"
+                }
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "f14897c6:7d528c3e",
+            "source": {
+              "message": "warp-source:persona:d68b4c9d:d494214b",
+              "quote": "Burn costs 2 Energy and applies Burning for 3 subsequent affected-owner actions, dealing 5 fire Health damage each. Salve costs 1 Energy and clears Burning. Venom adds 2 Venom toward threshold 3, applying Slowed for 2 owner actions.",
+              "sourceRevision": "d68b4c9d:d494214b"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-25679db7:cf0b29bb",
+            "version": 1,
+            "owner": "you",
+            "name": "Salve",
+            "description": "Salve",
+            "approach": "concentration",
+            "target": "either",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "energy",
+                "amount": 1
+              }
+            ],
+            "effects": [
+              {
+                "kind": "clear_condition",
+                "target": "target",
+                "name": "Burning"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "a7f9d13f:54b59c8f",
+            "source": {
+              "message": "warp-source:persona:d68b4c9d:d494214b",
+              "quote": "Burn costs 2 Energy and applies Burning for 3 subsequent affected-owner actions, dealing 5 fire Health damage each. Salve costs 1 Energy and clears Burning. Venom adds 2 Venom toward threshold 3, applying Slowed for 2 owner actions.",
+              "sourceRevision": "d68b4c9d:d494214b"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-e51e1ec7:67b4c24d",
+            "version": 1,
+            "owner": "you",
+            "name": "Venom",
+            "description": "Venom",
+            "approach": "concentration",
+            "target": "either",
+            "costs": [],
+            "effects": [
+              {
+                "kind": "buildup",
+                "target": "target",
+                "name": "Venom",
+                "amount": 2,
+                "threshold": 3,
+                "basis": "source",
+                "trigger": {
+                  "kind": "condition",
+                  "name": "Slowed",
+                  "ending": "After 2 owner actions",
+                  "helps": [],
+                  "hinders": [
+                    "movement"
+                  ],
+                  "blocks": [],
+                  "duration": 2
+                }
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "4f1c12a3:3712e525",
+            "source": {
+              "message": "warp-source:persona:d68b4c9d:d494214b",
+              "quote": "Burn costs 2 Energy and applies Burning for 3 subsequent affected-owner actions, dealing 5 fire Health damage each. Salve costs 1 Energy and clears Burning. Venom adds 2 Venom toward threshold 3, applying Slowed for 2 owner actions.",
+              "sourceRevision": "d68b4c9d:d494214b"
+            },
+            "sourceKind": "persona"
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 3
+          }
+        ],
+        "closedConditions": [
+          {
+            "id": "periodic-ffa58c8b:89071c89",
+            "owner": "you",
+            "name": "Burning",
+            "after": {
+              "kind": "receipt",
+              "id": "legacy-nine-2"
+            }
+          }
+        ]
+      },
+      "receipt": {
+        "version": 1,
+        "engine": 9,
+        "id": "legacy-nine-3",
+        "input": "a9e3756a:807d227a",
+        "base": "5c2006f2:543ec2dc",
+        "actor": "you",
+        "operations": [
+          {
+            "kind": "ability",
+            "ability": "ability-e51e1ec7:67b4c24d",
+            "version": 1,
+            "target": "Jo"
+          },
+          {
+            "kind": "ability",
+            "ability": "ability-e51e1ec7:67b4c24d",
+            "version": 1,
+            "target": "Jo"
+          }
+        ],
+        "responses": [],
+        "changes": [
+          {
+            "kind": "buildup",
+            "id": "buildup-4c3307df:ab80e67f",
+            "before": null,
+            "after": {
+              "id": "buildup-4c3307df:ab80e67f",
+              "owner": "Jo",
+              "name": "Venom",
+              "current": 2,
+              "threshold": 3,
+              "trigger": {
+                "kind": "condition",
+                "name": "Slowed",
+                "ending": "After 2 owner actions",
+                "helps": [],
+                "hinders": [
+                  "movement"
+                ],
+                "blocks": [],
+                "duration": 2
+              },
+              "fingerprint": "22dd5935:b6037cbf",
+              "basis": "source",
+              "source": {
+                "message": "warp-action:legacy-nine-3",
+                "quote": "Venom applied to Jo",
+                "sourceRevision": "2e755d38:bc3fa33e"
+              }
+            }
+          },
+          {
+            "kind": "buildup",
+            "id": "buildup-4c3307df:ab80e67f",
+            "before": {
+              "id": "buildup-4c3307df:ab80e67f",
+              "owner": "Jo",
+              "name": "Venom",
+              "current": 2,
+              "threshold": 3,
+              "trigger": {
+                "kind": "condition",
+                "name": "Slowed",
+                "ending": "After 2 owner actions",
+                "helps": [],
+                "hinders": [
+                  "movement"
+                ],
+                "blocks": [],
+                "duration": 2
+              },
+              "fingerprint": "22dd5935:b6037cbf",
+              "basis": "source",
+              "source": {
+                "message": "warp-action:legacy-nine-3",
+                "quote": "Venom applied to Jo",
+                "sourceRevision": "2e755d38:bc3fa33e"
+              }
+            },
+            "after": {
+              "id": "buildup-4c3307df:ab80e67f",
+              "owner": "Jo",
+              "name": "Venom",
+              "current": 1,
+              "threshold": 3,
+              "trigger": {
+                "kind": "condition",
+                "name": "Slowed",
+                "ending": "After 2 owner actions",
+                "helps": [],
+                "hinders": [
+                  "movement"
+                ],
+                "blocks": [],
+                "duration": 2
+              },
+              "fingerprint": "22dd5935:b6037cbf",
+              "basis": "source",
+              "source": {
+                "message": "warp-action:legacy-nine-3",
+                "quote": "Venom applied to Jo",
+                "sourceRevision": "2e755d38:bc3fa33e"
+              }
+            }
+          },
+          {
+            "kind": "condition",
+            "id": "buildup-trigger-buildup-4c3307df:ab80e67f",
+            "before": null,
+            "after": {
+              "id": "buildup-trigger-buildup-4c3307df:ab80e67f",
+              "owner": "Jo",
+              "name": "Slowed",
+              "ending": "After 2 owner actions",
+              "source": {
+                "message": "warp-action:legacy-nine-3",
+                "quote": "Slowed applied to Jo",
+                "sourceRevision": "fb24724:3fdd5d9e"
+              },
+              "helps": [],
+              "hinders": [
+                "movement"
+              ],
+              "blocks": [],
+              "expiresAt": 3
+            }
+          }
+        ],
+        "beats": [
+          {
+            "kind": "buildup",
+            "actor": "you",
+            "target": "Jo",
+            "name": "Venom",
+            "amount": 2
+          },
+          {
+            "kind": "buildup",
+            "actor": "you",
+            "target": "Jo",
+            "name": "Venom",
+            "amount": 1
+          },
+          {
+            "kind": "threshold",
+            "actor": "you",
+            "target": "Jo",
+            "name": "Slowed",
+            "amount": 1
+          }
+        ],
+        "result": "377f4bd9:ee502e29",
+        "status": "ready"
+      },
+      "after": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "hp",
+            "owner": "you",
+            "name": "Health",
+            "current": 35,
+            "max": 50,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          },
+          {
+            "id": "energy",
+            "owner": "you",
+            "name": "Energy",
+            "current": 9,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          },
+          {
+            "id": "jo-hp",
+            "owner": "Jo",
+            "name": "Health",
+            "current": 40,
+            "max": 50,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [
+          {
+            "id": "buildup-trigger-buildup-4c3307df:ab80e67f",
+            "owner": "Jo",
+            "name": "Slowed",
+            "ending": "After 2 owner actions",
+            "source": {
+              "message": "warp-action:legacy-nine-3",
+              "quote": "Slowed applied to Jo",
+              "sourceRevision": "fb24724:3fdd5d9e"
+            },
+            "helps": [],
+            "hinders": [
+              "movement"
+            ],
+            "blocks": [],
+            "expiresAt": 3
+          }
+        ],
+        "applied": [
+          {
+            "id": "legacy-nine-0",
+            "input": "638709ba:1f1f2db8"
+          },
+          {
+            "id": "legacy-nine-1",
+            "input": "8f643b3d:d7beea71"
+          },
+          {
+            "id": "legacy-nine-2",
+            "input": "90e5fee:c341c82"
+          },
+          {
+            "id": "legacy-nine-3",
+            "input": "a9e3756a:807d227a"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "You have 40 of 50 Health and 12 Energy. Jo stands beside you with 40 of 50 Health.",
+              "sourceRevision": "3d2187b7:dcc22c93"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-7ca62981:185dd265",
+            "version": 1,
+            "owner": "you",
+            "name": "Burn",
+            "description": "Burn",
+            "approach": "concentration",
+            "target": "either",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "energy",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "periodic",
+                "target": "target",
+                "name": "Burning",
+                "ending": "After 3 owner actions",
+                "duration": 3,
+                "cadence": "owner_action",
+                "timingBasis": "source",
+                "pulse": {
+                  "kind": "damage",
+                  "resource": "Health",
+                  "amount": 5,
+                  "basis": "source",
+                  "damageType": "fire"
+                }
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "f14897c6:7d528c3e",
+            "source": {
+              "message": "warp-source:persona:d68b4c9d:d494214b",
+              "quote": "Burn costs 2 Energy and applies Burning for 3 subsequent affected-owner actions, dealing 5 fire Health damage each. Salve costs 1 Energy and clears Burning. Venom adds 2 Venom toward threshold 3, applying Slowed for 2 owner actions.",
+              "sourceRevision": "d68b4c9d:d494214b"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-25679db7:cf0b29bb",
+            "version": 1,
+            "owner": "you",
+            "name": "Salve",
+            "description": "Salve",
+            "approach": "concentration",
+            "target": "either",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "energy",
+                "amount": 1
+              }
+            ],
+            "effects": [
+              {
+                "kind": "clear_condition",
+                "target": "target",
+                "name": "Burning"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "a7f9d13f:54b59c8f",
+            "source": {
+              "message": "warp-source:persona:d68b4c9d:d494214b",
+              "quote": "Burn costs 2 Energy and applies Burning for 3 subsequent affected-owner actions, dealing 5 fire Health damage each. Salve costs 1 Energy and clears Burning. Venom adds 2 Venom toward threshold 3, applying Slowed for 2 owner actions.",
+              "sourceRevision": "d68b4c9d:d494214b"
+            },
+            "sourceKind": "persona"
+          },
+          {
+            "id": "ability-e51e1ec7:67b4c24d",
+            "version": 1,
+            "owner": "you",
+            "name": "Venom",
+            "description": "Venom",
+            "approach": "concentration",
+            "target": "either",
+            "costs": [],
+            "effects": [
+              {
+                "kind": "buildup",
+                "target": "target",
+                "name": "Venom",
+                "amount": 2,
+                "threshold": 3,
+                "basis": "source",
+                "trigger": {
+                  "kind": "condition",
+                  "name": "Slowed",
+                  "ending": "After 2 owner actions",
+                  "helps": [],
+                  "hinders": [
+                    "movement"
+                  ],
+                  "blocks": [],
+                  "duration": 2
+                }
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "4f1c12a3:3712e525",
+            "source": {
+              "message": "warp-source:persona:d68b4c9d:d494214b",
+              "quote": "Burn costs 2 Energy and applies Burning for 3 subsequent affected-owner actions, dealing 5 fire Health damage each. Salve costs 1 Energy and clears Burning. Venom adds 2 Venom toward threshold 3, applying Slowed for 2 owner actions.",
+              "sourceRevision": "d68b4c9d:d494214b"
+            },
+            "sourceKind": "persona"
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 5
+          }
+        ],
+        "closedConditions": [
+          {
+            "id": "periodic-ffa58c8b:89071c89",
+            "owner": "you",
+            "name": "Burning",
+            "after": {
+              "kind": "receipt",
+              "id": "legacy-nine-2"
+            }
+          }
+        ],
+        "buildups": [
+          {
+            "id": "buildup-4c3307df:ab80e67f",
+            "owner": "Jo",
+            "name": "Venom",
+            "current": 1,
+            "threshold": 3,
+            "trigger": {
+              "kind": "condition",
+              "name": "Slowed",
+              "ending": "After 2 owner actions",
+              "helps": [],
+              "hinders": [
+                "movement"
+              ],
+              "blocks": [],
+              "duration": 2
+            },
+            "fingerprint": "22dd5935:b6037cbf",
+            "basis": "source",
+            "source": {
+              "message": "warp-action:legacy-nine-3",
+              "quote": "Venom applied to Jo",
+              "sourceRevision": "2e755d38:bc3fa33e"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

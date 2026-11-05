@@ -3,12 +3,13 @@ import { sourceRevisionMatches, sourceContains } from "./story-text.js";
 import { agreementDone } from "./agreements.js";
 import { actorName, conditionActive } from "./encounters.js";
 import { prepareMechanical, type MechanicalOperation } from "./mechanics.js";
+import type { AidOperation } from "./aid.js";
 import type { Message, World } from "./world.js";
 
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-export interface LocalActionRead {
+export interface LocalActionRead<T = { kind: "claim"; agreement: string; reward: string; quote: string }> {
   risky: false; contested: false; approach: "other";
-  mechanicalActions: { kind: "claim"; agreement: string; reward: string; quote: string }[];
+  mechanicalActions: T[];
 }
 
 /** Only a direct acceptance of one fresh, explicitly uncontested offer can skip interpretation. */
@@ -19,7 +20,7 @@ export function readLocalClaim(content: string, world: World, history: Message[]
   if (!state || action.length > 240 || !/^(?:I\s+)?(?:collect|accept|take|receive|pay)\s+/i.test(action)) return;
   const last = history.at(-1), narrator = history.at(-2);
   if (!last?.is_user || last.content !== content || !narrator || narrator.is_user || !narrator.content.trim()) return;
-  const candidates: LocalActionRead["mechanicalActions"] = [];
+  const candidates: { kind: "claim"; agreement: string; reward: string; quote: string }[] = [];
   for (const agreement of state.agreements ?? []) {
     if (!agreementDone(agreement) || agreement.owner !== "you" && agreement.from !== "you" || !agreement.rewards.some(r => !r.paid && r.ready?.uncontested)) continue;
     const paying = agreement.from === "you", counterpart = paying ? agreement.owner : agreement.from;
@@ -49,4 +50,25 @@ export function readLocalClaim(content: string, world: World, history: Message[]
   // Preflight on a copy. Missing knowledge still gets the ordinary preparation opportunity.
   if (prepareMechanical(state, "local-claim-preview", "you", [operation]).status !== "ready") return;
   return { risky: false, contested: false, approach: "other", mechanicalActions: [candidate] };
+}
+
+/** An exact acceptance/refusal of the one fresh offer needs no model to repeat the terms. */
+export function readLocalAid(content: string, world: World, history: Message[]): LocalActionRead<AidOperation & { quote: string }> | undefined {
+  const state = world.mechanics, plain = content.trim().replace(/^(\*{1,2}|_{1,2})(.+)\1$/, "$2").trim();
+  if (!state || plain.length > 240 || splitTyped(content).action.trim() !== plain) return;
+  const offers = state.aidOffers?.filter(o => o.status === "offered") ?? [];
+  const narrator = history.at(-2), player = history.at(-1);
+  if (offers.length !== 1 || !narrator || narrator.is_user || !player?.is_user || player.content !== content) return;
+  const offer = offers[0];
+  if (offer.source.message !== narrator.id || !sourceRevisionMatches(narrator, offer.source.sourceRevision) || !sourceContains(narrator.content, offer.source.quote)) return;
+  if (state.agreements?.some(a => !a.cancelled && a.rewards.some(r => !r.paid && r.ready?.allowed))) return;
+  const normalized = plain.replace(/[’‘]/g, "'").replace(/\s+/g, " ");
+  const accept = /^(?:yes[,!]?\s+please|yes|please|go ahead|I accept(?: your)? (?:help|aid|offer))[.!]?$/i.test(normalized);
+  const decline = /^(?:no[,!]?\s+thanks|no thank you|I (?:decline|refuse)(?: your)? (?:help|aid|offer))[.!]?$/i.test(normalized);
+  if (!accept && !decline) return;
+  const flat = narrator.content.replace(/\s+/g, " "), end = flat.indexOf(offer.source.quote) + offer.source.quote.length;
+  if (flat.slice(end).includes("?")) return; // A later question can change what a bare yes means.
+  const op: AidOperation = { kind: accept ? "accept_aid" : "decline_aid", offer: offer.id, version: offer.version };
+  if (prepareMechanical(state, "local-aid-preview", "you", [op]).status !== "ready") return;
+  return { risky: false, contested: false, approach: "other", mechanicalActions: [{ ...op, quote: plain }] };
 }

@@ -1,3 +1,4 @@
+import { aidOfferText } from "./aid.js";
 import { activePracticeTracks } from "./growth.js";
 import { isLingering, lingeringDescription, pulseDescription } from "./lingering.js";
 import { esc } from "../frontend/html.js";
@@ -34,6 +35,7 @@ export function inspectMechanics(state: MechanicalState): string {
   const conditions = state.conditions.filter(c => c.owner === "you"), abilities = state.abilities?.filter(a => a.owner === "you") ?? [];
   const growth = activePracticeTracks(state).filter(g => g.owner === "you");
   const buildups = state.buildups?.filter(b => b.owner === "you") ?? [];
+  const aid = state.aidOffers?.filter(o => o.status === "offered") ?? [];
   const companions = state.companions?.filter(c => c.controller === "you") ?? [];
   const resilience = state.resilience?.find(r => r.owner === "you" && r.band !== "ordinary");
   const agreements = visibleAgreements(state.agreements?.filter(a => a.owner === "you" || a.from === "you"));
@@ -54,6 +56,10 @@ export function inspectMechanics(state: MechanicalState): string {
       ${a.requires.length ? `<p>Requires ${a.requires.map(r => `${esc(named(r.item))}${r.equipped ? " equipped" : " carried"}`).join(", ")}</p>` : ""}
       ${a.unsupported.length ? `<p class="warp-inspector-blocked">Needs clarification: ${a.unsupported.map(esc).join(" · ")}</p>` : ""}
       <small>Version ${a.version} · ${esc(a.sourceKind)}</small><blockquote>${esc(a.source.quote)}</blockquote></details>`).join("")}</div>` : ""}
+    ${aid.map(o => { const ability = state.abilities?.find(a => a.id === o.ability && a.version === o.abilityVersion); return `<details data-inspect-aid="${esc(o.id)}"><summary>${esc(aidOfferText(o, state))}</summary>
+      ${ability?.effects.map(e => `<p>${esc(effectText(e, state))}</p>`).join("") ?? ""}
+      ${o.unsupported.length || ability?.unsupported.length ? `<p class="warp-inspector-blocked">Needs clarification: ${[...o.unsupported, ...(ability?.unsupported ?? [])].map(esc).join(" · ")}</p>` : ""}
+      <blockquote>${esc(o.source.quote)}</blockquote></details>`; }).join("")}
     ${buildups.map(b => `<p>${esc(b.name)}: ${b.current} / ${b.threshold}<small>At the threshold: ${esc(b.trigger.name)}${b.basis === "warp" ? " · Warp values" : ""}</small></p>`).join("")}
     ${growth.map(g => `<p>${esc(g.name)}: ${g.familiar ? "familiar" : `${g.credits.length} / 3 varied opportunities`}<small>Warp practice · one scoped help after the milestone · source costs and effects stay unchanged</small></p>`).join("")}
     ${companions.map(c => { const entity = state.entities?.find(e => e.name === c.actor); return `<details data-inspect-companion="${esc(c.id)}"><summary>${esc(entity?.displayName ?? c.actor)} · ${entity?.status === "dead" ? "Dead" : entity?.present ? "Here" : "Away"}</summary>
@@ -62,7 +68,7 @@ export function inspectMechanics(state: MechanicalState): string {
       ${(state.abilities ?? []).filter(a => a.owner === c.actor).map(a => `<p>${esc(a.name)}<small>${a.costs.map(cost => esc(costText(cost.kind, cost.id, cost.amount))).join(" + ") || "No established resource cost"}</small></p>`).join("")}
       <blockquote>${esc(c.source.quote)}</blockquote></details>`; }).join("")}
     ${agreements.map(a => `<details data-inspect-agreement="${esc(a.id)}"><summary>${esc(a.name)} · ${a.cancelled ? "withdrawn" : `${a.requirements.filter(r => r.done).length}/${a.requirements.length} done`}</summary>${a.requirements.map(r => `<p>${r.done ? "Done" : "Pending"} · ${esc(r.text)}</p>`).join("")}${a.rewards.map(r => `<p>${r.paid ? "Received" : a.cancelled ? "Declined" : r.ready?.allowed ? "Offered" : r.ready ? "Withheld" : "Promised"} · ${r.amount} ${esc(r.asset)}${a.from ? ` · from ${esc(a.from)}` : ""}</p>`).join("")}${a.unsupported.length ? `<p>Needs clarification: ${a.unsupported.map(esc).join(" · ")}</p>` : ""}<blockquote>${esc(a.offer?.quote ?? a.source.quote)}</blockquote></details>`).join("")}
-    ${!resources.length && !items.length && !conditions.length && !abilities.length && !resilience && !agreements.length && !companions.length && !growth.length && !buildups.length ? "No established player mechanics yet." : ""}
+    ${!resources.length && !items.length && !conditions.length && !abilities.length && !resilience && !agreements.length && !companions.length && !growth.length && !buildups.length && !aid.length ? "No established player mechanics yet." : ""}
   </section>`;
 }
 

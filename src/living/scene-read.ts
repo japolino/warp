@@ -1,3 +1,4 @@
+import { AID_INSTRUCTIONS } from "./aid.js";
 import { LINGERING_INSTRUCTIONS } from "./lingering.js";
 import { GROWTH_INSTRUCTIONS } from "./growth.js";
 import { RANGE_OBSERVATIONS } from "./encounters.js";
@@ -7,6 +8,7 @@ import type { Observation } from "./mechanics.js";
 /** Bookkeeping only. The foreground action compiler retains the full execution contracts. */
 export const SCENE_OBSERVATIONS = `Read the supplied story for consequential mechanical observations, not actions to execute. Always return both mechanicalObservations:[] and abilityDefinitions:[] alongside scene/changes. Fill the definition array when a relevant owned capability is confirmed; use an empty array otherwise. Do not execute costs, roll, award, heal, move someone, advance clocks or invent an encounter during this read. Committed receipts remain authoritative.
 ${COMPANION_INSTRUCTIONS}
+${AID_INSTRUCTIONS}
 ${GROWTH_INSTRUCTIONS}
 ${LINGERING_INSTRUCTIONS} Definition sources can establish actual owned quantities/capabilities, never presence, discoveries, exits or completed events. Every row needs message and a contiguous exact quote. Reuse known IDs/names. Keep unrelated systems absent.
 

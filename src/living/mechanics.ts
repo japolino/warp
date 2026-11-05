@@ -1,3 +1,4 @@
+import { readAidObservation, observeAid, executeAid, awaitingAid, type AidOffer, type AidObservation, type AidOperation } from "./aid.js";
 import { readOnlyIntent } from "./intent.js";
 import { readBuildup, readPeriodicObservation, applyLingering, validateLingering, isLingering, hasLingering, lingeringImmune, scheduledPulses, finishPulses, type PeriodicState, type BuildupTrack, type BuildupObservation, type PeriodicObservation } from "./lingering.js";
 import { revision } from "../shared/revision.js";
@@ -35,11 +36,11 @@ export interface MechanicalState {
   entities?: Entity[]; distances?: Distance[]; clocks?: ActionClock[]; cooldowns?: Cooldown[];
   resilience?: Resilience[]; closedConditions?: ClosedCondition[];
   agreements?: Agreement[];
-  growth?: PracticeTrack[]; buildups?: BuildupTrack[];
+  growth?: PracticeTrack[]; buildups?: BuildupTrack[]; aidOffers?: AidOffer[];
   companions?: Companion[]; costLinks?: CostLink[];
   places?: Place[]; positions?: Position[]; routes?: Route[]; discoveries?: Discovery[]; stocks?: SiteStock[];
 }
-export type Observation = AgreementObservation | ExplorationObservation | CompanionObservation | PracticeObservation | BuildupObservation | PeriodicObservation
+export type Observation = AgreementObservation | ExplorationObservation | CompanionObservation | PracticeObservation | BuildupObservation | PeriodicObservation | AidObservation
   | { kind: "resource"; value: Resource; correction?: boolean }
   | { kind: "item"; value: Item; correction?: boolean }
   | { kind: "condition"; value: Condition }
@@ -48,7 +49,7 @@ export type Observation = AgreementObservation | ExplorationObservation | Compan
   | { kind: "distance"; value: Distance }
   | { kind: "resilience"; value: Resilience }
   | { kind: "condition_end"; id: string; source: Evidence; retire?: true; natural?: true; ending?: string };
-export type MechanicalOperation =
+export type MechanicalOperation = AidOperation
   | { kind: "unlink"; link: string }
   | { kind: "travel"; route: string; outcome?: "clean" | "mixed" | "setback" }
   | { kind: "gather"; stock: string; amount: number; outcome?: "clean" | "mixed" | "setback" }
@@ -62,18 +63,18 @@ export type MechanicalOperation =
   | { kind: "strike"; target: string; outcome?: "clean" | "mixed" | "setback"; place?: string }
   | { kind: "move"; target: string; direction: "closer" | "away"; place?: string }
   | { kind: "ability"; ability: string; version: number; target?: string; outcome?: "clean" | "mixed" | "setback"; place?: string };
-export interface MechanicalChange { kind: "resource" | "item" | "condition" | "distance" | "agreement" | "position" | "place" | "stock" | "entity" | "companion" | "cost_link" | "growth" | "buildup"; id: string; before: Resource | Item | Condition | Distance | Agreement | Position | Place | SiteStock | Entity | Companion | CostLink | PracticeTrack | BuildupTrack | null; after: Resource | Item | Condition | Distance | Agreement | Position | Place | SiteStock | Entity | Companion | CostLink | PracticeTrack | BuildupTrack | null; }
+export interface MechanicalChange { kind: "resource" | "item" | "condition" | "distance" | "agreement" | "position" | "place" | "stock" | "entity" | "companion" | "cost_link" | "growth" | "buildup" | "aid_offer"; id: string; before: Resource | Item | Condition | Distance | Agreement | Position | Place | SiteStock | Entity | Companion | CostLink | PracticeTrack | BuildupTrack | AidOffer | null; after: Resource | Item | Condition | Distance | Agreement | Position | Place | SiteStock | Entity | Companion | CostLink | PracticeTrack | BuildupTrack | AidOffer | null; }
 export interface MechanicalReceipt {
   version: 1; id: string; input: string; base: string; actor: string;
   operations: MechanicalOperation[]; changes: MechanicalChange[];
   status: "ready" | "blocked"; reason?: string;
   unresolved?: true;
   learning?: LearningWitness;
-  engine?: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9; result?: string; beats?: EncounterBeat[]; responses?: ResponsePlan[]; place?: string;
+  engine?: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10; result?: string; beats?: EncounterBeat[]; responses?: ResponsePlan[]; place?: string;
 }
 export interface MechanicalRecord { version: 1; path: string; text: string; receipt?: MechanicalReceipt; observations: Observation[]; sources?: DefinitionSource[]; }
 export const emptyMechanics = (): MechanicalState => ({ version: 1, resources: [], items: [], conditions: [], applied: [] });
-export const hasMechanics = (s: MechanicalState) => !!(s.buildups?.length || s.resources.length || s.items.length || s.conditions.length || s.abilities?.length || s.entities?.length || s.resilience?.length || s.closedConditions?.length || s.agreements?.length || s.places?.length || s.companions?.length || s.costLinks?.length || s.growth?.length);
+export const hasMechanics = (s: MechanicalState) => !!(s.aidOffers?.length || s.buildups?.length || s.resources.length || s.items.length || s.conditions.length || s.abilities?.length || s.entities?.length || s.resilience?.length || s.closedConditions?.length || s.agreements?.length || s.places?.length || s.companions?.length || s.costLinks?.length || s.growth?.length);
 const obj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const str = (v: unknown, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "";
 const amount = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1e9;
@@ -146,7 +147,9 @@ export function readMechanicalObservations(raw: unknown, before: MechanicalState
     const s = source(row, messages, historical); let id = str(row.id, 100);
     if (!s) continue;
     let observation: Observation | undefined;
-    if (row.kind === "periodic") {
+    if (row.kind === "aid_offer" || row.kind === "aid_end") {
+      try { observation = readAidObservation(row.kind === "aid_offer" ? { ...row, target: own(row.target, player) } : row, working, s.evidence, messages, historical); } catch { continue; }
+    } else if (row.kind === "periodic") {
       try {
         observation = readPeriodicObservation({ ...row, owner: actorName(working, own(row.owner, player)), caster: actorName(working, own(row.caster, player)) }, working, s.evidence, messages, historical, s.correction);
         if (observation && !s.correction && !conditionCauseIsNew(working, observation.value.id, observation.value.owner, observation.value.name, s.evidence, messages)) observation = undefined;
@@ -164,6 +167,7 @@ export function readMechanicalObservations(raw: unknown, before: MechanicalState
       try { observation = readEncounterObservation(row.kind === "entity" ? { ...row, name: own(row.name, player), aliases: [...(Array.isArray(row.aliases) ? row.aliases : []), ...(own(row.name, player) === "you" && str(row.name, 80) !== "you" ? [row.name] : [])] } : { ...row, from: own(row.from, player), to: own(row.to, player) }, working, s.evidence, messages); } catch { continue; }
     } else if (row.kind === "condition_end") {
       const condition = working.conditions.find(c => c.id === id);
+      if (!s.correction && condition?.owner === "you" && (condition.injury || condition.category === "physical_injury") && awaitingAid(working, s.evidence, messages, historical)) continue;
       const start = condition?.source.message;
       const startedAt = start ? messages.findIndex(m => start.startsWith("warp-action:") ? messageOwnsAction(m, start.slice("warp-action:".length)) : m.id === start) : -1;
       const natural = !!condition?.periodic && condition.periodic.remaining === undefined && row.natural === true && row.ending === condition.ending
@@ -218,6 +222,7 @@ export function readMechanicalObservations(raw: unknown, before: MechanicalState
 }
 
 function observe(state: MechanicalState, o: Observation) {
+  if (o.kind === "aid_offer" || o.kind === "aid_end") { observeAid(state, o); return; }
   if (o.kind === "periodic") {
     const at = state.conditions.findIndex(c => c.id === o.value.id);
     if (at < 0) state.conditions.push(structuredClone(o.value)); else state.conditions[at] = structuredClone(o.value);
@@ -474,7 +479,11 @@ function execute(before: MechanicalState, actor: string, operations: MechanicalO
 }
 
 /** The exchange is one bounded receipt. A response cannot enqueue another response. */
-function executeExchange(before: MechanicalState, actor: string, operations: MechanicalOperation[], id: string, responses: ResponsePlan[], place?: string, resolver: 3 | 4 | 5 | 6 | 7 | 8 | 9 = 3, learning?: LearningWitness) {
+function executeExchange(before: MechanicalState, actor: string, operations: MechanicalOperation[], id: string, responses: ResponsePlan[], place?: string, resolver: 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 = 3, learning?: LearningWitness) {
+  if (resolver >= 10 && operations.some(op => op.kind === "accept_aid" || op.kind === "decline_aid")) {
+    if (responses.length || learning) throw Error("Aid permission opens only its offered action");
+    return executeAid(before, actor, operations, (state, who, operation) => execute(state, who, [operation], id, 2, true, true, true, true, true, true, true));
+  }
   if (!Array.isArray(responses) || responses.length > MAX_RESPONSES || (responses.length && !operations.length)) throw new Error("Invalid exchange opportunity");
   if (resolver >= 8 && operations.length && operations.every(op => op.kind === "unlink") && responses.length) throw Error("Withdrawing permission alone opens no exchange opportunity");
   let resolved = execute(before, actor, operations, id, 2, true, resolver >= 4, resolver >= 5, resolver >= 6, resolver >= 7, resolver >= 8, resolver >= 9);
@@ -522,7 +531,8 @@ function executeExchange(before: MechanicalState, actor: string, operations: Mec
   return resolved;
 }
 
-function resolverFor(before: MechanicalState, operations: MechanicalOperation[], responses: ResponsePlan[], learning?: LearningWitness): 5 | 6 | 7 | 8 | 9 {
+function resolverFor(before: MechanicalState, operations: MechanicalOperation[], responses: ResponsePlan[], learning?: LearningWitness): 5 | 6 | 7 | 8 | 9 | 10 {
+  if (operations.some(op => op.kind === "accept_aid" || op.kind === "decline_aid")) return 10;
   const relevant = [...operations, ...(Array.isArray(responses) ? responses.flatMap(p => p?.action ? [p.action] : []) : [])];
   if (hasLingering(before) || relevant.some(op => op.kind === "ability" && before.abilities?.some(a => a.id === op.ability && a.effects.some(isLingering)))) return 9;
   const opposedTechnique = Array.isArray(responses) && responses.some(p => p && typeof p.actor === "string" && p.action && p.assessment
@@ -537,7 +547,7 @@ export function prepareMechanical(before: MechanicalState, id: string, actor: st
 export function prepareExchange(before: MechanicalState, id: string, actor: string, operations: MechanicalOperation[], responses: ResponsePlan[], context = "", place?: string, learning?: LearningWitness): MechanicalReceipt {
   return prepare(before, id, actor, operations, context, resolverFor(before, operations, responses, learning), responses, place, learning);
 }
-function prepare(before: MechanicalState, id: string, actor: string, operations: MechanicalOperation[], context: string, engine: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9, responses?: ResponsePlan[], place?: string, learning?: LearningWitness): MechanicalReceipt {
+function prepare(before: MechanicalState, id: string, actor: string, operations: MechanicalOperation[], context: string, engine: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10, responses?: ResponsePlan[], place?: string, learning?: LearningWitness): MechanicalReceipt {
   place = place || undefined; responses ??= [];
   const base = revision(before), input = revision(engine >= 8 ? [actor, operations, context, responses, place, learning] : engine === 2 ? [actor, operations, context] : [actor, operations, context, responses, place]);
   try {
@@ -545,7 +555,7 @@ function prepare(before: MechanicalState, id: string, actor: string, operations:
     if (learning && learning.seed !== context) throw Error("Learning seed differs from the prepared action");
     const previous = before.applied.find(a => a.id === id);
     if (previous) throw new Error(previous.input === input ? "Action already applied" : "Action id reused for different input");
-    const executed = engine >= 3 ? executeExchange(before, actor, operations, id, responses, place, engine as 3 | 4 | 5 | 6 | 7 | 8 | 9, learning) : execute(before, actor, operations, id, 2);
+    const executed = engine >= 3 ? executeExchange(before, actor, operations, id, responses, place, engine as 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10, learning) : execute(before, actor, operations, id, 2);
     return { version: 1, engine, id, input, base, actor, operations: structuredClone(operations), ...(learning ? { learning: structuredClone(learning) } : {}), ...(engine >= 3 ? { responses: structuredClone(responses), ...(place ? { place } : {}) } : {}), changes: executed.changes, beats: executed.beats, result: revision(executed.state), status: "ready" };
   } catch (e) {
     return { version: 1, engine, id, input, base, actor, operations: structuredClone(operations), changes: [], status: "blocked", reason: e instanceof Error ? e.message : "Mechanical action unavailable", ...(e instanceof MechanicalKnowledgeError ? { unresolved: true as const } : {}) };
@@ -556,10 +566,10 @@ export function commitMechanical(before: MechanicalState, receipt: MechanicalRec
   const existing = before.applied.find(a => a.id === receipt.id);
   if (existing) { if (existing.input !== receipt.input) throw new Error("Action id conflict"); return before; }
   if (receipt.version !== 1 || receipt.status !== "ready" || receipt.base !== revision(before)) throw new Error("Mechanical receipt is blocked or stale");
-  if (receipt.engine !== undefined && receipt.engine !== 2 && receipt.engine !== 3 && receipt.engine !== 4 && receipt.engine !== 5 && receipt.engine !== 6 && receipt.engine !== 7 && receipt.engine !== 8 && receipt.engine !== 9) throw new Error("Unsupported mechanical resolver");
+  if (receipt.engine !== undefined && receipt.engine !== 2 && receipt.engine !== 3 && receipt.engine !== 4 && receipt.engine !== 5 && receipt.engine !== 6 && receipt.engine !== 7 && receipt.engine !== 8 && receipt.engine !== 9 && receipt.engine !== 10) throw new Error("Unsupported mechanical resolver");
   if (receipt.learning && (receipt.engine ?? 1) < 8) throw Error("Learning requires the progression resolver");
   if ((receipt.engine ?? 1) < 3 && receipt.responses?.length) throw new Error("Responses require the exchange resolver");
-  const { state, changes, beats } = (receipt.engine ?? 1) >= 3 ? executeExchange(before, receipt.actor, receipt.operations, receipt.id, receipt.responses ?? [], receipt.place, receipt.engine as 3 | 4 | 5 | 6 | 7 | 8 | 9, receipt.learning) : execute(before, receipt.actor, receipt.operations, receipt.id, receipt.engine ?? 1);
+  const { state, changes, beats } = (receipt.engine ?? 1) >= 3 ? executeExchange(before, receipt.actor, receipt.operations, receipt.id, receipt.responses ?? [], receipt.place, receipt.engine as 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10, receipt.learning) : execute(before, receipt.actor, receipt.operations, receipt.id, receipt.engine ?? 1);
   if (revision(changes) !== revision(receipt.changes)) throw new Error("Mechanical receipt does not match its operations");
   if (receipt.engine !== undefined && (revision(state) !== receipt.result || revision(beats) !== revision(receipt.beats))) throw new Error("Mechanical encounter receipt does not match its resolution");
   state.applied.push({ id: receipt.id, input: receipt.input });
@@ -583,7 +593,13 @@ function parseMechanicalPlan(raw: unknown, state: MechanicalState, action: strin
     // A native classification of this exact single action can replace English verb matching.
     // It cannot replace quoted evidence, ownership, amounts, saved definitions or transaction validation.
     const stated = (verbs: RegExp) => verbs.test(quote) || raw.length === 1 && classified?.action === action && classified.kind === row.kind && quote === action;
-    if (row.kind === "unlink") {
+    if (row.kind === "accept_aid" || row.kind === "decline_aid") {
+      if (Object.keys(row).some(k => !["kind", "offer", "version", "quote"].includes(k))) throw Error("Aid permission cannot override its offered action");
+      if (!stated(row.kind === "accept_aid" ? /\b(?:accept|agree|allow|yes|please|go ahead)\b/i : /\b(?:decline|refuse|reject|no|cancel)\b/i)) throw Error("Aid permission must be explicit");
+      const offer = state.aidOffers?.find(o => o.id === row.offer && o.version === row.version && o.status === "offered");
+      if (!offer) throw Error("The aid offer changed or is unavailable");
+      operations.push({ kind: row.kind, offer: offer.id, version: offer.version });
+    } else if (row.kind === "unlink") {
       if (Object.keys(row).some(k => !["kind", "link", "quote"].includes(k)) || !stated(/^[*"\s]*(?:I\s+)?(?:revoke|withdraw|stop|end|cut|disable|cancel)\b/i)) throw Error("Withdrawing a cost permission must be an explicit action");
       const link = state.costLinks?.find(l => l.id === row.link);
       if (!link) throw Error("The shared cost permission is unknown");
@@ -681,7 +697,7 @@ export function mechanicalPacket(state: MechanicalState, focus = "") {
   const withoutSource = <T extends { source: Evidence }>({ source, ...value }: T) => value;
   const tracks = activePracticeTracks(state), queried = readOnlyIntent(focus) && (/\b(?:growth|progress|practice|practiced|trained|training|familiar|mastery|learning|experienced|learn)\b/i.test(focus) || tracks.some(g => focus.toLocaleLowerCase().includes(g.name.toLocaleLowerCase())));
   const visibleGrowth = tracks.filter(g => g.familiar || queried && (g.owner === "you" || state.companions?.some(c => c.actor === g.owner && c.controller === "you")));
-  return { ...(visibleGrowth.length ? { growth: visibleGrowth.map(({ id, owner, name, skill, familiar, credits }) => ({ id, owner, name, skill, familiar, basis: "warp", ...(queried ? { opportunities: credits.length, milestoneAt: 3 } : {}) })) } : {}), ...(state.companions?.length ? { companions: state.companions.map(c => ({ id: c.id, actor: c.actor, controller: c.controller, companionKind: c.companionKind, ...(c.manifestation ? { active: c.manifestation.active, ...(c.manifestation.expiresAt !== undefined ? { remainingControllerActions: Math.max(0, c.manifestation.expiresAt - actionCount(state, c.controller) - 1) } : {}) } : {}) })) } : {}), ...(state.costLinks?.length ? { costLinks: state.costLinks.map(withoutSource) } : {}), ...(state.buildups?.length ? { buildups: state.buildups.map(({ source, fingerprint, definition, ...value }) => value) } : {}), resources: state.resources.map(withoutSource), items: state.items.map(withoutSource), conditions: state.conditions.map(c => { const value = withoutSource(c); return c.periodic ? { ...value, periodic: { remaining: c.periodic.remaining, endingRule: c.periodic.endingRule, timingBasis: c.periodic.timingBasis, pulse: c.periodic.pulse } } : value; }), ...explorationPacket(state, focus), ...(state.abilities?.length ? { abilities: state.abilities.map(a => {
+  return { ...(state.aidOffers?.length ? { aidOffers: state.aidOffers.filter(o => o.status === "offered").map(withoutSource) } : {}), ...(visibleGrowth.length ? { growth: visibleGrowth.map(({ id, owner, name, skill, familiar, credits }) => ({ id, owner, name, skill, familiar, basis: "warp", ...(queried ? { opportunities: credits.length, milestoneAt: 3 } : {}) })) } : {}), ...(state.companions?.length ? { companions: state.companions.map(c => ({ id: c.id, actor: c.actor, controller: c.controller, companionKind: c.companionKind, ...(c.manifestation ? { active: c.manifestation.active, ...(c.manifestation.expiresAt !== undefined ? { remainingControllerActions: Math.max(0, c.manifestation.expiresAt - actionCount(state, c.controller) - 1) } : {}) } : {}) })) } : {}), ...(state.costLinks?.length ? { costLinks: state.costLinks.map(withoutSource) } : {}), ...(state.buildups?.length ? { buildups: state.buildups.map(({ source, fingerprint, definition, ...value }) => value) } : {}), resources: state.resources.map(withoutSource), items: state.items.map(withoutSource), conditions: state.conditions.map(c => { const value = withoutSource(c); return c.periodic ? { ...value, periodic: { remaining: c.periodic.remaining, endingRule: c.periodic.endingRule, timingBasis: c.periodic.timingBasis, pulse: c.periodic.pulse } } : value; }), ...explorationPacket(state, focus), ...(state.abilities?.length ? { abilities: state.abilities.map(a => {
     const { source, sourceKind, fingerprint, ...value } = a; return value;
   }) } : {}), ...(state.entities?.length ? { entities: state.entities.map(withoutSource) } : {}), ...(state.distances?.length ? { distances: state.distances.map(withoutSource) } : {}),
     ...(state.clocks?.length ? { clocks: state.clocks } : {}), ...(state.cooldowns?.length ? { cooldowns: state.cooldowns } : {}), ...(state.resilience?.length ? { resilience: state.resilience.map(withoutSource) } : {}),
@@ -699,9 +715,10 @@ export function receiptPacket(receipt: MechanicalReceipt) {
 }
 export function mechanicalNotes(receipt?: MechanicalReceipt): string[] {
   if (!receipt || receipt.status !== "ready") return [];
-  return receipt.changes.filter(c => c.kind !== "growth" || c.after && "familiar" in c.after && c.after.familiar && !(c.before && "familiar" in c.before && c.before.familiar)).filter(c => (c.kind === "stock" || c.kind === "cost_link" || c.kind === "buildup") && receipt.actor === "you" || (c.after && "owner" in c.after && c.after.owner === "you") || (c.before && "owner" in c.before && c.before.owner === "you")).map(c => {
+  return receipt.changes.filter(c => c.kind !== "growth" || c.after && "familiar" in c.after && c.after.familiar && !(c.before && "familiar" in c.before && c.before.familiar)).filter(c => (c.kind === "stock" || c.kind === "cost_link" || c.kind === "buildup" || c.kind === "aid_offer") && receipt.actor === "you" || (c.after && "owner" in c.after && c.after.owner === "you") || (c.before && "owner" in c.before && c.before.owner === "you")).map(c => {
     const value = c.after;
     if (!value) return c.kind === "condition" && c.before && "name" in c.before ? `${c.before.name}: cleared` : "";
+    if (c.kind === "aid_offer" && "status" in value) return value.status === "used" ? `${value.name}: received` : value.status === "withdrawn" ? "Aid declined" : "";
     if ("threshold" in value) return `${value.name}: ${value.current} / ${value.threshold}`;
     if (c.kind === "condition" && "periodic" in value && value.periodic) return value.periodic.remaining === undefined ? `${value.name}: ${value.ending}` : `${value.name}: ${value.periodic.remaining} actions left`;
     if (c.kind === "cost_link" && "enabled" in value && !value.enabled) return "Shared resource access withdrawn";

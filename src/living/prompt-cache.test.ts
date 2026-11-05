@@ -311,3 +311,32 @@ test("periodic schedules and buildup append their changes and removals without c
   expect(c.at(-1)!.content).toContain('"conditions":{"put":[],"remove":["burn"]}');
   expect(c.at(-1)!.content).toContain('"buildups":{"put":[],"remove":["venom"]}');
 });
+
+
+test("aid offers and their removal append deltas while previous narrator request bytes stay frozen", () => {
+  const first = msg("0", true, "Could you treat my burn?"), history = [first];
+  store(history, first, "Jacket").packet.mechanics = { aidOffers: [] };
+  const initial = publish(history, first);
+  const offered = msg("1", false, "Jo offers Mend, using two of his Focus.");
+  const question = msg("2", true, "How much does that cost?"); history.push(offered, question);
+  const pending = store(history, question, "Jacket");
+  pending.packet.aidBoundary = "Offer only. Ask or accept in ordinary chat.";
+  pending.packet.mechanics = { aidOffers: [{ id: "aid-jo", version: 1, actor: "Jo", status: "offered", ability: "mend" }] };
+  const withOffer = publish(history, question);
+  expect(withOffer.slice(0, initial.length)).toEqual(initial);
+  expect(withOffer.at(-1)!.content).toContain('"aidOffers"');
+  expect(withOffer.at(-1)!.content).toContain('"aidBoundary"');
+  history.push(msg("3", false, "Two of my Focus."));
+  const acceptance = msg("4", true, "Yes, please."); history.push(acceptance);
+  store(history, acceptance, "Jacket").packet = structuredClone(pending.packet);
+  const stable = publish(history, acceptance);
+  expect(stable.slice(0, withOffer.length)).toEqual(withOffer);
+  expect(stable.at(-1)!.content).toBe("Yes, please.");
+  history.push(msg("5", false, "Jo treats your burn."));
+  const after = msg("6", true, "Thank you."); history.push(after);
+  const consumed = store(history, after, "Jacket"); consumed.packet.mechanics = { aidOffers: [] };
+  const final = publish(history, after);
+  expect(final.slice(0, stable.length)).toEqual(stable);
+  expect(final.at(-1)!.content).toContain('"remove":["aid-jo"]');
+  expect(final.at(-1)!.content).toContain('"aidBoundary":null');
+});
