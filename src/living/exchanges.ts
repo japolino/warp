@@ -1,4 +1,5 @@
 import { storyRevision, sourceRevisionMatches, sourceContains } from "./story-text.js";
+import { lingeringOffensive } from "./lingering.js";
 import { revision } from "../shared/revision.js";
 import { seededRng } from "../engine/dice.js";
 import { attemptBands } from "./check-bands.js";
@@ -74,7 +75,7 @@ export function offensiveAction(action: MechanicalOperation, state: MechanicalSt
   if (action.kind !== "ability") return false;
   const ability = state.abilities?.find(a => a.id === action.ability), target = action.target ?? (ability?.target === "self" ? actor : "");
   if (!ability || !target || actorName(state, target) === actorName(state, actor)) return false;
-  return ability.effects.some(e => e.target === "target" && (e.kind === "damage" || e.kind === "harm"
+  return ability.effects.some(e => e.target === "target" && (lingeringOffensive(e, actorName(state, target), state) || e.kind === "damage" || e.kind === "harm"
     || e.kind === "condition" && (!!e.blocks?.length || !!e.hinders?.length || !e.helps?.length)
     || e.kind === "clear_condition" && state.conditions.some(c => c.owner === actorName(state, target) && c.name.toLocaleLowerCase() === e.name?.toLocaleLowerCase() && (!!c.helps.length || !!c.defenses?.length))));
 }

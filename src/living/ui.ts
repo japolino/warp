@@ -90,7 +90,8 @@ export function connectLiving(ctx: SpindleFrontendContext): { accept(raw: unknow
     if (!view.enabled) return `<div class="warp-scene-top"><span>Warp paused</span><button data-living="resume">Resume</button></div>`;
     const world = view.world;
     const mappable = !!world.mechanics?.places?.length;
-    const inspectable = !!world.mechanics && [...world.mechanics.resources, ...world.mechanics.items.filter(i => i.quantity > 0), ...world.mechanics.conditions, ...(world.mechanics.abilities ?? []), ...(world.mechanics.resilience ?? []).filter(r => r.band !== "ordinary"), ...(world.mechanics.agreements ?? [])].some(row => row.owner === "you" || "from" in row && row.from === "you");
+    const inspectable = !!world.mechanics && [...world.mechanics.resources, ...world.mechanics.items.filter(i => i.quantity > 0), ...world.mechanics.conditions, ...(world.mechanics.abilities ?? []), ...(world.mechanics.resilience ?? []).filter(r => r.band !== "ordinary"), ...(world.mechanics.agreements ?? [])].some(row => row.owner === "you" || "from" in row && row.from === "you")
+      || !!world.mechanics?.growth?.some(g => g.owner === "you") || !!world.mechanics?.buildups?.some(b => b.owner === "you") || !!world.mechanics?.companions?.some(c => c.controller === "you");
     const matches = world.facts.filter(f => !memoryQuery || `${f.subject} ${f.text} ${f.quote}`.toLocaleLowerCase().includes(memoryQuery.toLocaleLowerCase()));
     const remembered = matches.slice(-80).reverse();
     const relevant = world.facts.filter(f => f.status === "open" && ["commitment", "situation"].includes(f.kind)).slice(-2);

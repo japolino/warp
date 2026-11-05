@@ -289,3 +289,25 @@ test("travel and depleted stocks append spatial deltas without rewriting an earl
   expect(b.at(-1)!.content).toContain('"stocks":{"put":[{"id":"rations","site":"clinic","quantity":1}]');
   expect(b.at(-1)!.content).toContain('"explorationBoundary":"Known places'); expect(snapshot.packet.mechanics.stocks[0].quantity).toBe(3);
 });
+
+test("periodic schedules and buildup append their changes and removals without changing old prompt bytes", () => {
+  const first = msg("0", true, "I use the supported power."), history = [first];
+  const initial = store(history, first, "Clinic");
+  initial.packet.mechanics = { conditions: [{ id: "burn", owner: "you", name: "Burning", periodic: { remaining: 3, timingBasis: "source", pulse: { kind: "damage", resource: "Health", amount: 5 } } }], buildups: [{ id: "venom", owner: "Jo", current: 2, threshold: 5 }] };
+  initial.packet.lingeringBoundary = "Only completed affected-owner actions advance saved effects.";
+  const a = publish(history, first);
+  const nextMessage = msg("1", true, "I wait."); history.push(nextMessage);
+  const next = store(history, nextMessage, "Clinic"); next.packet = structuredClone(initial.packet);
+  next.packet.mechanics.conditions[0].periodic.remaining = 2; next.packet.mechanics.buildups[0].current = 4;
+  const b = publish(history, nextMessage);
+  expect(b.slice(0, a.length)).toEqual(a);
+  expect(b.at(-1)!.content).toContain('"conditions":{"put":[{"id":"burn"');
+  expect(b.at(-1)!.content).toContain('"remaining":2');
+  expect(b.at(-1)!.content).toContain('"buildups":{"put":[{"id":"venom","owner":"Jo","current":4');
+  const cured = msg("2", true, "I use the supported cure."); history.push(cured);
+  const last = store(history, cured, "Clinic"); last.packet = structuredClone(next.packet); last.packet.mechanics.conditions = []; last.packet.mechanics.buildups = [];
+  const c = publish(history, cured);
+  expect(c.slice(0, b.length)).toEqual(b);
+  expect(c.at(-1)!.content).toContain('"conditions":{"put":[],"remove":["burn"]}');
+  expect(c.at(-1)!.content).toContain('"buildups":{"put":[],"remove":["venom"]}');
+});

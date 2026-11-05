@@ -11959,11 +11959,6 @@ ${clean.slice(-tail)}`;
 var STORY_BINDINGS = "warpStoryBindings", storyRevision = (content) => revision(storyContent(content));
 var init_story_text = () => {};
 
-// src/living/check-bands.ts
-function attemptBands(tier) {
-  return tier === "favorable" ? [60, 90] : tier === "outmatched" ? [10, 45] : [30, 75];
-}
-
 // src/living/condition-history.ts
 function messageOwnsAction(message, action) {
   const record = message;
@@ -12585,6 +12580,405 @@ ${RANGE_OBSERVATIONS}
 Resources may have role:"vital|effort|shield|money|other" only when their fictional function is supported. Equipped items and conditions may have defenses:[{kind:"armor|resistance|immunity|reflect",amount,damageType:"physical|fire|cold|electric|poison|mental|untyped|all"}]. Armor subtracts a flat amount, resistance/reflect use percentages, immunity uses amount:0. All non-immunity numbers must occur in the source quote. Do not invent these defenses or health values. A shield pool is an explicit resource with role:shield. Actual values stay unknown without source evidence. Never emit an absolute update to undo an action receipt.`;
 });
 
+// src/living/lingering.ts
+function scopes(v) {
+  if (v === undefined)
+    return [];
+  if (!Array.isArray(v) || v.some((x) => !["movement", "precision", "force", "speech", "perception", "concentration"].includes(x)))
+    throw Error("Unknown lingering constraint");
+  return [...new Set(v)];
+}
+function readPulse(v, quote) {
+  if (!obj2(v))
+    throw Error("Missing periodic pulse");
+  if (v.kind === "damage" || v.kind === "restore") {
+    fields(v, ["kind", "resource", "amount", "basis", "magnitude", "damageType"]);
+    const exact = positive(v.amount) && numberIn(quote, v.amount), magnitude = IMPACTS[v.magnitude];
+    if (!text2(v.resource) || v.amount !== undefined && !exact || !exact && !magnitude)
+      throw Error("Periodic amount needs a source number or supported magnitude");
+    if (v.damageType !== undefined && ![...physical, "mental", "untyped"].includes(v.damageType))
+      throw Error("Unknown periodic damage type");
+    return { kind: v.kind, resource: text2(v.resource), amount: exact ? v.amount : magnitude, basis: exact ? "source" : "warp", ...v.damageType ? { damageType: v.damageType } : {} };
+  }
+  if (v.kind === "harm" || v.kind === "mend") {
+    fields(v, ["kind", "impact", "damageType", "maxInjury"]);
+    if (!Object.hasOwn(IMPACTS, v.impact) || v.kind === "harm" && !physical.includes(v.damageType))
+      throw Error("Unsupported periodic physical effect");
+    if (v.maxInjury !== undefined && (!["minor", "standard", "major", "any"].includes(v.maxInjury) || !(v.maxInjury === "any" ? /\b(?:all|any)\b/i : new RegExp(`\\b${v.maxInjury}\\b`, "i")).test(quote)))
+      throw Error("Unsourced periodic treatment limit");
+    return { kind: v.kind, impact: v.impact, ...v.kind === "harm" ? { damageType: v.damageType } : {}, ...v.maxInjury ? { maxInjury: v.maxInjury } : {} };
+  }
+  throw Error("A periodic pulse cannot schedule another effect");
+}
+function readPeriodic(v, quote) {
+  const name = text2(v.name), rule = v.endingRule;
+  if (rule !== undefined && !Object.hasOwn(ENDINGS, rule))
+    throw Error("Unknown Warp ending rule");
+  const ongoing = v.untilCleared === true || rule !== undefined && v.untilCleared === undefined;
+  const ending = text2(v.ending, 240) || (rule ? ENDINGS[rule] : "");
+  if (!name || !ending || v.cadence !== "owner_action")
+    throw Error("Periodic effects require affected-owner action timing");
+  if (/\b(?:seconds?|minutes?|hours?|days?|rounds?)\b/i.test(quote))
+    throw Error("Real-time and round timing cannot become owner actions");
+  if (v.timingBasis !== undefined && !["source", "warp"].includes(v.timingBasis))
+    throw Error("Unknown periodic timing basis");
+  if (v.untilCleared !== undefined && v.untilCleared !== true || ongoing && (v.duration !== undefined || (!rule || ending !== ENDINGS[rule]) && !norm3(quote).includes(norm3(ending))))
+    throw Error("An ongoing effect needs its actual sourced ending and no invented duration");
+  if (v.duration === undefined && !ongoing)
+    throw Error("Periodic effects need a duration or a sourced ending trigger");
+  const pulse = readPulse(v.pulse, quote);
+  if (rule) {
+    const compatible = rule === "recover" ? pulse.kind === "mend" || pulse.kind === "restore" : (pulse.kind === "harm" || pulse.kind === "damage") && pulse.damageType === { extinguish: "fire", stanch: "physical", detox: "poison" }[rule];
+    if (!ongoing || v.duration !== undefined || !compatible)
+      throw Error("A Warp ending rule must match its actual ongoing effect");
+  }
+  return { name, ending, ...ongoing ? { untilCleared: true } : { duration: duration(v.duration, quote) }, ...rule ? { endingRule: rule } : {}, cadence: "owner_action", timingBasis: v.timingBasis ?? (ongoing ? "warp" : "source"), pulse };
+}
+function readTrigger(v, quote) {
+  if (!obj2(v))
+    throw Error("Missing buildup trigger");
+  if (v.kind === "periodic") {
+    fields(v, ["kind", "name", "ending", "duration", "untilCleared", "endingRule", "cadence", "timingBasis", "pulse"]);
+    return { kind: "periodic", ...readPeriodic(v, quote) };
+  }
+  if (v.kind !== "condition")
+    throw Error("Buildup can trigger one condition or finite periodic effect");
+  fields(v, ["kind", "name", "ending", "helps", "hinders", "blocks", "duration"]);
+  if (!text2(v.name) || !text2(v.ending, 240))
+    throw Error("Buildup condition needs an ending");
+  return { kind: "condition", name: text2(v.name), ending: text2(v.ending, 240), helps: scopes(v.helps), hinders: scopes(v.hinders), blocks: scopes(v.blocks), ...v.duration === undefined ? {} : { duration: duration(v.duration, quote) } };
+}
+function readLingeringEffect(v, quote) {
+  if (!["self", "target"].includes(v.target))
+    throw Error("Unknown lingering target");
+  const target = v.target;
+  if (v.kind === "periodic") {
+    fields(v, ["kind", "target", "name", "ending", "duration", "untilCleared", "endingRule", "cadence", "timingBasis", "pulse"]);
+    return { kind: "periodic", target, ...readPeriodic(v, quote) };
+  }
+  if (v.kind === "clear_buildup") {
+    fields(v, ["kind", "target", "name"]);
+    if (!text2(v.name))
+      throw Error("Missing accumulation to clear");
+    return { kind: "clear_buildup", target, name: text2(v.name) };
+  }
+  fields(v, ["kind", "target", "name", "amount", "threshold", "basis", "magnitude", "trigger"]);
+  const exact = positive(v.amount) && positive(v.threshold) && numberIn(quote, v.amount) && numberIn(quote, v.threshold);
+  const magnitude = { minor: 1, standard: 2, major: 3 }[v.magnitude];
+  if (!text2(v.name) || (v.amount !== undefined || v.threshold !== undefined) && !exact || !exact && !magnitude)
+    throw Error("Buildup requires sourced quantities or a Warp accumulation grade");
+  const amount = exact ? v.amount : magnitude, threshold = exact ? v.threshold : 3;
+  if (![amount, threshold].every((n) => Math.abs(n * 1000 - Math.round(n * 1000)) < 0.000001))
+    throw Error("Buildup supports at most three decimal places");
+  return { kind: "buildup", target, name: text2(v.name), amount, threshold, basis: exact ? "source" : "warp", trigger: readTrigger(v.trigger, quote) };
+}
+function lingeringInput(e) {
+  const value = structuredClone(e);
+  const pulse = (p) => p?.basis === "warp" ? { ...p, amount: undefined, magnitude: { 5: "minor", 15: "standard", 30: "major" }[p.amount] } : p;
+  if (value.pulse)
+    value.pulse = pulse(value.pulse);
+  if (value.trigger?.pulse)
+    value.trigger.pulse = pulse(value.trigger.pulse);
+  if (value.kind === "buildup" && value.basis === "warp") {
+    value.magnitude = { 1: "minor", 2: "standard", 3: "major" }[value.amount];
+    delete value.amount;
+    delete value.threshold;
+  }
+  return value;
+}
+function readBuildup(row, state, source, correction, historical) {
+  if (Object.keys(row).some((k) => !["kind", "owner", "name", "current", "caster", "ability", "message", "quote", "sourceRevision", ...historical ? ["id", "threshold", "trigger", "fingerprint", "basis", "source", "definition"] : []].includes(k)))
+    return;
+  const owner = text2(row.owner, 80), name = text2(row.name), current = row.current;
+  if (!owner || !name || typeof current !== "number" || !Number.isFinite(current) || current < 0 || !numberIn(source.quote, current) || !norm3(source.quote).includes(norm3(name)))
+    return;
+  if (!correction && state.buildups?.some((b) => b.owner === owner && norm3(b.name) === norm3(name)))
+    return;
+  let candidates = [];
+  if (historical && obj2(row.definition)) {
+    const ref = row.definition, a = state.abilities?.find((a) => a.id === ref.ability && a.version === ref.version);
+    const index = typeof ref.index === "number" && Number.isInteger(ref.index) ? ref.index : -1, effect = a?.effects[index];
+    if (a && effect?.kind === "buildup" && norm3(effect.name) === norm3(name))
+      candidates = [{ ability: a.id, version: a.version, index, effect }];
+  } else
+    for (const a of state.abilities ?? [])
+      if (a.owner === row.caster && (a.id === row.ability || norm3(a.name) === norm3(text2(row.ability)))) {
+        a.effects.forEach((effect, index) => {
+          if (effect.kind === "buildup" && norm3(effect.name) === norm3(name))
+            candidates.push({ ability: a.id, version: a.version, index, effect });
+        });
+      }
+  if (candidates.length !== 1)
+    return;
+  const { effect, ...definition } = candidates[0];
+  if (current >= effect.threshold || Math.abs(current * 1000 - Math.round(current * 1000)) > 0.000001)
+    return;
+  return { kind: "buildup", value: { id: `buildup-${revision([owner, norm3(name)])}`, owner, name, current, threshold: effect.threshold, trigger: structuredClone(effect.trigger), fingerprint: revision([effect.threshold, effect.trigger]), basis: effect.basis, definition, source }, ...correction ? { correction: true } : {} };
+}
+function readPeriodicObservation(row, state, source, messages, historical, correction = false) {
+  if (source.message.startsWith("warp-source:") || Object.keys(row).some((k) => !["kind", "owner", "name", "caster", "ability", "remaining", "effect", "message", "quote", "sourceRevision", ...historical ? ["definition"] : []].includes(k)))
+    return;
+  const latest = messages.filter((m) => (!m.is_user || /^\s*\(?OOC correction:/i.test(m.content)) && !!m.content.trim() && !m.id.startsWith("warp-source:")).at(-1);
+  if (source.message !== latest?.id)
+    return;
+  const owner = text2(row.owner, 80), name = text2(row.name), old = state.conditions.find((c) => c.owner === owner && norm3(c.name) === norm3(name));
+  if (!owner || !name || !norm3(source.quote).includes(norm3(name)) || !correction && (old?.periodic || old && (old.source.message !== source.message || old.source.sourceRevision !== source.sourceRevision)))
+    return;
+  const candidates = [];
+  for (const a of state.abilities ?? [])
+    a.effects.forEach((effect, index) => {
+      const selected = historical && obj2(row.definition) ? a.id === row.definition.ability && a.version === row.definition.version && index === row.definition.index : a.owner === row.caster && (a.id === row.ability || norm3(a.name) === norm3(text2(row.ability)));
+      if (selected && effect.kind === "periodic" && norm3(effect.name) === norm3(name))
+        candidates.push({ caster: a.owner, definition: { ability: a.id, version: a.version, index }, effect });
+    });
+  const direct = historical && obj2(row.definition) && obj2(row.definition.effect) ? lingeringInput(row.definition.effect) : row.effect;
+  if (direct !== undefined) {
+    if (candidates.length || !obj2(direct) || direct.kind !== "periodic" || direct.target !== "self")
+      return;
+    let effect;
+    try {
+      effect = readLingeringEffect(direct, source.quote);
+    } catch {
+      return;
+    }
+    if (norm3(effect.name) !== norm3(name))
+      return;
+    candidates.push({ caster: text2(row.caster, 80) || "environment", definition: { effect }, effect });
+  }
+  if (candidates.length !== 1)
+    return;
+  const { caster, definition, effect } = candidates[0], remaining = row.remaining;
+  if (effect.duration !== undefined && (typeof remaining !== "number" || !Number.isInteger(remaining) || remaining <= 0 || remaining > effect.duration || !numberIn(source.quote, remaining)))
+    return;
+  if (effect.duration === undefined && remaining !== undefined)
+    return;
+  try {
+    validatePulse(state, caster, owner, effect.pulse);
+  } catch {
+    return;
+  }
+  return { kind: "periodic", definition, value: {
+    ...old ?? { id: `periodic-start-${revision([owner, norm3(name)])}`, owner, helps: [], hinders: [], blocks: [] },
+    name,
+    ending: effect.ending,
+    source,
+    periodic: { rule: 1, caster, nextAt: actionCount(state, owner) + 1, ...typeof remaining === "number" ? { remaining } : {}, timingBasis: effect.timingBasis, ...effect.endingRule ? { endingRule: effect.endingRule } : {}, pulse: structuredClone(effect.pulse), startedBy: revision([source, definition]) }
+  } };
+}
+function resourceFor(state, owner, p) {
+  const found = state.resources.filter((r) => r.owner === owner && (r.id === p.resource || norm3(r.name) === norm3(p.resource)));
+  if (found.length !== 1 || p.kind === "restore" && found[0].max === undefined)
+    throw new MechanicalKnowledgeError(`Periodic ${p.kind} needs a known ${p.resource}${p.kind === "restore" ? " and recovery limit" : ""} for ${owner}`);
+  return found[0];
+}
+function validatePulse(state, actor, owner, p) {
+  if (p.kind === "damage" || p.kind === "restore")
+    resourceFor(state, owner, p);
+  else if (p.kind === "harm")
+    applyInjury(structuredClone(state), actor, owner, IMPACTS[p.impact], p.damageType, [], [], "periodic-preflight");
+  else if (p.kind === "mend") {
+    if (owner !== "you" && entityFor(state, owner)?.entityKind !== "person")
+      throw new MechanicalKnowledgeError("Periodic treatment needs a supported living subject");
+    try {
+      mendInjury(structuredClone(state), owner, p.impact, [], [], "periodic-preflight", p.maxInjury);
+    } catch (error) {
+      if (error instanceof MechanicalKnowledgeError)
+        throw error;
+    }
+  }
+}
+function validateLingering(state, actor, owner, e) {
+  if (e.kind === "periodic")
+    validatePulse(state, actor, owner, e.pulse);
+  if (e.kind === "buildup") {
+    const old = state.buildups?.find((b) => b.owner === owner && norm3(b.name) === norm3(e.name));
+    if (old && old.fingerprint !== revision([e.threshold, e.trigger]))
+      throw new MechanicalKnowledgeError(`${e.name}: the existing buildup definition conflicts with this effect`);
+    if (e.trigger?.kind === "periodic")
+      validatePulse(state, actor, owner, e.trigger.pulse);
+  }
+}
+function condition(state, id, actor, owner, spec, action, changes) {
+  const old = state.conditions.find((c) => c.id === id);
+  if (spec.kind === "periodic" && !old?.periodic && state.conditions.filter((c) => c.owner === owner && c.periodic).length >= 32)
+    throw new MechanicalKnowledgeError("This actor already has the supported maximum of active periodic effects");
+  const source = { message: `warp-action:${action}`, quote: `${spec.name} applied to ${owner}`, sourceRevision: revision([action, id, spec]) };
+  const next = {
+    id,
+    owner,
+    name: spec.name,
+    ending: spec.ending,
+    source,
+    helps: spec.kind === "condition" ? spec.helps : [],
+    hinders: spec.kind === "condition" ? spec.hinders : [],
+    blocks: spec.kind === "condition" ? spec.blocks : [],
+    ...spec.kind === "periodic" ? { periodic: { rule: 1, caster: actor, nextAt: actionCount(state, owner) + 1, ...spec.duration ? { remaining: spec.duration } : {}, timingBasis: spec.timingBasis, ...spec.endingRule ? { endingRule: spec.endingRule } : {}, pulse: structuredClone(spec.pulse), startedBy: revision([action, id, actionCount(state, owner), old?.periodic?.startedBy]) } } : spec.duration ? { expiresAt: actionCount(state, owner) + spec.duration + 1 } : {}
+  };
+  if (spec.kind === "periodic") {
+    state.clocks ??= [];
+    if (!state.clocks.some((c) => c.actor === owner))
+      state.clocks.push({ id: owner, actor: owner, actions: 0 });
+  }
+  if (old)
+    state.conditions[state.conditions.indexOf(old)] = next;
+  else
+    state.conditions.push(next);
+  changes.push({ kind: "condition", id, before: old ? structuredClone(old) : null, after: structuredClone(next) });
+}
+function applyLingering(state, actor, owner, e, key, action, changes, beats) {
+  if (e.kind === "periodic") {
+    condition(state, `periodic-${revision([key, owner])}`, actor, owner, { kind: "periodic", name: e.name, ending: e.ending, ...e.duration ? { duration: e.duration } : { untilCleared: true }, cadence: "owner_action", timingBasis: e.timingBasis, ...e.endingRule ? { endingRule: e.endingRule } : {}, pulse: e.pulse }, action, changes);
+    return;
+  }
+  const old = state.buildups?.find((b) => b.owner === owner && norm3(b.name) === norm3(e.name));
+  if (e.kind === "clear_buildup") {
+    if (old?.current) {
+      const before = structuredClone(old);
+      old.current = 0;
+      old.source = { message: `warp-action:${action}`, quote: `${old.name} cleared`, sourceRevision: revision([action, key]) };
+      changes.push({ kind: "buildup", id: old.id, before, after: structuredClone(old) });
+    }
+    return;
+  }
+  const threshold = e.threshold, total = Math.round((old?.current ?? 0) * 1000) + Math.round(e.amount * 1000), units = Math.round(threshold * 1000), crossings = Math.floor(total / units);
+  const next = { id: old?.id ?? `buildup-${revision([owner, norm3(e.name)])}`, owner, name: old?.name ?? e.name, current: total % units / 1000, threshold, trigger: structuredClone(e.trigger), fingerprint: revision([threshold, e.trigger]), basis: e.basis, source: { message: `warp-action:${action}`, quote: `${e.name} applied to ${owner}`, sourceRevision: revision([action, key]) } };
+  state.buildups ??= [];
+  if (old)
+    state.buildups[state.buildups.indexOf(old)] = next;
+  else
+    state.buildups.push(next);
+  changes.push({ kind: "buildup", id: next.id, before: old ? structuredClone(old) : null, after: structuredClone(next) });
+  beats.push({ kind: "buildup", actor, target: owner, name: next.name, amount: next.current });
+  if (crossings) {
+    condition(state, `buildup-trigger-${next.id}`, actor, owner, next.trigger, action, changes);
+    beats.push({ kind: "threshold", actor, target: owner, name: next.trigger.name, amount: crossings });
+  }
+}
+function periodicMend(state, actor, pulse, action, changes, beats) {
+  const grades = { minor: 1, standard: 2, major: 3 }, max = { ...grades, any: 4 }[pulse.maxInjury ?? "any"];
+  const wound = !state.conditions.some((c) => c.owner === actor && c.injury) && state.conditions.filter((c) => c.owner === actor && c.category === "physical_injury" && c.recovery === "routine" && c.severity).sort((a, b) => grades[b.severity] - grades[a.severity])[0];
+  if (wound && grades[wound.severity] <= max && grades[wound.severity] > grades[pulse.impact]) {
+    const before = structuredClone(wound), nextGrade = grades[wound.severity] - grades[pulse.impact];
+    wound.severity = ["minor", "standard", "major"][nextGrade - 1];
+    changes.push({ kind: "condition", id: wound.id, before, after: structuredClone(wound) });
+    beats.push({ kind: "mend", actor, target: actor, name: `${wound.name}: improving`, basis: "warp" });
+    return;
+  }
+  const copy = structuredClone(state);
+  try {
+    mendInjury(copy, actor, pulse.impact, [], [], action, pulse.maxInjury);
+    mendInjury(state, actor, pulse.impact, changes, beats, action, pulse.maxInjury);
+  } catch (error) {
+    if (!(error instanceof Error) || !["No recorded physical injury to treat", "No supported physical injury to treat", "This injury exceeds the treatment's supported severity"].includes(error.message))
+      throw error;
+    beats.push({ kind: "skipped", actor, name: "Recovery pulse", reason: error.message });
+  }
+}
+function recovered(state, owner, pulse) {
+  if (pulse.kind === "restore") {
+    const r = resourceFor(state, owner, pulse);
+    return r.current >= r.max;
+  }
+  if (pulse.kind !== "mend")
+    return false;
+  if (state.conditions.some((c) => c.owner === owner && (c.injury || c.category === "physical_injury")))
+    return false;
+  const health = state.resources.find((r) => r.owner === owner && (r.role === "vital" || /^(?:health|hp|vitality)$/i.test(r.name)));
+  return !health || health.max !== undefined && health.current >= health.max;
+}
+function finishPulses(state, actor, beforeCount, scheduled, action, changes, beats) {
+  const count = actionCount(state, actor);
+  if (count <= beforeCount)
+    return;
+  for (const old of scheduled) {
+    const p = old.periodic, current = state.conditions.find((c) => c.id === old.id);
+    if (!current?.periodic || p.nextAt > count)
+      continue;
+    const effect = p.pulse;
+    if (effect.kind === "damage" || effect.kind === "restore") {
+      const resource = resourceFor(state, actor, effect);
+      if (effect.kind === "damage")
+        damage(state, p.caster, actor, resource, effect.amount, effect.damageType ?? "untyped", changes, beats, false, true, true, action);
+      else {
+        const before = structuredClone(resource);
+        resource.current = Math.min(resource.max, resource.current + effect.amount);
+        if (resource.current !== before.current)
+          changes.push({ kind: "resource", id: resource.id, before, after: structuredClone(resource) });
+      }
+    } else if (effect.kind === "harm")
+      applyInjury(state, p.caster, actor, IMPACTS[effect.impact], effect.damageType, changes, beats, action);
+    else if (effect.kind === "mend")
+      periodicMend(state, actor, effect, action, changes, beats);
+    beats.push({ kind: "pulse", actor: p.caster, target: actor, name: old.name });
+    const live = state.conditions.find((c) => c.id === old.id);
+    if (!live?.periodic || live.periodic.startedBy !== p.startedBy)
+      continue;
+    const before = structuredClone(live);
+    if (live.periodic.remaining !== undefined)
+      live.periodic.remaining--;
+    live.periodic.nextAt = count + 1;
+    if (live.periodic.remaining !== undefined && live.periodic.remaining <= 0 || live.periodic.endingRule === "recover" && recovered(state, actor, effect)) {
+      state.conditions = state.conditions.filter((c) => c.id !== live.id);
+      closeCondition(state, live, { kind: "receipt", id: action });
+      changes.push({ kind: "condition", id: live.id, before, after: null });
+      beats.push({ kind: "expired", actor, name: live.name });
+    } else
+      changes.push({ kind: "condition", id: live.id, before, after: structuredClone(live) });
+  }
+}
+function lingeringOffensive(e, owner, state) {
+  const harmful = (p) => p.kind === "damage" || p.kind === "harm";
+  const harmfulTrigger = (t) => t.kind === "periodic" ? harmful(t.pulse) : !!(t.blocks.length || t.hinders.length || !t.helps.length);
+  if (e.kind === "periodic")
+    return harmful(e.pulse);
+  if (e.kind === "buildup")
+    return harmfulTrigger(e.trigger);
+  if (e.kind === "clear_buildup")
+    return !!state.buildups?.some((b) => b.owner === owner && norm3(b.name) === norm3(e.name) && !harmfulTrigger(b.trigger));
+  return false;
+}
+function lingeringImmune(e, owner, state) {
+  const p = e.kind === "periodic" ? e.pulse : e.kind === "buildup" && e.trigger?.kind === "periodic" ? e.trigger.pulse : undefined;
+  return !!p && (p.kind === "damage" || p.kind === "harm") && immune(state, owner, p.damageType ?? "untyped");
+}
+function pulseDescription(p, state) {
+  if ("impact" in p)
+    return `${p.impact} ${p.kind === "harm" ? `${p.damageType} harm` : "physical treatment"} · Warp interpretation`;
+  const name = state?.resources.find((r) => r.id === p.resource)?.name ?? p.resource;
+  return `${p.kind === "restore" ? "restore" : "lose"} ${p.amount} ${name}${p.damageType ? ` · ${p.damageType}` : ""}${p.basis === "warp" ? " · Warp value" : ""}`;
+}
+function lingeringDescription(e, state) {
+  if (e.kind === "clear_buildup")
+    return `Clear ${e.name} accumulation`;
+  if (e.kind === "buildup")
+    return `${e.name}: +${e.amount} toward ${e.threshold}, then ${e.trigger.name}${e.basis === "warp" ? " · Warp values" : ""}`;
+  return `${e.name}: ${pulseDescription(e.pulse, state)} after ${e.duration ? `each of ${e.target === "self" ? "your" : "the target's"} next ${e.duration} supported actions` : `each affected-owner action · ${e.ending}`}${e.timingBasis === "warp" ? " · Warp action timing" : ""}`;
+}
+var ENDINGS, physical, obj2 = (v) => !!v && typeof v === "object" && !Array.isArray(v), text2 = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", positive = (v) => typeof v === "number" && Number.isFinite(v) && v > 0 && v <= 1e6, numberIn = (quote, n) => (quote.match(/\d+(?:\.\d+)?/g) ?? []).some((v) => Number(v) === n) || ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].some((w, i) => n === i && new RegExp(`\\b${w}\\b`, "i").test(quote)), norm3 = (v) => v.normalize("NFKC").trim().toLocaleLowerCase(), fields = (v, keys) => {
+  if (Object.keys(v).some((k) => !keys.includes(k)))
+    throw Error("Unsupported lingering effect field");
+}, duration = (v, quote) => {
+  if (!positive(v) || !Number.isInteger(v) || v > 1e4 || !numberIn(quote, v))
+    throw Error("Lingering duration needs an explicit action count");
+  return v;
+}, isLingering = (e) => ["periodic", "buildup", "clear_buildup"].includes(e.kind), hasLingering = (s) => !!(s.buildups?.length || s.conditions.some((c) => c.periodic)), scheduledPulses = (s, actor) => s.conditions.filter((c) => c.owner === actor && c.periodic).map((c) => structuredClone(c)), LINGERING_INSTRUCTIONS = `Lingering effects use the same saved action receipts, never a separate simulator or model call. Prepare only source-backed accumulation or periodic powers, not ordinary conversation, affection, meals or automatic survival taxes.
+Periodic: {kind:"periodic",target:"self|target",name,ending,duration?:explicitAffectedOwnerActionCount,untilCleared?:true,endingRule?:"extinguish|stanch|detox|recover",cadence:"owner_action",timingBasis?:"source|warp",pulse:{kind:"damage|restore",resource,amount:explicitNumber}}; pulse may use magnitude:"minor|standard|major" instead of an absent amount, and damageType. Physical pulse alternatives are {kind:"harm",impact:"minor|standard|major",damageType} or {kind:"mend",impact,maxInjury?}. Never nest scheduling, buildup, summons, scripts or costs inside a pulse. Use an explicit action duration when sourced. Otherwise an established ongoing effect can use untilCleared:true with ending copied exactly from its source quote, and Warp affected-owner action timing. For an actual ordinary ongoing physical affliction with no stated ending, Warp provides fixed endingRule:"extinguish" for fire, "stanch" for physical bleeding, "detox" for poison, or "recover" for ongoing supported physical/resource recovery. The recover rule ends when that supported recovery reaches its actual limit, not after an invented duration. Omit ending to use its engine-defined recovery cue; it is a Warp rule, not a source claim. Never apply these to metaphors, blushes, illness of unknown cause, curses or special prohibitions; retain unsupported restrictions. Do not invent a duration, fee, cure quest or source limitation. This qualitative action cadence is labelled Warp timing and cannot override any explicit interval, seconds or round rule. The effect starts on the affected owner's NEXT supported action, after that action's effects. A cure removes it before the due pulse; refreshing cannot cancel an old due pulse. Questions, API waiting, inspection and permission withdrawal never tick it. Seconds, rounds, ongoing auras, on-hit counters and unsupported timing belong in unsupported; never convert them to owner actions.
+Buildup: {kind:"buildup",target,name,amount:explicitNumber,threshold:explicitNumber,trigger:{kind:"condition",name,ending,helps:[],hinders:[],blocks:[],duration?}}. A trigger may instead be one periodic spec above without target. Use sourced quantities together. Only when actual source accumulation has no quantities, omit amount/threshold and supply magnitude:"minor|standard|major"; Warp maps 1/2/3 steps toward 3 and labels its values. Never replace instant effects or explicit numbers with that mapping. Crossing consumes the threshold and retains the remainder, applies/refreshes one condition, and cannot loop into more actions or rewards. Reuse the same meter/name/trigger definition; incompatible rules remain unresolved. Source-backed clearing uses {kind:"clear_buildup",target,name}; it resets accumulation, not an already triggered condition. Curing an active effect separately uses clear_condition. Do not force feelings, consent, quests or attraction from a threshold.
+A presently narrated active effect in the latest actual narrator message may use mechanicalObservations {kind:"periodic",owner,name,caster,ability,remaining?,message,quote}, referencing one compiled periodic ability. If the original caster/ability or its past costs are unknown, the same observation may instead supply effect:{kind:"periodic",target:"self",name,ending?,endingRule?:"extinguish|stanch|detox|recover",duration?,untilCleared?,cadence:"owner_action",timingBasis?,pulse}, derived ONLY from this current actual narrator quote, with no invented count or cause. Do not create a fake player-owned ability to represent an affliction. Do not infer activation from a profile, intention or an older event. For actual current Burning without a stated ending, the complete effect is {kind:"periodic",target:"self",name:"Burning",untilCleared:true,endingRule:"extinguish",cadence:"owner_action",pulse:{kind:"harm",impact:"minor",damageType:"fire"}}. For an already active gentle physical regeneration with no interval, use untilCleared:true, endingRule:"recover" and pulse:{kind:"mend",impact:"minor"}. Do not omit BOTH ending and endingRule; that discards the future schedule. Do not emit a duplicate plain condition unless it has separately supported constraints to retain. A finite effect needs its explicit current remaining count in that quote; an ongoing untilCleared effect needs no invented count. This adopts only its future schedule, never old costs/damage/rolls. Repeated prose cannot refresh an existing schedule or resurrect a cured one.
+Initial explicit buildup counts may use mechanicalObservations {kind:"buildup",owner,name,current,caster,ability,message,quote} referencing one already compiled buildup ability. Cite the actual count and meter name. Never supply trigger rules or overwrite an existing count; action receipts own subsequent changes. A finite receipt-scheduled effect cannot be expired or cured through prose alone; use a supported cure operation or explicit correction. For an ongoing untilCleared effect only, an actual later environmental/source-defined ending with no counted item, spell or resource execution may use {kind:"condition_end",id,natural:true,ending:"exact saved ending",message,quote}. Cite its completed cause, not merely "it is gone", an intention, a negated outcome or a rulebook explanation. Do not end the effect in its own application reply or guess an earlier ending after it was reapplied. This ends only the ongoing condition, never heals recorded damage or spends/grants anything.
+Keep missing pools/recovery limits unresolved; do not invent HP. Known definitions retain their effects and are not regenerated. Report human effect names and only consequential changes, not internal IDs. Relevant saved counts and remaining pulses may be answered on request. Omitted state is not erased.`;
+var init_lingering = __esm(() => {
+  init_encounters();
+  init_injuries();
+  ENDINGS = { extinguish: "When the flames are extinguished", stanch: "When the bleeding is stopped", detox: "An effective antidote or established toxin recovery", recover: "When the supported recovery is complete" };
+  physical = ["physical", "fire", "cold", "electric", "poison"];
+});
+
+// src/living/check-bands.ts
+function attemptBands(tier) {
+  return tier === "favorable" ? [60, 90] : tier === "outmatched" ? [10, 45] : [30, 75];
+}
+
 // src/living/growth.ts
 function subject(state, actor, operation) {
   if (operation.kind === "strike")
@@ -12645,12 +13039,12 @@ function readPractice(row, state, source, messages) {
     return;
   if (row.unsupported !== undefined && (!Array.isArray(row.unsupported) || row.unsupported.length))
     return;
-  const owner = participant(state, text2(row.owner)), teacher = participant(state, text2(row.teacher));
-  const ability = state.abilities?.find((a) => a.owner === owner && (a.id === row.ability || norm3(a.name) === norm3(text2(row.ability))));
+  const owner = participant(state, text3(row.owner)), teacher = participant(state, text3(row.teacher));
+  const ability = state.abilities?.find((a) => a.owner === owner && (a.id === row.ability || norm4(a.name) === norm4(text3(row.ability))));
   if (!ability || !teacher || teacher === owner || teacher !== "you" && !entityFor(state, teacher) || !present(state, owner))
     return;
   const evidence = relationshipEvidence(state, owner, teacher, source, messages);
-  if (!evidence || !norm3(evidence.quote).includes(norm3(ability.name)))
+  if (!evidence || !norm4(evidence.quote).includes(norm4(ability.name)))
     return;
   const observation = { kind: "practice", value: { owner, teacher, ability: ability.id, source: evidence } };
   const key = `ability:${ability.id}:${ability.fingerprint}`, existing = state.growth?.find((g) => g.owner === owner && g.skill === key);
@@ -12666,7 +13060,7 @@ function observePractice(state, lesson) {
 function growthNotes(before, after) {
   return (after.growth ?? []).filter((g) => g.familiar && g.owner === "you" && !before.growth?.some((old) => old.id === g.id && old.familiar)).map((g) => `${g.name}: familiar`);
 }
-var PRACTICE_MILESTONE = 3, norm3 = (s) => s.normalize("NFKC").trim().toLocaleLowerCase(), text2 = (s) => typeof s === "string" && s.trim().length <= 160 ? s.trim() : "", GROWTH_INSTRUCTIONS = `Warp records familiarity locally from executed opposed strikes/known abilities and completed instruction. Do not invent XP, levels, stat pools, progression costs, extra practice rows for action receipts, or new powers. Repeated use against the same entity teaches at most once per technique; repeating one teacher's lesson cannot farm more credit. Three distinct eligible opportunities earn one bounded familiarity benefit for that exact technique. Familiarity alone never lifts an outmatched base tier. Code supplies this Warp rule; it never changes source costs, effects, immunity, consent or prerequisites. Ordinary conversation, affection, cancelled/rejected actions and uncontested routine casts earn no challenge credit. Announce only a newly earned milestone, never routine point totals unless asked. Read-only practice queries can include opportunities/milestoneAt from saved state; answering them grants nothing. Omitted progress is not erased.
+var PRACTICE_MILESTONE = 3, norm4 = (s) => s.normalize("NFKC").trim().toLocaleLowerCase(), text3 = (s) => typeof s === "string" && s.trim().length <= 160 ? s.trim() : "", GROWTH_INSTRUCTIONS = `Warp records familiarity locally from executed opposed strikes/known abilities and completed instruction. Do not invent XP, levels, stat pools, progression costs, extra practice rows for action receipts, or new powers. Repeated use against the same entity teaches at most once per technique; repeating one teacher's lesson cannot farm more credit. Three distinct eligible opportunities earn one bounded familiarity benefit for that exact technique. Familiarity alone never lifts an outmatched base tier. Code supplies this Warp rule; it never changes source costs, effects, immunity, consent or prerequisites. Ordinary conversation, affection, cancelled/rejected actions and uncontested routine casts earn no challenge credit. Announce only a newly earned milestone, never routine point totals unless asked. Read-only practice queries can include opportunities/milestoneAt from saved state; answering them grants nothing. Omitted progress is not erased.
 For an actual completed lesson in an ALREADY KNOWN ability only, mechanicalObservations may include {kind:"practice",owner:"student's exact identity",ability:"saved ability id or name",teacher:"known actual instructor",unsupported:[],message,quote}. Cite actual narrator completion naming both participants and the technique. Declare missing participants first. An offer to teach, watching someone without instruction, a question, a player attempt or a profile is not completed practice. No extra model call or setup is needed. Keep unresolved tuition, timing, prerequisites or learning rules in unsupported; such a lesson grants no automatic familiarity. Do not invent a published game's levels. A new/changed power still needs its own source-backed ability definition.`;
 var init_growth = __esm(() => {
   init_dice();
@@ -12684,39 +13078,39 @@ function readResponsePlans(raw, state, messages, enabled, historical = false) {
     throw new Error("Too many NPC responses");
   const latest = messages.filter((m) => !m.is_user && m.content.trim()).at(-1), actors = new Set;
   return raw.map((row) => {
-    if (!obj2(row) || Object.keys(row).some((k) => !["actor", "action", "assessment", "message", "quote", ...historical ? ["sourceRevision"] : []].includes(k)))
+    if (!obj3(row) || Object.keys(row).some((k) => !["actor", "action", "assessment", "message", "quote", ...historical ? ["sourceRevision"] : []].includes(k)))
       throw new Error("Unsupported NPC response");
-    const actor = actorName(state, text3(row.actor, 80)), quote = text3(row.quote, 400);
+    const actor = actorName(state, text4(row.actor, 80)), quote = text4(row.quote, 400);
     if (!actor || actor === "you" || actors.has(actor) || !present(state, actor) || !capable(state, actor))
       throw new Error("NPC response actor is unavailable");
     if (!latest || quote.length < 4 || !sourceContains(latest.content, quote) || historical && typeof row.sourceRevision === "string" && !sourceRevisionMatches(latest, row.sourceRevision))
       throw new Error("NPC response lacks current scene evidence");
     actors.add(actor);
     const a = row.action;
-    if (!obj2(a))
+    if (!obj3(a))
       throw new Error("NPC action is missing");
     let action;
     if (a.kind === "ability") {
       if (Object.keys(a).some((k) => !["kind", "ability", "version", "target"].includes(k)))
         throw new Error("NPC invocation cannot override its definition");
-      const ability = state.abilities?.find((d) => d.owner === actor && (d.id === a.ability || d.name.toLocaleLowerCase() === text3(a.ability).toLocaleLowerCase()));
+      const ability = state.abilities?.find((d) => d.owner === actor && (d.id === a.ability || d.name.toLocaleLowerCase() === text4(a.ability).toLocaleLowerCase()));
       if (!ability || a.version !== undefined && a.version !== ability.version)
         throw new Error("NPC ability is not established");
-      const target = text3(a.target, 80) ? actorName(state, text3(a.target, 80)) : ability.target === "self" ? actor : "";
+      const target = text4(a.target, 80) ? actorName(state, text4(a.target, 80)) : ability.target === "self" ? actor : "";
       if (!target || !present(state, target))
         throw new Error("NPC target is not present");
       action = { kind: "ability", ability: ability.id, version: ability.version, target };
     } else if (a.kind === "move") {
       if (Object.keys(a).some((k) => !["kind", "target", "direction"].includes(k)) || !["closer", "away"].includes(a.direction))
         throw new Error("Invalid NPC movement");
-      const target = actorName(state, text3(a.target, 80));
+      const target = actorName(state, text4(a.target, 80));
       if (!target || !present(state, target) || target === actor)
         throw new Error("NPC movement target is unavailable");
       action = { kind: "move", target, direction: a.direction };
     } else if (a.kind === "strike") {
       if (Object.keys(a).some((k) => !["kind", "target"].includes(k)))
         throw new Error("A basic strike has no model-selected damage");
-      const target = actorName(state, text3(a.target, 80));
+      const target = actorName(state, text4(a.target, 80));
       if (!target || !present(state, target) || target === actor)
         throw new Error("NPC strike target is unavailable");
       action = { kind: "strike", target };
@@ -12725,19 +13119,19 @@ function readResponsePlans(raw, state, messages, enabled, historical = false) {
     else
       throw new Error("Unsupported NPC action");
     const assessment = row.assessment;
-    if (!obj2(assessment) || Object.keys(assessment).some((k) => !["contested", "tier", "intent", "stakes", "reasons"].includes(k)) || assessment.contested !== undefined && typeof assessment.contested !== "boolean")
+    if (!obj3(assessment) || Object.keys(assessment).some((k) => !["contested", "tier", "intent", "stakes", "reasons"].includes(k)) || assessment.contested !== undefined && typeof assessment.contested !== "boolean")
       throw new Error("Invalid NPC assessment");
     const offensive = offensiveAction(action, state, actor);
     const contested = offensive || assessment.contested === true;
     const tier = assessment.tier;
-    if (contested && (!["favorable", "uncertain", "outmatched"].includes(tier) || !text3(assessment.intent) || !text3(assessment.stakes) || !Array.isArray(assessment.reasons) || !assessment.reasons.length || assessment.reasons.some((r) => !text3(r, 180))))
+    if (contested && (!["favorable", "uncertain", "outmatched"].includes(tier) || !text4(assessment.intent) || !text4(assessment.stakes) || !Array.isArray(assessment.reasons) || !assessment.reasons.length || assessment.reasons.some((r) => !text4(r, 180))))
       throw new Error("NPC uncertainty is incomplete");
     return { actor, action, source: { message: latest.id, quote, sourceRevision: historical && typeof row.sourceRevision === "string" ? row.sourceRevision : storyRevision(latest.content) }, assessment: {
       contested,
       tier: ["favorable", "uncertain", "outmatched"].includes(tier) ? tier : "uncertain",
-      intent: text3(assessment.intent),
-      stakes: text3(assessment.stakes),
-      reasons: Array.isArray(assessment.reasons) ? assessment.reasons.map((r) => text3(r, 180)).filter(Boolean).slice(0, 3) : []
+      intent: text4(assessment.intent),
+      stakes: text4(assessment.stakes),
+      reasons: Array.isArray(assessment.reasons) ? assessment.reasons.map((r) => text4(r, 180)).filter(Boolean).slice(0, 3) : []
     } };
   });
 }
@@ -12752,12 +13146,12 @@ function offensiveAction(action, state, actor) {
   const ability = state.abilities?.find((a) => a.id === action.ability), target = action.target ?? (ability?.target === "self" ? actor : "");
   if (!ability || !target || actorName(state, target) === actorName(state, actor))
     return false;
-  return ability.effects.some((e) => e.target === "target" && (e.kind === "damage" || e.kind === "harm" || e.kind === "condition" && (!!e.blocks?.length || !!e.hinders?.length || !e.helps?.length) || e.kind === "clear_condition" && state.conditions.some((c) => c.owner === actorName(state, target) && c.name.toLocaleLowerCase() === e.name?.toLocaleLowerCase() && (!!c.helps.length || !!c.defenses?.length))));
+  return ability.effects.some((e) => e.target === "target" && (lingeringOffensive(e, actorName(state, target), state) || e.kind === "damage" || e.kind === "harm" || e.kind === "condition" && (!!e.blocks?.length || !!e.hinders?.length || !e.helps?.length) || e.kind === "clear_condition" && state.conditions.some((c) => c.owner === actorName(state, target) && c.name.toLocaleLowerCase() === e.name?.toLocaleLowerCase() && (!!c.helps.length || !!c.defenses?.length))));
 }
 function responseDecision(plan, actionId, shift, reasons, requireRoll = false) {
   if (!requireRoll && plan.assessment.contested === false)
     return;
-  if (!["outmatched", "uncertain", "favorable"].includes(plan.assessment.tier) || !text3(plan.assessment.intent) || !text3(plan.assessment.stakes) || !Array.isArray(plan.assessment.reasons) || !plan.assessment.reasons.length || plan.assessment.reasons.some((r) => !text3(r, 180)))
+  if (!["outmatched", "uncertain", "favorable"].includes(plan.assessment.tier) || !text4(plan.assessment.intent) || !text4(plan.assessment.stakes) || !Array.isArray(plan.assessment.reasons) || !plan.assessment.reasons.length || plan.assessment.reasons.some((r) => !text4(r, 180)))
     throw new Error("NPC uncertainty is incomplete");
   const tiers = ["outmatched", "uncertain", "favorable"];
   const tier = tiers[Math.max(0, Math.min(2, tiers.indexOf(plan.assessment.tier) + shift))];
@@ -12792,13 +13186,14 @@ function responseChecks(receipt, state, visible = []) {
     intent: `${b.name ? b.name[0].toLocaleUpperCase() + b.name.slice(1) : "Respond"}${b.target ? ` · ${display(b.target)}` : ""}`
   } }] : []);
 }
-var MAX_RESPONSES = 3, obj2 = (v) => !!v && typeof v === "object" && !Array.isArray(v), text3 = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", RESPONSE_INSTRUCTIONS = `An ongoing physical exchange may include exchange:true and responses:[{actor,action,assessment:{contested,tier:"favorable|uncertain|outmatched",intent,stakes,reasons:[]},quote}]. Otherwise omit responses or return [].
+var MAX_RESPONSES = 3, obj3 = (v) => !!v && typeof v === "object" && !Array.isArray(v), text4 = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", RESPONSE_INSTRUCTIONS = `An ongoing physical exchange may include exchange:true and responses:[{actor,action,assessment:{contested,tier:"favorable|uncertain|outmatched",intent,stakes,reasons:[]},quote}]. Otherwise omit responses or return [].
 Plan at most one response for each present NPC, at most 3 total, in the order the scene supports. quote must be an EXACT substring of that NPC's current intention/opportunity in the MOST RECENT narrator message, never a card, old grudge, player attempt or generic personality. Code attaches the source message ID; do not draft future narration in a message field. Do not create opposition, interrupt quiet scenes, punish a question, or continue combat after it actually ended. Only an actual player action opens an exchange, not dialogue, inspection, a hypothetical or an OOC edit.
 NPC action vocabulary: {kind:"ability",ability:"saved ID or newly prepared name",target}; {kind:"move",target,direction:"closer|away"}; {kind:"strike",target} for an ordinary unmodified physical strike at touch range; {kind:"defend"}; {kind:"wait"}. Prepare a relevant NPC ability from its real source in abilityDefinitions if needed. Both sides use the same stored definitions, costs, range and defenses. No generated damage, no replacement cost and no new power in a response.
 Basic strike uses Warp's fixed 5 physical impact. It changes a known vital resource when present, otherwise resolver 4 records qualitative physical injury for a person without inventing a numerical pool. Prefer an established source-backed attack when the person has one; do not flatten exceptional abilities or equipment into this fallback. Explicit numerical ability damage still needs a known resource. Unknown money, energy and recovery limits remain unknown. If an exact numerical exchange cannot be prepared for both sides, keep that part unresolved locally rather than inventing health or letting one side take unrecorded damage.
 Assess each NPC's base circumstances WITHOUT mechanical condition or earned familiarity modifiers. Code applies those after the player's action, checks eligibility, and rolls. Offensive responses always roll; do not supply a roll or outcome. A disabled, absent, out-of-range or unaffordable responder does not get a free action. No response triggers another response list. Do not automatically dodge, counterattack, flee, consent or make another choice for the player. A passive established defense may apply automatically. Stop at the next player decision.`;
 var init_exchanges = __esm(() => {
   init_story_text();
+  init_lingering();
   init_dice();
   init_encounters();
 });
@@ -12813,7 +13208,7 @@ function agreementNotes(before, after) {
   }).slice(-2);
 }
 function evidence(raw, messages, historical = false) {
-  if (!obj3(raw))
+  if (!obj4(raw))
     return;
   const message = str2(raw.message, 160), quote = str2(raw.quote, 400), m = messages.find((m) => m.id === message);
   if (!m || quote.length < 4 || !sourceContains(m.content, quote) || message.startsWith("warp-source:"))
@@ -12889,7 +13284,7 @@ function readAgreementObservation(raw, state, messages, player, historical = fal
     };
     const requirements = [];
     for (const value of raw.requirements) {
-      if (!obj3(value) || Object.keys(value).some((k) => !["message", "quote", ...historical ? ["sourceRevision"] : []].includes(k)))
+      if (!obj4(value) || Object.keys(value).some((k) => !["message", "quote", ...historical ? ["sourceRevision"] : []].includes(k)))
         return;
       const e = clause(value);
       if (!e || requirements.some((r) => r.text === e.quote))
@@ -12898,7 +13293,7 @@ function readAgreementObservation(raw, state, messages, player, historical = fal
     }
     const rewards = [];
     for (const value of raw.rewards) {
-      if (!obj3(value) || Object.keys(value).some((k) => !["kind", "asset", "amount", "message", "quote", ...historical ? ["sourceRevision"] : []].includes(k)) || !from || !offer || !["item", "resource"].includes(value.kind))
+      if (!obj4(value) || Object.keys(value).some((k) => !["kind", "asset", "amount", "message", "quote", ...historical ? ["sourceRevision"] : []].includes(k)) || !from || !offer || !["item", "resource"].includes(value.kind))
         return;
       const e = clause(value), asset = str2(value.asset, 100), amount = value.amount;
       if (!e || e.message !== offer.message || !asset || typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0 || amount > 1e6 || value.kind === "item" && !Number.isInteger(amount) || !numeric(e.quote, amount))
@@ -13023,7 +13418,7 @@ function settleReward(state, actor, agreementId, rewardId, action, changes, beat
   changes.push({ kind: "agreement", id: agreement.id, before: beforeAgreement, after: structuredClone(agreement) });
   beats.push({ kind: "reward", actor: payer, target: recipient, name: reward.asset, amount: reward.amount });
 }
-var str2 = (v, max = 240) => typeof v === "string" && v.trim().length <= max ? v.trim().replace(/\s+/g, " ") : "", obj3 = (v) => !!v && typeof v === "object" && !Array.isArray(v), normalized = (s) => s.normalize("NFKC").toLocaleLowerCase(), numeric = (quote, n) => (quote.match(/\d+(?:\.\d+)?/g) ?? []).some((v) => Number(v) === n) || ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].some((v, i) => i === n && new RegExp(`\\b${v}\\b`, "i").test(quote)), agreementDone = (a) => !a.cancelled && !a.unsupported.length && a.requirements.every((r) => !!r.done), agreementSettled = (a) => !!a.cancelled || agreementDone(a) && a.rewards.every((r) => !!r.paid), visibleAgreements = (rows = []) => [...rows.filter((a) => !agreementSettled(a)), ...rows.filter(agreementSettled).slice(-6)], at = (e, messages) => messages.findIndex((m) => m.id === e.message), AGREEMENT_INSTRUCTIONS = `When an actual agreement has several requirements or an explicit counted reward, optionally add mechanicalObservations {kind:"agreement",owner,name,from:"reward payer if any",offer:{message,quote},requirements:[{message,quote}],rewards:[{kind:"item|resource",asset:"established asset name",amount,message,quote}],unsupported:[],message,quote}. The root quote is the owner's actual acceptance, in the player's own message for owner:you. An NPC payer's offer is actual narrator text naming them and the terms, never a player's invented NPC offer. When the player offers payment for another person's work, from:you requires the player's own offer, and owner is the NPC who actually accepts in narrator text. Each requirement quote is a distinct exact clause within that acceptance or offer; all requirements are required. Do not drop a condition, invent a reward, automatically accept a request, or turn an ordinary invitation into a quest. No reward means rewards:[]. Unknown source mechanics/restrictions stay in unsupported. Do not create duplicate free-form commitments, situations or facts for requirements, progress or rewards already represented by the structured agreement. Retain a separate event only for an independent consequence, such as a witness learning a secret. Resolve an earlier pending-offer situation when the agreement is accepted.
+var str2 = (v, max = 240) => typeof v === "string" && v.trim().length <= max ? v.trim().replace(/\s+/g, " ") : "", obj4 = (v) => !!v && typeof v === "object" && !Array.isArray(v), normalized = (s) => s.normalize("NFKC").toLocaleLowerCase(), numeric = (quote, n) => (quote.match(/\d+(?:\.\d+)?/g) ?? []).some((v) => Number(v) === n) || ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].some((v, i) => i === n && new RegExp(`\\b${v}\\b`, "i").test(quote)), agreementDone = (a) => !a.cancelled && !a.unsupported.length && a.requirements.every((r) => !!r.done), agreementSettled = (a) => !!a.cancelled || agreementDone(a) && a.rewards.every((r) => !!r.paid), visibleAgreements = (rows = []) => [...rows.filter((a) => !agreementSettled(a)), ...rows.filter(agreementSettled).slice(-6)], at = (e, messages) => messages.findIndex((m) => m.id === e.message), AGREEMENT_INSTRUCTIONS = `When an actual agreement has several requirements or an explicit counted reward, optionally add mechanicalObservations {kind:"agreement",owner,name,from:"reward payer if any",offer:{message,quote},requirements:[{message,quote}],rewards:[{kind:"item|resource",asset:"established asset name",amount,message,quote}],unsupported:[],message,quote}. The root quote is the owner's actual acceptance, in the player's own message for owner:you. An NPC payer's offer is actual narrator text naming them and the terms, never a player's invented NPC offer. When the player offers payment for another person's work, from:you requires the player's own offer, and owner is the NPC who actually accepts in narrator text. Each requirement quote is a distinct exact clause within that acceptance or offer; all requirements are required. Do not drop a condition, invent a reward, automatically accept a request, or turn an ordinary invitation into a quest. No reward means rewards:[]. Unknown source mechanics/restrictions stay in unsupported. Do not create duplicate free-form commitments, situations or facts for requirements, progress or rewards already represented by the structured agreement. Retain a separate event only for an independent consequence, such as a witness learning a secret. Resolve an earlier pending-offer situation when the agreement is accepted.
 Record actual fulfillment with {kind:"agreement_progress",agreement:"saved id or name",requirement:"saved id or exact clause",message,quote}, citing actual NARRATOR completion, not the player's attempt or a repeated offer. Code completes the agreement only after every requirement. Do not change accepted terms on subsequent reads. The owner can explicitly withdraw with {kind:"agreement_cancel",agreement,message,quote}; an NPC's displeasure does not withdraw the player's promise for them.
 After all requirements are fulfilled, an actual payer offering/holding out a particular reward can establish {kind:"reward_ready",agreement,reward:"saved id or asset name",ready:true,message,quote}. An offer may add uncontested:true only when taking/receiving this particular reward now is routine, with no established obstacle, hazard or opposing action. Willingness alone does not prove that. The code may use this fresh classification to skip a redundant pre-read for a simple collection; ambiguity, changed scenes and opposed actions still need interpretation. A subsequent explicit refusal/withdrawal can set ready:false. This is current willingness, separate from the original promise. It needs actual narrator text naming the NPC counterpart after the recorded fulfillment. For from:you this is the NPC recipient's willingness to receive, never permission to spend the player's money automatically. An earned reward does not force someone to cooperate. Do not narrate a completed monetary/item handover without its mechanical receipt. Make the offer available and leave acceptance to the player. The player can collect it through normal chat; no menu is required.
 Reward collection uses saved exact amounts and transfers actual owned items or between two established same-unit resource balances. Unknown balances are unknown, not zero. An offer alone does not prove the payer owns the money or item. Do not mint items or coins, refill a spent balance, substitute a different reward, or create numerical Health/relationship/XP to pay a promise. When a physical reward, including a counted pile of coins, is established without known total wallet balances, use an item claim and track that actual stack instead of inventing a wallet total. The offered amount alone does not prove possession; a later actual holding/counting/setting-out event can establish the counted item. Use a distinct source-backed item instance ID for a new stack, not the ID of a previously transferred stack. Actual paid rewards cannot be offered or collected again.`;
@@ -13307,7 +13702,7 @@ function readMechanicalObservations(raw, before, messages, player, historical = 
     return [];
   const out = [], working = structuredClone(before);
   const rows = raw.slice(0, 24);
-  const placeRows = rows.filter((r) => obj4(r) && r.kind === "place");
+  const placeRows = rows.filter((r) => obj5(r) && r.kind === "place");
   const depth = (row, seen = new Set) => {
     if (!row.parent || findPlace(working, row.parent))
       return 0;
@@ -13323,12 +13718,12 @@ function readMechanicalObservations(raw, before, messages, player, historical = 
   const playerIdentity = [];
   const literalPlayer = player ? new RegExp(`(?:^|[^\\p{L}\\p{N}])${player.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=$|[^\\p{L}\\p{N}])`, "iu") : undefined;
   if (player && player !== "you" && !working.entities?.some((e) => e.name === "you" && e.aliases.some((a) => a.toLocaleLowerCase() === player.toLocaleLowerCase()))) {
-    const claim = rows.find((r) => obj4(r) && ["practice", "companion"].includes(r.kind) && (own(r.owner, player) === "you" || own(r.controller, player) === "you" || own(r.teacher, player) === "you") && typeof r.quote === "string" && literalPlayer.test(r.quote) && source(r, messages, historical));
-    if (obj4(claim))
+    const claim = rows.find((r) => obj5(r) && ["practice", "companion"].includes(r.kind) && (own(r.owner, player) === "you" || own(r.controller, player) === "you" || own(r.teacher, player) === "you") && typeof r.quote === "string" && literalPlayer.test(r.quote) && source(r, messages, historical));
+    if (obj5(claim))
       playerIdentity.push({ kind: "entity", name: "you", aliases: [player], entityKind: "person", message: claim.message, quote: claim.quote, ...claim.sourceRevision ? { sourceRevision: claim.sourceRevision } : {} });
   }
-  for (const input of [...playerIdentity, ...rows.filter((r) => obj4(r) && r.kind === "entity"), ...placeRows, ...rows.filter((r) => !obj4(r) || !["entity", "place", "companion", "cost_link"].includes(r.kind)), ...rows.filter((r) => obj4(r) && ["companion", "cost_link"].includes(r.kind))]) {
-    if (!obj4(input))
+  for (const input of [...playerIdentity, ...rows.filter((r) => obj5(r) && r.kind === "entity"), ...placeRows, ...rows.filter((r) => !obj5(r) || !["entity", "place", "companion", "cost_link"].includes(r.kind)), ...rows.filter((r) => obj5(r) && ["companion", "cost_link"].includes(r.kind))]) {
+    if (!obj5(input))
       continue;
     let row = input;
     if (["place", "route", "discovery", "stock", "stock_access"].includes(row.kind)) {
@@ -13355,7 +13750,21 @@ function readMechanicalObservations(raw, before, messages, player, historical = 
     if (!s)
       continue;
     let observation;
-    if (row.kind === "practice") {
+    if (row.kind === "periodic") {
+      try {
+        observation = readPeriodicObservation({ ...row, owner: actorName(working, own(row.owner, player)), caster: actorName(working, own(row.caster, player)) }, working, s.evidence, messages, historical, s.correction);
+        if (observation && !s.correction && !conditionCauseIsNew(working, observation.value.id, observation.value.owner, observation.value.name, s.evidence, messages))
+          observation = undefined;
+      } catch {
+        continue;
+      }
+    } else if (row.kind === "buildup") {
+      try {
+        observation = readBuildup({ ...row, owner: actorName(working, own(row.owner, player)), caster: actorName(working, own(row.caster, player)) }, working, s.evidence, s.correction, historical);
+      } catch {
+        continue;
+      }
+    } else if (row.kind === "practice") {
       try {
         observation = readPractice({ ...row, owner: own(row.owner, player), teacher: own(row.teacher, player) }, working, s.evidence, messages);
       } catch {
@@ -13369,7 +13778,7 @@ function readMechanicalObservations(raw, before, messages, player, historical = 
       }
     } else if (["place", "route", "discovery", "stock", "stock_access"].includes(row.kind)) {
       observation = readExplorationObservation(row, working, s.evidence, messages, s.correction, historical);
-      if (observation?.kind === "place" && obj4(input) && typeof input.id === "string" && !ambiguousPlaceAliases.has(input.id))
+      if (observation?.kind === "place" && obj5(input) && typeof input.id === "string" && !ambiguousPlaceAliases.has(input.id))
         placeAliases.set(input.id, observation.value.id);
     } else if (row.kind === "entity" || row.kind === "distance") {
       try {
@@ -13378,8 +13787,12 @@ function readMechanicalObservations(raw, before, messages, player, historical = 
         continue;
       }
     } else if (row.kind === "condition_end") {
-      if (working.conditions.some((c) => c.id === id))
-        observation = { kind: "condition_end", id, source: s.evidence, ...!historical || row.retire === true ? { retire: true } : {} };
+      const condition = working.conditions.find((c) => c.id === id);
+      const start = condition?.source.message;
+      const startedAt = start ? messages.findIndex((m) => start.startsWith("warp-action:") ? messageOwnsAction(m, start.slice("warp-action:".length)) : m.id === start) : -1;
+      const natural = !!condition?.periodic && condition.periodic.remaining === undefined && row.natural === true && row.ending === condition.ending && startedAt >= 0 && messages.findIndex((m) => m.id === s.evidence.message) > startedAt && !/\b(?:not|never|cannot|can't|didn't|doesn't|failed|unable)\b/i.test(s.evidence.quote);
+      if (condition && (!condition.periodic || s.correction || natural))
+        observation = { kind: "condition_end", id, source: s.evidence, ...natural ? { natural: true, ending: condition.ending } : {}, ...!historical || row.retire === true ? { retire: true } : {} };
     } else {
       let owner;
       try {
@@ -13401,7 +13814,7 @@ function readMechanicalObservations(raw, before, messages, player, historical = 
         if (value)
           observation = { kind: "resilience", value };
       } else if (row.kind === "resource") {
-        if (!amount2(row.current) || !numberIn(s.evidence.quote, row.current) || row.max !== undefined && (!amount2(row.max) || row.max < row.current || !numberIn(s.evidence.quote, row.max)))
+        if (!amount2(row.current) || !numberIn2(s.evidence.quote, row.current) || row.max !== undefined && (!amount2(row.max) || row.max < row.current || !numberIn2(s.evidence.quote, row.max)))
           continue;
         if (!s.correction && working.resources.some((r) => r.id === id || r.owner === owner && r.name.toLowerCase() === name.toLowerCase()))
           continue;
@@ -13412,7 +13825,7 @@ function readMechanicalObservations(raw, before, messages, player, historical = 
           continue;
         observation = { kind: "resource", value: { id, owner, name, current: row.current, ...row.max !== undefined ? { max: row.max } : {}, ...str4(row.unit, 40) ? { unit: str4(row.unit, 40) } : {}, ...row.role ? { role: row.role } : {}, source: s.evidence }, ...s.correction ? { correction: true } : {} };
       } else if (row.kind === "item") {
-        if (!amount2(row.quantity) || !Number.isInteger(row.quantity) || !numberIn(s.evidence.quote, row.quantity) && !(row.quantity === 1 && singularPossession(s.evidence.quote, name)))
+        if (!amount2(row.quantity) || !Number.isInteger(row.quantity) || !numberIn2(s.evidence.quote, row.quantity) && !(row.quantity === 1 && singularPossession(s.evidence.quote, name)))
           continue;
         if (!s.correction && working.items.some((i) => i.id === id || i.owner === owner && i.name.toLowerCase() === name.toLowerCase()))
           continue;
@@ -13466,6 +13879,26 @@ function readMechanicalObservations(raw, before, messages, player, historical = 
   return out;
 }
 function observe(state, o) {
+  if (o.kind === "periodic") {
+    const at = state.conditions.findIndex((c) => c.id === o.value.id);
+    if (at < 0)
+      state.conditions.push(structuredClone(o.value));
+    else
+      state.conditions[at] = structuredClone(o.value);
+    state.clocks ??= [];
+    if (!state.clocks.some((c) => c.actor === o.value.owner))
+      state.clocks.push({ id: o.value.owner, actor: o.value.owner, actions: 0 });
+    return;
+  }
+  if (o.kind === "buildup") {
+    state.buildups ??= [];
+    const index = state.buildups.findIndex((b) => b.id === o.value.id);
+    if (index < 0)
+      state.buildups.push(structuredClone(o.value));
+    else if (o.correction)
+      state.buildups[index] = structuredClone(o.value);
+    return;
+  }
   if (o.kind === "practice") {
     observePractice(state, o.value);
     return;
@@ -13529,7 +13962,7 @@ function applyObservations(before, observations) {
     observe(state, observation);
   return state;
 }
-function execute(before, actor, operations, actionId, engine = 1, strict = false, qualitative = false, rewards = false, exploration = false, companions = false, progression = false) {
+function execute(before, actor, operations, actionId, engine = 1, strict = false, qualitative = false, rewards = false, exploration = false, companions = false, progression = false, lingering = false) {
   const state = structuredClone(before), changes = [], beats = [];
   if (engine === 2)
     actor = actorName(state, actor);
@@ -13542,6 +13975,9 @@ function execute(before, actor, operations, actionId, engine = 1, strict = false
   if (engine === 2 && operations.length && !capable(state, actor) && !waitingWhileUnable && !permissionOnly)
     throw new Error("This actor cannot act");
   for (const [index, op] of operations.entries()) {
+    if (lingering && !capable(state, actor) && op.kind !== "wait" && op.kind !== "unlink")
+      throw new Error("This actor cannot act");
+    const beforeCount = actionCount(state, actor), scheduled = lingering ? scheduledPulses(state, actor) : [];
     if (op.kind === "unlink" && progression) {
       withdrawCostLink(state, actor, op.link, actionId, changes, beats);
     } else if ((op.kind === "travel" || op.kind === "gather") && exploration) {
@@ -13560,6 +13996,8 @@ function execute(before, actor, operations, actionId, engine = 1, strict = false
         throw new (strict ? MechanicalKnowledgeError : Error)("Ability unavailable to this actor");
       if (ability.unsupported.length)
         throw new (strict ? MechanicalKnowledgeError : Error)(`${ability.name} needs clarification: ${ability.unsupported.join("; ")}`);
+      if (!lingering && ability.effects.some(isLingering))
+        throw new Error("Ability requires the lingering resolver");
       if (!companions && ability.effects.some((e) => e.kind === "summon" || e.kind === "dismiss"))
         throw new Error("Ability requires the companion resolver");
       if (!qualitative && ability.effects.some((e) => e.kind === "harm" || e.kind === "mend"))
@@ -13585,7 +14023,7 @@ function execute(before, actor, operations, actionId, engine = 1, strict = false
         if (strict && ability.range && target !== actor && !distance2(state, actor, target))
           throw new MechanicalKnowledgeError(`Distance to ${target} is unknown`);
         checkRange(state, actor, target, ability.range);
-        if (ability.effects.every((e) => (e.kind === "damage" || e.kind === "harm") && immune(state, e.target === "self" ? actor : target, e.damageType ?? "untyped")))
+        if (ability.effects.every((e) => (e.kind === "damage" || e.kind === "harm") && immune(state, e.target === "self" ? actor : target, e.damageType ?? "untyped") || lingering && lingeringImmune(e, e.target === "self" ? actor : target, state)))
           throw new Error("The established immunity prevents this ability's effects");
       }
       if (conditionInfluence(state, actor, ability.approach, target, op.place, engine === 2).blocked.length)
@@ -13606,6 +14044,11 @@ function execute(before, actor, operations, actionId, engine = 1, strict = false
           if (resources.length !== 1 || effect.kind === "restore" && resources[0].max === undefined)
             throw new (strict ? MechanicalKnowledgeError : Error)(`Unknown or ambiguous ${effect.resource} for ${owner}`);
         }
+      if (lingering) {
+        for (const effect of ability.effects)
+          if (isLingering(effect))
+            validateLingering(state, actor, effect.target === "self" ? actor : target, effect);
+      }
       for (const requirement of ability.requires) {
         const item = state.items.find((i) => i.id === requirement.item && i.owner === actor && i.quantity > 0);
         if (!item || requirement.equipped && !item.equipped)
@@ -13637,11 +14080,19 @@ function execute(before, actor, operations, actionId, engine = 1, strict = false
         advanceActor(state, actor, changes, beats);
         setCooldown(state, actor, ability.id, ability.cooldown ?? 0);
       }
-      if (op.outcome === "setback")
+      if (op.outcome === "setback") {
+        if (lingering) {
+          finishPulses(state, actor, beforeCount, scheduled, actionId, changes, beats);
+          if (companions)
+            expireCompanions(state, actionId, changes, beats);
+        }
         continue;
+      }
       for (const [effectIndex, effect] of ability.effects.entries()) {
         const owner = effect.target === "self" ? actor : target;
-        if (companions && (effect.kind === "summon" || effect.kind === "dismiss")) {
+        if (lingering && isLingering(effect)) {
+          applyLingering(state, actor, owner, effect, `${ability.id}:${effectIndex}`, actionId, changes, beats);
+        } else if (companions && (effect.kind === "summon" || effect.kind === "dismiss")) {
           manifest(state, actor, effect.companion, effect.kind === "summon", actionId, changes, beats, effect.duration);
         } else if (effect.kind === "restore" || effect.kind === "damage" || effect.kind === "harm" || effect.kind === "mend") {
           const candidates = state.resources.filter((r) => r.owner === owner && (r.id === effect.resource || r.name.toLocaleLowerCase() === effect.resource?.toLocaleLowerCase()));
@@ -13751,7 +14202,7 @@ function execute(before, actor, operations, actionId, engine = 1, strict = false
       }
       if (op.kind === "defend" && conditionInfluence(state, actor, "movement", undefined, undefined, true).blocked.length)
         throw new Error("A condition prevents defending");
-      if (!unableWait)
+      if (!unableWait || lingering)
         advanceActor(state, actor, changes, beats);
       if (op.kind === "defend") {
         const id = `guard-${revision(actor)}`, old = state.conditions.find((c) => c.id === id), condition = {
@@ -13824,6 +14275,8 @@ function execute(before, actor, operations, actionId, engine = 1, strict = false
       throw new Error("Unsupported mechanical operation");
     if (engine === 2 && ["spend", "restore", "consume", "transfer", "equip"].includes(op.kind) && state.clocks?.some((c) => c.actor === actor))
       advanceActor(state, actor, changes, beats);
+    if (lingering)
+      finishPulses(state, actor, beforeCount, scheduled, actionId, changes, beats);
     if (companions)
       expireCompanions(state, actionId, changes, beats);
   }
@@ -13834,7 +14287,7 @@ function executeExchange(before, actor, operations, id, responses, place, resolv
     throw new Error("Invalid exchange opportunity");
   if (resolver >= 8 && operations.length && operations.every((op) => op.kind === "unlink") && responses.length)
     throw Error("Withdrawing permission alone opens no exchange opportunity");
-  let resolved = execute(before, actor, operations, id, 2, true, resolver >= 4, resolver >= 5, resolver >= 6, resolver >= 7, resolver >= 8);
+  let resolved = execute(before, actor, operations, id, 2, true, resolver >= 4, resolver >= 5, resolver >= 6, resolver >= 7, resolver >= 8, resolver >= 9);
   if (learning) {
     if (resolver < 8 || operations.length !== 1 || !["ability", "strike"].includes(operations[0].kind))
       throw Error("Learning requires one checked technique");
@@ -13862,11 +14315,14 @@ function executeExchange(before, actor, operations, id, responses, place, resolv
       continue;
     }
     try {
-      execute(resolved.state, who, [{ ...action, ...["ability", "strike", "move"].includes(action.kind) ? { place } : {} }], `${id}:response:${who}`, 2, true, resolver >= 4, resolver >= 5, resolver >= 6, resolver >= 7, resolver >= 8);
+      execute(resolved.state, who, [{ ...action, ...["ability", "strike", "move"].includes(action.kind) ? { place } : {} }], `${id}:response:${who}`, 2, true, resolver >= 4, resolver >= 5, resolver >= 6, resolver >= 7, resolver >= 8, resolver >= 9);
     } catch (error) {
       if (error instanceof MechanicalKnowledgeError)
         throw error;
+      const beforeCount = actionCount(resolved.state, who), scheduled = resolver >= 9 ? scheduledPulses(resolved.state, who) : [];
       advanceActor(resolved.state, who, resolved.changes, resolved.beats);
+      if (resolver >= 9)
+        finishPulses(resolved.state, who, beforeCount, scheduled, `${id}:response:${who}`, resolved.changes, resolved.beats);
       skip(error instanceof Error ? error.message : "Response unavailable");
       continue;
     }
@@ -13879,7 +14335,7 @@ function executeExchange(before, actor, operations, id, responses, place, resolv
       operation = decision?.result === "setback" ? { kind: "attempt", approach: "movement", target: action.target, place } : { ...action, place };
     else if (action.kind === "defend" && decision?.result === "setback")
       operation = { kind: "attempt", approach: "movement", place };
-    const next = execute(resolved.state, who, [operation], `${id}:response:${who}`, 2, true, resolver >= 4, resolver >= 5, resolver >= 6, resolver >= 7, resolver >= 8);
+    const next = execute(resolved.state, who, [operation], `${id}:response:${who}`, 2, true, resolver >= 4, resolver >= 5, resolver >= 6, resolver >= 7, resolver >= 8, resolver >= 9);
     if (resolver >= 8 && decision?.roll)
       learnFromChallenge(next.state, resolved.state, who, operation, `${id}:response:${who}`, { seed: `${id}:response:${plan.actor}`, tier: decision.tier, result: decision.result, roll: decision.roll }, next.changes, next.beats);
     resolved.beats.push({ kind: "response", actor: who, ...target ? { target } : {}, ...decision ? { decision } : {}, name: action.kind === "ability" ? resolved.state.abilities?.find((a) => a.id === action.ability)?.name : action.kind });
@@ -13888,6 +14344,9 @@ function executeExchange(before, actor, operations, id, responses, place, resolv
   return resolved;
 }
 function resolverFor(before, operations, responses, learning) {
+  const relevant = [...operations, ...Array.isArray(responses) ? responses.flatMap((p) => p?.action ? [p.action] : []) : []];
+  if (hasLingering(before) || relevant.some((op) => op.kind === "ability" && before.abilities?.some((a) => a.id === op.ability && a.effects.some(isLingering))))
+    return 9;
   const opposedTechnique = Array.isArray(responses) && responses.some((p) => p && typeof p.actor === "string" && p.action && p.assessment && (p.action.kind === "strike" || p.action.kind === "ability" && (p.assessment.contested || (p.action.target === undefined || typeof p.action.target === "string") && offensiveResponse(p, before))));
   if (before.growth?.length || learning || operations.some((op) => op.kind === "unlink") || opposedTechnique)
     return 8;
@@ -13928,7 +14387,7 @@ function commitMechanical(before, receipt) {
   }
   if (receipt.version !== 1 || receipt.status !== "ready" || receipt.base !== revision(before))
     throw new Error("Mechanical receipt is blocked or stale");
-  if (receipt.engine !== undefined && receipt.engine !== 2 && receipt.engine !== 3 && receipt.engine !== 4 && receipt.engine !== 5 && receipt.engine !== 6 && receipt.engine !== 7 && receipt.engine !== 8)
+  if (receipt.engine !== undefined && receipt.engine !== 2 && receipt.engine !== 3 && receipt.engine !== 4 && receipt.engine !== 5 && receipt.engine !== 6 && receipt.engine !== 7 && receipt.engine !== 8 && receipt.engine !== 9)
     throw new Error("Unsupported mechanical resolver");
   if (receipt.learning && (receipt.engine ?? 1) < 8)
     throw Error("Learning requires the progression resolver");
@@ -13956,7 +14415,7 @@ function parseMechanicalPlan(raw, state, action, classified) {
     throw new Error("Mechanical interpretation is incomplete");
   const operations = [];
   for (const row of raw) {
-    if (!obj4(row) || !str4(row.quote, 400) || !action.replace(/\s+/g, " ").includes(row.quote))
+    if (!obj5(row) || !str4(row.quote, 400) || !action.replace(/\s+/g, " ").includes(row.quote))
       throw new Error("Mechanical action lacks player evidence");
     const quote = row.quote;
     const stated = (verbs) => verbs.test(quote) || raw.length === 1 && classified?.action === action && classified.kind === row.kind && quote === action;
@@ -13980,7 +14439,7 @@ function parseMechanicalPlan(raw, state, action, classified) {
     } else if (row.kind === "gather") {
       if (Object.keys(row).some((k) => !["kind", "stock", "amount", "quote"].includes(k)) || !stated(/\b(?:gather|pick|collect|take|harvest|retrieve)\b/i))
         throw new Error("Gathering must be an explicit action");
-      if (!state.stocks?.some((s) => s.id === row.stock) || !amount2(row.amount) || !Number.isInteger(row.amount) || row.amount <= 0 || !numberIn(quote, row.amount))
+      if (!state.stocks?.some((s) => s.id === row.stock) || !amount2(row.amount) || !Number.isInteger(row.amount) || row.amount <= 0 || !numberIn2(quote, row.amount))
         throw new Error("Gathering needs a known supply and an explicit count");
       operations.push({ kind: "gather", stock: row.stock, amount: row.amount });
     } else if (row.kind === "claim") {
@@ -14019,7 +14478,7 @@ function parseMechanicalPlan(raw, state, action, classified) {
       if (!stated(row.kind === "consume" ? /\b(?:use|drink|eat|consume|apply|take)\b/i : /\b(?:give|hand|pass|transfer)\b/i))
         throw new Error("Item operation is not an explicit action");
       const item = state.items.find((i) => i.id === row.item && i.owner === "you");
-      if (!item || !amount2(row.amount) || row.amount <= 0 || !Number.isInteger(row.amount) || !numberIn(quote, row.amount) && !(row.amount === 1 && /\b(?:a|an|one|the|my|it)\b/i.test(quote)))
+      if (!item || !amount2(row.amount) || row.amount <= 0 || !Number.isInteger(row.amount) || !numberIn2(quote, row.amount) && !(row.amount === 1 && /\b(?:a|an|one|the|my|it)\b/i.test(quote)))
         throw new Error("Item amount is not established");
       if (row.kind === "consume")
         operations.push({ kind: "consume", item: item.id, amount: row.amount });
@@ -14031,7 +14490,7 @@ function parseMechanicalPlan(raw, state, action, classified) {
       if (!stated(/\b(?:spend|pay|donate|deposit)\b/i))
         throw new Error("Spending was not stated");
       const resource = state.resources.find((r) => r.id === row.resource && r.owner === "you");
-      if (!resource || !amount2(row.amount) || row.amount <= 0 || !numberIn(quote, row.amount))
+      if (!resource || !amount2(row.amount) || row.amount <= 0 || !numberIn2(quote, row.amount))
         throw new Error("Resource cost is not established");
       operations.push({ kind: "spend", resource: resource.id, amount: row.amount });
     } else if (row.kind === "equip" && typeof row.equipped === "boolean" && state.items.some((i) => i.id === row.item && i.owner === "you")) {
@@ -14087,9 +14546,13 @@ function mechanicalPacket(state, focus = "") {
     ...visibleGrowth.length ? { growth: visibleGrowth.map(({ id, owner, name, skill, familiar, credits }) => ({ id, owner, name, skill, familiar, basis: "warp", ...queried ? { opportunities: credits.length, milestoneAt: 3 } : {} })) } : {},
     ...state.companions?.length ? { companions: state.companions.map((c) => ({ id: c.id, actor: c.actor, controller: c.controller, companionKind: c.companionKind, ...c.manifestation ? { active: c.manifestation.active, ...c.manifestation.expiresAt !== undefined ? { remainingControllerActions: Math.max(0, c.manifestation.expiresAt - actionCount(state, c.controller) - 1) } : {} } : {} })) } : {},
     ...state.costLinks?.length ? { costLinks: state.costLinks.map(withoutSource) } : {},
+    ...state.buildups?.length ? { buildups: state.buildups.map(({ source, fingerprint, definition, ...value }) => value) } : {},
     resources: state.resources.map(withoutSource),
     items: state.items.map(withoutSource),
-    conditions: state.conditions.map(withoutSource),
+    conditions: state.conditions.map((c) => {
+      const value = withoutSource(c);
+      return c.periodic ? { ...value, periodic: { remaining: c.periodic.remaining, endingRule: c.periodic.endingRule, timingBasis: c.periodic.timingBasis, pulse: c.periodic.pulse } } : value;
+    }),
     ...explorationPacket(state, focus),
     ...state.abilities?.length ? { abilities: state.abilities.map((a) => {
       const { source, sourceKind, fingerprint, ...value } = a;
@@ -14110,6 +14573,8 @@ function receiptPacket(receipt) {
     before: c.before ? "current" in c.before ? c.before.current : ("quantity" in c.before) ? c.before.quantity : ("band" in c.before) ? c.before.band : ("enabled" in c.before) ? c.before.enabled : true : null,
     after: c.after ? "current" in c.after ? c.after.current : ("quantity" in c.after) ? c.after.quantity : ("band" in c.after) ? c.after.band : ("enabled" in c.after) ? c.after.enabled : true : null,
     ...c.after && "name" in c.after ? { name: c.after.name } : c.before && ("name" in c.before) ? { name: c.before.name } : {},
+    ...(receipt.engine ?? 1) >= 9 && c.after && "severity" in c.after && c.after.severity ? { severity: c.after.severity } : {},
+    ...(receipt.engine ?? 1) >= 9 && c.after && "periodic" in c.after && c.after.periodic ? { periodic: { remaining: c.after.periodic.remaining, ending: c.after.ending, endingRule: c.after.periodic.endingRule, timingBasis: c.after.periodic.timingBasis, pulse: c.after.periodic.pulse } } : {},
     ...c.after && "owner" in c.after ? { owner: c.after.owner } : {},
     ...c.after && "equipped" in c.after ? { equipped: c.after.equipped } : {}
   })), ...receipt.status === "ready" && receipt.beats?.length ? { events: receipt.beats } : {}, ...(receipt.engine ?? 1) >= 3 ? { boundary: (receipt.engine ?? 1) >= 5 && receipt.status === "blocked" ? receipt.unresolved ? "This action is unresolved because a necessary mechanical fact is missing. Do not invent an NPC refusal, extra task, fee, restriction or adverse event to explain missing bookkeeping. Do not narrate payment, success or a new failure. Preserve the established agreement and leave the action pending; ordinary dialogue can continue." : "This action did not execute. Honor only its stated established prerequisite or already-paid result. Do not add new tasks, fees or restrictions to an accepted agreement, and do not narrate another payment. Leave the next choice to the player." : receipt.engine === 3 ? "These recorded actions exhaust this exchange. Describe them once and stop at the next player choice. No extra attacks, costs, recovery or forced player reactions. Describe the physical and story consequences naturally. Leave arithmetic and resource totals to the inline display unless the player asks for those numbers; do not recite bookkeeping in the prose." : "These recorded mechanical outcomes are settled. Describe their consequences once and stop at the next player decision. Do not add another attack, resource cost, recovery or forced player reaction. Leave arithmetic and resource totals to the inline display unless the player asks for those numbers. Qualitative injuries are Warp interpretations, not an invented Health pool or a specific medical diagnosis. Do not declare death, lost limbs, feelings or consent from a generic physical injury." } : {} };
@@ -14117,14 +14582,20 @@ function receiptPacket(receipt) {
 function mechanicalNotes(receipt) {
   if (!receipt || receipt.status !== "ready")
     return [];
-  return receipt.changes.filter((c) => c.kind !== "growth" || c.after && ("familiar" in c.after) && c.after.familiar && !(c.before && ("familiar" in c.before) && c.before.familiar)).filter((c) => (c.kind === "stock" || c.kind === "cost_link") && receipt.actor === "you" || c.after && ("owner" in c.after) && c.after.owner === "you" || c.before && ("owner" in c.before) && c.before.owner === "you").map((c) => {
+  return receipt.changes.filter((c) => c.kind !== "growth" || c.after && ("familiar" in c.after) && c.after.familiar && !(c.before && ("familiar" in c.before) && c.before.familiar)).filter((c) => (c.kind === "stock" || c.kind === "cost_link" || c.kind === "buildup") && receipt.actor === "you" || c.after && ("owner" in c.after) && c.after.owner === "you" || c.before && ("owner" in c.before) && c.before.owner === "you").map((c) => {
     const value = c.after;
     if (!value)
       return c.kind === "condition" && c.before && "name" in c.before ? `${c.before.name}: cleared` : "";
+    if ("threshold" in value)
+      return `${value.name}: ${value.current} / ${value.threshold}`;
+    if (c.kind === "condition" && "periodic" in value && value.periodic)
+      return value.periodic.remaining === undefined ? `${value.name}: ${value.ending}` : `${value.name}: ${value.periodic.remaining} actions left`;
     if (c.kind === "cost_link" && "enabled" in value && !value.enabled)
       return "Shared resource access withdrawn";
     if (c.kind === "growth" && "familiar" in value)
       return `${value.name}: familiar`;
+    if (c.kind === "condition" && "severity" in value && c.before && "severity" in c.before && c.before.severity !== value.severity)
+      return `${value.name}: improving`;
     if ("current" in value)
       return `${value.name}: ${value.current}${value.max === undefined ? "" : ` / ${value.max}`}${value.unit ? ` ${value.unit}` : ""}`;
     if (c.kind === "position" && "name" in value)
@@ -14138,14 +14609,15 @@ function mechanicalNotes(receipt) {
     return "name" in value ? value.name : "";
   }).filter(Boolean).slice(-2);
 }
-var APPROACHES, emptyMechanics = () => ({ version: 1, resources: [], items: [], conditions: [], applied: [] }), hasMechanics = (s) => !!(s.resources.length || s.items.length || s.conditions.length || s.abilities?.length || s.entities?.length || s.resilience?.length || s.closedConditions?.length || s.agreements?.length || s.places?.length || s.companions?.length || s.costLinks?.length || s.growth?.length), obj4 = (v) => !!v && typeof v === "object" && !Array.isArray(v), str4 = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", amount2 = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1e9, own = (v, player) => {
+var APPROACHES, emptyMechanics = () => ({ version: 1, resources: [], items: [], conditions: [], applied: [] }), hasMechanics = (s) => !!(s.buildups?.length || s.resources.length || s.items.length || s.conditions.length || s.abilities?.length || s.entities?.length || s.resilience?.length || s.closedConditions?.length || s.agreements?.length || s.places?.length || s.companions?.length || s.costLinks?.length || s.growth?.length), obj5 = (v) => !!v && typeof v === "object" && !Array.isArray(v), str4 = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", amount2 = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1e9, own = (v, player) => {
   const name = str4(v, 80);
   return ["you", "me", "i", "player", "{{user}}", player?.toLowerCase()].includes(name.toLowerCase()) ? "you" : name;
-}, approaches = (v) => Array.isArray(v) ? [...new Set(v.filter((x) => APPROACHES.includes(x)))] : [], numberIn = (quote, n) => (quote.match(/\d+(?:\.\d+)?/g) ?? []).some((x) => Number(x) === n) || Number.isInteger(n) && ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].some((word, i) => i === n && new RegExp(`\\b${word}\\b`, "i").test(quote)), singularPossession = (quote, name) => {
+}, approaches = (v) => Array.isArray(v) ? [...new Set(v.filter((x) => APPROACHES.includes(x)))] : [], numberIn2 = (quote, n) => (quote.match(/\d+(?:\.\d+)?/g) ?? []).some((x) => Number(x) === n) || Number.isInteger(n) && ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].some((word, i) => i === n && new RegExp(`\\b${word}\\b`, "i").test(quote)), singularPossession = (quote, name) => {
   const names = [name, name.replace(/([^s])s$/i, "$1")].map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
   return new RegExp(`\\b(?:have|has|carry|carries|carrying|own|owns|holding|holds|equipped|wear|wears|wearing)\\b[^.!?]{0,60}\\b(?:a|an|single)\\s+(?:${names})\\b`, "i").test(quote);
 }, correction = (m) => m.is_user && /^\s*\(?OOC correction:/i.test(m.content), MechanicalPlanError;
 var init_mechanics = __esm(() => {
+  init_lingering();
   init_story_text();
   init_encounters();
   init_exchanges();
@@ -14247,23 +14719,23 @@ function pathsOf(messages) {
   }));
 }
 function evidence2(v, messages) {
-  if (!obj5(v))
+  if (!obj6(v))
     return null;
-  const message = text4(v.message, 160), quote = text4(v.quote, 400);
+  const message = text5(v.message, 160), quote = text5(v.quote, 400);
   const source = messages.find((m) => m.id === message);
   if (!source || quote.length < 4 || !sourceContains(source.content, quote))
     return null;
   return { message, quote, sourceRevision: storyRevision(source.content) };
 }
 function readChanges(raw, before, messages, playerName) {
-  if (!obj5(raw))
+  if (!obj6(raw))
     return { events: [], notes: [] };
   const events = [], notes = [];
   let world = structuredClone(before);
   const sourceMessages = new Map(messages.map((m) => [m.id, m]));
   const playerNames = new Set(["you", "player", "me", "i", "{{user}}", ...playerName ? [playerName.toLowerCase()] : [], ...messages.filter((m) => m.is_user && m.name).map((m) => m.name.toLowerCase())]);
   const person = (v) => {
-    const s = text4(v, 80);
+    const s = text5(v, 80);
     if (playerNames.has(s.toLowerCase()))
       return "you";
     try {
@@ -14273,10 +14745,10 @@ function readChanges(raw, before, messages, playerName) {
     }
   };
   for (const v of (Array.isArray(raw.changes) ? raw.changes : []).slice(0, 16)) {
-    if (!obj5(v))
+    if (!obj6(v))
       continue;
     const e = evidence2(v, messages);
-    let id = text4(v.id, 100);
+    let id = text5(v.id, 100);
     if (!e || !id && v.op !== "learn")
       continue;
     const previous = world.facts.find((f) => f.id === id);
@@ -14307,7 +14779,7 @@ function readChanges(raw, before, messages, playerName) {
         continue;
       event = { op: "transfer", id, from, to, evidence: e };
     } else if (v.op === "put") {
-      const kind = text4(v.kind), subject = person(v.subject), description = text4(v.text);
+      const kind = text5(v.kind), subject = person(v.subject), description = text5(v.text);
       if (!kinds.has(kind) || !subject || !description)
         continue;
       if (kind === "knowledge")
@@ -14335,9 +14807,9 @@ function readChanges(raw, before, messages, playerName) {
       notes.push(event.fact.text);
   }
   let scene;
-  const sceneSource = obj5(raw.scene) ? evidence2(raw.scene, messages) : null;
-  if (obj5(raw.scene) && sceneSource) {
-    scene = { place: text4(raw.scene.place, 100) || before.place, present: Array.isArray(raw.scene.present) ? [...new Set(raw.scene.present.map(person).filter((p) => p && p !== "you"))].slice(0, 8) : before.present, ...sceneSource };
+  const sceneSource = obj6(raw.scene) ? evidence2(raw.scene, messages) : null;
+  if (obj6(raw.scene) && sceneSource) {
+    scene = { place: text5(raw.scene.place, 100) || before.place, present: Array.isArray(raw.scene.present) ? [...new Set(raw.scene.present.map(person).filter((p) => p && p !== "you"))].slice(0, 8) : before.present, ...sceneSource };
   }
   return { events, ...scene ? { scene } : {}, notes: notes.slice(0, 2) };
 }
@@ -14395,10 +14867,10 @@ function foldWorld(messages) {
   return { ...world, facts: [...facts.values()] };
 }
 function resolveAttempt(raw, seed) {
-  if (!obj5(raw) || raw.risky !== true || raw.contested !== true)
+  if (!obj6(raw) || raw.risky !== true || raw.contested !== true)
     return null;
-  const intent = text4(raw.intent), stakes = text4(raw.stakes);
-  const reasons = Array.isArray(raw.reasons) ? raw.reasons.map((x) => text4(x, 180)).filter(Boolean).slice(0, 3) : [];
+  const intent = text5(raw.intent), stakes = text5(raw.stakes);
+  const reasons = Array.isArray(raw.reasons) ? raw.reasons.map((x) => text5(x, 180)).filter(Boolean).slice(0, 3) : [];
   if (!intent || !stakes || !reasons.length)
     return null;
   const tier = raw.tier === "favorable" || raw.tier === "outmatched" ? raw.tier : "uncertain";
@@ -14420,13 +14892,14 @@ function worldPacket(world, focus = "") {
     ...selected.some((f) => f.access) ? { knowledgeBoundary: "Knowledge records identify actual learners and the proposition they learned. Other facts are narrator context, not shared information. Unrecorded access is unknown. Do not reveal secrets or let someone act on privileged information without an established way to learn it. Hearing an allegation does not make it true; old knowledge need not match a newer fact." } : {},
     ...world.mechanics && (world.mechanics.resources.length || world.mechanics.items.length) ? { assetBoundary: "Counted resources and items change only through a saved mechanical receipt. An offer, promise or completed task does not itself transfer payment. Hold an offered reward available for the player's acceptance and resolution. Do not invent or recite new balances from prose. Missing preparation is uncertainty in the record, not a fictional refusal, fee or extra chore." } : {},
     ...world.mechanics?.agreements?.length ? { agreementBoundary: "Accepted agreement requirements are separate and all must be fulfilled. Preserve their terms; an attempted task is not proof of completion. After completion the NPC may offer or refuse the promised reward. Hold an offered reward available for the player's acceptance; do not narrate a completed item or money handover without a reward receipt. Describe offers naturally; leave wallet arithmetic and current balances to the inline display unless asked. Paid rewards stay paid. Never automatically spend the player's promised payment. Do not introduce a setup menu, relationship score or new quest to manage an agreement." } : {},
+    ...world.mechanics && (hasLingering(world.mechanics) || world.mechanics.abilities?.some((a) => a.effects.some(isLingering))) ? { lingeringBoundary: "Periodic effects advance after supported actions of the affected owner, beginning with their next action. A question, inspection, model wait, denied action or permission withdrawal advances nothing. Honor saved pulse damage/healing, counts and threshold triggers once. A cure can remove a pending pulse; refreshing cannot evade an old due pulse. Do not narrate offscreen pulses, automatic death, free recovery, consent or feelings from these rules. Buildup retains its remainder and refreshes one condition; it never creates extra attacks or model-authored arithmetic. Use human names, show a relevant imminent consequence before the next choice and answer saved counts on request. Omitted records are not erased." } : {},
     ...world.mechanics && activePracticeTracks(world.mechanics).length > 0 ? { growthBoundary: "Earned familiarity is Warp practice, scoped to the exact recorded technique/version. It improves existing uncertainty once alongside conditions, never creates a new power, changes source numbers or bypasses hard constraints, feelings or consent. Do not invent XP or forced training. Only newly earned milestones are announced; routine progress totals stay offscreen unless asked. A query may include opportunities/milestoneAt from saved state, not source-defined XP. Answer with human technique names and plain progress, never internal IDs or control tags. Omitted progress is not erased. Milestones arise from varied completed opportunities; routine repetition does not farm them." } : {},
     ...world.mechanics?.companions?.length || world.mechanics?.costLinks?.length ? { companionBoundary: "Companion relationships do not grant control, consent, extra actions or shared knowledge. Recall/dismissal never resets injuries, balances, identity, cooldowns or death. Lifetime counts only sourced controller actions. Shared links redirect established ability effort costs one-for-one; they do not duplicate resources or transmit damage/healing. No automatic following, resurrection or recovery. Unknown restrictions stay unresolved." } : {},
     ...world.mechanics?.places?.length ? { explorationBoundary: "Known places, routes, local changes, clues and remaining supplies persist across visits. This packet contains relevant nearby/requested spatial knowledge, not the entire map; omitted places are not erased. This is the player's discovered map, not shared NPC knowledge. Unvisited places are known only through their established sources, not an omniscient map. A route's unknown status does not prove access. Do not reconnect rooms, relock an opened exit, repair a broken object or refill a cache simply because the player returns. Counted gathering and travel through recorded routes use saved receipts; do not grant supplies, move the player or repeat costs contrary to that turn's receipt. A question, map inspection or unaccepted trip does not move anyone or advance time. New unestablished space may be explored naturally; do not invent a setup requirement. A successful departure does not automatically bring other people along." } : {},
     ...world.mechanics ? { mechanics: mechanicalPacket(world.mechanics, focus) } : {}
   });
 }
-var emptyWorld = () => ({ place: "", present: [], facts: [] }), text4 = (v, limit = 240) => {
+var emptyWorld = () => ({ place: "", present: [], facts: [] }), text5 = (v, limit = 240) => {
   if (typeof v !== "string")
     return "";
   const clean = v.trim().replace(/\s+/g, " ");
@@ -14434,8 +14907,9 @@ var emptyWorld = () => ({ place: "", present: [], facts: [] }), text4 = (v, limi
     return clean;
   const boundary = clean.lastIndexOf(" ", limit);
   return clean.slice(0, boundary > limit * 0.65 ? boundary : limit).trimEnd();
-}, obj5 = (v) => !!v && typeof v === "object" && !Array.isArray(v), kinds, ROOT = "warp-living-v1", nextPath2 = (path, m) => revision([path, m.id, m.swipe_id ?? 0, storyContent(m.content)]);
+}, obj6 = (v) => !!v && typeof v === "object" && !Array.isArray(v), kinds, ROOT = "warp-living-v1", nextPath2 = (path, m) => revision([path, m.id, m.swipe_id ?? 0, storyContent(m.content)]);
 var init_world2 = __esm(() => {
+  init_lingering();
   init_growth();
   init_dice();
   init_mechanics();
@@ -14517,7 +14991,7 @@ function definitionSource(kind, text) {
   return { id: `warp-source:${kind}:${revision(content)}`, kind, text: content };
 }
 function validDefinitionSource(raw) {
-  return obj6(raw) && ["card", "persona", "lore"].includes(raw.kind) && typeof raw.text === "string" && raw.text.length <= 6000 && raw.id === `warp-source:${raw.kind}:${revision(raw.text)}`;
+  return obj7(raw) && ["card", "persona", "lore"].includes(raw.kind) && typeof raw.text === "string" && raw.text.length <= 6000 && raw.id === `warp-source:${raw.kind}:${revision(raw.text)}`;
 }
 function sourceMessages(sources) {
   return sources.filter(validDefinitionSource).map((s) => ({ id: s.id, is_user: false, content: s.text }));
@@ -14527,7 +15001,7 @@ function readAbilityDefinitions(raw, state, messages, sources = [], player, hist
     return [];
   const definitions = [];
   for (const row of raw.slice(0, 6)) {
-    if (!obj6(row))
+    if (!obj7(row))
       continue;
     try {
       if (Object.keys(row).some((k) => !["id", "version", "owner", "name", "description", "approach", "target", "range", "cooldown", "costs", "effects", "requires", "unsupported", "message", "quote", "source", "sourceKind", "fingerprint"].includes(k)))
@@ -14537,7 +15011,7 @@ function readAbilityDefinitions(raw, state, messages, sources = [], player, hist
       const message = messages.find((m) => m.id === messageId);
       const isCorrection = !!message?.is_user && /^\s*\(?OOC correction:/i.test(message.content);
       const content = source?.text ?? (message && (!message.is_user || isCorrection) ? message.content : "");
-      const oldRevision = historical && obj6(row.source) && typeof row.source.sourceRevision === "string" ? row.source.sourceRevision : undefined;
+      const oldRevision = historical && obj7(row.source) && typeof row.source.sourceRevision === "string" ? row.source.sourceRevision : undefined;
       if (!owner || !name || quote.length < 8 || !sourceContains(content, quote) || oldRevision && !sourceRevisionMatches(source ? { content } : message, oldRevision))
         continue;
       const id = identity(owner, name), existing = [...state.abilities ?? [], ...definitions].find((a) => a.id === id);
@@ -14547,14 +15021,14 @@ function readAbilityDefinitions(raw, state, messages, sources = [], player, hist
         continue;
       if (row.range !== undefined && !RANGES.includes(row.range))
         continue;
-      if (row.cooldown !== undefined && (!positive(row.cooldown) || !Number.isInteger(row.cooldown) || row.cooldown > 1e4 || !numberIn2(quote, row.cooldown)))
+      if (row.cooldown !== undefined && (!positive2(row.cooldown) || !Number.isInteger(row.cooldown) || row.cooldown > 1e4 || !numberIn3(quote, row.cooldown)))
         continue;
       if (!Array.isArray(row.costs) || row.costs.length > 6 || !Array.isArray(row.effects) || !row.effects.length || row.effects.length > 8)
         continue;
       const costs = row.costs.map((c) => {
-        if (!obj6(c) || Object.keys(c).some((k) => !["kind", "id", "amount"].includes(k)))
+        if (!obj7(c) || Object.keys(c).some((k) => !["kind", "id", "amount"].includes(k)))
           throw new Error("Unsupported cost fields");
-        if (!obj6(c) || !["resource", "item"].includes(c.kind) || !positive(c.amount) || !numberIn2(quote, c.amount))
+        if (!obj7(c) || !["resource", "item"].includes(c.kind) || !positive2(c.amount) || !numberIn3(quote, c.amount))
           throw new Error("Unsupported ability cost");
         const candidates = (c.kind === "resource" ? state.resources : state.items).filter((v) => v.owner === owner && (v.id === c.id || v.name.normalize("NFKC").toLocaleLowerCase() === str5(c.id).normalize("NFKC").toLocaleLowerCase()));
         const candidate = candidates.length === 1 ? candidates[0] : undefined;
@@ -14563,14 +15037,16 @@ function readAbilityDefinitions(raw, state, messages, sources = [], player, hist
         return { kind: c.kind, id: candidate.id, amount: c.amount };
       });
       const effects = row.effects.map((e) => {
+        if (obj7(e) && ["periodic", "buildup", "clear_buildup"].includes(e.kind))
+          return readLingeringEffect(e, quote);
         const fields = { summon: ["companion", "duration"], dismiss: ["companion"], restore: ["resource", "amount", "basis", "magnitude"], damage: ["resource", "amount", "basis", "magnitude", "damageType"], harm: ["impact", "damageType"], mend: ["impact", "maxInjury"], condition: ["name", "hinders", "helps", "blocks", "ending", "duration", "untilDismissed"], clear_condition: ["name"], defense: ["name", "defense", "ending", "duration", "basis", "magnitude"] };
-        if (!obj6(e) || !fields[e.kind] || Object.keys(e).some((k) => !["kind", "target", ...fields[e.kind]].includes(k)))
+        if (!obj7(e) || !fields[e.kind] || Object.keys(e).some((k) => !["kind", "target", ...fields[e.kind]].includes(k)))
           throw new Error("Unsupported effect fields");
-        if (!obj6(e) || !["self", "target"].includes(e.target))
+        if (!obj7(e) || !["self", "target"].includes(e.target))
           throw new Error("Unknown effect target");
         const target = e.target;
         const duration = e.duration;
-        if (duration !== undefined && (!positive(duration) || !Number.isInteger(duration) || duration > 1e4 || !numberIn2(quote, duration)))
+        if (duration !== undefined && (!positive2(duration) || !Number.isInteger(duration) || duration > 1e4 || !numberIn3(quote, duration)))
           throw new Error("Unsourced action duration");
         if (e.kind === "summon" || e.kind === "dismiss") {
           const companion = state.companions?.find((c) => (c.id === e.companion || c.actor === actorName(state, str5(e.companion, 80))) && c.controller === owner && c.companionKind === "summon");
@@ -14589,7 +15065,7 @@ function readAbilityDefinitions(raw, state, messages, sources = [], player, hist
           const resource = str5(e.resource);
           if (!resource)
             throw new Error("Missing resource selector");
-          const exact = positive(e.amount) && numberIn2(quote, e.amount);
+          const exact = positive2(e.amount) && numberIn3(quote, e.amount);
           const magnitude = { minor: 5, standard: 15, major: 30 }[e.magnitude];
           if (e.amount !== undefined && !exact)
             throw new Error("Unsourced numerical effect");
@@ -14609,11 +15085,11 @@ function readAbilityDefinitions(raw, state, messages, sources = [], player, hist
         }
         if (e.kind === "defense") {
           const name = str5(e.name), ending = str5(e.ending, 240);
-          if (!name || !ending || !obj6(e.defense) || Object.keys(e.defense).some((k) => !["kind", "amount", "damageType"].includes(k)))
+          if (!name || !ending || !obj7(e.defense) || Object.keys(e.defense).some((k) => !["kind", "amount", "damageType"].includes(k)))
             throw new Error("Incomplete defense effect");
           let defense, basis;
           if (e.defense.kind === "shield") {
-            const exact = positive(e.defense.amount) && numberIn2(quote, e.defense.amount), magnitude = { minor: 5, standard: 15, major: 30 }[e.magnitude];
+            const exact = positive2(e.defense.amount) && numberIn3(quote, e.defense.amount), magnitude = { minor: 5, standard: 15, major: 30 }[e.magnitude];
             if (e.defense.amount !== undefined && !exact || !exact && !magnitude || ![...DAMAGE_TYPES, "all"].includes(e.defense.damageType))
               throw new Error("Unsupported shield effect");
             defense = { kind: "shield", amount: exact ? e.defense.amount : magnitude, damageType: e.defense.damageType };
@@ -14631,7 +15107,7 @@ function readAbilityDefinitions(raw, state, messages, sources = [], player, hist
         if (!Array.isArray(row.requires) || row.requires.length > 6)
           continue;
         for (const r of row.requires) {
-          if (!obj6(r) || typeof r.equipped !== "boolean")
+          if (!obj7(r) || typeof r.equipped !== "boolean")
             throw new Error("Unknown required equipment");
           const candidates = state.items.filter((i) => i.owner === owner && (i.id === r.item || i.name.normalize("NFKC").toLocaleLowerCase() === str5(r.item).normalize("NFKC").toLocaleLowerCase()));
           if (candidates.length !== 1)
@@ -14657,23 +15133,26 @@ function abilitySummary(a, state) {
   const name = (id) => state?.resources.find((r) => r.id === id)?.name ?? state?.items.find((i) => i.id === id)?.name ?? id;
   return `${a.name} · ${a.costs.length ? a.costs.map((c) => `${c.amount} ${name(c.id)}`).join(" + ") : "No established resource cost"}${a.unsupported.length ? " · needs clarification" : ""}`;
 }
-var methods, str5 = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", obj6 = (v) => !!v && typeof v === "object" && !Array.isArray(v), positive = (v) => typeof v === "number" && Number.isFinite(v) && v > 0 && v <= 1e6, numberIn2 = (text, n) => (text.match(/\d+(?:\.\d+)?/g) ?? []).some((x) => Number(x) === n) || ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].some((w, i) => i === n && new RegExp(`\\b${w}\\b`, "i").test(text)), own2 = (v, player) => ["you", "me", "i", "player", "{{user}}", player?.toLowerCase()].includes(str5(v, 80).toLowerCase()) ? "you" : str5(v, 80), scope = (v) => {
+var methods, str5 = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", obj7 = (v) => !!v && typeof v === "object" && !Array.isArray(v), positive2 = (v) => typeof v === "number" && Number.isFinite(v) && v > 0 && v <= 1e6, numberIn3 = (text, n) => (text.match(/\d+(?:\.\d+)?/g) ?? []).some((x) => Number(x) === n) || ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].some((w, i) => i === n && new RegExp(`\\b${w}\\b`, "i").test(text)), own2 = (v, player) => ["you", "me", "i", "player", "{{user}}", player?.toLowerCase()].includes(str5(v, 80).toLowerCase()) ? "you" : str5(v, 80), scope = (v) => {
   if (v === undefined)
     return [];
   if (!Array.isArray(v) || v.some((x) => !methods.includes(x) || x === "other"))
     throw new Error("Unsupported approach constraint");
   return [...new Set(v)];
-}, identity = (owner, name) => `ability-${revision([owner.toLocaleLowerCase(), name.toLocaleLowerCase()])}`, ABILITY_INSTRUCTIONS = `Optionally include abilityDefinitions:[{owner,name,description,approach:"movement|precision|force|speech|perception|concentration|other",target:"self|other|either",costs:[{kind:"resource|item",id,amount}],effects:[],requires:[{item,equipped}],unsupported:[],message,quote}].
-Prepare only established abilities/item actions relevant to this scene. Use exact source IDs and one contiguous source quote covering the ability's effects and restrictions. Player attempts cannot establish a new ability. Respect which person actually owns the ability: a character card normally describes that character, while the persona describes the player. An item action requires the actual owned item.
-Effect vocabulary: {kind:"restore|damage",target:"self|target",resource:"resource name or saved ID",amount:explicitNumber} or magnitude:"minor|standard|major" ONLY when no numerical amount exists; damage may have damageType:"physical|fire|cold|electric|poison|mental|untyped"; {kind:"condition",target,name,hinders:[],blocks:[],helps:[],ending,duration?:explicitOwnerActions}; {kind:"clear_condition",target,name}; {kind:"defense",target,name,defense:{kind:"armor|resistance|immunity|shield|reflect",amount,damageType:"physical|fire|cold|electric|poison|mental|untyped|all"},ending,duration?:explicitOwnerActions}. Resistance/reflect are percentages, armor is flat, immunity uses amount:0. Only shield may use magnitude with its amount omitted. Approaches use the same enum as above, except other.
-Definitions may include range:"touch|near|far" and cooldown:explicitSubsequentOwnerActions only when established in source. Never infer a timer, default range or default cooldown. Duration counts subsequent actions of the affected owner, not chat messages. A cooldown of 1 requires another action before reuse. Seconds, real-time durations, unsupported damage types, multi-target rules and complex triggers belong in unsupported until supported; do not silently convert them. Reapplying the same effect refreshes it without stacking. Defenses resolve immunity, flat armor, capped resistance, shields, then loss, then at most one reflection.
-All costs must be explicit numbers in the source quote and reference an established resource/item owned by the ability owner. Do not invent mana, energy, health, timers, drawbacks, limits or new powers. No stated resource cost means costs:[]. Code supplies fixed magnitude values where needed and labels them Warp values. No formulas or scripts.
-Put unsupported restrictions or effects in unsupported; never silently omit them to make an ability executable. Do not regenerate a saved definition unless the source actually changed or an explicit OOC correction changes it. Return at most 3 relevant definitions. These are automatically prepared content, not a rulebook or a setup question.`;
+}, identity = (owner, name) => `ability-${revision([owner.toLocaleLowerCase(), name.toLocaleLowerCase()])}`, ABILITY_INSTRUCTIONS;
 var init_abilities = __esm(() => {
   init_story_text();
   init_encounters();
   init_injuries();
+  init_lingering();
   methods = ["movement", "precision", "force", "speech", "perception", "concentration", "other"];
+  ABILITY_INSTRUCTIONS = `Optionally include abilityDefinitions:[{owner,name,description,approach:"movement|precision|force|speech|perception|concentration|other",target:"self|other|either",costs:[{kind:"resource|item",id,amount}],effects:[],requires:[{item,equipped}],unsupported:[],message,quote}].
+Prepare only established abilities/item actions relevant to this scene. Use exact source IDs and one contiguous source quote covering the ability's effects and restrictions. Player attempts cannot establish a new ability. Respect which person actually owns the ability: a character card normally describes that character, while the persona describes the player. An item action requires the actual owned item.
+Effect vocabulary: {kind:"restore|damage",target:"self|target",resource:"resource name or saved ID",amount:explicitNumber} or magnitude:"minor|standard|major" ONLY when no numerical amount exists; damage may have damageType:"physical|fire|cold|electric|poison|mental|untyped"; {kind:"condition",target,name,hinders:[],blocks:[],helps:[],ending,duration?:explicitOwnerActions}; {kind:"clear_condition",target,name}; {kind:"defense",target,name,defense:{kind:"armor|resistance|immunity|shield|reflect",amount,damageType:"physical|fire|cold|electric|poison|mental|untyped|all"},ending,duration?:explicitOwnerActions}. Resistance/reflect are percentages, armor is flat, immunity uses amount:0. Only shield may use magnitude with its amount omitted. Approaches use the same enum as above, except other.
+Definitions may include range:"touch|near|far" and cooldown:explicitSubsequentOwnerActions only when established in source. Never infer a timer, default range or default cooldown. Duration counts subsequent actions of the affected owner, not chat messages. A cooldown of 1 requires another action before reuse. Seconds, real-time durations, unsupported damage types, multi-target rules and complex triggers belong in unsupported until supported; do not silently convert them. Reapplying the same effect refreshes it without stacking. Defenses resolve immunity, flat armor, capped resistance, shields, then loss, then at most one reflection.
+All costs must be explicit numbers in the source quote and reference an established resource/item owned by the ability owner. Do not invent mana, energy, health, timers, drawbacks, limits or new powers. No stated resource cost means costs:[]. Code supplies fixed magnitude values where needed and labels them Warp values. No formulas or scripts.
+Put unsupported restrictions or effects in unsupported; never silently omit them to make an ability executable. Do not regenerate a saved definition unless the source actually changed or an explicit OOC correction changes it. Return at most 3 relevant definitions. These are automatically prepared content, not a rulebook or a setup question.
+${LINGERING_INSTRUCTIONS}`;
 });
 
 // src/living/mechanical-history.ts
@@ -14709,8 +15188,8 @@ function foldMechanics(messages) {
           if (!o || typeof o !== "object")
             return [];
           if (o.kind === "condition_end")
-            return [{ kind: o.kind, id: o.id, ...o.retire ? { retire: true } : {}, ...o.source }];
-          if (o.kind === "ability" || o.kind === "practice")
+            return [{ kind: o.kind, id: o.id, ...o.retire ? { retire: true } : {}, ...o.natural ? { natural: true, ending: o.ending } : {}, ...o.source }];
+          if (o.kind === "ability" || o.kind === "practice" || o.kind === "buildup" || o.kind === "periodic")
             return [];
           if (o.kind === "companion") {
             const { manifestation, ...value } = o.value;
@@ -14730,10 +15209,10 @@ function foldMechanics(messages) {
             continue;
           const ability = observation.value;
           const magnitudes = { 5: "minor", 15: "standard", 30: "major" };
-          const imported = readAbilityDefinitions([{ ...ability, message: ability.source.message, quote: ability.source.quote, effects: ability.effects.map((e) => e.basis !== "warp" ? e : e.kind === "defense" && e.defense ? { ...e, defense: { ...e.defense, amount: undefined }, magnitude: magnitudes[e.defense.amount] } : { ...e, amount: undefined, magnitude: magnitudes[e.amount] }) }], state, messages.slice(0, index + 1), sources, undefined, true);
+          const imported = readAbilityDefinitions([{ ...ability, message: ability.source.message, quote: ability.source.quote, effects: ability.effects.map(lingeringInput).map((e) => e.basis !== "warp" || isLingering(e) ? e : e.kind === "defense" && e.defense ? { ...e, defense: { ...e.defense, amount: undefined }, magnitude: magnitudes[e.defense.amount] } : { ...e, amount: undefined, magnitude: magnitudes[e.amount] }) }], state, messages.slice(0, index + 1), sources, undefined, true);
           state = applyObservations(state, imported.map((value) => ({ kind: "ability", value })));
         }
-        const lessons = record.observations.filter((o) => o?.kind === "practice").map((o) => ({ kind: o.kind, ...o.value, ...o.value.source }));
+        const lessons = record.observations.filter((o) => o?.kind === "practice" || o?.kind === "buildup" || o?.kind === "periodic").map((o) => o.kind === "periodic" ? { kind: o.kind, owner: o.value.owner, name: o.value.name, caster: o.value.periodic?.caster, remaining: o.value.periodic?.remaining, definition: o.definition, ...o.value.source } : { kind: o.kind, ...o.value, ...o.value.source });
         state = applyObservations(state, readMechanicalObservations(lessons, state, messages.slice(0, index + 1), undefined, true));
       }
     }
@@ -14743,6 +15222,7 @@ function foldMechanics(messages) {
 }
 var MECHANICS_KEY = "warpMechanics";
 var init_mechanical_history = __esm(() => {
+  init_lingering();
   init_world2();
   init_story_text();
   init_mechanics();
@@ -14950,8 +15430,8 @@ var init_prompt_cache = __esm(() => {
   init_world2();
   init_mechanics();
   init_story_text();
-  STATE_FIELDS = ["place", "present", "preferences", "knowledgeBoundary", "agreementBoundary", "assetBoundary", "readBoundary", "explorationBoundary", "preparationBoundary", "companionBoundary", "growthBoundary"];
-  MECHANICAL_COLLECTIONS = ["resources", "items", "conditions", "abilities", "entities", "distances", "clocks", "cooldowns", "resilience", "agreements", "places", "positions", "routes", "discoveries", "stocks", "companions", "costLinks", "growth"];
+  STATE_FIELDS = ["place", "present", "preferences", "knowledgeBoundary", "agreementBoundary", "assetBoundary", "readBoundary", "explorationBoundary", "preparationBoundary", "companionBoundary", "growthBoundary", "lingeringBoundary"];
+  MECHANICAL_COLLECTIONS = ["resources", "items", "conditions", "abilities", "entities", "distances", "clocks", "cooldowns", "resilience", "agreements", "places", "positions", "routes", "discoveries", "stocks", "companions", "costLinks", "growth", "buildups"];
 });
 
 // src/living/decisions.ts
@@ -15212,12 +15692,14 @@ function sceneReadSummary(raw, accepted) {
 }
 var SCENE_OBSERVATIONS;
 var init_scene_read = __esm(() => {
+  init_lingering();
   init_growth();
   init_encounters();
   init_companions();
   SCENE_OBSERVATIONS = `Read the supplied story for consequential mechanical observations, not actions to execute. Return mechanicalObservations:[] alongside scene/changes, even when empty. Do not execute costs, roll, award, heal, move someone, advance clocks or invent an encounter during this read. Committed receipts remain authoritative.
 ${COMPANION_INSTRUCTIONS}
-${GROWTH_INSTRUCTIONS} Definition sources can establish actual owned quantities/capabilities, never presence, discoveries, exits or completed events. Every row needs message and a contiguous exact quote. Reuse known IDs/names. Keep unrelated systems absent.
+${GROWTH_INSTRUCTIONS}
+${LINGERING_INSTRUCTIONS} Definition sources can establish actual owned quantities/capabilities, never presence, discoveries, exits or completed events. Every row needs message and a contiguous exact quote. Reuse known IDs/names. Keep unrelated systems absent.
 
 PRIORITY: When the conversation investigates a route, access, a local discovery or supplies, record that knowledge as typed spatial observations BEFORE optional prose facts. A scene/fact alone does not record its exits. Recover relevant missing connections from earlier supplied narrator replies; an earlier successful read does not prove the connection was saved. Keep normal and emergency passages distinct. Use the supplied known scene references for established endpoint names, not as proof of a new connection or current presence.
 Spatial rows:
@@ -15330,7 +15812,7 @@ function explorationScenes(raw, scene, messages) {
   });
 }
 function readObserved(raw, state, messages, sources, player, scene) {
-  raw = Array.isArray(raw) ? raw.slice(0, 24).filter((row) => row?.kind !== "practice") : raw;
+  raw = Array.isArray(raw) ? raw.slice(0, 24).filter((row) => !["practice", "buildup", "periodic"].includes(row?.kind)) : raw;
   const seeded = readMechanicalObservations(chronologicalObservations(explorationScenes(raw, scene, messages), messages), state, messages, player);
   const base = seeded.length ? applyObservations(state, seeded) : state;
   const rows = Array.isArray(raw) ? raw.slice(0, 24) : [], bonds = rows.filter((row) => row?.kind === "companion");
@@ -15513,10 +15995,10 @@ ${contextText(window.messages)}`, userId, controller, 30000, 8192);
       const rawObserved = raw.mechanicalObservations;
       const modelObserved = readObserved(rawObserved, mechanicalBefore, messages, sources, playerName, changes.scene);
       const positioned = sceneExploration(changes.scene, applyObservations(mechanicalBefore, modelObserved), messages);
-      const observed = [...modelObserved, ...positioned, ...sceneParticipants(changes.scene, applyObservations(mechanicalBefore, [...modelObserved, ...positioned]), messages, playerName)];
+      const observed = [...modelObserved, ...positioned, ...sceneParticipants(changes.scene, applyObservations(mechanicalBefore, [...modelObserved, ...positioned]), messages, playerName, Array.isArray(rawObserved) && rawObserved.some((row) => ["periodic", "buildup"].includes(row?.kind)))];
       const definitions = readAbilityDefinitions(raw.abilityDefinitions, applyObservations(mechanicalBefore, observed), messages, sources, playerName);
       const prepared = [...observed, ...definitions.map((value) => ({ kind: "ability", value }))];
-      const lessons = Array.isArray(rawObserved) ? readMechanicalObservations(rawObserved.slice(0, 24).filter((row) => row?.kind === "practice"), applyObservations(mechanicalBefore, prepared), messages, playerName) : [];
+      const lessons = Array.isArray(rawObserved) ? readMechanicalObservations(rawObserved.slice(0, 24).filter((row) => ["practice", "buildup", "periodic"].includes(row?.kind)), applyObservations(mechanicalBefore, prepared), messages, playerName) : [];
       const observations = [...prepared, ...lessons];
       const progressNotes = [...growthNotes(mechanicalBefore, applyObservations(mechanicalBefore, observations)), ...agreementNotes(mechanicalBefore, applyObservations(mechanicalBefore, observations))];
       if (progressNotes.length)
@@ -15784,7 +16266,7 @@ ${contextText(recovery?.pending ? recovery.messages : history.slice(-3))}`, ctx.
           const observed = [...participants, ...modelObserved, ...sceneParticipants(scene, applyObservations(ready, modelObserved), history, definitionInput.player)];
           const definitions = readAbilityDefinitions(parsed.abilityDefinitions, applyObservations(base, observed), history.slice(-14), definitionInput.sources, definitionInput.player);
           const prepared = [...observed, ...definitions.map((value) => ({ kind: "ability", value }))];
-          const lessons = Array.isArray(parsed.mechanicalObservations) ? readMechanicalObservations(parsed.mechanicalObservations.slice(0, 24).filter((row) => row?.kind === "practice"), applyObservations(base, prepared), history, definitionInput.player) : [];
+          const lessons = Array.isArray(parsed.mechanicalObservations) ? readMechanicalObservations(parsed.mechanicalObservations.slice(0, 24).filter((row) => ["practice", "buildup", "periodic"].includes(row?.kind)), applyObservations(base, prepared), history, definitionInput.player) : [];
           const observations = [...prepared, ...lessons];
           if (observations.length) {
             const previous = mechanicalRecordOf(last);
@@ -15967,7 +16449,7 @@ async function livingAction(raw, userId) {
   }
   if (!(await getSettings(userId)).enabled)
     return true;
-  if (m.action === "say" && text4(m.text) && !started.has(chatId)) {
+  if (m.action === "say" && text5(m.text) && !started.has(chatId)) {
     await host().chat.appendMessage(chatId, { role: "user", content: m.text.trim().slice(0, 2000) }, { triggerGeneration: true });
   }
   if (m.action === "retry")
@@ -15980,14 +16462,14 @@ Suggest up to three distinct specific possibilities grounded in the scene. Inclu
 ${contextText(messages.slice(-4))}`, userId, controller, 12000, 500);
       if (pathOf(await getMessages(chatId)) !== signature)
         return true;
-      const ideas = raw && typeof raw === "object" && "ideas" in raw && Array.isArray(raw.ideas) ? raw.ideas.map((v) => text4(v, 240)).filter(Boolean).slice(0, 3) : [];
+      const ideas = raw && typeof raw === "object" && "ideas" in raw && Array.isArray(raw.ideas) ? raw.ideas.map((v) => text5(v, 240)).filter(Boolean).slice(0, 3) : [];
       host().sendToFrontend({ type: "living_ideas", chatId, signature, ideas }, userId);
     } catch {
       host().sendToFrontend({ type: "living_ideas", chatId, signature, ideas: [], error: "Ideas unavailable. You can keep typing or try again." }, userId);
     }
   }
-  if (m.action === "correct" && text4(m.text)) {
-    await host().chat.appendMessage(chatId, { role: "user", content: `(OOC correction: ${text4(m.text, 600)})` }, { triggerGeneration: false });
+  if (m.action === "correct" && text5(m.text)) {
+    await host().chat.appendMessage(chatId, { role: "user", content: `(OOC correction: ${text5(m.text, 600)})` }, { triggerGeneration: false });
     await syncLiving(chatId, userId);
   }
   return true;
@@ -17473,7 +17955,7 @@ ${fields.join(`
 `)}`
   };
 }
-var text5 = (v, n) => typeof v === "string" ? v.trim().slice(0, n) : "";
+var text6 = (v, n) => typeof v === "string" ? v.trim().slice(0, n) : "";
 function normQuestions(raw, prefix, max = 3) {
   if (!Array.isArray(raw))
     return [];
@@ -17484,7 +17966,7 @@ function normQuestions(raw, prefix, max = 3) {
     if (!q || typeof q !== "object")
       continue;
     const r = q;
-    const t = text5(r.text ?? r.question, 300);
+    const t = text6(r.text ?? r.question, 300);
     if (!t)
       continue;
     const kind = ["single", "multi", "text"].find((k) => k === r.kind) ?? (Array.isArray(r.options) ? "single" : "text");
@@ -17495,14 +17977,14 @@ function normQuestions(raw, prefix, max = 3) {
 }
 function readCard(out, cls, fallbackName) {
   const sb = out.statusBlock;
-  const strings = (v) => Array.isArray(v) ? v.map((x) => text5(x, 60)).filter(Boolean).slice(0, 12) : [];
+  const strings = (v) => Array.isArray(v) ? v.map((x) => text6(x, 60)).filter(Boolean).slice(0, 12) : [];
   const cast = Array.isArray(out.cast) ? out.cast.slice(0, 8).flatMap((c) => {
     const r = c && typeof c === "object" ? c : {};
-    const name = text5(r.name, 60);
+    const name = text6(r.name, 60);
     if (!name)
       return [];
     const age = Number(r.age);
-    return [{ name, relation: text5(r.relation, 200), ...Number.isFinite(age) && age > 0 ? { age: Math.round(age) } : {}, ...text5(r.appearance, 160) ? { appearance: text5(r.appearance, 160) } : {}, ...text5(r.outfit, 160) ? { outfit: text5(r.outfit, 160) } : {} }];
+    return [{ name, relation: text6(r.relation, 200), ...Number.isFinite(age) && age > 0 ? { age: Math.round(age) } : {}, ...text6(r.appearance, 160) ? { appearance: text6(r.appearance, 160) } : {}, ...text6(r.outfit, 160) ? { outfit: text6(r.outfit, 160) } : {} }];
   }) : [];
   const own = {
     style: out.style === "story" ? "story" : "adventure",
@@ -17513,8 +17995,8 @@ function readCard(out, cls, fallbackName) {
   const c = cls ?? own;
   return {
     ...c,
-    summary: text5(out.summary, 800) || `${fallbackName}.`,
-    reason: cls ? "" : text5(out.reason, 300),
+    summary: text6(out.summary, 800) || `${fallbackName}.`,
+    reason: cls ? "" : text6(out.reason, 300),
     statusFields: c.statusBlock ? cls ? strings(out.statusFields) : strings(sb?.fields) : [],
     cast,
     followUps: normQuestions(out.followUps, "f1_")

@@ -956,6 +956,400 @@ var init_growth = __esm(() => {
   init_companions();
 });
 
+// src/living/lingering.ts
+function scopes(v) {
+  if (v === undefined)
+    return [];
+  if (!Array.isArray(v) || v.some((x) => !["movement", "precision", "force", "speech", "perception", "concentration"].includes(x)))
+    throw Error("Unknown lingering constraint");
+  return [...new Set(v)];
+}
+function readPulse(v, quote) {
+  if (!obj(v))
+    throw Error("Missing periodic pulse");
+  if (v.kind === "damage" || v.kind === "restore") {
+    fields(v, ["kind", "resource", "amount", "basis", "magnitude", "damageType"]);
+    const exact = positive(v.amount) && numberIn(quote, v.amount), magnitude = IMPACTS[v.magnitude];
+    if (!text3(v.resource) || v.amount !== undefined && !exact || !exact && !magnitude)
+      throw Error("Periodic amount needs a source number or supported magnitude");
+    if (v.damageType !== undefined && ![...physical, "mental", "untyped"].includes(v.damageType))
+      throw Error("Unknown periodic damage type");
+    return { kind: v.kind, resource: text3(v.resource), amount: exact ? v.amount : magnitude, basis: exact ? "source" : "warp", ...v.damageType ? { damageType: v.damageType } : {} };
+  }
+  if (v.kind === "harm" || v.kind === "mend") {
+    fields(v, ["kind", "impact", "damageType", "maxInjury"]);
+    if (!Object.hasOwn(IMPACTS, v.impact) || v.kind === "harm" && !physical.includes(v.damageType))
+      throw Error("Unsupported periodic physical effect");
+    if (v.maxInjury !== undefined && (!["minor", "standard", "major", "any"].includes(v.maxInjury) || !(v.maxInjury === "any" ? /\b(?:all|any)\b/i : new RegExp(`\\b${v.maxInjury}\\b`, "i")).test(quote)))
+      throw Error("Unsourced periodic treatment limit");
+    return { kind: v.kind, impact: v.impact, ...v.kind === "harm" ? { damageType: v.damageType } : {}, ...v.maxInjury ? { maxInjury: v.maxInjury } : {} };
+  }
+  throw Error("A periodic pulse cannot schedule another effect");
+}
+function readPeriodic(v, quote) {
+  const name = text3(v.name), rule = v.endingRule;
+  if (rule !== undefined && !Object.hasOwn(ENDINGS, rule))
+    throw Error("Unknown Warp ending rule");
+  const ongoing = v.untilCleared === true || rule !== undefined && v.untilCleared === undefined;
+  const ending = text3(v.ending, 240) || (rule ? ENDINGS[rule] : "");
+  if (!name || !ending || v.cadence !== "owner_action")
+    throw Error("Periodic effects require affected-owner action timing");
+  if (/\b(?:seconds?|minutes?|hours?|days?|rounds?)\b/i.test(quote))
+    throw Error("Real-time and round timing cannot become owner actions");
+  if (v.timingBasis !== undefined && !["source", "warp"].includes(v.timingBasis))
+    throw Error("Unknown periodic timing basis");
+  if (v.untilCleared !== undefined && v.untilCleared !== true || ongoing && (v.duration !== undefined || (!rule || ending !== ENDINGS[rule]) && !norm3(quote).includes(norm3(ending))))
+    throw Error("An ongoing effect needs its actual sourced ending and no invented duration");
+  if (v.duration === undefined && !ongoing)
+    throw Error("Periodic effects need a duration or a sourced ending trigger");
+  const pulse = readPulse(v.pulse, quote);
+  if (rule) {
+    const compatible = rule === "recover" ? pulse.kind === "mend" || pulse.kind === "restore" : (pulse.kind === "harm" || pulse.kind === "damage") && pulse.damageType === { extinguish: "fire", stanch: "physical", detox: "poison" }[rule];
+    if (!ongoing || v.duration !== undefined || !compatible)
+      throw Error("A Warp ending rule must match its actual ongoing effect");
+  }
+  return { name, ending, ...ongoing ? { untilCleared: true } : { duration: duration(v.duration, quote) }, ...rule ? { endingRule: rule } : {}, cadence: "owner_action", timingBasis: v.timingBasis ?? (ongoing ? "warp" : "source"), pulse };
+}
+function readTrigger(v, quote) {
+  if (!obj(v))
+    throw Error("Missing buildup trigger");
+  if (v.kind === "periodic") {
+    fields(v, ["kind", "name", "ending", "duration", "untilCleared", "endingRule", "cadence", "timingBasis", "pulse"]);
+    return { kind: "periodic", ...readPeriodic(v, quote) };
+  }
+  if (v.kind !== "condition")
+    throw Error("Buildup can trigger one condition or finite periodic effect");
+  fields(v, ["kind", "name", "ending", "helps", "hinders", "blocks", "duration"]);
+  if (!text3(v.name) || !text3(v.ending, 240))
+    throw Error("Buildup condition needs an ending");
+  return { kind: "condition", name: text3(v.name), ending: text3(v.ending, 240), helps: scopes(v.helps), hinders: scopes(v.hinders), blocks: scopes(v.blocks), ...v.duration === undefined ? {} : { duration: duration(v.duration, quote) } };
+}
+function readLingeringEffect(v, quote) {
+  if (!["self", "target"].includes(v.target))
+    throw Error("Unknown lingering target");
+  const target = v.target;
+  if (v.kind === "periodic") {
+    fields(v, ["kind", "target", "name", "ending", "duration", "untilCleared", "endingRule", "cadence", "timingBasis", "pulse"]);
+    return { kind: "periodic", target, ...readPeriodic(v, quote) };
+  }
+  if (v.kind === "clear_buildup") {
+    fields(v, ["kind", "target", "name"]);
+    if (!text3(v.name))
+      throw Error("Missing accumulation to clear");
+    return { kind: "clear_buildup", target, name: text3(v.name) };
+  }
+  fields(v, ["kind", "target", "name", "amount", "threshold", "basis", "magnitude", "trigger"]);
+  const exact = positive(v.amount) && positive(v.threshold) && numberIn(quote, v.amount) && numberIn(quote, v.threshold);
+  const magnitude = { minor: 1, standard: 2, major: 3 }[v.magnitude];
+  if (!text3(v.name) || (v.amount !== undefined || v.threshold !== undefined) && !exact || !exact && !magnitude)
+    throw Error("Buildup requires sourced quantities or a Warp accumulation grade");
+  const amount = exact ? v.amount : magnitude, threshold = exact ? v.threshold : 3;
+  if (![amount, threshold].every((n) => Math.abs(n * 1000 - Math.round(n * 1000)) < 0.000001))
+    throw Error("Buildup supports at most three decimal places");
+  return { kind: "buildup", target, name: text3(v.name), amount, threshold, basis: exact ? "source" : "warp", trigger: readTrigger(v.trigger, quote) };
+}
+function lingeringInput(e) {
+  const value = structuredClone(e);
+  const pulse = (p) => p?.basis === "warp" ? { ...p, amount: undefined, magnitude: { 5: "minor", 15: "standard", 30: "major" }[p.amount] } : p;
+  if (value.pulse)
+    value.pulse = pulse(value.pulse);
+  if (value.trigger?.pulse)
+    value.trigger.pulse = pulse(value.trigger.pulse);
+  if (value.kind === "buildup" && value.basis === "warp") {
+    value.magnitude = { 1: "minor", 2: "standard", 3: "major" }[value.amount];
+    delete value.amount;
+    delete value.threshold;
+  }
+  return value;
+}
+function readBuildup(row, state, source, correction, historical) {
+  if (Object.keys(row).some((k) => !["kind", "owner", "name", "current", "caster", "ability", "message", "quote", "sourceRevision", ...historical ? ["id", "threshold", "trigger", "fingerprint", "basis", "source", "definition"] : []].includes(k)))
+    return;
+  const owner = text3(row.owner, 80), name = text3(row.name), current = row.current;
+  if (!owner || !name || typeof current !== "number" || !Number.isFinite(current) || current < 0 || !numberIn(source.quote, current) || !norm3(source.quote).includes(norm3(name)))
+    return;
+  if (!correction && state.buildups?.some((b) => b.owner === owner && norm3(b.name) === norm3(name)))
+    return;
+  let candidates = [];
+  if (historical && obj(row.definition)) {
+    const ref = row.definition, a = state.abilities?.find((a) => a.id === ref.ability && a.version === ref.version);
+    const index = typeof ref.index === "number" && Number.isInteger(ref.index) ? ref.index : -1, effect = a?.effects[index];
+    if (a && effect?.kind === "buildup" && norm3(effect.name) === norm3(name))
+      candidates = [{ ability: a.id, version: a.version, index, effect }];
+  } else
+    for (const a of state.abilities ?? [])
+      if (a.owner === row.caster && (a.id === row.ability || norm3(a.name) === norm3(text3(row.ability)))) {
+        a.effects.forEach((effect, index) => {
+          if (effect.kind === "buildup" && norm3(effect.name) === norm3(name))
+            candidates.push({ ability: a.id, version: a.version, index, effect });
+        });
+      }
+  if (candidates.length !== 1)
+    return;
+  const { effect, ...definition } = candidates[0];
+  if (current >= effect.threshold || Math.abs(current * 1000 - Math.round(current * 1000)) > 0.000001)
+    return;
+  return { kind: "buildup", value: { id: `buildup-${revision([owner, norm3(name)])}`, owner, name, current, threshold: effect.threshold, trigger: structuredClone(effect.trigger), fingerprint: revision([effect.threshold, effect.trigger]), basis: effect.basis, definition, source }, ...correction ? { correction: true } : {} };
+}
+function readPeriodicObservation(row, state, source, messages, historical, correction = false) {
+  if (source.message.startsWith("warp-source:") || Object.keys(row).some((k) => !["kind", "owner", "name", "caster", "ability", "remaining", "effect", "message", "quote", "sourceRevision", ...historical ? ["definition"] : []].includes(k)))
+    return;
+  const latest = messages.filter((m) => (!m.is_user || /^\s*\(?OOC correction:/i.test(m.content)) && !!m.content.trim() && !m.id.startsWith("warp-source:")).at(-1);
+  if (source.message !== latest?.id)
+    return;
+  const owner = text3(row.owner, 80), name = text3(row.name), old = state.conditions.find((c) => c.owner === owner && norm3(c.name) === norm3(name));
+  if (!owner || !name || !norm3(source.quote).includes(norm3(name)) || !correction && (old?.periodic || old && (old.source.message !== source.message || old.source.sourceRevision !== source.sourceRevision)))
+    return;
+  const candidates = [];
+  for (const a of state.abilities ?? [])
+    a.effects.forEach((effect, index) => {
+      const selected = historical && obj(row.definition) ? a.id === row.definition.ability && a.version === row.definition.version && index === row.definition.index : a.owner === row.caster && (a.id === row.ability || norm3(a.name) === norm3(text3(row.ability)));
+      if (selected && effect.kind === "periodic" && norm3(effect.name) === norm3(name))
+        candidates.push({ caster: a.owner, definition: { ability: a.id, version: a.version, index }, effect });
+    });
+  const direct = historical && obj(row.definition) && obj(row.definition.effect) ? lingeringInput(row.definition.effect) : row.effect;
+  if (direct !== undefined) {
+    if (candidates.length || !obj(direct) || direct.kind !== "periodic" || direct.target !== "self")
+      return;
+    let effect;
+    try {
+      effect = readLingeringEffect(direct, source.quote);
+    } catch {
+      return;
+    }
+    if (norm3(effect.name) !== norm3(name))
+      return;
+    candidates.push({ caster: text3(row.caster, 80) || "environment", definition: { effect }, effect });
+  }
+  if (candidates.length !== 1)
+    return;
+  const { caster, definition, effect } = candidates[0], remaining = row.remaining;
+  if (effect.duration !== undefined && (typeof remaining !== "number" || !Number.isInteger(remaining) || remaining <= 0 || remaining > effect.duration || !numberIn(source.quote, remaining)))
+    return;
+  if (effect.duration === undefined && remaining !== undefined)
+    return;
+  try {
+    validatePulse(state, caster, owner, effect.pulse);
+  } catch {
+    return;
+  }
+  return { kind: "periodic", definition, value: {
+    ...old ?? { id: `periodic-start-${revision([owner, norm3(name)])}`, owner, helps: [], hinders: [], blocks: [] },
+    name,
+    ending: effect.ending,
+    source,
+    periodic: { rule: 1, caster, nextAt: actionCount(state, owner) + 1, ...typeof remaining === "number" ? { remaining } : {}, timingBasis: effect.timingBasis, ...effect.endingRule ? { endingRule: effect.endingRule } : {}, pulse: structuredClone(effect.pulse), startedBy: revision([source, definition]) }
+  } };
+}
+function resourceFor(state, owner, p) {
+  const found = state.resources.filter((r) => r.owner === owner && (r.id === p.resource || norm3(r.name) === norm3(p.resource)));
+  if (found.length !== 1 || p.kind === "restore" && found[0].max === undefined)
+    throw new MechanicalKnowledgeError(`Periodic ${p.kind} needs a known ${p.resource}${p.kind === "restore" ? " and recovery limit" : ""} for ${owner}`);
+  return found[0];
+}
+function validatePulse(state, actor, owner, p) {
+  if (p.kind === "damage" || p.kind === "restore")
+    resourceFor(state, owner, p);
+  else if (p.kind === "harm")
+    applyInjury(structuredClone(state), actor, owner, IMPACTS[p.impact], p.damageType, [], [], "periodic-preflight");
+  else if (p.kind === "mend") {
+    if (owner !== "you" && entityFor(state, owner)?.entityKind !== "person")
+      throw new MechanicalKnowledgeError("Periodic treatment needs a supported living subject");
+    try {
+      mendInjury(structuredClone(state), owner, p.impact, [], [], "periodic-preflight", p.maxInjury);
+    } catch (error) {
+      if (error instanceof MechanicalKnowledgeError)
+        throw error;
+    }
+  }
+}
+function validateLingering(state, actor, owner, e) {
+  if (e.kind === "periodic")
+    validatePulse(state, actor, owner, e.pulse);
+  if (e.kind === "buildup") {
+    const old = state.buildups?.find((b) => b.owner === owner && norm3(b.name) === norm3(e.name));
+    if (old && old.fingerprint !== revision([e.threshold, e.trigger]))
+      throw new MechanicalKnowledgeError(`${e.name}: the existing buildup definition conflicts with this effect`);
+    if (e.trigger?.kind === "periodic")
+      validatePulse(state, actor, owner, e.trigger.pulse);
+  }
+}
+function condition(state, id, actor, owner, spec, action, changes) {
+  const old = state.conditions.find((c) => c.id === id);
+  if (spec.kind === "periodic" && !old?.periodic && state.conditions.filter((c) => c.owner === owner && c.periodic).length >= 32)
+    throw new MechanicalKnowledgeError("This actor already has the supported maximum of active periodic effects");
+  const source = { message: `warp-action:${action}`, quote: `${spec.name} applied to ${owner}`, sourceRevision: revision([action, id, spec]) };
+  const next = {
+    id,
+    owner,
+    name: spec.name,
+    ending: spec.ending,
+    source,
+    helps: spec.kind === "condition" ? spec.helps : [],
+    hinders: spec.kind === "condition" ? spec.hinders : [],
+    blocks: spec.kind === "condition" ? spec.blocks : [],
+    ...spec.kind === "periodic" ? { periodic: { rule: 1, caster: actor, nextAt: actionCount(state, owner) + 1, ...spec.duration ? { remaining: spec.duration } : {}, timingBasis: spec.timingBasis, ...spec.endingRule ? { endingRule: spec.endingRule } : {}, pulse: structuredClone(spec.pulse), startedBy: revision([action, id, actionCount(state, owner), old?.periodic?.startedBy]) } } : spec.duration ? { expiresAt: actionCount(state, owner) + spec.duration + 1 } : {}
+  };
+  if (spec.kind === "periodic") {
+    state.clocks ??= [];
+    if (!state.clocks.some((c) => c.actor === owner))
+      state.clocks.push({ id: owner, actor: owner, actions: 0 });
+  }
+  if (old)
+    state.conditions[state.conditions.indexOf(old)] = next;
+  else
+    state.conditions.push(next);
+  changes.push({ kind: "condition", id, before: old ? structuredClone(old) : null, after: structuredClone(next) });
+}
+function applyLingering(state, actor, owner, e, key, action, changes, beats) {
+  if (e.kind === "periodic") {
+    condition(state, `periodic-${revision([key, owner])}`, actor, owner, { kind: "periodic", name: e.name, ending: e.ending, ...e.duration ? { duration: e.duration } : { untilCleared: true }, cadence: "owner_action", timingBasis: e.timingBasis, ...e.endingRule ? { endingRule: e.endingRule } : {}, pulse: e.pulse }, action, changes);
+    return;
+  }
+  const old = state.buildups?.find((b) => b.owner === owner && norm3(b.name) === norm3(e.name));
+  if (e.kind === "clear_buildup") {
+    if (old?.current) {
+      const before = structuredClone(old);
+      old.current = 0;
+      old.source = { message: `warp-action:${action}`, quote: `${old.name} cleared`, sourceRevision: revision([action, key]) };
+      changes.push({ kind: "buildup", id: old.id, before, after: structuredClone(old) });
+    }
+    return;
+  }
+  const threshold = e.threshold, total = Math.round((old?.current ?? 0) * 1000) + Math.round(e.amount * 1000), units = Math.round(threshold * 1000), crossings = Math.floor(total / units);
+  const next = { id: old?.id ?? `buildup-${revision([owner, norm3(e.name)])}`, owner, name: old?.name ?? e.name, current: total % units / 1000, threshold, trigger: structuredClone(e.trigger), fingerprint: revision([threshold, e.trigger]), basis: e.basis, source: { message: `warp-action:${action}`, quote: `${e.name} applied to ${owner}`, sourceRevision: revision([action, key]) } };
+  state.buildups ??= [];
+  if (old)
+    state.buildups[state.buildups.indexOf(old)] = next;
+  else
+    state.buildups.push(next);
+  changes.push({ kind: "buildup", id: next.id, before: old ? structuredClone(old) : null, after: structuredClone(next) });
+  beats.push({ kind: "buildup", actor, target: owner, name: next.name, amount: next.current });
+  if (crossings) {
+    condition(state, `buildup-trigger-${next.id}`, actor, owner, next.trigger, action, changes);
+    beats.push({ kind: "threshold", actor, target: owner, name: next.trigger.name, amount: crossings });
+  }
+}
+function periodicMend(state, actor, pulse, action, changes, beats) {
+  const grades = { minor: 1, standard: 2, major: 3 }, max = { ...grades, any: 4 }[pulse.maxInjury ?? "any"];
+  const wound = !state.conditions.some((c) => c.owner === actor && c.injury) && state.conditions.filter((c) => c.owner === actor && c.category === "physical_injury" && c.recovery === "routine" && c.severity).sort((a, b) => grades[b.severity] - grades[a.severity])[0];
+  if (wound && grades[wound.severity] <= max && grades[wound.severity] > grades[pulse.impact]) {
+    const before = structuredClone(wound), nextGrade = grades[wound.severity] - grades[pulse.impact];
+    wound.severity = ["minor", "standard", "major"][nextGrade - 1];
+    changes.push({ kind: "condition", id: wound.id, before, after: structuredClone(wound) });
+    beats.push({ kind: "mend", actor, target: actor, name: `${wound.name}: improving`, basis: "warp" });
+    return;
+  }
+  const copy = structuredClone(state);
+  try {
+    mendInjury(copy, actor, pulse.impact, [], [], action, pulse.maxInjury);
+    mendInjury(state, actor, pulse.impact, changes, beats, action, pulse.maxInjury);
+  } catch (error) {
+    if (!(error instanceof Error) || !["No recorded physical injury to treat", "No supported physical injury to treat", "This injury exceeds the treatment's supported severity"].includes(error.message))
+      throw error;
+    beats.push({ kind: "skipped", actor, name: "Recovery pulse", reason: error.message });
+  }
+}
+function recovered(state, owner, pulse) {
+  if (pulse.kind === "restore") {
+    const r = resourceFor(state, owner, pulse);
+    return r.current >= r.max;
+  }
+  if (pulse.kind !== "mend")
+    return false;
+  if (state.conditions.some((c) => c.owner === owner && (c.injury || c.category === "physical_injury")))
+    return false;
+  const health = state.resources.find((r) => r.owner === owner && (r.role === "vital" || /^(?:health|hp|vitality)$/i.test(r.name)));
+  return !health || health.max !== undefined && health.current >= health.max;
+}
+function finishPulses(state, actor, beforeCount, scheduled, action, changes, beats) {
+  const count = actionCount(state, actor);
+  if (count <= beforeCount)
+    return;
+  for (const old of scheduled) {
+    const p = old.periodic, current = state.conditions.find((c) => c.id === old.id);
+    if (!current?.periodic || p.nextAt > count)
+      continue;
+    const effect = p.pulse;
+    if (effect.kind === "damage" || effect.kind === "restore") {
+      const resource = resourceFor(state, actor, effect);
+      if (effect.kind === "damage")
+        damage(state, p.caster, actor, resource, effect.amount, effect.damageType ?? "untyped", changes, beats, false, true, true, action);
+      else {
+        const before = structuredClone(resource);
+        resource.current = Math.min(resource.max, resource.current + effect.amount);
+        if (resource.current !== before.current)
+          changes.push({ kind: "resource", id: resource.id, before, after: structuredClone(resource) });
+      }
+    } else if (effect.kind === "harm")
+      applyInjury(state, p.caster, actor, IMPACTS[effect.impact], effect.damageType, changes, beats, action);
+    else if (effect.kind === "mend")
+      periodicMend(state, actor, effect, action, changes, beats);
+    beats.push({ kind: "pulse", actor: p.caster, target: actor, name: old.name });
+    const live = state.conditions.find((c) => c.id === old.id);
+    if (!live?.periodic || live.periodic.startedBy !== p.startedBy)
+      continue;
+    const before = structuredClone(live);
+    if (live.periodic.remaining !== undefined)
+      live.periodic.remaining--;
+    live.periodic.nextAt = count + 1;
+    if (live.periodic.remaining !== undefined && live.periodic.remaining <= 0 || live.periodic.endingRule === "recover" && recovered(state, actor, effect)) {
+      state.conditions = state.conditions.filter((c) => c.id !== live.id);
+      closeCondition(state, live, { kind: "receipt", id: action });
+      changes.push({ kind: "condition", id: live.id, before, after: null });
+      beats.push({ kind: "expired", actor, name: live.name });
+    } else
+      changes.push({ kind: "condition", id: live.id, before, after: structuredClone(live) });
+  }
+}
+function lingeringOffensive(e, owner, state) {
+  const harmful = (p) => p.kind === "damage" || p.kind === "harm";
+  const harmfulTrigger = (t) => t.kind === "periodic" ? harmful(t.pulse) : !!(t.blocks.length || t.hinders.length || !t.helps.length);
+  if (e.kind === "periodic")
+    return harmful(e.pulse);
+  if (e.kind === "buildup")
+    return harmfulTrigger(e.trigger);
+  if (e.kind === "clear_buildup")
+    return !!state.buildups?.some((b) => b.owner === owner && norm3(b.name) === norm3(e.name) && !harmfulTrigger(b.trigger));
+  return false;
+}
+function lingeringImmune(e, owner, state) {
+  const p = e.kind === "periodic" ? e.pulse : e.kind === "buildup" && e.trigger?.kind === "periodic" ? e.trigger.pulse : undefined;
+  return !!p && (p.kind === "damage" || p.kind === "harm") && immune(state, owner, p.damageType ?? "untyped");
+}
+function pulseDescription(p, state) {
+  if ("impact" in p)
+    return `${p.impact} ${p.kind === "harm" ? `${p.damageType} harm` : "physical treatment"} · Warp interpretation`;
+  const name = state?.resources.find((r) => r.id === p.resource)?.name ?? p.resource;
+  return `${p.kind === "restore" ? "restore" : "lose"} ${p.amount} ${name}${p.damageType ? ` · ${p.damageType}` : ""}${p.basis === "warp" ? " · Warp value" : ""}`;
+}
+function lingeringDescription(e, state) {
+  if (e.kind === "clear_buildup")
+    return `Clear ${e.name} accumulation`;
+  if (e.kind === "buildup")
+    return `${e.name}: +${e.amount} toward ${e.threshold}, then ${e.trigger.name}${e.basis === "warp" ? " · Warp values" : ""}`;
+  return `${e.name}: ${pulseDescription(e.pulse, state)} after ${e.duration ? `each of ${e.target === "self" ? "your" : "the target's"} next ${e.duration} supported actions` : `each affected-owner action · ${e.ending}`}${e.timingBasis === "warp" ? " · Warp action timing" : ""}`;
+}
+var ENDINGS, physical, obj = (v) => !!v && typeof v === "object" && !Array.isArray(v), text3 = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", positive = (v) => typeof v === "number" && Number.isFinite(v) && v > 0 && v <= 1e6, numberIn = (quote, n) => (quote.match(/\d+(?:\.\d+)?/g) ?? []).some((v) => Number(v) === n) || ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].some((w, i) => n === i && new RegExp(`\\b${w}\\b`, "i").test(quote)), norm3 = (v) => v.normalize("NFKC").trim().toLocaleLowerCase(), fields = (v, keys) => {
+  if (Object.keys(v).some((k) => !keys.includes(k)))
+    throw Error("Unsupported lingering effect field");
+}, duration = (v, quote) => {
+  if (!positive(v) || !Number.isInteger(v) || v > 1e4 || !numberIn(quote, v))
+    throw Error("Lingering duration needs an explicit action count");
+  return v;
+}, isLingering = (e) => ["periodic", "buildup", "clear_buildup"].includes(e.kind), hasLingering = (s) => !!(s.buildups?.length || s.conditions.some((c) => c.periodic)), scheduledPulses = (s, actor) => s.conditions.filter((c) => c.owner === actor && c.periodic).map((c) => structuredClone(c)), LINGERING_INSTRUCTIONS = `Lingering effects use the same saved action receipts, never a separate simulator or model call. Prepare only source-backed accumulation or periodic powers, not ordinary conversation, affection, meals or automatic survival taxes.
+Periodic: {kind:"periodic",target:"self|target",name,ending,duration?:explicitAffectedOwnerActionCount,untilCleared?:true,endingRule?:"extinguish|stanch|detox|recover",cadence:"owner_action",timingBasis?:"source|warp",pulse:{kind:"damage|restore",resource,amount:explicitNumber}}; pulse may use magnitude:"minor|standard|major" instead of an absent amount, and damageType. Physical pulse alternatives are {kind:"harm",impact:"minor|standard|major",damageType} or {kind:"mend",impact,maxInjury?}. Never nest scheduling, buildup, summons, scripts or costs inside a pulse. Use an explicit action duration when sourced. Otherwise an established ongoing effect can use untilCleared:true with ending copied exactly from its source quote, and Warp affected-owner action timing. For an actual ordinary ongoing physical affliction with no stated ending, Warp provides fixed endingRule:"extinguish" for fire, "stanch" for physical bleeding, "detox" for poison, or "recover" for ongoing supported physical/resource recovery. The recover rule ends when that supported recovery reaches its actual limit, not after an invented duration. Omit ending to use its engine-defined recovery cue; it is a Warp rule, not a source claim. Never apply these to metaphors, blushes, illness of unknown cause, curses or special prohibitions; retain unsupported restrictions. Do not invent a duration, fee, cure quest or source limitation. This qualitative action cadence is labelled Warp timing and cannot override any explicit interval, seconds or round rule. The effect starts on the affected owner's NEXT supported action, after that action's effects. A cure removes it before the due pulse; refreshing cannot cancel an old due pulse. Questions, API waiting, inspection and permission withdrawal never tick it. Seconds, rounds, ongoing auras, on-hit counters and unsupported timing belong in unsupported; never convert them to owner actions.
+Buildup: {kind:"buildup",target,name,amount:explicitNumber,threshold:explicitNumber,trigger:{kind:"condition",name,ending,helps:[],hinders:[],blocks:[],duration?}}. A trigger may instead be one periodic spec above without target. Use sourced quantities together. Only when actual source accumulation has no quantities, omit amount/threshold and supply magnitude:"minor|standard|major"; Warp maps 1/2/3 steps toward 3 and labels its values. Never replace instant effects or explicit numbers with that mapping. Crossing consumes the threshold and retains the remainder, applies/refreshes one condition, and cannot loop into more actions or rewards. Reuse the same meter/name/trigger definition; incompatible rules remain unresolved. Source-backed clearing uses {kind:"clear_buildup",target,name}; it resets accumulation, not an already triggered condition. Curing an active effect separately uses clear_condition. Do not force feelings, consent, quests or attraction from a threshold.
+A presently narrated active effect in the latest actual narrator message may use mechanicalObservations {kind:"periodic",owner,name,caster,ability,remaining?,message,quote}, referencing one compiled periodic ability. If the original caster/ability or its past costs are unknown, the same observation may instead supply effect:{kind:"periodic",target:"self",name,ending?,endingRule?:"extinguish|stanch|detox|recover",duration?,untilCleared?,cadence:"owner_action",timingBasis?,pulse}, derived ONLY from this current actual narrator quote, with no invented count or cause. Do not create a fake player-owned ability to represent an affliction. Do not infer activation from a profile, intention or an older event. For actual current Burning without a stated ending, the complete effect is {kind:"periodic",target:"self",name:"Burning",untilCleared:true,endingRule:"extinguish",cadence:"owner_action",pulse:{kind:"harm",impact:"minor",damageType:"fire"}}. For an already active gentle physical regeneration with no interval, use untilCleared:true, endingRule:"recover" and pulse:{kind:"mend",impact:"minor"}. Do not omit BOTH ending and endingRule; that discards the future schedule. Do not emit a duplicate plain condition unless it has separately supported constraints to retain. A finite effect needs its explicit current remaining count in that quote; an ongoing untilCleared effect needs no invented count. This adopts only its future schedule, never old costs/damage/rolls. Repeated prose cannot refresh an existing schedule or resurrect a cured one.
+Initial explicit buildup counts may use mechanicalObservations {kind:"buildup",owner,name,current,caster,ability,message,quote} referencing one already compiled buildup ability. Cite the actual count and meter name. Never supply trigger rules or overwrite an existing count; action receipts own subsequent changes. A finite receipt-scheduled effect cannot be expired or cured through prose alone; use a supported cure operation or explicit correction. For an ongoing untilCleared effect only, an actual later environmental/source-defined ending with no counted item, spell or resource execution may use {kind:"condition_end",id,natural:true,ending:"exact saved ending",message,quote}. Cite its completed cause, not merely "it is gone", an intention, a negated outcome or a rulebook explanation. Do not end the effect in its own application reply or guess an earlier ending after it was reapplied. This ends only the ongoing condition, never heals recorded damage or spends/grants anything.
+Keep missing pools/recovery limits unresolved; do not invent HP. Known definitions retain their effects and are not regenerated. Report human effect names and only consequential changes, not internal IDs. Relevant saved counts and remaining pulses may be answered on request. Omitted state is not erased.`;
+var init_lingering = __esm(() => {
+  init_encounters();
+  init_injuries();
+  ENDINGS = { extinguish: "When the flames are extinguished", stanch: "When the bleeding is stopped", detox: "An effective antidote or established toxin recovery", recover: "When the supported recovery is complete" };
+  physical = ["physical", "fire", "cold", "electric", "poison"];
+});
+
 // src/frontend/html.ts
 function esc(v) {
   return String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -984,7 +1378,7 @@ function agreementNotes(before, after) {
   }).slice(-2);
 }
 function evidence(raw, messages, historical = false) {
-  if (!obj(raw))
+  if (!obj2(raw))
     return;
   const message = str(raw.message, 160), quote = str(raw.quote, 400), m = messages.find((m) => m.id === message);
   if (!m || quote.length < 4 || !sourceContains(m.content, quote) || message.startsWith("warp-source:"))
@@ -1060,7 +1454,7 @@ function readAgreementObservation(raw, state, messages, player, historical = fal
     };
     const requirements = [];
     for (const value of raw.requirements) {
-      if (!obj(value) || Object.keys(value).some((k) => !["message", "quote", ...historical ? ["sourceRevision"] : []].includes(k)))
+      if (!obj2(value) || Object.keys(value).some((k) => !["message", "quote", ...historical ? ["sourceRevision"] : []].includes(k)))
         return;
       const e = clause(value);
       if (!e || requirements.some((r) => r.text === e.quote))
@@ -1069,7 +1463,7 @@ function readAgreementObservation(raw, state, messages, player, historical = fal
     }
     const rewards = [];
     for (const value of raw.rewards) {
-      if (!obj(value) || Object.keys(value).some((k) => !["kind", "asset", "amount", "message", "quote", ...historical ? ["sourceRevision"] : []].includes(k)) || !from || !offer || !["item", "resource"].includes(value.kind))
+      if (!obj2(value) || Object.keys(value).some((k) => !["kind", "asset", "amount", "message", "quote", ...historical ? ["sourceRevision"] : []].includes(k)) || !from || !offer || !["item", "resource"].includes(value.kind))
         return;
       const e = clause(value), asset = str(value.asset, 100), amount = value.amount;
       if (!e || e.message !== offer.message || !asset || typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0 || amount > 1e6 || value.kind === "item" && !Number.isInteger(amount) || !numeric(e.quote, amount))
@@ -1194,7 +1588,7 @@ function settleReward(state, actor, agreementId, rewardId, action, changes, beat
   changes.push({ kind: "agreement", id: agreement.id, before: beforeAgreement, after: structuredClone(agreement) });
   beats.push({ kind: "reward", actor: payer, target: recipient, name: reward.asset, amount: reward.amount });
 }
-var str = (v, max = 240) => typeof v === "string" && v.trim().length <= max ? v.trim().replace(/\s+/g, " ") : "", obj = (v) => !!v && typeof v === "object" && !Array.isArray(v), normalized = (s) => s.normalize("NFKC").toLocaleLowerCase(), numeric = (quote, n) => (quote.match(/\d+(?:\.\d+)?/g) ?? []).some((v) => Number(v) === n) || ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].some((v, i) => i === n && new RegExp(`\\b${v}\\b`, "i").test(quote)), agreementDone = (a) => !a.cancelled && !a.unsupported.length && a.requirements.every((r) => !!r.done), agreementSettled = (a) => !!a.cancelled || agreementDone(a) && a.rewards.every((r) => !!r.paid), visibleAgreements = (rows = []) => [...rows.filter((a) => !agreementSettled(a)), ...rows.filter(agreementSettled).slice(-6)], at = (e, messages) => messages.findIndex((m) => m.id === e.message), AGREEMENT_INSTRUCTIONS = `When an actual agreement has several requirements or an explicit counted reward, optionally add mechanicalObservations {kind:"agreement",owner,name,from:"reward payer if any",offer:{message,quote},requirements:[{message,quote}],rewards:[{kind:"item|resource",asset:"established asset name",amount,message,quote}],unsupported:[],message,quote}. The root quote is the owner's actual acceptance, in the player's own message for owner:you. An NPC payer's offer is actual narrator text naming them and the terms, never a player's invented NPC offer. When the player offers payment for another person's work, from:you requires the player's own offer, and owner is the NPC who actually accepts in narrator text. Each requirement quote is a distinct exact clause within that acceptance or offer; all requirements are required. Do not drop a condition, invent a reward, automatically accept a request, or turn an ordinary invitation into a quest. No reward means rewards:[]. Unknown source mechanics/restrictions stay in unsupported. Do not create duplicate free-form commitments, situations or facts for requirements, progress or rewards already represented by the structured agreement. Retain a separate event only for an independent consequence, such as a witness learning a secret. Resolve an earlier pending-offer situation when the agreement is accepted.
+var str = (v, max = 240) => typeof v === "string" && v.trim().length <= max ? v.trim().replace(/\s+/g, " ") : "", obj2 = (v) => !!v && typeof v === "object" && !Array.isArray(v), normalized = (s) => s.normalize("NFKC").toLocaleLowerCase(), numeric = (quote, n) => (quote.match(/\d+(?:\.\d+)?/g) ?? []).some((v) => Number(v) === n) || ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].some((v, i) => i === n && new RegExp(`\\b${v}\\b`, "i").test(quote)), agreementDone = (a) => !a.cancelled && !a.unsupported.length && a.requirements.every((r) => !!r.done), agreementSettled = (a) => !!a.cancelled || agreementDone(a) && a.rewards.every((r) => !!r.paid), visibleAgreements = (rows = []) => [...rows.filter((a) => !agreementSettled(a)), ...rows.filter(agreementSettled).slice(-6)], at = (e, messages) => messages.findIndex((m) => m.id === e.message), AGREEMENT_INSTRUCTIONS = `When an actual agreement has several requirements or an explicit counted reward, optionally add mechanicalObservations {kind:"agreement",owner,name,from:"reward payer if any",offer:{message,quote},requirements:[{message,quote}],rewards:[{kind:"item|resource",asset:"established asset name",amount,message,quote}],unsupported:[],message,quote}. The root quote is the owner's actual acceptance, in the player's own message for owner:you. An NPC payer's offer is actual narrator text naming them and the terms, never a player's invented NPC offer. When the player offers payment for another person's work, from:you requires the player's own offer, and owner is the NPC who actually accepts in narrator text. Each requirement quote is a distinct exact clause within that acceptance or offer; all requirements are required. Do not drop a condition, invent a reward, automatically accept a request, or turn an ordinary invitation into a quest. No reward means rewards:[]. Unknown source mechanics/restrictions stay in unsupported. Do not create duplicate free-form commitments, situations or facts for requirements, progress or rewards already represented by the structured agreement. Retain a separate event only for an independent consequence, such as a witness learning a secret. Resolve an earlier pending-offer situation when the agreement is accepted.
 Record actual fulfillment with {kind:"agreement_progress",agreement:"saved id or name",requirement:"saved id or exact clause",message,quote}, citing actual NARRATOR completion, not the player's attempt or a repeated offer. Code completes the agreement only after every requirement. Do not change accepted terms on subsequent reads. The owner can explicitly withdraw with {kind:"agreement_cancel",agreement,message,quote}; an NPC's displeasure does not withdraw the player's promise for them.
 After all requirements are fulfilled, an actual payer offering/holding out a particular reward can establish {kind:"reward_ready",agreement,reward:"saved id or asset name",ready:true,message,quote}. An offer may add uncontested:true only when taking/receiving this particular reward now is routine, with no established obstacle, hazard or opposing action. Willingness alone does not prove that. The code may use this fresh classification to skip a redundant pre-read for a simple collection; ambiguity, changed scenes and opposed actions still need interpretation. A subsequent explicit refusal/withdrawal can set ready:false. This is current willingness, separate from the original promise. It needs actual narrator text naming the NPC counterpart after the recorded fulfillment. For from:you this is the NPC recipient's willingness to receive, never permission to spend the player's money automatically. An earned reward does not force someone to cooperate. Do not narrate a completed monetary/item handover without its mechanical receipt. Make the offer available and leave acceptance to the player. The player can collect it through normal chat; no menu is required.
 Reward collection uses saved exact amounts and transfers actual owned items or between two established same-unit resource balances. Unknown balances are unknown, not zero. An offer alone does not prove the payer owns the money or item. Do not mint items or coins, refill a spent balance, substitute a different reward, or create numerical Health/relationship/XP to pay a promise. When a physical reward, including a counted pile of coins, is established without known total wallet balances, use an item claim and track that actual stack instead of inventing a wallet total. The offered amount alone does not prove possession; a later actual holding/counting/setting-out event can establish the counted item. Use a distinct source-backed item instance ID for a new stack, not the ID of a previously transferred stack. Actual paid rewards cannot be offered or collected again.`;
@@ -3753,6 +4147,7 @@ var DICE_STYLE = `
 
 // src/living/inspector.ts
 init_growth();
+init_lingering();
 init_html();
 init_encounters();
 init_companions();
@@ -3770,6 +4165,8 @@ function defenseText(d, remaining = false) {
   return `${d.amount} shield${remaining ? " remaining" : ""} against ${damage}`;
 }
 function effectText(e, state) {
+  if (isLingering(e))
+    return lingeringDescription(e, state);
   if (e.kind === "summon" || e.kind === "dismiss")
     return `${e.kind === "summon" ? "Recall" : "Dismiss"} ${state.companions?.find((c) => c.id === e.companion)?.actor ?? "summon"}${e.duration ? ` · ${e.duration} subsequent controller action${e.duration === 1 ? "" : "s"}` : ""}`;
   const who = e.target === "self" ? "self" : "target";
@@ -3789,6 +4186,7 @@ function inspectMechanics(state) {
   const resources = state.resources.filter((r) => r.owner === "you"), items = state.items.filter((i) => i.owner === "you" && i.quantity > 0);
   const conditions = state.conditions.filter((c) => c.owner === "you"), abilities = state.abilities?.filter((a) => a.owner === "you") ?? [];
   const growth = activePracticeTracks(state).filter((g) => g.owner === "you");
+  const buildups = state.buildups?.filter((b) => b.owner === "you") ?? [];
   const companions = state.companions?.filter((c) => c.controller === "you") ?? [];
   const resilience = state.resilience?.find((r) => r.owner === "you" && r.band !== "ordinary");
   const agreements = visibleAgreements(state.agreements?.filter((a) => a.owner === "you" || a.from === "you"));
@@ -3807,13 +4205,14 @@ function inspectMechanics(state) {
     ${resources.length ? `<dl class="warp-inspector-resources">${resources.map((r) => `<div><dt>${esc(r.name)}</dt><dd>${r.current}${r.max === undefined ? "" : ` / ${r.max}`}${r.unit ? ` ${esc(r.unit)}` : ""}</dd></div>`).join("")}</dl>` : ""}
     ${items.length ? `<div class="warp-inspector-items">${items.map((i) => `<span>${esc(i.name)} × ${i.quantity}${i.equipped ? " · equipped" : ""}</span>`).join("")}</div>` : ""}
     ${resilience ? `<p>Physical resilience: ${esc(resilience.band)}<small>Warp interpretation · ${esc(resilience.source.quote)}</small></p>` : ""}
-    ${conditions.map((c) => `<p>${esc(c.name)}${c.targets?.length ? ` · with ${c.targets.map(esc).join(", ")}` : ""}${c.place ? ` · ${esc(state.places?.find((p) => p.id === c.place)?.name ?? c.place)}` : ""}<small>${esc(c.ending)}${c.defenses?.length ? ` · ${c.defenses.map((d) => esc(defenseText(d, true))).join(" · ")}` : ""}</small></p>`).join("")}
+    ${conditions.map((c) => `<p>${esc(c.name)}${c.targets?.length ? ` · with ${c.targets.map(esc).join(", ")}` : ""}${c.place ? ` · ${esc(state.places?.find((p) => p.id === c.place)?.name ?? c.place)}` : ""}<small>${esc(c.ending)}${c.periodic ? ` · ${esc(pulseDescription(c.periodic.pulse, state))} after your next supported action · ${c.periodic.remaining === undefined ? esc(c.ending) : `${c.periodic.remaining} pulses left`}${c.periodic.timingBasis === "warp" ? " · Warp action timing" : ""}` : ""}${c.defenses?.length ? ` · ${c.defenses.map((d) => esc(defenseText(d, true))).join(" · ")}` : ""}</small></p>`).join("")}
     ${abilities.length ? `<div class="warp-inspector-abilities">${abilities.map((a) => `<details data-inspect-ability="${esc(a.id)}"><summary><strong>${esc(a.name)}</strong><span>${a.costs.length ? a.costs.map((c) => esc(costText(c.kind, c.id, c.amount))).join(" + ") : "No established resource cost"}</span></summary>
       <p>${esc(a.description)}</p>${a.effects.map((e) => `<p>${esc(effectText(e, state))}</p>`).join("")}
       ${a.range ? `<p>Range: ${esc(a.range)}</p>` : ""}${a.cooldown ? `<p>${cooldownRemaining(state, "you", a.id) ? `Ready after ${cooldownRemaining(state, "you", a.id)} more action${cooldownRemaining(state, "you", a.id) === 1 ? "" : "s"}` : "Ready"} · ${a.cooldown}-action cooldown</p>` : ""}
       ${a.requires.length ? `<p>Requires ${a.requires.map((r) => `${esc(named(r.item))}${r.equipped ? " equipped" : " carried"}`).join(", ")}</p>` : ""}
       ${a.unsupported.length ? `<p class="warp-inspector-blocked">Needs clarification: ${a.unsupported.map(esc).join(" · ")}</p>` : ""}
       <small>Version ${a.version} · ${esc(a.sourceKind)}</small><blockquote>${esc(a.source.quote)}</blockquote></details>`).join("")}</div>` : ""}
+    ${buildups.map((b) => `<p>${esc(b.name)}: ${b.current} / ${b.threshold}<small>At the threshold: ${esc(b.trigger.name)}${b.basis === "warp" ? " · Warp values" : ""}</small></p>`).join("")}
     ${growth.map((g) => `<p>${esc(g.name)}: ${g.familiar ? "familiar" : `${g.credits.length} / 3 varied opportunities`}<small>Warp practice · one scoped help after the milestone · source costs and effects stay unchanged</small></p>`).join("")}
     ${companions.map((c) => {
     const entity = state.entities?.find((e) => e.name === c.actor);
@@ -3824,7 +4223,7 @@ function inspectMechanics(state) {
       <blockquote>${esc(c.source.quote)}</blockquote></details>`;
   }).join("")}
     ${agreements.map((a) => `<details data-inspect-agreement="${esc(a.id)}"><summary>${esc(a.name)} · ${a.cancelled ? "withdrawn" : `${a.requirements.filter((r) => r.done).length}/${a.requirements.length} done`}</summary>${a.requirements.map((r) => `<p>${r.done ? "Done" : "Pending"} · ${esc(r.text)}</p>`).join("")}${a.rewards.map((r) => `<p>${r.paid ? "Received" : a.cancelled ? "Declined" : r.ready?.allowed ? "Offered" : r.ready ? "Withheld" : "Promised"} · ${r.amount} ${esc(r.asset)}${a.from ? ` · from ${esc(a.from)}` : ""}</p>`).join("")}${a.unsupported.length ? `<p>Needs clarification: ${a.unsupported.map(esc).join(" · ")}</p>` : ""}<blockquote>${esc(a.offer?.quote ?? a.source.quote)}</blockquote></details>`).join("")}
-    ${!resources.length && !items.length && !conditions.length && !abilities.length && !resilience && !agreements.length && !companions.length && !growth.length ? "No established player mechanics yet." : ""}
+    ${!resources.length && !items.length && !conditions.length && !abilities.length && !resilience && !agreements.length && !companions.length && !growth.length && !buildups.length ? "No established player mechanics yet." : ""}
   </section>`;
 }
 var INSPECTOR_STYLE = `
@@ -3999,7 +4398,7 @@ function connectLiving(ctx) {
       return `<div class="warp-scene-top"><span>Warp paused</span><button data-living="resume">Resume</button></div>`;
     const world = view.world;
     const mappable = !!world.mechanics?.places?.length;
-    const inspectable = !!world.mechanics && [...world.mechanics.resources, ...world.mechanics.items.filter((i) => i.quantity > 0), ...world.mechanics.conditions, ...world.mechanics.abilities ?? [], ...(world.mechanics.resilience ?? []).filter((r) => r.band !== "ordinary"), ...world.mechanics.agreements ?? []].some((row) => row.owner === "you" || ("from" in row) && row.from === "you");
+    const inspectable = !!world.mechanics && [...world.mechanics.resources, ...world.mechanics.items.filter((i) => i.quantity > 0), ...world.mechanics.conditions, ...world.mechanics.abilities ?? [], ...(world.mechanics.resilience ?? []).filter((r) => r.band !== "ordinary"), ...world.mechanics.agreements ?? []].some((row) => row.owner === "you" || ("from" in row) && row.from === "you") || !!world.mechanics?.growth?.some((g) => g.owner === "you") || !!world.mechanics?.buildups?.some((b) => b.owner === "you") || !!world.mechanics?.companions?.some((c) => c.controller === "you");
     const matches = world.facts.filter((f) => !memoryQuery || `${f.subject} ${f.text} ${f.quote}`.toLocaleLowerCase().includes(memoryQuery.toLocaleLowerCase()));
     const remembered = matches.slice(-80).reverse();
     const relevant = world.facts.filter((f) => f.status === "open" && ["commitment", "situation"].includes(f.kind)).slice(-2);

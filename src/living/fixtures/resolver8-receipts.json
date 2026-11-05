@@ -1,0 +1,1576 @@
+{
+  "generatedFrom": "7d5e445",
+  "cases": [
+    {
+      "name": "checked practice 1",
+      "before": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "hp",
+            "owner": "you",
+            "name": "Health",
+            "current": 40,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "jo-hp",
+            "owner": "Jo",
+            "name": "Health",
+            "current": 40,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "focus",
+            "owner": "you",
+            "name": "Focus",
+            "current": 12,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "echo-focus",
+            "owner": "Echo",
+            "name": "Focus",
+            "current": 0,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [],
+        "applied": [],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "entity-f7f9bc32:2212c02e",
+            "name": "Echo",
+            "displayName": "Echo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "costLinks": [
+          {
+            "id": "cost-link-23aaaa5d:4db9b96b",
+            "from": "echo-focus",
+            "to": "focus",
+            "enabled": true,
+            "unsupported": [],
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ]
+      },
+      "receipt": {
+        "version": 1,
+        "engine": 8,
+        "id": "practice-1",
+        "input": "4c5c3e5:688e18fd",
+        "base": "bb52e6d4:98decebe",
+        "actor": "you",
+        "operations": [
+          {
+            "kind": "strike",
+            "target": "Jo",
+            "outcome": "mixed"
+          }
+        ],
+        "learning": {
+          "seed": "legacy-eight-1",
+          "tier": "uncertain",
+          "result": "mixed",
+          "roll": 42
+        },
+        "responses": [],
+        "changes": [
+          {
+            "kind": "resource",
+            "id": "jo-hp",
+            "before": {
+              "id": "jo-hp",
+              "owner": "Jo",
+              "name": "Health",
+              "current": 40,
+              "role": "vital",
+              "source": {
+                "message": "opening",
+                "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+                "sourceRevision": "71ae4fe4:e14a6578"
+              }
+            },
+            "after": {
+              "id": "jo-hp",
+              "owner": "Jo",
+              "name": "Health",
+              "current": 35,
+              "role": "vital",
+              "source": {
+                "message": "opening",
+                "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+                "sourceRevision": "71ae4fe4:e14a6578"
+              }
+            }
+          },
+          {
+            "kind": "growth",
+            "id": "practice-5160af26:77487e70",
+            "before": null,
+            "after": {
+              "id": "practice-5160af26:77487e70",
+              "owner": "you",
+              "skill": "strike",
+              "name": "Unarmed strikes",
+              "credits": [
+                {
+                  "context": "entity:entity-bee4fa7c:b5c60136",
+                  "kind": "challenge",
+                  "action": "practice-1"
+                }
+              ],
+              "familiar": false
+            }
+          }
+        ],
+        "beats": [
+          {
+            "kind": "damage",
+            "actor": "you",
+            "target": "Jo",
+            "amount": 5,
+            "absorbed": 0,
+            "resisted": 0,
+            "reflected": 0,
+            "name": "physical"
+          }
+        ],
+        "result": "6889f25:4bf70a8f",
+        "status": "ready"
+      },
+      "after": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "hp",
+            "owner": "you",
+            "name": "Health",
+            "current": 40,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "jo-hp",
+            "owner": "Jo",
+            "name": "Health",
+            "current": 35,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "focus",
+            "owner": "you",
+            "name": "Focus",
+            "current": 12,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "echo-focus",
+            "owner": "Echo",
+            "name": "Focus",
+            "current": 0,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [],
+        "applied": [
+          {
+            "id": "practice-1",
+            "input": "4c5c3e5:688e18fd"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "entity-f7f9bc32:2212c02e",
+            "name": "Echo",
+            "displayName": "Echo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "costLinks": [
+          {
+            "id": "cost-link-23aaaa5d:4db9b96b",
+            "from": "echo-focus",
+            "to": "focus",
+            "enabled": true,
+            "unsupported": [],
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 1
+          }
+        ],
+        "growth": [
+          {
+            "id": "practice-5160af26:77487e70",
+            "owner": "you",
+            "skill": "strike",
+            "name": "Unarmed strikes",
+            "credits": [
+              {
+                "context": "entity:entity-bee4fa7c:b5c60136",
+                "kind": "challenge",
+                "action": "practice-1"
+              }
+            ],
+            "familiar": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "checked practice 2",
+      "before": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "hp",
+            "owner": "you",
+            "name": "Health",
+            "current": 40,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "jo-hp",
+            "owner": "Jo",
+            "name": "Health",
+            "current": 35,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "focus",
+            "owner": "you",
+            "name": "Focus",
+            "current": 12,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "echo-focus",
+            "owner": "Echo",
+            "name": "Focus",
+            "current": 0,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [],
+        "applied": [
+          {
+            "id": "practice-1",
+            "input": "4c5c3e5:688e18fd"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "entity-f7f9bc32:2212c02e",
+            "name": "Echo",
+            "displayName": "Echo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "costLinks": [
+          {
+            "id": "cost-link-23aaaa5d:4db9b96b",
+            "from": "echo-focus",
+            "to": "focus",
+            "enabled": true,
+            "unsupported": [],
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 1
+          }
+        ],
+        "growth": [
+          {
+            "id": "practice-5160af26:77487e70",
+            "owner": "you",
+            "skill": "strike",
+            "name": "Unarmed strikes",
+            "credits": [
+              {
+                "context": "entity:entity-bee4fa7c:b5c60136",
+                "kind": "challenge",
+                "action": "practice-1"
+              }
+            ],
+            "familiar": false
+          }
+        ]
+      },
+      "receipt": {
+        "version": 1,
+        "engine": 8,
+        "id": "practice-2",
+        "input": "2153176b:91f19bf3",
+        "base": "e6681739:7d7282f5",
+        "actor": "you",
+        "operations": [
+          {
+            "kind": "strike",
+            "target": "Jo",
+            "outcome": "mixed"
+          }
+        ],
+        "learning": {
+          "seed": "legacy-eight-2",
+          "tier": "uncertain",
+          "result": "mixed",
+          "roll": 55
+        },
+        "responses": [],
+        "changes": [
+          {
+            "kind": "resource",
+            "id": "jo-hp",
+            "before": {
+              "id": "jo-hp",
+              "owner": "Jo",
+              "name": "Health",
+              "current": 35,
+              "role": "vital",
+              "source": {
+                "message": "opening",
+                "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+                "sourceRevision": "71ae4fe4:e14a6578"
+              }
+            },
+            "after": {
+              "id": "jo-hp",
+              "owner": "Jo",
+              "name": "Health",
+              "current": 30,
+              "role": "vital",
+              "source": {
+                "message": "opening",
+                "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+                "sourceRevision": "71ae4fe4:e14a6578"
+              }
+            }
+          }
+        ],
+        "beats": [
+          {
+            "kind": "damage",
+            "actor": "you",
+            "target": "Jo",
+            "amount": 5,
+            "absorbed": 0,
+            "resisted": 0,
+            "reflected": 0,
+            "name": "physical"
+          }
+        ],
+        "result": "d083cca3:2cf5ef1b",
+        "status": "ready"
+      },
+      "after": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "hp",
+            "owner": "you",
+            "name": "Health",
+            "current": 40,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "jo-hp",
+            "owner": "Jo",
+            "name": "Health",
+            "current": 30,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "focus",
+            "owner": "you",
+            "name": "Focus",
+            "current": 12,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "echo-focus",
+            "owner": "Echo",
+            "name": "Focus",
+            "current": 0,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [],
+        "applied": [
+          {
+            "id": "practice-1",
+            "input": "4c5c3e5:688e18fd"
+          },
+          {
+            "id": "practice-2",
+            "input": "2153176b:91f19bf3"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "entity-f7f9bc32:2212c02e",
+            "name": "Echo",
+            "displayName": "Echo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "costLinks": [
+          {
+            "id": "cost-link-23aaaa5d:4db9b96b",
+            "from": "echo-focus",
+            "to": "focus",
+            "enabled": true,
+            "unsupported": [],
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 2
+          }
+        ],
+        "growth": [
+          {
+            "id": "practice-5160af26:77487e70",
+            "owner": "you",
+            "skill": "strike",
+            "name": "Unarmed strikes",
+            "credits": [
+              {
+                "context": "entity:entity-bee4fa7c:b5c60136",
+                "kind": "challenge",
+                "action": "practice-1"
+              }
+            ],
+            "familiar": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "practice exchange",
+      "before": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "hp",
+            "owner": "you",
+            "name": "Health",
+            "current": 40,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "jo-hp",
+            "owner": "Jo",
+            "name": "Health",
+            "current": 30,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "focus",
+            "owner": "you",
+            "name": "Focus",
+            "current": 12,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "echo-focus",
+            "owner": "Echo",
+            "name": "Focus",
+            "current": 0,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [],
+        "applied": [
+          {
+            "id": "practice-1",
+            "input": "4c5c3e5:688e18fd"
+          },
+          {
+            "id": "practice-2",
+            "input": "2153176b:91f19bf3"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "entity-f7f9bc32:2212c02e",
+            "name": "Echo",
+            "displayName": "Echo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "costLinks": [
+          {
+            "id": "cost-link-23aaaa5d:4db9b96b",
+            "from": "echo-focus",
+            "to": "focus",
+            "enabled": true,
+            "unsupported": [],
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 2
+          }
+        ],
+        "growth": [
+          {
+            "id": "practice-5160af26:77487e70",
+            "owner": "you",
+            "skill": "strike",
+            "name": "Unarmed strikes",
+            "credits": [
+              {
+                "context": "entity:entity-bee4fa7c:b5c60136",
+                "kind": "challenge",
+                "action": "practice-1"
+              }
+            ],
+            "familiar": false
+          }
+        ]
+      },
+      "receipt": {
+        "version": 1,
+        "engine": 8,
+        "id": "practice-exchange",
+        "input": "c12e2fb6:d3dee5d4",
+        "base": "7b8642a6:ff7c0086",
+        "actor": "you",
+        "operations": [
+          {
+            "kind": "strike",
+            "target": "Jo",
+            "outcome": "clean"
+          }
+        ],
+        "learning": {
+          "seed": "legacy-eight-exchange",
+          "tier": "uncertain",
+          "result": "clean",
+          "roll": 11
+        },
+        "responses": [
+          {
+            "actor": "Jo",
+            "action": {
+              "kind": "strike",
+              "target": "you"
+            },
+            "assessment": {
+              "contested": true,
+              "tier": "uncertain",
+              "intent": "Strike back",
+              "stakes": "Leave an opening",
+              "reasons": [
+                "You resist"
+              ]
+            },
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "changes": [
+          {
+            "kind": "resource",
+            "id": "jo-hp",
+            "before": {
+              "id": "jo-hp",
+              "owner": "Jo",
+              "name": "Health",
+              "current": 30,
+              "role": "vital",
+              "source": {
+                "message": "opening",
+                "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+                "sourceRevision": "71ae4fe4:e14a6578"
+              }
+            },
+            "after": {
+              "id": "jo-hp",
+              "owner": "Jo",
+              "name": "Health",
+              "current": 25,
+              "role": "vital",
+              "source": {
+                "message": "opening",
+                "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+                "sourceRevision": "71ae4fe4:e14a6578"
+              }
+            }
+          },
+          {
+            "kind": "resource",
+            "id": "hp",
+            "before": {
+              "id": "hp",
+              "owner": "you",
+              "name": "Health",
+              "current": 40,
+              "role": "vital",
+              "source": {
+                "message": "opening",
+                "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+                "sourceRevision": "71ae4fe4:e14a6578"
+              }
+            },
+            "after": {
+              "id": "hp",
+              "owner": "you",
+              "name": "Health",
+              "current": 35,
+              "role": "vital",
+              "source": {
+                "message": "opening",
+                "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+                "sourceRevision": "71ae4fe4:e14a6578"
+              }
+            }
+          },
+          {
+            "kind": "growth",
+            "id": "practice-70da311e:2af46a4a",
+            "before": null,
+            "after": {
+              "id": "practice-70da311e:2af46a4a",
+              "owner": "Jo",
+              "skill": "strike",
+              "name": "Unarmed strikes",
+              "credits": [
+                {
+                  "context": "entity:you",
+                  "kind": "challenge",
+                  "action": "practice-exchange:response:Jo"
+                }
+              ],
+              "familiar": false
+            }
+          }
+        ],
+        "beats": [
+          {
+            "kind": "damage",
+            "actor": "you",
+            "target": "Jo",
+            "amount": 5,
+            "absorbed": 0,
+            "resisted": 0,
+            "reflected": 0,
+            "name": "physical"
+          },
+          {
+            "kind": "response",
+            "actor": "Jo",
+            "target": "you",
+            "decision": {
+              "tier": "uncertain",
+              "roll": 43,
+              "result": "mixed",
+              "intent": "Strike back",
+              "stakes": "Leave an opening",
+              "reasons": [
+                "You resist"
+              ]
+            },
+            "name": "strike"
+          },
+          {
+            "kind": "damage",
+            "actor": "Jo",
+            "target": "you",
+            "amount": 5,
+            "absorbed": 0,
+            "resisted": 0,
+            "reflected": 0,
+            "name": "physical"
+          }
+        ],
+        "result": "574a801:c7e7fb39",
+        "status": "ready"
+      },
+      "after": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "hp",
+            "owner": "you",
+            "name": "Health",
+            "current": 35,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "jo-hp",
+            "owner": "Jo",
+            "name": "Health",
+            "current": 25,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "focus",
+            "owner": "you",
+            "name": "Focus",
+            "current": 12,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "echo-focus",
+            "owner": "Echo",
+            "name": "Focus",
+            "current": 0,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [],
+        "applied": [
+          {
+            "id": "practice-1",
+            "input": "4c5c3e5:688e18fd"
+          },
+          {
+            "id": "practice-2",
+            "input": "2153176b:91f19bf3"
+          },
+          {
+            "id": "practice-exchange",
+            "input": "c12e2fb6:d3dee5d4"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "entity-f7f9bc32:2212c02e",
+            "name": "Echo",
+            "displayName": "Echo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "costLinks": [
+          {
+            "id": "cost-link-23aaaa5d:4db9b96b",
+            "from": "echo-focus",
+            "to": "focus",
+            "enabled": true,
+            "unsupported": [],
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 3
+          },
+          {
+            "id": "Jo",
+            "actor": "Jo",
+            "actions": 1
+          }
+        ],
+        "growth": [
+          {
+            "id": "practice-5160af26:77487e70",
+            "owner": "you",
+            "skill": "strike",
+            "name": "Unarmed strikes",
+            "credits": [
+              {
+                "context": "entity:entity-bee4fa7c:b5c60136",
+                "kind": "challenge",
+                "action": "practice-1"
+              }
+            ],
+            "familiar": false
+          },
+          {
+            "id": "practice-70da311e:2af46a4a",
+            "owner": "Jo",
+            "skill": "strike",
+            "name": "Unarmed strikes",
+            "credits": [
+              {
+                "context": "entity:you",
+                "kind": "challenge",
+                "action": "practice-exchange:response:Jo"
+              }
+            ],
+            "familiar": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "withdraw shared permission",
+      "before": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "hp",
+            "owner": "you",
+            "name": "Health",
+            "current": 35,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "jo-hp",
+            "owner": "Jo",
+            "name": "Health",
+            "current": 25,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "focus",
+            "owner": "you",
+            "name": "Focus",
+            "current": 12,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "echo-focus",
+            "owner": "Echo",
+            "name": "Focus",
+            "current": 0,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [],
+        "applied": [
+          {
+            "id": "practice-1",
+            "input": "4c5c3e5:688e18fd"
+          },
+          {
+            "id": "practice-2",
+            "input": "2153176b:91f19bf3"
+          },
+          {
+            "id": "practice-exchange",
+            "input": "c12e2fb6:d3dee5d4"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "entity-f7f9bc32:2212c02e",
+            "name": "Echo",
+            "displayName": "Echo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "costLinks": [
+          {
+            "id": "cost-link-23aaaa5d:4db9b96b",
+            "from": "echo-focus",
+            "to": "focus",
+            "enabled": true,
+            "unsupported": [],
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 3
+          },
+          {
+            "id": "Jo",
+            "actor": "Jo",
+            "actions": 1
+          }
+        ],
+        "growth": [
+          {
+            "id": "practice-5160af26:77487e70",
+            "owner": "you",
+            "skill": "strike",
+            "name": "Unarmed strikes",
+            "credits": [
+              {
+                "context": "entity:entity-bee4fa7c:b5c60136",
+                "kind": "challenge",
+                "action": "practice-1"
+              }
+            ],
+            "familiar": false
+          },
+          {
+            "id": "practice-70da311e:2af46a4a",
+            "owner": "Jo",
+            "skill": "strike",
+            "name": "Unarmed strikes",
+            "credits": [
+              {
+                "context": "entity:you",
+                "kind": "challenge",
+                "action": "practice-exchange:response:Jo"
+              }
+            ],
+            "familiar": false
+          }
+        ]
+      },
+      "receipt": {
+        "version": 1,
+        "engine": 8,
+        "id": "withdraw",
+        "input": "b8119d6c:d831a70e",
+        "base": "3636a512:db9ce6cc",
+        "actor": "you",
+        "operations": [
+          {
+            "kind": "unlink",
+            "link": "cost-link-23aaaa5d:4db9b96b"
+          }
+        ],
+        "responses": [],
+        "changes": [
+          {
+            "kind": "cost_link",
+            "id": "cost-link-23aaaa5d:4db9b96b",
+            "before": {
+              "id": "cost-link-23aaaa5d:4db9b96b",
+              "from": "echo-focus",
+              "to": "focus",
+              "enabled": true,
+              "unsupported": [],
+              "source": {
+                "message": "opening",
+                "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+                "sourceRevision": "71ae4fe4:e14a6578"
+              }
+            },
+            "after": {
+              "id": "cost-link-23aaaa5d:4db9b96b",
+              "from": "echo-focus",
+              "to": "focus",
+              "enabled": false,
+              "unsupported": [],
+              "source": {
+                "message": "warp-action:withdraw",
+                "quote": "Withdraw shared cost permission cost-link-23aaaa5d:4db9b96b",
+                "sourceRevision": "a5b9c55e:b23f1c5a"
+              }
+            }
+          }
+        ],
+        "beats": [
+          {
+            "kind": "unlink",
+            "actor": "you",
+            "name": "Shared cost permission withdrawn"
+          }
+        ],
+        "result": "c3a6ae69:146a0b73",
+        "status": "ready"
+      },
+      "after": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "hp",
+            "owner": "you",
+            "name": "Health",
+            "current": 35,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "jo-hp",
+            "owner": "Jo",
+            "name": "Health",
+            "current": 25,
+            "role": "vital",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "focus",
+            "owner": "you",
+            "name": "Focus",
+            "current": 12,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "echo-focus",
+            "owner": "Echo",
+            "name": "Focus",
+            "current": 0,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [],
+        "applied": [
+          {
+            "id": "practice-1",
+            "input": "4c5c3e5:688e18fd"
+          },
+          {
+            "id": "practice-2",
+            "input": "2153176b:91f19bf3"
+          },
+          {
+            "id": "practice-exchange",
+            "input": "c12e2fb6:d3dee5d4"
+          },
+          {
+            "id": "withdraw",
+            "input": "b8119d6c:d831a70e"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          },
+          {
+            "id": "entity-f7f9bc32:2212c02e",
+            "name": "Echo",
+            "displayName": "Echo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "opening",
+              "quote": "Jo faces you within arm's reach and prepares to punch you. You have 40 Health. Jo has 40 Health. Echo is your familiar. You have 12 Focus and Echo has 0 Focus. Echo's Focus costs are paid one for one from your Focus.",
+              "sourceRevision": "71ae4fe4:e14a6578"
+            }
+          }
+        ],
+        "costLinks": [
+          {
+            "id": "cost-link-23aaaa5d:4db9b96b",
+            "from": "echo-focus",
+            "to": "focus",
+            "enabled": false,
+            "unsupported": [],
+            "source": {
+              "message": "warp-action:withdraw",
+              "quote": "Withdraw shared cost permission cost-link-23aaaa5d:4db9b96b",
+              "sourceRevision": "a5b9c55e:b23f1c5a"
+            }
+          }
+        ],
+        "clocks": [
+          {
+            "id": "you",
+            "actor": "you",
+            "actions": 3
+          },
+          {
+            "id": "Jo",
+            "actor": "Jo",
+            "actions": 1
+          }
+        ],
+        "growth": [
+          {
+            "id": "practice-5160af26:77487e70",
+            "owner": "you",
+            "skill": "strike",
+            "name": "Unarmed strikes",
+            "credits": [
+              {
+                "context": "entity:entity-bee4fa7c:b5c60136",
+                "kind": "challenge",
+                "action": "practice-1"
+              }
+            ],
+            "familiar": false
+          },
+          {
+            "id": "practice-70da311e:2af46a4a",
+            "owner": "Jo",
+            "skill": "strike",
+            "name": "Unarmed strikes",
+            "credits": [
+              {
+                "context": "entity:you",
+                "kind": "challenge",
+                "action": "practice-exchange:response:Jo"
+              }
+            ],
+            "familiar": false
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -4,16 +4,18 @@ import type { Evidence, Message } from "./world.js";
 import type { Approach, MechanicalState } from "./mechanics.js";
 import { actorName, RANGES, DAMAGE_TYPES, readDefenses, type Range, type DamageType, type Defense } from "./encounters.js";
 import { IMPACTS, type Impact } from "./injuries.js";
+import { LINGERING_INSTRUCTIONS, readLingeringEffect, type PeriodicPulse, type BuildupTrigger, type EndingRule } from "./lingering.js";
 
 export interface DefinitionSource { id: string; kind: "card" | "persona" | "lore"; text: string; }
 export interface AbilityEffect {
-  kind: "summon" | "dismiss" | "restore" | "damage" | "harm" | "mend" | "condition" | "clear_condition" | "defense";
+  kind: "summon" | "dismiss" | "restore" | "damage" | "harm" | "mend" | "condition" | "clear_condition" | "defense" | "periodic" | "buildup" | "clear_buildup";
   target: "self" | "target"; resource?: string; amount?: number; basis?: "source" | "warp";
   name?: string; hinders?: Approach[]; helps?: Approach[]; blocks?: Approach[]; ending?: string;
   damageType?: DamageType; defense?: Defense; duration?: number;
   companion?: string; untilDismissed?: true;
   impact?: Impact;
   maxInjury?: Impact | "any";
+  untilCleared?: true; endingRule?: EndingRule; timingBasis?: "source" | "warp"; cadence?: "owner_action"; pulse?: PeriodicPulse; threshold?: number; trigger?: BuildupTrigger;
 }
 export interface AbilityDefinition {
   id: string; version: number; owner: string; name: string; description: string;
@@ -83,6 +85,7 @@ export function readAbilityDefinitions(raw: unknown, state: MechanicalState, mes
         return { kind: c.kind as "resource" | "item", id: candidate.id, amount: c.amount };
       });
       const effects: AbilityEffect[] = row.effects.map(e => {
+        if (obj(e) && ["periodic", "buildup", "clear_buildup"].includes(e.kind as string)) return readLingeringEffect(e, quote);
         const fields: Record<string, string[]> = { summon: ["companion", "duration"], dismiss: ["companion"], restore: ["resource", "amount", "basis", "magnitude"], damage: ["resource", "amount", "basis", "magnitude", "damageType"], harm: ["impact", "damageType"], mend: ["impact", "maxInjury"], condition: ["name", "hinders", "helps", "blocks", "ending", "duration", "untilDismissed"], clear_condition: ["name"], defense: ["name", "defense", "ending", "duration", "basis", "magnitude"] };
         if (!obj(e) || !fields[e.kind as string] || Object.keys(e).some(k => !["kind", "target", ...fields[e.kind as string]].includes(k))) throw new Error("Unsupported effect fields");
         if (!obj(e) || !["self", "target"].includes(e.target as string)) throw new Error("Unknown effect target");
@@ -161,4 +164,5 @@ Prepare only established abilities/item actions relevant to this scene. Use exac
 Effect vocabulary: {kind:"restore|damage",target:"self|target",resource:"resource name or saved ID",amount:explicitNumber} or magnitude:"minor|standard|major" ONLY when no numerical amount exists; damage may have damageType:"physical|fire|cold|electric|poison|mental|untyped"; {kind:"condition",target,name,hinders:[],blocks:[],helps:[],ending,duration?:explicitOwnerActions}; {kind:"clear_condition",target,name}; {kind:"defense",target,name,defense:{kind:"armor|resistance|immunity|shield|reflect",amount,damageType:"physical|fire|cold|electric|poison|mental|untyped|all"},ending,duration?:explicitOwnerActions}. Resistance/reflect are percentages, armor is flat, immunity uses amount:0. Only shield may use magnitude with its amount omitted. Approaches use the same enum as above, except other.
 Definitions may include range:"touch|near|far" and cooldown:explicitSubsequentOwnerActions only when established in source. Never infer a timer, default range or default cooldown. Duration counts subsequent actions of the affected owner, not chat messages. A cooldown of 1 requires another action before reuse. Seconds, real-time durations, unsupported damage types, multi-target rules and complex triggers belong in unsupported until supported; do not silently convert them. Reapplying the same effect refreshes it without stacking. Defenses resolve immunity, flat armor, capped resistance, shields, then loss, then at most one reflection.
 All costs must be explicit numbers in the source quote and reference an established resource/item owned by the ability owner. Do not invent mana, energy, health, timers, drawbacks, limits or new powers. No stated resource cost means costs:[]. Code supplies fixed magnitude values where needed and labels them Warp values. No formulas or scripts.
-Put unsupported restrictions or effects in unsupported; never silently omit them to make an ability executable. Do not regenerate a saved definition unless the source actually changed or an explicit OOC correction changes it. Return at most 3 relevant definitions. These are automatically prepared content, not a rulebook or a setup question.`;
+Put unsupported restrictions or effects in unsupported; never silently omit them to make an ability executable. Do not regenerate a saved definition unless the source actually changed or an explicit OOC correction changes it. Return at most 3 relevant definitions. These are automatically prepared content, not a rulebook or a setup question.
+${LINGERING_INSTRUCTIONS}`;

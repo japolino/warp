@@ -148,7 +148,7 @@ function explorationScenes(raw: unknown, scene: LivingRecord["scene"], messages:
 }
 
 function readObserved(raw: unknown, state: MechanicalState, messages: Msg[], sources: DefinitionSource[], player?: string, scene?: LivingRecord["scene"]): Observation[] {
-  raw = Array.isArray(raw) ? raw.slice(0, 24).filter(row => row?.kind !== "practice") : raw;
+  raw = Array.isArray(raw) ? raw.slice(0, 24).filter(row => !["practice", "buildup", "periodic"].includes(row?.kind)) : raw;
   const seeded = readMechanicalObservations(chronologicalObservations(explorationScenes(raw, scene, messages), messages), state, messages, player);
   const base = seeded.length ? applyObservations(state, seeded) : state;
   // A controller named in this validated scene may not yet have a mechanical
@@ -296,10 +296,10 @@ export async function syncLiving(chatId: string, userId?: string, decision?: Dec
       const rawObserved = (raw as { mechanicalObservations?: unknown }).mechanicalObservations;
       const modelObserved = readObserved(rawObserved, mechanicalBefore, messages, sources, playerName, changes.scene);
       const positioned = sceneExploration(changes.scene, applyObservations(mechanicalBefore, modelObserved), messages);
-      const observed = [...modelObserved, ...positioned, ...sceneParticipants(changes.scene, applyObservations(mechanicalBefore, [...modelObserved, ...positioned]), messages, playerName)];
+      const observed = [...modelObserved, ...positioned, ...sceneParticipants(changes.scene, applyObservations(mechanicalBefore, [...modelObserved, ...positioned]), messages, playerName, Array.isArray(rawObserved) && rawObserved.some(row => ["periodic", "buildup"].includes(row?.kind)))];
       const definitions = readAbilityDefinitions((raw as { abilityDefinitions?: unknown }).abilityDefinitions, applyObservations(mechanicalBefore, observed), messages, sources, playerName);
       const prepared: Observation[] = [...observed, ...definitions.map(value => ({ kind: "ability" as const, value }))];
-      const lessons = Array.isArray(rawObserved) ? readMechanicalObservations(rawObserved.slice(0, 24).filter(row => row?.kind === "practice"), applyObservations(mechanicalBefore, prepared), messages, playerName) : [];
+      const lessons = Array.isArray(rawObserved) ? readMechanicalObservations(rawObserved.slice(0, 24).filter(row => ["practice", "buildup", "periodic"].includes(row?.kind)), applyObservations(mechanicalBefore, prepared), messages, playerName) : [];
       const observations: Observation[] = [...prepared, ...lessons];
       const progressNotes = [...growthNotes(mechanicalBefore, applyObservations(mechanicalBefore, observations)), ...agreementNotes(mechanicalBefore, applyObservations(mechanicalBefore, observations))];
       if (progressNotes.length) changes.notes = progressNotes;
@@ -502,7 +502,7 @@ REQUIRED preparation pass: always return mechanicalObservations:[] alongside mec
           const observed = [...participants, ...modelObserved, ...sceneParticipants(scene, applyObservations(ready, modelObserved), history, definitionInput.player)];
           const definitions = readAbilityDefinitions(parsed.abilityDefinitions, applyObservations(base, observed), history.slice(-14), definitionInput.sources, definitionInput.player);
           const prepared: Observation[] = [...observed, ...definitions.map(value => ({ kind: "ability" as const, value }))];
-          const lessons = Array.isArray(parsed.mechanicalObservations) ? readMechanicalObservations(parsed.mechanicalObservations.slice(0, 24).filter(row => row?.kind === "practice"), applyObservations(base, prepared), history, definitionInput.player) : [];
+          const lessons = Array.isArray(parsed.mechanicalObservations) ? readMechanicalObservations(parsed.mechanicalObservations.slice(0, 24).filter(row => ["practice", "buildup", "periodic"].includes(row?.kind)), applyObservations(base, prepared), history, definitionInput.player) : [];
           const observations: Observation[] = [...prepared, ...lessons];
           if (observations.length) {
             const previous = mechanicalRecordOf(last);

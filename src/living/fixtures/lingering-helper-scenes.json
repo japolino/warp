@@ -1,0 +1,209 @@
+[
+  {
+    "name": "fire",
+    "message": {
+      "id": "effect-public-probe-0-g",
+      "role": "narrator",
+      "content": "Sam, you stand beside an uncounted stream. Your left arm is on fire. You are Burning; the flames continue to burn your arm. There are no stated numerical health values or time intervals."
+    },
+    "raw": {
+      "scene": {
+        "place": "beside an uncounted stream",
+        "present": [],
+        "message": "effect-public-probe-0-g",
+        "quote": "you stand beside an uncounted stream."
+      },
+      "mechanicalObservations": [
+        {
+          "kind": "periodic",
+          "owner": "you",
+          "name": "Burning",
+          "effect": {
+            "kind": "periodic",
+            "target": "self",
+            "name": "Burning",
+            "untilCleared": true,
+            "endingRule": "extinguish",
+            "cadence": "owner_action",
+            "pulse": {
+              "kind": "harm",
+              "impact": "minor",
+              "damageType": "fire"
+            }
+          },
+          "message": "effect-public-probe-0-g",
+          "quote": "Your left arm is on fire. You are Burning; the flames continue to burn your arm."
+        }
+      ],
+      "changes": [
+        {
+          "op": "put",
+          "id": "fact:left-arm-burning",
+          "kind": "fact",
+          "subject": "you",
+          "text": "Your left arm is on fire and burning.",
+          "message": "effect-public-probe-0-g",
+          "quote": "Your left arm is on fire. You are Burning; the flames continue to burn your arm."
+        }
+      ]
+    }
+  },
+  {
+    "name": "recovery",
+    "message": {
+      "id": "effect-public-probe-1-g",
+      "role": "narrator",
+      "content": "You have minor routine burns on your arm. Your Spring Tide regeneration is already active, gently and continuously healing your routine physical injuries. It has no stated numerical pool or interval."
+    },
+    "raw": {
+      "scene": {
+        "place": "A fantasy recovery scene",
+        "present": [],
+        "message": "effect-public-probe-1-g",
+        "quote": "You have minor routine burns on your arm."
+      },
+      "mechanicalObservations": [
+        {
+          "kind": "condition",
+          "id": "minor_burns_arm",
+          "owner": "you",
+          "name": "Minor Burns",
+          "category": "physical_injury",
+          "severity": "minor",
+          "recovery": "routine",
+          "hinders": [],
+          "blocks": [],
+          "helps": [],
+          "ending": "healed or treated",
+          "message": "effect-public-probe-1-g",
+          "quote": "You have minor routine burns on your arm."
+        },
+        {
+          "kind": "periodic",
+          "owner": "you",
+          "name": "Spring Tide",
+          "effect": {
+            "kind": "periodic",
+            "target": "self",
+            "name": "Spring Tide",
+            "endingRule": "recover",
+            "cadence": "owner_action",
+            "pulse": {
+              "kind": "mend",
+              "impact": "minor"
+            }
+          },
+          "message": "effect-public-probe-1-g",
+          "quote": "Your Spring Tide regeneration is already active, gently and continuously healing your routine physical injuries."
+        }
+      ],
+      "changes": [
+        {
+          "op": "put",
+          "id": "sam_minor_routine_burns",
+          "kind": "fact",
+          "subject": "you",
+          "text": "You have minor routine burns on your arm.",
+          "message": "effect-public-probe-1-g",
+          "quote": "You have minor routine burns on your arm."
+        }
+      ]
+    }
+  },
+  {
+    "name": "romance",
+    "message": {
+      "id": "effect-public-probe-2-g",
+      "role": "narrator",
+      "content": "Across the cafe table, Jo looks at you with eyes burning with affection. Her face burns red when she admits she missed you. You are both comfortable and unhurt."
+    },
+    "raw": {
+      "scene": {
+        "place": "cafe",
+        "present": [
+          "Jo"
+        ],
+        "message": "effect-public-probe-2-g",
+        "quote": "Across the cafe table, Jo looks at you"
+      },
+      "mechanicalObservations": [
+        {
+          "kind": "entity",
+          "name": "Jo",
+          "entityKind": "person",
+          "present": true,
+          "status": "active",
+          "message": "effect-public-probe-2-g",
+          "quote": "Across the cafe table, Jo looks at you"
+        }
+      ],
+      "changes": [
+        {
+          "op": "put",
+          "id": "jo-missed-you",
+          "kind": "fact",
+          "subject": "Jo",
+          "text": "Jo admitted she missed you.",
+          "message": "effect-public-probe-2-g",
+          "quote": "she admits she missed you"
+        }
+      ]
+    }
+  },
+  {
+    "name": "sci-fi",
+    "message": {
+      "id": "effect-public-probe-3-g",
+      "role": "narrator",
+      "content": "The suppression system has completely extinguished the cabin fire. The flames are gone. You and Jo are unhurt. The wall remains scorched, and Jo checks the damaged panel. No gas is escaping."
+    },
+    "raw": {
+      "scene": {
+        "place": "cabin",
+        "present": [
+          "Jo"
+        ],
+        "message": "effect-public-probe-3-g",
+        "quote": "The suppression system has completely extinguished the cabin fire."
+      },
+      "mechanicalObservations": [
+        {
+          "kind": "entity",
+          "name": "Jo",
+          "entityKind": "person",
+          "present": true,
+          "status": "active",
+          "message": "effect-public-probe-3-g",
+          "quote": "You and Jo are unhurt."
+        },
+        {
+          "kind": "place",
+          "name": "cabin",
+          "entered": true,
+          "message": "effect-public-probe-3-g",
+          "quote": "extinguished the cabin fire."
+        }
+      ],
+      "changes": [
+        {
+          "op": "put",
+          "id": "cabin_fire_extinguished",
+          "kind": "fact",
+          "subject": "cabin",
+          "text": "The cabin fire has been completely extinguished by the suppression system.",
+          "message": "effect-public-probe-3-g",
+          "quote": "The suppression system has completely extinguished the cabin fire."
+        },
+        {
+          "op": "put",
+          "id": "cabin_wall_scorched",
+          "kind": "fact",
+          "subject": "cabin",
+          "text": "The cabin wall is scorched, and no gas is escaping from the damaged panel.",
+          "message": "effect-public-probe-3-g",
+          "quote": "The wall remains scorched, and Jo checks the damaged panel. No gas is escaping."
+        }
+      ]
+    }
+  }
+]

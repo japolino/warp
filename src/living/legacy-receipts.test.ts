@@ -43,3 +43,9 @@ for (const fixture of resolver7.cases) test(`${fixture.name} replays the install
   expect(resolver7.generatedFrom).toBe("7d4278b"); expect(fixture.receipt.engine).toBe(7);
   expect(commitMechanical(fixture.before, fixture.receipt)).toEqual(fixture.after);
 });
+
+const resolver8 = await Bun.file(new URL("./fixtures/resolver8-receipts.json", import.meta.url)).json() as Pick<typeof fixtures, "generatedFrom" | "cases">;
+for (const fixture of resolver8.cases) test(`${fixture.name} replays the installed growth resolver before lingering effects`, () => {
+  expect(resolver8.generatedFrom).toBe("7d5e445"); expect(fixture.receipt.engine).toBe(8);
+  expect(commitMechanical(fixture.before, fixture.receipt)).toEqual(fixture.after);
+});
