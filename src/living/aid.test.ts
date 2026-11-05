@@ -3,7 +3,8 @@ import { expect, test } from "bun:test";
 import { definitionSource, readAbilityDefinitions } from "./abilities.js";
 import { applyObservations, commitMechanical, emptyMechanics, prepareMechanical, prepareExchange, readMechanicalObservations, readMechanicalPlan, type MechanicalState } from "./mechanics.js";
 import { actionCount } from "./encounters.js";
-import { aidRequestIntent, aidOfferText } from "./aid.js";
+import { readLocalAid } from "./local-actions.js";
+import { aidRequestIntent, aidRequestBoundary, aidOfferText } from "./aid.js";
 import { foldMechanics } from "./mechanical-history.js";
 import { storyRevision } from "./story-text.js";
 import { pathOf } from "./world.js";
@@ -166,4 +167,42 @@ test("a pending aid cannot be replaced by an unrecorded prose cure", () => {
   const beforeFeature = structuredClone(state); delete beforeFeature.aidOffers;
   // Historical ordinary recovery keeps its earlier semantics when no aid feature was published.
   expect(readMechanicalObservations([{ kind: "condition_end", id: "burn", message: reply.id, quote: reply.content }], beforeFeature, [opening, reply], undefined, true)).toHaveLength(1);
+});
+
+
+test("actual NPC withdrawal persists and only a newly sourced offer can replace its terms", () => {
+  const { state } = setup(), end = { id: "withdraw", is_user: false, content: "Jo withdraws his offer of Mend for now." };
+  const rows = readMechanicalObservations([{ kind: "aid_end", id: state.aidOffers![0].id, message: end.id, quote: end.content }], state, [opening, end]);
+  expect(rows).toHaveLength(1);
+  const withdrawn = applyObservations(state, rows);
+  expect(withdrawn.aidOffers![0].status).toBe("withdrawn");
+  expect(withdrawn.resources).toEqual(state.resources); expect(withdrawn.clocks).toEqual(state.clocks);
+  const old = { kind: "aid_offer", actor: "Jo", target: "you", ability: "Mend", uncontested: true, unsupported: [], message: opening.id, quote: opening.content };
+  expect(readMechanicalObservations([old], withdrawn, [opening, end])).toEqual([]);
+  const renewal = { id: "renew", is_user: false, content: "Jo offers Mend again, but only if you pay him five coins." };
+  const renewed = applyObservations(withdrawn, readMechanicalObservations([{ ...old, message: renewal.id, quote: renewal.content }], withdrawn, [opening, end, renewal]));
+  expect(renewed.aidOffers![0].version).toBe(2); expect(renewed.aidOffers![0].unsupported.length).toBeGreaterThan(0);
+  expect(prepareMechanical(renewed, "stale", "you", [consent(state)]).status).toBe("blocked");
+  expect(prepareMechanical(renewed, "terms", "you", [consent(renewed)]).status).toBe("blocked");
+});
+
+test("a bare yes requires one fresh offer and cannot answer a different later question", () => {
+  const { state } = setup(), player = { id: "yes", is_user: true, content: "Yes, please." };
+  const world = { place: "clinic", present: ["Jo"], mechanics: state } as any;
+  expect(readLocalAid(player.content, world, [opening, player])?.mechanicalActions[0].kind).toBe("accept_aid");
+  const questioned = { ...opening, content: opening.content + " Do you want me to call the guard instead?" };
+  state.aidOffers![0].source.sourceRevision = storyRevision(questioned.content);
+  expect(readLocalAid(player.content, world, [questioned, player])).toBeUndefined();
+  expect(readLocalAid(player.content, world, [opening, { id: "aside", is_user: false, content: "Jo asks about the weather." }, player])).toBeUndefined();
+  const second = structuredClone(state.aidOffers![0]); second.id = "second-offer"; state.aidOffers!.push(second);
+  expect(readLocalAid(player.content, world, [opening, player])).toBeUndefined();
+});
+
+
+test("a quoted aid request in a movement message invites an offer without skipping movement interpretation", () => {
+  const mixed = 'I walk to the medical station. "Could you heal this minor cooking burn?"';
+  expect(aidRequestBoundary(mixed)).toBe(true);
+  expect(aidRequestIntent(mixed)).toBe(false);
+  expect(aidRequestBoundary('OOC: Why did "Could you heal my arm?" not spend mana?')).toBe(false);
+  expect(aidRequestBoundary('I walk to the desk. "Could you help me with my homework?"')).toBe(false);
 });

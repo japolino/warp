@@ -871,6 +871,11 @@ function aidRequestIntent(content, state) {
   const tail = text.slice(q + 1).replace(/^["'“”*\s]+/, "").trim();
   return !tail || /^I\s+(?:ask|say|whisper|murmur)(?:\s+(?:to\s+)?[\p{L}\p{N} '-]{1,80})?[.!]*$/iu.test(tail);
 }
+function aidRequestBoundary(content, state) {
+  if (/^\s*\(?\s*(?:ooc|out of character)\b/i.test(content))
+    return false;
+  return aidRequestIntent(content, state) || [...content.matchAll(/["“]([^"”\n]{1,800})["”]/g)].some((m) => aidRequestIntent(m[1], state));
+}
 function aidOfferText(offer, state) {
   const entity = entityFor(state, offer.actor);
   const name = [entity?.displayName, ...entity?.aliases ?? [], offer.actor].find((n) => n && normalize2(offer.source.quote).includes(normalize2(n))) ?? "Someone";
@@ -897,7 +902,7 @@ function awaitingAid(state, source, messages, historical) {
   const at = messages.findIndex((m) => m.id === source.message), prefix = messages.slice(0, at), player = prefix.at(-1);
   if (!player?.is_user)
     return false;
-  if (!historical && aidRequestIntent(player.content, state))
+  if (!historical && aidRequestBoundary(player.content, state))
     return true;
   const slots = player.metadata?.warpLivingPrompt, snapshot = obj(slots) ? slots[String(player.swipe_id ?? 0)] : undefined;
   return !!(obj(snapshot) && snapshot.version === 1 && typeof snapshot.path === "string" && obj(snapshot.packet) && typeof snapshot.packet.aidBoundary === "string" && recordPathMatches(player, snapshot.path, pathOf(prefix), rawPathOf(prefix), true));

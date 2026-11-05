@@ -106,6 +106,12 @@ export function aidRequestIntent(content: string, state?: MechanicalState): bool
   return !tail || /^I\s+(?:ask|say|whisper|murmur)(?:\s+(?:to\s+)?[\p{L}\p{N} '-]{1,80})?[.!]*$/iu.test(tail);
 }
 
+/** Mixed prose can invite an offer without skipping its other action interpretation. */
+export function aidRequestBoundary(content: string, state?: MechanicalState): boolean {
+  if (/^\s*\(?\s*(?:ooc|out of character)\b/i.test(content)) return false;
+  return aidRequestIntent(content, state) || [...content.matchAll(/["“]([^"”\n]{1,800})["”]/g)].some(m => aidRequestIntent(m[1], state));
+}
+
 export const AID_INSTRUCTIONS = `Voluntary aid uses aidOffers, not a new player-owned power. A request such as "Could you treat my arm?" invites an NPC decision; it neither commands agreement nor executes a cure. In actual narration an NPC can offer one established beneficial ability. Prepare the NPC's definition from its actual source, preserving ownership, costs, range, recovery limits and unsupported terms. Return mechanicalObservations {kind:"aid_offer",actor,target:"you",ability:"saved id or newly prepared name",uncontested:true,unsupported:[],message,quote}. The contiguous exact quote must name the actor and actually offer this aid now; profiles, hypotheticals, merely hearing a claim and a player request are insufficient. Do not record attacks, forced feelings, consent, movement or an unknown power as aid. Retain any payment, item, condition, timing or source restriction not resolved by the supported definition in unsupported, never turn paid help into free help. An actual later withdrawal uses {kind:"aid_end",id,message,quote}. Old offers cannot reopen themselves. Offers are not execution, inventory handovers, cures or costs. Preserve them through ordinary questions; they can be used once, explicitly withdrawn, or declined.
 An explicit acceptance can use mechanicalActions {kind:"accept_aid",offer:"saved id",version:currentVersion,quote}; explicit refusal uses decline_aid with the same fields. Code applies exactly one offered use by the NPC. The NPC pays the definition's actual costs and takes their own action, with existing shared payer permissions honored. The player grants permission without a player action, extra NPC responders, a new ability or a roll. Do not add duplicate NPC responses or player-owned invocations. If the definition or terms are not prepared, leave that aid unresolved without inventing reluctance, a fee or a fictional obstacle. Questions about costs/effects execute nothing. A plain request must first allow the NPC to make an offer rather than completing unrecorded mechanical healing. Keep player/NPC choice, source prohibitions, uncertainty and existing receipt boundaries intact.`;
 
@@ -134,7 +140,7 @@ export function awaitingAid(state: MechanicalState, source: Evidence, messages: 
   if (state.aidOffers?.some(o => o.status === "offered")) return true;
   const at = messages.findIndex(m => m.id === source.message), prefix = messages.slice(0, at), player = prefix.at(-1);
   if (!player?.is_user) return false;
-  if (!historical && aidRequestIntent(player.content, state)) return true;
+  if (!historical && aidRequestBoundary(player.content, state)) return true;
   const slots = player.metadata?.warpLivingPrompt, snapshot = obj(slots) ? slots[String(player.swipe_id ?? 0)] : undefined;
   return !!(obj(snapshot) && snapshot.version === 1 && typeof snapshot.path === "string" && obj(snapshot.packet) && typeof snapshot.packet.aidBoundary === "string"
     && recordPathMatches(player, snapshot.path, pathOf(prefix), rawPathOf(prefix), true));
