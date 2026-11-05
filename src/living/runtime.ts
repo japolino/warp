@@ -431,6 +431,9 @@ export async function livingIntercept(messages: LlmMessageDTO[], ctx: Intercepto
   if (["quiet", "impersonate"].includes(ctx.generationType ?? "") || !settings.enabled) return messages;
   const context = ctx as unknown as { isDryRun?: boolean; dryRun?: boolean };
   if (context.isDryRun || context.dryRun) { const history = await getMessages(ctx.chatId); return cachedInjection(messages, ctx, history, worldOf(history), null, false); }
+  // Older hosts do not send interceptorDeadlineAt. Finish inside their default
+  // ten-second limit, leaving room to publish the unresolved boundary and prompt.
+  const deadline = Math.min(ctx.interceptorDeadlineAt ?? Infinity, Date.now() + 8000);
   const active = started.get(ctx.chatId);
   const controller = new AbortController();
   ctx.signal?.addEventListener("abort", () => controller.abort(), { once: true });
@@ -467,7 +470,7 @@ export async function livingIntercept(messages: LlmMessageDTO[], ctx: Intercepto
           try {
             nativeRead = await readDecision(settings.decisionConnectionId,
               `State:\n${worldPacket(world, last.content)}\nScene:\n${contextText(history.slice(-3))}`,
-              last.content, controller.signal, ctx.userId, Math.max(50, Math.min(3500, (ctx.interceptorDeadlineAt || Date.now() + 12500) - Date.now() - 500)), world.present);
+              last.content, controller.signal, ctx.userId, Math.max(50, Math.min(3500, deadline - Date.now() - 1500)), world.present);
           } catch { /* A missing, denied or unavailable decision profile falls back to the helper. */ }
         }
         if (nativeRead?.requiresPreparation) {
@@ -493,7 +496,7 @@ For explicit travel along an ALREADY KNOWN route use mechanicalActions {kind:"tr
 For an explicit wait or defensive action, use mechanicalActions {kind:"wait|defend",quote}. Defend provides Warp's 50% physical resistance until the actor next acts. Movement relative to an established participant uses {kind:"move",target,direction:"closer|away",quote}, changing one known distance band. These are actual actions, never questions or conversational gestures. Do not promise that retreat ends the encounter or that guarding prevents every kind of harm.
 You may also bootstrap mechanicalObservations for explicit initial resource values/counts in the supplied definition sources or narrator messages: {kind:"resource",owner,name,current,max?,role?,message,quote} or {kind:"item",owner,name,quantity,equipped,message,quote}. Code assigns a stable ID if omitted. Existing IDs stay unchanged. Within a newly prepared definition, a cost or required item may reference its unique owned name when no ID exists yet. Cite the actual source, never the current player attempt. Unknown resources stay unknown.` : ""}${classified ? `\nA separate classifier identified one ${classified.kind} action. Verify that against the original action; do not force an operation if unsupported. For a single matching operation cite the entire exact original player action in quote, preserving its language.` : ""}${mechanicalRead ? `
 REQUIRED preparation pass: always return mechanicalObservations:[] alongside mechanicalActions:[] and responses:[]. Declare any missing actual actor/target first with a cited entity row and current presence; an action plan alone does not establish identity or presence. Before emitting a strike or ranged ability for either actor, check its required range in the supplied saved state. If absent, prepare a cited distance row from the latest actual narrator scene in THIS response. For a punch currently being delivered, touch means within melee reach, not an already successful contact. If no scene evidence establishes range, leave it unresolved; never invent a miss, disadvantage or extra movement because a stored row is absent. Return only newly needed observations, not every participant's distance.` : ""} Output only JSON.`,
-          `Player: ${definitionInput?.player ?? "you"}. Use you for the player.\nDefinition sources:\n${JSON.stringify(definitionInput?.sources ?? [])}\nState:\n${worldPacket(world, last.content)}\nScene:\n${contextText(recovery?.pending ? recovery.messages : history.slice(-3))}`, ctx.userId, controller, Math.max(50, Math.min(12000, (ctx.interceptorDeadlineAt || Date.now() + 12500) - Date.now() - 500)), mechanicalRead ? 8192 : 4096);
+          `Player: ${definitionInput?.player ?? "you"}. Use you for the player.\nDefinition sources:\n${JSON.stringify(definitionInput?.sources ?? [])}\nState:\n${worldPacket(world, last.content)}\nScene:\n${contextText(recovery?.pending ? recovery.messages : history.slice(-3))}`, ctx.userId, controller, Math.max(50, Math.min(12000, deadline - Date.now() - 1500)), mechanicalRead ? 8192 : 4096);
         if (!read || typeof read !== "object" || !("risky" in read) || !("contested" in read)) throw new Error("Attempt read incomplete");
         const parsed = read as { risky?: unknown; contested?: unknown; tier?: string; reasons?: unknown; approach?: unknown; target?: unknown; mechanicalActions?: unknown; abilityDefinitions?: unknown; mechanicalObservations?: unknown; exchange?: unknown; responses?: unknown };
         if (definitionInput) {

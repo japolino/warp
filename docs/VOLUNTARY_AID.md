@@ -17,7 +17,7 @@ Verification covers offer-before-execution, voluntary source evidence, ownership
 
 ## Verification checkpoint, 2026-11-05
 
-- 852 tests pass, 21,126 assertions, 97 files; TypeScript and production build pass.
+- 853 tests pass, 21,133 assertions, 97 files; TypeScript and production build pass.
 - The production Lumiverse worker smoke covers request, offer, refusal, renewed offer, cost question and acceptance. It makes no extra foreground interpretation call for fresh unambiguous acceptance/refusal, and preserves all earlier Warp prompt blocks byte-for-byte.
 - The selected real helper prepared Jo's NPC-owned Mend, its two-Focus cost and a pending offer from a public fixture. This validates actual model extraction on that fixture, not original-card first-use play.
 - Runtime tests cover cancelled generation, alternate narration/swipe, reload, source edits, no premature healing/payment, and questions preserving the offer. Fresh pending-offer reads bypass the cached character brief so an immediately edited card cannot execute the obsolete cost.
@@ -29,3 +29,9 @@ Verification covers offer-before-execution, voluntary source evidence, ownership
 The first original Frieren pilot at a4ff18c exposed a missing boundary: a movement sentence followed by a quoted request to a healer did not receive aid guidance. The narrator performed a cure and the ordinary post-read removed the burn without a saved aid cast. This is retained as a failed first-use pilot. Direct requests had the boundary already; compound quoted requests now receive it too, without skipping their other action interpretation. The new boundary cannot rewrite already published historical request bytes.
 
 That pilot also encountered intermittent unavailable scene reads and one narrator request stopped after several minutes without text. Only its isolated chat was then bound to the existing Flash helper connection for subsequent narration; global connection settings were preserved. A separate read-only replay of the clerk's compress scene completed in 4.8 seconds, with no aid definition or pending offer. A compress is not evidence of a magical cure.
+
+### Interceptor deadline correction
+
+The fresh fbd4eac pilot still narrated a cure. Its retained outgoing request contained no Warp block at all, and its player message had no saved Warp prompt. In contrast, earlier completed requests did contain their saved Warp blocks. The local host's interceptor setting is ten seconds; its current worker context does not supply interceptorDeadlineAt, while Warp's old fallback allowed up to twelve seconds for interpretation after other work. A timed-out interceptor can therefore lose both mechanical preparation and the narrator boundary.
+
+Warp now budgets eight seconds from interceptor entry on that host and reserves 1.5 seconds to publish its prompt and unresolved status. A runtime test with a deliberately non-returning helper completes the interception in 6.5 seconds, retains aid/preparation guidance, saves the current prompt and spends nothing. Explicit smaller host deadlines still constrain the budget. This does not make the model faster, prove every provider is reliable, or complete original-card acceptance testing.

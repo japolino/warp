@@ -16421,6 +16421,7 @@ async function livingIntercept(messages, ctx) {
     const history = await getMessages(ctx.chatId);
     return cachedInjection(messages, ctx, history, worldOf(history), null, false);
   }
+  const deadline = Math.min(ctx.interceptorDeadlineAt ?? Infinity, Date.now() + 8000);
   const active = started.get(ctx.chatId);
   const controller = new AbortController;
   ctx.signal?.addEventListener("abort", () => controller.abort(), { once: true });
@@ -16468,7 +16469,7 @@ async function livingIntercept(messages, ctx) {
             nativeRead = await readDecision(settings.decisionConnectionId, `State:
 ${worldPacket(world, last.content)}
 Scene:
-${contextText(history.slice(-3))}`, last.content, controller.signal, ctx.userId, Math.max(50, Math.min(3500, (ctx.interceptorDeadlineAt || Date.now() + 12500) - Date.now() - 500)), world.present);
+${contextText(history.slice(-3))}`, last.content, controller.signal, ctx.userId, Math.max(50, Math.min(3500, deadline - Date.now() - 1500)), world.present);
           } catch {}
         }
         if (nativeRead?.requiresPreparation) {
@@ -16502,7 +16503,7 @@ ${JSON.stringify(definitionInput?.sources ?? [])}
 State:
 ${worldPacket(world, last.content)}
 Scene:
-${contextText(recovery?.pending ? recovery.messages : history.slice(-3))}`, ctx.userId, controller, Math.max(50, Math.min(12000, (ctx.interceptorDeadlineAt || Date.now() + 12500) - Date.now() - 500)), mechanicalRead ? 8192 : 4096);
+${contextText(recovery?.pending ? recovery.messages : history.slice(-3))}`, ctx.userId, controller, Math.max(50, Math.min(12000, deadline - Date.now() - 1500)), mechanicalRead ? 8192 : 4096);
         if (!read || typeof read !== "object" || !("risky" in read) || !("contested" in read))
           throw new Error("Attempt read incomplete");
         const parsed = read;

@@ -3,7 +3,7 @@ import type { InterceptorContextDTO } from "lumiverse-spindle-types";
 import { makeHost, type HelperCall } from "../backend/test-host.js";
 import { getMessages } from "../backend/ledger.js";
 import { foldMechanics, MECHANICS_KEY } from "./mechanical-history.js";
-import { syncLiving, livingStarted, livingStopped, livingIntercept } from "./runtime.js";
+import { syncLiving, livingStarted, livingStopped, livingEnded, livingIntercept } from "./runtime.js";
 
 const h = makeHost("aid-runtime-owner", false);
 const opening = "Jo stands beside you within arm's reach in the clinic. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend to treat your burn.";
@@ -130,3 +130,25 @@ test("a card edit invalidates fresh local aid acceptance before any cost or cure
   expect(receipt?.status).toBe("blocked");
   expect(preparations).toBe(0);
 });
+
+
+test("a stalled interpretation on a host without a deadline still publishes aid and unresolved boundaries inside ten seconds", async () => {
+  const id = await chat(), before = await state(id);
+  h.helper = c => c.system.includes("Determine whether") ? new Promise(() => {}) : { changes: [] };
+  await h.say(id, 'I take a step closer. "Could you heal this cooking burn?"');
+  const user = h.messages(id).filter(m => m.is_user).at(-1)!;
+  const target = h.msg(id, `${id}-deadline-reply`, false, "");
+  livingStarted({ chatId: id, generationId: "no-host-deadline", targetMessageId: target.id });
+  const start = Date.now();
+  const prompt = await livingIntercept([{ role: "user", content: user.content, sourceMessageId: user.id }], { chatId: id, userId: h.userId, generationType: "normal" } as InterceptorContextDTO);
+  expect(Date.now() - start).toBeLessThan(9500);
+  const wire = prompt.map(m => m.content).join("\n");
+  expect(wire).toContain('"aidBoundary"');
+  expect(wire).toContain('"preparationBoundary"');
+  target.content = target.swipes[0] = "Jo waits while the offered treatment is clarified.";
+  await livingEnded({ chatId: id, generationId: "no-host-deadline", messageId: target.id }, h.userId);
+  expect((await state(id)).resources).toEqual(before.resources);
+  expect((await state(id)).conditions).toEqual(before.conditions);
+  expect((await state(id)).applied).toEqual([]);
+  expect((user.extra.spindle_metadata as any).warpLivingPrompt["0"].packet.aidBoundary).toBeTruthy();
+}, 12000);
