@@ -136,19 +136,37 @@ test("direct effects retain their actual cause on replay and a later environment
   await syncLiving(id, h.userId); expect(await state(id)).toEqual(after);
 });
 
-test("captured real helper reads adopt actual fire and regeneration while leaving romantic metaphors and past flames alone", async () => {
+test("captured helper reads distinguish active effects, confirmed inactive skills, metaphors and past flames", async () => {
   for (const fixture of helperScenes) {
     const id = `lingering-runtime-${++serial}`;
     h.chat(id, "", fixture.message.content);
     h.helper = () => JSON.parse(JSON.stringify(fixture.raw).replaceAll(fixture.message.id, `${id}-g`));
     await syncLiving(id, h.userId);
     const saved = await state(id), effects = saved.conditions.filter(c => c.periodic);
-    expect(saved.resources).toEqual([]); expect(saved.abilities).toBeUndefined();
+    expect(saved.resources).toEqual([]);
+    if (fixture.name !== "inactive-skill") expect(saved.abilities).toBeUndefined();
     if (fixture.name === "fire") {
       expect(effects).toHaveLength(1); expect(effects[0].periodic?.endingRule).toBe("extinguish");
     } else if (fixture.name === "recovery") {
       expect(effects).toHaveLength(1); expect(effects[0].periodic?.endingRule).toBe("recover");
       expect(saved.conditions.find(c => c.category === "physical_injury")?.severity).toBe("minor");
+    } else if (fixture.name === "inactive-skill") {
+      expect(saved.abilities).toHaveLength(1); expect(effects).toEqual([]);
+      expect(saved.applied).toEqual([]); expect(saved.clocks).toBeUndefined();
+      const ability = saved.abilities![0];
+      h.helper = c => c.system.includes("Determine whether") ? { risky: false, contested: false, mechanicalActions: c.user.includes('"content":"I wait."') ? [{ kind: "wait", quote: "I wait." }] : [{ kind: "ability", ability: ability.id, target: "you", quote: "I activate Spring Tide." }] } : { changes: [] };
+      await h.say(id, "I activate Spring Tide."); await h.generate(id, "Spring Tide begins its gentle continuous recovery.");
+      const active = await state(id);
+      expect(active.conditions.filter(c => c.periodic)).toHaveLength(1);
+      expect(active.conditions.find(c => c.category === "physical_injury")?.severity).toBe("minor");
+      await h.say(id, "How does my arm look?"); await h.generate(id, "The small burn still needs the next supported recovery pulse.");
+      expect((await state(id)).conditions).toEqual(active.conditions);
+      await h.say(id, "I wait."); const healed = await h.generate(id, "The recorded recovery pulse completes; your routine burn has healed.");
+      expect((healed.target.extra.spindle_metadata as any)[MECHANICS_KEY]["0"].receipt.engine).toBe(9);
+      expect((await state(id)).conditions).toEqual([]);
+      expect((await state(id)).resources).toEqual([]);
+      const completed = await state(id); await syncLiving(id, h.userId); expect(await state(id)).toEqual(completed);
+      continue;
     } else expect(saved.conditions).toEqual([]);
     await syncLiving(id, h.userId); expect(await state(id)).toEqual(saved);
   }

@@ -205,5 +205,99 @@
         }
       ]
     }
+  },
+  {
+    "name": "inactive-skill",
+    "message": {
+      "id": "effect-public-probe-4-g",
+      "role": "narrator",
+      "content": "Spring Tide is your innate skill: when activated, it continuously and gently regenerates routine physical injuries until they are healed. Your small cooking burn remains untouched. Spring Tide is currently inactive while you and Jo discuss it; no healing has begun."
+    },
+    "raw": {
+      "scene": {
+        "place": "traveler discussion",
+        "present": [
+          "Jo"
+        ],
+        "message": "effect-public-probe-4-g",
+        "quote": "Spring Tide is currently inactive while you and Jo discuss it"
+      },
+      "mechanicalObservations": [
+        {
+          "kind": "entity",
+          "name": "Jo",
+          "entityKind": "person",
+          "present": true,
+          "status": "active",
+          "message": "effect-public-probe-4-g",
+          "quote": "while you and Jo discuss it"
+        },
+        {
+          "kind": "condition",
+          "id": "small_cooking_burn",
+          "owner": "you",
+          "name": "Small cooking burn",
+          "category": "physical_injury",
+          "severity": "minor",
+          "recovery": "routine",
+          "hinders": [],
+          "blocks": [],
+          "helps": [],
+          "ending": "healed",
+          "message": "effect-public-probe-4-g",
+          "quote": "Your small cooking burn remains untouched."
+        }
+      ],
+      "abilityDefinitions": [
+        {
+          "owner": "you",
+          "name": "Spring Tide",
+          "description": "Continuously and gently regenerates routine physical injuries until they are healed.",
+          "approach": "concentration",
+          "target": "self",
+          "costs": [],
+          "requires": [],
+          "effects": [
+            {
+              "kind": "periodic",
+              "target": "self",
+              "name": "Spring Tide",
+              "untilCleared": true,
+              "endingRule": "recover",
+              "cadence": "owner_action",
+              "pulse": {
+                "kind": "mend",
+                "impact": "minor"
+              }
+            }
+          ],
+          "unsupported": [],
+          "message": "effect-public-probe-4-g",
+          "quote": "Spring Tide is your innate skill: when activated, it continuously and gently regenerates routine physical injuries until they are healed."
+        }
+      ],
+      "changes": [
+        {
+          "op": "put",
+          "id": "ability_spring_tide",
+          "kind": "ability",
+          "subject": "you",
+          "text": "Spring Tide gently regenerates routine physical injuries when activated.",
+          "status": "open",
+          "message": "effect-public-probe-4-g",
+          "quote": "Spring Tide is your innate skill: when activated, it continuously and gently regenerates routine physical injuries"
+        },
+        {
+          "op": "put",
+          "id": "injury_small_cooking_burn",
+          "kind": "fact",
+          "subject": "you",
+          "text": "Has a small cooking burn that remains unhealed.",
+          "status": "open",
+          "message": "effect-public-probe-4-g",
+          "quote": "Your small cooking burn remains untouched."
+        }
+      ]
+    }
   }
 ]
