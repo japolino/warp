@@ -153,3 +153,25 @@ test("captured real helper reads adopt actual fire and regeneration while leavin
     await syncLiving(id, h.userId); expect(await state(id)).toEqual(saved);
   }
 });
+
+test("a later scene read cannot turn unresolved activation prose into a free ongoing effect", async () => {
+  const id = `lingering-runtime-${++serial}`, opening = "You sit on a shaded bench. You have a small cooking burn.";
+  h.chat(id, "", opening);
+  h.helper = c => {
+    if (c.system.includes("Determine whether")) return { risky: false, contested: false, mechanicalActions: [{ kind: "ability", ability: "Spring Tide", target: "you", quote: "I activate Spring Tide." }] };
+    const latest = h.messages(id).at(-1)!;
+    return { changes: [], mechanicalObservations: latest.content.includes("invocation") ? [{ kind: "periodic", owner: "you", name: "Spring Tide", message: latest.id, quote: latest.content, effect: { kind: "periodic", target: "self", name: "Spring Tide", endingRule: "recover", cadence: "owner_action", pulse: { kind: "mend", impact: "minor" } } }] : [] };
+  };
+  await syncLiving(id, h.userId); await h.say(id, "I activate Spring Tide.");
+  const target = h.msg(id, `${id}-reply`, false, ""), generationId = `${id}-generation`;
+  await h.emit("GENERATION_STARTED", { chatId: id, generationId, targetMessageId: target.id, generationType: "normal" });
+  const prompt = await livingIntercept((await getMessages(id)).filter(m => m.content).map(m => ({ role: m.role, content: m.content, sourceMessageId: m.id })), { chatId: id, userId: h.userId, generationType: "normal" } as InterceptorContextDTO);
+  expect(prompt.map(m => m.content).join("\n")).toContain('"status":"blocked"');
+  target.content = "You focus inward toward the invocation of Spring Tide."; target.swipes[0] = target.content;
+  await h.emit("GENERATION_ENDED", { chatId: id, generationId, messageId: target.id });
+  const after = await state(id);
+  expect(after.conditions).toEqual([]); expect(after.resources).toEqual([]); expect(after.applied).toEqual([]);
+  expect(h.helperCalls.at(-1)!.user).toContain('"status":"blocked"');
+  expect(h.helperCalls.at(-1)!.user).toContain("Preparation for this reply");
+  await syncLiving(id, h.userId); expect(await state(id)).toEqual(after);
+});

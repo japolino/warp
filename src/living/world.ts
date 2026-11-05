@@ -1,3 +1,5 @@
+import { ROOT, nextPath, rawPathsOf } from "./story-path.js";
+export { pathOf, pathsOf, rawPathOf, rawPathsOf } from "./story-path.js";
 import { hasLingering, isLingering } from "./lingering.js";
 import { activePracticeTracks } from "./growth.js";
 import { revision } from "../shared/revision.js";
@@ -37,18 +39,7 @@ export const text = (v: unknown, limit = 240): string => {
 };
 const obj = (v: unknown): v is { [key: string]: unknown } => !!v && typeof v === "object" && !Array.isArray(v);
 const kinds = new Set<Kind>(["fact", "possession", "knowledge", "commitment", "situation", "motive", "ability"]);
-const ROOT = "warp-living-v1";
-const nextPath = (path: string, m: Message) => revision([path, m.id, m.swipe_id ?? 0, storyContent(m.content)]);
-export function rawPathOf(messages: Message[]): string { return messages.reduce((path, m) => revision([path, m.id, m.swipe_id ?? 0, m.content]), ROOT); }
-export function rawPathsOf(messages: Message[]): Map<string, string> {
-  let path = ROOT;
-  return new Map(messages.map(m => { path = revision([path, m.id, m.swipe_id ?? 0, m.content]); return [m.id, path]; }));
-}
-export function pathOf(messages: Message[]): string { return messages.reduce(nextPath, ROOT); }
-export function pathsOf(messages: Message[]): Map<string, string> {
-  let path = ROOT;
-  return new Map(messages.map(m => { path = nextPath(path, m); return [m.id, path]; }));
-}
+
 
 function evidence(v: unknown, messages: Message[]): Evidence | null {
   if (!obj(v)) return null;
