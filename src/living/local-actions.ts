@@ -70,6 +70,7 @@ export function readLocalAid(content: string, world: World, history: Message[]):
   const flat = storyReadContent(narrator).replace(/\s+/g, " "), end = flat.indexOf(offer.source.quote) + offer.source.quote.length;
   if (flat.slice(end).includes("?")) return; // A later question can change what a bare yes means.
   const op: AidOperation = { kind: accept ? "accept_aid" : "decline_aid", offer: offer.id, version: offer.version };
+  if (accept && offer.work && !offer.agreement) return { risky: false, contested: false, approach: "other", mechanicalActions: [] };
   if (prepareMechanical(state, "local-aid-preview", "you", [op]).status !== "ready") return;
   return { risky: false, contested: false, approach: "other", mechanicalActions: [{ ...op, quote: plain }] };
 }

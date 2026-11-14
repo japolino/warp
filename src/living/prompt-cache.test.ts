@@ -357,3 +357,23 @@ test("capturing a source view changes no prior prompt bytes, and corrected remem
  expect(current.at(-1)!.content).toContain('"remove":["jacket"]');
  expect((first.metadata![PROMPT_KEY] as any)["0"].renderings).toHaveLength(1);
 });
+
+test("barter acceptance, progress and one consumed service append state without rewriting an older Warp block", () => {
+  const first = msg("1", true, "What do you need?"), history = [msg("0", false, "Jo waits in the clinic."), first];
+  store(history, first, "At the clinic").packet.mechanics = { agreements: [] };
+  const original = publish(history, first);
+  history.push(msg("2", false, "Jo offers Mend in exchange for work."));
+  const yes = msg("3", true, "Yes, please."); history.push(yes);
+  const accepted = store(history, yes, "At the clinic");
+  accepted.packet.serviceBoundary = "Accepting the work does not execute treatment.";
+  accepted.packet.mechanics = { agreements: [{ id: "work", owner: "you", requirements: [{ id: "steps" }, { id: "basin" }], service: { offer: "aid", name: "Mend" } }] };
+  const agreed = publish(history, yes); expect(agreed.slice(0, original.length)).toEqual(original);
+  expect(agreed.at(-1)!.content).toContain('"serviceBoundary"'); expect(agreed.at(-1)!.content).toContain('"service":{"offer":"aid"');
+  history.push(msg("4", false, "Jo treats the burn after the agreed work and acceptance."));
+  const next = msg("5", true, "How is my arm?"); history.push(next);
+  const consumed = store(history, next, "At the clinic"); consumed.packet.serviceBoundary = accepted.packet.serviceBoundary;
+  consumed.packet.mechanics = structuredClone(accepted.packet.mechanics);
+  consumed.packet.mechanics.agreements[0].service.used = { action: "one-treatment" };
+  const paid = publish(history, next); expect(paid.slice(0, agreed.length)).toEqual(agreed);
+  expect(paid.at(-1)!.content).toContain('"used":{"action":"one-treatment"}');
+});

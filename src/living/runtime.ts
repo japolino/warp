@@ -8,7 +8,7 @@ import { savedChecks } from "./check-history.js";
 import { EXPLORATION_INSTRUCTIONS, currentSite, evidenceIndex } from "./exploration.js";
 import { PROMPT_KEY, promptSnapshot, replayPrompt, preparePrompt, type PromptSnapshot } from "./prompt-cache.js";
 import { readDecision } from "./decisions.js";
-import { emptyMechanics, hasMechanics, applyObservations, readMechanicalObservations, readMechanicalPlan, prepareMechanical, prepareExchange, conditionInfluence, mechanicalNotes, receiptPacket, MechanicalPlanError, APPROACHES, type Approach, type MechanicalOperation, type MechanicalReceipt, type MechanicalRecord, type MechanicalState, type Observation } from "./mechanics.js";
+import { emptyMechanics, hasMechanics, applyObservations, readMechanicalObservations, readServiceObservations, needsServiceRead, readMechanicalPlan, prepareMechanical, prepareExchange, conditionInfluence, mechanicalNotes, receiptPacket, MechanicalPlanError, APPROACHES, type Approach, type MechanicalOperation, type MechanicalReceipt, type MechanicalRecord, type MechanicalState, type Observation } from "./mechanics.js";
 import { MECHANICS_KEY, mechanicalRecordOf, foldMechanics } from "./mechanical-history.js";
 import { ABILITY_INSTRUCTIONS, abilitySummary, definitionSource, sourceMessages, readAbilityDefinitions, type DefinitionSource } from "./abilities.js";
 import { ENCOUNTER_INSTRUCTIONS, actorName } from "./encounters.js";
@@ -305,8 +305,9 @@ export async function syncLiving(chatId: string, userId?: string, decision?: Dec
       const observed = [...modelObserved, ...positioned, ...sceneParticipants(changes.scene, applyObservations(mechanicalBefore, [...modelObserved, ...positioned]), messages, playerName, Array.isArray(rawObserved) && rawObserved.some(row => ["periodic", "buildup", "aid_offer"].includes(row?.kind)))];
       const definitions = readAbilityDefinitions((raw as { abilityDefinitions?: unknown }).abilityDefinitions, applyObservations(mechanicalBefore, observed), messages, sources, playerName);
       const prepared: Observation[] = [...observed, ...definitions.map(value => ({ kind: "ability" as const, value }))];
-      const lessons = Array.isArray(rawObserved) ? readMechanicalObservations(rawObserved.slice(0, 24).filter(row => ["practice", "buildup", "periodic", "aid_offer"].includes(row?.kind)), applyObservations(mechanicalBefore, prepared), messages, playerName) : [];
-      const observations: Observation[] = [...prepared, ...lessons];
+      const lessons = Array.isArray(rawObserved) ? readMechanicalObservations(rawObserved.slice(0, 24).filter(row => ["practice", "buildup", "periodic", ...(!needsServiceRead(rawObserved, mechanicalBefore) ? ["aid_offer"] : [])].includes(row?.kind)), applyObservations(mechanicalBefore, prepared), messages, playerName) : [];
+      const services = readServiceObservations(rawObserved, applyObservations(mechanicalBefore, [...prepared, ...lessons]), messages, playerName);
+      const observations: Observation[] = [...prepared, ...lessons, ...services];
       const progressNotes = [...aidNotes(mechanicalBefore, applyObservations(mechanicalBefore, observations)), ...growthNotes(mechanicalBefore, applyObservations(mechanicalBefore, observations)), ...agreementNotes(mechanicalBefore, applyObservations(mechanicalBefore, observations))];
       if (progressNotes.length) changes.notes = progressNotes;
       if (observations.length) await saveMechanical(chatId, last, prefix, {
@@ -512,8 +513,9 @@ REQUIRED preparation pass: always return mechanicalObservations:[] alongside mec
           const observed = [...participants, ...modelObserved, ...sceneParticipants(scene, applyObservations(ready, modelObserved), history, definitionInput.player)];
           const definitions = readAbilityDefinitions(parsed.abilityDefinitions, applyObservations(base, observed), history.slice(-14), definitionInput.sources, definitionInput.player);
           const prepared: Observation[] = [...observed, ...definitions.map(value => ({ kind: "ability" as const, value }))];
-          const lessons = Array.isArray(parsed.mechanicalObservations) ? readMechanicalObservations(parsed.mechanicalObservations.slice(0, 24).filter(row => ["practice", "buildup", "periodic", "aid_offer"].includes(row?.kind)), applyObservations(base, prepared), history, definitionInput.player) : [];
-          const observations: Observation[] = [...prepared, ...lessons];
+          const lessons = Array.isArray(parsed.mechanicalObservations) ? readMechanicalObservations(parsed.mechanicalObservations.slice(0, 24).filter(row => ["practice", "buildup", "periodic", ...(!needsServiceRead(parsed.mechanicalObservations, base) ? ["aid_offer"] : [])].includes(row?.kind)), applyObservations(base, prepared), history, definitionInput.player) : [];
+          const services = readServiceObservations(parsed.mechanicalObservations, applyObservations(base, [...prepared, ...lessons]), history, definitionInput.player);
+          const observations: Observation[] = [...prepared, ...lessons, ...services];
           if (observations.length) {
             const previous = mechanicalRecordOf(last);
             const record: MechanicalRecord = { version: 1, path: pathOf(history.slice(0, -1)), text: storyRevision(last.content), observations: [...(previous?.observations ?? []), ...observations], sources: [...(previous?.sources ?? []), ...usedSources(observations, definitionInput.sources)].filter((s, i, all) => all.findIndex(x => x.id === s.id) === i) };

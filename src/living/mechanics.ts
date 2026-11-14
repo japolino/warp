@@ -71,7 +71,7 @@ export interface MechanicalReceipt {
   status: "ready" | "blocked"; reason?: string;
   unresolved?: true;
   learning?: LearningWitness;
-  engine?: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11; result?: string; beats?: EncounterBeat[]; responses?: ResponsePlan[]; place?: string;
+  engine?: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12; result?: string; beats?: EncounterBeat[]; responses?: ResponsePlan[]; place?: string;
 }
 export interface MechanicalRecord { version: 1; path: string; text: string; receipt?: MechanicalReceipt; observations: Observation[]; sources?: DefinitionSource[]; }
 export const emptyMechanics = (): MechanicalState => ({ version: 1, resources: [], items: [], conditions: [], applied: [] });
@@ -220,6 +220,26 @@ export function readMechanicalObservations(raw: unknown, before: MechanicalState
     if (observation) { out.push(observation); observe(working, observation); }
   }
   return out;
+}
+
+/** Service dependencies may arrive in one delayed read. Repeat only this bounded, idempotent subset. */
+export function needsServiceRead(raw: unknown, before: MechanicalState): boolean {
+  return !!(before.agreements?.some(a => a.service) || Array.isArray(raw) && raw.some(row => row?.kind === "agreement" && row.service || row?.kind === "aid_offer" && (row.work || row.agreement)));
+}
+export function readServiceObservations(raw: unknown, before: MechanicalState, messages: Message[], player?: string, historical = false): Observation[] {
+  if (!Array.isArray(raw) || !needsServiceRead(raw, before)) return [];
+  const positions = new Map(messages.map((m, i) => [m.id, i]));
+  const rank = (row: any) => row.kind === "aid_offer" && row.work ? 0 : row.kind === "agreement" ? 1 : row.kind === "agreement_progress" ? 2 : row.kind === "aid_offer" ? 3 : 4;
+  const rows = raw.filter(row => row && ["agreement", "agreement_progress", "agreement_cancel", "reward_ready", "aid_offer", "aid_end"].includes(row.kind)).slice(0, 24)
+    .sort((a, b) => (positions.get(a.message) ?? Infinity) - (positions.get(b.message) ?? Infinity) || rank(a) - rank(b));
+  let state = before;
+  const observations: Observation[] = [];
+  for (let pass = 0; pass < 2; pass++) {
+    const next = readMechanicalObservations(rows, state, messages, player, historical);
+    if (!next.length) break;
+    observations.push(...next); state = applyObservations(state, next);
+  }
+  return observations;
 }
 
 function observe(state: MechanicalState, o: Observation) {
@@ -480,10 +500,10 @@ function execute(before: MechanicalState, actor: string, operations: MechanicalO
 }
 
 /** The exchange is one bounded receipt. A response cannot enqueue another response. */
-function executeExchange(before: MechanicalState, actor: string, operations: MechanicalOperation[], id: string, responses: ResponsePlan[], place?: string, resolver: 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 = 3, learning?: LearningWitness) {
+function executeExchange(before: MechanicalState, actor: string, operations: MechanicalOperation[], id: string, responses: ResponsePlan[], place?: string, resolver: 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 = 3, learning?: LearningWitness) {
   if (resolver >= 10 && operations.some(op => op.kind === "accept_aid" || op.kind === "decline_aid")) {
     if (responses.length || learning) throw Error("Aid permission opens only its offered action");
-    return executeAid(before, actor, operations, (state, who, operation) => execute(state, who, [operation], id, 2, true, true, true, true, true, true, true), resolver >= 11);
+    return executeAid(before, actor, operations, (state, who, operation) => execute(state, who, [operation], id, 2, true, true, true, true, true, true, true), resolver >= 11, resolver >= 12 ? id : undefined);
   }
   if (!Array.isArray(responses) || responses.length > MAX_RESPONSES || (responses.length && !operations.length)) throw new Error("Invalid exchange opportunity");
   if (resolver >= 8 && operations.length && operations.every(op => op.kind === "unlink") && responses.length) throw Error("Withdrawing permission alone opens no exchange opportunity");
@@ -532,8 +552,12 @@ function executeExchange(before: MechanicalState, actor: string, operations: Mec
   return resolved;
 }
 
-function resolverFor(before: MechanicalState, operations: MechanicalOperation[], responses: ResponsePlan[], learning?: LearningWitness): 5 | 6 | 7 | 8 | 9 | 10 | 11 {
-  if (operations.some(op => op.kind === "accept_aid" || op.kind === "decline_aid")) return operations.some(op => (op.kind === "accept_aid" || op.kind === "decline_aid") && before.aidOffers?.some(o => o.id === op.offer && (o.fee || o.sourceRange))) ? 11 : 10;
+function resolverFor(before: MechanicalState, operations: MechanicalOperation[], responses: ResponsePlan[], learning?: LearningWitness): 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 {
+  const aid = operations.filter((op): op is AidOperation => op.kind === "accept_aid" || op.kind === "decline_aid");
+  if (aid.length) {
+    const offers = aid.flatMap(op => before.aidOffers?.filter(o => o.id === op.offer) ?? []);
+    return offers.some(o => o.work || o.agreement) ? 12 : offers.some(o => o.fee || o.sourceRange) ? 11 : 10;
+  }
   const relevant = [...operations, ...(Array.isArray(responses) ? responses.flatMap(p => p?.action ? [p.action] : []) : [])];
   if (hasLingering(before) || relevant.some(op => op.kind === "ability" && before.abilities?.some(a => a.id === op.ability && a.effects.some(isLingering)))) return 9;
   const opposedTechnique = Array.isArray(responses) && responses.some(p => p && typeof p.actor === "string" && p.action && p.assessment
@@ -548,7 +572,7 @@ export function prepareMechanical(before: MechanicalState, id: string, actor: st
 export function prepareExchange(before: MechanicalState, id: string, actor: string, operations: MechanicalOperation[], responses: ResponsePlan[], context = "", place?: string, learning?: LearningWitness): MechanicalReceipt {
   return prepare(before, id, actor, operations, context, resolverFor(before, operations, responses, learning), responses, place, learning);
 }
-function prepare(before: MechanicalState, id: string, actor: string, operations: MechanicalOperation[], context: string, engine: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11, responses?: ResponsePlan[], place?: string, learning?: LearningWitness): MechanicalReceipt {
+function prepare(before: MechanicalState, id: string, actor: string, operations: MechanicalOperation[], context: string, engine: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12, responses?: ResponsePlan[], place?: string, learning?: LearningWitness): MechanicalReceipt {
   place = place || undefined; responses ??= [];
   const base = revision(before), input = revision(engine >= 8 ? [actor, operations, context, responses, place, learning] : engine === 2 ? [actor, operations, context] : [actor, operations, context, responses, place]);
   try {
@@ -556,7 +580,7 @@ function prepare(before: MechanicalState, id: string, actor: string, operations:
     if (learning && learning.seed !== context) throw Error("Learning seed differs from the prepared action");
     const previous = before.applied.find(a => a.id === id);
     if (previous) throw new Error(previous.input === input ? "Action already applied" : "Action id reused for different input");
-    const executed = engine >= 3 ? executeExchange(before, actor, operations, id, responses, place, engine as 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11, learning) : execute(before, actor, operations, id, 2);
+    const executed = engine >= 3 ? executeExchange(before, actor, operations, id, responses, place, engine as 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12, learning) : execute(before, actor, operations, id, 2);
     return { version: 1, engine, id, input, base, actor, operations: structuredClone(operations), ...(learning ? { learning: structuredClone(learning) } : {}), ...(engine >= 3 ? { responses: structuredClone(responses), ...(place ? { place } : {}) } : {}), changes: executed.changes, beats: executed.beats, result: revision(executed.state), status: "ready" };
   } catch (e) {
     return { version: 1, engine, id, input, base, actor, operations: structuredClone(operations), changes: [], status: "blocked", reason: e instanceof Error ? e.message : "Mechanical action unavailable", ...(e instanceof MechanicalKnowledgeError ? { unresolved: true as const } : {}) };
@@ -567,10 +591,10 @@ export function commitMechanical(before: MechanicalState, receipt: MechanicalRec
   const existing = before.applied.find(a => a.id === receipt.id);
   if (existing) { if (existing.input !== receipt.input) throw new Error("Action id conflict"); return before; }
   if (receipt.version !== 1 || receipt.status !== "ready" || receipt.base !== revision(before)) throw new Error("Mechanical receipt is blocked or stale");
-  if (receipt.engine !== undefined && receipt.engine !== 2 && receipt.engine !== 3 && receipt.engine !== 4 && receipt.engine !== 5 && receipt.engine !== 6 && receipt.engine !== 7 && receipt.engine !== 8 && receipt.engine !== 9 && receipt.engine !== 10 && receipt.engine !== 11) throw new Error("Unsupported mechanical resolver");
+  if (receipt.engine !== undefined && receipt.engine !== 2 && receipt.engine !== 3 && receipt.engine !== 4 && receipt.engine !== 5 && receipt.engine !== 6 && receipt.engine !== 7 && receipt.engine !== 8 && receipt.engine !== 9 && receipt.engine !== 10 && receipt.engine !== 11 && receipt.engine !== 12) throw new Error("Unsupported mechanical resolver");
   if (receipt.learning && (receipt.engine ?? 1) < 8) throw Error("Learning requires the progression resolver");
   if ((receipt.engine ?? 1) < 3 && receipt.responses?.length) throw new Error("Responses require the exchange resolver");
-  const { state, changes, beats } = (receipt.engine ?? 1) >= 3 ? executeExchange(before, receipt.actor, receipt.operations, receipt.id, receipt.responses ?? [], receipt.place, receipt.engine as 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11, receipt.learning) : execute(before, receipt.actor, receipt.operations, receipt.id, receipt.engine ?? 1);
+  const { state, changes, beats } = (receipt.engine ?? 1) >= 3 ? executeExchange(before, receipt.actor, receipt.operations, receipt.id, receipt.responses ?? [], receipt.place, receipt.engine as 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12, receipt.learning) : execute(before, receipt.actor, receipt.operations, receipt.id, receipt.engine ?? 1);
   if (revision(changes) !== revision(receipt.changes)) throw new Error("Mechanical receipt does not match its operations");
   if (receipt.engine !== undefined && (revision(state) !== receipt.result || revision(beats) !== revision(receipt.beats))) throw new Error("Mechanical encounter receipt does not match its resolution");
   state.applied.push({ id: receipt.id, input: receipt.input });
@@ -719,7 +743,8 @@ export function mechanicalNotes(receipt?: MechanicalReceipt): string[] {
   return receipt.changes.filter(c => c.kind !== "growth" || c.after && "familiar" in c.after && c.after.familiar && !(c.before && "familiar" in c.before && c.before.familiar)).filter(c => (c.kind === "stock" || c.kind === "cost_link" || c.kind === "buildup" || c.kind === "aid_offer") && receipt.actor === "you" || (c.after && "owner" in c.after && c.after.owner === "you") || (c.before && "owner" in c.before && c.before.owner === "you")).map(c => {
     const value = c.after;
     if (!value) return c.kind === "condition" && c.before && "name" in c.before ? `${c.before.name}: cleared` : "";
-    if (c.kind === "aid_offer" && "status" in value) return value.status === "used" ? `${value.name}: received` : value.status === "withdrawn" ? "Aid declined" : "";
+    if (c.kind === "aid_offer" && "status" in value) return value.status === "used" ? `${value.name}: received${"paid" in value && value.paid ? ` · paid ${value.paid.amount} ${value.paid.asset}` : ""}` : value.status === "withdrawn" ? "Aid declined" : "";
+    if (c.kind === "agreement" && "service" in value && value.service?.used) return ""; // The aid receipt already names the received service.
     if ("threshold" in value) return `${value.name}: ${value.current} / ${value.threshold}`;
     if (c.kind === "condition" && "periodic" in value && value.periodic) return value.periodic.remaining === undefined ? `${value.name}: ${value.ending}` : `${value.name}: ${value.periodic.remaining} actions left`;
     if (c.kind === "cost_link" && "enabled" in value && !value.enabled) return "Shared resource access withdrawn";

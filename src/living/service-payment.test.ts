@@ -185,7 +185,7 @@ test("explicit free terms replay with their new reader while historical no-fee o
     const row = { kind: "aid_offer", actor: "Jo", target: "you", ability: "Mend", uncontested: true, unsupported: [], message: opening.id, quote: opening.content };
     const observations = readMechanicalObservations([row], stocked, [opening]);
     expect(observations).toHaveLength(1); const value = (observations[0] as any).value;
-    expect(value.unsupported).toEqual([]); expect(value.termsVersion).toBe(1);
+    expect(value.unsupported).toEqual([]); expect(value.termsVersion).toBe(2);
     expect(readMechanicalObservations([{ kind: "aid_offer", ...value, ...value.source }], stocked, [opening], undefined, true)).toEqual(observations);
     if (phrase === "at no fee") {
       const { termsVersion, ...old } = value;

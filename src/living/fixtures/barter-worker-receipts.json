@@ -1,0 +1,1932 @@
+{
+  "origin": "Actual Lumiverse worker and configured gemini-3.8-flash, public disposable scenarios, 2026-11-13. Fixed narrator replies, actual helper extraction and foreground work assessment. No original-card/narrator compliance claim.",
+  "cases": [
+    {
+      "scene": "fantasy",
+      "messages": [
+        {
+          "id": "opening",
+          "is_user": false,
+          "content": "Jo is beside you within arm's reach in the clinic. Jo has 10 Focus. Jo's Mend gently treats routine physical injury at touch range and costs 2 Focus. You have a small routine cooking burn and carry 12 coins. Jo offers Mend for five coins if you sweep the chapel steps and wash the basin.",
+          "index_in_chat": 0,
+          "swipe_id": 0,
+          "metadata": {
+            "warpMechanics": {
+              "0": {
+                "version": 1,
+                "path": "warp-living-v1",
+                "text": "ad88cf77:5ac4cd69",
+                "observations": [
+                  {
+                    "kind": "entity",
+                    "value": {
+                      "id": "entity-bee4fa7c:b5c60136",
+                      "name": "Jo",
+                      "displayName": "Jo",
+                      "aliases": [],
+                      "entityKind": "person",
+                      "present": true,
+                      "status": "active",
+                      "source": {
+                        "message": "opening",
+                        "quote": "Jo is beside you within arm's reach in the clinic.",
+                        "sourceRevision": "ad88cf77:5ac4cd69"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "distance",
+                    "value": {
+                      "id": "distance-c3962d65:8aac587f",
+                      "from": "you",
+                      "to": "Jo",
+                      "band": "touch",
+                      "source": {
+                        "message": "opening",
+                        "quote": "Jo is beside you within arm's reach in the clinic.",
+                        "sourceRevision": "ad88cf77:5ac4cd69"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "resource",
+                    "value": {
+                      "id": "jo-focus",
+                      "owner": "Jo",
+                      "name": "Focus",
+                      "current": 10,
+                      "role": "effort",
+                      "source": {
+                        "message": "opening",
+                        "quote": "Jo has 10 Focus.",
+                        "sourceRevision": "ad88cf77:5ac4cd69"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "resource",
+                    "value": {
+                      "id": "sam-coins",
+                      "owner": "you",
+                      "name": "coins",
+                      "current": 12,
+                      "role": "money",
+                      "source": {
+                        "message": "opening",
+                        "quote": "carry 12 coins.",
+                        "sourceRevision": "ad88cf77:5ac4cd69"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "condition",
+                    "value": {
+                      "id": "cooking-burn",
+                      "owner": "you",
+                      "name": "cooking burn",
+                      "hinders": [],
+                      "blocks": [],
+                      "helps": [],
+                      "ending": "treatment or natural healing",
+                      "category": "physical_injury",
+                      "severity": "minor",
+                      "recovery": "routine",
+                      "source": {
+                        "message": "opening",
+                        "quote": "You have a small routine cooking burn",
+                        "sourceRevision": "ad88cf77:5ac4cd69"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "ability",
+                    "value": {
+                      "id": "ability-599daf10:befb20c6",
+                      "version": 1,
+                      "owner": "Jo",
+                      "name": "Mend",
+                      "description": "gently treats routine physical injury",
+                      "approach": "concentration",
+                      "target": "other",
+                      "costs": [
+                        {
+                          "kind": "resource",
+                          "id": "jo-focus",
+                          "amount": 2
+                        }
+                      ],
+                      "effects": [
+                        {
+                          "kind": "mend",
+                          "target": "target",
+                          "impact": "minor"
+                        }
+                      ],
+                      "requires": [],
+                      "unsupported": [],
+                      "fingerprint": "555491ed:2bde2c27",
+                      "source": {
+                        "message": "opening",
+                        "quote": "Jo's Mend gently treats routine physical injury at touch range and costs 2 Focus.",
+                        "sourceRevision": "ad88cf77:5ac4cd69"
+                      },
+                      "sourceKind": "story"
+                    }
+                  },
+                  {
+                    "kind": "aid_offer",
+                    "value": {
+                      "id": "aid-c4dc5c01:7d563d01",
+                      "version": 1,
+                      "actor": "Jo",
+                      "target": "you",
+                      "ability": "ability-599daf10:befb20c6",
+                      "abilityVersion": 1,
+                      "name": "Mend",
+                      "status": "offered",
+                      "unsupported": [],
+                      "source": {
+                        "message": "opening",
+                        "quote": "Jo offers Mend for five coins if you sweep the chapel steps and wash the basin.",
+                        "sourceRevision": "ad88cf77:5ac4cd69"
+                      },
+                      "termsVersion": 2,
+                      "fee": {
+                        "kind": "resource",
+                        "id": "sam-coins",
+                        "amount": 5
+                      },
+                      "sourceRange": "touch",
+                      "work": [
+                        {
+                          "message": "opening",
+                          "quote": "sweep the chapel steps",
+                          "sourceRevision": "ad88cf77:5ac4cd69"
+                        },
+                        {
+                          "message": "opening",
+                          "quote": "wash the basin",
+                          "sourceRevision": "ad88cf77:5ac4cd69"
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "sources": []
+              }
+            }
+          }
+        },
+        {
+          "id": "player-1",
+          "is_user": true,
+          "content": "Yes, please.",
+          "index_in_chat": 1,
+          "swipe_id": 0,
+          "metadata": {}
+        },
+        {
+          "id": "reply-1",
+          "is_user": false,
+          "content": "Jo acknowledges your agreement. The work and treatment have not happened yet.",
+          "index_in_chat": 2,
+          "swipe_id": 0,
+          "metadata": {
+            "warpMechanics": {
+              "0": {
+                "version": 1,
+                "path": "11443a8b:242916f",
+                "text": "ab37913f:46d69549",
+                "observations": [
+                  {
+                    "kind": "agreement",
+                    "value": {
+                      "id": "agreement-c6487c88:64401940",
+                      "owner": "you",
+                      "name": "Mend for sweeping and washing",
+                      "source": {
+                        "message": "player-1",
+                        "quote": "Yes, please.",
+                        "sourceRevision": "1f9e84b2:a8959fc0"
+                      },
+                      "offer": {
+                        "message": "opening",
+                        "quote": "Jo offers Mend for five coins if you sweep the chapel steps and wash the basin.",
+                        "sourceRevision": "ad88cf77:5ac4cd69"
+                      },
+                      "from": "Jo",
+                      "requirements": [
+                        {
+                          "id": "requirement-dd11bda:49c78070",
+                          "text": "sweep the chapel steps",
+                          "source": {
+                            "message": "opening",
+                            "quote": "sweep the chapel steps",
+                            "sourceRevision": "ad88cf77:5ac4cd69"
+                          }
+                        },
+                        {
+                          "id": "requirement-6f99cd7e:84e1b104",
+                          "text": "wash the basin",
+                          "source": {
+                            "message": "opening",
+                            "quote": "wash the basin",
+                            "sourceRevision": "ad88cf77:5ac4cd69"
+                          }
+                        }
+                      ],
+                      "rewards": [],
+                      "unsupported": [],
+                      "service": {
+                        "offer": "aid-c4dc5c01:7d563d01",
+                        "version": 1,
+                        "actor": "Jo",
+                        "ability": "ability-599daf10:befb20c6",
+                        "abilityVersion": 1,
+                        "name": "Mend",
+                        "source": {
+                          "message": "opening",
+                          "quote": "Jo offers Mend for five coins if you sweep the chapel steps and wash the basin.",
+                          "sourceRevision": "ad88cf77:5ac4cd69"
+                        },
+                        "fee": {
+                          "kind": "resource",
+                          "id": "sam-coins",
+                          "amount": 5
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "kind": "entity",
+                    "value": {
+                      "id": "entity-bee4fa7c:b5c60136",
+                      "name": "Jo",
+                      "displayName": "Jo",
+                      "aliases": [],
+                      "entityKind": "person",
+                      "present": true,
+                      "status": "active",
+                      "source": {
+                        "message": "reply-1",
+                        "quote": "Jo acknowledges your agreement.",
+                        "sourceRevision": "ab37913f:46d69549"
+                      }
+                    }
+                  }
+                ],
+                "sources": []
+              }
+            }
+          }
+        },
+        {
+          "id": "player-2",
+          "is_user": true,
+          "content": "I sweep the chapel steps and wash the basin.",
+          "index_in_chat": 3,
+          "swipe_id": 0,
+          "metadata": {}
+        },
+        {
+          "id": "reply-2",
+          "is_user": false,
+          "content": "You finish sweeping the chapel steps and washing the basin. Jo inspects both and offers Mend as promised.",
+          "index_in_chat": 4,
+          "swipe_id": 0,
+          "metadata": {
+            "warpMechanics": {
+              "0": {
+                "version": 1,
+                "path": "3cc257da:c1773378",
+                "text": "be2862f2:10279222",
+                "observations": [
+                  {
+                    "kind": "agreement_progress",
+                    "value": {
+                      "agreement": "agreement-c6487c88:64401940",
+                      "requirement": "requirement-dd11bda:49c78070",
+                      "source": {
+                        "message": "reply-2",
+                        "quote": "You finish sweeping the chapel steps",
+                        "sourceRevision": "be2862f2:10279222"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "agreement_progress",
+                    "value": {
+                      "agreement": "agreement-c6487c88:64401940",
+                      "requirement": "requirement-6f99cd7e:84e1b104",
+                      "source": {
+                        "message": "reply-2",
+                        "quote": "and washing the basin.",
+                        "sourceRevision": "be2862f2:10279222"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "entity",
+                    "value": {
+                      "id": "entity-bee4fa7c:b5c60136",
+                      "name": "Jo",
+                      "displayName": "Jo",
+                      "aliases": [],
+                      "entityKind": "person",
+                      "present": true,
+                      "status": "active",
+                      "source": {
+                        "message": "reply-2",
+                        "quote": "Jo inspects both and offers Mend as promised.",
+                        "sourceRevision": "be2862f2:10279222"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "aid_offer",
+                    "value": {
+                      "id": "aid-c4dc5c01:7d563d01",
+                      "version": 2,
+                      "actor": "Jo",
+                      "target": "you",
+                      "ability": "ability-599daf10:befb20c6",
+                      "abilityVersion": 1,
+                      "name": "Mend",
+                      "status": "offered",
+                      "unsupported": [],
+                      "source": {
+                        "message": "reply-2",
+                        "quote": "Jo inspects both and offers Mend as promised.",
+                        "sourceRevision": "be2862f2:10279222"
+                      },
+                      "termsVersion": 2,
+                      "fee": {
+                        "kind": "resource",
+                        "id": "sam-coins",
+                        "amount": 5
+                      },
+                      "sourceRange": "touch",
+                      "agreement": "agreement-c6487c88:64401940"
+                    }
+                  }
+                ],
+                "sources": []
+              }
+            }
+          }
+        },
+        {
+          "id": "player-3",
+          "is_user": true,
+          "content": "Yes, please.",
+          "index_in_chat": 5,
+          "swipe_id": 0,
+          "metadata": {}
+        },
+        {
+          "id": "reply-3",
+          "is_user": false,
+          "content": "Jo receives five coins and uses Mend, treating your cooking burn.",
+          "index_in_chat": 6,
+          "swipe_id": 0,
+          "metadata": {
+            "warpMechanics": {
+              "0": {
+                "version": 1,
+                "path": "423ab382:c486c20e",
+                "text": "5db3c1ab:b3ab8d95",
+                "receipt": {
+                  "version": 1,
+                  "engine": 12,
+                  "id": "action-423ab382:c486c20e",
+                  "input": "c2534b5f:95bf1703",
+                  "base": "d81fa802:eccfabec",
+                  "actor": "you",
+                  "operations": [
+                    {
+                      "kind": "accept_aid",
+                      "offer": "aid-c4dc5c01:7d563d01",
+                      "version": 2
+                    }
+                  ],
+                  "responses": [],
+                  "changes": [
+                    {
+                      "kind": "resource",
+                      "id": "sam-coins",
+                      "before": {
+                        "id": "sam-coins",
+                        "owner": "you",
+                        "name": "coins",
+                        "current": 12,
+                        "role": "money",
+                        "source": {
+                          "message": "opening",
+                          "quote": "carry 12 coins.",
+                          "sourceRevision": "ad88cf77:5ac4cd69"
+                        }
+                      },
+                      "after": {
+                        "id": "sam-coins",
+                        "owner": "you",
+                        "name": "coins",
+                        "current": 7,
+                        "role": "money",
+                        "source": {
+                          "message": "opening",
+                          "quote": "carry 12 coins.",
+                          "sourceRevision": "ad88cf77:5ac4cd69"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "resource",
+                      "id": "jo-focus",
+                      "before": {
+                        "id": "jo-focus",
+                        "owner": "Jo",
+                        "name": "Focus",
+                        "current": 10,
+                        "role": "effort",
+                        "source": {
+                          "message": "opening",
+                          "quote": "Jo has 10 Focus.",
+                          "sourceRevision": "ad88cf77:5ac4cd69"
+                        }
+                      },
+                      "after": {
+                        "id": "jo-focus",
+                        "owner": "Jo",
+                        "name": "Focus",
+                        "current": 8,
+                        "role": "effort",
+                        "source": {
+                          "message": "opening",
+                          "quote": "Jo has 10 Focus.",
+                          "sourceRevision": "ad88cf77:5ac4cd69"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "condition",
+                      "id": "cooking-burn",
+                      "before": {
+                        "id": "cooking-burn",
+                        "owner": "you",
+                        "name": "cooking burn",
+                        "hinders": [],
+                        "blocks": [],
+                        "helps": [],
+                        "ending": "treatment or natural healing",
+                        "category": "physical_injury",
+                        "severity": "minor",
+                        "recovery": "routine",
+                        "source": {
+                          "message": "opening",
+                          "quote": "You have a small routine cooking burn",
+                          "sourceRevision": "ad88cf77:5ac4cd69"
+                        }
+                      },
+                      "after": null
+                    },
+                    {
+                      "kind": "agreement",
+                      "id": "agreement-c6487c88:64401940",
+                      "before": {
+                        "id": "agreement-c6487c88:64401940",
+                        "owner": "you",
+                        "name": "Mend for sweeping and washing",
+                        "source": {
+                          "message": "player-1",
+                          "quote": "Yes, please.",
+                          "sourceRevision": "1f9e84b2:a8959fc0"
+                        },
+                        "offer": {
+                          "message": "opening",
+                          "quote": "Jo offers Mend for five coins if you sweep the chapel steps and wash the basin.",
+                          "sourceRevision": "ad88cf77:5ac4cd69"
+                        },
+                        "from": "Jo",
+                        "requirements": [
+                          {
+                            "id": "requirement-dd11bda:49c78070",
+                            "text": "sweep the chapel steps",
+                            "source": {
+                              "message": "opening",
+                              "quote": "sweep the chapel steps",
+                              "sourceRevision": "ad88cf77:5ac4cd69"
+                            },
+                            "done": {
+                              "message": "reply-2",
+                              "quote": "You finish sweeping the chapel steps",
+                              "sourceRevision": "be2862f2:10279222"
+                            }
+                          },
+                          {
+                            "id": "requirement-6f99cd7e:84e1b104",
+                            "text": "wash the basin",
+                            "source": {
+                              "message": "opening",
+                              "quote": "wash the basin",
+                              "sourceRevision": "ad88cf77:5ac4cd69"
+                            },
+                            "done": {
+                              "message": "reply-2",
+                              "quote": "and washing the basin.",
+                              "sourceRevision": "be2862f2:10279222"
+                            }
+                          }
+                        ],
+                        "rewards": [],
+                        "unsupported": [],
+                        "service": {
+                          "offer": "aid-c4dc5c01:7d563d01",
+                          "version": 1,
+                          "actor": "Jo",
+                          "ability": "ability-599daf10:befb20c6",
+                          "abilityVersion": 1,
+                          "name": "Mend",
+                          "source": {
+                            "message": "opening",
+                            "quote": "Jo offers Mend for five coins if you sweep the chapel steps and wash the basin.",
+                            "sourceRevision": "ad88cf77:5ac4cd69"
+                          },
+                          "fee": {
+                            "kind": "resource",
+                            "id": "sam-coins",
+                            "amount": 5
+                          }
+                        }
+                      },
+                      "after": {
+                        "id": "agreement-c6487c88:64401940",
+                        "owner": "you",
+                        "name": "Mend for sweeping and washing",
+                        "source": {
+                          "message": "player-1",
+                          "quote": "Yes, please.",
+                          "sourceRevision": "1f9e84b2:a8959fc0"
+                        },
+                        "offer": {
+                          "message": "opening",
+                          "quote": "Jo offers Mend for five coins if you sweep the chapel steps and wash the basin.",
+                          "sourceRevision": "ad88cf77:5ac4cd69"
+                        },
+                        "from": "Jo",
+                        "requirements": [
+                          {
+                            "id": "requirement-dd11bda:49c78070",
+                            "text": "sweep the chapel steps",
+                            "source": {
+                              "message": "opening",
+                              "quote": "sweep the chapel steps",
+                              "sourceRevision": "ad88cf77:5ac4cd69"
+                            },
+                            "done": {
+                              "message": "reply-2",
+                              "quote": "You finish sweeping the chapel steps",
+                              "sourceRevision": "be2862f2:10279222"
+                            }
+                          },
+                          {
+                            "id": "requirement-6f99cd7e:84e1b104",
+                            "text": "wash the basin",
+                            "source": {
+                              "message": "opening",
+                              "quote": "wash the basin",
+                              "sourceRevision": "ad88cf77:5ac4cd69"
+                            },
+                            "done": {
+                              "message": "reply-2",
+                              "quote": "and washing the basin.",
+                              "sourceRevision": "be2862f2:10279222"
+                            }
+                          }
+                        ],
+                        "rewards": [],
+                        "unsupported": [],
+                        "service": {
+                          "offer": "aid-c4dc5c01:7d563d01",
+                          "version": 1,
+                          "actor": "Jo",
+                          "ability": "ability-599daf10:befb20c6",
+                          "abilityVersion": 1,
+                          "name": "Mend",
+                          "source": {
+                            "message": "opening",
+                            "quote": "Jo offers Mend for five coins if you sweep the chapel steps and wash the basin.",
+                            "sourceRevision": "ad88cf77:5ac4cd69"
+                          },
+                          "fee": {
+                            "kind": "resource",
+                            "id": "sam-coins",
+                            "amount": 5
+                          },
+                          "used": {
+                            "action": "action-423ab382:c486c20e"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "kind": "aid_offer",
+                      "id": "aid-c4dc5c01:7d563d01",
+                      "before": {
+                        "id": "aid-c4dc5c01:7d563d01",
+                        "version": 2,
+                        "actor": "Jo",
+                        "target": "you",
+                        "ability": "ability-599daf10:befb20c6",
+                        "abilityVersion": 1,
+                        "name": "Mend",
+                        "status": "offered",
+                        "unsupported": [],
+                        "source": {
+                          "message": "reply-2",
+                          "quote": "Jo inspects both and offers Mend as promised.",
+                          "sourceRevision": "be2862f2:10279222"
+                        },
+                        "termsVersion": 2,
+                        "fee": {
+                          "kind": "resource",
+                          "id": "sam-coins",
+                          "amount": 5
+                        },
+                        "sourceRange": "touch",
+                        "agreement": "agreement-c6487c88:64401940"
+                      },
+                      "after": {
+                        "id": "aid-c4dc5c01:7d563d01",
+                        "version": 2,
+                        "actor": "Jo",
+                        "target": "you",
+                        "ability": "ability-599daf10:befb20c6",
+                        "abilityVersion": 1,
+                        "name": "Mend",
+                        "status": "used",
+                        "unsupported": [],
+                        "source": {
+                          "message": "reply-2",
+                          "quote": "Jo inspects both and offers Mend as promised.",
+                          "sourceRevision": "be2862f2:10279222"
+                        },
+                        "termsVersion": 2,
+                        "fee": {
+                          "kind": "resource",
+                          "id": "sam-coins",
+                          "amount": 5
+                        },
+                        "sourceRange": "touch",
+                        "agreement": "agreement-c6487c88:64401940",
+                        "paid": {
+                          "kind": "resource",
+                          "id": "sam-coins",
+                          "amount": 5,
+                          "from": "you",
+                          "to": "Jo",
+                          "asset": "coins"
+                        }
+                      }
+                    }
+                  ],
+                  "beats": [
+                    {
+                      "kind": "payment",
+                      "actor": "you",
+                      "target": "Jo",
+                      "name": "coins",
+                      "amount": 5
+                    },
+                    {
+                      "kind": "mend",
+                      "actor": "Jo",
+                      "target": "you",
+                      "name": "cooking burn: cleared",
+                      "basis": "warp"
+                    },
+                    {
+                      "kind": "aid",
+                      "actor": "Jo",
+                      "target": "you",
+                      "name": "Mend"
+                    }
+                  ],
+                  "result": "c30ec324:128d36da",
+                  "status": "ready"
+                },
+                "observations": [
+                  {
+                    "kind": "entity",
+                    "value": {
+                      "id": "entity-bee4fa7c:b5c60136",
+                      "name": "Jo",
+                      "displayName": "Jo",
+                      "aliases": [],
+                      "entityKind": "person",
+                      "present": true,
+                      "status": "active",
+                      "source": {
+                        "message": "reply-3",
+                        "quote": "Jo receives five coins and uses Mend, treating your cooking burn.",
+                        "sourceRevision": "5db3c1ab:b3ab8d95"
+                      }
+                    }
+                  }
+                ],
+                "sources": []
+              }
+            }
+          }
+        }
+      ],
+      "after": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "jo-focus",
+            "owner": "Jo",
+            "name": "Focus",
+            "current": 8,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "Jo has 10 Focus.",
+              "sourceRevision": "ad88cf77:5ac4cd69"
+            }
+          },
+          {
+            "id": "sam-coins",
+            "owner": "you",
+            "name": "coins",
+            "current": 7,
+            "role": "money",
+            "source": {
+              "message": "opening",
+              "quote": "carry 12 coins.",
+              "sourceRevision": "ad88cf77:5ac4cd69"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [],
+        "applied": [
+          {
+            "id": "action-423ab382:c486c20e",
+            "input": "c2534b5f:95bf1703"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "reply-3",
+              "quote": "Jo receives five coins and uses Mend, treating your cooking burn.",
+              "sourceRevision": "5db3c1ab:b3ab8d95"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "opening",
+              "quote": "Jo is beside you within arm's reach in the clinic.",
+              "sourceRevision": "ad88cf77:5ac4cd69"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-599daf10:befb20c6",
+            "version": 1,
+            "owner": "Jo",
+            "name": "Mend",
+            "description": "gently treats routine physical injury",
+            "approach": "concentration",
+            "target": "other",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "jo-focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "mend",
+                "target": "target",
+                "impact": "minor"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "555491ed:2bde2c27",
+            "source": {
+              "message": "opening",
+              "quote": "Jo's Mend gently treats routine physical injury at touch range and costs 2 Focus.",
+              "sourceRevision": "ad88cf77:5ac4cd69"
+            },
+            "sourceKind": "story"
+          }
+        ],
+        "aidOffers": [
+          {
+            "id": "aid-c4dc5c01:7d563d01",
+            "version": 2,
+            "actor": "Jo",
+            "target": "you",
+            "ability": "ability-599daf10:befb20c6",
+            "abilityVersion": 1,
+            "name": "Mend",
+            "status": "used",
+            "unsupported": [],
+            "source": {
+              "message": "reply-2",
+              "quote": "Jo inspects both and offers Mend as promised.",
+              "sourceRevision": "be2862f2:10279222"
+            },
+            "termsVersion": 2,
+            "fee": {
+              "kind": "resource",
+              "id": "sam-coins",
+              "amount": 5
+            },
+            "sourceRange": "touch",
+            "agreement": "agreement-c6487c88:64401940",
+            "paid": {
+              "kind": "resource",
+              "id": "sam-coins",
+              "amount": 5,
+              "from": "you",
+              "to": "Jo",
+              "asset": "coins"
+            }
+          }
+        ],
+        "agreements": [
+          {
+            "id": "agreement-c6487c88:64401940",
+            "owner": "you",
+            "name": "Mend for sweeping and washing",
+            "source": {
+              "message": "player-1",
+              "quote": "Yes, please.",
+              "sourceRevision": "1f9e84b2:a8959fc0"
+            },
+            "offer": {
+              "message": "opening",
+              "quote": "Jo offers Mend for five coins if you sweep the chapel steps and wash the basin.",
+              "sourceRevision": "ad88cf77:5ac4cd69"
+            },
+            "from": "Jo",
+            "requirements": [
+              {
+                "id": "requirement-dd11bda:49c78070",
+                "text": "sweep the chapel steps",
+                "source": {
+                  "message": "opening",
+                  "quote": "sweep the chapel steps",
+                  "sourceRevision": "ad88cf77:5ac4cd69"
+                },
+                "done": {
+                  "message": "reply-2",
+                  "quote": "You finish sweeping the chapel steps",
+                  "sourceRevision": "be2862f2:10279222"
+                }
+              },
+              {
+                "id": "requirement-6f99cd7e:84e1b104",
+                "text": "wash the basin",
+                "source": {
+                  "message": "opening",
+                  "quote": "wash the basin",
+                  "sourceRevision": "ad88cf77:5ac4cd69"
+                },
+                "done": {
+                  "message": "reply-2",
+                  "quote": "and washing the basin.",
+                  "sourceRevision": "be2862f2:10279222"
+                }
+              }
+            ],
+            "rewards": [],
+            "unsupported": [],
+            "service": {
+              "offer": "aid-c4dc5c01:7d563d01",
+              "version": 1,
+              "actor": "Jo",
+              "ability": "ability-599daf10:befb20c6",
+              "abilityVersion": 1,
+              "name": "Mend",
+              "source": {
+                "message": "opening",
+                "quote": "Jo offers Mend for five coins if you sweep the chapel steps and wash the basin.",
+                "sourceRevision": "ad88cf77:5ac4cd69"
+              },
+              "fee": {
+                "kind": "resource",
+                "id": "sam-coins",
+                "amount": 5
+              },
+              "used": {
+                "action": "action-423ab382:c486c20e"
+              }
+            }
+          }
+        ],
+        "clocks": [
+          {
+            "id": "Jo",
+            "actor": "Jo",
+            "actions": 1
+          }
+        ],
+        "closedConditions": [
+          {
+            "id": "cooking-burn",
+            "owner": "you",
+            "name": "cooking burn",
+            "after": {
+              "kind": "receipt",
+              "id": "action-423ab382:c486c20e"
+            }
+          }
+        ]
+      },
+      "completionReply": "```json\n{\n  \"scene\": {\n    \"place\": \"the clinic\",\n    \"present\": [\n      \"Jo\"\n    ],\n    \"message\": \"reply-2\",\n    \"quote\": \"Jo inspects both and offers Mend as promised.\"\n  },\n  \"mechanicalObservations\": [\n    {\n      \"kind\": \"agreement_progress\",\n      \"agreement\": \"agreement-c6487c88:64401940\",\n      \"requirement\": \"sweep the chapel steps\",\n      \"message\": \"reply-2\",\n      \"quote\": \"You finish sweeping the chapel steps\"\n    },\n    {\n      \"kind\": \"agreement_progress\",\n      \"agreement\": \"agreement-c6487c88:64401940\",\n      \"requirement\": \"wash the basin\",\n      \"message\": \"reply-2\",\n      \"quote\": \"and washing the basin.\"\n    },\n    {\n      \"kind\": \"aid_offer\",\n      \"actor\": \"Jo\",\n      \"target\": \"you\",\n      \"ability\": \"ability-599daf10:befb20c6\",\n      \"agreement\": \"agreement-c6487c88:64401940\",\n      \"fee\": {\n        \"kind\": \"resource\",\n        \"id\": \"sam-coins\",\n        \"amount\": 5\n      },\n      \"uncontested\": true,\n      \"unsupported\": [],\n      \"message\": \"reply-2\",\n      \"quote\": \"Jo inspects both and offers Mend as promised.\"\n    }\n  ],\n  \"abilityDefinitions\": [],\n  \"changes\": []\n}\n```"
+    },
+    {
+      "scene": "science-fiction",
+      "messages": [
+        {
+          "id": "opening",
+          "is_user": false,
+          "content": "Dr Imani stands within arm's reach in the ship clinic. She owns 3 medical patches. Her Dermal Seal treats routine physical injury at touch range and uses 1 medical patch. You have a minor routine cut and 50 credits. Dr Imani offers Dermal Seal for 20 credits if you file the incident report and sterilize the bench.",
+          "index_in_chat": 0,
+          "swipe_id": 0,
+          "metadata": {
+            "warpMechanics": {
+              "0": {
+                "version": 1,
+                "path": "warp-living-v1",
+                "text": "3456179a:57f96078",
+                "observations": [
+                  {
+                    "kind": "entity",
+                    "value": {
+                      "id": "entity-b6bd4d6f:df2a09db",
+                      "name": "Dr Imani",
+                      "displayName": "Dr Imani",
+                      "aliases": [],
+                      "entityKind": "person",
+                      "present": true,
+                      "status": "active",
+                      "source": {
+                        "message": "opening",
+                        "quote": "Dr Imani stands within arm's reach in the ship clinic.",
+                        "sourceRevision": "3456179a:57f96078"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "distance",
+                    "value": {
+                      "id": "distance-41bb4568:68f5432e",
+                      "from": "you",
+                      "to": "Dr Imani",
+                      "band": "touch",
+                      "source": {
+                        "message": "opening",
+                        "quote": "Dr Imani stands within arm's reach",
+                        "sourceRevision": "3456179a:57f96078"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "item",
+                    "value": {
+                      "id": "item:dr_imani:medical_patches",
+                      "owner": "Dr Imani",
+                      "name": "medical patch",
+                      "quantity": 3,
+                      "equipped": false,
+                      "source": {
+                        "message": "opening",
+                        "quote": "She owns 3 medical patches.",
+                        "sourceRevision": "3456179a:57f96078"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "resource",
+                    "value": {
+                      "id": "resource:you:credits",
+                      "owner": "you",
+                      "name": "credits",
+                      "current": 50,
+                      "role": "money",
+                      "source": {
+                        "message": "opening",
+                        "quote": "You have a minor routine cut and 50 credits.",
+                        "sourceRevision": "3456179a:57f96078"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "condition",
+                    "value": {
+                      "id": "condition:you:minor_cut",
+                      "owner": "you",
+                      "name": "minor routine cut",
+                      "hinders": [],
+                      "blocks": [],
+                      "helps": [],
+                      "ending": "treated",
+                      "category": "physical_injury",
+                      "severity": "minor",
+                      "recovery": "routine",
+                      "source": {
+                        "message": "opening",
+                        "quote": "You have a minor routine cut",
+                        "sourceRevision": "3456179a:57f96078"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "ability",
+                    "value": {
+                      "id": "ability-6950da83:5d986775",
+                      "version": 1,
+                      "owner": "Dr Imani",
+                      "name": "Dermal Seal",
+                      "description": "treats routine physical injury at touch range and uses 1 medical patch",
+                      "approach": "precision",
+                      "target": "other",
+                      "costs": [
+                        {
+                          "kind": "item",
+                          "id": "item:dr_imani:medical_patches",
+                          "amount": 1
+                        }
+                      ],
+                      "effects": [
+                        {
+                          "kind": "mend",
+                          "target": "target",
+                          "impact": "standard"
+                        }
+                      ],
+                      "requires": [],
+                      "unsupported": [],
+                      "fingerprint": "4ea12ac6:92d932e8",
+                      "source": {
+                        "message": "opening",
+                        "quote": "Her Dermal Seal treats routine physical injury at touch range and uses 1 medical patch.",
+                        "sourceRevision": "3456179a:57f96078"
+                      },
+                      "sourceKind": "story"
+                    }
+                  },
+                  {
+                    "kind": "aid_offer",
+                    "value": {
+                      "id": "aid-53ff4048:b4e7aaf4",
+                      "version": 1,
+                      "actor": "Dr Imani",
+                      "target": "you",
+                      "ability": "ability-6950da83:5d986775",
+                      "abilityVersion": 1,
+                      "name": "Dermal Seal",
+                      "status": "offered",
+                      "unsupported": [],
+                      "source": {
+                        "message": "opening",
+                        "quote": "Dr Imani offers Dermal Seal for 20 credits if you file the incident report and sterilize the bench.",
+                        "sourceRevision": "3456179a:57f96078"
+                      },
+                      "termsVersion": 2,
+                      "fee": {
+                        "kind": "resource",
+                        "id": "resource:you:credits",
+                        "amount": 20
+                      },
+                      "sourceRange": "touch",
+                      "work": [
+                        {
+                          "message": "opening",
+                          "quote": "file the incident report",
+                          "sourceRevision": "3456179a:57f96078"
+                        },
+                        {
+                          "message": "opening",
+                          "quote": "sterilize the bench",
+                          "sourceRevision": "3456179a:57f96078"
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "sources": []
+              }
+            }
+          }
+        },
+        {
+          "id": "player-1",
+          "is_user": true,
+          "content": "Yes, please.",
+          "index_in_chat": 1,
+          "swipe_id": 0,
+          "metadata": {}
+        },
+        {
+          "id": "reply-1",
+          "is_user": false,
+          "content": "Dr Imani acknowledges your agreement. The work and treatment have not happened yet.",
+          "index_in_chat": 2,
+          "swipe_id": 0,
+          "metadata": {
+            "warpMechanics": {
+              "0": {
+                "version": 1,
+                "path": "b8bb407d:168becf5",
+                "text": "f547b04a:322986f8",
+                "observations": [
+                  {
+                    "kind": "agreement",
+                    "value": {
+                      "id": "agreement-2dce8db4:707ed4d4",
+                      "owner": "you",
+                      "name": "Dermal Seal Treatment Agreement",
+                      "source": {
+                        "message": "player-1",
+                        "quote": "Yes, please.",
+                        "sourceRevision": "1f9e84b2:a8959fc0"
+                      },
+                      "offer": {
+                        "message": "opening",
+                        "quote": "Dr Imani offers Dermal Seal for 20 credits if you file the incident report and sterilize the bench.",
+                        "sourceRevision": "3456179a:57f96078"
+                      },
+                      "from": "Dr Imani",
+                      "requirements": [
+                        {
+                          "id": "requirement-77168484:7557e2cc",
+                          "text": "file the incident report",
+                          "source": {
+                            "message": "opening",
+                            "quote": "file the incident report",
+                            "sourceRevision": "3456179a:57f96078"
+                          }
+                        },
+                        {
+                          "id": "requirement-7a6d541d:7aa5ff0f",
+                          "text": "sterilize the bench",
+                          "source": {
+                            "message": "opening",
+                            "quote": "sterilize the bench",
+                            "sourceRevision": "3456179a:57f96078"
+                          }
+                        }
+                      ],
+                      "rewards": [],
+                      "unsupported": [],
+                      "service": {
+                        "offer": "aid-53ff4048:b4e7aaf4",
+                        "version": 1,
+                        "actor": "Dr Imani",
+                        "ability": "ability-6950da83:5d986775",
+                        "abilityVersion": 1,
+                        "name": "Dermal Seal",
+                        "source": {
+                          "message": "opening",
+                          "quote": "Dr Imani offers Dermal Seal for 20 credits if you file the incident report and sterilize the bench.",
+                          "sourceRevision": "3456179a:57f96078"
+                        },
+                        "fee": {
+                          "kind": "resource",
+                          "id": "resource:you:credits",
+                          "amount": 20
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "kind": "entity",
+                    "value": {
+                      "id": "entity-b6bd4d6f:df2a09db",
+                      "name": "Dr Imani",
+                      "displayName": "Dr Imani",
+                      "aliases": [],
+                      "entityKind": "person",
+                      "present": true,
+                      "status": "active",
+                      "source": {
+                        "message": "reply-1",
+                        "quote": "Dr Imani acknowledges your agreement.",
+                        "sourceRevision": "f547b04a:322986f8"
+                      }
+                    }
+                  }
+                ],
+                "sources": []
+              }
+            }
+          }
+        },
+        {
+          "id": "player-2",
+          "is_user": true,
+          "content": "I file the incident report and sterilize the bench.",
+          "index_in_chat": 3,
+          "swipe_id": 0,
+          "metadata": {}
+        },
+        {
+          "id": "reply-2",
+          "is_user": false,
+          "content": "You finish filing the incident report and sterilizing the bench. Dr Imani checks both jobs and offers Dermal Seal as promised.",
+          "index_in_chat": 4,
+          "swipe_id": 0,
+          "metadata": {
+            "warpMechanics": {
+              "0": {
+                "version": 1,
+                "path": "eaa71f7b:2dd67dc9",
+                "text": "dd4b6cca:3bfcbd7e",
+                "observations": [
+                  {
+                    "kind": "agreement_progress",
+                    "value": {
+                      "agreement": "agreement-2dce8db4:707ed4d4",
+                      "requirement": "requirement-77168484:7557e2cc",
+                      "source": {
+                        "message": "reply-2",
+                        "quote": "You finish filing the incident report",
+                        "sourceRevision": "dd4b6cca:3bfcbd7e"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "agreement_progress",
+                    "value": {
+                      "agreement": "agreement-2dce8db4:707ed4d4",
+                      "requirement": "requirement-7a6d541d:7aa5ff0f",
+                      "source": {
+                        "message": "reply-2",
+                        "quote": "and sterilizing the bench.",
+                        "sourceRevision": "dd4b6cca:3bfcbd7e"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "entity",
+                    "value": {
+                      "id": "entity-b6bd4d6f:df2a09db",
+                      "name": "Dr Imani",
+                      "displayName": "Dr Imani",
+                      "aliases": [],
+                      "entityKind": "person",
+                      "present": true,
+                      "status": "active",
+                      "source": {
+                        "message": "reply-2",
+                        "quote": "Dr Imani checks both jobs and offers Dermal Seal as promised.",
+                        "sourceRevision": "dd4b6cca:3bfcbd7e"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "aid_offer",
+                    "value": {
+                      "id": "aid-53ff4048:b4e7aaf4",
+                      "version": 2,
+                      "actor": "Dr Imani",
+                      "target": "you",
+                      "ability": "ability-6950da83:5d986775",
+                      "abilityVersion": 1,
+                      "name": "Dermal Seal",
+                      "status": "offered",
+                      "unsupported": [],
+                      "source": {
+                        "message": "reply-2",
+                        "quote": "Dr Imani checks both jobs and offers Dermal Seal as promised.",
+                        "sourceRevision": "dd4b6cca:3bfcbd7e"
+                      },
+                      "termsVersion": 2,
+                      "fee": {
+                        "kind": "resource",
+                        "id": "resource:you:credits",
+                        "amount": 20
+                      },
+                      "sourceRange": "touch",
+                      "agreement": "agreement-2dce8db4:707ed4d4"
+                    }
+                  }
+                ],
+                "sources": []
+              }
+            }
+          }
+        },
+        {
+          "id": "player-3",
+          "is_user": true,
+          "content": "Yes, please.",
+          "index_in_chat": 5,
+          "swipe_id": 0,
+          "metadata": {}
+        },
+        {
+          "id": "reply-3",
+          "is_user": false,
+          "content": "Dr Imani receives 20 credits and uses one medical patch to seal your cut.",
+          "index_in_chat": 6,
+          "swipe_id": 0,
+          "metadata": {
+            "warpMechanics": {
+              "0": {
+                "version": 1,
+                "path": "bac1f9a4:1a20fb14",
+                "text": "6f00776:51e5689c",
+                "receipt": {
+                  "version": 1,
+                  "engine": 12,
+                  "id": "action-bac1f9a4:1a20fb14",
+                  "input": "6b09c1b0:1037e640",
+                  "base": "ab1bf2db:5c8018a7",
+                  "actor": "you",
+                  "operations": [
+                    {
+                      "kind": "accept_aid",
+                      "offer": "aid-53ff4048:b4e7aaf4",
+                      "version": 2
+                    }
+                  ],
+                  "responses": [],
+                  "changes": [
+                    {
+                      "kind": "resource",
+                      "id": "resource:you:credits",
+                      "before": {
+                        "id": "resource:you:credits",
+                        "owner": "you",
+                        "name": "credits",
+                        "current": 50,
+                        "role": "money",
+                        "source": {
+                          "message": "opening",
+                          "quote": "You have a minor routine cut and 50 credits.",
+                          "sourceRevision": "3456179a:57f96078"
+                        }
+                      },
+                      "after": {
+                        "id": "resource:you:credits",
+                        "owner": "you",
+                        "name": "credits",
+                        "current": 30,
+                        "role": "money",
+                        "source": {
+                          "message": "opening",
+                          "quote": "You have a minor routine cut and 50 credits.",
+                          "sourceRevision": "3456179a:57f96078"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "item",
+                      "id": "item:dr_imani:medical_patches",
+                      "before": {
+                        "id": "item:dr_imani:medical_patches",
+                        "owner": "Dr Imani",
+                        "name": "medical patch",
+                        "quantity": 3,
+                        "equipped": false,
+                        "source": {
+                          "message": "opening",
+                          "quote": "She owns 3 medical patches.",
+                          "sourceRevision": "3456179a:57f96078"
+                        }
+                      },
+                      "after": {
+                        "id": "item:dr_imani:medical_patches",
+                        "owner": "Dr Imani",
+                        "name": "medical patch",
+                        "quantity": 2,
+                        "equipped": false,
+                        "source": {
+                          "message": "opening",
+                          "quote": "She owns 3 medical patches.",
+                          "sourceRevision": "3456179a:57f96078"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "condition",
+                      "id": "condition:you:minor_cut",
+                      "before": {
+                        "id": "condition:you:minor_cut",
+                        "owner": "you",
+                        "name": "minor routine cut",
+                        "hinders": [],
+                        "blocks": [],
+                        "helps": [],
+                        "ending": "treated",
+                        "category": "physical_injury",
+                        "severity": "minor",
+                        "recovery": "routine",
+                        "source": {
+                          "message": "opening",
+                          "quote": "You have a minor routine cut",
+                          "sourceRevision": "3456179a:57f96078"
+                        }
+                      },
+                      "after": null
+                    },
+                    {
+                      "kind": "agreement",
+                      "id": "agreement-2dce8db4:707ed4d4",
+                      "before": {
+                        "id": "agreement-2dce8db4:707ed4d4",
+                        "owner": "you",
+                        "name": "Dermal Seal Treatment Agreement",
+                        "source": {
+                          "message": "player-1",
+                          "quote": "Yes, please.",
+                          "sourceRevision": "1f9e84b2:a8959fc0"
+                        },
+                        "offer": {
+                          "message": "opening",
+                          "quote": "Dr Imani offers Dermal Seal for 20 credits if you file the incident report and sterilize the bench.",
+                          "sourceRevision": "3456179a:57f96078"
+                        },
+                        "from": "Dr Imani",
+                        "requirements": [
+                          {
+                            "id": "requirement-77168484:7557e2cc",
+                            "text": "file the incident report",
+                            "source": {
+                              "message": "opening",
+                              "quote": "file the incident report",
+                              "sourceRevision": "3456179a:57f96078"
+                            },
+                            "done": {
+                              "message": "reply-2",
+                              "quote": "You finish filing the incident report",
+                              "sourceRevision": "dd4b6cca:3bfcbd7e"
+                            }
+                          },
+                          {
+                            "id": "requirement-7a6d541d:7aa5ff0f",
+                            "text": "sterilize the bench",
+                            "source": {
+                              "message": "opening",
+                              "quote": "sterilize the bench",
+                              "sourceRevision": "3456179a:57f96078"
+                            },
+                            "done": {
+                              "message": "reply-2",
+                              "quote": "and sterilizing the bench.",
+                              "sourceRevision": "dd4b6cca:3bfcbd7e"
+                            }
+                          }
+                        ],
+                        "rewards": [],
+                        "unsupported": [],
+                        "service": {
+                          "offer": "aid-53ff4048:b4e7aaf4",
+                          "version": 1,
+                          "actor": "Dr Imani",
+                          "ability": "ability-6950da83:5d986775",
+                          "abilityVersion": 1,
+                          "name": "Dermal Seal",
+                          "source": {
+                            "message": "opening",
+                            "quote": "Dr Imani offers Dermal Seal for 20 credits if you file the incident report and sterilize the bench.",
+                            "sourceRevision": "3456179a:57f96078"
+                          },
+                          "fee": {
+                            "kind": "resource",
+                            "id": "resource:you:credits",
+                            "amount": 20
+                          }
+                        }
+                      },
+                      "after": {
+                        "id": "agreement-2dce8db4:707ed4d4",
+                        "owner": "you",
+                        "name": "Dermal Seal Treatment Agreement",
+                        "source": {
+                          "message": "player-1",
+                          "quote": "Yes, please.",
+                          "sourceRevision": "1f9e84b2:a8959fc0"
+                        },
+                        "offer": {
+                          "message": "opening",
+                          "quote": "Dr Imani offers Dermal Seal for 20 credits if you file the incident report and sterilize the bench.",
+                          "sourceRevision": "3456179a:57f96078"
+                        },
+                        "from": "Dr Imani",
+                        "requirements": [
+                          {
+                            "id": "requirement-77168484:7557e2cc",
+                            "text": "file the incident report",
+                            "source": {
+                              "message": "opening",
+                              "quote": "file the incident report",
+                              "sourceRevision": "3456179a:57f96078"
+                            },
+                            "done": {
+                              "message": "reply-2",
+                              "quote": "You finish filing the incident report",
+                              "sourceRevision": "dd4b6cca:3bfcbd7e"
+                            }
+                          },
+                          {
+                            "id": "requirement-7a6d541d:7aa5ff0f",
+                            "text": "sterilize the bench",
+                            "source": {
+                              "message": "opening",
+                              "quote": "sterilize the bench",
+                              "sourceRevision": "3456179a:57f96078"
+                            },
+                            "done": {
+                              "message": "reply-2",
+                              "quote": "and sterilizing the bench.",
+                              "sourceRevision": "dd4b6cca:3bfcbd7e"
+                            }
+                          }
+                        ],
+                        "rewards": [],
+                        "unsupported": [],
+                        "service": {
+                          "offer": "aid-53ff4048:b4e7aaf4",
+                          "version": 1,
+                          "actor": "Dr Imani",
+                          "ability": "ability-6950da83:5d986775",
+                          "abilityVersion": 1,
+                          "name": "Dermal Seal",
+                          "source": {
+                            "message": "opening",
+                            "quote": "Dr Imani offers Dermal Seal for 20 credits if you file the incident report and sterilize the bench.",
+                            "sourceRevision": "3456179a:57f96078"
+                          },
+                          "fee": {
+                            "kind": "resource",
+                            "id": "resource:you:credits",
+                            "amount": 20
+                          },
+                          "used": {
+                            "action": "action-bac1f9a4:1a20fb14"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "kind": "aid_offer",
+                      "id": "aid-53ff4048:b4e7aaf4",
+                      "before": {
+                        "id": "aid-53ff4048:b4e7aaf4",
+                        "version": 2,
+                        "actor": "Dr Imani",
+                        "target": "you",
+                        "ability": "ability-6950da83:5d986775",
+                        "abilityVersion": 1,
+                        "name": "Dermal Seal",
+                        "status": "offered",
+                        "unsupported": [],
+                        "source": {
+                          "message": "reply-2",
+                          "quote": "Dr Imani checks both jobs and offers Dermal Seal as promised.",
+                          "sourceRevision": "dd4b6cca:3bfcbd7e"
+                        },
+                        "termsVersion": 2,
+                        "fee": {
+                          "kind": "resource",
+                          "id": "resource:you:credits",
+                          "amount": 20
+                        },
+                        "sourceRange": "touch",
+                        "agreement": "agreement-2dce8db4:707ed4d4"
+                      },
+                      "after": {
+                        "id": "aid-53ff4048:b4e7aaf4",
+                        "version": 2,
+                        "actor": "Dr Imani",
+                        "target": "you",
+                        "ability": "ability-6950da83:5d986775",
+                        "abilityVersion": 1,
+                        "name": "Dermal Seal",
+                        "status": "used",
+                        "unsupported": [],
+                        "source": {
+                          "message": "reply-2",
+                          "quote": "Dr Imani checks both jobs and offers Dermal Seal as promised.",
+                          "sourceRevision": "dd4b6cca:3bfcbd7e"
+                        },
+                        "termsVersion": 2,
+                        "fee": {
+                          "kind": "resource",
+                          "id": "resource:you:credits",
+                          "amount": 20
+                        },
+                        "sourceRange": "touch",
+                        "agreement": "agreement-2dce8db4:707ed4d4",
+                        "paid": {
+                          "kind": "resource",
+                          "id": "resource:you:credits",
+                          "amount": 20,
+                          "from": "you",
+                          "to": "Dr Imani",
+                          "asset": "credits"
+                        }
+                      }
+                    }
+                  ],
+                  "beats": [
+                    {
+                      "kind": "payment",
+                      "actor": "you",
+                      "target": "Dr Imani",
+                      "name": "credits",
+                      "amount": 20
+                    },
+                    {
+                      "kind": "mend",
+                      "actor": "Dr Imani",
+                      "target": "you",
+                      "name": "minor routine cut: cleared",
+                      "basis": "warp"
+                    },
+                    {
+                      "kind": "aid",
+                      "actor": "Dr Imani",
+                      "target": "you",
+                      "name": "Dermal Seal"
+                    }
+                  ],
+                  "result": "a49c72ef:91b9c341",
+                  "status": "ready"
+                },
+                "observations": [
+                  {
+                    "kind": "entity",
+                    "value": {
+                      "id": "entity-b6bd4d6f:df2a09db",
+                      "name": "Dr Imani",
+                      "displayName": "Dr Imani",
+                      "aliases": [],
+                      "entityKind": "person",
+                      "present": true,
+                      "status": "active",
+                      "source": {
+                        "message": "reply-3",
+                        "quote": "Dr Imani receives 20 credits and uses one medical patch to seal your cut.",
+                        "sourceRevision": "6f00776:51e5689c"
+                      }
+                    }
+                  }
+                ],
+                "sources": []
+              }
+            }
+          }
+        }
+      ],
+      "after": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "resource:you:credits",
+            "owner": "you",
+            "name": "credits",
+            "current": 30,
+            "role": "money",
+            "source": {
+              "message": "opening",
+              "quote": "You have a minor routine cut and 50 credits.",
+              "sourceRevision": "3456179a:57f96078"
+            }
+          }
+        ],
+        "items": [
+          {
+            "id": "item:dr_imani:medical_patches",
+            "owner": "Dr Imani",
+            "name": "medical patch",
+            "quantity": 2,
+            "equipped": false,
+            "source": {
+              "message": "opening",
+              "quote": "She owns 3 medical patches.",
+              "sourceRevision": "3456179a:57f96078"
+            }
+          }
+        ],
+        "conditions": [],
+        "applied": [
+          {
+            "id": "action-bac1f9a4:1a20fb14",
+            "input": "6b09c1b0:1037e640"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-b6bd4d6f:df2a09db",
+            "name": "Dr Imani",
+            "displayName": "Dr Imani",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "reply-3",
+              "quote": "Dr Imani receives 20 credits and uses one medical patch to seal your cut.",
+              "sourceRevision": "6f00776:51e5689c"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-41bb4568:68f5432e",
+            "from": "you",
+            "to": "Dr Imani",
+            "band": "touch",
+            "source": {
+              "message": "opening",
+              "quote": "Dr Imani stands within arm's reach",
+              "sourceRevision": "3456179a:57f96078"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-6950da83:5d986775",
+            "version": 1,
+            "owner": "Dr Imani",
+            "name": "Dermal Seal",
+            "description": "treats routine physical injury at touch range and uses 1 medical patch",
+            "approach": "precision",
+            "target": "other",
+            "costs": [
+              {
+                "kind": "item",
+                "id": "item:dr_imani:medical_patches",
+                "amount": 1
+              }
+            ],
+            "effects": [
+              {
+                "kind": "mend",
+                "target": "target",
+                "impact": "standard"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "4ea12ac6:92d932e8",
+            "source": {
+              "message": "opening",
+              "quote": "Her Dermal Seal treats routine physical injury at touch range and uses 1 medical patch.",
+              "sourceRevision": "3456179a:57f96078"
+            },
+            "sourceKind": "story"
+          }
+        ],
+        "aidOffers": [
+          {
+            "id": "aid-53ff4048:b4e7aaf4",
+            "version": 2,
+            "actor": "Dr Imani",
+            "target": "you",
+            "ability": "ability-6950da83:5d986775",
+            "abilityVersion": 1,
+            "name": "Dermal Seal",
+            "status": "used",
+            "unsupported": [],
+            "source": {
+              "message": "reply-2",
+              "quote": "Dr Imani checks both jobs and offers Dermal Seal as promised.",
+              "sourceRevision": "dd4b6cca:3bfcbd7e"
+            },
+            "termsVersion": 2,
+            "fee": {
+              "kind": "resource",
+              "id": "resource:you:credits",
+              "amount": 20
+            },
+            "sourceRange": "touch",
+            "agreement": "agreement-2dce8db4:707ed4d4",
+            "paid": {
+              "kind": "resource",
+              "id": "resource:you:credits",
+              "amount": 20,
+              "from": "you",
+              "to": "Dr Imani",
+              "asset": "credits"
+            }
+          }
+        ],
+        "agreements": [
+          {
+            "id": "agreement-2dce8db4:707ed4d4",
+            "owner": "you",
+            "name": "Dermal Seal Treatment Agreement",
+            "source": {
+              "message": "player-1",
+              "quote": "Yes, please.",
+              "sourceRevision": "1f9e84b2:a8959fc0"
+            },
+            "offer": {
+              "message": "opening",
+              "quote": "Dr Imani offers Dermal Seal for 20 credits if you file the incident report and sterilize the bench.",
+              "sourceRevision": "3456179a:57f96078"
+            },
+            "from": "Dr Imani",
+            "requirements": [
+              {
+                "id": "requirement-77168484:7557e2cc",
+                "text": "file the incident report",
+                "source": {
+                  "message": "opening",
+                  "quote": "file the incident report",
+                  "sourceRevision": "3456179a:57f96078"
+                },
+                "done": {
+                  "message": "reply-2",
+                  "quote": "You finish filing the incident report",
+                  "sourceRevision": "dd4b6cca:3bfcbd7e"
+                }
+              },
+              {
+                "id": "requirement-7a6d541d:7aa5ff0f",
+                "text": "sterilize the bench",
+                "source": {
+                  "message": "opening",
+                  "quote": "sterilize the bench",
+                  "sourceRevision": "3456179a:57f96078"
+                },
+                "done": {
+                  "message": "reply-2",
+                  "quote": "and sterilizing the bench.",
+                  "sourceRevision": "dd4b6cca:3bfcbd7e"
+                }
+              }
+            ],
+            "rewards": [],
+            "unsupported": [],
+            "service": {
+              "offer": "aid-53ff4048:b4e7aaf4",
+              "version": 1,
+              "actor": "Dr Imani",
+              "ability": "ability-6950da83:5d986775",
+              "abilityVersion": 1,
+              "name": "Dermal Seal",
+              "source": {
+                "message": "opening",
+                "quote": "Dr Imani offers Dermal Seal for 20 credits if you file the incident report and sterilize the bench.",
+                "sourceRevision": "3456179a:57f96078"
+              },
+              "fee": {
+                "kind": "resource",
+                "id": "resource:you:credits",
+                "amount": 20
+              },
+              "used": {
+                "action": "action-bac1f9a4:1a20fb14"
+              }
+            }
+          }
+        ],
+        "clocks": [
+          {
+            "id": "Dr Imani",
+            "actor": "Dr Imani",
+            "actions": 1
+          }
+        ],
+        "closedConditions": [
+          {
+            "id": "condition:you:minor_cut",
+            "owner": "you",
+            "name": "minor routine cut",
+            "after": {
+              "kind": "receipt",
+              "id": "action-bac1f9a4:1a20fb14"
+            }
+          }
+        ]
+      },
+      "completionReply": "```json\n{\n  \"scene\": {\n    \"place\": \"ship clinic\",\n    \"present\": [\n      \"Dr Imani\"\n    ],\n    \"message\": \"reply-2\",\n    \"quote\": \"Dr Imani checks both jobs and offers Dermal Seal as promised.\"\n  },\n  \"mechanicalObservations\": [\n    {\n      \"kind\": \"agreement_progress\",\n      \"agreement\": \"agreement-2dce8db4:707ed4d4\",\n      \"requirement\": \"file the incident report\",\n      \"message\": \"reply-2\",\n      \"quote\": \"You finish filing the incident report\"\n    },\n    {\n      \"kind\": \"agreement_progress\",\n      \"agreement\": \"agreement-2dce8db4:707ed4d4\",\n      \"requirement\": \"sterilize the bench\",\n      \"message\": \"reply-2\",\n      \"quote\": \"and sterilizing the bench.\"\n    },\n    {\n      \"kind\": \"aid_offer\",\n      \"actor\": \"Dr Imani\",\n      \"target\": \"you\",\n      \"ability\": \"ability-6950da83:5d986775\",\n      \"agreement\": \"agreement-2dce8db4:707ed4d4\",\n      \"fee\": {\n        \"kind\": \"resource\",\n        \"id\": \"resource:you:credits\",\n        \"amount\": 20\n      },\n      \"uncontested\": true,\n      \"unsupported\": [],\n      \"message\": \"reply-2\",\n      \"quote\": \"Dr Imani checks both jobs and offers Dermal Seal as promised.\"\n    }\n  ],\n  \"abilityDefinitions\": [],\n  \"changes\": [\n    {\n      \"op\": \"resolve\",\n      \"id\": \"commitment:sam:dr_imani_clinic_work\",\n      \"message\": \"reply-2\",\n      \"quote\": \"You finish filing the incident report and sterilizing the bench.\"\n    }\n  ]\n}\n```"
+    }
+  ]
+}

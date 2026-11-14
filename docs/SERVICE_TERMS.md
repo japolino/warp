@@ -12,7 +12,7 @@ If the NPC has a unique established same-name, same-unit money balance, the paym
 
 Ability costs retain their original owner and existing shared-payer rules. They are never replaced by the service fee, omitted because a payment exists, or charged again through an extra spend operation. Payment, one beneficial NPC ability use, offer consumption and the NPC's action/effects commit together. Granting permission still takes no player action.
 
-The source reader distinguishes explicit free help from a price. A fee, alternative payment, labor condition or other unsupported restriction cannot silently become free treatment. Labor-for-treatment and alternative currencies still need further implementation. The current simple-price recognizer is conservative and English-oriented; an unrecognized fee remains unresolved. Dialogue can continue without inventing an NPC refusal to explain missing bookkeeping.
+The source reader distinguishes explicit free help from a price. A fee, alternative payment, labor condition or other unsupported restriction cannot silently become free treatment. [Work-for-treatment agreements](SERVICE_BARTER.md) now support quoted labor clauses and one earned NPC service. Alternative currency selection remains open. The current simple-price recognizer is conservative and English-oriented; an unrecognized fee remains unresolved. Dialogue can continue without inventing an NPC refusal to explain missing bookkeeping.
 
 ## Replay and caching
 

@@ -3,7 +3,7 @@ import type { Msg } from "../backend/ledger.js";
 import { revision } from "../shared/revision.js";
 import { pathOf, pathsOf, rawPathsOf } from "./world.js";
 import { sourceRevisionMatches, recordPathMatches } from "./story-text.js";
-import { applyObservations, commitMechanical, emptyMechanics, readMechanicalObservations, type MechanicalRecord, type MechanicalState } from "./mechanics.js";
+import { applyObservations, commitMechanical, emptyMechanics, readMechanicalObservations, readServiceObservations, needsServiceRead, type MechanicalRecord, type MechanicalState } from "./mechanics.js";
 import { readAbilityDefinitions, sourceMessages, validDefinitionSource } from "./abilities.js";
 import { readResponsePlans } from "./exchanges.js";
 
@@ -44,7 +44,7 @@ export function foldMechanics(messages: Msg[]): MechanicalState {
           if (o.kind === "ability" || o.kind === "practice" || o.kind === "buildup" || o.kind === "periodic" || o.kind === "aid_offer") return [];
           if (o.kind === "companion") { const { manifestation, ...value } = o.value; return [{ kind: o.kind, ...value, ...o.value.source }]; }
           if (o.kind === "place") return [{ kind: o.kind, ...o.value, ...(o.entered ? { entered: true } : {}), ...o.value.source }];
-          if (o.kind === "agreement") return [{ kind: o.kind, owner: o.value.owner, name: o.value.name, from: o.value.from, offer: o.value.offer, requirements: o.value.requirements.map(r => ({ ...r.source })), rewards: o.value.rewards.map(r => ({ kind: r.kind, asset: r.asset, amount: r.amount, ...r.source })), unsupported: o.value.unsupported, ...o.value.source }];
+          if (o.kind === "agreement") return [{ kind: o.kind, owner: o.value.owner, name: o.value.name, from: o.value.from, offer: o.value.offer, requirements: o.value.requirements.map(r => ({ ...r.source })), rewards: o.value.rewards.map(r => ({ kind: r.kind, asset: r.asset, amount: r.amount, ...r.source })), unsupported: o.value.unsupported, ...(o.value.service ? { service: { offer: o.value.service.offer, version: o.value.service.version } } : {}), ...o.value.source }];
           if (!o.value?.source) return [];
           return [{ kind: o.kind, ...o.value, ...o.value.source }];
         });
@@ -57,7 +57,8 @@ export function foldMechanics(messages: Msg[]): MechanicalState {
           state = applyObservations(state, imported.map(value => ({ kind: "ability", value })));
         }
         const lessons = record.observations.filter(o => o?.kind === "practice" || o?.kind === "buildup" || o?.kind === "periodic" || o?.kind === "aid_offer").map(o => o.kind === "periodic" ? { kind: o.kind, owner: o.value.owner, name: o.value.name, caster: o.value.periodic?.caster, remaining: o.value.periodic?.remaining, definition: o.definition, ...o.value.source } : { kind: o.kind, ...o.value, ...o.value.source });
-        state = applyObservations(state, readMechanicalObservations(lessons, state, messages.slice(0, index + 1), undefined, true));
+        state = applyObservations(state, readMechanicalObservations(needsServiceRead([...raw, ...lessons], state) ? lessons.filter(row => row.kind !== "aid_offer") : lessons, state, messages.slice(0, index + 1), undefined, true));
+        state = applyObservations(state, readServiceObservations([...raw, ...lessons], state, messages.slice(0, index + 1), undefined, true));
       }
     }
     prefix = paths.get(message.id)!;

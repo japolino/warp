@@ -4,6 +4,8 @@ import { storyContent, storyRevision, sourceRevisionMatches, sourceContains } fr
 import type { Evidence, Message } from "./world.js";
 import type { MechanicalState, MechanicalChange } from "./mechanics.js";
 import { actorName, present, capable, vital, type EncounterBeat, MechanicalKnowledgeError } from "./encounters.js";
+import { readServicePromise, type ServicePromise } from "./service-barter.js";
+import { readOnlyIntent } from "./intent.js";
 
 export interface AgreementRequirement { id: string; text: string; source: Evidence; done?: Evidence; }
 export interface RewardClaim {
@@ -13,6 +15,7 @@ export interface RewardClaim {
 export interface Agreement {
   id: string; owner: string; name: string; source: Evidence; offer?: Evidence; from?: string;
   requirements: AgreementRequirement[]; rewards: RewardClaim[]; unsupported: string[];
+  service?: ServicePromise;
   cancelled?: Evidence;
 }
 export type AgreementObservation =
@@ -26,7 +29,7 @@ const normalized = (s: string) => s.normalize("NFKC").toLocaleLowerCase();
 const numeric = (quote: string, n: number) => (quote.match(/\d+(?:\.\d+)?/g) ?? []).some(v => Number(v) === n)
   || ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].some((v, i) => i === n && new RegExp(`\\b${v}\\b`, "i").test(quote));
 export const agreementDone = (a: Agreement) => !a.cancelled && !a.unsupported.length && a.requirements.every(r => !!r.done);
-export const agreementSettled = (a: Agreement) => !!a.cancelled || agreementDone(a) && a.rewards.every(r => !!r.paid);
+export const agreementSettled = (a: Agreement) => !!a.cancelled || agreementDone(a) && a.rewards.every(r => !!r.paid) && (!a.service || !!a.service.used);
 export const visibleAgreements = (rows: Agreement[] = []) => [...rows.filter(a => !agreementSettled(a)), ...rows.filter(agreementSettled).slice(-6)];
 export function agreementNotes(before: MechanicalState, after: MechanicalState): string[] {
   return (after.agreements ?? []).filter(a => a.owner === "you" || a.from === "you").flatMap(a => {
@@ -79,7 +82,7 @@ export function readAgreementObservation(raw: Record<string, unknown>, state: Me
   const message = messages.find(m => m.id === source.message)!;
   const correction = message.is_user && /^\s*\(?OOC correction:/i.test(message.content);
   if (raw.kind === "agreement") {
-    if (Object.keys(raw).some(k => !["kind", "id", "owner", "name", "from", "offer", "requirements", "rewards", "unsupported", "message", "quote", ...(historical ? ["sourceRevision", "viewRevision"] : [])].includes(k))) return;
+    if (Object.keys(raw).some(k => !["kind", "id", "owner", "name", "from", "offer", "requirements", "rewards", "unsupported", "service", "message", "quote", ...(historical ? ["sourceRevision", "viewRevision"] : [])].includes(k))) return;
     const owner = canonical(state, raw.owner, player), name = str(raw.name, 120), from = canonical(state, raw.from, player);
     const acceptedSource = namedEvidence(state, source, owner, messages); if (!acceptedSource) return;
     source = acceptedSource;
@@ -115,7 +118,12 @@ export function readAgreementObservation(raw: Record<string, unknown>, state: Me
       rewards.push({ id: `reward-${revision([id, value.kind, selector])}`, kind: value.kind as RewardClaim["kind"], asset: selector, amount, source: e });
     }
     if (raw.unsupported !== undefined && (!Array.isArray(raw.unsupported) || raw.unsupported.length > 6 || raw.unsupported.some(v => !str(v)))) return;
-    return { kind: "agreement", value: { id, owner, name, source, ...(offer ? { offer } : {}), ...(from ? { from } : {}), requirements, rewards, unsupported: Array.isArray(raw.unsupported) ? raw.unsupported.map(v => str(v)) : [] } };
+    if (raw.service !== undefined && (readOnlyIntent(message.content)
+      || /^(?:if\s+I|suppose|imagine|hypothetically|maybe|perhaps|I\s+(?:might|may|could|decline|refuse|won['’]t|do\s+not\s+agree|don['’]t\s+agree))\b|^no(?:[,.!?]|$|\s+thank)/i.test(message.content.trim())
+      || /\b(?:only if|but only|provided that|as long as)\b|\b(?:agree|accept)\b[^.!?]*\bif\b/i.test(message.content))) return;
+    const service = raw.service === undefined ? undefined : readServicePromise(raw.service, state, owner, from, offer, requirements, historical);
+    if (raw.service !== undefined && !service) return;
+    return { kind: "agreement", value: { id, owner, name, source, ...(offer ? { offer } : {}), ...(from ? { from } : {}), requirements, rewards, unsupported: Array.isArray(raw.unsupported) ? raw.unsupported.map(v => str(v)) : [], ...(service ? { service } : {}) } };
   }
   const agreements = (state.agreements ?? []).map(a => ({ ...a, text: a.name }));
   const agreement = agreements.find(a => a.id === raw.agreement) ?? lookup(agreements.filter(a => !agreementSettled(a)), raw.agreement);
