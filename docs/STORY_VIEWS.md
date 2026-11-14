@@ -18,4 +18,14 @@ Narrative events and scenes quoted from raw templated branches no longer pass so
 
 ## Verification
 
-864 tests pass with 21,198 assertions across 99 files; TypeScript, the production build and both worker smokes pass. Tests cover unknown/empty views, exact source IDs, duplicate IDs, cancellation, source edits, swipes, tampering, resolved names/numbers, ability preparation, one-time NPC aid payment and reload, legacy mechanical semantics and frozen prompt bytes. The production Lumiverse worker smoke checks template deferral, real source-view capture, hidden-branch exclusion, aid execution and prefix preservation. Installed original-card verification is still required; a passing fixture is not a complete first-session gate.
+864 tests pass with 21,198 assertions across 99 files; TypeScript, the production build and both worker smokes pass. Tests cover unknown/empty views, exact source IDs, duplicate IDs, cancellation, source edits, swipes, tampering, resolved names/numbers, ability preparation, one-time NPC aid payment and reload, legacy mechanical semantics and frozen prompt bytes. The production Lumiverse worker smoke checks template deferral, real source-view capture, hidden-branch exclusion, aid execution and prefix preservation.
+
+## Installed original-card checks
+
+The November 5 installed build matched commit `1a18867`. Tests used separate memory-isolated chats, leaving the original cards and conversations intact. The persisted records were rechecked from the local database on November 13 after restoring the development checkout. That recheck repeated no model calls. The 864 tests, TypeScript and both worker smokes also passed in the restored checkout.
+
+- Frieren, English, First Journey, Start Two: the 86,329-character raw greeting produced a 3,049-character selected view. Two ordinary questions retained the elf village and great oak rather than the inactive examination scene. The authored zero-Gold footer produced exactly one resource, with no invented health or mana. Reload and the later database recheck retained the same world/mechanical digest, `e710b8f3:dcafcf5f`. The second actual request retained the first Warp block byte-for-byte.
+- Frieren, English, Custom: the selected greeting contained only two decorative characters and supplied no readable scene. The player's cafe opening and its actual reply established the cafe in Äußerst, without importing an examination, injury or wallet from hidden routes. The rechecked digest was `3b20f3f0:b729ce7c`.
+- Norma Hollowell, English: the 6,274-character raw greeting produced a 2,319-character English view and the correct laboratory/core context, with no numerical resources or applied actions. The narrator refused the benign follow-up. This verifies source selection, not successful gameplay. The refusal was not retried or bypassed. The rechecked digest was `8ccffc6c:3b979cbc`.
+
+These checks establish selected-source behavior and limited prompt-prefix preservation. They do not supply provider cache-hit telemetry or close the original-card aid, barter or broader first-session gates.
