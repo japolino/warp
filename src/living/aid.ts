@@ -165,8 +165,18 @@ export function executeAid(before: MechanicalState, actor: string, operations: M
 }
 
 /** Recognize a narrow direct invitation; informational questions remain ordinary reads. */
-export function aidRequestIntent(content: string, state?: MechanicalState): boolean {
+export function aidRequestHead(content: string): { text: string; address?: string } {
   const text = content.trim().replace(/^["'“”*\s]+/, "");
+  const addressed = /^([\p{L}\p{N}'’ -]{1,80})[,:]\s*((?:can|could|would|will)\s+you\b[\s\S]*)$/iu.exec(text);
+  if (!addressed) return { text };
+  const address = addressed[1].trim().replace(/^(?:hey|hello|hi)\s+/i, "");
+  // A vocative may precede the request; an OOC label or an action clause may not disappear.
+  if (/^(?:ooc|out of character|i|we|you|he|she|they|it|if|after|before|once|unless|while|when)\b/i.test(address)
+    || /\b(?:pay|spend|give|buy|attack|cast|use)\b/i.test(address)) return { text };
+  return { text: addressed[2], ...(/^(?:please|hey|hello|hi)$/i.test(address) ? {} : { address }) };
+}
+export function aidRequestIntent(content: string, state?: MechanicalState): boolean {
+  const { text } = aidRequestHead(content);
   if (!/^(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:heal|treat|mend|cure|restore|protect|help)\b/i.test(text)) return false;
   const q = text.indexOf("?"); if (q < 0 || /\b(?:pay|spend|give|buy|attack|cast|use)\b/i.test(text.slice(0, q))) return false;
   if (/\byou\s+(?:please\s+)?help\b/i.test(text.slice(0, q))) {

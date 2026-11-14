@@ -1142,8 +1142,18 @@ function executeAid(before, actor, operations, run, serviceFees = false, barterA
   result.beats.push({ kind: "aid", actor: offer.actor, target: "you", name: op.kind === "accept_aid" ? offer.name : "Aid declined" });
   return result;
 }
-function aidRequestIntent(content, state) {
+function aidRequestHead(content) {
   const text = content.trim().replace(/^["'“”*\s]+/, "");
+  const addressed = /^([\p{L}\p{N}'’ -]{1,80})[,:]\s*((?:can|could|would|will)\s+you\b[\s\S]*)$/iu.exec(text);
+  if (!addressed)
+    return { text };
+  const address = addressed[1].trim().replace(/^(?:hey|hello|hi)\s+/i, "");
+  if (/^(?:ooc|out of character|i|we|you|he|she|they|it|if|after|before|once|unless|while|when)\b/i.test(address) || /\b(?:pay|spend|give|buy|attack|cast|use)\b/i.test(address))
+    return { text };
+  return { text: addressed[2], .../^(?:please|hey|hello|hi)$/i.test(address) ? {} : { address } };
+}
+function aidRequestIntent(content, state) {
+  const { text } = aidRequestHead(content);
   if (!/^(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:heal|treat|mend|cure|restore|protect|help)\b/i.test(text))
     return false;
   const q = text.indexOf("?");

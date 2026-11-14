@@ -74,7 +74,7 @@ test("aid cannot bundle extra actions, another responder or another person's per
 
 test("requests invite an offer while informational and compound messages retain their normal meaning", () => {
   for (const text of ["Could you heal my arm?", '"Can you treat this burn?" I ask Jo.', "Would you please heal me?"]) expect(aidRequestIntent(text)).toBe(true);
-  for (const text of ["How much does healing cost?", "Can you tell me how this spell works?", "Could you heal my arm? I attack the guard.", "OOC: could you heal my arm?", "Can you help with my homework?", "Can you help me?", "If you could heal me, I would pay."]) expect(aidRequestIntent(text)).toBe(false);
+  for (const text of ["How much does healing cost?", "Can you tell me how this spell works?", "Could you heal my arm? I attack the guard.", "OOC: could you heal my arm?", "I spend five coins, could you heal my arm?", "Jo and I attack, could you heal my arm?", "After casting, could you heal my arm?", "Who are you? Could you heal my arm?", "Can you help with my homework?", "Can you help me?", "If you could heal me, I would pay."]) expect(aidRequestIntent(text)).toBe(false);
   const { state } = setup(), row = { ...consent(state), quote: "Yes, please." };
   expect(readMechanicalPlan([row], state, "Yes, please.")).toEqual([consent(state)]);
   expect(readMechanicalPlan([row], state, "Can I accept your offer?")).toEqual([]);

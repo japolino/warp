@@ -4,15 +4,21 @@ import { pathToFileURL } from "node:url";
 import { revision } from "../src/shared/revision.js";
 const root = resolve(import.meta.dir, ".."), checkout = resolve(process.argv[2] ?? "D:/Lumiverse"), chatId = "native-aid-smoke";
 const manifest = await Bun.file(join(root, "spindle.json")).json();
+const cold = process.argv.includes("--cold");
 const opening = "Jo stands within arm's reach in the clinic. Jo has 10 Focus. You have a small routine cooking burn.";
 const profile = "Jo's Mend gently treats routine physical injury at touch range and costs 2 Focus.";
 const msg = (id: string, role: string, content: string, index: number): any => ({ id, role, content, is_user: role === "user", index_in_chat: index, swipe_id: 0, chat_id: chatId, metadata: {}, extra: {} });
 const messages = [msg("opening", "assistant", opening, 0)];
-let worker: Worker, registrationId = "", toolRegistered = false, phase = "bootstrap", wire: any[] = [], args: any, firstResult = "", expectedReload = "", timer: ReturnType<typeof setTimeout>;
+let worker: Worker, registrationId = "", toolRegistered = false, phase = "bootstrap", wire: any[] = [], args: any, firstResult = "", expectedReload = "", heldBackground = "", canceledBackground = false, timer: ReturnType<typeof setTimeout>;
 try {
   await new Promise<void>((done, reject) => {
     timer = setTimeout(() => reject(Error(`Native aid worker timed out at ${phase}`)), 30000);
     const invoke = (requestId: string, userId = "fixture-user") => worker.postMessage({ type: "tool_invocation", requestId, userId, toolName: "npc_aid", args, contextMessages: wire });
+    const begin = () => {
+      phase="intercept";messages.push(msg("request","user",'"Could you treat my arm?"',1),msg("reply","assistant","",2));
+      worker.postMessage({type:"event",event:"GENERATION_STARTED",userId:"fixture-user",payload:{chatId,generationId:"native-turn",targetMessageId:"reply",generationType:"normal"}});
+      worker.postMessage({type:"intercept_request",requestId:"native",registrationId,messages:messages.filter(m=>m.content).map(m=>({role:m.role,content:m.content,sourceMessageId:m.id})),context:{chatId,userId:"fixture-user",generationType:"normal"}});
+    };
     const launch = () => {
       worker = new Worker(pathToFileURL(join(checkout, "src/spindle/worker-runtime.ts")).href); worker.onerror = reject;
       worker.onmessage = ({data:e}) => {
@@ -20,7 +26,7 @@ try {
           const respond = (result: unknown) => worker.postMessage({type:"response",requestId:e.requestId,result});
           if (e.type === "register_interceptor") registrationId = e.registrationId;
           else if (e.type === "permissions_get_granted") respond(manifest.permissions);
-          else if (e.type === "register_tool") { if (e.tool.name !== "npc_aid" || !e.tool.inline_available || e.tool.parameters.properties.turn.enum) throw Error("Invalid native schema"); toolRegistered = true; }
+          else if (e.type === "register_tool") { if (e.tool.name !== "npc_aid" || !e.tool.inline_available || "turn" in e.tool.parameters.properties) throw Error("Invalid native schema"); toolRegistered = true; }
           else if (e.type === "log") { if (e.level === "error") throw Error(e.message); if (e.message === "__worker_ready__") worker.postMessage({type:"frontend_message",userId:"fixture-user",payload:{type:"hello",chatId}}); }
           else if (e.type === "chats_get") respond({id:chatId,character_id:"jo",metadata:{}});
           else if (e.type === "characters_get") respond({id:"jo",name:"Jo",description:profile,world_book_ids:[]});
@@ -30,8 +36,10 @@ try {
           else if (e.type === "macros_resolve") respond({text:e.template==="{{persona}}"?"Sam is an adult visitor.":"Sam",diagnostics:[]});
           else if (e.type === "user_storage_read") { if (e.path==="settings.json") respond("{}"); else worker.postMessage({type:"response",requestId:e.requestId,error:"Disposable fixture absent"}); }
           else if (e.type === "chat_update_message") { const m=messages.find(m=>m.id===e.messageId); if(!m) throw Error("Unknown fixture message"); m.metadata=e.patch.metadata; respond(undefined); }
+          else if (e.type === "cancel_generation") { if(e.requestId!==heldBackground)throw Error("Unknown controlled cancellation");canceledBackground=true;worker.postMessage({type:"response",requestId:e.requestId,error:"AbortError: controlled initial background delay canceled"}); }
           else if (e.type === "request_generation") {
             if (phase === "reload") throw Error("Reload requested a model call");
+            if (cold && phase === "bootstrap") { heldBackground=e.requestId;begin();return; }
             if (e.input.messages[0].content.includes("Determine whether")) throw Error("A direct request added an unnecessary foreground model call");
             const sources = JSON.parse(e.input.messages[1].content.split("\n").find((l:string)=>l.startsWith('[{"id":"warp-source:'))??"[]"), source=sources.find((s:any)=>s.kind==="card");
             const latest=[...messages].reverse().find(m=>!m.is_user&&m.content)!;
@@ -40,8 +48,8 @@ try {
           } else if (e.type === "intercept_result") {
             if(e.error) throw Error(e.error); wire=e.messages;
             const invitation=messages[1].metadata.warpLivingPrompt?.["0"].packet.narratorAid;
-            if(!toolRegistered||invitation?.choices?.length!==1) throw Error("No native invitation in the actual worker");
-            args={turn:invitation.turn,actor:invitation.choices[0].actor,ability:invitation.choices[0].ability}; phase="foreign";invoke("foreign","another-user");
+            if(!toolRegistered||(cold ? !invitation?.needsScene || !canceledBackground : invitation?.choices?.length!==1)) throw Error("No native invitation in the actual worker");
+            args={actor:cold?"Jo":invitation.choices[0].actor,ability:cold?"Mend":invitation.choices[0].ability}; phase="foreign";invoke("foreign","another-user");
           } else if (e.type === "tool_invocation_result") {
             if(e.error) throw Error(e.error); const result=JSON.parse(e.result);
             if(e.requestId==="foreign") { if(result.status!=="blocked") throw Error("Foreign caller was accepted");phase="prepare";invoke("first"); }
@@ -49,7 +57,7 @@ try {
             else if(e.requestId==="duplicate") {if(e.result!==firstResult)throw Error("Duplicate call changed the result");phase="commit";messages[2].content="Jo chooses to help and uses Mend to treat your cooking burn.";worker.postMessage({type:"event",event:"GENERATION_ENDED",userId:"fixture-user",payload:{chatId,generationId:"native-turn",messageId:"reply"}});}
           } else if(e.type==="frontend_message"&&e.payload?.type==="living"&&!e.payload.busy) {
             const state=e.payload.world.mechanics;
-            if(phase==="bootstrap"&&state?.abilities?.length===1) {phase="intercept";messages.push(msg("request","user",'"Could you treat my arm?"',1),msg("reply","assistant","",2));worker.postMessage({type:"event",event:"GENERATION_STARTED",userId:"fixture-user",payload:{chatId,generationId:"native-turn",targetMessageId:"reply",generationType:"normal"}});worker.postMessage({type:"intercept_request",requestId:"native",registrationId,messages:messages.filter(m=>m.content).map(m=>({role:m.role,content:m.content,sourceMessageId:m.id})),context:{chatId,userId:"fixture-user",generationType:"normal"}});}
+            if(phase==="bootstrap"&&state?.abilities?.length===1) begin();
             else if(phase==="commit") {if(state.resources[0].current!==8||state.conditions.length||state.applied.length!==1||messages[2].metadata.warpMechanics?.["0"].receipt?.engine!==13)throw Error("Native aid did not commit once");expectedReload=revision(state);phase="reload";worker.terminate();launch();}
             else if(phase==="reload") {if(revision(state)!==expectedReload)throw Error("Reload repeated or lost aid");done();}
           } else if(e.requestId) worker.postMessage({type:"response",requestId:e.requestId,error:`Unsupported fixture RPC ${e.type}`});
@@ -58,5 +66,5 @@ try {
       worker.postMessage({type:"init",manifest:{...manifest,entry_backend:pathToFileURL(join(root,"dist/backend.js")).href},storagePath:join(root,".artifacts/native-aid-worker-smoke")});
     }; launch();
   });
-  console.log("PASS: actual worker registers a stable native tool, binds a narrator action to its authenticated prompt, rejects a foreign caller, reuses duplicate preparation, commits one NPC-owned use after narration, and reloads without another model call.");
+  console.log(`PASS: actual worker ${cold ? "cancels a stalled first read and prepares the initially unknown scene through the narrator's aid call, then " : ""}registers a stable native tool, binds a narrator action to its authenticated prompt, rejects a foreign caller, reuses duplicate preparation, commits one NPC-owned use after narration, and reloads without another model call.`);
 } finally {clearTimeout(timer!);worker!.terminate();}

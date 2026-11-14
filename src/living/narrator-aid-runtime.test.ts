@@ -31,8 +31,8 @@ async function clinic() {
   active = `native-aid-${++serial}`; h.chat(active, "", opening); h.characters[`char-${active}`].description = profile;
   await syncLiving(active, h.userId); return active;
 }
-async function invoke(turn: string, actor = "Jo", ability?: string, owner = h.userId) {
-  return JSON.parse((await livingNarratorAid({ toolName: "npc_aid", requestId: crypto.randomUUID(), args: { turn, actor, ability: ability ?? foldMechanics(await getMessages(active)).abilities![0].id }, contextMessages: currentWire }, owner))!);
+async function invoke(turn: string | undefined, actor = "Jo", ability?: string, owner = h.userId) {
+  return JSON.parse((await livingNarratorAid({ toolName: "npc_aid", requestId: crypto.randomUUID(), args: { ...(turn === undefined ? {} : { turn }), actor, ability: ability ?? foldMechanics(await getMessages(active)).abilities![0].id }, contextMessages: currentWire }, owner))!);
 }
 async function invitation() {
   const player = [...await getMessages(active)].reverse().find(m => m.is_user)!;
@@ -58,7 +58,9 @@ test("the real runtime exposes a static tool, stages the narrator's chosen aid b
     expect((await invoke(token, "Jo", undefined, "another-user")).status).toBe("blocked");
     const originalWire = currentWire; currentWire = [{ role: "user", content: "A different chat" }];
     expect((await invoke(token)).status).toBe("blocked"); currentWire = originalWire;
-    const results = await Promise.all([invoke(token), invoke(token)]);
+    currentWire = structuredClone(originalWire); currentWire.at(-1)!.content = currentWire.at(-1)!.content.replace('"tool":"npc_aid"', '"tool":"forged_tool"');
+    expect((await invoke(undefined)).status).toBe("blocked"); currentWire = originalWire;
+    const results = await Promise.all([invoke(token), invoke(undefined)]);
     expect(results[0].status).toBe("ready"); expect(results[1]).toEqual(results[0]);
     expect(results[0].receipt.events.find((e: any) => e.kind === "mend").actor).toBe("Jo");
     expect(foldMechanics(await getMessages(id))).toEqual(original);
@@ -99,13 +101,15 @@ test("stopping a prepared narrator action spends nothing and a replacement gener
   livingStarted({ chatId: id, generationId: "stopped", targetMessageId: target.id, generationType: "normal" });
   const input = (await getMessages(id)).filter(m => m.content).map(m => ({ role: m.role, content: m.content, sourceMessageId: m.id }));
   currentWire = await livingIntercept(input, { chatId: id, userId: h.userId, generationType: "normal" } as InterceptorContextDTO);
-  const first = await invitation(); expect((await invoke(first.turn)).status).toBe("ready");
+  const first = await invitation(), oldWire = currentWire; expect((await invoke(first.turn)).status).toBe("ready");
   livingStopped({ chatId: id, generationId: "stopped" });
   expect(foldMechanics(await getMessages(id)).resources[0].current).toBe(10);
   livingStarted({ chatId: id, generationId: "replacement", targetMessageId: target.id, generationType: "normal" });
   currentWire = await livingIntercept(input, { chatId: id, userId: h.userId, generationType: "normal" } as InterceptorContextDTO);
   const second = await invitation(); expect(second.turn).not.toBe(first.turn);
-  expect((await invoke(first.turn)).status).toBe("blocked"); expect((await invoke(second.turn)).status).toBe("ready");
+  expect((await invoke(first.turn)).status).toBe("blocked");
+  const newWire = currentWire; currentWire = oldWire; expect((await invoke(undefined)).status).toBe("blocked"); currentWire = newWire;
+  expect((await invoke(undefined)).status).toBe("ready");
   expect(foldMechanics(await getMessages(id)).resources[0].current).toBe(10);
 });
 
