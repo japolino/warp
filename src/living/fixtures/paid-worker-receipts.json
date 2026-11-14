@@ -1,0 +1,1139 @@
+{
+  "origin": "Actual production worker and configured gemini-3.8-flash, public disposable scenarios, 2026-11-13. Synthetic narrator replies; no original-card gameplay claim.",
+  "cases": [
+    {
+      "scene": "fantasy",
+      "messages": [
+        {
+          "id": "opening",
+          "is_user": false,
+          "content": "Jo is beside you within arm's reach in the clinic. Jo has 10 Focus. Jo's Mend gently treats routine physical injury at touch range and costs 2 Focus. You have a small routine cooking burn and carry 12 coins. Jo offers Mend for five coins.",
+          "index_in_chat": 0,
+          "swipe_id": 0,
+          "metadata": {
+            "warpMechanics": {
+              "0": {
+                "version": 1,
+                "path": "warp-living-v1",
+                "text": "26f74bd6:1024215e",
+                "observations": [
+                  {
+                    "kind": "entity",
+                    "value": {
+                      "id": "entity-bee4fa7c:b5c60136",
+                      "name": "Jo",
+                      "displayName": "Jo",
+                      "aliases": [],
+                      "entityKind": "person",
+                      "present": true,
+                      "status": "active",
+                      "source": {
+                        "message": "opening",
+                        "quote": "Jo is beside you within arm's reach in the clinic.",
+                        "sourceRevision": "26f74bd6:1024215e"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "distance",
+                    "value": {
+                      "id": "distance-c3962d65:8aac587f",
+                      "from": "you",
+                      "to": "Jo",
+                      "band": "touch",
+                      "source": {
+                        "message": "opening",
+                        "quote": "Jo is beside you within arm's reach in the clinic.",
+                        "sourceRevision": "26f74bd6:1024215e"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "resource",
+                    "value": {
+                      "id": "jo-focus",
+                      "owner": "Jo",
+                      "name": "Focus",
+                      "current": 10,
+                      "role": "effort",
+                      "source": {
+                        "message": "opening",
+                        "quote": "Jo has 10 Focus.",
+                        "sourceRevision": "26f74bd6:1024215e"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "item",
+                    "value": {
+                      "id": "player-coins",
+                      "owner": "you",
+                      "name": "coins",
+                      "quantity": 12,
+                      "equipped": false,
+                      "source": {
+                        "message": "opening",
+                        "quote": "carry 12 coins.",
+                        "sourceRevision": "26f74bd6:1024215e"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "condition",
+                    "value": {
+                      "id": "player-cooking-burn",
+                      "owner": "you",
+                      "name": "routine cooking burn",
+                      "hinders": [],
+                      "blocks": [],
+                      "helps": [],
+                      "ending": "treated",
+                      "category": "physical_injury",
+                      "severity": "minor",
+                      "recovery": "routine",
+                      "source": {
+                        "message": "opening",
+                        "quote": "You have a small routine cooking burn",
+                        "sourceRevision": "26f74bd6:1024215e"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "ability",
+                    "value": {
+                      "id": "ability-599daf10:befb20c6",
+                      "version": 1,
+                      "owner": "Jo",
+                      "name": "Mend",
+                      "description": "gently treats routine physical injury at touch range",
+                      "approach": "concentration",
+                      "target": "other",
+                      "costs": [
+                        {
+                          "kind": "resource",
+                          "id": "jo-focus",
+                          "amount": 2
+                        }
+                      ],
+                      "effects": [
+                        {
+                          "kind": "mend",
+                          "target": "target",
+                          "impact": "minor"
+                        }
+                      ],
+                      "requires": [],
+                      "unsupported": [],
+                      "fingerprint": "b57762c6:1a2b6f48",
+                      "source": {
+                        "message": "opening",
+                        "quote": "Jo's Mend gently treats routine physical injury at touch range and costs 2 Focus.",
+                        "sourceRevision": "26f74bd6:1024215e"
+                      },
+                      "sourceKind": "story"
+                    }
+                  },
+                  {
+                    "kind": "aid_offer",
+                    "value": {
+                      "id": "aid-c4dc5c01:7d563d01",
+                      "version": 1,
+                      "actor": "Jo",
+                      "target": "you",
+                      "ability": "ability-599daf10:befb20c6",
+                      "abilityVersion": 1,
+                      "name": "Mend",
+                      "status": "offered",
+                      "unsupported": [],
+                      "source": {
+                        "message": "opening",
+                        "quote": "Jo offers Mend for five coins.",
+                        "sourceRevision": "26f74bd6:1024215e"
+                      },
+                      "termsVersion": 1,
+                      "fee": {
+                        "kind": "item",
+                        "id": "player-coins",
+                        "amount": 5
+                      }
+                    }
+                  }
+                ],
+                "sources": []
+              }
+            }
+          }
+        },
+        {
+          "id": "yes",
+          "is_user": true,
+          "content": "Yes, please.",
+          "index_in_chat": 1,
+          "swipe_id": 0,
+          "metadata": {}
+        },
+        {
+          "id": "reply",
+          "is_user": false,
+          "content": "Jo receives five coins and uses Mend, treating your cooking burn.",
+          "index_in_chat": 2,
+          "swipe_id": 0,
+          "metadata": {
+            "warpMechanics": {
+              "0": {
+                "version": 1,
+                "path": "68773790:b993f12c",
+                "text": "5db3c1ab:b3ab8d95",
+                "receipt": {
+                  "version": 1,
+                  "engine": 11,
+                  "id": "action-68773790:b993f12c",
+                  "input": "8530071a:c43fc946",
+                  "base": "4714b33d:d63fc417",
+                  "actor": "you",
+                  "operations": [
+                    {
+                      "kind": "accept_aid",
+                      "offer": "aid-c4dc5c01:7d563d01",
+                      "version": 1
+                    }
+                  ],
+                  "responses": [],
+                  "changes": [
+                    {
+                      "kind": "item",
+                      "id": "aid-fee-36fb121:e5f64f8b",
+                      "before": null,
+                      "after": {
+                        "id": "aid-fee-36fb121:e5f64f8b",
+                        "owner": "Jo",
+                        "name": "coins",
+                        "quantity": 5,
+                        "equipped": false,
+                        "source": {
+                          "message": "opening",
+                          "quote": "carry 12 coins.",
+                          "sourceRevision": "26f74bd6:1024215e"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "item",
+                      "id": "player-coins",
+                      "before": {
+                        "id": "player-coins",
+                        "owner": "you",
+                        "name": "coins",
+                        "quantity": 12,
+                        "equipped": false,
+                        "source": {
+                          "message": "opening",
+                          "quote": "carry 12 coins.",
+                          "sourceRevision": "26f74bd6:1024215e"
+                        }
+                      },
+                      "after": {
+                        "id": "player-coins",
+                        "owner": "you",
+                        "name": "coins",
+                        "quantity": 7,
+                        "equipped": false,
+                        "source": {
+                          "message": "opening",
+                          "quote": "carry 12 coins.",
+                          "sourceRevision": "26f74bd6:1024215e"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "resource",
+                      "id": "jo-focus",
+                      "before": {
+                        "id": "jo-focus",
+                        "owner": "Jo",
+                        "name": "Focus",
+                        "current": 10,
+                        "role": "effort",
+                        "source": {
+                          "message": "opening",
+                          "quote": "Jo has 10 Focus.",
+                          "sourceRevision": "26f74bd6:1024215e"
+                        }
+                      },
+                      "after": {
+                        "id": "jo-focus",
+                        "owner": "Jo",
+                        "name": "Focus",
+                        "current": 8,
+                        "role": "effort",
+                        "source": {
+                          "message": "opening",
+                          "quote": "Jo has 10 Focus.",
+                          "sourceRevision": "26f74bd6:1024215e"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "condition",
+                      "id": "player-cooking-burn",
+                      "before": {
+                        "id": "player-cooking-burn",
+                        "owner": "you",
+                        "name": "routine cooking burn",
+                        "hinders": [],
+                        "blocks": [],
+                        "helps": [],
+                        "ending": "treated",
+                        "category": "physical_injury",
+                        "severity": "minor",
+                        "recovery": "routine",
+                        "source": {
+                          "message": "opening",
+                          "quote": "You have a small routine cooking burn",
+                          "sourceRevision": "26f74bd6:1024215e"
+                        }
+                      },
+                      "after": null
+                    },
+                    {
+                      "kind": "aid_offer",
+                      "id": "aid-c4dc5c01:7d563d01",
+                      "before": {
+                        "id": "aid-c4dc5c01:7d563d01",
+                        "version": 1,
+                        "actor": "Jo",
+                        "target": "you",
+                        "ability": "ability-599daf10:befb20c6",
+                        "abilityVersion": 1,
+                        "name": "Mend",
+                        "status": "offered",
+                        "unsupported": [],
+                        "source": {
+                          "message": "opening",
+                          "quote": "Jo offers Mend for five coins.",
+                          "sourceRevision": "26f74bd6:1024215e"
+                        },
+                        "termsVersion": 1,
+                        "fee": {
+                          "kind": "item",
+                          "id": "player-coins",
+                          "amount": 5
+                        }
+                      },
+                      "after": {
+                        "id": "aid-c4dc5c01:7d563d01",
+                        "version": 1,
+                        "actor": "Jo",
+                        "target": "you",
+                        "ability": "ability-599daf10:befb20c6",
+                        "abilityVersion": 1,
+                        "name": "Mend",
+                        "status": "used",
+                        "unsupported": [],
+                        "source": {
+                          "message": "opening",
+                          "quote": "Jo offers Mend for five coins.",
+                          "sourceRevision": "26f74bd6:1024215e"
+                        },
+                        "termsVersion": 1,
+                        "fee": {
+                          "kind": "item",
+                          "id": "player-coins",
+                          "amount": 5
+                        },
+                        "paid": {
+                          "kind": "item",
+                          "id": "player-coins",
+                          "amount": 5,
+                          "from": "you",
+                          "to": "Jo",
+                          "asset": "coins"
+                        }
+                      }
+                    }
+                  ],
+                  "beats": [
+                    {
+                      "kind": "payment",
+                      "actor": "you",
+                      "target": "Jo",
+                      "name": "coins",
+                      "amount": 5
+                    },
+                    {
+                      "kind": "mend",
+                      "actor": "Jo",
+                      "target": "you",
+                      "name": "routine cooking burn: cleared",
+                      "basis": "warp"
+                    },
+                    {
+                      "kind": "aid",
+                      "actor": "Jo",
+                      "target": "you",
+                      "name": "Mend"
+                    }
+                  ],
+                  "result": "1af933fd:57255ff7",
+                  "status": "ready"
+                },
+                "observations": [
+                  {
+                    "kind": "entity",
+                    "value": {
+                      "id": "entity-bee4fa7c:b5c60136",
+                      "name": "Jo",
+                      "displayName": "Jo",
+                      "aliases": [],
+                      "entityKind": "person",
+                      "present": true,
+                      "status": "active",
+                      "source": {
+                        "message": "reply",
+                        "quote": "Jo receives five coins and uses Mend, treating your cooking burn.",
+                        "sourceRevision": "5db3c1ab:b3ab8d95"
+                      }
+                    }
+                  }
+                ],
+                "sources": []
+              }
+            }
+          }
+        }
+      ],
+      "after": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "jo-focus",
+            "owner": "Jo",
+            "name": "Focus",
+            "current": 8,
+            "role": "effort",
+            "source": {
+              "message": "opening",
+              "quote": "Jo has 10 Focus.",
+              "sourceRevision": "26f74bd6:1024215e"
+            }
+          }
+        ],
+        "items": [
+          {
+            "id": "player-coins",
+            "owner": "you",
+            "name": "coins",
+            "quantity": 7,
+            "equipped": false,
+            "source": {
+              "message": "opening",
+              "quote": "carry 12 coins.",
+              "sourceRevision": "26f74bd6:1024215e"
+            }
+          },
+          {
+            "id": "aid-fee-36fb121:e5f64f8b",
+            "owner": "Jo",
+            "name": "coins",
+            "quantity": 5,
+            "equipped": false,
+            "source": {
+              "message": "opening",
+              "quote": "carry 12 coins.",
+              "sourceRevision": "26f74bd6:1024215e"
+            }
+          }
+        ],
+        "conditions": [],
+        "applied": [
+          {
+            "id": "action-68773790:b993f12c",
+            "input": "8530071a:c43fc946"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "reply",
+              "quote": "Jo receives five coins and uses Mend, treating your cooking burn.",
+              "sourceRevision": "5db3c1ab:b3ab8d95"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "opening",
+              "quote": "Jo is beside you within arm's reach in the clinic.",
+              "sourceRevision": "26f74bd6:1024215e"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-599daf10:befb20c6",
+            "version": 1,
+            "owner": "Jo",
+            "name": "Mend",
+            "description": "gently treats routine physical injury at touch range",
+            "approach": "concentration",
+            "target": "other",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "jo-focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "mend",
+                "target": "target",
+                "impact": "minor"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "b57762c6:1a2b6f48",
+            "source": {
+              "message": "opening",
+              "quote": "Jo's Mend gently treats routine physical injury at touch range and costs 2 Focus.",
+              "sourceRevision": "26f74bd6:1024215e"
+            },
+            "sourceKind": "story"
+          }
+        ],
+        "aidOffers": [
+          {
+            "id": "aid-c4dc5c01:7d563d01",
+            "version": 1,
+            "actor": "Jo",
+            "target": "you",
+            "ability": "ability-599daf10:befb20c6",
+            "abilityVersion": 1,
+            "name": "Mend",
+            "status": "used",
+            "unsupported": [],
+            "source": {
+              "message": "opening",
+              "quote": "Jo offers Mend for five coins.",
+              "sourceRevision": "26f74bd6:1024215e"
+            },
+            "termsVersion": 1,
+            "fee": {
+              "kind": "item",
+              "id": "player-coins",
+              "amount": 5
+            },
+            "paid": {
+              "kind": "item",
+              "id": "player-coins",
+              "amount": 5,
+              "from": "you",
+              "to": "Jo",
+              "asset": "coins"
+            }
+          }
+        ],
+        "clocks": [
+          {
+            "id": "Jo",
+            "actor": "Jo",
+            "actions": 1
+          }
+        ],
+        "closedConditions": [
+          {
+            "id": "player-cooking-burn",
+            "owner": "you",
+            "name": "routine cooking burn",
+            "after": {
+              "kind": "receipt",
+              "id": "action-68773790:b993f12c"
+            }
+          }
+        ]
+      },
+      "bootstrapReply": "```json\n{\n  \"scene\": {\n    \"place\": \"clinic\",\n    \"present\": [\n      \"Jo\"\n    ],\n    \"message\": \"opening\",\n    \"quote\": \"Jo is beside you within arm's reach in the clinic.\"\n  },\n  \"mechanicalObservations\": [\n    {\n      \"kind\": \"entity\",\n      \"name\": \"Jo\",\n      \"entityKind\": \"person\",\n      \"present\": true,\n      \"status\": \"active\",\n      \"message\": \"opening\",\n      \"quote\": \"Jo is beside you within arm's reach in the clinic.\"\n    },\n    {\n      \"kind\": \"distance\",\n      \"from\": \"you\",\n      \"to\": \"Jo\",\n      \"band\": \"touch\",\n      \"message\": \"opening\",\n      \"quote\": \"Jo is beside you within arm's reach in the clinic.\"\n    },\n    {\n      \"kind\": \"resource\",\n      \"id\": \"jo-focus\",\n      \"owner\": \"Jo\",\n      \"name\": \"Focus\",\n      \"current\": 10,\n      \"role\": \"effort\",\n      \"message\": \"opening\",\n      \"quote\": \"Jo has 10 Focus.\"\n    },\n    {\n      \"kind\": \"item\",\n      \"id\": \"player-coins\",\n      \"owner\": \"you\",\n      \"name\": \"coins\",\n      \"quantity\": 12,\n      \"equipped\": false,\n      \"message\": \"opening\",\n      \"quote\": \"carry 12 coins.\"\n    },\n    {\n      \"kind\": \"condition\",\n      \"id\": \"player-cooking-burn\",\n      \"owner\": \"you\",\n      \"name\": \"routine cooking burn\",\n      \"category\": \"physical_injury\",\n      \"severity\": \"minor\",\n      \"recovery\": \"routine\",\n      \"hinders\": [],\n      \"blocks\": [],\n      \"helps\": [],\n      \"ending\": \"treated\",\n      \"message\": \"opening\",\n      \"quote\": \"You have a small routine cooking burn\"\n    },\n    {\n      \"kind\": \"aid_offer\",\n      \"actor\": \"Jo\",\n      \"target\": \"you\",\n      \"ability\": \"Mend\",\n      \"uncontested\": true,\n      \"fee\": {\n        \"kind\": \"item\",\n        \"id\": \"player-coins\",\n        \"amount\": 5\n      },\n      \"unsupported\": [],\n      \"message\": \"opening\",\n      \"quote\": \"Jo offers Mend for five coins.\"\n    }\n  ],\n  \"abilityDefinitions\": [\n    {\n      \"owner\": \"Jo\",\n      \"name\": \"Mend\",\n      \"description\": \"gently treats routine physical injury at touch range\",\n      \"approach\": \"concentration\",\n      \"target\": \"other\",\n      \"costs\": [\n        {\n          \"kind\": \"resource\",\n          \"id\": \"jo-focus\",\n          \"amount\": 2\n        }\n      ],\n      \"effects\": [\n        {\n          \"kind\": \"mend\",\n          \"target\": \"target\",\n          \"impact\": \"minor\"\n        }\n      ],\n      \"requires\": [],\n      \"unsupported\": [],\n      \"message\": \"opening\",\n      \"quote\": \"Jo's Mend gently treats routine physical injury at touch range and costs 2 Focus.\"\n    }\n  ],\n  \"changes\": [\n    {\n      \"op\": \"put\",\n      \"id\": \"jo-offers-mend\",\n      \"kind\": \"situation\",\n      \"subject\": \"Jo\",\n      \"text\": \"Jo offers Mend for five coins.\",\n      \"status\": \"open\",\n      \"message\": \"opening\",\n      \"quote\": \"Jo offers Mend for five coins.\"\n    }\n  ]\n}\n```"
+    },
+    {
+      "scene": "science-fiction",
+      "messages": [
+        {
+          "id": "opening",
+          "is_user": false,
+          "content": "Dr Imani stands within arm's reach in the ship clinic. She owns 3 medical patches. Her Dermal Seal treats routine physical injury at touch range and uses 1 medical patch. You have a minor routine cut and 50 credits. Dr Imani offers Dermal Seal for 20 credits.",
+          "index_in_chat": 0,
+          "swipe_id": 0,
+          "metadata": {
+            "warpMechanics": {
+              "0": {
+                "version": 1,
+                "path": "warp-living-v1",
+                "text": "ba75490e:68a9a330",
+                "observations": [
+                  {
+                    "kind": "entity",
+                    "value": {
+                      "id": "entity-b6bd4d6f:df2a09db",
+                      "name": "Dr Imani",
+                      "displayName": "Dr Imani",
+                      "aliases": [],
+                      "entityKind": "person",
+                      "present": true,
+                      "status": "active",
+                      "source": {
+                        "message": "opening",
+                        "quote": "Dr Imani stands within arm's reach in the ship clinic.",
+                        "sourceRevision": "ba75490e:68a9a330"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "entity",
+                    "value": {
+                      "id": "you",
+                      "name": "you",
+                      "displayName": "Sam",
+                      "aliases": [],
+                      "entityKind": "person",
+                      "present": true,
+                      "status": "active",
+                      "source": {
+                        "message": "opening",
+                        "quote": "You have a minor routine cut",
+                        "sourceRevision": "ba75490e:68a9a330"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "distance",
+                    "value": {
+                      "id": "distance-41bb4568:68f5432e",
+                      "from": "you",
+                      "to": "Dr Imani",
+                      "band": "touch",
+                      "source": {
+                        "message": "opening",
+                        "quote": "Dr Imani stands within arm's reach in the ship clinic.",
+                        "sourceRevision": "ba75490e:68a9a330"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "item",
+                    "value": {
+                      "id": "item:imani:medical_patches",
+                      "owner": "Dr Imani",
+                      "name": "medical patch",
+                      "quantity": 3,
+                      "equipped": false,
+                      "source": {
+                        "message": "opening",
+                        "quote": "She owns 3 medical patches.",
+                        "sourceRevision": "ba75490e:68a9a330"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "condition",
+                    "value": {
+                      "id": "condition:you:minor_routine_cut",
+                      "owner": "you",
+                      "name": "minor routine cut",
+                      "hinders": [],
+                      "blocks": [],
+                      "helps": [],
+                      "ending": "treatment or natural healing",
+                      "category": "physical_injury",
+                      "severity": "minor",
+                      "recovery": "routine",
+                      "source": {
+                        "message": "opening",
+                        "quote": "You have a minor routine cut",
+                        "sourceRevision": "ba75490e:68a9a330"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "resource",
+                    "value": {
+                      "id": "resource:you:credits",
+                      "owner": "you",
+                      "name": "credits",
+                      "current": 50,
+                      "role": "money",
+                      "source": {
+                        "message": "opening",
+                        "quote": "50 credits.",
+                        "sourceRevision": "ba75490e:68a9a330"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "ability",
+                    "value": {
+                      "id": "ability-6950da83:5d986775",
+                      "version": 1,
+                      "owner": "Dr Imani",
+                      "name": "Dermal Seal",
+                      "description": "Treats routine physical injury at touch range and uses 1 medical patch.",
+                      "approach": "precision",
+                      "target": "other",
+                      "costs": [
+                        {
+                          "kind": "item",
+                          "id": "item:imani:medical_patches",
+                          "amount": 1
+                        }
+                      ],
+                      "effects": [
+                        {
+                          "kind": "mend",
+                          "target": "target",
+                          "impact": "standard"
+                        }
+                      ],
+                      "requires": [],
+                      "unsupported": [],
+                      "fingerprint": "e3dfde69:9d4a5d37",
+                      "source": {
+                        "message": "opening",
+                        "quote": "Her Dermal Seal treats routine physical injury at touch range and uses 1 medical patch.",
+                        "sourceRevision": "ba75490e:68a9a330"
+                      },
+                      "sourceKind": "story"
+                    }
+                  },
+                  {
+                    "kind": "aid_offer",
+                    "value": {
+                      "id": "aid-53ff4048:b4e7aaf4",
+                      "version": 1,
+                      "actor": "Dr Imani",
+                      "target": "you",
+                      "ability": "ability-6950da83:5d986775",
+                      "abilityVersion": 1,
+                      "name": "Dermal Seal",
+                      "status": "offered",
+                      "unsupported": [],
+                      "source": {
+                        "message": "opening",
+                        "quote": "Dr Imani offers Dermal Seal for 20 credits.",
+                        "sourceRevision": "ba75490e:68a9a330"
+                      },
+                      "termsVersion": 1,
+                      "fee": {
+                        "kind": "resource",
+                        "id": "resource:you:credits",
+                        "amount": 20
+                      }
+                    }
+                  }
+                ],
+                "sources": []
+              }
+            }
+          }
+        },
+        {
+          "id": "yes",
+          "is_user": true,
+          "content": "Yes, please.",
+          "index_in_chat": 1,
+          "swipe_id": 0,
+          "metadata": {}
+        },
+        {
+          "id": "reply",
+          "is_user": false,
+          "content": "Dr Imani receives 20 credits and uses one medical patch to seal your cut.",
+          "index_in_chat": 2,
+          "swipe_id": 0,
+          "metadata": {
+            "warpMechanics": {
+              "0": {
+                "version": 1,
+                "path": "999e2a9d:6e71a705",
+                "text": "6f00776:51e5689c",
+                "receipt": {
+                  "version": 1,
+                  "engine": 11,
+                  "id": "action-999e2a9d:6e71a705",
+                  "input": "d13fd74d:dfa2ecc3",
+                  "base": "abd44c1a:a2d7bd62",
+                  "actor": "you",
+                  "operations": [
+                    {
+                      "kind": "accept_aid",
+                      "offer": "aid-53ff4048:b4e7aaf4",
+                      "version": 1
+                    }
+                  ],
+                  "responses": [],
+                  "changes": [
+                    {
+                      "kind": "resource",
+                      "id": "resource:you:credits",
+                      "before": {
+                        "id": "resource:you:credits",
+                        "owner": "you",
+                        "name": "credits",
+                        "current": 50,
+                        "role": "money",
+                        "source": {
+                          "message": "opening",
+                          "quote": "50 credits.",
+                          "sourceRevision": "ba75490e:68a9a330"
+                        }
+                      },
+                      "after": {
+                        "id": "resource:you:credits",
+                        "owner": "you",
+                        "name": "credits",
+                        "current": 30,
+                        "role": "money",
+                        "source": {
+                          "message": "opening",
+                          "quote": "50 credits.",
+                          "sourceRevision": "ba75490e:68a9a330"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "item",
+                      "id": "item:imani:medical_patches",
+                      "before": {
+                        "id": "item:imani:medical_patches",
+                        "owner": "Dr Imani",
+                        "name": "medical patch",
+                        "quantity": 3,
+                        "equipped": false,
+                        "source": {
+                          "message": "opening",
+                          "quote": "She owns 3 medical patches.",
+                          "sourceRevision": "ba75490e:68a9a330"
+                        }
+                      },
+                      "after": {
+                        "id": "item:imani:medical_patches",
+                        "owner": "Dr Imani",
+                        "name": "medical patch",
+                        "quantity": 2,
+                        "equipped": false,
+                        "source": {
+                          "message": "opening",
+                          "quote": "She owns 3 medical patches.",
+                          "sourceRevision": "ba75490e:68a9a330"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "condition",
+                      "id": "condition:you:minor_routine_cut",
+                      "before": {
+                        "id": "condition:you:minor_routine_cut",
+                        "owner": "you",
+                        "name": "minor routine cut",
+                        "hinders": [],
+                        "blocks": [],
+                        "helps": [],
+                        "ending": "treatment or natural healing",
+                        "category": "physical_injury",
+                        "severity": "minor",
+                        "recovery": "routine",
+                        "source": {
+                          "message": "opening",
+                          "quote": "You have a minor routine cut",
+                          "sourceRevision": "ba75490e:68a9a330"
+                        }
+                      },
+                      "after": null
+                    },
+                    {
+                      "kind": "aid_offer",
+                      "id": "aid-53ff4048:b4e7aaf4",
+                      "before": {
+                        "id": "aid-53ff4048:b4e7aaf4",
+                        "version": 1,
+                        "actor": "Dr Imani",
+                        "target": "you",
+                        "ability": "ability-6950da83:5d986775",
+                        "abilityVersion": 1,
+                        "name": "Dermal Seal",
+                        "status": "offered",
+                        "unsupported": [],
+                        "source": {
+                          "message": "opening",
+                          "quote": "Dr Imani offers Dermal Seal for 20 credits.",
+                          "sourceRevision": "ba75490e:68a9a330"
+                        },
+                        "termsVersion": 1,
+                        "fee": {
+                          "kind": "resource",
+                          "id": "resource:you:credits",
+                          "amount": 20
+                        }
+                      },
+                      "after": {
+                        "id": "aid-53ff4048:b4e7aaf4",
+                        "version": 1,
+                        "actor": "Dr Imani",
+                        "target": "you",
+                        "ability": "ability-6950da83:5d986775",
+                        "abilityVersion": 1,
+                        "name": "Dermal Seal",
+                        "status": "used",
+                        "unsupported": [],
+                        "source": {
+                          "message": "opening",
+                          "quote": "Dr Imani offers Dermal Seal for 20 credits.",
+                          "sourceRevision": "ba75490e:68a9a330"
+                        },
+                        "termsVersion": 1,
+                        "fee": {
+                          "kind": "resource",
+                          "id": "resource:you:credits",
+                          "amount": 20
+                        },
+                        "paid": {
+                          "kind": "resource",
+                          "id": "resource:you:credits",
+                          "amount": 20,
+                          "from": "you",
+                          "to": "Dr Imani",
+                          "asset": "credits"
+                        }
+                      }
+                    }
+                  ],
+                  "beats": [
+                    {
+                      "kind": "payment",
+                      "actor": "you",
+                      "target": "Dr Imani",
+                      "name": "credits",
+                      "amount": 20
+                    },
+                    {
+                      "kind": "mend",
+                      "actor": "Dr Imani",
+                      "target": "you",
+                      "name": "minor routine cut: cleared",
+                      "basis": "warp"
+                    },
+                    {
+                      "kind": "aid",
+                      "actor": "Dr Imani",
+                      "target": "you",
+                      "name": "Dermal Seal"
+                    }
+                  ],
+                  "result": "79501b6f:ea7d6775",
+                  "status": "ready"
+                },
+                "observations": [
+                  {
+                    "kind": "entity",
+                    "value": {
+                      "id": "entity-b6bd4d6f:df2a09db",
+                      "name": "Dr Imani",
+                      "displayName": "Dr Imani",
+                      "aliases": [],
+                      "entityKind": "person",
+                      "present": true,
+                      "status": "active",
+                      "source": {
+                        "message": "reply",
+                        "quote": "Dr Imani receives 20 credits and uses one medical patch to seal your cut.",
+                        "sourceRevision": "6f00776:51e5689c"
+                      }
+                    }
+                  }
+                ],
+                "sources": []
+              }
+            }
+          }
+        }
+      ],
+      "after": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "resource:you:credits",
+            "owner": "you",
+            "name": "credits",
+            "current": 30,
+            "role": "money",
+            "source": {
+              "message": "opening",
+              "quote": "50 credits.",
+              "sourceRevision": "ba75490e:68a9a330"
+            }
+          }
+        ],
+        "items": [
+          {
+            "id": "item:imani:medical_patches",
+            "owner": "Dr Imani",
+            "name": "medical patch",
+            "quantity": 2,
+            "equipped": false,
+            "source": {
+              "message": "opening",
+              "quote": "She owns 3 medical patches.",
+              "sourceRevision": "ba75490e:68a9a330"
+            }
+          }
+        ],
+        "conditions": [],
+        "applied": [
+          {
+            "id": "action-999e2a9d:6e71a705",
+            "input": "d13fd74d:dfa2ecc3"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-b6bd4d6f:df2a09db",
+            "name": "Dr Imani",
+            "displayName": "Dr Imani",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "reply",
+              "quote": "Dr Imani receives 20 credits and uses one medical patch to seal your cut.",
+              "sourceRevision": "6f00776:51e5689c"
+            }
+          },
+          {
+            "id": "you",
+            "name": "you",
+            "displayName": "Sam",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "opening",
+              "quote": "You have a minor routine cut",
+              "sourceRevision": "ba75490e:68a9a330"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-41bb4568:68f5432e",
+            "from": "you",
+            "to": "Dr Imani",
+            "band": "touch",
+            "source": {
+              "message": "opening",
+              "quote": "Dr Imani stands within arm's reach in the ship clinic.",
+              "sourceRevision": "ba75490e:68a9a330"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-6950da83:5d986775",
+            "version": 1,
+            "owner": "Dr Imani",
+            "name": "Dermal Seal",
+            "description": "Treats routine physical injury at touch range and uses 1 medical patch.",
+            "approach": "precision",
+            "target": "other",
+            "costs": [
+              {
+                "kind": "item",
+                "id": "item:imani:medical_patches",
+                "amount": 1
+              }
+            ],
+            "effects": [
+              {
+                "kind": "mend",
+                "target": "target",
+                "impact": "standard"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "e3dfde69:9d4a5d37",
+            "source": {
+              "message": "opening",
+              "quote": "Her Dermal Seal treats routine physical injury at touch range and uses 1 medical patch.",
+              "sourceRevision": "ba75490e:68a9a330"
+            },
+            "sourceKind": "story"
+          }
+        ],
+        "aidOffers": [
+          {
+            "id": "aid-53ff4048:b4e7aaf4",
+            "version": 1,
+            "actor": "Dr Imani",
+            "target": "you",
+            "ability": "ability-6950da83:5d986775",
+            "abilityVersion": 1,
+            "name": "Dermal Seal",
+            "status": "used",
+            "unsupported": [],
+            "source": {
+              "message": "opening",
+              "quote": "Dr Imani offers Dermal Seal for 20 credits.",
+              "sourceRevision": "ba75490e:68a9a330"
+            },
+            "termsVersion": 1,
+            "fee": {
+              "kind": "resource",
+              "id": "resource:you:credits",
+              "amount": 20
+            },
+            "paid": {
+              "kind": "resource",
+              "id": "resource:you:credits",
+              "amount": 20,
+              "from": "you",
+              "to": "Dr Imani",
+              "asset": "credits"
+            }
+          }
+        ],
+        "clocks": [
+          {
+            "id": "Dr Imani",
+            "actor": "Dr Imani",
+            "actions": 1
+          }
+        ],
+        "closedConditions": [
+          {
+            "id": "condition:you:minor_routine_cut",
+            "owner": "you",
+            "name": "minor routine cut",
+            "after": {
+              "kind": "receipt",
+              "id": "action-999e2a9d:6e71a705"
+            }
+          }
+        ]
+      },
+      "bootstrapReply": "```json\n{\n  \"scene\": {\n    \"place\": \"ship clinic\",\n    \"present\": [\n      \"Dr Imani\"\n    ],\n    \"message\": \"opening\",\n    \"quote\": \"Dr Imani stands within arm's reach in the ship clinic.\"\n  },\n  \"mechanicalObservations\": [\n    {\n      \"kind\": \"entity\",\n      \"name\": \"Dr Imani\",\n      \"displayName\": \"Dr Imani\",\n      \"aliases\": [],\n      \"entityKind\": \"person\",\n      \"present\": true,\n      \"status\": \"active\",\n      \"message\": \"opening\",\n      \"quote\": \"Dr Imani stands within arm's reach in the ship clinic.\"\n    },\n    {\n      \"kind\": \"entity\",\n      \"name\": \"you\",\n      \"displayName\": \"Sam\",\n      \"aliases\": [],\n      \"entityKind\": \"person\",\n      \"present\": true,\n      \"status\": \"active\",\n      \"message\": \"opening\",\n      \"quote\": \"You have a minor routine cut\"\n    },\n    {\n      \"kind\": \"distance\",\n      \"from\": \"you\",\n      \"to\": \"Dr Imani\",\n      \"band\": \"touch\",\n      \"message\": \"opening\",\n      \"quote\": \"Dr Imani stands within arm's reach in the ship clinic.\"\n    },\n    {\n      \"kind\": \"item\",\n      \"id\": \"item:imani:medical_patches\",\n      \"owner\": \"Dr Imani\",\n      \"name\": \"medical patch\",\n      \"quantity\": 3,\n      \"equipped\": false,\n      \"message\": \"opening\",\n      \"quote\": \"She owns 3 medical patches.\"\n    },\n    {\n      \"kind\": \"condition\",\n      \"id\": \"condition:you:minor_routine_cut\",\n      \"owner\": \"you\",\n      \"name\": \"minor routine cut\",\n      \"category\": \"physical_injury\",\n      \"severity\": \"minor\",\n      \"recovery\": \"routine\",\n      \"hinders\": [],\n      \"blocks\": [],\n      \"helps\": [],\n      \"ending\": \"treatment or natural healing\",\n      \"message\": \"opening\",\n      \"quote\": \"You have a minor routine cut\"\n    },\n    {\n      \"kind\": \"resource\",\n      \"id\": \"resource:you:credits\",\n      \"owner\": \"you\",\n      \"name\": \"credits\",\n      \"role\": \"money\",\n      \"current\": 50,\n      \"message\": \"opening\",\n      \"quote\": \"50 credits.\"\n    },\n    {\n      \"kind\": \"aid_offer\",\n      \"actor\": \"Dr Imani\",\n      \"target\": \"you\",\n      \"ability\": \"Dermal Seal\",\n      \"fee\": {\n        \"kind\": \"resource\",\n        \"id\": \"resource:you:credits\",\n        \"amount\": 20\n      },\n      \"uncontested\": true,\n      \"unsupported\": [],\n      \"message\": \"opening\",\n      \"quote\": \"Dr Imani offers Dermal Seal for 20 credits.\"\n    }\n  ],\n  \"abilityDefinitions\": [\n    {\n      \"owner\": \"Dr Imani\",\n      \"name\": \"Dermal Seal\",\n      \"description\": \"Treats routine physical injury at touch range and uses 1 medical patch.\",\n      \"approach\": \"precision\",\n      \"target\": \"other\",\n      \"costs\": [\n        {\n          \"kind\": \"item\",\n          \"id\": \"item:imani:medical_patches\",\n          \"amount\": 1\n        }\n      ],\n      \"effects\": [\n        {\n          \"kind\": \"mend\",\n          \"target\": \"target\",\n          \"impact\": \"standard\"\n        }\n      ],\n      \"requires\": [],\n      \"unsupported\": [],\n      \"message\": \"opening\",\n      \"quote\": \"Her Dermal Seal treats routine physical injury at touch range and uses 1 medical patch.\"\n    }\n  ],\n  \"changes\": [\n    {\n      \"op\": \"put\",\n      \"id\": \"fact:place:ship_clinic\",\n      \"kind\": \"situation\",\n      \"subject\": \"you\",\n      \"text\": \"Sam and Dr Imani are in the ship clinic.\",\n      \"status\": \"open\",\n      \"message\": \"opening\",\n      \"quote\": \"Dr Imani stands within arm's reach in the ship clinic.\"\n    }\n  ]\n}\n```"
+    }
+  ]
+}

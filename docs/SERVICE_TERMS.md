@@ -6,7 +6,7 @@ For example, Jo offers Mend for five coins. The player has twelve coins, and Jo'
 
 ## Supported fees
 
-The helper may attach `fee:{kind:"resource|item",id,amount}` to an actual aid offer. Code requires a positive exact price in that same quoted offer and a known player-owned asset. Resource payments require a money resource. Item payments transfer the actual quantity, splitting a stack when necessary. Equipped items cannot be handed over. No currency conversion or choice between alternative prices is inferred.
+The helper may attach `fee:{kind:"resource|item",id,amount}` to an actual aid offer. Code requires a positive exact price in that same quoted offer and a known player-owned asset. The selector may be a saved ID or a unique asset name; the saved fee always uses the canonical ID. Ambiguous names and someone else's exact ID cannot select a player asset. Resource payments require a money resource. Item payments transfer the actual quantity, splitting a stack when necessary. Equipped items cannot be handed over. No currency conversion or choice between alternative prices is inferred.
 
 If the NPC has a unique established same-name, same-unit money balance, the payment increases it. If their total is unknown, the consumed offer records exactly who paid whom, which asset and how much, without creating a fictional zero-based wallet. A paid receipt is evidence of that transfer, not evidence of the NPC's total wealth. Item fees remain actual owned stacks in the recipient's inventory.
 
@@ -16,12 +16,21 @@ The source reader distinguishes explicit free help from a price. A fee, alternat
 
 ## Replay and caching
 
-Resolver 11 handles offers with a saved fee. Resolver 10 remains the path for unpriced aid. Original resolver-10 acceptance and refusal receipts were captured from the installed `1a18867` source before these edits; both retain their exact results. Older observation records retain their former term-reader semantics. New observations carry a term-reader witness so the explicit-free correction replays consistently.
+Resolver 11 handles offers with a saved fee or an additional quoted-range witness. Resolver 10 remains the path for ordinary unpriced aid. Original resolver-10 acceptance and refusal receipts were captured from the installed `1a18867` source before these edits; both retain their exact results. Older observation records retain their former term-reader semantics. New observations carry a term-reader witness so the explicit-free correction replays consistently.
+
+The real helper omitted an explicit touch-range field in both public scenarios below. A fresh offer now retains one literal `at/within touch/near/far range` restriction from the ability's own source quote when it differs from the prepared definition. Execution checks that additional restriction before payment. Missing distance stays unknown. This narrow guard does not invent a default range, parse every possible range rule or reinterpret older paid receipts.
 
 The fee and its paid record travel inside the existing aid-offer collection. Existing narrator instructions and historical Warp blocks are not rewritten. The production-worker paid-aid check retains every previous Warp block byte-for-byte through offer, question, refusal and acceptance. This is prompt-prefix evidence, not provider cache-hit telemetry.
 
 ## Verification
 
-874 tests pass, with 21,334 assertions across 100 files. TypeScript and the production build pass. Both unpriced and paid aid pass in the actual Lumiverse worker, along with the rendered-story worker check. Focused checks cover known and unknown NPC wallets, item-stack conservation, insufficient funds, missing range/prerequisites, special injuries, refusals, old resolver receipts, reload, source/branch edits, cancellation and alternate reply swipes.
+878 tests pass, with 21,381 assertions across 100 files. TypeScript and the production build pass. Both unpriced and paid aid pass in the actual Lumiverse worker, along with the rendered-story worker check. Focused checks cover known and unknown NPC wallets, item-stack conservation, insufficient funds, missing range/prerequisites, special injuries, refusals, old resolver receipts, reload, source/branch edits, cancellation and alternate reply swipes.
 
-These deterministic and worker checks do not close the original-card paid-aid or broader seamless-first-session gates. The earlier original-card failures remain documented in [VOLUNTARY_AID.md](VOLUNTARY_AID.md).
+The configured `gemini-3.8-flash` helper also ran the actual worker's full extraction prompts on two disposable public clinic scenarios. Each prepared an offer, accepted a plain yes without another foreground interpretation, committed resolver 11, completed the normal post-read and replayed exactly from its saved message metadata:
+
+- Fantasy: five coins transferred from an actual twelve-coin item stack, leaving seven with the player and five with Jo. Mend treated the burn and reduced Jo's Focus from ten to eight. Bootstrap/post-read took 6.4/4.9 seconds.
+- Science fiction: twenty credits left the player's established fifty-credit balance, leaving thirty. Dermal Seal treated the cut and used one of Dr Imani's three medical patches, leaving two. Her total credit balance remained unknown. Bootstrap/post-read took 7.1/14.1 seconds.
+
+These scenarios used real helper calls and the production worker, with fixed narrator replies. They did not test a real narrator's compliance or the user's original cards. The fantasy harness initially expected a wallet resource and incorrectly flagged the valid coin-stack transfer; auditing the saved snapshots established the result without another model call. The original harness result is retained privately. Earlier standalone probes are retained too: the fantasy response exposed the unique-name binding bug and an incomplete condition row, and the sci-fi request timed out. No payment was applied from those failed standalone probes. The name-binding fix and the full worker records are now regression fixtures.
+
+The initial service build was installed through Lumiverse's native Warp updater, with unchanged permissions. Warp's user setting was already paused and was left paused; worker fixtures did not change it. These deterministic and worker checks do not close the original-card paid-aid or broader seamless-first-session gates. The earlier original-card failures remain documented in [VOLUNTARY_AID.md](VOLUNTARY_AID.md).

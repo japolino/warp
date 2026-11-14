@@ -21,7 +21,11 @@ function feePattern(fee: AidFee, state: MechanicalState): RegExp | undefined {
 export function readAidFee(raw: unknown, state: MechanicalState, quote: string): AidFee | undefined {
   if (!obj(raw) || Object.keys(raw).some(k => !["kind", "id", "amount"].includes(k)) || !["resource", "item"].includes(raw.kind as string)
     || typeof raw.id !== "string" || typeof raw.amount !== "number" || !Number.isFinite(raw.amount) || raw.amount <= 0 || raw.amount > 1e9) return;
-  const fee = raw as unknown as AidFee;
+  const rows = raw.kind === "resource" ? state.resources : state.items;
+  const exact = rows.filter(r => r.id === raw.id);
+  const candidates = exact.length ? exact : rows.filter(r => normalize(r.name) === normalize(raw.id as string));
+  if (candidates.length !== 1 || candidates[0].owner !== "you" || raw.kind === "resource" && (!("role" in candidates[0]) || candidates[0].role !== "money")) return;
+  const fee: AidFee = { kind: raw.kind as AidFee["kind"], id: candidates[0].id, amount: raw.amount };
   if (/\b(?:or|either|instead|alternatively)\b/i.test(quote) || !feePattern(fee, state)?.test(quote)) return;
   return { kind: fee.kind, id: fee.id, amount: fee.amount };
 }

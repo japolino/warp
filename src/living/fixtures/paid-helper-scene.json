@@ -1,0 +1,115 @@
+{
+  "origin": "Configured gemini-3.8-flash, actual unmodified response, 2026-11-13; initial native-name binding failed before the fix",
+  "messages": [
+    {
+      "id": "fantasy",
+      "is_user": false,
+      "content": "Jo is beside you within arm's reach in the clinic. Jo has 10 Focus. Jo's Mend gently treats routine physical injury at touch range and costs 2 Focus. You have a small routine cooking burn and carry 12 coins. Jo offers Mend for five coins."
+    }
+  ],
+  "result": {
+    "scene": "In the clinic, Jo is within arm's reach and offers treatment for your burn.",
+    "changes": [
+      "Jo is present in the clinic at touch range with 10 Focus.",
+      "You have 12 coins and a small routine cooking burn.",
+      "Jo offered Mend for five coins."
+    ],
+    "mechanicalObservations": [
+      {
+        "kind": "place",
+        "name": "clinic",
+        "entered": true,
+        "message": "fantasy",
+        "quote": "in the clinic."
+      },
+      {
+        "kind": "entity",
+        "name": "Jo",
+        "entityKind": "person",
+        "present": true,
+        "status": "active",
+        "message": "fantasy",
+        "quote": "Jo is beside you within arm's reach in the clinic."
+      },
+      {
+        "kind": "distance",
+        "from": "Jo",
+        "to": "you",
+        "band": "touch",
+        "message": "fantasy",
+        "quote": "Jo is beside you within arm's reach in the clinic."
+      },
+      {
+        "kind": "resource",
+        "owner": "Jo",
+        "name": "Focus",
+        "current": 10,
+        "role": "effort",
+        "message": "fantasy",
+        "quote": "Jo has 10 Focus."
+      },
+      {
+        "kind": "resource",
+        "owner": "you",
+        "name": "coins",
+        "current": 12,
+        "role": "money",
+        "message": "fantasy",
+        "quote": "carry 12 coins."
+      },
+      {
+        "kind": "condition",
+        "target": "you",
+        "name": "small routine cooking burn",
+        "category": "physical_injury",
+        "severity": "minor",
+        "recovery": "routine",
+        "message": "fantasy",
+        "quote": "You have a small routine cooking burn"
+      },
+      {
+        "kind": "aid_offer",
+        "actor": "Jo",
+        "target": "you",
+        "ability": "Mend",
+        "uncontested": true,
+        "fee": {
+          "kind": "resource",
+          "id": "coins",
+          "amount": 5
+        },
+        "unsupported": [],
+        "message": "fantasy",
+        "quote": "Jo offers Mend for five coins."
+      }
+    ],
+    "abilityDefinitions": [
+      {
+        "owner": "Jo",
+        "name": "Mend",
+        "description": "Gently treats routine physical injury at touch range.",
+        "approach": "concentration",
+        "target": "other",
+        "range": "touch",
+        "costs": [
+          {
+            "kind": "resource",
+            "id": "Focus",
+            "amount": 2
+          }
+        ],
+        "effects": [
+          {
+            "kind": "mend",
+            "target": "target",
+            "impact": "minor"
+          }
+        ],
+        "requires": [],
+        "unsupported": [],
+        "message": "fantasy",
+        "quote": "Jo's Mend gently treats routine physical injury at touch range and costs 2 Focus."
+      }
+    ]
+  }
+}

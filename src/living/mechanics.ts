@@ -533,7 +533,7 @@ function executeExchange(before: MechanicalState, actor: string, operations: Mec
 }
 
 function resolverFor(before: MechanicalState, operations: MechanicalOperation[], responses: ResponsePlan[], learning?: LearningWitness): 5 | 6 | 7 | 8 | 9 | 10 | 11 {
-  if (operations.some(op => op.kind === "accept_aid" || op.kind === "decline_aid")) return operations.some(op => (op.kind === "accept_aid" || op.kind === "decline_aid") && before.aidOffers?.some(o => o.id === op.offer && o.fee)) ? 11 : 10;
+  if (operations.some(op => op.kind === "accept_aid" || op.kind === "decline_aid")) return operations.some(op => (op.kind === "accept_aid" || op.kind === "decline_aid") && before.aidOffers?.some(o => o.id === op.offer && (o.fee || o.sourceRange))) ? 11 : 10;
   const relevant = [...operations, ...(Array.isArray(responses) ? responses.flatMap(p => p?.action ? [p.action] : []) : [])];
   if (hasLingering(before) || relevant.some(op => op.kind === "ability" && before.abilities?.some(a => a.id === op.ability && a.effects.some(isLingering)))) return 9;
   const opposedTechnique = Array.isArray(responses) && responses.some(p => p && typeof p.actor === "string" && p.action && p.assessment

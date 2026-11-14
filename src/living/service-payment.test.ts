@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
 import legacy from "./fixtures/resolver10-receipts.json";
+import helperScene from "./fixtures/paid-helper-scene.json";
+import workerScenes from "./fixtures/paid-worker-receipts.json";
+import { readAbilityDefinitions } from "./abilities.js";
+import { firstJson } from "../backend/helpers.js";
 import { applyObservations, commitMechanical, emptyMechanics, prepareMechanical, readMechanicalObservations, type MechanicalState, type MechanicalReceipt } from "./mechanics.js";
 import { readAidFee, unresolvedServiceTerms } from "./service-payment.js";
 import { aidOfferText } from "./aid.js";
@@ -39,6 +43,69 @@ test("paid aid debits the exact fee and caster cost once, without inventing the 
   expect(receipt.beats?.find(b => b.kind === "payment")).toEqual({ kind: "payment", actor: "you", target: "Jo", name: "Coins", amount: 5 });
   expect(commitMechanical(after, receipt)).toBe(after);
   expect(prepareMechanical(after, "again", "you", [op(after)]).status).toBe("blocked");
+});
+
+test("actual helper asset names bind, while its incomplete injury row still prevents payment", () => {
+  const { messages, result } = helperScene;
+  const initial = readMechanicalObservations(result.mechanicalObservations.filter(o => o.kind !== "aid_offer"), emptyMechanics(), messages);
+  let state = applyObservations(emptyMechanics(), initial);
+  const definitions = readAbilityDefinitions(result.abilityDefinitions, state, messages, []);
+  expect(definitions).toHaveLength(1);
+  state = applyObservations(state, definitions.map(value => ({ kind: "ability", value })));
+  state = applyObservations(state, readMechanicalObservations(result.mechanicalObservations.filter(o => o.kind === "aid_offer"), state, messages));
+  expect(state.aidOffers).toHaveLength(1); expect(state.aidOffers![0].unsupported).toEqual([]);
+  const wallet = state.resources.find(r => r.owner === "you" && r.role === "money")!;
+  expect(wallet.id).not.toBe("coins"); expect(state.aidOffers![0].fee?.id).toBe(wallet.id);
+  const receipt = prepareMechanical(state, "actual-helper-price", "you", [op(state)]);
+  expect(receipt.engine).toBe(11); expect(receipt.status).toBe("blocked"); expect(receipt.changes).toEqual([]);
+  // This first standalone probe omitted the runtime's base condition schema.
+  // Retain its actual malformed row as evidence, never repair it into a passing cast.
+  expect(state.conditions).toEqual([]); expect(wallet.current).toBe(12); expect(state.aidOffers![0].paid).toBeUndefined();
+});
+
+test("fee names must resolve uniquely and cannot shadow someone else's exact asset ID", () => {
+  const { stocked } = setup();
+  const wallet = stocked.resources.find(r => r.id === "coins")!; wallet.id = "your-wallet";
+  expect(readAidFee(money, stocked, "Jo offers Mend for five coins.")?.id).toBe("your-wallet");
+  stocked.resources.push({ ...structuredClone(wallet), id: "other-coins", owner: "Other" });
+  expect(readAidFee({ ...money, id: "other-coins" }, stocked, "Jo offers Mend for five coins.")).toBeUndefined();
+  stocked.resources.push({ ...structuredClone(wallet), id: "duplicate" });
+  expect(readAidFee(money, stocked, "Jo offers Mend for five coins.")).toBeUndefined();
+});
+
+test("actual fantasy and sci-fi worker records replay their money, item payment, treatment and NPC costs exactly", () => {
+  for (const fixture of workerScenes.cases) {
+    const messages = fixture.messages as unknown as Msg[], expected = fixture.after as MechanicalState;
+    expect(foldMechanics(messages)).toEqual(expected);
+    expect(foldMechanics(messages)).toEqual(expected);
+    const before = foldMechanics(messages.slice(0, 1));
+    const receipt = messages.at(-1)!.metadata!.warpMechanics as any;
+    const saved = receipt["0"].receipt as MechanicalReceipt;
+    expect(saved.engine).toBe(11);
+    const paid = commitMechanical(before, saved);
+    expect(paid.aidOffers![0].paid).toEqual(expected.aidOffers![0].paid);
+    expect(paid.conditions).toEqual([]); expect(paid.resources).toEqual(expected.resources); expect(paid.items).toEqual(expected.items);
+  }
+});
+
+test("a helper cannot waive literal touch range by omitting the optional ability field", () => {
+  for (const fixture of workerScenes.cases) {
+    const messages = fixture.messages.slice(0, 1), raw = firstJson(fixture.bootstrapReply)!;
+    const rows = raw.mechanicalObservations as any[];
+    let state = applyObservations(emptyMechanics(), readMechanicalObservations(rows.filter(o => o.kind !== "aid_offer"), emptyMechanics(), messages));
+    const definitions = readAbilityDefinitions(raw.abilityDefinitions, state, messages, []);
+    expect(definitions).toHaveLength(1); expect(definitions[0].range).toBeUndefined();
+    state = applyObservations(state, definitions.map(value => ({ kind: "ability", value })));
+    state = applyObservations(state, readMechanicalObservations(rows.filter(o => o.kind === "aid_offer"), state, messages));
+    expect(state.aidOffers![0].sourceRange).toBe("touch");
+    const receipt = prepareMechanical(state, "actual-restricted", "you", [op(state)]);
+    expect(receipt.status).toBe("ready"); expect(receipt.engine).toBe(11);
+    state.distances!.forEach(d => { d.band = "far"; });
+    const before = structuredClone(state), distant = prepareMechanical(state, "too-far", "you", [op(state)]);
+    expect(distant.status).toBe("blocked"); expect(distant.changes).toEqual([]); expect(state).toEqual(before);
+    state.distances = [];
+    expect(prepareMechanical(state, "unknown-distance", "you", [op(state)]).unresolved).toBe(true);
+  }
 });
 
 test("an established same-unit payee balance receives the fee, and ambiguity or capacity cannot discard money", () => {

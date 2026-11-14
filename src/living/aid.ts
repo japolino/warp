@@ -3,7 +3,7 @@ import { readAidFee, unresolvedServiceTerms, payAidFee, type AidFee, type AidPay
 import { pathOf, rawPathOf } from "./story-path.js";
 import { costPayer } from "./companions.js";
 import { revision } from "../shared/revision.js";
-import { actorName, entityFor, capable, present, MechanicalKnowledgeError, type EncounterBeat } from "./encounters.js";
+import { actorName, entityFor, capable, present, distance, checkRange, MechanicalKnowledgeError, type EncounterBeat, type Range } from "./encounters.js";
 import { sourceContains, sourceRevisionMatches, recordPathMatches } from "./story-text.js";
 import type { AbilityDefinition } from "./abilities.js";
 import type { Evidence, Message } from "./world.js";
@@ -12,7 +12,7 @@ import type { MechanicalState, MechanicalOperation, MechanicalChange } from "./m
 export interface AidOffer {
   id: string; version: number; actor: string; target: "you"; ability: string; abilityVersion: number;
   name: string; status: "offered" | "used" | "withdrawn"; unsupported: string[]; source: Evidence;
-  termsVersion?: 1; fee?: AidFee; paid?: AidPayment;
+  termsVersion?: 1; fee?: AidFee; paid?: AidPayment; sourceRange?: Range;
 }
 export type AidObservation = { kind: "aid_offer"; value: AidOffer } | { kind: "aid_end"; id: string; source: Evidence };
 export type AidOperation = { kind: "accept_aid" | "decline_aid"; offer: string; version: number };
@@ -38,7 +38,7 @@ export function readAidObservation(row: Record<string, unknown>, state: Mechanic
     const entity = offer && entityFor(state, offer.actor);
     return offer && entity && [offer.actor, entity.displayName, ...entity.aliases].some(n => n && normalize(source.quote).includes(normalize(n))) ? { kind: "aid_end", id: offer.id, source } : undefined;
   }
-  if (Object.keys(row).some(k => !["kind", "actor", "target", "ability", "uncontested", "unsupported", "fee", "message", "quote", ...(historical ? ["id", "version", "abilityVersion", "name", "status", "source", "sourceRevision", "viewRevision", "termsVersion"] : [])].includes(k))) return;
+  if (Object.keys(row).some(k => !["kind", "actor", "target", "ability", "uncontested", "unsupported", "fee", "message", "quote", ...(historical ? ["id", "version", "abilityVersion", "name", "status", "source", "sourceRevision", "viewRevision", "termsVersion", "sourceRange"] : [])].includes(k))) return;
   if (historical && row.termsVersion !== undefined && row.termsVersion !== 1) return;
   if (row.target !== "you" || row.uncontested !== true && !historical) return;
   const actor = actorName(state, text(row.actor, 80));
@@ -49,6 +49,12 @@ export function readAidObservation(row: Record<string, unknown>, state: Mechanic
   if (definitions.length !== 1 || !aidAbility(definitions[0])) return;
   const ability = definitions[0];
   if (historical && row.abilityVersion !== ability.version) return;
+  // Retain one literal source restriction even if the helper omitted the optional definition field.
+  // This is quoted range, never a default inferred from the genre or current distance.
+  const ranges = [...new Set([...ability.source.quote.matchAll(/\b(?:at|within)\s+(touch|near|far)\s+range\b/gi)].map(m => m[1].toLowerCase() as Range))];
+  if (historical && row.sourceRange !== undefined && !["touch", "near", "far"].includes(row.sourceRange as string)) return;
+  const sourceRange = historical ? row.sourceRange as Range | undefined : ranges.length === 1 && ranges[0] !== ability.range ? ranges[0] : undefined;
+  if (sourceRange && (ranges.length !== 1 || ranges[0] !== sourceRange)) return;
   if (!Array.isArray(row.unsupported) || row.unsupported.length > 8 || row.unsupported.some(v => !text(v, 240))) return;
   const id = `aid-${revision([actor, "you", ability.id])}`, old = state.aidOffers?.find(o => o.id === id);
   // A repeated old quotation cannot make a paid or withdrawn offer available again.
@@ -63,7 +69,7 @@ export function readAidObservation(row: Record<string, unknown>, state: Mechanic
   const unsupported = row.unsupported.map(v => text(v, 240));
   if (unresolvedTerms && !unsupported.length) unsupported.push(`Offer terms require resolution: ${source.quote.slice(0, 180)}`);
   return { kind: "aid_offer", value: { id, version: (old?.version ?? 0) + 1, actor, target: "you", ability: ability.id, abilityVersion: ability.version,
-    name: normalize(source.quote).includes(normalize(ability.name)) ? ability.name : "aid", status: "offered", unsupported, source, ...(modernTerms ? { termsVersion: 1 as const } : {}), ...(fee ? { fee } : {}) } };
+    name: normalize(source.quote).includes(normalize(ability.name)) ? ability.name : "aid", status: "offered", unsupported, source, ...(modernTerms ? { termsVersion: 1 as const } : {}), ...(fee ? { fee } : {}), ...(sourceRange ? { sourceRange } : {}) } };
 }
 
 export function observeAid(state: MechanicalState, observation: AidObservation) {
@@ -80,7 +86,7 @@ export function executeAid(before: MechanicalState, actor: string, operations: M
   if (actor !== "you" || operations.length !== 1 || !["accept_aid", "decline_aid"].includes(operations[0].kind)) throw Error("Aid permission authorizes one offered use only");
   const op = operations[0] as AidOperation, offer = before.aidOffers?.find(o => o.id === op.offer && o.version === op.version);
   if (!offer || offer.status !== "offered") throw Error("This aid offer is no longer available");
-  if (offer.fee && !serviceFees) throw Error("Paid aid requires the service resolver");
+  if ((offer.fee || offer.sourceRange) && !serviceFees) throw Error("These aid terms require the service resolver");
   const previous = structuredClone(offer);
   let result: AidResolution;
   if (op.kind === "decline_aid") result = { state: structuredClone(before), changes: [], beats: [] };
@@ -90,6 +96,10 @@ export function executeAid(before: MechanicalState, actor: string, operations: M
     if (offer.unsupported.length) throw new MechanicalKnowledgeError(`The offered aid needs clarification: ${offer.unsupported.join("; ")}`);
     const ability = before.abilities?.find(a => a.id === offer.ability && a.version === offer.abilityVersion && a.owner === offer.actor);
     if (!ability || !aidAbility(ability)) throw new MechanicalKnowledgeError("The offered ability changed or is not supported aid");
+    if (offer.sourceRange) {
+      if (!distance(before, offer.actor, "you")) throw new MechanicalKnowledgeError("The offered treatment's quoted range needs an established distance");
+      checkRange(before, offer.actor, "you", offer.sourceRange);
+    }
     for (const effect of ability.effects) if (effect.kind === "clear_condition") {
       const owner = effect.target === "self" ? offer.actor : "you";
       if (before.conditions.some(c => c.owner === owner && normalize(c.name) === normalize(effect.name!) && (c.helps.length || c.defenses?.length))) throw new MechanicalKnowledgeError("The offered aid would remove an established benefit");
@@ -128,7 +138,7 @@ export function aidRequestBoundary(content: string, state?: MechanicalState): bo
 }
 
 export const AID_INSTRUCTIONS = `Voluntary aid uses aidOffers, not a new player-owned power. A request such as "Could you treat my arm?" invites an NPC decision; it neither commands agreement nor executes a cure. In actual narration an NPC can offer one established beneficial ability. Prepare the NPC's definition from its actual source, preserving ownership, costs, range, recovery limits and unsupported terms. Return mechanicalObservations {kind:"aid_offer",actor,target:"you",ability:"saved id or newly prepared name",uncontested:true,unsupported:[],message,quote}. The contiguous exact quote must name the actor and actually offer this aid now; profiles, hypotheticals, merely hearing a claim and a player request are insufficient. Do not record attacks, forced feelings, consent, movement or an unknown power as aid. Retain any payment, item, condition, timing or source restriction not resolved by the supported definition in unsupported, never turn paid help into free help. An actual later withdrawal uses {kind:"aid_end",id,message,quote}. Old offers cannot reopen themselves. Offers are not execution, inventory handovers, cures or costs. Preserve them through ordinary questions; they can be used once, explicitly withdrawn, or declined.
-An offered service may add fee:{kind:"resource|item",id:"established player-owned asset ID",amount:exactQuotedNumber}. This is the price paid BY THE PLAYER to the NPC, separate from the NPC's casting/resource costs. Resource fees require an established player money balance; item fees transfer an actual owned quantity. Cite the actual simple price in the same offer quote, such as "Jo offers Mend for five coins". Do not choose between alternative prices, convert currencies, assume wallet totals, or omit extra labor, timing, item or other conditions. Unresolved alternatives/barter/other restrictions stay in unsupported. A fee does not imply the NPC's total wallet balance. When the only restriction is this supported exact fee, represent it in fee instead of also marking that same fee unsupported. Explicitly free help has no fee.
+An offered service may add fee:{kind:"resource|item",id:"established player-owned asset ID or unique name",amount:exactQuotedNumber}. This is the price paid BY THE PLAYER to the NPC, separate from the NPC's casting/resource costs. Resource fees require an established player money balance; item fees transfer an actual owned quantity. Cite the actual simple price in the same offer quote, such as "Jo offers Mend for five coins". Do not choose between alternative prices, convert currencies, assume wallet totals, or omit extra labor, timing, item or other conditions. Unresolved alternatives/barter/other restrictions stay in unsupported. A fee does not imply the NPC's total wallet balance. When the only restriction is this supported exact fee, represent it in fee instead of also marking that same fee unsupported. Explicitly free help has no fee.
 An explicit acceptance can use mechanicalActions {kind:"accept_aid",offer:"saved id",version:currentVersion,quote}; explicit refusal uses decline_aid with the same fields. Code applies exactly one offered use by the NPC and any saved service fee atomically. The NPC pays the definition's actual costs and takes their own action, with existing shared payer permissions honored. The player grants permission without a player action, extra NPC responders, a new ability or a roll. Do not add duplicate fee spending, item transfers, NPC responses or player-owned invocations. If the definition or terms are not prepared, leave that aid unresolved without inventing reluctance, a fee or a fictional obstacle. Questions about costs/effects execute nothing. A plain request must first allow the NPC to make an offer rather than completing unrecorded mechanical healing. Keep player/NPC choice, source prohibitions, uncertainty and existing receipt boundaries intact.`;
 
 /** Show the actual recipient of payment before consent, without inventing a balance. */
