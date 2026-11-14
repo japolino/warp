@@ -5,6 +5,8 @@ import { revision } from "../src/shared/revision.js";
 const root = resolve(import.meta.dir, ".."), checkout = resolve(process.argv[2] ?? "D:/Lumiverse"), chatId = "native-aid-smoke";
 const manifest = await Bun.file(join(root, "spindle.json")).json();
 const cold = process.argv.includes("--cold");
+const scoped = process.argv.includes("--scoped");
+let activationFile = "", requestedResume = false;
 const opening = "Jo stands within arm's reach in the clinic. Jo has 10 Focus. You have a small routine cooking burn.";
 const profile = "Jo's Mend gently treats routine physical injury at touch range and costs 2 Focus.";
 const msg = (id: string, role: string, content: string, index: number): any => ({ id, role, content, is_user: role === "user", index_in_chat: index, swipe_id: 0, chat_id: chatId, metadata: {}, extra: {} });
@@ -34,7 +36,8 @@ try {
           else if (e.type === "connections_list") respond([]);
           else if (e.type === "enclave_has") respond(false);
           else if (e.type === "macros_resolve") respond({text:e.template==="{{persona}}"?"Sam is an adult visitor.":"Sam",diagnostics:[]});
-          else if (e.type === "user_storage_read") { if (e.path==="settings.json") respond("{}"); else worker.postMessage({type:"response",requestId:e.requestId,error:"Disposable fixture absent"}); }
+          else if (e.type === "user_storage_read") { if (e.path==="settings.json") respond(scoped ? '{"enabled":false}' : "{}"); else if(e.path==="chat-activation.json"&&activationFile)respond(activationFile); else worker.postMessage({type:"response",requestId:e.requestId,error:"Disposable fixture absent"}); }
+          else if (e.type === "user_storage_write") { if(!scoped||e.path!=="chat-activation.json"||e.userId!=="fixture-user")throw Error("Inline activation changed unrelated user settings");activationFile=e.data;respond(undefined); }
           else if (e.type === "chat_update_message") { const m=messages.find(m=>m.id===e.messageId); if(!m) throw Error("Unknown fixture message"); m.metadata=e.patch.metadata; respond(undefined); }
           else if (e.type === "cancel_generation") { if(e.requestId!==heldBackground)throw Error("Unknown controlled cancellation");canceledBackground=true;worker.postMessage({type:"response",requestId:e.requestId,error:"AbortError: controlled initial background delay canceled"}); }
           else if (e.type === "request_generation") {
@@ -57,14 +60,16 @@ try {
             else if(e.requestId==="duplicate") {if(e.result!==firstResult)throw Error("Duplicate call changed the result");phase="commit";messages[2].content="Jo chooses to help and uses Mend to treat your cooking burn.";worker.postMessage({type:"event",event:"GENERATION_ENDED",userId:"fixture-user",payload:{chatId,generationId:"native-turn",messageId:"reply"}});}
           } else if(e.type==="frontend_message"&&e.payload?.type==="living"&&!e.payload.busy) {
             const state=e.payload.world.mechanics;
-            if(phase==="bootstrap"&&state?.abilities?.length===1) begin();
+            if(scoped&&phase==="bootstrap"&&!e.payload.enabled&&!requestedResume){requestedResume=true;worker.postMessage({type:"frontend_message",userId:"fixture-user",payload:{type:"living_action",chatId,action:"resume"}});}
+            else if(phase==="bootstrap"&&state?.abilities?.length===1) begin();
             else if(phase==="commit") {if(state.resources[0].current!==8||state.conditions.length||state.applied.length!==1||messages[2].metadata.warpMechanics?.["0"].receipt?.engine!==13)throw Error("Native aid did not commit once");expectedReload=revision(state);phase="reload";worker.terminate();launch();}
-            else if(phase==="reload") {if(revision(state)!==expectedReload)throw Error("Reload repeated or lost aid");done();}
+            else if(phase==="reload") {if(revision(state)!==expectedReload||scoped&&!e.payload.enabled)throw Error("Reload repeated or lost aid or local activation");if(scoped){phase="paused";worker.postMessage({type:"frontend_message",userId:"fixture-user",payload:{type:"living_action",chatId,action:"pause"}});}else done();}
+            else if(phase==="paused") {if(e.payload.enabled||JSON.parse(activationFile).chats[chatId]!==false)throw Error("Local pause did not persist");done();}
           } else if(e.requestId) worker.postMessage({type:"response",requestId:e.requestId,error:`Unsupported fixture RPC ${e.type}`});
         } catch(error) {reject(error);}
       };
       worker.postMessage({type:"init",manifest:{...manifest,entry_backend:pathToFileURL(join(root,"dist/backend.js")).href},storagePath:join(root,".artifacts/native-aid-worker-smoke")});
     }; launch();
   });
-  console.log(`PASS: actual worker ${cold ? "cancels a stalled first read and prepares the initially unknown scene through the narrator's aid call, then " : ""}registers a stable native tool, binds a narrator action to its authenticated prompt, rejects a foreign caller, reuses duplicate preparation, commits one NPC-owned use after narration, and reloads without another model call.`);
+  console.log(`PASS: actual worker ${scoped ? "resumes only this chat under a preserved global pause, persists it across worker replacement and pauses locally after the saved action, then verifies it " : ""}${cold ? "cancels a stalled first read and prepares the initially unknown scene through the narrator's aid call, then " : ""}registers a stable native tool, binds a narrator action to its authenticated prompt, rejects a foreign caller, reuses duplicate preparation, commits one NPC-owned use after narration, and reloads without another model call.`);
 } finally {clearTimeout(timer!);worker!.terminate();}

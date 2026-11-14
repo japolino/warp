@@ -20,7 +20,7 @@ import { getMessages, serializeMetadata, type Msg } from "../backend/ledger.js";
 import { getSettings } from "../backend/settings.js";
 import { firstJson, helperReasoning } from "../backend/helpers.js";
 import { characterBrief, getRuleset } from "../backend/source.js";
-import { patchSettings } from "../backend/settings.js";
+import { anyChatEnabled, chatEnabled, setChatEnabled } from "./activation.js";
 import { splitTyped } from "../backend/questions.js";
 import { injectInto } from "../backend/inject.js";
 import { revision } from "../shared/revision.js";
@@ -253,7 +253,7 @@ async function saveMechanical(chatId: string, message: Msg, prefix: Msg[], recor
 export async function pushLiving(chatId: string, userId?: string): Promise<void> {
   await registerNarratorAid(userId);
   const n = (sequence.get(chatId) ?? 0) + 1; sequence.set(chatId, n);
-  const messages = await storyHistory(chatId), world = worldOf(messages), settings = await getSettings(userId);
+  const messages = await storyHistory(chatId), world = worldOf(messages), enabled = await chatEnabled(chatId, userId);
   const last = messages.filter(m => !m.is_user && m.content.trim()).at(-1);
   const record = last ? recordOf(last) : undefined;
   const valid = last && validRecord(last, record, messages.filter(m => m.index_in_chat < last.index_in_chat));
@@ -266,7 +266,7 @@ export async function pushLiving(chatId: string, userId?: string): Promise<void>
   const mechanicalValid = !!last && validRecord(last, mechanical, prefix);
   const preparedAbilities = mechanicalValid ? mechanical!.observations.filter(o => o.kind === "ability" && o.value.owner === "you").map(o => o.kind === "ability" ? abilitySummary(o.value, world.mechanics) : "") : [];
   if (sequence.get(chatId) !== n) return;
-  host().sendToFrontend({ type: "living", chatId, signature: pathOf(messages), revision: n, enabled: settings.enabled, busy: jobs.has(chatId), retry: failures.has(chatId) || !jobs.has(chatId) && !!extractionWindow(messages, recordOf)?.pending,
+  host().sendToFrontend({ type: "living", chatId, signature: pathOf(messages), revision: n, enabled, busy: jobs.has(chatId), retry: failures.has(chatId) || !jobs.has(chatId) && !!extractionWindow(messages, recordOf)?.pending,
     checks: savedChecks(messages, recordOf),
     anchor: last?.id ?? null, world, notes: [...(mechanicalValid ? mechanicalNotes(mechanical!.receipt) : []), ...(valid ? record?.notes ?? [] : []), ...preparedAbilities].slice(0, 2), decision: valid ? record?.decision ?? preparedDecision : preparedDecision,
     responses: mechanicalValid ? responseChecks(mechanical!.receipt, world.mechanics, world.present) : [], notice: valid ? record?.notice : undefined }, userId);
@@ -275,7 +275,7 @@ export async function pushLiving(chatId: string, userId?: string): Promise<void>
 /** One extraction after a reply; no off-screen world events are committed here. */
 export async function syncLiving(chatId: string, userId?: string, decision?: Decision, targetId?: string, notice?: string): Promise<void> {
   await registerNarratorAid(userId);
-  if (!(await getSettings(userId)).enabled) { await pushLiving(chatId, userId); return; }
+  if (!await chatEnabled(chatId, userId)) { await pushLiving(chatId, userId); return; }
   const old = jobs.get(chatId); if (old) return old.done;
   const all = await storyHistory(chatId), last = targetId ? all.find(m => m.id === targetId) : all.at(-1);
   if (!last || (last.is_user && !targetId && !/^\(OOC correction:/i.test(last.content)) || !last.content.trim()) { await pushLiving(chatId, userId); return; }
@@ -366,7 +366,7 @@ export async function registerNarratorAid(userId?: string) {
   const api = host();
   if (!userId || !api.registerTool || !api.permissions?.has) return;
   const users = nativeUsers.get(api) ?? new Map<string, boolean>(); nativeUsers.set(api, users);
-  users.set(userId, (await getSettings(userId)).enabled);
+  users.set(userId, await anyChatEnabled(userId));
   if (![...users.values()].some(Boolean) || !api.permissions.has("tools")) {
     if (nativeHosts.has(api)) { api.unregisterTool(NARRATOR_AID_TOOL.name); nativeHosts.delete(api); }
     return;
@@ -398,7 +398,7 @@ export async function livingNarratorAid(payload: ToolInvocationPayloadDTO, userI
   // Older callers may still send a token; it cannot override the host's binding.
   if (args.turn !== undefined && args.turn !== invitation.token) return blocked("This narratorAid turn has expired or is unavailable");
   const active = started.get(chatId);
-  if (invitation.owner !== userId || !active?.target || active.id !== prepared.generation || prepared.controller.signal.aborted || !(await getSettings(userId)).enabled || !await usesLiving(chatId, userId)) return blocked("The active generation is unavailable for this caller");
+  if (invitation.owner !== userId || !active?.target || active.id !== prepared.generation || prepared.controller.signal.aborted || !await chatEnabled(chatId, userId) || !await usesLiving(chatId, userId)) return blocked("The active generation is unavailable for this caller");
   const all = await getMessages(chatId), target = all.find(m => m.id === active.target);
   if (!target) return blocked("The active reply is no longer available");
   const history = all.filter(m => m.index_in_chat < target.index_in_chat), request = history.at(-1);
@@ -561,7 +561,7 @@ async function cachedInjection(messages: LlmMessageDTO[], ctx: InterceptorContex
 
 export async function livingIntercept(messages: LlmMessageDTO[], ctx: InterceptorContextDTO): Promise<LlmMessageDTO[]> {
   const settings = await getSettings(ctx.userId);
-  if (["quiet", "impersonate"].includes(ctx.generationType ?? "") || !settings.enabled) return messages;
+  if (["quiet", "impersonate"].includes(ctx.generationType ?? "") || !await chatEnabled(ctx.chatId, ctx.userId)) return messages;
   const context = ctx as unknown as { isDryRun?: boolean; dryRun?: boolean };
   if (context.isDryRun || context.dryRun) { const history = await getMessages(ctx.chatId); return cachedInjection(messages, ctx, history, worldOf(history), null, false); }
   // Older hosts do not send interceptorDeadlineAt. Finish inside their default
@@ -777,9 +777,9 @@ export async function livingAction(raw: unknown, userId?: string): Promise<boole
   if (m.type !== "living_action" || !m.chatId) return false;
   const chatId = m.chatId;
   if (!await usesLiving(chatId, userId)) return true;
-  if (m.action === "pause") { livingStopped({ chatId }); await patchSettings({ enabled: false }, userId); await pushLiving(chatId, userId); return true; }
-  if (m.action === "resume") { await patchSettings({ enabled: true }, userId); await syncLiving(chatId, userId); return true; }
-  if (!(await getSettings(userId)).enabled) return true;
+  if (m.action === "pause") { livingStopped({ chatId }); await setChatEnabled(chatId, false, userId); await pushLiving(chatId, userId); return true; }
+  if (m.action === "resume") { await setChatEnabled(chatId, true, userId); await syncLiving(chatId, userId); return true; }
+  if (!await chatEnabled(chatId, userId)) return true;
   if (m.action === "say" && text(m.text) && !started.has(chatId)) {
     await host().chat.appendMessage(chatId, { role: "user", content: m.text!.trim().slice(0, 2000) }, { triggerGeneration: true });
   }

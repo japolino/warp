@@ -6,6 +6,8 @@ Design revision, 2026-11-02. This is a plan, not implemented behavior. It supers
 
 Install Warp, open an existing chat, use the normal composer. Inherit the chat connection; optionally select helper and decision profiles. No genre selection, rulebook generation screen, source checklist, initial character-sheet approval, required drawer, external relay, or second application.
 
+Inline [Pause and Resume](CHAT_ACTIVATION.md) apply to the current automatic conversation. Untouched chats keep the user's default, including an existing global pause. Resuming one conversation does not activate unrelated chats.
+
 Ship one versioned mechanical engine. Generate character and world content as needed, within that engine's typed operations. The player does not author rules; the engine does not ask an AI to invent its mathematics every turn. All numbers and restrictions that can affect a decision must be available to the player before that decision, even when the player never opens an inspector.
 
 The ordinary interface is prose, inline dice and short consequential changes. Metagaming is supported through optional inline inspection and normal-language questions. Reading detailed mechanics is never the entry requirement for using them.

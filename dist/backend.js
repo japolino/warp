@@ -16202,6 +16202,64 @@ ${action}`,
 }
 var init_decisions2 = () => {};
 
+// src/living/activation.ts
+function store() {
+  const api = host(), existing = stores.get(api);
+  if (existing)
+    return existing;
+  const next = new Map;
+  stores.set(api, next);
+  return next;
+}
+function userStore(userId) {
+  const users = store(), key = userId ?? "_";
+  let entry = users.get(key);
+  if (!entry) {
+    entry = { writes: Promise.resolve() };
+    users.set(key, entry);
+  }
+  return entry;
+}
+function normalize6(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return {};
+  const record = value;
+  if (record.version !== 1 || !record.chats || typeof record.chats !== "object" || Array.isArray(record.chats))
+    return {};
+  return Object.fromEntries(Object.entries(record.chats).filter(([id, enabled]) => id.length > 0 && id.length <= 200 && typeof enabled === "boolean"));
+}
+async function choices(userId) {
+  const entry = userStore(userId);
+  if (entry.choices)
+    return entry.choices;
+  entry.loaded ??= host().userStorage.getJson(FILE, { fallback: {}, userId }).then((value) => entry.choices = normalize6(value));
+  return entry.loaded;
+}
+async function chatEnabled(chatId, userId) {
+  const local = await choices(userId);
+  return Object.hasOwn(local, chatId) ? local[chatId] : (await getSettings(userId)).enabled;
+}
+async function anyChatEnabled(userId) {
+  return (await getSettings(userId)).enabled || Object.values(await choices(userId)).some(Boolean);
+}
+async function setChatEnabled(chatId, enabled, userId) {
+  if (!chatId || chatId.length > 200)
+    throw Error("A valid chat is required");
+  const entry = userStore(userId), api = host();
+  const operation = entry.writes.then(async () => {
+    const previous = await choices(userId), next = { ...previous, [chatId]: enabled };
+    await api.userStorage.setJson(FILE, { version: 1, chats: next }, { indent: 2, userId });
+    entry.choices = next;
+  });
+  entry.writes = operation.catch(() => {});
+  await operation;
+}
+var FILE = "chat-activation.json", stores;
+var init_activation = __esm(() => {
+  init_settings();
+  stores = new WeakMap;
+});
+
 // src/living/local-actions.ts
 function readLocalClaim(content, world, history) {
   const plain = (s) => s.trim().replace(/\s+/g, " ").replace(/^(\*{1,2}|_{1,2})(.+)\1$/, "$2").trim();
@@ -16745,7 +16803,7 @@ async function pushLiving(chatId, userId) {
   await registerNarratorAid(userId);
   const n = (sequence.get(chatId) ?? 0) + 1;
   sequence.set(chatId, n);
-  const messages = await storyHistory(chatId), world = worldOf(messages), settings = await getSettings(userId);
+  const messages = await storyHistory(chatId), world = worldOf(messages), enabled = await chatEnabled(chatId, userId);
   const last = messages.filter((m) => !m.is_user && m.content.trim()).at(-1);
   const record = last ? recordOf(last) : undefined;
   const valid = last && validRecord(last, record, messages.filter((m) => m.index_in_chat < last.index_in_chat));
@@ -16763,7 +16821,7 @@ async function pushLiving(chatId, userId) {
     chatId,
     signature: pathOf(messages),
     revision: n,
-    enabled: settings.enabled,
+    enabled,
     busy: jobs.has(chatId),
     retry: failures.has(chatId) || !jobs.has(chatId) && !!extractionWindow(messages, recordOf)?.pending,
     checks: savedChecks(messages, recordOf),
@@ -16777,7 +16835,7 @@ async function pushLiving(chatId, userId) {
 }
 async function syncLiving(chatId, userId, decision, targetId, notice) {
   await registerNarratorAid(userId);
-  if (!(await getSettings(userId)).enabled) {
+  if (!await chatEnabled(chatId, userId)) {
     await pushLiving(chatId, userId);
     return;
   }
@@ -16918,7 +16976,7 @@ async function registerNarratorAid(userId) {
     return;
   const users = nativeUsers.get(api) ?? new Map;
   nativeUsers.set(api, users);
-  users.set(userId, (await getSettings(userId)).enabled);
+  users.set(userId, await anyChatEnabled(userId));
   if (![...users.values()].some(Boolean) || !api.permissions.has("tools")) {
     if (nativeHosts.has(api)) {
       api.unregisterTool(NARRATOR_AID_TOOL.name);
@@ -16959,7 +17017,7 @@ async function livingNarratorAid(payload, userId) {
   if (args.turn !== undefined && args.turn !== invitation.token)
     return blocked("This narratorAid turn has expired or is unavailable");
   const active = started.get(chatId);
-  if (invitation.owner !== userId || !active?.target || active.id !== prepared.generation || prepared.controller.signal.aborted || !(await getSettings(userId)).enabled || !await usesLiving(chatId, userId))
+  if (invitation.owner !== userId || !active?.target || active.id !== prepared.generation || prepared.controller.signal.aborted || !await chatEnabled(chatId, userId) || !await usesLiving(chatId, userId))
     return blocked("The active generation is unavailable for this caller");
   const all = await getMessages(chatId), target = all.find((m) => m.id === active.target);
   if (!target)
@@ -17177,7 +17235,7 @@ ${JSON.stringify(receiptPacket(receipt))}` : ""}`).messages;
 }
 async function livingIntercept(messages, ctx) {
   const settings = await getSettings(ctx.userId);
-  if (["quiet", "impersonate"].includes(ctx.generationType ?? "") || !settings.enabled)
+  if (["quiet", "impersonate"].includes(ctx.generationType ?? "") || !await chatEnabled(ctx.chatId, ctx.userId))
     return messages;
   const context = ctx;
   if (context.isDryRun || context.dryRun) {
@@ -17455,16 +17513,16 @@ async function livingAction(raw, userId) {
     return true;
   if (m.action === "pause") {
     livingStopped({ chatId });
-    await patchSettings({ enabled: false }, userId);
+    await setChatEnabled(chatId, false, userId);
     await pushLiving(chatId, userId);
     return true;
   }
   if (m.action === "resume") {
-    await patchSettings({ enabled: true }, userId);
+    await setChatEnabled(chatId, true, userId);
     await syncLiving(chatId, userId);
     return true;
   }
-  if (!(await getSettings(userId)).enabled)
+  if (!await chatEnabled(chatId, userId))
     return true;
   if (m.action === "say" && text6(m.text) && !started.has(chatId)) {
     await host().chat.appendMessage(chatId, { role: "user", content: m.text.trim().slice(0, 2000) }, { triggerGeneration: true });
@@ -17557,7 +17615,7 @@ var init_runtime = __esm(() => {
   init_settings();
   init_helpers();
   init_source();
-  init_settings();
+  init_activation();
   init_questions();
   init_inject();
   init_loader();

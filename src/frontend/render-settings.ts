@@ -94,7 +94,7 @@ export function renderSettings(s: Settings, status: RulesetStatus | null, connec
   }).join("");
   return `<div class="warp-card">
     <h3>Warp</h3>
-    ${toggle("enabled", "Warp is on", "Turn the engine off without removing any rules.", s.enabled)}
+    ${toggle("enabled", "Start Warp by default", "Pause or resume an automatic conversation beside that chat.", s.enabled)}
     ${renderStyleSwitch(status, templates)}
     <label class="warp-field"><span>Helper connection</span>
       <select class="warp-select" data-setting="helperConnectionId" aria-label="Helper connection">

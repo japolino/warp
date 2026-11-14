@@ -2,8 +2,8 @@ import { afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
 import { makeHost, type HelperCall } from "../backend/test-host.js";
 import { getMessages } from "../backend/ledger.js";
 import { foldMechanics } from "./mechanical-history.js";
-import { livingNarratorAid, livingIntercept, livingStarted, livingStopped, syncLiving, registerNarratorAid } from "./runtime.js";
-import { patchSettings } from "../backend/settings.js";
+import { livingNarratorAid, livingIntercept, livingStarted, livingStopped, livingEnded, livingAction, syncLiving, registerNarratorAid } from "./runtime.js";
+import { getSettings, patchSettings } from "../backend/settings.js";
 import { PROMPT_KEY } from "./prompt-cache.js";
 import { revision } from "../shared/revision.js";
 import type { InterceptorContextDTO, ToolRegistrationDTO } from "lumiverse-spindle-types";
@@ -180,4 +180,34 @@ test("pausing the last enabled user removes the schema; resuming restores the id
   expect(removed.at(-1)).toBe("npc_aid"); expect(tools).toHaveLength(count);
   await patchSettings({ enabled: true }, h.userId); await registerNarratorAid(h.userId);
   expect(tools).toHaveLength(count + 1); expect(tools.at(-1)).toEqual(tools[0]);
+});
+
+test("inline resume runs only this chat under a global pause, and local pause cancels a reserved native action", async () => {
+  const id = await clinic(), other = `${id}-untouched`;
+  h.chat(other, "", opening); h.characters[`char-${other}`].description = profile;
+  await patchSettings({ enabled: false }, h.userId);
+  try {
+    const reads = h.counts.helper;
+    await syncLiving(other, h.userId); expect(h.counts.helper).toBe(reads);
+    await livingAction({ type: "living_action", chatId: id, action: "resume" }, h.userId);
+    expect((await getSettings(h.userId)).enabled).toBe(false);
+    expect(h.sent.filter(m => m.type === "living" && m.chatId === id).at(-1).enabled).toBe(true);
+    expect(h.sent.filter(m => m.type === "living" && m.chatId === other).at(-1).enabled).toBe(false);
+    await h.say(id, '"Could you treat my arm?"');
+    const target = h.msg(id, `${id}-reserved`, false, ""), generationId = `${id}-local-resume`;
+    livingStarted({ chatId: id, generationId, targetMessageId: target.id });
+    currentWire = await livingIntercept((await getMessages(id)).filter(m => m.content).map(m => ({ role: m.role, content: m.content, sourceMessageId: m.id })), { chatId: id, userId: h.userId } as InterceptorContextDTO);
+    expect((await invoke(undefined)).status).toBe("ready");
+    const input = [{ role: "user" as const, content: "Ordinary chat without Warp" }];
+    expect(await livingIntercept(input, { chatId: other, userId: h.userId } as InterceptorContextDTO)).toBe(input);
+    const removalCount = removed.length;
+    await livingAction({ type: "living_action", chatId: id, action: "pause" }, h.userId);
+    expect(removed.length).toBe(removalCount + 1);
+    expect((await invoke(undefined)).status).toBe("blocked");
+    target.content = "Jo has not treated the burn."; target.swipes[0] = target.content;
+    await livingEnded({ chatId: id, generationId, messageId: target.id }, h.userId);
+    const state = foldMechanics(await getMessages(id));
+    expect(state.resources[0].current).toBe(10); expect(state.applied).toEqual([]);
+    expect((await getSettings(h.userId)).enabled).toBe(false);
+  } finally { await patchSettings({ enabled: true }, h.userId); }
 });
