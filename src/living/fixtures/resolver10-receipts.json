@@ -1,0 +1,827 @@
+{
+  "origin": "Installed 1a188679c4ddeef53d8a7925a307cca192418dc3, captured 2026-11-13 before service changes",
+  "opening": {
+    "id": "clinic",
+    "is_user": false,
+    "content": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend."
+  },
+  "profile": {
+    "id": "warp-source:card:19deeb15:1c6b24dd",
+    "kind": "card",
+    "text": "Jo's Mend gently treats routine injury at touch range and costs 2 Focus."
+  },
+  "observations": [
+    {
+      "kind": "entity",
+      "value": {
+        "id": "entity-bee4fa7c:b5c60136",
+        "name": "Jo",
+        "displayName": "Jo",
+        "aliases": [],
+        "entityKind": "person",
+        "present": true,
+        "status": "active",
+        "source": {
+          "message": "clinic",
+          "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+          "sourceRevision": "57d13a0d:8f289237"
+        }
+      }
+    },
+    {
+      "kind": "distance",
+      "value": {
+        "id": "distance-c3962d65:8aac587f",
+        "from": "you",
+        "to": "Jo",
+        "band": "touch",
+        "source": {
+          "message": "clinic",
+          "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+          "sourceRevision": "57d13a0d:8f289237"
+        }
+      }
+    },
+    {
+      "kind": "resource",
+      "value": {
+        "id": "focus",
+        "owner": "Jo",
+        "name": "Focus",
+        "current": 10,
+        "role": "effort",
+        "source": {
+          "message": "clinic",
+          "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+          "sourceRevision": "57d13a0d:8f289237"
+        }
+      }
+    },
+    {
+      "kind": "condition",
+      "value": {
+        "id": "burn",
+        "owner": "you",
+        "name": "Burn",
+        "hinders": [
+          "movement"
+        ],
+        "blocks": [],
+        "helps": [],
+        "ending": "Treatment",
+        "category": "physical_injury",
+        "severity": "minor",
+        "recovery": "routine",
+        "source": {
+          "message": "clinic",
+          "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+          "sourceRevision": "57d13a0d:8f289237"
+        }
+      }
+    },
+    {
+      "kind": "ability",
+      "value": {
+        "id": "ability-599daf10:befb20c6",
+        "version": 1,
+        "owner": "Jo",
+        "name": "Mend",
+        "description": "Mend",
+        "approach": "concentration",
+        "target": "other",
+        "range": "touch",
+        "costs": [
+          {
+            "kind": "resource",
+            "id": "focus",
+            "amount": 2
+          }
+        ],
+        "effects": [
+          {
+            "kind": "mend",
+            "target": "target",
+            "impact": "minor"
+          }
+        ],
+        "requires": [],
+        "unsupported": [],
+        "fingerprint": "9999172f:c2ae1d69",
+        "source": {
+          "message": "warp-source:card:19deeb15:1c6b24dd",
+          "quote": "Jo's Mend gently treats routine injury at touch range and costs 2 Focus.",
+          "sourceRevision": "19deeb15:1c6b24dd"
+        },
+        "sourceKind": "card"
+      }
+    },
+    {
+      "kind": "aid_offer",
+      "value": {
+        "id": "aid-c4dc5c01:7d563d01",
+        "version": 1,
+        "actor": "Jo",
+        "target": "you",
+        "ability": "ability-599daf10:befb20c6",
+        "abilityVersion": 1,
+        "name": "Mend",
+        "status": "offered",
+        "unsupported": [],
+        "source": {
+          "message": "clinic",
+          "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+          "sourceRevision": "57d13a0d:8f289237"
+        }
+      }
+    }
+  ],
+  "cases": [
+    {
+      "before": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "focus",
+            "owner": "Jo",
+            "name": "Focus",
+            "current": 10,
+            "role": "effort",
+            "source": {
+              "message": "clinic",
+              "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+              "sourceRevision": "57d13a0d:8f289237"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [
+          {
+            "id": "burn",
+            "owner": "you",
+            "name": "Burn",
+            "hinders": [
+              "movement"
+            ],
+            "blocks": [],
+            "helps": [],
+            "ending": "Treatment",
+            "category": "physical_injury",
+            "severity": "minor",
+            "recovery": "routine",
+            "source": {
+              "message": "clinic",
+              "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+              "sourceRevision": "57d13a0d:8f289237"
+            }
+          }
+        ],
+        "applied": [],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "clinic",
+              "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+              "sourceRevision": "57d13a0d:8f289237"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "clinic",
+              "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+              "sourceRevision": "57d13a0d:8f289237"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-599daf10:befb20c6",
+            "version": 1,
+            "owner": "Jo",
+            "name": "Mend",
+            "description": "Mend",
+            "approach": "concentration",
+            "target": "other",
+            "range": "touch",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "mend",
+                "target": "target",
+                "impact": "minor"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "9999172f:c2ae1d69",
+            "source": {
+              "message": "warp-source:card:19deeb15:1c6b24dd",
+              "quote": "Jo's Mend gently treats routine injury at touch range and costs 2 Focus.",
+              "sourceRevision": "19deeb15:1c6b24dd"
+            },
+            "sourceKind": "card"
+          }
+        ],
+        "aidOffers": [
+          {
+            "id": "aid-c4dc5c01:7d563d01",
+            "version": 1,
+            "actor": "Jo",
+            "target": "you",
+            "ability": "ability-599daf10:befb20c6",
+            "abilityVersion": 1,
+            "name": "Mend",
+            "status": "offered",
+            "unsupported": [],
+            "source": {
+              "message": "clinic",
+              "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+              "sourceRevision": "57d13a0d:8f289237"
+            }
+          }
+        ]
+      },
+      "receipt": {
+        "version": 1,
+        "engine": 10,
+        "id": "legacy-accept_aid",
+        "input": "d269083c:f1a629d8",
+        "base": "e68d2abb:98dc8487",
+        "actor": "you",
+        "operations": [
+          {
+            "kind": "accept_aid",
+            "offer": "aid-c4dc5c01:7d563d01",
+            "version": 1
+          }
+        ],
+        "responses": [],
+        "changes": [
+          {
+            "kind": "resource",
+            "id": "focus",
+            "before": {
+              "id": "focus",
+              "owner": "Jo",
+              "name": "Focus",
+              "current": 10,
+              "role": "effort",
+              "source": {
+                "message": "clinic",
+                "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+                "sourceRevision": "57d13a0d:8f289237"
+              }
+            },
+            "after": {
+              "id": "focus",
+              "owner": "Jo",
+              "name": "Focus",
+              "current": 8,
+              "role": "effort",
+              "source": {
+                "message": "clinic",
+                "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+                "sourceRevision": "57d13a0d:8f289237"
+              }
+            }
+          },
+          {
+            "kind": "condition",
+            "id": "burn",
+            "before": {
+              "id": "burn",
+              "owner": "you",
+              "name": "Burn",
+              "hinders": [
+                "movement"
+              ],
+              "blocks": [],
+              "helps": [],
+              "ending": "Treatment",
+              "category": "physical_injury",
+              "severity": "minor",
+              "recovery": "routine",
+              "source": {
+                "message": "clinic",
+                "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+                "sourceRevision": "57d13a0d:8f289237"
+              }
+            },
+            "after": null
+          },
+          {
+            "kind": "aid_offer",
+            "id": "aid-c4dc5c01:7d563d01",
+            "before": {
+              "id": "aid-c4dc5c01:7d563d01",
+              "version": 1,
+              "actor": "Jo",
+              "target": "you",
+              "ability": "ability-599daf10:befb20c6",
+              "abilityVersion": 1,
+              "name": "Mend",
+              "status": "offered",
+              "unsupported": [],
+              "source": {
+                "message": "clinic",
+                "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+                "sourceRevision": "57d13a0d:8f289237"
+              }
+            },
+            "after": {
+              "id": "aid-c4dc5c01:7d563d01",
+              "version": 1,
+              "actor": "Jo",
+              "target": "you",
+              "ability": "ability-599daf10:befb20c6",
+              "abilityVersion": 1,
+              "name": "Mend",
+              "status": "used",
+              "unsupported": [],
+              "source": {
+                "message": "clinic",
+                "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+                "sourceRevision": "57d13a0d:8f289237"
+              }
+            }
+          }
+        ],
+        "beats": [
+          {
+            "kind": "mend",
+            "actor": "Jo",
+            "target": "you",
+            "name": "Burn: cleared",
+            "basis": "warp"
+          },
+          {
+            "kind": "aid",
+            "actor": "Jo",
+            "target": "you",
+            "name": "Mend"
+          }
+        ],
+        "result": "8ee711bc:7c16f20c",
+        "status": "ready"
+      },
+      "after": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "focus",
+            "owner": "Jo",
+            "name": "Focus",
+            "current": 8,
+            "role": "effort",
+            "source": {
+              "message": "clinic",
+              "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+              "sourceRevision": "57d13a0d:8f289237"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [],
+        "applied": [
+          {
+            "id": "legacy-accept_aid",
+            "input": "d269083c:f1a629d8"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "clinic",
+              "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+              "sourceRevision": "57d13a0d:8f289237"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "clinic",
+              "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+              "sourceRevision": "57d13a0d:8f289237"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-599daf10:befb20c6",
+            "version": 1,
+            "owner": "Jo",
+            "name": "Mend",
+            "description": "Mend",
+            "approach": "concentration",
+            "target": "other",
+            "range": "touch",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "mend",
+                "target": "target",
+                "impact": "minor"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "9999172f:c2ae1d69",
+            "source": {
+              "message": "warp-source:card:19deeb15:1c6b24dd",
+              "quote": "Jo's Mend gently treats routine injury at touch range and costs 2 Focus.",
+              "sourceRevision": "19deeb15:1c6b24dd"
+            },
+            "sourceKind": "card"
+          }
+        ],
+        "aidOffers": [
+          {
+            "id": "aid-c4dc5c01:7d563d01",
+            "version": 1,
+            "actor": "Jo",
+            "target": "you",
+            "ability": "ability-599daf10:befb20c6",
+            "abilityVersion": 1,
+            "name": "Mend",
+            "status": "used",
+            "unsupported": [],
+            "source": {
+              "message": "clinic",
+              "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+              "sourceRevision": "57d13a0d:8f289237"
+            }
+          }
+        ],
+        "clocks": [
+          {
+            "id": "Jo",
+            "actor": "Jo",
+            "actions": 1
+          }
+        ],
+        "closedConditions": [
+          {
+            "id": "burn",
+            "owner": "you",
+            "name": "Burn",
+            "after": {
+              "kind": "receipt",
+              "id": "legacy-accept_aid"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "before": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "focus",
+            "owner": "Jo",
+            "name": "Focus",
+            "current": 10,
+            "role": "effort",
+            "source": {
+              "message": "clinic",
+              "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+              "sourceRevision": "57d13a0d:8f289237"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [
+          {
+            "id": "burn",
+            "owner": "you",
+            "name": "Burn",
+            "hinders": [
+              "movement"
+            ],
+            "blocks": [],
+            "helps": [],
+            "ending": "Treatment",
+            "category": "physical_injury",
+            "severity": "minor",
+            "recovery": "routine",
+            "source": {
+              "message": "clinic",
+              "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+              "sourceRevision": "57d13a0d:8f289237"
+            }
+          }
+        ],
+        "applied": [],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "clinic",
+              "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+              "sourceRevision": "57d13a0d:8f289237"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "clinic",
+              "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+              "sourceRevision": "57d13a0d:8f289237"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-599daf10:befb20c6",
+            "version": 1,
+            "owner": "Jo",
+            "name": "Mend",
+            "description": "Mend",
+            "approach": "concentration",
+            "target": "other",
+            "range": "touch",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "mend",
+                "target": "target",
+                "impact": "minor"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "9999172f:c2ae1d69",
+            "source": {
+              "message": "warp-source:card:19deeb15:1c6b24dd",
+              "quote": "Jo's Mend gently treats routine injury at touch range and costs 2 Focus.",
+              "sourceRevision": "19deeb15:1c6b24dd"
+            },
+            "sourceKind": "card"
+          }
+        ],
+        "aidOffers": [
+          {
+            "id": "aid-c4dc5c01:7d563d01",
+            "version": 1,
+            "actor": "Jo",
+            "target": "you",
+            "ability": "ability-599daf10:befb20c6",
+            "abilityVersion": 1,
+            "name": "Mend",
+            "status": "offered",
+            "unsupported": [],
+            "source": {
+              "message": "clinic",
+              "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+              "sourceRevision": "57d13a0d:8f289237"
+            }
+          }
+        ]
+      },
+      "receipt": {
+        "version": 1,
+        "engine": 10,
+        "id": "legacy-decline_aid",
+        "input": "dc983ddc:e082c13c",
+        "base": "e68d2abb:98dc8487",
+        "actor": "you",
+        "operations": [
+          {
+            "kind": "decline_aid",
+            "offer": "aid-c4dc5c01:7d563d01",
+            "version": 1
+          }
+        ],
+        "responses": [],
+        "changes": [
+          {
+            "kind": "aid_offer",
+            "id": "aid-c4dc5c01:7d563d01",
+            "before": {
+              "id": "aid-c4dc5c01:7d563d01",
+              "version": 1,
+              "actor": "Jo",
+              "target": "you",
+              "ability": "ability-599daf10:befb20c6",
+              "abilityVersion": 1,
+              "name": "Mend",
+              "status": "offered",
+              "unsupported": [],
+              "source": {
+                "message": "clinic",
+                "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+                "sourceRevision": "57d13a0d:8f289237"
+              }
+            },
+            "after": {
+              "id": "aid-c4dc5c01:7d563d01",
+              "version": 1,
+              "actor": "Jo",
+              "target": "you",
+              "ability": "ability-599daf10:befb20c6",
+              "abilityVersion": 1,
+              "name": "Mend",
+              "status": "withdrawn",
+              "unsupported": [],
+              "source": {
+                "message": "clinic",
+                "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+                "sourceRevision": "57d13a0d:8f289237"
+              }
+            }
+          }
+        ],
+        "beats": [
+          {
+            "kind": "aid",
+            "actor": "Jo",
+            "target": "you",
+            "name": "Aid declined"
+          }
+        ],
+        "result": "85e3bbe0:1c868416",
+        "status": "ready"
+      },
+      "after": {
+        "version": 1,
+        "resources": [
+          {
+            "id": "focus",
+            "owner": "Jo",
+            "name": "Focus",
+            "current": 10,
+            "role": "effort",
+            "source": {
+              "message": "clinic",
+              "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+              "sourceRevision": "57d13a0d:8f289237"
+            }
+          }
+        ],
+        "items": [],
+        "conditions": [
+          {
+            "id": "burn",
+            "owner": "you",
+            "name": "Burn",
+            "hinders": [
+              "movement"
+            ],
+            "blocks": [],
+            "helps": [],
+            "ending": "Treatment",
+            "category": "physical_injury",
+            "severity": "minor",
+            "recovery": "routine",
+            "source": {
+              "message": "clinic",
+              "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+              "sourceRevision": "57d13a0d:8f289237"
+            }
+          }
+        ],
+        "applied": [
+          {
+            "id": "legacy-decline_aid",
+            "input": "dc983ddc:e082c13c"
+          }
+        ],
+        "entities": [
+          {
+            "id": "entity-bee4fa7c:b5c60136",
+            "name": "Jo",
+            "displayName": "Jo",
+            "aliases": [],
+            "entityKind": "person",
+            "present": true,
+            "status": "active",
+            "source": {
+              "message": "clinic",
+              "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+              "sourceRevision": "57d13a0d:8f289237"
+            }
+          }
+        ],
+        "distances": [
+          {
+            "id": "distance-c3962d65:8aac587f",
+            "from": "you",
+            "to": "Jo",
+            "band": "touch",
+            "source": {
+              "message": "clinic",
+              "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+              "sourceRevision": "57d13a0d:8f289237"
+            }
+          }
+        ],
+        "abilities": [
+          {
+            "id": "ability-599daf10:befb20c6",
+            "version": 1,
+            "owner": "Jo",
+            "name": "Mend",
+            "description": "Mend",
+            "approach": "concentration",
+            "target": "other",
+            "range": "touch",
+            "costs": [
+              {
+                "kind": "resource",
+                "id": "focus",
+                "amount": 2
+              }
+            ],
+            "effects": [
+              {
+                "kind": "mend",
+                "target": "target",
+                "impact": "minor"
+              }
+            ],
+            "requires": [],
+            "unsupported": [],
+            "fingerprint": "9999172f:c2ae1d69",
+            "source": {
+              "message": "warp-source:card:19deeb15:1c6b24dd",
+              "quote": "Jo's Mend gently treats routine injury at touch range and costs 2 Focus.",
+              "sourceRevision": "19deeb15:1c6b24dd"
+            },
+            "sourceKind": "card"
+          }
+        ],
+        "aidOffers": [
+          {
+            "id": "aid-c4dc5c01:7d563d01",
+            "version": 1,
+            "actor": "Jo",
+            "target": "you",
+            "ability": "ability-599daf10:befb20c6",
+            "abilityVersion": 1,
+            "name": "Mend",
+            "status": "withdrawn",
+            "unsupported": [],
+            "source": {
+              "message": "clinic",
+              "quote": "Jo stands within arm's reach. Jo has 10 Focus. You have a small routine cooking burn. Jo offers Mend.",
+              "sourceRevision": "57d13a0d:8f289237"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

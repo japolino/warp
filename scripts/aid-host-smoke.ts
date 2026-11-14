@@ -1,15 +1,17 @@
 // Production Lumiverse worker, disposable public story/model fixtures, no account or provider traffic.
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-const root = resolve(import.meta.dir, ".."), checkout = resolve(process.argv[2] ?? "D:/Lumiverse"), chatId = "aid-smoke";
+const paid = process.argv.includes("--paid");
+const root = resolve(import.meta.dir, ".."), checkout = resolve(process.argv.slice(2).find(a => !a.startsWith("--")) ?? "D:/Lumiverse"), chatId = paid ? "paid-aid-smoke" : "aid-smoke";
 const manifest = await Bun.file(join(root, "spindle.json")).json();
-const opening = "Jo stands within arm's reach in the clinic. Jo has 10 Focus and owns Mend, which gently treats routine physical injury at touch range and costs 2 Focus. You have a small routine cooking burn.";
+const opening = "Jo stands within arm's reach in the clinic. Jo has 10 Focus and owns Mend, which gently treats routine physical injury at touch range and costs 2 Focus. You have a small routine cooking burn." + (paid ? " You have 12 coins." : "");
 const steps = ["Could you treat my arm?", "No, thanks.", "Could you treat my arm?", "How much Focus would Mend use?", "Yes, please."];
-const replies = ["Jo offers Mend to treat your cooking burn.", "Jo accepts your refusal and does not perform the treatment.", "Jo offers Mend to treat your cooking burn.", "Jo offers Mend for your cooking burn; it uses two of his Focus.", "Jo uses Mend and clears your cooking burn."];
+const replies = ["Jo offers Mend to treat your cooking burn.", "Jo accepts your refusal and does not perform the treatment.", "Jo offers Mend to treat your cooking burn.", "Jo offers Mend for your cooking burn; it uses two of his Focus.", "Jo uses Mend and clears your cooking burn."].map(text => paid && text.includes("offers Mend") ? `${text} The fee is five coins.` : text);
 const message = (id: string, role: string, content: string, index: number): any => ({ id, role, content, is_user: role === "user", index_in_chat: index, swipe_id: 0, chat_id: chatId, metadata: {}, extra: {} });
 const messages = [message("opening", "assistant", opening, 0)], cite = (row: object) => ({ ...row, message: "opening", quote: opening });
 const observations = [cite({ kind: "entity", name: "Jo", entityKind: "person", present: true }), cite({ kind: "distance", from: "you", to: "Jo", band: "touch" }), cite({ kind: "resource", id: "focus", owner: "Jo", name: "Focus", current: 10, role: "effort" }), cite({ kind: "condition", id: "burn", owner: "you", name: "Cooking burn", category: "physical_injury", severity: "minor", recovery: "routine", helps: [], hinders: ["movement"], blocks: [], ending: "Treatment" })];
 const definitions = [cite({ owner: "Jo", name: "Mend", approach: "concentration", target: "other", range: "touch", costs: [{ kind: "resource", id: "focus", amount: 2 }], effects: [{ kind: "mend", target: "target", impact: "minor" }], requires: [], unsupported: [] })];
+if (paid) observations.push(cite({ kind: "resource", id: "coins", owner: "you", name: "Coins", unit: "coin", role: "money", current: 12 }));
 let phase = "bootstrap", step = 0, registrationId = "", priorWarp: any[] = [], preCalls = 0, timer: ReturnType<typeof setTimeout>;
 const worker = new Worker(pathToFileURL(join(checkout, "src/spindle/worker-runtime.ts")).href);
 try {
@@ -38,13 +40,13 @@ try {
         else if (e.type === "request_generation") {
           if (e.input.messages[0].content.includes("Determine whether")) { preCalls++; throw Error("A fresh simple request, refusal, query or acceptance opened another interpretation call"); }
           const latest = [...messages].reverse().find(m => !m.is_user && m.content)!, currentOffer = latest.content.includes("offers Mend");
-          respond({ content: JSON.stringify({ changes: [], scene: { place: "clinic", present: ["Jo"], message: latest.id, quote: latest.content }, mechanicalObservations: [...observations, ...(currentOffer ? [{ kind: "aid_offer", actor: "Jo", target: "you", ability: "Mend", uncontested: true, unsupported: [], message: latest.id, quote: latest.content }] : [])], abilityDefinitions: definitions }) });
+          respond({ content: JSON.stringify({ changes: [], scene: { place: "clinic", present: ["Jo"], message: latest.id, quote: latest.content }, mechanicalObservations: [...observations, ...(currentOffer ? [{ kind: "aid_offer", actor: "Jo", target: "you", ability: "Mend", uncontested: true, unsupported: [], ...(paid ? { fee: { kind: "resource", id: "coins", amount: 5 } } : {}), message: latest.id, quote: latest.content }] : [])], abilityDefinitions: definitions }) });
         } else if (e.type === "intercept_result" && e.requestId === `step-${step}`) {
           if (e.error) throw Error(e.error); const wire = e.messages as any[];
           if (!priorWarp.every(old => wire.some(m => JSON.stringify(m) === JSON.stringify(old)))) throw Error("A prior Warp prompt block changed");
           priorWarp = wire.filter(m => typeof m.content === "string" && m.content.includes("<warp>"));
           const player = messages.at(-2)!, reply = messages.at(-1)!, receipt = player.metadata.warpLivingAttempt?.receipt;
-          if ([2, 5].includes(step) && (receipt?.engine !== 10 || receipt.status !== "ready")) throw Error("Aid permission was not prepared before narration");
+          if ([2, 5].includes(step) && (receipt?.engine !== (paid ? 11 : 10) || receipt.status !== "ready")) throw Error("Aid permission was not prepared before narration");
           if ([1, 3, 4].includes(step) && receipt) throw Error("A request or question acquired a mechanical execution");
           if (reply.metadata.warpMechanics) throw Error("Aid committed before narration");
           phase = `commit-${step}`; reply.content = replies[step - 1];
@@ -54,6 +56,12 @@ try {
           if (phase === "bootstrap" && s?.abilities?.length) { step = 1; next(); }
           else if (phase === `commit-${step}`) {
             if (s.resources.find((r: any) => r.id === "focus")?.current !== (step === 5 ? 8 : 10)) throw Error("NPC aid payment was premature, missing or repeated");
+            if (paid) {
+              if (s.resources.find((r: any) => r.id === "coins")?.current !== (step === 5 ? 7 : 12)) throw Error("The service fee was premature, missing or repeated");
+              if (s.resources.some((r: any) => r.owner === "Jo" && r.role === "money")) throw Error("An unknown NPC wallet was invented");
+              if (step === 1 && !e.payload.notes.some((n: string) => n.includes("fee 5 Coins"))) throw Error("The service fee was hidden before acceptance");
+              if (step === 5 && s.aidOffers?.[0]?.paid?.amount !== 5) throw Error("The actual service payment was not recorded");
+            }
             if ((s.clocks?.find((c: any) => c.actor === "you")?.actions ?? 0) !== 0 || (s.clocks?.find((c: any) => c.actor === "Jo")?.actions ?? 0) !== (step === 5 ? 1 : 0)) throw Error("Wrong actor advanced for aid permission");
             if (s.conditions.some((c: any) => c.id === "burn") !== (step !== 5)) throw Error("Offer, question or refusal healed early");
             if (s.abilities.some((a: any) => a.owner === "you")) throw Error("The player acquired the NPC's power");
@@ -67,5 +75,5 @@ try {
     };
     worker.postMessage({ type: "init", manifest: { ...manifest, entry_backend: pathToFileURL(join(root, "dist/backend.js")).href }, storagePath: join(root, ".artifacts/aid-worker-smoke") });
   });
-  console.log("PASS: production worker offers NPC aid, forecasts its cost, preserves it through a question, declines without time or payment, accepts one NPC-owned use, and preserves all prior Warp prompt blocks without an extra interpretation call.");
+  console.log(`PASS: production worker offers ${paid ? "paid " : ""}NPC aid, forecasts its cost, preserves it through a question, declines without time or payment, accepts one NPC-owned use${paid ? " with one five-coin fee and no invented NPC wallet" : ""}, and preserves all prior Warp prompt blocks without an extra interpretation call.`);
 } finally { clearTimeout(timer!); worker.terminate(); }

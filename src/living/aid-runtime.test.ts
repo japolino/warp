@@ -32,6 +32,45 @@ async function chat() {
   await syncLiving(id, h.userId); return id;
 }
 
+test("a paid offer works through ordinary yes, cancellation and swipe with one atomic payment", async () => {
+  const id = `aid-runtime-${++serial}`, priced = `${opening} You have 12 coins. Jo offers Mend for five coins.`;
+  h.chat(id, "", priced); Object.assign(h.characters[`char-${id}`], { description: profile, world_book_ids: [] });
+  h.helper = c => {
+    const result = helper({ ...c, user: c.user.replaceAll(JSON.stringify(priced), JSON.stringify(opening)) }) as any;
+    if (!result.mechanicalObservations) return result;
+    const latest = h.messages(id).at(-1)!;
+    const offered = !latest.is_user && latest.content.includes("offers Mend for five coins") ? latest : { id: `${id}-g`, content: priced };
+    result.mechanicalObservations = [
+      { kind: "resource", id: "coins", owner: "you", name: "Coins", unit: "coin", role: "money", current: 12, message: `${id}-g`, quote: priced },
+      ...result.mechanicalObservations.map((row: any) => row.kind === "aid_offer" ? { ...row, message: offered.id, quote: offered.content, fee: { kind: "resource", id: "coins", amount: 5 } } : row),
+    ];
+    return result;
+  };
+  await syncLiving(id, h.userId);
+  const before = await state(id); expect(before.aidOffers![0].fee?.amount).toBe(5);
+  expect(view(id).notes).toContain("Jo offers Mend · fee 5 Coins · uses 2 Focus");
+  await h.say(id, "How much does that cost?");
+  await h.generate(id, "Jo repeats the five-coin price and renews the same offer. Jo offers Mend for five coins.");
+  expect((await state(id)).resources).toEqual(before.resources);
+  await h.say(id, "Yes, please.");
+  const target = h.msg(id, `${id}-stopped`, false, "");
+  livingStarted({ chatId: id, generationId: "paid-stopped", targetMessageId: target.id, generationType: "normal" });
+  await livingIntercept([{ role: "user", content: "Yes, please." }], { chatId: id, userId: h.userId, generationType: "normal" } as InterceptorContextDTO);
+  livingStopped({ chatId: id, generationId: "paid-stopped" });
+  expect((await state(id)).resources).toEqual(before.resources);
+  await h.generate(id, async prompt => {
+    const text = prompt.map(m => m.content).join("\n");
+    expect(text).toContain('"kind":"payment"'); expect(text).toContain('"amount":5');
+    return "Jo receives five coins and treats your burn with Mend.";
+  }, "swipe");
+  const after = await state(id);
+  expect(after.resources.find(r => r.id === "coins")!.current).toBe(7); expect(after.resources.find(r => r.id === "focus")!.current).toBe(8);
+  expect(after.aidOffers![0].status).toBe("used"); expect(after.aidOffers![0].paid?.amount).toBe(5); expect(after.conditions).toEqual([]);
+  await h.generate(id, "Jo's same recorded treatment is described again.", "swipe");
+  expect(await state(id)).toEqual(after); await syncLiving(id, h.userId); expect(await state(id)).toEqual(after);
+  expect(preparations).toBe(0);
+});
+
 test("a normal card prepares an offer and its NPC ability, shows costs and accepts without a setup screen or another interpretation", async () => {
   const id = await chat(), before = await state(id);
   expect(before.aidOffers?.[0].status).toBe("offered"); expect(before.abilities?.map(a => a.owner)).toEqual(["Jo"]);

@@ -12022,32 +12022,6 @@ var init_story_view_capture = __esm(() => {
   init_story_text();
 });
 
-// src/living/story-path.ts
-function rawPathOf(messages) {
-  return messages.reduce((path, m) => revision([path, m.id, m.swipe_id ?? 0, m.content]), ROOT);
-}
-function rawPathsOf(messages) {
-  let path = ROOT;
-  return new Map(messages.map((m) => {
-    path = revision([path, m.id, m.swipe_id ?? 0, m.content]);
-    return [m.id, path];
-  }));
-}
-function pathOf(messages) {
-  return messages.reduce(nextPath2, ROOT);
-}
-function pathsOf(messages) {
-  let path = ROOT;
-  return new Map(messages.map((m) => {
-    path = nextPath2(path, m);
-    return [m.id, path];
-  }));
-}
-var ROOT = "warp-living-v1", nextPath2 = (path, m) => revision([path, m.id, m.swipe_id ?? 0, storyContent(m.content)]);
-var init_story_path = __esm(() => {
-  init_story_text();
-});
-
 // src/living/condition-history.ts
 function messageOwnsAction(message, action) {
   const record = message;
@@ -12190,6 +12164,240 @@ var init_injuries = __esm(() => {
   IMPACTS = { minor: 5, standard: 15, major: 30 };
   BODY_RESILIENCE = { frail: 0.5, ordinary: 1, tough: 2, exceptional: 8 };
   PHYSICAL_TYPES = ["physical", "fire", "cold", "electric", "poison"];
+});
+
+// src/living/companions.ts
+function participant(state, input) {
+  const resolved = actorName(state, input);
+  if (resolved === "you" || entityFor(state, resolved))
+    return resolved;
+  const candidates = state.entities?.filter((e) => [e.name, e.displayName, ...e.aliases].some((n) => givenName(n) === norm2(input))) ?? [];
+  if (candidates.length > 1)
+    throw new Error("Companion participant is ambiguous");
+  return candidates[0]?.name ?? resolved;
+}
+function afterTransition(source, old, messages) {
+  if (old.message === source.message && old.sourceRevision === source.sourceRevision)
+    return false;
+  const prior = messages.findIndex((m) => old.message.startsWith("warp-action:") ? messageOwnsAction(m, old.message.slice("warp-action:".length)) : m.id === old.message);
+  return prior >= 0 && messages.findIndex((m) => m.id === source.message) > prior;
+}
+function mentioned(state, actor, quote) {
+  const e = entityFor(state, actor);
+  const names = actor === "you" ? ["you", "your", "{{user}}", ...e?.aliases ?? []] : [actor, e?.displayName ?? "", ...e?.aliases ?? []];
+  if (names.some((n) => n && norm2(quote).includes(norm2(n))))
+    return true;
+  return [actor, e?.displayName ?? ""].some((name) => {
+    const short = givenName(name);
+    if (!short)
+      return false;
+    const matching = state.entities?.filter((row) => [row.name, row.displayName, ...row.aliases].some((n) => norm2(n) === short || givenName(n) === short)) ?? [];
+    if (matching.length !== 1 || matching[0].name !== actor)
+      return false;
+    const escaped = short.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`, "u").test(norm2(quote));
+  });
+}
+function relationshipEvidence(state, actor, controller, source, messages) {
+  const bound = (quote) => mentioned(state, actor, quote) && mentioned(state, controller, quote);
+  if (bound(source.quote))
+    return source;
+  const message = messages.find((m) => m.id === source.message);
+  if (!message)
+    return;
+  {
+    const paragraph = (source.viewRevision ? storyReadContent(message) : storyContent(message.content)).replace(/\s+/g, " "), start = paragraph.indexOf(source.quote);
+    if (start < 0)
+      return;
+    const end = start + source.quote.length, spare = 400 - source.quote.length;
+    const windows = [paragraph.slice(start, start + 400), paragraph.slice(Math.max(0, end - 400), end), paragraph.slice(Math.max(0, start - Math.floor(spare / 2)), end + Math.ceil(spare / 2))];
+    for (const window of windows) {
+      const quote = window.trim();
+      if (quote.length <= 400 && quote.includes(source.quote) && bound(quote))
+        return { ...source, quote };
+    }
+  }
+}
+function compatible(from, to) {
+  return from.role === "effort" && to.role === "effort" && from.owner !== to.owner && (from.unit && to.unit ? norm2(from.unit) === norm2(to.unit) : !from.unit && !to.unit && norm2(from.name) === norm2(to.name));
+}
+function resource(state, input) {
+  const matches = state.resources.filter((r) => r.id === input);
+  return matches.length === 1 ? matches[0] : undefined;
+}
+function assertGraph(state) {
+  for (const start of state.costLinks ?? []) {
+    if (!start.enabled)
+      continue;
+    const seen = new Set;
+    let id = start.from;
+    for (;; ) {
+      if (seen.has(id))
+        throw new Error("Cyclic shared cost link");
+      seen.add(id);
+      const edges = state.costLinks?.filter((l) => l.enabled && l.from === id) ?? [];
+      if (!edges.length)
+        break;
+      if (edges.length !== 1)
+        throw new Error("Ambiguous shared cost payer");
+      const edge = edges[0], from = resource(state, edge.from), to = resource(state, edge.to);
+      if (!from || !to || !compatible(from, to))
+        throw new MechanicalKnowledgeError("Shared cost pools need compatible established effort units");
+      id = edge.to;
+    }
+  }
+}
+function readCompanionObservation(row, state, source, messages, correction) {
+  const profile = source.message.startsWith("warp-source:");
+  const fields = row.kind === "companion" ? ["actor", "controller", "companionKind"] : ["from", "to", "enabled", "unsupported"];
+  if (Object.keys(row).some((k) => ![
+    "kind",
+    "id",
+    "source",
+    "sourceRevision",
+    "viewRevision",
+    "message",
+    "quote",
+    ...fields,
+    ...row.kind === "companion" ? ["manifestation"] : []
+  ].includes(k)))
+    return;
+  const editedProfile = (old) => profile && old.message.startsWith("warp-source:") && old.message.split(":")[1] === source.message.split(":")[1] && !sourceContains(messages.find((m) => m.id === source.message)?.content ?? "", old.quote);
+  if (row.kind === "companion") {
+    const actor = participant(state, text(row.actor, 80)), controller = participant(state, text(row.controller, 80));
+    if (!actor || !controller || actor === "you" || actor === controller || !entityFor(state, actor) || controller !== "you" && !entityFor(state, controller) || !["companion", "summon"].includes(row.companionKind))
+      return;
+    const evidence = relationshipEvidence(state, actor, controller, source, messages);
+    if (!evidence)
+      return;
+    const old = state.companions?.find((c) => c.actor === actor);
+    if (old && !correction && !editedProfile(old.source))
+      return;
+    if (old?.manifestation?.active && (old.controller !== controller || old.companionKind !== row.companionKind))
+      return;
+    return { kind: "companion", value: {
+      id: old?.id ?? `companion-${revision(actor)}`,
+      actor,
+      controller,
+      companionKind: row.companionKind,
+      source: evidence,
+      ...old?.manifestation ? { manifestation: structuredClone(old.manifestation) } : {}
+    } };
+  }
+  const from = resource(state, row.from), to = resource(state, row.to);
+  if (!from || !to || typeof row.enabled !== "boolean" || !Array.isArray(row.unsupported) || row.unsupported.length > 8 || row.unsupported.some((v) => !text(v, 240)) || !compatible(from, to) || !mentioned(state, from.owner, source.quote) || !mentioned(state, to.owner, source.quote))
+    return;
+  const old = state.costLinks?.find((l) => l.from === from.id);
+  if (old && !correction && (profile ? !editedProfile(old.source) : !old.source.message.startsWith("warp-source:") && !afterTransition(source, old.source, messages)))
+    return;
+  const value = { id: `cost-link-${revision(from.id)}`, from: from.id, to: to.id, enabled: row.enabled, unsupported: row.unsupported, source };
+  const test = { ...state, costLinks: [...(state.costLinks ?? []).filter((l) => l.from !== from.id), value] };
+  assertGraph(test);
+  return { kind: "cost_link", value };
+}
+function observeCompanion(state, o) {
+  if (o.kind === "companion") {
+    const rows = state.companions ??= [], index = rows.findIndex((v) => v.id === o.value.id);
+    if (index < 0)
+      rows.push(structuredClone(o.value));
+    else
+      rows[index] = structuredClone(o.value);
+  } else {
+    const rows = state.costLinks ??= [], index = rows.findIndex((v) => v.id === o.value.id);
+    if (index < 0)
+      rows.push(structuredClone(o.value));
+    else
+      rows[index] = structuredClone(o.value);
+  }
+}
+function costPayer(state, input) {
+  assertGraph(state);
+  let payer = resource(state, input);
+  if (!payer)
+    throw new MechanicalKnowledgeError("Shared cost resource is unknown");
+  for (;; ) {
+    const link = state.costLinks?.find((l) => l.enabled && l.from === payer.id);
+    if (!link)
+      return payer;
+    if (link.unsupported.length)
+      throw new MechanicalKnowledgeError(`Shared cost needs clarification: ${link.unsupported.join("; ")}`);
+    payer = resource(state, link.to);
+  }
+}
+function withdrawCostLink(state, actor, id, action, changes, beats) {
+  const link = state.costLinks?.find((l) => l.id === id), from = link && resource(state, link.from), to = link && resource(state, link.to);
+  if (!link || !from || !to || from.owner !== actor && to.owner !== actor)
+    throw Error("This shared cost permission is not yours to withdraw");
+  if (link.unsupported.length)
+    throw new MechanicalKnowledgeError(`Withdrawing this link needs clarification: ${link.unsupported.join("; ")}`);
+  if (!link.enabled)
+    return;
+  const old = structuredClone(link);
+  link.enabled = false;
+  link.source = { message: `warp-action:${action}`, quote: `Withdraw shared cost permission ${id}`, sourceRevision: revision([action, id]) };
+  changes.push({ kind: "cost_link", id, before: old, after: structuredClone(link) });
+  beats.push({ kind: "unlink", actor, name: "Shared cost permission withdrawn" });
+}
+function validateManifestation(state, controller, id, active) {
+  const companion = state.companions?.find((c) => c.id === id && c.controller === controller && c.companionKind === "summon"), actor = companion && entityFor(state, companion.actor);
+  if (!companion || !actor)
+    throw new MechanicalKnowledgeError("This summon and its controller are not established");
+  if (active && actor.status === "dead")
+    throw new Error("Recalling a summon cannot resurrect it");
+  if (active && companion.manifestation?.active || actor.present === active)
+    throw new Error(active ? "This summon is already present" : "This summon is already absent");
+  return { companion, actor };
+}
+function manifest(state, controller, id, active, action, changes, beats, duration) {
+  const { companion, actor } = validateManifestation(state, controller, id, active);
+  changeManifestation(state, companion, actor, active, action, changes, beats, duration);
+}
+function changeManifestation(state, companion, actor, active, action, changes, beats, duration) {
+  const { controller, id } = companion;
+  const source = { message: `warp-action:${action}`, quote: `${active ? "Recall" : "Dismiss"} ${actor.name}`, sourceRevision: revision([id, active, duration]) };
+  const old = structuredClone(companion), oldActor = structuredClone(actor);
+  companion.manifestation = { active, source, ...active && duration ? { expiresAt: actionCount(state, controller) + duration + 1 } : {} };
+  actor.present = active;
+  if (!active) {
+    for (const condition of [...state.conditions])
+      if (condition.summon === companion.id) {
+        state.conditions = state.conditions.filter((c) => c.id !== condition.id);
+        closeCondition(state, condition, { kind: "receipt", id: action });
+        changes.push({ kind: "condition", id: condition.id, before: structuredClone(condition), after: null });
+      }
+  }
+  changes.push({ kind: "companion", id: companion.id, before: old, after: structuredClone(companion) }, { kind: "entity", id: actor.id, before: oldActor, after: structuredClone(actor) });
+  for (const d of [...state.distances ?? []])
+    if (d.from === actor.name || d.to === actor.name) {
+      state.distances = state.distances.filter((row) => row.id !== d.id);
+      changes.push({ kind: "distance", id: d.id, before: structuredClone(d), after: null });
+    }
+  for (const position of [...state.positions ?? []])
+    if (position.owner === actor.name) {
+      state.positions = state.positions.filter((p) => p.id !== position.id);
+      changes.push({ kind: "position", id: position.id, before: structuredClone(position), after: null });
+    }
+  beats.push({ kind: active ? "summon" : "dismiss", actor: controller, target: actor.name });
+}
+function expireCompanions(state, action, changes, beats) {
+  for (const c of state.companions ?? [])
+    if (c.manifestation?.active && c.manifestation.expiresAt !== undefined && c.manifestation.expiresAt <= actionCount(state, c.controller)) {
+      const actor = entityFor(state, c.actor);
+      if (actor)
+        changeManifestation(state, c, actor, false, action, changes, beats);
+    }
+}
+var norm2 = (v) => v.normalize("NFKC").trim().toLocaleLowerCase(), text = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", givenName = (name) => {
+  const parts = name.trim().split(/\s+/), word = parts[0];
+  return parts.length > 1 && word.length >= 3 && /^\p{Lu}/u.test(word) && !/^(?:the|dr\.?|professor|captain|sir|lady|lord)$/i.test(word) ? norm2(word) : "";
+}, COMPANION_INSTRUCTIONS = `PRIORITY: When this conversation introduces, addresses or uses an established familiar, animal partner, autonomous assistant or summon, save its entity AND companion relationship before optional prose facts. This applies to NPC companions too, not only the player's. Recognizing a companion does not start combat or give it a stat sheet. An unnamed companion can keep its actual distinctive descriptor as its identity; never invent a proper name or treat it as disposable inventory. Reuse that identity on later replies.
+For that established relationship, use mechanicalObservations {kind:"companion",actor:"known entity name",controller:"known person or you",companionKind:"companion|summon",message,quote}. Declare both entities in this same response if missing, using actual scene quotes for presence and actual short-name aliases. The relationship quote must literally include both identities or their saved aliases; "my familiar" alone lacks its named speaker. Use an exact nearby narrative fragment naming both instead. Copy a contiguous exact source fragment, including actual punctuation; do not add quotation marks or omit intervening words. Profiles establish the relationship, never current presence. companionKind:summon requires an actual summoning/recall nature, not merely the word familiar. Companion is a relationship, not permission to control another person's actions or knowledge. Do not turn every friend or romance partner into a companion system. Do not duplicate the typed relationship as an inventory/possession fact.
+An explicit one-for-one SHARED COST permission between two known effort pools may use {kind:"cost_link",from:"borrower's resource id",to:"payer's resource id",enabled:true,unsupported:[],message,quote}. Both owners must occur in the actual grant. Preserve all limits/conditions in unsupported. Pools need role:effort and the same explicit unit, or the same resource name with no unit. No damage/healing links, money, health, conversion, guessed pool, implicit NPC consent or cycles. An actual revocation uses enabled:false. This redirects saved ability costs only, never standalone spending. It does not copy or refill either balance.
+A sourced recall/dismiss ability can use effects {kind:"summon|dismiss",target:"self",companion:"saved companion id or exact actor name"}. Only kind:summon relationships are eligible, owned by the ability's actual controller. summon may add duration:explicitSubsequentControllerActions, only if the source states that action duration. Seconds and other lifetime rules stay unsupported. Already present/absent is not another cast. Recall preserves injuries, resource balances, knowledge and death. No resurrection or automatic healing. A condition effect on a summon itself may add untilDismissed:true only when source explicitly ties that effect to being summoned. Dismissal/expiry clears only such bound temporary effects, never an injury or an unrelated condition. A successful departure does not bring companions along. Their actual cooperation still needs current scene evidence under the existing NPC response contract.`;
+var init_companions = __esm(() => {
+  init_story_view();
+  init_encounters();
+  init_story_text();
 });
 
 // src/living/encounters.ts
@@ -12437,237 +12645,112 @@ ${RANGE_OBSERVATIONS}
 Resources may have role:"vital|effort|shield|money|other" only when their fictional function is supported. Equipped items and conditions may have defenses:[{kind:"armor|resistance|immunity|reflect",amount,damageType:"physical|fire|cold|electric|poison|mental|untyped|all"}]. Armor subtracts a flat amount, resistance/reflect use percentages, immunity uses amount:0. All non-immunity numbers must occur in the source quote. Do not invent these defenses or health values. A shield pool is an explicit resource with role:shield. Actual values stay unknown without source evidence. Never emit an absolute update to undo an action receipt.`;
 });
 
-// src/living/companions.ts
-function participant(state, input) {
-  const resolved = actorName(state, input);
-  if (resolved === "you" || entityFor(state, resolved))
-    return resolved;
-  const candidates = state.entities?.filter((e) => [e.name, e.displayName, ...e.aliases].some((n) => givenName(n) === norm2(input))) ?? [];
-  if (candidates.length > 1)
-    throw new Error("Companion participant is ambiguous");
-  return candidates[0]?.name ?? resolved;
-}
-function afterTransition(source, old, messages) {
-  if (old.message === source.message && old.sourceRevision === source.sourceRevision)
-    return false;
-  const prior = messages.findIndex((m) => old.message.startsWith("warp-action:") ? messageOwnsAction(m, old.message.slice("warp-action:".length)) : m.id === old.message);
-  return prior >= 0 && messages.findIndex((m) => m.id === source.message) > prior;
-}
-function mentioned(state, actor, quote) {
-  const e = entityFor(state, actor);
-  const names = actor === "you" ? ["you", "your", "{{user}}", ...e?.aliases ?? []] : [actor, e?.displayName ?? "", ...e?.aliases ?? []];
-  if (names.some((n) => n && norm2(quote).includes(norm2(n))))
-    return true;
-  return [actor, e?.displayName ?? ""].some((name) => {
-    const short = givenName(name);
-    if (!short)
-      return false;
-    const matching = state.entities?.filter((row) => [row.name, row.displayName, ...row.aliases].some((n) => norm2(n) === short || givenName(n) === short)) ?? [];
-    if (matching.length !== 1 || matching[0].name !== actor)
-      return false;
-    const escaped = short.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`, "u").test(norm2(quote));
-  });
-}
-function relationshipEvidence(state, actor, controller, source, messages) {
-  const bound = (quote) => mentioned(state, actor, quote) && mentioned(state, controller, quote);
-  if (bound(source.quote))
-    return source;
-  const message = messages.find((m) => m.id === source.message);
-  if (!message)
+// src/living/service-payment.ts
+function feePattern(fee, state) {
+  const asset = fee.kind === "resource" ? state.resources.find((r) => r.id === fee.id && r.owner === "you" && r.role === "money") : state.items.find((i) => i.id === fee.id && i.owner === "you");
+  if (!asset)
     return;
-  {
-    const paragraph = (source.viewRevision ? storyReadContent(message) : storyContent(message.content)).replace(/\s+/g, " "), start = paragraph.indexOf(source.quote);
-    if (start < 0)
-      return;
-    const end = start + source.quote.length, spare = 400 - source.quote.length;
-    const windows = [paragraph.slice(start, start + 400), paragraph.slice(Math.max(0, end - 400), end), paragraph.slice(Math.max(0, start - Math.floor(spare / 2)), end + Math.ceil(spare / 2))];
-    for (const window of windows) {
-      const quote = window.trim();
-      if (quote.length <= 400 && quote.includes(source.quote) && bound(quote))
-        return { ...source, quote };
+  const names = [asset.name, ..."unit" in asset && asset.unit ? [asset.unit] : []].filter(Boolean).map((n) => `${escape(n)}${/s$/i.test(n) ? "" : "s?"}`).join("|");
+  const number = [escape(String(fee.amount)), ...Number.isInteger(fee.amount) && words2[fee.amount] ? [words2[fee.amount]] : []].join("|");
+  return new RegExp(`\\b(?:for|(?:the\\s+)?fee(?:\\s+(?:of|is))?\\s*:?|(?:you\\s+)?pay\\s+(?:me\\s+)?|costs?\\s+you)\\s+(?:${number})\\s+(?:${names})(?![\\p{L}\\p{N}_])`, "iu");
+}
+function readAidFee(raw, state, quote) {
+  if (!obj2(raw) || Object.keys(raw).some((k) => !["kind", "id", "amount"].includes(k)) || !["resource", "item"].includes(raw.kind) || typeof raw.id !== "string" || typeof raw.amount !== "number" || !Number.isFinite(raw.amount) || raw.amount <= 0 || raw.amount > 1e9)
+    return;
+  const fee = raw;
+  if (/\b(?:or|either|instead|alternatively)\b/i.test(quote) || !feePattern(fee, state)?.test(quote))
+    return;
+  return { kind: fee.kind, id: fee.id, amount: fee.amount };
+}
+function unresolvedServiceTerms(quote, state, fee) {
+  let remaining = quote;
+  if (fee) {
+    const pattern = feePattern(fee, state), match = pattern.exec(quote);
+    if (/^\s*(?:and|plus|if|after|before|once|when|until|provided|on\s+condition)\b/i.test(quote.slice(match.index + match[0].length)))
+      return true;
+    remaining = remaining.replace(pattern, " ");
+  }
+  remaining = remaining.replace(/\b(?:no fee|free of charge|costs? you nothing|you pay nothing)\b/gi, " ");
+  return /\b(?:pay\s+me|you\s+(?:pay|owe)|costs?\s+you|fee|in\s+(?:exchange|return)|provided|only\s+if|not\s+free|(?:after|before|until)\s+you|for\s+(?:\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten)\s+[\p{L}]+)\b/iu.test(remaining);
+}
+function payAidFee(state, fee, recipient, offer, changes, beats) {
+  if (!Number.isFinite(fee.amount) || fee.amount <= 0 || fee.amount > 1e9)
+    throw Error("Invalid service fee");
+  let asset, unit;
+  if (fee.kind === "resource") {
+    const payer = state.resources.find((r) => r.id === fee.id && r.owner === "you" && r.role === "money");
+    if (!payer)
+      throw new MechanicalKnowledgeError("The service fee needs an established player money balance");
+    if (payer.current < fee.amount)
+      throw Error("The offered service fee is unaffordable");
+    const receivers = state.resources.filter((r) => r.owner === recipient && r.role === "money" && normalize3(r.name) === normalize3(payer.name) && r.unit === payer.unit);
+    if (receivers.length > 1)
+      throw new MechanicalKnowledgeError("The service recipient's money balance is ambiguous");
+    const receiver = receivers[0];
+    if (receiver?.max !== undefined && receiver.current + fee.amount > receiver.max)
+      throw Error("The recipient cannot hold the whole service fee");
+    const old = structuredClone(payer);
+    payer.current -= fee.amount;
+    changes.push({ kind: "resource", id: payer.id, before: old, after: structuredClone(payer) });
+    if (receiver) {
+      const oldReceiver = structuredClone(receiver);
+      receiver.current += fee.amount;
+      changes.push({ kind: "resource", id: receiver.id, before: oldReceiver, after: structuredClone(receiver) });
     }
-  }
-}
-function compatible(from, to) {
-  return from.role === "effort" && to.role === "effort" && from.owner !== to.owner && (from.unit && to.unit ? norm2(from.unit) === norm2(to.unit) : !from.unit && !to.unit && norm2(from.name) === norm2(to.name));
-}
-function resource(state, input) {
-  const matches = state.resources.filter((r) => r.id === input);
-  return matches.length === 1 ? matches[0] : undefined;
-}
-function assertGraph(state) {
-  for (const start of state.costLinks ?? []) {
-    if (!start.enabled)
-      continue;
-    const seen = new Set;
-    let id = start.from;
-    for (;; ) {
-      if (seen.has(id))
-        throw new Error("Cyclic shared cost link");
-      seen.add(id);
-      const edges = state.costLinks?.filter((l) => l.enabled && l.from === id) ?? [];
-      if (!edges.length)
-        break;
-      if (edges.length !== 1)
-        throw new Error("Ambiguous shared cost payer");
-      const edge = edges[0], from = resource(state, edge.from), to = resource(state, edge.to);
-      if (!from || !to || !compatible(from, to))
-        throw new MechanicalKnowledgeError("Shared cost pools need compatible established effort units");
-      id = edge.to;
-    }
-  }
-}
-function readCompanionObservation(row, state, source, messages, correction) {
-  const profile = source.message.startsWith("warp-source:");
-  const fields = row.kind === "companion" ? ["actor", "controller", "companionKind"] : ["from", "to", "enabled", "unsupported"];
-  if (Object.keys(row).some((k) => ![
-    "kind",
-    "id",
-    "source",
-    "sourceRevision",
-    "viewRevision",
-    "message",
-    "quote",
-    ...fields,
-    ...row.kind === "companion" ? ["manifestation"] : []
-  ].includes(k)))
-    return;
-  const editedProfile = (old) => profile && old.message.startsWith("warp-source:") && old.message.split(":")[1] === source.message.split(":")[1] && !sourceContains(messages.find((m) => m.id === source.message)?.content ?? "", old.quote);
-  if (row.kind === "companion") {
-    const actor = participant(state, text(row.actor, 80)), controller = participant(state, text(row.controller, 80));
-    if (!actor || !controller || actor === "you" || actor === controller || !entityFor(state, actor) || controller !== "you" && !entityFor(state, controller) || !["companion", "summon"].includes(row.companionKind))
-      return;
-    const evidence = relationshipEvidence(state, actor, controller, source, messages);
-    if (!evidence)
-      return;
-    const old = state.companions?.find((c) => c.actor === actor);
-    if (old && !correction && !editedProfile(old.source))
-      return;
-    if (old?.manifestation?.active && (old.controller !== controller || old.companionKind !== row.companionKind))
-      return;
-    return { kind: "companion", value: {
-      id: old?.id ?? `companion-${revision(actor)}`,
-      actor,
-      controller,
-      companionKind: row.companionKind,
-      source: evidence,
-      ...old?.manifestation ? { manifestation: structuredClone(old.manifestation) } : {}
-    } };
-  }
-  const from = resource(state, row.from), to = resource(state, row.to);
-  if (!from || !to || typeof row.enabled !== "boolean" || !Array.isArray(row.unsupported) || row.unsupported.length > 8 || row.unsupported.some((v) => !text(v, 240)) || !compatible(from, to) || !mentioned(state, from.owner, source.quote) || !mentioned(state, to.owner, source.quote))
-    return;
-  const old = state.costLinks?.find((l) => l.from === from.id);
-  if (old && !correction && (profile ? !editedProfile(old.source) : !old.source.message.startsWith("warp-source:") && !afterTransition(source, old.source, messages)))
-    return;
-  const value = { id: `cost-link-${revision(from.id)}`, from: from.id, to: to.id, enabled: row.enabled, unsupported: row.unsupported, source };
-  const test = { ...state, costLinks: [...(state.costLinks ?? []).filter((l) => l.from !== from.id), value] };
-  assertGraph(test);
-  return { kind: "cost_link", value };
-}
-function observeCompanion(state, o) {
-  if (o.kind === "companion") {
-    const rows = state.companions ??= [], index = rows.findIndex((v) => v.id === o.value.id);
-    if (index < 0)
-      rows.push(structuredClone(o.value));
-    else
-      rows[index] = structuredClone(o.value);
+    asset = payer.name;
+    unit = payer.unit;
   } else {
-    const rows = state.costLinks ??= [], index = rows.findIndex((v) => v.id === o.value.id);
-    if (index < 0)
-      rows.push(structuredClone(o.value));
-    else
-      rows[index] = structuredClone(o.value);
-  }
-}
-function costPayer(state, input) {
-  assertGraph(state);
-  let payer = resource(state, input);
-  if (!payer)
-    throw new MechanicalKnowledgeError("Shared cost resource is unknown");
-  for (;; ) {
-    const link = state.costLinks?.find((l) => l.enabled && l.from === payer.id);
-    if (!link)
-      return payer;
-    if (link.unsupported.length)
-      throw new MechanicalKnowledgeError(`Shared cost needs clarification: ${link.unsupported.join("; ")}`);
-    payer = resource(state, link.to);
-  }
-}
-function withdrawCostLink(state, actor, id, action, changes, beats) {
-  const link = state.costLinks?.find((l) => l.id === id), from = link && resource(state, link.from), to = link && resource(state, link.to);
-  if (!link || !from || !to || from.owner !== actor && to.owner !== actor)
-    throw Error("This shared cost permission is not yours to withdraw");
-  if (link.unsupported.length)
-    throw new MechanicalKnowledgeError(`Withdrawing this link needs clarification: ${link.unsupported.join("; ")}`);
-  if (!link.enabled)
-    return;
-  const old = structuredClone(link);
-  link.enabled = false;
-  link.source = { message: `warp-action:${action}`, quote: `Withdraw shared cost permission ${id}`, sourceRevision: revision([action, id]) };
-  changes.push({ kind: "cost_link", id, before: old, after: structuredClone(link) });
-  beats.push({ kind: "unlink", actor, name: "Shared cost permission withdrawn" });
-}
-function validateManifestation(state, controller, id, active) {
-  const companion = state.companions?.find((c) => c.id === id && c.controller === controller && c.companionKind === "summon"), actor = companion && entityFor(state, companion.actor);
-  if (!companion || !actor)
-    throw new MechanicalKnowledgeError("This summon and its controller are not established");
-  if (active && actor.status === "dead")
-    throw new Error("Recalling a summon cannot resurrect it");
-  if (active && companion.manifestation?.active || actor.present === active)
-    throw new Error(active ? "This summon is already present" : "This summon is already absent");
-  return { companion, actor };
-}
-function manifest(state, controller, id, active, action, changes, beats, duration) {
-  const { companion, actor } = validateManifestation(state, controller, id, active);
-  changeManifestation(state, companion, actor, active, action, changes, beats, duration);
-}
-function changeManifestation(state, companion, actor, active, action, changes, beats, duration) {
-  const { controller, id } = companion;
-  const source = { message: `warp-action:${action}`, quote: `${active ? "Recall" : "Dismiss"} ${actor.name}`, sourceRevision: revision([id, active, duration]) };
-  const old = structuredClone(companion), oldActor = structuredClone(actor);
-  companion.manifestation = { active, source, ...active && duration ? { expiresAt: actionCount(state, controller) + duration + 1 } : {} };
-  actor.present = active;
-  if (!active) {
-    for (const condition of [...state.conditions])
-      if (condition.summon === companion.id) {
-        state.conditions = state.conditions.filter((c) => c.id !== condition.id);
-        closeCondition(state, condition, { kind: "receipt", id: action });
-        changes.push({ kind: "condition", id: condition.id, before: structuredClone(condition), after: null });
-      }
-  }
-  changes.push({ kind: "companion", id: companion.id, before: old, after: structuredClone(companion) }, { kind: "entity", id: actor.id, before: oldActor, after: structuredClone(actor) });
-  for (const d of [...state.distances ?? []])
-    if (d.from === actor.name || d.to === actor.name) {
-      state.distances = state.distances.filter((row) => row.id !== d.id);
-      changes.push({ kind: "distance", id: d.id, before: structuredClone(d), after: null });
+    const item = state.items.find((i) => i.id === fee.id && i.owner === "you");
+    if (!item)
+      throw new MechanicalKnowledgeError("The service fee needs an established player item");
+    if (item.equipped || item.quantity < fee.amount || !Number.isInteger(fee.amount))
+      throw Error("The offered fee item is unavailable");
+    asset = item.name;
+    const old = structuredClone(item);
+    if (item.quantity === fee.amount)
+      item.owner = recipient;
+    else {
+      const received = { ...structuredClone(item), id: `aid-fee-${revision([offer, fee])}`, owner: recipient, quantity: fee.amount };
+      if (state.items.some((i) => i.id === received.id))
+        throw Error("Service fee item already exists");
+      item.quantity -= fee.amount;
+      state.items.push(received);
+      changes.push({ kind: "item", id: received.id, before: null, after: structuredClone(received) });
     }
-  for (const position of [...state.positions ?? []])
-    if (position.owner === actor.name) {
-      state.positions = state.positions.filter((p) => p.id !== position.id);
-      changes.push({ kind: "position", id: position.id, before: structuredClone(position), after: null });
-    }
-  beats.push({ kind: active ? "summon" : "dismiss", actor: controller, target: actor.name });
+    changes.push({ kind: "item", id: item.id, before: old, after: structuredClone(item) });
+  }
+  beats.push({ kind: "payment", actor: "you", target: recipient, name: asset, amount: fee.amount });
+  return { ...structuredClone(fee), from: "you", to: recipient, asset, ...unit ? { unit } : {} };
 }
-function expireCompanions(state, action, changes, beats) {
-  for (const c of state.companions ?? [])
-    if (c.manifestation?.active && c.manifestation.expiresAt !== undefined && c.manifestation.expiresAt <= actionCount(state, c.controller)) {
-      const actor = entityFor(state, c.actor);
-      if (actor)
-        changeManifestation(state, c, actor, false, action, changes, beats);
-    }
-}
-var norm2 = (v) => v.normalize("NFKC").trim().toLocaleLowerCase(), text = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", givenName = (name) => {
-  const parts = name.trim().split(/\s+/), word = parts[0];
-  return parts.length > 1 && word.length >= 3 && /^\p{Lu}/u.test(word) && !/^(?:the|dr\.?|professor|captain|sir|lady|lord)$/i.test(word) ? norm2(word) : "";
-}, COMPANION_INSTRUCTIONS = `PRIORITY: When this conversation introduces, addresses or uses an established familiar, animal partner, autonomous assistant or summon, save its entity AND companion relationship before optional prose facts. This applies to NPC companions too, not only the player's. Recognizing a companion does not start combat or give it a stat sheet. An unnamed companion can keep its actual distinctive descriptor as its identity; never invent a proper name or treat it as disposable inventory. Reuse that identity on later replies.
-For that established relationship, use mechanicalObservations {kind:"companion",actor:"known entity name",controller:"known person or you",companionKind:"companion|summon",message,quote}. Declare both entities in this same response if missing, using actual scene quotes for presence and actual short-name aliases. The relationship quote must literally include both identities or their saved aliases; "my familiar" alone lacks its named speaker. Use an exact nearby narrative fragment naming both instead. Copy a contiguous exact source fragment, including actual punctuation; do not add quotation marks or omit intervening words. Profiles establish the relationship, never current presence. companionKind:summon requires an actual summoning/recall nature, not merely the word familiar. Companion is a relationship, not permission to control another person's actions or knowledge. Do not turn every friend or romance partner into a companion system. Do not duplicate the typed relationship as an inventory/possession fact.
-An explicit one-for-one SHARED COST permission between two known effort pools may use {kind:"cost_link",from:"borrower's resource id",to:"payer's resource id",enabled:true,unsupported:[],message,quote}. Both owners must occur in the actual grant. Preserve all limits/conditions in unsupported. Pools need role:effort and the same explicit unit, or the same resource name with no unit. No damage/healing links, money, health, conversion, guessed pool, implicit NPC consent or cycles. An actual revocation uses enabled:false. This redirects saved ability costs only, never standalone spending. It does not copy or refill either balance.
-A sourced recall/dismiss ability can use effects {kind:"summon|dismiss",target:"self",companion:"saved companion id or exact actor name"}. Only kind:summon relationships are eligible, owned by the ability's actual controller. summon may add duration:explicitSubsequentControllerActions, only if the source states that action duration. Seconds and other lifetime rules stay unsupported. Already present/absent is not another cast. Recall preserves injuries, resource balances, knowledge and death. No resurrection or automatic healing. A condition effect on a summon itself may add untilDismissed:true only when source explicitly ties that effect to being summoned. Dismissal/expiry clears only such bound temporary effects, never an injury or an unrelated condition. A successful departure does not bring companions along. Their actual cooperation still needs current scene evidence under the existing NPC response contract.`;
-var init_companions = __esm(() => {
-  init_story_view();
+var obj2 = (v) => !!v && typeof v === "object" && !Array.isArray(v), normalize3 = (s) => s.normalize("NFKC").toLocaleLowerCase(), escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), words2;
+var init_service_payment = __esm(() => {
   init_encounters();
+  words2 = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+});
+
+// src/living/story-path.ts
+function rawPathOf(messages) {
+  return messages.reduce((path, m) => revision([path, m.id, m.swipe_id ?? 0, m.content]), ROOT);
+}
+function rawPathsOf(messages) {
+  let path = ROOT;
+  return new Map(messages.map((m) => {
+    path = revision([path, m.id, m.swipe_id ?? 0, m.content]);
+    return [m.id, path];
+  }));
+}
+function pathOf(messages) {
+  return messages.reduce(nextPath2, ROOT);
+}
+function pathsOf(messages) {
+  let path = ROOT;
+  return new Map(messages.map((m) => {
+    path = nextPath2(path, m);
+    return [m.id, path];
+  }));
+}
+var ROOT = "warp-living-v1", nextPath2 = (path, m) => revision([path, m.id, m.swipe_id ?? 0, storyContent(m.content)]);
+var init_story_path = __esm(() => {
   init_story_text();
 });
 
@@ -12686,9 +12769,11 @@ function readAidObservation(row, state, source, messages, historical = false) {
       return;
     const offer = state.aidOffers?.find((o) => o.id === row.id && o.status === "offered");
     const entity = offer && entityFor(state, offer.actor);
-    return offer && entity && [offer.actor, entity.displayName, ...entity.aliases].some((n) => n && normalize3(source.quote).includes(normalize3(n))) ? { kind: "aid_end", id: offer.id, source } : undefined;
+    return offer && entity && [offer.actor, entity.displayName, ...entity.aliases].some((n) => n && normalize4(source.quote).includes(normalize4(n))) ? { kind: "aid_end", id: offer.id, source } : undefined;
   }
-  if (Object.keys(row).some((k) => !["kind", "actor", "target", "ability", "uncontested", "unsupported", "message", "quote", ...historical ? ["id", "version", "abilityVersion", "name", "status", "source", "sourceRevision", "viewRevision"] : []].includes(k)))
+  if (Object.keys(row).some((k) => !["kind", "actor", "target", "ability", "uncontested", "unsupported", "fee", "message", "quote", ...historical ? ["id", "version", "abilityVersion", "name", "status", "source", "sourceRevision", "viewRevision", "termsVersion"] : []].includes(k)))
+    return;
+  if (historical && row.termsVersion !== undefined && row.termsVersion !== 1)
     return;
   if (row.target !== "you" || row.uncontested !== true && !historical)
     return;
@@ -12696,9 +12781,9 @@ function readAidObservation(row, state, source, messages, historical = false) {
   if (!actor || actor === "you" || !present(state, actor) || !capable(state, actor) || entityFor(state, actor)?.entityKind !== "person")
     return;
   const entity = entityFor(state, actor);
-  if (![actor, entity.displayName, ...entity.aliases].some((name) => name && normalize3(source.quote).includes(normalize3(name))))
+  if (![actor, entity.displayName, ...entity.aliases].some((name) => name && normalize4(source.quote).includes(normalize4(name))))
     return;
-  const definitions = state.abilities?.filter((a) => a.owner === actor && (a.id === row.ability || normalize3(a.name) === normalize3(text2(row.ability)))) ?? [];
+  const definitions = state.abilities?.filter((a) => a.owner === actor && (a.id === row.ability || normalize4(a.name) === normalize4(text2(row.ability)))) ?? [];
   if (definitions.length !== 1 || !aidAbility(definitions[0]))
     return;
   const ability = definitions[0];
@@ -12709,7 +12794,11 @@ function readAidObservation(row, state, source, messages, historical = false) {
   const id = `aid-${revision([actor, "you", ability.id])}`, old = state.aidOffers?.find((o) => o.id === id);
   if (old && old.source.message === source.message && old.source.sourceRevision === source.sourceRevision)
     return;
-  const unresolvedTerms = /\b(?:pay\s+me|you\s+(?:pay|owe)|cost\s+you|fee|in\s+exchange|provided|only\s+if|for\s+(?:\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:coins?|gold|silver|credits?|dollars?|yen))\b/i.test(source.quote);
+  const fee = row.fee === undefined ? undefined : readAidFee(row.fee, state, source.quote);
+  if (historical && row.fee !== undefined && !fee)
+    return;
+  const modernTerms = !historical || row.termsVersion === 1 || row.fee !== undefined;
+  const unresolvedTerms = !modernTerms ? /\b(?:pay\s+me|you\s+(?:pay|owe)|cost\s+you|fee|in\s+exchange|provided|only\s+if|for\s+(?:\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:coins?|gold|silver|credits?|dollars?|yen))\b/i.test(source.quote) : unresolvedServiceTerms(source.quote, state, fee) || row.fee !== undefined && !fee;
   const unsupported = row.unsupported.map((v) => text2(v, 240));
   if (unresolvedTerms && !unsupported.length)
     unsupported.push(`Offer terms require resolution: ${source.quote.slice(0, 180)}`);
@@ -12720,10 +12809,12 @@ function readAidObservation(row, state, source, messages, historical = false) {
     target: "you",
     ability: ability.id,
     abilityVersion: ability.version,
-    name: normalize3(source.quote).includes(normalize3(ability.name)) ? ability.name : "aid",
+    name: normalize4(source.quote).includes(normalize4(ability.name)) ? ability.name : "aid",
     status: "offered",
     unsupported,
-    source
+    source,
+    ...modernTerms ? { termsVersion: 1 } : {},
+    ...fee ? { fee } : {}
   } };
 }
 function observeAid(state, observation) {
@@ -12737,12 +12828,14 @@ function observeAid(state, observation) {
   } else if (at >= 0)
     state.aidOffers[at].status = "withdrawn";
 }
-function executeAid(before, actor, operations, run) {
+function executeAid(before, actor, operations, run, serviceFees = false) {
   if (actor !== "you" || operations.length !== 1 || !["accept_aid", "decline_aid"].includes(operations[0].kind))
     throw Error("Aid permission authorizes one offered use only");
   const op = operations[0], offer = before.aidOffers?.find((o) => o.id === op.offer && o.version === op.version);
   if (!offer || offer.status !== "offered")
     throw Error("This aid offer is no longer available");
+  if (offer.fee && !serviceFees)
+    throw Error("Paid aid requires the service resolver");
   const previous = structuredClone(offer);
   let result;
   if (op.kind === "decline_aid")
@@ -12760,10 +12853,16 @@ function executeAid(before, actor, operations, run) {
     for (const effect of ability.effects)
       if (effect.kind === "clear_condition") {
         const owner = effect.target === "self" ? offer.actor : "you";
-        if (before.conditions.some((c) => c.owner === owner && normalize3(c.name) === normalize3(effect.name) && (c.helps.length || c.defenses?.length)))
+        if (before.conditions.some((c) => c.owner === owner && normalize4(c.name) === normalize4(effect.name) && (c.helps.length || c.defenses?.length)))
           throw new MechanicalKnowledgeError("The offered aid would remove an established benefit");
       }
-    result = run(before, offer.actor, { kind: "ability", ability: ability.id, version: ability.version, target: "you" });
+    const fees = [], paymentBeats = [], working = offer.fee ? structuredClone(before) : before;
+    const paid = offer.fee ? payAidFee(working, offer.fee, offer.actor, `${offer.id}:${offer.version}`, fees, paymentBeats) : undefined;
+    result = run(working, offer.actor, { kind: "ability", ability: ability.id, version: ability.version, target: "you" });
+    result.changes.unshift(...fees);
+    result.beats.unshift(...paymentBeats);
+    if (paid)
+      result.state.aidOffers.find((o) => o.id === offer.id).paid = paid;
     for (const beat of result.beats)
       if (beat.kind === "mend" && beat.actor === "you" && beat.target === "you")
         beat.actor = offer.actor;
@@ -12797,7 +12896,7 @@ function aidRequestBoundary(content, state) {
 }
 function aidOfferText(offer, state) {
   const entity = entityFor(state, offer.actor);
-  const name = [entity?.displayName, ...entity?.aliases ?? [], offer.actor].find((n) => n && normalize3(offer.source.quote).includes(normalize3(n))) ?? "Someone";
+  const name = [entity?.displayName, ...entity?.aliases ?? [], offer.actor].find((n) => n && normalize4(offer.source.quote).includes(normalize4(n))) ?? "Someone";
   const ability = state.abilities?.find((a) => a.id === offer.ability && a.version === offer.abilityVersion);
   const costs = ability?.costs.map((c) => {
     if (c.kind === "item")
@@ -12810,7 +12909,8 @@ function aidOfferText(offer, state) {
       return `${c.amount} ${resource?.name ?? "resource"} · payer unresolved`;
     }
   }) ?? [];
-  return `${name} offers ${offer.name}${costs.length ? ` · uses ${costs.join(" + ")}` : ""}${offer.unsupported.length || ability?.unsupported.length ? " · needs clarification" : ""}`;
+  const fee = offer.fee, asset = fee && (fee.kind === "resource" ? state.resources : state.items).find((r) => r.id === fee.id);
+  return `${name} offers ${offer.name}${fee ? ` · fee ${fee.amount} ${asset?.name ?? "unresolved asset"}` : ""}${costs.length ? ` · uses ${costs.join(" + ")}` : ""}${offer.unsupported.length || ability?.unsupported.length ? " · needs clarification" : ""}`;
 }
 function aidNotes(before, after) {
   return (after.aidOffers ?? []).filter((o) => o.status === "offered" && !before.aidOffers?.some((old) => old.id === o.id && old.version === o.version && old.status === "offered")).map((o) => aidOfferText(o, after));
@@ -12823,13 +12923,15 @@ function awaitingAid(state, source, messages, historical) {
     return false;
   if (!historical && aidRequestBoundary(player.content, state))
     return true;
-  const slots = player.metadata?.warpLivingPrompt, snapshot = obj2(slots) ? slots[String(player.swipe_id ?? 0)] : undefined;
-  return !!(obj2(snapshot) && snapshot.version === 1 && typeof snapshot.path === "string" && obj2(snapshot.packet) && typeof snapshot.packet.aidBoundary === "string" && recordPathMatches(player, snapshot.path, pathOf(prefix), rawPathOf(prefix), true));
+  const slots = player.metadata?.warpLivingPrompt, snapshot = obj3(slots) ? slots[String(player.swipe_id ?? 0)] : undefined;
+  return !!(obj3(snapshot) && snapshot.version === 1 && typeof snapshot.path === "string" && obj3(snapshot.packet) && typeof snapshot.packet.aidBoundary === "string" && recordPathMatches(player, snapshot.path, pathOf(prefix), rawPathOf(prefix), true));
 }
-var obj2 = (v) => !!v && typeof v === "object" && !Array.isArray(v), text2 = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", normalize3 = (s) => s.normalize("NFKC").toLocaleLowerCase(), AID_INSTRUCTIONS = `Voluntary aid uses aidOffers, not a new player-owned power. A request such as "Could you treat my arm?" invites an NPC decision; it neither commands agreement nor executes a cure. In actual narration an NPC can offer one established beneficial ability. Prepare the NPC's definition from its actual source, preserving ownership, costs, range, recovery limits and unsupported terms. Return mechanicalObservations {kind:"aid_offer",actor,target:"you",ability:"saved id or newly prepared name",uncontested:true,unsupported:[],message,quote}. The contiguous exact quote must name the actor and actually offer this aid now; profiles, hypotheticals, merely hearing a claim and a player request are insufficient. Do not record attacks, forced feelings, consent, movement or an unknown power as aid. Retain any payment, item, condition, timing or source restriction not resolved by the supported definition in unsupported, never turn paid help into free help. An actual later withdrawal uses {kind:"aid_end",id,message,quote}. Old offers cannot reopen themselves. Offers are not execution, inventory handovers, cures or costs. Preserve them through ordinary questions; they can be used once, explicitly withdrawn, or declined.
-An explicit acceptance can use mechanicalActions {kind:"accept_aid",offer:"saved id",version:currentVersion,quote}; explicit refusal uses decline_aid with the same fields. Code applies exactly one offered use by the NPC. The NPC pays the definition's actual costs and takes their own action, with existing shared payer permissions honored. The player grants permission without a player action, extra NPC responders, a new ability or a roll. Do not add duplicate NPC responses or player-owned invocations. If the definition or terms are not prepared, leave that aid unresolved without inventing reluctance, a fee or a fictional obstacle. Questions about costs/effects execute nothing. A plain request must first allow the NPC to make an offer rather than completing unrecorded mechanical healing. Keep player/NPC choice, source prohibitions, uncertainty and existing receipt boundaries intact.`;
+var obj3 = (v) => !!v && typeof v === "object" && !Array.isArray(v), text2 = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", normalize4 = (s) => s.normalize("NFKC").toLocaleLowerCase(), AID_INSTRUCTIONS = `Voluntary aid uses aidOffers, not a new player-owned power. A request such as "Could you treat my arm?" invites an NPC decision; it neither commands agreement nor executes a cure. In actual narration an NPC can offer one established beneficial ability. Prepare the NPC's definition from its actual source, preserving ownership, costs, range, recovery limits and unsupported terms. Return mechanicalObservations {kind:"aid_offer",actor,target:"you",ability:"saved id or newly prepared name",uncontested:true,unsupported:[],message,quote}. The contiguous exact quote must name the actor and actually offer this aid now; profiles, hypotheticals, merely hearing a claim and a player request are insufficient. Do not record attacks, forced feelings, consent, movement or an unknown power as aid. Retain any payment, item, condition, timing or source restriction not resolved by the supported definition in unsupported, never turn paid help into free help. An actual later withdrawal uses {kind:"aid_end",id,message,quote}. Old offers cannot reopen themselves. Offers are not execution, inventory handovers, cures or costs. Preserve them through ordinary questions; they can be used once, explicitly withdrawn, or declined.
+An offered service may add fee:{kind:"resource|item",id:"established player-owned asset ID",amount:exactQuotedNumber}. This is the price paid BY THE PLAYER to the NPC, separate from the NPC's casting/resource costs. Resource fees require an established player money balance; item fees transfer an actual owned quantity. Cite the actual simple price in the same offer quote, such as "Jo offers Mend for five coins". Do not choose between alternative prices, convert currencies, assume wallet totals, or omit extra labor, timing, item or other conditions. Unresolved alternatives/barter/other restrictions stay in unsupported. A fee does not imply the NPC's total wallet balance. When the only restriction is this supported exact fee, represent it in fee instead of also marking that same fee unsupported. Explicitly free help has no fee.
+An explicit acceptance can use mechanicalActions {kind:"accept_aid",offer:"saved id",version:currentVersion,quote}; explicit refusal uses decline_aid with the same fields. Code applies exactly one offered use by the NPC and any saved service fee atomically. The NPC pays the definition's actual costs and takes their own action, with existing shared payer permissions honored. The player grants permission without a player action, extra NPC responders, a new ability or a roll. Do not add duplicate fee spending, item transfers, NPC responses or player-owned invocations. If the definition or terms are not prepared, leave that aid unresolved without inventing reluctance, a fee or a fictional obstacle. Questions about costs/effects execute nothing. A plain request must first allow the NPC to make an offer rather than completing unrecorded mechanical healing. Keep player/NPC choice, source prohibitions, uncertainty and existing receipt boundaries intact.`;
 var init_aid = __esm(() => {
   init_story_view();
+  init_service_payment();
   init_story_path();
   init_companions();
   init_encounters();
@@ -12856,7 +12958,7 @@ function scopes(v) {
   return [...new Set(v)];
 }
 function readPulse(v, quote) {
-  if (!obj3(v))
+  if (!obj4(v))
     throw Error("Missing periodic pulse");
   if (v.kind === "damage" || v.kind === "restore") {
     fields(v, ["kind", "resource", "amount", "basis", "magnitude", "damageType"]);
@@ -12902,7 +13004,7 @@ function readPeriodic(v, quote) {
   return { name, ending, ...ongoing ? { untilCleared: true } : { duration: duration(v.duration, quote) }, ...rule ? { endingRule: rule } : {}, cadence: "owner_action", timingBasis: v.timingBasis ?? (ongoing ? "warp" : "source"), pulse };
 }
 function readTrigger(v, quote) {
-  if (!obj3(v))
+  if (!obj4(v))
     throw Error("Missing buildup trigger");
   if (v.kind === "periodic") {
     fields(v, ["kind", "name", "ending", "duration", "untilCleared", "endingRule", "cadence", "timingBasis", "pulse"]);
@@ -12962,7 +13064,7 @@ function readBuildup(row, state, source, correction, historical) {
   if (!correction && state.buildups?.some((b) => b.owner === owner && norm3(b.name) === norm3(name)))
     return;
   let candidates = [];
-  if (historical && obj3(row.definition)) {
+  if (historical && obj4(row.definition)) {
     const ref = row.definition, a = state.abilities?.find((a) => a.id === ref.ability && a.version === ref.version);
     const index = typeof ref.index === "number" && Number.isInteger(ref.index) ? ref.index : -1, effect = a?.effects[index];
     if (a && effect?.kind === "buildup" && norm3(effect.name) === norm3(name))
@@ -12990,8 +13092,8 @@ function readPeriodicObservation(row, state, source, messages, historical, corre
     return;
   const at = messages.findIndex((m) => m.id === source.message), prefix = messages.slice(0, at), player = prefix.at(-1);
   const slots = player?.metadata?.warpLivingPrompt;
-  const preparation = obj3(slots) ? slots[String(player?.swipe_id ?? 0)] : undefined;
-  if (!correction && player?.is_user && obj3(preparation) && preparation.version === 1 && typeof preparation.path === "string" && recordPathMatches(player, preparation.path, pathOf(prefix), rawPathOf(prefix), true) && obj3(preparation.receipt) && preparation.receipt.status === "blocked")
+  const preparation = obj4(slots) ? slots[String(player?.swipe_id ?? 0)] : undefined;
+  if (!correction && player?.is_user && obj4(preparation) && preparation.version === 1 && typeof preparation.path === "string" && recordPathMatches(player, preparation.path, pathOf(prefix), rawPathOf(prefix), true) && obj4(preparation.receipt) && preparation.receipt.status === "blocked")
     return;
   const owner = text3(row.owner, 80), name = text3(row.name), old = state.conditions.find((c) => c.owner === owner && norm3(c.name) === norm3(name));
   if (!owner || !name || !norm3(source.quote).includes(norm3(name)) || !correction && (old?.periodic || old && (old.source.message !== source.message || old.source.sourceRevision !== source.sourceRevision)))
@@ -12999,13 +13101,13 @@ function readPeriodicObservation(row, state, source, messages, historical, corre
   const candidates = [];
   for (const a of state.abilities ?? [])
     a.effects.forEach((effect, index) => {
-      const selected = historical && obj3(row.definition) ? a.id === row.definition.ability && a.version === row.definition.version && index === row.definition.index : a.owner === row.caster && (a.id === row.ability || norm3(a.name) === norm3(text3(row.ability)));
+      const selected = historical && obj4(row.definition) ? a.id === row.definition.ability && a.version === row.definition.version && index === row.definition.index : a.owner === row.caster && (a.id === row.ability || norm3(a.name) === norm3(text3(row.ability)));
       if (selected && effect.kind === "periodic" && norm3(effect.name) === norm3(name))
         candidates.push({ caster: a.owner, definition: { ability: a.id, version: a.version, index }, effect });
     });
-  const direct = historical && obj3(row.definition) && obj3(row.definition.effect) ? lingeringInput(row.definition.effect) : row.effect;
+  const direct = historical && obj4(row.definition) && obj4(row.definition.effect) ? lingeringInput(row.definition.effect) : row.effect;
   if (direct !== undefined) {
-    if (candidates.length || !obj3(direct) || direct.kind !== "periodic" || direct.target !== "self")
+    if (candidates.length || !obj4(direct) || direct.kind !== "periodic" || direct.target !== "self")
       return;
     let effect;
     try {
@@ -13226,7 +13328,7 @@ function lingeringDescription(e, state) {
     return `${e.name}: +${e.amount} toward ${e.threshold}, then ${e.trigger.name}${e.basis === "warp" ? " · Warp values" : ""}`;
   return `${e.name}: ${pulseDescription(e.pulse, state)} after ${e.duration ? `each of ${e.target === "self" ? "your" : "the target's"} next ${e.duration} supported actions` : `each affected-owner action · ${e.ending}`}${e.timingBasis === "warp" ? " · Warp action timing" : ""}`;
 }
-var ENDINGS, physical, obj3 = (v) => !!v && typeof v === "object" && !Array.isArray(v), text3 = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", positive = (v) => typeof v === "number" && Number.isFinite(v) && v > 0 && v <= 1e6, numberIn = (quote, n) => (quote.match(/\d+(?:\.\d+)?/g) ?? []).some((v) => Number(v) === n) || ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].some((w, i) => n === i && new RegExp(`\\b${w}\\b`, "i").test(quote)), norm3 = (v) => v.normalize("NFKC").trim().toLocaleLowerCase(), fields = (v, keys) => {
+var ENDINGS, physical, obj4 = (v) => !!v && typeof v === "object" && !Array.isArray(v), text3 = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", positive = (v) => typeof v === "number" && Number.isFinite(v) && v > 0 && v <= 1e6, numberIn = (quote, n) => (quote.match(/\d+(?:\.\d+)?/g) ?? []).some((v) => Number(v) === n) || ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].some((w, i) => n === i && new RegExp(`\\b${w}\\b`, "i").test(quote)), norm3 = (v) => v.normalize("NFKC").trim().toLocaleLowerCase(), fields = (v, keys) => {
   if (Object.keys(v).some((k) => !keys.includes(k)))
     throw Error("Unsupported lingering effect field");
 }, duration = (v, quote) => {
@@ -13352,7 +13454,7 @@ function readResponsePlans(raw, state, messages, enabled, historical = false) {
     throw new Error("Too many NPC responses");
   const latest = messages.filter((m) => !m.is_user && m.content.trim()).at(-1), actors = new Set;
   return raw.map((row) => {
-    if (!obj4(row) || Object.keys(row).some((k) => !["actor", "action", "assessment", "message", "quote", ...historical ? ["sourceRevision", "viewRevision"] : []].includes(k)))
+    if (!obj5(row) || Object.keys(row).some((k) => !["actor", "action", "assessment", "message", "quote", ...historical ? ["sourceRevision", "viewRevision"] : []].includes(k)))
       throw new Error("Unsupported NPC response");
     const actor = actorName(state, text5(row.actor, 80)), quote = text5(row.quote, 400);
     if (!actor || actor === "you" || actors.has(actor) || !present(state, actor) || !capable(state, actor))
@@ -13362,7 +13464,7 @@ function readResponsePlans(raw, state, messages, enabled, historical = false) {
       throw new Error("NPC response lacks current scene evidence");
     actors.add(actor);
     const a = row.action;
-    if (!obj4(a))
+    if (!obj5(a))
       throw new Error("NPC action is missing");
     let action;
     if (a.kind === "ability") {
@@ -13394,7 +13496,7 @@ function readResponsePlans(raw, state, messages, enabled, historical = false) {
     else
       throw new Error("Unsupported NPC action");
     const assessment = row.assessment;
-    if (!obj4(assessment) || Object.keys(assessment).some((k) => !["contested", "tier", "intent", "stakes", "reasons"].includes(k)) || assessment.contested !== undefined && typeof assessment.contested !== "boolean")
+    if (!obj5(assessment) || Object.keys(assessment).some((k) => !["contested", "tier", "intent", "stakes", "reasons"].includes(k)) || assessment.contested !== undefined && typeof assessment.contested !== "boolean")
       throw new Error("Invalid NPC assessment");
     const offensive = offensiveAction(action, state, actor);
     const contested = offensive || assessment.contested === true;
@@ -13461,7 +13563,7 @@ function responseChecks(receipt, state, visible = []) {
     intent: `${b.name ? b.name[0].toLocaleUpperCase() + b.name.slice(1) : "Respond"}${b.target ? ` · ${display(b.target)}` : ""}`
   } }] : []);
 }
-var MAX_RESPONSES = 3, obj4 = (v) => !!v && typeof v === "object" && !Array.isArray(v), text5 = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", RESPONSE_INSTRUCTIONS = `An ongoing physical exchange may include exchange:true and responses:[{actor,action,assessment:{contested,tier:"favorable|uncertain|outmatched",intent,stakes,reasons:[]},quote}]. Otherwise omit responses or return [].
+var MAX_RESPONSES = 3, obj5 = (v) => !!v && typeof v === "object" && !Array.isArray(v), text5 = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", RESPONSE_INSTRUCTIONS = `An ongoing physical exchange may include exchange:true and responses:[{actor,action,assessment:{contested,tier:"favorable|uncertain|outmatched",intent,stakes,reasons:[]},quote}]. Otherwise omit responses or return [].
 Plan at most one response for each present NPC, at most 3 total, in the order the scene supports. quote must be an EXACT substring of that NPC's current intention/opportunity in the MOST RECENT narrator message, never a card, old grudge, player attempt or generic personality. Code attaches the source message ID; do not draft future narration in a message field. Do not create opposition, interrupt quiet scenes, punish a question, or continue combat after it actually ended. Only an actual player action opens an exchange, not dialogue, inspection, a hypothetical or an OOC edit.
 NPC action vocabulary: {kind:"ability",ability:"saved ID or newly prepared name",target}; {kind:"move",target,direction:"closer|away"}; {kind:"strike",target} for an ordinary unmodified physical strike at touch range; {kind:"defend"}; {kind:"wait"}. Prepare a relevant NPC ability from its real source in abilityDefinitions if needed. Both sides use the same stored definitions, costs, range and defenses. No generated damage, no replacement cost and no new power in a response.
 Basic strike uses Warp's fixed 5 physical impact. It changes a known vital resource when present, otherwise resolver 4 records qualitative physical injury for a person without inventing a numerical pool. Prefer an established source-backed attack when the person has one; do not flatten exceptional abilities or equipment into this fallback. Explicit numerical ability damage still needs a known resource. Unknown money, energy and recovery limits remain unknown. If an exact numerical exchange cannot be prepared for both sides, keep that part unresolved locally rather than inventing health or letting one side take unrecorded damage.
@@ -13483,7 +13585,7 @@ function agreementNotes(before, after) {
   }).slice(-2);
 }
 function evidence(raw, messages, historical = false) {
-  if (!obj5(raw))
+  if (!obj6(raw))
     return;
   const message = str2(raw.message, 160), quote = str2(raw.quote, 400), m = messages.find((m) => m.id === message);
   if (!m || quote.length < 4 || message.startsWith("warp-source:"))
@@ -13557,7 +13659,7 @@ function readAgreementObservation(raw, state, messages, player, historical = fal
     };
     const requirements = [];
     for (const value of raw.requirements) {
-      if (!obj5(value) || Object.keys(value).some((k) => !["message", "quote", ...historical ? ["sourceRevision", "viewRevision"] : []].includes(k)))
+      if (!obj6(value) || Object.keys(value).some((k) => !["message", "quote", ...historical ? ["sourceRevision", "viewRevision"] : []].includes(k)))
         return;
       const e = clause(value);
       if (!e || requirements.some((r) => r.text === e.quote))
@@ -13566,7 +13668,7 @@ function readAgreementObservation(raw, state, messages, player, historical = fal
     }
     const rewards = [];
     for (const value of raw.rewards) {
-      if (!obj5(value) || Object.keys(value).some((k) => !["kind", "asset", "amount", "message", "quote", ...historical ? ["sourceRevision", "viewRevision"] : []].includes(k)) || !from || !offer || !["item", "resource"].includes(value.kind))
+      if (!obj6(value) || Object.keys(value).some((k) => !["kind", "asset", "amount", "message", "quote", ...historical ? ["sourceRevision", "viewRevision"] : []].includes(k)) || !from || !offer || !["item", "resource"].includes(value.kind))
         return;
       const e = clause(value), asset = str2(value.asset, 100), amount = value.amount;
       if (!e || e.message !== offer.message || !asset || typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0 || amount > 1e6 || value.kind === "item" && !Number.isInteger(amount) || !numeric(e.quote, amount))
@@ -13691,7 +13793,7 @@ function settleReward(state, actor, agreementId, rewardId, action, changes, beat
   changes.push({ kind: "agreement", id: agreement.id, before: beforeAgreement, after: structuredClone(agreement) });
   beats.push({ kind: "reward", actor: payer, target: recipient, name: reward.asset, amount: reward.amount });
 }
-var str2 = (v, max = 240) => typeof v === "string" && v.trim().length <= max ? v.trim().replace(/\s+/g, " ") : "", obj5 = (v) => !!v && typeof v === "object" && !Array.isArray(v), normalized = (s) => s.normalize("NFKC").toLocaleLowerCase(), numeric = (quote, n) => (quote.match(/\d+(?:\.\d+)?/g) ?? []).some((v) => Number(v) === n) || ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].some((v, i) => i === n && new RegExp(`\\b${v}\\b`, "i").test(quote)), agreementDone = (a) => !a.cancelled && !a.unsupported.length && a.requirements.every((r) => !!r.done), agreementSettled = (a) => !!a.cancelled || agreementDone(a) && a.rewards.every((r) => !!r.paid), visibleAgreements = (rows = []) => [...rows.filter((a) => !agreementSettled(a)), ...rows.filter(agreementSettled).slice(-6)], at = (e, messages) => messages.findIndex((m) => m.id === e.message), AGREEMENT_INSTRUCTIONS = `When an actual agreement has several requirements or an explicit counted reward, optionally add mechanicalObservations {kind:"agreement",owner,name,from:"reward payer if any",offer:{message,quote},requirements:[{message,quote}],rewards:[{kind:"item|resource",asset:"established asset name",amount,message,quote}],unsupported:[],message,quote}. The root quote is the owner's actual acceptance, in the player's own message for owner:you. An NPC payer's offer is actual narrator text naming them and the terms, never a player's invented NPC offer. When the player offers payment for another person's work, from:you requires the player's own offer, and owner is the NPC who actually accepts in narrator text. Each requirement quote is a distinct exact clause within that acceptance or offer; all requirements are required. Do not drop a condition, invent a reward, automatically accept a request, or turn an ordinary invitation into a quest. No reward means rewards:[]. Unknown source mechanics/restrictions stay in unsupported. Do not create duplicate free-form commitments, situations or facts for requirements, progress or rewards already represented by the structured agreement. Retain a separate event only for an independent consequence, such as a witness learning a secret. Resolve an earlier pending-offer situation when the agreement is accepted.
+var str2 = (v, max = 240) => typeof v === "string" && v.trim().length <= max ? v.trim().replace(/\s+/g, " ") : "", obj6 = (v) => !!v && typeof v === "object" && !Array.isArray(v), normalized = (s) => s.normalize("NFKC").toLocaleLowerCase(), numeric = (quote, n) => (quote.match(/\d+(?:\.\d+)?/g) ?? []).some((v) => Number(v) === n) || ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].some((v, i) => i === n && new RegExp(`\\b${v}\\b`, "i").test(quote)), agreementDone = (a) => !a.cancelled && !a.unsupported.length && a.requirements.every((r) => !!r.done), agreementSettled = (a) => !!a.cancelled || agreementDone(a) && a.rewards.every((r) => !!r.paid), visibleAgreements = (rows = []) => [...rows.filter((a) => !agreementSettled(a)), ...rows.filter(agreementSettled).slice(-6)], at = (e, messages) => messages.findIndex((m) => m.id === e.message), AGREEMENT_INSTRUCTIONS = `When an actual agreement has several requirements or an explicit counted reward, optionally add mechanicalObservations {kind:"agreement",owner,name,from:"reward payer if any",offer:{message,quote},requirements:[{message,quote}],rewards:[{kind:"item|resource",asset:"established asset name",amount,message,quote}],unsupported:[],message,quote}. The root quote is the owner's actual acceptance, in the player's own message for owner:you. An NPC payer's offer is actual narrator text naming them and the terms, never a player's invented NPC offer. When the player offers payment for another person's work, from:you requires the player's own offer, and owner is the NPC who actually accepts in narrator text. Each requirement quote is a distinct exact clause within that acceptance or offer; all requirements are required. Do not drop a condition, invent a reward, automatically accept a request, or turn an ordinary invitation into a quest. No reward means rewards:[]. Unknown source mechanics/restrictions stay in unsupported. Do not create duplicate free-form commitments, situations or facts for requirements, progress or rewards already represented by the structured agreement. Retain a separate event only for an independent consequence, such as a witness learning a secret. Resolve an earlier pending-offer situation when the agreement is accepted.
 Record actual fulfillment with {kind:"agreement_progress",agreement:"saved id or name",requirement:"saved id or exact clause",message,quote}, citing actual NARRATOR completion, not the player's attempt or a repeated offer. Code completes the agreement only after every requirement. Do not change accepted terms on subsequent reads. The owner can explicitly withdraw with {kind:"agreement_cancel",agreement,message,quote}; an NPC's displeasure does not withdraw the player's promise for them.
 After all requirements are fulfilled, an actual payer offering/holding out a particular reward can establish {kind:"reward_ready",agreement,reward:"saved id or asset name",ready:true,message,quote}. An offer may add uncontested:true only when taking/receiving this particular reward now is routine, with no established obstacle, hazard or opposing action. Willingness alone does not prove that. The code may use this fresh classification to skip a redundant pre-read for a simple collection; ambiguity, changed scenes and opposed actions still need interpretation. A subsequent explicit refusal/withdrawal can set ready:false. This is current willingness, separate from the original promise. It needs actual narrator text naming the NPC counterpart after the recorded fulfillment. For from:you this is the NPC recipient's willingness to receive, never permission to spend the player's money automatically. An earned reward does not force someone to cooperate. Do not narrate a completed monetary/item handover without its mechanical receipt. Make the offer available and leave acceptance to the player. The player can collect it through normal chat; no menu is required.
 Reward collection uses saved exact amounts and transfers actual owned items or between two established same-unit resource balances. Unknown balances are unknown, not zero. An offer alone does not prove the payer owns the money or item. Do not mint items or coins, refill a spent balance, substitute a different reward, or create numerical Health/relationship/XP to pay a promise. When a physical reward, including a counted pile of coins, is established without known total wallet balances, use an item claim and track that actual stack instead of inventing a wallet total. The offered amount alone does not prove possession; a later actual holding/counting/setting-out event can establish the counted item. Use a distinct source-backed item instance ID for a new stack, not the ID of a previously transferred stack. Actual paid rewards cannot be offered or collected again.`;
@@ -13976,7 +14078,7 @@ function readMechanicalObservations(raw, before, messages, player, historical = 
     return [];
   const out = [], working = structuredClone(before);
   const rows = raw.slice(0, 24);
-  const placeRows = rows.filter((r) => obj6(r) && r.kind === "place");
+  const placeRows = rows.filter((r) => obj7(r) && r.kind === "place");
   const depth = (row, seen = new Set) => {
     if (!row.parent || findPlace(working, row.parent))
       return 0;
@@ -13992,12 +14094,12 @@ function readMechanicalObservations(raw, before, messages, player, historical = 
   const playerIdentity = [];
   const literalPlayer = player ? new RegExp(`(?:^|[^\\p{L}\\p{N}])${player.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=$|[^\\p{L}\\p{N}])`, "iu") : undefined;
   if (player && player !== "you" && !working.entities?.some((e) => e.name === "you" && e.aliases.some((a) => a.toLocaleLowerCase() === player.toLocaleLowerCase()))) {
-    const claim = rows.find((r) => obj6(r) && ["practice", "companion"].includes(r.kind) && (own(r.owner, player) === "you" || own(r.controller, player) === "you" || own(r.teacher, player) === "you") && typeof r.quote === "string" && literalPlayer.test(r.quote) && source(r, messages, historical));
-    if (obj6(claim))
+    const claim = rows.find((r) => obj7(r) && ["practice", "companion"].includes(r.kind) && (own(r.owner, player) === "you" || own(r.controller, player) === "you" || own(r.teacher, player) === "you") && typeof r.quote === "string" && literalPlayer.test(r.quote) && source(r, messages, historical));
+    if (obj7(claim))
       playerIdentity.push({ kind: "entity", name: "you", aliases: [player], entityKind: "person", message: claim.message, quote: claim.quote, ...claim.sourceRevision ? { sourceRevision: claim.sourceRevision } : {}, ...claim.viewRevision ? { viewRevision: claim.viewRevision } : {} });
   }
-  for (const input of [...playerIdentity, ...rows.filter((r) => obj6(r) && r.kind === "entity"), ...placeRows, ...rows.filter((r) => !obj6(r) || !["entity", "place", "companion", "cost_link"].includes(r.kind)), ...rows.filter((r) => obj6(r) && ["companion", "cost_link"].includes(r.kind))]) {
-    if (!obj6(input))
+  for (const input of [...playerIdentity, ...rows.filter((r) => obj7(r) && r.kind === "entity"), ...placeRows, ...rows.filter((r) => !obj7(r) || !["entity", "place", "companion", "cost_link"].includes(r.kind)), ...rows.filter((r) => obj7(r) && ["companion", "cost_link"].includes(r.kind))]) {
+    if (!obj7(input))
       continue;
     let row = input;
     if (["place", "route", "discovery", "stock", "stock_access"].includes(row.kind)) {
@@ -14058,7 +14160,7 @@ function readMechanicalObservations(raw, before, messages, player, historical = 
       }
     } else if (["place", "route", "discovery", "stock", "stock_access"].includes(row.kind)) {
       observation = readExplorationObservation(row, working, s.evidence, messages, s.correction, historical);
-      if (observation?.kind === "place" && obj6(input) && typeof input.id === "string" && !ambiguousPlaceAliases.has(input.id))
+      if (observation?.kind === "place" && obj7(input) && typeof input.id === "string" && !ambiguousPlaceAliases.has(input.id))
         placeAliases.set(input.id, observation.value.id);
     } else if (row.kind === "entity" || row.kind === "distance") {
       try {
@@ -14572,7 +14674,7 @@ function executeExchange(before, actor, operations, id, responses, place, resolv
   if (resolver >= 10 && operations.some((op) => op.kind === "accept_aid" || op.kind === "decline_aid")) {
     if (responses.length || learning)
       throw Error("Aid permission opens only its offered action");
-    return executeAid(before, actor, operations, (state, who, operation) => execute(state, who, [operation], id, 2, true, true, true, true, true, true, true));
+    return executeAid(before, actor, operations, (state, who, operation) => execute(state, who, [operation], id, 2, true, true, true, true, true, true, true), resolver >= 11);
   }
   if (!Array.isArray(responses) || responses.length > MAX_RESPONSES || responses.length && !operations.length)
     throw new Error("Invalid exchange opportunity");
@@ -14636,7 +14738,7 @@ function executeExchange(before, actor, operations, id, responses, place, resolv
 }
 function resolverFor(before, operations, responses, learning) {
   if (operations.some((op) => op.kind === "accept_aid" || op.kind === "decline_aid"))
-    return 10;
+    return operations.some((op) => (op.kind === "accept_aid" || op.kind === "decline_aid") && before.aidOffers?.some((o) => o.id === op.offer && o.fee)) ? 11 : 10;
   const relevant = [...operations, ...Array.isArray(responses) ? responses.flatMap((p) => p?.action ? [p.action] : []) : []];
   if (hasLingering(before) || relevant.some((op) => op.kind === "ability" && before.abilities?.some((a) => a.id === op.ability && a.effects.some(isLingering))))
     return 9;
@@ -14680,7 +14782,7 @@ function commitMechanical(before, receipt) {
   }
   if (receipt.version !== 1 || receipt.status !== "ready" || receipt.base !== revision(before))
     throw new Error("Mechanical receipt is blocked or stale");
-  if (receipt.engine !== undefined && receipt.engine !== 2 && receipt.engine !== 3 && receipt.engine !== 4 && receipt.engine !== 5 && receipt.engine !== 6 && receipt.engine !== 7 && receipt.engine !== 8 && receipt.engine !== 9 && receipt.engine !== 10)
+  if (receipt.engine !== undefined && receipt.engine !== 2 && receipt.engine !== 3 && receipt.engine !== 4 && receipt.engine !== 5 && receipt.engine !== 6 && receipt.engine !== 7 && receipt.engine !== 8 && receipt.engine !== 9 && receipt.engine !== 10 && receipt.engine !== 11)
     throw new Error("Unsupported mechanical resolver");
   if (receipt.learning && (receipt.engine ?? 1) < 8)
     throw Error("Learning requires the progression resolver");
@@ -14708,7 +14810,7 @@ function parseMechanicalPlan(raw, state, action, classified) {
     throw new Error("Mechanical interpretation is incomplete");
   const operations = [];
   for (const row of raw) {
-    if (!obj6(row) || !str4(row.quote, 400) || !action.replace(/\s+/g, " ").includes(row.quote))
+    if (!obj7(row) || !str4(row.quote, 400) || !action.replace(/\s+/g, " ").includes(row.quote))
       throw new Error("Mechanical action lacks player evidence");
     const quote = row.quote;
     const stated = (verbs) => verbs.test(quote) || raw.length === 1 && classified?.action === action && classified.kind === row.kind && quote === action;
@@ -14914,7 +15016,7 @@ function mechanicalNotes(receipt) {
     return "name" in value ? value.name : "";
   }).filter(Boolean).slice(-2);
 }
-var APPROACHES, emptyMechanics = () => ({ version: 1, resources: [], items: [], conditions: [], applied: [] }), hasMechanics = (s) => !!(s.aidOffers?.length || s.buildups?.length || s.resources.length || s.items.length || s.conditions.length || s.abilities?.length || s.entities?.length || s.resilience?.length || s.closedConditions?.length || s.agreements?.length || s.places?.length || s.companions?.length || s.costLinks?.length || s.growth?.length), obj6 = (v) => !!v && typeof v === "object" && !Array.isArray(v), str4 = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", amount2 = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1e9, own = (v, player) => {
+var APPROACHES, emptyMechanics = () => ({ version: 1, resources: [], items: [], conditions: [], applied: [] }), hasMechanics = (s) => !!(s.aidOffers?.length || s.buildups?.length || s.resources.length || s.items.length || s.conditions.length || s.abilities?.length || s.entities?.length || s.resilience?.length || s.closedConditions?.length || s.agreements?.length || s.places?.length || s.companions?.length || s.costLinks?.length || s.growth?.length), obj7 = (v) => !!v && typeof v === "object" && !Array.isArray(v), str4 = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", amount2 = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1e9, own = (v, player) => {
   const name = str4(v, 80);
   return ["you", "me", "i", "player", "{{user}}", player?.toLowerCase()].includes(name.toLowerCase()) ? "you" : name;
 }, approaches = (v) => Array.isArray(v) ? [...new Set(v.filter((x) => APPROACHES.includes(x)))] : [], numberIn2 = (quote, n) => (quote.match(/\d+(?:\.\d+)?/g) ?? []).some((x) => Number(x) === n) || Number.isInteger(n) && ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].some((word, i) => i === n && new RegExp(`\\b${word}\\b`, "i").test(quote)), singularPossession = (quote, name) => {
@@ -15005,7 +15107,7 @@ var init_knowledge = () => {};
 
 // src/living/world.ts
 function evidence2(v, messages) {
-  if (!obj7(v))
+  if (!obj8(v))
     return null;
   const message = text6(v.message, 160), quote = text6(v.quote, 400);
   const source = messages.find((m) => m.id === message);
@@ -15014,7 +15116,7 @@ function evidence2(v, messages) {
   return readStoryEvidence(source, quote) ?? null;
 }
 function readChanges(raw, before, messages, playerName) {
-  if (!obj7(raw))
+  if (!obj8(raw))
     return { events: [], notes: [] };
   const events = [], notes = [];
   let world = structuredClone(before);
@@ -15031,7 +15133,7 @@ function readChanges(raw, before, messages, playerName) {
     }
   };
   for (const v of (Array.isArray(raw.changes) ? raw.changes : []).slice(0, 16)) {
-    if (!obj7(v))
+    if (!obj8(v))
       continue;
     const e = evidence2(v, messages);
     let id = text6(v.id, 100);
@@ -15093,8 +15195,8 @@ function readChanges(raw, before, messages, playerName) {
       notes.push(event.fact.text);
   }
   let scene;
-  const sceneSource = obj7(raw.scene) ? evidence2(raw.scene, messages) : null;
-  if (obj7(raw.scene) && sceneSource) {
+  const sceneSource = obj8(raw.scene) ? evidence2(raw.scene, messages) : null;
+  if (obj8(raw.scene) && sceneSource) {
     scene = { place: text6(raw.scene.place, 100) || before.place, present: Array.isArray(raw.scene.present) ? [...new Set(raw.scene.present.map(person).filter((p) => p && p !== "you"))].slice(0, 8) : before.present, ...sceneSource };
   }
   return { events, ...scene ? { scene } : {}, notes: notes.slice(0, 2) };
@@ -15156,7 +15258,7 @@ function foldWorld(messages) {
   return { ...world, facts: [...facts.values()] };
 }
 function resolveAttempt(raw, seed) {
-  if (!obj7(raw) || raw.risky !== true || raw.contested !== true)
+  if (!obj8(raw) || raw.risky !== true || raw.contested !== true)
     return null;
   const intent = text6(raw.intent), stakes = text6(raw.stakes);
   const reasons = Array.isArray(raw.reasons) ? raw.reasons.map((x) => text6(x, 180)).filter(Boolean).slice(0, 3) : [];
@@ -15197,7 +15299,7 @@ var emptyWorld = () => ({ place: "", present: [], facts: [] }), text6 = (v, limi
     return clean;
   const boundary = clean.lastIndexOf(" ", limit);
   return clean.slice(0, boundary > limit * 0.65 ? boundary : limit).trimEnd();
-}, obj7 = (v) => !!v && typeof v === "object" && !Array.isArray(v), kinds;
+}, obj8 = (v) => !!v && typeof v === "object" && !Array.isArray(v), kinds;
 var init_world2 = __esm(() => {
   init_story_view();
   init_aid();
@@ -15285,7 +15387,7 @@ function definitionSource(kind, text) {
   return { id: `warp-source:${kind}:${revision(content)}`, kind, text: content };
 }
 function validDefinitionSource(raw) {
-  return obj8(raw) && ["card", "persona", "lore"].includes(raw.kind) && typeof raw.text === "string" && raw.text.length <= 6000 && raw.id === `warp-source:${raw.kind}:${revision(raw.text)}`;
+  return obj9(raw) && ["card", "persona", "lore"].includes(raw.kind) && typeof raw.text === "string" && raw.text.length <= 6000 && raw.id === `warp-source:${raw.kind}:${revision(raw.text)}`;
 }
 function sourceMessages(sources) {
   return sources.filter(validDefinitionSource).map((s) => ({ id: s.id, is_user: false, content: s.text }));
@@ -15295,7 +15397,7 @@ function readAbilityDefinitions(raw, state, messages, sources = [], player, hist
     return [];
   const definitions = [];
   for (const row of raw.slice(0, 6)) {
-    if (!obj8(row))
+    if (!obj9(row))
       continue;
     try {
       if (Object.keys(row).some((k) => !["id", "version", "owner", "name", "description", "approach", "target", "range", "cooldown", "costs", "effects", "requires", "unsupported", "message", "quote", "source", "sourceKind", "fingerprint"].includes(k)))
@@ -15305,8 +15407,8 @@ function readAbilityDefinitions(raw, state, messages, sources = [], player, hist
       const message = messages.find((m) => m.id === messageId);
       const isCorrection = !!message?.is_user && /^\s*\(?OOC correction:/i.test(message.content);
       const content = source?.text ?? (message && (!message.is_user || isCorrection) ? message.content : "");
-      const oldRevision = historical && obj8(row.source) && typeof row.source.sourceRevision === "string" ? row.source.sourceRevision : undefined;
-      const evidence = source ? sourceContains(content, quote) && (!oldRevision || sourceRevisionMatches({ content }, oldRevision)) ? { message: messageId, quote, sourceRevision: oldRevision ?? storyRevision(content) } : undefined : message && (!message.is_user || isCorrection) ? readStoryEvidence(message, quote, { message: messageId, quote, sourceRevision: oldRevision, ...historical && obj8(row.source) && typeof row.source.viewRevision === "string" ? { viewRevision: row.source.viewRevision } : {} }, historical) : undefined;
+      const oldRevision = historical && obj9(row.source) && typeof row.source.sourceRevision === "string" ? row.source.sourceRevision : undefined;
+      const evidence = source ? sourceContains(content, quote) && (!oldRevision || sourceRevisionMatches({ content }, oldRevision)) ? { message: messageId, quote, sourceRevision: oldRevision ?? storyRevision(content) } : undefined : message && (!message.is_user || isCorrection) ? readStoryEvidence(message, quote, { message: messageId, quote, sourceRevision: oldRevision, ...historical && obj9(row.source) && typeof row.source.viewRevision === "string" ? { viewRevision: row.source.viewRevision } : {} }, historical) : undefined;
       if (!owner || !name || quote.length < 8 || !evidence)
         continue;
       const id = identity(owner, name), existing = [...state.abilities ?? [], ...definitions].find((a) => a.id === id);
@@ -15321,9 +15423,9 @@ function readAbilityDefinitions(raw, state, messages, sources = [], player, hist
       if (!Array.isArray(row.costs) || row.costs.length > 6 || !Array.isArray(row.effects) || !row.effects.length || row.effects.length > 8)
         continue;
       const costs = row.costs.map((c) => {
-        if (!obj8(c) || Object.keys(c).some((k) => !["kind", "id", "amount"].includes(k)))
+        if (!obj9(c) || Object.keys(c).some((k) => !["kind", "id", "amount"].includes(k)))
           throw new Error("Unsupported cost fields");
-        if (!obj8(c) || !["resource", "item"].includes(c.kind) || !positive2(c.amount) || !numberIn3(quote, c.amount))
+        if (!obj9(c) || !["resource", "item"].includes(c.kind) || !positive2(c.amount) || !numberIn3(quote, c.amount))
           throw new Error("Unsupported ability cost");
         const candidates = (c.kind === "resource" ? state.resources : state.items).filter((v) => v.owner === owner && (v.id === c.id || v.name.normalize("NFKC").toLocaleLowerCase() === str5(c.id).normalize("NFKC").toLocaleLowerCase()));
         const candidate = candidates.length === 1 ? candidates[0] : undefined;
@@ -15332,12 +15434,12 @@ function readAbilityDefinitions(raw, state, messages, sources = [], player, hist
         return { kind: c.kind, id: candidate.id, amount: c.amount };
       });
       const effects = row.effects.map((e) => {
-        if (obj8(e) && ["periodic", "buildup", "clear_buildup"].includes(e.kind))
+        if (obj9(e) && ["periodic", "buildup", "clear_buildup"].includes(e.kind))
           return readLingeringEffect(e, quote);
         const fields = { summon: ["companion", "duration"], dismiss: ["companion"], restore: ["resource", "amount", "basis", "magnitude"], damage: ["resource", "amount", "basis", "magnitude", "damageType"], harm: ["impact", "damageType"], mend: ["impact", "maxInjury"], condition: ["name", "hinders", "helps", "blocks", "ending", "duration", "untilDismissed"], clear_condition: ["name"], defense: ["name", "defense", "ending", "duration", "basis", "magnitude"] };
-        if (!obj8(e) || !fields[e.kind] || Object.keys(e).some((k) => !["kind", "target", ...fields[e.kind]].includes(k)))
+        if (!obj9(e) || !fields[e.kind] || Object.keys(e).some((k) => !["kind", "target", ...fields[e.kind]].includes(k)))
           throw new Error("Unsupported effect fields");
-        if (!obj8(e) || !["self", "target"].includes(e.target))
+        if (!obj9(e) || !["self", "target"].includes(e.target))
           throw new Error("Unknown effect target");
         const target = e.target;
         const duration = e.duration;
@@ -15380,7 +15482,7 @@ function readAbilityDefinitions(raw, state, messages, sources = [], player, hist
         }
         if (e.kind === "defense") {
           const name = str5(e.name), ending = str5(e.ending, 240);
-          if (!name || !ending || !obj8(e.defense) || Object.keys(e.defense).some((k) => !["kind", "amount", "damageType"].includes(k)))
+          if (!name || !ending || !obj9(e.defense) || Object.keys(e.defense).some((k) => !["kind", "amount", "damageType"].includes(k)))
             throw new Error("Incomplete defense effect");
           let defense, basis;
           if (e.defense.kind === "shield") {
@@ -15402,7 +15504,7 @@ function readAbilityDefinitions(raw, state, messages, sources = [], player, hist
         if (!Array.isArray(row.requires) || row.requires.length > 6)
           continue;
         for (const r of row.requires) {
-          if (!obj8(r) || typeof r.equipped !== "boolean")
+          if (!obj9(r) || typeof r.equipped !== "boolean")
             throw new Error("Unknown required equipment");
           const candidates = state.items.filter((i) => i.owner === owner && (i.id === r.item || i.name.normalize("NFKC").toLocaleLowerCase() === str5(r.item).normalize("NFKC").toLocaleLowerCase()));
           if (candidates.length !== 1)
@@ -15428,7 +15530,7 @@ function abilitySummary(a, state) {
   const name = (id) => state?.resources.find((r) => r.id === id)?.name ?? state?.items.find((i) => i.id === id)?.name ?? id;
   return `${a.name} · ${a.costs.length ? a.costs.map((c) => `${c.amount} ${name(c.id)}`).join(" + ") : "No established resource cost"}${a.unsupported.length ? " · needs clarification" : ""}`;
 }
-var methods, str5 = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", obj8 = (v) => !!v && typeof v === "object" && !Array.isArray(v), positive2 = (v) => typeof v === "number" && Number.isFinite(v) && v > 0 && v <= 1e6, numberIn3 = (text, n) => (text.match(/\d+(?:\.\d+)?/g) ?? []).some((x) => Number(x) === n) || ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].some((w, i) => i === n && new RegExp(`\\b${w}\\b`, "i").test(text)), own2 = (v, player) => ["you", "me", "i", "player", "{{user}}", player?.toLowerCase()].includes(str5(v, 80).toLowerCase()) ? "you" : str5(v, 80), scope = (v) => {
+var methods, str5 = (v, max = 160) => typeof v === "string" && v.trim().length <= max ? v.trim() : "", obj9 = (v) => !!v && typeof v === "object" && !Array.isArray(v), positive2 = (v) => typeof v === "number" && Number.isFinite(v) && v > 0 && v <= 1e6, numberIn3 = (text, n) => (text.match(/\d+(?:\.\d+)?/g) ?? []).some((x) => Number(x) === n) || ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].some((w, i) => i === n && new RegExp(`\\b${w}\\b`, "i").test(text)), own2 = (v, player) => ["you", "me", "i", "player", "{{user}}", player?.toLowerCase()].includes(str5(v, 80).toLowerCase()) ? "you" : str5(v, 80), scope = (v) => {
   if (v === undefined)
     return [];
   if (!Array.isArray(v) || v.some((x) => !methods.includes(x) || x === "other"))
@@ -15446,7 +15548,7 @@ var init_abilities = __esm(() => {
 Prepare only established abilities/item actions relevant to this scene. Use exact source IDs and one contiguous source quote covering the ability's effects and restrictions. Player attempts cannot establish a new ability. Respect which person actually owns the ability: a character card normally describes that character, while the persona describes the player. An item action requires the actual owned item.
 Effect vocabulary: {kind:"restore|damage",target:"self|target",resource:"resource name or saved ID",amount:explicitNumber} or magnitude:"minor|standard|major" ONLY when no numerical amount exists; damage may have damageType:"physical|fire|cold|electric|poison|mental|untyped"; {kind:"condition",target,name,hinders:[],blocks:[],helps:[],ending,duration?:explicitOwnerActions}; {kind:"clear_condition",target,name}; {kind:"defense",target,name,defense:{kind:"armor|resistance|immunity|shield|reflect",amount,damageType:"physical|fire|cold|electric|poison|mental|untyped|all"},ending,duration?:explicitOwnerActions}. Resistance/reflect are percentages, armor is flat, immunity uses amount:0. Only shield may use magnitude with its amount omitted. Approaches use the same enum as above, except other.
 Definitions may include range:"touch|near|far" and cooldown:explicitSubsequentOwnerActions only when established in source. Never infer a timer, default range or default cooldown. Duration counts subsequent actions of the affected owner, not chat messages. A cooldown of 1 requires another action before reuse. Seconds, real-time durations, unsupported damage types, multi-target rules and complex triggers belong in unsupported until supported; do not silently convert them. Reapplying the same effect refreshes it without stacking. Defenses resolve immunity, flat armor, capped resistance, shields, then loss, then at most one reflection.
-All costs must be explicit numbers in the source quote and reference an established resource/item owned by the ability owner. Do not invent mana, energy, health, timers, drawbacks, limits or new powers. No stated resource cost means costs:[]. Code supplies fixed magnitude values where needed and labels them Warp values. No formulas or scripts.
+All costs must be explicit numbers in the source quote and reference an established resource/item owned by the ability owner. A service price charged to the player is an aid_offer fee, separate from the NPC ability's costs; retain it there rather than treating player money as the NPC's mana. Do not invent mana, energy, health, timers, drawbacks, limits or new powers. No stated resource cost means costs:[]. Code supplies fixed magnitude values where needed and labels them Warp values. No formulas or scripts.
 Put unsupported restrictions or effects in unsupported; never silently omit them to make an ability executable. Do not regenerate a saved definition unless the source actually changed or an explicit OOC correction changes it. Return at most 3 relevant definitions. These are automatically prepared content, not a rulebook or a setup question.
 ${LINGERING_INSTRUCTIONS}`;
 });
@@ -15866,15 +15968,15 @@ function readLocalClaim(content, world, history) {
       continue;
     if (state.conditions.some((c) => ["you", counterpart].includes(c.owner) && conditionActive(state, c) && (c.hinders.length || c.blocks.length)))
       continue;
-    const names = [...new Set([counterpart, entity.displayName, ...entity.aliases])].filter(Boolean).map(escape).join("|");
+    const names = [...new Set([counterpart, entity.displayName, ...entity.aliases])].filter(Boolean).map(escape2).join("|");
     for (const reward of agreement.rewards) {
       const ready = reward.ready;
       if (reward.paid || !ready?.allowed || !ready.uncontested || ready.source.message !== narrator.id || !sourceRevisionMatches(narrator, ready.source.sourceRevision))
         continue;
       if (!storyEvidenceMatches(narrator, ready.source))
         continue;
-      const asset = escape(reward.asset);
-      const reference = `(?:(?:my|the) (?:(?:offered|promised|earned|agreed) )?(?:pay|payment|reward)|(?:(?:the|my|your|this|that) )?(?:(?:offered|promised|earned|agreed) )?(?:${escape(String(reward.amount))} )?${asset})`;
+      const asset = escape2(reward.asset);
+      const reference = `(?:(?:my|the) (?:(?:offered|promised|earned|agreed) )?(?:pay|payment|reward)|(?:(?:the|my|your|this|that) )?(?:(?:offered|promised|earned|agreed) )?(?:${escape2(String(reward.amount))} )?${asset})`;
       const pattern = paying ? `^(?:I )?pay (?:(?:${names}) ${reference}|${reference} to (?:${names}))[.!]?$` : `^(?:I )?(?:collect|accept|take|receive) ${reference}(?: from (?:${names}))?[.!]?$`;
       if (!new RegExp(pattern, "iu").test(action.replace(/\s+/g, " ")))
         continue;
@@ -15914,7 +16016,7 @@ function readLocalAid(content, world, history) {
     return;
   return { risky: false, contested: false, approach: "other", mechanicalActions: [{ ...op, quote: plain }] };
 }
-var escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+var escape2 = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 var init_local_actions = __esm(() => {
   init_story_view();
   init_questions();

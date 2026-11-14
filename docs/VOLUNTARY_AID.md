@@ -49,3 +49,7 @@ All pilots use separate memory-isolated chats with the original Frieren simulato
 - Unresolved Risu conditional greetings can still contribute inactive-language/route facts, including the Japanese examination event visible in the live pilot. This compatibility bug is not fixed here.
 
 The deterministic aid engine and production worker fixture pass, but the original-card end-to-end aid gate does not. Next work must address source projection, first-use preparation and narrator compliance, as well as service terms. Do not describe this phase or the broader redesign as finished.
+
+## Later work, 2026-11-13
+
+[Rendered story views](STORY_VIEWS.md) now isolate the selected language/route and have installed original-card evidence. [Paid NPC aid](SERVICE_TERMS.md) adds atomic simple service fees, including actual item handovers and known player money balances. Fees remain separate from NPC ability costs. Barter labor, alternative currency selection and the original-card aid compliance gate remain open. These later changes do not turn the earlier failed pilots into passing first-use sessions.
