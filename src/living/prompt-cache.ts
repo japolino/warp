@@ -18,6 +18,7 @@ export function promptSnapshot(message: Msg, paths: Map<string, string>, rawPath
 
 const STATE_FIELDS = ["place", "present", "preferences", "knowledgeBoundary", "agreementBoundary", "assetBoundary", "readBoundary", "explorationBoundary", "preparationBoundary", "companionBoundary", "growthBoundary", "lingeringBoundary", "aidBoundary", "serviceBoundary"];
 const MECHANICAL_COLLECTIONS = ["resources", "items", "conditions", "abilities", "entities", "distances", "clocks", "cooldowns", "resilience", "agreements", "places", "positions", "routes", "discoveries", "stocks", "companions", "costLinks", "growth", "buildups", "aidOffers"];
+const MECHANICAL_FIELDS = ["agreementLedger"];
 function delta(before: any, after: any) {
   const changes: any = {};
   for (const key of STATE_FIELDS) if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) changes[key] = after[key] ?? null;
@@ -29,6 +30,7 @@ function delta(before: any, after: any) {
     if (put.length || remove.length) changes[key] = { put, remove };
   }
   const mechanics: any = {};
+  for (const key of MECHANICAL_FIELDS) if (JSON.stringify(before.mechanics?.[key]) !== JSON.stringify(after.mechanics?.[key])) mechanics[key] = after.mechanics?.[key] ?? null;
   for (const key of MECHANICAL_COLLECTIONS) {
     const old = before.mechanics?.[key] ?? [], next = after.mechanics?.[key] ?? [];
     const previous = new Map(old.map((row: any) => [row.id, JSON.stringify(row)]));
@@ -66,6 +68,10 @@ function publishedState(previous: any, block: string, mode: "full" | "delta") {
     for (const key of MECHANICAL_COLLECTIONS) if (update.mechanics && Object.hasOwn(update.mechanics, key)) {
       next.mechanics ??= {};
       next.mechanics[key] = apply(next.mechanics[key] ?? [], update.mechanics[key]);
+    }
+    for (const key of MECHANICAL_FIELDS) if (update.mechanics && Object.hasOwn(update.mechanics, key)) {
+      next.mechanics ??= {};
+      if (update.mechanics[key] === null) delete next.mechanics[key]; else next.mechanics[key] = update.mechanics[key];
     }
     return next;
   } catch { return previous; }

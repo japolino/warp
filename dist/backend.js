@@ -13724,6 +13724,34 @@ var init_exchanges = __esm(() => {
 });
 
 // src/living/agreements.ts
+function focusedAgreements(rows = [], focus = "", cast = []) {
+  const query = normalized(focus), open = rows.filter((a) => !agreementSettled(a));
+  const overview = readOnlyIntent(focus) && /\b(?:agreements?|promises?|promised|commitments?|obligations?|deals?|owed|owes?|owing)\b/i.test(focus);
+  const ignored = new Set(["i", "a", "an", "you", "your", "me", "my", "mine", "we", "our", "us", "what", "which", "who", "where", "how", "do", "does", "did", "have", "has", "is", "are", "the", "and", "for", "to", "with", "that", "it", "in", "about", "from", "work", "agreed", "agree", "promise", "promises", "agreement", "agreements"]);
+  const words = new Set((query.match(/[\p{L}\p{N}]+/gu) ?? []).filter((w) => !ignored.has(w)));
+  const named = (text) => {
+    if (!text)
+      return false;
+    const escaped = normalized(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, "u").test(query);
+  };
+  const people = new Map(cast.map((p) => [p.name, p]));
+  const person = (name) => {
+    if (!name || name === "you")
+      return false;
+    const actor = people.get(name);
+    return [name, actor?.displayName, ...actor?.aliases ?? []].some(named);
+  };
+  const topic = (a) => named(a.id) || named(a.name) || person(a.from) || person(a.owner) || named(a.service?.name);
+  const score = (a) => (named(a.id) || named(a.name) ? 100 : 0) + (person(a.from) || person(a.owner) ? 40 : 0) + (named(a.service?.name) ? 30 : 0) + [...new Set(normalized(`${a.name} ${a.from ?? ""} ${a.requirements.map((r) => r.text).join(" ")} ${a.service?.name ?? ""} ${a.rewards.map((r) => r.asset).join(" ")}`).match(/[\p{L}\p{N}]+/gu) ?? [])].filter((w) => words.has(w)).length * 3;
+  const ranked = rows.map((row, index) => ({ row, index, score: score(row) }));
+  const active = ranked.filter((x) => !agreementSettled(x.row)).sort((a, b) => b.score - a.score || b.index - a.index).slice(0, 3);
+  const closed = ranked.filter((x) => agreementSettled(x.row) && x.score > 0).sort((a, b) => b.score - a.score || b.index - a.index).slice(0, 1);
+  const mentioned = rows.filter(topic);
+  const overviewRows = mentioned.length ? mentioned : rows;
+  const selected = overview ? /\b(?:unsettled|unfinished|pending|active|open|still|left|remain|owe|owes|owing)\b/i.test(focus) ? overviewRows.filter((a) => !agreementSettled(a)) : overviewRows : [...active, ...closed].map((x) => x.row);
+  return { rows: selected, ledger: { retained: rows.length, unsettled: open.length, shown: selected.length, overview } };
+}
 function agreementNotes(before, after) {
   return (after.agreements ?? []).filter((a) => a.owner === "you" || a.from === "you").flatMap((a) => {
     const old = before.agreements?.find((b) => b.id === a.id), count = a.requirements.filter((r) => r.done).length;
@@ -13779,8 +13807,11 @@ function readAgreementObservation(raw, state, messages, player, historical = fal
   const message = messages.find((m) => m.id === source.message);
   const correction = message.is_user && /^\s*\(?OOC correction:/i.test(message.content);
   if (raw.kind === "agreement") {
-    if (Object.keys(raw).some((k) => !["kind", "id", "owner", "name", "from", "offer", "requirements", "rewards", "unsupported", "service", "message", "quote", ...historical ? ["sourceRevision", "viewRevision"] : []].includes(k)))
+    if (Object.keys(raw).some((k) => !["kind", "id", "owner", "name", "from", "offer", "requirements", "rewards", "unsupported", "service", "message", "quote", ...historical ? ["sourceRevision", "viewRevision", "readerVersion"] : []].includes(k)))
       return;
+    if (historical && raw.readerVersion !== undefined && raw.readerVersion !== 2)
+      return;
+    const modern = !historical || raw.readerVersion === 2;
     const owner = canonical(state, raw.owner, player), name = str2(raw.name, 120), from = canonical(state, raw.from, player);
     const acceptedSource = namedEvidence(state, source, owner, messages);
     if (!acceptedSource)
@@ -13796,7 +13827,7 @@ function readAgreementObservation(raw, state, messages, player, historical = fal
     if (raw.offer && !offer)
       return;
     const id = `agreement-${revision([owner, from, offer ? [offer.message, offer.sourceRevision] : [source.message, source.sourceRevision, source.quote]])}`;
-    if (state.agreements?.some((a) => a.id === id || offer && a.owner === owner && a.from === from && a.offer?.message === offer.message) || (state.agreements?.filter((a) => !agreementSettled(a)).length ?? 0) >= 3)
+    if (state.agreements?.some((a) => a.id === id || offer && a.owner === owner && a.from === from && a.offer?.message === offer.message) || !modern && (state.agreements?.filter((a) => !agreementSettled(a)).length ?? 0) >= 3)
       return;
     if (!Array.isArray(raw.requirements) || !raw.requirements.length || raw.requirements.length > 6 || !Array.isArray(raw.rewards) || raw.rewards.length > 4)
       return;
@@ -13835,7 +13866,7 @@ function readAgreementObservation(raw, state, messages, player, historical = fal
     const service = raw.service === undefined ? undefined : readServicePromise(raw.service, state, owner, from, offer, requirements, historical);
     if (raw.service !== undefined && !service)
       return;
-    return { kind: "agreement", value: { id, owner, name, source, ...offer ? { offer } : {}, ...from ? { from } : {}, requirements, rewards, unsupported: Array.isArray(raw.unsupported) ? raw.unsupported.map((v) => str2(v)) : [], ...service ? { service } : {} } };
+    return { kind: "agreement", value: { id, owner, name, source, ...offer ? { offer } : {}, ...from ? { from } : {}, requirements, rewards, unsupported: Array.isArray(raw.unsupported) ? raw.unsupported.map((v) => str2(v)) : [], ...service ? { service } : {}, ...modern ? { readerVersion: 2 } : {} } };
   }
   const agreements = (state.agreements ?? []).map((a) => ({ ...a, text: a.name }));
   const agreement = agreements.find((a) => a.id === raw.agreement) ?? lookup(agreements.filter((a) => !agreementSettled(a)), raw.agreement);
@@ -15120,10 +15151,11 @@ function conditionInfluence(state, actor, approach, target, place, nextAction = 
 }
 function mechanicalPacket(state, focus = "") {
   const withoutSource = ({ source, ...value }) => value;
+  const agreements = focusedAgreements(state.agreements, focus, state.entities);
   const tracks = activePracticeTracks(state), queried = readOnlyIntent(focus) && (/\b(?:growth|progress|practice|practiced|trained|training|familiar|mastery|learning|experienced|learn)\b/i.test(focus) || tracks.some((g) => focus.toLocaleLowerCase().includes(g.name.toLocaleLowerCase())));
   const visibleGrowth = tracks.filter((g) => g.familiar || queried && (g.owner === "you" || state.companions?.some((c) => c.actor === g.owner && c.controller === "you")));
   return {
-    ...state.aidOffers?.length ? { aidOffers: state.aidOffers.filter((o) => o.status === "offered").map(withoutSource) } : {},
+    ...state.aidOffers?.length ? { aidOffers: state.aidOffers.filter((o) => o.status === "offered").map((o) => o.work ? { ...withoutSource(o), source: o.source } : withoutSource(o)) } : {},
     ...visibleGrowth.length ? { growth: visibleGrowth.map(({ id, owner, name, skill, familiar, credits }) => ({ id, owner, name, skill, familiar, basis: "warp", ...queried ? { opportunities: credits.length, milestoneAt: 3 } : {} })) } : {},
     ...state.companions?.length ? { companions: state.companions.map((c) => ({ id: c.id, actor: c.actor, controller: c.controller, companionKind: c.companionKind, ...c.manifestation ? { active: c.manifestation.active, ...c.manifestation.expiresAt !== undefined ? { remainingControllerActions: Math.max(0, c.manifestation.expiresAt - actionCount(state, c.controller) - 1) } : {} } : {} })) } : {},
     ...state.costLinks?.length ? { costLinks: state.costLinks.map(withoutSource) } : {},
@@ -15144,7 +15176,7 @@ function mechanicalPacket(state, focus = "") {
     ...state.clocks?.length ? { clocks: state.clocks } : {},
     ...state.cooldowns?.length ? { cooldowns: state.cooldowns } : {},
     ...state.resilience?.length ? { resilience: state.resilience.map(withoutSource) } : {},
-    ...state.agreements?.length ? { agreements: visibleAgreements(state.agreements).map((a) => ({ id: a.id, owner: a.owner, name: a.name, from: a.from, cancelled: !!a.cancelled, unsupported: a.unsupported, requirements: a.requirements.map((r) => ({ id: r.id, text: r.text, done: !!r.done })), rewards: a.rewards.map((r) => ({ id: r.id, kind: r.kind, asset: r.asset, amount: r.amount, ready: r.ready?.allowed ?? null, paid: !!r.paid })) })) } : {}
+    ...state.agreements?.length ? { agreementLedger: agreements.ledger, agreements: agreements.rows.map((a) => ({ id: a.id, owner: a.owner, name: a.name, from: a.from, cancelled: !!a.cancelled, unsupported: a.unsupported, requirements: a.requirements.map((r) => ({ id: r.id, text: r.text, done: !!r.done })), rewards: a.rewards.map((r) => ({ id: r.id, kind: r.kind, asset: r.asset, amount: r.amount, ready: r.ready?.allowed ?? null, paid: !!r.paid })), ...a.service ? { service: { offer: a.service.offer, version: a.service.version, actor: a.service.actor, ability: a.service.ability, abilityVersion: a.service.abilityVersion, name: a.service.name, fee: a.service.fee, used: !!a.service.used, ...a.service.used?.feeWaived ? { feeWaived: true } : {} } } : {} })) } : {}
   };
 }
 function receiptPacket(receipt) {
@@ -15460,7 +15492,7 @@ function worldPacket(world, focus = "") {
     possibleMotives: selected.filter((f) => f.kind === "motive").map((f) => ({ id: f.id, subject: f.subject, text: f.text })),
     ...selected.some((f) => f.access) ? { knowledgeBoundary: "Knowledge records identify actual learners and the proposition they learned. Other facts are narrator context, not shared information. Unrecorded access is unknown. Do not reveal secrets or let someone act on privileged information without an established way to learn it. Hearing an allegation does not make it true; old knowledge need not match a newer fact." } : {},
     ...world.mechanics && (world.mechanics.resources.length || world.mechanics.items.length) ? { assetBoundary: "Counted resources and items change only through a saved mechanical receipt. An offer, promise or completed task does not itself transfer payment. Hold an offered reward available for the player's acceptance and resolution. Do not invent or recite new balances from prose. Missing preparation is uncertainty in the record, not a fictional refusal, fee or extra chore." } : {},
-    ...world.mechanics?.agreements?.length ? { agreementBoundary: "Accepted agreement requirements are separate and all must be fulfilled. Preserve their terms; an attempted task is not proof of completion. After completion the NPC may offer or refuse the promised reward. Hold an offered reward available for the player's acceptance; do not narrate a completed item or money handover without a reward receipt. Describe offers naturally; leave wallet arithmetic and current balances to the inline display unless asked. Paid rewards stay paid. Never automatically spend the player's promised payment. Do not introduce a setup menu, relationship score or new quest to manage an agreement." } : {},
+    ...world.mechanics?.agreements?.length ? { agreementBoundary: "Accepted agreement requirements are separate and all must be fulfilled. Preserve their terms; an attempted task is not proof of completion. The routine projection shows relevant agreements; agreementLedger counts every retained promise. Leaving this projection does not cancel, complete, pay or forfeit an agreement. Do not invent omitted terms. After completion the NPC may offer or refuse the promised reward. Hold an offered reward available for the player's acceptance; do not narrate a completed item or money handover without a reward receipt. Describe offers naturally; leave wallet arithmetic and current balances to the inline display unless asked. Paid rewards stay paid. Never automatically spend the player's promised payment. Do not introduce a setup menu, relationship score or new quest to manage an agreement." } : {},
     ...aidRequestBoundary(focus, world.mechanics) || world.mechanics?.aidOffers?.some((o) => o.status === "offered") ? { aidBoundary: "A request for another person's aid invites their voluntary offer or refusal, not an executed player spell or guaranteed agreement. Offer the actual beneficial ability and relevant cost before acceptance; do not complete unrecorded mechanical healing or spend items. Accepted aid receipts apply one NPC-owned use and their costs, without granting the player that power or taking a player action. Preserve pending offers through informational questions. Honor source restrictions, special injuries, current willingness, and unknown limits; missing bookkeeping is not a fictional refusal or a new task. No extra responders, attacks or forced feelings." } : {},
     ...world.mechanics && (hasLingering(world.mechanics) || world.mechanics.abilities?.some((a) => a.effects.some(isLingering))) ? { lingeringBoundary: "Periodic effects advance after supported actions of the affected owner, beginning with their next action. A question, inspection, model wait, denied action or permission withdrawal advances nothing. Honor saved pulse damage/healing, counts and threshold triggers once. Action timing is a Warp approximation, not a new fictional requirement to move, work or concentrate. Do not make people say recovery requires taking a step or performing an action; describe gradual recovery naturally without explaining bookkeeping. A cure can remove a pending pulse; refreshing cannot evade an old due pulse. Do not narrate offscreen pulses, automatic death, free recovery, consent or feelings from these rules. Buildup retains its remainder and refreshes one condition; it never creates extra attacks or model-authored arithmetic. Use human names, show a relevant imminent consequence before the next choice and answer saved counts on request. Omitted records are not erased." } : {},
     ...world.mechanics && activePracticeTracks(world.mechanics).length > 0 ? { growthBoundary: "Earned familiarity is Warp practice, scoped to the exact recorded technique/version. It improves existing uncertainty once alongside conditions, never creates a new power, changes source numbers or bypasses hard constraints, feelings or consent. Do not invent XP or forced training. Only newly earned milestones are announced; routine progress totals stay offscreen unless asked. A query may include opportunities/milestoneAt from saved state, not source-defined XP. Answer with human technique names and plain progress, never internal IDs or control tags. Omitted progress is not erased. Milestones arise from varied completed opportunities; routine repetition does not farm them." } : {},
@@ -15777,7 +15809,7 @@ function foldMechanics(messages) {
           if (o.kind === "place")
             return [{ kind: o.kind, ...o.value, ...o.entered ? { entered: true } : {}, ...o.value.source }];
           if (o.kind === "agreement")
-            return [{ kind: o.kind, owner: o.value.owner, name: o.value.name, from: o.value.from, offer: o.value.offer, requirements: o.value.requirements.map((r) => ({ ...r.source })), rewards: o.value.rewards.map((r) => ({ kind: r.kind, asset: r.asset, amount: r.amount, ...r.source })), unsupported: o.value.unsupported, ...o.value.service ? { service: { offer: o.value.service.offer, version: o.value.service.version } } : {}, ...o.value.source }];
+            return [{ kind: o.kind, owner: o.value.owner, name: o.value.name, from: o.value.from, offer: o.value.offer, requirements: o.value.requirements.map((r) => ({ ...r.source })), rewards: o.value.rewards.map((r) => ({ kind: r.kind, asset: r.asset, amount: r.amount, ...r.source })), unsupported: o.value.unsupported, ...o.value.readerVersion ? { readerVersion: o.value.readerVersion } : {}, ...o.value.service ? { service: { offer: o.value.service.offer, version: o.value.service.version } } : {}, ...o.value.source }];
           if (!o.value?.source)
             return [];
           return [{ kind: o.kind, ...o.value, ...o.value.source }];
@@ -15873,6 +15905,9 @@ function delta(before, after) {
       changes[key] = { put, remove };
   }
   const mechanics = {};
+  for (const key of MECHANICAL_FIELDS)
+    if (JSON.stringify(before.mechanics?.[key]) !== JSON.stringify(after.mechanics?.[key]))
+      mechanics[key] = after.mechanics?.[key] ?? null;
   for (const key of MECHANICAL_COLLECTIONS) {
     const old = before.mechanics?.[key] ?? [], next = after.mechanics?.[key] ?? [];
     const previous = new Map(old.map((row) => [row.id, JSON.stringify(row)]));
@@ -15927,6 +15962,14 @@ Recorded state update (put replaces by id; remove leaves the current projection)
       if (update.mechanics && Object.hasOwn(update.mechanics, key)) {
         next.mechanics ??= {};
         next.mechanics[key] = apply(next.mechanics[key] ?? [], update.mechanics[key]);
+      }
+    for (const key of MECHANICAL_FIELDS)
+      if (update.mechanics && Object.hasOwn(update.mechanics, key)) {
+        next.mechanics ??= {};
+        if (update.mechanics[key] === null)
+          delete next.mechanics[key];
+        else
+          next.mechanics[key] = update.mechanics[key];
       }
     return next;
   } catch {
@@ -15999,7 +16042,7 @@ ${block}` }] };
 function replayPrompt(messages, history, director, current) {
   return preparePrompt(messages, history, director, current).messages;
 }
-var PROMPT_KEY = "warpLivingPrompt", STATE_FIELDS, MECHANICAL_COLLECTIONS, renderingBasis = (snapshot) => revision(snapshot ? {
+var PROMPT_KEY = "warpLivingPrompt", STATE_FIELDS, MECHANICAL_COLLECTIONS, MECHANICAL_FIELDS, renderingBasis = (snapshot) => revision(snapshot ? {
   version: snapshot.version,
   path: snapshot.path,
   packet: snapshot.packet,
@@ -16013,6 +16056,7 @@ var init_prompt_cache = __esm(() => {
   init_story_text();
   STATE_FIELDS = ["place", "present", "preferences", "knowledgeBoundary", "agreementBoundary", "assetBoundary", "readBoundary", "explorationBoundary", "preparationBoundary", "companionBoundary", "growthBoundary", "lingeringBoundary", "aidBoundary", "serviceBoundary"];
   MECHANICAL_COLLECTIONS = ["resources", "items", "conditions", "abilities", "entities", "distances", "clocks", "cooldowns", "resilience", "agreements", "places", "positions", "routes", "discoveries", "stocks", "companions", "costLinks", "growth", "buildups", "aidOffers"];
+  MECHANICAL_FIELDS = ["agreementLedger"];
 });
 
 // src/living/decisions.ts

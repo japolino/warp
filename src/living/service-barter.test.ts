@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import legacy from "./fixtures/resolver10-receipts.json";
 import realWorkers from "./fixtures/barter-worker-receipts.json";
 import { firstJson } from "../backend/helpers.js";
-import { emptyMechanics, readMechanicalObservations, readServiceObservations, applyObservations, prepareMechanical, commitMechanical, type MechanicalState, type Observation } from "./mechanics.js";
+import { emptyMechanics, readMechanicalObservations, readServiceObservations, applyObservations, prepareMechanical, commitMechanical, mechanicalPacket, type MechanicalState, type Observation } from "./mechanics.js";
 import { agreementDone, agreementSettled } from "./agreements.js";
 import { readAidWork, explicitServiceWaiver } from "./service-barter.js";
 import { aidOfferText } from "./aid.js";
@@ -64,6 +64,19 @@ function offered(paid = false) {
   context.state = applyObservations(context.state, observations);
   return { ...context, ready: observations, readyRow: row };
 }
+
+test("focused prompts retain the full conditional offer and the earned treatment's saved terms", () => {
+  const pending = setup(true);
+  const proposal = mechanicalPacket(pending.state).aidOffers![0];
+  if (!("source" in proposal)) throw Error("Conditional proposal lost its source");
+  expect(proposal.source).toEqual(pending.state.aidOffers![0].source);
+  expect(proposal.source.quote).toContain("five coins if you sweep");
+  const context = offered(true), service = context.state.agreements![0].service!;
+  const projected = mechanicalPacket(context.state).agreements![0].service!;
+  expect(projected).toMatchObject({ name: "Mend", offer: service.offer, version: service.version, actor: "Jo", ability: service.ability, abilityVersion: service.abilityVersion, fee: { kind: "resource", id: "coins", amount: 5 }, used: false });
+  const after = commitMechanical(context.state, prepareMechanical(context.state, "receive", "you", [operation(context.state)]));
+  expect(mechanicalPacket(after, "What happened to Clinic work?").agreements![0].service).toMatchObject({ used: true, fee: { amount: 5 } });
+});
 
 test("a conditional proposal stores every clause, but neither accepts the work nor cures or charges anything", () => {
   const { state, messages, offer } = setup();

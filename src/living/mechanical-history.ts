@@ -44,7 +44,7 @@ export function foldMechanics(messages: Msg[]): MechanicalState {
           if (o.kind === "ability" || o.kind === "practice" || o.kind === "buildup" || o.kind === "periodic" || o.kind === "aid_offer") return [];
           if (o.kind === "companion") { const { manifestation, ...value } = o.value; return [{ kind: o.kind, ...value, ...o.value.source }]; }
           if (o.kind === "place") return [{ kind: o.kind, ...o.value, ...(o.entered ? { entered: true } : {}), ...o.value.source }];
-          if (o.kind === "agreement") return [{ kind: o.kind, owner: o.value.owner, name: o.value.name, from: o.value.from, offer: o.value.offer, requirements: o.value.requirements.map(r => ({ ...r.source })), rewards: o.value.rewards.map(r => ({ kind: r.kind, asset: r.asset, amount: r.amount, ...r.source })), unsupported: o.value.unsupported, ...(o.value.service ? { service: { offer: o.value.service.offer, version: o.value.service.version } } : {}), ...o.value.source }];
+          if (o.kind === "agreement") return [{ kind: o.kind, owner: o.value.owner, name: o.value.name, from: o.value.from, offer: o.value.offer, requirements: o.value.requirements.map(r => ({ ...r.source })), rewards: o.value.rewards.map(r => ({ kind: r.kind, asset: r.asset, amount: r.amount, ...r.source })), unsupported: o.value.unsupported, ...(o.value.readerVersion ? { readerVersion: o.value.readerVersion } : {}), ...(o.value.service ? { service: { offer: o.value.service.offer, version: o.value.service.version } } : {}), ...o.value.source }];
           if (!o.value?.source) return [];
           return [{ kind: o.kind, ...o.value, ...o.value.source }];
         });

@@ -9,6 +9,31 @@ import omittedMechanicalPrompt from "./fixtures/omitted-mechanical-prompt.json";
 
 const msg = (id: string, is_user: boolean, content: string): Msg => ({ id, is_user, content, role: is_user ? "user" : "assistant", index_in_chat: Number(id), swipe_id: 0 } as Msg);
 const packet = (text: string) => ({ place: "Cafe", present: ["Jo"], preferences: { exclude: [], offScreen: [] }, established: [{ id: "jacket", text }], possibleMotives: [] });
+
+test("agreement focus counts update once, clear explicitly, and never rewrite earlier prompt blocks", () => {
+  const first = msg("0", true, "I look around."), history = [first];
+  const ledger = { retained: 5, unsettled: 5, shown: 3, overview: false };
+  store(history, first, "Cafe").packet.mechanics = { agreementLedger: ledger };
+  const original = publish(history, first);
+  history.push(msg("1", true, "List all my agreements."));
+  store(history, history.at(-1)!, "Cafe").packet.mechanics = { agreementLedger: { ...ledger, shown: 5, overview: true } };
+  const expanded = publish(history, history.at(-1)!);
+  expect(expanded.slice(0, original.length)).toEqual(original);
+  expect(expanded.at(-1)!.content).toContain('"agreementLedger":{"retained":5,"unsettled":5,"shown":5,"overview":true}');
+  history.push(msg("2", true, "Same question."));
+  store(history, history.at(-1)!, "Cafe").packet.mechanics = { agreementLedger: { ...ledger, shown: 5, overview: true } };
+  const unchanged = publish(history, history.at(-1)!);
+  expect(unchanged.slice(0, expanded.length)).toEqual(expanded);
+  expect(unchanged.at(-1)!.content).toBe("Same question.");
+  history.push(msg("3", true, "The record is corrected."));
+  store(history, history.at(-1)!, "Cafe").packet.mechanics = {};
+  const cleared = publish(history, history.at(-1)!);
+  expect(cleared.slice(0, unchanged.length)).toEqual(unchanged);
+  expect(cleared.at(-1)!.content).toContain('"agreementLedger":null');
+  history.push(msg("4", true, "I wait."));
+  store(history, history.at(-1)!, "Cafe").packet.mechanics = {};
+  expect(publish(history, history.at(-1)!).at(-1)!.content).toBe("I wait.");
+});
 function store(history: Msg[], target: Msg, text: string) {
   const snapshot: PromptSnapshot = { version: 1, path: pathsOf(history).get(target.id)!, packet: packet(text) };
   target.metadata = { [PROMPT_KEY]: { "0": snapshot } };

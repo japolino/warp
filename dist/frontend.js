@@ -1870,6 +1870,34 @@ function readOnlyIntent(content) {
 }
 
 // src/living/agreements.ts
+function focusedAgreements(rows = [], focus = "", cast = []) {
+  const query = normalized(focus), open = rows.filter((a) => !agreementSettled(a));
+  const overview = readOnlyIntent(focus) && /\b(?:agreements?|promises?|promised|commitments?|obligations?|deals?|owed|owes?|owing)\b/i.test(focus);
+  const ignored = new Set(["i", "a", "an", "you", "your", "me", "my", "mine", "we", "our", "us", "what", "which", "who", "where", "how", "do", "does", "did", "have", "has", "is", "are", "the", "and", "for", "to", "with", "that", "it", "in", "about", "from", "work", "agreed", "agree", "promise", "promises", "agreement", "agreements"]);
+  const words = new Set((query.match(/[\p{L}\p{N}]+/gu) ?? []).filter((w) => !ignored.has(w)));
+  const named = (text) => {
+    if (!text)
+      return false;
+    const escaped = normalized(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, "u").test(query);
+  };
+  const people = new Map(cast.map((p) => [p.name, p]));
+  const person = (name) => {
+    if (!name || name === "you")
+      return false;
+    const actor = people.get(name);
+    return [name, actor?.displayName, ...actor?.aliases ?? []].some(named);
+  };
+  const topic = (a) => named(a.id) || named(a.name) || person(a.from) || person(a.owner) || named(a.service?.name);
+  const score = (a) => (named(a.id) || named(a.name) ? 100 : 0) + (person(a.from) || person(a.owner) ? 40 : 0) + (named(a.service?.name) ? 30 : 0) + [...new Set(normalized(`${a.name} ${a.from ?? ""} ${a.requirements.map((r) => r.text).join(" ")} ${a.service?.name ?? ""} ${a.rewards.map((r) => r.asset).join(" ")}`).match(/[\p{L}\p{N}]+/gu) ?? [])].filter((w) => words.has(w)).length * 3;
+  const ranked = rows.map((row, index) => ({ row, index, score: score(row) }));
+  const active = ranked.filter((x) => !agreementSettled(x.row)).sort((a, b) => b.score - a.score || b.index - a.index).slice(0, 3);
+  const closed = ranked.filter((x) => agreementSettled(x.row) && x.score > 0).sort((a, b) => b.score - a.score || b.index - a.index).slice(0, 1);
+  const mentioned = rows.filter(topic);
+  const overviewRows = mentioned.length ? mentioned : rows;
+  const selected = overview ? /\b(?:unsettled|unfinished|pending|active|open|still|left|remain|owe|owes|owing)\b/i.test(focus) ? overviewRows.filter((a) => !agreementSettled(a)) : overviewRows : [...active, ...closed].map((x) => x.row);
+  return { rows: selected, ledger: { retained: rows.length, unsettled: open.length, shown: selected.length, overview } };
+}
 function agreementNotes(before, after) {
   return (after.agreements ?? []).filter((a) => a.owner === "you" || a.from === "you").flatMap((a) => {
     const old = before.agreements?.find((b) => b.id === a.id), count = a.requirements.filter((r) => r.done).length;
@@ -1925,8 +1953,11 @@ function readAgreementObservation(raw, state, messages, player, historical = fal
   const message = messages.find((m) => m.id === source.message);
   const correction = message.is_user && /^\s*\(?OOC correction:/i.test(message.content);
   if (raw.kind === "agreement") {
-    if (Object.keys(raw).some((k) => !["kind", "id", "owner", "name", "from", "offer", "requirements", "rewards", "unsupported", "service", "message", "quote", ...historical ? ["sourceRevision", "viewRevision"] : []].includes(k)))
+    if (Object.keys(raw).some((k) => !["kind", "id", "owner", "name", "from", "offer", "requirements", "rewards", "unsupported", "service", "message", "quote", ...historical ? ["sourceRevision", "viewRevision", "readerVersion"] : []].includes(k)))
       return;
+    if (historical && raw.readerVersion !== undefined && raw.readerVersion !== 2)
+      return;
+    const modern = !historical || raw.readerVersion === 2;
     const owner = canonical(state, raw.owner, player), name = str(raw.name, 120), from = canonical(state, raw.from, player);
     const acceptedSource = namedEvidence(state, source, owner, messages);
     if (!acceptedSource)
@@ -1942,7 +1973,7 @@ function readAgreementObservation(raw, state, messages, player, historical = fal
     if (raw.offer && !offer)
       return;
     const id = `agreement-${revision([owner, from, offer ? [offer.message, offer.sourceRevision] : [source.message, source.sourceRevision, source.quote]])}`;
-    if (state.agreements?.some((a) => a.id === id || offer && a.owner === owner && a.from === from && a.offer?.message === offer.message) || (state.agreements?.filter((a) => !agreementSettled(a)).length ?? 0) >= 3)
+    if (state.agreements?.some((a) => a.id === id || offer && a.owner === owner && a.from === from && a.offer?.message === offer.message) || !modern && (state.agreements?.filter((a) => !agreementSettled(a)).length ?? 0) >= 3)
       return;
     if (!Array.isArray(raw.requirements) || !raw.requirements.length || raw.requirements.length > 6 || !Array.isArray(raw.rewards) || raw.rewards.length > 4)
       return;
@@ -1981,7 +2012,7 @@ function readAgreementObservation(raw, state, messages, player, historical = fal
     const service = raw.service === undefined ? undefined : readServicePromise(raw.service, state, owner, from, offer, requirements, historical);
     if (raw.service !== undefined && !service)
       return;
-    return { kind: "agreement", value: { id, owner, name, source, ...offer ? { offer } : {}, ...from ? { from } : {}, requirements, rewards, unsupported: Array.isArray(raw.unsupported) ? raw.unsupported.map((v) => str(v)) : [], ...service ? { service } : {} } };
+    return { kind: "agreement", value: { id, owner, name, source, ...offer ? { offer } : {}, ...from ? { from } : {}, requirements, rewards, unsupported: Array.isArray(raw.unsupported) ? raw.unsupported.map((v) => str(v)) : [], ...service ? { service } : {}, ...modern ? { readerVersion: 2 } : {} } };
   }
   const agreements = (state.agreements ?? []).map((a) => ({ ...a, text: a.name }));
   const agreement = agreements.find((a) => a.id === raw.agreement) ?? lookup(agreements.filter((a) => !agreementSettled(a)), raw.agreement);
