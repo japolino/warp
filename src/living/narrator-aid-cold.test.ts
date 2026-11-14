@@ -106,6 +106,25 @@ test("a sourced special injury remains special during first-use preparation", as
   const after = foldMechanics(await getMessages(id)); expect(after.resources[0].current).toBe(10); expect(after.conditions[0].recovery).toBe("special"); expect(after.applied).toEqual([]);
 });
 
+test("a current NPC constraint blocks execution without erasing their source-owned skill", async () => {
+  const id = await clinic(" Jo is unable to concentrate while a siren sounds.");
+  h.helper = call => {
+    const result = helper(call);
+    result.mechanicalObservations.push({ kind: "condition", id: "disrupted", owner: "Jo", name: "Unable to concentrate", helps: [], hinders: [], blocks: ["concentration"], ending: "The siren stops", message: h.messages(id)[0].id, quote: "Jo is unable to concentrate while a siren sounds." } as any);
+    return result;
+  };
+  await generate('"Could you treat my arm?"', async invoke => {
+    expect((await invoke()).status).toBe("blocked");
+    const known = foldMechanics(await getMessages(id));
+    expect(known.abilities).toHaveLength(1); expect(known.abilities![0].owner).toBe("Jo");
+    expect(known.conditions.some(c => c.owner === "Jo" && c.blocks.includes("concentration"))).toBe(true);
+    expect(known.resources[0].current).toBe(10); expect(known.applied).toEqual([]);
+    return "The siren prevents Jo from concentrating. No treatment has happened.";
+  });
+  const saved = foldMechanics(await getMessages(id));
+  expect(saved.abilities).toHaveLength(1); expect(saved.applied).toEqual([]); expect(saved.resources[0].current).toBe(10);
+});
+
 test("an incomplete first-use schema gets one bounded repair and retains actual scene evidence without spending early", async () => {
   const id = await clinic(); let attempts = 0;
   h.helper = call => {
