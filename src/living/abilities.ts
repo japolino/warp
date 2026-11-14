@@ -56,6 +56,18 @@ export function sourceMessages(sources: DefinitionSource[]): Message[] {
 }
 
 /** Content is mapped into a fixed effect vocabulary; no generated formulas or executable rules. */
+export function bindDefinitionCitations(raw: unknown, messages: Message[], sources: DefinitionSource[]): unknown {
+  if (!Array.isArray(raw)) return raw;
+  return raw.slice(0, 6).map(row => {
+    if (!obj(row) || typeof row.quote !== "string" || row.quote.length < 8 || row.quote.length > 800) return row;
+    const original = sources.find(s => s.id === row.message)?.text ?? messages.find(m => m.id === row.message)?.content;
+    if (original && sourceContains(original, row.quote)) return row;
+    // Bind an exact quote to its one actual definition source; never invent or rewrite the quote.
+    const matches = sources.filter(s => validDefinitionSource(s) && sourceContains(s.text, row.quote as string));
+    return matches.length === 1 ? { ...row, message: matches[0].id } : row;
+  });
+}
+
 export function readAbilityDefinitions(raw: unknown, state: MechanicalState, messages: Message[], sources: DefinitionSource[] = [], player?: string, historical = false): AbilityDefinition[] {
   if (!Array.isArray(raw)) return [];
   const definitions: AbilityDefinition[] = [];

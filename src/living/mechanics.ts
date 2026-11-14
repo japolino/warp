@@ -1,5 +1,5 @@
 import { readStoryEvidence } from "./story-view.js";
-import { readAidObservation, observeAid, executeAid, awaitingAid, type AidOffer, type AidObservation, type AidOperation } from "./aid.js";
+import { readAidObservation, observeAid, executeAid, awaitingAid, aidAbility, type AidOffer, type AidObservation, type AidOperation } from "./aid.js";
 import { readOnlyIntent } from "./intent.js";
 import { readBuildup, readPeriodicObservation, applyLingering, validateLingering, isLingering, hasLingering, lingeringImmune, scheduledPulses, finishPulses, type PeriodicState, type BuildupTrack, type BuildupObservation, type PeriodicObservation } from "./lingering.js";
 import { revision } from "../shared/revision.js";
@@ -71,7 +71,7 @@ export interface MechanicalReceipt {
   status: "ready" | "blocked"; reason?: string;
   unresolved?: true;
   learning?: LearningWitness;
-  engine?: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12; result?: string; beats?: EncounterBeat[]; responses?: ResponsePlan[]; place?: string;
+  engine?: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13; result?: string; beats?: EncounterBeat[]; responses?: ResponsePlan[]; place?: string;
 }
 export interface MechanicalRecord { version: 1; path: string; text: string; receipt?: MechanicalReceipt; observations: Observation[]; sources?: DefinitionSource[]; }
 export const emptyMechanics = (): MechanicalState => ({ version: 1, resources: [], items: [], conditions: [], applied: [] });
@@ -500,7 +500,15 @@ function execute(before: MechanicalState, actor: string, operations: MechanicalO
 }
 
 /** The exchange is one bounded receipt. A response cannot enqueue another response. */
-function executeExchange(before: MechanicalState, actor: string, operations: MechanicalOperation[], id: string, responses: ResponsePlan[], place?: string, resolver: 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 = 3, learning?: LearningWitness) {
+function executeExchange(before: MechanicalState, actor: string, operations: MechanicalOperation[], id: string, responses: ResponsePlan[], place?: string, resolver: 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 = 3, learning?: LearningWitness): ReturnType<typeof execute> {
+  if (resolver === 13) {
+    const op = operations[0], ability = op?.kind === "ability" && before.abilities?.find(a => a.id === op.ability && a.version === op.version && a.owner === actor);
+    if (actor === "you" || operations.length !== 1 || !ability || !aidAbility(ability) || op.kind !== "ability" || op.target !== "you" || responses.length || learning) throw Error("Narrator aid requires one NPC-owned beneficial action without extra responses");
+    const result = executeExchange(before, actor, operations, id, [], place, resolverFor(before, operations, []));
+    for (const beat of result.beats) if (beat.kind === "mend" && beat.actor === "you" && beat.target === "you") beat.actor = actor;
+    result.beats.push({ kind: "aid", actor, target: "you", name: ability.name });
+    return result;
+  }
   if (resolver >= 10 && operations.some(op => op.kind === "accept_aid" || op.kind === "decline_aid")) {
     if (responses.length || learning) throw Error("Aid permission opens only its offered action");
     return executeAid(before, actor, operations, (state, who, operation) => execute(state, who, [operation], id, 2, true, true, true, true, true, true, true), resolver >= 11, resolver >= 12 ? id : undefined);
@@ -569,10 +577,14 @@ function resolverFor(before: MechanicalState, operations: MechanicalOperation[],
 export function prepareMechanical(before: MechanicalState, id: string, actor: string, operations: MechanicalOperation[], context = "", learning?: LearningWitness): MechanicalReceipt {
   return prepare(before, id, actor, operations, context, resolverFor(before, operations, [], learning), [], undefined, learning);
 }
+/** The narrator chose this one requested NPC action; costs and effects use the shared engine. */
+export function prepareNarratorAid(before: MechanicalState, id: string, actor: string, ability: string, version: number, context: string): MechanicalReceipt {
+  return prepare(before, id, actor, [{ kind: "ability", ability, version, target: "you" }], context, 13);
+}
 export function prepareExchange(before: MechanicalState, id: string, actor: string, operations: MechanicalOperation[], responses: ResponsePlan[], context = "", place?: string, learning?: LearningWitness): MechanicalReceipt {
   return prepare(before, id, actor, operations, context, resolverFor(before, operations, responses, learning), responses, place, learning);
 }
-function prepare(before: MechanicalState, id: string, actor: string, operations: MechanicalOperation[], context: string, engine: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12, responses?: ResponsePlan[], place?: string, learning?: LearningWitness): MechanicalReceipt {
+function prepare(before: MechanicalState, id: string, actor: string, operations: MechanicalOperation[], context: string, engine: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13, responses?: ResponsePlan[], place?: string, learning?: LearningWitness): MechanicalReceipt {
   place = place || undefined; responses ??= [];
   const base = revision(before), input = revision(engine >= 8 ? [actor, operations, context, responses, place, learning] : engine === 2 ? [actor, operations, context] : [actor, operations, context, responses, place]);
   try {
@@ -580,7 +592,7 @@ function prepare(before: MechanicalState, id: string, actor: string, operations:
     if (learning && learning.seed !== context) throw Error("Learning seed differs from the prepared action");
     const previous = before.applied.find(a => a.id === id);
     if (previous) throw new Error(previous.input === input ? "Action already applied" : "Action id reused for different input");
-    const executed = engine >= 3 ? executeExchange(before, actor, operations, id, responses, place, engine as 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12, learning) : execute(before, actor, operations, id, 2);
+    const executed = engine >= 3 ? executeExchange(before, actor, operations, id, responses, place, engine as 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13, learning) : execute(before, actor, operations, id, 2);
     return { version: 1, engine, id, input, base, actor, operations: structuredClone(operations), ...(learning ? { learning: structuredClone(learning) } : {}), ...(engine >= 3 ? { responses: structuredClone(responses), ...(place ? { place } : {}) } : {}), changes: executed.changes, beats: executed.beats, result: revision(executed.state), status: "ready" };
   } catch (e) {
     return { version: 1, engine, id, input, base, actor, operations: structuredClone(operations), changes: [], status: "blocked", reason: e instanceof Error ? e.message : "Mechanical action unavailable", ...(e instanceof MechanicalKnowledgeError ? { unresolved: true as const } : {}) };
@@ -591,10 +603,10 @@ export function commitMechanical(before: MechanicalState, receipt: MechanicalRec
   const existing = before.applied.find(a => a.id === receipt.id);
   if (existing) { if (existing.input !== receipt.input) throw new Error("Action id conflict"); return before; }
   if (receipt.version !== 1 || receipt.status !== "ready" || receipt.base !== revision(before)) throw new Error("Mechanical receipt is blocked or stale");
-  if (receipt.engine !== undefined && receipt.engine !== 2 && receipt.engine !== 3 && receipt.engine !== 4 && receipt.engine !== 5 && receipt.engine !== 6 && receipt.engine !== 7 && receipt.engine !== 8 && receipt.engine !== 9 && receipt.engine !== 10 && receipt.engine !== 11 && receipt.engine !== 12) throw new Error("Unsupported mechanical resolver");
+  if (receipt.engine !== undefined && receipt.engine !== 2 && receipt.engine !== 3 && receipt.engine !== 4 && receipt.engine !== 5 && receipt.engine !== 6 && receipt.engine !== 7 && receipt.engine !== 8 && receipt.engine !== 9 && receipt.engine !== 10 && receipt.engine !== 11 && receipt.engine !== 12 && receipt.engine !== 13) throw new Error("Unsupported mechanical resolver");
   if (receipt.learning && (receipt.engine ?? 1) < 8) throw Error("Learning requires the progression resolver");
   if ((receipt.engine ?? 1) < 3 && receipt.responses?.length) throw new Error("Responses require the exchange resolver");
-  const { state, changes, beats } = (receipt.engine ?? 1) >= 3 ? executeExchange(before, receipt.actor, receipt.operations, receipt.id, receipt.responses ?? [], receipt.place, receipt.engine as 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12, receipt.learning) : execute(before, receipt.actor, receipt.operations, receipt.id, receipt.engine ?? 1);
+  const { state, changes, beats } = (receipt.engine ?? 1) >= 3 ? executeExchange(before, receipt.actor, receipt.operations, receipt.id, receipt.responses ?? [], receipt.place, receipt.engine as 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13, receipt.learning) : execute(before, receipt.actor, receipt.operations, receipt.id, receipt.engine ?? 1);
   if (revision(changes) !== revision(receipt.changes)) throw new Error("Mechanical receipt does not match its operations");
   if (receipt.engine !== undefined && (revision(state) !== receipt.result || revision(beats) !== revision(receipt.beats))) throw new Error("Mechanical encounter receipt does not match its resolution");
   state.applied.push({ id: receipt.id, input: receipt.input });

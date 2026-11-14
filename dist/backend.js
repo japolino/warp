@@ -14875,6 +14875,17 @@ function execute(before, actor, operations, actionId, engine = 1, strict = false
   return { state, changes, beats };
 }
 function executeExchange(before, actor, operations, id, responses, place, resolver = 3, learning) {
+  if (resolver === 13) {
+    const op = operations[0], ability = op?.kind === "ability" && before.abilities?.find((a) => a.id === op.ability && a.version === op.version && a.owner === actor);
+    if (actor === "you" || operations.length !== 1 || !ability || !aidAbility(ability) || op.kind !== "ability" || op.target !== "you" || responses.length || learning)
+      throw Error("Narrator aid requires one NPC-owned beneficial action without extra responses");
+    const result = executeExchange(before, actor, operations, id, [], place, resolverFor(before, operations, []));
+    for (const beat of result.beats)
+      if (beat.kind === "mend" && beat.actor === "you" && beat.target === "you")
+        beat.actor = actor;
+    result.beats.push({ kind: "aid", actor, target: "you", name: ability.name });
+    return result;
+  }
   if (resolver >= 10 && operations.some((op) => op.kind === "accept_aid" || op.kind === "decline_aid")) {
     if (responses.length || learning)
       throw Error("Aid permission opens only its offered action");
@@ -14959,6 +14970,9 @@ function resolverFor(before, operations, responses, learning) {
 function prepareMechanical(before, id, actor, operations, context = "", learning) {
   return prepare(before, id, actor, operations, context, resolverFor(before, operations, [], learning), [], undefined, learning);
 }
+function prepareNarratorAid(before, id, actor, ability, version, context) {
+  return prepare(before, id, actor, [{ kind: "ability", ability, version, target: "you" }], context, 13);
+}
 function prepareExchange(before, id, actor, operations, responses, context = "", place, learning) {
   return prepare(before, id, actor, operations, context, resolverFor(before, operations, responses, learning), responses, place, learning);
 }
@@ -14989,7 +15003,7 @@ function commitMechanical(before, receipt) {
   }
   if (receipt.version !== 1 || receipt.status !== "ready" || receipt.base !== revision(before))
     throw new Error("Mechanical receipt is blocked or stale");
-  if (receipt.engine !== undefined && receipt.engine !== 2 && receipt.engine !== 3 && receipt.engine !== 4 && receipt.engine !== 5 && receipt.engine !== 6 && receipt.engine !== 7 && receipt.engine !== 8 && receipt.engine !== 9 && receipt.engine !== 10 && receipt.engine !== 11 && receipt.engine !== 12)
+  if (receipt.engine !== undefined && receipt.engine !== 2 && receipt.engine !== 3 && receipt.engine !== 4 && receipt.engine !== 5 && receipt.engine !== 6 && receipt.engine !== 7 && receipt.engine !== 8 && receipt.engine !== 9 && receipt.engine !== 10 && receipt.engine !== 11 && receipt.engine !== 12 && receipt.engine !== 13)
     throw new Error("Unsupported mechanical resolver");
   if (receipt.learning && (receipt.engine ?? 1) < 8)
     throw Error("Learning requires the progression resolver");
@@ -15603,6 +15617,19 @@ function validDefinitionSource(raw) {
 function sourceMessages(sources) {
   return sources.filter(validDefinitionSource).map((s) => ({ id: s.id, is_user: false, content: s.text }));
 }
+function bindDefinitionCitations(raw, messages, sources) {
+  if (!Array.isArray(raw))
+    return raw;
+  return raw.slice(0, 6).map((row) => {
+    if (!obj10(row) || typeof row.quote !== "string" || row.quote.length < 8 || row.quote.length > 800)
+      return row;
+    const original = sources.find((s) => s.id === row.message)?.text ?? messages.find((m) => m.id === row.message)?.content;
+    if (original && sourceContains(original, row.quote))
+      return row;
+    const matches = sources.filter((s) => validDefinitionSource(s) && sourceContains(s.text, row.quote));
+    return matches.length === 1 ? { ...row, message: matches[0].id } : row;
+  });
+}
 function readAbilityDefinitions(raw, state, messages, sources = [], player, historical = false) {
   if (!Array.isArray(raw))
     return [];
@@ -16054,7 +16081,7 @@ var init_prompt_cache = __esm(() => {
   init_world2();
   init_mechanics();
   init_story_text();
-  STATE_FIELDS = ["place", "present", "preferences", "knowledgeBoundary", "agreementBoundary", "assetBoundary", "readBoundary", "explorationBoundary", "preparationBoundary", "companionBoundary", "growthBoundary", "lingeringBoundary", "aidBoundary", "serviceBoundary"];
+  STATE_FIELDS = ["place", "present", "preferences", "knowledgeBoundary", "agreementBoundary", "assetBoundary", "readBoundary", "explorationBoundary", "preparationBoundary", "companionBoundary", "growthBoundary", "lingeringBoundary", "aidBoundary", "serviceBoundary", "narratorAid"];
   MECHANICAL_COLLECTIONS = ["resources", "items", "conditions", "abilities", "entities", "distances", "clocks", "cooldowns", "resilience", "agreements", "places", "positions", "routes", "discoveries", "stocks", "companions", "costLinks", "growth", "buildups", "aidOffers"];
   MECHANICAL_FIELDS = ["agreementLedger"];
 });
@@ -16381,6 +16408,78 @@ Supported effects: {kind:"damage|restore",target:"self|target",resource,amount:e
 Before returning, check for a newly confirmed owned ability whose function is established in the supplied narrator/profile evidence. If it is relevant to this discussion and missing from Known state.mechanics.abilities, abilityDefinitions is REQUIRED even if it is inactive. A changes entry with kind:"ability" is memory only and does not prepare it; do not substitute that entry for abilityDefinitions. For example an established gentle continuous self-regeneration can prepare effects:[{kind:"periodic",target:"self",name:"actual source skill name",untilCleared:true,endingRule:"recover",cadence:"owner_action",pulse:{kind:"mend",impact:"minor"}}], costs:[], approach:"concentration", target:"self", requires:[], unsupported:[], with the actual confirming message/quote and skill name. This is a saved definition only. Inactive skills produce NO periodic observation, healing, cost or clock tick. Absent or merely claimed capabilities produce no definition.`;
 });
 
+// src/living/narrator-aid.ts
+function narratorAidActors(state, request) {
+  const spoken = request.trim().replace(/^["'“”*\s]+/, "");
+  if (!aidRequestIntent(request, state) || !/^(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:(?:heal|treat|mend|cure|restore|protect)\s+(?:me|my)\b|help\s+(?:my\b|me(?:\s+please)?(?:\s+with\s+my\b|\s*\?)))/i.test(spoken))
+    return [];
+  const people = state.entities?.filter((e) => e.entityKind === "person" && e.name !== "you" && present(state, e.name) && capable(state, e.name)) ?? [];
+  const addressed = people.filter((e) => [e.name, e.displayName, ...e.aliases].some((n) => named(n, request)));
+  const invited = addressed.length === 1 ? addressed[0] : addressed.length === 0 && people.length === 1 ? people[0] : undefined;
+  if (!invited)
+    return [];
+  const attribution = request.slice(request.indexOf("?") + 1).match(/^\s*["'“”*\s]*I\s+(?:ask|say|whisper|murmur)\s+(?:to\s+)?(.+?)[.!]*$/iu)?.[1];
+  if (attribution && ![invited.name, invited.displayName, ...invited.aliases].some((n) => n.normalize("NFKC").toLowerCase() === attribution.trim().normalize("NFKC").toLowerCase()))
+    return [];
+  return [invited.name];
+}
+function canPrepareNarratorAid(state, request, actor) {
+  return narratorAidActors(state, request).includes(actor) && !state.abilities?.some((a) => a.owner === actor && aidAbility(a)) && !state.aidOffers?.some((o) => o.actor === actor && (o.fee || o.work || o.agreement || o.unsupported.length)) && !state.agreements?.some((g) => !g.cancelled && g.service?.actor === actor && !g.service.used);
+}
+function narratorAidChoices(state, request) {
+  const invited = narratorAidActors(state, request);
+  return (state.abilities ?? []).filter((a) => {
+    if (!invited.includes(a.owner) || !aidAbility(a))
+      return false;
+    if (state.aidOffers?.some((o) => o.actor === a.owner && o.ability === a.id && (o.fee || o.work || o.agreement || o.unsupported.length)))
+      return false;
+    if (state.agreements?.some((g) => !g.cancelled && g.service?.actor === a.owner && g.service.ability === a.id && !g.service.used))
+      return false;
+    return a.costs.every((c) => {
+      try {
+        return c.kind === "resource" ? costPayer(state, c.id).owner !== "you" : state.items.find((i) => i.id === c.id)?.owner === a.owner;
+      } catch {
+        return false;
+      }
+    });
+  });
+}
+function validateNarratorAid(state, request, actor, ability) {
+  const who = actorName(state, actor);
+  const definition = narratorAidChoices(state, request).find((a) => a.owner === who && a.id === ability);
+  if (!definition)
+    throw Error("This turn does not authorize that free NPC aid; keep any proposed terms available for the player's choice");
+  const ranges = [...new Set([...definition.source.quote.matchAll(/\b(?:at|within)\s+(touch|near|far)\s+range\b/gi)].map((m) => m[1].toLowerCase()))];
+  if (ranges.length === 1 && ranges[0] !== definition.range) {
+    if (!distance2(state, who, "you"))
+      throw Error("The ability's quoted range needs an established distance");
+    checkRange(state, who, "you", ranges[0]);
+  }
+  for (const e of definition.effects)
+    if (e.kind === "clear_condition") {
+      const owner = e.target === "self" ? who : "you";
+      if (state.conditions.some((c) => c.owner === owner && c.name.normalize("NFKC").toLowerCase() === e.name?.normalize("NFKC").toLowerCase() && (c.category === "physical_injury" && c.recovery !== "routine")))
+        throw Error("Ordinary requested aid cannot clear a special injury");
+      if (state.conditions.some((c) => c.owner === owner && c.name.normalize("NFKC").toLowerCase() === e.name?.normalize("NFKC").toLowerCase() && (c.helps.length || c.defenses?.length)))
+        throw Error("Requested aid cannot remove an established benefit");
+    }
+  return definition;
+}
+var NARRATOR_AID_TOOL, NATIVE_AID_PREPARATION = "For routine physical treatment, use a reusable mend effect with supported impact (minor for ordinary first aid), rather than clear_condition named after this patient's current wound. clear_condition is for a source-supported named cure, not a way to bypass physical injury severity or recovery limits. Do not invent maxInjury or numerical treatment limits that the source does not establish.", named = (name, text) => !!name && new RegExp(`(?<![\\p{L}\\p{N}_])${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}_])`, "iu").test(text);
+var init_narrator_aid = __esm(() => {
+  init_aid();
+  init_encounters();
+  init_companions();
+  NARRATOR_AID_TOOL = {
+    name: "npc_aid",
+    display_name: "NPC aid",
+    inline_available: true,
+    council_eligible: false,
+    description: "When the current Warp narratorAid turn offers this tool and an NPC voluntarily chooses to give the player's requested free beneficial aid, call BEFORE describing its effects. Use an advertised actor and ability ID. If that actor has no prepared beneficial definition, give the name of their actual source-supported aid capability for bounded first-use preparation. This validates one NPC-owned action and its costs. It does not force cooperation: the NPC can instead talk, offer terms, or refuse. Never use for attacks, paid/conditional service, questions about powers, invented powers, or player actions. A ready result must be narrated once; a blocked result spent nothing and is not a fictional refusal.",
+    parameters: { type: "object", properties: { turn: { type: "string", description: "Exact current narratorAid.turn" }, actor: { type: "string", description: "Exact advertised NPC name" }, ability: { type: "string", description: "Advertised ability ID, or actual capability name when this actor needs first-use preparation" } }, required: ["turn", "actor", "ability"], additionalProperties: false }
+  };
+});
+
 // src/living/runtime.ts
 async function usesLiving(chatId, userId) {
   return !(await getSettings(userId)).authoredRules || (await getRuleset(chatId, userId))?.source === "Automatic";
@@ -16570,6 +16669,7 @@ async function saveMechanical(chatId, message, prefix, record, current) {
   });
 }
 async function pushLiving(chatId, userId) {
+  await registerNarratorAid(userId);
   const n = (sequence.get(chatId) ?? 0) + 1;
   sequence.set(chatId, n);
   const messages = await storyHistory(chatId), world = worldOf(messages), settings = await getSettings(userId);
@@ -16603,6 +16703,7 @@ async function pushLiving(chatId, userId) {
   }, userId);
 }
 async function syncLiving(chatId, userId, decision, targetId, notice) {
+  await registerNarratorAid(userId);
   if (!(await getSettings(userId)).enabled) {
     await pushLiving(chatId, userId);
     return;
@@ -16634,7 +16735,8 @@ async function syncLiving(chatId, userId, decision, targetId, notice) {
     try {
       const before = worldOf(messages);
       const { sources, player: playerName } = await definitionContext(chatId, userId);
-      const preparation = player?.is_user ? promptSnapshot(player, pathsOf(prefix), rawPathsOf(prefix))?.receipt : undefined;
+      const completedMechanical = mechanicalRecordOf(last);
+      const preparation = validRecord(last, completedMechanical, prefix) ? completedMechanical?.receipt : player?.is_user ? promptSnapshot(player, pathsOf(prefix), rawPathsOf(prefix))?.receipt : undefined;
       const raw = await call(chatId, `${EXTRACTION}
 ${SCENE_OBSERVATIONS}
 Recover previously unread exchanges in the supplied messages as well as this reply. Record actual acceptance, each fulfilled clause and current reward willingness in chronological dependency order. Do not omit an earlier accepted agreement merely because the latest reply concerns something else. Do not repeat already recorded changes or replace newer evidence with an older event. The scene describes the latest reply, not an earlier recovered exchange.`, `Player: ${playerName}. Use you for this person, and exclude the player from scene.present.
@@ -16737,6 +16839,129 @@ async function repairLiving(chatId, messageId, userId) {
   }
   await syncLiving(chatId, userId, undefined, messageId);
 }
+async function registerNarratorAid(userId) {
+  const api = host();
+  if (!userId || !api.registerTool || !api.permissions?.has)
+    return;
+  const users = nativeUsers.get(api) ?? new Map;
+  nativeUsers.set(api, users);
+  users.set(userId, (await getSettings(userId)).enabled);
+  if (![...users.values()].some(Boolean) || !api.permissions.has("tools")) {
+    if (nativeHosts.has(api)) {
+      api.unregisterTool(NARRATOR_AID_TOOL.name);
+      nativeHosts.delete(api);
+    }
+    return;
+  }
+  if (nativeHosts.has(api))
+    return;
+  api.registerTool(NARRATOR_AID_TOOL);
+  if (!nativeHandlers.has(api)) {
+    api.on("TOOL_INVOCATION", (payload, userId) => payload.toolName === NARRATOR_AID_TOOL.name ? livingNarratorAid(payload, userId) : undefined);
+    nativeHandlers.add(api);
+  }
+  nativeHosts.add(api);
+}
+async function livingNarratorAid(payload, userId) {
+  if (payload.toolName !== NARRATOR_AID_TOOL.name)
+    return "";
+  const blocked = (reason) => JSON.stringify({ status: "blocked", spent: false, reason, instruction: "Do not describe this aid as executed. Missing preparation is not a fictional refusal, price or new task." });
+  if (!nativeHosts.has(host()) || !host().permissions?.has("tools"))
+    return blocked("Native tools are not available; ordinary offer and acceptance remain available");
+  const args = payload.args;
+  if (!userId || !args || typeof args.turn !== "string" || typeof args.actor !== "string" || typeof args.ability !== "string")
+    return blocked("A current authenticated narratorAid turn is required");
+  const entry = [...pending.entries()].find(([, p]) => p.nativeAid?.token === args.turn);
+  if (!entry)
+    return blocked("This narratorAid turn has expired or is unavailable");
+  const [chatId, prepared] = entry, invitation = prepared.nativeAid;
+  const active = started.get(chatId);
+  if (invitation.owner !== userId || !active?.target || active.id !== prepared.generation || prepared.controller.signal.aborted || !(await getSettings(userId)).enabled || !await usesLiving(chatId, userId))
+    return blocked("The active generation is unavailable for this caller");
+  const all = await getMessages(chatId), target = all.find((m) => m.id === active.target);
+  if (!target)
+    return blocked("The active reply is no longer available");
+  const history = all.filter((m) => m.index_in_chat < target.index_in_chat), request = history.at(-1);
+  if (pending.get(chatId) !== prepared || started.get(chatId)?.id !== active.id || prepared.controller.signal.aborted || !request?.is_user || request.id !== invitation.request || pathOf(history) !== prepared.path)
+    return blocked("The request or its causal history changed");
+  const wireUser = payload.contextMessages?.filter((m) => m.role === "user").map((m) => typeof m.content === "string" ? m.content : m.content.filter((p) => p.type === "text").map((p) => p.text).join("")).filter((s) => s.includes(`<warp>
+`)).at(-1);
+  const blockAt = wireUser?.lastIndexOf(`<warp>
+`) ?? -1;
+  const block = wireUser && blockAt >= 0 ? wireUser.slice(blockAt, wireUser.indexOf("</warp>", blockAt) + "</warp>".length) : undefined;
+  const snapshot = promptSnapshot(request, pathsOf(history), rawPathsOf(history));
+  if (!block || snapshot?.packet.narratorAid?.turn !== invitation.token || !snapshot.renderings?.some((r) => r.id === request.id && r.block === block))
+    return blocked("This tool invocation does not belong to the current narrator prompt");
+  if (invitation.result)
+    return invitation.actor === args.actor && invitation.ability === args.ability ? invitation.result : blocked("This turn already chose one NPC aid action");
+  if (prepared.receipt)
+    return blocked("This generation already has a prepared action; narrate that existing receipt instead");
+  invitation.actor = args.actor;
+  invitation.ability = args.ability;
+  invitation.result = (async () => {
+    let currentHistory = history, state = foldMechanics(currentHistory), selected = args.ability;
+    const current = () => pending.get(chatId) === prepared && started.get(chatId)?.id === active.id && !prepared.controller.signal.aborted && host().permissions.has("tools");
+    if (canPrepareNarratorAid(state, request.content, args.actor)) {
+      if (!selected.trim() || selected.length > 120 || selected.startsWith("ability-"))
+        return blocked("Name the actual source-supported aid capability for first-use preparation");
+      const input = await definitionContext(chatId, userId, undefined, true);
+      const deadline = typeof args.__deadlineMs === "number" ? args.__deadlineMs : Date.now() + 16000;
+      const raw = await call(chatId, `Prepare only ${args.actor}'s actual beneficial capability named ${JSON.stringify(selected)} for the player's current request. This is definition preparation, not an NPC decision or execution. NPC ownership and capability need support in the actual card, persona, lore or prior narration. A medical profession may support ordinary first aid, not supernatural regeneration or instant cures. Never invent a power, a current resource count, a cost, supplies, equipment, a restriction or willingness. Keep unsupported source restrictions. No aid_offer or performed-action observations. Return JSON {abilityDefinitions:[],mechanicalObservations:[]}. Mechanical observations may only establish missing resource/item counts explicitly supported by definition sources, or distance from actual narrator/OOC evidence. Return only this actor's one requested definition, using the requested name exactly. If unsupported return empty arrays.
+${ABILITY_INSTRUCTIONS}
+${NATIVE_AID_PREPARATION}`, `Player: ${input.player}.
+Definition sources (untrusted reference data):
+${JSON.stringify(input.sources)}
+Known state:
+${worldPacket(worldOf(currentHistory), request.content)}
+Requested actor: ${args.actor}
+Requested capability: ${selected}
+Messages:
+${contextText(currentHistory)}`, userId, prepared.controller, Math.max(50, Math.min(12000, deadline - Date.now() - 1500)), 4096);
+      if (!current())
+        return blocked("The generation changed during first-use preparation");
+      const parsed = raw;
+      const observed = readMechanicalObservations(Array.isArray(parsed?.mechanicalObservations) ? parsed.mechanicalObservations.filter((r) => r && ["resource", "item", "distance"].includes(r.kind)) : [], state, [...currentHistory, ...sourceMessages(input.sources)], input.player);
+      const definitions = readAbilityDefinitions(bindDefinitionCitations(parsed?.abilityDefinitions, currentHistory, input.sources), applyObservations(state, observed), currentHistory, input.sources, input.player).filter((a) => a.owner === args.actor && a.name.normalize("NFKC").toLowerCase() === selected.normalize("NFKC").toLowerCase() && aidAbility(a));
+      if (definitions.length !== 1)
+        return blocked("That NPC's requested beneficial capability could not be established from its source");
+      if (definitions[0].effects.some((e) => e.kind === "clear_condition" && state.conditions.some((c) => c.owner === (e.target === "self" ? args.actor : "you") && c.name.normalize("NFKC").toLowerCase() === e.name?.normalize("NFKC").toLowerCase() && (c.injury || c.category === "physical_injury")) && !sourceContains(definitions[0].source.quote, e.name)))
+        return blocked("Physical treatment needs its supported injury effect; the source does not establish that named instant cure");
+      const observations = [...observed, { kind: "ability", value: definitions[0] }];
+      const saved = await saveMechanical(chatId, request, history.slice(0, -1), { version: 1, path: pathOf(history.slice(0, -1)), text: storyRevision(request.content), observations, sources: usedSources(observations, input.sources) }, current);
+      if (!saved || !current())
+        return blocked("The generation changed before its first-use definition could be saved");
+      currentHistory = (await getMessages(chatId)).filter((m) => m.index_in_chat < target.index_in_chat);
+      if (!current() || pathOf(currentHistory) !== prepared.path)
+        return blocked("The request changed during first-use preparation");
+      state = foldMechanics(currentHistory);
+      selected = definitions[0].id;
+    }
+    const definition = validateNarratorAid(state, request.content, args.actor, selected);
+    const offered = state.aidOffers?.find((o) => o.actor === definition.owner && o.ability === definition.id && o.status === "offered");
+    const receipt = offered ? prepareMechanical(state, `narrator-aid-${prepared.path}`, "you", [{ kind: "accept_aid", offer: offered.id, version: offered.version }], prepared.path) : prepareNarratorAid(state, `narrator-aid-${prepared.path}`, definition.owner, definition.id, definition.version, prepared.path);
+    if (receipt.status !== "ready")
+      return blocked(receipt.reason ?? "Aid could not be prepared");
+    prepared.receipt = receipt;
+    const saved = await serializeMetadata(chatId, request.id, async () => {
+      const now = await getMessages(chatId), current = now.find((m) => m.id === request.id);
+      if (pending.get(chatId) !== prepared || started.get(chatId)?.id !== active.id || prepared.controller.signal.aborted || !current || pathOf(now.filter((m) => m.index_in_chat <= current.index_in_chat)) !== prepared.path)
+        return false;
+      await host().chat.updateMessage(chatId, current.id, { metadata: { ...current.metadata, warpLivingAttempt: { path: prepared.path, decision: null, receipt, narratorChoice: { version: 1, actor: definition.owner, ability: definition.id, request: request.id } } }, skipChunkRebuild: true });
+      return true;
+    });
+    if (!saved || pending.get(chatId) !== prepared || prepared.controller.signal.aborted) {
+      if (pending.get(chatId) === prepared)
+        delete prepared.receipt;
+      return blocked("The generation changed before the aid could be saved");
+    }
+    return JSON.stringify({ status: "ready", actor: definition.owner, ability: definition.name, receipt: receiptPacket(receipt), instruction: "Narrate this NPC's chosen aid and its exact effects once. Its costs are reserved and commit only when this reply finishes successfully. Do not charge again or invent further effects." });
+  })().catch((error) => {
+    if (pending.get(chatId) === prepared)
+      delete prepared.receipt;
+    return blocked(error instanceof Error ? error.message : "Aid preparation could not be saved");
+  });
+  return invitation.result;
+}
 function livingStarted(p) {
   if (["quiet", "impersonate"].includes(p.generationType ?? ""))
     return;
@@ -16796,9 +17021,17 @@ async function cachedInjection(messages, ctx, history, world, decision, persist,
     ...failures.has(ctx.chatId) || extractionWindow(history, recordOf)?.pending ? { readBoundary: "Some prior exchanges have not been fully recorded. Preserve actual story events, but do not infer completed payment, costs, inventory changes or a fair resolved check from missing records. Keep an offered transfer available until its receipt resolves it. Do not invent an obstacle, refusal, fee or extra task to explain missing preparation." } : {}
   };
   const latest = history.filter((m) => m.is_user).at(-1);
+  const turn = pending.get(ctx.chatId), active = started.get(ctx.chatId);
+  const enabled = world.mechanics && history.at(-1)?.is_user && messages.some((m) => m.role === "user" && m.sourceMessageId === latest?.id) && !receipt && persist && ctx.userId && active?.target && active.id === turn?.generation && ctx.generationType !== "continue" && nativeHosts.has(host()) && host().permissions.has("tools");
+  const choices = enabled ? narratorAidChoices(world.mechanics, history.at(-1).content) : [];
+  const actors = enabled ? narratorAidActors(world.mechanics, history.at(-1).content).filter((actor) => choices.some((a) => a.owner === actor) || canPrepareNarratorAid(world.mechanics, history.at(-1).content, actor)) : [];
+  if (actors.length && turn && ctx.userId && latest) {
+    turn.nativeAid ??= { token: crypto.randomUUID(), owner: ctx.userId, request: latest.id };
+    Object.assign(packet, { narratorAid: { turn: turn.nativeAid.token, tool: NARRATOR_AID_TOOL.name, actors, choices: choices.map((a) => ({ actor: a.owner, ability: a.id, version: a.version, name: a.name })), instruction: "The player requested this aid. The NPC chooses freely whether to help. Before describing a free beneficial action, call npc_aid with this turn and the chosen actor/ability ID. If the actor has no prepared beneficial ability, name their actual source-supported capability for bounded first-use preparation. Invented powers remain unavailable. Narrate only the returned ready receipt. Talking, refusal and offering terms execute nothing. Never use an earlier turn token." } });
+  }
   const paths = pathsOf(history);
   const existing = latest ? promptSnapshot(latest, paths, rawPathsOf(history)) : undefined;
-  const snapshot = existing && JSON.stringify(existing.packet.preferences) === JSON.stringify(preferences) && (!persist || !history.at(-1)?.is_user || JSON.stringify(existing.decision ?? null) === JSON.stringify(decision) && JSON.stringify(existing.receipt) === JSON.stringify(receipt)) ? existing : {
+  const snapshot = existing && JSON.stringify(existing.packet.preferences) === JSON.stringify(preferences) && JSON.stringify(existing.packet.narratorAid) === JSON.stringify(packet.narratorAid) && (!persist || !history.at(-1)?.is_user || JSON.stringify(existing.decision ?? null) === JSON.stringify(decision) && JSON.stringify(existing.receipt) === JSON.stringify(receipt)) ? existing : {
     version: 1,
     path: latest ? paths.get(latest.id) : "",
     packet,
@@ -17192,7 +17425,7 @@ var KEY = "warpLiving", started, jobs, failures, sequence, recordOf = (m) => {
 Respect the card, user boundaries, and current tone. Never assign the player's feelings, words, consent or decisions.
 Established preparation, evidence, ownership and knowledge matter. People act from their own interests and knowledge.
 Quiet and affectionate scenes are valid. No quota of danger, quests, interruptions or developments.
-Do not invent a wallet, time, debt, statistic, personality or convenient exit to fill missing fields.`, EXTRACTION, pending, DIRECTOR;
+Do not invent a wallet, time, debt, statistic, personality or convenient exit to fill missing fields.`, EXTRACTION, pending, nativeHosts, nativeHandlers, nativeUsers, DIRECTOR;
 var init_runtime = __esm(() => {
   init_story_view_capture();
   init_story_view();
@@ -17225,6 +17458,7 @@ var init_runtime = __esm(() => {
   init_local_actions();
   init_read_window();
   init_scene_read();
+  init_narrator_aid();
   started = new Map;
   jobs = new Map;
   failures = new Set;
@@ -17247,6 +17481,9 @@ Optionally add mechanicalObservations: [{kind:"resource",id,owner,name,current,m
 Bootstrap resources and counted items ONLY when their actual current numbers are explicit in narrator text, an OOC correction, or the supplied card/persona/activated-lore definition sources. Ownership must be established for that person; a generic item description or an ability's cost is not a current inventory or balance. Use the supplied source ID in message when citing a definition source. Reuse existing IDs; never emit alternate IDs to reset counts. Do not overwrite saved balances to match prose: executed costs are authoritative. Missing counts are unknown, not zero. Player attempts are not proof of completed events.
 Conditions need an explicit physical, environmental or situational cause and a supported ending, not imagined moods or a universal penalty. Allowed approaches: movement, precision, force, speech, perception, concentration. Apply only supported relevant approaches; use blocks only for an actual inability, not mere difficulty. A particular person's suspicion or leverage must list that person's exact name in targets, not penalize all conversations. Local terrain must name its exact scene place, not penalize other locations. Ordinary affection, conversation and everyday activities do not create resource meters. condition_end needs actual recovery/removal evidence. These observations do not advance time.`;
   pending = new Map;
+  nativeHosts = new WeakSet;
+  nativeHandlers = new WeakSet;
+  nativeUsers = new WeakMap;
   DIRECTOR = `${PRINCIPLES}
 Keep established facts true. Treat tentative motives as possibilities, never facts.
 Recorded state is an earlier observation: newer explicit story events and player corrections supersede outdated records. Do not repeat a request the player has already answered.

@@ -16,7 +16,7 @@ export function promptSnapshot(message: Msg, paths: Map<string, string>, rawPath
   return value;
 }
 
-const STATE_FIELDS = ["place", "present", "preferences", "knowledgeBoundary", "agreementBoundary", "assetBoundary", "readBoundary", "explorationBoundary", "preparationBoundary", "companionBoundary", "growthBoundary", "lingeringBoundary", "aidBoundary", "serviceBoundary"];
+const STATE_FIELDS = ["place", "present", "preferences", "knowledgeBoundary", "agreementBoundary", "assetBoundary", "readBoundary", "explorationBoundary", "preparationBoundary", "companionBoundary", "growthBoundary", "lingeringBoundary", "aidBoundary", "serviceBoundary", "narratorAid"];
 const MECHANICAL_COLLECTIONS = ["resources", "items", "conditions", "abilities", "entities", "distances", "clocks", "cooldowns", "resilience", "agreements", "places", "positions", "routes", "discoveries", "stocks", "companions", "costLinks", "growth", "buildups", "aidOffers"];
 const MECHANICAL_FIELDS = ["agreementLedger"];
 function delta(before: any, after: any) {
